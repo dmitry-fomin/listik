@@ -24,6 +24,7 @@ from . import config as config_mod
 from . import db as db_mod
 from . import deps as deps_mod
 from . import embed as embed_mod
+from . import mcp
 from . import paths
 from . import search as search_mod
 from . import store
@@ -304,6 +305,33 @@ def handle(method: str, path: str, query: dict, body: dict, authed: bool = False
         return 201, task
 
     if len(parts) >= 2 and parts[0] == "api" and parts[1] == "tasks":
+        if len(parts) == 5 and parts[3] == "documents":
+            # Документы задачи содержимым: на удалённом сервере файлов проектов нет,
+            # поэтому текст приезжает телом запроса и читается из базы.
+            tid, kind = parts[2], urllib.parse.unquote(parts[4])
+            from . import documents
+            if method == "PUT":
+                content = body.get("content")
+                if not isinstance(content, str):
+                    raise ApiError(400, "не передан обязательный параметр: content")
+                try:
+                    out = documents.put_document(conn, tid, kind, content,
+                                                 path=body.get("path"), actor=body.get("actor"))
+                except KeyError as exc:
+                    raise ApiError(404, str(exc)) from exc
+                except ValueError as exc:
+                    raise ApiError(400, str(exc)) from exc
+                publish("task", {"id": tid, "action": "document"})
+                return 200, out
+            if method == "GET":
+                try:
+                    out = documents.get_document(conn, tid, kind)
+                except KeyError as exc:
+                    raise ApiError(404, str(exc)) from exc
+                except ValueError as exc:
+                    raise ApiError(400, str(exc)) from exc
+                return 200, out
+            raise ApiError(405, "метод не поддерживается")
         if len(parts) == 5 and parts[3] == "deps" and method == "DELETE":
             tid, dep_id = parts[2], urllib.parse.unquote(parts[4])
             out = store.remove_dep(conn, tid, dep_id, dep_type=q1("dep_type"))
@@ -506,6 +534,16 @@ class Handler(BaseHTTPRequestHandler):
         query = urllib.parse.parse_qs(parsed.query)
         path = parsed.path
 
+        if path == "/mcp":
+            # Транспорт MCP — только POST, токен здесь не проверяется.
+            payload = json.dumps({"ok": False, "error": "MCP: только POST"},
+                                 ensure_ascii=False).encode("utf-8")
+            return self._send(405, payload, "application/json; charset=utf-8", {"Allow": "POST"})
+
+        if path.startswith("/.well-known/"):
+            # MCP-клиент ищет тут OAuth-метаданные и принимает HTML SPA-фолбэка за них.
+            return self._error(404, "нет такого эндпоинта")
+
         if path == "/api/stream":
             if not self._authed(query):
                 return self._error(401, "нужен токен")
@@ -529,6 +567,9 @@ class Handler(BaseHTTPRequestHandler):
 
     def do_POST(self):  # noqa: N802
         parsed = urllib.parse.urlparse(self.path)
+        if parsed.path == "/mcp":
+            # У /mcp своя авторизация, поэтому до общей проверки токена.
+            return self._mcp()
         query = urllib.parse.parse_qs(parsed.query)
         if not self._authed(query):
             return self._error(401, "нужен токен")
@@ -552,6 +593,11 @@ class Handler(BaseHTTPRequestHandler):
 
     def _write_method(self, method: str) -> None:
         parsed = urllib.parse.urlparse(self.path)
+        if parsed.path == "/mcp":
+            # PUT/PATCH/DELETE на /mcp — только 405, без проверки токена.
+            payload = json.dumps({"ok": False, "error": "MCP: только POST"},
+                                 ensure_ascii=False).encode("utf-8")
+            return self._send(405, payload, "application/json; charset=utf-8", {"Allow": "POST"})
         query = urllib.parse.parse_qs(parsed.query)
         if not self._authed(query):
             return self._error(401, "нужен токен")
@@ -563,6 +609,91 @@ class Handler(BaseHTTPRequestHandler):
         except Exception as exc:  # noqa: BLE001
             return self._error(500, f"{type(exc).__name__}: {exc}")
         return self._json(status, {"ok": True, "data": data})
+
+    # --- MCP: минимальное подмножество транспорта Streamable HTTP
+    def _mcp(self) -> None:
+        """Один POST — одно JSON-RPC-сообщение, ответ обычным JSON, без SSE и сессий.
+
+        Соединение на время запроса берётся из `get_conn()`, разбор сообщения — общий
+        с stdio (`mcp.handle`). После успешного ответа пишущие инструменты шлют событие
+        доске; на сам ответ событие не влияет и отправляется уже после него.
+        """
+        def plain(status: int, message: str, extra: dict | None = None) -> None:
+            body = json.dumps({"ok": False, "error": message},
+                              ensure_ascii=False).encode("utf-8")
+            self._send(status, body, "application/json; charset=utf-8", extra)
+
+        def rpc_error(status: int, code: int, message: str, rid) -> None:
+            body = json.dumps({"jsonrpc": "2.0", "id": rid,
+                               "error": {"code": code, "message": message}},
+                              ensure_ascii=False).encode("utf-8")
+            self._send(status, body, "application/json; charset=utf-8")
+
+        # 1. Защита от DNS rebinding: браузер шлёт Origin, MCP-клиенты — нет.
+        if self.headers.get("Origin"):
+            self.close_connection = True
+            return plain(403, "запросы с Origin к /mcp запрещены", {"Connection": "close"})
+
+        # 2. Своя авторизация: ?token= в строке запроса здесь не принимается.
+        token = self._token()
+        if token:
+            auth = self.headers.get("Authorization", "")
+            bearer = auth.startswith("Bearer ") and auth[7:].strip() == token
+            if not bearer and self.headers.get("X-Listik-Token") != token:
+                self.close_connection = True
+                return plain(401, "нужен токен: Authorization: Bearer <token>",
+                             {"WWW-Authenticate": 'Bearer realm="listik"',
+                              "Connection": "close"})
+
+        # 3. Тело больше 5 МБ не читаем, а соединение закрываем: непрочитанное тело
+        # испортило бы следующий запрос на keep-alive.
+        length = as_int(self.headers.get("Content-Length"), 0) or 0
+        if length > 5 * 1024 * 1024:
+            self.close_connection = True
+            return plain(413, "тело больше 5 МБ", {"Connection": "close"})
+
+        # 4. Тело и разбор JSON.
+        raw = self.rfile.read(length) if length > 0 else b""
+        try:
+            request = json.loads(raw.decode("utf-8"))
+        except (json.JSONDecodeError, UnicodeDecodeError) as exc:
+            return rpc_error(400, -32700, f"невалидный JSON: {exc}", None)
+
+        # 5. Один POST — одно сообщение; пакеты и мусор не поддерживаются.
+        rid = request.get("id") if isinstance(request, dict) else None
+        if isinstance(request, list):
+            return rpc_error(400, -32600, "пакетные запросы не поддерживаются", None)
+        if not isinstance(request, dict) or not isinstance(request.get("method"), str):
+            return rpc_error(400, -32600, "неверный запрос JSON-RPC", rid)
+
+        # 6. Разбор сообщения — тот же, что у stdio.
+        try:
+            response = mcp.handle(request, conn=get_conn())
+        except Exception as exc:  # noqa: BLE001
+            return rpc_error(500, -32603, f"{type(exc).__name__}: {exc}", rid)
+
+        # 7. Уведомление — отвечать нечем.
+        if response is None:
+            return self._send(202, b"", "application/json")
+
+        # 8. Обычный ответ: JSON-RPC как есть, без обёртки ok/data.
+        self._json(200, response)
+
+        # 9. Событие доске — уже после ответа; любой сбой здесь на ответ не влияет.
+        try:
+            if request["method"] == "tools/call":
+                params = request.get("params") or {}
+                name = params.get("name")
+                result = response.get("result") or {}
+                if name in mcp.WRITE_TOOLS and not result.get("isError"):
+                    args = params.get("arguments") or {}
+                    task_id = args.get("id")
+                    if name == "listik_create":
+                        task_id = json.loads(result["content"][0]["text"])["id"]
+                    if task_id:
+                        publish("task", {"id": task_id, "action": name})
+        except Exception:  # noqa: BLE001
+            pass
 
     # --- статика доски
     def _static(self, path: str, query: dict) -> None:

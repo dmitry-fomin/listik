@@ -1,11 +1,20 @@
 """MCP-сервер Listik: агенты (claude, dsh, grok, codex) работают с задачами инструментами.
 
-Транспорт — stdio, JSON-RPC 2.0 (протокол MCP 2024-11-05).
-Работает через локальную базу: сервер Listik может быть и не поднят, а задача
-должна открываться всегда.
+JSON-RPC 2.0; поддерживаемые версии протокола MCP — 2025-06-18, 2025-03-26, 2024-11-05
+(на `initialize` сервер отвечает версией клиента, если знает её, иначе самой свежей).
 
-Подключение (claude / dsh):
-  claude mcp add listik -- /Users/dmitry.fomin/Projects/Listik/bin/listik mcp
+Транспортов два, разбор сообщений общий (`handle`):
+  * stdio — `bin/listik mcp`; работает через локальную базу: сервер Listik может быть и
+    не поднят, а задача должна открываться всегда;
+  * HTTP — `POST /mcp` сервера Listik (Streamable HTTP: один POST — одно сообщение,
+    ответ обычным JSON, без SSE и сессий) — для Listik, стоящего на другом сервере;
+    авторизация заголовком `Authorization: Bearer <токен>` или `X-Listik-Token`.
+
+Подключение по stdio (claude / dsh):
+  claude mcp add listik -- /путь/к/listik/bin/listik mcp
+
+Подключение к удалённому серверу:
+  claude mcp add --transport http listik https://<домен>/mcp --header "Authorization: Bearer <токен>"
 """
 from __future__ import annotations
 
@@ -17,8 +26,16 @@ from . import db as db_mod
 from . import search as search_mod
 from . import store
 
-PROTOCOL_VERSION = "2024-11-05"
+PROTOCOL_VERSION = "2025-06-18"
+SUPPORTED_PROTOCOL_VERSIONS = ("2025-06-18", "2025-03-26", "2024-11-05")
 SERVER_INFO = {"name": "listik", "version": "0.1.0"}
+
+# Инструменты, после которых доске нужно событие: она обновляется по SSE, а не по опросу.
+WRITE_TOOLS = frozenset({
+    "listik_create", "listik_update", "listik_claim", "listik_heartbeat", "listik_stage",
+    "listik_comment", "listik_needs_owner", "listik_done", "listik_release", "listik_deps",
+    "listik_put_document",
+})
 
 TASK_ID = {"type": "string", "description": "ID задачи, например zoloto585-search-a1b2"}
 ACTOR = {"type": "string",
@@ -139,6 +156,39 @@ TOOLS: list[dict] = [
         },
     },
     {
+        "name": "listik_put_document",
+        "description": ("Передать на сервер текст документа задачи (когда файлов проекта на "
+                        "сервере нет); повторный вызов с тем же текстом ревизию не меняет. "
+                        "kind: spec, checklist, review, decision — как у полей spec_path/"
+                        "checklist_path/review_path/decision_path; без path документ привяжется "
+                        "к уже указанному пути или к listik://<id>/<kind>.md."),
+        "inputSchema": {
+            "type": "object",
+            "properties": {
+                "id": TASK_ID,
+                "kind": {"type": "string", "enum": ["spec", "checklist", "review", "decision"]},
+                "content": {"type": "string", "description": "текст документа целиком"},
+                "path": {"type": "string", "description": "путь документа (необязательно)"},
+                "actor": ACTOR,
+            },
+            "required": ["id", "kind", "content"],
+        },
+    },
+    {
+        "name": "listik_get_document",
+        "description": ("Прочитать документ задачи: загруженный через listik_put_document — из "
+                        "базы, файловый — с диска сервера. Возвращает текст, а если файла нет — "
+                        "status=missing и текст ошибки."),
+        "inputSchema": {
+            "type": "object",
+            "properties": {
+                "id": TASK_ID,
+                "kind": {"type": "string", "enum": ["spec", "checklist", "review", "decision"]},
+            },
+            "required": ["id", "kind"],
+        },
+    },
+    {
         "name": "listik_claim",
         "description": ("Взять задачу в работу: держатель + статус «в работе». "
                         "Отказывает, если у задачи открытый блокер (обход force), чужой "
@@ -161,7 +211,8 @@ TOOLS: list[dict] = [
         "inputSchema": {
             "type": "object",
             "properties": {"id": TASK_ID, "holder": ACTOR,
-                           "note": {"type": "string", "description": "что делаешь прямо сейчас"}},
+                           "note": {"type": "string", "description": "что делаешь прямо сейчас"},
+                           "harness": {"type": "string", "description": "какой harness работает"}},
             "required": ["id", "holder"],
         },
     },
@@ -212,7 +263,9 @@ TOOLS: list[dict] = [
         "inputSchema": {
             "type": "object",
             "properties": {"id": TASK_ID, "result": {"type": "string"},
-                           "reason": {"type": "string"}, "actor": ACTOR},
+                           "reason": {"type": "string"},
+                           "note": {"type": "string", "description": "итог/пояснение — попадёт в историю"},
+                           "actor": ACTOR},
             "required": ["id"],
         },
     },
@@ -292,6 +345,82 @@ TOOLS: list[dict] = [
             "required": ["id", "depends_on"],
         },
     },
+    {
+        "name": "listik_release",
+        "description": ("Освободить задачу: снять держателя, не закрывая её. То же, что "
+                        "`listik release` — так бросают задачу или передают её другому."),
+        "inputSchema": {
+            "type": "object",
+            "properties": {"id": TASK_ID, "actor": ACTOR,
+                           "note": {"type": "string", "description": "почему отпускаешь"}},
+            "required": ["id"],
+        },
+    },
+    {
+        "name": "listik_inbox",
+        "description": ("Что требует человека: вопросы к автору (флаг «нужен ты») и задачи, "
+                        "висящие без движения. Две линии доски одним ответом."),
+        "inputSchema": {"type": "object", "properties": {}},
+    },
+    {
+        "name": "listik_memory",
+        "description": ("Долговременная память (заметки вне задач). С query — гибридный поиск, "
+                        "без query — последние заметки, свежие сверху."),
+        "inputSchema": {
+            "type": "object",
+            "properties": {"query": {"type": "string", "description": "что искать"},
+                           "project": {"type": "string", "description": "точный slug проекта"},
+                           "limit": {"type": "integer", "default": 20}},
+        },
+    },
+    {
+        "name": "listik_remember",
+        "description": ("Записать заметку в долговременную память. Повтор с тем же key "
+                        "перезаписывает заметку; без key ключ генерируется."),
+        "inputSchema": {
+            "type": "object",
+            "properties": {"text": {"type": "string", "description": "текст заметки"},
+                           "key": {"type": "string"},
+                           "project": {"type": "string"}},
+            "required": ["text"],
+        },
+    },
+    {
+        "name": "listik_projects",
+        "description": "Проекты доски: slug, путь, счётчики задач; скрытые — по флагу.",
+        "inputSchema": {
+            "type": "object",
+            "properties": {"include_archived": {"type": "boolean", "default": False}},
+        },
+    },
+    {
+        "name": "listik_actors",
+        "description": "Исполнители и агенты: кто есть в базе и сколько задач на ком.",
+        "inputSchema": {"type": "object", "properties": {}},
+    },
+    {
+        "name": "listik_timeline",
+        "description": "Лента последних событий по всем задачам: этапы, статусы, комментарии.",
+        "inputSchema": {
+            "type": "object",
+            "properties": {"limit": {"type": "integer", "default": 100}},
+        },
+    },
+    {
+        "name": "listik_deps_suggested",
+        "description": ("Предложенные блокеры (suggested-blocks): агент предложил, человек ещё "
+                        "не подтвердил. Что именно ждёт решения по зависимостям."),
+        "inputSchema": {
+            "type": "object",
+            "properties": {"project": {"type": "string"},
+                           "limit": {"type": "integer", "default": 100}},
+        },
+    },
+    {
+        "name": "listik_cycles",
+        "description": "Циклы в графе зависимостей: задача ждёт саму себя по кругу — разрывать руками.",
+        "inputSchema": {"type": "object", "properties": {}},
+    },
 ]
 
 
@@ -299,8 +428,9 @@ def _conn():
     return db_mod.init()
 
 
-def call_tool(name: str, args: dict) -> object:
-    conn = _conn()
+def call_tool(name: str, args: dict, conn=None) -> object:
+    if conn is None:
+        conn = _conn()
     if name == "listik_search":
         return search_mod.search(conn, args["query"], limit=int(args.get("limit", 10)),
                                  project=args.get("project"), status=args.get("status"),
@@ -337,6 +467,13 @@ def call_tool(name: str, args: dict) -> object:
         return documents_mod.context(conn, args["id"], args["stage"],
                                      portion=args.get("portion"),
                                      max_chars=args.get("max_chars"))
+    if name == "listik_put_document":
+        from . import documents as documents_mod
+        return documents_mod.put_document(conn, args["id"], args["kind"], args["content"],
+                                          path=args.get("path"), actor=args.get("actor"))
+    if name == "listik_get_document":
+        from . import documents as documents_mod
+        return documents_mod.get_document(conn, args["id"], args["kind"])
     if name == "listik_claim":
         return store.claim(conn, args["id"], holder=_norm_actor(args["holder"]),
                            harness=args.get("harness"), note=args.get("note"),
@@ -364,7 +501,7 @@ def call_tool(name: str, args: dict) -> object:
         return deps_mod.graph(conn, args["id"], depth=int(args.get("depth", 3)))
     if name == "listik_heartbeat":
         return store.heartbeat(conn, args["id"], holder=_norm_actor(args["holder"]),
-                               note=args.get("note"))
+                               note=args.get("note"), harness=args.get("harness"))
     if name == "listik_stage":
         if args.get("to"):
             return store.next_stage(conn, args["id"], holder=_norm_actor(args.get("holder")),
@@ -382,13 +519,45 @@ def call_tool(name: str, args: dict) -> object:
     if name == "listik_done":
         return store.update_task(conn, args["id"], actor=args.get("actor"), status="done",
                                  stage="done", result=args.get("result", ""),
-                                 close_reason=args.get("reason") or args.get("result", ""))
+                                 close_reason=args.get("reason") or args.get("result", ""),
+                                 note=args.get("note"))
+    if name == "listik_release":
+        return store.update_task(conn, args["id"], actor=args.get("actor"), holder="",
+                                 note=args.get("note") or "освободил")
+    if name == "listik_inbox":
+        res = store.board(conn, group_by="status", include_closed=False)
+        items = res.get("needs_you") or []
+        return {"questions": [t for t in items if t.get("needs_owner")],
+                "dropped": [t for t in items if not t.get("needs_owner")]}
+    if name == "listik_memory":
+        query = args.get("query")
+        limit = int(args.get("limit", 20))
+        project = args.get("project")
+        if query:
+            return {"items": search_mod.search_memories(conn, query, limit=limit,
+                                                        project=project)}
+        rows = conn.execute(
+            "SELECT key, project, body, updated_at FROM memories "
+            + ("WHERE project = ? " if project else "")
+            + "ORDER BY updated_at DESC LIMIT ?",
+            ([project] if project else []) + [limit]).fetchall()
+        return {"items": [dict(r) for r in rows]}
+    if name == "listik_remember":
+        return store.remember(conn, args["text"], key=args.get("key"),
+                              project=args.get("project"))
     if name == "listik_board":
         return store.board(conn, group_by=args.get("group_by", "status"),
                            project=args.get("project"),
                            include_closed=bool(args.get("include_closed")))
     if name == "listik_stats":
         return store.stats(conn, project=args.get("project"))
+    if name == "listik_projects":
+        return {"projects": store.list_projects(conn,
+                                                include_archived=bool(args.get("include_archived")))}
+    if name == "listik_actors":
+        return {"actors": store.list_actors(conn)}
+    if name == "listik_timeline":
+        return {"items": store.task_timeline(conn, limit=int(args.get("limit", 100)))}
     if name == "listik_deps":
         # MCP — транспорт только для агентов: без явного actor вызов всё равно
         # должен считаться агентским, а не тихо превращаться в «человека».
@@ -399,6 +568,13 @@ def call_tool(name: str, args: dict) -> object:
         return store.add_dep(conn, args["id"], args["depends_on"],
                              args.get("dep_type", "blocks"), actor,
                              confirm=bool(args.get("confirm")))
+    if name == "listik_deps_suggested":
+        from . import deps as deps_mod
+        return {"items": deps_mod.suggested(conn, project=args.get("project"),
+                                            limit=int(args.get("limit", 100)))}
+    if name == "listik_cycles":
+        from . import deps as deps_mod
+        return {"cycles": deps_mod.cycles(conn)}
     raise ValueError(f"неизвестный инструмент: {name}")
 
 
@@ -417,14 +593,18 @@ def _result(payload: object) -> dict:
     return {"content": [{"type": "text", "text": text}]}
 
 
-def handle(request: dict) -> dict | None:
+def handle(request: dict, conn=None) -> dict | None:
     method = request.get("method")
     rid = request.get("id")
     params = request.get("params") or {}
 
     if method == "initialize":
+        # Согласование версии: клиент получает свою же версию, если Listik её знает,
+        # иначе — самую свежую из поддерживаемых. Работает и для stdio, и для HTTP.
+        requested = params.get("protocolVersion")
+        version = requested if requested in SUPPORTED_PROTOCOL_VERSIONS else PROTOCOL_VERSION
         return {"jsonrpc": "2.0", "id": rid, "result": {
-            "protocolVersion": PROTOCOL_VERSION,
+            "protocolVersion": version,
             "capabilities": {"tools": {}},
             "serverInfo": SERVER_INFO,
         }}
@@ -436,7 +616,7 @@ def handle(request: dict) -> dict | None:
         name = params.get("name")
         args = params.get("arguments") or {}
         try:
-            payload = call_tool(name, args)
+            payload = call_tool(name, args, conn)
         except KeyError as exc:
             return {"jsonrpc": "2.0", "id": rid,
                     "result": {"content": [{"type": "text", "text": f"не найдено: {exc}"}],

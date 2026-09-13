@@ -11,7 +11,7 @@ from pathlib import Path
 
 from . import paths
 
-SCHEMA_VERSION = 5
+SCHEMA_VERSION = 6
 
 SCHEMA = """
 PRAGMA journal_mode = WAL;
@@ -207,6 +207,8 @@ CREATE TABLE IF NOT EXISTS documents (
     status       TEXT NOT NULL DEFAULT 'ok',   -- ok | missing
     error        TEXT,                          -- текст последней ошибки чтения
     checked_at   TEXT,                          -- служебное: последняя попытка прочитать файл
+    source       TEXT NOT NULL DEFAULT 'file',  -- file | upload (текст пришёл через API/MCP)
+    content      TEXT,                          -- текст загруженного документа; у file всегда NULL
     UNIQUE(task_id, kind, path),
     FOREIGN KEY(task_id) REFERENCES tasks(id) ON DELETE CASCADE
 );
@@ -263,6 +265,8 @@ MIGRATIONS: list[tuple[str, str, str]] = [
     ("documents", "status", "TEXT NOT NULL DEFAULT 'ok'"),
     ("documents", "error", "TEXT"),
     ("documents", "checked_at", "TEXT"),
+    ("documents", "source", "TEXT NOT NULL DEFAULT 'file'"),
+    ("documents", "content", "TEXT"),
 ]
 
 

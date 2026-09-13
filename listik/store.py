@@ -11,6 +11,7 @@ import re
 import sqlite3
 import string
 import subprocess
+import time
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
@@ -533,7 +534,7 @@ def get_task(conn: sqlite3.Connection, task_id: str, *, with_details: bool = Tru
     if with_details:
         try:
             out["documents"] = [dict(r) for r in conn.execute(
-                "SELECT id, kind, path, revision, content_hash, title, updated_at, status, error, "
+                "SELECT id, kind, path, revision, content_hash, title, updated_at, status, error, source, "
                 "(SELECT count(*) FROM document_chunks WHERE document_chunks.document_id = documents.id) "
                 "AS chunk_count FROM documents WHERE task_id=? ORDER BY kind, path",
                 (task_id,))]
@@ -1316,3 +1317,26 @@ def recompute_blocked(conn: sqlite3.Connection) -> int:
     changed = deps_mod.refresh_blocked_column(conn)
     conn.commit()
     return changed
+
+
+# ------------------------------------------------------------------ память
+
+def remember(conn: sqlite3.Connection, text: str, *, key: str | None = None,
+             project: str | None = None) -> dict:
+    """Записать заметку в долговременную память (аналог `bd remember`).
+
+    Ключ по умолчанию — `note/<unix-время>`, проект — `personal`. Повторная запись
+    с тем же ключом перезаписывает тело заметки и её строку в полнотекстовом индексе.
+    """
+    if not text or not text.strip():
+        raise ValueError("пустой текст заметки")
+    key = key or f"note/{int(time.time())}"
+    project = project or "personal"
+    conn.execute(
+        "INSERT INTO memories(key, project, body, source) VALUES(?,?,?, 'native') "
+        "ON CONFLICT(key) DO UPDATE SET body=excluded.body, updated_at=?",
+        (key, project, text, now_iso()))
+    conn.execute("DELETE FROM memory_fts WHERE memory_key = ?", (key,))
+    conn.execute("INSERT INTO memory_fts(memory_key, body) VALUES(?,?)", (key, text))
+    conn.commit()
+    return {"key": key, "project": project}

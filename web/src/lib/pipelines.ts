@@ -45,7 +45,7 @@ export const PIPELINES: PipelineDef[] = [
   {
     key: 'xhigh-pipeline',
     title: 'xhigh',
-    hint: 'внешних ~$4.89 · ~37 мин · когда ошибка дороже прогона',
+    hint: 'от 50 мин на задачу',
     roles: {
       spec: { provider: 'claude', label: 'xhigh', title: 'Fable · xhigh' },
       critic: { provider: 'glm', label: 'GLM', title: 'GLM 5.3 Flash по HTTP' },
@@ -56,7 +56,7 @@ export const PIPELINES: PipelineDef[] = [
   {
     key: 'high-pipeline',
     title: 'high · по умолчанию',
-    hint: 'внешних ~$2 · подписка тратится на ТЗ и код',
+    hint: 'от 40 мин на задачу',
     roles: {
       spec: { provider: 'claude', label: 'medium', title: 'Fable · medium' },
       critic: { provider: 'glm', label: 'GLM', title: 'GLM 5.3 Flash по HTTP' },
@@ -67,7 +67,7 @@ export const PIPELINES: PipelineDef[] = [
   {
     key: 'medium-pipeline',
     title: 'medium',
-    hint: 'внешних ~$1.75 · ~29 мин · работа понятная, разгон не нужен',
+    hint: '30 мин на задачу, когда работа понятная',
     roles: {
       spec: { provider: 'claude', label: 'low', title: 'Fable · low' },
       critic: { provider: 'glm', label: 'GLM', title: 'GLM 5.3 Flash по HTTP' },
@@ -78,7 +78,7 @@ export const PIPELINES: PipelineDef[] = [
   {
     key: 'low-pipeline',
     title: 'low',
-    hint: 'внешних ~$0.99 · ~21 мин · когда поджимает квота подписки',
+    hint: 'на 20 мин, самый дешевый',
     roles: {
       spec: { provider: 'claude', label: 'low', title: 'Opus · low' },
       critic: { provider: 'glm', label: 'GLM', title: 'GLM 5.3 Flash по HTTP' },

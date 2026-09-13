@@ -53,6 +53,15 @@ Listik — самостоятельный трекер задач вместо `
 | `decision_path` | str? | путь к файлу решения; `journal_path` — старое имя, алиас того же вида документа `decision` |
 | `journal_path` | str? | алиас `decision_path` (совместимость со старыми задачами) |
 | `worktree` / `branch` | str? | где идёт работа |
+| `autostart` | bool | галочка «запустить сразу»: процесс задачи поднимает сам сервер Listik |
+| `launch_route` | str? | ключ маршрута из `routes.json`, по которому запускать |
+| `launched_by` | str? | `listik`, если процесс запустил сервер; иначе `null` |
+| `launch_pid` | int? | PID запущенного процесса |
+| `launched_at` | str? | когда запустили, ISO-8601 UTC |
+| `launch_log` | str? | абсолютный путь к логу процесса |
+| `launch_exit_code` | int? | код выхода; `null` — процесс идёт или код неизвестен (слежение потеряно) |
+| `launch_finished_at` | str? | когда процесс завершился или когда слежение потеряно |
+| `launch_error` | str? | почему не запустили; `null` — запуск был или его не пытались |
 | `source` | str | `native` \| `beads` \| `writerllm` (импортированные задачи) |
 | `external_ref` | str? | старое ID в beads/WriterLLM |
 | `created_at`/`updated_at`/`started_at`/`closed_at` | str | ISO-8601 UTC |
@@ -66,6 +75,78 @@ Listik — самостоятельный трекер задач вместо `
 updated_at, status, error, chunk_count`. Колонка `checked_at` (время последней фоновой
 перепроверки файла) есть только в таблице `documents` и в ответы API не попадает — это
 решение ради побайтной стабильности `context` (см. ниже).
+
+Поля запуска (девять колонок `autostart`…`launch_error`) пишут только:
+
+| Писатель | Поля |
+|---|---|
+| `store.create_task` (POST `/api/tasks`) | `autostart`, `launch_route` |
+| `listik/launcher.py: start` (сервер) | `launched_by`, `launched_at`, `launch_pid`, `launch_log`, `launch_error`, плюс `needs_owner` через `set_needs_owner` |
+| поток слежения за процессом и `recover` при старте сервера | `launch_exit_code`, `launch_finished_at` |
+| локальный фолбэк CLI (`client.local_call`, ветка `create`) | `launch_error`, плюс `needs_owner` |
+
+Ни одно из девяти полей не входит в белый список `PATCH /api/tasks/{id}`
+(`store.UPDATABLE`): правкой карточки их изменить нельзя.
+
+## Маршруты запуска (routes.json) и автостарт
+
+Маршруты — это таблица пресетов конвейера и отдельных исполнителей; она же даёт команду
+для автостарта. Источник — `routes.json` в корне Listik (образец без `command`), при старте
+сервера он один раз копируется в `~/.config/listik/routes.json` (или в `$LISTIK_ROUTES`,
+если переменная задана). Уже существующая копия не перезаписывается: команды автор
+вписывает в неё. Сервер читает файл только при старте (`routes.init_at_startup`), поэтому
+правка `routes.json` на ходу ничего не меняет до перезапуска.
+
+Формат (версия 1): `{"version": 1, "routes": [ {...}, ... ]}`. Лишние поля — ошибка.
+Запись: `key` (`^[a-z0-9][a-z0-9-]*$`, уникален), `kind` (`pipeline` или `direct`),
+`title`, `hint`, `visible` (именно JSON `true`/`false`); у `pipeline` обязателен `roles`
+(`spec`/`critic`/`impl`/`judge`), у `direct` — `harness`; необязательный `strip` и
+необязательный `command` — непустой массив непустых строк, argv процесса.
+
+В `command` допустимы только подстановки `{task_id}`, `{project}` (пусто, если проекта
+нет), `{route}`, `{cwd}`, `{title}`; любая другая фигурная скобка — ошибка проверки.
+Подстановка однопроходная: значение занимает место целиком в элементе массива, а
+фигурные скобки внутри значения (`{task_id}` в `title`) остаются как есть. Shell не
+используется (`shell=True` нигде нет), команда берётся только из `routes.json` — поле
+`command` в теле POST `/api/tasks` игнорируется.
+
+Если файл не прошёл проверку (нет файла, битый JSON, ошибка формата), автостарт выключен
+целиком: `GET /api/routes` и `GET /api/health` отдают `ok=false` и текст ошибки, а задача
+с `autostart` создаётся, но не запускается — `launch_error` начинается с
+`routes.json с ошибкой`, поднимается `needs_owner`. Отказы запуска (проверяются по порядку,
+состояние задачи меняется одинаково — `launch_error`, `needs_owner`, строка в stderr):
+
+| Отказ | `launch_error` |
+|---|---|
+| `routes.json` не загружен или с ошибкой | `routes.json с ошибкой: <текст>` |
+| ключа `launch_route` нет среди записей (`visible:false` запуску не мешает) | `маршрута <key> нет в routes.json` |
+| у записи нет `command` | `у маршрута <key> нет command в routes.json` |
+| нет рабочего каталога: `worktree` задачи пуст и `path` проекта пуст, либо каталога нет на диске | `нет рабочего каталога (worktree или path проекта <slug>)` |
+| `Popen` бросил `OSError` (нет бинарника и т. п.) | `не удалось запустить: <ошибка>` |
+
+Рабочий каталог (`cwd`) — `worktree` задачи, если он непустой, иначе `path` её проекта.
+Ошибка запуска не отменяет создание задачи: POST отвечает `201`, а не `500`.
+
+Отдельный случай — повторный запуск: задача захватывается условным
+`UPDATE … SET launched_by='listik' WHERE id=? AND launched_by IS NULL`, поэтому `start`
+для уже запущенной задачи возвращает `уже запущена Listik` и **ничего** не меняет —
+ни `launch_error`, ни `needs_owner`, ни комментариев; в stderr только строка
+`autostart <id>: уже запущена Listik`. Так же ведёт себя гонка двух одновременных
+запусков: процесс и лог-файл ровно одни.
+
+Успешный запуск пишет `launched_by=listik`, `launch_pid`, `launched_at`, `launch_log`
+(файл `logs/launch-<id>-<ГГГГММДДТЧЧММССZ>.log` в корне Listik, каталог создаётся),
+`launch_error=NULL` и комментарий `journal` от `agent:listik`: `автостарт: маршрут <key>,
+pid <N>, лог <path>`. Процесс не блокирует запрос: POST возвращается сразу после `Popen`.
+Поток-демон дожидается процесса и пишет `launch_exit_code`, `launch_finished_at` и
+комментарий `автостарт: процесс <pid> завершился с кодом <code>`; этап, держатель и статус
+не меняются — запуск не делает claim за агента. После перезапуска сервера `launcher.recover`
+проверяет задачи с `launched_by=listik`, PID которых ещё не завершён: мёртвый процесс
+(`ProcessLookupError`) получает `launch_finished_at` и журнал «отслеживание потеряно при
+перезапуске сервера» (`launch_exit_code` остаётся `NULL`), живой (в том числе
+`PermissionError`) не трогается. Переиспользованный PID считается живым — принятый риск.
+
+`command` наружу не отдаётся: его нет ни в `GET /api/routes`, ни в `/api/health`.
 
 ## Документы и чанки
 
@@ -111,7 +192,8 @@ updated_at, status, error, chunk_count`. Колонка `checked_at` (время
 
 | Метод | Путь | Параметры | Ответ |
 |---|---|---|---|
-| GET | `/api/health` | — | `status, version, db, counts, embed{ok,models}, now` |
+| GET | `/api/health` | — | `status, version, db, counts, embed{ok,models}, now`; авторизованному — ещё `routes{ok,error,path,count}` |
+| GET | `/api/routes` | — | `ok, error, path, routes[]` — записи `routes.json`, загруженные при старте, без `command` (см. «Маршруты запуска»); ошибка файла — `ok=false` и текст, а не HTTP-ошибка |
 | GET | `/api/meta` | `archived` | `projects[], actors[], facets{}, statuses{}, stages{}, priorities{}` |
 | GET | `/api/projects` | — | `projects[]` — все репозитории доски, включая скрытые: `slug, title, kind, path, path_exists, git_remote, git_branch, archived, n_tasks, n_open, n_wip`, плюс `routing` (переопределение проекта — объект или `null`), `routing_effective` (действующая слитая таблица, которой реально пользуются `allowed_harnesses`/`transition_kind`), `routing_source` (`default`\|`config`\|`db`\|`config+db`), плюс `root` (корень поиска проектов) |
 | GET | `/api/stats` | `project` | `by_status{}, by_stage{}, by_project[], by_holder[], by_actor[], stale, needs_owner, closed_7d, closed_prev_7d, closed_delta, closed_by_day[{date,count}] (14 дней), long_stage, running[], generated_at` |
@@ -193,7 +275,7 @@ dropped_chunks, reason`), `reasons[]` (по одному пункту на ка�
 
 | Метод | Путь | Тело | Смысл |
 |---|---|---|---|
-| POST | `/api/tasks` | `title`(обязателен), `project, description, acceptance, design, notes, type, status, priority, assignee, stage, labels[], spec_path, checklist_path, review_path, decision_path, journal_path, external_ref, actor, harness, needs_owner, id` | создать |
+| POST | `/api/tasks` | `title`(обязателен), `project, description, acceptance, design, notes, type, status, priority, assignee, stage, labels[], spec_path, checklist_path, review_path, decision_path, journal_path, external_ref, actor, harness, needs_owner, id, autostart, route` | создать. `autostart: true` сразу запускает процесс по маршруту `route` (см. «Маршруты запуска»): ответ — `201` с перечитанной задачей, отказ запуска не отменяет создание и не даёт `500`. `autostart: true` без непустого `route` — `400`, задача не создаётся; `route` без `autostart` просто сохраняется в `launch_route` |
 | PATCH | `/api/tasks/{id}` | любые из `title, description, acceptance, design, notes, result, status, stage, priority, issue_type, assignee, holder, holder_note, project, labels[], spec_path, checklist_path, review_path, decision_path, journal_path, worktree, branch, close_reason, needs_owner, external_ref, archived` + `actor`, `harness`, `note` | изменить (каждое изменение пишется в events) |
 | DELETE | `/api/tasks/{id}` | — | удалить |
 | PUT | `/api/tasks/{id}/documents/{kind}` | `content` (обязателен, строка не длиннее 1 000 000 символов), `path`, `actor` | принять текст документа и хранить его в базе (`source=upload`) — для сервера, где файлов проектов нет. Путь выбирается по шагам, ровно в этом порядке: 1) непустой `path` из тела; 2) иначе — уже записанный в карточке путь этого вида (`spec_path`/`checklist_path`/`review_path`/`decision_path`); 3) иначе, для `decision`, — `journal_path`; 4) иначе — виртуальный `listik://<id>/<kind>.md`. В случаях 1 и 4 выбранный путь дописывается в карточку. `revision` растёт только при смене текста (новая запись — сразу `revision=1`); при новой записи и при смене текста пишется событие `document_uploaded` с пометкой `r<revision>`; повтор с тем же текстом ревизию не меняет и события не создаёт. 400 — неизвестный `kind`, не передан или не строка `content`, текст длиннее 1 000 000 символов, не строка `path`; 404 — нет такой задачи; 405 — любой метод по этому пути, кроме `GET` и `PUT` |
@@ -378,6 +460,7 @@ listik serve                       # поднять сервер и доску
 listik import-beads [--dry-run]    # разовый импорт из старых .beads
 listik import-writerllm --source <path> [--project writerllm] [--dry-run] [--update]   # импорт выгрузки bd export WriterLLM, идемпотентно
 listik new "Заголовок" -p project --type bug --priority 1 --actor agent:dsh
+listik new "Заголовок" -p project --autostart --route low-pipeline   # сразу запустить по маршруту (--autostart без --route — ошибка)
 listik ready                        # что можно взять прямо сейчас
 listik ready --harness dsh          # только то, что этому harness разрешено на его этапе
 listik blocked                      # кто кого ждёт и почему

@@ -156,6 +156,19 @@ def show_task(t: dict) -> None:
             print(line)
     if t.get("worktree") or t.get("branch"):
         print(f"  дерево:      {t.get('worktree') or '—'}   ветка: {t.get('branch') or '—'}")
+    if t.get("launch_error"):
+        print(f"  автостарт: ОШИБКА {t['launch_error']}")
+    elif t.get("autostart") or t.get("launched_by"):
+        bits = [f"автостарт: {t.get('launch_route') or '—'}"]
+        if t.get("launched_by"):
+            pid = t.get("launch_pid")
+            launched = f"запущена {t['launched_by']} pid {pid if pid is not None else '—'}"
+            if t.get("launched_at"):
+                launched += f" {t['launched_at']}"
+            bits.append(launched)
+            code = t.get("launch_exit_code")
+            bits.append(f"код {code if code is not None else 'идёт'}")
+        print("  " + " · ".join(bits))
     if t.get("external_ref"):
         print(f"  старый ID ({t.get('source')}): {t['external_ref']}")
     for field, label in (("description", "описание"), ("acceptance", "приёмка"),
@@ -340,6 +353,12 @@ def cmd_import_writerllm(args) -> int:
 
 
 def cmd_new(args) -> int:
+    if args.autostart and not (args.route or "").strip():
+        # Задача не создаётся: запускать автостарт нечем, а молча создать её без
+        # маршрута — значит соврать галочке. Код 2 — как у parser.error.
+        print("ошибка: --autostart требует --route <ключ маршрута из routes.json>",
+              file=sys.stderr)
+        return 2
     body = {
         "title": args.title, "project": args.project, "type": args.type,
         "priority": args.priority, "description": args.description or "",
@@ -349,6 +368,7 @@ def cmd_new(args) -> int:
         "checklist_path": args.checklist,
         "review_path": args.review, "decision_path": args.decision,
         "actor": actor_default(args), "harness": args.harness,
+        "autostart": args.autostart, "route": args.route,
     }
     local = dict(body)
     local.pop("type", None)
@@ -1153,6 +1173,10 @@ def build_parser() -> argparse.ArgumentParser:
     sp.add_argument("--review")
     sp.add_argument("--decision")
     sp.add_argument("--journal")
+    sp.add_argument("--autostart", action="store_true",
+                    help="сервер Listik сам запустит процесс задачи по маршруту (нужен --route)")
+    sp.add_argument("--route", metavar="КЛЮЧ",
+                    help="ключ маршрута из routes.json; без --autostart просто сохраняется")
 
     sp = add("list", cmd_list, help="список задач")
     sp.add_argument("--project")

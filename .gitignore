@@ -7,6 +7,9 @@ listik.db.bak-*
 listik.pid
 listik.log
 
+# Логи автостарта задач: logs/launch-<id>-<время>.log (см. listik/launcher.py)
+logs/
+
 # Локальный конфиг: токен доски, пути к проектам. Шаблон — config.example.toml;
 # без config.toml `listik serve` сам создаст конфиг и сгенерирует токен.
 config.toml

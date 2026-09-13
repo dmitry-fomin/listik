@@ -5,7 +5,7 @@
       "key": "xhigh-pipeline",
       "kind": "pipeline",
       "title": "xhigh",
-      "hint": "внешних ~$4.89 · ~37 мин · когда ошибка дороже прогона",
+      "hint": "от 50 мин на задачу",
       "visible": true,
       "roles": {
         "spec": {
@@ -34,7 +34,7 @@
       "key": "high-pipeline",
       "kind": "pipeline",
       "title": "high · по умолчанию",
-      "hint": "внешних ~$2 · подписка тратится на ТЗ и код",
+      "hint": "от 40 мин на задачу",
       "visible": true,
       "roles": {
         "spec": {
@@ -63,7 +63,7 @@
       "key": "medium-pipeline",
       "kind": "pipeline",
       "title": "medium",
-      "hint": "внешних ~$1.75 · ~29 мин · работа понятная, разгон не нужен",
+      "hint": "30 мин на задачу, когда работа понятная",
       "visible": true,
       "roles": {
         "spec": {
@@ -92,7 +92,7 @@
       "key": "low-pipeline",
       "kind": "pipeline",
       "title": "low",
-      "hint": "внешних ~$0.99 · ~21 мин · когда поджимает квота подписки",
+      "hint": "на 20 мин, самый дешевый",
       "visible": true,
       "roles": {
         "spec": {

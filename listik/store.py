@@ -163,7 +163,12 @@ def create_task(
     created_at: str | None = None,
     needs_owner: bool = False,
     harness: str | None = None,
+    autostart: bool = False,
+    route: str | None = None,
 ) -> dict:
+    """Создать задачу. `autostart`/`route` только сохраняются: процесс запускает
+    не эта функция, а `listik/launcher.py` (сервер — сразу после создания, CLI
+    в локальном режиме — отказом, потому что сервера нет)."""
     if not title.strip():
         raise ValueError("title не может быть пустым")
     tid = task_id or gen_id(conn, project)
@@ -176,8 +181,8 @@ def create_task(
         INSERT INTO tasks(id, project, title, description, acceptance, design, notes, result, status, stage,
                           stage_at, priority, issue_type, assignee, labels, spec_path, journal_path,
                           source, external_ref, created_at, created_by, updated_at, needs_owner,
-                          checklist_path, review_path, decision_path)
-        VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)
+                          checklist_path, review_path, decision_path, autostart, launch_route)
+        VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)
         ON CONFLICT(id) DO UPDATE SET
             title=excluded.title, description=excluded.description, acceptance=excluded.acceptance,
             design=excluded.design, notes=excluded.notes, status=excluded.status,
@@ -188,7 +193,7 @@ def create_task(
          ts if stage else None, priority, issue_type, assignee,
          json.dumps(labels or [], ensure_ascii=False), spec_path, journal_path,
          source, external_ref, ts, created_by, ts, 1 if needs_owner else 0,
-         checklist_path, review_path, decision_path),
+         checklist_path, review_path, decision_path, 1 if autostart else 0, route),
     )
     event(conn, tid, "created", to_value=status, actor=actor_key, harness=harness,
           note=f"создана: {title[:120]}", ts=ts)
@@ -635,6 +640,16 @@ def row_to_task(conn: sqlite3.Connection, row: sqlite3.Row) -> dict:
         "journal_path": row["journal_path"],
         "worktree": row["worktree"],
         "branch": row["branch"],
+        # Автостарт: пишут только create_task и launcher, PATCH их не меняет
+        "autostart": bool(row["autostart"]),
+        "launch_route": row["launch_route"],
+        "launched_by": row["launched_by"],
+        "launch_pid": row["launch_pid"],
+        "launched_at": row["launched_at"],
+        "launch_log": row["launch_log"],
+        "launch_exit_code": row["launch_exit_code"],
+        "launch_finished_at": row["launch_finished_at"],
+        "launch_error": row["launch_error"],
         "blocked_by": blockers,
         "source": row["source"],
         "external_ref": row["external_ref"],

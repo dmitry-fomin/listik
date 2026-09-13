@@ -24,6 +24,7 @@ from . import config as config_mod
 from . import db as db_mod
 from . import deps as deps_mod
 from . import embed as embed_mod
+from . import launcher as launcher_mod
 from . import mcp
 from . import paths
 from . import routes as routes_mod
@@ -295,6 +296,13 @@ def handle(method: str, path: str, query: dict, body: dict, authed: bool = False
         )
 
     if path == "/api/tasks" and method == "POST":
+        autostart = as_bool(body.get("autostart", False))
+        route = body.get("route")
+        if route is not None and not isinstance(route, str):
+            raise ApiError(400, "route должен быть строкой")
+        # Автостарт без маршрута запускать нечего: задача не создаётся вовсе.
+        if autostart and not (route or "").strip():
+            raise ApiError(400, "autostart: нужен непустой route")
         task = store.create_task(
             conn,
             title=need(body, "title"),
@@ -320,7 +328,14 @@ def handle(method: str, path: str, query: dict, body: dict, authed: bool = False
             created_by=body.get("actor") or body.get("created_by"),
             needs_owner=as_bool(body.get("needs_owner", False)),
             harness=body.get("harness"),
+            autostart=autostart,
+            route=route,
         )
+        if autostart:
+            # Процесс не ждём: start возвращается сразу после Popen, отказ (битый
+            # routes.json, нет маршрута/command/каталога) не отменяет создание задачи.
+            launcher_mod.start(conn, task["id"], notify=publish)
+            task = store.get_task(conn, task["id"])
         publish("task", {"id": task["id"], "action": "created"})
         return 201, task
 
@@ -852,9 +867,10 @@ def serve(host: str | None = None, port: int | None = None, quiet: bool = False,
         print(f"pid:  {pid_file()}")
         daemonize()
         pid_file().write_text(str(os.getpid()))
-        get_conn()
+        conn = get_conn()
         # После daemonize: сообщение об ошибке routes.json должно попасть в listik.log.
         routes_mod.init_at_startup()
+        launcher_mod.recover(conn, notify=publish)
         if not no_embed:
             start_embed_worker()
         try:
@@ -867,8 +883,9 @@ def serve(host: str | None = None, port: int | None = None, quiet: bool = False,
                 pass
         return
 
-    get_conn()
+    conn = get_conn()
     routes_mod.init_at_startup()
+    launcher_mod.recover(conn, notify=publish)
     if not no_embed:
         start_embed_worker()
     httpd = make_server(host, port, quiet=quiet)

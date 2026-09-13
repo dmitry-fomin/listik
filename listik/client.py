@@ -129,7 +129,15 @@ def local_call(op: str, **kwargs):
         return documents.context(conn, kwargs["task_id"], kwargs.get("stage", "s1-spec"),
                                  portion=kwargs.get("portion"), max_chars=kwargs.get("max_chars"))
     if op == "create":
-        return store.create_task(conn, **kwargs)
+        autostart = bool(kwargs.get("autostart"))
+        task = store.create_task(conn, **kwargs)
+        if autostart:
+            # Локальный режим — это «сервера нет»: запускать процесс некому, поэтому
+            # задача создаётся, но сразу с отказом и флагом «нужен человек».
+            from . import launcher
+            launcher.refuse(conn, task["id"], "сервер Listik не запущен")
+            return store.get_task(conn, task["id"])
+        return task
     if op == "update":
         task_id = kwargs.pop("task_id")
         return store.update_task(conn, task_id, **kwargs)

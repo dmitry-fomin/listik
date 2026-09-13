@@ -11,7 +11,7 @@ from pathlib import Path
 
 from . import paths
 
-SCHEMA_VERSION = 6
+SCHEMA_VERSION = 7
 
 SCHEMA = """
 PRAGMA journal_mode = WAL;
@@ -72,7 +72,19 @@ CREATE TABLE IF NOT EXISTS tasks (
     close_reason TEXT,
     archived     INTEGER NOT NULL DEFAULT 0,
     content_hash TEXT,
-    indexed_at   TEXT
+    indexed_at   TEXT,
+    -- Автостарт (шаг 09, порция b): галочка при создании, запуск процесса сервером
+    -- и слежение за ним. Пишут только create_task и listik/launcher.py, через
+    -- PATCH/update_task эти поля не меняются.
+    autostart          INTEGER NOT NULL DEFAULT 0,  -- 1 = задача стартует сама
+    launch_route       TEXT,                   -- ключ маршрута из routes.json
+    launched_by        TEXT,                   -- 'listik', если процесс запустил сервер
+    launch_pid         INTEGER,                -- PID запущенного процесса
+    launched_at        TEXT,                   -- ISO-время запуска
+    launch_log         TEXT,                   -- абсолютный путь к логу процесса
+    launch_exit_code   INTEGER,                -- код выхода; NULL — идёт или неизвестен
+    launch_finished_at TEXT,                   -- завершился или слежение потеряно
+    launch_error       TEXT                    -- почему не запустили; NULL — запуск был
 );
 CREATE INDEX IF NOT EXISTS idx_tasks_status   ON tasks(status);
 CREATE INDEX IF NOT EXISTS idx_tasks_stage    ON tasks(stage);
@@ -260,6 +272,15 @@ MIGRATIONS: list[tuple[str, str, str]] = [
     ("tasks", "source", "TEXT NOT NULL DEFAULT 'beads'"),
     ("tasks", "archived", "INTEGER NOT NULL DEFAULT 0"),
     ("tasks", "blocked_by", "TEXT NOT NULL DEFAULT '[]'"),
+    ("tasks", "autostart", "INTEGER NOT NULL DEFAULT 0"),
+    ("tasks", "launch_route", "TEXT"),
+    ("tasks", "launched_by", "TEXT"),
+    ("tasks", "launch_pid", "INTEGER"),
+    ("tasks", "launched_at", "TEXT"),
+    ("tasks", "launch_log", "TEXT"),
+    ("tasks", "launch_exit_code", "INTEGER"),
+    ("tasks", "launch_finished_at", "TEXT"),
+    ("tasks", "launch_error", "TEXT"),
     ("comments", "kind", "TEXT NOT NULL DEFAULT 'comment'"),
     ("deps", "created_by", "TEXT"),
     ("documents", "status", "TEXT NOT NULL DEFAULT 'ok'"),

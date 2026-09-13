@@ -152,7 +152,7 @@ on an open blocker, another holder, or a busy worktree; `--force` can't take ano
 - **sticky** (`s1→s2`, `s3→s4`): the holder stays. Same session continues as is; to pass to another
   harness run `stage <id> --holder <next>`, and the receiver runs `claim <id> --holder <self>`
   (idempotent), then `heartbeat`.
-- **red verdict return** keeps the holder: a judge holding under its own name does `release <id>`
+- **FAIL verdict return** keeps the holder: a judge holding under its own name does `release <id>`
   so the implementer can `claim`; in a single session just continue.
 
 ### Stages
@@ -166,17 +166,18 @@ human confirms with `dep confirm`. Never use `--confirm`. Next: `stage` → `s2-
 `comment -k review` (and `review_path` if set). Next: `stage` → `s3-impl` (handoff).
 
 **s3-impl** — read `context <id> --stage s3-impl --portion "<portion>"` and always `show <id>`
-(answers to questions, previous verdict after a red return). Edit code in the card's
+(answers to questions; after a FAIL return the last verdict is your list of fixes). Edit code in the card's
 worktree/branch, run checks, log in `comment -k journal`. Don't commit. Next: `stage` → `s4-judge`
 (sticky; other judge harness: `stage <id> --holder <judge>`).
 
 **s4-judge** — read `context <id> --stage s4-judge` and the checklist; if the card arrives with
 another holder, first `claim <id> --holder <self>`. Never edit code. Write `comment -k verdict`
-whose first word is `зелёный` (green) or `красный` (red) — keep these Russian words.
-- Green: a verdict starting with `зелёный` is never treated as red. Then commit and
-  `done <id> -r "…"`.
-- Red: the server returns the card to `s3-impl` with the same holder; `release <id>` if you held it
-  under your own name. If the implementer doesn't `heartbeat`/`claim` within the return window
+whose first line is exactly `VERDICT: PASS` or `VERDICT: FAIL` — the server reads only that line and
+rejects any other format.
+- PASS: nothing else is required. Commit, then `done <id> -r "…"`.
+- FAIL: below the first line list the fixes, one per line: checklist item — what is wrong —
+  file:line — what to do. This list is all the implementer gets. The server returns the card to
+  `s3-impl` with the same holder; `release <id>` if you held it under your own name. If the implementer doesn't `heartbeat`/`claim` within the return window
   (24 h default), the holder is cleared and the task returns to `ready`.
 
 ### Commands
@@ -196,7 +197,8 @@ $L heartbeat <id> --holder <who> --note "what I'm doing"
 $L stage <id>                          # next stage
 $L stage <id> --holder <next>          # sticky pass to another harness
 $L comment <id> "text" -k journal|review
-$L comment <id> "зелёный/красный: …" -k verdict
+$L comment <id> "VERDICT: PASS" -k verdict
+$L comment <id> $'VERDICT: FAIL\n1. <item> — <problem> — <file:line> — <fix>' -k verdict
 $L needs-owner <id> "question"
 $L needs-owner <id> --clear "answer"
 $L release <id>

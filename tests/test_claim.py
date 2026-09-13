@@ -181,7 +181,7 @@ class RedVerdictTests(TempDbTestCase):
         self.conn.commit()
 
     def test_red_verdict_returns_to_s3_with_duration(self) -> None:
-        store.add_comment(self.conn, self.p, "красный: тест падает", kind="verdict",
+        store.add_comment(self.conn, self.p, "VERDICT: FAIL\n1. test_x fails", kind="verdict",
                           author="agent:claude")
         task = store.get_task(self.conn, self.p)
         self.assertEqual(task["stage"], "s3-impl")
@@ -194,20 +194,25 @@ class RedVerdictTests(TempDbTestCase):
         self.assertGreaterEqual(last["duration_s"], 7000)
         self.assertIn("красного verdict", last["note"] or "")
 
-    def test_green_verdict_with_red_substrings_does_not_change_stage(self) -> None:
-        store.add_comment(self.conn, self.p, "зелёный: required checks covered, no failures ❌-free",
-                          kind="verdict", author="agent:claude")
-        self.assertEqual(store.get_task(self.conn, self.p)["stage"], "s4-judge")
+    def test_parse_verdict_first_line_only(self) -> None:
+        self.assertFalse(store.parse_verdict("VERDICT: PASS\nall required checks covered, no fail"))
+        self.assertTrue(store.parse_verdict("VERDICT: FAIL\n1. fix x"))
+        for bad in ("зелёный: ok", "verdict: pass", "PASS", "", "VERDICT: FAIL", "VERDICT: FAIL\n  "):
+            with self.assertRaises(ValueError, msg=bad):
+                store.parse_verdict(bad)
 
-    def test_is_red_verdict_whole_words(self) -> None:
-        self.assertTrue(store.is_red_verdict("red: tests fail"))
-        self.assertTrue(store.is_red_verdict("Вердикт: тесты не пройдены"))
-        self.assertTrue(store.is_red_verdict("итог ❌"))
-        self.assertFalse(store.is_red_verdict("all required items covered"))
-        self.assertFalse(store.is_red_verdict("green: nothing failed"))
+    def test_bad_verdict_rejected_and_not_stored(self) -> None:
+        with self.assertRaises(ValueError):
+            store.add_comment(self.conn, self.p, "красный: тест падает", kind="verdict",
+                              author="agent:claude")
+        task = store.get_task(self.conn, self.p)
+        self.assertEqual(task["stage"], "s4-judge")
+        n = self.conn.execute("SELECT COUNT(*) FROM comments WHERE task_id = ? AND kind = 'verdict'",
+                              (self.p,)).fetchone()[0]
+        self.assertEqual(n, 0)
 
     def test_green_verdict_does_not_change_stage(self) -> None:
-        store.add_comment(self.conn, self.p, "зелёный: всё хорошо", kind="verdict",
+        store.add_comment(self.conn, self.p, "VERDICT: PASS", kind="verdict",
                           author="agent:claude")
         task = store.get_task(self.conn, self.p)
         self.assertEqual(task["stage"], "s4-judge")
@@ -219,7 +224,7 @@ class ExpireReturnWindowTests(TempDbTestCase):
         self.p = store.create_task(self.conn, title="P", project="demo", stage="s3-impl")["id"]
         store.claim(self.conn, self.p, holder="dsh")
         store.next_stage(self.conn, self.p, to_stage="s4-judge")
-        store.add_comment(self.conn, self.p, "красный: тест падает", kind="verdict",
+        store.add_comment(self.conn, self.p, "VERDICT: FAIL\n1. test_x fails", kind="verdict",
                           author="agent:claude")
         self.assertEqual(store.get_task(self.conn, self.p)["stage"], "s3-impl")
 
@@ -288,7 +293,7 @@ class ProjectReturnWindowTests(TempDbTestCase):
         p = store.create_task(self.conn, title="P", project="demo", stage="s3-impl")["id"]
         store.claim(self.conn, p, holder="dsh")
         store.next_stage(self.conn, p, to_stage="s4-judge")
-        store.add_comment(self.conn, p, "красный: тест падает", kind="verdict", author="agent:claude")
+        store.add_comment(self.conn, p, "VERDICT: FAIL\n1. test_x fails", kind="verdict", author="agent:claude")
         self.conn.execute(
             "UPDATE events SET ts = ? WHERE task_id = ? AND kind = 'stage' "
             "AND from_value = 's4-judge' AND to_value = 's3-impl'",
@@ -302,7 +307,7 @@ class ProjectReturnWindowTests(TempDbTestCase):
         p = store.create_task(self.conn, title="P2", project="demo2", stage="s3-impl")["id"]
         store.claim(self.conn, p, holder="dsh")
         store.next_stage(self.conn, p, to_stage="s4-judge")
-        store.add_comment(self.conn, p, "красный: тест падает", kind="verdict", author="agent:claude")
+        store.add_comment(self.conn, p, "VERDICT: FAIL\n1. test_x fails", kind="verdict", author="agent:claude")
         self.conn.execute(
             "UPDATE events SET ts = ? WHERE task_id = ? AND kind = 'stage' "
             "AND from_value = 's4-judge' AND to_value = 's3-impl'",
@@ -318,7 +323,7 @@ class ClaimAfterExpiredWindowTests(TempDbTestCase):
         p = store.create_task(self.conn, title="P", project="demo", stage="s3-impl")["id"]
         store.claim(self.conn, p, holder="dsh")
         store.next_stage(self.conn, p, to_stage="s4-judge")
-        store.add_comment(self.conn, p, "красный: тест падает", kind="verdict", author="agent:claude")
+        store.add_comment(self.conn, p, "VERDICT: FAIL\n1. test_x fails", kind="verdict", author="agent:claude")
         self.conn.execute(
             "UPDATE events SET ts = ? WHERE task_id = ? AND kind = 'stage' "
             "AND from_value = 's4-judge' AND to_value = 's3-impl'",

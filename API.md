@@ -200,7 +200,7 @@ dropped_chunks, reason`), `reasons[]` (по одному пункту на ка�
 | POST | `/api/tasks/{id}/claim` | `holder`(обязателен), `harness`, `note`, `force=false` | взять в работу. 400 по трём причинам: незакрытые жёсткие блокеры (обходится `force`, пишет предупреждение в историю), чужой держатель, занятое рабочее дерево — держатель и рабочее дерево `force` не обходят. `harness` проверяется, только если передан (сверяется с routing проекта на этапе задачи) |
 | POST | `/api/tasks/{id}/heartbeat` | `holder`(обязателен), `note` | отметка «жив, работаю» (событие не чаще 10 мин) |
 | POST | `/api/tasks/{id}/stage` | `holder`, `note`, `harness` | следующий этап конвейера s1→s2→s3→s4→done, считает длительность прошлого этапа |
-| POST | `/api/tasks/{id}/comment` | `text`(обязателен), `author`/`actor`, `kind=comment\|journal\|question\|answer\|review\|verdict`, `harness` | комментарий в журнал задачи; `kind=question`/`answer` — те же виды, что пишет `needs-owner` (см. ниже), их можно оставить и вручную, но сам флаг `needs_owner` они не меняют |
+| POST | `/api/tasks/{id}/comment` | `text`(обязателен), `author`/`actor`, `kind=comment\|journal\|question\|answer\|review\|verdict`, `harness` | комментарий в журнал задачи; `kind=question`/`answer` — те же виды, что пишет `needs-owner` (см. ниже), их можно оставить и вручную, но сам флаг `needs_owner` они не меняют; `kind=verdict` — первая строка ровно `VERDICT: PASS` или `VERDICT: FAIL` (после `FAIL` — список правок), иначе 400 |
 | POST | `/api/tasks/{id}/needs-owner` | `value=true\|false`, `note`, `actor`, `harness` | поднять/снять флаг «нужен человек»: при непустом `note` создаётся комментарий `kind=question` (`value=true`) или `kind=answer` (`value=false`); событие `question`/`answer` пишется при каждом вызове, даже если флаг уже стоит в нужном значении; ответ — полная карточка, как у `PATCH`. `PATCH /api/tasks/{id}` с `needs_owner` меняет только флаг и комментария не пишет |
 | POST | `/api/tasks/{id}/release` | `note`, `actor` | освободить задачу |
 | POST | `/api/tasks/{id}/done` | `result`, `reason`, `actor`, `note` | закрыть: `status=done`, `stage=done` |
@@ -413,4 +413,4 @@ listik embed
 `<!-- BEGIN LISTIK -->` в `AGENTS.md` проектов командой `listik init-projects`). Здесь — только
 то, что относится к самому API: заблокированную задачу `claim` не возьмёт (400 с перечнем
 блокеров); переход этапа через `handoff` (`s2→s3`, `s4→done`) снимает держателя, `sticky`
-(`s1→s2`, `s3→s4`) — нет; красный вердикт на `s4-judge` сервер сам возвращает на `s3-impl`.
+(`s1→s2`, `s3→s4`) — нет; вердикт `VERDICT: FAIL` на `s4-judge` сервер сам возвращает на `s3-impl`.

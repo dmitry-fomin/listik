@@ -64,7 +64,7 @@ class ContextContractTests(TempDbTestCase):
         self.journal_comment = store.add_comment(self.conn, self.tid, "запись журнала о решении",
                                                  author="human", kind="journal")
         time.sleep(0.005)
-        self.verdict_comment = store.add_comment(self.conn, self.tid, "текст вердикта, не должен просочиться на s1",
+        self.verdict_comment = store.add_comment(self.conn, self.tid, "VERDICT: PASS\nтекст вердикта, не должен просочиться на s1",
                                                  author="human", kind="verdict")
 
         for _ in range(3):  # s1 -> s2 -> s3 -> s4, leaves stage-transition events behind

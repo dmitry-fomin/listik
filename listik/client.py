@@ -1,0 +1,266 @@
+"""Клиент API: CLI и агенты ходят в сервер Listik.
+
+Если сервер поднят — работаем через HTTP (одна точка записи, доска обновляется сама).
+Если нет — CLI временно работает с базой напрямую, чтобы агент не вставал из-за
+незапущенного сервера. Сервер, который уже работает, при этом не ломается: SQLite в WAL.
+"""
+from __future__ import annotations
+
+import json
+import urllib.error
+import urllib.parse
+import urllib.request
+
+from . import config as config_mod
+from . import db as db_mod
+from . import paths
+
+
+class ApiDown(Exception):
+    pass
+
+
+def base_url(host: str | None = None, port: int | None = None) -> str:
+    cfg = config_mod.load()
+    h = host or cfg["server"]["host"]
+    p = int(port or cfg["server"]["port"])
+    return f"http://{h}:{p}"
+
+
+def token() -> str:
+    cfg = config_mod.load()
+    return (cfg.get("auth") or {}).get("token", "")
+
+
+def health(host: str | None = None, port: int | None = None, timeout: float = 2.0) -> dict | None:
+    """Состояние сервера: None — не отвечает. 401 тоже считается «отвечает»."""
+    req = urllib.request.Request(f"{base_url(host, port)}/api/health")
+    if token():
+        req.add_header("Authorization", f"Bearer {token()}")
+    try:
+        with urllib.request.urlopen(req, timeout=timeout) as r:
+            data = json.loads(r.read().decode("utf-8"))
+        return data.get("data") if isinstance(data, dict) else None
+    except urllib.error.HTTPError as exc:
+        if exc.code in (401, 403):
+            return {"status": "ok", "authed": False}
+        return None
+    except Exception:  # noqa: BLE001
+        return None
+
+
+def is_up(host: str | None = None, port: int | None = None, timeout: float = 2.0) -> bool:
+    return health(host, port, timeout) is not None
+
+
+def _query_string(query: dict) -> str:
+    """Строка запроса без «+» и с сохранением «/»: у проектов slug бывает путём
+    (Zoloto585/repo), и urlencode здесь сделал бы из него %252F."""
+    parts = []
+    for key, value in query.items():
+        if value is None:
+            continue
+        text = str(value)
+        safe = ",/" if ("/" in text or "," in text) else ","
+        parts.append(f"{urllib.parse.quote(str(key))}={urllib.parse.quote(text, safe=safe)}")
+    return "&".join(parts)
+
+
+def request(method: str, path: str, *, query: dict | None = None, body: dict | None = None,
+            host: str | None = None, port: int | None = None, timeout: float = 60.0) -> dict:
+    url = base_url(host, port) + path
+    if query:
+        qs = _query_string(query)
+        if qs:
+            url += "?" + qs
+    data = json.dumps(body or {}, ensure_ascii=False).encode("utf-8") if body is not None else None
+    req = urllib.request.Request(url, data=data, method=method)
+    req.add_header("Authorization", f"Bearer {token()}")
+    if data is not None:
+        req.add_header("Content-Type", "application/json")
+    try:
+        with urllib.request.urlopen(req, timeout=timeout) as resp:
+            payload = json.loads(resp.read().decode("utf-8"))
+    except urllib.error.HTTPError as exc:
+        raw = exc.read().decode("utf-8", "replace")
+        try:
+            payload = json.loads(raw)
+            message = payload.get("error") or raw
+        except json.JSONDecodeError:
+            message = raw
+        raise SystemExit(f"ошибка {exc.code}: {message}") from exc
+    except urllib.error.URLError as exc:
+        raise ApiDown(str(exc)) from exc
+    if isinstance(payload, dict) and payload.get("ok") is False:
+        raise SystemExit(f"ошибка: {payload.get('error')}")
+    return payload.get("data") if isinstance(payload, dict) and "data" in payload else payload
+
+
+# ------------------------------------------------------------------ локальный фолбэк
+
+def local_call(op: str, **kwargs):
+    """Прямая работа с базой, когда сервер не поднят."""
+    from . import search as search_mod
+    from . import store
+
+    conn = db_mod.init()
+    if op == "meta":
+        return {
+            "projects": store.list_projects(conn),
+            "actors": store.list_actors(conn),
+            "facets": store.facet_values(conn),
+            "statuses": store.STATUS_TITLES,
+            "stages": store.STAGE_TITLES,
+            "priorities": store.PRIORITY_TITLES,
+        }
+    if op == "stats":
+        return store.stats(conn, project=kwargs.get("project"))
+    if op == "board":
+        return store.board(conn, group_by=kwargs.get("group_by", "status"),
+                           project=kwargs.get("project"),
+                           include_closed=kwargs.get("include_closed", False),
+                           limit_per_column=kwargs.get("limit", 300))
+    if op == "list":
+        return store.list_tasks(conn, **kwargs)
+    if op == "show":
+        return store.get_task(conn, kwargs["task_id"])
+    if op == "context":
+        from . import documents
+        return documents.context(conn, kwargs["task_id"], kwargs.get("stage", "s1-spec"),
+                                 portion=kwargs.get("portion"), max_chars=kwargs.get("max_chars"))
+    if op == "create":
+        return store.create_task(conn, **kwargs)
+    if op == "update":
+        task_id = kwargs.pop("task_id")
+        return store.update_task(conn, task_id, **kwargs)
+    if op == "needs-owner":
+        task_id = kwargs.pop("task_id")
+        return store.set_needs_owner(conn, task_id, **kwargs)
+    if op == "claim":
+        task_id = kwargs.pop("task_id")
+        return store.claim(conn, task_id, **kwargs)
+    if op == "heartbeat":
+        task_id = kwargs.pop("task_id")
+        return store.heartbeat(conn, task_id, **kwargs)
+    if op == "stage":
+        task_id = kwargs.pop("task_id")
+        return store.next_stage(conn, task_id, **kwargs)
+    if op == "comment":
+        task_id = kwargs.pop("task_id")
+        return store.add_comment(conn, task_id, **kwargs)
+    if op == "ready":
+        from . import deps as deps_mod
+        return {"tasks": deps_mod.ready_tasks(conn, project=kwargs.get("project"),
+                                              stage=kwargs.get("stage"), harness=kwargs.get("harness"),
+                                              include_occupied=kwargs.get("include_occupied", False),
+                                              limit=kwargs.get("limit", 50)),
+                "cycles": deps_mod.cycles(conn)}
+    if op == "blocked":
+        from . import deps as deps_mod
+        return {"tasks": deps_mod.blocked_tasks(conn, project=kwargs.get("project"),
+                                                limit=kwargs.get("limit", 100))}
+    if op == "mentions":
+        from . import deps as deps_mod
+        return deps_mod.mentioned(conn, kwargs["task_id"], limit=kwargs.get("limit", 50))
+    if op == "dep_tree":
+        from . import deps as deps_mod
+        return deps_mod.graph(conn, kwargs["task_id"], depth=kwargs.get("depth", 3))
+    if op == "task_ready":
+        from . import deps as deps_mod
+        return deps_mod.ready(conn, kwargs["task_id"])
+    if op == "timeline":
+        return {"items": store.task_timeline(conn, limit=kwargs.get("limit", 100))}
+    if op == "memory":
+        return search_mod.search_memories(conn, kwargs["query"], limit=kwargs.get("limit", 20),
+                                          project=kwargs.get("project"))
+    if op == "search":
+        return search_mod.search(conn, kwargs.pop("query"), **kwargs)
+    if op == "dep_add":
+        return store.add_dep(conn, kwargs["issue_id"], kwargs["depends_on"],
+                             kwargs.get("dep_type", "blocks"), kwargs.get("created_by"), confirm=kwargs.get("confirm", False))
+    if op == "dep_remove":
+        return store.remove_dep(conn, kwargs["issue_id"], kwargs["depends_on"],
+                                kwargs.get("dep_type"))
+    if op == "dep_suggested":
+        from . import deps as deps_mod
+        return {"items": deps_mod.suggested(conn, project=kwargs.get("project"),
+                                            limit=kwargs.get("limit", 100)),
+                "generated_at": store.now_iso()}
+    raise SystemExit(f"локальный режим не умеет: {op}")
+
+
+# ------------------------------------------------------------------ репозитории (проекты)
+
+def list_projects(*, host: str | None = None, port: int | None = None,
+                  local: bool = False) -> dict:
+    """Все проекты, включая скрытые с доски (для настроек доски и `listik projects`)."""
+    if not local and is_up(host, port):
+        return request("GET", "/api/projects", host=host, port=port)
+    from . import store
+    conn = db_mod.init()
+    return {"projects": store.list_all_projects(conn), "root": str(paths.PROJECTS_ROOT)}
+
+
+def add_project(*, path: str | None = None, slug: str | None = None, title: str | None = None,
+                kind: str = "native", host: str | None = None, port: int | None = None,
+                local: bool = False) -> dict:
+    """Добавить репозиторий (каталог) на доску."""
+    body = {"path": path, "slug": slug, "title": title, "kind": kind}
+    if not local and is_up(host, port):
+        return request("POST", "/api/projects", body=body, host=host, port=port)
+    from . import store
+    try:
+        return store.add_project(db_mod.init(), **body)
+    except ValueError as exc:
+        raise SystemExit(f"ошибка: {exc}") from exc
+
+
+def set_project_archived(slug: str, archived: bool, *, host: str | None = None,
+                         port: int | None = None, local: bool = False) -> dict:
+    """Скрыть проект с доски (`archived=True`) или вернуть обратно."""
+    if not local and is_up(host, port):
+        return request("PATCH", f"/api/projects/{urllib.parse.quote(slug, safe='')}",
+                       body={"archived": 1 if archived else 0}, host=host, port=port)
+    from . import store
+    try:
+        return store.update_project(db_mod.init(), slug, archived=1 if archived else 0)
+    except KeyError as exc:
+        raise SystemExit(f"ошибка: {exc}") from exc
+
+
+def remove_project(slug: str, *, force: bool = False, host: str | None = None,
+                   port: int | None = None, local: bool = False) -> dict:
+    """Убрать проект из Listik. Проект с задачами — только с `force`."""
+    if not local and is_up(host, port):
+        query = {"force": "1"} if force else None
+        return request("DELETE", f"/api/projects/{urllib.parse.quote(slug, safe='')}",
+                       query=query, host=host, port=port)
+    from . import store
+    try:
+        return store.remove_project(db_mod.init(), slug, force=force)
+    except KeyError as exc:
+        raise SystemExit(f"ошибка: {exc}") from exc
+    except ValueError as exc:
+        raise SystemExit(f"ошибка: {exc}") from exc
+
+
+def set_project_routing(slug: str, routing: dict, *, local: bool = False,
+                        host: str | None = None, port: int | None = None) -> dict:
+    """Установить (или сбросить, `{}`) переопределение маршрутизации проекта.
+
+    Возвращает словарь проекта из `store._project_with_routing` (с `routing_effective`),
+    чтобы вызывающий код не перечитывал проект отдельно.
+    """
+    if not local and is_up(host, port):
+        return request("PATCH", f"/api/projects/{urllib.parse.quote(slug, safe='')}",
+                       body={"routing": routing}, host=host, port=port)
+    from . import store
+    try:
+        return store.update_project(db_mod.init(), slug, routing=routing)
+    except KeyError as exc:
+        raise SystemExit(
+            f"ошибка: проект не найден: {slug}; добавьте его: "
+            "listik projects --add <путь> [--slug …]"
+        ) from exc
+    except ValueError as exc:
+        raise SystemExit(f"ошибка: {exc}") from exc

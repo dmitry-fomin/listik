@@ -1,0 +1,681 @@
+<!doctype html>
+<html>
+<head>
+  <meta charset="utf-8">
+  <script src="./vendor/react.js"></script>
+<script src="./vendor/react-dom.js"></script>
+<script src="./support.js"></script>
+</head>
+<body>
+<x-dc>
+<helmet>
+  <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Geist:wght@400;500;600;700&amp;family=JetBrains+Mono:wght@400;500&amp;display=swap">
+  <style>
+:root{
+  --neutral-0:#FFFFFF;--neutral-50:#FAFAF7;--neutral-100:#F5F4EE;--neutral-150:#EFEDE5;--neutral-200:#E5E2DA;--neutral-300:#D6D2C7;--neutral-400:#A8A49A;--neutral-500:#7A7672;--neutral-600:#555148;--neutral-700:#3A3733;--neutral-800:#1F1D1A;--neutral-900:#0E0D0B;
+  --bg:#0E0D0B;--surface:#1F1D1A;--surface-2:#3A3733;--surface-3:#555148;--hairline:#3A3733;--hairline-strong:#555148;
+  --ink-1:#FAFAF7;--ink-2:#E5E2DA;--ink-3:#A8A49A;--ink-4:#7A7672;
+  --accent-50:#362204;--accent-100:#493007;--accent-200:#6B480D;--accent-300:#976713;--accent-400:#BF8018;--accent-500:#DC9D2F;--accent-600:#ECB755;--accent-700:#F9CD7C;--accent-800:#FFE4B3;--accent-500-rgb:220 157 47;
+  --success-50:#043415;--success-500:#2FA845;--success-600:#45CC66;--success-700:#79E393;
+  --danger-50:#401D1A;--danger-500:#FB5950;--danger-600:#FD978C;--danger-700:#FFBAB1;
+  --warning-50:#472212;--warning-500:#FFA97D;--warning-600:#F9CBB0;--warning-700:#FFDFCA;
+  --info-50:#1D214A;--info-500:#717DE5;--info-600:#99A6FD;--info-700:#B4C0FF;
+  --chart-1:var(--accent-500);--chart-2:#468EA6;--chart-3:#9C86F9;--chart-4:#D4CC5B;--chart-5:#CD68CB;--chart-6:#C0C0C6;--pmark-ink:var(--neutral-900);
+  --health-healthy:var(--ink-2);--health-at-risk:var(--warning-600);--health-dead:var(--danger-500);--health-unknown:var(--ink-3);
+  --shadow-xs:0 1px 1px rgb(0 0 0 / 0.30);--shadow-sm:0 1px 2px rgb(0 0 0 / 0.34),0 1px 3px rgb(0 0 0 / 0.28);--shadow-md:0 4px 8px -2px rgb(0 0 0 / 0.40),0 2px 4px -1px rgb(0 0 0 / 0.30);--shadow-lg:0 12px 24px -8px rgb(0 0 0 / 0.50),0 4px 8px -2px rgb(0 0 0 / 0.36);--shadow-xl:0 24px 48px -12px rgb(0 0 0 / 0.60);
+  --backdrop:rgb(0 0 0 / 55%);
+  --focus-ring:0 0 0 3px rgb(var(--accent-500-rgb) / 0.28);
+  --gradient-accent:linear-gradient(90deg,var(--accent-300),var(--accent-500));
+  --gradient-mark:linear-gradient(135deg,var(--accent-100),var(--accent-300));
+  --font-ui:'Geist','Geist Variable',system-ui,-apple-system,sans-serif;--font-mono:'JetBrains Mono','JetBrains Mono Variable',ui-monospace,'SF Mono',Menlo,monospace;
+  --text-xs:12px;--text-sm:13px;--text-base:14px;--text-md:15px;--text-lg:18px;--text-xl:22px;--text-2xl:28px;--text-3xl:36px;
+  --leading-tight:1.1;--leading-snug:1.25;--leading-normal:1.5;
+  --weight-regular:400;--weight-medium:500;--weight-semibold:600;--weight-bold:700;--tracking-tight:-0.014em;--tracking-wide:0.06em;
+  --space-1:4px;--space-2:8px;--space-3:12px;--space-4:16px;--space-5:20px;--space-6:24px;--space-8:32px;--space-10:40px;--space-12:48px;--space-16:64px;
+  --radius-2xs:2px;--radius-xs:4px;--radius-sm:6px;--radius-md:8px;--radius-lg:12px;--radius-xl:16px;--radius-pill:999px;
+  --control-h-sm:28px;--control-h-md:32px;--control-h-lg:40px;--header-h:56px;--container-max:1280px;
+  --icon-xs:12px;--icon-sm:14px;--icon-md:16px;--icon-lg:20px;
+}
+*, *::before, *::after { box-sizing: border-box; }
+body { margin: 0; background: var(--bg); }
+a { color: var(--accent-700); text-decoration: none; } a:hover { color: var(--accent-800); }
+.mono { font-family: var(--font-mono); font-variant-numeric: tabular-nums; }
+.tnum { font-variant-numeric: tabular-nums; }
+.ico { display: inline-flex; flex-shrink: 0; width: var(--icon-sm); height: var(--icon-sm); }
+.ico--xs { width: var(--icon-xs); height: var(--icon-xs); }
+.ico--md { width: var(--icon-md); height: var(--icon-md); }
+.ico svg { width: 100%; height: 100%; display: block; }
+
+/* ── UiAppHeader ─────────────────────────────────────────── */
+.hdr { position: relative; z-index: 20; height: var(--header-h); border-bottom: 1px solid var(--hairline); background: var(--surface); }
+.hdr__row { display: flex; align-items: center; justify-content: space-between; gap: var(--space-6); height: 100%; padding-inline: var(--space-6); }
+.hdr__brand { display: flex; align-items: center; gap: var(--space-2); min-width: 0; }
+.hdr__actions { display: flex; align-items: center; gap: var(--space-4); flex-shrink: 0; }
+.mark { display: inline-flex; align-items: center; justify-content: center; width: 28px; height: 28px; border-radius: var(--radius-sm); background: var(--gradient-mark); border: 1px solid var(--accent-200); color: var(--accent-700); font-weight: var(--weight-bold); font-size: var(--text-sm); line-height: 1; }
+.brand-name { font-weight: var(--weight-semibold); font-size: var(--text-base); color: var(--ink-1); }
+
+/* ── UiBadge ─────────────────────────────────────────────── */
+.badge { display: inline-flex; align-items: center; gap: var(--space-1); border-radius: var(--radius-pill); border: 1px solid var(--hairline); font-weight: var(--weight-medium); line-height: 1; white-space: nowrap; font-variant-numeric: tabular-nums; color: var(--ink-2); background: var(--surface-2); padding: 4px 12px; font-size: var(--text-sm); }
+.badge--sm { padding: 4px 8px; font-size: var(--text-xs); }
+.badge--accent { color: var(--accent-700); background: var(--accent-50); border-color: color-mix(in srgb, var(--accent-500) 30%, transparent); }
+.badge--success { color: var(--success-700); background: var(--success-50); border-color: color-mix(in srgb, var(--success-500) 30%, transparent); }
+.badge--danger { color: var(--danger-700); background: var(--danger-50); border-color: color-mix(in srgb, var(--danger-500) 30%, transparent); }
+.badge--warning { color: var(--warning-700); background: var(--warning-50); border-color: color-mix(in srgb, var(--warning-500) 30%, transparent); }
+.badge--info { color: var(--info-700); background: var(--info-50); border-color: color-mix(in srgb, var(--info-500) 30%, transparent); }
+
+/* ── UiStatusPill ────────────────────────────────────────── */
+.pill { display: inline-flex; align-items: center; gap: var(--space-1); border: 1px solid var(--hairline); border-radius: var(--radius-pill); font-weight: var(--weight-medium); line-height: 1; white-space: nowrap; font-variant-numeric: tabular-nums; color: var(--ink-2); background: var(--surface-2); padding: 4px 12px; font-size: var(--text-sm); }
+.pill--sm { padding: 4px 8px; font-size: var(--text-xs); }
+.pill__dot { width: 6px; height: 6px; flex: none; border-radius: var(--radius-pill); background: currentColor; box-shadow: 0 0 0 2px color-mix(in srgb, currentColor 20%, transparent); }
+.pill--healthy { color: var(--ink-2); }
+.pill--at-risk { color: var(--warning-600); background: var(--warning-50); border-color: color-mix(in srgb, var(--warning-600) 30%, transparent); }
+.pill--dead { color: var(--danger-500); background: var(--danger-50); border-color: color-mix(in srgb, var(--danger-500) 30%, transparent); }
+.pill--unknown { color: var(--ink-3); }
+.pill--info { color: var(--info-700); background: var(--info-50); border-color: color-mix(in srgb, var(--info-500) 30%, transparent); }
+.pill--success { color: var(--success-700); background: var(--success-50); border-color: color-mix(in srgb, var(--success-500) 30%, transparent); }
+
+/* ── UiButton ────────────────────────────────────────────── */
+.btn { display: inline-flex; align-items: center; justify-content: center; gap: var(--space-2); border: 1px solid transparent; border-radius: var(--radius-sm); font-family: var(--font-ui); font-weight: var(--weight-medium); letter-spacing: var(--tracking-tight); white-space: nowrap; height: var(--control-h-md); padding: 0 12px; font-size: var(--text-base); line-height: 1; cursor: pointer; }
+.btn--sm { height: var(--control-h-sm); padding: 0 8px; font-size: var(--text-sm); }
+.btn--primary { background: var(--accent-500); color: var(--neutral-900); border-color: var(--accent-600); box-shadow: var(--shadow-xs); }
+.btn--secondary { background: var(--surface); color: var(--ink-1); border-color: var(--hairline-strong); box-shadow: var(--shadow-xs); }
+.btn--ghost { background: transparent; color: var(--ink-2); }
+.btn--danger { background: var(--danger-500); color: var(--surface); border-color: var(--danger-700); box-shadow: var(--shadow-xs); }
+.btn--disabled { opacity: 0.5; cursor: not-allowed; }
+.btn .ico { width: 1em; height: 1em; }
+
+/* ── UiSegmented ─────────────────────────────────────────── */
+.seg { display: inline-flex; align-items: center; gap: 2px; background: var(--surface-2); border: 1px solid var(--hairline); border-radius: var(--radius-md); padding: 2px; height: var(--control-h-md); width: fit-content; }
+.seg--sm { height: var(--control-h-sm); }
+.seg__item { display: inline-flex; align-items: center; height: 100%; padding: 0 12px; font-size: var(--text-sm); border: 1px solid transparent; border-radius: var(--radius-sm); color: var(--ink-3); font-weight: var(--weight-medium); white-space: nowrap; }
+.seg--sm .seg__item { padding: 0 8px; font-size: var(--text-xs); }
+.seg__item--active { background: var(--surface); color: var(--ink-1); border-color: var(--hairline); box-shadow: var(--shadow-xs); }
+
+/* ── UiChip ──────────────────────────────────────────────── */
+.chip { display: inline-flex; align-items: center; gap: var(--space-1); border-radius: var(--radius-pill); border: 1px solid var(--hairline); background: var(--surface); color: var(--ink-2); font-size: var(--text-sm); padding: 4px 12px; line-height: 1.25; white-space: nowrap; }
+.chip--on { background: var(--accent-50); border-color: color-mix(in srgb, var(--accent-500) 45%, transparent); color: var(--accent-800); font-weight: var(--weight-semibold); }
+.chip__dot { width: 8px; height: 8px; border-radius: var(--radius-pill); flex: none; }
+.chip__n { font-weight: var(--weight-semibold); color: var(--ink-1); font-variant-numeric: tabular-nums; }
+
+/* ── UiInput ─────────────────────────────────────────────── */
+.input { display: inline-flex; align-items: center; gap: var(--space-2); padding-inline: 12px; height: var(--control-h-md); border-radius: var(--radius-sm); border: 1px solid var(--hairline-strong); background: var(--surface); box-shadow: var(--shadow-xs); color: var(--ink-3); font-size: var(--text-base); }
+.input--sm { height: var(--control-h-sm); padding-inline: 8px; font-size: var(--text-sm); }
+.input .ico { color: var(--ink-3); }
+.select { display: inline-flex; align-items: center; justify-content: space-between; gap: var(--space-2); padding-inline: 12px; height: var(--control-h-md); border-radius: var(--radius-sm); border: 1px solid var(--hairline-strong); background: var(--surface); box-shadow: var(--shadow-xs); color: var(--ink-1); font-size: var(--text-base); white-space: nowrap; }
+.select--sm { height: var(--control-h-sm); padding-inline: 8px; font-size: var(--text-sm); }
+.select .ico { color: var(--ink-3); }
+
+/* ── Секции страницы ─────────────────────────────────────── */
+.sec-title { display: flex; align-items: center; gap: var(--space-2); margin: 0; font-size: var(--text-lg); font-weight: var(--weight-semibold); letter-spacing: var(--tracking-tight); color: var(--ink-1); }
+.hint { font-size: var(--text-sm); color: var(--ink-3); }
+.eyebrow { font-size: var(--text-xs); font-weight: var(--weight-medium); text-transform: uppercase; letter-spacing: var(--tracking-wide); color: var(--ink-3); }
+
+/* ── Инбокс «нужен ты» ───────────────────────────────────── */
+.inbox-card { display: flex; flex-direction: column; gap: var(--space-2); padding: var(--space-3) var(--space-4); border: 1px solid var(--hairline); border-left: 3px solid var(--accent-500); border-radius: var(--radius-lg); background: var(--surface); box-shadow: var(--shadow-xs); min-width: 0; }
+.inbox-card--danger { border-left-color: var(--danger-500); }
+.inbox-card--warning { border-left-color: var(--warning-600); }
+.inbox-card__title { margin: 0; font-size: var(--text-base); font-weight: var(--weight-medium); line-height: var(--leading-snug); color: var(--ink-1); display: -webkit-box; -webkit-line-clamp: 1; -webkit-box-orient: vertical; overflow: hidden; }
+.inbox-card__q { margin: 0; font-size: var(--text-sm); color: var(--ink-2); line-height: var(--leading-normal); }
+.inbox-card__q strong { font-weight: var(--weight-semibold); color: var(--ink-1); }
+
+/* ── Конвейер: рельса переходов ──────────────────────────── */
+.rail { display: flex; align-items: center; gap: 0; }
+.rail__col { display: flex; align-items: center; gap: var(--space-2); flex: none; }
+.rail__seg { height: 2px; flex: 1 1 auto; background: var(--hairline-strong); position: relative; }
+.rail__tr { position: absolute; z-index: 1; left: 50%; top: 50%; transform: translate(-50%, -50%); white-space: nowrap; display: inline-flex; align-items: center; gap: 4px; font-size: var(--text-xs); color: var(--ink-3); background: var(--bg); padding: 0 6px; font-family: var(--font-mono); }
+.rail__tr--sticky { color: var(--accent-700); }
+
+/* ── Колонка ─────────────────────────────────────────────── */
+.col { display: flex; flex-direction: column; flex: none; min-width: 0; background: var(--surface); border: 1px solid var(--hairline); border-radius: var(--radius-lg); overflow: hidden; }
+.col__head { display: flex; flex-direction: column; gap: var(--space-2); padding: var(--space-3) var(--space-3) var(--space-2); border-bottom: 1px solid var(--hairline); }
+.col__title-row { display: flex; align-items: center; justify-content: space-between; gap: var(--space-2); }
+.col__title { margin: 0; font-size: var(--text-base); font-weight: var(--weight-semibold); color: var(--ink-1); display: flex; align-items: center; gap: var(--space-2); min-width: 0; }
+.col__code { font-family: var(--font-mono); font-size: var(--text-xs); color: var(--ink-3); font-weight: var(--weight-regular); }
+.col__count { font-family: var(--font-mono); font-size: var(--text-sm); color: var(--ink-3); font-variant-numeric: tabular-nums; }
+.col__meta { display: flex; align-items: center; justify-content: space-between; gap: var(--space-2); font-size: var(--text-xs); color: var(--ink-3); }
+.col__harness { display: inline-flex; align-items: center; gap: var(--space-1); font-family: var(--font-mono); }
+.col__body { display: flex; flex-direction: column; gap: var(--space-2); padding: var(--space-2); }
+.health-row { display: inline-flex; align-items: center; gap: 3px; }
+.hdot { width: 8px; height: 8px; border-radius: var(--radius-pill); flex: none; background: var(--health-healthy); }
+.hdot--at-risk { background: var(--health-at-risk); }
+.hdot--dead { background: var(--health-dead); }
+.hdot--unknown { background: transparent; box-shadow: inset 0 0 0 1.5px var(--health-unknown); }
+.hdot--lg { width: 10px; height: 10px; }
+
+/* ── Карточка задачи (компактная) ────────────────────────── */
+.tc { display: flex; flex-direction: column; gap: var(--space-2); padding: var(--space-3); border: 1px solid var(--hairline); border-left: 3px solid transparent; border-radius: var(--radius-md); background: var(--surface); box-shadow: var(--shadow-xs); min-width: 0; }
+.tc--needs { border-left-color: var(--accent-500); }
+.tc--dead { border-left-color: var(--danger-500); background: color-mix(in srgb, var(--danger-50) 45%, var(--surface)); }
+.tc--stale { border-left-color: var(--warning-600); background: color-mix(in srgb, var(--warning-50) 40%, var(--surface)); }
+.tc--muted { opacity: 0.72; }
+.tc--step { border-color: var(--hairline-strong); border-left-width: 1px; background: var(--surface-2); }
+.tc__top { display: flex; align-items: center; justify-content: flex-start; gap: 6px; min-width: 0; }
+.tc__id { display: inline-flex; align-items: center; gap: 6px; font-family: var(--font-mono); font-size: var(--text-xs); color: var(--ink-3); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; min-width: 0; }
+.tc__id em { font-style: normal; color: var(--ink-1); font-weight: var(--weight-medium); }
+.tc__harness { display: inline-flex; align-items: center; gap: 4px; font-family: var(--font-mono); font-size: 11px; color: var(--ink-2); padding: 2px 6px; border-radius: var(--radius-xs); background: var(--surface-2); border: 1px solid var(--hairline); flex: none; line-height: 1.2; }
+.tc__title { margin: 0; font-size: var(--text-base); font-weight: var(--weight-medium); line-height: var(--leading-snug); color: var(--ink-1); display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; overflow: hidden; }
+.tc__meta { display: flex; align-items: center; gap: var(--space-2); min-width: 0; }
+.tc__foot { display: flex; align-items: center; justify-content: space-between; gap: var(--space-2); font-size: var(--text-xs); color: var(--ink-3); min-width: 0; }
+.tc__foot > span { display: inline-flex; align-items: center; gap: 4px; min-width: 0; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; font-variant-numeric: tabular-nums; }
+.tc__foot strong { font-weight: var(--weight-medium); color: var(--ink-2); }
+.tc__foot .is-warn { color: var(--warning-700); }
+.tc__foot .is-late { color: var(--danger-700); }
+.tc__age { display: inline-flex; align-items: center; gap: 4px; flex: none; font-size: var(--text-xs); color: var(--ink-3); font-variant-numeric: tabular-nums; white-space: nowrap; }
+.tc__age--warn { color: var(--warning-700); }
+.tc__age--late { color: var(--danger-700); }
+.progress { width: 100%; height: 4px; border-radius: var(--radius-pill); background: var(--surface-3); overflow: hidden; }
+.progress__fill { display: block; height: 100%; border-radius: inherit; background: var(--gradient-accent); }
+.tc__portions { display: flex; align-items: center; justify-content: space-between; gap: var(--space-2); font-size: var(--text-xs); color: var(--ink-3); font-family: var(--font-mono); white-space: nowrap; }
+.tc__portions b { font-weight: var(--weight-medium); color: var(--ink-2); }
+
+/* ── Проект, приоритет, тип, счётчики ─────────────────────── */
+.pmark { display: inline-flex; align-items: center; justify-content: center; flex: none; border-radius: var(--radius-xs); color: var(--pmark-ink); font-family: var(--font-ui); font-size: 10px; font-weight: var(--weight-semibold); letter-spacing: 0.02em; line-height: 1; }
+.tc__project { font-size: var(--text-sm); color: var(--ink-2); font-weight: var(--weight-medium); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; min-width: 0; }
+.tc__sub { font-size: var(--text-xs); color: var(--ink-3); white-space: nowrap; font-variant-numeric: tabular-nums; }
+.pico { display: inline-flex; flex: none; width: 16px; height: 16px; align-items: center; justify-content: center; }
+.pico .ico { width: 16px; height: 16px; }
+.cnt { display: inline-flex; align-items: center; gap: 3px; font-size: var(--text-xs); font-weight: var(--weight-medium); font-variant-numeric: tabular-nums; white-space: nowrap; }
+.tc__badges { display: inline-flex; flex-wrap: wrap; gap: var(--space-1); min-width: 0; }
+.tc__counts { display: inline-flex; align-items: center; gap: var(--space-2); margin-left: auto; flex: none; }
+
+/* ── Полоса «готово» (свёрнутая колонка) ─────────────────── */
+.done-rail { display: flex; flex-direction: column; align-items: center; gap: var(--space-3); flex: none; width: 56px; padding: var(--space-3) 0; background: var(--surface); border: 1px solid var(--hairline); border-radius: var(--radius-lg); }
+.done-rail__label { writing-mode: vertical-rl; transform: rotate(180deg); font-size: var(--text-sm); font-weight: var(--weight-semibold); color: var(--ink-2); letter-spacing: var(--tracking-tight); }
+
+/* ── Дровер (UiDrawer lg, ширина доски 720) ──────────────── */
+.drawer { position: absolute; top: 0; right: 0; height: 100%; width: 720px; display: flex; flex-direction: column; background: var(--surface); box-shadow: var(--shadow-xl); border-left: 1px solid var(--hairline); z-index: 50; }
+.drawer__header { display: flex; align-items: flex-start; justify-content: space-between; gap: var(--space-4); flex: none; padding: var(--space-5) var(--space-6); border-bottom: 1px solid var(--hairline); }
+.drawer__body { flex: 1; padding: var(--space-6); color: var(--ink-2); font-size: var(--text-base); line-height: var(--leading-normal); display: flex; flex-direction: column; gap: var(--space-8); }
+.drawer__close { display: inline-flex; align-items: center; justify-content: center; width: 28px; height: 28px; border-radius: var(--radius-sm); color: var(--ink-3); margin: -4px -4px 0 0; }
+.backdrop { position: absolute; inset: 0; background: var(--backdrop); z-index: 40; }
+.h4 { margin: 0; font-size: var(--text-md); font-weight: var(--weight-semibold); color: var(--ink-1); letter-spacing: var(--tracking-tight); display: flex; align-items: center; gap: var(--space-2); }
+.dl { display: grid; grid-template-columns: 150px minmax(0, 1fr); gap: var(--space-2) var(--space-4); margin: 0; font-size: var(--text-sm); }
+.dl dt { color: var(--ink-3); }
+.dl dd { margin: 0; color: var(--ink-1); min-width: 0; overflow-wrap: anywhere; }
+
+/* ── UiSteps ─────────────────────────────────────────────── */
+.steps { display: flex; align-items: flex-start; width: 100%; }
+.step { display: flex; flex: 1; flex-direction: column; gap: var(--space-2); min-width: 96px; }
+.step__row { display: flex; align-items: center; width: 100%; }
+.step__marker { display: flex; align-items: center; justify-content: center; flex: none; width: 24px; height: 24px; border-radius: var(--radius-pill); border: 2px solid var(--hairline-strong); background: var(--surface); color: var(--ink-3); font-size: var(--text-xs); font-weight: var(--weight-semibold); font-variant-numeric: tabular-nums; }
+.step__conn { flex: 1 1 auto; height: 2px; margin-inline: var(--space-2); background: var(--hairline); position: relative; }
+.step__conn--filled { background: var(--accent-500); }
+.step__text { display: flex; flex-direction: column; gap: 2px; padding-right: var(--space-2); }
+.step__label { font-size: var(--text-sm); font-weight: var(--weight-medium); color: var(--ink-2); }
+.step__desc { font-size: var(--text-xs); color: var(--ink-3); }
+.step--done .step__marker { border-color: var(--accent-500); background: var(--accent-500); color: var(--neutral-900); }
+.step--done .step__label { color: var(--ink-1); }
+.step--current .step__marker { border-color: var(--accent-500); background: var(--accent-100); color: var(--accent-700); }
+.step--current .step__label { color: var(--ink-1); font-weight: var(--weight-semibold); }
+.step--upcoming .step__label, .step--upcoming .step__desc { color: var(--ink-4); }
+.step__tr { position: absolute; top: 6px; left: 50%; transform: translateX(-50%); font-family: var(--font-mono); font-size: 10px; color: var(--ink-3); white-space: nowrap; }
+.step__tr--sticky { color: var(--accent-700); }
+
+/* ── Холодный старт: чек-лист полей ──────────────────────── */
+.cold { display: flex; flex-direction: column; border: 1px solid var(--hairline); border-radius: var(--radius-md); overflow: hidden; }
+.cold__row { display: grid; grid-template-columns: 20px 132px minmax(0, 1fr); align-items: center; gap: var(--space-3); padding: var(--space-2) var(--space-3); border-top: 1px solid var(--hairline); font-size: var(--text-sm); }
+.cold__row:first-child { border-top: none; }
+.cold__k { color: var(--ink-3); }
+.cold__v { font-family: var(--font-mono); font-size: var(--text-xs); color: var(--ink-1); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.cold__v--empty { color: var(--warning-700); font-family: var(--font-ui); font-size: var(--text-sm); }
+.cold__ok { display: inline-flex; width: 16px; height: 16px; border-radius: var(--radius-pill); align-items: center; justify-content: center; background: var(--success-50); color: var(--success-700); }
+.cold__warn { display: inline-flex; width: 16px; height: 16px; border-radius: var(--radius-pill); align-items: center; justify-content: center; background: var(--warning-50); color: var(--warning-700); }
+
+/* ── UiTimeline dense ────────────────────────────────────── */
+.tl { display: flex; flex-direction: column; margin: 0; padding: 0; list-style: none; }
+.tl__item { display: flex; gap: var(--space-3); }
+.tl__rail { display: flex; flex-direction: column; align-items: center; flex: none; }
+.tl__dot { width: 16px; height: 16px; margin-top: 2px; border-radius: var(--radius-pill); border: 2px solid var(--surface); background: var(--ink-4); box-shadow: 0 0 0 1px var(--hairline-strong); }
+.tl__dot--accent { background: var(--accent-500); } .tl__dot--danger { background: var(--danger-500); } .tl__dot--success { background: var(--success-500); } .tl__dot--info { background: var(--info-500); } .tl__dot--warning { background: var(--warning-500); }
+.tl__conn { width: 2px; flex: 1 1 auto; min-height: 16px; margin-top: 2px; background: var(--hairline-strong); }
+.tl__item:last-child .tl__conn { display: none; }
+.tl__content { flex: 1; min-width: 0; padding-bottom: var(--space-3); }
+.tl__item:last-child .tl__content { padding-bottom: 0; }
+.tl__head { display: flex; align-items: baseline; justify-content: space-between; gap: var(--space-3); }
+.tl__title { margin: 0; font-size: var(--text-base); font-weight: var(--weight-medium); color: var(--ink-1); }
+.tl__time { flex: none; font-size: var(--text-xs); color: var(--ink-3); font-variant-numeric: tabular-nums; white-space: nowrap; }
+.tl__meta { margin: 2px 0 0; font-size: var(--text-xs); color: var(--ink-3); }
+.tl__desc { margin: 4px 0 0; font-size: var(--text-sm); color: var(--ink-2); line-height: var(--leading-normal); }
+
+/* ── Связи ───────────────────────────────────────────────── */
+.dep { display: flex; flex-direction: column; gap: var(--space-1); padding: var(--space-2) var(--space-3); border: 1px solid var(--hairline); border-radius: var(--radius-md); background: var(--surface-2); }
+.dep__main { display: flex; align-items: baseline; flex-wrap: wrap; gap: var(--space-2); font-size: var(--text-sm); color: var(--ink-1); }
+.dep__main .mono { color: var(--accent-700); font-size: var(--text-xs); }
+
+/* ── Лист состояний ──────────────────────────────────────── */
+.sheet-label { font-size: var(--text-xs); color: var(--ink-3); font-family: var(--font-mono); }
+
+/* ── UiModal lg + форма создания ─────────────────────────── */
+.modal-wrap { position: absolute; inset: 0; display: flex; align-items: flex-start; justify-content: center; padding: var(--space-12) var(--space-6); z-index: 50; }
+.modal { width: 100%; max-width: 760px; display: flex; flex-direction: column; background: var(--surface); border: 1px solid var(--hairline); border-radius: var(--radius-lg); box-shadow: var(--shadow-xl); overflow: hidden; }
+.modal__header { display: flex; align-items: flex-start; justify-content: space-between; gap: var(--space-4); padding: var(--space-5) var(--space-6); border-bottom: 1px solid var(--hairline); }
+.modal__title { margin: 0; font-size: var(--text-lg); font-weight: var(--weight-semibold); color: var(--ink-1); letter-spacing: var(--tracking-tight); line-height: 1.25; }
+.modal__body { padding: var(--space-6); display: flex; flex-direction: column; gap: var(--space-6); color: var(--ink-2); font-size: var(--text-base); }
+.modal__footer { display: flex; align-items: center; justify-content: flex-end; gap: var(--space-2); padding: var(--space-4) var(--space-6) var(--space-5); border-top: 1px solid var(--hairline); }
+.field { display: flex; flex-direction: column; gap: var(--space-2); min-width: 0; }
+.field__label { font-size: var(--text-sm); font-weight: var(--weight-medium); color: var(--ink-2); }
+.field__hint { margin: 0; font-size: var(--text-sm); color: var(--ink-3); }
+.textarea { display: block; width: 100%; padding: var(--space-2) var(--space-3); border-radius: var(--radius-sm); border: 1px solid var(--hairline-strong); background: var(--surface); color: var(--ink-1); font-size: var(--text-base); line-height: var(--leading-normal); box-shadow: var(--shadow-xs); white-space: pre-wrap; }
+.textarea--ph { color: var(--ink-3); }
+.input--filled { color: var(--ink-1); }
+.seg__item .pico { margin-right: 6px; }
+
+/* оценка DeepSeek */
+.est { display: grid; grid-template-columns: minmax(0, 1fr) minmax(0, 1fr); gap: var(--space-4); padding: var(--space-4) var(--space-5); border: 1px solid var(--hairline); border-radius: var(--radius-lg); background: var(--surface-2); }
+.est__k { font-size: var(--text-xs); font-weight: var(--weight-medium); text-transform: uppercase; letter-spacing: var(--tracking-wide); color: var(--ink-3); }
+.est__v { font-size: var(--text-md); font-weight: var(--weight-semibold); color: var(--ink-1); }
+.est__why { font-size: var(--text-sm); color: var(--ink-2); line-height: var(--leading-normal); }
+.scale { display: flex; gap: 3px; }
+.scale__step { flex: 1; height: 6px; border-radius: var(--radius-2xs); background: var(--surface-3); }
+.scale__step--on { background: var(--accent-500); }
+.scale__labels { display: flex; justify-content: space-between; font-size: 11px; color: var(--ink-4); font-variant-numeric: tabular-nums; }
+
+/* матрица маршрута */
+.route { display: grid; grid-template-columns: 132px repeat(4, minmax(0, 1fr)); gap: var(--space-2); align-items: stretch; }
+.route__h { font-size: var(--text-xs); color: var(--ink-3); font-weight: var(--weight-medium); text-align: center; padding: 0 0 var(--space-1); white-space: nowrap; }
+.route__r { display: flex; align-items: center; gap: var(--space-2); font-size: var(--text-sm); color: var(--ink-1); font-weight: var(--weight-medium); }
+.route__r .hint { font-weight: var(--weight-regular); }
+.route__cell { display: flex; align-items: center; justify-content: center; min-height: 44px; border: 1px solid var(--hairline); border-radius: var(--radius-md); background: var(--surface); font-size: var(--text-sm); color: var(--ink-2); position: relative; }
+.route__cell--off { border-style: dashed; color: var(--ink-4); background: transparent; }
+.route__cell--on { border-color: var(--accent-500); background: var(--accent-50); color: var(--accent-800); font-weight: var(--weight-semibold); box-shadow: var(--focus-ring); }
+.route__cell--rec::after { content: 'совет'; position: absolute; top: -8px; right: 8px; font-size: 10px; font-weight: var(--weight-semibold); text-transform: uppercase; letter-spacing: var(--tracking-wide); color: var(--accent-700); background: var(--surface); padding: 0 4px; border-radius: var(--radius-2xs); }
+.route__cell--alt { border-color: color-mix(in srgb, var(--accent-500) 45%, transparent); }
+.hmark { display: inline-flex; align-items: center; justify-content: center; width: 22px; height: 22px; border-radius: var(--radius-sm); background: var(--surface-2); border: 1px solid var(--hairline); font-family: var(--font-mono); font-size: 10px; color: var(--ink-2); flex: none; }
+.chain { display: inline-flex; align-items: center; gap: 2px; color: var(--ink-2); }
+.chain .ico { width: 15px; height: 15px; }
+.chain i { display: inline-block; width: 6px; height: 1px; background: var(--hairline-strong); margin: 0 2px; }
+.hmark--sm { width: 18px; height: 18px; font-size: 9px; border-radius: var(--radius-xs); }
+.route__cell--on .chain { color: var(--accent-800); }
+.route__cell--on .hmark, .route__cell--alt .hmark { border-color: color-mix(in srgb, var(--accent-500) 45%, transparent); background: var(--surface); color: var(--accent-800); }
+.hico { display: inline-flex; flex: none; vertical-align: -3px; }
+.hico svg { width: 100%; height: 100%; display: block; }
+.chain .hico + .hico { margin-left: 2px; }
+.tc__foot .hico { margin-right: 2px; }
+  </style>
+</helmet>
+<div class="page" style="width: 1440px; min-height: 1420px; background: var(--bg); color: var(--ink-1); font-family: var(--font-ui); font-size: var(--text-base); line-height: var(--leading-normal); -webkit-font-smoothing: antialiased; font-feature-settings: 'tnum' 1, 'cv11' 1, 'ss01' 1;">
+
+<div style="position: relative; width: 1440px; min-height: 1420px; overflow: hidden">
+
+
+<header class="hdr">
+  <div class="hdr__row">
+    <div class="hdr__brand">
+      <span class="mark">L</span>
+      <span class="brand-name">Listik</span>
+      <span class="pill pill--sm pill--healthy"><span class="pill__dot"></span><span>сервер жив</span></span>
+    </div>
+    <div class="hdr__actions">
+      <span class="pill pill--sm pill--healthy"><span class="pill__dot"></span><span>живое</span></span>
+      <span class="badge badge--sm badge--neutral">версия 0.1.0</span>
+      <span class="seg seg--sm"><span class="seg__item seg__item--active">amber</span><span class="seg__item">malachite</span><span class="seg__item">garnet</span><span class="seg__item">sapphire</span></span>
+      <button type="button" class="btn btn--ghost btn--sm" aria-label="Тема"><span class="ico "><svg viewBox="0 0 16 16" fill="none" aria-hidden="true"><path d="M8 11.2a3.2 3.2 0 1 0 0-6.4 3.2 3.2 0 0 0 0 6.4ZM8 1.6v1.6M8 12.8v1.6M1.6 8h1.6M12.8 8h1.6M3.6 3.6l1.1 1.1M11.3 11.3l1.1 1.1M12.4 3.6l-1.1 1.1M4.7 11.3l-1.1 1.1" stroke="currentColor" stroke-width="1.25" stroke-linecap="round" stroke-linejoin="round"></path></svg></span></button>
+      <button type="button" class="btn btn--ghost btn--sm "><span class="ico "><svg viewBox="0 0 16 16" fill="none" aria-hidden="true"><path d="M2.4 3.2h11.2v9.6H2.4zM6.2 3.2v9.6M9.8 3.2v9.6" stroke="currentColor" stroke-width="1.25" stroke-linecap="round" stroke-linejoin="round"></path></svg></span><span>Репозитории</span></button>
+      <button type="button" class="btn btn--secondary btn--sm "><span class="ico "><svg viewBox="0 0 16 16" fill="none" aria-hidden="true"><path d="M13.5 8a5.5 5.5 0 1 1-1.9-4.16M13.5 2.2v3.2h-3.2" stroke="currentColor" stroke-width="1.25" stroke-linecap="round" stroke-linejoin="round"></path></svg></span><span>Обновить</span></button>
+    </div>
+  </div>
+</header>
+<main style="display: flex; flex-direction: column; gap: var(--space-6); padding: var(--space-6) var(--space-8) var(--space-8)">
+  
+<div style="display: flex; align-items: center; justify-content: space-between; gap: var(--space-4)">
+  <span class="seg"><span class="seg__item seg__item--active">Доска</span><span class="seg__item">Список</span><span class="seg__item">Таймлайн</span><span class="seg__item">Метрики</span></span>
+  <div style="display: flex; align-items: center; gap: var(--space-3)">
+    <span class="hint" style="display: inline-flex; align-items: center; gap: 4px; color: var(--success-700)"><span class="ico ico--xs"><svg viewBox="0 0 16 16" fill="none" aria-hidden="true"><path d="M3.5 8.4l3 3 6-6.6" stroke="currentColor" stroke-width="1.25" stroke-linecap="round" stroke-linejoin="round"></path></svg></span><span style="color: var(--ink-3)">Сохранено · 22:26:19</span></span>
+    <span class="badge badge--sm badge--neutral">642 задачи</span>
+  </div>
+</div>
+  
+<section style="display: flex; flex-direction: column; gap: var(--space-3)">
+  <div style="display: flex; align-items: center; justify-content: space-between; gap: var(--space-4)">
+    <h2 class="sec-title"><span class="ico ico--md"><svg viewBox="0 0 16 16" fill="none" aria-hidden="true"><path d="M5.4 7.4V4.6a1 1 0 0 1 2 0v2.2m0-.6a1 1 0 0 1 2 0v.8m0-.4a1 1 0 0 1 2 0v2.6c0 2-1.4 3.4-3.4 3.4H7.2c-1.6 0-2.6-.8-3.2-2L3 9.4a1 1 0 0 1 1.8-.9l.6 1.1" stroke="currentColor" stroke-width="1.25" stroke-linecap="round" stroke-linejoin="round"></path></svg></span>Нужен ты <span class="badge badge--sm badge--accent">3</span></h2>
+    <span class="hint">вопрос автору, брошенные и молчащие держатели — то, без чего конвейер стоит</span>
+  </div>
+  <div style="display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: var(--space-4)">
+    <article class="inbox-card">
+      <div class="tc__top"><span class="pico" style="color: var(--info-500)" title="задача"><span class="ico "><svg viewBox="0 0 16 16" fill="none" aria-hidden="true"><path d="M3 3h10v10H3zM5.4 8.2l1.8 1.8 3.6-3.8" stroke="currentColor" stroke-width="1.25" stroke-linecap="round" stroke-linejoin="round"></path></svg></span></span><span class="pmark" style="width: 18px; height: 18px; background: var(--chart-1)" title="zoloto585-orders">Or</span><span class="tc__project">Orders</span><span style="flex: 1"></span><span class="badge badge--sm badge--accent">вопрос автору</span></div>
+      <h3 class="inbox-card__title">PH6-13 — E2E smoke-тест уведомлений и golden-тест матрицы</h3>
+      <p class="inbox-card__q"><span class="hico" style="width: 14px; height: 14px; color: #D97757" title="claude"><svg viewBox="0 0 16 16" fill="none" aria-hidden="true"><path d="M4.6 5.4h6.8a1.6 1.6 0 0 1 1.6 1.6v3.4a1.6 1.6 0 0 1-1.6 1.6H4.6A1.6 1.6 0 0 1 3 10.4V7a1.6 1.6 0 0 1 1.6-1.6ZM6.2 5.4V3.8M9.8 5.4V3.8M5.4 12v1.6M8 12v1.6M10.6 12v1.6" stroke="currentColor" stroke-width="1.25" stroke-linecap="round" stroke-linejoin="round"></path><path d="M6.4 8.6h.01M9.6 8.6h.01" stroke="currentColor" stroke-width="2.2" stroke-linecap="round"></path></svg></span> <strong>claude спрашивает:</strong> golden-тест гонять на снапшоте прода или на фикстурах из docs/specs?</p>
+      <div style="display: flex; align-items: center; justify-content: space-between; gap: var(--space-2)">
+        <span class="hint tnum"><span class="ico ico--xs"><svg viewBox="0 0 16 16" fill="none" aria-hidden="true"><path d="M8 14a6 6 0 1 0 0-12 6 6 0 0 0 0 12ZM8 4.6V8l2.4 1.6" stroke="currentColor" stroke-width="1.25" stroke-linecap="round" stroke-linejoin="round"></path></svg></span> держит claude · окно 12 мин · s1</span>
+        <span style="display: flex; gap: var(--space-2)"><button type="button" class="btn btn--primary btn--sm "><span>Ответить</span></button><button type="button" class="btn btn--ghost btn--sm "><span>Открыть</span></button></span>
+      </div>
+    </article>
+    <article class="inbox-card inbox-card--danger">
+      <div class="tc__top"><span class="pico" style="color: var(--danger-500)" title="баг"><span class="ico "><svg viewBox="0 0 16 16" fill="none" aria-hidden="true"><path d="M5.6 6.4a2.4 2.4 0 0 1 4.8 0v3.2a2.4 2.4 0 0 1-4.8 0V6.4ZM6.4 4.2a1.6 1.6 0 0 1 3.2 0M2.8 8h2.8M10.4 8h2.8M3.4 4.6l2 1.4M12.6 4.6l-2 1.4M3.4 11.8l2-1.4M12.6 11.8l-2-1.4" stroke="currentColor" stroke-width="1.25" stroke-linecap="round" stroke-linejoin="round"></path></svg></span></span><span class="pmark" style="width: 18px; height: 18px; background: var(--chart-4)" title="zoloto585-frontend-nuxt">Nx</span><span class="tc__project">Nuxt</span><span style="flex: 1"></span><span class="badge badge--sm badge--danger">брошена 26 ч</span></div>
+      <h3 class="inbox-card__title">WEB-14434 fix: hydration mismatch на /catalog (insertBefore null)</h3>
+      <p class="inbox-card__q">держатель <span class="hico" style="width: 14px; height: 14px; color: #4D6BFE" title="dsh"><svg viewBox="0 0 16 16" fill="none" aria-hidden="true"><path d="M3 9.6C3 6.4 5.6 4.4 8.8 4.6c1.8.1 3.2 1 4 2.2.3-1.6 1-2.9 2-3.6-.1 1.4.1 2.6.6 3.6-1 .1-1.8.5-2.4 1.2.1.4.2.9.2 1.4 0 2.6-2.4 4.4-5.6 4.4C4.6 13.8 3 12 3 9.6Z" fill="currentColor"></path><circle cx="10.6" cy="8.2" r="1" fill="var(--surface)"></circle><path d="M4.2 10.4c1.6.8 3.4.6 5-.6" stroke="var(--surface)" stroke-width="1" stroke-linecap="round"></path></svg></span> <strong>dsh</strong> замолчал на s3 без heartbeat; последняя заметка: «правлю плагин-order»</p>
+      <div style="display: flex; align-items: center; justify-content: space-between; gap: var(--space-2)">
+        <span class="hint tnum"><span class="ico ico--xs"><svg viewBox="0 0 16 16" fill="none" aria-hidden="true"><path d="M8 14a6 6 0 1 0 0-12 6 6 0 0 0 0 12ZM8 4.6V8l2.4 1.6" stroke="currentColor" stroke-width="1.25" stroke-linecap="round" stroke-linejoin="round"></path></svg></span> на этапе 1.2 дн · s3</span>
+        <span style="display: flex; gap: var(--space-2)"><button type="button" class="btn btn--secondary btn--sm "><span>Освободить</span></button><button type="button" class="btn btn--ghost btn--sm "><span>Открыть</span></button></span>
+      </div>
+    </article>
+    <article class="inbox-card inbox-card--warning">
+      <div class="tc__top"><span class="pico" style="color: var(--info-500)" title="задача"><span class="ico "><svg viewBox="0 0 16 16" fill="none" aria-hidden="true"><path d="M3 3h10v10H3zM5.4 8.2l1.8 1.8 3.6-3.8" stroke="currentColor" stroke-width="1.25" stroke-linecap="round" stroke-linejoin="round"></path></svg></span></span><span class="pmark" style="width: 18px; height: 18px; background: var(--chart-5)" title="PremiumTackleFinal">PT</span><span class="tc__project">PremiumTackle</span><span style="flex: 1"></span><span class="badge badge--sm badge--warning">молчит 3 ч</span></div>
+      <h3 class="inbox-card__title">Pixel-perfect аудит всех страниц по Figma</h3>
+      <p class="inbox-card__q">держатель <span class="hico" style="width: 14px; height: 14px; color: #D97757" title="claude"><svg viewBox="0 0 16 16" fill="none" aria-hidden="true"><path d="M4.6 5.4h6.8a1.6 1.6 0 0 1 1.6 1.6v3.4a1.6 1.6 0 0 1-1.6 1.6H4.6A1.6 1.6 0 0 1 3 10.4V7a1.6 1.6 0 0 1 1.6-1.6ZM6.2 5.4V3.8M9.8 5.4V3.8M5.4 12v1.6M8 12v1.6M10.6 12v1.6" stroke="currentColor" stroke-width="1.25" stroke-linecap="round" stroke-linejoin="round"></path><path d="M6.4 8.6h.01M9.6 8.6h.01" stroke="currentColor" stroke-width="2.2" stroke-linecap="round"></path></svg></span> <strong>claude</strong> без heartbeat 3 ч на s4; порог брошенности — 24 ч</p>
+      <div style="display: flex; align-items: center; justify-content: space-between; gap: var(--space-2)">
+        <span class="hint tnum"><span class="ico ico--xs"><svg viewBox="0 0 16 16" fill="none" aria-hidden="true"><path d="M8 14a6 6 0 1 0 0-12 6 6 0 0 0 0 12ZM8 4.6V8l2.4 1.6" stroke="currentColor" stroke-width="1.25" stroke-linecap="round" stroke-linejoin="round"></path></svg></span> на этапе 5.5 ч · s4</span>
+        <span style="display: flex; gap: var(--space-2)"><button type="button" class="btn btn--ghost btn--sm "><span>Открыть</span></button></span>
+      </div>
+    </article>
+  </div>
+</section>
+  
+<div style="display: flex; align-items: center; justify-content: space-between; gap: var(--space-4); flex-wrap: wrap">
+  <div style="display: flex; align-items: center; gap: var(--space-2); flex-wrap: wrap">
+    <span class="chip"><span class="chip__dot" style="background: var(--health-dead)"></span><span class="chip__n">1</span> брошена</span>
+    <span class="chip"><span class="chip__dot" style="background: var(--health-at-risk)"></span><span class="chip__n">2</span> под угрозой</span>
+    <span class="chip"><span class="chip__dot" style="background: var(--warning-500)"></span><span class="chip__n">62</span> стоят из-за других</span>
+    <span class="chip chip--on"><span class="chip__dot" style="background: var(--success-500)"></span><span class="chip__n" style="color: inherit">15</span> можно брать</span>
+    <span class="chip"><span class="chip__n">9</span> в конвейере</span>
+  </div>
+  <div style="display: flex; align-items: center; gap: var(--space-2)">
+    <span class="select select--sm"><span>все проекты</span><span class="ico ico--xs"><svg viewBox="0 0 16 16" fill="none" aria-hidden="true"><path d="M4.5 6.5 8 10l3.5-3.5" stroke="currentColor" stroke-width="1.25" stroke-linecap="round" stroke-linejoin="round"></path></svg></span></span>
+    <span class="select select--sm"><span>любой харнесс</span><span class="ico ico--xs"><svg viewBox="0 0 16 16" fill="none" aria-hidden="true"><path d="M4.5 6.5 8 10l3.5-3.5" stroke="currentColor" stroke-width="1.25" stroke-linecap="round" stroke-linejoin="round"></path></svg></span></span>
+    <span class="chip">закрытые</span>
+    <span class="input input--sm" style="width: 260px"><span class="ico "><svg viewBox="0 0 16 16" fill="none" aria-hidden="true"><path d="M7.2 12.4a5.2 5.2 0 1 0 0-10.4 5.2 5.2 0 0 0 0 10.4ZM11 11l3 3" stroke="currentColor" stroke-width="1.25" stroke-linecap="round" stroke-linejoin="round"></path></svg></span><span>поиск по задачам · Cmd K</span></span>
+  </div>
+</div>
+  
+<section style="display: flex; flex-direction: column; gap: var(--space-3)">
+  
+<div style="display: flex; align-items: center; justify-content: space-between; gap: var(--space-4)">
+  <div style="display: flex; align-items: center; gap: var(--space-3)">
+    <span class="seg seg--sm"><span class="seg__item seg__item--active">по этапу</span><span class="seg__item">по статусу</span><span class="seg__item">по проекту</span><span class="seg__item">по держателю</span></span>
+    <span class="hint">колонки — этапы конвейера; этап меняет агент через <span class="mono">stage</span>, доска только показывает</span>
+  </div>
+  <div style="display: flex; align-items: center; gap: var(--space-3)">
+    <span class="hint tnum">309 задач в выборке</span>
+    <button type="button" class="btn btn--secondary btn--sm "><span class="ico "><svg viewBox="0 0 16 16" fill="none" aria-hidden="true"><path d="M8 3.2v9.6M3.2 8h9.6" stroke="currentColor" stroke-width="1.25" stroke-linecap="round" stroke-linejoin="round"></path></svg></span><span>Новая задача</span></button>
+  </div>
+</div>
+  
+<div class="rail" style="padding: 0 var(--space-1)">
+  <span style="width: 232px; flex: none"></span>
+  <span class="rail__seg" style="flex: 0 0 16px; background: transparent"></span>
+  <span class="rail__col" style="width: 252px; justify-content: center"><span class="rail__seg"></span></span><span style="flex: 0 0 16px; width: 16px; min-width: 0; position: relative; display: flex; justify-content: center; align-items: center; height: 2px; background: var(--hairline-strong)"><span class="rail__tr rail__tr--sticky"><span class="ico ico--xs"><svg viewBox="0 0 16 16" fill="none" aria-hidden="true"><path d="M6.6 9.4a2.4 2.4 0 0 0 3.4 0l2.2-2.2a2.4 2.4 0 0 0-3.4-3.4L7.6 5M9.4 6.6a2.4 2.4 0 0 0-3.4 0L3.8 8.8a2.4 2.4 0 0 0 3.4 3.4L8.4 11" stroke="currentColor" stroke-width="1.25" stroke-linecap="round" stroke-linejoin="round"></path></svg></span>sticky</span></span><span class="rail__col" style="width: 252px; justify-content: center"><span class="rail__seg"></span></span><span style="flex: 0 0 16px; width: 16px; min-width: 0; position: relative; display: flex; justify-content: center; align-items: center; height: 2px; background: var(--hairline-strong)"><span class="rail__tr "><span class="ico ico--xs"><svg viewBox="0 0 16 16" fill="none" aria-hidden="true"><path d="M3 8h10M9.4 4.4 13 8l-3.6 3.6" stroke="currentColor" stroke-width="1.25" stroke-linecap="round" stroke-linejoin="round"></path></svg></span>handoff</span></span><span class="rail__col" style="width: 252px; justify-content: center"><span class="rail__seg"></span></span><span style="flex: 0 0 16px; width: 16px; min-width: 0; position: relative; display: flex; justify-content: center; align-items: center; height: 2px; background: var(--hairline-strong)"><span class="rail__tr rail__tr--sticky"><span class="ico ico--xs"><svg viewBox="0 0 16 16" fill="none" aria-hidden="true"><path d="M6.6 9.4a2.4 2.4 0 0 0 3.4 0l2.2-2.2a2.4 2.4 0 0 0-3.4-3.4L7.6 5M9.4 6.6a2.4 2.4 0 0 0-3.4 0L3.8 8.8a2.4 2.4 0 0 0 3.4 3.4L8.4 11" stroke="currentColor" stroke-width="1.25" stroke-linecap="round" stroke-linejoin="round"></path></svg></span>sticky</span></span><span class="rail__col" style="width: 252px; justify-content: center"><span class="rail__seg"></span></span>
+  <span style="flex: 0 0 16px; width: 16px; min-width: 0; position: relative; display: flex; justify-content: center; align-items: center; height: 2px; background: var(--hairline-strong)"><span class="rail__tr"><span class="ico ico--xs"><svg viewBox="0 0 16 16" fill="none" aria-hidden="true"><path d="M3 8h10M9.4 4.4 13 8l-3.6 3.6" stroke="currentColor" stroke-width="1.25" stroke-linecap="round" stroke-linejoin="round"></path></svg></span>handoff</span></span>
+  <span style="width: 56px; flex: none"></span>
+</div>
+  <div style="display: flex; align-items: flex-start; gap: var(--space-4)">
+    
+  <section class="col" style="width: 232px">
+    <header class="col__head">
+      <div class="col__title-row">
+        <h2 class="col__title">Заведена</h2>
+        <span class="col__count">300</span>
+      </div>
+      <div class="col__meta">
+        <span class="col__harness">без этапа</span>
+        
+      </div>
+    </header>
+    <div class="col__body">
+      
+  <article class="tc">
+    <div class="tc__top"><span class="pico" style="color: var(--chart-3)" title="эпик · ТЗ"><span class="ico "><svg viewBox="0 0 16 16" fill="none" aria-hidden="true"><path d="M8 2.6 13.6 5.6 8 8.6 2.4 5.6 8 2.6ZM2.4 8.4 8 11.4l5.6-3M2.4 11 8 14l5.6-3" stroke="currentColor" stroke-width="1.25" stroke-linecap="round" stroke-linejoin="round"></path></svg></span></span><span class="pmark" style="width: 18px; height: 18px; background: var(--chart-3)" title="VastAISmartClient">Va</span><span class="tc__project">VastAI</span><span style="flex: 1"></span><span class="pico" style="color: var(--warning-600)" title="P1 · критичный"><span class="ico "><svg viewBox="0 0 16 16" fill="none" aria-hidden="true"><path d="M4 8.6 8 4.6l4 4M4 12.4 8 8.4l4 4" stroke="currentColor" stroke-width="1.25" stroke-linecap="round" stroke-linejoin="round"></path></svg></span></span></div>
+    <h3 class="tc__title">[Epic] Переработка логики расчёта размера пула серверов</h3>
+    <div class="tc__meta"><span class="tc__badges"></span><span class="tc__counts"><span class="cnt" style="color: var(--ink-3)" title="детей открыто 4"><span class="ico ico--xs"><svg viewBox="0 0 16 16" fill="none" aria-hidden="true"><path d="M8 2.6v3.2M8 5.8 4 9.2M8 5.8l4 3.4M4 9.2v3.2M12 9.2v3.2" stroke="currentColor" stroke-width="1.25" stroke-linecap="round" stroke-linejoin="round"></path></svg></span>4</span></span></div>
+    
+    <div class="tc__foot"><span><span class="hdot hdot--unknown" title="здоровье: unknown"></span>без держателя</span><span class="tc__age"><span class="ico ico--xs"><svg viewBox="0 0 16 16" fill="none" aria-hidden="true"><path d="M8 14a6 6 0 1 0 0-12 6 6 0 0 0 0 12ZM8 4.6V8l2.4 1.6" stroke="currentColor" stroke-width="1.25" stroke-linecap="round" stroke-linejoin="round"></path></svg></span>134 дн</span></div>
+  </article>
+  <article class="tc">
+    <div class="tc__top"><span class="pico" style="color: var(--chart-3)" title="эпик · ТЗ"><span class="ico "><svg viewBox="0 0 16 16" fill="none" aria-hidden="true"><path d="M8 2.6 13.6 5.6 8 8.6 2.4 5.6 8 2.6ZM2.4 8.4 8 11.4l5.6-3M2.4 11 8 14l5.6-3" stroke="currentColor" stroke-width="1.25" stroke-linecap="round" stroke-linejoin="round"></path></svg></span></span><span class="pmark" style="width: 18px; height: 18px; background: var(--chart-6)" title="dicms">Di</span><span class="tc__project">dicms</span><span style="flex: 1"></span><span class="pico" style="color: var(--warning-600)" title="P1 · критичный"><span class="ico "><svg viewBox="0 0 16 16" fill="none" aria-hidden="true"><path d="M4 8.6 8 4.6l4 4M4 12.4 8 8.4l4 4" stroke="currentColor" stroke-width="1.25" stroke-linecap="round" stroke-linejoin="round"></path></svg></span></span></div>
+    <h3 class="tc__title">QA витрины carptimeshop — браузерный прогон (chrome-devtools MCP)</h3>
+    <div class="tc__meta"><span class="tc__badges"></span><span class="tc__counts"><span class="cnt" style="color: var(--ink-3)" title="детей открыто 6"><span class="ico ico--xs"><svg viewBox="0 0 16 16" fill="none" aria-hidden="true"><path d="M8 2.6v3.2M8 5.8 4 9.2M8 5.8l4 3.4M4 9.2v3.2M12 9.2v3.2" stroke="currentColor" stroke-width="1.25" stroke-linecap="round" stroke-linejoin="round"></path></svg></span>6</span></span></div>
+    
+    <div class="tc__foot"><span><span class="hdot hdot--unknown" title="здоровье: unknown"></span>без держателя</span><span class="tc__age"><span class="ico ico--xs"><svg viewBox="0 0 16 16" fill="none" aria-hidden="true"><path d="M8 14a6 6 0 1 0 0-12 6 6 0 0 0 0 12ZM8 4.6V8l2.4 1.6" stroke="currentColor" stroke-width="1.25" stroke-linecap="round" stroke-linejoin="round"></path></svg></span>134 дн</span></div>
+  </article>
+  <article class="tc">
+    <div class="tc__top"><span class="pico" style="color: var(--info-500)" title="задача"><span class="ico "><svg viewBox="0 0 16 16" fill="none" aria-hidden="true"><path d="M3 3h10v10H3zM5.4 8.2l1.8 1.8 3.6-3.8" stroke="currentColor" stroke-width="1.25" stroke-linecap="round" stroke-linejoin="round"></path></svg></span></span><span class="pmark" style="width: 18px; height: 18px; background: var(--chart-2)" title="identityanddefect">Id</span><span class="tc__project">Identity</span><span style="flex: 1"></span><span class="pico" style="color: var(--ink-3)" title="P2 · обычный"><span class="ico "><svg viewBox="0 0 16 16" fill="none" aria-hidden="true"><path d="M4 6.2h8M4 9.8h8" stroke="currentColor" stroke-width="1.25" stroke-linecap="round" stroke-linejoin="round"></path></svg></span></span></div>
+    <h3 class="tc__title">Branch protection на master/develop/prerelease в GitLab: PR + green CI</h3>
+    
+    
+    <div class="tc__foot"><span><span class="hdot hdot--unknown" title="здоровье: unknown"></span>без держателя</span><span class="tc__age"><span class="ico ico--xs"><svg viewBox="0 0 16 16" fill="none" aria-hidden="true"><path d="M8 14a6 6 0 1 0 0-12 6 6 0 0 0 0 12ZM8 4.6V8l2.4 1.6" stroke="currentColor" stroke-width="1.25" stroke-linecap="round" stroke-linejoin="round"></path></svg></span>134 дн</span></div>
+  </article>
+  <article class="tc">
+    <div class="tc__top"><span class="pico" style="color: var(--danger-500)" title="баг"><span class="ico "><svg viewBox="0 0 16 16" fill="none" aria-hidden="true"><path d="M5.6 6.4a2.4 2.4 0 0 1 4.8 0v3.2a2.4 2.4 0 0 1-4.8 0V6.4ZM6.4 4.2a1.6 1.6 0 0 1 3.2 0M2.8 8h2.8M10.4 8h2.8M3.4 4.6l2 1.4M12.6 4.6l-2 1.4M3.4 11.8l2-1.4M12.6 11.8l-2-1.4" stroke="currentColor" stroke-width="1.25" stroke-linecap="round" stroke-linejoin="round"></path></svg></span></span><span class="pmark" style="width: 18px; height: 18px; background: var(--chart-1)" title="zoloto585-crm-orders">Cr</span><span class="tc__project">CRM Orders</span><span style="flex: 1"></span><span class="pico" style="color: var(--ink-3)" title="P2 · обычный"><span class="ico "><svg viewBox="0 0 16 16" fill="none" aria-hidden="true"><path d="M4 6.2h8M4 9.8h8" stroke="currentColor" stroke-width="1.25" stroke-linecap="round" stroke-linejoin="round"></path></svg></span></span></div>
+    <h3 class="tc__title">Swagger UI отдаёт устаревшую копию спеки</h3>
+    <div class="tc__meta"><span class="tc__badges"></span><span class="tc__counts"><span class="cnt" style="color: var(--warning-700)" title="ждёт 1"><span class="ico ico--xs"><svg viewBox="0 0 16 16" fill="none" aria-hidden="true"><path d="M4 7.4h8v6H4zM5.6 7.4V5.2a2.4 2.4 0 0 1 4.8 0v2.2" stroke="currentColor" stroke-width="1.25" stroke-linecap="round" stroke-linejoin="round"></path></svg></span>1</span></span></div>
+    
+    <div class="tc__foot"><span><span class="hdot hdot--unknown" title="здоровье: unknown"></span>без держателя</span><span class="tc__age"><span class="ico ico--xs"><svg viewBox="0 0 16 16" fill="none" aria-hidden="true"><path d="M8 14a6 6 0 1 0 0-12 6 6 0 0 0 0 12ZM8 4.6V8l2.4 1.6" stroke="currentColor" stroke-width="1.25" stroke-linecap="round" stroke-linejoin="round"></path></svg></span>134 дн</span></div>
+  </article>
+      <button type="button" class="btn btn--ghost btn--sm" style="width: 100%"><span>Показать ещё 60 · осталось 296</span></button>
+    </div>
+  </section>
+  <section class="col" style="width: 252px">
+    <header class="col__head">
+      <div class="col__title-row">
+        <h2 class="col__title"><span class="col__code">s1</span>ТЗ и чек-лист</h2>
+        <span class="col__count">2</span>
+      </div>
+      <div class="col__meta">
+        <span class="col__harness"><span style="display: inline-flex; align-items: center; gap: 3px"><span class="hico" style="width: 14px; height: 14px; color: #D97757" title="claude"><svg viewBox="0 0 16 16" fill="none" aria-hidden="true"><path d="M4.6 5.4h6.8a1.6 1.6 0 0 1 1.6 1.6v3.4a1.6 1.6 0 0 1-1.6 1.6H4.6A1.6 1.6 0 0 1 3 10.4V7a1.6 1.6 0 0 1 1.6-1.6ZM6.2 5.4V3.8M9.8 5.4V3.8M5.4 12v1.6M8 12v1.6M10.6 12v1.6" stroke="currentColor" stroke-width="1.25" stroke-linecap="round" stroke-linejoin="round"></path><path d="M6.4 8.6h.01M9.6 8.6h.01" stroke="currentColor" stroke-width="2.2" stroke-linecap="round"></path></svg></span>claude</span></span>
+        <span class="health-row"><span class="hdot " title="здоровье: healthy"></span><span class="hdot " title="здоровье: healthy"></span></span>
+      </div>
+    </header>
+    <div class="col__body">
+      
+  <article class="tc tc--step">
+    <div class="tc__top"><span class="pico" style="color: var(--info-500)" title="задача"><span class="ico "><svg viewBox="0 0 16 16" fill="none" aria-hidden="true"><path d="M3 3h10v10H3zM5.4 8.2l1.8 1.8 3.6-3.8" stroke="currentColor" stroke-width="1.25" stroke-linecap="round" stroke-linejoin="round"></path></svg></span></span><span class="pmark" style="width: 18px; height: 18px; background: var(--chart-2)" title="zoloto585-symfony">Sy</span><span class="tc__project">Symfony</span><span class="tc__sub">шаг</span><span style="flex: 1"></span><span class="pico" style="color: var(--warning-600)" title="P1 · критичный"><span class="ico "><svg viewBox="0 0 16 16" fill="none" aria-hidden="true"><path d="M4 8.6 8 4.6l4 4M4 12.4 8 8.4l4 4" stroke="currentColor" stroke-width="1.25" stroke-linecap="round" stroke-linejoin="round"></path></svg></span></span></div>
+    <h3 class="tc__title">WEB-14193 — Единый резолвер назначения скидок (GroupProfitableDiscountHandler)</h3>
+    <div class="tc__meta"><span class="tc__badges"></span><span class="tc__counts"><span class="cnt" style="color: var(--ink-3)" title="детей открыто 5"><span class="ico ico--xs"><svg viewBox="0 0 16 16" fill="none" aria-hidden="true"><path d="M8 2.6v3.2M8 5.8 4 9.2M8 5.8l4 3.4M4 9.2v3.2M12 9.2v3.2" stroke="currentColor" stroke-width="1.25" stroke-linecap="round" stroke-linejoin="round"></path></svg></span>5</span></span></div>
+    
+    <div class="tc__portions"><span>порции <b>0/5</b></span><span>s2 2 · s3 2 · s4 1</span></div>
+    <div class="progress"><span class="progress__fill" style="width: 0%"></span></div>
+    <div class="tc__foot"><span><span class="hdot " title="здоровье: healthy"></span><span class="hico" style="width: 14px; height: 14px; color: #D97757" title="claude"><svg viewBox="0 0 16 16" fill="none" aria-hidden="true"><path d="M4.6 5.4h6.8a1.6 1.6 0 0 1 1.6 1.6v3.4a1.6 1.6 0 0 1-1.6 1.6H4.6A1.6 1.6 0 0 1 3 10.4V7a1.6 1.6 0 0 1 1.6-1.6ZM6.2 5.4V3.8M9.8 5.4V3.8M5.4 12v1.6M8 12v1.6M10.6 12v1.6" stroke="currentColor" stroke-width="1.25" stroke-linecap="round" stroke-linejoin="round"></path><path d="M6.4 8.6h.01M9.6 8.6h.01" stroke="currentColor" stroke-width="2.2" stroke-linecap="round"></path></svg></span><strong>claude</strong></span><span class="tc__age"><span class="ico ico--xs"><svg viewBox="0 0 16 16" fill="none" aria-hidden="true"><path d="M8 14a6 6 0 1 0 0-12 6 6 0 0 0 0 12ZM8 4.6V8l2.4 1.6" stroke="currentColor" stroke-width="1.25" stroke-linecap="round" stroke-linejoin="round"></path></svg></span>3.7 ч</span></div>
+  </article>
+  <article class="tc tc--needs">
+    <div class="tc__top"><span class="pico" style="color: var(--info-500)" title="задача"><span class="ico "><svg viewBox="0 0 16 16" fill="none" aria-hidden="true"><path d="M3 3h10v10H3zM5.4 8.2l1.8 1.8 3.6-3.8" stroke="currentColor" stroke-width="1.25" stroke-linecap="round" stroke-linejoin="round"></path></svg></span></span><span class="pmark" style="width: 18px; height: 18px; background: var(--chart-1)" title="zoloto585-orders">Or</span><span class="tc__project">Orders</span><span style="flex: 1"></span><span class="pico" style="color: var(--ink-3)" title="P2 · обычный"><span class="ico "><svg viewBox="0 0 16 16" fill="none" aria-hidden="true"><path d="M4 6.2h8M4 9.8h8" stroke="currentColor" stroke-width="1.25" stroke-linecap="round" stroke-linejoin="round"></path></svg></span></span></div>
+    <h3 class="tc__title">PH6-13 — E2E smoke-тест уведомлений и golden-тест матрицы на реальных данных</h3>
+    <div class="tc__meta"><span class="tc__badges"><span class="badge badge--sm badge--accent">нужен ты</span></span><span class="tc__counts"></span></div>
+    
+    <div class="tc__foot"><span><span class="hdot " title="здоровье: healthy"></span><span class="hico" style="width: 14px; height: 14px; color: #D97757" title="claude"><svg viewBox="0 0 16 16" fill="none" aria-hidden="true"><path d="M4.6 5.4h6.8a1.6 1.6 0 0 1 1.6 1.6v3.4a1.6 1.6 0 0 1-1.6 1.6H4.6A1.6 1.6 0 0 1 3 10.4V7a1.6 1.6 0 0 1 1.6-1.6ZM6.2 5.4V3.8M9.8 5.4V3.8M5.4 12v1.6M8 12v1.6M10.6 12v1.6" stroke="currentColor" stroke-width="1.25" stroke-linecap="round" stroke-linejoin="round"></path><path d="M6.4 8.6h.01M9.6 8.6h.01" stroke="currentColor" stroke-width="2.2" stroke-linecap="round"></path></svg></span><strong>claude</strong></span><span class="tc__age"><span class="ico ico--xs"><svg viewBox="0 0 16 16" fill="none" aria-hidden="true"><path d="M8 14a6 6 0 1 0 0-12 6 6 0 0 0 0 12ZM8 4.6V8l2.4 1.6" stroke="currentColor" stroke-width="1.25" stroke-linecap="round" stroke-linejoin="round"></path></svg></span>46 мин</span></div>
+  </article>
+      
+    </div>
+  </section>
+  <section class="col" style="width: 252px">
+    <header class="col__head">
+      <div class="col__title-row">
+        <h2 class="col__title"><span class="col__code">s2</span>Второе мнение</h2>
+        <span class="col__count">2</span>
+      </div>
+      <div class="col__meta">
+        <span class="col__harness"><span style="display: inline-flex; align-items: center; gap: 3px"><span class="hico" style="width: 14px; height: 14px; color: currentColor" title="grok"><svg viewBox="0 0 16 16" fill="none" aria-hidden="true"><path d="M8 13.4a5.4 5.4 0 1 0 0-10.8 5.4 5.4 0 0 0 0 10.8ZM2.8 13.2 13.2 2.8" stroke="currentColor" stroke-width="1.25" stroke-linecap="round" stroke-linejoin="round"></path></svg></span>grok</span><span style="color: var(--ink-4)">·</span><span style="display: inline-flex; align-items: center; gap: 3px"><span class="hico" style="width: 14px; height: 14px; color: #8E7CF2" title="gemini"><svg viewBox="0 0 16 16" fill="none" aria-hidden="true"><path d="M8 2.2c.4 3.3 2.5 5.4 5.8 5.8-3.3.4-5.4 2.5-5.8 5.8-.4-3.3-2.5-5.4-5.8-5.8 3.3-.4 5.4-2.5 5.8-5.8Z" stroke="currentColor" stroke-width="1.25" stroke-linecap="round" stroke-linejoin="round"></path></svg></span>gemini</span></span>
+        <span class="health-row"><span class="hdot " title="здоровье: healthy"></span><span class="hdot hdot--unknown" title="здоровье: unknown"></span></span>
+      </div>
+    </header>
+    <div class="col__body">
+      
+  <article class="tc">
+    <div class="tc__top"><span class="pico" style="color: var(--info-500)" title="задача"><span class="ico "><svg viewBox="0 0 16 16" fill="none" aria-hidden="true"><path d="M3 3h10v10H3zM5.4 8.2l1.8 1.8 3.6-3.8" stroke="currentColor" stroke-width="1.25" stroke-linecap="round" stroke-linejoin="round"></path></svg></span></span><span class="pmark" style="width: 18px; height: 18px; background: var(--chart-2)" title="zoloto585-symfony">Sy</span><span class="tc__project">Symfony</span><span class="tc__sub">порция 5/5</span><span style="flex: 1"></span><span class="pico" style="color: var(--warning-600)" title="P1 · критичный"><span class="ico "><svg viewBox="0 0 16 16" fill="none" aria-hidden="true"><path d="M4 8.6 8 4.6l4 4M4 12.4 8 8.4l4 4" stroke="currentColor" stroke-width="1.25" stroke-linecap="round" stroke-linejoin="round"></path></svg></span></span></div>
+    <h3 class="tc__title">Изолированные юнит-тесты на DiscountAssignmentResolver</h3>
+    <div class="tc__meta"><span class="tc__badges"></span><span class="tc__counts"><span class="cnt" style="color: var(--warning-700)" title="ждёт 1"><span class="ico ico--xs"><svg viewBox="0 0 16 16" fill="none" aria-hidden="true"><path d="M4 7.4h8v6H4zM5.6 7.4V5.2a2.4 2.4 0 0 1 4.8 0v2.2" stroke="currentColor" stroke-width="1.25" stroke-linecap="round" stroke-linejoin="round"></path></svg></span>1</span></span></div>
+    
+    <div class="tc__foot"><span><span class="hdot " title="здоровье: healthy"></span><span class="hico" style="width: 14px; height: 14px; color: currentColor" title="grok"><svg viewBox="0 0 16 16" fill="none" aria-hidden="true"><path d="M8 13.4a5.4 5.4 0 1 0 0-10.8 5.4 5.4 0 0 0 0 10.8ZM2.8 13.2 13.2 2.8" stroke="currentColor" stroke-width="1.25" stroke-linecap="round" stroke-linejoin="round"></path></svg></span><strong>claude</strong></span><span class="tc__age"><span class="ico ico--xs"><svg viewBox="0 0 16 16" fill="none" aria-hidden="true"><path d="M8 14a6 6 0 1 0 0-12 6 6 0 0 0 0 12ZM8 4.6V8l2.4 1.6" stroke="currentColor" stroke-width="1.25" stroke-linecap="round" stroke-linejoin="round"></path></svg></span>24 мин</span></div>
+  </article>
+  <article class="tc tc--muted">
+    <div class="tc__top"><span class="pico" style="color: var(--info-500)" title="задача"><span class="ico "><svg viewBox="0 0 16 16" fill="none" aria-hidden="true"><path d="M3 3h10v10H3zM5.4 8.2l1.8 1.8 3.6-3.8" stroke="currentColor" stroke-width="1.25" stroke-linecap="round" stroke-linejoin="round"></path></svg></span></span><span class="pmark" style="width: 18px; height: 18px; background: var(--chart-2)" title="zoloto585-symfony">Sy</span><span class="tc__project">Symfony</span><span class="tc__sub">порция 6/5</span><span style="flex: 1"></span><span class="pico" style="color: var(--warning-600)" title="P1 · критичный"><span class="ico "><svg viewBox="0 0 16 16" fill="none" aria-hidden="true"><path d="M4 8.6 8 4.6l4 4M4 12.4 8 8.4l4 4" stroke="currentColor" stroke-width="1.25" stroke-linecap="round" stroke-linejoin="round"></path></svg></span></span></div>
+    <h3 class="tc__title">Финальная проверка: полный прогон тестов + composer lint</h3>
+    <div class="tc__meta"><span class="tc__badges"></span><span class="tc__counts"><span class="cnt" style="color: var(--warning-700)" title="ждёт 2"><span class="ico ico--xs"><svg viewBox="0 0 16 16" fill="none" aria-hidden="true"><path d="M4 7.4h8v6H4zM5.6 7.4V5.2a2.4 2.4 0 0 1 4.8 0v2.2" stroke="currentColor" stroke-width="1.25" stroke-linecap="round" stroke-linejoin="round"></path></svg></span>2</span></span></div>
+    
+    <div class="tc__foot"><span><span class="hdot hdot--unknown" title="здоровье: unknown"></span>без держателя</span><span class="tc__age"><span class="ico ico--xs"><svg viewBox="0 0 16 16" fill="none" aria-hidden="true"><path d="M8 14a6 6 0 1 0 0-12 6 6 0 0 0 0 12ZM8 4.6V8l2.4 1.6" stroke="currentColor" stroke-width="1.25" stroke-linecap="round" stroke-linejoin="round"></path></svg></span>2 ч</span></div>
+  </article>
+      
+    </div>
+  </section>
+  <section class="col" style="width: 252px">
+    <header class="col__head">
+      <div class="col__title-row">
+        <h2 class="col__title"><span class="col__code">s3</span>Реализация</h2>
+        <span class="col__count">3</span>
+      </div>
+      <div class="col__meta">
+        <span class="col__harness"><span style="display: inline-flex; align-items: center; gap: 3px"><span class="hico" style="width: 14px; height: 14px; color: #4D6BFE" title="dsh"><svg viewBox="0 0 16 16" fill="none" aria-hidden="true"><path d="M3 9.6C3 6.4 5.6 4.4 8.8 4.6c1.8.1 3.2 1 4 2.2.3-1.6 1-2.9 2-3.6-.1 1.4.1 2.6.6 3.6-1 .1-1.8.5-2.4 1.2.1.4.2.9.2 1.4 0 2.6-2.4 4.4-5.6 4.4C4.6 13.8 3 12 3 9.6Z" fill="currentColor"></path><circle cx="10.6" cy="8.2" r="1" fill="var(--surface)"></circle><path d="M4.2 10.4c1.6.8 3.4.6 5-.6" stroke="var(--surface)" stroke-width="1" stroke-linecap="round"></path></svg></span>dsh</span><span style="color: var(--ink-4)">·</span><span style="display: inline-flex; align-items: center; gap: 3px"><span class="hico" style="width: 14px; height: 14px; color: #4A8CFF" title="codex"><svg viewBox="0 0 16 16" fill="none" aria-hidden="true"><path d="M5.2 12.6h6.2a2.6 2.6 0 0 0 .5-5.2 3.6 3.6 0 0 0-6.9-.9 3 3 0 0 0 .2 6.1Z" stroke="currentColor" stroke-width="1.25" stroke-linecap="round" stroke-linejoin="round"></path></svg></span>codex</span></span>
+        <span class="health-row"><span class="hdot hdot--dead" title="здоровье: dead"></span><span class="hdot " title="здоровье: healthy"></span><span class="hdot hdot--at-risk" title="здоровье: at-risk"></span></span>
+      </div>
+    </header>
+    <div class="col__body">
+      
+  <article class="tc tc--dead">
+    <div class="tc__top"><span class="pico" style="color: var(--danger-500)" title="баг"><span class="ico "><svg viewBox="0 0 16 16" fill="none" aria-hidden="true"><path d="M5.6 6.4a2.4 2.4 0 0 1 4.8 0v3.2a2.4 2.4 0 0 1-4.8 0V6.4ZM6.4 4.2a1.6 1.6 0 0 1 3.2 0M2.8 8h2.8M10.4 8h2.8M3.4 4.6l2 1.4M12.6 4.6l-2 1.4M3.4 11.8l2-1.4M12.6 11.8l-2-1.4" stroke="currentColor" stroke-width="1.25" stroke-linecap="round" stroke-linejoin="round"></path></svg></span></span><span class="pmark" style="width: 18px; height: 18px; background: var(--chart-4)" title="zoloto585-frontend-nuxt">Nx</span><span class="tc__project">Nuxt</span><span style="flex: 1"></span><span class="pico" style="color: var(--danger-500)" title="P0 · блокер"><span class="ico "><svg viewBox="0 0 16 16" fill="none" aria-hidden="true"><path d="M8 14A6 6 0 1 0 8 2a6 6 0 0 0 0 12ZM4.6 8h6.8" stroke="currentColor" stroke-width="1.25" stroke-linecap="round" stroke-linejoin="round"></path></svg></span></span></div>
+    <h3 class="tc__title">WEB-14434 fix: hydration mismatch на /catalog (insertBefore null)</h3>
+    <div class="tc__meta"><span class="tc__badges"><span class="badge badge--sm badge--danger">брошена 26 ч</span></span><span class="tc__counts"></span></div>
+    
+    <div class="tc__foot"><span><span class="hdot hdot--dead" title="здоровье: dead"></span><span class="hico" style="width: 14px; height: 14px; color: #4D6BFE" title="dsh"><svg viewBox="0 0 16 16" fill="none" aria-hidden="true"><path d="M3 9.6C3 6.4 5.6 4.4 8.8 4.6c1.8.1 3.2 1 4 2.2.3-1.6 1-2.9 2-3.6-.1 1.4.1 2.6.6 3.6-1 .1-1.8.5-2.4 1.2.1.4.2.9.2 1.4 0 2.6-2.4 4.4-5.6 4.4C4.6 13.8 3 12 3 9.6Z" fill="currentColor"></path><circle cx="10.6" cy="8.2" r="1" fill="var(--surface)"></circle><path d="M4.2 10.4c1.6.8 3.4.6 5-.6" stroke="var(--surface)" stroke-width="1" stroke-linecap="round"></path></svg></span><strong>dsh</strong></span><span class="tc__age tc__age--late"><span class="ico ico--xs"><svg viewBox="0 0 16 16" fill="none" aria-hidden="true"><path d="M8 14a6 6 0 1 0 0-12 6 6 0 0 0 0 12ZM8 4.6V8l2.4 1.6" stroke="currentColor" stroke-width="1.25" stroke-linecap="round" stroke-linejoin="round"></path></svg></span>1.2 дн</span></div>
+  </article>
+  <article class="tc">
+    <div class="tc__top"><span class="pico" style="color: var(--info-500)" title="задача"><span class="ico "><svg viewBox="0 0 16 16" fill="none" aria-hidden="true"><path d="M3 3h10v10H3zM5.4 8.2l1.8 1.8 3.6-3.8" stroke="currentColor" stroke-width="1.25" stroke-linecap="round" stroke-linejoin="round"></path></svg></span></span><span class="pmark" style="width: 18px; height: 18px; background: var(--chart-2)" title="zoloto585-symfony">Sy</span><span class="tc__project">Symfony</span><span class="tc__sub">порция 3/5</span><span style="flex: 1"></span><span class="pico" style="color: var(--warning-600)" title="P1 · критичный"><span class="ico "><svg viewBox="0 0 16 16" fill="none" aria-hidden="true"><path d="M4 8.6 8 4.6l4 4M4 12.4 8 8.4l4 4" stroke="currentColor" stroke-width="1.25" stroke-linecap="round" stroke-linejoin="round"></path></svg></span></span></div>
+    <h3 class="tc__title">Создать DiscountAssignmentResolver + DiscountAssignment VO</h3>
+    <div class="tc__meta"><span class="tc__badges"></span><span class="tc__counts"><span class="cnt" style="color: var(--accent-700)" title="её ждут 2"><span class="ico ico--xs"><svg viewBox="0 0 16 16" fill="none" aria-hidden="true"><path d="M9.6 2.4a4 4 0 1 1-3.1 6.6L2.6 12.9v.9h2v1.4H2.2L1.6 14l4.3-4.3a4 4 0 0 1 3.7-7.3ZM11 4.4h.01" stroke="currentColor" stroke-width="1.25" stroke-linecap="round" stroke-linejoin="round"></path></svg></span>2</span></span></div>
+    
+    <div class="tc__foot"><span><span class="hdot " title="здоровье: healthy"></span><span class="hico" style="width: 14px; height: 14px; color: #4D6BFE" title="dsh"><svg viewBox="0 0 16 16" fill="none" aria-hidden="true"><path d="M3 9.6C3 6.4 5.6 4.4 8.8 4.6c1.8.1 3.2 1 4 2.2.3-1.6 1-2.9 2-3.6-.1 1.4.1 2.6.6 3.6-1 .1-1.8.5-2.4 1.2.1.4.2.9.2 1.4 0 2.6-2.4 4.4-5.6 4.4C4.6 13.8 3 12 3 9.6Z" fill="currentColor"></path><circle cx="10.6" cy="8.2" r="1" fill="var(--surface)"></circle><path d="M4.2 10.4c1.6.8 3.4.6 5-.6" stroke="var(--surface)" stroke-width="1" stroke-linecap="round"></path></svg></span><strong>dsh</strong></span><span class="tc__age"><span class="ico ico--xs"><svg viewBox="0 0 16 16" fill="none" aria-hidden="true"><path d="M8 14a6 6 0 1 0 0-12 6 6 0 0 0 0 12ZM8 4.6V8l2.4 1.6" stroke="currentColor" stroke-width="1.25" stroke-linecap="round" stroke-linejoin="round"></path></svg></span>1.3 ч</span></div>
+  </article>
+  <article class="tc">
+    <div class="tc__top"><span class="pico" style="color: var(--info-500)" title="задача"><span class="ico "><svg viewBox="0 0 16 16" fill="none" aria-hidden="true"><path d="M3 3h10v10H3zM5.4 8.2l1.8 1.8 3.6-3.8" stroke="currentColor" stroke-width="1.25" stroke-linecap="round" stroke-linejoin="round"></path></svg></span></span><span class="pmark" style="width: 18px; height: 18px; background: var(--chart-2)" title="zoloto585-symfony">Sy</span><span class="tc__project">Symfony</span><span class="tc__sub">порция 4/5</span><span style="flex: 1"></span><span class="pico" style="color: var(--warning-600)" title="P1 · критичный"><span class="ico "><svg viewBox="0 0 16 16" fill="none" aria-hidden="true"><path d="M4 8.6 8 4.6l4 4M4 12.4 8 8.4l4 4" stroke="currentColor" stroke-width="1.25" stroke-linecap="round" stroke-linejoin="round"></path></svg></span></span></div>
+    <h3 class="tc__title">Переключить GroupProfitableDiscountHandler на резолвер (вывод applied/forced из VO)</h3>
+    <div class="tc__meta"><span class="tc__badges"><span class="badge badge--sm badge--danger">красный ×1</span></span><span class="tc__counts"><span class="cnt" style="color: var(--warning-700)" title="ждёт 1"><span class="ico ico--xs"><svg viewBox="0 0 16 16" fill="none" aria-hidden="true"><path d="M4 7.4h8v6H4zM5.6 7.4V5.2a2.4 2.4 0 0 1 4.8 0v2.2" stroke="currentColor" stroke-width="1.25" stroke-linecap="round" stroke-linejoin="round"></path></svg></span>1</span></span></div>
+    
+    <div class="tc__foot"><span><span class="hdot hdot--at-risk" title="здоровье: at-risk"></span><span class="hico" style="width: 14px; height: 14px; color: #D97757" title="claude"><svg viewBox="0 0 16 16" fill="none" aria-hidden="true"><path d="M4.6 5.4h6.8a1.6 1.6 0 0 1 1.6 1.6v3.4a1.6 1.6 0 0 1-1.6 1.6H4.6A1.6 1.6 0 0 1 3 10.4V7a1.6 1.6 0 0 1 1.6-1.6ZM6.2 5.4V3.8M9.8 5.4V3.8M5.4 12v1.6M8 12v1.6M10.6 12v1.6" stroke="currentColor" stroke-width="1.25" stroke-linecap="round" stroke-linejoin="round"></path><path d="M6.4 8.6h.01M9.6 8.6h.01" stroke="currentColor" stroke-width="2.2" stroke-linecap="round"></path></svg></span><strong>claude</strong></span><span class="tc__age tc__age--warn"><span class="ico ico--xs"><svg viewBox="0 0 16 16" fill="none" aria-hidden="true"><path d="M8 14a6 6 0 1 0 0-12 6 6 0 0 0 0 12ZM8 4.6V8l2.4 1.6" stroke="currentColor" stroke-width="1.25" stroke-linecap="round" stroke-linejoin="round"></path></svg></span>3.2 ч</span></div>
+  </article>
+      
+    </div>
+  </section>
+  <section class="col" style="width: 252px">
+    <header class="col__head">
+      <div class="col__title-row">
+        <h2 class="col__title"><span class="col__code">s4</span>Проверка и коммит</h2>
+        <span class="col__count">2</span>
+      </div>
+      <div class="col__meta">
+        <span class="col__harness"><span style="display: inline-flex; align-items: center; gap: 3px"><span class="hico" style="width: 14px; height: 14px; color: #D97757" title="claude"><svg viewBox="0 0 16 16" fill="none" aria-hidden="true"><path d="M4.6 5.4h6.8a1.6 1.6 0 0 1 1.6 1.6v3.4a1.6 1.6 0 0 1-1.6 1.6H4.6A1.6 1.6 0 0 1 3 10.4V7a1.6 1.6 0 0 1 1.6-1.6ZM6.2 5.4V3.8M9.8 5.4V3.8M5.4 12v1.6M8 12v1.6M10.6 12v1.6" stroke="currentColor" stroke-width="1.25" stroke-linecap="round" stroke-linejoin="round"></path><path d="M6.4 8.6h.01M9.6 8.6h.01" stroke="currentColor" stroke-width="2.2" stroke-linecap="round"></path></svg></span>claude</span><span style="color: var(--ink-4)">·</span><span style="display: inline-flex; align-items: center; gap: 3px"><span class="hico" style="width: 14px; height: 14px; color: #4D6BFE" title="dsh"><svg viewBox="0 0 16 16" fill="none" aria-hidden="true"><path d="M3 9.6C3 6.4 5.6 4.4 8.8 4.6c1.8.1 3.2 1 4 2.2.3-1.6 1-2.9 2-3.6-.1 1.4.1 2.6.6 3.6-1 .1-1.8.5-2.4 1.2.1.4.2.9.2 1.4 0 2.6-2.4 4.4-5.6 4.4C4.6 13.8 3 12 3 9.6Z" fill="currentColor"></path><circle cx="10.6" cy="8.2" r="1" fill="var(--surface)"></circle><path d="M4.2 10.4c1.6.8 3.4.6 5-.6" stroke="var(--surface)" stroke-width="1" stroke-linecap="round"></path></svg></span>dsh</span></span>
+        <span class="health-row"><span class="hdot " title="здоровье: healthy"></span><span class="hdot hdot--at-risk" title="здоровье: at-risk"></span></span>
+      </div>
+    </header>
+    <div class="col__body">
+      
+  <article class="tc">
+    <div class="tc__top"><span class="pico" style="color: var(--info-500)" title="задача"><span class="ico "><svg viewBox="0 0 16 16" fill="none" aria-hidden="true"><path d="M3 3h10v10H3zM5.4 8.2l1.8 1.8 3.6-3.8" stroke="currentColor" stroke-width="1.25" stroke-linecap="round" stroke-linejoin="round"></path></svg></span></span><span class="pmark" style="width: 18px; height: 18px; background: var(--chart-2)" title="zoloto585-symfony">Sy</span><span class="tc__project">Symfony</span><span class="tc__sub">порция 2/5</span><span style="flex: 1"></span><span class="pico" style="color: var(--warning-600)" title="P1 · критичный"><span class="ico "><svg viewBox="0 0 16 16" fill="none" aria-hidden="true"><path d="M4 8.6 8 4.6l4 4M4 12.4 8 8.4l4 4" stroke="currentColor" stroke-width="1.25" stroke-linecap="round" stroke-linejoin="round"></path></svg></span></span></div>
+    <h3 class="tc__title">Выровнять DiscountGroupMock к реальной семантике AbstractDiscountGroup</h3>
+    <div class="tc__meta"><span class="tc__badges"></span><span class="tc__counts"><span class="cnt" style="color: var(--accent-700)" title="её ждут 1"><span class="ico ico--xs"><svg viewBox="0 0 16 16" fill="none" aria-hidden="true"><path d="M9.6 2.4a4 4 0 1 1-3.1 6.6L2.6 12.9v.9h2v1.4H2.2L1.6 14l4.3-4.3a4 4 0 0 1 3.7-7.3ZM11 4.4h.01" stroke="currentColor" stroke-width="1.25" stroke-linecap="round" stroke-linejoin="round"></path></svg></span>1</span></span></div>
+    
+    <div class="tc__foot"><span><span class="hdot " title="здоровье: healthy"></span><span class="hico" style="width: 14px; height: 14px; color: #D97757" title="claude"><svg viewBox="0 0 16 16" fill="none" aria-hidden="true"><path d="M4.6 5.4h6.8a1.6 1.6 0 0 1 1.6 1.6v3.4a1.6 1.6 0 0 1-1.6 1.6H4.6A1.6 1.6 0 0 1 3 10.4V7a1.6 1.6 0 0 1 1.6-1.6ZM6.2 5.4V3.8M9.8 5.4V3.8M5.4 12v1.6M8 12v1.6M10.6 12v1.6" stroke="currentColor" stroke-width="1.25" stroke-linecap="round" stroke-linejoin="round"></path><path d="M6.4 8.6h.01M9.6 8.6h.01" stroke="currentColor" stroke-width="2.2" stroke-linecap="round"></path></svg></span><strong>claude</strong></span><span class="tc__age"><span class="ico ico--xs"><svg viewBox="0 0 16 16" fill="none" aria-hidden="true"><path d="M8 14a6 6 0 1 0 0-12 6 6 0 0 0 0 12ZM8 4.6V8l2.4 1.6" stroke="currentColor" stroke-width="1.25" stroke-linecap="round" stroke-linejoin="round"></path></svg></span>8 мин</span></div>
+  </article>
+  <article class="tc tc--stale">
+    <div class="tc__top"><span class="pico" style="color: var(--info-500)" title="задача"><span class="ico "><svg viewBox="0 0 16 16" fill="none" aria-hidden="true"><path d="M3 3h10v10H3zM5.4 8.2l1.8 1.8 3.6-3.8" stroke="currentColor" stroke-width="1.25" stroke-linecap="round" stroke-linejoin="round"></path></svg></span></span><span class="pmark" style="width: 18px; height: 18px; background: var(--chart-5)" title="PremiumTackleFinal">PT</span><span class="tc__project">PremiumTackle</span><span style="flex: 1"></span><span class="pico" style="color: var(--warning-600)" title="P1 · критичный"><span class="ico "><svg viewBox="0 0 16 16" fill="none" aria-hidden="true"><path d="M4 8.6 8 4.6l4 4M4 12.4 8 8.4l4 4" stroke="currentColor" stroke-width="1.25" stroke-linecap="round" stroke-linejoin="round"></path></svg></span></span></div>
+    <h3 class="tc__title">Pixel-perfect аудит всех страниц по Figma</h3>
+    <div class="tc__meta"><span class="tc__badges"><span class="badge badge--sm badge--warning">молчит 3 ч</span></span><span class="tc__counts"></span></div>
+    
+    <div class="tc__foot"><span><span class="hdot hdot--at-risk" title="здоровье: at-risk"></span><span class="hico" style="width: 14px; height: 14px; color: #D97757" title="claude"><svg viewBox="0 0 16 16" fill="none" aria-hidden="true"><path d="M4.6 5.4h6.8a1.6 1.6 0 0 1 1.6 1.6v3.4a1.6 1.6 0 0 1-1.6 1.6H4.6A1.6 1.6 0 0 1 3 10.4V7a1.6 1.6 0 0 1 1.6-1.6ZM6.2 5.4V3.8M9.8 5.4V3.8M5.4 12v1.6M8 12v1.6M10.6 12v1.6" stroke="currentColor" stroke-width="1.25" stroke-linecap="round" stroke-linejoin="round"></path><path d="M6.4 8.6h.01M9.6 8.6h.01" stroke="currentColor" stroke-width="2.2" stroke-linecap="round"></path></svg></span><strong>claude</strong></span><span class="tc__age tc__age--warn"><span class="ico ico--xs"><svg viewBox="0 0 16 16" fill="none" aria-hidden="true"><path d="M8 14a6 6 0 1 0 0-12 6 6 0 0 0 0 12ZM8 4.6V8l2.4 1.6" stroke="currentColor" stroke-width="1.25" stroke-linecap="round" stroke-linejoin="round"></path></svg></span>5.5 ч</span></div>
+  </article>
+      
+    </div>
+  </section>
+    
+<aside class="done-rail">
+  <span class="ico ico--md"><svg viewBox="0 0 16 16" fill="none" aria-hidden="true"><path d="M3.5 8.4l3 3 6-6.6" stroke="currentColor" stroke-width="1.25" stroke-linecap="round" stroke-linejoin="round"></path></svg></span>
+  <span class="done-rail__label">Готово · 7 дн</span>
+  <span class="badge badge--sm badge--success">12</span>
+</aside>
+  </div>
+</section>
+</main>
+<div class="backdrop"></div>
+<div class="modal-wrap">
+<div class="modal">
+  <div class="modal__header">
+    <div style="display: flex; flex-direction: column; gap: 2px; min-width: 0">
+      <h2 class="modal__title">Новая задача</h2>
+      <span class="hint">что делаем, в каком проекте и как: кто исполняет и по какому процессу</span>
+    </div>
+    <span class="drawer__close"><span class="ico "><svg viewBox="0 0 16 16" fill="none" aria-hidden="true"><path d="M3.5 3.5l9 9M12.5 3.5l-9 9" stroke="currentColor" stroke-width="1.25" stroke-linecap="round" stroke-linejoin="round"></path></svg></span></span>
+  </div>
+  <div class="modal__body">
+    <div style="display: grid; grid-template-columns: minmax(0, 1fr) 200px 208px; gap: var(--space-4)">
+      <div class="field"><span class="field__label">Тип</span>
+        <span class="seg"><span class="seg__item seg__item--active"><span class="pico" style="color: var(--chart-3)" title="эпик · ТЗ"><span class="ico "><svg viewBox="0 0 16 16" fill="none" aria-hidden="true"><path d="M8 2.6 13.6 5.6 8 8.6 2.4 5.6 8 2.6ZM2.4 8.4 8 11.4l5.6-3M2.4 11 8 14l5.6-3" stroke="currentColor" stroke-width="1.25" stroke-linecap="round" stroke-linejoin="round"></path></svg></span></span>эпик · ТЗ</span><span class="seg__item"><span class="pico" style="color: var(--info-500)" title="задача"><span class="ico "><svg viewBox="0 0 16 16" fill="none" aria-hidden="true"><path d="M3 3h10v10H3zM5.4 8.2l1.8 1.8 3.6-3.8" stroke="currentColor" stroke-width="1.25" stroke-linecap="round" stroke-linejoin="round"></path></svg></span></span>задача</span><span class="seg__item"><span class="pico" style="color: var(--danger-500)" title="баг"><span class="ico "><svg viewBox="0 0 16 16" fill="none" aria-hidden="true"><path d="M5.6 6.4a2.4 2.4 0 0 1 4.8 0v3.2a2.4 2.4 0 0 1-4.8 0V6.4ZM6.4 4.2a1.6 1.6 0 0 1 3.2 0M2.8 8h2.8M10.4 8h2.8M3.4 4.6l2 1.4M12.6 4.6l-2 1.4M3.4 11.8l2-1.4M12.6 11.8l-2-1.4" stroke="currentColor" stroke-width="1.25" stroke-linecap="round" stroke-linejoin="round"></path></svg></span></span>баг</span></span>
+      </div>
+      <div class="field"><span class="field__label">Проект</span>
+        <span class="select"><span class="pmark" style="width: 16px; height: 16px; background: var(--chart-2)" title="zoloto585-symfony">Sy</span><span style="flex: 1">Symfony</span><span class="ico ico--xs"><svg viewBox="0 0 16 16" fill="none" aria-hidden="true"><path d="M4.5 6.5 8 10l3.5-3.5" stroke="currentColor" stroke-width="1.25" stroke-linecap="round" stroke-linejoin="round"></path></svg></span></span>
+      </div>
+      <div class="field"><span class="field__label">Приоритет</span>
+        <span class="seg"><span class="seg__item" title="P0 блокер · только баги" style="opacity: .45"><span class="pico" style="color: var(--danger-500)" title="P0 · блокер"><span class="ico "><svg viewBox="0 0 16 16" fill="none" aria-hidden="true"><path d="M8 14A6 6 0 1 0 8 2a6 6 0 0 0 0 12ZM4.6 8h6.8" stroke="currentColor" stroke-width="1.25" stroke-linecap="round" stroke-linejoin="round"></path></svg></span></span></span><span class="seg__item seg__item--active"><span class="pico" style="color: var(--warning-600)" title="P1 · критичный"><span class="ico "><svg viewBox="0 0 16 16" fill="none" aria-hidden="true"><path d="M4 8.6 8 4.6l4 4M4 12.4 8 8.4l4 4" stroke="currentColor" stroke-width="1.25" stroke-linecap="round" stroke-linejoin="round"></path></svg></span></span></span><span class="seg__item"><span class="pico" style="color: var(--ink-3)" title="P2 · обычный"><span class="ico "><svg viewBox="0 0 16 16" fill="none" aria-hidden="true"><path d="M4 6.2h8M4 9.8h8" stroke="currentColor" stroke-width="1.25" stroke-linecap="round" stroke-linejoin="round"></path></svg></span></span></span><span class="seg__item"><span class="pico" style="color: var(--info-500)" title="P3 · низкий"><span class="ico "><svg viewBox="0 0 16 16" fill="none" aria-hidden="true"><path d="M4 5.8 8 9.8l4-4" stroke="currentColor" stroke-width="1.25" stroke-linecap="round" stroke-linejoin="round"></path></svg></span></span></span><span class="seg__item"><span class="pico" style="color: var(--ink-4)" title="P4 · потом"><span class="ico "><svg viewBox="0 0 16 16" fill="none" aria-hidden="true"><path d="M4 3.6 8 7.6l4-4M4 7.4 8 11.4l4-4" stroke="currentColor" stroke-width="1.25" stroke-linecap="round" stroke-linejoin="round"></path></svg></span></span></span></span>
+      </div>
+    </div>
+
+    <div class="field"><span class="field__label">Заголовок</span>
+      <span class="input input--filled">WEB-14193 — Единый резолвер назначения скидок</span>
+    </div>
+
+    <div class="field"><span class="field__label">Описание · ТЗ</span>
+      <div class="textarea" style="min-height: 112px">Скидки назначаются в GroupProfitableDiscountHandler и DiscountGroupMock по разным правилам: applied и forced считаются в двух местах и расходятся на группах с «2=1».
+Нужен один DiscountAssignmentResolver и VO DiscountAssignment; хендлер и мок переводятся на резолвер, старое поведение для уже созданных заказов не меняется.</div>
+      <p class="field__hint">markdown · эпик режется на шаги и порции на этапе s1, здесь только суть</p>
+    </div>
+
+    <div class="field"><span class="field__label">Критерии приёмки</span>
+      <div class="textarea" style="min-height: 56px">все тесты скидок зелёные, composer lint чистый; applied/forced на старых заказах совпадают со снапшотом до правки</div>
+    </div>
+
+    <section style="display: flex; flex-direction: column; gap: var(--space-4)">
+      <div style="display: flex; align-items: center; justify-content: space-between; gap: var(--space-4)">
+        <h4 class="h4">Как делать</h4>
+        <span style="display: inline-flex; align-items: center; gap: var(--space-3)">
+          <span class="hint tnum">deepseek-chat · 1.8 с · оценка по описанию и критериям</span>
+          <button type="button" class="btn btn--secondary btn--sm "><span class="ico "><svg viewBox="0 0 16 16" fill="none" aria-hidden="true"><path d="M13.5 8a5.5 5.5 0 1 1-1.9-4.16M13.5 2.2v3.2h-3.2" stroke="currentColor" stroke-width="1.25" stroke-linecap="round" stroke-linejoin="round"></path></svg></span><span>Оценить заново</span></button>
+        </span>
+      </div>
+
+      <div class="est">
+        <div style="display: flex; flex-direction: column; gap: var(--space-2)">
+          <span class="est__k">объём</span>
+          <span class="est__v">L · примерно 4–6 ч агента</span>
+          <div class="scale"><span class="scale__step scale__step--on"></span><span class="scale__step scale__step--on"></span><span class="scale__step scale__step--on"></span><span class="scale__step "></span></div><div class="scale__labels"><span>S</span><span>M</span><span>L</span><span>XL</span></div>
+          <span class="est__why">два хендлера, новый VO, тесты и миграция мока: 6–8 файлов, 3–4 порции</span>
+        </div>
+        <div style="display: flex; flex-direction: column; gap: var(--space-2)">
+          <span class="est__k">когнитивная сложность</span>
+          <span class="est__v">высокая</span>
+          <div class="scale"><span class="scale__step scale__step--on"></span><span class="scale__step scale__step--on"></span><span class="scale__step scale__step--on"></span></div><div class="scale__labels"><span>низкая</span><span>средняя</span><span>высокая</span></div>
+          <span class="est__why">меняется семантика applied/forced в двух местах, нужны решения автора по старым заказам</span>
+        </div>
+        <div style="grid-column: 1 / -1; display: flex; align-items: center; justify-content: space-between; gap: var(--space-4); padding-top: var(--space-3); border-top: 1px solid var(--hairline)">
+          <span style="display: flex; flex-direction: column; gap: 2px; min-width: 0">
+            <span class="est__k">совет</span>
+            <span class="est__v" style="display: inline-flex; align-items: center; gap: var(--space-2)"><span class="hico" style="width: 18px; height: 18px; color: #D97757" title="claude"><svg viewBox="0 0 16 16" fill="none" aria-hidden="true"><path d="M4.6 5.4h6.8a1.6 1.6 0 0 1 1.6 1.6v3.4a1.6 1.6 0 0 1-1.6 1.6H4.6A1.6 1.6 0 0 1 3 10.4V7a1.6 1.6 0 0 1 1.6-1.6ZM6.2 5.4V3.8M9.8 5.4V3.8M5.4 12v1.6M8 12v1.6M10.6 12v1.6" stroke="currentColor" stroke-width="1.25" stroke-linecap="round" stroke-linejoin="round"></path><path d="M6.4 8.6h.01M9.6 8.6h.01" stroke="currentColor" stroke-width="2.2" stroke-linecap="round"></path></svg></span>claude · feature-pipeline</span>
+            <span class="est__why">ТЗ с решениями автора и приёмка судьёй; код можно отдать dsh через маршрутизацию этапов. Дешевле: codex · cheap-pipeline, если вопросов автору не ждём</span>
+          </span>
+          <button type="button" class="btn btn--primary btn--sm "><span class="ico "><svg viewBox="0 0 16 16" fill="none" aria-hidden="true"><path d="M3.5 8.4l3 3 6-6.6" stroke="currentColor" stroke-width="1.25" stroke-linecap="round" stroke-linejoin="round"></path></svg></span><span>Применить совет</span></button>
+        </div>
+      </div>
+
+      <div class="field">
+        <span class="field__label">Маршрут · кто исполняет и по какому процессу</span>
+        <div class="route">
+          <span></span>
+          <span class="route__h">feature-pipeline</span><span class="route__h">cheap-pipeline</span><span class="route__h">local-pipeline</span><span class="route__h">прямая задача</span>
+          <span class="route__r"><span class="hico" style="width: 18px; height: 18px; color: #D97757" title="claude"><svg viewBox="0 0 16 16" fill="none" aria-hidden="true"><path d="M4.6 5.4h6.8a1.6 1.6 0 0 1 1.6 1.6v3.4a1.6 1.6 0 0 1-1.6 1.6H4.6A1.6 1.6 0 0 1 3 10.4V7a1.6 1.6 0 0 1 1.6-1.6ZM6.2 5.4V3.8M9.8 5.4V3.8M5.4 12v1.6M8 12v1.6M10.6 12v1.6" stroke="currentColor" stroke-width="1.25" stroke-linecap="round" stroke-linejoin="round"></path><path d="M6.4 8.6h.01M9.6 8.6h.01" stroke="currentColor" stroke-width="2.2" stroke-linecap="round"></path></svg></span>claude</span>
+          <span class="route__cell route__cell--on route__cell--rec"><span class="chain"><span class="ico "><svg viewBox="0 0 16 16" fill="none" aria-hidden="true"><path d="M4 2.6h5.2L12.4 5.8v7.6H4V2.6ZM9.2 2.6v3.2h3.2" stroke="currentColor" stroke-width="1.25" stroke-linecap="round" stroke-linejoin="round"></path></svg></span><i></i><span class="ico "><svg viewBox="0 0 16 16" fill="none" aria-hidden="true"><path d="M1.8 8s2.4-4.2 6.2-4.2S14.2 8 14.2 8s-2.4 4.2-6.2 4.2S1.8 8 1.8 8ZM8 10a2 2 0 1 0 0-4 2 2 0 0 0 0 4Z" stroke="currentColor" stroke-width="1.25" stroke-linecap="round" stroke-linejoin="round"></path></svg></span><i></i><span class="hico" style="width: 16px; height: 16px; color: #4D6BFE" title="dsh"><svg viewBox="0 0 16 16" fill="none" aria-hidden="true"><path d="M3 9.6C3 6.4 5.6 4.4 8.8 4.6c1.8.1 3.2 1 4 2.2.3-1.6 1-2.9 2-3.6-.1 1.4.1 2.6.6 3.6-1 .1-1.8.5-2.4 1.2.1.4.2.9.2 1.4 0 2.6-2.4 4.4-5.6 4.4C4.6 13.8 3 12 3 9.6Z" fill="currentColor"></path><circle cx="10.6" cy="8.2" r="1" fill="var(--surface)"></circle><path d="M4.2 10.4c1.6.8 3.4.6 5-.6" stroke="var(--surface)" stroke-width="1" stroke-linecap="round"></path></svg></span><span class="hico" style="width: 16px; height: 16px; color: #4A8CFF" title="codex"><svg viewBox="0 0 16 16" fill="none" aria-hidden="true"><path d="M5.2 12.6h6.2a2.6 2.6 0 0 0 .5-5.2 3.6 3.6 0 0 0-6.9-.9 3 3 0 0 0 .2 6.1Z" stroke="currentColor" stroke-width="1.25" stroke-linecap="round" stroke-linejoin="round"></path></svg></span><i></i><span class="ico "><svg viewBox="0 0 16 16" fill="none" aria-hidden="true"><path d="M9.2 3.2 12.8 6.8M8 4.4 11.6 8M5.6 6.8l4.2 4.2M3.2 12.8l4.2-4.2M2.6 13.4h5.6" stroke="currentColor" stroke-width="1.25" stroke-linecap="round" stroke-linejoin="round"></path></svg></span></span></span><span class="route__cell route__cell--alt"><span class="chain"><span class="ico "><svg viewBox="0 0 16 16" fill="none" aria-hidden="true"><path d="M4 2.6h5.2L12.4 5.8v7.6H4V2.6ZM9.2 2.6v3.2h3.2" stroke="currentColor" stroke-width="1.25" stroke-linecap="round" stroke-linejoin="round"></path></svg></span><i></i><span class="ico "><svg viewBox="0 0 16 16" fill="none" aria-hidden="true"><path d="M1.8 8s2.4-4.2 6.2-4.2S14.2 8 14.2 8s-2.4 4.2-6.2 4.2S1.8 8 1.8 8ZM8 10a2 2 0 1 0 0-4 2 2 0 0 0 0 4Z" stroke="currentColor" stroke-width="1.25" stroke-linecap="round" stroke-linejoin="round"></path></svg></span><i></i><span class="hico" style="width: 16px; height: 16px; color: #4D6BFE" title="dsh"><svg viewBox="0 0 16 16" fill="none" aria-hidden="true"><path d="M3 9.6C3 6.4 5.6 4.4 8.8 4.6c1.8.1 3.2 1 4 2.2.3-1.6 1-2.9 2-3.6-.1 1.4.1 2.6.6 3.6-1 .1-1.8.5-2.4 1.2.1.4.2.9.2 1.4 0 2.6-2.4 4.4-5.6 4.4C4.6 13.8 3 12 3 9.6Z" fill="currentColor"></path><circle cx="10.6" cy="8.2" r="1" fill="var(--surface)"></circle><path d="M4.2 10.4c1.6.8 3.4.6 5-.6" stroke="var(--surface)" stroke-width="1" stroke-linecap="round"></path></svg></span><i></i><span class="ico "><svg viewBox="0 0 16 16" fill="none" aria-hidden="true"><path d="M9.2 3.2 12.8 6.8M8 4.4 11.6 8M5.6 6.8l4.2 4.2M3.2 12.8l4.2-4.2M2.6 13.4h5.6" stroke="currentColor" stroke-width="1.25" stroke-linecap="round" stroke-linejoin="round"></path></svg></span></span></span><span class="route__cell "><span class="chain"><span class="ico "><svg viewBox="0 0 16 16" fill="none" aria-hidden="true"><path d="M4 2.6h5.2L12.4 5.8v7.6H4V2.6ZM9.2 2.6v3.2h3.2" stroke="currentColor" stroke-width="1.25" stroke-linecap="round" stroke-linejoin="round"></path></svg></span><i></i><span class="ico "><svg viewBox="0 0 16 16" fill="none" aria-hidden="true"><path d="M1.8 8s2.4-4.2 6.2-4.2S14.2 8 14.2 8s-2.4 4.2-6.2 4.2S1.8 8 1.8 8ZM8 10a2 2 0 1 0 0-4 2 2 0 0 0 0 4Z" stroke="currentColor" stroke-width="1.25" stroke-linecap="round" stroke-linejoin="round"></path></svg></span><i></i><span class="hico" style="width: 16px; height: 16px; color: #D97757" title="claude"><svg viewBox="0 0 16 16" fill="none" aria-hidden="true"><path d="M4.6 5.4h6.8a1.6 1.6 0 0 1 1.6 1.6v3.4a1.6 1.6 0 0 1-1.6 1.6H4.6A1.6 1.6 0 0 1 3 10.4V7a1.6 1.6 0 0 1 1.6-1.6ZM6.2 5.4V3.8M9.8 5.4V3.8M5.4 12v1.6M8 12v1.6M10.6 12v1.6" stroke="currentColor" stroke-width="1.25" stroke-linecap="round" stroke-linejoin="round"></path><path d="M6.4 8.6h.01M9.6 8.6h.01" stroke="currentColor" stroke-width="2.2" stroke-linecap="round"></path></svg></span><i></i><span class="ico "><svg viewBox="0 0 16 16" fill="none" aria-hidden="true"><path d="M9.2 3.2 12.8 6.8M8 4.4 11.6 8M5.6 6.8l4.2 4.2M3.2 12.8l4.2-4.2M2.6 13.4h5.6" stroke="currentColor" stroke-width="1.25" stroke-linecap="round" stroke-linejoin="round"></path></svg></span></span></span><span class="route__cell route__cell--off">—</span>
+          <span class="route__r"><span class="hico" style="width: 18px; height: 18px; color: #4A8CFF" title="codex"><svg viewBox="0 0 16 16" fill="none" aria-hidden="true"><path d="M5.2 12.6h6.2a2.6 2.6 0 0 0 .5-5.2 3.6 3.6 0 0 0-6.9-.9 3 3 0 0 0 .2 6.1Z" stroke="currentColor" stroke-width="1.25" stroke-linecap="round" stroke-linejoin="round"></path></svg></span>codex</span>
+          <span class="route__cell "><span class="chain"><span class="ico "><svg viewBox="0 0 16 16" fill="none" aria-hidden="true"><path d="M4 2.6h5.2L12.4 5.8v7.6H4V2.6ZM9.2 2.6v3.2h3.2" stroke="currentColor" stroke-width="1.25" stroke-linecap="round" stroke-linejoin="round"></path></svg></span><i></i><span class="ico "><svg viewBox="0 0 16 16" fill="none" aria-hidden="true"><path d="M1.8 8s2.4-4.2 6.2-4.2S14.2 8 14.2 8s-2.4 4.2-6.2 4.2S1.8 8 1.8 8ZM8 10a2 2 0 1 0 0-4 2 2 0 0 0 0 4Z" stroke="currentColor" stroke-width="1.25" stroke-linecap="round" stroke-linejoin="round"></path></svg></span><i></i><span class="hico" style="width: 16px; height: 16px; color: #4D6BFE" title="dsh"><svg viewBox="0 0 16 16" fill="none" aria-hidden="true"><path d="M3 9.6C3 6.4 5.6 4.4 8.8 4.6c1.8.1 3.2 1 4 2.2.3-1.6 1-2.9 2-3.6-.1 1.4.1 2.6.6 3.6-1 .1-1.8.5-2.4 1.2.1.4.2.9.2 1.4 0 2.6-2.4 4.4-5.6 4.4C4.6 13.8 3 12 3 9.6Z" fill="currentColor"></path><circle cx="10.6" cy="8.2" r="1" fill="var(--surface)"></circle><path d="M4.2 10.4c1.6.8 3.4.6 5-.6" stroke="var(--surface)" stroke-width="1" stroke-linecap="round"></path></svg></span><span class="hico" style="width: 16px; height: 16px; color: #4A8CFF" title="codex"><svg viewBox="0 0 16 16" fill="none" aria-hidden="true"><path d="M5.2 12.6h6.2a2.6 2.6 0 0 0 .5-5.2 3.6 3.6 0 0 0-6.9-.9 3 3 0 0 0 .2 6.1Z" stroke="currentColor" stroke-width="1.25" stroke-linecap="round" stroke-linejoin="round"></path></svg></span><i></i><span class="ico "><svg viewBox="0 0 16 16" fill="none" aria-hidden="true"><path d="M9.2 3.2 12.8 6.8M8 4.4 11.6 8M5.6 6.8l4.2 4.2M3.2 12.8l4.2-4.2M2.6 13.4h5.6" stroke="currentColor" stroke-width="1.25" stroke-linecap="round" stroke-linejoin="round"></path></svg></span></span></span><span class="route__cell route__cell--alt"><span class="chain"><span class="ico "><svg viewBox="0 0 16 16" fill="none" aria-hidden="true"><path d="M4 2.6h5.2L12.4 5.8v7.6H4V2.6ZM9.2 2.6v3.2h3.2" stroke="currentColor" stroke-width="1.25" stroke-linecap="round" stroke-linejoin="round"></path></svg></span><i></i><span class="ico "><svg viewBox="0 0 16 16" fill="none" aria-hidden="true"><path d="M1.8 8s2.4-4.2 6.2-4.2S14.2 8 14.2 8s-2.4 4.2-6.2 4.2S1.8 8 1.8 8ZM8 10a2 2 0 1 0 0-4 2 2 0 0 0 0 4Z" stroke="currentColor" stroke-width="1.25" stroke-linecap="round" stroke-linejoin="round"></path></svg></span><i></i><span class="hico" style="width: 16px; height: 16px; color: #4D6BFE" title="dsh"><svg viewBox="0 0 16 16" fill="none" aria-hidden="true"><path d="M3 9.6C3 6.4 5.6 4.4 8.8 4.6c1.8.1 3.2 1 4 2.2.3-1.6 1-2.9 2-3.6-.1 1.4.1 2.6.6 3.6-1 .1-1.8.5-2.4 1.2.1.4.2.9.2 1.4 0 2.6-2.4 4.4-5.6 4.4C4.6 13.8 3 12 3 9.6Z" fill="currentColor"></path><circle cx="10.6" cy="8.2" r="1" fill="var(--surface)"></circle><path d="M4.2 10.4c1.6.8 3.4.6 5-.6" stroke="var(--surface)" stroke-width="1" stroke-linecap="round"></path></svg></span><i></i><span class="ico "><svg viewBox="0 0 16 16" fill="none" aria-hidden="true"><path d="M9.2 3.2 12.8 6.8M8 4.4 11.6 8M5.6 6.8l4.2 4.2M3.2 12.8l4.2-4.2M2.6 13.4h5.6" stroke="currentColor" stroke-width="1.25" stroke-linecap="round" stroke-linejoin="round"></path></svg></span></span></span><span class="route__cell "><span class="chain"><span class="ico "><svg viewBox="0 0 16 16" fill="none" aria-hidden="true"><path d="M4 2.6h5.2L12.4 5.8v7.6H4V2.6ZM9.2 2.6v3.2h3.2" stroke="currentColor" stroke-width="1.25" stroke-linecap="round" stroke-linejoin="round"></path></svg></span><i></i><span class="ico "><svg viewBox="0 0 16 16" fill="none" aria-hidden="true"><path d="M1.8 8s2.4-4.2 6.2-4.2S14.2 8 14.2 8s-2.4 4.2-6.2 4.2S1.8 8 1.8 8ZM8 10a2 2 0 1 0 0-4 2 2 0 0 0 0 4Z" stroke="currentColor" stroke-width="1.25" stroke-linecap="round" stroke-linejoin="round"></path></svg></span><i></i><span class="hico" style="width: 16px; height: 16px; color: #4A8CFF" title="codex"><svg viewBox="0 0 16 16" fill="none" aria-hidden="true"><path d="M5.2 12.6h6.2a2.6 2.6 0 0 0 .5-5.2 3.6 3.6 0 0 0-6.9-.9 3 3 0 0 0 .2 6.1Z" stroke="currentColor" stroke-width="1.25" stroke-linecap="round" stroke-linejoin="round"></path></svg></span><i></i><span class="ico "><svg viewBox="0 0 16 16" fill="none" aria-hidden="true"><path d="M9.2 3.2 12.8 6.8M8 4.4 11.6 8M5.6 6.8l4.2 4.2M3.2 12.8l4.2-4.2M2.6 13.4h5.6" stroke="currentColor" stroke-width="1.25" stroke-linecap="round" stroke-linejoin="round"></path></svg></span></span></span><span class="route__cell route__cell--off">—</span>
+          <span class="route__r"><span class="hico" style="width: 18px; height: 18px; color: #4D6BFE" title="dsh"><svg viewBox="0 0 16 16" fill="none" aria-hidden="true"><path d="M3 9.6C3 6.4 5.6 4.4 8.8 4.6c1.8.1 3.2 1 4 2.2.3-1.6 1-2.9 2-3.6-.1 1.4.1 2.6.6 3.6-1 .1-1.8.5-2.4 1.2.1.4.2.9.2 1.4 0 2.6-2.4 4.4-5.6 4.4C4.6 13.8 3 12 3 9.6Z" fill="currentColor"></path><circle cx="10.6" cy="8.2" r="1" fill="var(--surface)"></circle><path d="M4.2 10.4c1.6.8 3.4.6 5-.6" stroke="var(--surface)" stroke-width="1" stroke-linecap="round"></path></svg></span>dsh <span class="hint">DeepSeek</span></span>
+          <span class="route__cell route__cell--off">—</span><span class="route__cell route__cell--off">—</span><span class="route__cell route__cell--off">—</span><span class="route__cell route__cell--off"><span class="hico" style="width: 16px; height: 16px; color: #4D6BFE" title="dsh"><svg viewBox="0 0 16 16" fill="none" aria-hidden="true"><path d="M3 9.6C3 6.4 5.6 4.4 8.8 4.6c1.8.1 3.2 1 4 2.2.3-1.6 1-2.9 2-3.6-.1 1.4.1 2.6.6 3.6-1 .1-1.8.5-2.4 1.2.1.4.2.9.2 1.4 0 2.6-2.4 4.4-5.6 4.4C4.6 13.8 3 12 3 9.6Z" fill="currentColor"></path><circle cx="10.6" cy="8.2" r="1" fill="var(--surface)"></circle><path d="M4.2 10.4c1.6.8 3.4.6 5-.6" stroke="var(--surface)" stroke-width="1" stroke-linecap="round"></path></svg></span><span style="margin-left: 6px">эпик так не делают</span></span>
+          <span class="route__r"><span class="hico" style="width: 18px; height: 18px; color: currentColor" title="grok"><svg viewBox="0 0 16 16" fill="none" aria-hidden="true"><path d="M8 13.4a5.4 5.4 0 1 0 0-10.8 5.4 5.4 0 0 0 0 10.8ZM2.8 13.2 13.2 2.8" stroke="currentColor" stroke-width="1.25" stroke-linecap="round" stroke-linejoin="round"></path></svg></span>grok</span>
+          <span class="route__cell route__cell--off">—</span><span class="route__cell route__cell--off">—</span><span class="route__cell route__cell--off">—</span><span class="route__cell route__cell--off"><span class="hico" style="width: 16px; height: 16px; color: currentColor" title="grok"><svg viewBox="0 0 16 16" fill="none" aria-hidden="true"><path d="M8 13.4a5.4 5.4 0 1 0 0-10.8 5.4 5.4 0 0 0 0 10.8ZM2.8 13.2 13.2 2.8" stroke="currentColor" stroke-width="1.25" stroke-linecap="round" stroke-linejoin="round"></path></svg></span><span style="margin-left: 6px">эпик так не делают</span></span>
+        </div>
+        <div style="display: flex; align-items: center; gap: var(--space-4); font-size: var(--text-xs); color: var(--ink-3); flex-wrap: wrap"><span style="display: inline-flex; align-items: center; gap: 4px"><span class="ico ico--xs"><svg viewBox="0 0 16 16" fill="none" aria-hidden="true"><path d="M4 2.6h5.2L12.4 5.8v7.6H4V2.6ZM9.2 2.6v3.2h3.2" stroke="currentColor" stroke-width="1.25" stroke-linecap="round" stroke-linejoin="round"></path></svg></span> ТЗ и чек-лист</span><span style="display: inline-flex; align-items: center; gap: 4px"><span class="ico ico--xs"><svg viewBox="0 0 16 16" fill="none" aria-hidden="true"><path d="M1.8 8s2.4-4.2 6.2-4.2S14.2 8 14.2 8s-2.4 4.2-6.2 4.2S1.8 8 1.8 8ZM8 10a2 2 0 1 0 0-4 2 2 0 0 0 0 4Z" stroke="currentColor" stroke-width="1.25" stroke-linecap="round" stroke-linejoin="round"></path></svg></span> критика</span><span style="display: inline-flex; align-items: center; gap: 4px"><span class="hico" style="width: 16px; height: 16px; color: #4D6BFE" title="dsh"><svg viewBox="0 0 16 16" fill="none" aria-hidden="true"><path d="M3 9.6C3 6.4 5.6 4.4 8.8 4.6c1.8.1 3.2 1 4 2.2.3-1.6 1-2.9 2-3.6-.1 1.4.1 2.6.6 3.6-1 .1-1.8.5-2.4 1.2.1.4.2.9.2 1.4 0 2.6-2.4 4.4-5.6 4.4C4.6 13.8 3 12 3 9.6Z" fill="currentColor"></path><circle cx="10.6" cy="8.2" r="1" fill="var(--surface)"></circle><path d="M4.2 10.4c1.6.8 3.4.6 5-.6" stroke="var(--surface)" stroke-width="1" stroke-linecap="round"></path></svg></span><span class="hico" style="width: 16px; height: 16px; color: #4A8CFF" title="codex"><svg viewBox="0 0 16 16" fill="none" aria-hidden="true"><path d="M5.2 12.6h6.2a2.6 2.6 0 0 0 .5-5.2 3.6 3.6 0 0 0-6.9-.9 3 3 0 0 0 .2 6.1Z" stroke="currentColor" stroke-width="1.25" stroke-linecap="round" stroke-linejoin="round"></path></svg></span><span class="hico" style="width: 16px; height: 16px; color: #D97757" title="claude"><svg viewBox="0 0 16 16" fill="none" aria-hidden="true"><path d="M4.6 5.4h6.8a1.6 1.6 0 0 1 1.6 1.6v3.4a1.6 1.6 0 0 1-1.6 1.6H4.6A1.6 1.6 0 0 1 3 10.4V7a1.6 1.6 0 0 1 1.6-1.6ZM6.2 5.4V3.8M9.8 5.4V3.8M5.4 12v1.6M8 12v1.6M10.6 12v1.6" stroke="currentColor" stroke-width="1.25" stroke-linecap="round" stroke-linejoin="round"></path><path d="M6.4 8.6h.01M9.6 8.6h.01" stroke="currentColor" stroke-width="2.2" stroke-linecap="round"></path></svg></span> кто пишет код</span><span style="display: inline-flex; align-items: center; gap: 4px"><span class="ico ico--xs"><svg viewBox="0 0 16 16" fill="none" aria-hidden="true"><path d="M9.2 3.2 12.8 6.8M8 4.4 11.6 8M5.6 6.8l4.2 4.2M3.2 12.8l4.2-4.2M2.6 13.4h5.6" stroke="currentColor" stroke-width="1.25" stroke-linecap="round" stroke-linejoin="round"></path></svg></span> приёмка и коммит судьёй</span></div>
+        <p class="field__hint">эпик всегда начинается с ТЗ, поэтому прямые маршруты закрыты; для задачи и бага открыты все четыре строки. Выбранное уходит в карточку полями <span class="mono">harness</span> и <span class="mono">skill</span>, диспетчер отдаёт задачу только этому харнессу</p>
+      </div>
+    </section>
+  </div>
+  <div class="modal__footer">
+    <button type="button" class="btn btn--ghost btn--md "><span>Отмена</span></button>
+    <button type="button" class="btn btn--primary btn--md "><span class="ico "><svg viewBox="0 0 16 16" fill="none" aria-hidden="true"><path d="M8 3.2v9.6M3.2 8h9.6" stroke="currentColor" stroke-width="1.25" stroke-linecap="round" stroke-linejoin="round"></path></svg></span><span>Создать эпик</span></button>
+  </div>
+</div></div>
+</div>
+</div>
+</x-dc>
+</body>
+</html>

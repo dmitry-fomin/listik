@@ -1,0 +1,1903 @@
+/**
+ * Свои стили доски. Подключаются после tokens.css кита и содержат только то,
+ * чего в ките нет: раскладку канбан-колонок, карточку задачи, линию «нужен ты»
+ * и пару общих правил страницы. Кнопки/бейджи/поля — из кита, здесь их нет.
+ */
+
+html,
+body {
+  margin: 0;
+  min-height: 100%;
+  background: var(--surface-2);
+  color: var(--ink-1);
+}
+
+#app {
+  min-height: 100vh;
+}
+
+*,
+*::before,
+*::after {
+  box-sizing: border-box;
+}
+
+/* ── Токены прототипа, которых нет в ките ───────────────────────────────── */
+
+/* Текст монограммы поверх цветного pmark: тёмный (--neutral-900) в тёмной теме,
+   светлый (--neutral-0) в светлой — как в Main.dc.html vs BoardLight.dc.html
+   (--pmark-ink), а не по яркости самого --chart-N, который у кита фиксирован. */
+:root {
+  --listik-pmark-ink: var(--neutral-900);
+}
+
+[data-theme='light'] {
+  --listik-pmark-ink: var(--neutral-0);
+}
+
+/* Фирменные цвета харнессов — из прототипа (.hico), в ките таких токенов нет. */
+:root {
+  --listik-harness-claude: #d97757;
+  --listik-harness-dsh: #4d6bfe;
+  --listik-harness-codex: #4a8cff;
+  --listik-harness-grok: currentColor;
+  --listik-harness-gemini: #8e7cf2;
+  --listik-harness-glm: #16a394;
+}
+
+/* Превью-цвета гаммы (переключатель IconToggle в AppHeader.vue): у гаммы,
+   которая сейчас НЕ активна, её --accent-* не подключены в DOM (в документе
+   живут только токены активной темы/гаммы), поэтому кружки-превью не могут
+   взять цвет из CSS-переменной кита — нужны фиксированные литералы. Значения —
+   --accent-500 каждой гаммы в светлой теме (node_modules/@zoloto585/facet/src/
+   tokens/themes/<scheme>.css), как и цвета харнессов выше. */
+:root {
+  --listik-scheme-amber: #d08a1b;
+  --listik-scheme-malachite: #2f9e6e;
+  --listik-scheme-garnet: #ca5875;
+  --listik-scheme-sapphire: #4981c8;
+}
+
+/* Раскладка доски (Main.dc.html): колонки резиновые — `--listik-col-min` лишь
+   нижняя граница развёрнутой колонки (уже неё ряд прокручивается вбок), свёрнутая
+   колонка и «Готово» — рельса `--listik-rail-w`; промежуток, толщина линии
+   рельсы и левой полосы карточки. */
+:root {
+  --listik-col-min: 200px;
+  --listik-rail-w: 56px;
+  --listik-col-gap: var(--space-4);
+  --listik-rail-line: 2px;
+  --listik-rail-tr-h: 16px; /* высота подписи на рельсе (.listik-rail__tr, text-xs) */
+  --listik-card-stripe: 3px;
+}
+
+/* Свои классы — тоже по токенам: ни одного литерального цвета/отступа. */
+.listik-shell {
+  /* Ширина колонки страницы — общая для контента (UiContainer) и ряда шапки,
+     чтобы края шапки совпадали с краями текста. Медиа-запросы ниже меняют
+     только эту переменную. */
+  --listik-page-w: min(100% - 64px, 1440px);
+
+  display: flex;
+  flex-direction: column;
+  min-height: 100vh;
+  gap: 0;
+  padding-bottom: 32px;
+}
+
+.listik-shell > .ui-app-header {
+  border-bottom: 1px solid color-mix(in srgb, var(--hairline) 78%, transparent);
+  background: var(--surface);
+}
+
+/* Ряд шапки — той же ширины, что контент. Проп `contained` кита не подходит:
+   он ограничивает ряд `--container-max` (1280px), а контейнер у нас шире.
+   Боковое поле ряда убираем — край задаёт сама ширина, как у контейнера
+   (его внутреннее поле `--container-pad-x` компенсирует padding-inline ниже). */
+.listik-shell > .ui-app-header .ui-app-header__row {
+  width: var(--listik-page-w);
+  margin-inline: auto;
+  padding-inline: var(--container-pad-x);
+}
+
+.listik-shell > .ui-container {
+  /* UiContainer (size="page") держит собственные `width: 100%` и
+     `max-width: var(--container-max)` (1280px) — та же специфичность, а стили
+     кита встают в бандл позже приложения (см. соответствующий комментарий у
+     `.ui-kpi-row.ui-kpi-row--cols-4` ниже), поэтому без `!important` ни одно из
+     двух правил здесь не победило бы: контейнер остался бы 1280px, и резиновым
+     колонкам доски досталось бы меньше места. Медиа-переопределения ниже обязаны нести
+     `!important` — иначе они не действуют (см. соответствующий раздел «Телефон
+     (шаг 06)»). */
+  width: var(--listik-page-w) !important;
+  max-width: none !important;
+  padding-top: 24px;
+}
+
+.listik-mobile-queue {
+  display: none;
+}
+
+/* ── Телефон (шаг 06) ──────────────────────────────────────────────────────
+   Единственная секция режима телефона (порция b): фильтр «проект» + поиск +
+   постраничная очередь. Не путать с `.listik-mobile-queue` выше (планшет,
+   1023px): тот класс скрыт глобально и включается только медиа-запросом
+   ≤1023px, а очередь телефона должна оставаться видимой и на более широких
+   вьюпортах, если её всё же смонтировали (например, до применения setPhone). */
+.listik-phone-queue {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-3);
+}
+
+.listik-phone-toolbar {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) minmax(0, 1fr);
+  gap: var(--space-2);
+}
+
+.listik-phone-toolbar > * {
+  min-width: 0;
+}
+
+/* Корни UiSelect/UiInput кита держат собственную ширину той же специфичности —
+   перебиваем, чтобы обе колонки тулбара были равными. */
+.listik-phone-toolbar .ui-select,
+.listik-phone-toolbar .ui-input-wrap {
+  width: 100%;
+}
+
+.listik-phone-queue__head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--space-2);
+}
+
+.listik-phone-queue__list {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-2);
+}
+
+/* Карточка задачи на телефоне (порция c) — чистый просмотр, поэтому здесь нет
+   ни одного класса для действий/полей ввода, только раскладка секций.
+   overflow-wrap: длинные id/пути (блокеры, mono-строки) не должны расширять
+   панель за 100vw. */
+.listik-phone-sheet {
+  overflow-wrap: anywhere;
+}
+
+/* Заголовок карточки телефона рендерится в слоте #header UiDrawer — он вне
+   div.listik-phone-sheet, поэтому длинный заголовок без пробелов расширял
+   панель. Затрагивает только шапку PhoneTaskSheet, не TaskDrawer. */
+.listik-phone-sheet__head {
+  overflow-wrap: anywhere;
+  min-width: 0;
+}
+
+.listik-phone-sheet__head .listik-drawer__title {
+  overflow-wrap: anywhere;
+}
+
+.listik-phone-sheet__deps {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-2);
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.listik-phone-sheet__deps li {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--space-2);
+  align-items: center;
+}
+
+/* Строка компактного списка: одна для планшета (MobileTaskList) и телефона (порция b). */
+.listik-mobile-task {
+  display: flex;
+  flex-direction: column;
+  align-items: stretch;
+  gap: var(--space-2);
+  width: 100%;
+  padding: var(--space-3);
+  border: 1px solid var(--hairline);
+  border-radius: var(--radius-lg);
+  background: var(--surface);
+  color: var(--ink-1);
+  text-align: left;
+  font: inherit;
+  cursor: pointer;
+  box-shadow: var(--shadow-xs);
+  transition: border-color var(--duration-fast) var(--ease-out), box-shadow var(--duration-fast) var(--ease-out);
+}
+
+.listik-mobile-task:hover,
+.listik-mobile-task:focus-visible {
+  border-color: var(--accent-500);
+  box-shadow: var(--focus-ring);
+  outline: none;
+}
+
+.listik-mobile-task__top,
+.listik-mobile-task__meta {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: var(--space-2);
+  min-width: 0;
+}
+
+.listik-mobile-task__top {
+  justify-content: space-between;
+}
+
+.listik-mobile-task__title {
+  overflow: hidden;
+  font-size: var(--text-base);
+  line-height: var(--leading-snug);
+  text-overflow: ellipsis;
+  display: -webkit-box;
+  -webkit-line-clamp: 2;
+  -webkit-box-orient: vertical;
+}
+
+.listik-mobile-task__meta {
+  color: var(--ink-2);
+  font-size: var(--text-sm);
+}
+
+.listik-mobile-task__meta--muted {
+  color: var(--ink-3);
+  font-size: var(--text-xs);
+}
+
+.listik-shell__brand-name {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.listik-shell__actions {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+}
+
+.listik-shell__top {
+  display: flex;
+  flex-direction: column;
+  gap: 24px;
+}
+
+.listik-shell__top .ui-filter-bar {
+  /* Кит рисует .ui-filter-bar как тонкую обёртку без внутреннего отступа
+     (см. UiFilterBar.vue) — рамку, скругление, фон и отступ добавляет приложение. */
+  padding: var(--space-3) var(--space-4);
+  border: 1px solid color-mix(in srgb, var(--hairline) 82%, transparent);
+  border-radius: var(--radius-xl);
+  background: color-mix(in srgb, var(--surface) 94%, transparent);
+}
+
+/* Фильтры (TaskFilters.vue): кит растягивает каждое поле до 180–260px, из-за
+   чего переключатели-иконки тянут пустой хвост. Здесь поле — по содержимому,
+   только выпадающие списки держат ровную ширину. */
+.ui-filter-bar.listik-filters .ui-filter-bar__fields > * {
+  flex: 0 0 auto;
+  width: auto;
+  min-width: 0;
+  max-width: none;
+}
+
+.ui-filter-bar.listik-filters {
+  column-gap: var(--space-5);
+}
+
+.ui-filter-bar.listik-filters .ui-filter-bar__fields {
+  column-gap: var(--space-5);
+  row-gap: var(--space-3);
+}
+
+.listik-filters .ui-select {
+  width: 160px;
+}
+
+.listik-filters__stage {
+  font-family: var(--font-mono);
+  font-size: var(--text-xs);
+}
+
+.listik-filters__updated {
+  gap: var(--space-1);
+}
+
+.listik-filters__special {
+  height: var(--control-h-sm);
+}
+
+.listik-filters__range {
+  display: flex;
+  gap: var(--space-3);
+  padding: var(--space-3);
+}
+
+.listik-filters__range > * {
+  width: 150px;
+}
+
+/* Подвал страницы (App.vue): версия сервера, вынесенная из шапки — тихая
+   строка, не действие и не статус, поэтому не в UiAppHeader, а ниже всего
+   контента. */
+.listik-shell__footer {
+  padding: var(--space-4) var(--space-4) var(--space-6);
+  border-top: 1px solid var(--hairline);
+  color: var(--ink-3);
+  font-size: var(--text-xs);
+  text-align: center;
+}
+
+.listik-section {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-3);
+}
+
+.listik-section__head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  flex-wrap: wrap; /* на узком экране правый блок уезжает на новую строку, а не вылезает за вьюпорт */
+  gap: var(--space-4);
+}
+
+.listik-section__head > .listik-row {
+  min-width: 0;
+}
+
+.listik-section__title {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+  margin: 0;
+  font-size: var(--text-xl);
+  font-weight: var(--weight-semibold);
+  letter-spacing: var(--tracking-tight);
+  color: var(--ink-1);
+}
+
+.listik-section__hint {
+  font-size: var(--text-sm);
+  color: var(--ink-3);
+  min-width: 0;
+}
+
+/* UiSegmented на узком экране может оказаться шире своей колонки (4 варианта
+   группировки доски, 4 гаммы и т.п.) и тогда выталкивает всю секцию за вьюпорт.
+   Ряд сегментов прокручивается сам, как это делает UiAppNav у кита. */
+.listik-row > .ui-segmented,
+.listik-section__head > .ui-segmented {
+  max-width: 100%;
+  overflow-x: auto;
+  scrollbar-width: none;
+}
+
+.listik-row > .ui-segmented::-webkit-scrollbar,
+.listik-section__head > .ui-segmented::-webkit-scrollbar {
+  display: none;
+}
+
+/* ── Доска ─────────────────────────────────────────────────────────────── */
+
+/* Общий прокручиваемый контейнер рельсы переходов и ряда колонок: оба —
+   grid с одинаковым `grid-template-columns` (инлайн-стиль, см. BoardView),
+   поэтому подписи переходов едут вместе с колонками при прокрутке. */
+.listik-board-scroll {
+  overflow-x: auto;
+  scrollbar-color: var(--hairline) transparent;
+}
+
+/* Колонки резиновые и живут на обычном поле контейнера — за поле (`--container-pad-x`)
+   доска не выходит, поэтому её левый край совпадает с вкладками, «Нужен ты» и тулбаром. */
+.listik-board-scroll {
+  /* Геометрия полосы рельсы (см. `.listik-rail` ниже): подпись наполовину
+     высотой уходит вверх от линии, и эта верхняя половина обязана жить ВНУТРИ
+     скроллера — он режет содержимое по padding-краю, снаружи подпись пропадает.
+     Поэтому: верхнюю половину подписи (+1px запас) держит padding-top, а чтобы
+     линия при этом встала в те же 12px под шапкой секции, что в прототипе,
+     сам скроллер подтягивается вверх на нижнюю половину подписи. Итог: шапка →
+     линия = 12px - 8px + 9px + 1px ≈ 14px, как в Main.dc.html (там 13px), и
+     подписи не обрезаются и не наезжают на шапку. */
+  margin-top: calc(-1 * var(--listik-rail-tr-h) / 2);
+  padding-top: calc(var(--listik-rail-tr-h) / 2 + 1px);
+}
+
+.listik-rail {
+  display: grid;
+  column-gap: var(--listik-col-gap);
+  align-items: center;
+  /* Полоса рельсы — только сама линия (2px), как в прототипе (Main.dc.html:
+     шапка → 12px → линия 2px → 12px → колонки). Подписи (.listik-rail__tr) абсолютны и
+     центрированы на линии, поэтому высоты в потоке им не нужно: верхняя
+     половина подписи уходит в padding-top скроллера, нижняя — в воздух
+     margin-bottom (до колонок 8px + 4px pad доски ≈ те самые 12px прототипа).
+     Верхняя половина НЕ может жить в отрицательном margin самой рельсы:
+     скроллер режет по padding-краю, поэтому вверх её прячет связка
+     «отрицательный margin-top + padding-top» самого скроллера (см. правило
+     `.listik-board-scroll` выше). */
+  height: var(--listik-rail-line);
+  margin-bottom: var(--space-2);
+  padding: 0 var(--space-1);
+}
+
+.listik-rail__cell {
+  position: relative;
+  min-width: 0;
+}
+
+.listik-rail__line {
+  display: block;
+  height: var(--listik-rail-line);
+  background: var(--hairline-strong);
+}
+
+.listik-rail__tr {
+  position: absolute;
+  right: 0;
+  top: 50%;
+  transform: translate(calc(50% + var(--listik-col-gap) / 2), -50%);
+  /* Подпись центрирована на стыке колонок и физически заходит в соседнюю
+     ячейку рельсы (`.listik-rail__cell` следующей колонки), а грид красит
+     каждую ячейку как единый слой (как inline-block), в порядке DOM —
+     поэтому линия СЛЕДУЮЩЕЙ ячейки рисуется поверх всей текущей, включая
+     абсолютно спозиционированную подпись. Явный z-index поднимает подпись
+     в отдельный слой над всеми ячейками рельсы, а не только над своей. */
+  z-index: 1;
+  display: inline-flex;
+  align-items: center;
+  gap: var(--space-1);
+  padding: 0 var(--space-2);
+  background: var(--surface-2);
+  color: var(--ink-3);
+  font: normal var(--text-xs) var(--font-mono);
+  white-space: nowrap;
+}
+
+.listik-rail__tr.is-sticky {
+  color: var(--accent-700);
+}
+
+.listik-board {
+  display: flex;
+  align-items: flex-start;
+  gap: var(--listik-col-gap);
+  padding: var(--space-1) 0 var(--space-4);
+}
+
+.listik-board--grid {
+  display: grid;
+  column-gap: var(--listik-col-gap);
+  align-items: start;
+  padding-inline: 0;
+}
+
+.listik-column {
+  display: flex;
+  flex-direction: column;
+  /* Ширину задаёт дорожка грида доски (`boardTracks` в BoardView). */
+  min-width: 0;
+  min-height: 220px;
+  max-height: calc(100vh - var(--header-h) - var(--space-16));
+  background: var(--surface);
+  border: 1px solid var(--hairline);
+  border-radius: var(--radius-lg);
+  box-shadow: none;
+  overflow: hidden;
+}
+
+.listik-column__head {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-1);
+  padding: var(--space-3) var(--space-3) var(--space-2);
+  border-bottom: 1px solid color-mix(in srgb, var(--hairline) 72%, transparent);
+}
+
+/* Заголовок колонки сворачивает её в рельсу, в т.ч. с клавиатуры. */
+.listik-column__head--toggleable {
+  cursor: pointer;
+}
+
+.listik-column__head--toggleable:focus-visible {
+  outline: 2px solid var(--accent-500);
+  outline-offset: -2px;
+}
+
+.listik-column__title-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--space-2);
+}
+
+.listik-column__title {
+  margin: 0;
+  display: flex;
+  align-items: baseline;
+  gap: var(--space-2);
+  font-size: var(--text-base);
+  font-weight: var(--weight-semibold);
+  color: var(--ink-1);
+}
+
+.listik-column__code {
+  font-family: var(--font-mono);
+  font-weight: var(--weight-medium);
+  color: var(--ink-3);
+}
+
+.listik-column__count {
+  font-size: var(--text-sm);
+  color: var(--ink-3);
+}
+
+.listik-column__meta {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--space-2);
+  min-height: 16px;
+}
+
+.listik-column__harness {
+  display: flex;
+  align-items: center;
+  gap: var(--space-1);
+  margin: 0;
+  font-size: var(--text-xs);
+  color: var(--ink-3);
+}
+
+.listik-health-row {
+  display: flex;
+  align-items: center;
+  gap: 3px;
+  margin: 0;
+}
+
+.listik-column__body {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-2);
+  padding: var(--space-2);
+  overflow-y: auto;
+}
+
+/* Колонка, свёрнутая в рельсу: вертикальная подпись + бейдж. Клик разворачивает. */
+.listik-column__rail {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: var(--space-2);
+  width: var(--listik-rail-w);
+  min-height: 220px;
+  max-height: calc(100vh - var(--header-h) - var(--space-16));
+  padding: var(--space-3) 0;
+  background: var(--surface);
+  border: 1px solid var(--hairline);
+  border-radius: var(--radius-lg);
+  color: var(--ink-2);
+  cursor: pointer;
+  font: inherit;
+}
+
+.listik-column__rail-title {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--space-2);
+  writing-mode: vertical-rl;
+  transform: rotate(180deg);
+  white-space: nowrap;
+  font-size: var(--text-sm);
+  font-weight: var(--weight-medium);
+}
+
+/* «Готово» рельса (7 дней) — постоянная колонка доски по этапу.
+   Кликабельна (открывает список готовых, `store.openDoneList()`), поэтому
+   курсор и фокус-кольцо — как у остальных интерактивных рельс/заголовков
+   доски (`.listik-column__rail`, `.listik-column__head--toggleable`). */
+.listik-done-rail {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: var(--space-2);
+  flex: 0 0 var(--listik-rail-w);
+  width: var(--listik-rail-w);
+  min-height: 220px;
+  max-height: calc(100vh - var(--header-h) - var(--space-16));
+  padding: var(--space-3) 0;
+  color: var(--ink-2);
+  cursor: pointer;
+}
+
+.listik-done-rail:focus-visible {
+  outline: 2px solid var(--accent-500);
+  outline-offset: -2px;
+}
+
+.listik-done-rail__title {
+  writing-mode: vertical-rl;
+  transform: rotate(180deg);
+  white-space: nowrap;
+  font-size: var(--text-sm);
+  color: var(--ink-3);
+}
+
+/* ── Карточка задачи ───────────────────────────────────────────────────── */
+
+.listik-task-card {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-2);
+  padding: var(--space-3);
+  border: 1px solid var(--hairline);
+  border-left: var(--listik-card-stripe) solid transparent;
+  border-radius: var(--radius-md);
+  background: var(--surface);
+  box-shadow: var(--shadow-xs);
+  cursor: pointer;
+  transition:
+    box-shadow var(--duration-fast) var(--ease-out),
+    border-color var(--duration-fast) var(--ease-out);
+}
+
+.listik-task-card:hover {
+  box-shadow: var(--shadow-sm);
+}
+
+.listik-task-card:active {
+  transform: translateY(1px);
+}
+
+.listik-task-card:focus-visible {
+  outline: none;
+  box-shadow: var(--focus-ring);
+}
+
+.listik-task-card.is-needs {
+  border-left-color: var(--accent-500);
+}
+
+.listik-task-card.is-dead {
+  border-left-color: var(--danger-500);
+}
+
+.listik-task-card.is-at-risk {
+  border-left-color: var(--warning-600);
+}
+
+.listik-task-card.is-muted {
+  opacity: 0.72;
+}
+
+.listik-task-card__top {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+}
+
+.listik-task-card__spacer {
+  flex: 1;
+  min-width: var(--space-2);
+}
+
+.listik-task-card__title {
+  margin: 0;
+  font-size: var(--text-base);
+  font-weight: var(--weight-medium);
+  line-height: var(--leading-snug);
+  color: var(--ink-1);
+  display: -webkit-box;
+  -webkit-line-clamp: 2;
+  line-clamp: 2;
+  -webkit-box-orient: vertical;
+  overflow: hidden;
+}
+
+.listik-task-card__meta {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--space-2);
+}
+
+.listik-task-card__badges {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: var(--space-1);
+  min-width: 0;
+}
+
+.listik-task-card__counts {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+  flex: none;
+}
+
+.listik-task-card__foot {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--space-2);
+  font-size: var(--text-xs);
+  color: var(--ink-2);
+}
+
+.listik-task-card__holder {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--space-1);
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.listik-task-card__age {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--space-1);
+  flex: none;
+  color: var(--ink-3);
+}
+
+.listik-task-card__age.is-warn {
+  color: var(--warning-700);
+}
+
+.listik-task-card__age.is-late {
+  color: var(--danger-700);
+}
+
+@media (max-width: 900px) {
+  .listik-shell { --listik-page-w: min(100% - 32px, 1440px); }
+}
+
+/* Панель задачи должна быть ~720px: у UiDrawer есть только sm/md/lg
+   (560px у lg), своего размера он не принимает. Дровер телепортируется в <body>,
+   поэтому scoped-стиль компонента до него не доходит, а его собственное правило
+   `.ui-drawer--right.ui-drawer--lg[data-v-…]` — три класса и атрибут (0,4,0),
+   поэтому поднять выше можно только большей специфичностью: пять классов в
+   селекторе против четырёх у кита (элементов, инлайна и !important нет). */
+body .ui-drawer-backdrop.ui-drawer-backdrop--right .ui-drawer.ui-drawer--right.ui-drawer--lg {
+  width: min(720px, 100vw);
+}
+
+/* ── Зависимости: вердикт и разбор связей ─────────────────────────────── */
+
+.listik-verdict {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: var(--space-2);
+}
+
+.listik-verdict__reasons {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-1);
+  margin: 0;
+  padding-left: var(--space-5);
+  font-size: var(--text-sm);
+  color: var(--ink-2);
+}
+
+.listik-subtitle {
+  margin: var(--space-2) 0 0;
+  font-size: var(--text-sm);
+  font-weight: var(--weight-semibold);
+  color: var(--ink-2);
+}
+
+.listik-dep-list {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-2);
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.listik-dep {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-1);
+  padding: var(--space-2) var(--space-3);
+  border: 1px solid var(--hairline);
+  border-radius: var(--radius-md);
+  background: var(--surface-2);
+}
+
+.listik-dep__main {
+  display: flex;
+  align-items: baseline;
+  flex-wrap: wrap;
+  gap: var(--space-2);
+}
+
+.listik-dep__title {
+  font-size: var(--text-sm);
+  color: var(--ink-1);
+}
+
+.listik-dep__note {
+  font-size: var(--text-xs);
+  color: var(--ink-3);
+}
+
+/* ── Панель задачи (TaskDrawer) ────────────────────────────────────────── */
+
+.listik-drawer__head {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-2);
+}
+
+.listik-drawer__meta-row {
+  min-width: 0;
+}
+
+.listik-drawer__truncate {
+  overflow: hidden;
+  white-space: nowrap;
+  text-overflow: ellipsis;
+  min-width: 0;
+}
+
+.listik-drawer__title {
+  margin: 0;
+  font-size: var(--text-lg);
+  font-weight: var(--weight-semibold);
+  letter-spacing: var(--tracking-tight);
+  color: var(--ink-1);
+}
+
+.listik-drawer__pills {
+  min-width: 0;
+}
+
+.listik-drawer__id {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+  margin-left: auto;
+  font-family: var(--font-mono);
+  font-size: var(--text-sm);
+  color: var(--ink-1);
+}
+
+/* Промежуток между секциями панели крупнее общего .listik-stack (--space-4). */
+.listik-drawer__body {
+  gap: var(--space-8);
+}
+
+.listik-drawer__spacer {
+  flex: 1 1 auto;
+}
+
+.listik-drawer__process {
+  min-width: 0;
+}
+
+.listik-events {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-1);
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.listik-events__row {
+  display: flex;
+  align-items: baseline;
+  gap: var(--space-2);
+  flex-wrap: wrap;
+  padding: var(--space-2) 0;
+  border-bottom: 1px solid var(--hairline);
+  font-size: var(--text-sm);
+}
+
+.listik-dep-grid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: var(--space-3);
+}
+
+.listik-dep-grid__head {
+  grid-column: 1 / -1;
+}
+
+.listik-cold {
+  display: flex;
+  flex-direction: column;
+}
+
+.listik-cold__row {
+  display: grid;
+  grid-template-columns: 20px 132px 1fr;
+  align-items: center;
+  gap: var(--space-2);
+  padding: var(--space-2) 0;
+  border-bottom: 1px solid var(--hairline);
+  font-size: var(--text-sm);
+}
+
+.listik-cold__row:last-child {
+  border-bottom: none;
+}
+
+.listik-cold__icon {
+  display: inline-flex;
+  flex: none;
+  align-items: center;
+  justify-content: center;
+  width: 20px;
+  height: 20px;
+  border-radius: var(--radius-pill);
+}
+
+.listik-cold__icon--ok {
+  background: var(--success-50);
+  color: var(--success-700);
+}
+
+.listik-cold__icon--warn {
+  background: var(--warning-50);
+  color: var(--warning-700);
+}
+
+.listik-cold__key {
+  color: var(--ink-3);
+}
+
+.listik-cold__value {
+  min-width: 0;
+  overflow: hidden;
+  white-space: nowrap;
+  text-overflow: ellipsis;
+  font-family: var(--font-mono);
+  font-size: var(--text-xs);
+}
+
+.listik-cold__value--warn {
+  font-family: var(--font-ui);
+  color: var(--warning-700);
+}
+
+/* ── Общие мелочи страницы ─────────────────────────────────────────────── */
+
+/* Кнопка-ссылка на другую задачу (блокер, ожидающий, ребёнок эпика). */
+.listik-link {
+  padding: 0;
+  border: 0;
+  background: none;
+  color: var(--accent-700);
+  cursor: pointer;
+  font: inherit;
+}
+
+.listik-link:hover {
+  text-decoration: underline;
+}
+
+.listik-mono {
+  font-family: var(--font-mono);
+  font-size: var(--text-xs);
+  color: var(--ink-2);
+}
+
+.listik-stack {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-4);
+}
+
+.listik-row {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+  flex-wrap: wrap;
+  min-width: 0;
+}
+
+.listik-dl {
+  display: grid;
+  grid-template-columns: minmax(140px, max-content) minmax(0, 1fr);
+  gap: var(--space-2) var(--space-4);
+  margin: 0;
+  font-size: var(--text-sm);
+}
+
+.listik-dl dt {
+  color: var(--ink-3);
+}
+
+.listik-dl dd {
+  margin: 0;
+  color: var(--ink-1);
+  word-break: break-word;
+}
+
+.listik-prose {
+  margin: 0;
+  font-size: var(--text-sm);
+  line-height: var(--leading-normal);
+  color: var(--ink-1);
+  white-space: pre-wrap;
+}
+
+.listik-token-form {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-3);
+  max-width: 420px;
+}
+
+@media (max-width: 860px) {
+  /* UiKpiRow с 4 колонками на 721-860px оставлял по 4 карточки в ряд — карточка
+     ужималась до ~190px и содержимое выезжало за вьюпорт (на 768px scrollWidth
+     был 772 при innerWidth 768). Ниже — как в самом ките на ≤720px, но раньше. */
+  .ui-kpi-row.ui-kpi-row--cols-4 {
+    grid-template-columns: repeat(2, minmax(0, 1fr)) !important;
+  }
+}
+
+/**
+ * Порог 1024px: канкан не масштабируется до планшета/телефона, поэтому доску
+ * (только `.listik-board-only`) заменяет компактный список (`.listik-mobile-queue`).
+ * Вкладки, статус, алерт циклов, инбокс и тулбар остаются как есть на любой
+ * ширине — их видимость с этим порогом не связана.
+ */
+@media (max-width: 1023px) {
+  .listik-board-only {
+    display: none;
+  }
+
+  .listik-mobile-queue {
+    display: flex;
+    flex-direction: column;
+    gap: var(--space-3);
+    width: 100%;
+  }
+
+  .listik-mobile-queue__head {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: var(--space-3);
+    padding: var(--space-1) 0;
+  }
+
+  .listik-mobile-queue__eyebrow {
+    margin: 0 0 var(--space-1);
+    color: var(--ink-3);
+    font-size: var(--text-xs);
+    letter-spacing: var(--tracking-wide);
+    text-transform: uppercase;
+  }
+}
+
+/**
+ * Узкий экран. Кит держит шапку в рамках вьюпорта, но `#actions` намеренно
+ * не сжимается — что прятать на телефоне, решает приложение (README кита,
+ * «Рецепты layout»). Убираем подписи у кнопок, оставляя иконки, и прячем
+ * второстепенные индикаторы; иначе ряд действий (615px) выталкивает страницу
+ * вбок: на 375px scrollWidth был 643 при innerWidth 375.
+ * Порог телефона 767 px (шаг 06).
+ */
+@media (max-width: 767px) {
+  body {
+    overflow-x: hidden;
+  }
+
+  .listik-shell {
+    gap: var(--space-4);
+    padding-bottom: var(--space-8);
+  }
+
+  .listik-shell {
+    --listik-page-w: min(100% - 24px, 560px);
+  }
+
+  .listik-shell__top {
+    gap: var(--space-4);
+  }
+
+  .ui-filter-bar__fields > * {
+    flex: 1 1 140px;
+    min-width: 0;
+    max-width: none;
+  }
+
+  body .ui-drawer-backdrop.ui-drawer-backdrop--right .ui-drawer.ui-drawer--right.ui-drawer--lg {
+    width: 100vw;
+    max-width: 100vw;
+  }
+
+  /* Детали на телефоне остаются read-mostly: оставляем heartbeat, claim,
+     комментарии и needs-owner, а переходы этапа/закрытие/освобождение скрываем. */
+  .ui-drawer .listik-drawer__process,
+  .ui-drawer .listik-drawer__close-action,
+  .ui-drawer .listik-drawer__unsafe-release {
+    display: none !important;
+  }
+
+  .listik-dl {
+    grid-template-columns: minmax(100px, max-content) minmax(0, 1fr);
+    gap: var(--space-2) var(--space-3);
+  }
+
+  .listik-dep-grid {
+    grid-template-columns: 1fr;
+  }
+
+  /* У этих элементов кит задаёт собственный display в scoped-правиле, поэтому
+     спрятать их можно только через !important — :global-хуков у кита для них нет. */
+  .listik-shell__brand-name,
+  .listik-shell__hide-compact {
+    display: none !important;
+  }
+
+  .listik-shell__actions,
+  .ui-app-header__actions {
+    min-width: 0;
+  }
+
+  .listik-shell__actions .ui-button__label {
+    display: none !important;
+  }
+
+  .listik-column {
+    flex: 0 0 260px;
+    width: 260px;
+  }
+
+  /* У UiKpiCard собственный `min-width: 200px` в scoped-правиле: в две колонки
+     на 375px это переезд за вьюпорт (200 × 2 + gap > 311). Своя специфичность
+     не поможет — стили кита встают в бандл позже приложения, поэтому !important. */
+  .ui-kpi-row .ui-kpi-card {
+    min-width: 0 !important;
+  }
+}
+
+/* ── Примитивы прототипа (web/src/components/marks/*) ─────────────────────
+   Знаков (проект/харнесс/здоровье/тип/приоритет/счётчик), которых нет в
+   ките — правило кита «нет токена — заводите переменную после tokens.css,
+   а не #hex/px в разметке» (facet-components.md, «Ловушки», п.16) уже
+   закрыто выше; здесь — только раскладка/размеры на токенах. */
+
+.listik-pmark {
+  display: inline-flex;
+  flex: none;
+  align-items: center;
+  justify-content: center;
+  width: var(--listik-pmark-size, 18px);
+  height: var(--listik-pmark-size, 18px);
+  border-radius: var(--radius-xs);
+  color: var(--listik-pmark-ink);
+  font-size: var(--text-xs);
+  font-weight: var(--weight-semibold);
+  line-height: 1;
+}
+
+.listik-pmark--sm {
+  --listik-pmark-size: 16px;
+}
+
+.listik-pmark--md {
+  --listik-pmark-size: 18px;
+}
+
+.listik-pmark__title {
+  min-width: 0;
+  overflow: hidden;
+  color: var(--ink-2);
+  font-size: var(--text-sm);
+  font-weight: var(--weight-medium);
+  white-space: nowrap;
+  text-overflow: ellipsis;
+}
+
+.listik-harness-icon {
+  display: inline-flex;
+  flex: none;
+  width: var(--listik-harness-size, 16px);
+  height: var(--listik-harness-size, 16px);
+}
+
+.listik-harness-icon--xs {
+  --listik-harness-size: 14px;
+}
+
+.listik-harness-icon--sm {
+  --listik-harness-size: 16px;
+}
+
+.listik-harness-icon--md {
+  --listik-harness-size: 18px;
+}
+
+.listik-harness-icon svg {
+  display: block;
+  width: 100%;
+  height: 100%;
+}
+
+.listik-health-dot {
+  display: inline-flex;
+  flex: none;
+  width: var(--listik-health-dot-size, 8px);
+  height: var(--listik-health-dot-size, 8px);
+  border-radius: var(--radius-pill);
+  background: var(--health-healthy);
+}
+
+.listik-health-dot--sm {
+  --listik-health-dot-size: 8px;
+}
+
+.listik-health-dot--md {
+  --listik-health-dot-size: 10px;
+}
+
+.listik-health-dot--at-risk {
+  background: var(--health-at-risk);
+}
+
+.listik-health-dot--dead {
+  background: var(--health-dead);
+}
+
+.listik-health-dot--unknown {
+  background: transparent;
+  box-shadow: inset 0 0 0 1.5px var(--health-unknown);
+}
+
+.listik-glyph {
+  display: inline-flex;
+  flex: none;
+  align-items: center;
+}
+
+.listik-count-glyph {
+  display: inline-flex;
+  align-items: center;
+  gap: 3px;
+  font-size: var(--text-xs);
+  font-weight: var(--weight-medium);
+}
+
+.listik-count-glyph--warning {
+  color: var(--warning-700);
+}
+
+.listik-count-glyph--accent {
+  color: var(--accent-700);
+}
+
+.listik-count-glyph--neutral {
+  color: var(--ink-3);
+}
+
+/* ── Матрица маршрута (NewTaskModal) ─────────────────────────────────────
+   Референс: NewTask.dc.html `.field`/`.seg`/`.route`/`.chain` — своя разметка,
+   в ките нет ни матрицы «харнесс × процесс», ни цепочки-иконок этапов. */
+
+.listik-newtask-row {
+  display: grid;
+  /* Тип и Приоритет — колонки по содержимому (тогглы fit-content), Проект
+     забирает остаток. Тогда видимый промежуток между всеми тремя полями —
+     ровно grid-gap (--space-4); шаблон прототипа «minmax(0,1fr) 200px 208px»
+     давал разные зазоры: тоггл Типа не заполнял свою 1fr-колонку. */
+  grid-template-columns: auto auto minmax(0, 1fr);
+  gap: var(--space-4);
+}
+
+@media (max-width: 767px) {
+  .listik-newtask-row {
+    grid-template-columns: minmax(0, 1fr);
+  }
+}
+
+/* ── Маршрут: пресеты конвейера (таблица) + «просто исполнитель» (ряд) ───── */
+
+.listik-pipelines {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-1);
+}
+
+.listik-pipelines__header,
+.listik-pipelines__row {
+  display: grid;
+  grid-template-columns: minmax(0, 1.7fr) repeat(4, minmax(0, 1fr));
+  gap: var(--space-2);
+  align-items: center;
+}
+
+.listik-pipelines__header {
+  padding: 0 var(--space-2);
+}
+
+.listik-pipelines__col-title {
+  font-size: var(--text-xs);
+  color: var(--ink-3);
+  text-align: center;
+}
+
+.listik-pipelines__row {
+  width: 100%;
+  padding: var(--space-2);
+  border: 1px solid var(--hairline);
+  border-radius: var(--radius-md);
+  background: var(--surface);
+  cursor: pointer;
+  text-align: left;
+  font: inherit;
+  color: inherit;
+  transition:
+    border-color var(--duration-fast) var(--ease-out),
+    background-color var(--duration-fast) var(--ease-out),
+    box-shadow var(--duration-fast) var(--ease-out);
+}
+
+.listik-pipelines__row:focus-visible {
+  outline: none;
+  box-shadow: var(--focus-ring);
+}
+
+.listik-pipelines__row.is-on {
+  border-color: var(--accent-500);
+  background: var(--accent-50);
+}
+
+.listik-pipelines__row.is-off {
+  border-style: dashed;
+  cursor: not-allowed;
+  opacity: 0.55;
+}
+
+.listik-pipelines__row-title {
+  display: flex;
+  flex-direction: column;
+  gap: 1px;
+  min-width: 0;
+}
+
+.listik-pipelines__row-name {
+  font-size: var(--text-sm);
+  color: var(--ink-1);
+}
+
+.listik-pipelines__row-hint {
+  font-size: var(--text-xs);
+  color: var(--ink-3);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.listik-pipelines__cell {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 2px;
+  color: var(--ink-2);
+}
+
+.listik-pipelines__cell-label {
+  font-size: 10px;
+  line-height: 1;
+  color: var(--ink-3);
+}
+
+.listik-pipelines__cell-empty {
+  color: var(--hairline-strong);
+}
+
+.listik-direct {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-1);
+  padding-top: var(--space-1);
+}
+
+.listik-direct__title {
+  font-size: var(--text-xs);
+  color: var(--ink-3);
+}
+
+.listik-direct__items {
+  display: flex;
+  gap: var(--space-2);
+  flex-wrap: wrap;
+}
+
+.listik-direct__item {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--space-2);
+  padding: var(--space-2) var(--space-3);
+  border: 1px solid var(--hairline);
+  border-radius: var(--radius-md);
+  background: var(--surface);
+  font: inherit;
+  font-size: var(--text-sm);
+  color: var(--ink-1);
+  cursor: pointer;
+  transition:
+    border-color var(--duration-fast) var(--ease-out),
+    background-color var(--duration-fast) var(--ease-out),
+    box-shadow var(--duration-fast) var(--ease-out);
+}
+
+.listik-direct__item:focus-visible {
+  outline: none;
+  box-shadow: var(--focus-ring);
+}
+
+.listik-direct__item.is-on {
+  border-color: var(--accent-500);
+  background: var(--accent-50);
+}
+
+.listik-direct__item.is-off {
+  border-style: dashed;
+  cursor: not-allowed;
+  opacity: 0.55;
+}
+
+@media (max-width: 640px) {
+  .listik-pipelines__header,
+  .listik-pipelines__row {
+    grid-template-columns: minmax(0, 1fr) repeat(4, minmax(0, 44px));
+    gap: var(--space-1);
+  }
+
+  .listik-pipelines__row-hint {
+    display: none;
+  }
+}
+
+/* ── IconToggle (переключатель иконками) ──────────────────────────────────
+   Тот же вид «таблетки», что у ui-segmented кита (см. UiSegmented.vue), но
+   опции — иконка/кружок через слот, а не текстовый label. */
+
+.listik-icon-toggle {
+  display: inline-flex;
+  align-items: center;
+  gap: 2px;
+  box-sizing: border-box;
+  background: var(--surface-2);
+  border: 1px solid var(--hairline);
+  border-radius: var(--radius-md);
+  padding: 2px;
+  width: fit-content;
+}
+
+.listik-icon-toggle--md {
+  height: var(--control-h-md);
+}
+
+.listik-icon-toggle--sm {
+  height: var(--control-h-sm);
+}
+
+.listik-icon-toggle__item {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  appearance: none;
+  height: 100%;
+  border: 1px solid transparent;
+  border-radius: var(--radius-sm);
+  padding: 0 var(--space-2);
+  background: transparent;
+  color: var(--ink-3);
+  cursor: pointer;
+  transition:
+    background-color var(--duration-fast) var(--ease-out),
+    color var(--duration-fast) var(--ease-out),
+    border-color var(--duration-fast) var(--ease-out),
+    box-shadow var(--duration-fast) var(--ease-out);
+}
+
+.listik-icon-toggle__item:hover:not(.is-on) {
+  color: var(--ink-1);
+}
+
+.listik-icon-toggle__item:focus-visible {
+  outline: none;
+  box-shadow: var(--focus-ring);
+}
+
+.listik-icon-toggle__item.is-on {
+  background: var(--surface);
+  color: var(--ink-1);
+  border-color: var(--hairline);
+  box-shadow: var(--shadow-xs);
+}
+
+/* Кружок-превью гаммы внутри #icon у IconToggle гаммы в AppHeader.vue — цвет
+   берётся из --listik-scheme-* (см. блок токенов вверху файла). Тонкое кольцо
+   нужно, чтобы светлые гаммы не сливались с фоном на светлой теме. */
+.listik-scheme-swatch {
+  display: inline-block;
+  width: 14px;
+  height: 14px;
+  border-radius: var(--radius-pill);
+  box-shadow: inset 0 0 0 1px var(--hairline-strong);
+}
+
+/* ── Метрики (макет «Метрики Listik») ───────────────────────────────────── */
+
+.listik-metrics {
+  gap: var(--space-5);
+}
+
+.listik-metrics__row {
+  display: grid;
+  grid-template-columns: repeat(12, minmax(0, 1fr));
+  gap: var(--space-5);
+}
+
+.listik-metrics__span-4 { grid-column: span 4; }
+.listik-metrics__span-5 { grid-column: span 5; }
+.listik-metrics__span-7 { grid-column: span 7; }
+.listik-metrics__span-8 { grid-column: span 8; }
+
+.listik-metrics__card-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  flex-wrap: wrap;
+  gap: var(--space-3);
+}
+
+.listik-metrics__title {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+  margin: 0;
+  font-size: var(--text-md);
+  font-weight: var(--weight-semibold);
+  color: var(--ink-1);
+}
+
+.listik-metrics__subtitle {
+  margin-top: var(--space-5);
+  margin-bottom: var(--space-3);
+}
+
+.listik-metrics__body {
+  gap: var(--space-4);
+}
+
+.listik-metrics__muted {
+  color: var(--ink-3);
+}
+
+.listik-metrics__task {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+  min-width: 0;
+}
+
+.listik-metrics__prio {
+  flex: none;
+  font-size: var(--text-xs);
+  font-weight: var(--weight-semibold);
+  font-variant-numeric: tabular-nums;
+}
+
+.listik-metrics__ellipsis {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.listik-metrics__stage {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--space-2);
+  color: var(--ink-2);
+  white-space: nowrap;
+}
+
+.listik-metrics__foot {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--space-4);
+  padding-top: var(--space-3);
+  border-top: 1px solid var(--hairline);
+  font-size: var(--text-sm);
+  color: var(--ink-3);
+}
+
+.listik-metrics__foot b {
+  font-weight: var(--weight-semibold);
+  color: var(--ink-2);
+}
+
+/* Требует внимания: ненулевое — полоса слева (не заливка карточки, ловушка 11). */
+.listik-attn {
+  display: grid;
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+  gap: var(--space-3);
+}
+
+.listik-attn__item {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-1);
+  min-width: 0;
+  padding: var(--space-3) var(--space-4);
+  border-radius: var(--radius-md);
+  background: var(--surface-2);
+}
+
+.listik-attn__item--hot {
+  box-shadow: inset var(--listik-card-stripe) 0 0 var(--warning-500);
+}
+
+.listik-attn__label {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+  font-size: var(--text-sm);
+  color: var(--ink-2);
+}
+
+.listik-attn__value {
+  font-size: var(--text-3xl);
+  line-height: 1.1;
+  font-weight: var(--weight-semibold);
+  font-variant-numeric: tabular-nums;
+  letter-spacing: var(--tracking-tight);
+  color: var(--ink-4);
+}
+
+.listik-attn__item--hot .listik-attn__value {
+  color: var(--warning-700);
+}
+
+.listik-attn__hint {
+  font-size: var(--text-xs);
+  color: var(--ink-3);
+}
+
+/* Поток конвейера: Заведена → s1…s4 → Готово. */
+.listik-flow {
+  display: grid;
+  grid-template-columns: repeat(6, minmax(0, 1fr));
+  row-gap: var(--space-5);
+}
+
+.listik-flow__step {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-2);
+  min-width: 0;
+  padding: 0 var(--space-4);
+  border-left: 1px solid var(--hairline);
+}
+
+.listik-flow__step:first-child {
+  padding-left: 0;
+  border-left: 0;
+}
+
+.listik-flow__head {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+  min-width: 0;
+  font-size: var(--text-sm);
+  color: var(--ink-2);
+}
+
+.listik-flow__label {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.listik-flow__code {
+  flex: none;
+  padding: 0 var(--space-1);
+  border-radius: var(--radius-xs);
+  background: var(--surface-2);
+  color: var(--ink-3);
+  font-family: var(--font-mono);
+  font-size: var(--text-xs);
+}
+
+.listik-flow__step--busy .listik-flow__code {
+  background: var(--accent-100);
+  color: var(--accent-700);
+}
+
+.listik-flow__step--done .listik-flow__code {
+  background: var(--success-50);
+  color: var(--success-700);
+}
+
+.listik-flow__count {
+  font-size: var(--text-2xl);
+  line-height: 1.15;
+  font-weight: var(--weight-semibold);
+  font-variant-numeric: tabular-nums;
+  color: var(--ink-1);
+}
+
+.listik-flow__count--zero {
+  color: var(--ink-4);
+}
+
+.listik-flow__track {
+  display: flex;
+  height: var(--space-2);
+  border-radius: var(--radius-2xs);
+  background: var(--surface-2);
+  overflow: hidden;
+}
+
+.listik-flow__fill--wip { background: var(--accent-500); }
+.listik-flow__fill--wait { background: var(--accent-200); }
+.listik-flow__step--done .listik-flow__fill--wip { background: var(--success-500); }
+
+.listik-flow__note {
+  font-size: var(--text-xs);
+  color: var(--ink-3);
+}
+
+/* Открытая работа одной полосой + легенда. */
+.listik-split {
+  display: flex;
+  gap: 2px;
+  height: var(--space-7);
+  border-radius: var(--radius-sm);
+  background: var(--surface-2);
+  overflow: hidden;
+}
+
+.listik-split__part {
+  min-width: var(--space-1);
+}
+
+.listik-legend {
+  display: grid;
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+  gap: var(--space-3);
+}
+
+.listik-legend-inline {
+  display: flex;
+  gap: var(--space-4);
+}
+
+.listik-legend__item {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+
+.listik-legend__label {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--space-2);
+  font-size: var(--text-sm);
+  color: var(--ink-2);
+}
+
+.listik-legend__value {
+  font-size: var(--text-xl);
+  font-weight: var(--weight-semibold);
+  font-variant-numeric: tabular-nums;
+  color: var(--ink-1);
+}
+
+.listik-legend__value--zero {
+  color: var(--ink-4);
+}
+
+.listik-swatch {
+  flex: none;
+  width: var(--space-2);
+  height: var(--space-2);
+  border-radius: var(--radius-2xs);
+}
+
+/* Зависимости: термин + подсказка слева, число справа. */
+.listik-deps__row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--space-4);
+  padding: var(--space-3) 0;
+  border-bottom: 1px solid var(--hairline);
+}
+
+.listik-deps__row:first-child { padding-top: 0; }
+.listik-deps__row:last-child { padding-bottom: 0; border-bottom: 0; }
+
+.listik-deps__term {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  min-width: 0;
+}
+
+.listik-deps__name {
+  font-weight: var(--weight-medium);
+  color: var(--ink-1);
+}
+
+.listik-deps__hint {
+  font-size: var(--text-xs);
+  color: var(--ink-3);
+}
+
+.listik-deps__value {
+  font-size: var(--text-xl);
+  font-weight: var(--weight-semibold);
+  font-variant-numeric: tabular-nums;
+  color: var(--ink-1);
+}
+
+.listik-deps__value--good { color: var(--success-600); }
+.listik-deps__value--warn { color: var(--warning-600); }
+.listik-deps__value--zero { color: var(--ink-4); }
+
+@media (max-width: 1100px) {
+  .listik-metrics__row > * {
+    grid-column: 1 / -1;
+  }
+}
+
+@media (max-width: 860px) {
+  .listik-attn,
+  .listik-legend {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+
+  .listik-flow {
+    grid-template-columns: repeat(3, minmax(0, 1fr));
+  }
+
+  .listik-flow__step:nth-child(3n + 1) {
+    padding-left: 0;
+    border-left: 0;
+  }
+}
+
+/* UiProportionalBarList рисует <ul> без сброса маркеров — на метриках торчали «•». */
+.listik-metrics .ui-proportional-bar-list__list {
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.listik-metrics .listik-mono {
+  white-space: nowrap;
+}

@@ -1,0 +1,473 @@
+"""MCP-сервер Listik: агенты (claude, dsh, grok, codex) работают с задачами инструментами.
+
+Транспорт — stdio, JSON-RPC 2.0 (протокол MCP 2024-11-05).
+Работает через локальную базу: сервер Listik может быть и не поднят, а задача
+должна открываться всегда.
+
+Подключение (claude / dsh):
+  claude mcp add listik -- /Users/dmitry.fomin/Projects/Listik/bin/listik mcp
+"""
+from __future__ import annotations
+
+import json
+import os
+import sys
+
+from . import db as db_mod
+from . import search as search_mod
+from . import store
+
+PROTOCOL_VERSION = "2024-11-05"
+SERVER_INFO = {"name": "listik", "version": "0.1.0"}
+
+TASK_ID = {"type": "string", "description": "ID задачи, например zoloto585-search-a1b2"}
+ACTOR = {"type": "string",
+         "description": "кто действует: me, agent:claude, agent:dsh, agent:grok, agent:codex"}
+
+TOOLS: list[dict] = [
+    {
+        "name": "listik_search",
+        "description": ("Гибридный поиск по всем задачам и комментариям сразу во всех проектах "
+                        "(BM25 + векторный, слияние RRF). Главный инструмент памяти: искать, "
+                        "где уже решалась такая задача, кто её делал и чем кончилось."),
+        "inputSchema": {
+            "type": "object",
+            "properties": {
+                "query": {"type": "string", "description": "запрос словами"},
+                "limit": {"type": "integer", "default": 10},
+                "project": {"type": "string"},
+                "status": {"type": "string"},
+                "stage": {"type": "string"},
+                "mode": {"type": "string", "enum": ["hybrid", "text", "vector"], "default": "hybrid"},
+            },
+            "required": ["query"],
+        },
+    },
+    {
+        "name": "listik_list",
+        "description": "Список задач с фильтрами. Открытые по умолчанию.",
+        "inputSchema": {
+            "type": "object",
+            "properties": {
+                "project": {"type": "string"},
+                "status": {"type": "string",
+                           "enum": ["open", "in_progress", "blocked", "review", "done", "cancelled"]},
+                "stage": {"type": "string",
+                          "enum": ["s1-spec", "s2-review", "s3-impl", "s4-judge", "done"]},
+                "assignee": {"type": "string"},
+                "holder": {"type": "string"},
+                "needs_owner": {"type": "boolean"},
+                "type": {"type": "string"},
+                "text": {"type": "string"},
+                "include_closed": {"type": "boolean", "default": False},
+                "limit": {"type": "integer", "default": 50},
+                "order": {"type": "string", "enum": ["updated", "created", "priority", "stage"]},
+            },
+        },
+    },
+    {
+        "name": "listik_show",
+        "description": ("Полная карточка задачи: описание, критерии приёмки, этап и сколько на нём, "
+                        "кто держит и как давно, комментарии/журнал, события, зависимости, "
+                        "documents[] — статус индексируемых документов (spec/checklist/review/decision)."),
+        "inputSchema": {"type": "object", "properties": {"id": TASK_ID}, "required": ["id"]},
+    },
+    {
+        "name": "listik_create",
+        "description": ("Создать задачу в Listik. spec_path/checklist_path/review_path/decision_path — "
+                        "пути к markdown-документам задачи (ТЗ, чек-лист приёмки, ревью, решение); "
+                        "они индексируются по разделам и доступны через listik_context/поиск."),
+        "inputSchema": {
+            "type": "object",
+            "properties": {
+                "title": {"type": "string"},
+                "project": {"type": "string"},
+                "description": {"type": "string"},
+                "acceptance": {"type": "string", "description": "критерии приёмки"},
+                "type": {"type": "string", "enum": ["task", "bug", "feature", "epic", "chore",
+                                                    "decision", "question"]},
+                "priority": {"type": "integer", "minimum": 0, "maximum": 4},
+                "stage": {"type": "string", "enum": ["s1-spec", "s2-review", "s3-impl", "s4-judge"]},
+                "assignee": ACTOR,
+                "labels": {"type": "array", "items": {"type": "string"}},
+                "spec_path": {"type": "string"},
+                "checklist_path": {"type": "string"},
+                "review_path": {"type": "string"},
+                "decision_path": {"type": "string"},
+                "journal_path": {"type": "string"},
+                "actor": ACTOR,
+            },
+            "required": ["title"],
+        },
+    },
+    {
+        "name": "listik_update",
+        "description": ("Изменить поля задачи. Каждое изменение попадает в историю. "
+                        "status, stage, priority, assignee, holder, labels, needs_owner, "
+                        "spec_path, checklist_path, review_path, decision_path, journal_path, "
+                        "worktree, branch, result и т.д."),
+        "inputSchema": {
+            "type": "object",
+            "properties": {
+                "id": TASK_ID,
+                "fields": {"type": "object", "description": "пары поле: значение"},
+                "note": {"type": "string", "description": "зачем меняем — попадёт в историю"},
+                "actor": ACTOR,
+                "harness": {"type": "string"},
+            },
+            "required": ["id", "fields"],
+        },
+    },
+    {
+        "name": "listik_context",
+        "description": ("Компактный, побайтно стабильный контекст задачи под конкретный этап "
+                        "конвейера — карточка, критерии приёмки, зависимости и отобранные разделы "
+                        "документов (ТЗ/чек-лист/ревью/решение) вместо файлов целиком; на s4 "
+                        "ещё и последний вердикт, журнал и состояние рабочего дерева (на s3 "
+                        "этих трёх полей нет). Используй "
+                        "вместо listik_show, когда нужен именно рабочий срез под этап."),
+        "inputSchema": {
+            "type": "object",
+            "properties": {
+                "id": TASK_ID,
+                "stage": {"type": "string", "enum": ["s1-spec", "s2-review", "s3-impl", "s4-judge"]},
+                "portion": {"type": "string", "description": "какой раздел ТЗ/решения выбрать (s3/s4)"},
+                "max_chars": {"type": "integer",
+                             "description": "лимит символов на выбранные блоки; без него — дефолт этапа"},
+            },
+            "required": ["id", "stage"],
+        },
+    },
+    {
+        "name": "listik_claim",
+        "description": ("Взять задачу в работу: держатель + статус «в работе». "
+                        "Отказывает, если у задачи открытый блокер (обход force), чужой "
+                        "держатель или занято рабочее дерево — текст ошибки называет причину "
+                        "и варианты. Одновременно держать задачу должен один агент. "
+                        "После этого регулярно вызывай listik_heartbeat."),
+        "inputSchema": {
+            "type": "object",
+            "properties": {"id": TASK_ID, "holder": ACTOR, "note": {"type": "string"},
+                           "harness": {"type": "string"},
+                           "force": {"type": "boolean",
+                                     "description": "взять даже заблокированную задачу (крайний случай, попадёт в историю)"}},
+            "required": ["id", "holder"],
+        },
+    },
+    {
+        "name": "listik_heartbeat",
+        "description": ("Отметка «работаю»: без неё через 24 часа задача считается брошенной "
+                        "и попадает в линию «нужен ты». Зови каждые 10-15 минут работы."),
+        "inputSchema": {
+            "type": "object",
+            "properties": {"id": TASK_ID, "holder": ACTOR,
+                           "note": {"type": "string", "description": "что делаешь прямо сейчас"}},
+            "required": ["id", "holder"],
+        },
+    },
+    {
+        "name": "listik_stage",
+        "description": ("Перевести задачу на следующий этап конвейера "
+                        "(s1-spec → s2-review → s3-impl → s4-judge → done) или на конкретный "
+                        "этап через to. Сервер сам считает, сколько задача провела на прошлом этапе."),
+        "inputSchema": {
+            "type": "object",
+            "properties": {"id": TASK_ID,
+                           "to": {"type": "string",
+                                  "enum": ["s1-spec", "s2-review", "s3-impl", "s4-judge", "done"]},
+                           "holder": ACTOR, "note": {"type": "string"}, "harness": {"type": "string"}},
+            "required": ["id"],
+        },
+    },
+    {
+        "name": "listik_comment",
+        "description": ("Добавить запись в журнал задачи. kind: comment — обычный комментарий, "
+                        "journal — строка журнала конвейера, question — вопрос, answer — ответ, "
+                        "review — замечания ревью, verdict — вердикт судьи."),
+        "inputSchema": {
+            "type": "object",
+            "properties": {"id": TASK_ID, "text": {"type": "string"},
+                           "kind": {"type": "string", "enum": ["comment", "journal", "question",
+                                                               "answer", "review", "verdict"]},
+                           "author": ACTOR, "harness": {"type": "string"}},
+            "required": ["id", "text"],
+        },
+    },
+    {
+        "name": "listik_needs_owner",
+        "description": ("Поднять флаг «нужен человек» с формулировкой вопроса — задача встанет "
+                        "в линию «нужен ты» на доске. value=false снимает флаг. Текст вопроса "
+                        "ложится в историю карточки комментарием kind=question (ответ при "
+                        "value=false — kind=answer) и находится поиском."),
+        "inputSchema": {
+            "type": "object",
+            "properties": {"id": TASK_ID, "text": {"type": "string", "description": "вопрос автору"},
+                           "value": {"type": "boolean", "default": True}, "actor": ACTOR},
+            "required": ["id"],
+        },
+    },
+    {
+        "name": "listik_done",
+        "description": "Закрыть задачу с результатом в одну-две строки.",
+        "inputSchema": {
+            "type": "object",
+            "properties": {"id": TASK_ID, "result": {"type": "string"},
+                           "reason": {"type": "string"}, "actor": ACTOR},
+            "required": ["id"],
+        },
+    },
+    {
+        "name": "listik_ready",
+        "description": ("Что можно взять прямо сейчас: задачи без незакрытых блокеров и без держателя, "
+                        "отсортированные по приоритету. Вызывай перед тем, как взять работу, "
+                        "чтобы не начать то, что ждёт другую задачу."),
+        "inputSchema": {
+            "type": "object",
+            "properties": {
+                "project": {"type": "string"},
+                "stage": {"type": "string"},
+                "harness": {"type": "string", "description": "фильтр по routing проекта: только задачи, чей этап разрешён этому harness; задачи без этапа — всем"},
+                "include_occupied": {"type": "boolean", "default": False},
+                "limit": {"type": "integer", "default": 30},
+            },
+        },
+    },
+    {
+        "name": "listik_blocked",
+        "description": ("Кто кого ждёт: задачи с незакрытыми блокерами и разбор по каждому блокеру — "
+                        "статус, держатель, сколько стоит без движения."),
+        "inputSchema": {
+            "type": "object",
+            "properties": {"project": {"type": "string"}, "limit": {"type": "integer", "default": 50}},
+        },
+    },
+    {
+        "name": "listik_can_take",
+        "description": ("Можно ли брать конкретную задачу: короткий вердикт и причины "
+                        "(кого ждём, кто держит, что зависит от неё). Спрашивай перед claim, "
+                        "если сомневаешься."),
+        "inputSchema": {"type": "object", "properties": {"id": TASK_ID}, "required": ["id"]},
+    },
+    {
+        "name": "listik_dep_tree",
+        "description": "Дерево зависимостей задачи: чего она ждёт и кто ждёт её.",
+        "inputSchema": {
+            "type": "object",
+            "properties": {"id": TASK_ID, "depth": {"type": "integer", "default": 3}},
+            "required": ["id"],
+        },
+    },
+    {
+        "name": "listik_board",
+        "description": ("Состояние доски: что в работе, кто держит, что брошено, что ждёт человека, "
+                        "что можно взять (поле ready). "
+                        "group_by: status | stage | project | holder. Вызывай в начале сессии, "
+                        "чтобы понять обстановку."),
+        "inputSchema": {
+            "type": "object",
+            "properties": {"group_by": {"type": "string", "enum": ["status", "stage", "project",
+                                                                   "holder"]},
+                           "project": {"type": "string"},
+                           "include_closed": {"type": "boolean", "default": False}},
+        },
+    },
+    {
+        "name": "listik_stats",
+        "description": "Сводка: счётчики по статусам/этапам/проектам/исполнителям, что в работе сейчас.",
+        "inputSchema": {"type": "object", "properties": {"project": {"type": "string"}}},
+    },
+    {
+        "name": "listik_deps",
+        "description": "Добавить или снять связь между задачами (blocks, related, parent-child). "
+                        "Жёсткая связь от агента без confirm записывается как предложение "
+                        "(suggested-blocks) до подтверждения человеком; без actor вызов считается "
+                        "агентским. confirm — только по решению человека.",
+        "inputSchema": {
+            "type": "object",
+            "properties": {"id": TASK_ID, "depends_on": TASK_ID,
+                           "dep_type": {"type": "string", "default": "blocks"},
+                           "action": {"type": "string", "enum": ["add", "rm"], "default": "add"},
+                           "actor": ACTOR,
+                           "confirm": {"type": "boolean", "description": "подтвердить жёсткую зависимость"}},
+            "required": ["id", "depends_on"],
+        },
+    },
+]
+
+
+def _conn():
+    return db_mod.init()
+
+
+def call_tool(name: str, args: dict) -> object:
+    conn = _conn()
+    if name == "listik_search":
+        return search_mod.search(conn, args["query"], limit=int(args.get("limit", 10)),
+                                 project=args.get("project"), status=args.get("status"),
+                                 stage=args.get("stage"), mode=args.get("mode", "hybrid"))
+    if name == "listik_list":
+        return store.list_tasks(
+            conn, project=args.get("project"), status=args.get("status"),
+            stage=args.get("stage"), assignee=args.get("assignee"), holder=args.get("holder"),
+            needs_owner=bool(args.get("needs_owner")), issue_type=args.get("type"),
+            text=args.get("text"), include_closed=bool(args.get("include_closed")),
+            limit=int(args.get("limit", 50)), order=args.get("order", "updated"))
+    if name == "listik_show":
+        from . import deps as deps_mod
+        task = store.get_task(conn, args["id"])
+        task["deps_state"] = deps_mod.ready(conn, args["id"])
+        return task
+    if name == "listik_create":
+        return store.create_task(
+            conn, title=args["title"], project=args.get("project"),
+            description=args.get("description", ""), acceptance=args.get("acceptance", ""),
+            issue_type=args.get("type", "task"), priority=int(args.get("priority", 2)),
+            stage=args.get("stage"), assignee=_norm_actor(args.get("assignee")),
+            labels=args.get("labels") or [], spec_path=args.get("spec_path"),
+            checklist_path=args.get("checklist_path"), review_path=args.get("review_path"),
+            decision_path=args.get("decision_path"), journal_path=args.get("journal_path"),
+            created_by=args.get("actor"))
+    if name == "listik_update":
+        return store.update_task(conn, args["id"], actor=args.get("actor"),
+                                 harness=args.get("harness"), note=args.get("note"),
+                                 **{k: v for k, v in (args.get("fields") or {}).items()
+                                    if k in store.UPDATABLE})
+    if name == "listik_context":
+        from . import documents as documents_mod
+        return documents_mod.context(conn, args["id"], args["stage"],
+                                     portion=args.get("portion"),
+                                     max_chars=args.get("max_chars"))
+    if name == "listik_claim":
+        return store.claim(conn, args["id"], holder=_norm_actor(args["holder"]),
+                           harness=args.get("harness"), note=args.get("note"),
+                           force=bool(args.get("force")))
+    if name == "listik_ready":
+        from . import deps as deps_mod
+        return {"tasks": deps_mod.ready_tasks(
+                    conn, project=args.get("project"), stage=args.get("stage"),
+                    harness=args.get("harness"),
+                    include_occupied=bool(args.get("include_occupied")),
+                    limit=int(args.get("limit", 30))),
+                "cycles": deps_mod.cycles(conn)}
+    if name == "listik_blocked":
+        from . import deps as deps_mod
+        return {"tasks": deps_mod.blocked_tasks(conn, project=args.get("project"),
+                                                limit=int(args.get("limit", 50)))}
+    if name == "listik_can_take":
+        from . import deps as deps_mod
+        state = deps_mod.ready(conn, args["id"])
+        return {k: state[k] for k in ("task_id", "title", "status", "stage", "ready", "claimable",
+                                      "can_finish", "verdict", "reasons", "holder_title",
+                                      "holder_age", "stale_holder", "blocked_by", "children_open")}
+    if name == "listik_dep_tree":
+        from . import deps as deps_mod
+        return deps_mod.graph(conn, args["id"], depth=int(args.get("depth", 3)))
+    if name == "listik_heartbeat":
+        return store.heartbeat(conn, args["id"], holder=_norm_actor(args["holder"]),
+                               note=args.get("note"))
+    if name == "listik_stage":
+        if args.get("to"):
+            return store.next_stage(conn, args["id"], holder=_norm_actor(args.get("holder")),
+                                    harness=args.get("harness"), note=args.get("note"),
+                                    to_stage=args["to"])
+        return store.next_stage(conn, args["id"], holder=_norm_actor(args.get("holder")),
+                                note=args.get("note"), harness=args.get("harness"))
+    if name == "listik_comment":
+        return store.add_comment(conn, args["id"], args["text"],
+                                 author=args.get("author"), kind=args.get("kind", "comment"),
+                                 harness=args.get("harness"))
+    if name == "listik_needs_owner":
+        return store.set_needs_owner(conn, args["id"], value=bool(args.get("value", True)),
+                                     text=args.get("text"), actor=args.get("actor"))
+    if name == "listik_done":
+        return store.update_task(conn, args["id"], actor=args.get("actor"), status="done",
+                                 stage="done", result=args.get("result", ""),
+                                 close_reason=args.get("reason") or args.get("result", ""))
+    if name == "listik_board":
+        return store.board(conn, group_by=args.get("group_by", "status"),
+                           project=args.get("project"),
+                           include_closed=bool(args.get("include_closed")))
+    if name == "listik_stats":
+        return store.stats(conn, project=args.get("project"))
+    if name == "listik_deps":
+        # MCP — транспорт только для агентов: без явного actor вызов всё равно
+        # должен считаться агентским, а не тихо превращаться в «человека».
+        actor = args.get("actor") or os.environ.get("LISTIK_ACTOR") or "agent:mcp"
+        if args.get("action") == "rm":
+            return store.remove_dep(conn, args["id"], args["depends_on"],
+                                    args.get("dep_type"))
+        return store.add_dep(conn, args["id"], args["depends_on"],
+                             args.get("dep_type", "blocks"), actor,
+                             confirm=bool(args.get("confirm")))
+    raise ValueError(f"неизвестный инструмент: {name}")
+
+
+def _norm_actor(value: str | None) -> str | None:
+    if not value:
+        return None
+    from . import actors as actors_mod
+    key, _ = actors_mod.resolve(value, None)
+    return key
+
+
+def _result(payload: object) -> dict:
+    if isinstance(payload, list):
+        payload = {"items": payload}
+    text = json.dumps(payload, ensure_ascii=False, indent=2)
+    return {"content": [{"type": "text", "text": text}]}
+
+
+def handle(request: dict) -> dict | None:
+    method = request.get("method")
+    rid = request.get("id")
+    params = request.get("params") or {}
+
+    if method == "initialize":
+        return {"jsonrpc": "2.0", "id": rid, "result": {
+            "protocolVersion": PROTOCOL_VERSION,
+            "capabilities": {"tools": {}},
+            "serverInfo": SERVER_INFO,
+        }}
+    if method in ("notifications/initialized", "initialized"):
+        return None
+    if method == "tools/list":
+        return {"jsonrpc": "2.0", "id": rid, "result": {"tools": TOOLS}}
+    if method == "tools/call":
+        name = params.get("name")
+        args = params.get("arguments") or {}
+        try:
+            payload = call_tool(name, args)
+        except KeyError as exc:
+            return {"jsonrpc": "2.0", "id": rid,
+                    "result": {"content": [{"type": "text", "text": f"не найдено: {exc}"}],
+                               "isError": True}}
+        except Exception as exc:  # noqa: BLE001
+            return {"jsonrpc": "2.0", "id": rid,
+                    "result": {"content": [{"type": "text",
+                                            "text": f"ошибка {type(exc).__name__}: {exc}"}],
+                               "isError": True}}
+        return {"jsonrpc": "2.0", "id": rid, "result": _result(payload)}
+    if method == "ping":
+        return {"jsonrpc": "2.0", "id": rid, "result": {}}
+    if rid is None:
+        return None
+    return {"jsonrpc": "2.0", "id": rid,
+            "error": {"code": -32601, "message": f"неизвестный метод: {method}"}}
+
+
+def run() -> int:
+    db_mod.init()
+    for line in sys.stdin:
+        line = line.strip()
+        if not line:
+            continue
+        try:
+            request = json.loads(line)
+        except json.JSONDecodeError:
+            continue
+        response = handle(request)
+        if response is None:
+            continue
+        sys.stdout.write(json.dumps(response, ensure_ascii=False) + "\n")
+        sys.stdout.flush()
+    return 0

@@ -1,0 +1,1331 @@
+#!/usr/bin/env python3
+"""listik — трекер задач и память по всем проектам.
+
+Сервер и доска:   listik serve
+Работа агента:    listik claim / heartbeat / stage / comment / done
+Поиск:            listik search "запрос"
+"""
+from __future__ import annotations
+
+import argparse
+import json
+import os
+import sys
+from pathlib import Path
+
+sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
+
+from listik import __version__, client, db, paths, store  # noqa: E402
+
+STATUS_ICON = {"open": "○", "in_progress": "▶", "blocked": "■", "review": "◐",
+               "done": "✓", "cancelled": "✕"}
+STAGE_SHORT = {"s1-spec": "ТЗ", "s2-review": "крит", "s3-impl": "код", "s4-judge": "судья",
+               "done": "готово"}
+
+
+def actor_default(args) -> str | None:
+    return args.actor or os.environ.get("LISTIK_ACTOR") or os.environ.get("USER")
+
+
+def call(op: str, args, path: str, *, query: dict | None = None, body: dict | None = None,
+         method: str = "GET", local_kwargs: dict | None = None):
+    """Идём в сервер, если он поднят; иначе — прямо в базу (агент не должен падать)."""
+    if not getattr(args, "local", False) and client.is_up(args.host, args.port):
+        return client.request(method, path, query=query, body=body,
+                              host=args.host, port=args.port)
+    if not getattr(args, "local", False):
+        print("! сервер Listik не отвечает — команда выполнена напрямую по базе "
+              "(доска не получит событие; подними сервер: listik serve)", file=sys.stderr)
+    return client.local_call(op, **(local_kwargs or {}))
+
+
+def emit(args, payload, human: str) -> None:
+    if getattr(args, "json", False):
+        print(json.dumps(payload, ensure_ascii=False, indent=2))
+    else:
+        print(human)
+
+
+def _dur(seconds) -> str:
+    try:
+        s = int(seconds)
+    except (TypeError, ValueError):
+        return "—"
+    if s < 60:
+        return f"{s} с"
+    if s < 3600:
+        return f"{s // 60} мин"
+    if s < 86400:
+        return f"{s // 3600} ч {s % 3600 // 60} мин"
+    return f"{s // 86400} дн"
+
+
+def task_line(t: dict, *, width: int = 96) -> str:
+    icon = STATUS_ICON.get(t["status"], "?")
+    stage = STAGE_SHORT.get(t.get("stage") or "", t.get("stage") or "")
+    bits = [f"{icon} {t['id']}"]
+    if t.get("project"):
+        bits.append(f"[{t['project']}]")
+    if stage:
+        bits.append(f"этап {stage}")
+    if t.get("holder"):
+        bits.append(f"держит {t['holder_title']} {t.get('holder_age', '')}".strip())
+    elif t.get("assignee"):
+        bits.append(f"назначен {t['assignee_title']}")
+    flags = []
+    if t.get("needs_owner"):
+        flags.append("НУЖЕН ТЫ")
+    if t.get("stale"):
+        flags.append("брошена")
+    if t.get("abandoned"):
+        flags.append("без держателя")
+    if t.get("stage_warn"):
+        flags.append(f"на этапе {t.get('stage_age')}")
+    if t.get("blocked_by"):
+        flags.append(f"блокеров {len(t['blocked_by'])}")
+    head = "  ".join(bits)
+    if flags:
+        head += "  «" + ", ".join(flags) + "»"
+    title = (t.get("title") or "").strip()
+    if len(title) > width:
+        title = title[:width - 1] + "…"
+    return f"{head}\n     {title}"
+
+
+def print_tasks(tasks: list[dict]) -> None:
+    if not tasks:
+        print("  пусто")
+        return
+    for t in tasks:
+        print(task_line(t))
+    print(f"\nвсего: {len(tasks)}")
+
+
+def _soft_link_label(x: dict) -> str:
+    """Подпись мягкой связи для текстового вывода: висячая связь — с пояснением,
+    иначе dep_title (или тип связи, если названия нет)."""
+    if x.get("missing"):
+        return f"{x['id']} ({x['dep_type']}, задача не найдена)"
+    return f"{x['id']} ({x.get('dep_title') or x['dep_type']})"
+
+
+def show_task(t: dict) -> None:
+    print(f"{STATUS_ICON.get(t['status'], '?')} {t['id']}")
+    print(f"  заголовок:   {t['title']}")
+    print(f"  проект:      {t.get('project') or '—'}   тип: {t['issue_type']}   "
+          f"приоритет: {t['priority_title']}")
+    print(f"  статус:      {t['status_title']}"
+          + (f"   этап: {t['stage_title']} (на этапе {t['stage_age']})" if t.get("stage") else ""))
+    holder = t.get("holder_title") or "—"
+    if t.get("holder"):
+        holder += f"   держит {t.get('holder_age')}"
+        if t.get("holder_note"):
+            holder += f" — {t['holder_note']}"
+    print(f"  исполнитель: {t['assignee_title']}   держатель: {holder}")
+    print(f"  создана:     {t['created_at']}   обновлена: {t['updated_at']} ({t['updated_age']} назад)")
+    if t.get("started_at"):
+        print(f"  начата:      {t['started_at']}")
+    if t.get("closed_at"):
+        print(f"  закрыта:     {t['closed_at']}   причина: {t.get('close_reason') or '—'}")
+    if t.get("needs_owner"):
+        print("  *** ЖДЁТ ЧЕЛОВЕКА ***")
+    if t.get("stale"):
+        print(f"  !!! брошена: держатель молчит {t.get('holder_age')}")
+    if t.get("blocked_by"):
+        print(f"  заблокирована: {', '.join(t['blocked_by'])}")
+    deps_state = t.get("deps_state")
+    if deps_state:
+        soft = deps_state.get("soft_links") or []
+        suggested_ids = [x["id"] for x in soft if x.get("dep_type") == "suggested-blocks"]
+        if suggested_ids:
+            print(f"  предложены блокеры (не подтверждены): {', '.join(suggested_ids)}")
+        others = [x for x in soft if x.get("dep_type") != "suggested-blocks"]
+        if others:
+            print(f"  связано (не блокирует): {', '.join(_soft_link_label(x) for x in others)}")
+    if t.get("labels"):
+        print(f"  метки:       {', '.join(t['labels'])}")
+    if t.get("spec_path") or t.get("journal_path"):
+        print(f"  ТЗ:          {t.get('spec_path') or '—'}")
+        print(f"  журнал:      {t.get('journal_path') or '—'}")
+    if t.get("documents"):
+        print("\n  документы:")
+        for d in t["documents"]:
+            line = f"    {d.get('kind')} {d.get('path')} rev {d.get('revision')} чанков {d.get('chunk_count', 0)}"
+            if d.get("status") == "missing":
+                line += f" — ФАЙЛ НЕДОСТУПЕН: {d.get('error')}"
+            print(line)
+    if t.get("worktree") or t.get("branch"):
+        print(f"  дерево:      {t.get('worktree') or '—'}   ветка: {t.get('branch') or '—'}")
+    if t.get("external_ref"):
+        print(f"  старый ID ({t.get('source')}): {t['external_ref']}")
+    for field, label in (("description", "описание"), ("acceptance", "приёмка"),
+                         ("design", "дизайн"), ("notes", "заметки"), ("result", "результат")):
+        value = (t.get(field) or "").strip()
+        if value:
+            print(f"\n  {label}:\n" + "\n".join("    " + line for line in value.splitlines()[:60]))
+    if t.get("comments"):
+        print(f"\n  история ({len(t['comments'])}):")
+        for c in t["comments"][-25:]:
+            text = (c.get("text") or "").strip()
+            first = text.splitlines()[0] if text else ""
+            print(f"    [{c.get('created_at')}] {c.get('author') or '?'} ({c.get('kind')}): {first[:140]}")
+            for line in text.splitlines()[1:8]:
+                print(f"        {line[:150]}")
+    if t.get("events"):
+        print("\n  события:")
+        for e in t["events"][:20]:
+            arrow = ""
+            if e.get("from_value") or e.get("to_value"):
+                arrow = f" {e.get('from_value') or '—'} → {e.get('to_value')}"
+            dur = f" ({_dur(e['duration_s'])})" if e.get("duration_s") else ""
+            print(f"    [{e['ts']}] {e['kind']}{arrow}{dur}"
+                  + (f" — {e['note']}" if e.get("note") else ""))
+    if t.get("dependencies"):
+        print("\n  зависит от: " + ", ".join(d["depends_on"] for d in t["dependencies"]))
+    if t.get("dependents"):
+        print("  от неё зависят: " + ", ".join(d["issue_id"] for d in t["dependents"]))
+
+
+# ------------------------------------------------------------------ команды
+
+def cmd_serve(args) -> int:
+    from listik import server
+    cfg, token = client.config_mod.ensure_token()
+    db.init()
+    if not args.daemon:
+        print(f"токен для агентов: {token}")
+    server.serve(host=args.host, port=args.port, quiet=args.quiet, background=args.daemon,
+                 no_embed=args.no_embed)
+    return 0
+
+
+def cmd_stop(args) -> int:
+    from listik import server
+    pid = server.read_pid()
+    if not pid:
+        print("сервер не запущен")
+        return 0
+    os.kill(pid, 15)
+    print(f"остановлен (pid {pid})")
+    return 0
+
+
+def cmd_status(args) -> int:
+    from listik import server
+    h = client.health(args.host, args.port)
+    pid = server.read_pid()
+    cfg, token = client.config_mod.ensure_token()
+    url = f"http://{cfg['server']['host']}:{cfg['server']['port']}/?token={token}"
+    if h is None:
+        print("сервер: не отвечает" + (f" (pid-файл: {pid})" if pid else ""))
+        print("поднять: listik serve --daemon")
+        return 1
+    print(f"сервер: работает{' (pid ' + str(pid) + ')' if pid else ''}")
+    print(f"доска:  {url}")
+    if h.get("authed") and h.get("counts"):
+        c = h["counts"]
+        print(f"база:   {h.get('db')}")
+        print(f"данные: {c['tasks']} задач, {c['comments']} комментариев, "
+              f"{c['events']} событий, {c['embeddings']} векторов")
+        emb = h.get("embed") or {}
+        print(f"поиск:  модель {emb.get('model')} "
+              + ("готова" if emb.get("ok") else "НЕДОСТУПНА — векторов не будет"))
+    else:
+        print("(подробности недоступны: токен не принят)")
+    return 0
+
+
+def cmd_init(args) -> int:
+    conn = db.init(verbose=True)
+    print(f"база: {paths.DB_PATH}")
+    for k, v in db.counts(conn).items():
+        print(f"  {k:12s} {v}")
+    return 0
+
+
+def cmd_init_projects(args) -> int:
+    """Прописать правила Listik в AGENTS.md/CLAUDE.md всех проектов (блок между маркерами)."""
+    from listik import migrate
+    conn = db.init()
+    rows = conn.execute(
+        "SELECT slug, path FROM projects WHERE path IS NOT NULL AND archived = 0 ORDER BY slug"
+    ).fetchall()
+    dirs = []
+    for r in rows:
+        if args.only and args.only not in r["slug"]:
+            continue
+        candidate = Path(r["path"])
+        if candidate.is_dir():
+            dirs.append(candidate)
+    print(f"проектов к обработке: {len(dirs)}"
+          + (" (dry-run, ничего не записано)" if args.dry_run else ""))
+    report = migrate.migrate_all(dirs, dry_run=args.dry_run, remove_block=args.remove,
+                                 verbose=not args.quiet)
+    print("\nдобавлено: {added}, обновлено: {updated}, без изменений: {unchanged}, "
+          "удалено блоков: {removed}, пропущено: {skipped}".format(**{
+              k: len(v) for k, v in report.items()}))
+    if not args.dry_run and not args.remove:
+        print("\nДальше по каждому проекту: выключить авто-экспорт beads, чтобы репозиторий "
+              "перестал коммитить .beads/issues.jsonl — см. docs/beads-migration.md")
+    return 0
+
+
+def cmd_import(args) -> int:
+    from listik import import_beads
+    conn = db.init()
+    print(f"ищу .beads в {paths.PROJECTS_ROOT} …")
+    report = import_beads.import_all(conn, only=args.only, dry_run=args.dry_run,
+                                     verbose=not args.quiet)
+    if report["skipped_duplicates"]:
+        print("\nдубликаты трекеров (пропущены):")
+        for d in report["skipped_duplicates"]:
+            print(f"  ! {d['slug']} — тот же префикс {d['prefix']}, что и у {d['winner']}; "
+                  f"задач в копии: {d['issues']}")
+    print(f"\nпроектов: {report['projects']}, задач: {report['tasks']}, "
+          f"комментариев: {report['comments']}, связей: {report['deps']}, "
+          f"памятей beads: {report['memories']}"
+          + (f", пропущено уже импортированных: {report['skipped_tasks']}"
+             if report["skipped_tasks"] else ""))
+    if report["dry_run"]:
+        print("(dry-run: ничего не записано)")
+    return 0
+
+
+def cmd_import_writerllm(args) -> int:
+    from listik import import_writerllm
+    conn = db.init()
+    report = import_writerllm.import_file(conn, args.source, project=args.project,
+                                          dry_run=args.dry_run, update=args.update)
+    if args.json:
+        print(json.dumps(report, ensure_ascii=False, indent=2))
+        return 0 if report["ok"] else 1
+
+    print(f"WriterLLM → проект {report['project']} (источник: {report['source']})")
+    print(f"записей: {report['total']}   создано: {report['created']}   "
+          f"обновлено: {report['updated']}   пропущено: {report['skipped']}   "
+          f"игнорировано: {report['ignored']}   связей: {report['dependencies']}   "
+          f"комментариев: {report['comments']}   ошибок: {len(report['errors'])}")
+    for entry in report["examples"]["create"][:5]:
+        line = f"  create  {entry['external_ref']}  «{entry['title']}»"
+        if entry.get("remapped"):
+            line += f"  (id: {entry['id']} — старый занят)"
+        print(line)
+    for entry in report["examples"]["skip"][:5]:
+        print(f"  skip    {entry['external_ref']}  «{entry['title']}»")
+    for entry in report["examples"]["update"][:5]:
+        print(f"  update  {entry['external_ref']}  «{entry['title']}»  "
+              f"({', '.join(entry['fields'])})")
+    for err in report["errors"][:10]:
+        where = err.get("where")
+        if where == "record" and err.get("line") is not None:
+            print(f"  ! строка {err['line']}: {err['error']}")
+        elif where == "dependency":
+            print(f"  ! запись {err.get('external_ref')}, связь → {err.get('target_ref')}: {err['error']}")
+        else:
+            ref = err.get("external_ref") or err.get("line")
+            print(f"  ! {where} {ref}: {err['error']}")
+    if report["warnings"]:
+        print(f"предупреждений: {len(report['warnings'])} (подробности в --json)")
+    if args.dry_run:
+        print("(dry-run: ничего не записано)")
+    return 0 if report["ok"] else 1
+
+
+def cmd_new(args) -> int:
+    body = {
+        "title": args.title, "project": args.project, "type": args.type,
+        "priority": args.priority, "description": args.description or "",
+        "acceptance": args.acceptance or "", "stage": args.stage,
+        "assignee": args.assignee, "labels": args.label or [],
+        "spec_path": args.spec, "journal_path": args.journal,
+        "checklist_path": args.checklist,
+        "review_path": args.review, "decision_path": args.decision,
+        "actor": actor_default(args), "harness": args.harness,
+    }
+    local = dict(body)
+    local.pop("type", None)
+    local.pop("actor", None)
+    local.pop("harness", None)
+    local["issue_type"] = args.type
+    local["created_by"] = actor_default(args)
+    task = call("create", args, "/api/tasks", method="POST", body=body, local_kwargs=local)
+    emit(args, task, f"создана {task['id']}"
+         + (f"  [{task['project']}]" if task.get("project") else "")
+         + f"\n  {task['title']}")
+    return 0
+
+
+def cmd_list(args) -> int:
+    kwargs = {
+        "project": args.project, "status": args.status, "stage": args.stage,
+        "assignee": args.assignee, "holder": args.holder, "issue_type": args.type,
+        "needs_owner": args.needs_owner, "include_closed": args.all,
+        "limit": args.limit, "order": args.order,
+    }
+    if args.mine:
+        kwargs["holder"] = kwargs["holder"] or actor_default(args)
+    if args.stale:
+        kwargs["status"] = "in_progress"
+    res = call("list", args, "/api/tasks",
+               query={k: (str(v).lower() if isinstance(v, bool) else v)
+                      for k, v in kwargs.items() if v is not None},
+               local_kwargs=kwargs)
+    tasks = res["tasks"]
+    if args.stale:
+        tasks = [t for t in tasks if t.get("stale") or t.get("abandoned")]
+    if getattr(args, "json", False):
+        print(json.dumps(res, ensure_ascii=False, indent=2))
+    else:
+        print_tasks(tasks)
+    return 0
+
+
+def cmd_show(args) -> int:
+    task = call("show", args, f"/api/tasks/{args.task_id}", local_kwargs={"task_id": args.task_id})
+    if getattr(args, "json", False):
+        print(json.dumps(task, ensure_ascii=False, indent=2))
+    else:
+        show_task(task)
+    return 0
+
+
+def cmd_context(args) -> int:
+    query = {"stage": args.stage, "portion": args.portion, "max_chars": args.max_chars}
+    out = call("context", args, f"/api/tasks/{args.task_id}/context", query=query,
+               local_kwargs={"task_id": args.task_id, "stage": args.stage,
+                             "portion": args.portion, "max_chars": args.max_chars})
+    if args.format == "json" or getattr(args, "json", False):
+        print(json.dumps(out, ensure_ascii=False, indent=2))
+        return 0
+    card = out.get("card") or {}
+    print(f"контекст {card.get('id') or args.task_id} · этап {out['stage']}")
+    print(f"{card.get('title', '')} [{card.get('project') or '—'}] "
+          f"статус {card.get('status')} этап {card.get('stage')} держит {card.get('holder') or '—'}")
+    if card.get("spec_path"):
+        print(f"spec: {card['spec_path']}")
+    if card.get("checklist_path"):
+        print(f"checklist: {card['checklist_path']}")
+    if card.get("review_path"):
+        print(f"review: {card['review_path']}")
+    if card.get("decision_path"):
+        print(f"decision: {card['decision_path']}")
+    print(f"\nacceptance:\n{out.get('acceptance', '')}")
+    deps = out.get("dependencies") or {}
+    if deps.get("hard"):
+        print("\nзависимости:")
+        for d in deps["hard"]:
+            print(f"  - {d.get('depends_on')} [{d.get('dep_type')}] {d.get('status')} — {d.get('title')}")
+        print(f"  verdict: {deps.get('verdict')}")
+    if deps.get("suggested"):
+        print("\nпредложенные блокеры (не подтверждены):")
+        for d in deps["suggested"]:
+            print(f"  - {d.get('depends_on')} [{d.get('dep_type')}] {d.get('status')} — {d.get('title')}")
+    for doc in out.get("documents", []):
+        print(f"\n## {doc.get('title') or doc['path']} [{doc['kind']}] rev {doc['revision']} статус {doc.get('status')}")
+    for chunk in out.get("chunks", []):
+        heading = chunk.get("breadcrumb") or chunk.get("heading") or "раздел"
+        print(f"\n### {heading} ({chunk.get('path')}:{chunk.get('start_line')}-{chunk.get('end_line')}) — {chunk.get('reason')}")
+        print(chunk.get("text", ""))
+    if out.get("reviews"):
+        print("\nreviews:")
+        for r in out["reviews"]:
+            print(f"  - {r.get('author')}: {r.get('text')}")
+    if out.get("verdict"):
+        print(f"\nverdict: {out['verdict'].get('author')}: {out['verdict'].get('text')}")
+    if out.get("journal"):
+        print("\njournal:")
+        for j in out["journal"]:
+            print(f"  - {j.get('ts')} [{j.get('kind')}] {j.get('actor')}: {j.get('text')}")
+    wt = out.get("worktree")
+    if wt:
+        print(f"\nworktree: {wt.get('path') or '—'}")
+        if wt.get("exists"):
+            print(f"  ветка: {wt.get('branch') or '—'}   head: {wt.get('head') or '—'}")
+            changed = wt.get("changed_files") or []
+            print(f"  изменённых файлов: {len(changed)}")
+            if wt.get("diff_stat"):
+                print(wt["diff_stat"].rstrip("\n"))
+        if wt.get("reason"):
+            print(f"  ({wt['reason']})")
+    if out.get("limits", {}).get("truncated"):
+        print(f"\n[контекст обрезан: {out['limits'].get('reason')}]")
+    return 0
+
+
+def cmd_set(args) -> int:
+    fields = {}
+    for pair in args.field:
+        if "=" not in pair:
+            raise SystemExit(f"ожидалось поле=значение, получено: {pair}")
+        key, value = pair.split("=", 1)
+        key = key.strip()
+        if key == "labels":
+            value = [x.strip() for x in value.split(",") if x.strip()]
+        elif key == "priority":
+            value = int(value)
+        elif key == "needs_owner":
+            value = value.lower() in ("1", "true", "yes", "да")
+        fields[key] = value
+    fields["actor"] = actor_default(args)
+    fields["harness"] = args.harness
+    if args.note:
+        fields["note"] = args.note
+    body = dict(fields)
+    local = dict(fields)
+    local.pop("actor", None)
+    local.pop("harness", None)
+    local["actor"] = fields["actor"]
+    local["task_id"] = args.task_id
+    task = call("update", args, f"/api/tasks/{args.task_id}", method="PATCH", body=body,
+                local_kwargs=local)
+    emit(args, task, task_line(task))
+    return 0
+
+
+def _holder_action(args, action: str) -> int:
+    body = {"holder": args.holder or actor_default(args), "harness": args.harness,
+            "note": args.note}
+    if action == "claim" and getattr(args, "force", False):
+        body["force"] = True
+    task = call(action, args, f"/api/tasks/{args.task_id}/{action}", method="POST", body=body,
+                local_kwargs={**body, "task_id": args.task_id})
+    if getattr(args, "json", False):
+        print(json.dumps(task, ensure_ascii=False, indent=2))
+    else:
+        print(task_line(task))
+    return 0
+
+
+def cmd_claim(args) -> int:
+    return _holder_action(args, "claim")
+
+
+def cmd_heartbeat(args) -> int:
+    return _holder_action(args, "heartbeat")
+
+
+def cmd_stage(args) -> int:
+    if args.to:
+        holder = args.holder or actor_default(args)
+        # Explicit targets use the same server-side routing/holder semantics as
+        # the ordinary next-stage command.
+        body = {"to": args.to, "holder": holder, "harness": args.harness, "note": args.note}
+        local = {"task_id": args.task_id, "to_stage": args.to, "holder": holder,
+                 "harness": args.harness, "note": args.note}
+        task = call("stage", args, f"/api/tasks/{args.task_id}/stage", method="POST", body=body,
+                    local_kwargs=local)
+    else:
+        body = {"holder": args.holder or actor_default(args), "harness": args.harness,
+                "note": args.note}
+        task = call("stage", args, f"/api/tasks/{args.task_id}/stage", method="POST", body=body,
+                    local_kwargs={**body, "task_id": args.task_id})
+    if getattr(args, "json", False):
+        print(json.dumps(task, ensure_ascii=False, indent=2))
+    else:
+        print(task_line(task))
+    return 0
+
+
+def cmd_comment(args) -> int:
+    body = {"text": args.text, "kind": args.kind, "author": actor_default(args),
+            "harness": args.harness}
+    out = call("comment", args, f"/api/tasks/{args.task_id}/comment", method="POST", body=body,
+               local_kwargs={**body, "task_id": args.task_id})
+    emit(args, out, f"добавлено в {args.task_id} ({args.kind})")
+    return 0
+
+
+def cmd_needs_owner(args) -> int:
+    actor = actor_default(args)
+    body = {"value": not args.clear, "note": args.text, "actor": actor, "harness": args.harness}
+    task = call("needs-owner", args, f"/api/tasks/{args.task_id}/needs-owner", method="POST",
+                body=body, local_kwargs={"task_id": args.task_id, "value": not args.clear,
+                                         "text": args.text, "actor": actor,
+                                         "harness": args.harness})
+    state = "снят" if args.clear else "поднят"
+    emit(args, task, f"флаг «нужен человек» {state}: {task['id']}")
+    if not getattr(args, "json", False):
+        if args.text and not args.clear:
+            print(f"  вопрос: {args.text}")
+        elif args.text and args.clear:
+            print(f"  ответ: {args.text}")
+    return 0
+
+
+def cmd_release(args) -> int:
+    actor = actor_default(args)
+    body = {"actor": actor, "note": args.note}
+    task = call("update", args, f"/api/tasks/{args.task_id}/release", method="POST", body=body,
+                local_kwargs={"task_id": args.task_id, "holder": "", "actor": actor,
+                              "note": args.note or "освободил"})
+    emit(args, task, f"освобождена: {task['id']}")
+    return 0
+
+
+def cmd_done(args) -> int:
+    actor = actor_default(args)
+    body = {"result": args.result, "reason": args.reason, "actor": actor,
+            "note": args.note, "harness": args.harness}
+    task = call("update", args, f"/api/tasks/{args.task_id}/done", method="POST", body=body,
+                local_kwargs={"task_id": args.task_id, "status": "done", "stage": "done",
+                              "result": args.result or "", "actor": actor,
+                              "close_reason": args.reason or args.result})
+    emit(args, task, f"закрыта {task['id']}\n  результат: {args.result or '—'}")
+    return 0
+
+
+def cmd_search(args) -> int:
+    from listik import search as search_mod
+    filt = {"project": args.project, "stage": args.stage, "status": args.status}
+    res = call("search", args, "/api/search",
+               query={"q": args.query, "limit": args.limit, "mode": args.mode, **filt},
+               local_kwargs={"query": args.query, "limit": args.limit, "mode": args.mode, **filt})
+    if getattr(args, "json", False):
+        print(json.dumps(res, ensure_ascii=False, indent=2))
+    else:
+        search_mod.print_results(res)
+    return 0
+
+
+def cmd_memory(args) -> int:
+    from listik import search as search_mod
+    if args.query:
+        items = call("memory", args, "/api/memory",
+                     query={"q": args.query, "limit": args.limit, "project": args.project},
+                     local_kwargs={"query": args.query, "limit": args.limit,
+                                   "project": args.project})
+        if getattr(args, "json", False):
+            print(json.dumps(items, ensure_ascii=False, indent=2))
+        else:
+            search_mod.print_memories(items)
+        return 0
+    conn = db.init()
+    rows = conn.execute(
+        "SELECT key, project, body, updated_at FROM memories "
+        + ("WHERE project LIKE ? " if args.project else "")
+        + "ORDER BY updated_at DESC LIMIT ?",
+        ([f"%{args.project}%"] if args.project else []) + [args.limit]).fetchall()
+    if getattr(args, "json", False):
+        print(json.dumps([dict(r) for r in rows], ensure_ascii=False, indent=2))
+        return 0
+    if not rows:
+        print("памяти пока нет (появятся из beads-импорта или командой listik remember)")
+        return 0
+    for r in rows:
+        body = " ".join((r["body"] or "").split())
+        print(f"● {r['key']}\n    {body[:220]}")
+    print(f"\nвсего: {len(rows)}")
+    return 0
+
+
+def cmd_remember(args) -> int:
+    conn = db.init()
+    key = args.key or f"note/{int(__import__('time').time())}"
+    conn.execute(
+        "INSERT INTO memories(key, project, body, source) VALUES(?,?,?, 'native') "
+        "ON CONFLICT(key) DO UPDATE SET body=excluded.body, updated_at=?",
+        (key, args.project or "personal", args.text, store_now()))
+    conn.execute("DELETE FROM memory_fts WHERE memory_key = ?", (key,))
+    conn.execute("INSERT INTO memory_fts(memory_key, body) VALUES(?,?)", (key, args.text))
+    conn.commit()
+    print(f"запомнено: {key}")
+    return 0
+
+
+def store_now() -> str:
+    from datetime import datetime, timezone
+    return datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
+
+
+def cmd_ready(args) -> int:
+    """Что можно взять прямо сейчас: без незакрытых блокеров и без держателя."""
+    res = call("ready", args, "/api/ready",
+               query={"project": args.project, "stage": args.stage, "harness": getattr(args, "harness", None),
+                      "include_occupied": str(args.with_occupied).lower(),
+                      "limit": args.limit},
+               local_kwargs={"project": args.project, "stage": args.stage, "harness": getattr(args, "harness", None),
+                             "include_occupied": args.with_occupied, "limit": args.limit})
+    tasks = res["tasks"]
+    if getattr(args, "json", False):
+        print(json.dumps(res, ensure_ascii=False, indent=2))
+        return 0
+    if not tasks:
+        print("нечего брать: у всех задач есть незакрытые блокеры или держатель")
+    for t in tasks:
+        occ = f" (уже держит {t['holder_title']})" if t.get("holder") else ""
+        wait = f"  [за ней ждут {t['waiting_for_count']}]" if t.get("waiting_for_count") else ""
+        print(f"{STATUS_ICON.get(t['status'], '?')} {t['id']:38s} P{t['priority']} "
+              f"[{t['project'] or '—'}]{occ}{wait}")
+        print(f"     {t['title'][:110]}")
+    if res.get("cycles"):
+        print(f"\n! циклы в зависимостях: {len(res['cycles'])} — см. listik dep cycles")
+    print(f"\nвсего готовых: {len(tasks)}")
+    return 0
+
+
+def cmd_blocked(args) -> int:
+    """Кто кого ждёт: незакрытые блокеры и что из-за них стоит."""
+    res = call("blocked", args, "/api/blocked",
+               query={"project": args.project, "limit": args.limit},
+               local_kwargs={"project": args.project, "limit": args.limit})
+    tasks = res["tasks"]
+    if getattr(args, "json", False):
+        print(json.dumps(res, ensure_ascii=False, indent=2))
+        return 0
+    for t in tasks:
+        print(f"■ {t['id']:38s} [{t['project'] or '—'}]  {t['title'][:80]}")
+        for b in t["blockers"]:
+            if b["missing"]:
+                who = "задача не найдена"
+            elif b["holder"]:
+                who = f"держит {b['holder_title']} {b['idle_age']}"
+            elif b["status"] in ("in_progress", "review"):
+                who = f"в работе, но никто не держит ({b['idle_age']})"
+            else:
+                who = "никто не взял"
+            print(f"      ← ждёт {b['id']:32s} {b['status']:12s} {who}")
+        if t.get("blocked_by_stale"):
+            print("      !!! все блокеры стоят без движения — возможно, пора вмешаться")
+    print(f"\nвсего ждущих: {len(tasks)}")
+    return 0
+
+
+def cmd_dep_tree(args) -> int:
+    body = {"depth": args.depth}
+    tree = call("dep_tree", args, f"/api/tasks/{args.task_id}/deps", method="POST", body=body,
+                local_kwargs={"task_id": args.task_id, "depth": args.depth})
+    if getattr(args, "json", False):
+        print(json.dumps(tree, ensure_ascii=False, indent=2))
+        return 0
+    root = tree["task"]
+    print(f"{root['id']} — {root['title'][:100]}  [{root['status']}]")
+
+    def draw(nodes, prefix="", arrow="← ждёт"):
+        for i, node in enumerate(nodes):
+            last = i == len(nodes) - 1
+            branch = "└─ " if last else "├─ "
+            who = f", держит {node['holder_title']} {node['idle_age']}" if node.get("holder_title") and node["holder_title"] != "—" else ""
+            print(f"{prefix}{branch}{arrow} {node['id']} [{node['status']}{who}] {node['title'][:70]}")
+            draw(node.get("up") or node.get("down") or [], prefix + ("   " if last else "│  "), arrow)
+
+    if tree["waits_for"]:
+        print("ждёт завершения:")
+        draw(tree["waits_for"])
+    if tree["waited_by"]:
+        print("её ждут:")
+        draw(tree["waited_by"], arrow="→ ждёт её")
+    if not tree["waits_for"] and not tree["waited_by"]:
+        print("связей-блокировок нет")
+    if tree.get("soft_links"):
+        print("связано (не блокирует): " + ", ".join(_soft_link_label(x)
+                                                    for x in tree["soft_links"][:8]))
+    return 0
+
+
+def cmd_dep_cycles(args) -> int:
+    conn = db.init()
+    from listik import deps as deps_mod
+    found = deps_mod.cycles(conn)
+    if getattr(args, "json", False):
+        print(json.dumps(found, ensure_ascii=False, indent=2))
+        return 0
+    if not found:
+        print("циклов нет")
+        return 0
+    for cycle in found:
+        print("цикл: " + " → ".join(cycle))
+    return 0
+
+
+def cmd_inbox(args) -> int:
+    """Что требует человека: вопросы, брошенные задачи и всё, что ждёт решения."""
+    res = call("board", args, "/api/board",
+               query={"group_by": "status", "include_closed": "false"},
+               local_kwargs={"group_by": "status"})
+    items = res.get("needs_you") or []
+    questions = [t for t in items if t.get("needs_owner")]
+    dropped = [t for t in items if not t.get("needs_owner")]
+    if getattr(args, "json", False):
+        print(json.dumps({"questions": questions, "dropped": dropped}, ensure_ascii=False, indent=2))
+        return 0
+    print(f"ВОПРОСЫ К ТЕБЕ ({len(questions)})")
+    if not questions:
+        print("  нет")
+    for t in questions:
+        print(f"  ▶ {t['id']}  [{t.get('project') or '—'}]  ждёт {t.get('idle_age')}")
+        print(f"     {t['title'][:120]}")
+        if t.get("holder_note"):
+            print(f"     держатель: {t['holder_title']} — {t['holder_note'][:100]}")
+    print(f"\nВИСИТ БЕЗ ДВИЖЕНИЯ ({len(dropped)})")
+    for t in dropped[: args.limit]:
+        why = "в работе без держателя" if t.get("abandoned") else "держатель молчит"
+        print(f"  ■ {t['id']:40s} {why:24s} {t.get('idle_age')}")
+    if len(dropped) > args.limit:
+        print(f"  … и ещё {len(dropped) - args.limit}")
+    return 0
+
+
+def cmd_board(args) -> int:
+    res = call("board", args, "/api/board",
+               query={"group_by": args.group_by, "project": args.project,
+                      "include_closed": str(args.all).lower()},
+               local_kwargs={"group_by": args.group_by, "project": args.project,
+                             "include_closed": args.all})
+    if getattr(args, "json", False):
+        print(json.dumps(res, ensure_ascii=False, indent=2))
+        return 0
+    if res.get("needs_you"):
+        print(f"=== НУЖЕН ТЫ ({len(res['needs_you'])}) ===")
+        for t in res["needs_you"][:15]:
+            why = "ждёт автора" if t["needs_owner"] else ("брошена" if t["stale"] else "без держателя")
+            print(f"  {t['id']:38s} {why:14s} {t.get('holder_age') or '—':>6s}  {t['title'][:80]}")
+        print()
+    for col in res["columns"]:
+        print(f"=== {col['title']} — {col['count']}"
+              + (f" (в работе {col['wip']})" if col.get("wip") else "")
+              + (f", ждут тебя {col['needs_owner']}" if col.get("needs_owner") else "")
+              + (f", брошено {col['stale']}" if col.get("stale") else "") + " ===")
+        for t in col["tasks"][:40]:
+            print(task_line(t, width=80))
+        print()
+    return 0
+
+
+def cmd_stats(args) -> int:
+    res = call("stats", args, "/api/stats", query={"project": args.project},
+               local_kwargs={"project": args.project})
+    if getattr(args, "json", False):
+        print(json.dumps(res, ensure_ascii=False, indent=2))
+        return 0
+    print("по статусам:  " + ", ".join(f"{k}={v}" for k, v in res["by_status"].items()))
+    print("по этапам:    " + ", ".join(f"{k}={v}" for k, v in res["by_stage"].items()))
+    print(f"нужен человек: {res['needs_owner']}   брошено: {res['stale']}")
+    print("\nпроекты:")
+    for p in res["by_project"][:20]:
+        print(f"  {p['total']:4d}  в работе {p['in_progress']:2d}  ждут {p['waiting']:2d}  {p['project']}")
+    print("\nдержат прямо сейчас:")
+    for h in res["by_holder"]:
+        if h["holder"] != "—":
+            print(f"  {h['count']:4d}  {h['title']} ({h['holder']})")
+    if res["running"]:
+        print("\nчто в работе:")
+        for t in res["running"][:25]:
+            print(f"  {STATUS_ICON.get(t['status'], '?')} {t['id']:38s} "
+                  f"этап {t['stage_age']:>6s}  держит {t['holder_title']}  {t['title'][:60]}")
+    return 0
+
+
+def cmd_timeline(args) -> int:
+    res = call("timeline", args, "/api/timeline", query={"limit": args.limit},
+               local_kwargs={"limit": args.limit})
+    if getattr(args, "json", False):
+        print(json.dumps(res, ensure_ascii=False, indent=2))
+        return 0
+    for e in res["items"]:
+        arrow = ""
+        if e.get("from_value") or e.get("to_value"):
+            arrow = f" {e.get('from_value') or '—'} → {e.get('to_value')}"
+        actor = e.get("actor_title")
+        print(f"[{e['ts']}] {e['kind']:9s} {e['task_id']:38s}{arrow}"
+              + (f"  {actor}" if actor and actor != "—" else "")
+              + (f"  — {e['note'][:70]}" if e.get("note") else ""))
+    return 0
+
+
+def cmd_embed(args) -> int:
+    from listik import embed as embed_mod
+    if not args.local and client.is_up(args.host, args.port):
+        out = client.request("POST", "/api/embed", body={"limit": args.limit},
+                             host=args.host, port=args.port, timeout=3600)
+    else:
+        conn = db.init()
+        out = embed_mod.embed_pending(conn, limit=args.limit)
+    print(json.dumps(out, ensure_ascii=False, indent=2))
+    return 0
+
+
+_ROUTING_SOURCE_TITLES = {
+    "default": "по умолчанию",
+    "config": "config.toml",
+    "db": "база",
+    "config+db": "config.toml+база",
+}
+
+
+def _print_routing(project: dict) -> None:
+    """Печатает блок «маршрутизация» для одного проекта (см. `--routing` и показ)."""
+    eff = project.get("routing_effective") or {}
+    source = _ROUTING_SOURCE_TITLES.get(project.get("routing_source"),
+                                        project.get("routing_source") or "?")
+    print(f"маршрутизация (источник: {source}):")
+    process = eff.get("default_process") or []
+    print(f"  процесс по умолчанию: {' → '.join(process) if process else '—'}")
+    harnesses = eff.get("harnesses") or {}
+    for stage in store.PIPELINE_STAGES:
+        names = harnesses.get(stage) or []
+        label = ", ".join(names) if names else "любой"
+        print(f"  {stage + ':':11s}{label}")
+    transitions = eff.get("transitions") or {}
+    trans_line = ", ".join(f"{k.replace(':', '→')} {v}" for k, v in transitions.items())
+    print(f"  переходы:  {trans_line or '—'}")
+    hours = eff.get("return_window_hours")
+    print(f"  окно возврата после красного вердикта: {hours if hours is not None else '—'} ч")
+
+
+def _projects_table(rows: list[dict], *, with_path: bool = False) -> None:
+    head = f"{'проект':40s} {'всего':>6s} {'живых':>6s} {'в работе':>9s}  {'тип':7s} скрыт"
+    if with_path:
+        head += "  каталог"
+    print(head)
+    for pr in rows:
+        line = (f"{pr['slug']:40s} {pr.get('n_tasks', 0):6d} {pr.get('n_open', 0):6d} "
+                f"{pr.get('n_wip', 0):9d}  {pr.get('kind', ''):7s} "
+                f"{'да' if pr.get('archived') else '':4s}")
+        if with_path:
+            path = pr.get("path") or "—"
+            mark = "" if not pr.get("path") or pr.get("path_exists") else "  (нет каталога)"
+            line += f"  {path}{mark}"
+        print(line)
+
+
+def cmd_projects(args) -> int:
+    """Список репозиториев доски; добавление, скрытие и удаление.
+
+    Доска показывает ровно те проекты, что лежат в таблице projects и не скрыты.
+    Добавить репозиторий — значит прописать его каталог; убрать с доски — скрыть
+    (задачи остаются в истории), удалить совсем — `--remove` (с задачами — --force).
+    """
+    try:
+        list_kwargs = {"host": args.host, "port": args.port, "local": getattr(args, "local", False)}
+    except AttributeError:  # вызов из другого кода без общих флагов
+        list_kwargs = {}
+
+    if getattr(args, "routing", None) is not None:
+        slug = getattr(args, "project", None)
+        if not slug:
+            raise SystemExit("нужен slug проекта")
+        try:
+            parsed = json.loads(args.routing)
+        except json.JSONDecodeError as exc:
+            raise SystemExit(f"ошибка: невалидный JSON: {exc}") from exc
+        project = client.set_project_routing(slug, parsed, **list_kwargs)
+        print(f"проект {project['slug']}: маршрутизация обновлена")
+        _print_routing(project)
+        return 0
+
+    if getattr(args, "add", None):
+        project = client.add_project(path=args.add, slug=args.slug, title=args.title,
+                                     kind=args.kind or "native", **list_kwargs)
+        where = project.get("path") or "без каталога"
+        what = "добавлен" if project.get("created") else "обновлён"
+        print(f"проект {project['slug']} {what}: {where}"
+              + ("  (git-репозиторий)" if project.get("git") else ""))
+        return 0
+
+    if getattr(args, "remove", None):
+        out = client.remove_project(args.remove, force=getattr(args, "force", False),
+                                    **list_kwargs)
+        extra = f", вместе с ним удалено задач: {out['removed_tasks']}" if out.get("removed_tasks") else ""
+        print(f"проект {out['slug']} удалён{extra}")
+        return 0
+
+    archived = getattr(args, "archive", None) or getattr(args, "unarchive", None)
+    if archived:
+        value = bool(getattr(args, "archive", None))
+        client.set_project_archived(archived, value, **list_kwargs)
+        print(f"проект {archived}: {'скрыт с доски' if value else 'возвращён на доску'}")
+        return 0
+
+    res = client.list_projects(**list_kwargs)
+    rows = res["projects"]
+    if getattr(args, "project", None):  # без действия slug — показать один проект
+        rows = [row for row in rows if row["slug"] == args.project]
+        if not rows:
+            raise SystemExit(f"проект не найден: {args.project}")
+    if not getattr(args, "include_archived", False):
+        rows = [row for row in rows if not row.get("archived")]
+    if getattr(args, "json", False):
+        print(json.dumps(rows, ensure_ascii=False, indent=2))
+        return 0
+    _projects_table(rows, with_path=bool(getattr(args, "project", None)))
+    if getattr(args, "project", None) and rows:
+        print()
+        _print_routing(rows[0])
+    print(f"\nвсего: {len(rows)}"
+          + (f"  (скрытых тоже: --include-archived)" if not getattr(args, "include_archived", False) else "")
+          + f"  корень проектов: {res.get('root') or '—'}")
+    return 0
+
+
+def cmd_actors(args) -> int:
+    res = call("meta", args, "/api/meta", local_kwargs={})
+    if getattr(args, "json", False):
+        print(json.dumps(res["actors"], ensure_ascii=False, indent=2))
+        return 0
+    for a in res["actors"]:
+        print(f"  {a['key']:22s} {(a['title'] or ''):26s} {a['kind']:6s} "
+              f"задач {a['n_tasks']:4d}  держит {a['n_held']:3d}")
+    return 0
+
+
+def cmd_dep(args) -> int:
+    # add без явного типа — жёсткая блокировка; link (по упоминаниям) — мягкая связь;
+    # rm без типа должен уйти как None (снимает и blocks, и suggested-blocks разом).
+    if args.action not in ("rm", "suggested") and not args.dep_type:
+        args.dep_type = "relates-to" if args.action == "link" else "blocks"
+    if args.action == "suggested":
+        out = call("dep_suggested", args, "/api/deps/suggested",
+                   query={"project": getattr(args, "project", None), "limit": args.limit},
+                   local_kwargs={"project": getattr(args, "project", None), "limit": args.limit})
+        items = out.get("items", []) if isinstance(out, dict) else out
+        if getattr(args, "json", False):
+            print(json.dumps(items, ensure_ascii=False, indent=2))
+            return 0
+        if not items:
+            print("предложений нет")
+            return 0
+        for it in items:
+            print(f"  {it['issue_id']:34s} ждёт  {it['depends_on']} [{it['depends_on_status']}]  "
+                  f"предложил {it.get('created_by') or '—'} {it.get('created_at')}")
+        print(f"\nвсего предложений: {len(items)}")
+        return 0
+    if args.action == "tree":
+        if not args.issue_id:
+            raise SystemExit("нужен ID задачи: listik dep tree <id>")
+        args.task_id = args.issue_id
+        args.depth = getattr(args, "depth", 3)
+        return cmd_dep_tree(args)
+    if args.action == "cycles":
+        return cmd_dep_cycles(args)
+    if args.action in ("suggest", "link"):
+        if not args.issue_id:
+            raise SystemExit("нужен ID задачи: listik dep suggest <id>")
+        items = call("mentions", args, f"/api/tasks/{args.issue_id}/mentions", method="POST",
+                     body={"limit": args.limit},
+                     local_kwargs={"task_id": args.issue_id, "limit": args.limit})
+        if getattr(args, "json", False):
+            print(json.dumps(items, ensure_ascii=False, indent=2))
+        else:
+            if not items:
+                print(f"{args.issue_id}: неупомянутых несвязанных задач нет")
+            for x in items:
+                print(f"  {x['id']:34s} {x['status']:12s} {x['title'][:70]}")
+            if items:
+                print(f"\nсвязать как «relates-to» (не блокирует): "
+                      f"listik dep link {args.issue_id} [--dep-type blocks]")
+        if args.action == "link" and items:
+            conn = db.init()
+            made = 0
+            for x in items:
+                if args.only and args.only != x["id"]:
+                    continue
+                try:
+                    store.add_dep(conn, args.issue_id, x["id"], args.dep_type,
+                                  created_by=actor_default(args))
+                    made += 1
+                except KeyError:
+                    continue
+            print(f"создано связей: {made} (тип {args.dep_type})")
+        return 0
+    if args.action in ("add", "confirm"):
+        dep_type = "blocks" if args.action == "confirm" else args.dep_type
+        confirm = True if args.action == "confirm" else getattr(args, "confirm", False)
+        out = call("dep_add", args, f"/api/tasks/{args.issue_id}/deps", method="POST",
+                   body={"depends_on": args.depends_on, "dep_type": dep_type, "confirm": confirm,
+                         "actor": actor_default(args)},
+                   local_kwargs={"issue_id": args.issue_id, "depends_on": args.depends_on,
+                                 "dep_type": dep_type, "confirm": confirm,
+                                 "created_by": actor_default(args)})
+        if out.get("suggested"):
+            human = (f"предложение зависимости записано: {args.issue_id} ждёт {args.depends_on}; "
+                     f"подтвердить: listik dep confirm {args.issue_id} {args.depends_on}")
+        elif not out.get("created", True):
+            human = "связь уже была"
+        elif out.get("promoted"):
+            human = (f"{args.issue_id} зависит от {args.depends_on} ({out.get('dep_type', dep_type)}) "
+                     f"(подтверждена, предложение заменено)")
+        else:
+            human = f"{args.issue_id} зависит от {args.depends_on} ({out.get('dep_type', dep_type)})"
+        emit(args, out, human)
+        return 0
+    # rm
+    out = call("dep_remove", args, f"/api/tasks/{args.issue_id}/deps/{args.depends_on}",
+               method="DELETE", query={"dep_type": args.dep_type} if args.dep_type else None,
+               local_kwargs={"issue_id": args.issue_id, "depends_on": args.depends_on,
+                             "dep_type": args.dep_type})
+    if out.get("removed"):
+        human = (f"связь снята: {args.issue_id} → {args.depends_on} "
+                 f"({', '.join(out.get('dep_types') or [])})")
+    else:
+        human = "связи не было"
+    emit(args, out, human)
+    return 0
+
+
+def cmd_token(args) -> int:
+    cfg, token = client.config_mod.ensure_token()
+    print(f"токен: {token}")
+    print(f"конфиг: {paths.CONFIG_PATH}")
+    print(f"доска: http://{cfg['server']['host']}:{cfg['server']['port']}/?token={token}")
+    return 0
+
+
+def cmd_mcp(args) -> int:
+    from listik import mcp
+    return mcp.run()
+
+
+# ------------------------------------------------------------------ парсер
+
+def build_parser() -> argparse.ArgumentParser:
+    p = argparse.ArgumentParser(prog="listik", description="Listik — трекер задач и память")
+    p.add_argument("--version", action="version", version=f"listik {__version__}")
+    p.add_argument("--json", action="store_true", help="вывод в JSON (для агентов)")
+    p.add_argument("--actor", help="кто выполняет действие (me, agent:dsh, ...)")
+    p.add_argument("--harness", help="какой харнесс: dsh, grok, claude, codex")
+    p.add_argument("--host", help="хост сервера Listik")
+    p.add_argument("--port", type=int, help="порт сервера Listik")
+    p.add_argument("--local", action="store_true", help="работать с базой напрямую, минуя сервер")
+    sub = p.add_subparsers(dest="cmd", required=True)
+
+    # Флаги, которые нужны после подкоманды: `listik list --json` читается лучше,
+    # чем `listik --json list`, а агенты пишут именно так.
+    common = argparse.ArgumentParser(add_help=False)
+    # SUPPRESS (а не None): иначе значение из подкоманды перетирает глобальное,
+    # и `listik --json stats` перестаёт быть JSON.
+    common.add_argument("--json", action="store_true", default=argparse.SUPPRESS,
+                        help="вывод в JSON (для агентов)")
+    common.add_argument("--actor", default=argparse.SUPPRESS,
+                        help="кто выполняет действие (me, agent:dsh, agent:claude, ...)")
+    common.add_argument("--harness", default=argparse.SUPPRESS,
+                        help="какой харнесс: dsh, grok, claude, codex")
+
+    def add(name: str, func, **kw):
+        sp = sub.add_parser(name, parents=[common], **kw)
+        sp.set_defaults(func=func)
+        return sp
+
+    sp = add("serve", cmd_serve, help="поднять сервер и доску")
+    sp.add_argument("-q", "--quiet", action="store_true")
+    sp.add_argument("-d", "--daemon", action="store_true", help="уйти в фон (pid в listik.pid)")
+    sp.add_argument("--no-embed", action="store_true",
+                    help="не досчитывать векторы в фоне (ollama не нужен)")
+    add("stop", cmd_stop, help="остановить фоновый сервер")
+    add("status", cmd_status, help="состояние сервера, базы и поиска")
+    add("init", cmd_init, help="создать/обновить базу")
+
+    sp = add("init-projects", cmd_init_projects,
+             help="прописать правила Listik в AGENTS.md/CLAUDE.md проектов")
+    sp.add_argument("--dry-run", action="store_true", help="только показать, что изменится")
+    sp.add_argument("--only", help="подстрока slug проекта")
+    sp.add_argument("--remove", action="store_true", help="убрать блок Listik из файлов")
+    sp.add_argument("-q", "--quiet", action="store_true")
+
+    sp = add("import-beads", cmd_import, help="разовый импорт из старых .beads")
+    sp.add_argument("--dry-run", action="store_true")
+    sp.add_argument("--only", help="подстрока slug проекта")
+    sp.add_argument("-q", "--quiet", action="store_true")
+
+    sp = add("import-writerllm", cmd_import_writerllm,
+             help="идемпотентный импорт WriterLLM (работает с базой напрямую, --local не нужен)",
+             description="Пишет в SQLite напрямую, как import-beads: запущенный сервер и --local "
+                          "не нужны; HTTP-эндпоинта и MCP-инструмента у импорта нет.")
+    sp.add_argument("--source", required=True,
+                    help="JSONL из bd export или JSON-массив из bd list --json (файл; каталог не принимается)")
+    sp.add_argument("--project", default="writerllm",
+                    help="slug проекта для импортируемых задач (по умолчанию: writerllm)")
+    sp.add_argument("--dry-run", action="store_true")
+    sp.add_argument("--update", action="store_true",
+                    help="обновлять поля уже импортированных задач и писать diff в журнал")
+
+    sp = add("new", cmd_new, help="создать задачу")
+    sp.add_argument("title")
+    sp.add_argument("-p", "--project")
+    sp.add_argument("-t", "--type", default="task")
+    sp.add_argument("--priority", type=int, default=2)
+    sp.add_argument("-d", "--description")
+    sp.add_argument("-a", "--acceptance")
+    sp.add_argument("--stage", choices=["s1-spec", "s2-review", "s3-impl", "s4-judge"])
+    sp.add_argument("--assignee")
+    sp.add_argument("-l", "--label", action="append")
+    sp.add_argument("--spec")
+    sp.add_argument("--checklist")
+    sp.add_argument("--review")
+    sp.add_argument("--decision")
+    sp.add_argument("--journal")
+
+    sp = add("list", cmd_list, help="список задач")
+    sp.add_argument("--project")
+    sp.add_argument("--status")
+    sp.add_argument("--stage")
+    sp.add_argument("--assignee")
+    sp.add_argument("--holder")
+    sp.add_argument("-t", "--type")
+    sp.add_argument("--needs-owner", action="store_true")
+    sp.add_argument("--mine", action="store_true", help="только мои (по --actor)")
+    sp.add_argument("--stale", action="store_true", help="только брошенные")
+    sp.add_argument("-a", "--all", action="store_true", help="включая закрытые")
+    sp.add_argument("-n", "--limit", type=int, default=60)
+    sp.add_argument("--order", default="updated",
+                    choices=["updated", "created", "priority", "stage"])
+
+    sp = add("show", cmd_show, help="карточка задачи")
+    sp.add_argument("task_id")
+
+    sp = add("context", cmd_context, help="компактный контекст задачи для этапа")
+    sp.add_argument("task_id")
+    sp.add_argument("--stage", required=True, choices=["s1-spec", "s2-review", "s3-impl", "s4-judge"])
+    sp.add_argument("--portion")
+    sp.add_argument("--max-chars", type=int, default=None)
+    sp.add_argument("--format", choices=["text", "json"], default="text")
+
+    sp = add("set", cmd_set, help="изменить поля: set <id> status=in_progress priority=1")
+    sp.add_argument("task_id")
+    sp.add_argument("field", nargs="+")
+    sp.add_argument("--note")
+
+    for name, func, helptext in (
+        ("claim", cmd_claim, "взять задачу в работу"),
+        ("heartbeat", cmd_heartbeat, "отметиться, что работаешь"),
+    ):
+        sp = add(name, func, help=helptext)
+        sp.add_argument("task_id")
+        sp.add_argument("--holder")
+        sp.add_argument("--note")
+        if name == "claim":
+            sp.add_argument("--force", action="store_true",
+                            help="взять даже заблокированную (останется в истории)")
+
+    sp = add("stage", cmd_stage, help="следующий этап конвейера (или --to)")
+    sp.add_argument("task_id")
+    sp.add_argument("--holder")
+    sp.add_argument("--note")
+    sp.add_argument("--to", choices=["s1-spec", "s2-review", "s3-impl", "s4-judge", "done"])
+
+    sp = add("comment", cmd_comment, help="комментарий/журнал")
+    sp.add_argument("task_id")
+    sp.add_argument("text")
+    sp.add_argument("-k", "--kind", default="comment",
+                    choices=["comment", "journal", "question", "answer", "review", "verdict"])
+
+    sp = add("needs-owner", cmd_needs_owner, help="поднять/снять флаг «нужен человек»")
+    sp.add_argument("task_id")
+    sp.add_argument("text", nargs="?")
+    sp.add_argument("--clear", action="store_true")
+
+    sp = add("release", cmd_release, help="освободить задачу")
+    sp.add_argument("task_id")
+    sp.add_argument("--note")
+
+    sp = add("done", cmd_done, help="закрыть задачу")
+    sp.add_argument("task_id")
+    sp.add_argument("-r", "--result")
+    sp.add_argument("--reason")
+    sp.add_argument("--note")
+
+    sp = add("search", cmd_search, help="гибридный поиск по всем задачам")
+    sp.add_argument("query")
+    sp.add_argument("-n", "--limit", type=int, default=15)
+    sp.add_argument("--mode", choices=["hybrid", "text", "vector"], default="hybrid")
+    sp.add_argument("--project")
+    sp.add_argument("--stage")
+    sp.add_argument("--status")
+
+    sp = add("memory", cmd_memory, help="долговременная память: список или поиск")
+    sp.add_argument("query", nargs="?")
+    sp.add_argument("-n", "--limit", type=int, default=20)
+    sp.add_argument("--project")
+
+    sp = add("remember", cmd_remember, help="записать заметку в память")
+    sp.add_argument("text")
+    sp.add_argument("--key")
+    sp.add_argument("-p", "--project")
+
+    sp = add("ready", cmd_ready, help="что можно взять прямо сейчас (нет блокеров)")
+    sp.add_argument("--project")
+    sp.add_argument("--stage")
+    sp.add_argument("-n", "--limit", type=int, default=40)
+    sp.add_argument("--with-occupied", action="store_true", help="включая занятые кем-то")
+
+    sp = add("blocked", cmd_blocked, help="кто кого ждёт: незакрытые блокеры задач")
+    sp.add_argument("--project")
+    sp.add_argument("-n", "--limit", type=int, default=60)
+
+    sp = add("inbox", cmd_inbox, help="что требует человека: вопросы и брошенные задачи")
+    sp.add_argument("-n", "--limit", type=int, default=25)
+
+    sp = add("board", cmd_board, help="состояние доски в терминале")
+    sp.add_argument("--group-by", default="status",
+                    choices=["status", "stage", "project", "holder"])
+    sp.add_argument("--project")
+    sp.add_argument("-a", "--all", action="store_true")
+
+    sp = add("stats", cmd_stats, help="сводка")
+    sp.add_argument("--project")
+
+    sp = add("timeline", cmd_timeline, help="лента событий")
+    sp.add_argument("-n", "--limit", type=int, default=60)
+
+    sp = add("embed", cmd_embed, help="досчитать векторы (ollama bge-m3)")
+    sp.add_argument("--limit", type=int, default=0)
+
+    sp = add("projects", cmd_projects,
+             help="репозитории доски: список, добавить, скрыть, убрать")
+    sp.add_argument("project", nargs="?", help="показать один проект подробно")
+    sp.add_argument("--add", metavar="ПУТЬ", help="добавить репозиторий (каталог) на доску")
+    sp.add_argument("--slug", metavar="SLUG", help="slug для --add (по умолчанию имя каталога)")
+    sp.add_argument("--title", help="человеческое название проекта")
+    sp.add_argument("--kind", help="тип проекта (по умолчанию native)")
+    sp.add_argument("--remove", metavar="SLUG", help="убрать проект из Listik")
+    sp.add_argument("--force", action="store_true",
+                    help="с --remove: удалить проект вместе с его задачами")
+    sp.add_argument("--archive", metavar="SLUG", help="скрыть проект с доски")
+    sp.add_argument("--unarchive", metavar="SLUG", help="вернуть проект на доску")
+    sp.add_argument("--include-archived", action="store_true", help="показать и скрытые")
+    sp.add_argument("--routing", metavar="JSON",
+                    help="установить переопределение маршрутизации проекта (JSON); "
+                         "'{}' — сбросить; нужен позиционный slug проекта")
+    add("actors", cmd_actors, help="список исполнителей")
+
+    sp = add("dep", cmd_dep,
+             help="связи между задачами: add, confirm, rm, tree, cycles, suggest, link, suggested")
+    sp.add_argument("action", choices=["add", "confirm", "rm", "tree", "cycles", "suggest",
+                                       "link", "suggested"])
+    sp.add_argument("issue_id", nargs="?", help="задача; для tree — та, чьё дерево строим")
+    sp.add_argument("depends_on", nargs="?", help="от чего зависит")
+    sp.add_argument("--dep-type", default=None,
+                    help="тип связи: blocks (жёсткая блокировка, по умолчанию для add), "
+                         "relates-to (по умолчанию для link), parent-child, waits-for")
+    sp.add_argument("-d", "--depth", type=int, default=3)
+    sp.add_argument("-n", "--limit", type=int, default=50)
+    sp.add_argument("--only", help="связать только с этой задачей")
+    sp.add_argument("--confirm", action="store_true", help="подтвердить жёсткую зависимость агента")
+    sp.add_argument("--project", help="фильтр по проекту (для suggested)")
+
+    sp = add("tree", cmd_dep_tree, help="дерево зависимостей задачи (то же, что dep tree)")
+    sp.add_argument("task_id")
+    sp.add_argument("-d", "--depth", type=int, default=3)
+    add("cycles", cmd_dep_cycles, help="циклы в зависимостях")
+
+    add("token", cmd_token, help="показать токен и ссылку на доску")
+    add("mcp", cmd_mcp, help="MCP-сервер (stdio) для агентов")
+
+    return p
+
+
+def main(argv: list[str] | None = None) -> int:
+    args = build_parser().parse_args(argv)
+    if not hasattr(args, "json"):
+        args.json = False
+    try:
+        return args.func(args)
+    except KeyError as exc:
+        print(f"ошибка: {exc.args[0] if exc.args else exc}", file=sys.stderr)
+        return 1
+    except ValueError as exc:
+        print(f"ошибка: {exc}", file=sys.stderr)
+        return 1
+
+
+if __name__ == "__main__":
+    raise SystemExit(main())

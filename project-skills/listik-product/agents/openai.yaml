@@ -1,0 +1,4 @@
+interface:
+  display_name: "Listik product implementation"
+  short_description: "Implement the Listik product spec in dependency order"
+  default_prompt: "Use $listik-product to implement the next uncompleted step from docs/specs/listik-product.md."

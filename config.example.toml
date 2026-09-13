@@ -1,0 +1,21 @@
+[server]
+host = "127.0.0.1"
+port = 8787
+
+[auth]
+token = "test-token"
+
+[embed]
+enabled = true
+model = "bge-m3"
+url = "http://127.0.0.1:11434"
+batch = 16
+max_chars = 6000
+
+[import]
+projects_root = "/Users/pathToProjects"
+max_depth = 6
+
+[board]
+stale_hours = 24
+wip_warn_hours = 8

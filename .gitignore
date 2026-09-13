@@ -1,0 +1,23 @@
+# Listik ведёт свою историю в SQLite — это не артефакт сборки, а единственный
+# источник истины: он не должен попадать в git ни целиком, ни строчками WAL.
+# База создаётся сама при `listik init`/`listik serve`.
+listik.db
+listik.db-*
+listik.db.bak-*
+listik.pid
+listik.log
+
+# Локальный конфиг: токен доски, пути к проектам. Шаблон — config.example.toml;
+# без config.toml `listik serve` сам создаст конфиг и сгенерирует токен.
+config.toml
+
+# Доска
+web/node_modules/
+web/dist/
+web/.env
+web/.env.local
+
+__pycache__/
+*.pyc
+.DS_Store
+.claude/*.lock

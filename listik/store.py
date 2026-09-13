@@ -466,7 +466,7 @@ def add_comment(conn: sqlite3.Connection, task_id: str, text: str, *, author: st
     event(conn, task_id, "comment", to_value=kind, actor=actor_key, harness=harness,
           note=text[:200], ts=ts)
     # Red verdict at s4 returns work to the implementer (sticky) within a configured window.
-    if kind == "verdict" and any(x in (text or "").lower() for x in ("красн", "red", "fail", "не прой", "❌")):
+    if kind == "verdict" and is_red_verdict(text):
         task_row = conn.execute("SELECT stage, project FROM tasks WHERE id = ?", (task_id,)).fetchone()
         if task_row and task_row["stage"] == "s4-judge":
             next_stage(conn, task_id, to_stage="s3-impl", actor=author, harness=harness,
@@ -475,6 +475,19 @@ def add_comment(conn: sqlite3.Connection, task_id: str, text: str, *, author: st
     conn.commit()
     return {"id": cid, "task_id": task_id, "author": author, "kind": kind, "text": text,
             "created_at": ts}
+
+
+_GREEN_HEAD = re.compile(r"^\W*(зел[её]н\w*|green)\b", re.IGNORECASE)
+_RED_MARK = re.compile(r"❌|\b(красн\w*|red|fail\w*|не\s+прой\w*)\b", re.IGNORECASE)
+
+
+def is_red_verdict(text: str | None) -> bool:
+    """A verdict starting with «зелёный»/green is never red; otherwise look for whole-word red marks,
+    so words like "required" or "covered" don't trigger a return."""
+    text = text or ""
+    if _GREEN_HEAD.match(text):
+        return False
+    return bool(_RED_MARK.search(text))
 
 
 def next_stage(conn: sqlite3.Connection, task_id: str, *, holder: str | None = None,

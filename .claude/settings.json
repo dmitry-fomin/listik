@@ -1,6 +1,7 @@
 {
   "enabledPlugins": {
     "feature-pipeline@homemade-skills-claude-code": true,
-    "context7@claude-plugins-official": true
+    "context7@claude-plugins-official": true,
+    "listik@listik": true
   }
 }

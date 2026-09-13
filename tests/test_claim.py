@@ -194,6 +194,18 @@ class RedVerdictTests(TempDbTestCase):
         self.assertGreaterEqual(last["duration_s"], 7000)
         self.assertIn("красного verdict", last["note"] or "")
 
+    def test_green_verdict_with_red_substrings_does_not_change_stage(self) -> None:
+        store.add_comment(self.conn, self.p, "зелёный: required checks covered, no failures ❌-free",
+                          kind="verdict", author="agent:claude")
+        self.assertEqual(store.get_task(self.conn, self.p)["stage"], "s4-judge")
+
+    def test_is_red_verdict_whole_words(self) -> None:
+        self.assertTrue(store.is_red_verdict("red: tests fail"))
+        self.assertTrue(store.is_red_verdict("Вердикт: тесты не пройдены"))
+        self.assertTrue(store.is_red_verdict("итог ❌"))
+        self.assertFalse(store.is_red_verdict("all required items covered"))
+        self.assertFalse(store.is_red_verdict("green: nothing failed"))
+
     def test_green_verdict_does_not_change_stage(self) -> None:
         store.add_comment(self.conn, self.p, "зелёный: всё хорошо", kind="verdict",
                           author="agent:claude")

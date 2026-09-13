@@ -1,101 +1,84 @@
-## Listik — протокол harness
+## Listik — harness protocol
 
-Listik — единственная очередь и журнал работы: `L=~/Projects/Listik/bin/listik`,
-`LISTIK_ACTOR=agent:<harness>` — кто ты (значение — из `listik actors`).
+Listik is the single work queue and journal: `L=~/Projects/Listik/bin/listik`.
 
-1. Выполни `listik ready` и `listik search`, затем `listik show <id>`.
-2. Не бери заблокированную задачу. Если блокер брошен, возьми блокер или поставь ему needs-owner.
-3. Взяв задачу, сразу сделай `claim <id> --holder <твой-harness>`.
-4. Работая дольше 10 минут, делай heartbeat каждые 10–15 минут с короткой заметкой.
-5. При переходе этапа используй `stage`; не подменяй переход изменением текста карточки.
-6. Замечания пиши `comment -k review`, решения и ход работы — `comment -k journal`, вердикт —
-   `comment -k verdict`.
-7. Вопрос человеку оформляй `needs-owner <id> "точный вопрос"`; не оставляй его только в чате.
-8. Перед handoff проверь spec_path, acceptance, worktree/branch, зависимости и журнал.
-9. Завершая работу, выполни `done <id> -r "краткий проверяемый результат"`.
-10. Чужую карточку не переписывай: добавь comment и сообщи о проблеме через Listik.
+**Identify yourself.** Pass `--actor agent:<harness> --harness <harness>` on every command
+(names from `listik actors`; `--holder` uses the same name). Don't rely on `export LISTIK_ACTOR`:
+each shell call is a new process, and a leftover value may belong to a parent agent. Without
+`--actor` writes are attributed to `$USER` (the human) and `dep add` creates a hard blocker.
 
-### Роли по этапам
+### Rules
 
-Что брать: `ready --harness <твой-harness>` — только задачи, чей этап разрешён тебе в routing
-проекта. `claim` откажет и скажет почему, если у задачи открытый блокер, чужой держатель или
-занятое рабочее дерево (`s3-impl`/`s4-judge`/задача без этапа в том же дереве); если блокер или
-держатель брошен — возьми блокер, сделай `release` или поставь `needs-owner`.
+1. Start with `ready`, `search`, then `show <id>`.
+2. Never take a blocked task. If the blocker is abandoned, take the blocker or mark it `needs-owner`.
+3. `claim <id> --holder <harness>` immediately after picking a task.
+4. On work longer than 10 min, `heartbeat` every 10–15 min with a short note.
+5. Change stages only with `stage`, never by editing the card text.
+6. Comment kinds: `review` for remarks, `journal` for decisions/progress, `verdict` for verdicts.
+7. Questions for the human go to `needs-owner <id> "exact question"`, not just the chat.
+8. Before handoff check `spec_path`, acceptance, worktree/branch, deps and journal.
+9. Finish with `done <id> -r "short verifiable result"`.
+10. Don't rewrite someone else's card — comment on it instead.
 
-Держатель на переходах: `claim` чужой карточки невозможен даже с `--force`, поэтому важно, кто
-держит карточку после перехода.
+### Holder on transitions
 
-- handoff (`s2→s3`, `s4→done`) — сервер сам снимает держателя; следующий берёт через
-  `ready` → `claim`.
-- sticky (`s1→s2`, `s3→s4`) — держатель не меняется: если следующий этап ведёт та же
-  сессия, она продолжает под тем же `--holder`; если следующий этап ведёт другой
-  harness, передающий делает `stage <id> --holder <следующий>` (сервер переставит
-  держателя без `release`), а принимающий начинает с `claim <id> --holder <свой>` (для
-  него он идемпотентен) и дальше `heartbeat`.
-- возврат после красного вердикта держателя не меняет: если судья держал карточку под
-  своим именем — судья делает `release <id>`, исполнитель заново `claim`; в одной сессии —
-  просто продолжает под прежним держателем.
+`ready --harness <you>` lists only stages your harness is routed to. `claim` refuses (and says why)
+on an open blocker, another holder, or a busy worktree; `--force` can't take another's card.
 
-**s1-spec**
-- читать: `show`, `context <id> --stage s1-spec`, файл `spec_path`, если уже есть.
-- менять: Markdown-ТЗ, чек-лист приёмки, дочерние карточки-порции (`new … --spec … --checklist …`),
-  предложения зависимостей мягкими связями (`dep link`/`relates-to`); предложения зависимостей —
-  `dep add <порция> <блокер>`: от агента сервер записывает предложение, не жёсткую связь;
-  подтверждает человек (`dep confirm`); `--confirm` агенту не использовать.
-- переход: `stage <id>` на `s2-review`, sticky: держатель остаётся, тот же автор идёт критиковать
-  (другой harness — `stage <id> --holder <критик>`).
+- **handoff** (`s2→s3`, `s4→done`): the server clears the holder; next harness does `ready` → `claim`.
+- **sticky** (`s1→s2`, `s3→s4`): the holder stays. Same session continues as is; to pass to another
+  harness run `stage <id> --holder <next>`, and the receiver runs `claim <id> --holder <self>`
+  (idempotent), then `heartbeat`.
+- **red verdict return** keeps the holder: a judge holding under its own name does `release <id>`
+  so the implementer can `claim`; in a single session just continue.
 
-**s2-review**
-- читать: `context <id> --stage s2-review` (ТЗ и чек-лист целиком).
-- менять: ничего в коде и в ТЗ, только `comment -k review` (и файл `review_path`, если задан).
-- переход: `stage <id>` на `s3-impl`, handoff: сервер снимает держателя, дальше задачу
-  берёт исполнитель через `ready` → `claim`.
+### Stages
 
-**s3-impl**
-- читать: `context <id> --stage s3-impl --portion "<название порции>"` (в нём последний review,
-  вердикта и журнала на `s3` нет) и обязательно `show <id>` — там ответы на вопросы и прошлый
-  вердикт судьи после красного возврата.
-- менять: код в `worktree`/`branch` карточки, запускать проверки, ход — `comment -k journal`.
-- переход: `stage <id>` на `s4-judge`, sticky: не коммитить, дерево остаётся судье; если судья —
-  другой harness, `stage <id> --holder <судья>`.
+**s1-spec** — read `show`, `context <id> --stage s1-spec`, existing `spec_path`. Write the Markdown
+spec, acceptance checklist, portion child cards (`new … --spec … --checklist …`), soft links
+(`dep link`/`relates-to`). `dep add <portion> <blocker>` from an agent is only a suggestion; the
+human confirms with `dep confirm`. Never use `--confirm`. Next: `stage` → `s2-review` (sticky).
 
-**s4-judge**
-- читать: `context <id> --stage s4-judge` (worktree, diff, последний вердикт), чек-лист; если
-  карточка приехала с чужим держателем — сначала `claim <id> --holder <свой>` (после
-  `stage --holder` он идемпотентен).
-- менять: код не править; писать `comment -k verdict`, первое слово — «зелёный» или «красный»,
-  и обязательная фраза: в зелёном вердикте нигде в тексте не употреблять подстроки «красн»,
-  `red`, `fail`, «не прой», `❌` — сервер ищет их во всём тексте и вернёт карточку на `s3-impl`;
-  красный — сервер сам вернёт карточку на `s3-impl`, держатель не меняется: если судья держит
-  под своим именем — `release <id>`, чтобы исполнитель мог `claim`; зелёный — коммит, затем
-  `done <id> -r "…"`. Держатель на `s3-impl` остаётся; если исполнитель не подаст
-  `heartbeat`/`claim` в окно возврата (по умолчанию 24 ч), сервер снимет держателя и задача
-  вернётся в `ready`.
+**s2-review** — read `context <id> --stage s2-review`. Change nothing in code or spec; only
+`comment -k review` (and `review_path` if set). Next: `stage` → `s3-impl` (handoff).
 
-### Команды
+**s3-impl** — read `context <id> --stage s3-impl --portion "<portion>"` and always `show <id>`
+(answers to questions, previous verdict after a red return). Edit code in the card's
+worktree/branch, run checks, log in `comment -k journal`. Don't commit. Next: `stage` → `s4-judge`
+(sticky; other judge harness: `stage <id> --holder <judge>`).
+
+**s4-judge** — read `context <id> --stage s4-judge` and the checklist; if the card arrives with
+another holder, first `claim <id> --holder <self>`. Never edit code. Write `comment -k verdict`
+whose first word is `зелёный` (green) or `красный` (red) — keep these Russian words.
+- Green: a verdict starting with `зелёный` is never treated as red. Then commit and
+  `done <id> -r "…"`.
+- Red: the server returns the card to `s3-impl` with the same holder; `release <id>` if you held it
+  under your own name. If the implementer doesn't `heartbeat`/`claim` within the return window
+  (24 h default), the holder is cleared and the task returns to `ready`.
+
+### Commands
 
 ```sh
 L=~/Projects/Listik/bin/listik
-export LISTIK_ACTOR=agent:<harness>
+# append to every command: --actor agent:<who> --harness <who>
 
-$L ready --harness <кто>
-$L search "суть задачи"
+$L ready --harness <who>
+$L search "gist of the task"
 $L show <id>
-$L context <id> --stage <этап> [--portion "<название порции>"]
-$L dep add <id> <блокер>              # предложение (жёсткое — только с человеком)
-$L dep confirm <id> <блокер>          # подтвердить предложение — человек
-$L claim <id> --holder <кто>
-$L heartbeat <id> --holder <кто> --note "что делаю"
-$L stage <id>                          # переход по цепочке этапов
-$L stage <id> --holder <следующий>     # sticky-передача другому harness
-$L comment <id> "текст" -k journal
-$L comment <id> "текст" -k review
+$L context <id> --stage <stage> [--portion "<portion>"]
+$L dep add <id> <blocker>              # suggestion (hard only via human)
+$L dep confirm <id> <blocker>          # human confirms
+$L claim <id> --holder <who>
+$L heartbeat <id> --holder <who> --note "what I'm doing"
+$L stage <id>                          # next stage
+$L stage <id> --holder <next>          # sticky pass to another harness
+$L comment <id> "text" -k journal|review
 $L comment <id> "зелёный/красный: …" -k verdict
-$L needs-owner <id> "вопрос"
-$L needs-owner <id> --clear "ответ"
+$L needs-owner <id> "question"
+$L needs-owner <id> --clear "answer"
 $L release <id>
-$L done <id> -r "краткий проверяемый результат"
+$L done <id> -r "short verifiable result"
 ```
 
-Восстановление после холодного старта: всё нужное — в `show <id>` (держатель, этап, вопросы и
-ответы, журнал, вердикты, `spec_path`, `worktree`/`branch`) и `context`; чат не нужен.
+Cold start: everything needed is in `show <id>` (holder, stage, Q&A, journal, verdicts,
+`spec_path`, worktree/branch) and `context` — no chat history required.

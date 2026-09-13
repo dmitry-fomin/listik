@@ -17,8 +17,14 @@
 
 ## Listik — протокол harness
 
-Listik — единственная очередь и журнал работы: `L=~/Projects/Listik/bin/listik`,
-`LISTIK_ACTOR=agent:<harness>` — кто ты (значение — из `listik actors`).
+Listik — единственная очередь и журнал работы: `L=~/Projects/Listik/bin/listik`.
+
+**Кто ты.** Каждую команду Listik запускай с `--actor agent:<harness> --harness <harness>`
+(имя harness — из `listik actors`; `--holder` — то же имя). Не полагайся на
+`export LISTIK_ACTOR`: у агента каждый вызов shell — новый процесс, и переменная теряется.
+Без `--actor` запись уходит от `$USER`, то есть от человека: история смешивается с
+человеческой, а `dep add` сразу ставит жёсткий блокер вместо предложения. Переменная
+`LISTIK_ACTOR` в окружении могла остаться от запустившего тебя агента — флаг её перебивает.
 
 1. Выполни `listik ready` и `listik search`, затем `listik show <id>`.
 2. Не бери заблокированную задачу. Если блокер брошен, возьми блокер или поставь ему needs-owner.
@@ -93,7 +99,7 @@ Listik — единственная очередь и журнал работы:
 
 ```sh
 L=~/Projects/Listik/bin/listik
-export LISTIK_ACTOR=agent:<harness>
+# к каждой команде ниже: --actor agent:<кто> --harness <кто>
 
 $L ready --harness <кто>
 $L search "суть задачи"

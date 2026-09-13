@@ -225,11 +225,14 @@ export LISTIK_ACTOR=agent:claude
 `LISTIK_BIN=/путь/к/listik/bin/listik`.
 
 **MCP** (инструменты `listik_*`: ready, show, claim, heartbeat, stage, comment, needs_owner, done,
-deps, search и др.):
+deps, search и др.; полный список — в [API.md](API.md)):
 
 ```sh
 claude mcp add listik -- /путь/к/listik/bin/listik mcp
 ```
+
+Это локальный stdio-транспорт: агент работает на той же машине, где стоит Listik. Для Listik на
+другом сервере — MCP по HTTP, см. «Listik на другом сервере».
 
 **Правила в проектах.** `listik init-projects` вписывает протокол работы с Listik
 (`docs/harness-protocol.md`) в существующие `AGENTS.md`/`CLAUDE.md` проектов, добавленных через
@@ -238,6 +241,65 @@ claude mcp add listik -- /путь/к/listik/bin/listik mcp
 
 **Переход с beads.** `listik import-beads` разово переносит `.beads`-трекеры из каталога проектов
 (старый ID сохраняется в `external_ref`), затем — `docs/beads-migration.md`.
+
+## Listik на другом сервере
+
+Listik можно держать на одном сервере, а агентов подключать к нему по сети. Удалённо доступен
+только MCP по HTTP (`POST /mcp`); CLI `bin/listik` остаётся локальным инструментом — удалённого
+режима CLI нет.
+
+1. **Поднять Listik на сервере.** Клон репозитория, база, запуск:
+
+   ```sh
+   git clone https://github.com/dmitry-fomin/listik.git && cd listik
+   ./bin/listik init            # создать базу
+   ./bin/listik serve --daemon  # сервер и доска
+   ```
+
+   `host` в `config.toml` оставьте `127.0.0.1` (значение по умолчанию): наружу сервер смотрит
+   только через обратный прокси на той же машине. Без `config.toml` первый `serve` создаст его
+   сам и сгенерирует токен.
+
+2. **Обратный прокси и HTTPS.** Наружу — только HTTPS через прокси на той же машине: токен по
+   голому HTTP отдавать нельзя, его перехватят. Caddy (`Caddyfile`):
+
+   ```
+   <домен> {
+       reverse_proxy 127.0.0.1:8787
+   }
+   ```
+
+   nginx:
+
+   ```
+   location /mcp {
+       proxy_pass http://127.0.0.1:8787;
+       proxy_read_timeout 120s;
+   }
+   ```
+
+   `8787` — порт по умолчанию (и порт из примера выше); если в `config.toml` в `[server] port`
+   указан другой, замените его и здесь. `proxy_read_timeout` — не меньше 120 с: ответ MCP может
+   считаться долго, а короткий таймаут обрывает запрос.
+
+3. **Взять токен.** На сервере: `./bin/listik token` — покажет токен и ссылку на доску. Токен
+   один на всё: доска, API и MCP.
+
+4. **Подключить агента на его машине.** Репозиторий и база там не нужны — только URL и токен:
+
+   ```sh
+   claude mcp add --transport http listik https://<домен>/mcp --header "Authorization: Bearer <токен>"
+   ```
+
+5. **Документы.** Файлов проектов на сервере нет, поэтому ТЗ и чек-лист передаются содержимым:
+   `listik_put_document` (MCP) → `PUT /api/tasks/{id}/documents/{kind}`, а читаются
+   `listik_get_document` или `listik_context`. Путь в карточке при этом не нужен: документ
+   получает виртуальный `listik://<id>/<kind>.md` и дальше читается из базы, а не с диска
+   (см. [API.md](API.md), «Документы и чанки»).
+
+6. **Что остаётся только локально:** CLI `bin/listik` (удалённого режима CLI нет),
+   администрирование проектов и routing, удаление задач, импорты (`import-beads`,
+   `import-writerllm`), пересчёт векторов (`listik embed`) и `listik init-projects`.
 
 ## Справочник команд
 

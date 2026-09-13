@@ -1,11 +1,20 @@
 """MCP-сервер Listik: агенты (claude, dsh, grok, codex) работают с задачами инструментами.
 
-Транспорт — stdio, JSON-RPC 2.0 (протокол MCP 2024-11-05).
-Работает через локальную базу: сервер Listik может быть и не поднят, а задача
-должна открываться всегда.
+JSON-RPC 2.0; поддерживаемые версии протокола MCP — 2025-06-18, 2025-03-26, 2024-11-05
+(на `initialize` сервер отвечает версией клиента, если знает её, иначе самой свежей).
 
-Подключение (claude / dsh):
-  claude mcp add listik -- /Users/dmitry.fomin/Projects/Listik/bin/listik mcp
+Транспортов два, разбор сообщений общий (`handle`):
+  * stdio — `bin/listik mcp`; работает через локальную базу: сервер Listik может быть и
+    не поднят, а задача должна открываться всегда;
+  * HTTP — `POST /mcp` сервера Listik (Streamable HTTP: один POST — одно сообщение,
+    ответ обычным JSON, без SSE и сессий) — для Listik, стоящего на другом сервере;
+    авторизация заголовком `Authorization: Bearer <токен>` или `X-Listik-Token`.
+
+Подключение по stdio (claude / dsh):
+  claude mcp add listik -- /путь/к/listik/bin/listik mcp
+
+Подключение к удалённому серверу:
+  claude mcp add --transport http listik https://<домен>/mcp --header "Authorization: Bearer <токен>"
 """
 from __future__ import annotations
 

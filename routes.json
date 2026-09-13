@@ -1,0 +1,244 @@
+{
+  "version": 1,
+  "routes": [
+    {
+      "key": "xhigh-pipeline",
+      "kind": "pipeline",
+      "title": "xhigh",
+      "hint": "внешних ~$4.89 · ~37 мин · когда ошибка дороже прогона",
+      "visible": true,
+      "roles": {
+        "spec": {
+          "provider": "claude",
+          "label": "xhigh",
+          "title": "Fable · xhigh"
+        },
+        "critic": {
+          "provider": "glm",
+          "label": "GLM",
+          "title": "GLM 5.3 Flash по HTTP"
+        },
+        "impl": {
+          "provider": "openai",
+          "label": "xhigh",
+          "title": "GPT-6 Astra · xhigh, в Codex"
+        },
+        "judge": {
+          "provider": "grok",
+          "label": "xhigh",
+          "title": "Grok 4.6 · xhigh"
+        }
+      }
+    },
+    {
+      "key": "high-pipeline",
+      "kind": "pipeline",
+      "title": "high · по умолчанию",
+      "hint": "внешних ~$2 · подписка тратится на ТЗ и код",
+      "visible": true,
+      "roles": {
+        "spec": {
+          "provider": "claude",
+          "label": "medium",
+          "title": "Fable · medium"
+        },
+        "critic": {
+          "provider": "glm",
+          "label": "GLM",
+          "title": "GLM 5.3 Flash по HTTP"
+        },
+        "impl": {
+          "provider": "claude",
+          "label": "medium",
+          "title": "Opus · medium"
+        },
+        "judge": {
+          "provider": "grok",
+          "label": "xhigh",
+          "title": "Grok 4.6 · xhigh"
+        }
+      }
+    },
+    {
+      "key": "medium-pipeline",
+      "kind": "pipeline",
+      "title": "medium",
+      "hint": "внешних ~$1.75 · ~29 мин · работа понятная, разгон не нужен",
+      "visible": true,
+      "roles": {
+        "spec": {
+          "provider": "claude",
+          "label": "low",
+          "title": "Fable · low"
+        },
+        "critic": {
+          "provider": "glm",
+          "label": "GLM",
+          "title": "GLM 5.3 Flash по HTTP"
+        },
+        "impl": {
+          "provider": "claude",
+          "label": "medium",
+          "title": "Opus · medium"
+        },
+        "judge": {
+          "provider": "grok",
+          "label": "medium",
+          "title": "Grok 4.6 · medium"
+        }
+      }
+    },
+    {
+      "key": "low-pipeline",
+      "kind": "pipeline",
+      "title": "low",
+      "hint": "внешних ~$0.99 · ~21 мин · когда поджимает квота подписки",
+      "visible": true,
+      "roles": {
+        "spec": {
+          "provider": "claude",
+          "label": "low",
+          "title": "Opus · low"
+        },
+        "critic": {
+          "provider": "glm",
+          "label": "GLM",
+          "title": "GLM 5.3 Flash по HTTP"
+        },
+        "impl": {
+          "provider": "deepseek",
+          "label": "dsh",
+          "title": "DeepSeek Harness (dsh), своя модель"
+        },
+        "judge": {
+          "provider": "grok",
+          "label": "low",
+          "title": "Grok 4.6 · low"
+        }
+      }
+    },
+    {
+      "key": "inherit-pipeline",
+      "kind": "pipeline",
+      "title": "inherit",
+      "hint": "без внешних харнессов · effort наследуется от оркестратора · вопросы этапов приходят вам по ходу",
+      "visible": true,
+      "roles": {
+        "spec": {
+          "provider": "claude",
+          "label": "Fable",
+          "title": "Fable · effort наследует от оркестратора"
+        },
+        "critic": {
+          "provider": "claude",
+          "label": "Opus",
+          "title": "Opus (критик) · effort наследует от оркестратора"
+        },
+        "impl": {
+          "provider": "claude",
+          "label": "Sonnet",
+          "title": "Sonnet · effort наследует от оркестратора"
+        },
+        "judge": {
+          "provider": "claude",
+          "label": "Opus",
+          "title": "Opus (судья) · effort наследует от оркестратора"
+        }
+      }
+    },
+    {
+      "key": "opus-single-pipeline",
+      "kind": "pipeline",
+      "title": "«Один прогон»",
+      "hint": "внешних $0 · ~6 мин · без ТЗ, критики и приёмки — Opus делает всё сам и коммитит",
+      "visible": true,
+      "roles": {
+        "impl": {
+          "provider": "claude",
+          "label": "Opus",
+          "title": "Opus · medium — сам и коммитит"
+        }
+      },
+      "strip": {
+        "provider": "claude",
+        "label": "Opus"
+      }
+    },
+    {
+      "key": "opus-sonnet-pipeline",
+      "kind": "pipeline",
+      "title": "opus & sonnet",
+      "hint": "пачка задач из трекера · без ТЗ и критики",
+      "visible": true,
+      "roles": {
+        "impl": {
+          "provider": "claude",
+          "label": "Opus",
+          "title": "Opus, medium или high"
+        },
+        "judge": {
+          "provider": "claude",
+          "label": "Sonnet",
+          "title": "Sonnet-судья, коммитит"
+        }
+      }
+    },
+    {
+      "key": "feature-pipeline",
+      "kind": "pipeline",
+      "title": "По конфигу проекта",
+      "hint": "те же четыре роли, но вендор каждой — из .claude/feature-pipeline.yaml, по умолчанию grok",
+      "visible": true,
+      "roles": {
+        "spec": {
+          "provider": "claude",
+          "label": "Fable",
+          "title": "Fable, эффорт из конфига"
+        },
+        "critic": {
+          "provider": "grok",
+          "label": "2nd",
+          "title": "second-opinion, провайдер по умолчанию grok"
+        },
+        "impl": {
+          "provider": "grok",
+          "label": "grok",
+          "title": "grok:grok-delegate → dsh → локально (фолбэк)"
+        },
+        "judge": {
+          "provider": "claude",
+          "label": "judge",
+          "title": "pipeline-judge, локально"
+        }
+      },
+      "strip": {
+        "glyph": "gear",
+        "label": "по конфигу"
+      }
+    },
+    {
+      "key": "dsh",
+      "kind": "direct",
+      "harness": "dsh",
+      "title": "dsh",
+      "hint": "",
+      "visible": true
+    },
+    {
+      "key": "grok",
+      "kind": "direct",
+      "harness": "grok",
+      "title": "grok",
+      "hint": "",
+      "visible": true
+    },
+    {
+      "key": "codex",
+      "kind": "direct",
+      "harness": "codex",
+      "title": "codex",
+      "hint": "",
+      "visible": true
+    }
+  ]
+}

@@ -26,6 +26,7 @@ from . import deps as deps_mod
 from . import embed as embed_mod
 from . import mcp
 from . import paths
+from . import routes as routes_mod
 from . import search as search_mod
 from . import store
 
@@ -162,12 +163,31 @@ def handle(method: str, path: str, query: dict, body: dict, authed: bool = False
         # Проба живости отдаётся без токена (по ней CLI понимает, поднят ли сервер),
         # поэтому подробности о базе — только авторизованному.
         if authed:
+            routes_state = routes_mod.current()
             data.update({
                 "db": str(paths.DB_PATH),
                 "counts": db_mod.counts(conn),
                 "embed": embed_mod.health(cfg["embed"]["model"]),
+                "routes": {
+                    "ok": routes_state.ok,
+                    "error": routes_state.error,
+                    "path": routes_state.path,
+                    "count": len(routes_state.routes),
+                },
             })
         return 200, data
+
+    if path == "/api/routes":
+        # Данные — из состояния, загруженного один раз при старте: правка файла на
+        # ходу сервер не перечитывает. `command` наружу не отдаём — это argv запуска.
+        state = routes_mod.current()
+        return 200, {
+            "ok": state.ok,
+            "error": state.error,
+            "path": state.path,
+            "routes": [{k: v for k, v in record.items() if k != "command"}
+                       for record in state.routes],
+        }
 
     if path == "/api/meta":
         return 200, {
@@ -833,6 +853,8 @@ def serve(host: str | None = None, port: int | None = None, quiet: bool = False,
         daemonize()
         pid_file().write_text(str(os.getpid()))
         get_conn()
+        # После daemonize: сообщение об ошибке routes.json должно попасть в listik.log.
+        routes_mod.init_at_startup()
         if not no_embed:
             start_embed_worker()
         try:
@@ -846,6 +868,7 @@ def serve(host: str | None = None, port: int | None = None, quiet: bool = False,
         return
 
     get_conn()
+    routes_mod.init_at_startup()
     if not no_embed:
         start_embed_worker()
     httpd = make_server(host, port, quiet=quiet)

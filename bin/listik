@@ -232,6 +232,14 @@ def cmd_status(args) -> int:
               + ("готова" if emb.get("ok") else "НЕДОСТУПНА — векторов не будет"))
     else:
         print("(подробности недоступны: токен не принят)")
+    # Маршруты — только из ответа /api/health работающего сервера: сам status файл
+    # routes.json не читает и не копирует.
+    routes = h.get("routes")
+    if routes:
+        if routes.get("ok"):
+            print(f"маршруты: {routes.get('count')} из {routes.get('path')}")
+        else:
+            print(f"маршруты: ОШИБКА {routes.get('error')} — автостарт выключен")
     return 0
 
 

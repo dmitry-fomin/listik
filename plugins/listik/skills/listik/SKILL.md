@@ -1,6 +1,6 @@
 ---
 name: listik
-description: Работа с задачами в трекере Listik по протоколу — найти и взять задачу (ready, claim), держать её живой (heartbeat), вести журнал, ревью и вердикты, переводить этапы конвейера s1-spec → s2-review → s3-impl → s4-judge → done, ставить зависимости, задавать вопросы человеку (needs-owner) и закрывать (done). Используй, когда в проекте задачи ведутся в Listik, пользователь упоминает listik, карточку/задачу по id, очередь, этап, блокер, или просит взять, продолжить, передать или закрыть задачу.
+description: Работа с задачами в трекере Listik по протоколу — найти и взять задачу (ready, claim), держать её живой (heartbeat), вести журнал, ревью и вердикты, переводить этапы конвейера s1-spec → s2-review → s3-impl → s4-judge → done, ставить зависимости, задавать вопросы человеку (needs-owner) и закрывать (done) — через CLI или MCP-инструменты listik_* (Listik на другом сервере). Используй, когда в проекте задачи ведутся в Listik, пользователь упоминает listik, карточку/задачу по id, очередь, этап, блокер, или просит взять, продолжить, передать или закрыть задачу.
 ---
 
 # Listik: работа с задачами
@@ -10,8 +10,10 @@ Listik — общая очередь задач и журнал работы д�
 
 ## Подготовка
 
-1. Найди CLI: `$LISTIK_BIN`, иначе `listik` в `PATH`, иначе спроси пользователя путь к
-   `bin/listik`. Дальше в тексте — `L`.
+1. Выбери режим. Есть CLI — `$LISTIK_BIN`, иначе `listik` в `PATH` — работай через него, дальше
+   в тексте это `L`. CLI нет, но доступны MCP-инструменты `listik_*` — Listik на другом сервере:
+   работай через них, см. «Удалённый Listik (MCP)». Нет ни того, ни другого — спроси пользователя
+   путь к `bin/listik` или адрес MCP.
 2. Представляйся в **каждой** команде: `L <команда> --actor agent:claude --harness claude`.
    `export LISTIK_ACTOR` между вызовами Bash не сохраняется, а без `--actor` запись уйдёт от
    `$USER`, то есть от человека: история смешается с человеческой, а `dep add` сразу поставит
@@ -74,6 +76,34 @@ Listik — общая очередь задач и журнал работы д�
 - Блокер брошен — возьми сам блокер или поставь ему `needs-owner`; `claim --force` в обход
   блокера — только с явного согласия человека.
 - Проверить: `L tree <id>`, `L blocked`, в `show` — «ждёт» и «её ждут».
+
+## Удалённый Listik (MCP)
+
+Протокол тот же, меняется только способ вызова: вместо `L <команда>` — инструмент `listik_*`.
+
+| CLI | MCP |
+|---|---|
+| `ready`, `search`, `show`, `list` | `listik_ready`, `listik_search`, `listik_show`, `listik_list` |
+| `claim`, `heartbeat`, `release` | `listik_claim`, `listik_heartbeat` (`holder` обязателен), `listik_release` |
+| `stage` | `listik_stage` (`to`, `holder` — для sticky-передачи) |
+| `comment -k journal\|review\|verdict` | `listik_comment` (`kind`, `author`) |
+| `needs-owner` / `--clear` | `listik_needs_owner` (`text`; снять — `value: false` и ответ в `text`) |
+| `done -r` | `listik_done` (`result`) |
+| `new`, `set` | `listik_create`, `listik_update` (`fields`) |
+| `context`, `dep add`, `tree`, `blocked` | `listik_context`, `listik_deps`, `listik_dep_tree`, `listik_blocked` |
+| `inbox`, `memory`, `remember` | `listik_inbox`, `listik_memory`, `listik_remember` |
+
+- **Кто ты.** Флагов нет — передавай `actor: "agent:claude"` и `harness: "claude"` там, где
+  инструмент их принимает; `holder: "claude"`. `listik_deps` без `actor` всё равно считается
+  агентским: жёсткая связь ляжет предложением. `confirm` не ставь — это решение человека.
+- **Документы.** Файлов твоего проекта на сервере нет: `spec_path` на твоей машине сервер не
+  прочитает. ТЗ, чек-лист, ревью и решения загружай содержимым — `listik_put_document` (`id`,
+  `kind`: `spec|checklist|review|decision`, `content`); читай `listik_get_document` или
+  `listik_context`. Поменял файл — загрузи снова, иначе сервер отдаст старый текст.
+- **Нет запасного пути.** Сервер не отвечает — CLI-режима с локальной базой здесь нет: скажи
+  пользователю, не пиши задачи в чат вместо Listik.
+- Администрирование (проекты, routing, удаление задач, импорты) через MCP недоступно — это
+  делает человек на сервере.
 
 ## Холодный старт
 

@@ -1,7 +1,8 @@
 # Listik — трекер задач и память для людей и агентов
 
 Listik — одна очередь задач на все проекты, общая для человека и AI-агентов (Claude Code, Codex,
-DeepSeek, Grok и т. п.). Один локальный сервер, одна база SQLite, один API. Кроме задач — журнал
+DeepSeek, Grok и т. п.). Один сервер — локально или на отдельной машине, одна база SQLite, один
+API (HTTP и MCP). Кроме задач — журнал
 работы по каждой карточке, долговременная память и гибридный поиск (полнотекстовый + векторный)
 по всей истории.
 
@@ -223,11 +224,16 @@ ready → claim → работа + heartbeat → stage … → done
 /plugin install listik@listik
 ```
 
-Скил вызывает ваш установленный `listik`: положите `bin/listik` в `PATH` или задайте
-`LISTIK_BIN=/путь/к/listik/bin/listik`.
+Скил работает в двух режимах:
 
-**MCP** (инструменты `listik_*`: ready, show, claim, heartbeat, stage, comment, needs_owner, done,
-deps, search и др.; полный список — в [API.md](API.md)):
+- **Listik на этой машине** — скил вызывает установленный `listik`: положите `bin/listik` в
+  `PATH` или задайте `LISTIK_BIN=/путь/к/listik/bin/listik`.
+- **Listik на другом сервере** — CLI не нужен: подключите удалённый MCP (см. «Listik на другом
+  сервере»), и скил будет работать через инструменты `listik_*`.
+
+**MCP** — 30 инструментов `listik_*`: ready, show, claim, heartbeat, stage, comment, needs_owner,
+done, release, deps, search, memory, put_document/get_document и др.; полный список с параметрами —
+в [API.md](API.md), «MCP по HTTP». Локально:
 
 ```sh
 claude mcp add listik -- /путь/к/listik/bin/listik mcp

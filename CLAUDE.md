@@ -104,8 +104,8 @@ Database migrations exist as two parallel mechanisms — don't confuse them:
 
 ## This repo tracks its own development in Listik
 
-Work on this codebase is itself queued in Listik — see `project-skills/listik-product/SKILL.md`
-and `docs/specs/listik-product.md` with step files under `docs/specs/steps/`. Read the relevant
-step file before implementing, keep steps incremental (later steps depend on earlier ones), and
-move tasks through the pipeline stages `s1-spec → s2-review → s3-impl → s4-judge → done` via
-`stage`, recording decisions with `comment -k journal`.
+Work on this codebase is itself queued in Listik (project `listik`). Read the task's
+`spec_path`/acceptance before implementing, and move tasks through the pipeline stages
+`s1-spec → s2-review → s3-impl → s4-judge → done` via `stage`, recording decisions with
+`comment -k journal`. Working specs and step files live in `docs/specs/` locally and are not
+committed (see `.gitignore`).

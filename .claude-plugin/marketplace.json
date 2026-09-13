@@ -1,0 +1,16 @@
+{
+  "name": "listik",
+  "description": "Плагины Listik для Claude Code — трекера задач и памяти для людей и агентов.",
+  "owner": {
+    "name": "Dmitry Fomin",
+    "url": "https://github.com/dmitry-fomin"
+  },
+  "plugins": [
+    {
+      "name": "listik",
+      "source": "./plugins/listik",
+      "description": "Работа с задачами в Listik: очередь, этапы конвейера, heartbeat, зависимости, вопросы человеку и журнал.",
+      "version": "0.5.0"
+    }
+  ]
+}

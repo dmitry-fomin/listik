@@ -96,7 +96,7 @@ scripts/
 `NewTaskModal`: тип (эпик · ТЗ / задача / баг), проект, приоритет (P0 доступен только багу),
 заголовок, описание · ТЗ, критерии приёмки, путь к ТЗ (`spec_path`) и матрицу «Маршрут» —
 харнесс (claude/codex/dsh/grok) × процесс (feature-pipeline/cheap-pipeline/local-pipeline/прямая
-задача), таблица зашита в UI (`lib/routes.ts`) по `docs/listik-vision.md`. В `POST /api/tasks`
+задача), таблица зашита в UI (`lib/routes.ts`). В `POST /api/tasks`
 уходят `title, project, type, priority, description, acceptance, spec_path, labels, actor`; выбор
 маршрута сохраняется метками `harness:<x>`/`process:<y>` — их читает только человек, полей
 `harness`/`skill` у карточки нет и после шага 04, автоматической раздачи задач по этим меткам

@@ -1,0 +1,12 @@
+{
+  "name": "listik",
+  "description": "Скил для Claude Code: брать и вести задачи в Listik по протоколу — ready → claim → heartbeat → stage → done, зависимости, needs-owner, журнал, ревью и вердикты.",
+  "version": "0.5.0",
+  "author": {
+    "name": "Dmitry Fomin",
+    "url": "https://github.com/dmitry-fomin"
+  },
+  "homepage": "https://github.com/dmitry-fomin/listik",
+  "repository": "https://github.com/dmitry-fomin/listik",
+  "keywords": ["tasks", "tracker", "pipeline", "listik"]
+}

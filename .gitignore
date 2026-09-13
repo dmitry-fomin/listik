@@ -11,6 +11,16 @@ listik.log
 # без config.toml `listik serve` сам создаст конфиг и сгенерирует токен.
 config.toml
 
+# Рабочие материалы разработки Listik — не документация для использования:
+# ТЗ шагов и вердикты конвейера, HTML-прототипы доски, черновики схемы процесса.
+docs/specs/
+docs/prototype/
+docs/listik-vision.md
+docs/listik-orchestration-scheme.md
+docs/listik-pipeline-binding.md
+docs/facet-prototype-map.md
+project-skills/
+
 # Доска
 web/node_modules/
 web/dist/

@@ -14,17 +14,14 @@ _HARNESS_NAMES = re.compile(
     re.IGNORECASE,
 )
 
-_SPEC_PATH = (
-    paths.ROOT_DIR / "docs" / "specs" / "steps" / "step-02-harness-protocol.md"
-)
+# Ten canonical rules of the harness protocol, frozen from the step-02 spec (the working
+# specs are not committed, so the reference copy lives next to the tests).
+_RULES_PATH = Path(__file__).parent / "fixtures" / "harness-protocol-rules.txt"
 
 
 def _spec_rules() -> list[str]:
-    """Extract the ```text ... ``` block from the step spec and normalize whitespace."""
-    text = _SPEC_PATH.read_text(encoding="utf-8")
-    match = re.search(r"```text\n(.*?)```", text, re.DOTALL)
-    assert match, "spec has no ```text block"
-    block = match.group(1)
+    """Read the numbered rules from the fixture and normalize whitespace."""
+    block = _RULES_PATH.read_text(encoding="utf-8")
     rules: list[str] = []
     current: list[str] = []
     for ln in block.splitlines():

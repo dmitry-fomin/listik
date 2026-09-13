@@ -1,0 +1,20 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512">
+  <defs>
+    <linearGradient id="leaf" x1="0.1" y1="0.9" x2="0.9" y2="0.1">
+      <stop offset="0" stop-color="#12663A"/>
+      <stop offset="0.5" stop-color="#2E9E57"/>
+      <stop offset="1" stop-color="#74DA8E"/>
+    </linearGradient>
+    <linearGradient id="shine" x1="0" y1="0" x2="1" y2="1">
+      <stop offset="0" stop-color="#FFFFFF" stop-opacity="0.28"/>
+      <stop offset="0.7" stop-color="#FFFFFF" stop-opacity="0"/>
+    </linearGradient>
+  </defs>
+  <!-- черешок из нижней точки галочки -->
+  <path d="M200 356 118 446" stroke="#12663A" stroke-width="28" stroke-linecap="round"/>
+  <!-- лист: основание (200,356), кончик (448,64) -->
+  <path d="M200 356C120 330 76 250 98 176 120 104 210 70 300 66 350 64 410 66 448 64 446 120 452 200 420 270 380 356 290 390 200 356Z" fill="url(#leaf)"/>
+  <path d="M98 176C120 104 210 70 300 66 350 64 410 66 448 64 380 110 250 130 170 200 140 226 110 240 96 236 92 214 92 196 98 176Z" fill="url(#shine)"/>
+  <!-- центральная жилка — галочка: короткий штрих слева, вершина у основания, длинный штрих к кончику -->
+  <path d="M132 232 200 330 418 94" fill="none" stroke="#F5FFF8" stroke-width="30" stroke-linecap="round" stroke-linejoin="round"/>
+</svg>

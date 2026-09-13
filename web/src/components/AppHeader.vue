@@ -8,7 +8,7 @@
  * Метрики) — в App.vue как UiSegmented: он ничего не переключает в
  * контенте сам, это radiogroup, а не tablist, и он же несёт счётчики.
  *
- * Марка — UiBrandMark; многоточие названию ставит приложение: слот #brand в ките
+ * Марка — картинка /logo.svg (зелёный лист, жилка которого — галочка), не UiBrandMark; многоточие названию ставит приложение: слот #brand в ките
  * сжимается и обрезает содержимое, а кит не знает, какой элемент слота текстовый.
  *
  * Живость сервера показывает один индикатор (health-статус), не два: раньше
@@ -17,7 +17,7 @@
  * проп остался только ради неё.
  */
 import { computed } from 'vue'
-import { UiAppHeader, UiBrandMark, UiButton, UiStatusPill, UiTooltip } from '@zoloto585/facet'
+import { UiAppHeader, UiButton, UiStatusPill, UiTooltip } from '@zoloto585/facet'
 import ListikIcon from './ListikIcon.vue'
 import ProjectPicker from './ProjectPicker.vue'
 import store from '@/store/listik'
@@ -84,7 +84,9 @@ const themeLabel = computed(() => (theme.value === 'dark' ? 'Включить с
 <template>
   <UiAppHeader>
     <template #brand>
-      <UiBrandMark label="Listik" size="md">L</UiBrandMark>
+      <!-- Знак Listik — зелёный лист, чья центральная жилка складывается в галочку. Не UiBrandMark:
+           у марки кита свой градиентный фон и рамка, а знак — самостоятельная цветная иконка -->
+      <img class="listik-shell__brand-logo" src="/logo.svg" alt="Listik" width="28" height="28" />
       <strong class="listik-shell__brand-name">Listik</strong>
       <UiTooltip :text="healthTooltip" placement="bottom">
         <UiStatusPill :tone="healthTone" size="sm">{{ healthLabel }}</UiStatusPill>

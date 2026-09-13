@@ -1,12 +1,10 @@
-Listik — единственная очередь и журнал работы. Перед началом:
-1. Выполни `listik ready` и `listik search`, затем `listik show <id>`.
-2. Не бери заблокированную задачу. Если блокер брошен, возьми блокер или поставь ему needs-owner.
-3. Взяв задачу, сразу сделай `claim <id> --holder <твой-harness>`.
-4. Работая дольше 10 минут, делай heartbeat каждые 10–15 минут с короткой заметкой.
-5. При переходе этапа используй `stage`; не подменяй переход изменением текста карточки.
-6. Замечания пиши `comment -k review`, решения и ход работы — `comment -k journal`, вердикт —
-   `comment -k verdict`.
-7. Вопрос человеку оформляй `needs-owner <id> "точный вопрос"`; не оставляй его только в чате.
-8. Перед handoff проверь spec_path, acceptance, worktree/branch, зависимости и журнал.
-9. Завершая работу, выполни `done <id> -r "краткий проверяемый результат"`.
-10. Чужую карточку не переписывай: добавь comment и сообщи о проблеме через Listik.
+1. Start with `ready`, `search`, then `show <id>`.
+2. Never take a blocked task. If the blocker is abandoned, take the blocker or mark it `needs-owner`.
+3. `claim <id> --holder <harness>` immediately after picking a task.
+4. On work longer than 10 min, `heartbeat` every 10–15 min with a short note.
+5. Change stages only with `stage`, never by editing the card text.
+6. Comment kinds: `review` for remarks, `journal` for decisions/progress, `verdict` for verdicts.
+7. Questions for the human go to `needs-owner <id> "exact question"`, not just the chat.
+8. Before handoff check `spec_path`, acceptance, worktree/branch, deps and journal.
+9. Finish with `done <id> -r "short verifiable result"`.
+10. Don't rewrite someone else's card — comment on it instead.

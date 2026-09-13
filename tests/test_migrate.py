@@ -50,7 +50,7 @@ class BlockContentTests(unittest.TestCase):
                 rf"(^|\n){n}\.\s",
                 f"missing numbered rule {n}",
             )
-        self.assertIn("### Роли по этапам", rendered)
+        self.assertIn("### Stages", rendered)
         for stage in ("s1-spec", "s2-review", "s3-impl", "s4-judge"):
             self.assertIn(stage, rendered)
         self.assertNotRegex(rendered, _HARNESS_NAMES)

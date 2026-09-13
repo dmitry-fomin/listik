@@ -161,7 +161,8 @@ TOOLS: list[dict] = [
         "inputSchema": {
             "type": "object",
             "properties": {"id": TASK_ID, "holder": ACTOR,
-                           "note": {"type": "string", "description": "что делаешь прямо сейчас"}},
+                           "note": {"type": "string", "description": "что делаешь прямо сейчас"},
+                           "harness": {"type": "string", "description": "какой harness работает"}},
             "required": ["id", "holder"],
         },
     },
@@ -212,7 +213,9 @@ TOOLS: list[dict] = [
         "inputSchema": {
             "type": "object",
             "properties": {"id": TASK_ID, "result": {"type": "string"},
-                           "reason": {"type": "string"}, "actor": ACTOR},
+                           "reason": {"type": "string"},
+                           "note": {"type": "string", "description": "итог/пояснение — попадёт в историю"},
+                           "actor": ACTOR},
             "required": ["id"],
         },
     },
@@ -292,6 +295,82 @@ TOOLS: list[dict] = [
             "required": ["id", "depends_on"],
         },
     },
+    {
+        "name": "listik_release",
+        "description": ("Освободить задачу: снять держателя, не закрывая её. То же, что "
+                        "`listik release` — так бросают задачу или передают её другому."),
+        "inputSchema": {
+            "type": "object",
+            "properties": {"id": TASK_ID, "actor": ACTOR,
+                           "note": {"type": "string", "description": "почему отпускаешь"}},
+            "required": ["id"],
+        },
+    },
+    {
+        "name": "listik_inbox",
+        "description": ("Что требует человека: вопросы к автору (флаг «нужен ты») и задачи, "
+                        "висящие без движения. Две линии доски одним ответом."),
+        "inputSchema": {"type": "object", "properties": {}},
+    },
+    {
+        "name": "listik_memory",
+        "description": ("Долговременная память (заметки вне задач). С query — гибридный поиск, "
+                        "без query — последние заметки, свежие сверху."),
+        "inputSchema": {
+            "type": "object",
+            "properties": {"query": {"type": "string", "description": "что искать"},
+                           "project": {"type": "string", "description": "точный slug проекта"},
+                           "limit": {"type": "integer", "default": 20}},
+        },
+    },
+    {
+        "name": "listik_remember",
+        "description": ("Записать заметку в долговременную память. Повтор с тем же key "
+                        "перезаписывает заметку; без key ключ генерируется."),
+        "inputSchema": {
+            "type": "object",
+            "properties": {"text": {"type": "string", "description": "текст заметки"},
+                           "key": {"type": "string"},
+                           "project": {"type": "string"}},
+            "required": ["text"],
+        },
+    },
+    {
+        "name": "listik_projects",
+        "description": "Проекты доски: slug, путь, счётчики задач; скрытые — по флагу.",
+        "inputSchema": {
+            "type": "object",
+            "properties": {"include_archived": {"type": "boolean", "default": False}},
+        },
+    },
+    {
+        "name": "listik_actors",
+        "description": "Исполнители и агенты: кто есть в базе и сколько задач на ком.",
+        "inputSchema": {"type": "object", "properties": {}},
+    },
+    {
+        "name": "listik_timeline",
+        "description": "Лента последних событий по всем задачам: этапы, статусы, комментарии.",
+        "inputSchema": {
+            "type": "object",
+            "properties": {"limit": {"type": "integer", "default": 100}},
+        },
+    },
+    {
+        "name": "listik_deps_suggested",
+        "description": ("Предложенные блокеры (suggested-blocks): агент предложил, человек ещё "
+                        "не подтвердил. Что именно ждёт решения по зависимостям."),
+        "inputSchema": {
+            "type": "object",
+            "properties": {"project": {"type": "string"},
+                           "limit": {"type": "integer", "default": 100}},
+        },
+    },
+    {
+        "name": "listik_cycles",
+        "description": "Циклы в графе зависимостей: задача ждёт саму себя по кругу — разрывать руками.",
+        "inputSchema": {"type": "object", "properties": {}},
+    },
 ]
 
 
@@ -299,8 +378,9 @@ def _conn():
     return db_mod.init()
 
 
-def call_tool(name: str, args: dict) -> object:
-    conn = _conn()
+def call_tool(name: str, args: dict, conn=None) -> object:
+    if conn is None:
+        conn = _conn()
     if name == "listik_search":
         return search_mod.search(conn, args["query"], limit=int(args.get("limit", 10)),
                                  project=args.get("project"), status=args.get("status"),
@@ -364,7 +444,7 @@ def call_tool(name: str, args: dict) -> object:
         return deps_mod.graph(conn, args["id"], depth=int(args.get("depth", 3)))
     if name == "listik_heartbeat":
         return store.heartbeat(conn, args["id"], holder=_norm_actor(args["holder"]),
-                               note=args.get("note"))
+                               note=args.get("note"), harness=args.get("harness"))
     if name == "listik_stage":
         if args.get("to"):
             return store.next_stage(conn, args["id"], holder=_norm_actor(args.get("holder")),
@@ -382,13 +462,45 @@ def call_tool(name: str, args: dict) -> object:
     if name == "listik_done":
         return store.update_task(conn, args["id"], actor=args.get("actor"), status="done",
                                  stage="done", result=args.get("result", ""),
-                                 close_reason=args.get("reason") or args.get("result", ""))
+                                 close_reason=args.get("reason") or args.get("result", ""),
+                                 note=args.get("note"))
+    if name == "listik_release":
+        return store.update_task(conn, args["id"], actor=args.get("actor"), holder="",
+                                 note=args.get("note") or "освободил")
+    if name == "listik_inbox":
+        res = store.board(conn, group_by="status", include_closed=False)
+        items = res.get("needs_you") or []
+        return {"questions": [t for t in items if t.get("needs_owner")],
+                "dropped": [t for t in items if not t.get("needs_owner")]}
+    if name == "listik_memory":
+        query = args.get("query")
+        limit = int(args.get("limit", 20))
+        project = args.get("project")
+        if query:
+            return {"items": search_mod.search_memories(conn, query, limit=limit,
+                                                        project=project)}
+        rows = conn.execute(
+            "SELECT key, project, body, updated_at FROM memories "
+            + ("WHERE project = ? " if project else "")
+            + "ORDER BY updated_at DESC LIMIT ?",
+            ([project] if project else []) + [limit]).fetchall()
+        return {"items": [dict(r) for r in rows]}
+    if name == "listik_remember":
+        return store.remember(conn, args["text"], key=args.get("key"),
+                              project=args.get("project"))
     if name == "listik_board":
         return store.board(conn, group_by=args.get("group_by", "status"),
                            project=args.get("project"),
                            include_closed=bool(args.get("include_closed")))
     if name == "listik_stats":
         return store.stats(conn, project=args.get("project"))
+    if name == "listik_projects":
+        return {"projects": store.list_projects(conn,
+                                                include_archived=bool(args.get("include_archived")))}
+    if name == "listik_actors":
+        return {"actors": store.list_actors(conn)}
+    if name == "listik_timeline":
+        return {"items": store.task_timeline(conn, limit=int(args.get("limit", 100)))}
     if name == "listik_deps":
         # MCP — транспорт только для агентов: без явного actor вызов всё равно
         # должен считаться агентским, а не тихо превращаться в «человека».
@@ -399,6 +511,13 @@ def call_tool(name: str, args: dict) -> object:
         return store.add_dep(conn, args["id"], args["depends_on"],
                              args.get("dep_type", "blocks"), actor,
                              confirm=bool(args.get("confirm")))
+    if name == "listik_deps_suggested":
+        from . import deps as deps_mod
+        return {"items": deps_mod.suggested(conn, project=args.get("project"),
+                                            limit=int(args.get("limit", 100)))}
+    if name == "listik_cycles":
+        from . import deps as deps_mod
+        return {"cycles": deps_mod.cycles(conn)}
     raise ValueError(f"неизвестный инструмент: {name}")
 
 
@@ -417,7 +536,7 @@ def _result(payload: object) -> dict:
     return {"content": [{"type": "text", "text": text}]}
 
 
-def handle(request: dict) -> dict | None:
+def handle(request: dict, conn=None) -> dict | None:
     method = request.get("method")
     rid = request.get("id")
     params = request.get("params") or {}
@@ -436,7 +555,7 @@ def handle(request: dict) -> dict | None:
         name = params.get("name")
         args = params.get("arguments") or {}
         try:
-            payload = call_tool(name, args)
+            payload = call_tool(name, args, conn)
         except KeyError as exc:
             return {"jsonrpc": "2.0", "id": rid,
                     "result": {"content": [{"type": "text", "text": f"не найдено: {exc}"}],

@@ -619,16 +619,8 @@ def cmd_memory(args) -> int:
 
 
 def cmd_remember(args) -> int:
-    conn = db.init()
-    key = args.key or f"note/{int(__import__('time').time())}"
-    conn.execute(
-        "INSERT INTO memories(key, project, body, source) VALUES(?,?,?, 'native') "
-        "ON CONFLICT(key) DO UPDATE SET body=excluded.body, updated_at=?",
-        (key, args.project or "personal", args.text, store_now()))
-    conn.execute("DELETE FROM memory_fts WHERE memory_key = ?", (key,))
-    conn.execute("INSERT INTO memory_fts(memory_key, body) VALUES(?,?)", (key, args.text))
-    conn.commit()
-    print(f"запомнено: {key}")
+    out = store.remember(db.init(), args.text, key=args.key, project=args.project)
+    print(f"запомнено: {out['key']}")
     return 0
 
 

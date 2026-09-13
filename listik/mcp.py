@@ -17,8 +17,16 @@ from . import db as db_mod
 from . import search as search_mod
 from . import store
 
-PROTOCOL_VERSION = "2024-11-05"
+PROTOCOL_VERSION = "2025-06-18"
+SUPPORTED_PROTOCOL_VERSIONS = ("2025-06-18", "2025-03-26", "2024-11-05")
 SERVER_INFO = {"name": "listik", "version": "0.1.0"}
+
+# Инструменты, после которых доске нужно событие: она обновляется по SSE, а не по опросу.
+WRITE_TOOLS = frozenset({
+    "listik_create", "listik_update", "listik_claim", "listik_heartbeat", "listik_stage",
+    "listik_comment", "listik_needs_owner", "listik_done", "listik_release", "listik_deps",
+    "listik_put_document",
+})
 
 TASK_ID = {"type": "string", "description": "ID задачи, например zoloto585-search-a1b2"}
 ACTOR = {"type": "string",
@@ -582,8 +590,12 @@ def handle(request: dict, conn=None) -> dict | None:
     params = request.get("params") or {}
 
     if method == "initialize":
+        # Согласование версии: клиент получает свою же версию, если Listik её знает,
+        # иначе — самую свежую из поддерживаемых. Работает и для stdio, и для HTTP.
+        requested = params.get("protocolVersion")
+        version = requested if requested in SUPPORTED_PROTOCOL_VERSIONS else PROTOCOL_VERSION
         return {"jsonrpc": "2.0", "id": rid, "result": {
-            "protocolVersion": PROTOCOL_VERSION,
+            "protocolVersion": version,
             "capabilities": {"tools": {}},
             "serverInfo": SERVER_INFO,
         }}

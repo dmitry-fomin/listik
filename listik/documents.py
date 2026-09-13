@@ -11,6 +11,11 @@ from . import paths, search, store, textutil
 
 MAX_CHARS = 6000
 OVERLAP = 240
+# Вид документа -> поле задачи, в котором лежит путь к нему.
+DOC_FIELDS = {"spec": "spec_path", "checklist": "checklist_path", "review": "review_path",
+              "decision": "decision_path"}
+# Потолок на текст, присланный через API/MCP: документ едет в sqlite целиком.
+MAX_UPLOAD_CHARS = 1_000_000
 _HEADING = re.compile(r"^(#{1,6})\s+(.+?)\s*$")
 _FENCE = re.compile(r"^\s*```")
 _LIST_ITEM = re.compile(r"^[ \t]*(?:[-*+]|\d+[.)])[ \t]+\S")
@@ -234,38 +239,72 @@ def split_markdown(content: str, limit: int = MAX_CHARS) -> list[dict]:
 _split_markdown = split_markdown
 
 
+def _document_title(content: str, path: str) -> str:
+    return content.splitlines()[0].lstrip("# ") if content else path
+
+
+def _insert_chunks(conn: sqlite3.Connection, task_id: str, doc_id: str, content: str) -> None:
+    """Нарезать `content` в `document_chunks` и их строки FTS для готовой строки документа."""
+    for ordinal, chunk in enumerate(split_markdown(content), 1):
+        chunk_id = f"{doc_id}:{ordinal}"
+        chash = textutil.text_hash(chunk["heading"] or "", chunk["breadcrumb"] or "", chunk["text"])
+        conn.execute("INSERT INTO document_chunks(id,document_id,ordinal,heading,breadcrumb,text,start_line,end_line,token_count,content_hash) VALUES(?,?,?,?,?,?,?,?,?,?)",
+                     (chunk_id, doc_id, ordinal, chunk["heading"], chunk["breadcrumb"], chunk["text"],
+                      chunk["start_line"], chunk["end_line"], chunk["token_count"], chash))
+        conn.execute("INSERT INTO document_chunk_fts(chunk_id,document_id,task_id,heading,breadcrumb,body) VALUES(?,?,?,?,?,?)",
+                     (chunk_id, doc_id, task_id, chunk["heading"], chunk["breadcrumb"], chunk["text"]))
+
+
+def _drop_chunks(conn: sqlite3.Connection, doc_id: str) -> None:
+    """Снести чанки документа вместе с их строками FTS и векторами (как при переиндексации)."""
+    old_chunk_ids = [r[0] for r in conn.execute(
+        "SELECT id FROM document_chunks WHERE document_id=?", (doc_id,)).fetchall()]
+    conn.execute("DELETE FROM document_chunks WHERE document_id=?", (doc_id,))
+    conn.execute("DELETE FROM document_chunk_fts WHERE document_id=?", (doc_id,))
+    if old_chunk_ids:
+        marks = ",".join("?" * len(old_chunk_ids))
+        conn.execute(
+            f"DELETE FROM embeddings WHERE doc_kind='chunk' AND doc_id IN ({marks})",
+            old_chunk_ids)
+    search.invalidate_vectors()
+
+
 def index_document(conn: sqlite3.Connection, task_id: str, path: str, *, kind: str = "spec") -> dict:
     task = conn.execute("SELECT * FROM tasks WHERE id = ?", (task_id,)).fetchone()
     if task is None:
         raise KeyError(f"задача не найдена: {task_id}")
-    resolved = _resolve(conn, task, path)
     row = conn.execute("SELECT * FROM documents WHERE task_id=? AND kind=? AND path=?",
                        (task_id, kind, path)).fetchone()
     now = store.now_iso()
     prev_status = row["status"] if row is not None and "status" in row.keys() else "ok"
-    try:
-        content = resolved.read_text(encoding="utf-8")
-    except (OSError, UnicodeError) as exc:
-        error_text = str(exc)
-        if row is None:
-            doc_id = hashlib.sha256(f"{task_id}:{kind}:{path}".encode()).hexdigest()[:24]
-            conn.execute(
-                "INSERT INTO documents(id,task_id,kind,path,revision,content_hash,title,"
-                "created_at,updated_at,status,error,checked_at) VALUES(?,?,?,?,?,?,?,?,?,?,?,?)",
-                (doc_id, task_id, kind, path, 0, "", path, now, now, "missing", error_text, now))
-            store.event(conn, task_id, "document_error", note=f"{kind} {path}: {error_text}")
-        else:
-            doc_id = row["id"]
-            if prev_status == "missing":
-                conn.execute("UPDATE documents SET error=?, checked_at=? WHERE id=?",
-                             (error_text, now, doc_id))
-            else:
+    if row is not None and "source" in row.keys() and row["source"] == "upload":
+        # Текст загруженного документа лежит в базе: на диск не ходим вообще.
+        content = row["content"] or ""
+    else:
+        resolved = _resolve(conn, task, path)
+        try:
+            content = resolved.read_text(encoding="utf-8")
+        except (OSError, UnicodeError) as exc:
+            error_text = str(exc)
+            if row is None:
+                doc_id = hashlib.sha256(f"{task_id}:{kind}:{path}".encode()).hexdigest()[:24]
                 conn.execute(
-                    "UPDATE documents SET status='missing', error=?, checked_at=?, updated_at=? WHERE id=?",
-                    (error_text, now, now, doc_id))
+                    "INSERT INTO documents(id,task_id,kind,path,revision,content_hash,title,"
+                    "created_at,updated_at,status,error,checked_at) VALUES(?,?,?,?,?,?,?,?,?,?,?,?)",
+                    (doc_id, task_id, kind, path, 0, "", path, now, now, "missing", error_text, now))
                 store.event(conn, task_id, "document_error", note=f"{kind} {path}: {error_text}")
-        conn.commit()
-        return document_json(conn, doc_id)
+            else:
+                doc_id = row["id"]
+                if prev_status == "missing":
+                    conn.execute("UPDATE documents SET error=?, checked_at=? WHERE id=?",
+                                 (error_text, now, doc_id))
+                else:
+                    conn.execute(
+                        "UPDATE documents SET status='missing', error=?, checked_at=?, updated_at=? WHERE id=?",
+                        (error_text, now, now, doc_id))
+                    store.event(conn, task_id, "document_error", note=f"{kind} {path}: {error_text}")
+            conn.commit()
+            return document_json(conn, doc_id)
 
     digest = hashlib.sha256(content.encode("utf-8")).hexdigest()[:32]
     was_missing = row is not None and prev_status == "missing"
@@ -275,7 +314,7 @@ def index_document(conn: sqlite3.Connection, task_id: str, path: str, *, kind: s
         conn.commit()
         return document_json(conn, row["id"])
 
-    title = content.splitlines()[0].lstrip("# ") if content else path
+    title = _document_title(content, path)
     if row and row["content_hash"] == digest:
         # Was missing, file reappeared unchanged: no revision bump, chunks kept as-is.
         doc_id = row["id"]
@@ -285,47 +324,134 @@ def index_document(conn: sqlite3.Connection, task_id: str, path: str, *, kind: s
     elif row:
         revision = int(row["revision"] or 0) + 1
         doc_id = row["id"]
-        old_chunk_ids = [r[0] for r in conn.execute(
-            "SELECT id FROM document_chunks WHERE document_id=?", (doc_id,)).fetchall()]
         conn.execute(
             "UPDATE documents SET revision=?, content_hash=?, title=?, status='ok', error=NULL, "
             "checked_at=?, updated_at=? WHERE id=?",
             (revision, digest, title, now, now, doc_id))
-        conn.execute("DELETE FROM document_chunks WHERE document_id=?", (doc_id,))
-        conn.execute("DELETE FROM document_chunk_fts WHERE document_id=?", (doc_id,))
-        if old_chunk_ids:
-            marks = ",".join("?" * len(old_chunk_ids))
-            conn.execute(
-                f"DELETE FROM embeddings WHERE doc_kind='chunk' AND doc_id IN ({marks})",
-                old_chunk_ids)
-        search.invalidate_vectors()
-        for ordinal, chunk in enumerate(split_markdown(content), 1):
-            chunk_id = f"{doc_id}:{ordinal}"
-            chash = textutil.text_hash(chunk["heading"] or "", chunk["breadcrumb"] or "", chunk["text"])
-            conn.execute("INSERT INTO document_chunks(id,document_id,ordinal,heading,breadcrumb,text,start_line,end_line,token_count,content_hash) VALUES(?,?,?,?,?,?,?,?,?,?)",
-                         (chunk_id, doc_id, ordinal, chunk["heading"], chunk["breadcrumb"], chunk["text"],
-                          chunk["start_line"], chunk["end_line"], chunk["token_count"], chash))
-            conn.execute("INSERT INTO document_chunk_fts(chunk_id,document_id,task_id,heading,breadcrumb,body) VALUES(?,?,?,?,?,?)",
-                         (chunk_id, doc_id, task_id, chunk["heading"], chunk["breadcrumb"], chunk["text"]))
+        _drop_chunks(conn, doc_id)
+        _insert_chunks(conn, task_id, doc_id, content)
     else:
         doc_id = hashlib.sha256(f"{task_id}:{kind}:{path}".encode()).hexdigest()[:24]
         conn.execute(
             "INSERT INTO documents(id,task_id,kind,path,revision,content_hash,title,created_at,"
             "updated_at,status,error,checked_at) VALUES(?,?,?,?,?,?,?,?,?,?,?,?)",
             (doc_id, task_id, kind, path, 1, digest, title, now, now, "ok", None, now))
-        for ordinal, chunk in enumerate(split_markdown(content), 1):
-            chunk_id = f"{doc_id}:{ordinal}"
-            chash = textutil.text_hash(chunk["heading"] or "", chunk["breadcrumb"] or "", chunk["text"])
-            conn.execute("INSERT INTO document_chunks(id,document_id,ordinal,heading,breadcrumb,text,start_line,end_line,token_count,content_hash) VALUES(?,?,?,?,?,?,?,?,?,?)",
-                         (chunk_id, doc_id, ordinal, chunk["heading"], chunk["breadcrumb"], chunk["text"],
-                          chunk["start_line"], chunk["end_line"], chunk["token_count"], chash))
-            conn.execute("INSERT INTO document_chunk_fts(chunk_id,document_id,task_id,heading,breadcrumb,body) VALUES(?,?,?,?,?,?)",
-                         (chunk_id, doc_id, task_id, chunk["heading"], chunk["breadcrumb"], chunk["text"]))
+        _insert_chunks(conn, task_id, doc_id, content)
 
     if was_missing:
         store.event(conn, task_id, "document_restored", note=f"{kind} {path}")
     conn.commit()
     return document_json(conn, doc_id)
+
+
+def _check_kind(kind: str) -> None:
+    if kind not in DOC_FIELDS:
+        raise ValueError(f"неизвестный вид документа: {kind}; "
+                         f"допустимо: {', '.join(DOC_FIELDS)}")
+
+
+def put_document(conn: sqlite3.Connection, task_id: str, kind: str, content: str, *,
+                 path: str | None = None, actor: str | None = None) -> dict:
+    """Принять текст документа через API/MCP и держать его в базе.
+
+    На удалённом сервере репозиториев проектов нет, поэтому файл по `spec_path` там не
+    прочитается. Документ, однажды загруженный для `(task, kind, path)`, дальше читается
+    из `documents.content` и на диск не ходит; повтор с тем же текстом ревизию не меняет.
+    """
+    task = conn.execute("SELECT * FROM tasks WHERE id = ?", (task_id,)).fetchone()
+    if task is None:
+        raise KeyError(f"задача не найдена: {task_id}")
+    _check_kind(kind)
+    if not isinstance(content, str):
+        raise ValueError("content должен быть строкой")
+    if len(content) > MAX_UPLOAD_CHARS:
+        raise ValueError(f"документ длиннее {MAX_UPLOAD_CHARS} символов")
+    if path is not None and not isinstance(path, str):
+        raise ValueError("path должен быть строкой")
+
+    field = DOC_FIELDS[kind]
+    current = task[field] if field in task.keys() else None
+    journal = task["journal_path"] if "journal_path" in task.keys() else None
+    # explicit: путь выбран явным параметром (4.1) или синтетическим fallback (4.4) —
+    # только тогда он дописывается в карточку задачи.
+    if path is not None and path.strip():
+        eff_path, explicit = path.strip(), True
+    elif current and str(current).strip():
+        eff_path, explicit = current, False
+    elif kind == "decision" and journal and str(journal).strip():
+        eff_path, explicit = journal, False
+    else:
+        eff_path, explicit = f"listik://{task_id}/{kind}.md", True
+
+    now = store.now_iso()
+    digest = hashlib.sha256(content.encode("utf-8")).hexdigest()[:32]
+    row = conn.execute("SELECT * FROM documents WHERE task_id=? AND kind=? AND path=?",
+                       (task_id, kind, eff_path)).fetchone()
+    if row is None:
+        doc_id = hashlib.sha256(f"{task_id}:{kind}:{eff_path}".encode()).hexdigest()[:24]
+        revision = 1
+        conn.execute(
+            "INSERT INTO documents(id,task_id,kind,path,revision,content_hash,title,created_at,"
+            "updated_at,status,error,checked_at,source,content) VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?)",
+            (doc_id, task_id, kind, eff_path, revision, digest, _document_title(content, eff_path),
+             now, now, "ok", None, now, "upload", content))
+        _insert_chunks(conn, task_id, doc_id, content)
+        store.event(conn, task_id, "document_uploaded",
+                    note=f"{kind} {eff_path} r{revision}", actor=actor)
+    else:
+        doc_id = row["id"]
+        changed = row["content_hash"] != digest
+        revision = int(row["revision"] or 0) + (1 if changed else 0)
+        if changed:
+            conn.execute(
+                "UPDATE documents SET revision=?, content_hash=?, title=?, status='ok', "
+                "error=NULL, checked_at=?, updated_at=?, source='upload', content=? WHERE id=?",
+                (revision, digest, _document_title(content, eff_path), now, now, content, doc_id))
+            _drop_chunks(conn, doc_id)
+            _insert_chunks(conn, task_id, doc_id, content)
+            store.event(conn, task_id, "document_uploaded",
+                        note=f"{kind} {eff_path} r{revision}", actor=actor)
+        else:
+            conn.execute(
+                "UPDATE documents SET status='ok', error=NULL, checked_at=?, updated_at=?, "
+                "source='upload', content=? WHERE id=?",
+                (now, now, content, doc_id))
+
+    # Путь из 4.1/4.4 дописываем в карточку только после записи строки: переиндексация
+    # внутри update_task должна найти строку `upload` и не пойти на диск.
+    if explicit and (current or "") != eff_path:
+        store.update_task(conn, task_id, actor=actor, **{field: eff_path})
+    conn.commit()
+    return document_json(conn, doc_id)
+
+
+def get_document(conn: sqlite3.Connection, task_id: str, kind: str) -> dict:
+    """Прочитать документ задачи: загруженный — из базы, файловый — с диска. Базу не пишет."""
+    task = conn.execute("SELECT * FROM tasks WHERE id = ?", (task_id,)).fetchone()
+    if task is None:
+        raise KeyError(f"задача не найдена: {task_id}")
+    _check_kind(kind)
+    field = DOC_FIELDS[kind]
+    path = task[field] if field in task.keys() else None
+    if not path and kind == "decision" and "journal_path" in task.keys():
+        path = task["journal_path"]
+    if not path:
+        raise KeyError(f"у задачи {task_id} нет документа {kind}")
+    row = conn.execute("SELECT * FROM documents WHERE task_id=? AND kind=? AND path=?",
+                       (task_id, kind, path)).fetchone()
+    if row is not None and "source" in row.keys() and row["source"] == "upload":
+        return {"task_id": task_id, "kind": kind, "path": path, "source": "upload",
+                "revision": row["revision"], "content_hash": row["content_hash"],
+                "status": "ok", "error": None, "content": row["content"] or ""}
+    try:
+        content = _resolve(conn, task, path).read_text(encoding="utf-8")
+        status, error = "ok", None
+    except (OSError, UnicodeError) as exc:
+        content, status, error = None, "missing", str(exc)
+    return {"task_id": task_id, "kind": kind, "path": path, "source": "file",
+            "revision": row["revision"] if row is not None else None,
+            "content_hash": row["content_hash"] if row is not None else None,
+            "status": status, "error": error, "content": content}
 
 
 def index_task_documents(conn: sqlite3.Connection, task_id: str) -> list[dict]:
@@ -395,6 +521,7 @@ def document_json(conn: sqlite3.Connection, doc_id: str) -> dict:
     status = row["status"] if "status" in row.keys() else "ok"
     error = row["error"] if "error" in row.keys() else None
     return {"id": row["id"], "task_id": row["task_id"], "kind": row["kind"], "path": row["path"],
+            "source": row["source"] if "source" in row.keys() else "file",
             "revision": row["revision"], "content_hash": row["content_hash"], "title": row["title"],
             "created_at": row["created_at"], "updated_at": row["updated_at"], "chunks": chunks,
             "chunk_count": len(chunks), "status": status, "error": error, "ok": status == "ok"}

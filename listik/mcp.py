@@ -139,6 +139,39 @@ TOOLS: list[dict] = [
         },
     },
     {
+        "name": "listik_put_document",
+        "description": ("Передать на сервер текст документа задачи (когда файлов проекта на "
+                        "сервере нет); повторный вызов с тем же текстом ревизию не меняет. "
+                        "kind: spec, checklist, review, decision — как у полей spec_path/"
+                        "checklist_path/review_path/decision_path; без path документ привяжется "
+                        "к уже указанному пути или к listik://<id>/<kind>.md."),
+        "inputSchema": {
+            "type": "object",
+            "properties": {
+                "id": TASK_ID,
+                "kind": {"type": "string", "enum": ["spec", "checklist", "review", "decision"]},
+                "content": {"type": "string", "description": "текст документа целиком"},
+                "path": {"type": "string", "description": "путь документа (необязательно)"},
+                "actor": ACTOR,
+            },
+            "required": ["id", "kind", "content"],
+        },
+    },
+    {
+        "name": "listik_get_document",
+        "description": ("Прочитать документ задачи: загруженный через listik_put_document — из "
+                        "базы, файловый — с диска сервера. Возвращает текст, а если файла нет — "
+                        "status=missing и текст ошибки."),
+        "inputSchema": {
+            "type": "object",
+            "properties": {
+                "id": TASK_ID,
+                "kind": {"type": "string", "enum": ["spec", "checklist", "review", "decision"]},
+            },
+            "required": ["id", "kind"],
+        },
+    },
+    {
         "name": "listik_claim",
         "description": ("Взять задачу в работу: держатель + статус «в работе». "
                         "Отказывает, если у задачи открытый блокер (обход force), чужой "
@@ -417,6 +450,13 @@ def call_tool(name: str, args: dict, conn=None) -> object:
         return documents_mod.context(conn, args["id"], args["stage"],
                                      portion=args.get("portion"),
                                      max_chars=args.get("max_chars"))
+    if name == "listik_put_document":
+        from . import documents as documents_mod
+        return documents_mod.put_document(conn, args["id"], args["kind"], args["content"],
+                                          path=args.get("path"), actor=args.get("actor"))
+    if name == "listik_get_document":
+        from . import documents as documents_mod
+        return documents_mod.get_document(conn, args["id"], args["kind"])
     if name == "listik_claim":
         return store.claim(conn, args["id"], holder=_norm_actor(args["holder"]),
                            harness=args.get("harness"), note=args.get("note"),

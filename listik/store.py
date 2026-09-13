@@ -521,7 +521,7 @@ def get_task(conn: sqlite3.Connection, task_id: str, *, with_details: bool = Tru
     if with_details:
         try:
             out["documents"] = [dict(r) for r in conn.execute(
-                "SELECT id, kind, path, revision, content_hash, title, updated_at, status, error, "
+                "SELECT id, kind, path, revision, content_hash, title, updated_at, status, error, source, "
                 "(SELECT count(*) FROM document_chunks WHERE document_chunks.document_id = documents.id) "
                 "AS chunk_count FROM documents WHERE task_id=? ORDER BY kind, path",
                 (task_id,))]

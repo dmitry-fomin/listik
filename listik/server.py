@@ -304,6 +304,33 @@ def handle(method: str, path: str, query: dict, body: dict, authed: bool = False
         return 201, task
 
     if len(parts) >= 2 and parts[0] == "api" and parts[1] == "tasks":
+        if len(parts) == 5 and parts[3] == "documents":
+            # Документы задачи содержимым: на удалённом сервере файлов проектов нет,
+            # поэтому текст приезжает телом запроса и читается из базы.
+            tid, kind = parts[2], urllib.parse.unquote(parts[4])
+            from . import documents
+            if method == "PUT":
+                content = body.get("content")
+                if not isinstance(content, str):
+                    raise ApiError(400, "не передан обязательный параметр: content")
+                try:
+                    out = documents.put_document(conn, tid, kind, content,
+                                                 path=body.get("path"), actor=body.get("actor"))
+                except KeyError as exc:
+                    raise ApiError(404, str(exc)) from exc
+                except ValueError as exc:
+                    raise ApiError(400, str(exc)) from exc
+                publish("task", {"id": tid, "action": "document"})
+                return 200, out
+            if method == "GET":
+                try:
+                    out = documents.get_document(conn, tid, kind)
+                except KeyError as exc:
+                    raise ApiError(404, str(exc)) from exc
+                except ValueError as exc:
+                    raise ApiError(400, str(exc)) from exc
+                return 200, out
+            raise ApiError(405, "метод не поддерживается")
         if len(parts) == 5 and parts[3] == "deps" and method == "DELETE":
             tid, dep_id = parts[2], urllib.parse.unquote(parts[4])
             out = store.remove_dep(conn, tid, dep_id, dep_type=q1("dep_type"))

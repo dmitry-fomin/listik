@@ -207,7 +207,11 @@ class ContextContractTests(TempDbTestCase):
         self.assertIn("stage", kinds)
         journal_item = next(j for j in out["journal"] if j["kind"] == "journal")
         self.assertEqual(journal_item["id"], self.journal_comment["id"])
-        stage_item = next(j for j in out["journal"] if j["kind"] == "stage")
+        # Порядок журнала — (ts, kind, id) с секундным ts: первым среди событий
+        # этапа может оказаться создание карточки (from=None), если оно попало в
+        # предыдущую секунду. Проверяем именно переход конвейера.
+        stage_item = next(j for j in out["journal"]
+                          if j["kind"] == "stage" and j["from"] is not None)
         self.assertIsNotNone(stage_item["from"])
         self.assertIsNotNone(stage_item["to"])
         self.assertTrue(stage_item["id"].startswith("event:"))

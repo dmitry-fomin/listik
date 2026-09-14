@@ -261,7 +261,7 @@ def set_project_archived(slug: str, archived: bool, *, host: str | None = None,
     from . import store
     try:
         return store.update_project(db_mod.init(), slug, archived=1 if archived else 0)
-    except KeyError as exc:
+    except errors.NotFound as exc:
         raise errors.ListikError(errors.message_of(exc), code=errors.NOT_FOUND,
                                  hint="список проектов: listik projects") from exc
 
@@ -276,7 +276,7 @@ def remove_project(slug: str, *, force: bool = False, host: str | None = None,
     from . import store
     try:
         return store.remove_project(db_mod.init(), slug, force=force)
-    except KeyError as exc:
+    except errors.NotFound as exc:
         raise errors.ListikError(errors.message_of(exc), code=errors.NOT_FOUND,
                                  hint="список проектов: listik projects") from exc
     except ValueError as exc:
@@ -297,7 +297,7 @@ def set_project_routing(slug: str, routing: dict, *, local: bool = False,
     from . import store
     try:
         return store.update_project(db_mod.init(), slug, routing=routing)
-    except KeyError as exc:
+    except errors.NotFound as exc:
         raise errors.ListikError(
             f"проект не найден: {slug}", code=errors.NOT_FOUND,
             hint="добавьте его: listik projects --add <путь> [--slug …]") from exc

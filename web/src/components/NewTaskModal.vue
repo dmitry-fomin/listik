@@ -10,8 +10,9 @@
  * тултипом UiTooltip на контроле, а не строкой под ним. Блок «Маршрут» — свой (кит не знает такого
  * контрола): записи (пресеты конвейера и прямые харнессы) отдаёт сервер — `GET /api/routes`,
  * файл `routes.json`; грузятся один раз за сессию доски, логика выбора — `lib/routes.ts`.
- * Выбранный ключ уходит на сервер полем `route`; метки `harness:<x>`/`process:<y>` — для
- * человека и поиска, кто реально допущен до этапа, решает routing проекта на сервере
+ * Выбранный ключ уходит на сервер полем `route`; метки `harness:<x>`/`process:<y>` сервер
+ * ставит по нему сам (`routes.labels_for`) — доска их не считает, они для человека и поиска;
+ * кто реально допущен до этапа, решает routing проекта на сервере
  * (`ready --harness`, отказ в `claim`).
  */
 import { computed, reactive, ref, watch } from 'vue'
@@ -46,7 +47,7 @@ import type {
 } from '@/api/types'
 import { HARNESS_TITLES } from '@/lib/harness'
 import { ROLE_KEYS, ROLE_TITLES } from '@/lib/pipelines'
-import { defaultPipelineFor, routeAllowedForType, routeLabels, routesAlertText } from '@/lib/routes'
+import { defaultPipelineFor, routeAllowedForType, routesAlertText } from '@/lib/routes'
 import store from '@/store/listik'
 
 const props = defineProps<{
@@ -64,7 +65,6 @@ const emit = defineEmits<{
       description: string
       acceptance: string
       spec_path?: string
-      labels: string[]
       /** Ключ маршрута из routes.json; нет — задача создаётся без маршрута. */
       route?: string
       autostart: boolean
@@ -337,8 +337,8 @@ function submit(): void {
     description: form.description,
     acceptance: form.acceptance,
     ...(form.specPath.trim() ? { spec_path: form.specPath.trim() } : {}),
-    // Без выбранного маршрута — пустые метки, без `route` и с выключенным автостартом.
-    labels: route ? routeLabels(route) : [],
+    // Метки маршрута ставит сервер (`routes.labels_for`); без маршрута — `route` нет
+    // и автостарт выключен.
     ...(route ? { route: route.key } : {}),
     autostart: route ? autostart.value : false,
     actor: 'me',
@@ -579,7 +579,8 @@ function cancel(): void {
           </p>
           <p class="listik-section__hint">
             эпик всегда начинается с ТЗ, поэтому для него закрыто всё без этапа ТЗ. Выбор уходит на сервер
-            ключом маршрута и сохраняется метками <span class="listik-mono">harness:&lt;…&gt;</span> и
+            ключом маршрута, и сервер сам помечает задачу метками
+            <span class="listik-mono">harness:&lt;…&gt;</span> и
             <span class="listik-mono">process:&lt;…&gt;</span> — их читает человек, автоматической раздачи
             задач по ним нет; кто допущен до этапа, решает сервер по routing проекта.
           </p>

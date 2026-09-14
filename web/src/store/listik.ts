@@ -27,6 +27,7 @@ import type {
   ReadyTask,
   SearchResponse,
   Stats,
+  StreamEvent,
   Task,
   TaskDetail,
   TaskPatch,
@@ -562,11 +563,25 @@ async function loadQueuePage(params: { limit: number; offset: number }): Promise
   }
 }
 
-function scheduleRefresh(): void {
+/**
+ * id задач, которых коснулись события за окно дебаунса. `refresh()` обновляет
+ * доску, статистику и граф, но не открытую карточку (`detail`), поэтому её
+ * перечитываем отдельно — тихо, без сброса прокрутки и черновиков
+ * (`reloadDetailQuiet`). События по чужим задачам открытую не трогают.
+ */
+let streamTouched = new Set<string>()
+
+function scheduleRefresh(event?: StreamEvent): void {
+  const id = event?.payload?.id
+  if (typeof id === 'string' && id) streamTouched.add(id)
   if (sseTimer) clearTimeout(sseTimer)
   sseTimer = setTimeout(() => {
     sseTimer = null
+    const touched = streamTouched
+    streamTouched = new Set()
     refresh({ silent: true }).catch(handleError)
+    const open = openTaskId.value
+    if (open && touched.has(open)) void reloadDetailQuiet(open)
   }, SSE_DEBOUNCE_MS)
 }
 
@@ -574,7 +589,7 @@ function startStream(): void {
   stopStream()
   if (!token.value) return
   unsubscribeStream = subscribeStream(
-    () => scheduleRefresh(),
+    (event) => scheduleRefresh(event),
     (connected) => {
       live.value = connected
     },
@@ -688,6 +703,21 @@ function normalizeTaskId(id: string): string {
   return id.trim()
 }
 
+/**
+ * Карточка задачи одним запросом. Регистр id: канонические id строчные, но в
+ * связях мог остаться id из импорта (beads/WriterLLM) с заглавными буквами —
+ * сервер ищет задачу по точному id, поэтому 404 повторяем в нижнем регистре.
+ */
+async function fetchDetail(id: string): Promise<TaskDetail> {
+  try {
+    return await api.task(id)
+  } catch (error) {
+    const lower = id.toLowerCase()
+    if (!(error instanceof ApiError) || error.status !== 404 || lower === id) throw error
+    return await api.task(lower)
+  }
+}
+
 async function openTask(rawId: string): Promise<void> {
   const id = normalizeTaskId(rawId)
   if (!id) return
@@ -701,16 +731,7 @@ async function openTask(rawId: string): Promise<void> {
   detailLoading.value = true
   paletteOpen.value = false
   try {
-    let data: TaskDetail
-    try {
-      data = await api.task(id)
-    } catch (error) {
-      // Регистр id: канонические id строчные, но в связях мог остаться id из импорта
-      // (beads/WriterLLM) с заглавными буквами — сервер ищет задачу по точному id.
-      const lower = id.toLowerCase()
-      if (!(error instanceof ApiError) || error.status !== 404 || lower === id) throw error
-      data = await api.task(lower)
-    }
+    const data = await fetchDetail(id)
     if (request !== detailRequest) return
     detail.value = data
     // id от сервера: после перехода в другом регистре панель дальше работает с каноническим.
@@ -726,6 +747,31 @@ async function openTask(rawId: string): Promise<void> {
   } finally {
     // Снимает загрузку только последний запрос: у «догоняющего» она уже снята новым.
     if (request === detailRequest) detailLoading.value = false
+  }
+}
+
+/**
+ * Тихое обновление уже открытой карточки по событию доски (listik-ch3v).
+ * Обычный `openTask` на время запроса обнуляет `detail`, и панель на кадр
+ * показывает скелет: прокрутка уезжает в начало, а поля с несохранённым
+ * текстом перерисовываются. Здесь данные подменяются только готовым ответом,
+ * `detailLoading`/`detailError` не трогаются, поэтому черновики и позиция
+ * прокрутки остаются на месте.
+ */
+async function reloadDetailQuiet(rawId: string): Promise<void> {
+  const id = normalizeTaskId(rawId)
+  // Пока открытие в пути — оно само принесёт свежие данные, гонку не устраиваем.
+  if (!id || id !== openTaskId.value || detailLoading.value) return
+  const request = (detailRequest += 1)
+  try {
+    const data = await fetchDetail(id)
+    // Ответ «догоняющего» запроса не должен перезаписывать карточку, открытую
+    // позже, а задача в панели могла смениться, пока запрос летел.
+    if (request !== detailRequest || openTaskId.value !== data.id) return
+    detail.value = data
+  } catch {
+    // Карточка уже показана: неудачное тихое обновление не подменяет её ошибкой
+    // и не стирает введённое. О недоступности сервера скажет refresh()/плашка.
   }
 }
 
@@ -1025,6 +1071,7 @@ function dispose(): void {
   healthTimer = null
   if (sseTimer) clearTimeout(sseTimer)
   sseTimer = null
+  streamTouched = new Set()
 }
 
 export function useListikStore() {

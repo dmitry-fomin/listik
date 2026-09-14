@@ -1,6 +1,6 @@
 /**
  * Фейковый API Listik для разработки фронтенда без сервера (и в тестах).
- * Запуск: node scripts/mock-api.mjs [port] [--fill=N] [--links] [--slow-ms=N]
+ * Запуск: node scripts/mock-api.mjs [port] [--fill=N] [--links] [--cold] [--slow-ms=N]
  *   → порт по умолчанию 8788.
  * Затем: VITE_API_BASE=http://127.0.0.1:8788 npm run dev
  * `--fill=N` (в любом месте после порта) добавляет N сгенерированных задач
@@ -9,6 +9,16 @@
  * задача, чужой проект, id в другом регистре, взаимные ссылки); `--slow-ms=N`
  * задерживает отдачу карточки `listik-links-slow` — так воспроизводится гонка
  * двух открытий задачи (scripts/verify-deps-links.mjs).
+ * `--cold` добавляет четыре задачи под строку «worktree · branch» блока
+ * «Холодный старт»: отдельное дерево, работа в `main`, она же в `master`, и
+ * карточка совсем без дерева и ветки (scripts/verify-cold-start.mjs).
+ *
+ * Служебные ручки для скриптов проверки (в API.md их нет — это не контракт, а
+ * ручки управления моком, как `__token`): `POST /__event` рассылает кадр в
+ * открытые `/api/stream` (тело `{kind, payload, patch?, comment?}`, patch/comment
+ * сперва меняют заглушку — так проверяется, что доска увидела запись), а
+ * `GET /__requests` и `POST /__requests/reset` считают чтения карточек
+ * `GET /api/tasks/{id}` (scripts/verify-detail-sse.mjs).
  *
  * Формы ответов повторяют API.md и listik/store.py 1:1 — это заглушка
  * транспорта, а не второй контракт.
@@ -19,6 +29,7 @@ const port = Number(process.argv[2] ?? 8788)
 const fillArg = process.argv.slice(3).find((arg) => arg.startsWith('--fill='))
 const fillCount = fillArg ? Number.parseInt(fillArg.slice('--fill='.length), 10) : 0
 const linksMode = process.argv.slice(3).includes('--links')
+const coldMode = process.argv.slice(3).includes('--cold')
 const slowArg = process.argv.slice(3).find((arg) => arg.startsWith('--slow-ms='))
 const slowMs = slowArg ? Number.parseInt(slowArg.slice('--slow-ms='.length), 10) : 0
 const now = Date.now()
@@ -306,6 +317,54 @@ if (linksMode) {
 }
 
 /**
+ * `--cold`: четыре задачи под строку «worktree · branch» блока «Холодный старт»
+ * (scripts/verify-cold-start.mjs) — отдельное дерево с веткой, маркер основной
+ * ветки `main`, он же `master`, и карточка без `worktree`/`branch`. Все прочие
+ * поля холодного старта у них заполнены одинаково, поэтому счётчик «N из M»
+ * отличается только состоянием дерева: у трёх первых 7 из 7 (жёлтое состояние
+ * считается заполненным), у последней 6 из 7.
+ */
+if (coldMode) {
+  const coldFields = {
+    status: 'open',
+    status_title: 'открыта',
+    stage: 's3-impl',
+    stage_title: '3. Реализация',
+    holder: null,
+    holder_title: '',
+    holder_at: null,
+    holder_age: '',
+    holder_hours: null,
+    spec_path: 'docs/listik-cold.md',
+    acceptance: 'строка «worktree · branch» красится по состоянию дерева',
+    journal_path: 'docs/listik-cold.journal.md',
+    review_path: 'docs/listik-cold.review.md',
+    blocked_by: [],
+    parent: null,
+    soft_links: [],
+    labels: [],
+    needs_owner: false,
+  }
+  for (const item of [
+    task({
+      ...coldFields,
+      id: 'listik-cold-branch',
+      title: 'Холодный старт: дерево и ветка',
+      worktree: '/Users/dmitry.fomin/Projects/Listik-wt/listik-cold-branch',
+      branch: 'task/listik-cold-branch',
+    }),
+    task({ ...coldFields, id: 'listik-cold-main', title: 'Холодный старт: работа в main',
+           worktree: 'main', branch: 'main' }),
+    task({ ...coldFields, id: 'listik-cold-master', title: 'Холодный старт: работа в master',
+           worktree: 'master', branch: 'master' }),
+    task({ ...coldFields, id: 'listik-cold-none', title: 'Холодный старт: дерево не указано',
+           worktree: null, branch: null }),
+  ]) {
+    tasks.push(item)
+  }
+}
+
+/**
  * Связи задачи как в `deps` на сервере: `blocked_by` (blocks) плюс `parent-child`
  * плюс краевые строки из `extraDeps` (`--links`). Один и тот же id может прийти
  * двумя строками с разными `dep_type` — как в таблице `deps`, где ключ
@@ -344,6 +403,14 @@ function dependentsOf(id) {
   return out
 }
 
+/**
+ * Комментарии, дописанные ручкой `POST /__event` (`comment`): проверка видит по
+ * ним, что открытая карточка действительно перечиталась и показала свежую
+ * запись. Ключ — id задачи, значение — комментарии в форме `TaskComment`.
+ */
+const extraComments = new Map()
+let nextCommentId = 100
+
 function details(id) {
   const found = tasks.find((item) => item.id === id)
   if (!found) return null
@@ -351,6 +418,7 @@ function details(id) {
     ...found,
     deps_state: depsStateOf(id),
     comments: [
+      ...(extraComments.get(id) ?? []),
       { id: 1, author: 'agent:dsh', kind: 'journal', text: 'взял в работу', created_at: iso(2) },
       { id: 2, author: 'me', kind: 'verdict', text: 'ок, собирай', created_at: iso(1) },
     ],
@@ -605,6 +673,11 @@ function depsStateOf(id) {
   }
 }
 
+/** Открытые подписки `/api/stream`: ручка `POST /__event` шлёт кадры в них. */
+const streamClients = new Set()
+/** Сколько раз читали карточку `GET /api/tasks/{id}` — счёт для проверок. */
+const detailReads = new Map()
+
 const server = createServer(async (request, response) => {
   const url = new URL(request.url ?? '/', `http://127.0.0.1:${port}`)
   if (process.env.MOCK_LOG) {
@@ -645,6 +718,41 @@ const server = createServer(async (request, response) => {
     return
   }
 
+  // ── служебные ручки скриптов проверки (не часть API.md) ────────────────
+  if (url.pathname === '/__requests') {
+    if (request.method === 'POST') {
+      detailReads.clear()
+      return ok({ detail_reads: {}, streams: streamClients.size })
+    }
+    return ok({ detail_reads: Object.fromEntries(detailReads), streams: streamClients.size })
+  }
+
+  if (url.pathname === '/__event') {
+    const body = await readJsonBody(request)
+    const id = body.payload?.id
+    if (body.patch && id) applyPatch(id, body.patch)
+    if (body.comment && id) {
+      const list = extraComments.get(id) ?? []
+      list.push({
+        id: nextCommentId++,
+        author: body.comment.author ?? 'agent:dsh',
+        kind: body.comment.kind ?? 'journal',
+        text: String(body.comment.text ?? ''),
+        created_at: new Date().toISOString(),
+      })
+      extraComments.set(id, list)
+    }
+    const frame = `data: ${JSON.stringify({
+      kind: body.kind ?? 'task',
+      at: new Date().toISOString(),
+      payload: body.payload ?? {},
+    })}\n\n`
+    for (const client of streamClients) client.write(frame)
+    // clients=0 — событие ушло в пустоту: проверка должна это заметить, а не
+    // решить, что доска не отреагировала.
+    return ok({ clients: streamClients.size, payload: body.payload ?? {} })
+  }
+
   if (url.pathname === '/api/stream') {
     response.writeHead(200, {
       'Content-Type': 'text/event-stream; charset=utf-8',
@@ -653,8 +761,12 @@ const server = createServer(async (request, response) => {
       'Access-Control-Allow-Origin': '*',
     })
     response.write(': mock stream\n\n')
+    streamClients.add(response)
     const timer = setInterval(() => response.write(': ping\n\n'), 15000)
-    request.on('close', () => clearInterval(timer))
+    request.on('close', () => {
+      clearInterval(timer)
+      streamClients.delete(response)
+    })
     return
   }
 
@@ -793,6 +905,7 @@ const server = createServer(async (request, response) => {
       return ok(found)
     }
     if (request.method === 'GET') {
+      detailReads.set(id, (detailReads.get(id) ?? 0) + 1)
       // `--slow-ms`: задержка отдачи карточки — гонка «клик по ссылке, потом другая
       // задача» (scripts/verify-deps-links.mjs) без правки мока не воспроизводится.
       if (slowMs > 0 && id === 'listik-links-slow') {

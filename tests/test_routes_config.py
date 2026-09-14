@@ -44,7 +44,7 @@ DIRECT_KEYS = ["dsh", "grok", "codex"]
 
 # Порядок записей в routes.json — он же порядок строк формы «Новая задача».
 EXPECTED_KEYS = [
-    "xhigh-pipeline", "high-pipeline", "medium-pipeline", "low-pipeline", "dsh-grok-pipeline",
+    "xhigh-pipeline", "high-pipeline", "medium-pipeline", "low-pipeline", "xlow-pipeline",
     "inherit-pipeline", "opus-single-pipeline", "opus-sonnet-pipeline", "feature-pipeline",
     *DIRECT_KEYS,
 ]
@@ -110,11 +110,12 @@ class RepoRoutesFileTests(unittest.TestCase):
 
     def test_direct_records_are_exact(self) -> None:
         normalized = routes_mod.validate(self.raw)
+        raw_by_key = {record["key"]: record for record in self.raw["routes"]}
         for key, got in zip(DIRECT_KEYS, normalized[9:]):
             self.assertEqual(got["title"], key)
             self.assertEqual(got, {"key": key, "kind": "direct", "title": key, "hint": "",
                                    "visible": True, "icon": "direct", "harness": key,
-                                   "command": None})
+                                   "command": raw_by_key[key]["command"]})
 
     def test_icons_are_the_route_levels(self) -> None:
         normalized = {r["key"]: r["icon"] for r in routes_mod.validate(self.raw)}
@@ -122,17 +123,24 @@ class RepoRoutesFileTests(unittest.TestCase):
         self.assertEqual(normalized["high-pipeline"], "high")
         self.assertEqual(normalized["medium-pipeline"], "medium")
         self.assertEqual(normalized["low-pipeline"], "low")
+        self.assertEqual(normalized["xlow-pipeline"], "xlow")
         for key in DIRECT_KEYS:
             self.assertEqual(normalized[key], "direct")
         # У пресетов без уровня поля нет — иконка не выдумывается.
         for key in ("inherit-pipeline", "opus-single-pipeline", "opus-sonnet-pipeline",
-                    "feature-pipeline", "dsh-grok-pipeline"):
+                    "feature-pipeline"):
             self.assertIsNone(normalized[key])
 
-    def test_no_record_has_command_in_repo(self) -> None:
+    def test_repo_commands_only_on_direct(self) -> None:
+        """В образце готовый argv автостарта — у прямых маршрутов; конвейеры без command."""
+        normalized = {record["key"]: record for record in routes_mod.validate(self.raw)}
         for raw in self.raw["routes"]:
-            self.assertNotIn("command", raw)
-        self.assertTrue(all(r["command"] is None for r in routes_mod.validate(self.raw)))
+            if raw["kind"] == "direct":
+                self.assertIn("command", raw, raw["key"])
+                self.assertEqual(normalized[raw["key"]]["command"], raw["command"])
+            else:
+                self.assertNotIn("command", raw, raw["key"])
+                self.assertIsNone(normalized[raw["key"]]["command"])
 
     def test_web_src_has_no_embedded_route_tables(self) -> None:
         offenders: list[str] = []
@@ -254,7 +262,8 @@ class ValidateTests(unittest.TestCase):
 
     def test_icon_falls_back_to_key_prefix(self) -> None:
         for key, level in (("xhigh-pipeline", "xhigh"), ("high-pipeline", "high"),
-                           ("medium-pipeline", "medium"), ("low-pipeline", "low")):
+                           ("medium-pipeline", "medium"), ("low-pipeline", "low"),
+                           ("xlow-pipeline", "xlow")):
             with self.subTest(key=key):
                 normalized = routes_mod.validate(document({**pipeline_record(), "key": key}))
                 self.assertEqual(normalized[0]["icon"], level)

@@ -95,7 +95,7 @@
       "key": "low-pipeline",
       "kind": "pipeline",
       "title": "low",
-      "hint": "на 20 мин, самый дешевый",
+      "hint": "на 20 мин, с ТЗ и критикой",
       "visible": true,
       "icon": "low",
       "roles": {
@@ -122,11 +122,12 @@
       }
     },
     {
-      "key": "dsh-grok-pipeline",
+      "key": "xlow-pipeline",
       "kind": "pipeline",
-      "title": "dsh + grok",
-      "hint": "короткая задача без ТЗ и критики · не для эпиков",
+      "title": "xlow",
+      "hint": "без ТЗ и критики · не для эпиков",
       "visible": true,
+      "icon": "xlow",
       "roles": {
         "impl": {
           "provider": "deepseek",
@@ -246,7 +247,15 @@
       "title": "dsh",
       "hint": "",
       "visible": true,
-      "icon": "direct"
+      "icon": "direct",
+      "command": [
+        "env",
+        "DSH_PERMISSION_MODE=danger-full-access",
+        "dsh",
+        "--profile",
+        "headless",
+        "Задача {task_id} (проект {project}) уже выдана тебе: Listik поставил этап s1-spec и держателя dsh. Работай по протоколу из AGENTS.md. Первое действие, до чтения кода и show: claim {task_id} --holder dsh. Потом show, изучение, heartbeat каждые 10–15 мин. Перед первой правкой кода (не позже): stage {task_id} --to s3-impl. Итог — comment -k journal, затем done {task_id} -r \"…\". Все команды с --actor agent:dsh --harness dsh. Рабочее дерево: если в show поле worktree пустое, до правок создай его — mkdir -p ~/.worktrees/{project} && git worktree add -b task/{task_id} ~/.worktrees/{project}/{task_id} HEAD, запиши в карточку set {task_id} worktree=<абсолютный путь> branch=task/{task_id} и работай только там. Если worktree задан или равен main — дерево не создавай. Уборка: если ты сам создал дерево и сам делаешь done, после done выйди из него и выполни git -C {cwd} worktree remove ~/.worktrees/{project}/{task_id} (без --force; ветка task/{task_id} остаётся). Если git отказал из-за незакоммиченных правок — не удаляй, напиши об этом comment -k journal."
+      ]
     },
     {
       "key": "grok",
@@ -255,7 +264,15 @@
       "title": "grok",
       "hint": "",
       "visible": true,
-      "icon": "direct"
+      "icon": "direct",
+      "command": [
+        "grok",
+        "--cwd",
+        "{cwd}",
+        "--always-approve",
+        "-p",
+        "Задача {task_id} (проект {project}) уже выдана тебе: Listik поставил этап s1-spec и держателя grok. Работай по протоколу из AGENTS.md. Первое действие, до чтения кода и show: claim {task_id} --holder grok. Потом show, изучение, heartbeat каждые 10–15 мин. Перед первой правкой кода (не позже): stage {task_id} --to s3-impl. Итог — comment -k journal, затем done {task_id} -r \"…\". Все команды с --actor agent:grok --harness grok. Рабочее дерево: если в show поле worktree пустое, до правок создай его — mkdir -p ~/.worktrees/{project} && git worktree add -b task/{task_id} ~/.worktrees/{project}/{task_id} HEAD, запиши в карточку set {task_id} worktree=<абсолютный путь> branch=task/{task_id} и работай только там. Если worktree задан или равен main — дерево не создавай. Уборка: если ты сам создал дерево и сам делаешь done, после done выйди из него и выполни git -C {cwd} worktree remove ~/.worktrees/{project}/{task_id} (без --force; ветка task/{task_id} остаётся). Если git отказал из-за незакоммиченных правок — не удаляй, напиши об этом comment -k journal."
+      ]
     },
     {
       "key": "codex",
@@ -264,7 +281,15 @@
       "title": "codex",
       "hint": "",
       "visible": true,
-      "icon": "direct"
+      "icon": "direct",
+      "command": [
+        "codex",
+        "exec",
+        "-C",
+        "{cwd}",
+        "--dangerously-bypass-approvals-and-sandbox",
+        "Задача {task_id} (проект {project}) уже выдана тебе: Listik поставил этап s1-spec и держателя codex. Работай по протоколу из AGENTS.md. Первое действие, до чтения кода и show: claim {task_id} --holder codex. Потом show, изучение, heartbeat каждые 10–15 мин. Перед первой правкой кода (не позже): stage {task_id} --to s3-impl. Итог — comment -k journal, затем done {task_id} -r \"…\". Все команды с --actor agent:codex --harness codex. Рабочее дерево: если в show поле worktree пустое, до правок создай его — mkdir -p ~/.worktrees/{project} && git worktree add -b task/{task_id} ~/.worktrees/{project}/{task_id} HEAD, запиши в карточку set {task_id} worktree=<абсолютный путь> branch=task/{task_id} и работай только там. Если worktree задан или равен main — дерево не создавай. Уборка: если ты сам создал дерево и сам делаешь done, после done выйди из него и выполни git -C {cwd} worktree remove ~/.worktrees/{project}/{task_id} (без --force; ветка task/{task_id} остаётся). Если git отказал из-за незакоммиченных правок — не удаляй, напиши об этом comment -k journal."
+      ]
     }
   ]
 }

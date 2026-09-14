@@ -65,8 +65,9 @@ export const icons: Record<string, IconDef> = {
   gear: { stroke: 'M8 2.4 12.9 5.2 12.9 10.8 8 13.6 3.1 10.8 3.1 5.2Z M9.8 8a1.8 1.8 0 1 1-3.6 0 1.8 1.8 0 0 1 3.6 0Z' },
   // Уровень маршрута разработки — значение поля `icon` в routes.json; подписи и
   // пары «уровень → иконка» лежат в dictionaries.ts (ROUTE_ICONS). Уровень
-  // xhigh/high/medium/low — растущие столбики (1…4 штуки над общей базой, как
+  // xhigh/high/medium/low/xlow — растущие столбики (база + 0…4 штуки, как
   // уровень сигнала), direct — стрелка «напрямую», без конвейера.
+  'route-xlow': { stroke: 'M2.6 13.4h10.8' },
   'route-low': { stroke: 'M2.6 13.4h10.8M4.6 13.4V10.2' },
   'route-medium': { stroke: 'M2.6 13.4h10.8M4.6 13.4V10.2M7.4 13.4V8.4' },
   'route-high': { stroke: 'M2.6 13.4h10.8M4.6 13.4V10.2M7.4 13.4V8.4M10.2 13.4V6.2' },

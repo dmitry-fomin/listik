@@ -1,6 +1,6 @@
 <script setup lang="ts">
 /**
- * RouteIcon — иконка уровня маршрута разработки (xhigh/high/medium/low/direct):
+ * RouteIcon — иконка уровня маршрута разработки (xhigh/high/medium/low/xlow/direct):
  * выбор маршрута в `RoutePicker` и карточка заведённой задачи. Уровень и
  * подпись берутся из справочника `lib/dictionaries.ts`, путь рисует `ListikIcon`
  * из общего словаря `icons.ts` (кит icon-agnostic).

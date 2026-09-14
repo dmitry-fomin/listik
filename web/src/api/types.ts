@@ -344,7 +344,7 @@ export interface ProjectRemoved {
  * правила фолбэка по ключу — `listik/routes.py` (`ROUTE_ICONS`, `fallback_icon`),
  * подписи и иконки — `lib/dictionaries.ts` (`ROUTE_ICONS`).
  */
-export type RouteIconKey = 'xhigh' | 'high' | 'medium' | 'low' | 'direct'
+export type RouteIconKey = 'xhigh' | 'high' | 'medium' | 'low' | 'xlow' | 'direct'
 
 /** Одна иконка и подпись вместо таблицы ролей — `strip` в routes.json. */
 export interface RouteStrip {

@@ -212,7 +212,8 @@ export const ROUTE_ICONS: RouteIconItem[] = [
   { value: 'xhigh', label: 'xhigh', icon: 'route-xhigh', hint: 'xhigh · самый дорогой и долгий маршрут' },
   { value: 'high', label: 'high', icon: 'route-high', hint: 'high · обычный маршрут' },
   { value: 'medium', label: 'medium', icon: 'route-medium', hint: 'medium · средний маршрут' },
-  { value: 'low', label: 'low', icon: 'route-low', hint: 'low · самый дешёвый и быстрый' },
+  { value: 'low', label: 'low', icon: 'route-low', hint: 'low · дешёвый маршрут с ТЗ и критикой' },
+  { value: 'xlow', label: 'xlow', icon: 'route-xlow', hint: 'xlow · самый дешёвый: без ТЗ и критики' },
   { value: 'direct', label: 'direct', icon: 'route-direct', hint: 'direct · один харнесс, без конвейера' },
 ]
 

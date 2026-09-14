@@ -36,7 +36,7 @@ Listik — общая очередь задач и журнал работы д�
    `process:<ключ>` (метка `harness:<x>` рядом — кто оркестрирует).
 2. Найди запись с этим `key` в `~/.config/listik/routes.json` (или `GET /api/routes`).
    - `kind: pipeline` — пресет из набора скилов feature-pipeline: вызови скил
-     `feature-pipeline:<ключ>` (например `feature-pipeline:dsh-grok-pipeline`) и веди задачу по
+     `feature-pipeline:<ключ>` (например `feature-pipeline:xlow-pipeline`) и веди задачу по
      нему. Кто исполняет какую роль (`spec`/`critic`/`impl`/`judge`), берётся из `roles` записи:
      роль с `"provider": "claude"` — это ты (твоя сессия или субагенты скила), остальные
      провайдеры (`grok`, `deepseek`→dsh, `openai`→Codex, `glm`) — те харнессы, которых вызывает скил.

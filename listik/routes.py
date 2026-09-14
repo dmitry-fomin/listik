@@ -4,8 +4,9 @@
 в доску (`web/src/lib/pipelines.ts`). Теперь её читает сервер: источник — `routes.json`
 в корне репозитория (`SOURCE_PATH`), при старте сервера он один раз копируется в
 `RUNTIME_PATH` (`$LISTIK_ROUTES`, иначе `~/.config/listik/routes.json`), если копии ещё
-нет. Автор правит рабочую копию и вписывает команды; файл в репозитории остаётся
-образцом без `command`.
+нет. У прямых маршрутов в образце уже есть готовый `command` (dsh/grok/codex);
+у конвейеров его нет — автор вписывает argv в рабочую копию. Существующая копия
+при старте не перезаписывается.
 
 Формат (версия 1)::
 
@@ -23,7 +24,7 @@
   * `strip` — необязательная одна иконка вместо таблицы ролей: `{label}` плюс ровно
     одно из `provider`/`glyph`;
   * `icon` — необязательный уровень маршрута для иконки на доске, одно из
-    `xhigh`/`high`/`medium`/`low`/`direct`. Если поля нет, уровень выводится из самой
+    `xhigh`/`high`/`medium`/`low`/`xlow`/`direct`. Если поля нет, уровень выводится из самой
     записи (`fallback_icon`): у `direct` это `direct`, у `pipeline` — часть ключа до
     первого `-`, если она из того же набора (`xhigh-pipeline` → `xhigh`); у записи без
     выводимого уровня (`feature-pipeline`) иконки нет. Рабочая копия `routes.json`,
@@ -76,7 +77,7 @@ PROVIDERS = ("claude", "glm", "openai", "grok", "deepseek")
 HARNESSES = ("claude", "dsh", "codex", "grok", "gemini")
 # Уровни маршрута — значения поля `icon`; подписи и иконки для доски лежат в
 # `web/src/lib/dictionaries.ts` (`ROUTE_ICONS`).
-ROUTE_ICONS = ("xhigh", "high", "medium", "low", "direct")
+ROUTE_ICONS = ("xhigh", "high", "medium", "low", "xlow", "direct")
 PLACEHOLDERS = ("task_id", "project", "route", "cwd", "title")
 
 ROOT_FIELDS = ("version", "routes")

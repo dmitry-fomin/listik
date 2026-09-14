@@ -14,6 +14,7 @@ import urllib.request
 
 from . import config as config_mod
 from . import db as db_mod
+from . import errors
 from . import paths
 
 
@@ -69,7 +70,10 @@ def _query_string(query: dict) -> str:
 
 def request(method: str, path: str, *, query: dict | None = None, body: dict | None = None,
             host: str | None = None, port: int | None = None, timeout: float = 60.0) -> dict:
-    url = base_url(host, port) + path
+    # Кириллица в пути (например, в ID задачи) кодируется здесь: иначе urllib падает
+    # с UnicodeEncodeError ещё до запроса. Уже закодированные сегменты (%2F) целы —
+    # «%» в safe.
+    url = base_url(host, port) + urllib.parse.quote(path, safe="/?&=%")
     if query:
         qs = _query_string(query)
         if qs:
@@ -81,19 +85,32 @@ def request(method: str, path: str, *, query: dict | None = None, body: dict | N
         req.add_header("Content-Type", "application/json")
     try:
         with urllib.request.urlopen(req, timeout=timeout) as resp:
-            payload = json.loads(resp.read().decode("utf-8"))
+            raw_ok = resp.read()
     except urllib.error.HTTPError as exc:
         raw = exc.read().decode("utf-8", "replace")
+        code = errors.code_for_status(exc.code)
+        hint = errors.hint_for_status(exc.code)
         try:
             payload = json.loads(raw)
             message = payload.get("error") or raw
+            # Сервер отдаёт свой код (см. listik/errors.py): он точнее статуса —
+            # «задача уже удерживается» это 400, но по смыслу conflict.
+            code = payload.get("code") or code
         except json.JSONDecodeError:
             message = raw
-        raise SystemExit(f"ошибка {exc.code}: {message}") from exc
+        raise errors.ListikError(str(message).strip(), code=code, hint=hint,
+                                 status=exc.code) from exc
     except urllib.error.URLError as exc:
         raise ApiDown(str(exc)) from exc
+    try:
+        payload = json.loads(raw_ok.decode("utf-8"))
+    except (json.JSONDecodeError, UnicodeDecodeError) as exc:
+        # Отвечает не Listik (прокси, чужая страница): трейсбек агенту не поможет.
+        raise errors.ListikError("сервер ответил не-JSON", code=errors.HTTP_ERROR,
+                                 hint="проверь адрес и состояние сервера: listik status") from exc
     if isinstance(payload, dict) and payload.get("ok") is False:
-        raise SystemExit(f"ошибка: {payload.get('error')}")
+        raise errors.ListikError(str(payload.get("error")),
+                                 code=payload.get("code") or errors.HTTP_ERROR)
     return payload.get("data") if isinstance(payload, dict) and "data" in payload else payload
 
 
@@ -195,7 +212,7 @@ def local_call(op: str, **kwargs):
         return {"items": deps_mod.suggested(conn, project=kwargs.get("project"),
                                             limit=kwargs.get("limit", 100)),
                 "generated_at": store.now_iso()}
-    raise SystemExit(f"локальный режим не умеет: {op}")
+    raise errors.ListikError(f"локальный режим не умеет: {op}", code=errors.UNSUPPORTED)
 
 
 # ------------------------------------------------------------------ репозитории (проекты)
@@ -226,7 +243,8 @@ def add_project(*, path: str | None = None, slug: str | None = None, title: str 
     try:
         return store.add_project(db_mod.init(), **body)
     except ValueError as exc:
-        raise SystemExit(f"ошибка: {exc}") from exc
+        raise errors.ListikError(errors.message_of(exc),
+                                 code=errors.BAD_ARGUMENT) from exc
 
 
 def set_project_archived(slug: str, archived: bool, *, host: str | None = None,
@@ -239,7 +257,8 @@ def set_project_archived(slug: str, archived: bool, *, host: str | None = None,
     try:
         return store.update_project(db_mod.init(), slug, archived=1 if archived else 0)
     except KeyError as exc:
-        raise SystemExit(f"ошибка: {exc}") from exc
+        raise errors.ListikError(errors.message_of(exc), code=errors.NOT_FOUND,
+                                 hint="список проектов: listik projects") from exc
 
 
 def remove_project(slug: str, *, force: bool = False, host: str | None = None,
@@ -253,9 +272,11 @@ def remove_project(slug: str, *, force: bool = False, host: str | None = None,
     try:
         return store.remove_project(db_mod.init(), slug, force=force)
     except KeyError as exc:
-        raise SystemExit(f"ошибка: {exc}") from exc
+        raise errors.ListikError(errors.message_of(exc), code=errors.NOT_FOUND,
+                                 hint="список проектов: listik projects") from exc
     except ValueError as exc:
-        raise SystemExit(f"ошибка: {exc}") from exc
+        # Как 409 у сервера: проект с задачами сначала скрывают.
+        raise errors.ListikError(errors.message_of(exc), code=errors.CONFLICT) from exc
 
 
 def set_project_routing(slug: str, routing: dict, *, local: bool = False,
@@ -272,9 +293,9 @@ def set_project_routing(slug: str, routing: dict, *, local: bool = False,
     try:
         return store.update_project(db_mod.init(), slug, routing=routing)
     except KeyError as exc:
-        raise SystemExit(
-            f"ошибка: проект не найден: {slug}; добавьте его: "
-            "listik projects --add <путь> [--slug …]"
-        ) from exc
+        raise errors.ListikError(
+            f"проект не найден: {slug}", code=errors.NOT_FOUND,
+            hint="добавьте его: listik projects --add <путь> [--slug …]") from exc
     except ValueError as exc:
-        raise SystemExit(f"ошибка: {exc}") from exc
+        raise errors.ListikError(errors.message_of(exc),
+                                 code=errors.BAD_ARGUMENT) from exc

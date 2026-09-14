@@ -10,17 +10,105 @@ from __future__ import annotations
 import argparse
 import json
 import os
+import re
 import sys
+import traceback
+from datetime import datetime, timezone
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
-from listik import __version__, client, db, paths, store  # noqa: E402
+from listik import __version__, client, db, errors, paths, store  # noqa: E402
 
 STATUS_ICON = {"open": "○", "in_progress": "▶", "blocked": "■", "review": "◐",
                "done": "✓", "cancelled": "✕"}
 STAGE_SHORT = {"s1-spec": "ТЗ", "s2-review": "крит", "s3-impl": "код", "s4-judge": "судья",
                "done": "готово"}
+
+# ------------------------------------------------------------------ ошибки
+#
+# Любая ошибка выходит в одном формате (см. listik/errors.py): человеку — одна-две
+# строки «ошибка: <что> — <как исправить>» в stderr, агенту с --json — объект
+# {"error": {"code", "message", "hint"}} в stdout. Разбор аргументов, ответ сервера
+# и локальный режим дают одинаковую структуру, а трейсбек непойманного исключения
+# уходит только в listik.log.
+
+_REQUIRED_ARG = re.compile(r"^the following arguments are required: (.+)$")
+_UNRECOGNIZED_ARG = re.compile(r"^unrecognized arguments?: (.+)$")
+_ARG_DETAIL = re.compile(r"^argument ([^:]+): (.*)$", re.S)
+_INVALID_CHOICE = re.compile(r"^invalid choice: (.*?) \(choose from (.*)\)$")
+_INVALID_NUMBER = re.compile(r"^invalid (?:int|float) value: (.*)$")
+_PRIORITY = re.compile(r"^(?:[Pp])?([0-4])$")
+
+
+def humanize_argparse(message: str) -> str:
+    """Ошибка argparse по-русски и без «argument --x:» — подсказку добавит error()."""
+    text = " ".join((message or "").split())
+    arg, detail = "", text
+    m = _ARG_DETAIL.match(text)
+    if m:
+        arg, detail = m.group(1), m.group(2).strip()
+    m = _REQUIRED_ARG.match(detail)
+    if m:
+        return f"не хватает обязательного аргумента: {m.group(1)}"
+    m = _UNRECOGNIZED_ARG.match(detail)
+    if m:
+        return f"неизвестный аргумент: {m.group(1)}"
+    m = _INVALID_CHOICE.match(detail)
+    if m:
+        return (f"{arg}: " if arg else "") + \
+            f"недопустимое значение {m.group(1)}; допустимо: {m.group(2)}"
+    m = _INVALID_NUMBER.match(detail)
+    if m:
+        detail = f"ждёт целое число, получено {m.group(1)}"
+    elif detail == "expected one argument":
+        detail = "нужно значение"
+    return f"{arg}: {detail}" if arg else detail
+
+
+class ListikParser(argparse.ArgumentParser):
+    """argparse, который не печатает usage-простыню, а отдаёт ошибку в общем формате.
+
+    Переопределён `error`: любая ошибка разбора аргументов (нет заголовка, чужой
+    флаг, плохое значение) становится ListikError с кодом bad_argument. Подкоманды
+    наследуют этот класс от корневого парсера, поэтому формат один везде.
+    """
+
+    def error(self, message: str) -> None:  # type: ignore[override]
+        raise errors.ListikError(humanize_argparse(message), code=errors.BAD_ARGUMENT,
+                                 hint=f"{self.prog} --help", exit_code=2)
+
+
+def priority_value(text: str) -> int:
+    """Приоритет из аргумента: 0–4 или P0–P4 (show печатает «P2 обычный»)."""
+    m = _PRIORITY.match(str(text).strip())
+    if not m:
+        raise errors.ListikError(
+            "priority ждёт число 0–4 или P0–P4", code=errors.BAD_ARGUMENT, exit_code=2,
+            hint="например: --priority 2, --priority P2, listik set <id> priority=P2")
+    return int(m.group(1))
+
+
+def report_error(exc: BaseException, json_mode: bool) -> int:
+    """Печатает ошибку в общем формате и возвращает ненулевой код возврата."""
+    err = errors.as_error(exc)
+    if json_mode:
+        print(json.dumps(errors.payload(err), ensure_ascii=False, indent=2))
+    else:
+        for line in errors.text_lines(err):
+            print(line, file=sys.stderr)
+    return err.exit_code
+
+
+def log_traceback(exc: BaseException) -> None:
+    """Трейсбек непойманного исключения — только в listik.log, не в терминал."""
+    try:
+        with open(paths.LOG_PATH, "a", encoding="utf-8") as fh:
+            ts = datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
+            fh.write(f"\n[{ts}] CLI: {' '.join(sys.argv)}\n")
+            traceback.print_exception(type(exc), exc, exc.__traceback__, file=fh)
+    except OSError:
+        pass
 
 
 def actor_default(args) -> str | None:
@@ -365,9 +453,10 @@ def cmd_new(args) -> int:
     if args.autostart and not (args.route or "").strip():
         # Задача не создаётся: запускать автостарт нечем, а молча создать её без
         # маршрута — значит соврать галочке. Код 2 — как у parser.error.
-        print("ошибка: --autostart требует --route <ключ маршрута из routes.json>",
-              file=sys.stderr)
-        return 2
+        raise errors.ListikError("--autostart требует --route <ключ маршрута из routes.json>",
+                                 code=errors.BAD_ARGUMENT, exit_code=2,
+                                 hint="например: listik new \"заголовок\" --autostart "
+                                      "--route low-pipeline")
     body = {
         "title": args.title, "project": args.project, "type": args.type,
         "priority": args.priority, "description": args.description or "",
@@ -493,13 +582,15 @@ def cmd_set(args) -> int:
     fields = {}
     for pair in args.field:
         if "=" not in pair:
-            raise SystemExit(f"ожидалось поле=значение, получено: {pair}")
+            raise errors.ListikError(f"ожидалось поле=значение, получено: {pair}",
+                                     code=errors.BAD_ARGUMENT,
+                                     hint="например: listik set <id> status=in_progress priority=P2")
         key, value = pair.split("=", 1)
         key = key.strip()
         if key == "labels":
             value = [x.strip() for x in value.split(",") if x.strip()]
         elif key == "priority":
-            value = int(value)
+            value = priority_value(value)
         elif key == "needs_owner":
             value = value.lower() in ("1", "true", "yes", "да")
         fields[key] = value
@@ -932,11 +1023,15 @@ def cmd_projects(args) -> int:
     if getattr(args, "routing", None) is not None:
         slug = getattr(args, "project", None)
         if not slug:
-            raise SystemExit("нужен slug проекта")
+            raise errors.ListikError("нужен slug проекта", code=errors.BAD_ARGUMENT,
+                                     hint="listik projects <slug> --routing '<json>'")
         try:
             parsed = json.loads(args.routing)
         except json.JSONDecodeError as exc:
-            raise SystemExit(f"ошибка: невалидный JSON: {exc}") from exc
+            raise errors.ListikError(f"невалидный JSON маршрутизации: {exc}",
+                                     code=errors.BAD_ARGUMENT,
+                                     hint="пример: listik projects <slug> --routing "
+                                          "'{\"harnesses\": {\"s3-impl\": [\"dsh\"]}}'") from exc
         project = client.set_project_routing(slug, parsed, **list_kwargs)
         print(f"проект {project['slug']}: маршрутизация обновлена")
         _print_routing(project)
@@ -973,7 +1068,8 @@ def cmd_projects(args) -> int:
     if getattr(args, "project", None):  # без действия slug — показать один проект
         rows = [row for row in rows if row["slug"] == args.project]
         if not rows:
-            raise SystemExit(f"проект не найден: {args.project}")
+            raise errors.ListikError(f"проект не найден: {args.project}", code=errors.NOT_FOUND,
+                                     hint="список проектов: listik projects")
     if not getattr(args, "include_archived", False):
         rows = [row for row in rows if not row.get("archived")]
     if getattr(args, "json", False):
@@ -1023,7 +1119,8 @@ def cmd_dep(args) -> int:
         return 0
     if args.action == "tree":
         if not args.issue_id:
-            raise SystemExit("нужен ID задачи: listik dep tree <id>")
+            raise errors.ListikError("нужен ID задачи", code=errors.BAD_ARGUMENT,
+                                     hint="listik dep tree <id>")
         args.task_id = args.issue_id
         args.depth = getattr(args, "depth", 3)
         return cmd_dep_tree(args)
@@ -1034,13 +1131,16 @@ def cmd_dep(args) -> int:
             # dep link/suggest работают только по упоминаниям в тексте; второй аргумент
             # раньше молча терялся (listik-u0ii). Явную связь ставит dep add.
             t = args.dep_type if args.action == "link" else "relates-to"
-            raise SystemExit(
-                f"ошибка: dep {args.action} принимает только <id> и ищет упоминания в тексте; "
-                f"второй аргумент {args.depends_on} не поддерживается.\n"
-                f"явная связь: listik dep add {args.issue_id} {args.depends_on} --dep-type {t}\n"
-                f"одна из упомянутых задач: listik dep link {args.issue_id} --only {args.depends_on}")
+            raise errors.ListikError(
+                f"dep {args.action} принимает только <id> и ищет упоминания в тексте; "
+                f"второй аргумент {args.depends_on} не поддерживается",
+                code=errors.BAD_ARGUMENT,
+                hint=f"явная связь: listik dep add {args.issue_id} {args.depends_on} "
+                     f"--dep-type {t}; одна из упомянутых задач: "
+                     f"listik dep link {args.issue_id} --only {args.depends_on}")
         if not args.issue_id:
-            raise SystemExit("нужен ID задачи: listik dep suggest <id>")
+            raise errors.ListikError("нужен ID задачи", code=errors.BAD_ARGUMENT,
+                                     hint="listik dep suggest <id>")
         items = call("mentions", args, f"/api/tasks/{args.issue_id}/mentions", method="POST",
                      body={"limit": args.limit},
                      local_kwargs={"task_id": args.issue_id, "limit": args.limit})
@@ -1119,7 +1219,7 @@ def cmd_mcp(args) -> int:
 # ------------------------------------------------------------------ парсер
 
 def build_parser() -> argparse.ArgumentParser:
-    p = argparse.ArgumentParser(prog="listik", description="Listik — трекер задач и память")
+    p = ListikParser(prog="listik", description="Listik — трекер задач и память")
     p.add_argument("--version", action="version", version=f"listik {__version__}")
     p.add_argument("--json", action="store_true", help="вывод в JSON (для агентов)")
     p.add_argument("--actor", help="кто выполняет действие (me, agent:dsh, ...)")
@@ -1183,7 +1283,8 @@ def build_parser() -> argparse.ArgumentParser:
     sp.add_argument("title")
     sp.add_argument("-p", "--project")
     sp.add_argument("-t", "--type", default="task")
-    sp.add_argument("--priority", type=int, default=2)
+    sp.add_argument("--priority", type=priority_value, default=2,
+                    help="приоритет: 0–4 или P0–P4 (по умолчанию 2)")
     sp.add_argument("-d", "--description")
     sp.add_argument("-a", "--acceptance")
     sp.add_argument("--stage", choices=["s1-spec", "s2-review", "s3-impl", "s4-judge"])
@@ -1360,17 +1461,44 @@ def build_parser() -> argparse.ArgumentParser:
 
 
 def main(argv: list[str] | None = None) -> int:
-    args = build_parser().parse_args(argv)
+    raw = list(sys.argv[1:] if argv is None else argv)
+    # --json может стоять и до подкоманды, и после: ошибка разбора аргументов
+    # случается раньше, чем флаг попадёт в args, поэтому смотрим сам argv.
+    # После «--» флагов уже нет — там текст («--json» как комментарий).
+    try:
+        after_dashdash = raw.index("--")
+    except ValueError:
+        after_dashdash = len(raw)
+    json_mode = "--json" in raw[:after_dashdash]
+    try:
+        args = build_parser().parse_args(raw)
+    except errors.ListikError as exc:
+        return report_error(exc, json_mode)
+    except SystemExit:  # --help/--version: argparse уже всё напечатал
+        return 0
     if not hasattr(args, "json"):
         args.json = False
+    json_mode = json_mode or args.json
     try:
-        return args.func(args)
-    except KeyError as exc:
-        print(f"ошибка: {exc.args[0] if exc.args else exc}", file=sys.stderr)
-        return 1
-    except ValueError as exc:
-        print(f"ошибка: {exc}", file=sys.stderr)
-        return 1
+        return int(args.func(args) or 0)
+    except (errors.ListikError, KeyError, ValueError) as exc:
+        # Ожидаемые ошибки: разбор аргументов, «не найдено», «нельзя сделать».
+        # Они не нуждаются в трейсбеке — он остаётся только для непойманных.
+        return report_error(exc, json_mode)
+    except SystemExit as exc:  # чужой SystemExit(строка) — в тот же формат
+        if exc.code in (None, 0):
+            return 0
+        message = exc.code if isinstance(exc.code, str) else "команда прервана"
+        return report_error(errors.ListikError(message, code=errors.BAD_ARGUMENT), json_mode)
+    except KeyboardInterrupt:
+        return report_error(errors.ListikError("прервано (Ctrl+C)", code=errors.INTERNAL,
+                                               hint="команда не выполнена", exit_code=130),
+                            json_mode)
+    except Exception as exc:  # noqa: BLE001 — трейсбек уходит только в listik.log
+        log_traceback(exc)
+        err = errors.as_error(exc)
+        err.hint = err.hint or f"подробности в {paths.LOG_PATH}"
+        return report_error(err, json_mode)
 
 
 if __name__ == "__main__":

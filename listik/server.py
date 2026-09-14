@@ -25,6 +25,7 @@ from . import config as config_mod
 from . import db as db_mod
 from . import deps as deps_mod
 from . import embed as embed_mod
+from . import errors as errors_mod
 from . import launcher as launcher_mod
 from . import mcp
 from . import paths
@@ -171,10 +172,19 @@ def as_int(value, default=None):
 
 
 class ApiError(Exception):
-    def __init__(self, status: int, message: str):
+    def __init__(self, status: int, message: str, code: str | None = None):
         super().__init__(message)
         self.status = status
         self.message = message
+        # Машинный код ошибки (см. listik/errors.py): CLI и агенты ветвятся по нему,
+        # а не по HTTP-статусу. Явный code важнее статуса: «задача уже удерживается» —
+        # это 400 по контракту API, но по смыслу conflict.
+        self.code = code or errors_mod.code_for_status(status)
+
+
+def api_error(status: int, exc: BaseException) -> ApiError:
+    """ApiError по пойманному исключению: сообщение без кавычек KeyError + код по типу."""
+    return ApiError(status, errors_mod.message_of(exc), code=errors_mod.code_of(exc))
 
 
 def need(body: dict, key: str):
@@ -252,7 +262,7 @@ def handle(method: str, path: str, query: dict, body: dict, authed: bool = False
                     conn, path=body.get("path"), slug=body.get("slug"),
                     title=body.get("title"), kind=body.get("kind") or "native")
             except ValueError as exc:
-                raise ApiError(400, str(exc)) from exc
+                raise api_error(400, exc) from exc
             publish("project", {"slug": project["slug"],
                                 "action": "created" if project.get("created") else "updated"})
             return 201, project
@@ -266,9 +276,9 @@ def handle(method: str, path: str, query: dict, body: dict, authed: bool = False
                     color=body.get("color"), archived=body.get("archived"),
                     kind=body.get("kind"), routing=body.get("routing"))
             except KeyError as exc:
-                raise ApiError(404, str(exc)) from exc
+                raise api_error(404, exc) from exc
             except ValueError as exc:
-                raise ApiError(400, str(exc)) from exc
+                raise api_error(400, exc) from exc
             publish("project", {"slug": slug, "action": "updated"})
             return 200, project
         if method == "DELETE":
@@ -278,9 +288,9 @@ def handle(method: str, path: str, query: dict, body: dict, authed: bool = False
                 force = as_bool(body.get("force", False)) or as_bool(q1("force", False))
                 out = store.remove_project(conn, slug, force=force)
             except KeyError as exc:
-                raise ApiError(404, str(exc)) from exc
+                raise api_error(404, exc) from exc
             except ValueError as exc:
-                raise ApiError(409, str(exc)) from exc
+                raise api_error(409, exc) from exc
             publish("project", {"slug": slug, "action": "removed"})
             return 200, out
 
@@ -394,18 +404,18 @@ def handle(method: str, path: str, query: dict, body: dict, authed: bool = False
                     out = documents.put_document(conn, tid, kind, content,
                                                  path=body.get("path"), actor=body.get("actor"))
                 except KeyError as exc:
-                    raise ApiError(404, str(exc)) from exc
+                    raise api_error(404, exc) from exc
                 except ValueError as exc:
-                    raise ApiError(400, str(exc)) from exc
+                    raise api_error(400, exc) from exc
                 publish("task", {"id": tid, "action": "document"})
                 return 200, out
             if method == "GET":
                 try:
                     out = documents.get_document(conn, tid, kind)
                 except KeyError as exc:
-                    raise ApiError(404, str(exc)) from exc
+                    raise api_error(404, exc) from exc
                 except ValueError as exc:
-                    raise ApiError(400, str(exc)) from exc
+                    raise api_error(400, exc) from exc
                 return 200, out
             raise ApiError(405, "метод не поддерживается")
         if len(parts) == 5 and parts[3] == "deps" and method == "DELETE":
@@ -422,7 +432,7 @@ def handle(method: str, path: str, query: dict, body: dict, authed: bool = False
                         task["deps_state"] = deps_mod.ready(conn, tid)
                     return 200, task
                 except KeyError as exc:
-                    raise ApiError(404, str(exc)) from exc
+                    raise api_error(404, exc) from exc
             if method in ("PATCH", "PUT"):
                 fields = {k: v for k, v in body.items()
                           if k in store.UPDATABLE}
@@ -431,7 +441,7 @@ def handle(method: str, path: str, query: dict, body: dict, authed: bool = False
                                              harness=body.get("harness"),
                                              note=body.get("note"), **fields)
                 except KeyError as exc:
-                    raise ApiError(404, str(exc)) from exc
+                    raise api_error(404, exc) from exc
                 publish("task", {"id": tid, "action": "updated"})
                 return 200, task
             if method == "DELETE":
@@ -447,7 +457,7 @@ def handle(method: str, path: str, query: dict, body: dict, authed: bool = False
                                              portion=q1("portion"),
                                              max_chars=as_int(q1("max_chars"), None))
                 except KeyError as exc:
-                    raise ApiError(404, str(exc)) from exc
+                    raise api_error(404, exc) from exc
                 return 200, out
             try:
                 if action == "claim":
@@ -491,9 +501,9 @@ def handle(method: str, path: str, query: dict, body: dict, authed: bool = False
                 else:
                     raise ApiError(404, f"неизвестное действие: {action}")
             except KeyError as exc:
-                raise ApiError(404, str(exc)) from exc
+                raise api_error(404, exc) from exc
             except ValueError as exc:
-                raise ApiError(400, str(exc)) from exc
+                raise api_error(400, exc) from exc
             publish("task", {"id": tid, "action": action})
             return 200, out
 
@@ -585,8 +595,10 @@ class Handler(BaseHTTPRequestHandler):
         self._send(status, json.dumps(data, ensure_ascii=False).encode("utf-8"),
                    "application/json; charset=utf-8")
 
-    def _error(self, status: int, message: str) -> None:
-        self._json(status, {"ok": False, "error": message})
+    def _error(self, status: int, message: str, code: str | None = None) -> None:
+        body = {"ok": False, "error": message,
+                "code": code or errors_mod.code_for_status(status)}
+        self._json(status, body)
 
     def _read_body(self) -> dict:
         length = int(self.headers.get("Content-Length") or 0)
@@ -634,9 +646,9 @@ class Handler(BaseHTTPRequestHandler):
             try:
                 status, data = handle("GET", path, query, {}, authed=authed)
             except ApiError as exc:
-                return self._error(exc.status, exc.message)
+                return self._error(exc.status, exc.message, exc.code)
             except Exception as exc:  # noqa: BLE001
-                return self._error(500, f"{type(exc).__name__}: {exc}")
+                return self._error(500, f"{type(exc).__name__}: {exc}", errors_mod.INTERNAL)
             return self._json(status, {"ok": True, "data": data})
 
         return self._static(path, query)
@@ -653,9 +665,9 @@ class Handler(BaseHTTPRequestHandler):
             body = self._read_body()
             status, data = handle("POST", parsed.path, query, body, authed=True)
         except ApiError as exc:
-            return self._error(exc.status, exc.message)
+            return self._error(exc.status, exc.message, exc.code)
         except Exception as exc:  # noqa: BLE001
-            return self._error(500, f"{type(exc).__name__}: {exc}")
+            return self._error(500, f"{type(exc).__name__}: {exc}", errors_mod.INTERNAL)
         return self._json(status, {"ok": True, "data": data})
 
     def do_PATCH(self):  # noqa: N802
@@ -681,9 +693,9 @@ class Handler(BaseHTTPRequestHandler):
             body = self._read_body()
             status, data = handle(method, parsed.path, query, body, authed=True)
         except ApiError as exc:
-            return self._error(exc.status, exc.message)
+            return self._error(exc.status, exc.message, exc.code)
         except Exception as exc:  # noqa: BLE001
-            return self._error(500, f"{type(exc).__name__}: {exc}")
+            return self._error(500, f"{type(exc).__name__}: {exc}", errors_mod.INTERNAL)
         return self._json(status, {"ok": True, "data": data})
 
     # --- MCP: минимальное подмножество транспорта Streamable HTTP
@@ -895,7 +907,7 @@ def pid_file() -> Path:
 
 
 def log_file() -> Path:
-    return paths.ROOT_DIR / "listik.log"
+    return paths.LOG_PATH
 
 
 def read_pid() -> int | None:

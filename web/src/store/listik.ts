@@ -661,26 +661,67 @@ function openSearch(text: string): void {
   paletteOpen.value = true
 }
 
-async function openTask(id: string): Promise<void> {
+/**
+ * Номер последнего запроса карточки. Ответ «догоняющего» запроса (клик по ссылке, а
+ * следом другая задача; перезагрузка карточки после действия; закрытие панели, пока
+ * запрос в пути) не должен перезаписывать то, что открыли позже, — иначе панель
+ * показывает не ту задачу, на которую кликнули, и выглядит это как «ссылка не работает».
+ */
+let detailRequest = 0
+
+/** id из данных задачи: пробелы по краям в ссылке ломали бы поиск задачи. */
+function normalizeTaskId(id: string): string {
+  return id.trim()
+}
+
+async function openTask(rawId: string): Promise<void> {
+  const id = normalizeTaskId(rawId)
+  if (!id) return
+  const request = (detailRequest += 1)
+  // Карточка, из которой уходим по ссылке: если переход не удался (задача удалена,
+  // устаревшая связь), панель остаётся на ней, а не показывает пустой экран с ошибкой.
+  const previous = detail.value
   openTaskId.value = id
   detail.value = null
   detailError.value = null
   detailLoading.value = true
   paletteOpen.value = false
   try {
-    detail.value = await api.task(id)
+    let data: TaskDetail
+    try {
+      data = await api.task(id)
+    } catch (error) {
+      // Регистр id: канонические id строчные, но в связях мог остаться id из импорта
+      // (beads/WriterLLM) с заглавными буквами — сервер ищет задачу по точному id.
+      const lower = id.toLowerCase()
+      if (!(error instanceof ApiError) || error.status !== 404 || lower === id) throw error
+      data = await api.task(lower)
+    }
+    if (request !== detailRequest) return
+    detail.value = data
+    // id от сервера: после перехода в другом регистре панель дальше работает с каноническим.
+    openTaskId.value = data.id
   } catch (error) {
+    if (request !== detailRequest) return
+    detail.value = previous
+    // Возвращаем id прежней карточки: действия панели и «Повторить» перезагружают
+    // карточку по openTaskId и иначе били бы в несуществующую задачу.
+    openTaskId.value = previous ? previous.id : id
     detailError.value = errorMessage(error)
     handleError(error)
   } finally {
-    detailLoading.value = false
+    // Снимает загрузку только последний запрос: у «догоняющего» она уже снята новым.
+    if (request === detailRequest) detailLoading.value = false
   }
 }
 
 function closeTask(): void {
+  // Запрос карточки, летящий в закрытую панель, применять некуда — гасим его номером.
+  detailRequest += 1
   openTaskId.value = null
   detail.value = null
   detailError.value = null
+  detailLoading.value = false
 }
 
 async function reloadDetail(): Promise<void> {

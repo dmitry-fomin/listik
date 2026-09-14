@@ -146,14 +146,33 @@ const groupedIds = computed<Set<string>>(() => {
   if (parentDep.value) ids.add(parentDep.value.id)
   return ids
 })
-/** Сводка «зависит от» — только то, чего нет в группах выше. */
-const dependenciesSummary = computed<TaskDep[]>(
-  () => dependencies.value.filter((dep) => !groupedIds.value.has(dep.depends_on)),
-)
-/** Сводка «от неё зависит» — только то, чего нет в группах выше. */
-const dependentsSummary = computed<TaskDependent[]>(
-  () => dependents.value.filter((dep) => !groupedIds.value.has(dep.issue_id)),
-)
+/**
+ * Сводка «зависит от» — только то, чего нет в группах выше. Один id — одна ссылка:
+ * в `deps` на одного и того же адресата бывает несколько строк с разными `dep_type`
+ * (ключ таблицы — `issue_id, depends_on, dep_type`), а повтор `:key` во `v-for`
+ * Vue патчит непредсказуемо.
+ */
+const dependenciesSummary = computed<TaskDep[]>(() => {
+  const out: TaskDep[] = []
+  const seen = new Set<string>()
+  for (const dep of dependencies.value) {
+    if (groupedIds.value.has(dep.depends_on) || seen.has(dep.depends_on)) continue
+    seen.add(dep.depends_on)
+    out.push(dep)
+  }
+  return out
+})
+/** Сводка «от неё зависит» — только то, чего нет в группах выше; тоже без дублей id. */
+const dependentsSummary = computed<TaskDependent[]>(() => {
+  const out: TaskDependent[] = []
+  const seen = new Set<string>()
+  for (const dep of dependents.value) {
+    if (groupedIds.value.has(dep.issue_id) || seen.has(dep.issue_id)) continue
+    seen.add(dep.issue_id)
+    out.push(dep)
+  }
+  return out
+})
 const canFinish = computed(() => deps.value?.can_finish !== false)
 const reasons = computed<string[]>(() => deps.value?.reasons ?? [])
 /** Серверная семантика «взять можно»: нет блокеров, нет держателя, не закрыта. */
@@ -271,6 +290,10 @@ watch(
     closeFormOpen.value = false
     depFormOpen.value = false
     needsOwnerFormOpen.value = false
+    // Дерево связей принадлежит задаче: при переходе по ссылке оно не должно
+    // оставаться от прежней карточки (ответ старого запроса тоже гасится в loadTree).
+    depTree.value = null
+    depTreeLoading.value = false
     if (props.task?.holder) holder.value = props.task.holder
   },
 )
@@ -776,9 +799,15 @@ function depCardHint(dep: DepInfo): string {
 
 /** Дерево связей запрашивается по кнопке: у задачи оно может быть глубоким. */
 async function loadTree(): Promise<void> {
-  if (!props.task) return
+  const task = props.task
+  if (!task) return
+  const id = task.id
   depTreeLoading.value = true
-  depTree.value = await props.loadTree(props.task.id)
+  const tree = await props.loadTree(id)
+  // Пока грузилось, могли уйти по ссылке на другую задачу — чужое дерево не показываем
+  // (сброс состояния и снятие загрузки в этом случае уже сделал вотчер по id).
+  if (props.task?.id !== id) return
+  depTree.value = tree
   depTreeLoading.value = false
 }
 </script>
@@ -825,19 +854,24 @@ async function loadTree(): Promise<void> {
       </div>
     </template>
 
+    <!-- Ошибку показываем и когда карточка уже есть: неудачный переход по ссылке из
+         «Связей» (задача удалена, связь устарела) не должен стирать открытую панель. -->
+    <UiAlert v-if="error" tone="danger">
+      <template #title>Не удалось открыть задачу</template>
+      {{ error }}
+      <div v-if="task" class="listik-section__hint">
+        Панель осталась на задаче <span class="listik-mono">{{ task.id }}</span> — ссылку можно нажать ещё раз.
+      </div>
+      <div v-else class="listik-row" style="margin-top: var(--space-3)">
+        <UiButton size="sm" variant="secondary" @click="emit('reload')">Повторить</UiButton>
+      </div>
+    </UiAlert>
+
     <div v-if="loading && !task" class="listik-stack">
       <UiSkeleton variant="text" width="40%" />
       <UiSkeleton variant="rect" height="80px" />
       <UiSkeleton variant="rect" height="160px" />
     </div>
-
-    <UiAlert v-else-if="error" tone="danger">
-      <template #title>Не удалось загрузить задачу</template>
-      {{ error }}
-      <div class="listik-row" style="margin-top: var(--space-3)">
-        <UiButton size="sm" variant="secondary" @click="emit('reload')">Повторить</UiButton>
-      </div>
-    </UiAlert>
 
     <div v-else-if="task" class="listik-stack listik-drawer__body">
       <section class="listik-section">

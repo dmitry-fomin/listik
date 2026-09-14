@@ -7,6 +7,7 @@
 from __future__ import annotations
 
 import json
+from pathlib import Path
 import urllib.error
 import urllib.parse
 import urllib.request
@@ -212,7 +213,12 @@ def list_projects(*, host: str | None = None, port: int | None = None,
 def add_project(*, path: str | None = None, slug: str | None = None, title: str | None = None,
                 kind: str = "native", host: str | None = None, port: int | None = None,
                 local: bool = False) -> dict:
-    """Добавить репозиторий (каталог) на доску."""
+    """Добавить репозиторий (каталог) на доску.
+
+    Относительный путь разрешается здесь, в cwd вызывающего: у сервера свой cwd.
+    """
+    if path:
+        path = str(Path(path).expanduser().resolve())
     body = {"path": path, "slug": slug, "title": title, "kind": kind}
     if not local and is_up(host, port):
         return request("POST", "/api/projects", body=body, host=host, port=port)

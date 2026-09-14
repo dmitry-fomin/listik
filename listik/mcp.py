@@ -636,7 +636,9 @@ def handle(request: dict, conn=None) -> dict | None:
 
 
 def run() -> int:
-    db_mod.init()
+    # Одно соединение на весь stdio-процесс: без него call_tool открывал бы
+    # новое соединение на каждый вызов и не закрывал его (listik-sxcd).
+    conn = db_mod.init()
     for line in sys.stdin:
         line = line.strip()
         if not line:
@@ -645,9 +647,10 @@ def run() -> int:
             request = json.loads(line)
         except json.JSONDecodeError:
             continue
-        response = handle(request)
+        response = handle(request, conn=conn)
         if response is None:
             continue
         sys.stdout.write(json.dumps(response, ensure_ascii=False) + "\n")
         sys.stdout.flush()
+    conn.close()
     return 0

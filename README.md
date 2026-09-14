@@ -198,7 +198,9 @@ ready → claim → работа + heartbeat → stage … → done
   убирают задачу из `ready` и не дают её взять.
 - **Мягкие** (`relates-to`, `parent-child`, `discovered-from`, `duplicates`, `supersedes`, …) —
   «прочитай сначала», работу не запрещают. `dep link <id>` ставит `relates-to` на задачи,
-  упомянутые в тексте; `dep suggest <id>` показывает такие упоминания.
+  упомянутые в тексте (`--only <id2>` — только с одной из них); `dep suggest <id>` показывает
+  такие упоминания. Второй аргумент `dep link`/`dep suggest` не принимают и завершаются ошибкой с
+  подсказкой: явную мягкую связь ставит `dep add <id> <other> --dep-type parent-child|relates-to|…`.
 - **Кто ставит жёсткую связь.** Человек — сразу. **Агент** (`agent:…`) без `--confirm` получает
   не блокер, а **предложение** `suggested-blocks`: оно видно в `show` («предложены блокеры») и в
   `dep suggested`, но на `ready`/`claim` не влияет. Человек подтверждает `dep confirm <id>

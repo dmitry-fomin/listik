@@ -317,7 +317,7 @@ def expire_return_handoffs(conn: sqlite3.Connection, *, task_id: str | None = No
         if active_after:
             continue
         ts = store.now_iso()
-        conn.execute("UPDATE tasks SET holder='', updated_at=? WHERE id=?", (ts, row["id"]))
+        conn.execute("UPDATE tasks SET holder='', holder_note=NULL, updated_at=? WHERE id=?", (ts, row["id"]))
         store.event(conn, row["id"], "release", from_value=row["holder"], to_value="",
                     note=f"истёк срок возврата после красного verdict ({int(hours)} ч без активности)",
                     ts=ts)

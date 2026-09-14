@@ -11,6 +11,7 @@ import mimetypes
 import os
 import queue
 import signal
+import sqlite3
 import sys
 import threading
 import time
@@ -65,6 +66,40 @@ def get_conn():
     return conn
 
 
+def close_thread_conn() -> None:
+    """Закрыть соединение текущего потока (listik-sxcd).
+
+    Поток-обработчик ThreadingHTTPServer живёт одно HTTP-соединение; без явного
+    закрытия его sqlite-соединение ждало сборщика мусора и держало fd на базе и на
+    уже удалённых WAL. Вызывается в конце каждого потока-обработчика.
+    """
+    conn = getattr(_conn_local, "conn", None)
+    if conn is None:
+        return
+    _conn_local.conn = None
+    try:
+        conn.close()
+    except Exception:  # noqa: BLE001
+        pass
+
+
+# Последняя ошибка базы в фоновом потоке — отдаётся в /api/health, чтобы не молчать.
+_db_error: dict | None = None
+
+
+def _background_db_error(where: str, exc: Exception) -> None:
+    """DatabaseError в фоне: громко в лог, в health, и переоткрыть соединение потока.
+
+    Если базу или WAL подменили под работающим сервером, старое соединение ловит
+    «database disk image is malformed» бесконечно; свежее соединение видит новый файл.
+    """
+    global _db_error
+    _db_error = {"where": where, "error": f"{type(exc).__name__}: {exc}", "at": store.now_iso()}
+    print(f"[{where}] ОШИБКА БАЗЫ: {type(exc).__name__}: {exc} — переоткрываю соединение",
+          flush=True)
+    close_thread_conn()
+
+
 _embed_stop = threading.Event()
 
 
@@ -84,6 +119,8 @@ def start_embed_worker(interval: float = 45.0, batch_limit: int = 200) -> thread
                 if res.get("reindexed"):
                     print(f"[documents] переиндексировано: {res['reindexed']}", flush=True)
                     publish("documents", res)
+            except sqlite3.DatabaseError as exc:
+                _background_db_error("documents", exc)
             except Exception as exc:  # noqa: BLE001
                 print(f"[documents] пропуск: {type(exc).__name__}: {exc}", flush=True)
             try:
@@ -93,6 +130,8 @@ def start_embed_worker(interval: float = 45.0, batch_limit: int = 200) -> thread
                     search_mod.invalidate_vectors()
                     print(f"[embed] досчитано векторов: {res['embedded']}", flush=True)
                     publish("embed", res)
+            except sqlite3.DatabaseError as exc:
+                _background_db_error("embed", exc)
             except Exception as exc:  # noqa: BLE001
                 print(f"[embed] пропуск: {type(exc).__name__}: {exc}", flush=True)
 
@@ -161,6 +200,8 @@ def handle(method: str, path: str, query: dict, body: dict, authed: bool = False
             "embed": {"model": cfg["embed"]["model"]},
             "authed": authed,
         }
+        if authed and _db_error is not None:
+            data["db_error"] = _db_error
         # Проба живости отдаётся без токена (по ней CLI понимает, поднят ли сервер),
         # поэтому подробности о базе — только авторизованному.
         if authed:
@@ -798,6 +839,13 @@ class Server(ThreadingHTTPServer):
     def __init__(self, addr, handler, quiet: bool = False):
         super().__init__(addr, handler)
         self.quiet = quiet
+
+    def process_request_thread(self, request, client_address):
+        # Поток на соединение: его sqlite-соединение закрываем вместе с потоком.
+        try:
+            super().process_request_thread(request, client_address)
+        finally:
+            close_thread_conn()
 
 
 def make_server(host: str, port: int, quiet: bool = False) -> Server:

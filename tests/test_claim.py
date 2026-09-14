@@ -391,3 +391,28 @@ class ClaimCliTests(TempDbTestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class HolderNoteResetTest(TempDbTestCase):
+    """listik-8d9y: «что делает» не переходит к новому держателю."""
+
+    def setUp(self) -> None:
+        super().setUp()
+        self.t = store.create_task(self.conn, title="Задача", project="demo")["id"]
+        store.claim(self.conn, self.t, holder="codex")
+        store.heartbeat(self.conn, self.t, holder="codex", note="готовлю ТЗ")
+
+    def test_repeated_claim_by_same_holder_keeps_note(self) -> None:
+        out = store.claim(self.conn, self.t, holder="codex")
+        self.assertEqual(out["holder_note"], "готовлю ТЗ")
+
+    def test_release_then_claim_by_other_clears_note(self) -> None:
+        out = store.update_task(self.conn, self.t, holder="", note="освободил")
+        self.assertFalse(out["holder_note"])
+        out = store.claim(self.conn, self.t, holder="claude")
+        self.assertEqual(out["holder"], "claude")
+        self.assertFalse(out["holder_note"])
+
+    def test_holder_change_clears_note(self) -> None:
+        out = store.update_task(self.conn, self.t, holder="claude")
+        self.assertFalse(out["holder_note"])

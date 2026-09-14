@@ -37,7 +37,7 @@ Listik — самостоятельный трекер задач вместо `
 | `assignee` | str? | кому поручена: `me`, `agent:claude`, `agent:dsh`, `agent:grok`, `agent:codex` |
 | `holder` | str? | кто **держит прямо сейчас** (может отличаться от assignee) |
 | `holder_at` | str? | heartbeat держащего |
-| `holder_note` | str? | что именно держащий делает сейчас |
+| `holder_note` | str? | что именно держащий делает сейчас; сбрасывается при смене держателя (release, claim другим, handoff, истечение окна возврата), повторный claim тем же держателем её сохраняет |
 | `needs_owner` | bool | ждёт решения человека |
 | `stage_at` | str? | когда вошёл в текущий этап |
 | `stage_hours` | float? | сколько часов на этапе (считает сервер) |

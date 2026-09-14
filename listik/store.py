@@ -297,6 +297,10 @@ def update_task(conn: sqlite3.Connection, task_id: str, *, actor: str | None = N
             if new:
                 sets.append("holder_at = ?")
                 params.append(ts)
+            # «Что делает» принадлежит прежнему держателю: смена держателя (release,
+            # claim другим, handoff) её сбрасывает, если заметку не передали явно.
+            if "holder_note" not in fields and row["holder_note"]:
+                sets.append("holder_note = NULL")
         elif key == "needs_owner":
             event(conn, task_id, "question" if new else "answer",
                   from_value=old, to_value=new, actor=actor_key, harness=harness, note=note)
@@ -914,9 +918,26 @@ def stats(conn: sqlite3.Connection, project: str | None = None) -> dict:
 
 # ------------------------------------------------------------------ проекты, акторы, связи
 
+def existing_slug(conn: sqlite3.Connection, slug: str) -> str | None:
+    """Slug существующего проекта, совпадающий с `slug` без учёта регистра.
+
+    Slug не приводится к нижнему регистру (есть `Zoloto585/orders`), но проекты,
+    отличающиеся только регистром, — дубли: файловая система macOS регистр не различает.
+    """
+    exact = conn.execute("SELECT slug FROM projects WHERE slug = ?", (slug,)).fetchone()
+    if exact:
+        return exact[0]
+    key = slug.casefold()
+    for (s,) in conn.execute("SELECT slug FROM projects"):
+        if s.casefold() == key:
+            return s
+    return None
+
+
 def upsert_project(conn: sqlite3.Connection, slug: str, **fields) -> dict:
     allowed = {"title", "kind", "path", "git_remote", "git_branch", "color", "archived",
                "imported_at", "import_note", "routing"}
+    slug = existing_slug(conn, slug) or slug
     conn.execute(
         "INSERT INTO projects(slug, title, kind) VALUES(?,?,?) "
         "ON CONFLICT(slug) DO UPDATE SET title=coalesce(excluded.title, projects.title)",
@@ -1057,17 +1078,28 @@ def add_project(conn: sqlite3.Connection, *, path: str | None = None, slug: str 
                   "git_remote": None, "git_branch": None})
     if path and not info["exists"]:
         raise ValueError(f"каталога нет: {info['path']}")
+    adjusted_from = None
+    if info["git"]:
+        top = _git_value(Path(info["path"]), "rev-parse", "--show-toplevel")
+        if top:
+            top_resolved = str(Path(top).resolve())
+            if top_resolved != info["path"]:
+                adjusted_from = info["path"]
+                info["path"] = top_resolved
     base = slug or (Path(info["path"]).name if info["path"] else "")
     clean = norm_slug(base)
     if not clean:
         raise ValueError("нужен slug проекта или путь к каталогу")
-    existed = conn.execute("SELECT 1 FROM projects WHERE slug = ?", (clean,)).fetchone() is not None
+    found = existing_slug(conn, clean)
+    existed = found is not None
+    clean = found or clean
     project = upsert_project(conn, clean, title=title or Path(clean).name, kind=kind,
                              path=info["path"], git_remote=info["git_remote"],
                              git_branch=info["git_branch"], archived=0)
     project["created"] = not existed
     project["git"] = info["git"]
     project["path_exists"] = info["exists"]
+    project["path_adjusted_from"] = adjusted_from
     return project
 
 

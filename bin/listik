@@ -938,6 +938,9 @@ def cmd_projects(args) -> int:
                                      kind=args.kind or "native", **list_kwargs)
         where = project.get("path") or "без каталога"
         what = "добавлен" if project.get("created") else "обновлён"
+        if project.get("path_adjusted_from"):
+            print(f"путь {project['path_adjusted_from']} лежит внутри репозитория — "
+                  f"приведён к корню {project['path']}")
         print(f"проект {project['slug']} {what}: {where}"
               + ("  (git-репозиторий)" if project.get("git") else ""))
         return 0
@@ -1018,6 +1021,15 @@ def cmd_dep(args) -> int:
     if args.action == "cycles":
         return cmd_dep_cycles(args)
     if args.action in ("suggest", "link"):
+        if args.depends_on:
+            # dep link/suggest работают только по упоминаниям в тексте; второй аргумент
+            # раньше молча терялся (listik-u0ii). Явную связь ставит dep add.
+            t = args.dep_type if args.action == "link" else "relates-to"
+            raise SystemExit(
+                f"ошибка: dep {args.action} принимает только <id> и ищет упоминания в тексте; "
+                f"второй аргумент {args.depends_on} не поддерживается.\n"
+                f"явная связь: listik dep add {args.issue_id} {args.depends_on} --dep-type {t}\n"
+                f"одна из упомянутых задач: listik dep link {args.issue_id} --only {args.depends_on}")
         if not args.issue_id:
             raise SystemExit("нужен ID задачи: listik dep suggest <id>")
         items = call("mentions", args, f"/api/tasks/{args.issue_id}/mentions", method="POST",
@@ -1316,7 +1328,8 @@ def build_parser() -> argparse.ArgumentParser:
     sp.add_argument("action", choices=["add", "confirm", "rm", "tree", "cycles", "suggest",
                                        "link", "suggested"])
     sp.add_argument("issue_id", nargs="?", help="задача; для tree — та, чьё дерево строим")
-    sp.add_argument("depends_on", nargs="?", help="от чего зависит")
+    sp.add_argument("depends_on", nargs="?", help="от чего зависит (для add/confirm/rm; "
+                    "link/suggest второй аргумент отвергают — используйте dep add --dep-type)")
     sp.add_argument("--dep-type", default=None,
                     help="тип связи: blocks (жёсткая блокировка, по умолчанию для add), "
                          "relates-to (по умолчанию для link), parent-child, waits-for")

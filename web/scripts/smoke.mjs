@@ -235,6 +235,70 @@ async function main() {
     return null
   })()`)
 
+  // Клик по строке «Списка» открывает ту же панель задачи, что и карточка на
+  // доске. Заодно проверяем обратное: чекбокс выбора строку не открывает, а
+  // кнопка-id открывает по-прежнему. В конце возвращаемся на «Доску», чтобы не
+  // менять состояние для следующих блоков отчёта.
+  report.listRow = await evaluate(`(async () => {
+    const tabs = [...document.querySelectorAll('.ui-tabs__list [role="tab"]')]
+    const listTab = tabs.find((item) => item.textContent.trim().startsWith('Список'))
+    if (!listTab) return 'вкладки «Список» нет'
+    listTab.click()
+    await new Promise((resolve) => setTimeout(resolve, 1200))
+
+    const rows = [...document.querySelectorAll('.ui-data-table tbody tr.ui-data-table__row')]
+    const row = rows[0]
+    if (!row) return { rows: 0 }
+
+    const out = { rows: rows.length }
+    const idCell = row.querySelector('td:nth-child(2)')
+    out.id = idCell ? idCell.innerText.trim() : null
+
+    const checkbox = row.querySelector('td input[type="checkbox"]')
+    if (checkbox) {
+      checkbox.click()
+      await new Promise((resolve) => setTimeout(resolve, 500))
+      out.checkboxSelectedWithoutDrawer = document.querySelectorAll('.ui-drawer').length === 0
+      checkbox.click()
+      await new Promise((resolve) => setTimeout(resolve, 400))
+    }
+
+    const cell = [...row.cells].find(
+      (item) => !item.querySelector('input, button') && item.innerText.trim().length > 0,
+    )
+    out.clickedCell = cell ? cell.innerText.trim() : null
+    if (cell) cell.click()
+    await new Promise((resolve) => setTimeout(resolve, 1200))
+
+    const drawer = document.querySelector('.ui-drawer')
+    out.drawerOpen = Boolean(drawer)
+    const titleEl = drawer ? drawer.querySelector('.listik-drawer__title') : null
+    out.drawerTitle = titleEl ? titleEl.innerText.trim() : null
+    out.titleInClickedCell = Boolean(
+      out.drawerTitle && out.clickedCell && out.clickedCell.includes(out.drawerTitle),
+    )
+    out.drawerHasId = drawer && out.id ? drawer.innerText.includes(out.id) : null
+
+    const idButton = row.querySelector('td button')
+    window.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape', bubbles: true }))
+    await new Promise((resolve) => setTimeout(resolve, 600))
+    out.closed = document.querySelectorAll('.ui-drawer').length === 0
+    if (idButton) {
+      idButton.click()
+      await new Promise((resolve) => setTimeout(resolve, 1200))
+      out.idButtonOpens = document.querySelectorAll('.ui-drawer').length > 0
+      window.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape', bubbles: true }))
+      await new Promise((resolve) => setTimeout(resolve, 600))
+    }
+
+    const boardTab = tabs.find((item) => item.textContent.trim().startsWith('Доска'))
+    if (boardTab) {
+      boardTab.click()
+      await new Promise((resolve) => setTimeout(resolve, 1000))
+    }
+    return out
+  })()`)
+
   report.phone = await evaluate(`(async () => {
     const isVisible = (el) => el.offsetParent !== null
     window.scrollTo(0, 0)

@@ -244,6 +244,29 @@ function openRow(id: string): void {
   void store.openTask(id)
 }
 
+/**
+ * Строка списка кликабельна целиком и открывает карточку задачи — ту же панель
+ * `TaskDrawer`, что и на доске. У `UiDataTable` события клика по строке нет
+ * (таблица только для чтения), а `tr` не несёт ни id, ни data-атрибутов,
+ * поэтому ловим клик делегированием с обёртки: позиция строки в `tbody`
+ * совпадает с позицией в `sortedRows` (скелетон отсекает `loadingRows`, строку
+ * пустого состояния — отсутствие задачи по индексу). Клик по интерактиву в
+ * ячейке (чекбокс выбора, кнопка-id) открытие не дублирует — у него свой
+ * обработчик.
+ */
+const ROW_INTERACTIVE = 'button, a, input, label, select, textarea'
+
+function onTableClick(event: MouseEvent): void {
+  if (loadingRows.value) return
+  const target = event.target
+  if (!(target instanceof Element) || target.closest(ROW_INTERACTIVE)) return
+  const row = target.closest('tr')
+  const body = row?.parentElement
+  if (!row || !body || body.tagName !== 'TBODY') return
+  const task = sortedRows.value[Array.from(body.children).indexOf(row)]
+  if (task) openRow(task.id)
+}
+
 function toggleRow(id: string, value: boolean): void {
   if (value) selected.value = [...selected.value, id]
   else selected.value = selected.value.filter((item) => item !== id)
@@ -341,71 +364,79 @@ defineExpose({ reload: load })
       {{ bulkError }}
     </UiAlert>
 
-    <UiDataTable
-      :columns="tableColumns"
-      :rows="sortedRows"
-      :loading="loadingRows"
-      :sort="sort"
-      :row-key="(row: Task) => row.id"
-      density="compact"
-      empty-title="Задач не найдено"
-      empty-description="Измените фильтры или снимите «нужен ты» / «только брошенные»."
-      @sort="setSort"
+    <!-- Обёртка ловит клик по строке (см. onTableClick): у самой таблицы такого
+         события нет. Курсор-указатель — только когда строки кликабельны. -->
+    <div
+      class="listik-list__table"
+      :class="{ 'is-row-clickable': !loadingRows }"
+      @click="onTableClick"
     >
-      <template #cell-select="{ row }">
-        <UiCheckbox
-          :model-value="selected.includes(row.id)"
-          @update:model-value="(value) => toggleRow(row.id, Boolean(value))"
-        />
-      </template>
-      <template #cell-id="{ row }">
-        <button type="button" class="listik-link" @click="openRow(row.id)">
-          <span class="listik-mono">{{ row.id }}</span>
-        </button>
-      </template>
-      <template #cell-title="{ row }">
-        <span>{{ row.title }}</span>
-        <span v-if="row.needs_owner" class="listik-cell-flag is-accent">нужен ты</span>
-        <span v-if="row.abandoned" class="listik-cell-flag is-danger">брошена</span>
-        <span v-else-if="row.stale" class="listik-cell-flag is-warning">stale</span>
-      </template>
-      <template #cell-stage_age="{ row }">
-        <span :class="{ 'is-warn': row.stage_warn }">{{ row.stage_age }}</span>
-      </template>
-      <template #cell-blocked_count="{ row }">
-        <UiTooltip
-          v-if="depsCell(row.id).blocked > 0"
-          :text="`ждёт ${depsCell(row.id).blocked}: ${row.blocked_by.join(', ')}`"
-        >
-          <UiBadge :tone="depsCell(row.id).stale ? 'danger' : 'warning'" size="sm">
-            ждёт {{ depsCell(row.id).blocked }}
-          </UiBadge>
-        </UiTooltip>
-        <span v-else class="listik-mono">—</span>
-      </template>
-      <template #cell-waiting_count="{ row }">
-        <UiTooltip
-          v-if="depsCell(row.id).waiting > 0"
-          text="пока эта задача не закрыта, эти задачи стоят"
-        >
-          <UiBadge tone="accent" size="sm">её ждут {{ depsCell(row.id).waiting }}</UiBadge>
-        </UiTooltip>
-        <span v-else class="listik-mono">—</span>
-      </template>
-      <template #cell-updated_age="{ row }">
-        <span :title="formatDateTime(row.updated_at)">{{ humanAge(row.updated_at) }}</span>
-      </template>
-      <template #cell-holder_title="{ row }">{{ row.holder_title || '—' }}</template>
-      <template #cell-labels="{ row }">
-        <span class="listik-mono">{{ row.labels.join(', ') || '—' }}</span>
-      </template>
-      <template #cell-issue_type="{ row }">
-        <TaskGlyph kind="type" :value="row.issue_type" />
-      </template>
-      <template #cell-priority_title="{ row }">
-        <TaskGlyph kind="priority" :value="row.priority" />
-      </template>
-    </UiDataTable>
+      <UiDataTable
+        :columns="tableColumns"
+        :rows="sortedRows"
+        :loading="loadingRows"
+        :sort="sort"
+        :row-key="(row: Task) => row.id"
+        density="compact"
+        empty-title="Задач не найдено"
+        empty-description="Измените фильтры или снимите «нужен ты» / «только брошенные»."
+        @sort="setSort"
+      >
+        <template #cell-select="{ row }">
+          <UiCheckbox
+            :model-value="selected.includes(row.id)"
+            @update:model-value="(value) => toggleRow(row.id, Boolean(value))"
+          />
+        </template>
+        <template #cell-id="{ row }">
+          <button type="button" class="listik-link" @click="openRow(row.id)">
+            <span class="listik-mono">{{ row.id }}</span>
+          </button>
+        </template>
+        <template #cell-title="{ row }">
+          <span>{{ row.title }}</span>
+          <span v-if="row.needs_owner" class="listik-cell-flag is-accent">нужен ты</span>
+          <span v-if="row.abandoned" class="listik-cell-flag is-danger">брошена</span>
+          <span v-else-if="row.stale" class="listik-cell-flag is-warning">stale</span>
+        </template>
+        <template #cell-stage_age="{ row }">
+          <span :class="{ 'is-warn': row.stage_warn }">{{ row.stage_age }}</span>
+        </template>
+        <template #cell-blocked_count="{ row }">
+          <UiTooltip
+            v-if="depsCell(row.id).blocked > 0"
+            :text="`ждёт ${depsCell(row.id).blocked}: ${row.blocked_by.join(', ')}`"
+          >
+            <UiBadge :tone="depsCell(row.id).stale ? 'danger' : 'warning'" size="sm">
+              ждёт {{ depsCell(row.id).blocked }}
+            </UiBadge>
+          </UiTooltip>
+          <span v-else class="listik-mono">—</span>
+        </template>
+        <template #cell-waiting_count="{ row }">
+          <UiTooltip
+            v-if="depsCell(row.id).waiting > 0"
+            text="пока эта задача не закрыта, эти задачи стоят"
+          >
+            <UiBadge tone="accent" size="sm">её ждут {{ depsCell(row.id).waiting }}</UiBadge>
+          </UiTooltip>
+          <span v-else class="listik-mono">—</span>
+        </template>
+        <template #cell-updated_age="{ row }">
+          <span :title="formatDateTime(row.updated_at)">{{ humanAge(row.updated_at) }}</span>
+        </template>
+        <template #cell-holder_title="{ row }">{{ row.holder_title || '—' }}</template>
+        <template #cell-labels="{ row }">
+          <span class="listik-mono">{{ row.labels.join(', ') || '—' }}</span>
+        </template>
+        <template #cell-issue_type="{ row }">
+          <TaskGlyph kind="type" :value="row.issue_type" />
+        </template>
+        <template #cell-priority_title="{ row }">
+          <TaskGlyph kind="priority" :value="row.priority" />
+        </template>
+      </UiDataTable>
+    </div>
 
     <div class="listik-row" style="justify-content: space-between">
       <UiPaginator v-model="page" :total="total" :page-size="pageSize" size="sm" />
@@ -437,6 +468,15 @@ defineExpose({ reload: load })
 </template>
 
 <style scoped>
+/* Курсор-указатель на кликабельной строке: подсветку при наведении уже рисует
+   кит (`--surface-2` у `.ui-data-table__row`), а курсор говорит о клике до него.
+   Селектор — по классу строки данных, поэтому скелетон (тот же класс, но
+   `loadingRows` снимает `is-row-clickable`) и строка пустого состояния (класса
+   строки у неё нет) указатель не получают. */
+.listik-list__table.is-row-clickable :deep(tbody tr.ui-data-table__row) {
+  cursor: pointer;
+}
+
 .listik-cell-flag {
   margin-left: var(--space-2);
   font-size: var(--text-xs);

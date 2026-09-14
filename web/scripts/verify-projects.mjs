@@ -1,5 +1,8 @@
 /**
- * Проверка сценария «добавить / убрать репозиторий» через интерфейс настроек.
+ * Проверка сценария «добавить / скрыть / вернуть / убрать репозиторий» через
+ * интерфейс настроек: скрытый проект возвращается на доску тумблером в разделе
+ * «Скрыты с доски» и остаётся возвращённым после перезагрузки страницы
+ * (возврат — это запись в базе, а не только вид; listik-54be).
  * Работает с живой страницей (dev или прод) и настоящим API Listik, поэтому
  * трогает базу: используйте временный каталог и slug вида `listik-check-*`.
  *
@@ -101,6 +104,11 @@ const typeInto = (index, value) => evaluate(`(() => {
   return true;
 })()`)
 
+/** Открыть настройки: кнопка в шапке подписана «Настройки» (тултип «Репозитории, …» —
+ *  не текст кнопки, искать по нему нельзя). Вкладка «Репозитории» открыта по умолчанию. */
+const openSettings = `[...document.querySelectorAll('button')]
+  .find((b) => b.textContent.trim() === 'Настройки')?.click()`
+
 const report = {}
 await send('Runtime.enable')
 await send('Network.enable')
@@ -109,10 +117,9 @@ await send('Page.navigate', { url })
 await sleep(4000)
 
 // открыть настройки репозиториев
-await evaluate(
-  `[...document.querySelectorAll('button')].find((b) => b.textContent.includes('Репозитории'))?.click()`,
-)
+await evaluate(openSettings)
 await sleep(2000)
+report.settingsOpen = await evaluate(`Boolean(document.querySelector('.ui-modal'))`)
 report.rowsBefore = await evaluate(`document.querySelectorAll('.ui-entity-card').length`)
 
 // добавить каталог
@@ -143,6 +150,38 @@ report.afterHide = await evaluate(`JSON.stringify({
   visible: [...document.querySelectorAll('.ui-entity-card__title')].map((el) => el.textContent.trim()).includes(${JSON.stringify(slug)}),
   hiddenSection: [...document.querySelectorAll('.listik-section__title')].map((el) => el.textContent.trim()),
 })`)
+
+// вернуть скрытый проект на доску тумблером в разделе «Скрыты с доски»
+report.hiddenSwitch = await evaluate(`(() => {
+  const card = [...document.querySelectorAll('.ui-entity-card')]
+    .find((el) => el.querySelector('.ui-entity-card__title')?.textContent.trim() === ${JSON.stringify(slug)});
+  const toggle = card?.querySelector('[role=switch]');
+  return JSON.stringify({ found: Boolean(toggle), checked: toggle?.getAttribute('aria-checked') });
+})()`)
+await evaluate(`(() => {
+  const card = [...document.querySelectorAll('.ui-entity-card')]
+    .find((el) => el.querySelector('.ui-entity-card__title')?.textContent.trim() === ${JSON.stringify(slug)});
+  card?.querySelector('[role=switch]')?.click();
+})()`)
+await sleep(3000)
+const boardState = `(() => {
+  const slug = ${JSON.stringify(slug)};
+  const inSection = (needle) => {
+    const section = [...document.querySelectorAll('.listik-projects__list')]
+      .find((el) => (el.querySelector('.listik-section__title')?.textContent || '').includes(needle));
+    if (!section) return false;
+    return [...section.querySelectorAll('.ui-entity-card__title')].some((el) => el.textContent.trim() === slug);
+  };
+  return JSON.stringify({ onBoard: inSection('На доске'), inHidden: inSection('Скрыты') });
+})()`
+report.afterRestore = await evaluate(boardState)
+
+// состояние возврата должно пережить перезагрузку: возврат — не только вид, но и база
+await send('Page.navigate', { url })
+await sleep(4000)
+await evaluate(openSettings)
+await sleep(2000)
+report.afterReload = await evaluate(boardState)
 
 // удалить: подтверждение → убрать
 await evaluate(`(() => {

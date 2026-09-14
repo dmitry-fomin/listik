@@ -265,6 +265,12 @@ ROUTE_GUARD_SQL = ("status = 'open' AND trim(ifnull(holder, '')) = '' "
 #: маршрута: их новые значения учитывает проверка (см. `route_card_after`).
 ROUTE_STARTING_FIELDS = ("status", "stage", "holder")
 
+#: Отказ автостарта: автор вопроса «нужен человек» и начало его текста. Одни и те же
+#: константы у `launcher.refuse` (пишет вопрос) и у `update_task` (узнаёт по истории,
+#: что флаг поднят именно отказом автостарта, — см. `autostart_reset`).
+AUTOSTART_ACTOR = "agent:listik"
+AUTOSTART_QUESTION_PREFIX = "автостарт не выполнен"
+
 
 def route_change_denied(row) -> str | None:
     """Почему у задачи нельзя сменить маршрут; None — можно (работа не началась).
@@ -314,6 +320,50 @@ def route_card_after(row, fields: dict) -> dict:
     return effective
 
 
+def autostart_flag_raised(conn: sqlite3.Connection, task_id: str) -> bool:
+    """Флаг «нужен человек» поднят отказом автостарта, а не вопросом человека.
+
+    Ошибка запуска (`launch_error`) и флаг ставятся одной транзакцией
+    (`launcher.refuse` → `set_needs_owner`), поэтому смотрим последний
+    вопрос/ответ в истории: если это вопрос от `agent:listik` с текстом
+    «автостарт не выполнен: …» — флаг принадлежит отказу. Вопрос, заданный
+    человеком уже после отказа, — чужой: смена маршрута его не отменяет.
+
+    Истории вопросов нет вовсе (задача поднята из фикстуры/импорта), но
+    `launch_error` стоит — считаем, что флаг пришёл вместе с ошибкой.
+    """
+    last = conn.execute(
+        "SELECT kind, actor, note FROM events WHERE task_id = ? "
+        "AND kind IN ('question', 'answer') ORDER BY rowid DESC LIMIT 1",
+        (task_id,)).fetchone()
+    if last is None:
+        return True
+    return bool(last["kind"] == "question"
+                and (last["actor"] or "") == AUTOSTART_ACTOR
+                and (last["note"] or "").startswith(AUTOSTART_QUESTION_PREFIX))
+
+
+def autostart_reset(conn: sqlite3.Connection, task_id: str, row) -> tuple[list[str], list[str]]:
+    """Что снимает смена маршрута: присваивания для UPDATE и пояснения к событию.
+
+    Маршрут — это «тип запуска»: прежний отказ автостарта к новому маршруту не
+    относится, поэтому `launch_error` снимается при любой смене (и при снятии
+    маршрута пустой строкой). Флаг «нужен человек» — только если его поднял сам
+    отказ автостарта (см. `autostart_flag_raised`): чужой вопрос смена маршрута
+    не отменяет. Присваивания уходят в тот же условный UPDATE, что и `launch_route`,
+    поэтому гонка с `claim` откатывает и их.
+    """
+    error = (row["launch_error"] or "").strip()
+    if not error:
+        return [], []
+    sets = ["launch_error = NULL"]
+    notes = [f"снята ошибка автостарта: {error}"]
+    if row["needs_owner"] and autostart_flag_raised(conn, task_id):
+        sets.append("needs_owner = 0")
+        notes.append("снят флаг «нужен человек»")
+    return sets, notes
+
+
 def delete_task(conn: sqlite3.Connection, task_id: str) -> None:
     """Remove a task and every derived row: FTS entries, embeddings and indexed
     documents/chunks. ``documents``/``document_chunks`` also cascade via the foreign
@@ -347,6 +397,8 @@ def update_task(conn: sqlite3.Connection, task_id: str, *, actor: str | None = N
     effective = route_card_after(row, fields)
     sets, params = [], []
     changes: list[tuple[str, object, object]] = []
+    # Пояснения к событию `route`: смена маршрута снимает прошлый отказ автостарта.
+    reset_notes: list[str] = []
     for key, value in fields.items():
         if key not in UPDATABLE or value is None:
             continue
@@ -364,6 +416,13 @@ def update_task(conn: sqlite3.Connection, task_id: str, *, actor: str | None = N
                 denied = route_change_denied(row) or route_change_denied(effective)
                 if denied:
                     raise ValueError(denied)
+                # Новый «тип запуска» отменяет прошлую ошибку автостарта и поднятый
+                # ею флаг — одним UPDATE с самим маршрутом (см. `autostart_reset`).
+                # Явный `needs_owner` в том же вызове сильнее: его оставляем как есть.
+                reset_sets, reset_notes = autostart_reset(conn, task_id, row)
+                if "needs_owner" in fields:
+                    reset_sets = [s for s in reset_sets if not s.startswith("needs_owner")]
+                sets.extend(reset_sets)
         old = row[key]
         if str(old) == str(value):
             continue
@@ -428,7 +487,7 @@ def update_task(conn: sqlite3.Connection, task_id: str, *, actor: str | None = N
                   harness=harness, note=f"исполнитель: {note or ''}".strip())
         elif key == ROUTE_FIELD:
             event(conn, task_id, "route", from_value=old, to_value=new, actor=actor_key,
-                  harness=harness, note=note)
+                  harness=harness, note=" · ".join(x for x in [note, *reset_notes] if x) or None)
 
     sets.append("updated_at = ?")
     params.append(ts)

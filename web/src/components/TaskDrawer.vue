@@ -233,13 +233,20 @@ const statusTone = computed<StatusPillTone>(() => {
  */
 const routeEditable = computed(() => props.task?.route_editable === true)
 
+/**
+ * Пункт «без маршрута»: значение-пустышка выбора. Пустая строка — это и есть
+ * «снять маршрут» на сервере (`set launch_route=`), `null` у выбора означает
+ * «ничего не выбрано» и до сохранения не доводит.
+ */
+const NO_ROUTE = ''
+
 /** Черновик выбора: в задачу уходит только по кнопке, а не на каждый клик. */
 const routeDraft = ref<string | null>(null)
 
 watch(
   () => props.task?.launch_route,
   (value) => {
-    routeDraft.value = value ?? null
+    routeDraft.value = value ?? NO_ROUTE
   },
   { immediate: true },
 )
@@ -268,14 +275,19 @@ function retryRoutes(): void {
 const routeOptions = computed<UiSelectOption<string>[]>(() => {
   if (routesFailed.value) return []
   const type = props.task?.issue_type ?? 'task'
-  const options: UiSelectOption<string>[] = store.routes.value
-    .filter((route) => route.visible)
-    .map((route) => ({
-      value: route.key,
-      label: route.title,
-      // Те же правила, что в «Новой задаче»: эпику нужен этап ТЗ, прямой маршрут закрыт.
-      disabled: !routeAllowedForType(route, type),
-    }))
+  // «Без маршрута» — первым пунктом: у заведённой задачи маршрут можно не только
+  // сменить, но и снять совсем (раньше это умел только CLI).
+  const options: UiSelectOption<string>[] = [
+    { value: NO_ROUTE, label: 'без маршрута' },
+    ...store.routes.value
+      .filter((route) => route.visible)
+      .map((route) => ({
+        value: route.key,
+        label: route.title,
+        // Те же правила, что в «Новой задаче»: эпику нужен этап ТЗ, прямой маршрут закрыт.
+        disabled: !routeAllowedForType(route, type),
+      })),
+  ]
   const current = props.task?.launch_route ?? null
   // Текущий маршрут может быть скрыт, устареть или ещё не приехать вместе со
   // списком: показываем его отдельной строкой, а не пустой подписью селекта.
@@ -285,26 +297,30 @@ const routeOptions = computed<UiSelectOption<string>[]>(() => {
   return options
 })
 
-const routeDirty = computed(() => routeDraft.value !== (props.task?.launch_route ?? null))
+const routeDirty = computed(() => routeDraft.value !== (props.task?.launch_route ?? NO_ROUTE))
 
 /**
  * Метки маршрута (`harness:<…>`/`process:<…>`) — как при создании: старые метки
- * маршрута заменяются метками нового, чужие метки задачи остаются. Маршрута нет
- * в списке (битый `routes.json`) — метки не трогаем.
+ * маршрута заменяются метками нового, чужие метки задачи остаются. Пункт «без
+ * маршрута» метки маршрута снимает совсем: маршрута, которому они принадлежат,
+ * у задачи больше нет. Чужого ключа (устаревшая запись `routes.json`) это не
+ * касается — там метки не трогаем.
  */
 function routeLabelsPatch(): string[] | null {
+  const keep = (props.task?.labels ?? []).filter((label) => !/^(harness|process):/.test(label))
+  if (!routeDraft.value) return keep
   const route = store.routes.value.find((item) => item.key === routeDraft.value)
   if (!route) return null
-  const keep = (props.task?.labels ?? []).filter((label) => !/^(harness|process):/.test(label))
   return [...keep, ...routeLabels(route)]
 }
 
 function submitRoute(): void {
-  if (!props.task || !routeDirty.value || routeDraft.value === null) return
+  if (!props.task || !routeDirty.value) return
   const labels = routeLabelsPatch()
   emit('patch', {
     id: props.task.id,
-    body: { route: routeDraft.value, ...(labels ? { labels } : {}) },
+    // Пустая строка — «без маршрута»: сервер снимает маршрут совсем (как `set launch_route=`).
+    body: { route: routeDraft.value ?? NO_ROUTE, ...(labels ? { labels } : {}) },
     label: 'route',
   })
 }
@@ -1128,8 +1144,10 @@ async function loadTree(): Promise<void> {
             «Тип запуска» — запись из <span class="listik-mono">routes.json</span> (её отдаёт
             <span class="listik-mono">GET /api/routes</span>): кто исполняет задачу и по какому
             процессу. Пока задача заведена — без этапа, держателя и запуска — маршрут можно
-            сменить; после начала работы сервер откажет. Сам маршрут ничего не запускает: процесс
-            поднимает только галочка «Автостарт» при создании.
+            сменить или снять совсем пунктом «без маршрута» (вместе с маршрутом уезжают
+            метки <span class="listik-mono">harness:</span>/<span class="listik-mono">process:</span>
+            и ошибка автостарта); после начала работы сервер откажет. Сам маршрут ничего не
+            запускает: процесс поднимает только галочка «Автостарт» при создании.
           </p>
 
           <UiAlert v-if="task.launch_error" tone="warning">

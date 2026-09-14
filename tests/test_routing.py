@@ -144,13 +144,70 @@ class RoutingTests(TempDbTestCase):
     def test_validate_routing_accepts_valid_shapes(self) -> None:
         example = {
             "harnesses": {"s3-impl": ["dsh", "codex"]},
-            "default_process": ["s1-spec", "s3-impl"],
             "transitions": {"s1-spec:s2-review": "sticky", "s4-judge:done": "handoff"},
             "return_window_hours": 12,
         }
         out = config_mod.validate_routing(example)
         self.assertEqual(out["harnesses"]["s3-impl"], ["dsh", "codex"])
         self.assertEqual(config_mod.validate_routing({}), {})
+
+    def test_validate_routing_ignores_legacy_default_process(self) -> None:
+        """Убранный ключ не должен ломать старые вызовы и старое сохранённое значение
+        (listik-sqh6): он молча выкидывается, а не превращается в «неизвестный ключ»."""
+        out = config_mod.validate_routing(
+            {"default_process": ["s1-spec", "s3-impl"], "return_window_hours": 5}
+        )
+        self.assertEqual(out, {"return_window_hours": 5})
+        self.assertEqual(config_mod.validate_routing({"default_process": []}), {})
+        # Перезапись проекта со старым ключом проходит и не оставляет его в базе.
+        saved = store.update_project(self.conn, "demo",
+                                     routing={"default_process": ["s1-spec"]})
+        self.assertIsNone(saved["routing"])
+        self.assertNotIn("default_process", saved["routing_effective"])
+        self.assertEqual(saved["routing_source"], "default")
+        # Настоящий неизвестный ключ по-прежнему отвергается.
+        with self.assertRaises(ValueError):
+            config_mod.validate_routing({"bad": 1})
+
+    def test_legacy_default_process_in_db_override_is_ignored(self) -> None:
+        """Старое переопределение проекта в базе читается: ключ не виден ни в `routing`,
+        ни в `routing_effective`, и сам по себе не считается переопределением."""
+        self.conn.execute("UPDATE projects SET routing = ? WHERE slug = 'demo'",
+                          (json.dumps({"default_process": ["s1-spec"]}),))
+        self.conn.commit()
+        demo = next(p for p in store.list_all_projects(self.conn) if p["slug"] == "demo")
+        self.assertIsNone(demo["routing"])
+        self.assertEqual(demo["routing_source"], "default")
+        self.assertNotIn("default_process", demo["routing_effective"])
+        self.assertEqual(demo["routing_effective"]["harnesses"],
+                         config_mod.DEFAULTS["routing"]["harnesses"])
+
+        # А вместе с настоящим ключом — сохраняется только он.
+        self.conn.execute(
+            "UPDATE projects SET routing = ? WHERE slug = 'demo'",
+            (json.dumps({"default_process": ["s1-spec"],
+                         "harnesses": {"s3-impl": ["dsh"]}}),),
+        )
+        self.conn.commit()
+        demo2 = next(p for p in store.list_all_projects(self.conn) if p["slug"] == "demo")
+        self.assertEqual(demo2["routing"], {"harnesses": {"s3-impl": ["dsh"]}})
+        self.assertEqual(demo2["routing_source"], "db")
+        self.assertEqual(config_mod.allowed_harnesses("demo", "s3-impl", conn=self.conn), ["dsh"])
+
+    def test_legacy_default_process_in_toml_project_override_is_ignored(self) -> None:
+        """То же для `[routing.projects.<slug>]` в config.toml."""
+        self._config_path.write_text(
+            '[routing]\ndefault_process = ["s1-spec", "s2-review"]\n'
+            '[routing.projects.demo]\ndefault_process = ["s3-impl"]\n',
+            encoding="utf-8",
+        )
+        effective = config_mod.routing("demo", conn=self.conn)
+        self.assertNotIn("default_process", effective)
+        demo = next(p for p in store.list_all_projects(self.conn) if p["slug"] == "demo")
+        self.assertIsNone(demo["routing"])
+        self.assertEqual(demo["routing_source"], "default")
+        self.assertEqual(config_mod.allowed_harnesses("demo", "s3-impl", conn=self.conn),
+                         config_mod.DEFAULTS["routing"]["harnesses"]["s3-impl"])
 
     def test_validate_routing_rejects_bad_shapes(self) -> None:
         with self.assertRaises(ValueError):
@@ -181,8 +238,9 @@ class RoutingTests(TempDbTestCase):
         demo = next(p for p in projects if p["slug"] == "demo")
         self.assertIn(demo["routing"], (None,))
         self.assertIsInstance(demo["routing_effective"], dict)
-        for key in ("default_process", "harnesses", "transitions", "return_window_hours"):
+        for key in ("harnesses", "transitions", "return_window_hours"):
             self.assertIn(key, demo["routing_effective"])
+        self.assertNotIn("default_process", demo["routing_effective"])
 
         out = store.update_project(self.conn, "demo",
                                    routing={"harnesses": {"s3-impl": ["dsh"]}})
@@ -203,6 +261,8 @@ class RoutingTests(TempDbTestCase):
         p = self._cli("--local", "projects", "demo")
         self.assertEqual(p.returncode, 0, p.stderr)
         self.assertIn("маршрутизация", p.stdout)
+        # listik-sqh6: строки про убранный «процесс по умолчанию» в выводе больше нет.
+        self.assertNotIn("процесс по умолчанию", p.stdout)
 
         p2 = self._cli("--local", "projects", "demo", "--routing",
                        '{"harnesses":{"s3-impl":["dsh"]}}')

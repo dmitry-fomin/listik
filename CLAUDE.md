@@ -77,6 +77,14 @@ Database migrations exist as two parallel mechanisms — don't confuse them:
   rather than failing.
 - `listik/server.py` — the HTTP API, implemented directly on `http.server.ThreadingHTTPServer`
   (no web framework/dependency). Serves both the JSON API and the built board (`web/dist`).
+  One sqlite connection per thread (`threading.local`, closed with the request thread); a
+  per-process generation counter reopens every connection after a `DatabaseError` or when a
+  watcher thread (`start_db_watch`) notices that `listik.db`/`listik.db-wal` changed inode —
+  the "database swapped under a running server" case (`_db_replaced` in `/api/health` and
+  `listik status`).
+- `listik/backup.py` — `listik backup` / `listik restore` via the sqlite backup API (a plain
+  `cp` of a WAL database is inconsistent). `restore` refuses while the server is running unless
+  `--stop`, keeps a `listik.db.bak-pre-restore-*` safety copy and removes stale `-wal`/`-shm`.
 - `listik/mcp.py` — MCP server exposing `listik_*` tools; the same store/db as the CLI. Two
   transports: stdio (`claude mcp add listik -- bin/listik mcp`) and HTTP — `server.py` serves
   `POST /mcp` (Bearer token, no SSE) for a Listik deployed on another machine

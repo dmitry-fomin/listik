@@ -47,23 +47,43 @@ from . import store
 _conn_local = threading.local()
 _conn_lock = threading.Lock()
 _conn_made = False
+#: Живые соединения по id потока: по ним `_invalidate_connections` переоткрывает
+#: чужие соединения после подмены файла базы (listik-cfzk) и закрывает их вместе
+#: с потоком (listik-sxcd).
+_conns: dict[int, sqlite3.Connection] = {}
+#: Поколение файла базы. Растёт, когда файл подменили/удалили или соединение
+#: поймало DatabaseError: соединение с прошлым поколением закрывается и
+#: открывается заново — иначе запись уходила бы в удалённый inode.
+_db_generation = 0
+#: Поколение, для которого схема и миграции уже применены (`db.init`).
+_schema_generation = -1
 _subs: list[queue.Queue] = []
 _subs_lock = threading.Lock()
 
 
 def get_conn():
-    """Соединение текущего потока; схема и миграции применяются один раз за процесс."""
-    global _conn_made
+    """Соединение текущего потока; схема и миграции применяются раз за поколение."""
+    global _conn_made, _schema_generation
+    _watch_tick()  # подмена файла видна и без фонового потока (не чаще интервала)
     conn = getattr(_conn_local, "conn", None)
-    if conn is not None:
+    if conn is not None and getattr(_conn_local, "generation", None) == _db_generation:
         return conn
+    if conn is not None:
+        # Соединение прошлого поколения: смотрим на удалённый/подменённый файл.
+        close_thread_conn()
     with _conn_lock:
-        if not _conn_made:
+        generation = _db_generation
+        if not _conn_made or _schema_generation != generation:
+            # После подмены файла схему и миграции применяем заново: копия может
+            # быть старее текущей версии Listik.
             conn = db_mod.init()
             _conn_made = True
+            _schema_generation = generation
         else:
             conn = db_mod.connect()
+        _conns[threading.get_ident()] = conn
     _conn_local.conn = conn
+    _conn_local.generation = generation
     return conn
 
 
@@ -74,14 +94,184 @@ def close_thread_conn() -> None:
     закрытия его sqlite-соединение ждало сборщика мусора и держало fd на базе и на
     уже удалённых WAL. Вызывается в конце каждого потока-обработчика.
     """
-    conn = getattr(_conn_local, "conn", None)
+    ident = threading.get_ident()
+    with _conn_lock:
+        conn = _conns.pop(ident, None)
     if conn is None:
-        return
+        conn = getattr(_conn_local, "conn", None)
+        if conn is None:
+            return
     _conn_local.conn = None
+    _conn_local.generation = None
     try:
         conn.close()
     except Exception:  # noqa: BLE001
         pass
+    # Последнее соединение sqlite закрывает вместе с собой и -wal — это не подмена.
+    _refresh_wal()
+
+
+# ------------------------------------------------------- подмена файла базы
+#
+# 13.09.2026 базу и WAL заменили (или удалили) под работающим сервером: соединения
+# остались на удалённых inode, фоновые потоки каждый цикл писали «database disk
+# image is malformed», status показывал -1 задач, а помогал только перезапуск
+# (listik-cfzk). Поэтому сервер следит за inode файла базы и WAL и на подмену
+# отвечает громко: строка в listik.log, запись в /api/health и `listik status`,
+# плюс переоткрытие всех соединений (`_invalidate_connections`).
+
+#: Как часто сервер сам проверяет файлы базы; в get_conn — не чаще этого интервала.
+DB_WATCH_INTERVAL = 2.0
+
+_watch_lock = threading.Lock()
+#: Последний замер: {"db": (dev, ino) | None, "wal": (dev, ino) | None}.
+_fingerprint: dict | None = None
+#: Последняя подмена файла в этом процессе — уходит в /api/health и `listik status`
+#: (в отличие от `_db_error`, это не «прямо сейчас», а факт: он не сбрасывается).
+_db_replaced: dict | None = None
+_last_watch = 0.0
+_dbwatch_stop = threading.Event()
+
+
+def _file_id(path: Path) -> tuple[int, int] | None:
+    """(устройство, inode) файла; None — файла нет. При подмене inode меняется."""
+    try:
+        st = path.stat()
+    except OSError:
+        return None
+    return (st.st_dev, st.st_ino)
+
+
+def _wal_path() -> Path:
+    return Path(str(paths.DB_PATH) + "-wal")
+
+
+def _fingerprint_now() -> dict:
+    return {"db": _file_id(paths.DB_PATH), "wal": _file_id(_wal_path())}
+
+
+def _open_conns() -> int:
+    with _conn_lock:
+        return len(_conns)
+
+
+def _refresh_wal() -> None:
+    """Перечитать inode WAL, не считая изменение подменой.
+
+    sqlite сам удаляет -wal, когда закрывается последнее соединение (и создаёт
+    заново при следующем открытии); это не подмена. Файл базы не трогаем: его
+    подмена в этом окне всё ещё должна быть замечена.
+    """
+    global _fingerprint
+    with _watch_lock:
+        if _fingerprint is not None:
+            _fingerprint = {**_fingerprint, "wal": _file_id(_wal_path())}
+
+
+def _fingerprint_diff(before: dict, after: dict, open_conns: int) -> dict | None:
+    """Что случилось с файлами базы между замерами; None — всё на месте.
+
+    Подмена: база исчезла или сменила inode; WAL сменил inode или исчез, пока у
+    сервера есть открытые соединения (сам sqlite удаляет -wal только вместе с
+    последним соединением, значит, его удалил кто-то извне).
+    """
+    changes: list[str] = []
+    db_before, db_after = before.get("db"), after.get("db")
+    wal_before, wal_after = before.get("wal"), after.get("wal")
+    if db_before and not db_after:
+        changes.append("файл базы исчез")
+    elif db_before and db_after and db_before != db_after:
+        changes.append("файл базы заменён")
+    if wal_before and wal_after and wal_before != wal_after:
+        changes.append("файл WAL заменён")
+    elif wal_before and not wal_after and open_conns > 0:
+        changes.append("файл WAL исчез")
+    if not changes:
+        return None
+    kind = "db" if changes[0].startswith("файл базы") else "wal"
+    if len(changes) > 1:
+        kind = "db+wal"
+    return {
+        "kind": kind,
+        "at": store.now_iso(),
+        "detail": "; ".join(changes),
+        "before": before,
+        "after": after,
+    }
+
+
+def _watch_tick(*, force: bool = False) -> dict | None:
+    """Один замер файлов базы; событие подмены уходит в лог, health и status."""
+    global _fingerprint, _last_watch
+    now = time.monotonic()
+    with _watch_lock:
+        if not force and now - _last_watch < DB_WATCH_INTERVAL:
+            return None
+        _last_watch = now
+        before = _fingerprint
+        after = _fingerprint_now()
+        _fingerprint = after
+    if before is None:
+        return None
+    event = _fingerprint_diff(before, after, _open_conns())
+    if event is not None:
+        _note_replaced(event)
+    return event
+
+
+def _note_replaced(event: dict) -> None:
+    """Подмена файла: громко в лог, в health/status и переоткрыть все соединения."""
+    global _db_error, _db_replaced
+    _db_replaced = event
+    _db_error = {"where": "watch",
+                 "error": f"файл базы подменён: {event['detail']}",
+                 "at": event["at"]}
+    print(f"[watch] ПОДМЕНА ФАЙЛА БАЗЫ: {event['detail']} "
+          f"(было {event['before']}, стало {event['after']}) — "
+          f"переоткрываю все соединения с базой", flush=True)
+    _invalidate_connections()
+
+
+def _invalidate_connections() -> None:
+    """Закрыть все соединения: старые смотрят на удалённый или подменённый файл.
+
+    Чужие соединения закрываем, а не ждём следующего запроса: запись в удалённый
+    inode не возвращает ошибку — данные просто теряются молча. Своё соединение
+    закроет `close_thread_conn`, следующее `get_conn` откроет уже новое поколение.
+    """
+    global _db_generation
+    mine = threading.get_ident()
+    with _conn_lock:
+        _db_generation += 1
+        foreign = [(ident, conn) for ident, conn in _conns.items() if ident != mine]
+        for ident, _ in foreign:
+            _conns.pop(ident, None)
+    for _ident, conn in foreign:
+        try:
+            conn.close()
+        except Exception:  # noqa: BLE001
+            pass
+    close_thread_conn()
+
+
+def start_db_watch(interval: float = DB_WATCH_INTERVAL) -> threading.Thread:
+    """Фоновый надзор за файлами базы: подмена или удаление — событие в лог и health.
+
+    Отдельный поток, а не только проверка в `get_conn`: подмену нужно заметить и
+    тогда, когда запросов нет (ночью, на простаивающем сервере).
+    """
+    _watch_tick(force=True)  # запомнить исходные inode
+
+    def loop() -> None:
+        while not _dbwatch_stop.wait(interval):
+            try:
+                _watch_tick(force=True)
+            except Exception as exc:  # noqa: BLE001 — надзор не должен падать
+                print(f"[watch] пропуск: {type(exc).__name__}: {exc}", flush=True)
+
+    thread = threading.Thread(target=loop, name="listik-watch", daemon=True)
+    thread.start()
+    return thread
 
 
 # Последняя ошибка базы в фоновом потоке — отдаётся в /api/health, чтобы не молчать.
@@ -92,16 +282,16 @@ _db_error: dict | None = None
 
 
 def _background_db_error(where: str, exc: Exception) -> None:
-    """DatabaseError в фоне: громко в лог, в health, и переоткрыть соединение потока.
+    """DatabaseError: громко в лог, в health, и переоткрыть все соединения.
 
-    Если базу или WAL подменили под работающим сервером, старое соединение ловит
-    «database disk image is malformed» бесконечно; свежее соединение видит новый файл.
+    Если базу или WAL подменили под работающим сервером, соединения ловят
+    «database disk image is malformed» бесконечно; свежие соединения видят новый файл.
     """
     global _db_error
     _db_error = {"where": where, "error": f"{type(exc).__name__}: {exc}", "at": store.now_iso()}
-    print(f"[{where}] ОШИБКА БАЗЫ: {type(exc).__name__}: {exc} — переоткрываю соединение",
+    print(f"[{where}] ОШИБКА БАЗЫ: {type(exc).__name__}: {exc} — переоткрываю соединения",
           flush=True)
-    close_thread_conn()
+    _invalidate_connections()
 
 
 def _background_db_ok() -> None:
@@ -109,9 +299,13 @@ def _background_db_ok() -> None:
 
     База восстановилась (её пересоздали, вернули WAL, отпустил busy_timeout) — молчать
     об этом нельзя ровно так же, как об ошибке: держатель смотрит на health и решает,
-    нужен ли перезапуск демона.
+    нужен ли перезапуск демона. Запись о подмене файла (`_db_replaced`) при этом
+    остаётся: это факт, который видно в `listik status` до перезапуска сервера.
     """
     global _db_error
+    if _db_replaced is not None and _db_error is not None:
+        print("[watch] база снова отвечает; запись о подмене файла остаётся в status "
+              "до перезапуска сервера", flush=True)
     if _db_error is None:
         return
     where = _db_error.get("where") or "db"
@@ -222,6 +416,27 @@ def api_error(status: int, exc: BaseException) -> ApiError:
     return ApiError(status, errors_mod.message_of(exc), code=errors_mod.code_of(exc))
 
 
+def error_response(exc: BaseException) -> tuple[int, str, str]:
+    """HTTP-ответ по исключению обработчика: (статус, сообщение, код).
+
+    ApiError отдаётся как есть. Ошибка базы — 503 и запись в health: подменённый
+    или повреждённый файл нельзя показывать как «ошибка операции» на доске
+    (listik-cfzk), а закрытое соединение (`ProgrammingError` после переоткрытия)
+    значит «повтори запрос». Нарушение ограничений (IntegrityError) — это логика
+    приложения, а не файл базы, и остаётся 500.
+    """
+    if isinstance(exc, ApiError):
+        return exc.status, exc.message, exc.code
+    if isinstance(exc, sqlite3.IntegrityError):
+        return 500, f"{type(exc).__name__}: {exc}", errors_mod.INTERNAL
+    if isinstance(exc, (sqlite3.DatabaseError, sqlite3.ProgrammingError)):
+        _background_db_error("http", exc)
+        return 503, (f"база Listik недоступна ({type(exc).__name__}: {exc}); "
+                     "соединения переоткрыты — повтори запрос, состояние: listik status"), \
+            errors_mod.SERVER_ERROR
+    return 500, f"{type(exc).__name__}: {exc}", errors_mod.INTERNAL
+
+
 def need(body: dict, key: str):
     value = body.get(key)
     if value is None or (isinstance(value, str) and not value.strip()):
@@ -247,6 +462,10 @@ def handle(method: str, path: str, query: dict, body: dict, authed: bool = False
         }
         if authed and _db_error is not None:
             data["db_error"] = _db_error
+        # Подмена файла базы (listik-cfzk): не «ошибка сейчас», а факт — висит в
+        # status до перезапуска сервера, даже если новые соединения уже работают.
+        if authed and _db_replaced is not None:
+            data["db_replaced"] = _db_replaced
         # Проба живости отдаётся без токена (по ней CLI понимает, поднят ли сервер),
         # поэтому подробности о базе — только авторизованному.
         if authed:
@@ -680,10 +899,9 @@ class Handler(BaseHTTPRequestHandler):
                 return self._error(401, "нужен токен: Authorization: Bearer <token>")
             try:
                 status, data = handle("GET", path, query, {}, authed=authed)
-            except ApiError as exc:
-                return self._error(exc.status, exc.message, exc.code)
             except Exception as exc:  # noqa: BLE001
-                return self._error(500, f"{type(exc).__name__}: {exc}", errors_mod.INTERNAL)
+                status, message, code = error_response(exc)
+                return self._error(status, message, code)
             return self._json(status, {"ok": True, "data": data})
 
         return self._static(path, query)
@@ -699,10 +917,9 @@ class Handler(BaseHTTPRequestHandler):
         try:
             body = self._read_body()
             status, data = handle("POST", parsed.path, query, body, authed=True)
-        except ApiError as exc:
-            return self._error(exc.status, exc.message, exc.code)
         except Exception as exc:  # noqa: BLE001
-            return self._error(500, f"{type(exc).__name__}: {exc}", errors_mod.INTERNAL)
+            status, message, code = error_response(exc)
+            return self._error(status, message, code)
         return self._json(status, {"ok": True, "data": data})
 
     def do_PATCH(self):  # noqa: N802
@@ -727,10 +944,9 @@ class Handler(BaseHTTPRequestHandler):
         try:
             body = self._read_body()
             status, data = handle(method, parsed.path, query, body, authed=True)
-        except ApiError as exc:
-            return self._error(exc.status, exc.message, exc.code)
         except Exception as exc:  # noqa: BLE001
-            return self._error(500, f"{type(exc).__name__}: {exc}", errors_mod.INTERNAL)
+            status, message, code = error_response(exc)
+            return self._error(status, message, code)
         return self._json(status, {"ok": True, "data": data})
 
     # --- MCP: минимальное подмножество транспорта Streamable HTTP
@@ -793,7 +1009,8 @@ class Handler(BaseHTTPRequestHandler):
         try:
             response = mcp.handle(request, conn=get_conn())
         except Exception as exc:  # noqa: BLE001
-            return rpc_error(500, -32603, f"{type(exc).__name__}: {exc}", rid)
+            status, message, _code = error_response(exc)
+            return rpc_error(status, -32603, message, rid)
 
         # 7. Уведомление — отвечать нечем.
         if response is None:
@@ -1004,6 +1221,9 @@ def serve(host: str | None = None, port: int | None = None, quiet: bool = False,
         # После daemonize: сообщение об ошибке routes.json должно попасть в listik.log.
         routes_mod.init_at_startup()
         launcher_mod.recover(conn, notify=publish)
+        # Надзор за файлами базы — до фоновой индексации: подмену нужно заметить,
+        # даже если ollama нет и векторы не считаются (listik-cfzk).
+        start_db_watch()
         if not no_embed:
             start_embed_worker()
         try:
@@ -1021,6 +1241,7 @@ def serve(host: str | None = None, port: int | None = None, quiet: bool = False,
     conn = get_conn()
     routes_mod.init_at_startup()
     launcher_mod.recover(conn, notify=publish)
+    start_db_watch()
     if not no_embed:
         start_embed_worker()
     url = f"http://{host}:{port}/?token={token}"

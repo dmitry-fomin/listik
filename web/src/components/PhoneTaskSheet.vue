@@ -22,9 +22,18 @@ import {
 import ProjectMark from './marks/ProjectMark.vue'
 import TaskGlyph from './marks/TaskGlyph.vue'
 import type { DepInfo, ProjectRow, TaskComment, TaskDetail } from '@/api/types'
-import { commentKindTitle, datetimeAttr, formatDateTime, humanAge, taskStageLabel } from '@/lib/format'
+import { commentKindTitle, datetimeAttr, humanAge, taskStageLabel } from '@/lib/format'
 import { HEALTH_TITLES, taskHealth } from '@/lib/health'
 import { stageCode } from '@/lib/stages'
+import {
+  depHolderHint,
+  heartbeatText,
+  holderStatusText,
+  latestReview,
+  projectOf,
+  sortedCommentsDesc,
+  stageStartedText,
+} from '@/lib/task-presentation'
 
 const props = defineProps<{
   modelValue: boolean
@@ -43,38 +52,18 @@ const emit = defineEmits<{
 // Секции панели задают собственные отступы через margin/padding и разделитель.
 const drawerBodyGap = computed(() => 0)
 
-function projectOf(task: TaskDetail): ProjectRow | null {
-  return props.projects?.find((project) => project.slug === task.project) ?? null
-}
-
 const blockedBy = computed<DepInfo[]>(() => props.task?.deps_state?.blocked_by ?? [])
-
-/** Комментарии, отсортированные по `created_at` по убыванию; при равенстве —
- *  позже в исходном массиве выше (индекс совпадает с относительным порядком,
- *  filter/map его не меняют). */
-function sortedDesc(comments: TaskComment[]): TaskComment[] {
-  return comments
-    .map((comment, index) => ({ comment, index }))
-    .sort((a, b) => {
-      const diff = Date.parse(b.comment.created_at) - Date.parse(a.comment.created_at)
-      if (diff !== 0) return diff
-      return b.index - a.index
-    })
-    .map((entry) => entry.comment)
-}
 
 const lastReview = computed<TaskComment | null>(() => {
   const task = props.task
   if (!task) return null
-  const candidates = task.comments.filter((comment) => comment.kind === 'review' || comment.kind === 'verdict')
-  if (!candidates.length) return null
-  return sortedDesc(candidates)[0]
+  return latestReview(task.comments)
 })
 
 const journalItems = computed<UiTimelineItem[]>(() => {
   const task = props.task
   if (!task) return []
-  return sortedDesc(task.comments)
+  return sortedCommentsDesc(task.comments)
     .slice(0, 20)
     .map((comment) => ({
       id: comment.id,
@@ -85,9 +74,6 @@ const journalItems = computed<UiTimelineItem[]>(() => {
     }))
 })
 
-function depHolderHint(dep: DepInfo): string {
-  return dep.holder ? `держит ${dep.holder_title}` : 'без держателя'
-}
 </script>
 
 <template>
@@ -102,7 +88,7 @@ function depHolderHint(dep: DepInfo): string {
       <div v-if="task" class="listik-drawer__head listik-phone-sheet__head">
         <div class="listik-row listik-drawer__meta-row">
           <TaskGlyph kind="type" :value="task.issue_type" />
-          <ProjectMark :project="projectOf(task)" :slug="task.project" with-title size="sm" />
+          <ProjectMark :project="projectOf(task, projects)" :slug="task.project" with-title size="sm" />
         </div>
         <h2 class="listik-drawer__title">{{ task.title }}</h2>
         <div class="listik-row listik-drawer__pills">
@@ -138,19 +124,14 @@ function depHolderHint(dep: DepInfo): string {
           <dl class="listik-dl">
             <dt>держит</dt>
             <dd>
-              <template v-if="!task.holder">никто</template>
-              <template v-else-if="task.not_taken">
-                выдана {{ task.holder_title }}, не взята {{ task.assigned_age }}
-                <template v-if="task.holder_assigned_by_title"> · выдал {{ task.holder_assigned_by_title }}</template>
-              </template>
-              <template v-else>{{ task.holder_title }} · {{ task.holder_age }}</template>
+              {{ holderStatusText(task) }}
             </dd>
             <dt>heartbeat</dt>
-            <dd>{{ task.holder_at ? `${formatDateTime(task.holder_at)} · ${humanAge(task.holder_at)} назад` : '—' }}</dd>
+            <dd>{{ heartbeatText(task) }}</dd>
             <dt>что делает</dt>
             <dd>{{ task.holder_note ? `«${task.holder_note}»` : '—' }}</dd>
             <dt>этап с</dt>
-            <dd>{{ task.stage_at ? `${formatDateTime(task.stage_at)} · ${task.stage_age}` : '—' }}</dd>
+            <dd>{{ stageStartedText(task) }}</dd>
           </dl>
         </section>
 

@@ -56,8 +56,6 @@ import {
   linkTypeLabel,
   priority,
   verdictMark,
-  worktreeState,
-  worktreeValue,
   type DepSummaryKind,
   type FeedFilterValue,
 } from '@/lib/dictionaries'
@@ -85,8 +83,16 @@ import {
   humanAge,
 } from '@/lib/format'
 import { PIPELINE, TRANSITIONS, stageCode, stageIndex, stageTitle, transitionOut, type TransitionKey } from '@/lib/stages'
-import { HEALTH_TITLES, healthReason, taskHealth } from '@/lib/health'
-import { HARNESS_TITLES, harnessOf } from '@/lib/harness'
+import { taskHealth } from '@/lib/health'
+import {
+  actorShort,
+  coldStartRows,
+  coldStartTone,
+  hasHolderTitle,
+  healthPillText,
+  projectOf,
+  type ColdRow,
+} from '@/lib/task-presentation'
 import { NO_ROUTE, routeByKey, routesAlertText } from '@/lib/routes'
 import store from '@/store/listik'
 
@@ -269,38 +275,6 @@ const reasons = computed<string[]>(() => deps.value?.reasons ?? [])
 const blockersIdle = computed(
   () => blockedBy.value.length > 0 && blockedBy.value.every((dep) => dep.missing || dep.stale || !dep.holder),
 )
-
-function projectOf(task: TaskDetail): ProjectRow | null {
-  return props.projects?.find((project) => project.slug === task.project) ?? null
-}
-
-/**
- * `holder_title`/`dep.holder_title` пусты только у мока: сервер (`actors.py display()`,
- * `store.py`) для отсутствующего держателя отдаёт заглушку «—», а не пустую строку —
- * поэтому «есть держатель» проверяется и на непустоту, и на то, что это не «—».
- */
-function hasHolderTitle(title: string | null | undefined): title is string {
-  return Boolean(title) && title !== '—'
-}
-
-/** Держатель/актор коротко: agent:dsh/dsh-flash → dsh, human me → я, иначе сам ключ. */
-function actorShort(key: string | null | undefined): string {
-  if (!key) return '—'
-  const trimmed = key.trim()
-  if (!trimmed) return '—'
-  const harness = harnessOf(trimmed)
-  if (harness && harness !== 'human') return HARNESS_TITLES[harness]
-  return trimmed === 'me' ? 'я' : trimmed
-}
-
-/** Пилюля здоровья без дубля со status_title: закрытая → «закрыта», dead/unknown —
- *  только причина, healthy/at-risk — заголовок + причина. */
-function healthPillText(task: TaskDetail): string {
-  if (task.status === 'done' || task.status === 'cancelled') return 'закрыта'
-  const health = taskHealth(task)
-  if (health === 'dead' || health === 'unknown') return healthReason(task)
-  return `${HEALTH_TITLES[health]} · ${healthReason(task)}`
-}
 
 const statusTone = computed<StatusPillTone>(() => {
   const status = props.task?.status
@@ -678,80 +652,16 @@ function onDepKeydown(event: KeyboardEvent): void {
 
 // ── «Холодный старт» ──────────────────────────────────────────────────────
 
-interface ColdRow {
-  key: string
-  label: string
-  /** Заполнено ли поле для счётчика «Холодный старт N из M»: жёлтое состояние — заполнено. */
-  ok: boolean
-  value: string
-  /** Тон точки-статуса (`UiStatusPill`): success — заполнено, warning — основная ветка, danger — пусто. */
-  tone: 'success' | 'warning' | 'danger'
-  /** Цвет значения и пояснение — из справочника `WORKTREE_STATES` (строка worktree). */
-  color?: string
-  hint?: string
-  /** Значение — слова состояния, а не путь: строку показываем не моноширинной. */
-  words?: boolean
-}
-
 const coldRows = computed<ColdRow[]>(() => {
   const task = props.task
   if (!task) return []
-  const rows: ColdRow[] = []
-  const simpleRow = (key: string, label: string, ok: boolean, value: string): ColdRow => ({
-    key,
-    label,
-    ok,
-    value,
-    tone: ok ? 'success' : 'warning',
-  })
-  rows.push(simpleRow('spec_path', 'spec_path', Boolean(task.spec_path),
-                  task.spec_path || 'ТЗ не привязано'))
-  const checklistPath = task.checklist_path ?? null
-  const acceptanceText = task.acceptance?.trim() || ''
-  rows.push(simpleRow('acceptance', 'acceptance', Boolean(checklistPath) || Boolean(acceptanceText),
-                  checklistPath || (acceptanceText ? acceptanceText.split('\n')[0] : 'чек-листа нет')))
-  const journalRef = task.decision_path ?? task.journal_path
-  rows.push(simpleRow('journal_path', 'journal_path', Boolean(journalRef), journalRef || 'журнала нет'))
-  // Три состояния строки: жёлтое «работа в main» (маркер основной ветки),
-  // зелёное с путём и веткой, красное «рабочее дерево не указано». Жёлтое —
-  // заполненное поле, поэтому в счётчике холодного старта идёт как ok.
-  const worktree = worktreeState(task.worktree, task.branch)
-  rows.push({
-    key: 'worktree',
-    label: 'worktree · branch',
-    ok: worktree.filled,
-    value: worktreeValue(task.worktree, task.branch),
-    tone: worktree.tone,
-    color: worktree.color,
-    hint: worktree.hint,
-    words: !worktree.mono,
-  })
-  const blockedIds = blockedBy.value.map((dep) => dep.id)
-  const waitingIds = waitingFor.value.map((dep) => dep.id)
-  let blocksValue = blockedIds.length ? `ждёт ${blockedIds.join(', ')}` : 'ничего не ждёт'
-  if (waitingIds.length) blocksValue += ` · её ждут ${waitingIds.join(', ')}`
-  rows.push(simpleRow('blocks', 'blocks', true, blocksValue))
-  const journalComments = task.comments
-    .filter((comment) => comment.kind === 'journal')
-    .sort((a, b) => Date.parse(a.created_at) - Date.parse(b.created_at))
-  const lastJournal = journalComments[journalComments.length - 1]
-  rows.push(simpleRow('comment_journal', 'comment -k journal', Boolean(lastJournal),
-                  lastJournal ? lastJournal.text.slice(0, 80) : 'журнальных записей нет'))
-  const reviewComments = task.comments.filter((comment) => comment.kind === 'review')
-  rows.push(simpleRow('comment_review', 'comment -k review',
-                  Boolean(task.review_path) || reviewComments.length > 0,
-                  task.review_path || (reviewComments.length ? `${reviewComments.length} замечаний` : 'ревью нет')))
-  return rows
+  return coldStartRows(task, blockedBy.value, waitingFor.value)
 })
 
 const coldOkCount = computed(() => coldRows.value.filter((row) => row.ok).length)
 
 /** Тон счётчика: всё заполнено — зелёный; красная строка (worktree не указан) — красный; иначе жёлтый. */
-const coldTone = computed<'success' | 'warning' | 'danger'>(() => {
-  const rows = coldRows.value
-  if (rows.length && rows.every((row) => row.ok)) return 'success'
-  return rows.some((row) => row.tone === 'danger') ? 'danger' : 'warning'
-})
+const coldTone = computed(() => coldStartTone(coldRows.value))
 
 // ── «Журнал и вердикты» ───────────────────────────────────────────────────
 //
@@ -1088,7 +998,7 @@ async function loadTree(): Promise<void> {
       <div v-if="task" class="listik-drawer__head">
         <div class="listik-row listik-drawer__meta-row">
           <TaskGlyph kind="type" :value="task.issue_type" />
-          <ProjectMark :project="projectOf(task)" :slug="task.project" with-title size="sm" />
+          <ProjectMark :project="projectOf(task, projects)" :slug="task.project" with-title size="sm" />
           <span class="listik-drawer__slash">/</span>
           <span class="listik-drawer__id">
             <span class="listik-mono">{{ task.id }}</span>

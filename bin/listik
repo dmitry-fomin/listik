@@ -157,7 +157,10 @@ def task_line(t: dict, *, width: int = 96) -> str:
     if stage:
         bits.append(f"этап {stage}")
     if t.get("holder"):
-        bits.append(f"держит {t['holder_title']} {t.get('holder_age', '')}".strip())
+        if t.get("not_taken"):
+            bits.append(f"выдана {t['holder_title']}, не взята {t.get('assigned_age', '')}".strip())
+        else:
+            bits.append(f"держит {t['holder_title']} {t.get('holder_age', '')}".strip())
     elif t.get("assignee"):
         bits.append(f"назначен {t['assignee_title']}")
     flags = []
@@ -167,6 +170,8 @@ def task_line(t: dict, *, width: int = 96) -> str:
         flags.append("брошена")
     if t.get("abandoned"):
         flags.append("без держателя")
+    if t.get("not_taken_warn"):
+        flags.append(f"не взята {t.get('assigned_age')}")
     if t.get("stage_warn"):
         flags.append(f"на этапе {t.get('stage_age')}")
     if t.get("blocked_by"):
@@ -206,7 +211,12 @@ def show_task(t: dict) -> None:
           + (f"   этап: {t['stage_title']} (на этапе {t['stage_age']})" if t.get("stage") else ""))
     holder = t.get("holder_title") or "—"
     if t.get("holder"):
-        holder += f"   держит {t.get('holder_age')}"
+        if t.get("not_taken"):
+            holder += (f"   выдана, не взята {t.get('assigned_age')}"
+                       + (f" (выдал {t['holder_assigned_by_title']})" if t.get("holder_assigned_by_title") else "")
+                       + " — claim от агента не было")
+        else:
+            holder += f"   держит {t.get('holder_age')}"
         if t.get("holder_note"):
             holder += f" — {t['holder_note']}"
     print(f"  исполнитель: {t['assignee_title']}   держатель: {holder}")
@@ -219,6 +229,9 @@ def show_task(t: dict) -> None:
         print("  *** ЖДЁТ ЧЕЛОВЕКА ***")
     if t.get("stale"):
         print(f"  !!! брошена: держатель молчит {t.get('holder_age')}")
+    if t.get("not_taken_warn"):
+        print(f"  !!! выдана, но не взята: {t.get('holder_title')} не сделал claim "
+              f"за {t.get('assigned_age')} — прогон не запустился?")
     if t.get("blocked_by"):
         print(f"  заблокирована: {', '.join(t['blocked_by'])}")
     deps_state = t.get("deps_state")
@@ -700,7 +713,7 @@ def cmd_set(args) -> int:
 
 def _holder_action(args, action: str) -> int:
     body = {"holder": args.holder or actor_default(args), "harness": args.harness,
-            "note": args.note}
+            "actor": actor_default(args), "note": args.note}
     if action == "claim" and getattr(args, "force", False):
         body["force"] = True
     task = call(action, args, f"/api/tasks/{args.task_id}/{action}", method="POST", body=body,
@@ -721,17 +734,19 @@ def cmd_heartbeat(args) -> int:
 
 
 def cmd_stage(args) -> int:
+    actor = actor_default(args)
     if args.to:
-        holder = args.holder or actor_default(args)
+        holder = args.holder or actor
         # Explicit targets use the same server-side routing/holder semantics as
         # the ordinary next-stage command.
-        body = {"to": args.to, "holder": holder, "harness": args.harness, "note": args.note}
+        body = {"to": args.to, "holder": holder, "harness": args.harness, "actor": actor,
+                "note": args.note}
         local = {"task_id": args.task_id, "to_stage": args.to, "holder": holder,
-                 "harness": args.harness, "note": args.note}
+                 "harness": args.harness, "actor": actor, "note": args.note}
         task = call("stage", args, f"/api/tasks/{args.task_id}/stage", method="POST", body=body,
                     local_kwargs=local)
     else:
-        body = {"holder": args.holder or actor_default(args), "harness": args.harness,
+        body = {"holder": args.holder or actor, "harness": args.harness, "actor": actor,
                 "note": args.note}
         task = call("stage", args, f"/api/tasks/{args.task_id}/stage", method="POST", body=body,
                     local_kwargs={**body, "task_id": args.task_id})

@@ -77,6 +77,7 @@ function badgeText(task: Task): string {
     if (task.abandoned && !task.holder) return 'брошена · без держателя'
     return `брошена ${task.idle_age}`
   }
+  if (task.not_taken_warn) return `не взята ${task.assigned_age}`
   return `молчит ${task.idle_age}`
 }
 
@@ -103,10 +104,17 @@ function reasonText(task: Task): string {
     }
     return `в работе без держателя с ${humanAge(task.started_at)}`
   }
+  if (task.not_taken_warn) {
+    const by = task.holder_assigned_by_title ? ` (выдал ${task.holder_assigned_by_title})` : ''
+    return `выдана ${task.holder_title}, но не взята ${task.assigned_age}${by}: claim от агента так и не пришёл — прогон не запустился?`
+  }
   return `держатель ${task.holder_title} без heartbeat ${task.idle_age} на ${code}; порог брошенности — 24 ч`
 }
 
 function footerText(task: Task): string {
+  if (task.not_taken) {
+    return `выдана ${task.holder_title}, не взята ${task.assigned_age} · на этапе ${task.stage_age} · ${stageCode(task.stage) ?? '—'}`
+  }
   return task.holder
     ? `держит ${task.holder_title} · на этапе ${task.stage_age} · ${stageCode(task.stage) ?? '—'}`
     : `без держателя · на этапе ${task.stage_age} · ${stageCode(task.stage) ?? '—'}`

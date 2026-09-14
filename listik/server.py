@@ -746,13 +746,16 @@ def handle(method: str, path: str, query: dict, body: dict, authed: bool = False
                 if action == "claim":
                     out = store.claim(conn, tid, holder=need(body, "holder"),
                                       harness=body.get("harness"), note=body.get("note"),
+                                      actor=body.get("actor"),
                                       force=as_bool(body.get("force", False)))
                 elif action == "heartbeat":
                     out = store.heartbeat(conn, tid, holder=need(body, "holder"),
-                                          note=body.get("note"), harness=body.get("harness"))
+                                          note=body.get("note"), harness=body.get("harness"),
+                                          actor=body.get("actor"))
                 elif action == "stage":
                     out = store.next_stage(conn, tid, holder=body.get("holder"),
                                            note=body.get("note"), harness=body.get("harness"),
+                                           actor=body.get("actor"),
                                            to_stage=body.get("to") or body.get("stage"))
                 elif action == "comment":
                     out = store.add_comment(conn, tid, need(body, "text"),

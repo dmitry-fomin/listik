@@ -28,3 +28,4 @@ max_depth = 6
 [board]
 stale_hours = 24
 wip_warn_hours = 8
+assign_warn_minutes = 15

@@ -64,6 +64,11 @@ const isIdleAtRisk = computed(
 const stateBadge = computed<{ tone: 'accent' | 'danger' | 'warning'; text: string } | null>(() => {
   if (branch.value === 'needs') return { tone: 'accent', text: 'нужен ты' }
   if (branch.value === 'dead') return { tone: 'danger', text: healthReason(props.task) }
+  // «Выдана, но не взята» дольше порога — свой бейдж: видно, что прогон не
+  // запустился, а не что исполнитель молчит в работе.
+  if (branch.value === 'at-risk' && props.task.not_taken_warn) {
+    return { tone: 'warning', text: `не взята ${props.task.assigned_age}` }
+  }
   if (branch.value === 'at-risk' && isIdleAtRisk.value) return { tone: 'warning', text: healthReason(props.task) }
   return null
 })
@@ -156,6 +161,9 @@ function onKeydown(event: KeyboardEvent): void {
         <template v-if="task.holder">
           <HarnessIcon :actor="task.holder" size="xs" />
           <strong>{{ task.holder_title }}</strong>
+          <span v-if="task.not_taken" class="listik-task-card__assigned">
+            выдана, не взята {{ task.assigned_age }}
+          </span>
         </template>
         <template v-else>без держателя</template>
       </span>

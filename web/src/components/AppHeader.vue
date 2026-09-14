@@ -44,7 +44,15 @@ const props = withDefaults(
 const emit = defineEmits<{
   refresh: []
   projects: []
+  home: []
 }>()
+
+/** Клик по марке: обычный — событие `home` (доска), с модификатором — браузеру. */
+function onBrandClick(event: MouseEvent): void {
+  if (event.button !== 0 || event.metaKey || event.ctrlKey || event.shiftKey || event.altKey) return
+  event.preventDefault()
+  emit('home')
+}
 
 const { theme, toggleTheme } = useTheme()
 
@@ -94,8 +102,12 @@ const themeLabel = computed(() => (theme.value === 'dark' ? 'Включить с
     <template #brand>
       <!-- Знак Listik — зелёный лист, чья центральная жилка складывается в галочку. Не UiBrandMark:
            у марки кита свой градиентный фон и рамка, а знак — самостоятельная цветная иконка -->
-      <img class="listik-shell__brand-logo" src="/logo.svg" alt="Listik" width="28" height="28" />
-      <strong class="listik-shell__brand-name">Listik</strong>
+      <!-- Марка ведёт на доску: обычный клик переключает вид без перезагрузки, клик с
+           модификатором/средней кнопкой отдаётся браузеру (новая вкладка на «/»). -->
+      <a class="listik-shell__brand-link" href="/" aria-label="Listik — на доску" @click="onBrandClick">
+        <img class="listik-shell__brand-logo" src="/logo.svg" alt="" width="28" height="28" />
+        <strong class="listik-shell__brand-name">Listik</strong>
+      </a>
       <UiTooltip :text="healthTooltip" placement="bottom">
         <UiStatusPill :tone="healthTone" size="sm">{{ healthLabel }}</UiStatusPill>
       </UiTooltip>

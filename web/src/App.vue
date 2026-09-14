@@ -213,6 +213,12 @@ const isPhone = useIsPhone()
 store.phone.value = isPhone.value
 watch(isPhone, (value) => store.setPhone(value))
 
+/** Клик по марке в шапке: закрыть карточку и вернуться на доску. */
+function goHome(): void {
+  store.closeTask()
+  void store.setView('board')
+}
+
 onMounted(() => {
   store.init()
 })
@@ -232,6 +238,7 @@ onBeforeUnmount(() => {
       :phone="store.phone.value"
       @refresh="refreshAll"
       @projects="store.openProjects()"
+      @home="goHome"
     />
 
     <UiContainer>

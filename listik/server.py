@@ -852,6 +852,44 @@ def make_server(host: str, port: int, quiet: bool = False) -> Server:
     return Server((host, port), Handler, quiet=quiet)
 
 
+def port_holder(port: int) -> tuple[int, str] | None:
+    """Кто слушает порт: (pid, командная строка) по lsof, None — никто или lsof нет."""
+    import subprocess
+    try:
+        out = subprocess.run(["lsof", "-nP", f"-iTCP:{port}", "-sTCP:LISTEN", "-t"],
+                             capture_output=True, text=True, timeout=5).stdout.split()
+        pid = int(out[0])
+        cmd = subprocess.run(["ps", "-o", "command=", "-p", str(pid)],
+                             capture_output=True, text=True, timeout=5).stdout.strip()
+    except (OSError, ValueError, IndexError, subprocess.SubprocessError):
+        return None
+    return pid, cmd
+
+
+def is_listik_serve(cmd: str) -> bool:
+    return "listik" in cmd and " serve" in cmd
+
+
+def bind_or_explain(host: str, port: int, quiet: bool) -> Server:
+    """make_server, но занятый порт — понятное сообщение и код 1 вместо трейсбека."""
+    import errno
+    try:
+        return make_server(host, port, quiet=quiet)
+    except OSError as e:
+        if e.errno != errno.EADDRINUSE:
+            raise
+        msg = f"порт {host}:{port} уже занят"
+        holder = port_holder(port)
+        if holder and is_listik_serve(holder[1]):
+            msg += (f" другим сервером Listik (pid {holder[0]}, pid-файла нет)\n"
+                    f"остановить: listik stop")
+        elif holder:
+            msg += f" процессом pid {holder[0]}: {holder[1]}\nосвободите порт или задайте другой: --port"
+        else:
+            msg += "\nосвободите порт или задайте другой: --port"
+        raise SystemExit(msg) from None
+
+
 def pid_file() -> Path:
     return paths.ROOT_DIR / "listik.pid"
 
@@ -908,7 +946,7 @@ def serve(host: str | None = None, port: int | None = None, quiet: bool = False,
             return
         # Сокет биндим до fork: после daemonize уже нельзя заводить потоки и
         # открывать соединения в родителе — на macOS fork из многопоточного процесса падает.
-        httpd = make_server(host, port, quiet=True)
+        httpd = bind_or_explain(host, port, quiet=True)
         url = f"http://{host}:{port}/?token={token}"
         print(f"Listik в фоне: {url}")
         print(f"лог:  {log_file()}")
@@ -931,12 +969,13 @@ def serve(host: str | None = None, port: int | None = None, quiet: bool = False,
                 pass
         return
 
+    # Порт занимаем первым: при занятом порте не трогаем launcher и не заводим потоки.
+    httpd = bind_or_explain(host, port, quiet=quiet)
     conn = get_conn()
     routes_mod.init_at_startup()
     launcher_mod.recover(conn, notify=publish)
     if not no_embed:
         start_embed_worker()
-    httpd = make_server(host, port, quiet=quiet)
     url = f"http://{host}:{port}/?token={token}"
     print(f"Listik слушает http://{host}:{port}")
     print(f"доска:          {url}")

@@ -216,8 +216,17 @@ def cmd_stop(args) -> int:
     from listik import server
     pid = server.read_pid()
     if not pid:
-        print("сервер не запущен")
-        return 0
+        # pid-файла нет, но порт может держать живой сервер Listik — найдём по порту.
+        cfg = client.config_mod.load()
+        holder = server.port_holder(int(args.port or cfg["server"]["port"]))
+        if holder and server.is_listik_serve(holder[1]):
+            pid = holder[0]
+        elif holder:
+            print(f"сервер Listik не запущен; порт занят чужим процессом pid {holder[0]}: {holder[1]}")
+            return 1
+        else:
+            print("сервер не запущен")
+            return 0
     os.kill(pid, 15)
     print(f"остановлен (pid {pid})")
     return 0

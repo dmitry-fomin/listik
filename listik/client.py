@@ -22,6 +22,14 @@ class ApiDown(Exception):
     pass
 
 
+def _remote_or_local(*, local: bool, host: str | None, port: int | None,
+                     remote, local_call):
+    """Выполнить операцию через API, если сервер доступен, иначе локально."""
+    if not local and is_up(host, port):
+        return remote()
+    return local_call()
+
+
 def base_url(host: str | None = None, port: int | None = None) -> str:
     cfg = config_mod.load()
     h = host or cfg["server"]["host"]
@@ -202,6 +210,9 @@ def local_call(op: str, **kwargs):
     if op == "memory":
         return search_mod.search_memories(conn, kwargs["query"], limit=kwargs.get("limit", 20),
                                           project=kwargs.get("project"))
+    if op == "embed":
+        from . import embed as embed_mod
+        return embed_mod.embed_pending(conn, limit=kwargs.get("limit", 0))
     if op == "search":
         return search_mod.search(conn, kwargs.pop("query"), **kwargs)
     if op == "dep_add":
@@ -215,6 +226,37 @@ def local_call(op: str, **kwargs):
         return {"items": deps_mod.suggested(conn, project=kwargs.get("project"),
                                             limit=kwargs.get("limit", 100)),
                 "generated_at": store.now_iso()}
+    if op == "projects":
+        return {"projects": store.list_all_projects(conn), "root": str(paths.PROJECTS_ROOT)}
+    if op == "project_add":
+        try:
+            return store.add_project(conn, path=kwargs.get("path"), slug=kwargs.get("slug"),
+                                     title=kwargs.get("title"), kind=kwargs.get("kind", "native"))
+        except ValueError as exc:
+            raise errors.ListikError(errors.message_of(exc), code=errors.BAD_ARGUMENT) from exc
+    if op == "project_archive":
+        try:
+            return store.update_project(conn, kwargs["slug"], archived=1 if kwargs.get("archived") else 0)
+        except errors.NotFound as exc:
+            raise errors.ListikError(errors.message_of(exc), code=errors.NOT_FOUND,
+                                     hint="список проектов: listik projects") from exc
+    if op == "project_remove":
+        try:
+            return store.remove_project(conn, kwargs["slug"], force=kwargs.get("force", False))
+        except errors.NotFound as exc:
+            raise errors.ListikError(errors.message_of(exc), code=errors.NOT_FOUND,
+                                     hint="список проектов: listik projects") from exc
+        except ValueError as exc:
+            raise errors.ListikError(errors.message_of(exc), code=errors.CONFLICT) from exc
+    if op == "project_routing":
+        try:
+            return store.update_project(conn, kwargs["slug"], routing=kwargs.get("routing") or {})
+        except errors.NotFound as exc:
+            raise errors.ListikError(
+                f"проект не найден: {kwargs['slug']}", code=errors.NOT_FOUND,
+                hint="добавьте его: listik projects --add <путь> [--slug …]") from exc
+        except ValueError as exc:
+            raise errors.ListikError(errors.message_of(exc), code=errors.BAD_ARGUMENT) from exc
     raise errors.ListikError(f"локальный режим не умеет: {op}", code=errors.UNSUPPORTED)
 
 
@@ -223,11 +265,13 @@ def local_call(op: str, **kwargs):
 def list_projects(*, host: str | None = None, port: int | None = None,
                   local: bool = False) -> dict:
     """Все проекты, включая скрытые с доски (для настроек доски и `listik projects`)."""
-    if not local and is_up(host, port):
-        return request("GET", "/api/projects", host=host, port=port)
     from . import store
-    conn = db_mod.init()
-    return {"projects": store.list_all_projects(conn), "root": str(paths.PROJECTS_ROOT)}
+    return _remote_or_local(
+        local=local, host=host, port=port,
+        remote=lambda: request("GET", "/api/projects", host=host, port=port),
+        local_call=lambda: {"projects": store.list_all_projects(db_mod.init()),
+                            "root": str(paths.PROJECTS_ROOT)},
+    )
 
 
 def add_project(*, path: str | None = None, slug: str | None = None, title: str | None = None,
@@ -242,46 +286,57 @@ def add_project(*, path: str | None = None, slug: str | None = None, title: str 
     if path:
         path = str(Path(path).expanduser().resolve())
     body = {"path": path, "slug": slug, "title": title, "kind": kind}
-    if not local and is_up(host, port):
-        return request("POST", "/api/projects", body=body, host=host, port=port)
     from . import store
-    try:
-        return store.add_project(db_mod.init(), **body)
-    except ValueError as exc:
-        raise errors.ListikError(errors.message_of(exc),
-                                 code=errors.BAD_ARGUMENT) from exc
+    def local_add():
+        try:
+            return store.add_project(db_mod.init(), **body)
+        except ValueError as exc:
+            raise errors.ListikError(errors.message_of(exc),
+                                     code=errors.BAD_ARGUMENT) from exc
+    return _remote_or_local(
+        local=local, host=host, port=port,
+        remote=lambda: request("POST", "/api/projects", body=body, host=host, port=port),
+        local_call=local_add,
+    )
 
 
 def set_project_archived(slug: str, archived: bool, *, host: str | None = None,
                          port: int | None = None, local: bool = False) -> dict:
     """Скрыть проект с доски (`archived=True`) или вернуть обратно."""
-    if not local and is_up(host, port):
-        return request("PATCH", f"/api/projects/{urllib.parse.quote(slug, safe='')}",
-                       body={"archived": 1 if archived else 0}, host=host, port=port)
     from . import store
-    try:
-        return store.update_project(db_mod.init(), slug, archived=1 if archived else 0)
-    except errors.NotFound as exc:
-        raise errors.ListikError(errors.message_of(exc), code=errors.NOT_FOUND,
-                                 hint="список проектов: listik projects") from exc
+    def local_archive():
+        try:
+            return store.update_project(db_mod.init(), slug, archived=1 if archived else 0)
+        except errors.NotFound as exc:
+            raise errors.ListikError(errors.message_of(exc), code=errors.NOT_FOUND,
+                                     hint="список проектов: listik projects") from exc
+    return _remote_or_local(
+        local=local, host=host, port=port,
+        remote=lambda: request("PATCH", f"/api/projects/{urllib.parse.quote(slug, safe='')}",
+                               body={"archived": 1 if archived else 0}, host=host, port=port),
+        local_call=local_archive,
+    )
 
 
 def remove_project(slug: str, *, force: bool = False, host: str | None = None,
                    port: int | None = None, local: bool = False) -> dict:
     """Убрать проект из Listik. Проект с задачами — только с `force`."""
-    if not local and is_up(host, port):
-        query = {"force": "1"} if force else None
-        return request("DELETE", f"/api/projects/{urllib.parse.quote(slug, safe='')}",
-                       query=query, host=host, port=port)
     from . import store
-    try:
-        return store.remove_project(db_mod.init(), slug, force=force)
-    except errors.NotFound as exc:
-        raise errors.ListikError(errors.message_of(exc), code=errors.NOT_FOUND,
-                                 hint="список проектов: listik projects") from exc
-    except ValueError as exc:
-        # Как 409 у сервера: проект с задачами сначала скрывают.
-        raise errors.ListikError(errors.message_of(exc), code=errors.CONFLICT) from exc
+    def local_remove():
+        try:
+            return store.remove_project(db_mod.init(), slug, force=force)
+        except errors.NotFound as exc:
+            raise errors.ListikError(errors.message_of(exc), code=errors.NOT_FOUND,
+                                     hint="список проектов: listik projects") from exc
+        except ValueError as exc:
+            # Как 409 у сервера: проект с задачами сначала скрывают.
+            raise errors.ListikError(errors.message_of(exc), code=errors.CONFLICT) from exc
+    return _remote_or_local(
+        local=local, host=host, port=port,
+        remote=lambda: request("DELETE", f"/api/projects/{urllib.parse.quote(slug, safe='')}",
+                               query={"force": "1"} if force else None, host=host, port=port),
+        local_call=local_remove,
+    )
 
 
 def set_project_routing(slug: str, routing: dict, *, local: bool = False,
@@ -291,16 +346,20 @@ def set_project_routing(slug: str, routing: dict, *, local: bool = False,
     Возвращает словарь проекта из `store._project_with_routing` (с `routing_effective`),
     чтобы вызывающий код не перечитывал проект отдельно.
     """
-    if not local and is_up(host, port):
-        return request("PATCH", f"/api/projects/{urllib.parse.quote(slug, safe='')}",
-                       body={"routing": routing}, host=host, port=port)
     from . import store
-    try:
-        return store.update_project(db_mod.init(), slug, routing=routing)
-    except errors.NotFound as exc:
-        raise errors.ListikError(
-            f"проект не найден: {slug}", code=errors.NOT_FOUND,
-            hint="добавьте его: listik projects --add <путь> [--slug …]") from exc
-    except ValueError as exc:
-        raise errors.ListikError(errors.message_of(exc),
-                                 code=errors.BAD_ARGUMENT) from exc
+    def local_routing():
+        try:
+            return store.update_project(db_mod.init(), slug, routing=routing)
+        except errors.NotFound as exc:
+            raise errors.ListikError(
+                f"проект не найден: {slug}", code=errors.NOT_FOUND,
+                hint="добавьте его: listik projects --add <путь> [--slug …]") from exc
+        except ValueError as exc:
+            raise errors.ListikError(errors.message_of(exc),
+                                     code=errors.BAD_ARGUMENT) from exc
+    return _remote_or_local(
+        local=local, host=host, port=port,
+        remote=lambda: request("PATCH", f"/api/projects/{urllib.parse.quote(slug, safe='')}",
+                               body={"routing": routing}, host=host, port=port),
+        local_call=local_routing,
+    )

@@ -13,6 +13,7 @@ import os
 import re
 import sys
 import traceback
+import urllib.parse
 from datetime import datetime, timezone
 from pathlib import Path
 
@@ -122,7 +123,8 @@ def actor_default(args) -> str | None:
 #: `mentions` шлют POST, но это чтения графа, событий они не создают.
 WRITE_OPS = frozenset({
     "create", "update", "claim", "heartbeat", "stage", "comment",
-    "needs-owner", "dep_add", "dep_remove",
+    "needs-owner", "dep_add", "dep_remove", "project_add", "project_archive",
+    "project_remove", "project_routing",
 })
 
 #: `--local` при живом сервере обходит push доски так же молча, как фолбэк без
@@ -152,7 +154,8 @@ def warn_local_bypass(args, *, writing: bool) -> None:
 
 
 def call(op: str, args, path: str, *, query: dict | None = None, body: dict | None = None,
-         method: str = "GET", local_kwargs: dict | None = None):
+         method: str = "GET", local_kwargs: dict | None = None,
+         fallback_warning: bool = True, timeout: float = 60.0):
     """Идём в сервер, если он поднят; иначе — прямо в базу (агент не должен падать)."""
     if getattr(args, "local", False):
         warn_local_bypass(args, writing=op in WRITE_OPS)
@@ -161,8 +164,8 @@ def call(op: str, args, path: str, *, query: dict | None = None, body: dict | No
         return client.local_call(op, **(local_kwargs or {}))
     if client.is_up(args.host, args.port):
         return client.request(method, path, query=query, body=body,
-                              host=args.host, port=args.port)
-    if not getattr(args, "local", False):
+                              host=args.host, port=args.port, timeout=timeout)
+    if not getattr(args, "local", False) and fallback_warning:
         print("! сервер Listik не отвечает — команда выполнена напрямую по базе "
               "(доска не получит событие; подними сервер: listik serve)", file=sys.stderr)
     # Маршруты в локальном режиме никто не загружал — это делает сервер при старте.
@@ -174,9 +177,13 @@ def call(op: str, args, path: str, *, query: dict | None = None, body: dict | No
     return client.local_call(op, **(local_kwargs or {}))
 
 
-def emit(args, payload, human: str) -> None:
-    if getattr(args, "json", False):
-        print(json.dumps(payload, ensure_ascii=False, indent=2))
+def emit(args, payload, human: str, *, force_json: bool = False, indent: int | None = 2) -> None:
+    """Единая печать результата команды в текстовом или JSON-виде."""
+    if force_json or getattr(args, "json", False):
+        kwargs = {"ensure_ascii": False}
+        if indent is not None:
+            kwargs["indent"] = indent
+        print(json.dumps(payload, **kwargs))
     else:
         print(human)
 
@@ -430,7 +437,7 @@ def cmd_status(args) -> int:
         else:
             state = "up"
         # Токена и содержимого config.toml здесь нет: ссылка с токеном — `listik token`.
-        print(json.dumps({
+        emit(args, {
             "server": state,
             "pid": pid,
             "url": url,
@@ -442,7 +449,7 @@ def cmd_status(args) -> int:
             "code_dir": str(paths.ROOT_DIR),
             # Ответ /api/health как есть — только когда он что-то значит.
             "health": h if state in ("up", "unauthorized") else None,
-        }, ensure_ascii=False))
+        }, "", force_json=True, indent=None)
         return 1 if state == "down" else 0
     # Каталог данных — до проверки сервера: он нужен и когда сервер не отвечает.
     print(f"каталог данных: {paths.DATA_DIR}")
@@ -574,8 +581,8 @@ def cmd_import_from_bd(args) -> int:
     conn = db.init()
     report = import_writerllm.import_file(conn, args.source, project=args.project,
                                           dry_run=args.dry_run, update=args.update)
-    if args.json:
-        print(json.dumps(report, ensure_ascii=False, indent=2))
+    if getattr(args, "json", False):
+        emit(args, report, "")
         return 0 if report["ok"] else 1
 
     print(f"WriterLLM → проект {report['project']} (источник: {report['source']})")
@@ -687,19 +694,13 @@ def cmd_list(args) -> int:
     tasks = res["tasks"]
     if args.stale:
         tasks = [t for t in tasks if t.get("stale") or t.get("abandoned")]
-    if getattr(args, "json", False):
-        print(json.dumps(res, ensure_ascii=False, indent=2))
-    else:
-        print_tasks(tasks)
+    emit(args, res, "") if getattr(args, "json", False) else print_tasks(tasks)
     return 0
 
 
 def cmd_show(args) -> int:
     task = call("show", args, f"/api/tasks/{args.task_id}", local_kwargs={"task_id": args.task_id})
-    if getattr(args, "json", False):
-        print(json.dumps(task, ensure_ascii=False, indent=2))
-    else:
-        show_task(task)
+    emit(args, task, "") if getattr(args, "json", False) else show_task(task)
     return 0
 
 
@@ -709,7 +710,7 @@ def cmd_context(args) -> int:
                local_kwargs={"task_id": args.task_id, "stage": args.stage,
                              "portion": args.portion, "max_chars": args.max_chars})
     if args.format == "json" or getattr(args, "json", False):
-        print(json.dumps(out, ensure_ascii=False, indent=2))
+        emit(args, out, "", force_json=True)
         return 0
     card = out.get("card") or {}
     print(f"контекст {card.get('id') or args.task_id} · этап {out['stage']}")
@@ -828,10 +829,7 @@ def _holder_action(args, action: str) -> int:
         body["force"] = True
     task = call(action, args, f"/api/tasks/{args.task_id}/{action}", method="POST", body=body,
                 local_kwargs={**body, "task_id": args.task_id})
-    if getattr(args, "json", False):
-        print(json.dumps(task, ensure_ascii=False, indent=2))
-    else:
-        print(task_line(task))
+    emit(args, task, task_line(task))
     return 0
 
 
@@ -866,7 +864,7 @@ def cmd_stage(args) -> int:
         task = call("stage", args, f"/api/tasks/{args.task_id}/stage", method="POST", body=body,
                     local_kwargs={**body, "task_id": args.task_id})
     if getattr(args, "json", False):
-        print(json.dumps(task, ensure_ascii=False, indent=2))
+        emit(args, task, "")
     else:
         print(task_line(task))
         if task.get("stage_unchanged"):
@@ -930,7 +928,7 @@ def cmd_search(args) -> int:
                query={"q": args.query, "limit": args.limit, "mode": args.mode, **filt},
                local_kwargs={"query": args.query, "limit": args.limit, "mode": args.mode, **filt})
     if getattr(args, "json", False):
-        print(json.dumps(res, ensure_ascii=False, indent=2))
+        emit(args, res, "")
     else:
         search_mod.print_results(res)
     return 0
@@ -944,7 +942,7 @@ def cmd_memory(args) -> int:
                      local_kwargs={"query": args.query, "limit": args.limit,
                                    "project": args.project})
         if getattr(args, "json", False):
-            print(json.dumps(items, ensure_ascii=False, indent=2))
+            emit(args, items, "")
         else:
             search_mod.print_memories(items)
         return 0
@@ -955,7 +953,7 @@ def cmd_memory(args) -> int:
         + "ORDER BY updated_at DESC LIMIT ?",
         ([f"%{args.project}%"] if args.project else []) + [args.limit]).fetchall()
     if getattr(args, "json", False):
-        print(json.dumps([dict(r) for r in rows], ensure_ascii=False, indent=2))
+        emit(args, [dict(r) for r in rows], "")
         return 0
     if not rows:
         print("памяти пока нет (появятся командой listik remember)")
@@ -988,7 +986,7 @@ def cmd_ready(args) -> int:
                              "include_occupied": args.with_occupied, "limit": args.limit})
     tasks = res["tasks"]
     if getattr(args, "json", False):
-        print(json.dumps(res, ensure_ascii=False, indent=2))
+        emit(args, res, "")
         return 0
     if not tasks:
         print("нечего брать: у всех задач есть незакрытые блокеры или держатель")
@@ -1011,7 +1009,7 @@ def cmd_blocked(args) -> int:
                local_kwargs={"project": args.project, "limit": args.limit})
     tasks = res["tasks"]
     if getattr(args, "json", False):
-        print(json.dumps(res, ensure_ascii=False, indent=2))
+        emit(args, res, "")
         return 0
     for t in tasks:
         print(f"■ {t['id']:38s} [{t['project'] or '—'}]  {t['title'][:80]}")
@@ -1036,7 +1034,7 @@ def cmd_dep_tree(args) -> int:
     tree = call("dep_tree", args, f"/api/tasks/{args.task_id}/deps", method="POST", body=body,
                 local_kwargs={"task_id": args.task_id, "depth": args.depth})
     if getattr(args, "json", False):
-        print(json.dumps(tree, ensure_ascii=False, indent=2))
+        emit(args, tree, "")
         return 0
     root = tree["task"]
     print(f"{root['id']} — {root['title'][:100]}  [{root['status']}]")
@@ -1068,7 +1066,7 @@ def cmd_dep_cycles(args) -> int:
     from listik import deps as deps_mod
     found = deps_mod.cycles(conn)
     if getattr(args, "json", False):
-        print(json.dumps(found, ensure_ascii=False, indent=2))
+        emit(args, found, "")
         return 0
     if not found:
         print("циклов нет")
@@ -1087,7 +1085,7 @@ def cmd_inbox(args) -> int:
     questions = [t for t in items if t.get("needs_owner")]
     dropped = [t for t in items if not t.get("needs_owner")]
     if getattr(args, "json", False):
-        print(json.dumps({"questions": questions, "dropped": dropped}, ensure_ascii=False, indent=2))
+        emit(args, {"questions": questions, "dropped": dropped}, "")
         return 0
     print(f"ВОПРОСЫ К ТЕБЕ ({len(questions)})")
     if not questions:
@@ -1113,7 +1111,7 @@ def cmd_board(args) -> int:
                local_kwargs={"group_by": args.group_by, "project": args.project,
                              "include_closed": args.all})
     if getattr(args, "json", False):
-        print(json.dumps(res, ensure_ascii=False, indent=2))
+        emit(args, res, "")
         return 0
     if res.get("needs_you"):
         print(f"=== НУЖЕН ТЫ ({len(res['needs_you'])}) ===")
@@ -1136,7 +1134,7 @@ def cmd_stats(args) -> int:
     res = call("stats", args, "/api/stats", query={"project": args.project},
                local_kwargs={"project": args.project})
     if getattr(args, "json", False):
-        print(json.dumps(res, ensure_ascii=False, indent=2))
+        emit(args, res, "")
         return 0
     print("по статусам:  " + ", ".join(f"{k}={v}" for k, v in res["by_status"].items()))
     print("по этапам:    " + ", ".join(f"{k}={v}" for k, v in res["by_stage"].items()))
@@ -1160,7 +1158,7 @@ def cmd_timeline(args) -> int:
     res = call("timeline", args, "/api/timeline", query={"limit": args.limit},
                local_kwargs={"limit": args.limit})
     if getattr(args, "json", False):
-        print(json.dumps(res, ensure_ascii=False, indent=2))
+        emit(args, res, "")
         return 0
     for e in res["items"]:
         arrow = ""
@@ -1174,14 +1172,9 @@ def cmd_timeline(args) -> int:
 
 
 def cmd_embed(args) -> int:
-    from listik import embed as embed_mod
-    if not args.local and client.is_up(args.host, args.port):
-        out = client.request("POST", "/api/embed", body={"limit": args.limit},
-                             host=args.host, port=args.port, timeout=3600)
-    else:
-        conn = db.init()
-        out = embed_mod.embed_pending(conn, limit=args.limit)
-    print(json.dumps(out, ensure_ascii=False, indent=2))
+    out = call("embed", args, "/api/embed", method="POST", body={"limit": args.limit},
+               local_kwargs={"limit": args.limit}, fallback_warning=False, timeout=3600)
+    emit(args, out, "", force_json=True)
     return 0
 
 
@@ -1234,21 +1227,6 @@ def cmd_projects(args) -> int:
     Добавить репозиторий — значит прописать его каталог; убрать с доски — скрыть
     (задачи остаются в истории), удалить совсем — `--remove` (с задачами — --force).
     """
-    try:
-        list_kwargs = {"host": args.host, "port": args.port, "local": getattr(args, "local", False)}
-    except AttributeError:  # вызов из другого кода без общих флагов
-        list_kwargs = {}
-
-    # `projects` пишет мимо `call()` (сразу зовёт client.*), поэтому предупреждение
-    # о `--local` при живом сервере ставим здесь: ветки ниже меняют доску и через
-    # сервер шлют событие `project` (список читающих веток молчит).
-    writes = (getattr(args, "routing", None) is not None
-              or bool(getattr(args, "add", None))
-              or bool(getattr(args, "remove", None))
-              or bool(getattr(args, "archive", None))
-              or bool(getattr(args, "unarchive", None)))
-    warn_local_bypass(args, writing=writes)
-
     if getattr(args, "routing", None) is not None:
         slug = getattr(args, "project", None)
         if not slug:
@@ -1261,14 +1239,21 @@ def cmd_projects(args) -> int:
                                      code=errors.BAD_ARGUMENT,
                                      hint="пример: listik projects <slug> --routing "
                                           "'{\"harnesses\": {\"s3-impl\": [\"dsh\"]}}'") from exc
-        project = client.set_project_routing(slug, parsed, **list_kwargs)
+        project = call("project_routing", args, f"/api/projects/{urllib.parse.quote(slug, safe='')}",
+                       method="PATCH", body={"routing": parsed},
+                       local_kwargs={"slug": slug, "routing": parsed}, fallback_warning=False)
         print(f"проект {project['slug']}: маршрутизация обновлена")
         _print_routing(project)
         return 0
 
     if getattr(args, "add", None):
-        project = client.add_project(path=args.add, slug=args.slug, title=args.title,
-                                     kind=args.kind or "native", **list_kwargs)
+        project_path = str(Path(args.add).expanduser().resolve())
+        project = call("project_add", args, "/api/projects", method="POST",
+                       body={"path": project_path, "slug": args.slug, "title": args.title,
+                             "kind": args.kind or "native"},
+                       local_kwargs={"path": project_path, "slug": args.slug,
+                                     "title": args.title, "kind": args.kind or "native"},
+                       fallback_warning=False)
         where = project.get("path") or "без каталога"
         what = "добавлен" if project.get("created") else "обновлён"
         if project.get("path_adjusted_from"):
@@ -1279,8 +1264,12 @@ def cmd_projects(args) -> int:
         return 0
 
     if getattr(args, "remove", None):
-        out = client.remove_project(args.remove, force=getattr(args, "force", False),
-                                    **list_kwargs)
+        out = call("project_remove", args,
+                   f"/api/projects/{urllib.parse.quote(args.remove, safe='')}",
+                   method="DELETE",
+                   query={"force": "1"} if getattr(args, "force", False) else None,
+                   local_kwargs={"slug": args.remove, "force": getattr(args, "force", False)},
+                   fallback_warning=False)
         extra = f", вместе с ним удалено задач: {out['removed_tasks']}" if out.get("removed_tasks") else ""
         print(f"проект {out['slug']} удалён{extra}")
         return 0
@@ -1288,11 +1277,14 @@ def cmd_projects(args) -> int:
     archived = getattr(args, "archive", None) or getattr(args, "unarchive", None)
     if archived:
         value = bool(getattr(args, "archive", None))
-        client.set_project_archived(archived, value, **list_kwargs)
+        call("project_archive", args,
+             f"/api/projects/{urllib.parse.quote(archived, safe='')}", method="PATCH",
+             body={"archived": 1 if value else 0},
+             local_kwargs={"slug": archived, "archived": value}, fallback_warning=False)
         print(f"проект {archived}: {'скрыт с доски' if value else 'возвращён на доску'}")
         return 0
 
-    res = client.list_projects(**list_kwargs)
+    res = call("projects", args, "/api/projects", local_kwargs={}, fallback_warning=False)
     rows = res["projects"]
     if getattr(args, "project", None):  # без действия slug — показать один проект
         rows = [row for row in rows if row["slug"] == args.project]
@@ -1302,7 +1294,7 @@ def cmd_projects(args) -> int:
     if not getattr(args, "include_archived", False):
         rows = [row for row in rows if not row.get("archived")]
     if getattr(args, "json", False):
-        print(json.dumps(rows, ensure_ascii=False, indent=2))
+        emit(args, rows, "")
         return 0
     _projects_table(rows, with_path=bool(getattr(args, "project", None)))
     if getattr(args, "project", None) and rows:
@@ -1317,7 +1309,7 @@ def cmd_projects(args) -> int:
 def cmd_actors(args) -> int:
     res = call("meta", args, "/api/meta", local_kwargs={})
     if getattr(args, "json", False):
-        print(json.dumps(res["actors"], ensure_ascii=False, indent=2))
+        emit(args, res["actors"], "")
         return 0
     for a in res["actors"]:
         print(f"  {a['key']:22s} {(a['title'] or ''):26s} {a['kind']:6s} "
@@ -1336,7 +1328,7 @@ def cmd_dep(args) -> int:
                    local_kwargs={"project": getattr(args, "project", None), "limit": args.limit})
         items = out.get("items", []) if isinstance(out, dict) else out
         if getattr(args, "json", False):
-            print(json.dumps(items, ensure_ascii=False, indent=2))
+            emit(args, items, "")
             return 0
         if not items:
             print("предложений нет")
@@ -1374,7 +1366,7 @@ def cmd_dep(args) -> int:
                      body={"limit": args.limit},
                      local_kwargs={"task_id": args.issue_id, "limit": args.limit})
         if getattr(args, "json", False):
-            print(json.dumps(items, ensure_ascii=False, indent=2))
+            emit(args, items, "")
         else:
             if not items:
                 print(f"{args.issue_id}: неупомянутых несвязанных задач нет")
@@ -1453,7 +1445,7 @@ def cmd_service(args) -> int:
     if args.action == "install":
         info = service.install(args.bin, args.no_load)
         if json_mode:
-            print(json.dumps({"ok": True, **info}, ensure_ascii=False))
+            emit(args, {"ok": True, **info}, "", force_json=True, indent=None)
         else:
             print(f"сервис установлен: {info['unit_path']}")
             print(f"бинарь: {info['bin']}")
@@ -1465,7 +1457,7 @@ def cmd_service(args) -> int:
     if args.action == "uninstall":
         info = service.uninstall(args.no_load)
         if json_mode:
-            print(json.dumps({"ok": True, **info}, ensure_ascii=False))
+            emit(args, {"ok": True, **info}, "", force_json=True, indent=None)
         else:
             if info["existed"]:
                 print(f"сервис удалён: {info['unit_path']}")
@@ -1477,7 +1469,7 @@ def cmd_service(args) -> int:
     # action == "status"
     st = service.status()
     if json_mode:
-        print(json.dumps(st, ensure_ascii=False))
+        emit(args, st, "", force_json=True, indent=None)
         return 0
     print(f"платформа: {st['platform']}")
     print(f"юнит:      {st['unit_path']}")
@@ -1523,6 +1515,19 @@ def build_parser() -> argparse.ArgumentParser:
         sp = sub.add_parser(name, parents=[common], **kw)
         sp.set_defaults(func=func)
         return sp
+
+    def add_task_id(sp):
+        sp.add_argument("task_id")
+
+    def add_note(sp):
+        sp.add_argument("--note")
+
+    def add_holder(sp, *, help_text=None):
+        sp.add_argument("--holder", **({"help": help_text} if help_text else {}))
+
+    def add_task_note(sp):
+        add_task_id(sp)
+        add_note(sp)
 
     sp = add("serve", cmd_serve, help="поднять сервер и доску")
     sp.add_argument("-q", "--quiet", action="store_true")
@@ -1620,10 +1625,10 @@ def build_parser() -> argparse.ArgumentParser:
                     choices=["updated", "created", "priority", "stage"])
 
     sp = add("show", cmd_show, help="карточка задачи")
-    sp.add_argument("task_id")
+    add_task_id(sp)
 
     sp = add("context", cmd_context, help="компактный контекст задачи для этапа")
-    sp.add_argument("task_id")
+    add_task_id(sp)
     sp.add_argument("--stage", required=True, choices=["s1-spec", "s2-review", "s3-impl", "s4-judge"])
     sp.add_argument("--portion")
     sp.add_argument("--max-chars", type=int, default=None)
@@ -1632,53 +1637,51 @@ def build_parser() -> argparse.ArgumentParser:
     sp = add("set", cmd_set, help="изменить поля: set <id> status=in_progress priority=1, "
                                   "worktree=main — работа в основной ветке без дерева, "
                                   "route=low-pipeline — маршрут, пока задача не начата")
-    sp.add_argument("task_id")
+    add_task_id(sp)
     sp.add_argument("field", nargs="+")
-    sp.add_argument("--note")
+    add_note(sp)
 
     for name, func, helptext in (
         ("claim", cmd_claim, "взять задачу в работу"),
         ("heartbeat", cmd_heartbeat, "отметиться, что работаешь"),
     ):
         sp = add(name, func, help=helptext)
-        sp.add_argument("task_id")
-        sp.add_argument("--holder")
-        sp.add_argument("--note")
+        add_task_id(sp)
+        add_holder(sp)
+        add_note(sp)
         if name == "claim":
             sp.add_argument("--force", action="store_true",
                             help="взять даже заблокированную (останется в истории)")
 
     sp = add("stage", cmd_stage,
              help="следующий этап конвейера (или --to; текущий этап — no-op с заметкой)")
-    sp.add_argument("task_id")
-    sp.add_argument("--holder",
-                    help="кому выдать карточку: держатель ставится и пишется назначение; "
-                         "без него на handoff держателя снимает, на том же этапе — тихий no-op")
-    sp.add_argument("--note")
+    add_task_id(sp)
+    add_holder(sp, help_text="кому выдать карточку: держатель ставится и пишется назначение; "
+                            "без него на handoff держателя снимает, на том же этапе — тихий no-op")
+    add_note(sp)
     sp.add_argument("--to", choices=["s1-spec", "s2-review", "s3-impl", "s4-judge", "done"],
                     help="явный этап; совпал с текущим — карточка не меняется, "
                          "заметка уходит в историю")
 
     sp = add("comment", cmd_comment, help="комментарий/журнал")
-    sp.add_argument("task_id")
+    add_task_id(sp)
     sp.add_argument("text")
     sp.add_argument("-k", "--kind", default="comment",
                     choices=["comment", "journal", "question", "answer", "review", "verdict"])
 
     sp = add("needs-owner", cmd_needs_owner, help="поднять/снять флаг «нужен человек»")
-    sp.add_argument("task_id")
+    add_task_id(sp)
     sp.add_argument("text", nargs="?")
     sp.add_argument("--clear", action="store_true")
 
     sp = add("release", cmd_release, help="освободить задачу")
-    sp.add_argument("task_id")
-    sp.add_argument("--note")
+    add_task_note(sp)
 
     sp = add("done", cmd_done, help="закрыть задачу")
-    sp.add_argument("task_id")
+    add_task_id(sp)
     sp.add_argument("-r", "--result")
     sp.add_argument("--reason")
-    sp.add_argument("--note")
+    add_note(sp)
 
     sp = add("search", cmd_search, help="гибридный поиск по всем задачам")
     sp.add_argument("query")
@@ -1761,7 +1764,7 @@ def build_parser() -> argparse.ArgumentParser:
     sp.add_argument("--project", help="фильтр по проекту (для suggested)")
 
     sp = add("tree", cmd_dep_tree, help="дерево зависимостей задачи (то же, что dep tree)")
-    sp.add_argument("task_id")
+    add_task_id(sp)
     sp.add_argument("-d", "--depth", type=int, default=3)
     add("cycles", cmd_dep_cycles, help="циклы в зависимостях")
 

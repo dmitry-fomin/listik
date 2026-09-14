@@ -59,7 +59,7 @@ class DumpTests(unittest.TestCase):
             "demo": {"harnesses": {"s3-impl": ["dsh"]}},
             "Zoloto585/repo": {"transitions": {"s1-spec:s2-review": "handoff"}},
             "my.project": {"return_window_hours": 1},
-            "проект с пробелом": {"default_process": ["s1-spec"]},
+            "проект с пробелом": {"return_window_hours": 3},
         }
         parsed = tomllib.loads(config_mod._dump(cfg))
         self.assertEqual(parsed, cfg)
@@ -76,6 +76,48 @@ class DumpTests(unittest.TestCase):
         cfg = {"s": "текст", "i": 7, "f": 1.5, "b": True, "n": False,
                "lst": ["a", 1, True], "quoted": 'he said "hi"'}
         self.assertEqual(tomllib.loads(config_mod._dump(cfg)), cfg)
+
+
+class LegacyDefaultProcessTests(unittest.TestCase):
+    """listik-sqh6: `routing.default_process` убран — он валидировался, но нигде не
+    использовался (`next_stage` всегда идёт по `PIPELINE_STAGES`)."""
+
+    def test_defaults_have_no_default_process(self) -> None:
+        self.assertNotIn("default_process", config_mod.DEFAULTS["routing"])
+        self.assertEqual(config_mod.LEGACY_ROUTING_KEYS, {"default_process"})
+
+    def test_old_config_with_default_process_loads_and_is_ignored(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            path = pathlib.Path(tmp) / "config.toml"
+            path.write_text(
+                '[routing]\n'
+                'default_process = ["s1-spec", "s2-review"]\n'
+                '[routing.projects.demo]\n'
+                'default_process = ["s3-impl"]\n'
+                '[routing.projects.demo.harnesses]\n'
+                's3-impl = ["dsh"]\n',
+                encoding="utf-8",
+            )
+            with mock.patch.object(paths, "CONFIG_PATH", path):
+                cfg = config_mod.load()
+                self.assertNotIn("default_process", cfg["routing"])
+                self.assertNotIn("default_process", cfg["routing"]["projects"]["demo"])
+                self.assertNotIn("default_process", config_mod.routing())
+                effective = config_mod.routing("demo")
+                # Токена в файле не было — ensure_token перезаписывает config.toml
+                # из загруженного дерева; устаревший ключ не должен вернуться.
+                config_mod.ensure_token()
+            rewritten = tomllib.loads(path.read_text(encoding="utf-8"))
+            self.assertNotIn("default_process", rewritten["routing"])
+            self.assertNotIn("default_process",
+                             rewritten["routing"]["projects"]["demo"])
+            self.assertEqual(rewritten["routing"]["projects"]["demo"]["harnesses"]["s3-impl"],
+                             ["dsh"])
+            self.assertEqual(effective["harnesses"]["s3-impl"], ["dsh"])
+            self.assertEqual(effective["transitions"], cfg["routing"]["transitions"])
+            self.assertNotIn("default_process", effective)
+            # DEFAULTS не отравлены: старый файл читается, но новых ключей не заводит.
+            self.assertNotIn("default_process", config_mod.DEFAULTS["routing"])
 
 
 class SaveLoadTests(unittest.TestCase):

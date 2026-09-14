@@ -30,6 +30,7 @@ import urllib.request
 
 from . import config as config_mod
 from . import db as db_mod
+from . import routes as routes_mod
 from . import search as search_mod
 from . import store
 
@@ -102,7 +103,9 @@ TOOLS: list[dict] = [
                         "пути к markdown-документам задачи (ТЗ, чек-лист приёмки, ревью, решение); "
                         "они индексируются по разделам и доступны через listik_context/поиск. "
                         "parent — ID карточки шага: новая карточка станет её порцией "
-                        "(связь parent-child) со своими документами."),
+                        "(связь parent-child) со своими документами. route — ключ маршрута из "
+                        "routes.json: сохраняется в launch_route, а карточка получает метки "
+                        "маршрута harness:/process: (как форма «Новая задача» на доске)."),
         "inputSchema": {
             "type": "object",
             "properties": {
@@ -123,6 +126,8 @@ TOOLS: list[dict] = [
                 "journal_path": {"type": "string"},
                 "parent": {"type": "string",
                            "description": "ID родительской карточки (шаг/эпик): связь parent-child"},
+                "route": {"type": "string",
+                          "description": "ключ маршрута из routes.json (low-pipeline, dsh, …)"},
                 "actor": ACTOR,
             },
             "required": ["title"],
@@ -469,7 +474,8 @@ def call_tool(name: str, args: dict, conn=None) -> object:
             labels=args.get("labels") or [], spec_path=args.get("spec_path"),
             checklist_path=args.get("checklist_path"), review_path=args.get("review_path"),
             decision_path=args.get("decision_path"), journal_path=args.get("journal_path"),
-            parent=args.get("parent"), created_by=args.get("actor"))
+            parent=args.get("parent"), route=args.get("route"),
+            created_by=args.get("actor"))
     if name == "listik_update":
         return store.update_task(conn, args["id"], actor=args.get("actor"),
                                  harness=args.get("harness"), note=args.get("note"),
@@ -759,6 +765,9 @@ def wait_pending_notifies(timeout: float = NOTIFY_TIMEOUT + 0.5) -> None:
 def run() -> int:
     # Одно соединение на весь stdio-процесс: без него call_tool открывал бы
     # новое соединение на каждый вызов и не закрывал его (listik-sxcd).
+    # Маршруты читаем сами: сервера рядом нет, а `listik_create` с `route` должен
+    # поставить карточке те же метки, что форма на доске (см. routes.labels_for).
+    routes_mod.load_local()
     conn = db_mod.init()
     for line in sys.stdin:
         line = line.strip()

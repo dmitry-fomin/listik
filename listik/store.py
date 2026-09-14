@@ -18,6 +18,7 @@ from pathlib import Path
 from . import actors as actors_mod
 from . import config as config_mod
 from . import deps as deps_mod
+from . import routes as routes_mod
 from . import textutil
 
 OPEN_STATUSES = ("open", "in_progress", "blocked", "review")
@@ -40,7 +41,80 @@ STATUS_TITLES = {
 }
 PRIORITY_TITLES = {0: "P0 срочно", 1: "P1 высокий", 2: "P2 обычный", 3: "P3 низкий", 4: "P4 потом"}
 
+# `worktree` хранит либо путь к отдельному рабочему дереву, либо маркер основной
+# ветки (`main`/`master`): он значит «работа идёт в основной ветке репозитория
+# проекта, отдельного дерева нет» (`listik set <id> worktree=main`, см. API.md).
+# Маркер остаётся ключом блокировки дерева — две задачи в основной ветке одного
+# проекта не пишут в неё одновременно, как и в общем дереве (см. `worktree_lock_key`).
+MAIN_WORKTREE_MARKERS = ("main", "master")
+
+# Ключ «основное дерево проекта» для блокировки, когда у проекта не указан `path`
+# (тогда каталога нет, но дерево всё равно одно на проект). Начинается с NUL,
+# чтобы не столкнуться ни с одним путём файловой системы.
+MAIN_TREE_LOCK_KEY = "\x00main-tree"
+
 _SUFFIX_ALPHABET = string.ascii_lowercase + string.digits
+
+
+def main_worktree(value: str | None) -> str:
+    """Канонический маркер основной ветки (`main`/`master`) или `''`.
+
+    Регистр не важен: `worktree=MAIN` — тот же маркер, в карточке он хранится
+    строчными (см. `update_task`). Пустая строка — значение не маркер.
+    """
+    marker = (value or "").strip().lower()
+    return marker if marker in MAIN_WORKTREE_MARKERS else ""
+
+
+def is_main_worktree(value: str | None) -> bool:
+    """True, если `worktree` — маркер «работа в основной ветке, без дерева»."""
+    return bool(main_worktree(value))
+
+
+def main_worktree_title(value: str | None) -> str:
+    """Подпись маркера для CLI и доски: «работа в main» (или `master`)."""
+    marker = main_worktree(value)
+    return f"работа в {marker}" if marker else ""
+
+
+def _real_path(value: str) -> str:
+    """Канонический путь для ключа блокировки: `~`, симлинки, хвостовой `/`.
+
+    Каталога может и не быть (дерево ещё не создано) — `resolve` в нестрогом
+    режиме это переживает; на битый симлинк откатываемся на путь как дали.
+    """
+    path = Path(value).expanduser()
+    try:
+        return str(path.resolve())
+    except (OSError, RuntimeError):
+        return str(path)
+
+
+def worktree_lock_key(worktree: str | None, project_path: str | None = "") -> str:
+    """Канонический ключ дерева записи: одно дерево — один ключ.
+
+    Ключ блокировки — не сырое значение `worktree`, а дерево, в которое задача
+    реально пишет:
+
+    * пустой `worktree` и маркеры основной ветки `main`/`master` — это «основное
+      дерево проекта», каталог `projects.path` (туда задачу запускает
+      `launcher._workdir`). Все три записи дают один ключ, поэтому две пишущие
+      задачи «в main» и «без дерева» одного проекта конфликтуют;
+    * явный путь приводится к каноническому (`_real_path`) — `/repo`, `/repo/` и
+      путь через симлинк считаются одним деревом, а путь, равный каталогу
+      проекта, — тем же ключом, что и маркер;
+    * если у проекта нет `path`, «основное дерево» остаётся отдельным ключом
+      `MAIN_TREE_LOCK_KEY` (один на проект) — как и раньше, когда пустые
+      `worktree` конфликтовали между собой.
+
+    Блокировка применяется только к пишущим задачам — это проверяет вызывающий
+    (`deps.worktree_conflict`); `s1-spec`/`s2-review` дерево не занимают.
+    """
+    value = (worktree or "").strip()
+    if value and not is_main_worktree(value):
+        return _real_path(value)
+    path = (project_path or "").strip()
+    return _real_path(path) if path else MAIN_TREE_LOCK_KEY
 
 
 def now_iso() -> str:
@@ -135,6 +209,44 @@ def _index_comment(conn: sqlite3.Connection, comment_id: str) -> None:
         )
 
 
+def labels_with_route(labels: list[str] | None, route_key: str | None) -> list[str]:
+    """Метки карточки: явные плюс метки маршрута, без дублей (явные идут первыми).
+
+    Одно правило для всех, кто создаёт задачу: CLI (`new --route`), `POST /api/tasks`
+    с `route` и MCP `listik_create`. Метки маршрута считает `routes.labels_for`;
+    заданную вручную метку (`--label harness:claude`) второй раз не добавляем.
+    """
+    out = [str(label) for label in (labels or [])]
+    for label in routes_mod.labels_for(route_key):
+        if label not in out:
+            out.append(label)
+    return out
+
+
+def labels_after_route_change(labels: list[str], route_key: str | None) -> list[str] | None:
+    """Метки карточки при смене маршрута; `None` — оставить как есть.
+
+    Старые метки маршрута (`harness:`/`process:`) заменяются метками нового, чужие
+    метки задачи остаются. Не трогаем их, когда у нового непустого ключа меток нет:
+    маршрута нет в таблице (устаревший или битый `routes.json`) — стирать чужие
+    данные нельзя. Снятие маршрута (пустой ключ) метки маршрута убирает.
+    """
+    fresh = routes_mod.labels_for(route_key)
+    if not fresh and (route_key or "").strip():
+        return None
+    keep = [str(label) for label in labels if not routes_mod.is_route_label(str(label))]
+    return keep + [label for label in fresh if label not in keep]
+
+
+def route_labels_from_row(row: sqlite3.Row) -> list[str]:
+    """Метки карточки из строки таблицы (в колонке — JSON-массив)."""
+    try:
+        value = json.loads(row["labels"] or "[]")
+    except (json.JSONDecodeError, TypeError):
+        return []
+    return [str(label) for label in value] if isinstance(value, list) else []
+
+
 def create_task(
     conn: sqlite3.Connection,
     *,
@@ -169,7 +281,8 @@ def create_task(
 ) -> dict:
     """Создать задачу. `autostart`/`route` только сохраняются: процесс запускает
     не эта функция, а `listik/launcher.py` (сервер — сразу после создания, CLI
-    в локальном режиме — отказом, потому что сервера нет).
+    в локальном режиме — отказом, потому что сервера нет). `route` вдобавок помечает
+    карточку метками маршрута (`labels_with_route`) — как форма на доске.
 
     `parent` сразу связывает новую карточку с родительской мягкой связью
     `parent-child`: так заводят порции шага — у каждой свой `spec_path`/
@@ -189,6 +302,9 @@ def create_task(
         parent_project = parent_row["project"]
     if not project and parent_project:
         project = parent_project
+    # Маршрут помечает карточку теми же метками, что и форма «Новая задача» на доске:
+    # их считает сервер (routes.labels_for), а не доска и не CLI по отдельности.
+    labels = labels_with_route(labels, route)
     tid = task_id or gen_id(conn, project)
     if parent_id is not None and parent_id == tid:
         raise ValueError(f"задача не может быть родителем самой себе: {tid}")
@@ -211,7 +327,7 @@ def create_task(
         """,
         (tid, project, title, description, acceptance, design, notes, result, status, stage,
          ts if stage else None, priority, issue_type, assignee,
-         json.dumps(labels or [], ensure_ascii=False), spec_path, journal_path,
+         json.dumps(labels, ensure_ascii=False), spec_path, journal_path,
          source, external_ref, ts, created_by, ts, 1 if needs_owner else 0,
          checklist_path, review_path, decision_path, 1 if autostart else 0, route),
     )
@@ -342,6 +458,17 @@ def update_task(conn: sqlite3.Connection, task_id: str, *, actor: str | None = N
         if not isinstance(fields[ROUTE_FIELD], str):
             raise ValueError("маршрут должен быть строкой — ключом из routes.json")
         fields[ROUTE_FIELD] = fields[ROUTE_FIELD].strip()
+    # Вместе с маршрутом сервер сам переписывает его метки (`harness:`/`process:`) —
+    # ровно так же, как при создании задачи: старые снимаются, метки нового встают на
+    # их место, чужие метки остаются. Клиент про них больше не думает.
+    if ROUTE_FIELD in fields and fields[ROUTE_FIELD] != (row[ROUTE_FIELD] or ""):
+        base = fields.get("labels")
+        if base is None:
+            base = route_labels_from_row(row)
+        if isinstance(base, list):
+            merged = labels_after_route_change(base, fields[ROUTE_FIELD])
+            if merged is not None:
+                fields["labels"] = merged
     # Смену маршрута проверяем по карточке, какой она станет после этого вызова:
     # в тех же полях может прийти начало работы (`status`/`stage`/`holder`).
     effective = route_card_after(row, fields)
@@ -354,6 +481,11 @@ def update_task(conn: sqlite3.Connection, task_id: str, *, actor: str | None = N
             value = json.dumps(value, ensure_ascii=False)
         if key == "needs_owner":
             value = 1 if value else 0
+        elif key == "worktree" and isinstance(value, str):
+            # Маркер основной ветки храним канонически (`MAIN` → `main`), путь —
+            # как дали, только без крайних пробелов (маркер `main` иначе не
+            # отличить от имени каталога, см. `main_worktree`).
+            value = main_worktree(value) or value.strip()
         if key == ROUTE_FIELD:
             # Пустая строка снимает маршрут совсем; None в поля не доходит (см. выше),
             # поэтому «стереть» можно только пустой строкой.
@@ -551,7 +683,12 @@ def claim(conn: sqlite3.Connection, task_id: str, *, holder: str, harness: str |
     if conflict is not None:
         conflict_task = row_to_task(conn, conflict)
         wt = (row["worktree"] or "").strip()
-        wt_label = wt or "основное"
+        # Дерево одно и то же, но задано оно могло быть по-разному (пусто, маркер,
+        # путь) — подпись берём с обеих сторон: «работа в main» красноречивее
+        # пустого поля, из-за которого конфликт и возник.
+        wt_label = (main_worktree_title(wt)
+                    or main_worktree_title((conflict["worktree"] or "").strip())
+                    or wt or "основное")
         stale_note = ", молчит — брошена?" if conflict_task["stale"] else ""
         raise ValueError(
             f"рабочее дерево {wt_label} проекта {row['project'] or '—'} занято задачей "
@@ -1150,6 +1287,14 @@ def existing_slug(conn: sqlite3.Connection, slug: str) -> str | None:
     return None
 
 
+def project_path(conn: sqlite3.Connection, slug: str | None) -> str:
+    """`projects.path` проекта или `''` — если пути (или самого проекта) нет."""
+    if not slug:
+        return ""
+    row = conn.execute("SELECT path FROM projects WHERE slug = ?", (slug,)).fetchone()
+    return str((row["path"] if row else "") or "").strip()
+
+
 def upsert_project(conn: sqlite3.Connection, slug: str, **fields) -> dict:
     allowed = {"title", "kind", "path", "git_remote", "git_branch", "color", "archived",
                "imported_at", "import_note", "routing"}
@@ -1175,7 +1320,11 @@ def _project_with_routing(conn: sqlite3.Connection, row: dict) -> dict:
     """Дописать к строке проекта действующую маршрутизацию: `routing` (переопределение
     из базы, распарсенное, или None), `routing_effective` (слитый словарь: то, чем
     реально пользуются `allowed_harnesses`/`transition_kind`) и `routing_source` —
-    откуда взято переопределение (`default`/`config`/`db`/`config+db`)."""
+    откуда взято переопределение (`default`/`config`/`db`/`config+db`).
+
+    Устаревшие ключи (`config.LEGACY_ROUTING_KEYS`) не показываем и за
+    переопределение не считаем: проект, у которого сохранён только такой ключ,
+    равнозначен проекту без настроек."""
     slug = row.get("slug")
     raw = row.get("routing")
     parsed = None
@@ -1185,11 +1334,14 @@ def _project_with_routing(conn: sqlite3.Connection, row: dict) -> dict:
         except (TypeError, ValueError):
             parsed = None
     out = dict(row)
-    out["routing"] = parsed if isinstance(parsed, dict) else None
+    cleaned = config_mod.without_legacy_routing(parsed) if isinstance(parsed, dict) else None
+    out["routing"] = cleaned or None
     out["routing_effective"] = config_mod.routing(slug, conn=conn)
     has_db = bool(out["routing"])
     has_config = False
     try:
+        # config.load() уже вычистил устаревшие ключи (см. config.LEGACY_ROUTING_KEYS):
+        # переопределение, в котором остался только такой ключ, сюда приходит пустым.
         cfg = config_mod.load()
         projects_cfg = (cfg.get("routing") or {}).get("projects") or {}
         has_config = bool(slug and isinstance(projects_cfg, dict) and projects_cfg.get(slug))

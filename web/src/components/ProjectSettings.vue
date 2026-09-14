@@ -11,7 +11,11 @@
  * Репозитории умеют:
  * - добавить каталог по пути (`POST /api/projects`): slug берётся из имени
  *   каталога, но его можно задать вручную — так проект ложится в категорию
- *   (`Zoloto585/my-repo`) и рядом с уже импортированными из beads;
+ *   (`Zoloto585/my-repo`) и рядом с уже импортированными из beads. Ответ сервера
+ *   не выбрасывается: в нём итоговый `path` и `path_adjusted_from` (каталог
+ *   лежал внутри репозитория и приведён к его корню) — плашка после добавления
+ *   говорит, куда именно лёг проект. Путь нужен абсолютный (или от `~`):
+ *   относительный сервер отклоняет, у него свой рабочий каталог;
  * - скрыть проект с доски (`archived=1`) — задачи остаются в истории и поиске,
  *   доска просто перестаёт его показывать; вернуть обратно — тем же тумблером;
  * - убрать проект совсем. Проект с задачами сервер без `force` не удалит:
@@ -54,6 +58,8 @@ const pathInput = ref('')
 const slugInput = ref('')
 const titleInput = ref('')
 const action = ref<string | null>(null)
+/** Ответ `POST /api/projects` последнего удачного добавления — показываем, куда лёг проект. */
+const addResult = ref<ProjectRow | null>(null)
 const removeTarget = ref<ProjectRow | null>(null)
 const forceOpen = ref(false)
 
@@ -135,13 +141,17 @@ function slugHint(): string {
 async function submitAdd(): Promise<void> {
   if (!canAdd.value) return
   action.value = 'add'
-  const ok = await store.addProject({
+  addResult.value = null
+  const project = await store.addProject({
     path: pathInput.value.trim(),
     slug: slugInput.value.trim(),
     title: titleInput.value.trim(),
   })
   action.value = null
-  if (ok) {
+  if (project) {
+    // Ответ сервера не выбрасываем: в нём итоговый путь (и path_adjusted_from,
+    // если каталог привели к корню git) — пользователь должен видеть, куда попал проект.
+    addResult.value = project
     pathInput.value = ''
     slugInput.value = ''
     titleInput.value = ''
@@ -185,6 +195,7 @@ watch(
     if (!value) {
       removeTarget.value = null
       forceOpen.value = false
+      addResult.value = null
       activeTab.value = 'repos'
       emit('close')
     }
@@ -239,12 +250,26 @@ watch(
               </UiButton>
             </div>
             <span class="listik-section__hint">
-              {{ slugHint() }} · git remote и ветка подтянутся сами, если это git-репозиторий
+              {{ slugHint() }} · путь — абсолютный (или от ~): относительный сервер отклонит,
+              у него свой рабочий каталог · git remote и ветка подтянутся сами, если это git-репозиторий
               <template v-if="store.projectsRoot.value">
                 · корень проектов: <code class="listik-mono">{{ store.projectsRoot.value }}</code>
               </template>
             </span>
           </section>
+
+          <UiAlert v-if="addResult" tone="success" closable @close="addResult = null">
+            <template #title>
+              {{ addResult.created ? 'Репозиторий добавлен' : 'Репозиторий обновлён' }}
+            </template>
+            Проект <code class="listik-mono">{{ addResult.slug }}</code>:
+            <code class="listik-mono">{{ addResult.path ?? 'без каталога' }}</code>.
+            <template v-if="addResult.path_adjusted_from">
+              Исходный путь <code class="listik-mono">{{ addResult.path_adjusted_from }}</code>
+              лежит внутри репозитория — приведён к его корню.
+            </template>
+            <template v-else-if="addResult.git">Это корень git-репозитория.</template>
+          </UiAlert>
 
           <div
             v-if="store.projectsLoading.value && store.projects.value.length === 0"

@@ -289,6 +289,12 @@ export interface ProjectRow {
   created?: boolean
   /** Ответ `POST /api/projects`: каталог оказался git-репозиторием. */
   git?: boolean
+  /**
+   * Ответ `POST /api/projects`: исходный путь, если каталог лежал внутри
+   * git-репозитория и его привели к корню (`git rev-parse --show-toplevel`).
+   * `null` — путь уже был корнем (или это не git-репозиторий).
+   */
+  path_adjusted_from?: string | null
 }
 
 export interface ProjectsResponse {

@@ -817,17 +817,27 @@ async function openProjects(): Promise<void> {
   await loadProjects()
 }
 
-/** Добавить каталог на доску. `path` — путь к репозиторию, `slug` — куда положить. */
-async function addProject(body: { path: string; slug?: string; title?: string }): Promise<boolean> {
+/**
+ * Добавить каталог на доску. `path` — путь к репозиторию, `slug` — куда положить.
+ *
+ * Возвращает ответ `POST /api/projects` (в нём итоговый `path` и
+ * `path_adjusted_from`, если каталог лежал внутри репозитория и его привели к
+ * корню) — по нему форма говорит, куда именно добавлен проект. Ошибка — null.
+ */
+async function addProject(body: { path: string; slug?: string; title?: string }): Promise<ProjectRow | null> {
   projectsLoading.value = true
   try {
-    await api.addProject({ path: body.path, slug: body.slug || undefined, title: body.title || undefined })
+    const project = await api.addProject({
+      path: body.path,
+      slug: body.slug || undefined,
+      title: body.title || undefined,
+    })
     await Promise.all([loadProjects(), loadMeta(), loadBoard()])
     projectsError.value = null
-    return true
+    return project
   } catch (error) {
     projectsError.value = errorMessage(error)
-    return false
+    return null
   } finally {
     projectsLoading.value = false
   }

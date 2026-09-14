@@ -232,7 +232,9 @@ def add_project(*, path: str | None = None, slug: str | None = None, title: str 
                 local: bool = False) -> dict:
     """Добавить репозиторий (каталог) на доску.
 
-    Относительный путь разрешается здесь, в cwd вызывающего: у сервера свой cwd.
+    Относительный путь разрешается здесь, в cwd вызывающего: сервер относительный
+    `path` отклоняет 400 (`bad_argument`) — у него свой рабочий каталог, поэтому
+    в API уходит уже абсолютный путь.
     """
     if path:
         path = str(Path(path).expanduser().resolve())

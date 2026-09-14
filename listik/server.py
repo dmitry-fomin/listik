@@ -516,7 +516,11 @@ def handle(method: str, path: str, query: dict, body: dict, authed: bool = False
                     conn, path=body.get("path"), slug=body.get("slug"),
                     title=body.get("title"), kind=body.get("kind") or "native")
             except ValueError as exc:
-                raise api_error(400, exc) from exc
+                # Всё, на чём падает add_project, — доводы запроса (нет каталога,
+                # относительный path, пустой slug), а не конфликт состояния:
+                # code_of(ValueError) дал бы conflict, поэтому код явный.
+                raise ApiError(400, errors_mod.message_of(exc),
+                               code=errors_mod.BAD_ARGUMENT) from exc
             publish("project", {"slug": project["slug"],
                                 "action": "created" if project.get("created") else "updated"})
             return 201, project

@@ -10,11 +10,12 @@ import TaskCard from './TaskCard.vue'
 import HarnessIcon from '../marks/HarnessIcon.vue'
 import HealthDot from '../marks/HealthDot.vue'
 import ListikIcon from '../ListikIcon.vue'
-import type { BoardColumn, ProjectRow, Task, TaskStage } from '@/api/types'
+import type { BoardColumn, ProjectRow, TaskStage } from '@/api/types'
 import type { DepsSummary } from '@/store/listik'
 import { taskHealth, healthReason } from '@/lib/health'
 import { harnessOf, HARNESS_TITLES, type HarnessKey } from '@/lib/harness'
 import { stageCode, stageTitle } from '@/lib/stages'
+import { projectOf } from '@/lib/task-presentation'
 
 /** Сколько карточек колонка показывает сразу: 300 карточек в DOM — это лишние тысячи узлов. */
 const PAGE = 60
@@ -86,9 +87,6 @@ const healthDots = computed(() =>
 
 const healthOverflow = computed(() => Math.max(0, props.column.tasks.length - MAX_HEALTH_DOTS))
 
-function projectOf(task: Task): ProjectRow | null {
-  return (props.projects ?? []).find((project) => project.slug === task.project) ?? null
-}
 </script>
 
 <template>
@@ -157,7 +155,7 @@ function projectOf(task: Task): ProjectRow | null {
         :key="task.id"
         :task="task"
         :deps="depsSummary?.[task.id] ?? null"
-        :project="projectOf(task)"
+        :project="projectOf(task, props.projects)"
         @open="emit('open', $event)"
       />
 

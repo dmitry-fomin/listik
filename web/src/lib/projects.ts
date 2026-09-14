@@ -5,6 +5,35 @@
  */
 import type { ProjectRow } from '@/api/types'
 
+export function projectBySlug(projects: ProjectRow[] | null | undefined, slug: string | null | undefined): ProjectRow | null {
+  if (!slug) return null
+  return projects?.find((project) => project.slug === slug) ?? null
+}
+
+export function projectTasksLabel(project: ProjectRow): string {
+  const open = project.n_open ?? 0
+  const total = project.n_tasks ?? 0
+  if (!total) return 'задач нет'
+  if (open === total) return `задач: ${total}`
+  return `задач: ${total} · живых: ${open}`
+}
+
+export function projectPathLabel(project: ProjectRow): string {
+  if (!project.path) return 'каталог не указан'
+  return project.path_exists === false ? `${project.path} — каталога нет` : project.path
+}
+
+export function projectIsGit(project: ProjectRow): boolean {
+  return Boolean(project.git_branch || project.git_remote)
+}
+
+export function projectGitHint(project: ProjectRow): string {
+  const parts = ['git-репозиторий']
+  if (project.git_branch) parts.push(`ветка ${project.git_branch}`)
+  parts.push(project.git_remote ? `remote: ${project.git_remote}` : 'remote не задан')
+  return parts.join(' · ')
+}
+
 export interface ProjectMarkResult {
   mark: string
   color: string

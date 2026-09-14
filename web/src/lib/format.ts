@@ -26,6 +26,36 @@ export function formatDateTime(iso: string | null | undefined): string {
   return `${pad(date.getDate())}.${pad(date.getMonth() + 1)}.${date.getFullYear()} ${pad(date.getHours())}:${pad(date.getMinutes())}`
 }
 
+/** Время для коротких подписей в шапке и метриках. */
+export function formatTime(
+  iso: string | null | undefined,
+  options: Intl.DateTimeFormatOptions = {},
+): string {
+  if (!iso) return '—'
+  return new Date(iso).toLocaleTimeString('ru-RU', options)
+}
+
+/** Дата фильтра «сегодня минус N дней» в формате YYYY-MM-DD. */
+export function isoDateDaysAgo(days: number): string {
+  const date = new Date(Date.now() - days * 86400000)
+  const pad = (value: number): string => String(value).padStart(2, '0')
+  return `${date.getFullYear()}-${pad(date.getMonth() + 1)}-${pad(date.getDate())}`
+}
+
+/** Преобразование значения фильтра YYYY-MM-DD в Date для UiDatePicker. */
+export function parseIsoDate(value: string): Date | null {
+  if (!value) return null
+  const date = new Date(`${value}T00:00:00`)
+  return Number.isNaN(date.getTime()) ? null : date
+}
+
+/** Преобразование Date из UiDatePicker обратно в YYYY-MM-DD. */
+export function formatIsoDate(value: Date | null): string {
+  if (!value) return ''
+  const pad = (part: number): string => String(part).padStart(2, '0')
+  return `${value.getFullYear()}-${pad(value.getMonth() + 1)}-${pad(value.getDate())}`
+}
+
 /** Значение для <time datetime="…">. */
 export function datetimeAttr(iso: string | null | undefined): string | undefined {
   if (!iso) return undefined

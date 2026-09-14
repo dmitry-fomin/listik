@@ -51,6 +51,7 @@ import IconToggle from './IconToggle.vue'
 import ListikIcon from './ListikIcon.vue'
 import store from '@/store/listik'
 import type { ProjectRow } from '@/api/types'
+import { projectGitHint, projectIsGit, projectPathLabel, projectTasksLabel } from '@/lib/projects'
 
 const ADMIN_NAME_KEY = 'listik.adminName'
 
@@ -118,34 +119,6 @@ const hidden = computed(() => store.projects.value.filter((project) => project.a
 const canAdd = computed(() => pathInput.value.trim().length > 0 && action.value === null)
 
 /** Задач в проекте: сервер отдаёт и живые, и всего — в подсказке показываем оба. */
-function tasksLabel(project: ProjectRow): string {
-  const open = project.n_open ?? 0
-  const total = project.n_tasks ?? 0
-  if (!total) return 'задач нет'
-  if (open === total) return `задач: ${total}`
-  return `задач: ${total} · живых: ${open}`
-}
-
-function pathLabel(project: ProjectRow): string {
-  if (!project.path) return 'каталог не указан'
-  return project.path_exists === false ? `${project.path} — каталога нет` : project.path
-}
-
-/** Git-репозиторий — по ветке, а не по remote: сервер отдаёт `git_branch` у любого
- *  репозитория, а `git_remote` появляется только с remote `origin`. По нему проект
- *  без remote (Zoloto585/Parser, listik-6sem) оставался без бейджа. */
-function isGit(project: ProjectRow): boolean {
-  return Boolean(project.git_branch || project.git_remote)
-}
-
-/** Подсказка к бейджу: ветка и remote — разные факты, remote может быть и не задан. */
-function gitHint(project: ProjectRow): string {
-  const parts = ['git-репозиторий']
-  if (project.git_branch) parts.push(`ветка ${project.git_branch}`)
-  parts.push(project.git_remote ? `remote: ${project.git_remote}` : 'remote не задан')
-  return parts.join(' · ')
-}
-
 function slugHint(): string {
   const value = slugInput.value.trim()
   if (value) return `проект ляжет в «${value}»`
@@ -321,7 +294,7 @@ watch(
                   <UiEntityCard
                     :title="project.slug"
                     size="sm"
-                    :meta="`${tasksLabel(project)} · ${pathLabel(project)}`"
+                    :meta="`${projectTasksLabel(project)} · ${projectPathLabel(project)}`"
                     :loading="action === `archive:${project.slug}` || action === `remove:${project.slug}`"
                   >
                     <template #avatar>
@@ -329,7 +302,7 @@ watch(
                     </template>
                     <template #actions>
                       <UiBadge v-if="project.path_exists === false" tone="warning" size="sm">нет каталога</UiBadge>
-                      <UiTooltip v-else-if="isGit(project)" :text="gitHint(project)">
+                      <UiTooltip v-else-if="projectIsGit(project)" :text="projectGitHint(project)">
                         <UiBadge tone="info" size="sm">git</UiBadge>
                       </UiTooltip>
                       <UiTooltip text="Убрать с доски: задачи останутся в истории и поиске">
@@ -364,7 +337,7 @@ watch(
                   <UiEntityCard
                     :title="project.slug"
                     size="sm"
-                    :meta="`${tasksLabel(project)} · ${pathLabel(project)}`"
+                    :meta="`${projectTasksLabel(project)} · ${projectPathLabel(project)}`"
                     :loading="action === `archive:${project.slug}` || action === `remove:${project.slug}`"
                   >
                     <template #avatar>

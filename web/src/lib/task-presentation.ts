@@ -1,4 +1,4 @@
-import type { DepInfo, ProjectRow, TaskComment, TaskDetail } from '@/api/types'
+import type { DepInfo, ProjectRow, Task, TaskComment, TaskDetail } from '@/api/types'
 import { formatDateTime, humanAge } from './format'
 import { HARNESS_TITLES, harnessOf } from './harness'
 import { HEALTH_TITLES, healthReason, taskHealth } from './health'
@@ -6,8 +6,12 @@ import { worktreeState, worktreeValue } from './dictionaries'
 
 /** Общие представления задачи для настольной и телефонной карточек. */
 
-export function projectOf(task: TaskDetail, projects?: ProjectRow[]): ProjectRow | null {
+export function projectOf(task: Pick<Task, 'project'>, projects?: ProjectRow[]): ProjectRow | null {
   return projects?.find((project) => project.slug === task.project) ?? null
+}
+
+export function sortedTasksByUpdatedDesc<T extends Pick<Task, 'updated_at'>>(tasks: T[]): T[] {
+  return tasks.slice().sort((left, right) => Date.parse(right.updated_at) - Date.parse(left.updated_at))
 }
 
 /** Сервер использует «—» для отсутствующего держателя; пустая подпись означает то же. */

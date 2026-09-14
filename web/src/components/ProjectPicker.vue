@@ -13,6 +13,7 @@ import { computed, ref } from 'vue'
 import { UiButton, UiCommandPalette, type UiCommandPaletteItem } from '@zoloto585/facet'
 import ListikIcon from './ListikIcon.vue'
 import store from '@/store/listik'
+import { projectBySlug } from '@/lib/projects'
 
 const ALL_LABEL = 'Все проекты'
 
@@ -21,7 +22,7 @@ const open = ref(false)
 const currentLabel = computed(() => {
   const slug = store.filters.project
   if (!slug) return ALL_LABEL
-  const project = store.meta.value?.projects.find((item) => item.slug === slug)
+  const project = projectBySlug(store.meta.value?.projects, slug)
   return project?.title || project?.slug || slug
 })
 

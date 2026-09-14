@@ -14,7 +14,7 @@ import { UiBadge, UiButton, UiEmptyState, UiInput, UiSelect, UiSkeleton, type Ui
 import ListikIcon from '@/components/ListikIcon.vue'
 import MobileTaskRow from '@/components/MobileTaskRow.vue'
 import store from '@/store/listik'
-import { projectOptions } from '@/components/facets'
+import { projectOptions } from '@/lib/facets'
 import type { Task } from '@/api/types'
 
 const searchText = ref(store.query.value)

@@ -18,7 +18,7 @@ import {
   type UiSegmentedOption,
   type UiSelectOption,
 } from '@zoloto585/facet'
-import type { FacetsOption } from './facets'
+import type { FacetsOption } from '@/lib/facets'
 import type { DepsFilter, Filters } from '@/store/listik'
 import IconToggle, { type IconToggleOption } from './IconToggle.vue'
 import ListikIcon from './ListikIcon.vue'
@@ -26,6 +26,7 @@ import HealthDot from './marks/HealthDot.vue'
 import TaskGlyph from './marks/TaskGlyph.vue'
 import type { TaskStage } from '@/api/types'
 import { stageCode } from '@/lib/stages'
+import { formatIsoDate, isoDateDaysAgo, parseIsoDate } from '@/lib/format'
 
 const props = defineProps<{
   filters: Filters
@@ -86,25 +87,6 @@ function patch(next: Partial<Filters>): void {
   emit('update:filters', next)
 }
 
-function isoDaysAgo(days: number): string {
-  const date = new Date(Date.now() - days * 86400000)
-  const pad = (value: number): string => String(value).padStart(2, '0')
-  return `${date.getFullYear()}-${pad(date.getMonth() + 1)}-${pad(date.getDate())}`
-}
-
-/** UiDatePicker работает с Date — конвертируем в YYYY-MM-DD для фильтра. */
-function parseIsoDate(value: string): Date | null {
-  if (!value) return null
-  const date = new Date(`${value}T00:00:00`)
-  return Number.isNaN(date.getTime()) ? null : date
-}
-
-function formatIsoDate(value: Date | null): string {
-  if (!value) return ''
-  const pad = (part: number): string => String(part).padStart(2, '0')
-  return `${value.getFullYear()}-${pad(value.getMonth() + 1)}-${pad(value.getDate())}`
-}
-
 const updateQuick = computed<string>({
   get() {
     if (!props.filters.updatedFrom) return 'all'
@@ -117,9 +99,9 @@ const updateQuick = computed<string>({
   },
   set(value: string) {
     if (value === 'all') patch({ updatedFrom: '', updatedTo: '' })
-    else if (value === 'day') patch({ updatedFrom: isoDaysAgo(1) })
-    else if (value === 'week') patch({ updatedFrom: isoDaysAgo(7) })
-    else patch({ updatedFrom: isoDaysAgo(30) })
+    else if (value === 'day') patch({ updatedFrom: isoDateDaysAgo(1) })
+    else if (value === 'week') patch({ updatedFrom: isoDateDaysAgo(7) })
+    else patch({ updatedFrom: isoDateDaysAgo(30) })
   },
 })
 

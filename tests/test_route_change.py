@@ -13,6 +13,8 @@
 """
 from __future__ import annotations
 
+import contextlib
+import io
 import json
 import os
 import pathlib
@@ -24,6 +26,7 @@ import unittest
 from unittest import mock
 
 from listik import db as db_mod
+from listik import launcher
 from listik import server
 from listik import store
 from tests.helpers import TempDbTestCase
@@ -315,6 +318,136 @@ class RouteRaceTests(TempDbTestCase):
             store.delete_task(self.conn, task["id"])
 
 
+class RouteAutostartResetTests(TempDbTestCase):
+    """Смена (и снятие) маршрута снимает прошлый отказ автостарта.
+
+    `launch_error` и флаг «нужен человек» ставит отказ запуска (`launcher.refuse`
+    одной транзакцией). Новый «тип запуска» к прежнему отказу не относится,
+    поэтому маршрут уносит с собой и ошибку, и — если флаг поднял именно отказ —
+    сам флаг; чужой вопрос человека остаётся. След — событие `route` с пояснением.
+    """
+
+    def setUp(self) -> None:
+        super().setUp()
+        self._conn_patch = mock.patch.object(server, "get_conn", return_value=self.conn)
+        self._conn_patch.start()
+        self.addCleanup(self._conn_patch.stop)
+
+    def refused_task(self, **fields) -> dict:
+        """Задача, у которой автостарт отказал: `launch_error` + вопрос и флаг."""
+        task = store.create_task(self.conn, title="проба", project="listik",
+                                 route="low-pipeline", **fields)
+        with contextlib.redirect_stderr(io.StringIO()):
+            launcher.refuse(self.conn, task["id"], "маршрута low-pipeline нет в routes.json")
+        return task
+
+    def row(self, task_id: str):
+        return self.conn.execute(
+            "SELECT launch_error, needs_owner, launch_route FROM tasks WHERE id = ?",
+            (task_id,)).fetchone()
+
+    def route_note(self, task_id: str) -> str | None:
+        return self.conn.execute(
+            "SELECT note FROM events WHERE task_id = ? AND kind = 'route' "
+            "ORDER BY rowid DESC LIMIT 1", (task_id,)).fetchone()["note"]
+
+    def test_change_clears_error_and_flag_with_event_note(self) -> None:
+        task = self.refused_task()
+        self.assertEqual(self.row(task["id"])["needs_owner"], 1)
+
+        updated = store.update_task(self.conn, task["id"], route="high-pipeline",
+                                    actor="agent:dsh", harness="dsh")
+        self.assertEqual(updated["launch_route"], "high-pipeline")
+        self.assertIsNone(updated["launch_error"])
+        self.assertIs(updated["needs_owner"], False)
+        self.assertIsNone(self.row(task["id"])["launch_error"])
+        self.assertEqual(self.row(task["id"])["needs_owner"], 0)
+
+        note = self.route_note(task["id"])
+        self.assertIn("снята ошибка автостарта", note)
+        self.assertIn("маршрута low-pipeline нет в routes.json", note)
+        self.assertIn("снят флаг «нужен человек»", note)
+        # Вопрос автостарта остаётся в истории: снятие флага не переписывает прошлое.
+        question = self.conn.execute(
+            "SELECT text, kind FROM comments WHERE task_id = ? AND kind = 'question'",
+            (task["id"],)).fetchall()
+        self.assertEqual([c["text"] for c in question],
+                         ["автостарт не выполнен: маршрута low-pipeline нет в routes.json — "
+                          "нужен ты"])
+
+    def test_clearing_route_also_clears_error_and_flag(self) -> None:
+        task = self.refused_task()
+        updated = store.update_task(self.conn, task["id"], launch_route="", actor="me")
+        self.assertIsNone(updated["launch_route"])
+        self.assertIsNone(updated["launch_error"])
+        self.assertIs(updated["needs_owner"], False)
+        self.assertIn("снят флаг «нужен человек»", self.route_note(task["id"]))
+
+    def test_error_is_cleared_even_without_flag(self) -> None:
+        """Флаг уже снял человек: смена маршрута всё равно убирает ошибку."""
+        task = self.refused_task()
+        store.set_needs_owner(self.conn, task["id"], value=False, text="беру на себя",
+                              actor="me")
+        updated = store.update_task(self.conn, task["id"], route="medium-pipeline")
+        self.assertIsNone(updated["launch_error"])
+        self.assertIs(updated["needs_owner"], False)
+        note = self.route_note(task["id"])
+        self.assertIn("снята ошибка автостарта", note)
+        self.assertNotIn("флаг", note)
+
+    def test_foreign_question_after_refusal_keeps_flag(self) -> None:
+        """Вопрос, заданный уже после отказа, — не автостартный: флаг остаётся."""
+        task = self.refused_task()
+        store.set_needs_owner(self.conn, task["id"], value=True,
+                              text="и ещё: какую ветку брать?", actor="agent:dsh")
+        updated = store.update_task(self.conn, task["id"], route="high-pipeline")
+        self.assertIsNone(updated["launch_error"])
+        self.assertIs(updated["needs_owner"], True)
+        note = self.route_note(task["id"])
+        self.assertIn("снята ошибка автостарта", note)
+        self.assertNotIn("флаг", note)
+
+    def test_question_without_launch_error_is_untouched(self) -> None:
+        """Флаг без ошибки автостарта смена маршрута не трогает (и пояснений нет)."""
+        task = store.create_task(self.conn, title="проба", project="listik",
+                                 route="low-pipeline")
+        store.set_needs_owner(self.conn, task["id"], value=True,
+                              text="нужен ответ человека", actor="me")
+        updated = store.update_task(self.conn, task["id"], route="high-pipeline")
+        self.assertIs(updated["needs_owner"], True)
+        self.assertIsNone(self.route_note(task["id"]))
+
+    def test_same_route_does_not_touch_error(self) -> None:
+        """Смены не было — отказ автостарта остаётся как есть."""
+        task = self.refused_task()
+        out = store.update_task(self.conn, task["id"], route="low-pipeline")
+        self.assertIs(out.get("unchanged"), True)
+        row = self.row(task["id"])
+        self.assertEqual(row["launch_error"], "маршрута low-pipeline нет в routes.json")
+        self.assertEqual(row["needs_owner"], 1)
+
+    def test_refused_route_change_keeps_error(self) -> None:
+        """Отказ смены (работа началась) не снимает ни ошибку, ни флаг."""
+        task = self.refused_task(stage="s1-spec")
+        with self.assertRaises(ValueError):
+            store.update_task(self.conn, task["id"], route="high-pipeline")
+        row = self.row(task["id"])
+        self.assertEqual(row["launch_route"], "low-pipeline")
+        self.assertEqual(row["launch_error"], "маршрута low-pipeline нет в routes.json")
+        self.assertEqual(row["needs_owner"], 1)
+
+    def test_error_without_question_history_is_cleared(self) -> None:
+        """Отказ, пришедший без вопроса в истории (импорт/фикстура): флаг тоже снимаем."""
+        task = store.create_task(self.conn, title="проба", project="listik",
+                                 route="low-pipeline")
+        self.conn.execute("UPDATE tasks SET launch_error = ?, needs_owner = 1 WHERE id = ?",
+                          ("подмена", task["id"]))
+        self.conn.commit()
+        updated = store.update_task(self.conn, task["id"], route="high-pipeline")
+        self.assertIsNone(updated["launch_error"])
+        self.assertIs(updated["needs_owner"], False)
+
+
 class RouteApiTests(TempDbTestCase):
     """PATCH /api/tasks/{id}: `route`/`launch_route` и отказ после начала работы."""
 
@@ -404,6 +537,31 @@ class RouteApiTests(TempDbTestCase):
         self.assertIsNone(task["launch_pid"])
         self.assertIsNone(task["launch_error"])
 
+    def test_patch_route_clears_autostart_error_and_flag(self) -> None:
+        """Доска шлёт тот же PATCH: смена маршрута снимает отказ автостарта."""
+        with contextlib.redirect_stderr(io.StringIO()):
+            launcher.refuse(self.conn, self.task["id"],
+                            "маршрута low-pipeline нет в routes.json")
+        status, task = self.patch({"route": "high-pipeline", "actor": "me"})
+        self.assertEqual(status, 200)
+        self.assertEqual(task["launch_route"], "high-pipeline")
+        self.assertIsNone(task["launch_error"])
+        self.assertIs(task["needs_owner"], False)
+        row = self.conn.execute("SELECT launch_error, needs_owner FROM tasks WHERE id = ?",
+                                (self.task["id"],)).fetchone()
+        self.assertIsNone(row["launch_error"])
+        self.assertEqual(row["needs_owner"], 0)
+
+    def test_patch_empty_route_clears_autostart_error_and_flag(self) -> None:
+        """Пункт «без маршрута» доски: пустая строка снимает маршрут и отказ."""
+        with contextlib.redirect_stderr(io.StringIO()):
+            launcher.refuse(self.conn, self.task["id"], "нет рабочего каталога")
+        status, task = self.patch({"route": "", "actor": "me"})
+        self.assertEqual(status, 200)
+        self.assertIsNone(task["launch_route"])
+        self.assertIsNone(task["launch_error"])
+        self.assertIs(task["needs_owner"], False)
+
 
 class RouteMcpTests(TempDbTestCase):
     """MCP `listik_update` принимает маршрут и под алиасом `route`, и под колонкой."""
@@ -489,6 +647,28 @@ class RouteCliTests(TempDbTestCase):
         self.assertEqual(proc.returncode, 0, proc.stderr)
         proc = self._run("set", task_id, "route=low-pipeline")
         self.assertEqual(proc.returncode, 0, proc.stderr)
+
+    def test_cli_route_change_clears_local_autostart_error(self) -> None:
+        """Локальный `new --autostart` отказывает («сервер не запущен»), а смена
+        маршрута снимает и ошибку, и флаг — тем же `store.update_task`, что у сервера."""
+        proc = self._run("new", "проба", "-p", "listik", "--route", "low-pipeline",
+                         "--autostart", "--json")
+        self.assertEqual(proc.returncode, 0, proc.stderr)
+        task_id = json.loads(proc.stdout)["id"]
+        shown = self._show(task_id)
+        self.assertEqual(shown["launch_error"], "сервер Listik не запущен")
+        self.assertIs(shown["needs_owner"], True)
+
+        proc = self._run("set", task_id, "route=high-pipeline")
+        self.assertEqual(proc.returncode, 0, proc.stderr)
+        shown = self._show(task_id)
+        self.assertEqual(shown["launch_route"], "high-pipeline")
+        self.assertIsNone(shown["launch_error"])
+        self.assertIs(shown["needs_owner"], False)
+
+        proc = self._run("set", task_id, "launch_route=")
+        self.assertEqual(proc.returncode, 0, proc.stderr)
+        self.assertIsNone(self._show(task_id)["launch_route"])
 
 
 class RouteCliParserTests(unittest.TestCase):

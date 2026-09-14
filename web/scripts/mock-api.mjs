@@ -9,6 +9,10 @@
  * задача, чужой проект, id в другом регистре, взаимные ссылки); `--slow-ms=N`
  * задерживает отдачу карточки `listik-links-slow` — так воспроизводится гонка
  * двух открытий задачи (scripts/verify-deps-links.mjs).
+ * `--routes` добавляет `GET /api/routes` и карточку `listik-routes-error` с
+ * отказавшим автостартом (`launch_error`, флаг «нужен человек», метки маршрута) —
+ * так проверяется пункт «без маршрута» в панели задачи
+ * (scripts/verify-route-clear.mjs).
  * `--cold` добавляет четыре задачи под строку «worktree · branch» блока
  * «Холодный старт»: отдельное дерево, работа в `main`, она же в `master`, и
  * карточка совсем без дерева и ветки (scripts/verify-cold-start.mjs).
@@ -29,6 +33,7 @@ const port = Number(process.argv[2] ?? 8788)
 const fillArg = process.argv.slice(3).find((arg) => arg.startsWith('--fill='))
 const fillCount = fillArg ? Number.parseInt(fillArg.slice('--fill='.length), 10) : 0
 const linksMode = process.argv.slice(3).includes('--links')
+const routesMode = process.argv.slice(3).includes('--routes')
 const coldMode = process.argv.slice(3).includes('--cold')
 const slowArg = process.argv.slice(3).find((arg) => arg.startsWith('--slow-ms='))
 const slowMs = slowArg ? Number.parseInt(slowArg.slice('--slow-ms='.length), 10) : 0
@@ -84,6 +89,16 @@ function task(overrides) {
     stage_hours: 2,
     stage_warn: false,
     needs_owner: false,
+    // Девять колонок запуска (API.md): у базовых задач автостарта нет.
+    autostart: false,
+    launch_route: null,
+    launched_by: null,
+    launch_pid: null,
+    launched_at: null,
+    launch_log: null,
+    launch_exit_code: null,
+    launch_finished_at: null,
+    launch_error: null,
     labels: ['frontend'],
     spec_path: 'docs/listik-board.md',
     journal_path: 'docs/listik-board.journal.md',
@@ -105,7 +120,21 @@ function task(overrides) {
     stale: false,
     abandoned: false,
   }
-  return { ...base, ...overrides }
+  return { ...base, ...overrides, route_editable: routeEditableOf({ ...base, ...overrides }) }
+}
+
+/**
+ * `route_editable` считает сервер (`store.route_change_denied`): маршрут меняют,
+ * только пока задача заведена — статус `open`, без этапа, держателя и запуска.
+ * Мок повторяет формулу, чтобы панель задачи показывала выбор там же, где сервер.
+ */
+function routeEditableOf(item) {
+  return Boolean(
+    item.status === 'open' &&
+      !item.stage &&
+      !item.holder &&
+      !item.launched_by,
+  )
 }
 
 const tasks = [
@@ -317,6 +346,125 @@ if (linksMode) {
 }
 
 /**
+ * `--routes`: записи `routes.json` и карточка с отказавшим автостартом. Маршрут
+ * `low-pipeline` у неё есть, а запуск не удался — `launch_error`, флаг «нужен
+ * человек» и метки маршрута стоят ровно так, как их пишет `launcher.refuse`.
+ * Панель задачи по `route_editable: true` показывает выбор маршрута; снятие
+ * маршрута пунктом «без маршрута» проверяет scripts/verify-route-clear.mjs.
+ */
+const ROUTES = [
+  {
+    key: 'low-pipeline',
+    kind: 'pipeline',
+    title: 'Низкий — конвейер',
+    hint: 'дёшево и быстро',
+    visible: true,
+    icon: 'low',
+    roles: {
+      spec: { provider: 'claude', label: 'ТЗ', title: 'ТЗ и чек-лист' },
+      impl: { provider: 'dsh', label: 'Код', title: 'Реализация' },
+      judge: { provider: 'grok', label: 'Судья', title: 'Проверка' },
+    },
+  },
+  {
+    key: 'high-pipeline',
+    kind: 'pipeline',
+    title: 'Высокий — конвейер',
+    hint: 'дороже, но надёжнее',
+    visible: true,
+    icon: 'high',
+    roles: {
+      spec: { provider: 'claude', label: 'ТЗ', title: 'ТЗ и чек-лист' },
+      impl: { provider: 'claude', label: 'Код', title: 'Реализация' },
+      judge: { provider: 'grok', label: 'Судья', title: 'Проверка' },
+    },
+  },
+  {
+    key: 'dsh-direct',
+    kind: 'direct',
+    title: 'DeepSeek — целиком',
+    hint: 'один харнесс, без конвейера',
+    visible: true,
+    icon: 'direct',
+    harness: 'dsh',
+  },
+  {
+    key: 'hidden-route',
+    kind: 'direct',
+    title: 'Скрытый маршрут',
+    hint: 'в списке доски не показывается',
+    visible: false,
+    icon: 'direct',
+    harness: 'codex',
+  },
+]
+
+if (routesMode) {
+  for (const item of [
+    task({
+      id: 'listik-routes-error',
+      title: 'Автостарт упал: маршрут можно сменить',
+      status: 'open',
+      status_title: 'открыта',
+      stage: null,
+      stage_title: null,
+      holder: null,
+      holder_title: '',
+      holder_at: null,
+      holder_age: '',
+      holder_hours: null,
+      holder_note: null,
+      stage_at: null,
+      stage_age: '',
+      assignee: null,
+      assignee_title: '',
+      autostart: true,
+      launch_route: 'low-pipeline',
+      launch_error: 'маршрута low-pipeline нет в routes.json',
+      needs_owner: true,
+      labels: ['harness:claude', 'process:low-pipeline', 'frontend'],
+      stale: false,
+      abandoned: false,
+    }),
+    task({
+      id: 'listik-routes-fresh',
+      title: 'Заведена без маршрута',
+      status: 'open',
+      status_title: 'открыта',
+      stage: null,
+      stage_title: null,
+      holder: null,
+      holder_title: '',
+      holder_at: null,
+      holder_age: '',
+      holder_hours: null,
+      holder_note: null,
+      stage_at: null,
+      stage_age: '',
+      assignee: null,
+      assignee_title: '',
+      labels: ['frontend'],
+      stale: false,
+      abandoned: false,
+    }),
+  ]) {
+    tasks.push(item)
+  }
+}
+
+/** Метка маршрута (`harness:<x>`/`process:<y>`) — её ставит и снимает сервер. */
+const ROUTE_LABEL_RE = /^(harness|process):/
+
+/** Метки маршрута — правило `routes.labels_for`: их ставит и снимает сервер. */
+function routeLabelsOf(key) {
+  const route = ROUTES.find((item) => item.key === key)
+  if (!route) return []
+  return route.kind === 'direct'
+    ? [`harness:${route.harness}`, 'process:direct']
+    : ['harness:claude', `process:${route.key}`]
+}
+
+/**
  * `--cold`: четыре задачи под строку «worktree · branch» блока «Холодный старт»
  * (scripts/verify-cold-start.mjs) — отдельное дерево с веткой, маркер основной
  * ветки `main`, он же `master`, и карточка без `worktree`/`branch`. Все прочие
@@ -455,6 +603,7 @@ const TASK_STATUSES = ['open', 'in_progress', 'blocked', 'review', 'done', 'canc
 function applyPatch(id, body) {
   const found = tasks.find((item) => item.id === id)
   if (!found) return null
+  let routeChanged = false
   for (const [key, value] of Object.entries(body ?? {})) {
     if (key === 'status' && TASK_STATUSES.includes(String(value))) {
       found.status = String(value)
@@ -469,8 +618,30 @@ function applyPatch(id, body) {
       found.needs_owner = Boolean(value)
     } else if (key === 'labels') {
       found.labels = Array.isArray(value) ? value : found.labels
+    } else if (key === 'route' || key === 'launch_route') {
+      // Пустая строка — «без маршрута»; смена маршрута снимает прошлый отказ
+      // автостарта вместе с флагом — как store.update_task (API.md).
+      const next = value === '' || value == null ? null : String(value)
+      if (next !== found.launch_route) {
+        found.launch_route = next
+        found.launch_error = null
+        found.needs_owner = false
+        routeChanged = true
+      }
     }
   }
+  // Метки маршрута (`harness:`/`process:`) переписывает сервер, а не доска:
+  // `store.labels_after_route_change` — старые метки маршрута снимаются, метки
+  // нового встают на их место, чужие метки задачи остаются. Неизвестный непустой
+  // ключ (устаревший `routes.json`) метки не трогает; пустой — убирает.
+  if (routeChanged) {
+    const keep = (found.labels ?? []).filter((label) => !ROUTE_LABEL_RE.test(label))
+    const fresh = routeLabelsOf(found.launch_route)
+    if (fresh.length || !found.launch_route) {
+      found.labels = [...keep, ...fresh.filter((label) => !keep.includes(label))]
+    }
+  }
+  found.route_editable = routeEditableOf(found)
   found.updated_at = new Date().toISOString()
   found.updated_age = 'только что'
   return found
@@ -867,6 +1038,17 @@ const server = createServer(async (request, response) => {
 
   if (url.pathname === '/api/board') {
     return ok(board(url.searchParams.get('group_by') ?? 'status'))
+  }
+
+  if (url.pathname === '/api/routes') {
+    // Форма ответа — как у сервера: ошибка файла приезжает `ok:false` с текстом,
+    // `command` наружу не отдаётся (маршруты есть только в режиме `--routes`).
+    return ok({
+      ok: routesMode,
+      error: routesMode ? null : 'routes.json не читался: мок запущен без --routes',
+      path: '~/.config/listik/routes.json',
+      routes: routesMode ? ROUTES : [],
+    })
   }
 
   if (url.pathname === '/api/tasks') {

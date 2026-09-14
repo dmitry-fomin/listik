@@ -81,13 +81,17 @@ def refuse(conn, task_id: str, reason: str, notify=None) -> str:
 
     Всё пишется в одной транзакции: `set_needs_owner` коммитит и `launch_error`,
     выставленный перед ним. Возвращает причину, чтобы вызывающий вернул её наружу.
+
+    Текст вопроса — из `store.AUTOSTART_QUESTION_PREFIX`: по нему смена маршрута
+    узнаёт, что флаг «нужен человек» поднят именно отказом автостарта, и снимает
+    его вместе с `launch_error` (см. `store.autostart_reset`).
     """
     ts = store.now_iso()
     conn.execute("UPDATE tasks SET launch_error = ?, updated_at = ? WHERE id = ?",
                  (reason, ts, task_id))
     store.set_needs_owner(conn, task_id, value=True,
-                          text=f"автостарт не выполнен: {reason} — нужен ты",
-                          actor="agent:listik")
+                          text=f"{store.AUTOSTART_QUESTION_PREFIX}: {reason} — нужен ты",
+                          actor=store.AUTOSTART_ACTOR)
     print(f"autostart {task_id}: {reason}", file=sys.stderr, flush=True)
     _notify(notify, task_id)
     return reason

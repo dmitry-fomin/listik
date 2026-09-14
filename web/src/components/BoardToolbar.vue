@@ -33,7 +33,7 @@ function toggleDeps(value: 'blocked' | 'ready', next: boolean): void {
       <UiChip
         size="sm"
         :label="`${store.counts.value.atRisk} под угрозой`"
-        hint="heartbeat старше 15 мин или дольше порога этапа"
+        hint="heartbeat старше 15 мин, дольше порога этапа или выдана, но не взята"
         :selected="store.filters.health === 'at-risk'"
         @update:selected="(value) => toggleHealth('at-risk', value)"
       />

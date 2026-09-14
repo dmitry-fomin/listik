@@ -235,13 +235,20 @@ const statusTone = computed<StatusPillTone>(() => {
  */
 const routeEditable = computed(() => props.task?.route_editable === true)
 
+/**
+ * Пункт «без маршрута»: значение-пустышка выбора. Пустая строка — это и есть
+ * «снять маршрут» на сервере (`set launch_route=`), `null` у выбора означает
+ * «ничего не выбрано» и до сохранения не доводит.
+ */
+const NO_ROUTE = ''
+
 /** Черновик выбора: в задачу уходит только по кнопке, а не на каждый клик. */
 const routeDraft = ref<string | null>(null)
 
 watch(
   () => props.task?.launch_route,
   (value) => {
-    routeDraft.value = value ?? null
+    routeDraft.value = value ?? NO_ROUTE
   },
   { immediate: true },
 )
@@ -270,14 +277,19 @@ function retryRoutes(): void {
 const routeOptions = computed<UiSelectOption<string>[]>(() => {
   if (routesFailed.value) return []
   const type = props.task?.issue_type ?? 'task'
-  const options: UiSelectOption<string>[] = store.routes.value
-    .filter((route) => route.visible)
-    .map((route) => ({
-      value: route.key,
-      label: route.title,
-      // Те же правила, что в «Новой задаче»: эпику нужен этап ТЗ, прямой маршрут закрыт.
-      disabled: !routeAllowedForType(route, type),
-    }))
+  // «Без маршрута» — первым пунктом: у заведённой задачи маршрут можно не только
+  // сменить, но и снять совсем (раньше это умел только CLI).
+  const options: UiSelectOption<string>[] = [
+    { value: NO_ROUTE, label: 'без маршрута' },
+    ...store.routes.value
+      .filter((route) => route.visible)
+      .map((route) => ({
+        value: route.key,
+        label: route.title,
+        // Те же правила, что в «Новой задаче»: эпику нужен этап ТЗ, прямой маршрут закрыт.
+        disabled: !routeAllowedForType(route, type),
+      })),
+  ]
   const current = props.task?.launch_route ?? null
   // Текущий маршрут может быть скрыт, устареть или ещё не приехать вместе со
   // списком: показываем его отдельной строкой, а не пустой подписью селекта.
@@ -287,19 +299,22 @@ const routeOptions = computed<UiSelectOption<string>[]>(() => {
   return options
 })
 
-const routeDirty = computed(() => routeDraft.value !== (props.task?.launch_route ?? null))
+const routeDirty = computed(() => routeDraft.value !== (props.task?.launch_route ?? NO_ROUTE))
 
 /**
- * Смена маршрута: уходит на сервер одним полем `route`. Метки маршрута
+ * Смена маршрута: на сервер уходит одним полем `route`. Метки маршрута
  * (`harness:<…>`/`process:<…>`) сервер переписывает сам — старые снимает, метки
  * нового ставит, чужие метки задачи оставляет: то же правило, что при создании
  * (`routes.labels_for`), поэтому доска их не считает.
+ *
+ * Пункт «без маршрута» шлёт пустую строку — маршрут снимается совсем (как
+ * `set launch_route=`): сервер убирает и его метки, и ошибку автостарта.
  */
 function submitRoute(): void {
-  if (!props.task || !routeDirty.value || routeDraft.value === null) return
+  if (!props.task || !routeDirty.value) return
   emit('patch', {
     id: props.task.id,
-    body: { route: routeDraft.value },
+    body: { route: routeDraft.value ?? NO_ROUTE },
     label: 'route',
   })
 }
@@ -1133,8 +1148,10 @@ async function loadTree(): Promise<void> {
             «Тип запуска» — запись из <span class="listik-mono">routes.json</span> (её отдаёт
             <span class="listik-mono">GET /api/routes</span>): кто исполняет задачу и по какому
             процессу. Пока задача заведена — без этапа, держателя и запуска — маршрут можно
-            сменить; после начала работы сервер откажет. Сам маршрут ничего не запускает: процесс
-            поднимает только галочка «Автостарт» при создании.
+            сменить или снять совсем пунктом «без маршрута» (вместе с маршрутом уезжают
+            метки <span class="listik-mono">harness:</span>/<span class="listik-mono">process:</span>
+            и ошибка автостарта); после начала работы сервер откажет. Сам маршрут ничего не
+            запускает: процесс поднимает только галочка «Автостарт» при создании.
           </p>
 
           <UiAlert v-if="task.launch_error" tone="warning">
@@ -1218,6 +1235,14 @@ async function loadTree(): Promise<void> {
             <HarnessIcon :actor="task.holder" />
             {{ hasHolderTitle(task.holder_title) ? task.holder_title : 'никто' }}<template v-if="hasHolderTitle(task.holder_title)"> · {{ task.holder_age }}</template>
           </dd>
+          <template v-if="task.not_taken">
+            <dt>взята</dt>
+            <dd>
+              <UiBadge tone="warning" size="sm">выдана, не взята {{ task.assigned_age }}</UiBadge>
+              <span v-if="task.holder_assigned_by_title"> — выдал {{ task.holder_assigned_by_title }}.</span>
+              <span>Claim от агента не приходил: прогон не запустился?</span>
+            </dd>
+          </template>
           <dt>heartbeat</dt>
           <dd>
             {{ task.holder_at ? formatDateTime(task.holder_at) : '—' }}

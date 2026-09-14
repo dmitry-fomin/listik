@@ -122,6 +122,25 @@
       }
     },
     {
+      "key": "dsh-grok-pipeline",
+      "kind": "pipeline",
+      "title": "dsh + grok",
+      "hint": "короткая задача без ТЗ и критики · не для эпиков",
+      "visible": true,
+      "roles": {
+        "impl": {
+          "provider": "deepseek",
+          "label": "dsh",
+          "title": "DeepSeek Harness (dsh), своя модель"
+        },
+        "judge": {
+          "provider": "grok",
+          "label": "high",
+          "title": "Grok 4.6 · high"
+        }
+      }
+    },
+    {
       "key": "inherit-pipeline",
       "kind": "pipeline",
       "title": "inherit",

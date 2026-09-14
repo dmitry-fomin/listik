@@ -526,11 +526,14 @@ def handle(method: str, path: str, query: dict, body: dict, authed: bool = False
     if path == "/api/routes":
         # Данные — из состояния, загруженного один раз при старте: правка файла на
         # ходу сервер не перечитывает. `command` наружу не отдаём — это argv запуска.
+        # `warnings` — замечания, которые файл не отменяют (неизвестный `icon` записи):
+        # у такой записи посчитан фолбэк по ключу и есть поле `icon_error`.
         state = routes_mod.current()
         return 200, {
             "ok": state.ok,
             "error": state.error,
             "path": state.path,
+            "warnings": state.warnings,
             "routes": [{k: v for k, v in record.items() if k != "command"}
                        for record in state.routes],
         }
@@ -785,13 +788,16 @@ def handle(method: str, path: str, query: dict, body: dict, authed: bool = False
                 if action == "claim":
                     out = store.claim(conn, tid, holder=need(body, "holder"),
                                       harness=body.get("harness"), note=body.get("note"),
+                                      actor=body.get("actor"),
                                       force=as_bool(body.get("force", False)))
                 elif action == "heartbeat":
                     out = store.heartbeat(conn, tid, holder=need(body, "holder"),
-                                          note=body.get("note"), harness=body.get("harness"))
+                                          note=body.get("note"), harness=body.get("harness"),
+                                          actor=body.get("actor"))
                 elif action == "stage":
                     out = store.next_stage(conn, tid, holder=body.get("holder"),
                                            note=body.get("note"), harness=body.get("harness"),
+                                           actor=body.get("actor"),
                                            to_stage=body.get("to") or body.get("stage"))
                 elif action == "comment":
                     out = store.add_comment(conn, tid, need(body, "text"),

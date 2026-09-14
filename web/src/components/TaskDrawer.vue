@@ -1234,6 +1234,14 @@ async function loadTree(): Promise<void> {
             <HarnessIcon :actor="task.holder" />
             {{ hasHolderTitle(task.holder_title) ? task.holder_title : 'никто' }}<template v-if="hasHolderTitle(task.holder_title)"> · {{ task.holder_age }}</template>
           </dd>
+          <template v-if="task.not_taken">
+            <dt>взята</dt>
+            <dd>
+              <UiBadge tone="warning" size="sm">выдана, не взята {{ task.assigned_age }}</UiBadge>
+              <span v-if="task.holder_assigned_by_title"> — выдал {{ task.holder_assigned_by_title }}.</span>
+              <span>Claim от агента не приходил: прогон не запустился?</span>
+            </dd>
+          </template>
           <dt>heartbeat</dt>
           <dd>
             {{ task.holder_at ? formatDateTime(task.holder_at) : '—' }}

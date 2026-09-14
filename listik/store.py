@@ -693,13 +693,18 @@ def set_needs_owner(conn: sqlite3.Connection, task_id: str, *, value: bool,
 
 
 def claim(conn: sqlite3.Connection, task_id: str, *, holder: str, harness: str | None = None,
-          note: str | None = None, force: bool = False) -> dict:
+          note: str | None = None, force: bool = False, actor: str | None = None) -> dict:
     """Агент берёт задачу: держатель, heartbeat, статус в работе.
 
     Заблокированную задачу взять нельзя: сначала надо закрыть блокеры.
     Обойти можно только явным force (и это останется в истории). Лок рабочего
     дерева распространяется только на пишущие задачи (`s3-impl`/`s4-judge`/без
     этапа) — держатель на `s1-spec`/`s2-review` дерево не занимает.
+
+    `actor` — кто именно берёт (`agent:dsh`): событие `claim` с автором и есть
+    доказательство, что агент запустился. Повторный claim тем же держателем
+    идемпотентен, но если держателя до этого поставил оркестратор (`stage
+    --holder`), первый claim агента пишет событие — «выдана» становится «взята».
     """
     row = conn.execute("SELECT * FROM tasks WHERE id = ?", (task_id,)).fetchone()
     if not row:
@@ -725,9 +730,21 @@ def claim(conn: sqlite3.Connection, task_id: str, *, holder: str, harness: str |
             # crucially, extends the red-verdict return window (see
             # deps.expire_return_handoffs) so an agent that resumes with `claim`
             # rather than `heartbeat` is not treated as having gone silent.
+            state = holder_claim_state(conn, task_id, holder)
             ts = now_iso()
             conn.execute("UPDATE tasks SET holder_at = ?, updated_at = ? WHERE id = ?",
                         (ts, ts, task_id))
+            if not state["taken"]:
+                # Держателя поставил кто-то другой (`stage --holder <кому>`):
+                # первый claim самого агента — то самое доказательство запуска,
+                # по которому доска отличает «выдана» от «взята». Повторные claim
+                # того же держателя события не плодят.
+                actor_key, a_kind = actors_mod.resolve(actor, conn)
+                if actor:
+                    actors_mod.remember(conn, actor, actor_key, a_kind)
+                event(conn, task_id, "claim", from_value=holder, to_value=holder,
+                      actor=actor_key, harness=harness,
+                      note=note or "взял задачу, которую выдали")
             conn.commit()
             return get_task(conn, task_id)
         cur_task = row_to_task(conn, row)
@@ -769,23 +786,33 @@ def claim(conn: sqlite3.Connection, task_id: str, *, holder: str, harness: str |
             "или осознанно обойти запрет: claim --force (останется в истории)"
         )
     if state["blocked_by"] and force:
-        event(conn, task_id, "note", actor=holder, harness=harness,
+        event(conn, task_id, "note", actor=actors_mod.resolve(actor, conn)[0] or holder,
+              harness=harness,
               note=f"ЗАПУСК БЕЗ РАЗРЕШЕНИЯ БЛОКЕРОВ: {', '.join(b['id'] for b in state['blocked_by'])}")
     extra = {}
     if row["status"] == "open":
         extra["status"] = "in_progress"
-    out = update_task(conn, task_id, holder=holder, assignee=row["assignee"] or holder,
-                      harness=harness, note=note or f"взял в работу: {holder}", **extra)
+    # Идентичность берущего пишем в событие даже без явного `--harness`: сам вызов
+    # `claim` означает «беру я», поэтому держатель и есть автор. Без этого события
+    # старых клиентов выглядели бы как «выдана, но не взята».
+    out = update_task(conn, task_id, actor=actor, holder=holder,
+                      assignee=row["assignee"] or holder,
+                      harness=harness or holder,
+                      note=note or f"взял в работу: {holder}", **extra)
     return out
 
 
 def heartbeat(conn: sqlite3.Connection, task_id: str, *, holder: str, note: str | None = None,
-              harness: str | None = None, min_interval_min: int = 10) -> dict:
+              harness: str | None = None, actor: str | None = None,
+              min_interval_min: int = 10) -> dict:
     row = conn.execute("SELECT holder, holder_at, holder_note FROM tasks WHERE id = ?",
                        (task_id,)).fetchone()
     if not row:
         raise errors_mod.NotFound(f"задача не найдена: {task_id}")
     ts = now_iso()
+    actor_key, a_kind = actors_mod.resolve(actor, conn)
+    if actor:
+        actors_mod.remember(conn, actor, actor_key, a_kind)
     # «Что делает» принадлежит тому, кто её написал: heartbeat, сменивший держателя
     # без claim, не наследует чужую заметку — остаётся только переданная явно.
     holder_changed = (row["holder"] or "").strip() != (holder or "").strip()
@@ -797,7 +824,7 @@ def heartbeat(conn: sqlite3.Connection, task_id: str, *, holder: str, note: str 
     # иначе перехват чужой задачи остался бы незаметным.
     if holder_changed or not last or (datetime.now(timezone.utc) - last) > timedelta(minutes=min_interval_min):
         event(conn, task_id, "heartbeat", from_value=row["holder"] if holder_changed else None,
-              to_value=holder, note=note, harness=harness)
+              to_value=holder, actor=actor_key, note=note, harness=harness)
     conn.commit()
     return get_task(conn, task_id)
 
@@ -945,10 +972,50 @@ def get_task(conn: sqlite3.Connection, task_id: str, *, with_details: bool = Tru
     return out
 
 
+def holder_claim_state(conn: sqlite3.Connection, task_id: str, holder: str | None) -> dict:
+    """Взял ли держатель задачу сам или её только выдали.
+
+    `claim` и `stage --holder <кому>` пишут одно и то же событие `claim`, поэтому
+    доска различает «выдана» и «взята» по автору события: взята — если после
+    назначения сам держатель записал `claim` или `heartbeat` (`--actor agent:<holder>`
+    или `--harness <holder>`). Пока такого события нет, карточка «выдана, но не
+    взята»: оркестратор назначил исполнителя, а тот не запустился.
+
+    Возраст считается от события-назначения, а не от `holder_at`: heartbeat за
+    исполнителя (чужой рукой) его не сбрасывает. Держателя нет — состояние пустое.
+    """
+    out = {"assigned_by": None, "assigned_at": None, "assigned_hours": None,
+           "taken": False, "taken_at": None}
+    h = (holder or "").strip()
+    if not h:
+        return out
+    assign = conn.execute(
+        "SELECT id, ts, actor, harness FROM events WHERE task_id = ? AND kind = 'claim' "
+        "AND to_value = ? ORDER BY ts DESC, id DESC LIMIT 1", (task_id, h)).fetchone()
+    if assign is None:
+        return out
+    by = assign["actor"] or assign["harness"]
+    out["assigned_by"] = actors_mod.resolve(by, conn)[0] if by else None
+    out["assigned_at"] = assign["ts"]
+    out["assigned_hours"] = hours_since(assign["ts"])
+    target = actors_mod.resolve(h, conn)[0] or h
+    for r in conn.execute(
+            "SELECT actor, harness, ts FROM events WHERE task_id = ? AND kind IN ('claim','heartbeat') "
+            "AND to_value = ? AND id >= ? ORDER BY id",
+            (task_id, h, assign["id"])).fetchall():
+        who = actors_mod.resolve(r["actor"] or r["harness"], conn)[0]
+        if who and who == target:
+            out["taken"] = True
+            out["taken_at"] = r["ts"]
+            break
+    return out
+
+
 def row_to_task(conn: sqlite3.Connection, row: sqlite3.Row) -> dict:
     cfg = config_mod.load()
     warn = float((cfg.get("board") or {}).get("wip_warn_hours", 8))
     stale_h = float((cfg.get("board") or {}).get("stale_hours", 24))
+    assign_warn_min = float((cfg.get("board") or {}).get("assign_warn_minutes", 15))
     try:
         labels = json.loads(row["labels"] or "[]")
     except json.JSONDecodeError:
@@ -972,6 +1039,13 @@ def row_to_task(conn: sqlite3.Connection, row: sqlite3.Row) -> dict:
         hours_since(row["started_at"]) if running else None)
     stale = bool(running and not orphan and idle_hours is not None and idle_hours > stale_h)
     abandoned = orphan or missing_heartbeat
+    # «Выдана, но не взята»: держателя поставил оркестратор (`stage --holder`), а
+    # сам агент ещё не записал ни claim, ни heartbeat от своего имени. Порог
+    # `board.assign_warn_minutes` — когда его прошли, карточка идёт в «нужен ты»:
+    # так брошенный прогон видно, не дожидаясь `stale_hours`.
+    claim_state = holder_claim_state(conn, row["id"], row["holder"])
+    assigned_hours = claim_state["assigned_hours"]
+    not_taken = bool((row["holder"] or "").strip()) and not claim_state["taken"]
     return {
         "id": row["id"],
         "project": row["project"],
@@ -996,6 +1070,18 @@ def row_to_task(conn: sqlite3.Connection, row: sqlite3.Row) -> dict:
         "holder_at": row["holder_at"],
         "holder_age": human_age(row["holder_at"]),
         "holder_hours": holder_hours,
+        # Кто поставил держателя и подтвердил ли он работу сам: доска показывает
+        # «выдана, не взята N» вместо «держит N», пока агент не сделал claim.
+        "holder_taken": claim_state["taken"],
+        "holder_assigned_by": claim_state["assigned_by"],
+        "holder_assigned_by_title": (actors_mod.display(claim_state["assigned_by"])
+                                     if claim_state["assigned_by"] else None),
+        "assigned_at": claim_state["assigned_at"],
+        "assigned_age": human_age(claim_state["assigned_at"]),
+        "assigned_hours": assigned_hours,
+        "not_taken": not_taken,
+        "not_taken_warn": bool(not_taken and assigned_hours is not None
+                               and assigned_hours > assign_warn_min / 60.0),
         # сколько задача стоит без движения: у брошенной — от последнего heartbeat,
         # у задачи «в работе без держателя» — от начала работы, иначе — от обновления
         "idle_hours": idle_hours,
@@ -1241,11 +1327,16 @@ def board(conn: sqlite3.Connection, *, group_by: str = "status", project: str | 
         col["wip"] = sum(1 for t in col["tasks"] if t["status"] == "in_progress")
         col["needs_owner"] = sum(1 for t in col["tasks"] if t["needs_owner"])
         col["stale"] = sum(1 for t in col["tasks"] if t["stale"])
+        col["not_taken"] = sum(1 for t in col["tasks"] if t["not_taken_warn"])
         col["tasks"] = col["tasks"][:limit_per_column]
 
-    needs_you = [t for t in tasks if t["needs_owner"] or t["stale"] or t["abandoned"]]
+    # «Выдана, но не взята» дольше порога — тот же сигнал «нужен ты», что и
+    # брошенная: оркестратор выдал работу, а агент не запустился.
+    needs_you = [t for t in tasks
+                 if t["needs_owner"] or t["stale"] or t["abandoned"] or t["not_taken_warn"]]
     # Самое запущенное — наверх: сначала ждущие человека, потом по времени без движения
-    needs_you.sort(key=lambda t: (not t["needs_owner"], -(t.get("idle_hours") or 0)))
+    needs_you.sort(key=lambda t: (not t["needs_owner"],
+                                  -(t.get("idle_hours") or t.get("assigned_hours") or 0)))
 
     # Что можно взять прямо сейчас: без незакрытых блокеров и без держателя.
     # Считается по графу зависимостей, поэтому ограничено сверху.

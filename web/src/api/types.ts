@@ -67,6 +67,22 @@ export interface Task {
   archived: boolean
   stale: boolean
   abandoned: boolean
+  /**
+   * Держатель подтвердил работу сам (`claim`/`heartbeat` от своего имени).
+   * `false` при живом держателе — карточку выдали (`stage --holder`), а агент
+   * ещё не запустился: доска показывает «выдана, не взята» вместо «держит».
+   */
+  holder_taken: boolean
+  /** Кто поставил держателя: `agent:claude` у выдачи оркестратором, null у старых записей. */
+  holder_assigned_by: string | null
+  holder_assigned_by_title: string | null
+  assigned_at: string | null
+  /** Сколько задача «выдана, но не взята» — от события выдачи, не от heartbeat. */
+  assigned_age: string
+  assigned_hours: number | null
+  not_taken: boolean
+  /** «Выдана, но не взята» дольше `board.assign_warn_minutes` (15 мин). */
+  not_taken_warn: boolean
   // ── запуск процесса (см. API.md, «Маршруты запуска»): пишет только сервер,
   // поля есть у каждой задачи, у незапущенных — null/false
   autostart: boolean
@@ -165,6 +181,8 @@ export interface BoardColumn {
   wip: number
   needs_owner: number
   stale: number
+  /** Сколько задач колонки выданы, но не взяты дольше `board.assign_warn_minutes`. */
+  not_taken?: number
   /** Сколько задач колонки стоят из-за других (считается по графу на клиенте). */
   blocked?: number
   tasks: Task[]
@@ -343,6 +361,12 @@ interface RouteBase {
    * `key`/`kind`). Необязательно: сервер до появления поля его не отдаёт.
    */
   icon?: RouteIconKey | null
+  /**
+   * Явный `icon` записи не принят сервером (`listik/routes.py`): уровень взят по
+   * ключу, а здесь — причина. Поле есть только у таких записей; `icon: null`
+   * вместе с ним значит «иконки нет» — доска рисует серый кружок с крестиком.
+   */
+  icon_error?: string | null
 }
 
 /** Пресет конвейера: роли ТЗ/критик/исполнитель/судья. */
@@ -366,6 +390,12 @@ export interface RoutesResponse {
   ok: boolean
   error: string | null
   path: string
+  /**
+   * Замечания, которые файл не отменяют (неизвестный `icon` записи): автостарт
+   * работает, у записи посчитан фолбэк по ключу. Необязательно: сервер до
+   * появления поля его не отдаёт.
+   */
+  warnings?: string[]
   routes: RouteDef[]
 }
 

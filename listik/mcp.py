@@ -213,11 +213,15 @@ TOOLS: list[dict] = [
                         "Отказывает, если у задачи открытый блокер (обход force), чужой "
                         "держатель или занято рабочее дерево — текст ошибки называет причину "
                         "и варианты. Одновременно держать задачу должен один агент. "
+                        "Задачу берёт тот, кто по ней работает: `actor` = `agent:<себя>`, "
+                        "`holder` — то же имя. Пока своего claim от держателя нет, карточка "
+                        "считается выданной, а не взятой. "
                         "После этого регулярно вызывай listik_heartbeat."),
         "inputSchema": {
             "type": "object",
             "properties": {"id": TASK_ID, "holder": ACTOR, "note": {"type": "string"},
                            "harness": {"type": "string"},
+                           "actor": ACTOR,
                            "force": {"type": "boolean",
                                      "description": "взять даже заблокированную задачу (крайний случай, попадёт в историю)"}},
             "required": ["id", "holder"],
@@ -226,11 +230,14 @@ TOOLS: list[dict] = [
     {
         "name": "listik_heartbeat",
         "description": ("Отметка «работаю»: без неё через 24 часа задача считается брошенной "
-                        "и попадает в линию «нужен ты». Зови каждые 10-15 минут работы."),
+                        "и попадает в линию «нужен ты». Зови каждые 10-15 минут работы. "
+                        "Heartbeat от самого держателя (`actor` = `agent:<себя>`) подтверждает, "
+                        "что задача взята, а не только выдана."),
         "inputSchema": {
             "type": "object",
             "properties": {"id": TASK_ID, "holder": ACTOR,
                            "note": {"type": "string", "description": "что делаешь прямо сейчас"},
+                           "actor": ACTOR,
                            "harness": {"type": "string", "description": "какой harness работает"}},
             "required": ["id", "holder"],
         },
@@ -239,13 +246,16 @@ TOOLS: list[dict] = [
         "name": "listik_stage",
         "description": ("Перевести задачу на следующий этап конвейера "
                         "(s1-spec → s2-review → s3-impl → s4-judge → done) или на конкретный "
-                        "этап через to. Сервер сам считает, сколько задача провела на прошлом этапе."),
+                        "этап через to. Сервер сам считает, сколько задача провела на прошлом этапе. "
+                        "`holder` с `to` на тот же этап — повторная выдача: держатель остаётся, "
+                        "claim за него не пишется, его делает сам исполнитель."),
         "inputSchema": {
             "type": "object",
             "properties": {"id": TASK_ID,
                            "to": {"type": "string",
                                   "enum": ["s1-spec", "s2-review", "s3-impl", "s4-judge", "done"]},
-                           "holder": ACTOR, "note": {"type": "string"}, "harness": {"type": "string"}},
+                           "holder": ACTOR, "note": {"type": "string"}, "harness": {"type": "string"},
+                           "actor": ACTOR},
             "required": ["id"],
         },
     },
@@ -498,7 +508,7 @@ def call_tool(name: str, args: dict, conn=None) -> object:
     if name == "listik_claim":
         return store.claim(conn, args["id"], holder=_norm_actor(args["holder"]),
                            harness=args.get("harness"), note=args.get("note"),
-                           force=bool(args.get("force")))
+                           actor=args.get("actor"), force=bool(args.get("force")))
     if name == "listik_ready":
         from . import deps as deps_mod
         return {"tasks": deps_mod.ready_tasks(
@@ -522,14 +532,16 @@ def call_tool(name: str, args: dict, conn=None) -> object:
         return deps_mod.graph(conn, args["id"], depth=int(args.get("depth", 3)))
     if name == "listik_heartbeat":
         return store.heartbeat(conn, args["id"], holder=_norm_actor(args["holder"]),
-                               note=args.get("note"), harness=args.get("harness"))
+                               note=args.get("note"), harness=args.get("harness"),
+                               actor=args.get("actor"))
     if name == "listik_stage":
         if args.get("to"):
             return store.next_stage(conn, args["id"], holder=_norm_actor(args.get("holder")),
                                     harness=args.get("harness"), note=args.get("note"),
-                                    to_stage=args["to"])
+                                    actor=args.get("actor"), to_stage=args["to"])
         return store.next_stage(conn, args["id"], holder=_norm_actor(args.get("holder")),
-                                note=args.get("note"), harness=args.get("harness"))
+                                note=args.get("note"), harness=args.get("harness"),
+                                actor=args.get("actor"))
     if name == "listik_comment":
         return store.add_comment(conn, args["id"], args["text"],
                                  author=args.get("author"), kind=args.get("kind", "comment"),

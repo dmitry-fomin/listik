@@ -44,6 +44,11 @@ Listik — самостоятельный трекер задач вместо `
 | `holder_hours` | float? | сколько часов держит (считает сервер) |
 | `stale` | bool | держатель молчит дольше `board.stale_hours` (24 ч) |
 | `abandoned` | bool | задача в работе, но держателя нет |
+| `holder_taken` | bool | держатель подтвердил работу сам: последнее событие `claim`/`heartbeat` по нему сделано от его имени (`--actor agent:<holder>` или `--harness <holder>`) |
+| `holder_assigned_by` | str? | кто поставил держателя (`agent:claude` у выдачи оркестратором, `null` у старых записей) |
+| `holder_assigned_by_title` / `assigned_at` / `assigned_age` / `assigned_hours` | str?/str/str/float? | подпись выдавшего, время и возраст выдачи — от события-назначения, а не от `holder_at` (heartbeat за исполнителя его не сбрасывает) |
+| `not_taken` | bool | держатель есть, а своего `claim`/`heartbeat` от него не было: «выдана, но не взята». Отличает выданную оркестратором карточку (`stage --holder <кому>`) от взятой агентом |
+| `not_taken_warn` | bool | `not_taken` дольше `board.assign_warn_minutes` (15 мин) — прогон, похоже, не запустился |
 | `stage_warn` | bool | на этапе дольше `board.wip_warn_hours` (8 ч) |
 | `blocked_by` | str[] | незакрытые блокеры |
 | `labels` | str[] | метки |
@@ -157,7 +162,11 @@ listik set <id> worktree=master branch=master
 и `command` — непустой массив непустых строк, argv процесса.
 
 `icon` — уровень маршрута для иконки на доске: `xhigh`, `high`, `medium`, `low` или
-`direct`; любое другое значение — ошибка проверки. Если поля в записи нет, сервер выводит
+`direct`; неизвестное значение файл не отменяет: это предупреждение — запись получает
+уровень по ключу, в `GET /api/routes` у неё появляется `icon_error` с причиной, а текст
+предупреждения уходит в `warnings` ответа и отдельной строкой в лог сервера (`listik.log`).
+Проверка файла остаётся строгой ко всему остальному, поэтому опечатка в `icon` больше не
+лишает доску всех маршрутов и не выключает автостарт. Если поля в записи нет, сервер выводит
 уровень сам: у `direct`-записи это `direct`, у `pipeline` — часть ключа до первого `-`,
 если она из того же набора (`xhigh-pipeline` → `xhigh`, `medium-pipeline` → `medium`).
 У записи без выводимого уровня (`feature-pipeline`, `inherit-pipeline`) иконки нет —
@@ -388,7 +397,7 @@ Listik и никогда не отдаёт его доске:
 | Метод | Путь | Параметры | Ответ |
 |---|---|---|---|
 | GET | `/api/health` | — | `status, version, embed{model}, now, authed`; авторизованному — ещё `db`, `counts`, `embed{ok,models}`, `routes{ok,error,path,count}`, `db_error{where,error,at}` — только если последний фоновый проход упал с `sqlite3.DatabaseError`, и `db_replaced{kind,at,detail,before,after}` — если сервер заметил подмену файла базы или WAL (см. ниже) |
-| GET | `/api/routes` | — | `ok, error, path, routes[]` — записи `routes.json`, загруженные при старте, без `command`, но с посчитанным `icon` (см. «Маршруты запуска»); ошибка файла — `ok=false` и текст, а не HTTP-ошибка |
+| GET | `/api/routes` | — | `ok, error, path, warnings[], routes[]` — записи `routes.json`, загруженные при старте, без `command`, но с посчитанным `icon` (см. «Маршруты запуска»); `warnings` — замечания, которые файл не отменяют (неизвестный `icon` записи: у неё есть фолбэк по ключу и поле `icon_error` с причиной); ошибка файла — `ok=false` и текст, а не HTTP-ошибка |
 | GET | `/api/assistant/status` | — | `enabled, model, base_url` — настроен ли помощник DeepSeek (`[assistant]` в `config.toml`); ключ наружу не отдаётся (см. «Помощник DeepSeek») |
 | GET | `/api/meta` | `archived` | `projects[], actors[], facets{}, statuses{}, stages{}, priorities{}` |
 | GET | `/api/projects` | — | `projects[]` — все репозитории доски, включая скрытые: `slug, title, kind, path, path_exists, git_remote, git_branch, archived, n_tasks, n_open, n_wip`, плюс `routing` (переопределение проекта — объект или `null`), `routing_effective` (действующая слитая таблица, которой реально пользуются `allowed_harnesses`/`transition_kind`), `routing_source` (`default`\|`config`\|`db`\|`config+db`), плюс `root` (корень поиска проектов) |
@@ -414,7 +423,9 @@ Listik и никогда не отдаёт его доске:
 сервера — `listik --local`, фолбэк CLI при недоступном сервере,
 `listik import-beads`/`import-writerllm`, `listik remember` — событий не шлют: `publish`
 живёт в процессе сервера, поэтому доска увидит такую запись только при следующем событии,
-ручном обновлении или перезагрузке (listik-1p86).
+ручном обновлении или перезагрузке (listik-1p86). CLI не молчит об этом: пишущая команда
+с `--local` при живом сервере печатает в stderr «доска не получит событие» (чтения молчат,
+а с `--json` предупреждение не попадает в stdout — listik-f6kt).
 
 `GET /api/health` без токена отдаёт только пробу живости (`status`, `version`, `embed.model`,
 `now`, `authed`) — по ней CLI понимает, поднят ли сервер; подробности (`db`, `counts`,
@@ -452,10 +463,11 @@ WAL и исчезновение WAL при открытых соединения
 
 ```json
 { "key": "in_progress", "title": "в работе", "count": 7, "wip": 3, "needs_owner": 2, "stale": 1,
-  "tasks": [ { ...задача... } ] }
+  "not_taken": 1, "tasks": [ { ...задача... } ] }
 ```
 
-`needs_you` — задачи, требующие человека: `needs_owner`, `stale` или `abandoned`.
+`needs_you` — задачи, требующие человека: `needs_owner`, `stale`, `abandoned` или `not_taken_warn`
+(выдана, но не взята дольше `board.assign_warn_minutes`).
 
 `/api/search` — форма `results[]`: карточка задачи (обычные поля) плюс `snippet`, `score`,
 `hits[]` и `best_hit` (лучший из `hits[]`). Каждый элемент `hits[]` — либо попадание в саму
@@ -535,9 +547,9 @@ dropped_chunks, reason`), `reasons[]` (по одному пункту на ка�
 | PATCH | `/api/tasks/{id}` | любые из `title, description, acceptance, design, notes, result, status, stage, priority, issue_type, assignee, holder, holder_note, project, labels[], spec_path, checklist_path, review_path, decision_path, journal_path, worktree, branch, close_reason, needs_owner, external_ref, archived` + `route` (алиас `launch_route`, см. «Смена маршрута») + `actor`, `harness`, `note` | изменить (каждое изменение пишется в events). `route` — «тип запуска»: принимается, только пока задача заведена — без этапа, держателя и запуска, иначе `400`/`conflict`; пустая строка снимает маршрут; событие `route`; вместе с маршрутом сервер переписывает его метки `harness:`/`process:`. Остальные восемь полей запуска не принимаются |
 | DELETE | `/api/tasks/{id}` | — | удалить |
 | PUT | `/api/tasks/{id}/documents/{kind}` | `content` (обязателен, строка не длиннее 1 000 000 символов), `path`, `actor` | принять текст документа и хранить его в базе (`source=upload`) — для сервера, где файлов проектов нет. Путь выбирается по шагам, ровно в этом порядке: 1) непустой `path` из тела; 2) иначе — уже записанный в карточке путь этого вида (`spec_path`/`checklist_path`/`review_path`/`decision_path`); 3) иначе, для `decision`, — `journal_path`; 4) иначе — виртуальный `listik://<id>/<kind>.md`. В случаях 1 и 4 выбранный путь дописывается в карточку. `revision` растёт только при смене текста (новая запись — сразу `revision=1`); при новой записи и при смене текста пишется событие `document_uploaded` с пометкой `r<revision>`; повтор с тем же текстом ревизию не меняет и события не создаёт. 400 — неизвестный `kind`, не передан или не строка `content`, текст длиннее 1 000 000 символов, не строка `path`; 404 — нет такой задачи; 405 — любой метод по этому пути, кроме `GET` и `PUT` |
-| POST | `/api/tasks/{id}/claim` | `holder`(обязателен), `harness`, `note`, `force=false` | взять в работу. 400 по трём причинам: незакрытые жёсткие блокеры (обходится `force`, пишет предупреждение в историю), чужой держатель, занятое рабочее дерево — держатель и рабочее дерево `force` не обходят. `harness` проверяется, только если передан (сверяется с routing проекта на этапе задачи) |
-| POST | `/api/tasks/{id}/heartbeat` | `holder`(обязателен), `note` | отметка «жив, работаю» (событие не чаще 10 мин). Если `holder` отличается от текущего, держатель перезаписывается без проверок, `holder_note` прежнего сбрасывается (сохраняется только явно переданный `note`), а событие пишется всегда — смена держателя видна в истории |
-| POST | `/api/tasks/{id}/stage` | `holder`, `note`, `harness`, `to` | следующий этап конвейера s1→s2→s3→s4→done, считает длительность прошлого этапа. `to` — явный этап (`s1-spec`…`s4-judge`/`done`); если `to` совпал с текущим этапом, это не переход, а no-op: карточка, `stage_at` и держатель остаются как были, событие `stage` не пишется, а непустой `note` уходит событием `note` в историю; в ответе та же карточка с `stage_unchanged: true`, `unchanged: true` и `message`. Сценарий «release → `stage --to <текущий>`» безопасен (listik-xut1) |
+| POST | `/api/tasks/{id}/claim` | `holder`(обязателен), `harness`, `note`, `actor`, `force=false` | взять в работу. 400 по трём причинам: незакрытые жёсткие блокеры (обходится `force`, пишет предупреждение в историю), чужой держатель, занятое рабочее дерево — держатель и рабочее дерево `force` не обходят. `harness` проверяется, только если передан (сверяется с routing проекта на этапе задачи). `actor` пишется в событие `claim`: по нему доска отличает «взята» (`actor` = сам держатель) от «выдана, но не взята»; повторный claim того же держателя идемпотентен, но первый claim держателя по выданной карточке событие пишет |
+| POST | `/api/tasks/{id}/heartbeat` | `holder`(обязателен), `note`, `actor` | отметка «жив, работаю» (событие не чаще 10 мин). Если `holder` отличается от текущего, держатель перезаписывается без проверок, `holder_note` прежнего сбрасывается (сохраняется только явно переданный `note`), а событие пишется всегда — смена держателя видна в истории. Heartbeat от самого держателя (`actor`/`harness` = он) подтверждает, что карточка взята; heartbeat за него чужой рукой — нет |
+| POST | `/api/tasks/{id}/stage` | `holder`, `note`, `harness`, `actor`, `to` | следующий этап конвейера s1→s2→s3→s4→done, считает длительность прошлого этапа. `to` — явный этап (`s1-spec`…`s4-judge`/`done`); если `to` совпал с текущим этапом, это не переход, а no-op: карточка, `stage_at` и держатель остаются как были, событие `stage` не пишется, а непустой `note` уходит событием `note` в историю; в ответе та же карточка с `stage_unchanged: true`, `unchanged: true` и `message`. Сценарий «release → `stage --to <текущий>`» безопасен (listik-xut1). `--to <тот же этап>` держателя не снимает: это повторная выдача, а не передача |
 | POST | `/api/tasks/{id}/comment` | `text`(обязателен), `author`/`actor`, `kind=comment\|journal\|question\|answer\|review\|verdict`, `harness` | комментарий в журнал задачи; `kind=question`/`answer` — те же виды, что пишет `needs-owner` (см. ниже), их можно оставить и вручную, но сам флаг `needs_owner` они не меняют; `kind=verdict` — первая строка ровно `VERDICT: PASS` или `VERDICT: FAIL` (после `FAIL` — список правок), иначе 400 |
 | POST | `/api/tasks/{id}/needs-owner` | `value=true\|false`, `note`, `actor`, `harness` | поднять/снять флаг «нужен человек»: при непустом `note` создаётся комментарий `kind=question` (`value=true`) или `kind=answer` (`value=false`); событие `question`/`answer` пишется при каждом вызове, даже если флаг уже стоит в нужном значении; ответ — полная карточка, как у `PATCH`. `PATCH /api/tasks/{id}` с `needs_owner` меняет только флаг и комментария не пишет |
 | POST | `/api/tasks/{id}/release` | `note`, `actor` | освободить задачу |

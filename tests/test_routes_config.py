@@ -44,8 +44,8 @@ DIRECT_KEYS = ["dsh", "grok", "codex"]
 
 # Порядок записей в routes.json — он же порядок строк формы «Новая задача».
 EXPECTED_KEYS = [
-    "xhigh-pipeline", "high-pipeline", "medium-pipeline", "low-pipeline", "inherit-pipeline",
-    "opus-single-pipeline", "opus-sonnet-pipeline", "feature-pipeline",
+    "xhigh-pipeline", "high-pipeline", "medium-pipeline", "low-pipeline", "dsh-grok-pipeline",
+    "inherit-pipeline", "opus-single-pipeline", "opus-sonnet-pipeline", "feature-pipeline",
     *DIRECT_KEYS,
 ]
 
@@ -92,9 +92,9 @@ class RepoRoutesFileTests(unittest.TestCase):
             self.skipTest(f"git недоступен: {exc}")
         self.assertEqual(done.returncode, 1, done.stdout + done.stderr)
 
-    def test_has_eleven_records_in_order(self) -> None:
+    def test_has_twelve_records_in_order(self) -> None:
         self.assertEqual(self.raw["version"], 1)
-        self.assertEqual(len(self.raw["routes"]), 11)
+        self.assertEqual(len(self.raw["routes"]), 12)
         self.assertEqual([r["key"] for r in self.raw["routes"]], EXPECTED_KEYS)
 
     def test_validates_and_every_record_is_visible(self) -> None:
@@ -105,12 +105,12 @@ class RepoRoutesFileTests(unittest.TestCase):
 
     def test_kinds_match_the_table(self) -> None:
         kinds = [r["kind"] for r in self.raw["routes"]]
-        self.assertEqual(kinds[:8], ["pipeline"] * 8)
-        self.assertEqual(kinds[8:], ["direct"] * 3)
+        self.assertEqual(kinds[:9], ["pipeline"] * 9)
+        self.assertEqual(kinds[9:], ["direct"] * 3)
 
     def test_direct_records_are_exact(self) -> None:
         normalized = routes_mod.validate(self.raw)
-        for key, got in zip(DIRECT_KEYS, normalized[8:]):
+        for key, got in zip(DIRECT_KEYS, normalized[9:]):
             self.assertEqual(got["title"], key)
             self.assertEqual(got, {"key": key, "kind": "direct", "title": key, "hint": "",
                                    "visible": True, "icon": "direct", "harness": key,
@@ -126,7 +126,7 @@ class RepoRoutesFileTests(unittest.TestCase):
             self.assertEqual(normalized[key], "direct")
         # У пресетов без уровня поля нет — иконка не выдумывается.
         for key in ("inherit-pipeline", "opus-single-pipeline", "opus-sonnet-pipeline",
-                    "feature-pipeline"):
+                    "feature-pipeline", "dsh-grok-pipeline"):
             self.assertIsNone(normalized[key])
 
     def test_no_record_has_command_in_repo(self) -> None:
@@ -187,18 +187,70 @@ class ValidateTests(unittest.TestCase):
 
     # -- icon --------------------------------------------------------------
 
-    def test_icon_unknown_level(self) -> None:
-        self.check_error(document({**pipeline_record(), "icon": "xhihg"}), "routes[0].icon")
+    def validate_with_warnings(self, document_obj) -> tuple[list[dict], list[str]]:
+        """`validate` вместе с собранными предупреждениями (listik-itg8)."""
+        warnings: list[str] = []
+        return routes_mod.validate(document_obj, warnings), warnings
 
-    def test_icon_not_string(self) -> None:
-        self.check_error(document({**pipeline_record(), "icon": 4}), "routes[0].icon")
+    def test_icon_unknown_level_warns_and_falls_back_to_key(self) -> None:
+        """Опечатка в `icon` не отменяет файл: уровень берётся из ключа, а не из поля."""
+        record = {**pipeline_record(), "key": "xhigh-pipeline", "icon": "xhihg"}
+        normalized, warnings = self.validate_with_warnings(document(record))
+        self.assertEqual(normalized[0]["icon"], "xhigh")
+        self.assertEqual(len(warnings), 1)
+        self.assertIn("routes[0].icon", warnings[0])
+        self.assertIn("'xhihg'", warnings[0])
+        self.assertIn("'xhigh'", warnings[0])
+        self.assertEqual(normalized[0]["icon_error"], warnings[0])
+
+    def test_icon_unknown_level_without_fallback_has_no_icon(self) -> None:
+        normalized, warnings = self.validate_with_warnings(
+            document({**pipeline_record(), "icon": "xhihg"}))
+        self.assertIsNone(normalized[0]["icon"])
+        self.assertIn("routes[0].icon", warnings[0])
+        self.assertEqual(normalized[0]["icon_error"], warnings[0])
+
+    def test_icon_unknown_level_keeps_other_records(self) -> None:
+        """Битая запись не мешает остальным: файл валиден целиком (приёмка 1)."""
+        bad = {**pipeline_record(), "key": "bad-pipeline", "icon": "xhihg"}
+        good = {**direct_record(), "icon": "direct"}
+        normalized, warnings = self.validate_with_warnings(document(bad, good))
+        self.assertEqual([r["key"] for r in normalized], ["bad-pipeline", "dsh"])
+        self.assertEqual(normalized[1], {"key": "dsh", "kind": "direct", "title": "dsh",
+                                         "hint": "", "visible": True, "icon": "direct",
+                                         "harness": "dsh", "command": None})
+        self.assertEqual(len(warnings), 1)
+        self.assertIn("routes[0].icon", warnings[0])
+
+    def test_icon_unknown_levels_accumulate_warnings(self) -> None:
+        first = {**pipeline_record(), "key": "xhigh-pipeline", "icon": "xhihg"}
+        second = {**direct_record(), "icon": "dirct"}
+        normalized, warnings = self.validate_with_warnings(document(first, second))
+        self.assertEqual([r["icon"] for r in normalized], ["xhigh", "direct"])
+        self.assertEqual(len(warnings), 2)
+        self.assertIn("routes[0].icon", warnings[0])
+        self.assertIn("routes[1].icon", warnings[1])
+
+    def test_icon_not_string_warns(self) -> None:
+        normalized, warnings = self.validate_with_warnings(
+            document({**pipeline_record(), "key": "high-pipeline", "icon": 4}))
+        self.assertEqual(normalized[0]["icon"], "high")
+        self.assertIn("routes[0].icon", warnings[0])
+        self.assertIn("4", warnings[0])
 
     def test_icon_null_is_not_a_level(self) -> None:
-        self.check_error(document({**pipeline_record(), "icon": None}), "routes[0].icon")
+        normalized, warnings = self.validate_with_warnings(
+            document({**pipeline_record(), "key": "high-pipeline", "icon": None}))
+        self.assertEqual(normalized[0]["icon"], "high")
+        self.assertIn("routes[0].icon", warnings[0])
+        self.assertIn("None", warnings[0])
 
     def test_icon_explicit_level_passes(self) -> None:
         record = {**pipeline_record(), "key": "feature-pipeline", "icon": "high"}
-        self.assertEqual(routes_mod.validate(document(record))[0]["icon"], "high")
+        normalized, warnings = self.validate_with_warnings(document(record))
+        self.assertEqual(normalized[0]["icon"], "high")
+        self.assertEqual(warnings, [])
+        self.assertNotIn("icon_error", normalized[0])
 
     def test_icon_falls_back_to_key_prefix(self) -> None:
         for key, level in (("xhigh-pipeline", "xhigh"), ("high-pipeline", "high"),
@@ -429,6 +481,55 @@ class RouteIconDictionaryTests(unittest.TestCase):
             self.assertIn(glyph, known)
 
 
+class RouteIconUnknownBoardTests(unittest.TestCase):
+    """Маркер недоступной иконки: сервер и доска не разъезжаются (listik-itg8).
+
+    Неизвестный `icon` записи сервер отдаёт полем `icon_error` в `GET /api/routes`,
+    а доска рисует по нему серый кружок с крестиком из `ROUTE_ICON_UNKNOWN`. Здесь
+    читаются исходники доски — так же, как в `RouteIconDictionaryTests`, без сборки.
+    """
+
+    def setUp(self) -> None:
+        self.dictionaries_path = DICTIONARIES_TS
+        text = DICTIONARIES_TS.read_text(encoding="utf-8")
+        marker = "export const ROUTE_ICON_UNKNOWN"
+        self.assertTrue(marker in text, "в dictionaries.ts нет ROUTE_ICON_UNKNOWN")
+        self.unknown_block = text.split(marker, 1)[1].split("\n}", 1)[0]
+        self.route_icon = (REPO_DIR / "web" / "src" / "components" / "marks"
+                           / "RouteIcon.vue").read_text(encoding="utf-8")
+        self.types = (REPO_DIR / "web" / "src" / "api" / "types.ts").read_text(encoding="utf-8")
+        self.store = (REPO_DIR / "web" / "src" / "store" / "listik.ts").read_text(encoding="utf-8")
+        self.modal = (REPO_DIR / "web" / "src" / "components"
+                      / "NewTaskModal.vue").read_text(encoding="utf-8")
+
+    def test_marker_glyph_exists_in_icons_ts(self) -> None:
+        glyphs = ROUTE_GLYPH_RE.findall(self.unknown_block)
+        self.assertEqual(len(glyphs), 1, self.unknown_block)
+        self.assertIn(glyphs[0], routes_mod.icon_names(ICONS_TS))
+
+    def test_marker_is_not_a_route_level(self) -> None:
+        """Крестик не уровень маршрута: в `ROUTE_ICONS` его быть не должно."""
+        self.assertEqual(ROUTE_LEVEL_RE.findall(self.unknown_block), [])
+        block = (self.dictionaries_path.read_text(encoding="utf-8")
+                 .split("export const ROUTE_ICONS", 1)[1].split("\n]", 1)[0])
+        self.assertEqual(ROUTE_LEVEL_RE.findall(block), list(routes_mod.ROUTE_ICONS))
+        marker_glyphs = ROUTE_GLYPH_RE.findall(self.unknown_block)
+        for glyph in ROUTE_GLYPH_RE.findall(block):
+            self.assertNotIn(glyph, marker_glyphs)
+
+    def test_component_marks_the_record_by_icon_error(self) -> None:
+        """Крестик рисуется по `icon_error` ответа, а не по отсутствию уровня вообще."""
+        self.assertIn("ROUTE_ICON_UNKNOWN", self.route_icon)
+        self.assertIn("icon_error", self.route_icon)
+        self.assertIn("icon_error", self.types)
+
+    def test_board_shows_file_warnings(self) -> None:
+        """`warnings` ответа доезжают до формы «Новая задача»."""
+        self.assertIn("warnings", self.types)
+        self.assertIn("routesWarnings", self.store)
+        self.assertIn("routesWarnings", self.modal)
+
+
 class CopyAndStateTests(TempDbTestCase):
     """Пункты 7–11 чек-листа: копия, load, состояние модуля."""
 
@@ -466,6 +567,7 @@ class CopyAndStateTests(TempDbTestCase):
         self.assertEqual(state.error, "routes.json не загружен")
         self.assertEqual(state.routes, [])
         self.assertEqual(state.by_key, {})
+        self.assertEqual(state.warnings, [])
 
     # -- load ----------------------------------------------------------------
 
@@ -508,8 +610,41 @@ class CopyAndStateTests(TempDbTestCase):
         self.assertTrue(state.ok)
         self.assertIsNone(state.error)
         self.assertEqual(state.path, str(self.source))
-        self.assertEqual(len(state.routes), 11)
+        self.assertEqual(len(state.routes), 12)
         self.assertEqual(sorted(state.by_key), sorted(r["key"] for r in state.routes))
+        self.assertEqual(state.warnings, [])
+
+    def _write_routes(self, records, name: str = "custom-routes.json") -> pathlib.Path:
+        path = self.tmp_path / name
+        path.write_text(json.dumps({"version": 1, "routes": list(records)}, ensure_ascii=False),
+                        encoding="utf-8")
+        return path
+
+    def test_load_unknown_icon_warns_but_keeps_the_file(self) -> None:
+        """Опечатка в `icon` — предупреждение, а не ошибка файла (приёмка 1).
+
+        Автостарт остаётся включённым, остальные записи работают, у битой записи
+        посчитан фолбэк по ключу и есть `icon_error` для доски.
+        """
+        bad = {**pipeline_record(), "key": "xhigh-pipeline", "icon": "xhihg"}
+        path = self._write_routes([bad, direct_record()])
+        with contextlib.redirect_stderr(io.StringIO()) as err:
+            state = routes_mod.load(path)
+        self.assertTrue(state.ok)
+        self.assertIsNone(state.error)
+        self.assertEqual([r["key"] for r in state.routes], ["xhigh-pipeline", "dsh"])
+        self.assertEqual([r["icon"] for r in state.routes], ["xhigh", "direct"])
+        self.assertEqual(sorted(state.by_key), ["dsh", "xhigh-pipeline"])
+        self.assertEqual(len(state.warnings), 1)
+        self.assertIn("routes[0].icon", state.warnings[0])
+        self.assertEqual(state.routes[0]["icon_error"], state.warnings[0])
+        self.assertNotIn("icon_error", state.routes[1])
+        text = err.getvalue()
+        self.assertIn("предупреждение", text)
+        self.assertIn("routes[0].icon", text)
+        # В отличие от ошибки файла: автостарт не выключен и человек не нужен.
+        self.assertNotIn("нужен ты", text)
+        self.assertNotIn("автостарт выключен", text)
 
     def test_load_does_not_change_current(self) -> None:
         routes_mod.init_at_startup(source=self.source, target=self.target)
@@ -528,7 +663,7 @@ class CopyAndStateTests(TempDbTestCase):
         self.assertTrue(state.ok)
         self.assertTrue(self.target.exists())
         self.assertIs(routes_mod.current(), state)
-        self.assertEqual(len(state.routes), 11)
+        self.assertEqual(len(state.routes), 12)
         self.assertEqual(state.path, str(self.target))
 
     def test_init_copy_failure_is_not_raised(self) -> None:
@@ -550,7 +685,7 @@ class CopyAndStateTests(TempDbTestCase):
         self.target.write_text("{ битый", encoding="utf-8")
         self.assertIs(routes_mod.current(), before)
         self.assertEqual([r["key"] for r in routes_mod.current().routes], keys_before)
-        self.assertEqual(len(routes_mod.current().routes), 11)
+        self.assertEqual(len(routes_mod.current().routes), 12)
 
 
 class RoutesApiTests(TempDbTestCase):
@@ -612,7 +747,7 @@ class RoutesApiTests(TempDbTestCase):
         self.assertTrue(data["ok"])
         self.assertIsNone(data["error"])
         self.assertEqual(data["path"], str(self.target))
-        self.assertEqual(len(data["routes"]), 11)
+        self.assertEqual(len(data["routes"]), 12)
         for record in data["routes"]:
             self.assertNotIn("command", record)
             self.assertIn("icon", record)
@@ -621,6 +756,44 @@ class RoutesApiTests(TempDbTestCase):
         self.assertEqual(icons["medium-pipeline"], "medium")
         self.assertEqual(icons["dsh"], "direct")
         self.assertIsNone(icons["feature-pipeline"])
+
+    def test_routes_with_bad_icon_warn_and_keep_all_records(self) -> None:
+        """Приёмка 1: неизвестный `icon` — предупреждение, фолбэк и живые остальные.
+
+        Проверяется полный путь: файл рабочей копии → `init_at_startup` → ответ
+        `GET /api/routes` (`warnings[]`, `icon_error` у записи, `icon` по ключу).
+        """
+        bad = {**pipeline_record(), "key": "xhigh-pipeline", "icon": "xhihg"}
+        plain = {**pipeline_record(), "key": "feature-pipeline"}
+        self.target.parent.mkdir(parents=True)
+        self.target.write_text(json.dumps({"version": 1, "routes": [bad, plain, direct_record()]},
+                                          ensure_ascii=False), encoding="utf-8")
+        with contextlib.redirect_stderr(io.StringIO()) as err:
+            state = routes_mod.init_at_startup(source=ROUTES_JSON, target=self.target)
+        self.assertTrue(state.ok)
+        self.assertIn("предупреждение", err.getvalue())
+        status, payload = self._get("/api/routes", token=self.TOKEN)
+        self.assertEqual(status, 200)
+        data = payload["data"]
+        self.assertTrue(data["ok"])
+        self.assertIsNone(data["error"])
+        self.assertEqual(len(data["warnings"]), 1)
+        self.assertIn("routes[0].icon", data["warnings"][0])
+        records = {record["key"]: record for record in data["routes"]}
+        self.assertEqual(sorted(records), ["dsh", "feature-pipeline", "xhigh-pipeline"])
+        self.assertEqual(records["xhigh-pipeline"]["icon"], "xhigh")
+        self.assertEqual(records["xhigh-pipeline"]["icon_error"], data["warnings"][0])
+        self.assertIsNone(records["feature-pipeline"]["icon"])
+        self.assertNotIn("icon_error", records["feature-pipeline"])
+        self.assertEqual(records["dsh"]["icon"], "direct")
+        for record in records.values():
+            self.assertNotIn("command", record)
+
+    def test_handle_routes_has_empty_warnings_for_valid_file(self) -> None:
+        self._init_from_repo()
+        status, data = server.handle("GET", "/api/routes", {}, {}, authed=True)
+        self.assertEqual(status, 200)
+        self.assertEqual(data["warnings"], [])
 
     def test_icon_falls_back_to_key_for_old_runtime_copy(self) -> None:
         """Рабочая копия без поля `icon` (создана до его появления) — уровни по ключу."""
@@ -662,7 +835,7 @@ class RoutesApiTests(TempDbTestCase):
         self.assertEqual(status, 200)
         data = payload["data"]
         self.assertTrue(data["ok"])
-        self.assertEqual(len(data["routes"]), 11)
+        self.assertEqual(len(data["routes"]), 12)
         self.assertEqual([r["key"] for r in data["routes"]][-3:], DIRECT_KEYS)
         self.assertTrue(all("command" not in r for r in data["routes"]))
 
@@ -689,7 +862,7 @@ class RoutesApiTests(TempDbTestCase):
         status, payload = self._get("/api/routes", token=self.TOKEN)
         self.assertEqual(status, 200)
         self.assertTrue(payload["data"]["ok"])
-        self.assertEqual(len(payload["data"]["routes"]), 11)
+        self.assertEqual(len(payload["data"]["routes"]), 12)
 
     def test_health_reports_routes(self) -> None:
         self._init_from_repo()
@@ -700,7 +873,7 @@ class RoutesApiTests(TempDbTestCase):
         self.assertTrue(state["ok"])
         self.assertIsNone(state["error"])
         self.assertEqual(state["path"], str(self.target))
-        self.assertEqual(state["count"], 11)
+        self.assertEqual(state["count"], 12)
 
     def test_health_error_state_is_reported(self) -> None:
         with contextlib.redirect_stderr(io.StringIO()):

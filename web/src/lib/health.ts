@@ -23,13 +23,16 @@ export const HEALTH_TITLES: Record<Health, string> = {
  * 2. stale/abandoned — раньше проверки держателя: abandoned на сервере — это
  *    в первую очередь «в работе без держателя»;
  * 3. нет держателя — unknown;
- * 4. молчит дольше порога или превысила порог этапа — at-risk;
- * 5. иначе healthy.
+ * 4. «выдана, но не взята» дольше порога — at-risk: держатель назначен, но
+ *    агент так и не сделал claim, то есть прогон, похоже, не запустился;
+ * 5. молчит дольше порога или превысила порог этапа — at-risk;
+ * 6. иначе healthy.
  */
 export function taskHealth(task: Task): Health {
   if (task.status === 'done' || task.status === 'cancelled') return 'healthy'
   if (task.stale || task.abandoned) return 'dead'
   if (!task.holder) return 'unknown'
+  if (task.not_taken_warn) return 'at-risk'
   if (task.stage_warn || (task.idle_hours !== null && task.idle_hours >= AT_RISK_IDLE_HOURS)) {
     return 'at-risk'
   }
@@ -43,6 +46,7 @@ export function healthReason(task: Task): string {
   if (task.abandoned && !task.holder) return 'брошена · без держателя'
   if (task.abandoned) return 'брошена'
   if (!task.holder) return 'без держателя'
+  if (task.not_taken) return `выдана, не взята ${task.assigned_age}`
   if (task.idle_hours !== null && task.idle_hours >= AT_RISK_IDLE_HOURS) return `молчит ${task.idle_age}`
   if (task.stage_warn) return 'на этапе дольше порога'
   return `hb ${task.holder_age}`

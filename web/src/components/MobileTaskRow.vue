@@ -4,6 +4,7 @@
  * MobileTaskList (< 1024 px) и телефонным режимом (шаг 06, порция b).
  */
 import { UiBadge, UiStatusPill } from '@zoloto585/facet'
+import { computed } from 'vue'
 import type { Task } from '@/api/types'
 import { humanAge, taskStageLabel } from '@/lib/format'
 import { HEALTH_TITLES, taskHealth } from '@/lib/health'
@@ -18,6 +19,13 @@ function healthTone(task: Task): 'healthy' | 'at-risk' | 'dead' | 'unknown' {
 function healthLabel(task: Task): string {
   return HEALTH_TITLES[taskHealth(task)]
 }
+
+/** «Взята» и «выдана, но не взята» — разные состояния: вторая строка это показывает. */
+const holderText = computed(() => {
+  if (!props.task.holder) return 'держателя нет'
+  if (props.task.not_taken) return `выдана, не взята ${props.task.assigned_age}`
+  return `держит ${props.task.holder_title}`
+})
 </script>
 
 <template>
@@ -32,7 +40,7 @@ function healthLabel(task: Task): string {
       <span>{{ taskStageLabel(props.task) }}</span>
     </span>
     <span class="listik-mobile-task__meta listik-mobile-task__meta--muted">
-      <span>{{ props.task.holder ? `держит ${props.task.holder_title}` : 'держателя нет' }}</span>
+      <span>{{ holderText }}</span>
       <span aria-hidden="true">·</span>
       <span>{{ props.task.holder_at ? `heartbeat ${humanAge(props.task.holder_at)}` : 'heartbeat —' }}</span>
     </span>

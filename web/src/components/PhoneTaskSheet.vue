@@ -133,7 +133,14 @@ function depHolderHint(dep: DepInfo): string {
           <h4 class="listik-section__title">Кто держит</h4>
           <dl class="listik-dl">
             <dt>держит</dt>
-            <dd>{{ task.holder ? `${task.holder_title} · ${task.holder_age}` : 'никто' }}</dd>
+            <dd>
+              <template v-if="!task.holder">никто</template>
+              <template v-else-if="task.not_taken">
+                выдана {{ task.holder_title }}, не взята {{ task.assigned_age }}
+                <template v-if="task.holder_assigned_by_title"> · выдал {{ task.holder_assigned_by_title }}</template>
+              </template>
+              <template v-else>{{ task.holder_title }} · {{ task.holder_age }}</template>
+            </dd>
             <dt>heartbeat</dt>
             <dd>{{ task.holder_at ? `${formatDateTime(task.holder_at)} · ${humanAge(task.holder_at)} назад` : '—' }}</dd>
             <dt>что делает</dt>

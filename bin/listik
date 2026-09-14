@@ -116,10 +116,49 @@ def actor_default(args) -> str | None:
     return args.actor or os.environ.get("LISTIK_ACTOR") or os.environ.get("USER")
 
 
+#: Операции `call()`, которые пишут в базу, — только им терять событие доски
+#: (listik-f6kt). Список по операциям, а не по HTTP-методу: `dep_tree` и
+#: `mentions` шлют POST, но это чтения графа, событий они не создают.
+WRITE_OPS = frozenset({
+    "create", "update", "claim", "heartbeat", "stage", "comment",
+    "needs-owner", "dep_add", "dep_remove",
+})
+
+#: `--local` при живом сервере обходит push доски так же молча, как фолбэк без
+#: сервера. Формулировка та же, что у фолбэка, но с подсказкой убрать --local:
+#: сервер-то отвечает, и запись можно провести через него.
+LOCAL_BYPASS_WARNING = (
+    "! --local: команда пишет прямо в базу, минуя сервер — "
+    "доска не получит событие (убери --local, чтобы доска обновилась)"
+)
+
+
+def warn_local_bypass(args, *, writing: bool) -> None:
+    """`--local` при живом сервере и пишущей команде: предупредить в stderr.
+
+    Сервер опрашиваем только для записей: чтению в `--local` терять нечего, и
+    лишний health-запрос ему ни к чему (приёмка 2 listik-f6kt). Печать идёт
+    строго в stderr, поэтому `--json` остаётся разбираемым в stdout.
+    """
+    if not writing or not getattr(args, "local", False):
+        return
+    try:
+        up = client.is_up(getattr(args, "host", None), getattr(args, "port", None))
+    except Exception:  # noqa: BLE001 — битый config.toml не должен ломать саму команду
+        up = False
+    if up:
+        print(LOCAL_BYPASS_WARNING, file=sys.stderr)
+
+
 def call(op: str, args, path: str, *, query: dict | None = None, body: dict | None = None,
          method: str = "GET", local_kwargs: dict | None = None):
     """Идём в сервер, если он поднят; иначе — прямо в базу (агент не должен падать)."""
-    if not getattr(args, "local", False) and client.is_up(args.host, args.port):
+    if getattr(args, "local", False):
+        warn_local_bypass(args, writing=op in WRITE_OPS)
+        if any((local_kwargs or {}).get(key) for key in ("route", "launch_route")):
+            routes_mod.load_local()
+        return client.local_call(op, **(local_kwargs or {}))
+    if client.is_up(args.host, args.port):
         return client.request(method, path, query=query, body=body,
                               host=args.host, port=args.port)
     if not getattr(args, "local", False):
@@ -175,7 +214,10 @@ def task_line(t: dict, *, width: int = 96) -> str:
         bits.append(f"этап {stage}")
     if t.get("holder"):
         holder = label_of(t, "holder_title", "holder")
-        bits.append(f"держит {holder} {t.get('holder_age', '')}".strip())
+        if t.get("not_taken"):
+            bits.append(f"выдана {holder}, не взята {t.get('assigned_age', '')}".strip())
+        else:
+            bits.append(f"держит {holder} {t.get('holder_age', '')}".strip())
     elif t.get("assignee"):
         bits.append(f"назначен {label_of(t, 'assignee_title', 'assignee')}")
     flags = []
@@ -185,6 +227,8 @@ def task_line(t: dict, *, width: int = 96) -> str:
         flags.append("брошена")
     if t.get("abandoned"):
         flags.append("без держателя")
+    if t.get("not_taken_warn"):
+        flags.append(f"не взята {t.get('assigned_age')}")
     if t.get("stage_warn"):
         flags.append(f"на этапе {t.get('stage_age')}")
     if t.get("blocked_by"):
@@ -226,7 +270,12 @@ def show_task(t: dict) -> None:
              if t.get("stage") else ""))
     holder = label_of(t, "holder_title", "holder")
     if t.get("holder"):
-        holder += f"   держит {t.get('holder_age') or '—'}"
+        if t.get("not_taken"):
+            holder += (f"   выдана, не взята {t.get('assigned_age')}"
+                       + (f" (выдал {t['holder_assigned_by_title']})" if t.get("holder_assigned_by_title") else "")
+                       + " — claim от агента не было")
+        else:
+            holder += f"   держит {t.get('holder_age') or '—'}"
         if t.get("holder_note"):
             holder += f" — {t['holder_note']}"
     print(f"  исполнитель: {label_of(t, 'assignee_title', 'assignee')}   держатель: {holder}")
@@ -240,6 +289,9 @@ def show_task(t: dict) -> None:
         print("  *** ЖДЁТ ЧЕЛОВЕКА ***")
     if t.get("stale"):
         print(f"  !!! брошена: держатель молчит {t.get('holder_age') or '—'}")
+    if t.get("not_taken_warn"):
+        print(f"  !!! выдана, но не взята: {t.get('holder_title')} не сделал claim "
+              f"за {t.get('assigned_age')} — прогон не запустился?")
     if t.get("blocked_by"):
         print(f"  заблокирована: {', '.join(t['blocked_by'])}")
     deps_state = t.get("deps_state")
@@ -729,7 +781,7 @@ def cmd_set(args) -> int:
 
 def _holder_action(args, action: str) -> int:
     body = {"holder": args.holder or actor_default(args), "harness": args.harness,
-            "note": args.note}
+            "actor": actor_default(args), "note": args.note}
     if action == "claim" and getattr(args, "force", False):
         body["force"] = True
     task = call(action, args, f"/api/tasks/{args.task_id}/{action}", method="POST", body=body,
@@ -750,17 +802,19 @@ def cmd_heartbeat(args) -> int:
 
 
 def cmd_stage(args) -> int:
+    actor = actor_default(args)
     if args.to:
-        holder = args.holder or actor_default(args)
+        holder = args.holder or actor
         # Explicit targets use the same server-side routing/holder semantics as
         # the ordinary next-stage command.
-        body = {"to": args.to, "holder": holder, "harness": args.harness, "note": args.note}
+        body = {"to": args.to, "holder": holder, "harness": args.harness, "actor": actor,
+                "note": args.note}
         local = {"task_id": args.task_id, "to_stage": args.to, "holder": holder,
-                 "harness": args.harness, "note": args.note}
+                 "harness": args.harness, "actor": actor, "note": args.note}
         task = call("stage", args, f"/api/tasks/{args.task_id}/stage", method="POST", body=body,
                     local_kwargs=local)
     else:
-        body = {"holder": args.holder or actor_default(args), "harness": args.harness,
+        body = {"holder": args.holder or actor, "harness": args.harness, "actor": actor,
                 "note": args.note}
         task = call("stage", args, f"/api/tasks/{args.task_id}/stage", method="POST", body=body,
                     local_kwargs={**body, "task_id": args.task_id})
@@ -1138,6 +1192,16 @@ def cmd_projects(args) -> int:
     except AttributeError:  # вызов из другого кода без общих флагов
         list_kwargs = {}
 
+    # `projects` пишет мимо `call()` (сразу зовёт client.*), поэтому предупреждение
+    # о `--local` при живом сервере ставим здесь: ветки ниже меняют доску и через
+    # сервер шлют событие `project` (список читающих веток молчит).
+    writes = (getattr(args, "routing", None) is not None
+              or bool(getattr(args, "add", None))
+              or bool(getattr(args, "remove", None))
+              or bool(getattr(args, "archive", None))
+              or bool(getattr(args, "unarchive", None)))
+    warn_local_bypass(args, writing=writes)
+
     if getattr(args, "routing", None) is not None:
         slug = getattr(args, "project", None)
         if not slug:
@@ -1346,7 +1410,9 @@ def build_parser() -> argparse.ArgumentParser:
     p.add_argument("--harness", help="какой харнесс: dsh, grok, claude, codex")
     p.add_argument("--host", help="хост сервера Listik")
     p.add_argument("--port", type=int, help="порт сервера Listik")
-    p.add_argument("--local", action="store_true", help="работать с базой напрямую, минуя сервер")
+    p.add_argument("--local", action="store_true",
+                   help="работать с базой напрямую, минуя сервер "
+                        "(пишущая команда при живом сервере предупредит: доска не получит событие)")
     sub = p.add_subparsers(dest="cmd", required=True)
 
     # Флаги, которые нужны после подкоманды: `listik list --json` читается лучше,
@@ -1361,7 +1427,8 @@ def build_parser() -> argparse.ArgumentParser:
     common.add_argument("--harness", default=argparse.SUPPRESS,
                         help="какой харнесс: dsh, grok, claude, codex")
     common.add_argument("--local", action="store_true", default=argparse.SUPPRESS,
-                        help="работать с базой напрямую, минуя сервер")
+                        help="работать с базой напрямую, минуя сервер "
+                             "(пишущая команда при живом сервере предупредит: доска не получит событие)")
 
     def add(name: str, func, **kw):
         sp = sub.add_parser(name, parents=[common], **kw)

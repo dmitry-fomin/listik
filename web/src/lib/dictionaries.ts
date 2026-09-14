@@ -221,6 +221,17 @@ export function routeIcon(value: string | null | undefined): RouteIconItem | nul
   return ROUTE_ICONS.find((item) => item.value === value) ?? null
 }
 
+/**
+ * Замена иконки записи, у которой `icon` в `routes.json` не принят сервером:
+ * серый кружок с крестиком — «иконка недоступна». Такие записи отличает поле
+ * `icon_error` из `GET /api/routes`; уровень, выведенный по ключу, рисуется
+ * обычной иконкой из `ROUTE_ICONS`, крестик же значит, что уровня нет вовсе.
+ */
+export const ROUTE_ICON_UNKNOWN = {
+  label: 'иконка недоступна',
+  icon: 'route-unknown',
+} as const
+
 // ── Когнитивная сложность (оценка помощника DeepSeek) ───────────────────────
 
 export interface ComplexityItem extends DictionaryItem<AssistantComplexityLevel> {

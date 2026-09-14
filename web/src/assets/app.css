@@ -385,7 +385,7 @@ body {
   align-items: center;
   gap: var(--space-2);
   margin: 0;
-  font-size: var(--text-xl);
+  font-size: var(--text-lg);
   font-weight: var(--weight-semibold);
   letter-spacing: var(--tracking-tight);
   color: var(--ink-1);
@@ -891,7 +891,7 @@ body .ui-drawer-backdrop.ui-drawer-backdrop--right .ui-drawer.ui-drawer--right.u
 
 .listik-drawer__title {
   margin: 0;
-  font-size: var(--text-lg);
+  font-size: var(--text-xl);
   font-weight: var(--weight-semibold);
   letter-spacing: var(--tracking-tight);
   color: var(--ink-1);
@@ -905,15 +905,47 @@ body .ui-drawer-backdrop.ui-drawer-backdrop--right .ui-drawer.ui-drawer--right.u
   display: flex;
   align-items: center;
   gap: var(--space-2);
-  margin-left: auto;
   font-family: var(--font-mono);
   font-size: var(--text-sm);
   color: var(--ink-1);
 }
 
-/* Промежуток между секциями панели крупнее общего .listik-stack (--space-4). */
+:root {
+  --listik-vsep-w: 1px;
+  --listik-vsep-h: var(--space-4);
+  --listik-cold-dot: var(--space-4);
+  --listik-cold-key: 140px;
+  --listik-cold-copy: 24px;
+  --listik-cold-row: 40px;
+  --listik-dl-key: 96px;
+}
+
+.listik-drawer__slash {
+  color: var(--ink-4);
+}
+
+.listik-drawer__vsep,
+.listik-drawer__release-sep {
+  display: inline-block;
+  flex: none;
+  width: var(--listik-vsep-w);
+  height: var(--listik-vsep-h);
+  background: var(--hairline);
+}
+
+.listik-drawer__release-sep {
+  height: 18px;
+}
+
+/* Разделители между прямыми секциями панели. */
 .listik-drawer__body {
-  gap: var(--space-8);
+  gap: 0;
+}
+
+.listik-drawer__body > * + * {
+  margin-top: var(--space-4);
+  padding-top: var(--space-4);
+  border-top: 1px solid var(--hairline);
 }
 
 .listik-drawer__spacer {
@@ -922,6 +954,12 @@ body .ui-drawer-backdrop.ui-drawer-backdrop--right .ui-drawer.ui-drawer--right.u
 
 .listik-drawer__process {
   min-width: 0;
+  align-items: center;
+  width: 100%;
+  padding: var(--space-2);
+  border: 1px solid var(--hairline);
+  border-radius: var(--radius-md);
+  background: var(--surface-2);
 }
 
 .listik-drawer__unsafe-release {
@@ -929,6 +967,56 @@ body .ui-drawer-backdrop.ui-drawer-backdrop--right .ui-drawer.ui-drawer--right.u
   align-items: center;
   gap: var(--space-2);
   flex-wrap: wrap;
+}
+
+.listik-drawer__reasons {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-2);
+}
+
+.listik-drawer__reason {
+  display: flex;
+  align-items: flex-start;
+  gap: var(--space-2);
+  color: var(--ink-3);
+  font-size: var(--text-sm);
+}
+
+.listik-drawer__reason > .listik-icon,
+.listik-drawer__reason > svg {
+  flex: none;
+  margin-top: 2px;
+}
+
+.listik-drawer__reason--warning {
+  color: var(--warning-600);
+}
+
+.listik-drawer__reason--warning > .listik-icon,
+.listik-drawer__reason--warning > svg {
+  color: var(--warning-500);
+}
+
+.listik-drawer__holder-block {
+  display: flex;
+  flex-direction: column;
+  row-gap: var(--space-2);
+}
+
+.listik-drawer__holder-grid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  column-gap: var(--space-6);
+}
+
+.listik-drawer__nowrap {
+  flex-wrap: nowrap;
+  min-width: 0;
+}
+
+.listik-drawer__start {
+  align-items: flex-start;
 }
 
 .listik-events {
@@ -1281,18 +1369,29 @@ body .ui-drawer-backdrop.ui-drawer-backdrop--right .ui-drawer.ui-drawer--right.u
   flex-direction: column;
 }
 
+.listik-cold__head {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-1);
+}
+
 .listik-cold__row {
   display: grid;
-  grid-template-columns: 28px 132px 1fr;
+  grid-template-columns: var(--listik-cold-dot) var(--listik-cold-key) minmax(0, 1fr) var(--listik-cold-copy);
   align-items: center;
-  gap: var(--space-2);
-  padding: var(--space-2) 0;
+  column-gap: var(--space-3);
+  height: var(--listik-cold-row);
   border-bottom: 1px solid var(--hairline);
   font-size: var(--text-sm);
 }
 
-.listik-cold__row:last-child {
-  border-bottom: none;
+.listik-cold__row > .ui-tooltip,
+.listik-cold__row > .ui-copy-button {
+  justify-self: center;
+}
+
+.listik-cold__row > .ui-copy-button {
+  justify-self: end;
 }
 
 .listik-cold__key {
@@ -1353,8 +1452,9 @@ body .ui-drawer-backdrop.ui-drawer-backdrop--right .ui-drawer.ui-drawer--right.u
 
 .listik-dl {
   display: grid;
-  grid-template-columns: minmax(140px, max-content) minmax(0, 1fr);
-  gap: var(--space-2) var(--space-4);
+  grid-template-columns: var(--listik-dl-key) minmax(0, 1fr);
+  column-gap: var(--space-3);
+  row-gap: var(--space-2);
   margin: 0;
   font-size: var(--text-sm);
 }
@@ -1471,11 +1571,6 @@ body .ui-drawer-backdrop.ui-drawer-backdrop--right .ui-drawer.ui-drawer--right.u
   .ui-drawer .listik-drawer__close-action,
   .ui-drawer .listik-drawer__unsafe-release {
     display: none !important;
-  }
-
-  .listik-dl {
-    grid-template-columns: minmax(100px, max-content) minmax(0, 1fr);
-    gap: var(--space-2) var(--space-3);
   }
 
   .listik-dep-tree__progress {

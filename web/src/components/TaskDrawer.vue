@@ -31,6 +31,7 @@ import {
   UiSkeleton,
   UiStatusPill,
   UiSteps,
+  UiTableActionButton,
   UiTextarea,
   UiTimeline,
   UiTooltip,
@@ -102,6 +103,10 @@ const props = defineProps<{
   /** Запрос дерева зависимостей (POST …/deps без depends_on). */
   loadTree: (id: string, depth?: number) => Promise<DepTree | null>
 }>()
+
+// `.listik-stack` объявляет gap позже общих стилей drawer и перекрывает его.
+// Секции панели задают собственные отступы через margin/padding и разделитель.
+const drawerBodyGap = computed(() => 0)
 
 const emit = defineEmits<{
   'update:modelValue': [value: boolean]
@@ -1084,6 +1089,13 @@ async function loadTree(): Promise<void> {
         <div class="listik-row listik-drawer__meta-row">
           <TaskGlyph kind="type" :value="task.issue_type" />
           <ProjectMark :project="projectOf(task)" :slug="task.project" with-title size="sm" />
+          <span class="listik-drawer__slash">/</span>
+          <span class="listik-drawer__id">
+            <span class="listik-mono">{{ task.id }}</span>
+            <UiCopyButton :value="task.id" label="ID задачи">
+              <template #icon="{ copied }"><ListikIcon :name="copied ? 'check' : 'copy'" size="sm" /></template>
+            </UiCopyButton>
+          </span>
           <span v-if="parentDep" class="listik-section__hint listik-drawer__truncate">
             · порция шага «{{ parentDep.title }}»
           </span>
@@ -1096,16 +1108,15 @@ async function loadTree(): Promise<void> {
             <TaskGlyph kind="priority" :value="task.priority" />
             <span class="listik-section__hint">{{ priority(task.priority).label }}</span>
           </span>
-          <UiBadge v-for="label in task.labels" :key="label" tone="info" size="sm">{{ label }}</UiBadge>
+          <span
+            v-if="task.labels.length || waitingFor.length || blockedBy.length || task.needs_owner"
+            class="listik-drawer__vsep"
+            aria-hidden="true"
+          />
+          <UiBadge v-for="label in task.labels" :key="label" tone="info" size="sm"><span class="listik-mono">{{ label }}</span></UiBadge>
           <UiBadge v-if="waitingFor.length" tone="accent" size="sm">её ждут {{ waitingFor.length }}</UiBadge>
           <UiBadge v-if="blockedBy.length" tone="warning" size="sm">ждёт {{ blockedBy.length }}</UiBadge>
           <UiBadge v-if="task.needs_owner" tone="accent" size="sm">нужен ты</UiBadge>
-          <span class="listik-drawer__id">
-            <span class="listik-mono">{{ task.id }}</span>
-            <UiCopyButton :value="task.id" label="ID задачи">
-              <template #icon="{ copied }"><ListikIcon :name="copied ? 'check' : 'copy'" size="sm" /></template>
-            </UiCopyButton>
-          </span>
         </div>
       </div>
       <div v-else class="listik-drawer__head">
@@ -1132,7 +1143,7 @@ async function loadTree(): Promise<void> {
       <UiSkeleton variant="rect" height="160px" />
     </div>
 
-    <div v-else-if="task" class="listik-stack listik-drawer__body">
+    <div v-else-if="task" class="listik-stack listik-drawer__body" :style="{ gap: `${drawerBodyGap}px` }">
       <section class="listik-section">
         <div class="listik-section__head">
           <h4 class="listik-section__title">Где стоит процесс</h4>
@@ -1140,7 +1151,7 @@ async function loadTree(): Promise<void> {
         </div>
         <UiSteps :items="steps" :current-index="currentIndex" label="Этапы конвейера" />
 
-        <div class="listik-row listik-drawer__process">
+          <div class="listik-row listik-drawer__process">
           <UiTooltip text="Heartbeat">
             <UiButton
               size="sm"
@@ -1187,7 +1198,7 @@ async function loadTree(): Promise<void> {
               <template #icon><ListikIcon name="play" size="xs" /></template>
             </UiButton>
           </UiTooltip>
-          <UiTooltip text="Закрыть с результатом">
+            <UiTooltip text="Закрыть с результатом">
             <UiButton
               size="sm"
               variant="secondary"
@@ -1197,8 +1208,9 @@ async function loadTree(): Promise<void> {
             >
               <template #icon><ListikIcon name="flag" size="xs" /></template>
             </UiButton>
-          </UiTooltip>
-          <span class="listik-drawer__unsafe-release">
+            </UiTooltip>
+            <span class="listik-drawer__spacer" />
+            <span class="listik-drawer__unsafe-release">
             <UiButton
               size="sm"
               variant="ghost"
@@ -1208,22 +1220,28 @@ async function loadTree(): Promise<void> {
             >
               Освободить
             </UiButton>
-            <UiButton
-              size="sm"
-              variant="ghost"
-              :loading="pending === 'remove'"
-              v-bind="{ 'aria-label': `Удалить задачу ${task.id}` }"
+            <span class="listik-drawer__release-sep" aria-hidden="true" />
+            <UiTableActionButton
+              tone="danger-quiet"
+              :label="`Удалить задачу ${task.id}`"
+              :disabled="pending === 'remove'"
               @click="removeOpen = true"
             >
               <template #icon><ListikIcon name="close" size="xs" /></template>
               Удалить
-            </UiButton>
-          </span>
-        </div>
+            </UiTableActionButton>
+            </span>
+          </div>
 
-        <div class="listik-row">
-          <span class="listik-section__hint">{{ belowRowHint }}</span>
-          <UiBadge v-if="!canFinish" tone="warning" size="sm">закрывать нельзя: открыты дети</UiBadge>
+        <div class="listik-drawer__reasons">
+          <div v-if="belowRowHint" class="listik-drawer__reason" :class="{ 'listik-drawer__reason--ready': deps?.ready }">
+            <ListikIcon :name="deps?.ready ? 'check' : 'lock'" size="sm" />
+            <span>{{ belowRowHint }}</span>
+          </div>
+          <div v-if="!canFinish" class="listik-drawer__reason listik-drawer__reason--warning">
+            <ListikIcon name="warning" size="sm" />
+            <span>закрывать нельзя: открыты дети</span>
+          </div>
         </div>
 
         <div v-if="needsOwnerFormOpen" class="listik-row">
@@ -1248,9 +1266,9 @@ async function loadTree(): Promise<void> {
         </div>
       </section>
 
-      <section v-if="showLaunch" class="listik-section">
+      <section v-if="showLaunch && routeEditable" class="listik-section">
         <div class="listik-section__head">
-          <h4 class="listik-section__title">{{ routeEditable ? 'Маршрут запуска' : 'Автостарт' }}</h4>
+          <h4 class="listik-section__title">Маршрут запуска</h4>
           <span v-if="routeEditable" class="listik-section__hint">менять можно, пока задача не начата</span>
         </div>
 
@@ -1291,51 +1309,14 @@ async function loadTree(): Promise<void> {
           </UiAlert>
         </template>
 
-        <dl v-else class="listik-dl">
-          <dt>маршрут</dt>
-          <dd class="listik-row" style="flex-wrap: nowrap">
-            <RouteIcon
-              v-if="launchRoute"
-              :route="launchRoute"
-              size="sm"
-              :title="`маршрут: ${launchRoute.title}`"
-            />
-            <span class="listik-mono">{{ task.launch_route || '—' }}</span>
-          </dd>
-          <template v-if="task.launched_by === 'listik'">
-            <dt>запуск</dt>
-            <dd>
-              запущена Listik<template v-if="task.launch_pid != null"> · pid {{ task.launch_pid }}</template>
-              <template v-if="task.launched_at"> · {{ formatDateTime(task.launched_at) }}</template>
-            </dd>
-          </template>
-          <template v-if="launchStatus">
-            <dt>статус</dt>
-            <dd>{{ launchStatus }}</dd>
-          </template>
-          <template v-if="task.launch_error">
-            <dt>ошибка</dt>
-            <dd class="listik-row" style="flex-wrap: nowrap; align-items: flex-start">
-              <ListikIcon name="warning" size="xs" />
-              <span>{{ task.launch_error }}</span>
-            </dd>
-          </template>
-          <template v-if="task.launch_log">
-            <dt>лог</dt>
-            <dd class="listik-row" style="flex-wrap: nowrap; min-width: 0">
-              <span class="listik-mono">{{ task.launch_log }}</span>
-              <UiCopyButton :value="task.launch_log" label="Путь к логу запуска">
-                <template #icon="{ copied }"><ListikIcon :name="copied ? 'check' : 'copy'" size="sm" /></template>
-              </UiCopyButton>
-            </dd>
-          </template>
-        </dl>
       </section>
 
       <section class="listik-section">
-        <div class="listik-section__head">
-          <h4 class="listik-section__title">Холодный старт</h4>
-          <UiBadge :tone="coldTone" size="sm">{{ coldOkCount }} из {{ coldRows.length }}</UiBadge>
+        <div class="listik-cold__head">
+          <div class="listik-row">
+            <h4 class="listik-section__title">Холодный старт</h4>
+            <UiBadge :tone="coldTone" size="sm">{{ coldOkCount }} из {{ coldRows.length }}</UiBadge>
+          </div>
           <span class="listik-section__hint">что увидит принимающий по <code class="listik-mono">listik show</code></span>
         </div>
         <div class="listik-cold">
@@ -1344,23 +1325,23 @@ async function loadTree(): Promise<void> {
               <UiStatusPill :tone="row.tone" size="sm" />
             </UiTooltip>
             <span class="listik-cold__key">{{ row.label }}</span>
-            <span class="listik-row" style="flex-wrap: nowrap; min-width: 0">
-              <span
-                class="listik-cold__value"
-                :class="{ 'listik-cold__value--state': row.words }"
-                :style="row.color ? { color: row.color } : undefined"
-              >{{ row.value }}</span>
-              <UiCopyButton :value="row.value" :label="row.label">
-                <template #icon="{ copied }"><ListikIcon :name="copied ? 'check' : 'copy'" size="sm" /></template>
-              </UiCopyButton>
-            </span>
+            <span
+              class="listik-cold__value"
+              :class="{ 'listik-cold__value--state': row.words }"
+              :style="row.color ? { color: row.color } : undefined"
+            >{{ row.value }}</span>
+            <UiCopyButton :value="row.value" :label="row.label">
+              <template #icon="{ copied }"><ListikIcon :name="copied ? 'check' : 'copy'" size="sm" /></template>
+            </UiCopyButton>
           </div>
         </div>
       </section>
 
-      <section class="listik-section">
-        <h4 class="listik-section__title">Кто держит</h4>
-        <dl class="listik-dl">
+      <div class="listik-drawer__holder-block">
+        <div class="listik-drawer__holder-grid">
+          <section class="listik-section">
+            <h4 class="listik-section__title">Кто держит</h4>
+            <dl class="listik-dl">
           <dt>держит</dt>
           <dd>
             <HarnessIcon :actor="task.holder" />
@@ -1379,16 +1360,46 @@ async function loadTree(): Promise<void> {
             {{ task.holder_at ? formatDateTime(task.holder_at) : '—' }}
             <template v-if="task.holder_at"> · {{ humanAge(task.holder_at) }} назад</template>
           </dd>
-          <dt>что делает</dt>
-          <dd>{{ task.holder_note ? `«${task.holder_note}»` : '—' }}</dd>
           <dt>этап с</dt>
           <dd>{{ task.stage_at ? formatDateTime(task.stage_at) : '—' }} · {{ task.stage_age }}</dd>
           <template v-if="task.assignee && task.assignee !== task.holder">
             <dt>исполнитель</dt>
             <dd>{{ task.assignee_title || task.assignee }}</dd>
           </template>
+            </dl>
+          </section>
+          <section v-if="showLaunch && !routeEditable" class="listik-section">
+            <h4 class="listik-section__title">Автостарт</h4>
+            <dl class="listik-dl">
+              <dt>маршрут</dt>
+              <dd class="listik-row listik-drawer__nowrap">
+                <RouteIcon v-if="launchRoute" :route="launchRoute" size="sm" :title="`маршрут: ${launchRoute.title}`" />
+                <span class="listik-mono">{{ task.launch_route || '—' }}</span>
+              </dd>
+              <template v-if="task.launched_by === 'listik'">
+                <dt>запуск</dt>
+                <dd>
+                  запущена Listik<template v-if="task.launch_pid != null"> · pid {{ task.launch_pid }}</template>
+                  <template v-if="task.launched_at"> · {{ formatDateTime(task.launched_at) }}</template>
+                </dd>
+              </template>
+              <template v-if="launchStatus"><dt>статус</dt><dd>{{ launchStatus }}</dd></template>
+              <template v-if="task.launch_error">
+                <dt>ошибка</dt>
+                <dd class="listik-row listik-drawer__nowrap listik-drawer__start"><ListikIcon name="warning" size="xs" /><span>{{ task.launch_error }}</span></dd>
+              </template>
+              <template v-if="task.launch_log">
+                <dt>лог</dt>
+                <dd class="listik-row listik-drawer__nowrap"><span class="listik-mono">{{ task.launch_log }}</span><UiCopyButton :value="task.launch_log" label="Путь к логу запуска"><template #icon="{ copied }"><ListikIcon :name="copied ? 'check' : 'copy'" size="sm" /></template></UiCopyButton></dd>
+              </template>
+            </dl>
+          </section>
+        </div>
+        <dl class="listik-dl">
+          <dt>что делает</dt>
+          <dd>{{ task.holder_note ? `«${task.holder_note}»` : '—' }}</dd>
         </dl>
-      </section>
+      </div>
 
       <section class="listik-section">
         <div class="listik-section__head">
@@ -1765,4 +1776,3 @@ async function loadTree(): Promise<void> {
      в assets/app.css, раздел «Панель задачи»: заголовок телепортируется в
      body вместе с data-v-атрибутом, а .listik-events переиспользуется и вне
      этого компонента (общие «мелочи страницы»). -->
-

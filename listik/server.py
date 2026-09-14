@@ -132,6 +132,8 @@ _fingerprint: dict | None = None
 _db_replaced: dict | None = None
 _last_watch = 0.0
 _dbwatch_stop = threading.Event()
+#: Поток надзора, запущенный `start_db_watch`; останавливается `stop_db_watch`.
+_dbwatch_thread: threading.Thread | None = None
 
 
 def _file_id(path: Path) -> tuple[int, int] | None:
@@ -259,20 +261,43 @@ def start_db_watch(interval: float = DB_WATCH_INTERVAL) -> threading.Thread:
     """Фоновый надзор за файлами базы: подмена или удаление — событие в лог и health.
 
     Отдельный поток, а не только проверка в `get_conn`: подмену нужно заметить и
-    тогда, когда запросов нет (ночью, на простаивающем сервере).
+    тогда, когда запросов нет (ночью, на простаивающем сервере). Остановка —
+    `stop_db_watch()` (serve вызывает её при завершении, listik-2gn8).
     """
+    global _dbwatch_stop, _dbwatch_thread
+    stop_db_watch()  # второй запуск не плодит потоки
     _watch_tick(force=True)  # запомнить исходные inode
+    stop = threading.Event()  # своё событие: цикл не зависит от подмены глобала
 
     def loop() -> None:
-        while not _dbwatch_stop.wait(interval):
+        while not stop.wait(interval):
             try:
                 _watch_tick(force=True)
             except Exception as exc:  # noqa: BLE001 — надзор не должен падать
                 print(f"[watch] пропуск: {type(exc).__name__}: {exc}", flush=True)
 
     thread = threading.Thread(target=loop, name="listik-watch", daemon=True)
+    _dbwatch_stop, _dbwatch_thread = stop, thread
     thread.start()
     return thread
+
+
+def stop_db_watch(timeout: float = 5.0) -> bool:
+    """Остановить поток надзора и дождаться его. Идемпотентна.
+
+    True — потока нет или он завершился за `timeout`.
+    """
+    global _dbwatch_thread
+    thread = _dbwatch_thread
+    _dbwatch_stop.set()
+    if thread is None:
+        return True
+    if thread is not threading.current_thread():
+        thread.join(timeout)
+    if thread.is_alive():
+        return False
+    _dbwatch_thread = None
+    return True
 
 
 # Последняя ошибка базы в фоновом потоке — отдаётся в /api/health, чтобы не молчать.
@@ -1364,6 +1389,7 @@ def serve(host: str | None = None, port: int | None = None, quiet: bool = False,
         try:
             httpd.serve_forever()
         finally:
+            stop_db_watch()
             httpd.server_close()
             try:
                 pid_file().unlink()
@@ -1391,6 +1417,7 @@ def serve(host: str | None = None, port: int | None = None, quiet: bool = False,
     except KeyboardInterrupt:
         print("\nостановлен")
     finally:
+        stop_db_watch()
         httpd.server_close()
         try:
             pid_file().unlink()

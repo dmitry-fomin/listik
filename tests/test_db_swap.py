@@ -48,7 +48,7 @@ class SwapStateCase(unittest.TestCase):
 
     _GLOBALS = ("_conn_local", "_conn_made", "_conns", "_db_generation",
                 "_schema_generation", "_fingerprint", "_db_replaced", "_db_error",
-                "_last_watch", "_dbwatch_stop")
+                "_last_watch", "_dbwatch_stop", "_dbwatch_thread")
 
     def setUp(self) -> None:
         self._saved = {name: getattr(server, name) for name in self._GLOBALS}
@@ -72,10 +72,17 @@ class SwapStateCase(unittest.TestCase):
         server._db_error = None
         server._last_watch = 0.0
         server._dbwatch_stop = threading.Event()
+        server._dbwatch_thread = None
         self.addCleanup(self._restore_state)
+        # Строки «[watch] …» — ожидаемый вывод подмены; держим их в буфере теста.
+        self.watch_output = io.StringIO()
+        redirect = contextlib.redirect_stdout(self.watch_output)
+        redirect.__enter__()
+        self.addCleanup(redirect.__exit__, None, None, None)
 
     def _restore_state(self) -> None:
-        self._saved["_dbwatch_stop"].set()
+        # Сначала остановить поток этого теста, пока глобалы ещё его (listik-2gn8).
+        self.assertTrue(server.stop_db_watch(), "поток надзора не остановился")
         for conn in list(server._conns.values()) + [getattr(server._conn_local, "conn", None)]:
             if conn is None:
                 continue
@@ -206,8 +213,7 @@ class WatchThreadTests(SwapStateCase):
 
     def test_watch_thread_detects_swap(self) -> None:
         self.make_task("до подмены")
-        thread = server.start_db_watch(interval=0.02)
-        self.addCleanup(thread.join, 5)
+        server.start_db_watch(interval=0.02)
         self.swap_db_file()
 
         deadline = time.time() + 5
@@ -215,6 +221,46 @@ class WatchThreadTests(SwapStateCase):
             time.sleep(0.01)
         self.assertIsNotNone(server._db_replaced, "надзор не заметил подмену файла")
         self.assertIn("заменён", server._db_replaced["detail"])
+
+    def test_stop_ends_thread_and_is_idempotent(self) -> None:
+        thread = server.start_db_watch(interval=0.02)
+        self.assertTrue(thread.is_alive())
+        self.assertTrue(server.stop_db_watch())
+        self.assertFalse(thread.is_alive())
+        self.assertIsNone(server._dbwatch_thread)
+        self.assertTrue(server.stop_db_watch())
+
+    def test_restart_replaces_previous_thread(self) -> None:
+        first = server.start_db_watch(interval=0.02)
+        second = server.start_db_watch(interval=0.02)
+        self.assertFalse(first.is_alive())
+        self.assertTrue(second.is_alive())
+        self.assertTrue(server.stop_db_watch())
+        self.assertFalse(second.is_alive())
+
+    def test_serve_stops_watch_on_shutdown(self) -> None:
+        started: list[threading.Thread] = []
+        real_start = server.start_db_watch
+
+        def fake_httpd(*_a, **_k):
+            httpd = mock.Mock()
+            httpd.serve_forever.side_effect = KeyboardInterrupt
+            return httpd
+
+        def start(*a, **k):
+            started.append(real_start(interval=0.02))
+            return started[-1]
+
+        with mock.patch.object(server, "bind_or_explain", side_effect=fake_httpd), \
+                mock.patch.object(server, "start_db_watch", side_effect=start), \
+                mock.patch.object(server.routes_mod, "init_at_startup"), \
+                mock.patch.object(server.launcher_mod, "recover"), \
+                mock.patch.object(server, "pid_file", return_value=self.tmp_path / "pid"), \
+                contextlib.redirect_stdout(io.StringIO()):
+            server.serve(no_embed=True, quiet=True)
+        self.assertEqual(len(started), 1)
+        self.assertFalse(started[0].is_alive(), "поток надзора жив после shutdown")
+        self.assertIsNone(server._dbwatch_thread)
 
 
 class ReportTests(SwapStateCase):

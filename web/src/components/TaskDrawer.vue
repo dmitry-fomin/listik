@@ -25,7 +25,6 @@ import {
   UiSegmented,
   UiSelect,
   UiSkeleton,
-  UiSplitButton,
   UiStatusPill,
   UiSteps,
   UiTextarea,
@@ -34,7 +33,6 @@ import {
   type StatusPillTone,
   type UiSegmentedOption,
   type UiSelectOption,
-  type UiSplitButtonItem,
   type UiStepItem,
   type UiStepStatus,
   type UiTimelineItem,
@@ -111,9 +109,6 @@ const holder = ref<string | null>(null)
 const holderInitialised = ref(false)
 const closeResult = ref('')
 const newDep = ref('')
-const claimOpen = ref(false)
-const claimWarningOpen = ref(false)
-const forceDialogOpen = ref(false)
 const closeFormOpen = ref(false)
 const removeOpen = ref(false)
 const depFormOpen = ref(false)
@@ -180,8 +175,6 @@ const dependentsSummary = computed<TaskDependent[]>(() => {
 })
 const canFinish = computed(() => deps.value?.can_finish !== false)
 const reasons = computed<string[]>(() => deps.value?.reasons ?? [])
-/** Серверная семантика «взять можно»: нет блокеров, нет держателя, не закрыта. */
-const canClaim = computed(() => deps.value?.ready === true)
 /** Блокеры стоят без движения: ни держателя, ни свежего heartbeat. */
 const blockersIdle = computed(
   () => blockedBy.value.length > 0 && blockedBy.value.every((dep) => dep.missing || dep.stale || !dep.holder),
@@ -343,8 +336,6 @@ watch(
     feedText.value = ''
     feedKind.value = 'journal'
     feedFilter.value = 'all'
-    claimOpen.value = false
-    claimWarningOpen.value = false
     closeFormOpen.value = false
     removeOpen.value = false
     depFormOpen.value = false
@@ -536,47 +527,6 @@ const belowRowHint = computed(() => {
   return 'можно брать прямо сейчас'
 })
 
-const splitItems = computed<UiSplitButtonItem[]>(() => [
-  {
-    key: 'force',
-    label: 'Взять всё равно (обход блокеров)',
-    danger: true,
-    disabled: !(blockedBy.value.length > 0 && !deps.value?.holder),
-  },
-  { key: 'done', label: 'Закрыть с результатом…', disabled: !canFinish.value },
-  { key: 'dep', label: 'Добавить связь…' },
-])
-
-function onClaimMainClick(): void {
-  if (canClaim.value) {
-    claimWarningOpen.value = false
-    claimOpen.value = !claimOpen.value
-  } else {
-    claimOpen.value = false
-    claimWarningOpen.value = !claimWarningOpen.value
-  }
-}
-
-function onSplitSelect(item: UiSplitButtonItem): void {
-  if (item.key === 'force') forceDialogOpen.value = true
-  else if (item.key === 'done') closeFormOpen.value = true
-  else if (item.key === 'dep') depFormOpen.value = true
-}
-
-function submitClaim(force = false): void {
-  if (!props.task) return
-  const value = (holder.value ?? '').trim()
-  if (!value) return
-  try {
-    window.localStorage.setItem(HOLDER_KEY, value)
-  } catch {
-    /* не критично */
-  }
-  emit('claim', { id: props.task.id, holder: value, force })
-  claimOpen.value = false
-  forceDialogOpen.value = false
-}
-
 function submitHeartbeat(): void {
   const value = (holder.value ?? '').trim()
   if (!props.task || !value) return
@@ -627,16 +577,6 @@ function submitDep(): void {
   newDep.value = ''
   depFormOpen.value = false
 }
-
-const actorOptions = computed<UiSelectOption<string>[]>(() => {
-  const list = props.actors ?? []
-  const options: UiSelectOption<string>[] = list.map((actor) => ({
-    value: actor.key,
-    label: actor.title || actor.key,
-  }))
-  if (!options.some((option) => option.value === 'me')) options.unshift({ value: 'me', label: 'я (me)' })
-  return options
-})
 
 // ── «Холодный старт» ──────────────────────────────────────────────────────
 
@@ -967,40 +907,63 @@ async function loadTree(): Promise<void> {
         <UiSteps :items="steps" :current-index="currentIndex" label="Этапы конвейера" />
 
         <div class="listik-row listik-drawer__process">
-          <UiButton
-            size="sm"
-            variant="secondary"
-            :loading="pending === 'heartbeat'"
-            :disabled="!holder"
-            @click="submitHeartbeat"
-          >
-            <template #icon><ListikIcon name="clock" size="xs" /></template>
-            Heartbeat
-          </UiButton>
-          <UiButton
-            v-if="task.needs_owner"
-            size="sm"
-            variant="secondary"
-            :loading="pending === 'needs-owner'"
-            @click="clearNeedsOwner"
-          >
-            <template #icon><ListikIcon name="check" size="xs" /></template>
-            Снять «нужен автор»
-          </UiButton>
-          <UiButton v-else size="sm" variant="secondary" :loading="pending === 'needs-owner'" @click="openNeedsOwnerForm">
-            <template #icon><ListikIcon name="warning" size="xs" /></template>
-            Нужен автор
-          </UiButton>
-          <UiButton
-            size="sm"
-            variant="secondary"
-            :disabled="task.stage === 'done'"
-            :loading="pending === 'stage'"
-            @click="submitStage"
-          >
-            <template #icon><ListikIcon name="bolt" size="xs" /></template>
-            Следующий этап
-          </UiButton>
+          <UiTooltip text="Heartbeat">
+            <UiButton
+              size="sm"
+              variant="secondary"
+              ariaLabel="Heartbeat"
+              :loading="pending === 'heartbeat'"
+              :disabled="!holder"
+              @click="submitHeartbeat"
+            >
+              <template #icon><ListikIcon name="heart" size="xs" /></template>
+            </UiButton>
+          </UiTooltip>
+          <UiTooltip v-if="task.needs_owner" text="Снять «нужен автор»">
+            <UiButton
+              size="sm"
+              variant="secondary"
+              ariaLabel="Снять «нужен автор»"
+              :loading="pending === 'needs-owner'"
+              @click="clearNeedsOwner"
+            >
+              <template #icon><ListikIcon name="check" size="xs" /></template>
+            </UiButton>
+          </UiTooltip>
+          <UiTooltip v-else text="Нужен автор">
+            <UiButton
+              size="sm"
+              variant="secondary"
+              ariaLabel="Нужен автор"
+              :loading="pending === 'needs-owner'"
+              @click="openNeedsOwnerForm"
+            >
+              <template #icon><ListikIcon name="user" size="xs" /></template>
+            </UiButton>
+          </UiTooltip>
+          <UiTooltip text="Следующий этап">
+            <UiButton
+              size="sm"
+              variant="secondary"
+              ariaLabel="Следующий этап"
+              :disabled="task.stage === 'done'"
+              :loading="pending === 'stage'"
+              @click="submitStage"
+            >
+              <template #icon><ListikIcon name="play" size="xs" /></template>
+            </UiButton>
+          </UiTooltip>
+          <UiTooltip text="Закрыть с результатом">
+            <UiButton
+              size="sm"
+              variant="secondary"
+              ariaLabel="Закрыть с результатом"
+              :disabled="!canFinish"
+              @click="closeFormOpen = !closeFormOpen"
+            >
+              <template #icon><ListikIcon name="flag" size="xs" /></template>
+            </UiButton>
+          </UiTooltip>
           <span class="listik-drawer__unsafe-release">
             <UiButton
               size="sm"
@@ -1022,45 +985,11 @@ async function loadTree(): Promise<void> {
               Удалить
             </UiButton>
           </span>
-          <span class="listik-drawer__spacer" />
-          <span :data-can-claim="canClaim">
-            <UiSplitButton
-              variant="primary"
-              size="sm"
-              :items="splitItems"
-              :loading="pending === 'claim'"
-              @click="onClaimMainClick"
-              @select="onSplitSelect"
-            >
-              <template #icon><ListikIcon name="hand" size="xs" /></template>
-              Взять в работу
-            </UiSplitButton>
-          </span>
         </div>
 
         <div class="listik-row">
           <span class="listik-section__hint">{{ belowRowHint }}</span>
           <UiBadge v-if="!canFinish" tone="warning" size="sm">закрывать нельзя: открыты дети</UiBadge>
-        </div>
-
-        <UiAlert v-if="claimWarningOpen" tone="warning">
-          <template #title>Взять нельзя</template>
-          <ul class="listik-verdict__reasons">
-            <li v-for="reason in reasons" :key="reason">{{ reason }}</li>
-          </ul>
-        </UiAlert>
-
-        <div v-if="claimOpen" class="listik-row">
-          <UiSelect
-            v-model="holder"
-            :options="actorOptions"
-            size="sm"
-            placeholder="кто берёт"
-            v-bind="{ 'aria-label': 'Кто берёт задачу' }"
-          />
-          <UiButton size="sm" variant="primary" :loading="pending === 'claim'" @click="submitClaim(false)">
-            Подтвердить
-          </UiButton>
         </div>
 
         <div v-if="needsOwnerFormOpen" class="listik-row">
@@ -1424,18 +1353,6 @@ async function loadTree(): Promise<void> {
     </div>
   </UiDrawer>
 
-  <!-- Обход запрета блокеров — отдельным подтверждением и danger-тоном:
-       это осознанное действие, и оно останется в истории задачи. -->
-  <UiConfirmDialog
-    v-model="forceDialogOpen"
-    tone="danger"
-    title="Взять заблокированную задачу?"
-    :description="`Задача ${task?.id ?? ''} ждёт: ${blockedBy.map((dep) => dep.id).join(', ') || '—'}. В историю уйдёт запись «ЗАПУСК БЕЗ РАЗРЕШЕНИЯ БЛОКЕРОВ».`"
-    confirm-label="Взять всё равно"
-    cancel-label="Отмена"
-    :loading="pending === 'claim'"
-    @confirm="submitClaim(true)"
-  />
 
   <!-- Сосед дровера, не содержимое: оба оверлея телепортируются в body. -->
   <UiConfirmDialog

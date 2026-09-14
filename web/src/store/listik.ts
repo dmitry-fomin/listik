@@ -10,6 +10,7 @@ import { ApiError, api, subscribeStream } from '@/api/client'
 import { readStoredToken, writeStoredToken } from '@/api/config'
 import { AT_RISK_IDLE_HOURS, taskHealth } from '@/lib/health'
 import { INTAKE_COLUMN_KEY, PIPELINE_STAGE_KEYS, STAGES } from '@/lib/dictionaries'
+import { tryRequest, withLoading } from './helpers'
 import type {
   AssistantSuggestRequest,
   AssistantSuggestResponse,
@@ -388,21 +389,18 @@ const counts = computed(() => {
 })
 
 async function loadHealth(): Promise<void> {
-  try {
-    health.value = await api.health()
-    connectionLost.value = false
-  } catch (error) {
+  const data = await tryRequest(() => api.health(), handleError)
+  if (data === null) {
     health.value = null
-    handleError(error)
+    return
   }
+  health.value = data
+  connectionLost.value = false
 }
 
 async function loadMeta(): Promise<void> {
-  try {
-    meta.value = await api.meta()
-  } catch (error) {
-    handleError(error)
-  }
+  const data = await tryRequest(() => api.meta(), handleError)
+  if (data !== null) meta.value = data
 }
 
 async function loadBoard(): Promise<void> {
@@ -424,12 +422,26 @@ async function loadStats(): Promise<void> {
  * по запросу на каждую задачу.
  */
 async function loadDeps(): Promise<void> {
-  depsLoading.value = true
-  try {
-    const [ready, blocked] = await Promise.all([
-      api.ready({ project: filters.project || undefined, limit: 150 }),
-      api.blocked({ project: filters.project || undefined, limit: 200 }),
-    ])
+  await withLoading(depsLoading, async () => {
+    const result = await tryRequest(
+      () =>
+        Promise.all([
+          api.ready({ project: filters.project || undefined, limit: 150 }),
+          api.blocked({ project: filters.project || undefined, limit: 200 }),
+        ]),
+      (error) => {
+        // Граф зависимостей — вспомогательный слой: его отсутствие не должно
+        // помечать всю доску недоступной.
+        if (isUnauthorized(error) || isOffline(error)) handleError(error)
+      },
+    )
+    if (result === null) {
+      depsSummary.value = {}
+      readyTasks.value = []
+      blockedTasks.value = []
+      return
+    }
+    const [ready, blocked] = result
     readyTasks.value = ready.tasks
     blockedTasks.value = blocked.tasks
 
@@ -452,16 +464,7 @@ async function loadDeps(): Promise<void> {
       }
     }
     depsSummary.value = next
-  } catch (error) {
-    // Граф зависимостей — вспомогательный слой: его отсутствие не должно
-    // помечать всю доску недоступной.
-    depsSummary.value = {}
-    readyTasks.value = []
-    blockedTasks.value = []
-    if (isUnauthorized(error) || isOffline(error)) handleError(error)
-  } finally {
-    depsLoading.value = false
-  }
+  })
 }
 
 /**
@@ -470,19 +473,24 @@ async function loadDeps(): Promise<void> {
  * ошибка не должна ронять доску (как и `loadDeps`).
  */
 async function loadDoneWeek(): Promise<void> {
-  try {
-    const page = await api.tasks({
-      status: 'done',
-      include_closed: true,
-      order: 'updated',
-      limit: 200,
-      project: filters.project || undefined,
-    })
-    doneWeekCount.value = page.tasks.filter(isRecentlyDone).length
-  } catch (error) {
+  const page = await tryRequest(
+    () =>
+      api.tasks({
+        status: 'done',
+        include_closed: true,
+        order: 'updated',
+        limit: 200,
+        project: filters.project || undefined,
+      }),
+    (error) => {
+      if (isUnauthorized(error) || isOffline(error)) handleError(error)
+    },
+  )
+  if (page === null) {
     doneWeekCount.value = 0
-    if (isUnauthorized(error) || isOffline(error)) handleError(error)
+    return
   }
+  doneWeekCount.value = page.tasks.filter(isRecentlyDone).length
 }
 
 async function loadTimeline(): Promise<void> {
@@ -497,14 +505,17 @@ async function loadTimeline(): Promise<void> {
  * inboxQuestions — на телефоне нет ни доски, ни инбокса, ни здоровья конвейера.
  */
 async function refreshPhone(options: { silent?: boolean } = {}): Promise<void> {
-  if (!options.silent) loading.value = true
-  try {
+  const refreshData = async (): Promise<void> => {
     await loadHealth()
     if (meta.value === null) await loadMeta()
     lastSyncAt.value = new Date().toISOString()
     queueTick.value += 1
-  } finally {
-    loading.value = false
+  }
+  try {
+    if (options.silent) await refreshData()
+    else await withLoading(loading, refreshData)
+  } catch (error) {
+    handleError(error)
   }
 }
 
@@ -517,8 +528,7 @@ async function refresh(options: { silent?: boolean } = {}): Promise<void> {
     await refreshPhone(options)
     return
   }
-  if (!options.silent) loading.value = true
-  try {
+  async function refreshData(): Promise<void> {
     await Promise.all([loadBoard(), loadStats(), loadHealth(), loadDeps(), loadDoneWeek()])
     if (meta.value === null) await loadMeta()
     // /api/timeline нужен только блоку «активность» в метриках — отдельной вкладки нет
@@ -527,10 +537,12 @@ async function refresh(options: { silent?: boolean } = {}): Promise<void> {
     connectionLost.value = false
     lastError.value = null
     lastSyncAt.value = new Date().toISOString()
+  }
+  try {
+    if (options.silent) await refreshData()
+    else await withLoading(loading, refreshData)
   } catch (error) {
     handleError(error)
-  } finally {
-    loading.value = false
   }
   // Не в общем Promise.all выше: нужен уже загруженный board, и не должен
   // задерживать снятие loading.
@@ -551,21 +563,21 @@ function setPhone(next: boolean): void {
  * needsToken/connectionLost/lastError (как раньше это делал общий refresh()).
  */
 async function loadQueuePage(params: { limit: number; offset: number }): Promise<TasksPage | null> {
-  try {
-    const page = await api.tasks({
-      project: filters.project || undefined,
-      limit: params.limit,
-      offset: params.offset,
-      order: 'updated',
-    })
-    needsToken.value = false
-    connectionLost.value = false
-    lastError.value = null
-    return page
-  } catch (error) {
-    handleError(error)
-    return null
-  }
+  const page = await tryRequest(
+    () =>
+      api.tasks({
+        project: filters.project || undefined,
+        limit: params.limit,
+        offset: params.offset,
+        order: 'updated',
+      }),
+    handleError,
+  )
+  if (page === null) return null
+  needsToken.value = false
+  connectionLost.value = false
+  lastError.value = null
+  return page
 }
 
 /**
@@ -663,21 +675,21 @@ async function runSearch(): Promise<void> {
     searchResponse.value = null
     return
   }
-  searchLoading.value = true
-  try {
-    searchResponse.value = await api.search({
-      q: text,
-      mode: searchMode.value,
-      limit: 20,
-      project: filters.project || undefined,
-      status: filters.status || undefined,
-      stage: filters.stage || undefined,
-    })
-  } catch (error) {
-    handleError(error)
-  } finally {
-    searchLoading.value = false
-  }
+  await withLoading(searchLoading, async () => {
+    const result = await tryRequest(
+      () =>
+        api.search({
+          q: text,
+          mode: searchMode.value,
+          limit: 20,
+          project: filters.project || undefined,
+          status: filters.status || undefined,
+          stage: filters.stage || undefined,
+        }),
+      handleError,
+    )
+    if (result !== null) searchResponse.value = result
+  })
 }
 
 function clearSearch(): void {
@@ -902,23 +914,22 @@ async function bulkPatch(ids: string[], changes: TaskPatch): Promise<void> {
 async function loadRoutes(): Promise<void> {
   if (routesLoading.value) return
   routesRequested = true
-  routesLoading.value = true
-  try {
-    const data = await api.routes()
-    routesOk.value = data.ok
-    routesError.value = data.error
-    routesRequestFailed.value = false
-    routesWarnings.value = data.warnings ?? []
-    routes.value = data.routes ?? []
-  } catch (error) {
-    routesOk.value = false
-    routesError.value = errorMessage(error)
-    routesRequestFailed.value = true
-    routesWarnings.value = []
-    routes.value = []
-  } finally {
-    routesLoading.value = false
-  }
+  await withLoading(routesLoading, async () => {
+    try {
+      const data = await api.routes()
+      routesOk.value = data.ok
+      routesError.value = data.error
+      routesRequestFailed.value = false
+      routesWarnings.value = data.warnings ?? []
+      routes.value = data.routes ?? []
+    } catch (error) {
+      routesOk.value = false
+      routesError.value = errorMessage(error)
+      routesRequestFailed.value = true
+      routesWarnings.value = []
+      routes.value = []
+    }
+  })
 }
 
 /** Ленивая загрузка: одно обращение на сессию доски (старт доски и форма). */
@@ -935,17 +946,16 @@ function ensureRoutes(): void {
 async function loadAssistant(): Promise<void> {
   if (assistantLoading.value) return
   assistantRequested = true
-  assistantLoading.value = true
-  try {
-    const status = await api.assistantStatus()
-    assistantEnabled.value = status.enabled
-    assistantModel.value = status.model
-  } catch {
-    assistantEnabled.value = false
-    assistantModel.value = ''
-  } finally {
-    assistantLoading.value = false
-  }
+  await withLoading(assistantLoading, async () => {
+    try {
+      const status = await api.assistantStatus()
+      assistantEnabled.value = status.enabled
+      assistantModel.value = status.model
+    } catch {
+      assistantEnabled.value = false
+      assistantModel.value = ''
+    }
+  })
 }
 
 /** Ленивая загрузка при первом открытии формы создания задачи. */
@@ -960,12 +970,7 @@ function ensureAssistant(): void {
  * а таймаут DeepSeek не должен выглядеть как «сервер Listik недоступен».
  */
 async function askAssistant(body: AssistantSuggestRequest): Promise<AssistantSuggestResponse> {
-  assistantLoading.value = true
-  try {
-    return await api.assistantSuggest(body)
-  } finally {
-    assistantLoading.value = false
-  }
+  return withLoading(assistantLoading, () => api.assistantSuggest(body))
 }
 
 /**
@@ -974,22 +979,40 @@ async function askAssistant(body: AssistantSuggestRequest): Promise<AssistantSug
  * это операции над проектом, а не фильтр по задачам.
  */
 async function loadProjects(): Promise<void> {
-  projectsLoading.value = true
-  try {
-    const data = await api.projects()
+  await withLoading(projectsLoading, async () => {
+    const data = await tryRequest(() => api.projects(), (error) => {
+      projectsError.value = errorMessage(error)
+    })
+    if (data === null) return
     projects.value = data.projects
     projectsRoot.value = data.root
     projectsError.value = null
-  } catch (error) {
-    projectsError.value = errorMessage(error)
-  } finally {
-    projectsLoading.value = false
-  }
+  })
 }
 
 async function openProjects(): Promise<void> {
   projectsOpen.value = true
   await loadProjects()
+}
+
+async function projectAction<T>(
+  action: () => Promise<T>,
+  refresh: () => Promise<void>,
+): Promise<T | null> {
+  return withLoading(projectsLoading, async () => {
+    const result = await tryRequest(action, (error) => {
+      projectsError.value = errorMessage(error)
+    })
+    if (result === null) return null
+    try {
+      await refresh()
+      projectsError.value = null
+      return result
+    } catch (error) {
+      projectsError.value = errorMessage(error)
+      return null
+    }
+  })
 }
 
 /**
@@ -1000,54 +1023,33 @@ async function openProjects(): Promise<void> {
  * корню) — по нему форма говорит, куда именно добавлен проект. Ошибка — null.
  */
 async function addProject(body: { path: string; slug?: string; title?: string }): Promise<ProjectRow | null> {
-  projectsLoading.value = true
-  try {
-    const project = await api.addProject({
-      path: body.path,
-      slug: body.slug || undefined,
-      title: body.title || undefined,
-    })
-    await Promise.all([loadProjects(), loadMeta(), loadBoard()])
-    projectsError.value = null
-    return project
-  } catch (error) {
-    projectsError.value = errorMessage(error)
-    return null
-  } finally {
-    projectsLoading.value = false
-  }
+  return projectAction(
+    () =>
+      api.addProject({
+        path: body.path,
+        slug: body.slug || undefined,
+        title: body.title || undefined,
+      }),
+    () => Promise.all([loadProjects(), loadMeta(), loadBoard()]).then(() => undefined),
+  )
 }
 
 /** Скрыть репозиторий с доски или вернуть обратно: задачи при этом не теряются. */
 async function setProjectArchived(slug: string, archived: boolean): Promise<boolean> {
-  projectsLoading.value = true
-  try {
-    await api.setProjectArchived(slug, archived)
-    await Promise.all([loadProjects(), loadMeta(), loadBoard(), loadStats()])
-    projectsError.value = null
-    return true
-  } catch (error) {
-    projectsError.value = errorMessage(error)
-    return false
-  } finally {
-    projectsLoading.value = false
-  }
+  const result = await projectAction(
+    () => api.setProjectArchived(slug, archived),
+    () => Promise.all([loadProjects(), loadMeta(), loadBoard(), loadStats()]).then(() => undefined),
+  )
+  return result !== null
 }
 
 /** Убрать репозиторий совсем. Задачи уносит только `force` — сервер иначе откажет. */
 async function removeProject(slug: string, force = false): Promise<boolean> {
-  projectsLoading.value = true
-  try {
-    await api.removeProject(slug, force)
-    await Promise.all([loadProjects(), loadMeta(), loadBoard(), loadStats()])
-    projectsError.value = null
-    return true
-  } catch (error) {
-    projectsError.value = errorMessage(error)
-    return false
-  } finally {
-    projectsLoading.value = false
-  }
+  const result = await projectAction(
+    () => api.removeProject(slug, force),
+    () => Promise.all([loadProjects(), loadMeta(), loadBoard(), loadStats()]).then(() => undefined),
+  )
+  return result !== null
 }
 
 async function importEmbeddings(): Promise<void> {

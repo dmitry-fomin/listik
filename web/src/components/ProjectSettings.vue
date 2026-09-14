@@ -131,6 +131,21 @@ function pathLabel(project: ProjectRow): string {
   return project.path_exists === false ? `${project.path} — каталога нет` : project.path
 }
 
+/** Git-репозиторий — по ветке, а не по remote: сервер отдаёт `git_branch` у любого
+ *  репозитория, а `git_remote` появляется только с remote `origin`. По нему проект
+ *  без remote (Zoloto585/Parser, listik-6sem) оставался без бейджа. */
+function isGit(project: ProjectRow): boolean {
+  return Boolean(project.git_branch || project.git_remote)
+}
+
+/** Подсказка к бейджу: ветка и remote — разные факты, remote может быть и не задан. */
+function gitHint(project: ProjectRow): string {
+  const parts = ['git-репозиторий']
+  if (project.git_branch) parts.push(`ветка ${project.git_branch}`)
+  parts.push(project.git_remote ? `remote: ${project.git_remote}` : 'remote не задан')
+  return parts.join(' · ')
+}
+
 function slugHint(): string {
   const value = slugInput.value.trim()
   if (value) return `проект ляжет в «${value}»`
@@ -314,7 +329,9 @@ watch(
                     </template>
                     <template #actions>
                       <UiBadge v-if="project.path_exists === false" tone="warning" size="sm">нет каталога</UiBadge>
-                      <UiBadge v-else-if="project.git_remote" tone="info" size="sm">git</UiBadge>
+                      <UiTooltip v-else-if="isGit(project)" :text="gitHint(project)">
+                        <UiBadge tone="info" size="sm">git</UiBadge>
+                      </UiTooltip>
                       <UiTooltip text="Убрать с доски: задачи останутся в истории и поиске">
                         <UiSwitch
                           :model-value="false"

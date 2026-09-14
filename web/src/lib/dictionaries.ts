@@ -3,7 +3,7 @@
  * где перечислены ключи, подписи, иконки и цвета: фильтры, модалка создания,
  * глифы, доска и витрина берут значения отсюда, а не держат свои копии.
  */
-import type { PipelineStage, TaskStage, TaskStatus } from '@/api/types'
+import type { AssistantComplexityLevel, PipelineStage, TaskStage, TaskStatus } from '@/api/types'
 
 export interface DictionaryItem<T extends string | number> {
   value: T
@@ -101,4 +101,25 @@ export const STATUSES: DictionaryItem<TaskStatus>[] = [
 
 export function statusTitle(value: TaskStatus): string {
   return STATUSES.find((item) => item.value === value)?.label ?? value
+}
+
+// ── Когнитивная сложность (оценка помощника DeepSeek) ───────────────────────
+
+export interface ComplexityItem extends DictionaryItem<AssistantComplexityLevel> {
+  /** Пояснение уровня — в подсказке и в панели помощника. */
+  hint: string
+  /** Тон бейджа: чем сложнее, тем громче. */
+  tone: 'success' | 'info' | 'warning'
+}
+
+/** Уровни — ключи сервера (`assistant.COMPLEXITY_LEVELS`), подписи — здесь. */
+export const COMPLEXITY_LEVELS: ComplexityItem[] = [
+  { value: 'low', label: 'низкая', hint: 'механическая работа', tone: 'success' },
+  { value: 'medium', label: 'средняя', hint: 'несколько шагов', tone: 'info' },
+  { value: 'high', label: 'высокая', hint: 'много контекста и развилок', tone: 'warning' },
+]
+
+/** Незнакомый или пустой уровень — `null`: бейдж не рисуем. */
+export function complexity(value: string | null | undefined): ComplexityItem | null {
+  return COMPLEXITY_LEVELS.find((item) => item.value === value) ?? null
 }

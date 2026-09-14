@@ -11,6 +11,8 @@ import { readStoredToken, writeStoredToken } from '@/api/config'
 import { AT_RISK_IDLE_HOURS, taskHealth } from '@/lib/health'
 import { INTAKE_COLUMN_KEY, PIPELINE_STAGE_KEYS, STAGES } from '@/lib/dictionaries'
 import type {
+  AssistantSuggestRequest,
+  AssistantSuggestResponse,
   BlockedTask,
   DepTree,
   Board,
@@ -146,6 +148,18 @@ const routesError = ref<string | null>(null)
 const routesRequestFailed = ref(false)
 const routesLoading = ref(false)
 let routesRequested = false
+
+/**
+ * Помощник DeepSeek (`GET /api/assistant/status`): ключ живёт в конфиге сервера,
+ * доска знает только «настроен или нет». Пока `assistantEnabled` не подтверждён
+ * ответом сервера, кнопки у полей формы не рисуются; отказ запроса — тоже
+ * «выключен» (доска не должна ломаться из-за необязательного помощника).
+ * Статус запрашивается один раз за сессию — при первом открытии формы.
+ */
+const assistantEnabled = ref(false)
+const assistantModel = ref('')
+const assistantLoading = ref(false)
+let assistantRequested = false
 
 let healthTimer: ReturnType<typeof setInterval> | null = null
 let sseTimer: ReturnType<typeof setTimeout> | null = null
@@ -794,6 +808,47 @@ function ensureRoutes(): void {
 }
 
 /**
+ * Статус помощника — ровно один запрос за сессию (`ensureAssistant` из формы).
+ * Ошибка запроса не всплывает на доску: кнопки просто не показываются, а сама
+ * причина видна в консоли — помощник необязателен.
+ */
+async function loadAssistant(): Promise<void> {
+  if (assistantLoading.value) return
+  assistantRequested = true
+  assistantLoading.value = true
+  try {
+    const status = await api.assistantStatus()
+    assistantEnabled.value = status.enabled
+    assistantModel.value = status.model
+  } catch {
+    assistantEnabled.value = false
+    assistantModel.value = ''
+  } finally {
+    assistantLoading.value = false
+  }
+}
+
+/** Ленивая загрузка при первом открытии формы создания задачи. */
+function ensureAssistant(): void {
+  if (assistantRequested) return
+  void loadAssistant()
+}
+
+/**
+ * Спросить помощника про одно поле формы. Ошибку не глотаем и в общий
+ * `handleError` не отдаём: её показывает панель помощника у самого поля,
+ * а таймаут DeepSeek не должен выглядеть как «сервер Listik недоступен».
+ */
+async function askAssistant(body: AssistantSuggestRequest): Promise<AssistantSuggestResponse> {
+  assistantLoading.value = true
+  try {
+    return await api.assistantSuggest(body)
+  } finally {
+    assistantLoading.value = false
+  }
+}
+
+/**
  * Репозитории доски (проекты). Доска показывает ровно те, что лежат в таблице
  * `projects` и не скрыты, поэтому «добавить репозиторий» и «убрать с доски» —
  * это операции над проектом, а не фильтр по задачам.
@@ -958,6 +1013,9 @@ export function useListikStore() {
     routesError,
     routesRequestFailed,
     routesLoading,
+    assistantEnabled,
+    assistantModel,
+    assistantLoading,
     inboxQuestions,
     // производные
     columns,
@@ -1012,6 +1070,9 @@ export function useListikStore() {
     bulkPatch,
     loadRoutes,
     ensureRoutes,
+    loadAssistant,
+    ensureAssistant,
+    askAssistant,
     loadProjects,
     openProjects,
     addProject,

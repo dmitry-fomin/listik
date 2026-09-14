@@ -32,6 +32,10 @@ DEFAULTS: dict[str, Any] = {
         "batch": paths.EMBED_BATCH,
         "max_chars": paths.EMBED_MAX_CHARS,
     },
+    # Раздела [assistant] здесь нет намеренно: это пользовательская настройка
+    # (api_key), а не дефолт. С ним в DEFAULTS `ensure_token`/`save` дописывали бы
+    # в чужой config.toml `[assistant]` с пустым api_key. Дефолты помощника
+    # (base_url, model) живут в `assistant.settings()`.
     "import": {
         # Откуда разово забираем задачи из старых .beads
         "projects_root": str(paths.PROJECTS_ROOT),

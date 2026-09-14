@@ -18,6 +18,7 @@ import tomllib
 import unittest
 from unittest import mock
 
+from listik import assistant as assistant_mod
 from listik import config as config_mod
 from listik import paths
 from listik import store
@@ -159,6 +160,48 @@ class WorktreeCliRegressionTests(TempDbTestCase):
         parsed = tomllib.loads(config_path.read_text(encoding="utf-8"))
         self.assertEqual(parsed["auth"]["token"], token)
         self.assertEqual(parsed["routing"]["transitions"]["s1-spec:s2-review"], "handoff")
+
+
+class AssistantSectionTests(unittest.TestCase):
+    """[assistant] — пользовательская секция: запись конфига её не выдумывает.
+
+    Регрессия listik-odxq: `assistant` лежал в DEFAULTS, и `ensure_token` дописывал
+    в чужой config.toml `[assistant]` с пустым api_key. Дефолты помощника живут
+    в `assistant.settings()`.
+    """
+
+    def test_ensure_token_does_not_create_assistant_section(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            path = pathlib.Path(tmp) / "config.toml"
+            with mock.patch.object(paths, "CONFIG_PATH", path):
+                config_mod.ensure_token()
+            text = path.read_text(encoding="utf-8")
+            parsed = tomllib.loads(text)
+            self.assertNotIn("assistant", parsed)
+            self.assertNotIn("api_key", text)
+
+            # Помощник при этом остаётся настроенным по умолчанию.
+            settings = assistant_mod.settings(parsed)
+            self.assertEqual(settings["api_key"], "")
+            self.assertEqual(settings["base_url"], assistant_mod.DEFAULT_BASE_URL)
+            self.assertEqual(settings["model"], assistant_mod.DEFAULT_MODEL)
+            self.assertFalse(assistant_mod.status(parsed)["enabled"])
+
+    def test_ensure_token_preserves_existing_assistant_section(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            path = pathlib.Path(tmp) / "config.toml"
+            path.write_text('[assistant]\napi_key = "user-secret-key"\n'
+                            'model = "deepseek-chat"\n', encoding="utf-8")
+            with mock.patch.object(paths, "CONFIG_PATH", path):
+                _, token = config_mod.ensure_token()
+            parsed = tomllib.loads(path.read_text(encoding="utf-8"))
+            self.assertEqual(parsed["assistant"],
+                             {"api_key": "user-secret-key", "model": "deepseek-chat"})
+            self.assertEqual(parsed["auth"]["token"], token)
+            settings = assistant_mod.settings(parsed)
+            self.assertEqual(settings["api_key"], "user-secret-key")
+            self.assertEqual(settings["model"], "deepseek-chat")
+            self.assertTrue(assistant_mod.status(parsed)["enabled"])
 
 
 class DefaultsIsolationTests(unittest.TestCase):

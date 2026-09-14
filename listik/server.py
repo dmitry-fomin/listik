@@ -688,14 +688,23 @@ def handle(method: str, path: str, query: dict, body: dict, authed: bool = False
                 except KeyError as exc:
                     raise api_error(404, exc) from exc
             if method in ("PATCH", "PUT"):
+                # `route` — то же поле, что колонка `launch_route`: так маршрут
+                # называет создание задачи, доска шлёт его же. Смена разрешена
+                # только пока работа не началась — отказ даёт store (400).
                 fields = {k: v for k, v in body.items()
-                          if k in store.UPDATABLE}
+                          if k in store.UPDATABLE or k == store.ROUTE_ALIAS}
+                if store.ROUTE_ALIAS in fields and store.ROUTE_FIELD not in fields:
+                    fields[store.ROUTE_FIELD] = fields.pop(store.ROUTE_ALIAS)
                 try:
                     task = store.update_task(conn, tid, actor=body.get("actor"),
                                              harness=body.get("harness"),
                                              note=body.get("note"), **fields)
                 except KeyError as exc:
                     raise api_error(404, exc) from exc
+                except ValueError as exc:
+                    # store refuses changes the current state does not allow —
+                    # with the route that is "работа уже началась".
+                    raise api_error(400, exc) from exc
                 publish("task", {"id": tid, "action": "updated"})
                 return 200, task
             if method == "DELETE":

@@ -83,6 +83,7 @@ const EVENT_KIND_TITLES: Record<string, string> = {
   note: 'заметка',
   done: 'закрыта',
   dep: 'связь',
+  route: 'маршрут',
   embed: 'вектор',
 }
 

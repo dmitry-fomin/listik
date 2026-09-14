@@ -460,8 +460,9 @@ def call_tool(name: str, args: dict, conn=None) -> object:
     if name == "listik_update":
         return store.update_task(conn, args["id"], actor=args.get("actor"),
                                  harness=args.get("harness"), note=args.get("note"),
+                                 # `route` — алиас колонки launch_route, как в POST /api/tasks.
                                  **{k: v for k, v in (args.get("fields") or {}).items()
-                                    if k in store.UPDATABLE})
+                                    if k in store.UPDATABLE or k == store.ROUTE_ALIAS})
     if name == "listik_context":
         from . import documents as documents_mod
         return documents_mod.context(conn, args["id"], args["stage"],

@@ -257,6 +257,9 @@ def show_task(t: dict) -> None:
             code = t.get("launch_exit_code")
             bits.append(f"код {code if code is not None else 'идёт'}")
         print("  " + " · ".join(bits))
+    elif t.get("launch_route"):
+        # Маршрут без автостарта: сохранённый «тип запуска», запуска не было.
+        print(f"  маршрут:     {t['launch_route']} (без автостарта)")
     if t.get("external_ref"):
         print(f"  старый ID ({t.get('source')}): {t['external_ref']}")
     for field, label in (("description", "описание"), ("acceptance", "приёмка"),
@@ -1400,7 +1403,8 @@ def build_parser() -> argparse.ArgumentParser:
     sp.add_argument("--max-chars", type=int, default=None)
     sp.add_argument("--format", choices=["text", "json"], default="text")
 
-    sp = add("set", cmd_set, help="изменить поля: set <id> status=in_progress priority=1")
+    sp = add("set", cmd_set, help="изменить поля: set <id> status=in_progress priority=1 "
+                                  "route=low-pipeline (маршрут — пока задача не начата)")
     sp.add_argument("task_id")
     sp.add_argument("field", nargs="+")
     sp.add_argument("--note")

@@ -18,6 +18,24 @@ export function directAllowed(type: string): boolean {
 }
 
 /**
+ * Разрешён ли маршрут типу задачи — одни и те же правила у «Новой задачи» и у
+ * смены маршрута в карточке: эпику нужен этап ТЗ, прямой маршрут ему закрыт.
+ */
+export function routeAllowedForType(route: RouteDef, type: string): boolean {
+  return route.kind === 'direct' ? directAllowed(type) : pipelineAllowed(route, type)
+}
+
+/**
+ * Текст алерта «маршруты недоступны»: отказ запроса и ошибка самого файла
+ * (`ok:false`) звучат по-разному, потому что причины разные.
+ */
+export function routesAlertText(requestFailed: boolean, error: string | null): string {
+  const reason = error ?? 'неизвестная ошибка'
+  if (requestFailed) return `${reason} — нужен ты`
+  return `routes.json с ошибкой: ${reason} — нужен ты`
+}
+
+/**
  * Пресет по умолчанию зависит от типа: эпик крупнее и рискованнее — `high-pipeline`,
  * задаче и багу хватает `low-pipeline`. Если нужного ключа нет среди видимых
  * разрешённых, берётся первый видимый разрешённый `pipeline` в порядке ответа;

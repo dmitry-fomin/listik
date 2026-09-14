@@ -35,7 +35,7 @@ import { TASK_TYPES, priority } from '@/lib/dictionaries'
 import type { DirectRouteDef, PipelineRouteDef, ProjectRow, RouteDef } from '@/api/types'
 import { HARNESS_TITLES } from '@/lib/harness'
 import { ROLE_KEYS, ROLE_TITLES } from '@/lib/pipelines'
-import { defaultPipelineFor, directAllowed, pipelineAllowed, routeLabels } from '@/lib/routes'
+import { defaultPipelineFor, routeAllowedForType, routeLabels, routesAlertText } from '@/lib/routes'
 import store from '@/store/listik'
 
 const props = defineProps<{
@@ -180,7 +180,7 @@ const directRoutes = computed(() =>
 )
 
 function routeAllowed(route: RouteDef): boolean {
-  return route.kind === 'direct' ? directAllowed(form.type) : pipelineAllowed(route, form.type)
+  return routeAllowedForType(route, form.type)
 }
 
 const routeOptions = computed<RouteDef[]>(() => [
@@ -265,11 +265,7 @@ watch(autostartAvailable, (available) => {
   if (!available) autostart.value = false
 })
 
-const routesAlertText = computed(() => {
-  const error = store.routesError.value ?? 'неизвестная ошибка'
-  if (store.routesRequestFailed.value) return `${error} — нужен ты`
-  return `routes.json с ошибкой: ${error} — нужен ты`
-})
+const routesAlert = computed(() => routesAlertText(store.routesRequestFailed.value, store.routesError.value))
 
 /** Кнопка «повторить» — ровно один запрос, кеш до этого не трогаем. */
 function retryRoutes(): void {
@@ -374,7 +370,7 @@ function cancel(): void {
 
         <template v-if="routesFailed">
           <UiAlert tone="warning">
-            {{ routesAlertText }}
+            {{ routesAlert }}
             <div class="listik-row" style="margin-top: var(--space-3)">
               <UiButton size="sm" variant="secondary" :loading="store.routesLoading.value" @click="retryRoutes">
                 Повторить

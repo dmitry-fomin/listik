@@ -15,6 +15,12 @@
  * рядом висел ещё и статус SSE-потока (`live`) отдельной таблеткой — теперь это
  * просто строка в подсказке той же таблетки (см. healthTooltip), `live` как
  * проп остался только ради неё.
+ *
+ * «Сервер жив» — тон `success` (зелёный), а не `healthy`: в ките
+ * `--health-healthy` намеренно нейтральный (`--ink-2`), зелёный закреплён за
+ * статусной парой success/danger. Для индикатора соединения это статус, а не
+ * здоровье сущности, поэтому живой сервер читается зелёным; точки здоровья
+ * задач (HealthDot) остаются нейтральными.
  */
 import { computed } from 'vue'
 import { UiAppHeader, UiButton, UiStatusPill, UiTooltip } from '@zoloto585/facet'
@@ -42,9 +48,11 @@ const emit = defineEmits<{
 
 const { theme, toggleTheme } = useTheme()
 
-const healthTone = computed<'healthy' | 'dead' | 'unknown'>(() => {
+/** Живой сервер — зелёный `success` (см. комментарий выше); нет ответа —
+ *  `dead` (красный), любой другой статус здоровья — нейтральный `unknown`. */
+const healthTone = computed<'success' | 'dead' | 'unknown'>(() => {
   if (!props.health) return 'dead'
-  return props.health.status === 'ok' ? 'healthy' : 'unknown'
+  return props.health.status === 'ok' ? 'success' : 'unknown'
 })
 
 const healthLabel = computed(() => {

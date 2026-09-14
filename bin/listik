@@ -828,8 +828,13 @@ def cmd_heartbeat(args) -> int:
 
 def cmd_stage(args) -> int:
     actor = actor_default(args)
+    # Держателя ставит только явный `--holder`: `stage` двигает этап, а не выдаёт
+    # карточку актору по умолчанию. Иначе handoff без `--holder`, но с `--actor`,
+    # назначал бы оркестратора, а `--to <текущий>` «выдавал» бы карточку тому, кто
+    # её и так держит (listik-udop). Сервер и MCP ведут себя так же: передают ровно
+    # то, что пришло в запросе.
+    holder = args.holder
     if args.to:
-        holder = args.holder or actor
         # Explicit targets use the same server-side routing/holder semantics as
         # the ordinary next-stage command.
         body = {"to": args.to, "holder": holder, "harness": args.harness, "actor": actor,
@@ -839,7 +844,7 @@ def cmd_stage(args) -> int:
         task = call("stage", args, f"/api/tasks/{args.task_id}/stage", method="POST", body=body,
                     local_kwargs=local)
     else:
-        body = {"holder": args.holder or actor, "harness": args.harness, "actor": actor,
+        body = {"holder": holder, "harness": args.harness, "actor": actor,
                 "note": args.note}
         task = call("stage", args, f"/api/tasks/{args.task_id}/stage", method="POST", body=body,
                     local_kwargs={**body, "task_id": args.task_id})
@@ -1590,7 +1595,9 @@ def build_parser() -> argparse.ArgumentParser:
     sp = add("stage", cmd_stage,
              help="следующий этап конвейера (или --to; текущий этап — no-op с заметкой)")
     sp.add_argument("task_id")
-    sp.add_argument("--holder")
+    sp.add_argument("--holder",
+                    help="кому выдать карточку: держатель ставится и пишется назначение; "
+                         "без него на handoff держателя снимает, на том же этапе — тихий no-op")
     sp.add_argument("--note")
     sp.add_argument("--to", choices=["s1-spec", "s2-review", "s3-impl", "s4-judge", "done"],
                     help="явный этап; совпал с текущим — карточка не меняется, "

@@ -866,8 +866,13 @@ def heartbeat(conn: sqlite3.Connection, task_id: str, *, holder: str, note: str 
                  "WHERE id = ?", (holder, ts, holder_note, ts, task_id))
     last = parse_ts(row["holder_at"])
     # Смену держателя пишем в историю всегда, даже если 10 минут ещё не прошли:
-    # иначе перехват чужой задачи остался бы незаметным.
-    if holder_changed or not last or (datetime.now(timezone.utc) - last) > timedelta(minutes=min_interval_min):
+    # иначе перехват чужой задачи остался бы незаметным. Карточка «выдана, но не
+    # взята» — тот же случай: heartbeat её держателя и есть доказательство, что
+    # прогон запустился, поэтому первый удар не теряется в троттлинге. Уже взятая
+    # карточка троттлится как раньше (listik-udop).
+    taken = True if holder_changed else holder_claim_state(conn, task_id, holder)["taken"]
+    if (holder_changed or not taken or not last
+            or (datetime.now(timezone.utc) - last) > timedelta(minutes=min_interval_min)):
         event(conn, task_id, "heartbeat", from_value=row["holder"] if holder_changed else None,
               to_value=holder, actor=actor_key, note=note, harness=harness)
     conn.commit()
@@ -924,25 +929,61 @@ def parse_verdict(text: str | None) -> bool:
 
 def stage_unchanged(conn: sqlite3.Connection, task_id: str, *, stage: str | None,
                     note: str | None = None, harness: str | None = None,
-                    actor: str | None = None) -> dict:
+                    actor: str | None = None, holder: str | None = None) -> dict:
     """`stage --to <текущий этап>`: перехода нет, карточка остаётся как была.
 
     Событие `stage` с одинаковыми from/to соврало бы про смену этапа и обнулило
     `stage_at`, а handoff по умолчанию снял бы держателя у задачи, которая никуда
-    не поехала. Поэтому не меняем ничего — но заметку сохраняем в истории, чтобы
+    не поехала. Поэтому этап не меняем — но заметку сохраняем в истории, чтобы
     вызов не пропал зря, и возвращаем карточку с флагом `stage_unchanged`, по
     которому CLI печатает понятную строку (listik-xut1).
+
+    Явный `holder` — исключение: это повторная выдача (круг после красного
+    вердикта и `release`). Этап и `stage_at` по-прежнему не трогаем, но держателя
+    ставим и пишем событие-назначение `claim` (автор — выдающий), причём даже
+    когда держатель тот же самый: `holder_claim_state` отсчитывает «взята» от
+    последнего назначения, и без нового события старый claim того же харнесса
+    с прошлого круга выглядел бы как взятие (listik-udop).
     """
+    row = conn.execute("SELECT holder FROM tasks WHERE id = ?", (task_id,)).fetchone()
+    if not row:
+        raise errors_mod.NotFound(f"задача не найдена: {task_id}")
+    old_holder = (row["holder"] or "").strip()
+    target = (holder or "").strip()
+    actor_key, a_kind = actors_mod.resolve(actor, conn)
+    if actor:
+        actors_mod.remember(conn, actor, actor_key, a_kind)
+    ts = now_iso()
     if note:
-        actor_key, _kind = actors_mod.resolve(actor, conn)
         event(conn, task_id, "note", actor=actor_key, harness=harness, note=note)
+    if target:
+        sets = ["holder = ?", "holder_at = ?", "updated_at = ?"]
+        params: list = [target, ts, ts]
+        if target != old_holder:
+            # «Что делает» принадлежит прежнему держателю: назначение нового её
+            # сбрасывает — ровно как смена держателя в `update_task`.
+            sets.append("holder_note = NULL")
+        params.append(task_id)
+        conn.execute(f"UPDATE tasks SET {', '.join(sets)} WHERE id = ?", params)
+        event(conn, task_id, "claim", from_value=old_holder, to_value=target,
+              actor=actor_key, harness=harness,
+              note=note or f"выдал задачу исполнителю: {target}")
+    if note or target:
         conn.commit()
     out = get_task(conn, task_id)
     out["unchanged"] = True
     out["stage_unchanged"] = True
-    out["message"] = (f"этап не менялся: задача уже на {stage} — перехода нет; "
-                      "держатель тоже не менялся"
-                      + ("; заметка записана в историю" if note else ""))
+    if target:
+        # Не врём про держателя: он как раз сменился (или выдан заново). «Взята»
+        # он станет только после claim/heartbeat самого харнесса.
+        state = "выдана, но не взята" if out.get("not_taken") else "взята"
+        out["message"] = (f"этап не менялся: задача уже на {stage} — перехода нет; "
+                          f"держатель {target} — {state}"
+                          + ("; заметка записана в историю" if note else ""))
+    else:
+        out["message"] = (f"этап не менялся: задача уже на {stage} — перехода нет; "
+                          "держатель тоже не менялся"
+                          + ("; заметка записана в историю" if note else ""))
     return out
 
 
@@ -965,14 +1006,19 @@ def next_stage(conn: sqlite3.Connection, task_id: str, *, holder: str | None = N
     if to_stage is not None and nxt == cur:
         # Явно попросили этап, на котором задача уже стоит (частый случай —
         # `stage <id> --to <текущий> --note "…"` после release): это не переход.
+        # Явный holder при этом — повторная выдача, её обрабатывает stage_unchanged.
         return stage_unchanged(conn, task_id, stage=cur, note=note,
-                               harness=harness, actor=actor)
+                               harness=harness, actor=actor, holder=holder)
     fields = {"stage": nxt}
     transition = config_mod.transition_kind(row["project"], cur, nxt, conn=conn)
     # Handoff intentionally releases the previous writer so the next harness
     # must claim the stage.  Sticky transitions keep/optionally refresh holder.
     if transition == "handoff":
-        fields["holder"] = ""
+        # Явный holder на handoff — это выдача карточки следующему харнессу:
+        # держателя ставим сразу (событие-назначение `claim` пишет update_task,
+        # автор — выдающий), и до собственного claim харнесса карточка «выдана,
+        # но не взята». Без holder — как раньше, снимаем держателя.
+        fields["holder"] = holder or ""
     elif holder:
         fields["holder"] = holder
     return update_task(conn, task_id, actor=actor, harness=harness,

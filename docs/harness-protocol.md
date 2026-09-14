@@ -37,12 +37,23 @@ The board tells the two apart — `holder_taken=false` / `not_taken=true` means 
 `ready --harness <you>` lists only stages your harness is routed to. `claim` refuses (and says why)
 on an open blocker, another holder, or a busy worktree; `--force` can't take another's card.
 
-- **handoff** (`s2→s3`, `s4→done`): the server clears the holder; next harness does `ready` → `claim`.
+- **handoff** (`s2→s3`, `s4→done`): without `--holder` the server clears the holder and the next
+  harness does `ready` → `claim`. With an explicit `--holder` the same transition issues the card:
+  `stage <id> --to s3-impl --holder <next>` puts that harness in the holder and writes the assignment
+  (`claim` event, author — the issuer), so the card is «выдана, но не взята» until its own
+  `claim`/`heartbeat`.
 - **sticky** (`s1→s2`, `s3→s4`): the holder stays. Same session continues as is; to pass to another
   harness run `stage <id> --holder <next>` — this only issues the card (it becomes «выдана, но не
   взята», `holder_taken=false`), the receiver starts with `claim <id> --holder <self>` (idempotent:
   the holder is already there, but the first claim of the holder itself is written to the history
-  and turns the card into «взята»), then `heartbeat`.
+  and turns the card into «взята»), then `heartbeat`. A `heartbeat` within the first 10 minutes after
+  the assignment is written to the history as well: the card is not taken yet, so the usual throttle
+  does not apply.
+- **re-issue at the same stage** (`stage <id> --to <current> --holder <next>` — a new round after
+  `release`, e.g. a red verdict): the stage, `stage_at` and the `stage` event stay as they were, but
+  the holder is set and a fresh assignment is written. «Взята» is counted from the last assignment,
+  so an old `claim` of the same harness from the previous round does not make the new round taken
+  until it claims or heartbeats again. Without `--holder` this call remains a quiet no-op.
 - **FAIL verdict return** keeps the holder: the judge claims `s4-judge` under its own name and writes
   the verdict itself; if it held the card under another name it does `release <id>` so the implementer
   can `claim`; in a single session just continue.
@@ -93,7 +104,8 @@ $L dep confirm <id> <blocker>          # human confirms
 $L claim <id> --holder <who>
 $L heartbeat <id> --holder <who> --note "what I'm doing"
 $L stage <id>                          # next stage
-$L stage <id> --holder <next>          # sticky pass: issues the card, the receiver claims it
+$L stage <id> --holder <next>          # issue the card: holder is set, the receiver claims it
+$L stage <id> --to <same stage> --holder <next>   # re-issue after release: same stage, fresh assignment
 $L comment <id> "text" -k journal|review
 $L comment <id> "VERDICT: PASS" -k verdict
 $L comment <id> $'VERDICT: FAIL\n1. <item> — <problem> — <file:line> — <fix>' -k verdict

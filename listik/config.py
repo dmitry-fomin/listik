@@ -258,6 +258,9 @@ def allowed_harnesses(project: str | None, stage: str | None, conn=None) -> list
 
 
 _TRANSITION_KINDS = {"sticky", "handoff", "sticky-return"}
+#: «sticky» и «sticky-return» держателя не снимают; «handoff» снимает его, если
+#: `stage` не передали явного `--holder`: явный держатель — это выдача, её пишет
+#: `store.next_stage`/`stage_unchanged` (listik-udop).
 
 
 def validate_routing(obj: Any) -> dict:
@@ -327,6 +330,8 @@ def transition_kind(project: str | None, from_stage: str | None, to_stage: str |
     if from_stage == to_stage:
         # Повторная выдача на том же этапе (`stage <id> --to s3-impl --holder <кто>`)
         # — не передача: держателя не снимаем, иначе выдача молча теряла бы его.
+        # Ставит его `store.stage_unchanged` — явный `--holder` там ещё и пишет
+        # новое назначение, сбрасывая «взята» у прошлого круга (listik-udop).
         return "sticky"
     r = routing(project, conn=conn)
     return str((r.get("transitions") or {}).get(f"{from_stage}:{to_stage}", "handoff"))

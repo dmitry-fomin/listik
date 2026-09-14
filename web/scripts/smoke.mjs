@@ -192,6 +192,7 @@ async function main() {
       естьСвязи: text.includes('Связи'),
       coldRows: document.querySelectorAll('.listik-cold__row').length,
       splitButton: document.querySelectorAll('.ui-split-button').length > 0,
+      естьУдалить: text.includes('Удалить'),
     }
   })()`)
 

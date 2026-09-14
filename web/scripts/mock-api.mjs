@@ -647,6 +647,15 @@ function applyPatch(id, body) {
   return found
 }
 
+/** `DELETE /api/tasks/{id}` и кадр `action=deleted` в `/__event`. */
+function removeTask(id) {
+  const index = tasks.findIndex((item) => item.id === id)
+  if (index === -1) return false
+  tasks.splice(index, 1)
+  extraComments.delete(id)
+  return true
+}
+
 const OPEN_STATUSES = ['open', 'in_progress', 'blocked', 'review']
 const ORDER_KEYS = {
   updated: (item) => item.updated_at,
@@ -901,6 +910,7 @@ const server = createServer(async (request, response) => {
   if (url.pathname === '/__event') {
     const body = await readJsonBody(request)
     const id = body.payload?.id
+    if (body.payload?.action === 'deleted' && id) removeTask(id)
     if (body.patch && id) applyPatch(id, body.patch)
     if (body.comment && id) {
       const list = extraComments.get(id) ?? []
@@ -1068,6 +1078,11 @@ const server = createServer(async (request, response) => {
       })
     }
     if (action === 'ready') return ok(depsStateOf(id))
+    if (!action && request.method === 'DELETE') {
+      return removeTask(id)
+        ? ok({ deleted: id })
+        : json(404, { ok: false, error: `задача не найдена: ${id}` })
+    }
     if (action === 'claim') {
       const body = await readJsonBody(request)
       const state = depsStateOf(id)

@@ -177,6 +177,12 @@ async function onDone(payload: { id: string; result: string }): Promise<void> {
   else toast.danger(store.lastError.value ?? 'Не удалось закрыть задачу')
 }
 
+async function onRemove(payload: { id: string }): Promise<void> {
+  const ok = await store.removeTask(payload.id)
+  if (ok) toast.success(`Задача ${payload.id} удалена`)
+  else toast.danger(store.lastError.value ?? 'Не удалось удалить задачу')
+}
+
 async function onComment(payload: { id: string; text: string; kind: CommentKind; author?: string }): Promise<void> {
   const ok = await store.addComment(payload.id, payload.text, payload.kind, payload.author)
   if (ok) toast.success('Комментарий добавлен')
@@ -311,6 +317,7 @@ onBeforeUnmount(() => {
       @needs-owner="onNeedsOwner"
       @release="onRelease"
       @done="onDone"
+      @remove="onRemove"
       @comment="onComment"
       @dep="onDep"
     />

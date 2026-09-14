@@ -908,6 +908,13 @@ body .ui-drawer-backdrop.ui-drawer-backdrop--right .ui-drawer.ui-drawer--right.u
   min-width: 0;
 }
 
+.listik-drawer__unsafe-release {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+  flex-wrap: wrap;
+}
+
 .listik-events {
   display: flex;
   flex-direction: column;

@@ -5,7 +5,7 @@
  *   и бейджей с id справа;
  * - «Где стоит процесс»: степпер s1…s4→done с описанием прошлого/текущего/
  *   будущего шага, ряд действий (heartbeat/needs-owner/next-stage/release/
- *   claim-сплит-кнопка) и подсказка под ним;
+ *   удалить/claim-сплит-кнопка) и подсказка под ним;
  * - «Холодный старт», «Кто держит», «Журнал и вердикты» (единая лента
  *   комментариев+событий с фильтром и формой отправки), «Связи» (сетка
  *   карточек по группам), «Описание и критерии».
@@ -97,6 +97,7 @@ const emit = defineEmits<{
   needsOwner: [payload: { id: string; value: boolean; note?: string }]
   release: [payload: { id: string }]
   done: [payload: { id: string; result: string }]
+  remove: [payload: { id: string }]
   comment: [payload: { id: string; text: string; kind: CommentKind; author?: string }]
   dep: [payload: { id: string; dependsOn: string }]
   /** Перейти к другой задаче, не закрывая панель (блокер, ожидающий, ребёнок). */
@@ -113,6 +114,7 @@ const claimOpen = ref(false)
 const claimWarningOpen = ref(false)
 const forceDialogOpen = ref(false)
 const closeFormOpen = ref(false)
+const removeOpen = ref(false)
 const depFormOpen = ref(false)
 const needsOwnerFormOpen = ref(false)
 const needsOwnerNote = ref('')
@@ -385,6 +387,7 @@ watch(
     claimOpen.value = false
     claimWarningOpen.value = false
     closeFormOpen.value = false
+    removeOpen.value = false
     depFormOpen.value = false
     needsOwnerFormOpen.value = false
     // Дерево связей принадлежит задаче: при переходе по ссылке оно не должно
@@ -392,6 +395,13 @@ watch(
     depTree.value = null
     depTreeLoading.value = false
     if (props.task?.holder) holder.value = props.task.holder
+  },
+)
+
+watch(
+  () => props.pending,
+  (value, previous) => {
+    if (previous === 'remove' && value !== 'remove') removeOpen.value = false
   },
 )
 
@@ -643,6 +653,11 @@ function submitDone(): void {
   emit('done', { id: props.task.id, result })
   closeResult.value = ''
   closeFormOpen.value = false
+}
+
+function submitRemove(): void {
+  if (!props.task) return
+  emit('remove', { id: props.task.id })
 }
 
 function submitDep(): void {
@@ -1036,6 +1051,16 @@ async function loadTree(): Promise<void> {
               @click="emit('release', { id: task.id })"
             >
               Освободить
+            </UiButton>
+            <UiButton
+              size="sm"
+              variant="ghost"
+              :loading="pending === 'remove'"
+              v-bind="{ 'aria-label': `Удалить задачу ${task.id}` }"
+              @click="removeOpen = true"
+            >
+              <template #icon><ListikIcon name="close" size="xs" /></template>
+              Удалить
             </UiButton>
           </span>
           <span class="listik-drawer__spacer" />
@@ -1460,6 +1485,18 @@ async function loadTree(): Promise<void> {
     cancel-label="Отмена"
     :loading="pending === 'claim'"
     @confirm="submitClaim(true)"
+  />
+
+  <!-- Сосед дровера, не содержимое: оба оверлея телепортируются в body. -->
+  <UiConfirmDialog
+    v-model="removeOpen"
+    tone="danger"
+    title="Удалить задачу?"
+    :description="`Задача ${task?.id ?? ''} исчезнет безвозвратно — вместе с комментариями, связями и историей. Если нужна запись, закройте её с результатом.`"
+    confirm-label="Удалить"
+    cancel-label="Отмена"
+    :loading="pending === 'remove'"
+    @confirm="submitRemove"
   />
 </template>
 

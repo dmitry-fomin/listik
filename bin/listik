@@ -1066,8 +1066,6 @@ def _print_routing(project: dict) -> None:
     source = _ROUTING_SOURCE_TITLES.get(project.get("routing_source"),
                                         project.get("routing_source") or "?")
     print(f"маршрутизация (источник: {source}):")
-    process = eff.get("default_process") or []
-    print(f"  процесс по умолчанию: {' → '.join(process) if process else '—'}")
     harnesses = eff.get("harnesses") or {}
     for stage in store.PIPELINE_STAGES:
         names = harnesses.get(stage) or []

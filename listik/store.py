@@ -1175,7 +1175,11 @@ def _project_with_routing(conn: sqlite3.Connection, row: dict) -> dict:
     """Дописать к строке проекта действующую маршрутизацию: `routing` (переопределение
     из базы, распарсенное, или None), `routing_effective` (слитый словарь: то, чем
     реально пользуются `allowed_harnesses`/`transition_kind`) и `routing_source` —
-    откуда взято переопределение (`default`/`config`/`db`/`config+db`)."""
+    откуда взято переопределение (`default`/`config`/`db`/`config+db`).
+
+    Устаревшие ключи (`config.LEGACY_ROUTING_KEYS`) не показываем и за
+    переопределение не считаем: проект, у которого сохранён только такой ключ,
+    равнозначен проекту без настроек."""
     slug = row.get("slug")
     raw = row.get("routing")
     parsed = None
@@ -1185,11 +1189,14 @@ def _project_with_routing(conn: sqlite3.Connection, row: dict) -> dict:
         except (TypeError, ValueError):
             parsed = None
     out = dict(row)
-    out["routing"] = parsed if isinstance(parsed, dict) else None
+    cleaned = config_mod.without_legacy_routing(parsed) if isinstance(parsed, dict) else None
+    out["routing"] = cleaned or None
     out["routing_effective"] = config_mod.routing(slug, conn=conn)
     has_db = bool(out["routing"])
     has_config = False
     try:
+        # config.load() уже вычистил устаревшие ключи (см. config.LEGACY_ROUTING_KEYS):
+        # переопределение, в котором остался только такой ключ, сюда приходит пустым.
         cfg = config_mod.load()
         projects_cfg = (cfg.get("routing") or {}).get("projects") or {}
         has_config = bool(slug and isinstance(projects_cfg, dict) and projects_cfg.get(slug))

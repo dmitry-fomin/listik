@@ -12,6 +12,15 @@ url = "http://127.0.0.1:11434"
 batch = 16
 max_chars = 6000
 
+# Помощник при создании задачи (DeepSeek, OpenAI-совместимый chat/completions).
+# Пустой api_key = помощник выключен: кнопки у полей формы прячутся, а
+# POST /api/assistant/suggest отвечает понятной ошибкой. Ключ читает только
+# сервер — в браузер он не уходит.
+[assistant]
+api_key = ""
+base_url = "https://api.deepseek.com"
+model = "deepseek-flash"
+
 [import]
 projects_root = "/Users/pathToProjects"
 max_depth = 6

@@ -21,6 +21,7 @@ from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 
 from . import actors as actors_mod
+from . import assistant as assistant_mod
 from . import config as config_mod
 from . import db as db_mod
 from . import deps as deps_mod
@@ -495,6 +496,11 @@ def handle(method: str, path: str, query: dict, body: dict, authed: bool = False
                        for record in state.routes],
         }
 
+    if path == "/api/assistant/status":
+        # Настроен ли помощник: без api_key в [assistant] доска прячет кнопки.
+        # Ключ наружу не отдаётся — только факт его наличия.
+        return 200, assistant_mod.status()
+
     if path == "/api/meta":
         return 200, {
             "projects": store.list_projects(conn, include_archived=as_bool(q1("archived", False))),
@@ -804,6 +810,15 @@ def handle(method: str, path: str, query: dict, body: dict, authed: bool = False
             "SELECT key, project, body, updated_at FROM memories "
             "ORDER BY updated_at DESC LIMIT ?", (as_int(q1("limit"), 50) or 50,)).fetchall()
         return 200, [dict(r) for r in rows]
+
+    if path == "/api/assistant/suggest" and method == "POST":
+        # Помощник DeepSeek: ключ читается из config.toml на сервере и в браузер
+        # не уходит. Маршрут предлагается только из записей routes.json.
+        try:
+            return 200, assistant_mod.suggest(
+                body.get("field"), body.get("text", ""), body.get("context"))
+        except assistant_mod.AssistantError as exc:
+            raise ApiError(exc.status, exc.message, exc.code) from exc
 
     if path == "/api/embed" and method == "POST":
         cfg = config_mod.load()

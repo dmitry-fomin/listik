@@ -158,6 +158,55 @@ pid <N>, лог <path>`. Процесс не блокирует запрос: PO
 
 `command` наружу не отдаётся: его нет ни в `GET /api/routes`, ни в `/api/health`.
 
+## Помощник DeepSeek (создание задачи)
+
+Помощник помогает заполнять форму «Новая задача»: переписывает текст одного поля, дописывает
+критерии приёмки, оценивает когнитивную сложность и предлагает маршрут из `routes.json`.
+Настройки — `config.toml`, раздел `[assistant]`: `api_key`, `base_url`, `model`. Пустой
+`api_key` — помощник выключен. Обязателен только `api_key`: без `base_url`/`model` берутся
+значения по умолчанию (`https://api.deepseek.com`, `deepseek-flash`); секция целиком
+пользовательская — Listik не создаёт и не перезаписывает её сам. Ключ читает только сервер
+Listik и никогда не отдаёт его доске:
+браузер ходит в серверные эндпоинты, а к DeepSeek (OpenAI-совместимый `POST
+<base_url>/chat/completions`, по умолчанию `https://api.deepseek.com`) обращается сервер.
+
+`GET /api/assistant/status` — `enabled` (есть ли непустой ключ), `model`, `base_url`. Ключ не
+отдаётся ни в каком виде. Доска показывает кнопки помощника, только когда `enabled=true`;
+без ключа кнопок нет, а прямой запрос к `suggest` отвечает понятной ошибкой.
+
+`POST /api/assistant/suggest` — тело `{field, text, context}`:
+
+- `field` (обязателен) — одно из `title`, `description`, `acceptance`, `spec_path`; другое
+  значение — 400 `bad_argument`;
+- `text` — текущий текст поля; может быть пустым, если `context` не пуст, иначе 400
+  `bad_argument` («нечего проверять»);
+- `context` — срез карточки: `type`, `priority`, `project`, `title`, `description`,
+  `acceptance`, `spec_path`; незнакомые ключи отбрасываются, длинные значения обрезаются.
+
+Ответ: `field`, `model` и `suggestion`:
+
+```json
+{"field": "description", "model": "deepseek-flash",
+ "suggestion": {
+   "text": "переписанный текст поля",
+   "acceptance": ["критерий, которого нет в текущей приёмке"],
+   "complexity": {"level": "low|medium|high", "reason": "почему"},
+   "route": {"key": "low-pipeline", "kind": "pipeline", "title": "low", "hint": "…",
+             "reason": "почему этот маршрут"}}}
+```
+
+`acceptance` — до 10 непустых строк без дублей; `complexity` и `route` — `null`, если модель
+не дала уровень из `COMPLEXITY_LEVELS` или ключ маршрута не из видимых записей `GET
+/api/routes` (чужой ключ молча отбрасывается). Ничего не применяется автоматически: доска
+показывает предложение и ждёт подтверждения человеком.
+
+Ошибки DeepSeek не выглядят как внутренняя ошибка Listik: нет ключа — 503 `server_error`
+«помощник не настроен: добавьте api_key в config.toml, раздел [assistant]»; DeepSeek ответил
+ошибкой — 502 `server_error` (для 401/403 текст указывает на `api_key`); сеть или таймаут —
+504 `server_error`; неразбираемый ответ модели — 502 `server_error`. Тело ответа DeepSeek в
+текст ошибки не проксируется — только код статуса (для 401/403 — подсказка про
+`[assistant].api_key`); тело пишется в лог сервера, с замаскированным ключом.
+
 ## Документы и чанки
 
 Задача может ссылаться на markdown-файлы четырёх видов: `spec` (ТЗ, поле `spec_path`),
@@ -247,6 +296,7 @@ pid <N>, лог <path>`. Процесс не блокирует запрос: PO
 |---|---|---|---|
 | GET | `/api/health` | — | `status, version, embed{model}, now, authed`; авторизованному — ещё `db`, `counts`, `embed{ok,models}`, `routes{ok,error,path,count}`, `db_error{where,error,at}` — только если последний фоновый проход упал с `sqlite3.DatabaseError`, и `db_replaced{kind,at,detail,before,after}` — если сервер заметил подмену файла базы или WAL (см. ниже) |
 | GET | `/api/routes` | — | `ok, error, path, routes[]` — записи `routes.json`, загруженные при старте, без `command`, но с посчитанным `icon` (см. «Маршруты запуска»); ошибка файла — `ok=false` и текст, а не HTTP-ошибка |
+| GET | `/api/assistant/status` | — | `enabled, model, base_url` — настроен ли помощник DeepSeek (`[assistant]` в `config.toml`); ключ наружу не отдаётся (см. «Помощник DeepSeek») |
 | GET | `/api/meta` | `archived` | `projects[], actors[], facets{}, statuses{}, stages{}, priorities{}` |
 | GET | `/api/projects` | — | `projects[]` — все репозитории доски, включая скрытые: `slug, title, kind, path, path_exists, git_remote, git_branch, archived, n_tasks, n_open, n_wip`, плюс `routing` (переопределение проекта — объект или `null`), `routing_effective` (действующая слитая таблица, которой реально пользуются `allowed_harnesses`/`transition_kind`), `routing_source` (`default`\|`config`\|`db`\|`config+db`), плюс `root` (корень поиска проектов) |
 | GET | `/api/stats` | `project` | `by_status{}, by_stage{}, by_project[], by_holder[], by_actor[], stale, needs_owner, closed_7d, closed_prev_7d, closed_delta, closed_by_day[{date,count}] (14 дней), long_stage, running[], generated_at` |
@@ -403,6 +453,7 @@ dropped_chunks, reason`), `reasons[]` (по одному пункту на ка�
 | PATCH | `/api/projects/{slug}` | `title`, `path`, `color`, `kind`, `archived=0/1`, `routing` | правка проекта; `archived=1` — убрать с доски, не теряя задачи; `routing` — объект-переопределение маршрутизации проекта (`{}` сбрасывает его), проверяется `config.validate_routing`: допустимые ключи — `harnesses` (словарь этап → список имён, этапы и имена без дублей), `default_process` (список этапов без дублей), `transitions` (словарь `"<этап>:<этап-или-done>"` → `sticky`\|`handoff`\|`sticky-return`), `return_window_hours` (число > 0); неизвестный ключ или неверная форма — 400 с текстом на русском |
 | DELETE | `/api/projects/{slug}` | `force=1` (или в теле) | убрать проект из Listik. Проект с задачами отвечает 409 — их сначала скрывают; `force` удаляет задачи вместе с проектом |
 | POST | `/api/embed` | `limit`, `kinds=task,comment,chunk` (по умолчанию все три) | досчитать векторы (ollama bge-m3) |
+| POST | `/api/assistant/suggest` | `field`(обязателен: `title`\|`description`\|`acceptance`\|`spec_path`), `text`, `context{type,priority,project,title,description,acceptance,spec_path}` | помощник DeepSeek: переписать поле, дописать критерии приёмки, оценить когнитивную сложность и предложить маршрут из `routes.json`; ключ остаётся на сервере, предложение ничего не меняет само (см. «Помощник DeepSeek») |
 
 Slug проекта — ключ, и тот, кто проект **создаёт** (`POST /api/projects`, импортёры
 `listik import-beads` и `listik import-writerllm`), сверяется с существующими slug'ами без учёта

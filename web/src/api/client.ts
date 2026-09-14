@@ -1,5 +1,8 @@
 import { apiUrl, readStoredToken } from './config'
 import type {
+  AssistantStatus,
+  AssistantSuggestRequest,
+  AssistantSuggestResponse,
   BlockedResponse,
   Board,
   CommentKind,
@@ -108,6 +111,20 @@ export const api = {
 
   /** Маршруты запуска из `routes.json` (загружены сервером при старте, без `command`). */
   routes: () => get<RoutesResponse>('/api/routes'),
+
+  /**
+   * Настроен ли помощник DeepSeek (`[assistant]` в config.toml). Ключ наружу не
+   * отдаётся: доска прячет кнопки, когда `enabled=false`.
+   */
+  assistantStatus: () => get<AssistantStatus>('/api/assistant/status'),
+
+  /**
+   * Спросить помощника про одно поле формы: переписать текст, дописать приёмку,
+   * оценить сложность и предложить маршрут. Запрос уходит на сервер Listik —
+   * ключ DeepSeek в браузер не попадает.
+   */
+  assistantSuggest: (body: AssistantSuggestRequest) =>
+    post<AssistantSuggestResponse>('/api/assistant/suggest', body),
 
   meta: (archived = false) => get<Meta>(`/api/meta${buildQuery({ archived })}`),
 

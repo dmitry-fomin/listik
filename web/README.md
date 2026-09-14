@@ -81,7 +81,7 @@ src/
   lib/          форматтеры (возраст, длительности), иконки, тема, здоровье/харнесс/проект/этапы,
                 маршруты (`routes.ts` — таблица харнесс × процесс для «Новой задачи»),
                 viewport.ts (`useIsPhone` — порог 767px режима телефона)
-  components/   AppHeader, BoardToolbar, NeedsYouStrip, NewTaskModal, ProjectSettings,
+  components/   AppHeader, BoardToolbar, NeedsYouStrip, NewTaskModal, AssistantField, ProjectSettings,
                 TaskFilters, SearchPanel, TaskDrawer, MobileTaskList, MobileTaskRow,
                 PhoneQueue, PhoneTaskSheet, ListikIcon,
                 board/{BoardColumn,TaskCard},
@@ -108,8 +108,22 @@ scripts/
 маршрута сохраняется метками `harness:<x>`/`process:<y>` — их читает только человек, полей
 `harness`/`skill` у карточки нет и после шага 04, автоматической раздачи задач по этим меткам
 нет. Таблица маршрутов в модалке не связана с `routing` проекта на сервере: кто реально допущен
-до этапа, решает сервер (`ready --harness`, отказ причиной в `claim`). Оценки DeepSeek (блок
-`.est`/`.scale` прототипа, «Применить совет») в этом окне нет — решение автора.
+до этапа, решает сервер (`ready --harness`, отказ причиной в `claim`).
+
+## Помощник DeepSeek у полей
+
+У каждого текстового поля формы (заголовок, описание · ТЗ, приёмка, `spec_path`) есть
+`AssistantField`: при наведении на поле поверх него появляется полупрозрачная кнопка, по клику
+открывается поповер с предложением — переписанный текст поля, критерии для приёмки, оценка
+когнитивной сложности и маршрут из `routes.json`. Применяется только по подтверждению: у текста,
+критериев и маршрута отдельные кнопки, маршрут проходит те же правила доступности, что клик по
+матрице (`lib/routes.ts`).
+
+Ключ DeepSeek в браузер не попадает. Доска ходит в серверные `GET /api/assistant/status` (узнать,
+настроен ли помощник) и `POST /api/assistant/suggest` (сам запрос); `api_key` живёт в
+`config.toml`, раздел `[assistant]` (см. README репозитория). Пока `enabled=false` — ключа нет
+или запрос статуса не удался, — кнопок нет вовсе; ошибку самого запроса (таймаут, отказ
+DeepSeek) показывает панель помощника и не роняет доску.
 
 ## Слой зависимостей
 

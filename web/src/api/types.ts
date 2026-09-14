@@ -364,6 +364,69 @@ export interface RoutesResponse {
   routes: RouteDef[]
 }
 
+// ── помощник DeepSeek при создании задачи: GET /api/assistant/status,
+//    POST /api/assistant/suggest (см. API.md «Помощник DeepSeek») ─────────────
+
+/** Поля формы, у которых есть кнопка помощника (белый список `assistant.FIELDS`). */
+export type AssistantField = 'title' | 'description' | 'acceptance' | 'spec_path'
+
+/** Уровни когнитивной сложности — ключи сервера, подписи — в lib/dictionaries.ts. */
+export type AssistantComplexityLevel = 'low' | 'medium' | 'high'
+
+/** GET /api/assistant/status: ключ DeepSeek наружу не отдаётся — только факт наличия. */
+export interface AssistantStatus {
+  enabled: boolean
+  model: string
+  base_url: string
+}
+
+/** Контекст карточки, который уходит на сервер вместе с текстом поля. */
+export interface AssistantContext {
+  type?: string
+  priority?: number
+  project?: string
+  title?: string
+  description?: string
+  acceptance?: string
+  spec_path?: string
+}
+
+/** Предложенный маршрут: только из видимых записей `routes.json` (проверяет сервер). */
+export interface AssistantRoute {
+  key: string
+  kind: RouteDef['kind'] | null
+  title: string | null
+  hint: string
+  reason: string
+}
+
+export interface AssistantComplexity {
+  level: AssistantComplexityLevel
+  reason: string
+}
+
+/** Разобранное предложение модели: `null` — уровень/маршрут не приняты сервером. */
+export interface AssistantSuggestion {
+  /** Переписанный текст того поля, которое спросили. */
+  text: string
+  /** Критерии приёмки, которых нет в текущем тексте приёмки. */
+  acceptance: string[]
+  complexity: AssistantComplexity | null
+  route: AssistantRoute | null
+}
+
+export interface AssistantSuggestResponse {
+  field: AssistantField
+  model: string
+  suggestion: AssistantSuggestion
+}
+
+export interface AssistantSuggestRequest {
+  field: AssistantField
+  text: string
+  context: AssistantContext
+}
+
 export interface ActorRow {
   key: string
   title: string | null

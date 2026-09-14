@@ -2,8 +2,10 @@
 /**
  * Окно «Новая задача» (референс: `docs/prototype/NewTask-html/NewTask.dc.html`,
  * `.modal`). Поля Тип/Приоритет/Проект/Заголовок/Описание·ТЗ/Критерии
- * приёмки/`spec_path` — как в форме прототипа, без блока оценки DeepSeek
- * (решение автора). Два отличия от прототипа: порядок первого ряда
+ * приёмки/`spec_path` — как в форме прототипа; вместо блока `.est`/`.scale`
+ * прототипа оценку и маршрут предлагает помощник DeepSeek — полупрозрачной
+ * кнопкой у каждого текстового поля (`AssistantField`), и применяется только по
+ * подтверждению. Два отличия от прототипа: порядок первого ряда
  * Тип → Приоритет → Проект (в прототипе Проект второй) и подсказка приоритета
  * тултипом UiTooltip на контроле, а не строкой под ним. Блок «Маршрут» — свой (кит не знает такого
  * контрола): записи (пресеты конвейера и прямые харнессы) отдаёт сервер — `GET /api/routes`,
@@ -27,13 +29,21 @@ import {
 } from '@zoloto585/facet'
 import IconToggle, { type IconToggleOption } from '@/components/IconToggle.vue'
 import ListikIcon from '@/components/ListikIcon.vue'
+import AssistantField from '@/components/AssistantField.vue'
 import HarnessIcon from '@/components/marks/HarnessIcon.vue'
 import ProjectMark from '@/components/marks/ProjectMark.vue'
 import ProviderIcon from '@/components/marks/ProviderIcon.vue'
 import RouteIcon from '@/components/marks/RouteIcon.vue'
 import TaskGlyph from '@/components/marks/TaskGlyph.vue'
 import { ROUTE_ICONS, TASK_TYPES, priority } from '@/lib/dictionaries'
-import type { DirectRouteDef, PipelineRouteDef, ProjectRow, RouteDef } from '@/api/types'
+import type {
+  AssistantContext,
+  AssistantField as AssistantFieldKey,
+  DirectRouteDef,
+  PipelineRouteDef,
+  ProjectRow,
+  RouteDef,
+} from '@/api/types'
 import { HARNESS_TITLES } from '@/lib/harness'
 import { ROLE_KEYS, ROLE_TITLES } from '@/lib/pipelines'
 import { defaultPipelineFor, directAllowed, pipelineAllowed, routeLabels } from '@/lib/routes'
@@ -110,6 +120,8 @@ watch(isOpen, (open) => {
   }
   // Первое открытие формы — единственный запрос маршрутов за сессию доски.
   store.ensureRoutes()
+  // И единственный запрос статуса помощника: без ключа кнопок у полей не будет.
+  store.ensureAssistant()
   if (!routeTouched.value) applyDefaultRoute()
 })
 
@@ -155,6 +167,41 @@ watch(
 const titleError = computed(() => (submitted.value && !form.title.trim() ? 'нужен заголовок' : null))
 
 const createDisabled = computed(() => props.pending || !form.title.trim() || !form.project)
+
+// ── помощник DeepSeek у полей: кнопка на поле, применение — только по подтверждению ──
+
+/** Контекст карточки для помощника: то, что уже введено в форму, без пустых полей. */
+const assistantContext = computed<AssistantContext>(() => ({
+  type: form.type,
+  priority: Number(form.priority),
+  project: form.project ?? undefined,
+  title: form.title.trim() || undefined,
+  description: form.description.trim() || undefined,
+  acceptance: form.acceptance.trim() || undefined,
+  spec_path: form.specPath.trim() || undefined,
+}))
+
+/** Переписанный текст прилетает в своё поле — какое спросили, то и меняем. */
+function applyAssistantText(field: AssistantFieldKey, text: string): void {
+  if (field === 'title') form.title = text
+  else if (field === 'description') form.description = text
+  else if (field === 'acceptance') form.acceptance = text
+  else form.specPath = text
+}
+
+/** Дописать критерии приёмки к уже написанному, по одному в строке. */
+function appendAcceptance(criteria: string[]): void {
+  const clean = criteria.map((item) => item.trim()).filter(Boolean)
+  if (!clean.length) return
+  const body = clean.join('\n')
+  form.acceptance = form.acceptance.trim() ? `${form.acceptance.trimEnd()}\n${body}` : body
+}
+
+/** Маршрут от помощника проходит те же правила, что и клик по матрице. */
+function applyAssistantRoute(key: string): void {
+  const route = routeOptions.value.find((item) => item.key === key)
+  if (route) selectRoute(route)
+}
 
 // ── маршрут: записи из routes.json (`GET /api/routes`), правила — lib/routes.ts ──
 
@@ -350,25 +397,69 @@ function cancel(): void {
       </div>
 
       <UiField label="Заголовок" required :error="titleError">
-        <UiInput v-model="form.title" placeholder="тема задачи" :error="titleError" />
+        <AssistantField
+          field="title"
+          label="Заголовок"
+          :text="form.title"
+          :context="assistantContext"
+          :selected-route-key="form.routeKey"
+          @apply-text="(text) => applyAssistantText('title', text)"
+          @apply-acceptance="appendAcceptance"
+          @apply-route="applyAssistantRoute"
+        >
+          <UiInput v-model="form.title" placeholder="тема задачи" :error="titleError" />
+        </AssistantField>
       </UiField>
 
       <UiField
         label="Описание · ТЗ"
         hint="markdown · эпик режется на шаги и порции на этапе s1, здесь только суть"
       >
-        <UiTextarea v-model="form.description" autosize :rows="5" placeholder="что делаем и зачем" />
+        <AssistantField
+          field="description"
+          label="Описание · ТЗ"
+          :text="form.description"
+          :context="assistantContext"
+          :selected-route-key="form.routeKey"
+          @apply-text="(text) => applyAssistantText('description', text)"
+          @apply-acceptance="appendAcceptance"
+          @apply-route="applyAssistantRoute"
+        >
+          <UiTextarea v-model="form.description" autosize :rows="5" placeholder="что делаем и зачем" />
+        </AssistantField>
       </UiField>
 
       <UiField label="Критерии приёмки">
-        <UiTextarea v-model="form.acceptance" autosize :rows="3" placeholder="как проверить, что готово" />
+        <AssistantField
+          field="acceptance"
+          label="Критерии приёмки"
+          :text="form.acceptance"
+          :context="assistantContext"
+          :selected-route-key="form.routeKey"
+          @apply-text="(text) => applyAssistantText('acceptance', text)"
+          @apply-acceptance="appendAcceptance"
+          @apply-route="applyAssistantRoute"
+        >
+          <UiTextarea v-model="form.acceptance" autosize :rows="3" placeholder="как проверить, что готово" />
+        </AssistantField>
       </UiField>
 
       <UiField
         label="Путь к ТЗ (spec_path)"
         hint="относительно корня репозитория проекта; можно заполнить позже"
       >
-        <UiInput v-model="form.specPath" placeholder="docs/specs/….md" />
+        <AssistantField
+          field="spec_path"
+          label="Путь к ТЗ"
+          :text="form.specPath"
+          :context="assistantContext"
+          :selected-route-key="form.routeKey"
+          @apply-text="(text) => applyAssistantText('spec_path', text)"
+          @apply-acceptance="appendAcceptance"
+          @apply-route="applyAssistantRoute"
+        >
+          <UiInput v-model="form.specPath" placeholder="docs/specs/….md" />
+        </AssistantField>
       </UiField>
 
       <section class="listik-stack" style="gap: var(--space-2)">

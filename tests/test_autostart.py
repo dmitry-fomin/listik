@@ -603,13 +603,23 @@ class ServerPostTests(AutostartTestCase):
         with mock.patch.object(server, "publish"):
             status, updated = server.handle(
                 "PATCH", f"/api/tasks/{task['id']}", {},
-                {"autostart": False, "launch_route": "xhigh-pipeline", "launched_by": None,
+                {"autostart": False, "launched_by": None,
                  "launch_pid": 1, "launch_error": "подмена", "launch_exit_code": 42,
                  "launch_log": "/tmp/подмена.log", "launch_finished_at": "2020-01-01T00:00:00Z",
                  "launched_at": "2020-01-01T00:00:00Z"}, authed=True)
         self.assertEqual(status, 200)
         for name in NINE:
             self.assertEqual(updated[name], before[name], name)
+
+        # Маршрут — единственное поле запуска, которое вообще принимает PATCH, но
+        # у начатой задачи смена запрещена (см. tests/test_route_change.py).
+        with self.assertRaises(server.ApiError) as ctx:
+            with mock.patch.object(server, "publish"):
+                server.handle("PATCH", f"/api/tasks/{task['id']}", {},
+                              {"route": "xhigh-pipeline"}, authed=True)
+        self.assertEqual(ctx.exception.status, 400)
+        self.assertIn("маршрут нельзя менять", ctx.exception.message)
+        self.assertEqual(self.row(task["id"])["launch_route"], before["launch_route"])
 
 
 class LocalFallbackTests(AutostartTestCase):

@@ -71,6 +71,11 @@ export interface Task {
   // поля есть у каждой задачи, у незапущенных — null/false
   autostart: boolean
   launch_route: string | null
+  /**
+   * Можно ли ещё менять маршрут (`launch_route`): сервер разрешает только пока
+   * задача заведена — без этапа, держателя и запущенного процесса.
+   */
+  route_editable: boolean
   launched_by: string | null
   launch_pid: number | null
   launched_at: string | null
@@ -605,6 +610,12 @@ export interface TaskPatch {
   needs_owner?: boolean
   external_ref?: string
   archived?: boolean
+  /**
+   * Маршрут запуска («тип запуска»): алиас колонки `launch_route`, как и в
+   * POST /api/tasks. Сервер принимает смену, только пока задача не начата.
+   */
+  route?: string | null
+  launch_route?: string | null
   actor?: string
   harness?: string
   note?: string

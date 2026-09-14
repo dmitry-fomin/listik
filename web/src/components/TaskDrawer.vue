@@ -69,7 +69,7 @@ import {
 import { PIPELINE, TRANSITIONS, stageCode, stageIndex, stageTitle, transitionOut, type TransitionKey } from '@/lib/stages'
 import { HEALTH_TITLES, healthReason, taskHealth } from '@/lib/health'
 import { HARNESS_TITLES, harnessOf } from '@/lib/harness'
-import { routeByKey } from '@/lib/routes'
+import { routeAllowedForType, routeByKey, routeLabels, routesAlertText } from '@/lib/routes'
 import store from '@/store/listik'
 
 const props = defineProps<{
@@ -223,6 +223,92 @@ const statusTone = computed<StatusPillTone>(() => {
   return 'healthy'
 })
 
+// ── «Маршрут запуска»: смена, пока задача не начата (см. API.md) ──────────
+
+/**
+ * Сервер разрешает менять маршрут, пока задача заведена и работа не началась:
+ * нет этапа, держателя и запущенного процесса (поле `route_editable`). Как
+ * только работа началась, сервер отказывает с понятной ошибкой, а доска не
+ * показывает выбор — здесь остаётся только прочитанный маршрут.
+ */
+const routeEditable = computed(() => props.task?.route_editable === true)
+
+/** Черновик выбора: в задачу уходит только по кнопке, а не на каждый клик. */
+const routeDraft = ref<string | null>(null)
+
+watch(
+  () => props.task?.launch_route,
+  (value) => {
+    routeDraft.value = value ?? null
+  },
+  { immediate: true },
+)
+
+// Маршруты — из `GET /api/routes` (кеш на сессию доски, как у «Новой задачи»):
+// запрашиваем, только когда в карточке действительно можно выбирать.
+watch(
+  [() => props.modelValue, routeEditable],
+  ([open, editable]) => {
+    if (open && editable) store.ensureRoutes()
+  },
+  { immediate: true },
+)
+
+/** Ошибка файла (`ok:false`) или самого запроса — выбирать не из чего. */
+const routesFailed = computed(() => store.routesRequestFailed.value || !store.routesOk.value)
+
+const routesAlert = computed(() =>
+  routesAlertText(store.routesRequestFailed.value, store.routesError.value),
+)
+
+function retryRoutes(): void {
+  void store.loadRoutes()
+}
+
+const routeOptions = computed<UiSelectOption<string>[]>(() => {
+  if (routesFailed.value) return []
+  const type = props.task?.issue_type ?? 'task'
+  const options: UiSelectOption<string>[] = store.routes.value
+    .filter((route) => route.visible)
+    .map((route) => ({
+      value: route.key,
+      label: route.title,
+      // Те же правила, что в «Новой задаче»: эпику нужен этап ТЗ, прямой маршрут закрыт.
+      disabled: !routeAllowedForType(route, type),
+    }))
+  const current = props.task?.launch_route ?? null
+  // Текущий маршрут может быть скрыт, устареть или ещё не приехать вместе со
+  // списком: показываем его отдельной строкой, а не пустой подписью селекта.
+  if (current && !options.some((option) => option.value === current)) {
+    options.unshift({ value: current, label: current, disabled: true })
+  }
+  return options
+})
+
+const routeDirty = computed(() => routeDraft.value !== (props.task?.launch_route ?? null))
+
+/**
+ * Метки маршрута (`harness:<…>`/`process:<…>`) — как при создании: старые метки
+ * маршрута заменяются метками нового, чужие метки задачи остаются. Маршрута нет
+ * в списке (битый `routes.json`) — метки не трогаем.
+ */
+function routeLabelsPatch(): string[] | null {
+  const route = store.routes.value.find((item) => item.key === routeDraft.value)
+  if (!route) return null
+  const keep = (props.task?.labels ?? []).filter((label) => !/^(harness|process):/.test(label))
+  return [...keep, ...routeLabels(route)]
+}
+
+function submitRoute(): void {
+  if (!props.task || !routeDirty.value || routeDraft.value === null) return
+  const labels = routeLabelsPatch()
+  emit('patch', {
+    id: props.task.id,
+    body: { route: routeDraft.value, ...(labels ? { labels } : {}) },
+    label: 'route',
+  })
+}
+
 // ── «Автостарт»: процесс маршрута поднимает сервер (см. API.md) ───────────
 
 /**
@@ -231,11 +317,12 @@ const statusTone = computed<StatusPillTone>(() => {
  */
 const launchRoute = computed(() => routeByKey(props.task?.launch_route, store.routes.value))
 
-/** Блок нужен, только если автостарт заказан, запуск был или о нём есть ошибка. */
+/** Блок нужен, если маршрут можно менять или о запуске уже есть что сказать. */
 const showLaunch = computed(() => {
   const task = props.task
   if (!task) return false
-  return Boolean(task.autostart || task.launched_by || task.launch_error)
+  return Boolean(task.route_editable || task.autostart || task.launched_by
+    || task.launch_error || task.launch_route)
 })
 
 /**
@@ -645,6 +732,7 @@ const ALL_EVENT_KINDS = new Set([
   'answer',
   'done',
   'created',
+  'route',
   'document_error',
   'document_restored',
 ])
@@ -674,6 +762,9 @@ function eventTitle(event: TaskEvent): string {
   if (event.kind === 'heartbeat') return `heartbeat · ${event.actor ?? '—'}`
   if (event.kind === 'claim') return `взял в работу · ${event.actor ?? '—'}`
   if (event.kind === 'release') return `освободил · ${event.actor ?? '—'}`
+  if (event.kind === 'route') {
+    return `маршрут ${event.from_value ?? '—'} → ${event.to_value ?? '—'}`
+  }
   return eventKindTitle(event.kind)
 }
 
@@ -998,8 +1089,56 @@ async function loadTree(): Promise<void> {
       </section>
 
       <section v-if="showLaunch" class="listik-section">
-        <h4 class="listik-section__title">Автостарт</h4>
-        <dl class="listik-dl">
+        <div class="listik-section__head">
+          <h4 class="listik-section__title">{{ routeEditable ? 'Маршрут запуска' : 'Автостарт' }}</h4>
+          <span v-if="routeEditable" class="listik-section__hint">менять можно, пока задача не начата</span>
+        </div>
+
+        <template v-if="routeEditable">
+          <UiAlert v-if="routesFailed" tone="warning">
+            {{ routesAlert }}
+            <div class="listik-row" style="margin-top: var(--space-3)">
+              <UiButton size="sm" variant="secondary" :loading="store.routesLoading.value" @click="retryRoutes">
+                Повторить
+              </UiButton>
+            </div>
+          </UiAlert>
+
+          <div v-else class="listik-row">
+            <UiSelect
+              v-model="routeDraft"
+              :options="routeOptions"
+              size="sm"
+              placeholder="маршрут не выбран"
+              :disabled="pending === 'route'"
+              v-bind="{ 'aria-label': 'Маршрут запуска' }"
+            />
+            <UiButton
+              size="sm"
+              variant="secondary"
+              :disabled="!routeDirty"
+              :loading="pending === 'route'"
+              @click="submitRoute"
+            >
+              Сохранить маршрут
+            </UiButton>
+          </div>
+
+          <p v-if="!routesFailed" class="listik-section__hint">
+            «Тип запуска» — запись из <span class="listik-mono">routes.json</span> (её отдаёт
+            <span class="listik-mono">GET /api/routes</span>): кто исполняет задачу и по какому
+            процессу. Пока задача заведена — без этапа, держателя и запуска — маршрут можно
+            сменить; после начала работы сервер откажет. Сам маршрут ничего не запускает: процесс
+            поднимает только галочка «Автостарт» при создании.
+          </p>
+
+          <UiAlert v-if="task.launch_error" tone="warning">
+            <template #title>Автостарт не выполнен</template>
+            {{ task.launch_error }}
+          </UiAlert>
+        </template>
+
+        <dl v-else class="listik-dl">
           <dt>маршрут</dt>
           <dd class="listik-row" style="flex-wrap: nowrap">
             <RouteIcon

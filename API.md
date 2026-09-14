@@ -55,6 +55,7 @@ Listik — самостоятельный трекер задач вместо `
 | `worktree` / `branch` | str? | где идёт работа |
 | `autostart` | bool | галочка «запустить сразу»: процесс задачи поднимает сам сервер Listik |
 | `launch_route` | str? | ключ маршрута из `routes.json`, по которому запускать |
+| `route_editable` | bool | можно ли ещё менять `launch_route`: `true` — задача заведена, без этапа, держателя и запущенного процесса (считает сервер) |
 | `launched_by` | str? | `listik`, если процесс запустил сервер; иначе `null` |
 | `launch_pid` | int? | PID запущенного процесса |
 | `launched_at` | str? | когда запустили, ISO-8601 UTC |
@@ -83,12 +84,14 @@ updated_at, status, error, chunk_count`, — и `children[]` — все доче
 | Писатель | Поля |
 |---|---|
 | `store.create_task` (POST `/api/tasks`) | `autostart`, `launch_route` |
+| `store.update_task` (PATCH `/api/tasks/{id}`, `listik set`, `listik_update` в MCP) | `launch_route` — и только пока задача не началась (см. «Смена маршрута» ниже) |
 | `listik/launcher.py: start` (сервер) | `launched_by`, `launched_at`, `launch_pid`, `launch_log`, `launch_error`, плюс `needs_owner` через `set_needs_owner` |
 | поток слежения за процессом и `recover` при старте сервера | `launch_exit_code`, `launch_finished_at` |
 | локальный фолбэк CLI (`client.local_call`, ветка `create`) | `launch_error`, плюс `needs_owner` |
 
-Ни одно из девяти полей не входит в белый список `PATCH /api/tasks/{id}`
-(`store.UPDATABLE`): правкой карточки их изменить нельзя.
+В белый список `PATCH /api/tasks/{id}` (`store.UPDATABLE`) входит только `launch_route`
+(и его алиас `route`, как в POST): правкой карточки маршрут меняют, пока работа не началась.
+Остальные восемь колонок запуска правкой карточки не меняются.
 
 ## Маршруты запуска (routes.json) и автостарт
 
@@ -155,6 +158,29 @@ pid <N>, лог <path>`. Процесс не блокирует запрос: PO
 (`ProcessLookupError`) получает `launch_finished_at` и журнал «отслеживание потеряно при
 перезапуске сервера» (`launch_exit_code` остаётся `NULL`), живой (в том числе
 `PermissionError`) не трогается. Переиспользованный PID считается живым — принятый риск.
+
+### Смена маршрута («типа запуска») у заведённой задачи
+
+Маршрут можно поменять после создания: `PATCH /api/tasks/{id}` полем `route` (алиас —
+колонка `launch_route`) или `listik set <id> route=<ключ>`; пустая строка снимает маршрут
+совсем. Сервер разрешает смену, только пока задача не началась: статус `open`, нет этапа,
+держателя и запущенного процесса (`launched_by`). Иначе — `400` с кодом `conflict` и текстом
+`маршрут нельзя менять: <что именно>. …`; не строка в поле — тоже `400`. Успешная смена
+пишется в историю событием `route` (`from_value` — старый ключ, `to_value` — новый, `null` —
+маршрута нет) от имени актора. Поле `route_editable` в карточке сообщает доске, показывать
+ли выбор маршрута.
+
+Запрет держится и на самой записи, а не только на чтении карточки: `launch_route` пишется
+условным `UPDATE … WHERE status='open' AND holder пуст AND stage пуст AND launched_by пуст`.
+Если между чтением и записью задачу успели взять (`claim` на другом соединении) или
+запустить, условие не выполняется — запрос не применяет ни одного своего поля и не пишет
+событий, а отвечает тем же `400` с текстом отказа по свежему состоянию задачи. По той же
+причине один запрос не может одновременно начать работу и сменить маршрут: `route` вместе с
+`status`/`stage`/`holder`, после которых задача уже не заведена, — тоже `400`.
+
+Смена маршрута ничего не запускает: процесс поднимает только `autostart` в момент создания
+задачи. Метки `harness:<…>`/`process:<…>` сервер не выводит из маршрута и не переписывает —
+их ставит доска (вместе с маршрутом), CLI при создании задачи их не выставляет.
 
 `command` наружу не отдаётся: его нет ни в `GET /api/routes`, ни в `/api/health`.
 
@@ -435,7 +461,7 @@ dropped_chunks, reason`), `reasons[]` (по одному пункту на ка�
 | Метод | Путь | Тело | Смысл |
 |---|---|---|---|
 | POST | `/api/tasks` | `title`(обязателен), `project, description, acceptance, design, notes, type, status, priority, assignee, stage, labels[], spec_path, checklist_path, review_path, decision_path, journal_path, external_ref, actor, harness, needs_owner, id, autostart, route, parent` | создать. `parent` — ID карточки шага: новая карточка сразу получает мягкую связь `parent-child` (порция), а без своего `project` — ещё и проект родителя; несуществующий `parent` — 404, задача не создаётся. `autostart: true` сразу запускает процесс по маршруту `route` (см. «Маршруты запуска»): ответ — `201` с перечитанной задачей, отказ запуска не отменяет создание и не даёт `500`. `autostart: true` без непустого `route` — `400`, задача не создаётся; `route` без `autostart` просто сохраняется в `launch_route` |
-| PATCH | `/api/tasks/{id}` | любые из `title, description, acceptance, design, notes, result, status, stage, priority, issue_type, assignee, holder, holder_note, project, labels[], spec_path, checklist_path, review_path, decision_path, journal_path, worktree, branch, close_reason, needs_owner, external_ref, archived` + `actor`, `harness`, `note` | изменить (каждое изменение пишется в events) |
+| PATCH | `/api/tasks/{id}` | любые из `title, description, acceptance, design, notes, result, status, stage, priority, issue_type, assignee, holder, holder_note, project, labels[], spec_path, checklist_path, review_path, decision_path, journal_path, worktree, branch, close_reason, needs_owner, external_ref, archived` + `route` (алиас `launch_route`, см. «Смена маршрута») + `actor`, `harness`, `note` | изменить (каждое изменение пишется в events). `route` — «тип запуска»: принимается, только пока задача заведена — без этапа, держателя и запуска, иначе `400`/`conflict`; пустая строка снимает маршрут; событие `route`. Остальные восемь полей запуска не принимаются |
 | DELETE | `/api/tasks/{id}` | — | удалить |
 | PUT | `/api/tasks/{id}/documents/{kind}` | `content` (обязателен, строка не длиннее 1 000 000 символов), `path`, `actor` | принять текст документа и хранить его в базе (`source=upload`) — для сервера, где файлов проектов нет. Путь выбирается по шагам, ровно в этом порядке: 1) непустой `path` из тела; 2) иначе — уже записанный в карточке путь этого вида (`spec_path`/`checklist_path`/`review_path`/`decision_path`); 3) иначе, для `decision`, — `journal_path`; 4) иначе — виртуальный `listik://<id>/<kind>.md`. В случаях 1 и 4 выбранный путь дописывается в карточку. `revision` растёт только при смене текста (новая запись — сразу `revision=1`); при новой записи и при смене текста пишется событие `document_uploaded` с пометкой `r<revision>`; повтор с тем же текстом ревизию не меняет и события не создаёт. 400 — неизвестный `kind`, не передан или не строка `content`, текст длиннее 1 000 000 символов, не строка `path`; 404 — нет такой задачи; 405 — любой метод по этому пути, кроме `GET` и `PUT` |
 | POST | `/api/tasks/{id}/claim` | `holder`(обязателен), `harness`, `note`, `force=false` | взять в работу. 400 по трём причинам: незакрытые жёсткие блокеры (обходится `force`, пишет предупреждение в историю), чужой держатель, занятое рабочее дерево — держатель и рабочее дерево `force` не обходят. `harness` проверяется, только если передан (сверяется с routing проекта на этапе задачи) |

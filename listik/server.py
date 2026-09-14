@@ -1142,6 +1142,13 @@ class Handler(BaseHTTPRequestHandler):
         rel = "index.html" if path in ("/", "") else path.lstrip("/")
         target = (dist / rel).resolve()
         if not str(target).startswith(str(dist.resolve())) or not target.is_file():
+            # Путь с расширением — это файл, а не маршрут приложения: на запрос
+            # ассета отвечаем честным 404, а не HTML-страницей с кодом 200.
+            # Safari, попросивший /favicon.ico и получивший HTML, считает иконку
+            # битой, запоминает отказ и рисует вкладку без фавиконки (listik-5cb0).
+            if Path(rel).suffix:
+                return self._send(404, b"not found\n", "text/plain; charset=utf-8",
+                                  {"Cache-Control": "no-store"})
             target = dist / "index.html"
             if not target.is_file():
                 return self._board_not_built()

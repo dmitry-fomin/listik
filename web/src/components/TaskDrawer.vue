@@ -304,7 +304,9 @@ const showLaunch = computed(() => {
 const launchStatus = computed<string | null>(() => {
   const task = props.task
   if (!task) return null
-  if (task.launched_by === 'listik' && !task.launch_finished_at) return 'идёт'
+  const closed = task.status === 'done' || task.status === 'cancelled'
+  // Закрытая задача без launch_finished_at — процесс потерян, а не «идёт» (listik-3a4m).
+  if (task.launched_by === 'listik' && !task.launch_finished_at) return closed ? 'отслеживание потеряно' : 'идёт'
   if (task.launch_finished_at && task.launch_exit_code != null) return `код ${task.launch_exit_code}`
   if (task.launch_finished_at) return 'отслеживание потеряно'
   return null

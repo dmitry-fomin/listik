@@ -41,6 +41,9 @@ ALREADY_STARTED = "уже запущена Listik"
 _trackers: dict[str, threading.Thread] = {}
 _trackers_lock = threading.Lock()
 
+# Период опроса живого pid, за которым слежение потеряно при перезапуске сервера.
+POLL_INTERVAL = 5.0
+
 
 def tracker(task_id: str) -> threading.Thread | None:
     """Поток слежения за процессом задачи (None, если задачу не запускали)."""
@@ -269,8 +272,10 @@ def recover(conn, notify=None) -> list[str]:
     `ProcessLookupError` — процесс умер, пока сервер лежал: пишем
     `launch_finished_at`, комментарий и событие; код выхода остаётся NULL, потому что
     узнать его уже негде. Живой процесс и `PermissionError` (чужой живой процесс)
-    не трогаются — слежение за живым процессом не возобновляется. Возвращает id
-    задач, у которых слежение потеряно. Принятый риск: переиспользованный PID
+    не трогаются сразу: для них стартует поток-опросчик (`_poll`), который раз в
+    `POLL_INTERVAL` сек проверяет pid и по его исчезновению пишет
+    `launch_finished_at` и комментарий «код неизвестен» (listik-3a4m). Возвращает id
+    задач, чей процесс умер, пока сервер лежал. Принятый риск: переиспользованный PID
     считается живым, это не лечим.
     """
     rows = conn.execute(
@@ -292,8 +297,61 @@ def recover(conn, notify=None) -> list[str]:
             _notify(notify, row["id"])
             lost.append(row["id"])
         except PermissionError:
-            continue
+            _start_poller(conn, row["id"], pid, notify)
         except OSError as exc:  # прочая ошибка проверки — считаем процесс живым
             print(f"autostart {row['id']}: проверка pid {pid}: {exc}",
                   file=sys.stderr, flush=True)
+            _start_poller(conn, row["id"], pid, notify)
+        else:
+            _start_poller(conn, row["id"], pid, notify)
     return lost
+
+
+def _start_poller(conn, task_id: str, pid: int, notify):
+    """Поток-демон, опрашивающий живой pid, который сервер не запускал в этом процессе."""
+    thread = threading.Thread(
+        target=_poll, args=(conn, _db_path(conn), task_id, pid, notify),
+        name=f"listik-launch-poll-{task_id}", daemon=True)
+    with _trackers_lock:
+        _trackers[task_id] = thread
+    thread.start()
+    return thread
+
+
+def _alive(pid: int) -> bool:
+    try:
+        os.kill(pid, 0)
+    except ProcessLookupError:
+        return False
+    except OSError:  # PermissionError и прочее — считаем живым
+        return True
+    return True
+
+
+def _poll(conn, db_path, task_id: str, pid: int, notify) -> None:
+    import time
+    while _alive(pid):
+        time.sleep(POLL_INTERVAL)
+    own = db_mod.connect(db_path) if db_path else None
+    target = own or conn
+    try:
+        ts = store.now_iso()
+        cur = target.execute(
+            "UPDATE tasks SET launch_finished_at = ?, updated_at = ? WHERE id = ? "
+            "AND launch_pid = ? AND (launch_finished_at IS NULL OR launch_finished_at = '')",
+            (ts, ts, task_id, pid))
+        if cur.rowcount == 0:  # запись уже сделана или задачу перезапустили
+            target.commit()
+            return
+        store.add_comment(target, task_id,
+                          f"автостарт: процесс {pid} завершился; слежение было потеряно "
+                          "при перезапуске сервера — код выхода неизвестен",
+                          author="agent:listik", kind="journal")
+    except Exception as exc:  # noqa: BLE001 — падать в демоне нельзя
+        print(f"autostart {task_id}: не записал завершение процесса {pid}: {exc}",
+              file=sys.stderr, flush=True)
+        return
+    finally:
+        if own is not None:
+            own.close()
+    _notify(notify, task_id)

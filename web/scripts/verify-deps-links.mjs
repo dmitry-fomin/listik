@@ -14,151 +14,18 @@
  * Печатает JSON-отчёт: `cases[]` (имя, ok, что увидели) и `consoleErrors`.
  * Код возврата 1, если хоть один сценарий не прошёл.
  */
-import { spawn } from 'node:child_process'
-import { createServer, request as httpRequest } from 'node:http'
-import { createReadStream, existsSync, mkdtempSync, rmSync, statSync } from 'node:fs'
+import { existsSync, mkdtempSync, rmSync } from 'node:fs'
 import { tmpdir } from 'node:os'
-import { extname, join, normalize } from 'node:path'
+import { join } from 'node:path'
 import { fileURLToPath } from 'node:url'
+import { cdpTarget, connect, freePort, serveDist, sleep, startChrome, startMock } from './lib/browser-harness.mjs'
 
 const root = fileURLToPath(new URL('..', import.meta.url))
 const dist = join(root, 'dist')
-const slowMs = 3000
-
-const sleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms))
-
-function freePort() {
-  return new Promise((resolve, reject) => {
-    const probe = createServer()
-    probe.on('error', reject)
-    probe.listen(0, '127.0.0.1', () => {
-      const { port } = probe.address()
-      probe.close(() => resolve(port))
-    })
-  })
-}
-
-/**
- * Статика собранного приложения: SPA-фолбэк на index.html плюс прокси `/api/*`
- * на мок. Прокси, а не `VITE_API_BASE`, — чтобы страница и API были одного
- * origin, как в проде (сборка отдаётся тем же сервером Listik).
- */
-function serveDist(port, apiPort) {
-  const types = {
-    '.html': 'text/html; charset=utf-8',
-    '.js': 'text/javascript; charset=utf-8',
-    '.css': 'text/css; charset=utf-8',
-    '.json': 'application/json; charset=utf-8',
-    '.woff2': 'font/woff2',
-  }
-  const server = createServer((request, response) => {
-    const path = decodeURIComponent((request.url ?? '/').split('?')[0])
-    if (path.startsWith('/api/')) {
-      const proxy = httpRequest(
-        {
-          host: '127.0.0.1',
-          port: apiPort,
-          path: request.url,
-          method: request.method,
-          headers: { ...request.headers, host: `127.0.0.1:${apiPort}` },
-        },
-        (upstream) => {
-          response.writeHead(upstream.statusCode ?? 502, upstream.headers)
-          upstream.pipe(response)
-        },
-      )
-      proxy.on('error', () => {
-        response.writeHead(502, { 'Content-Type': 'application/json; charset=utf-8' })
-        response.end(JSON.stringify({ ok: false, error: 'mock-api недоступен' }))
-      })
-      request.pipe(proxy)
-      return
-    }
-    const file = join(dist, normalize(path).replace(/^(\.\.[/\\])+/, ''))
-    const target = path !== '/' && existsSync(file) && statSync(file).isFile() ? file : join(dist, 'index.html')
-    response.writeHead(200, { 'Content-Type': types[extname(target)] ?? 'application/octet-stream' })
-    createReadStream(target).pipe(response)
-  })
-  return new Promise((resolve) => server.listen(port, '127.0.0.1', () => resolve(server)))
-}
-
-async function startMock(port) {
-  const child = spawn(
-    process.execPath,
-    [join(root, 'scripts', 'mock-api.mjs'), String(port), '--links', `--slow-ms=${slowMs}`],
-    { stdio: 'inherit' },
-  )
-  for (let attempt = 0; attempt < 40; attempt += 1) {
-    try {
-      const response = await fetch(`http://127.0.0.1:${port}/api/health`)
-      if (response.ok) return child
-    } catch {
-      /* мок ещё поднимается */
-    }
-    await sleep(100)
-  }
-  child.kill()
-  throw new Error('mock-api не поднялся')
-}
-
-/* ── CDP ────────────────────────────────────────────────────────────────── */
-
-const chromePath =
-  process.env.CHROME_PATH ?? '/Applications/Google Chrome.app/Contents/MacOS/Google Chrome'
+const chromePath = process.env.CHROME_PATH ?? '/Applications/Google Chrome.app/Contents/MacOS/Google Chrome'
 const chromePort = 9400 + Math.floor(Math.random() * 400)
 const profile = mkdtempSync(join(tmpdir(), 'listik-links-'))
-
-async function cdpTarget() {
-  for (let attempt = 0; attempt < 40; attempt += 1) {
-    try {
-      const response = await fetch(`http://127.0.0.1:${chromePort}/json/list`)
-      const page = (await response.json()).find((item) => item.type === 'page')
-      if (page?.webSocketDebuggerUrl) return page.webSocketDebuggerUrl
-    } catch {
-      /* chrome ещё поднимается */
-    }
-    await sleep(250)
-  }
-  throw new Error('не дождались CDP-таргета Chrome')
-}
-
-function connect(url) {
-  const socket = new WebSocket(url)
-  const pending = new Map()
-  const consoleErrors = []
-  let nextId = 1
-  const ready = new Promise((resolve, reject) => {
-    socket.addEventListener('open', resolve, { once: true })
-    socket.addEventListener('error', reject, { once: true })
-  })
-  socket.addEventListener('message', (message) => {
-    const data = JSON.parse(message.data)
-    if (data.id && pending.has(data.id)) {
-      const { resolve, reject } = pending.get(data.id)
-      pending.delete(data.id)
-      data.error ? reject(new Error(JSON.stringify(data.error))) : resolve(data.result)
-      return
-    }
-    if (data.method === 'Runtime.exceptionThrown') {
-      consoleErrors.push(data.params?.exceptionDetails?.exception?.description ?? 'исключение')
-    }
-    if (data.method === 'Runtime.consoleAPICalled' && data.params?.type === 'error') {
-      consoleErrors.push((data.params.args ?? []).map((arg) => arg.value ?? arg.description).join(' '))
-    }
-  })
-  const send = (method, params = {}) =>
-    new Promise((resolve, reject) => {
-      const id = nextId++
-      pending.set(id, { resolve, reject })
-      socket.send(JSON.stringify({ id, method, params }))
-    })
-  const evaluate = async (expression) => {
-    const result = await send('Runtime.evaluate', { expression, returnByValue: true, awaitPromise: true })
-    if (result.exceptionDetails) throw new Error(JSON.stringify(result.exceptionDetails))
-    return result.result.value
-  }
-  return { socket, ready, send, evaluate, consoleErrors }
-}
+const slowMs = 3000
 
 /* ── Сценарии ───────────────────────────────────────────────────────────── */
 
@@ -190,27 +57,14 @@ try {
     }
     const apiPort = await freePort()
     const pagePort = await freePort()
-    mock = await startMock(apiPort)
-    staticServer = await serveDist(pagePort, apiPort)
+    mock = await startMock(apiPort, root, ['--links', `--slow-ms=${slowMs}`])
+    staticServer = await serveDist(pagePort, apiPort, dist)
     url = `http://127.0.0.1:${pagePort}/?token=mock-token`
   }
 
-  chrome = spawn(
-    chromePath,
-    [
-      '--headless=old',
-      '--disable-gpu',
-      '--window-size=1600,1100',
-      '--no-sandbox',
-      '--disable-dev-shm-usage',
-      `--remote-debugging-port=${chromePort}`,
-      `--user-data-dir=${profile}`,
-      'about:blank',
-    ],
-    { stdio: 'ignore' },
-  )
+  chrome = startChrome(chromePath, chromePort, profile)
 
-  const { socket, ready, send, evaluate, consoleErrors } = connect(await cdpTarget())
+  const { socket, ready, send, evaluate, consoleErrors } = connect(await cdpTarget(chromePort))
   await ready
   await send('Runtime.enable')
   await send('Page.enable')

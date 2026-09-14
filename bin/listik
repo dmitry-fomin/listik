@@ -534,7 +534,7 @@ def cmd_new(args) -> int:
         "review_path": args.review, "decision_path": args.decision,
         "actor": actor_default(args), "harness": args.harness,
         "autostart": args.autostart, "route": args.route,
-        "parent": args.parent,
+        "parent": args.parent, "discovered_from": args.discovered_from,
     }
     local = dict(body)
     local.pop("type", None)
@@ -543,12 +543,37 @@ def cmd_new(args) -> int:
     local["issue_type"] = args.type
     local["created_by"] = actor_default(args)
     local["parent"] = args.parent
+    local["discovered_from"] = args.discovered_from
+    # Подсказка «упомянутые id без связи» — и в локальном режиме тоже.
+    local["hints"] = True
     task = call("create", args, "/api/tasks", method="POST", body=body, local_kwargs=local)
+    hint_lines = _link_hint_lines(task)
     emit(args, task, f"создана {task['id']}"
          + (f"  [{task['project']}]" if task.get("project") else "")
          + (f"\n  порция шага: {task['id']} → родитель {args.parent}" if args.parent else "")
+         + (f"\n  найдена при: {task['id']} → {args.discovered_from}"
+            if args.discovered_from else "")
          + f"\n  {task['title']}")
+    for line in hint_lines:
+        print(line, file=sys.stderr)
     return 0
+
+
+def _link_hint_lines(task: dict) -> list[str]:
+    """Предупреждение о чужих id в тексте новой карточки без связи (listik-0wpx).
+
+    Сами связи не ставим: упоминание не всегда означает связь, а `dep link`
+    связывает все упомянутые задачи одной командой. Пишем в stderr, чтобы
+    `--json` оставался машинно-читаемым."""
+    hints = task.get("link_hints") or []
+    if not hints:
+        return []
+    lines = [f"! в тексте упомянуты задачи без связи ({len(hints)}):"]
+    for h in hints:
+        lines.append(f"    {h['id']} [{h.get('status') or '—'}] {h.get('title') or ''}".rstrip())
+    lines.append(f"  связать: listik dep link {task['id']}  "
+                 f"(или listik dep add {task['id']} <ID> --dep-type relates-to)")
+    return lines
 
 
 def cmd_list(args) -> int:
@@ -1414,6 +1439,9 @@ def build_parser() -> argparse.ArgumentParser:
                     help="родительская карточка (шаг/эпик): новая карточка станет её порцией "
                          "(связь parent-child) со своими spec/checklist/review; проект "
                          "наследуется от родителя, если не задан -p")
+    sp.add_argument("--discovered-from", metavar="ID",
+                    help="карточка, при работе над которой задачу нашли: сразу ставит мягкую "
+                         "связь discovered-from, и исходная карточка видит находку в связях")
 
     sp = add("list", cmd_list, help="список задач")
     sp.add_argument("--project")

@@ -166,6 +166,8 @@ def create_task(
     autostart: bool = False,
     route: str | None = None,
     parent: str | None = None,
+    discovered_from: str | None = None,
+    hints: bool = False,
 ) -> dict:
     """Создать задачу. `autostart`/`route` только сохраняются: процесс запускает
     не эта функция, а `listik/launcher.py` (сервер — сразу после создания, CLI
@@ -176,7 +178,17 @@ def create_task(
     `checklist_path`/`review_path`, а родитель видит их все через `show`/`context`.
     Если `project` не задан, порция наследует проект родителя (иначе она уехала бы
     на другую доску). Несуществующий родитель — ошибка до вставки: карточка не
-    создаётся."""
+    создаётся.
+
+    `discovered_from` — ID карточки, при работе над которой задачу нашли: сразу
+    ставит мягкую связь `discovered-from`, и исходная карточка показывает находку
+    в своих связях. Несуществующий источник — ошибка до вставки, как и с `parent`.
+    Проект при этом не наследуется: найденное по ходу может относиться к другому
+    проекту, а угадывание проекта молча уводило бы карточку на чужую доску.
+
+    `hints=True` добавляет в результат `link_hints` — упоминания чужих карточек
+    в тексте, с которыми связи нет (подсказка «поставь `dep link`»). Импортёрам
+    это не нужно, поэтому по умолчанию выключено."""
     if not title.strip():
         raise ValueError("title не может быть пустым")
     parent_id = (parent or "").strip() or None
@@ -187,11 +199,17 @@ def create_task(
         if parent_row is None:
             raise KeyError(f"задача не найдена: {parent_id}")
         parent_project = parent_row["project"]
+    source_id = (discovered_from or "").strip() or None
+    if source_id is not None and not conn.execute(
+            "SELECT 1 FROM tasks WHERE id = ?", (source_id,)).fetchone():
+        raise KeyError(f"задача не найдена: {source_id}")
     if not project and parent_project:
         project = parent_project
     tid = task_id or gen_id(conn, project)
     if parent_id is not None and parent_id == tid:
         raise ValueError(f"задача не может быть родителем самой себе: {tid}")
+    if source_id is not None and source_id == tid:
+        raise ValueError(f"задача не может быть найдена при самой себе: {tid}")
     ts = created_at or now_iso()
     actor_key, kind = actors_mod.resolve(created_by, conn)
     if created_by:
@@ -225,6 +243,10 @@ def create_task(
         # Порция — дочерняя карточка шага (решение listik-9gsh): мягкая связь
         # parent-child, родитель закрывается только после закрытия всех детей.
         add_dep(conn, tid, parent_id, "parent-child", created_by=created_by or actor_key)
+    if source_id is not None:
+        # «Найдена при»: связь появляется вместе с карточкой, а не отдельным
+        # `dep add`, о котором легко забыть (listik-0wpx).
+        add_dep(conn, tid, source_id, "discovered-from", created_by=created_by or actor_key)
     if spec_path or journal_path or checklist_path or review_path or decision_path:
         try:
             from . import documents
@@ -232,7 +254,30 @@ def create_task(
         except Exception as exc:  # document availability must not break task creation
             event(conn, tid, "document_error", note=str(exc))
     conn.commit()
-    return get_task(conn, tid)
+    task = get_task(conn, tid)
+    if hints:
+        task["link_hints"] = link_hints(conn, tid)
+    return task
+
+
+def link_hints(conn: sqlite3.Connection, task_id: str, *, limit: int = 5) -> list[dict]:
+    """Упоминания чужих карточек в тексте задачи, с которыми нет связи.
+
+    ID в описании — ещё не связь: без `dep add`/`dep link` исходная карточка не
+    видит, что из неё что-то выросло (listik-0wpx). Возвращаем короткий список
+    для предупреждения; связи не ставим сами — упоминание не всегда означает
+    связь. Подсказка не должна ломать уже созданную карточку, поэтому ошибки
+    чтения здесь гасим.
+
+    Режим `hints` отсеивает id в файловых путях и кавычках: `docs/specs/<id>.md`
+    или `x = "<id>"` — ссылка на файл, а не на карточку, и предупреждение по ней
+    было бы ложным (вердикт grok, listik-0wpx)."""
+    try:
+        from . import deps as deps_mod
+        found = deps_mod.mentioned(conn, task_id, limit=limit, mode="hints")
+    except Exception:  # noqa: BLE001 — подсказка необязательна
+        return []
+    return [{"id": x["id"], "title": x["title"], "status": x["status"]} for x in found]
 
 
 UPDATABLE = {

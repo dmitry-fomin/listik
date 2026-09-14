@@ -154,7 +154,10 @@ def local_call(op: str, **kwargs):
             # задача создаётся, но сразу с отказом и флагом «нужен человек».
             from . import launcher
             launcher.refuse(conn, task["id"], "сервер Listik не запущен")
-            return store.get_task(conn, task["id"])
+            fresh = store.get_task(conn, task["id"])
+            if "link_hints" in task:  # перечитывание карточки не должно терять подсказку
+                fresh["link_hints"] = task["link_hints"]
+            return fresh
         return task
     if op == "update":
         task_id = kwargs.pop("task_id")

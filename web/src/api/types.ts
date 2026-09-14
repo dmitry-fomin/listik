@@ -192,6 +192,11 @@ export interface DepInfo {
   stale?: boolean
   /** Связь ссылается на несуществующую задачу. */
   missing?: boolean
+  /**
+   * Связь пришла с противоположной стороны: карточка-источник так видит задачи,
+   * найденные при работе над ней (`discovered-from`, «найдена при»).
+   */
+  incoming?: boolean
 }
 
 /** Вердикт «можно ли брать эту задачу» — POST /api/tasks/{id}/ready, deps_state в карточке. */

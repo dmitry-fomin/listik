@@ -95,7 +95,10 @@ TOOLS: list[dict] = [
                         "пути к markdown-документам задачи (ТЗ, чек-лист приёмки, ревью, решение); "
                         "они индексируются по разделам и доступны через listik_context/поиск. "
                         "parent — ID карточки шага: новая карточка станет её порцией "
-                        "(связь parent-child) со своими документами."),
+                        "(связь parent-child) со своими документами. discovered_from — ID карточки, "
+                        "при работе над которой задачу нашли: связь discovered-from появляется сразу, "
+                        "и исходная карточка видит находку в связях. Если в тексте упомянуты чужие "
+                        "карточки без связи, в ответе будет link_hints — поставь dep link."),
         "inputSchema": {
             "type": "object",
             "properties": {
@@ -116,6 +119,9 @@ TOOLS: list[dict] = [
                 "journal_path": {"type": "string"},
                 "parent": {"type": "string",
                            "description": "ID родительской карточки (шаг/эпик): связь parent-child"},
+                "discovered_from": {"type": "string",
+                                    "description": "ID карточки, при работе над которой найдена эта задача: "
+                                                   "сразу ставит мягкую связь discovered-from"},
                 "actor": ACTOR,
             },
             "required": ["title"],
@@ -462,7 +468,8 @@ def call_tool(name: str, args: dict, conn=None) -> object:
             labels=args.get("labels") or [], spec_path=args.get("spec_path"),
             checklist_path=args.get("checklist_path"), review_path=args.get("review_path"),
             decision_path=args.get("decision_path"), journal_path=args.get("journal_path"),
-            parent=args.get("parent"), created_by=args.get("actor"))
+            parent=args.get("parent"), discovered_from=args.get("discovered_from"),
+            hints=True, created_by=args.get("actor"))
     if name == "listik_update":
         return store.update_task(conn, args["id"], actor=args.get("actor"),
                                  harness=args.get("harness"), note=args.get("note"),

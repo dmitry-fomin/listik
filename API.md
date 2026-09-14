@@ -305,6 +305,28 @@ Listik и никогда не отдаёт его доске:
   раздела ТЗ. На `s1-spec`/`s2-review` `portion` детей не подменяет: `portion_card` там
   всегда `null`, а в `children[]` видны все порции с их документами.
 
+## Найденная по ходу задача (discovered-from)
+
+Задачу, найденную при работе над другой, заводят сразу со связью с исходной:
+`listik new "…" --discovered-from <id текущей>`. В API это необязательное поле `discovered_from`
+у `POST /api/tasks`, в MCP — параметр `discovered_from` у `listik_create`. Связь мягкая
+(`dep_type=discovered-from`, подпись «найдена при»), пишется в той же транзакции, что и карточка;
+несуществующий id — `404` (`listik new` — ошибка с кодом 1), карточка при этом не создаётся.
+Проект от исходной карточки не наследуется: найденное по ходу может относиться к другому проекту.
+
+`discovered-from` — единственная мягкая связь, видимая с обеих сторон: карточка-источник
+показывает находки в `deps_state.soft_links[]` с `incoming: true` (в `listik show` — строка
+«связано (не блокирует): `<id>` (найдена при)»), а сама находка — с `incoming: false`.
+
+Если в тексте новой карточки упомянуты id существующих задач, а связи с ними нет, ответ
+`POST /api/tasks` (и MCP `listik_create`) содержит `link_hints[]` — `{id, title, status}`;
+`listik new` печатает по ним предупреждение в stderr и подсказывает `listik dep link <новая>`.
+Связи автоматически не ставятся: упоминание не всегда означает связь. Упоминанием не считается
+id внутри файлового пути (`docs/specs/<id>.md`, `/wt/<id>/listik/store.py` — id после `/` или
+прямо перед расширением) и id в кавычках или обратных кавычках (`x = "<id>"`): это ссылка на
+файл или фрагмент кода, а не на карточку. `dep suggest`/`dep link` при этом по-прежнему видят
+все совпадения — там команду запускает человек (режим `hints` только у подсказки).
+
 ## Эндпоинты
 
 Ошибка любого эндпоинта — HTTP-статус (400/401/403/404/405/409/5xx) и тело
@@ -460,7 +482,7 @@ dropped_chunks, reason`), `reasons[]` (по одному пункту на ка�
 
 | Метод | Путь | Тело | Смысл |
 |---|---|---|---|
-| POST | `/api/tasks` | `title`(обязателен), `project, description, acceptance, design, notes, type, status, priority, assignee, stage, labels[], spec_path, checklist_path, review_path, decision_path, journal_path, external_ref, actor, harness, needs_owner, id, autostart, route, parent` | создать. `parent` — ID карточки шага: новая карточка сразу получает мягкую связь `parent-child` (порция), а без своего `project` — ещё и проект родителя; несуществующий `parent` — 404, задача не создаётся. `autostart: true` сразу запускает процесс по маршруту `route` (см. «Маршруты запуска»): ответ — `201` с перечитанной задачей, отказ запуска не отменяет создание и не даёт `500`. `autostart: true` без непустого `route` — `400`, задача не создаётся; `route` без `autostart` просто сохраняется в `launch_route` |
+| POST | `/api/tasks` | `title`(обязателен), `project, description, acceptance, design, notes, type, status, priority, assignee, stage, labels[], spec_path, checklist_path, review_path, decision_path, journal_path, external_ref, actor, harness, needs_owner, id, autostart, route, parent, discovered_from` | создать. `parent` — ID карточки шага: новая карточка сразу получает мягкую связь `parent-child` (порция), а без своего `project` — ещё и проект родителя; несуществующий `parent` — 404, задача не создаётся. `discovered_from` — ID карточки, при работе над которой задачу нашли: сразу пишется мягкая связь `discovered-from` (см. «Найденная по ходу задача»), несуществующий id — 404, задача не создаётся. В ответе, кроме задачи, — `link_hints[]` с упомянутыми в тексте, но несвязанными задачами. `autostart: true` сразу запускает процесс по маршруту `route` (см. «Маршруты запуска»): ответ — `201` с перечитанной задачей, отказ запуска не отменяет создание и не даёт `500`. `autostart: true` без непустого `route` — `400`, задача не создаётся; `route` без `autostart` просто сохраняется в `launch_route` |
 | PATCH | `/api/tasks/{id}` | любые из `title, description, acceptance, design, notes, result, status, stage, priority, issue_type, assignee, holder, holder_note, project, labels[], spec_path, checklist_path, review_path, decision_path, journal_path, worktree, branch, close_reason, needs_owner, external_ref, archived` + `route` (алиас `launch_route`, см. «Смена маршрута») + `actor`, `harness`, `note` | изменить (каждое изменение пишется в events). `route` — «тип запуска»: принимается, только пока задача заведена — без этапа, держателя и запуска, иначе `400`/`conflict`; пустая строка снимает маршрут; событие `route`. Остальные восемь полей запуска не принимаются |
 | DELETE | `/api/tasks/{id}` | — | удалить |
 | PUT | `/api/tasks/{id}/documents/{kind}` | `content` (обязателен, строка не длиннее 1 000 000 символов), `path`, `actor` | принять текст документа и хранить его в базе (`source=upload`) — для сервера, где файлов проектов нет. Путь выбирается по шагам, ровно в этом порядке: 1) непустой `path` из тела; 2) иначе — уже записанный в карточке путь этого вида (`spec_path`/`checklist_path`/`review_path`/`decision_path`); 3) иначе, для `decision`, — `journal_path`; 4) иначе — виртуальный `listik://<id>/<kind>.md`. В случаях 1 и 4 выбранный путь дописывается в карточку. `revision` растёт только при смене текста (новая запись — сразу `revision=1`); при новой записи и при смене текста пишется событие `document_uploaded` с пометкой `r<revision>`; повтор с тем же текстом ревизию не меняет и события не создаёт. 400 — неизвестный `kind`, не передан или не строка `content`, текст длиннее 1 000 000 символов, не строка `path`; 404 — нет такой задачи; 405 — любой метод по этому пути, кроме `GET` и `PUT` |
@@ -474,7 +496,7 @@ dropped_chunks, reason`), `reasons[]` (по одному пункту на ка�
 | POST | `/api/tasks/{id}/deps` | `depends_on`, `dep_type=blocks`, `confirm=false`, `actor` | с `depends_on` — добавить связь; без него — дерево зависимостей (`waits_for`/`waited_by`). Жёсткий `dep_type` (`blocks`/`blocked-by`/`waits-for`/`conditional-blocks`) от агентского `actor` без `confirm=true` не ставится сразу жёстким — пишется как `suggested-blocks` (мягкая, ждёт подтверждения человеком); `confirm=true` (или неагентский `actor`) ставит жёсткую связь сразу. Ответ: `dep_type` (фактически записанный тип), `requested_dep_type` (что просили), `suggested`, `confirmed`, `promoted` (предложение заменено на жёсткую связь этим вызовом), `created`, `created_by`. 400 на самосвязь и на цикл жёстких связей |
 | DELETE | `/api/tasks/{id}/deps/{depends_on}` | `dep_type` строкой запроса | снять связь; без `dep_type` снимает разом `blocks` и `suggested-blocks` между той же парой задач. Ответ: `removed` (число снятых строк), `dep_types[]` |
 | POST | `/api/tasks/{id}/ready` | — | вердикт по задаче (`deps_state`, см. ниже) |
-| POST | `/api/tasks/{id}/mentions` | `limit` | задачи, упомянутые в тексте этой задачи, но не связанные с ней |
+| POST | `/api/tasks/{id}/mentions` | `limit` | задачи, упомянутые в тексте этой задачи, но не связанные с ней. Отдаёт все совпадения — тем же режимом пользуются `dep suggest`/`dep link`; подсказка `link_hints[]` при создании отсеивает id в путях и кавычках (см. «Найденная по ходу задача») |
 | POST | `/api/projects` | `path` (каталог репозитория) или `slug`, `title`, `kind=native` | добавить репозиторий на доску; slug по умолчанию — имя каталога, git remote/ветка подтягиваются сами. `path` — только абсолютный (или от `~`): относительный сервер не разрешает (у него свой рабочий каталог) — 400 `bad_argument` с текстом «path должен быть абсолютным». Если каталог лежит внутри git-репозитория, путь приводится к корню (`git rev-parse --show-toplevel`), а в ответе появляется `path_adjusted_from` — исходный путь, иначе `null`. Существующий slug не падает: проект возвращается на доску и обновляется. Сверка slug идёт **без учёта регистра** (`store.existing_slug`): если проект с таким slug уже есть в другом написании, возвращается он — с прежним регистром slug, `created=false`, — а не второй проект-дубль |
 | PATCH | `/api/projects/{slug}` | `title`, `path`, `color`, `kind`, `archived=0/1`, `routing` | правка проекта; `archived=1` — убрать с доски, не теряя задачи; `routing` — объект-переопределение маршрутизации проекта (`{}` сбрасывает его), проверяется `config.validate_routing`: допустимые ключи — `harnesses` (словарь этап → список имён, этапы и имена без дублей), `default_process` (список этапов без дублей), `transitions` (словарь `"<этап>:<этап-или-done>"` → `sticky`\|`handoff`\|`sticky-return`), `return_window_hours` (число > 0); неизвестный ключ или неверная форма — 400 с текстом на русском |
 | DELETE | `/api/projects/{slug}` | `force=1` (или в теле) | убрать проект из Listik. Проект с задачами отвечает 409 — их сначала скрывают; `force` удаляет задачи вместе с проектом |
@@ -627,6 +649,8 @@ JSON-RPC-сообщение, ответ — обычный JSON (`Content-Type: 
 `supersedes`, `suggested-blocks`) — не запрет, но сигнал «сначала прочитай»; отдаются в
 `soft_links`. `suggested-blocks` — предложение агентом жёсткой связи, ещё не подтверждённое
 человеком (`dep_title`: «предложенный блокер»); на `ready`/`claimable` не влияет.
+`discovered-from` («найдена при») отдаётся с обеих сторон: у исходной карточки находки
+приходят входящими записями с `incoming: true` (см. «Найденная по ходу задача»).
 
 `parent-child` — отдельный смысл: родитель-эпик закрывается, когда закрыты его дети.
 Поэтому `can_finish` (можно ли закрывать) и `ready` (можно ли брать) — разные вопросы.

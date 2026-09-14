@@ -14,6 +14,7 @@
 from __future__ import annotations
 
 import json
+import re
 import sqlite3
 
 OPEN_STATUSES = ("open", "in_progress", "blocked", "review")
@@ -138,10 +139,34 @@ def parent(conn: sqlite3.Connection, task_id: str) -> dict | None:
 
 
 def soft_links(conn: sqlite3.Connection, task_id: str) -> list[dict]:
+    """Мягкие связи задачи: исходящие плюс входящие `discovered-from`.
+
+    `discovered-from` — единственная мягкая связь, у которой вторая сторона тоже
+    должна быть видна: карточка-источник обязана показать, что при работе над ней
+    нашли другие задачи (listik-0wpx). Остальные входящие мягкие связи в сводку не
+    попадают — они уже есть в `dependents` карточки и дублировали бы список.
+    """
     marks = ",".join("?" * len(SOFT_LINKS))
     rows = _fetch(conn, f"SELECT depends_on, dep_type FROM deps WHERE issue_id = ? "
                         f"AND dep_type IN ({marks})", (task_id, *SOFT_LINKS))
-    return [_info(conn, r["depends_on"], r["dep_type"]) for r in rows]
+    out: list[dict] = []
+    seen: set[str] = set()
+    for r in rows:
+        info = _info(conn, r["depends_on"], r["dep_type"])
+        info["incoming"] = False
+        out.append(info)
+        seen.add(r["depends_on"])
+    incoming = _fetch(conn, "SELECT issue_id FROM deps WHERE depends_on = ? "
+                            "AND dep_type = 'discovered-from' ORDER BY issue_id", (task_id,))
+    for r in incoming:
+        discovered = r["issue_id"]
+        if discovered in seen:
+            continue
+        seen.add(discovered)
+        info = _info(conn, discovered, "discovered-from")
+        info["incoming"] = True
+        out.append(info)
+    return out
 
 
 def refresh_blocked_column(conn: sqlite3.Connection) -> int:
@@ -443,14 +468,50 @@ def graph(conn: sqlite3.Connection, task_id: str, depth: int = 3) -> dict:
             "soft_links": soft_links(conn, task_id)}
 
 
-def mentioned(conn: sqlite3.Connection, task_id: str, limit: int = 50) -> list[dict]:
+MENTION_MODES = ("text", "hints")
+# id в тексте бывает не упоминанием карточки, а технической ссылкой: компонентом
+# файлового пути (`docs/specs/<id>.md`, `/wt/<id>/listik/store.py`) или куском кода
+# в кавычках (`x = "<id>"`). Для подсказок `link_hints` такие совпадения — шум
+# (listik-0wpx, вердикт grok), для `dep link` остаются рабочими.
+# Кортежи, а не строки: `"" in "/\\"` — истина, и id в самом начале текста
+# (совпадение с нулевой позиции) ложно считался бы путём.
+_PATH_CHARS = ("/", "\\")
+_QUOTE_CHARS = ("\"", "'", "`", "«", "»", "“", "”", "„", "‟", "‘", "’")
+_MENTION_PAT = re.compile(r"\b([a-z][a-z0-9_]*(?:-[a-z0-9_]+)*)-([a-z0-9]{2,6}(?:\.[0-9]+)?)\b")
+_FILE_SUFFIX_PAT = re.compile(r"\.[A-Za-z][A-Za-z0-9_]{0,7}(?![A-Za-z0-9_])")
+
+
+def _technical_mention(text: str, start: int, end: int) -> bool:
+    """Стоит ли id в техническом контексте, а не в прозе.
+
+    Компонент пути — id сразу после разделителя (`/wt/<id>/…`) или сразу перед
+    расширением файла (`<id>.md`, `<id>.py`); кавычки и обратные кавычки —
+    цитата или фрагмент кода. В обоих случаях это ссылка на файл, а не на
+    карточку, и подсказывать по ней `dep link` не нужно."""
+    before = text[start - 1] if start else ""
+    after = text[end] if end < len(text) else ""
+    if before in _PATH_CHARS or after in _PATH_CHARS:
+        return True
+    if before in _QUOTE_CHARS or after in _QUOTE_CHARS:
+        return True
+    return after == "." and _FILE_SUFFIX_PAT.match(text, end) is not None
+
+
+def mentioned(conn: sqlite3.Connection, task_id: str, limit: int = 50, *,
+              mode: str = "text") -> list[dict]:
     """Задачи, которые упомянуты в тексте задачи, но не связаны с ней.
 
     Задачи ссылаются друг на друга ID-ами прямо в описании («упирается в vtt5»,
     «см. zoloto585-search-x3l»). Это не всегда зависимость — поэтому связи
     предлагаются как `relates-to`, а не `blocks`.
+
+    `mode="text"` (по умолчанию) — все совпадения: так работают `dep suggest` и
+    `dep link`, где команду запускает человек и сам решает, что связывать.
+    `mode="hints"` — для подсказки `link_hints` (`store.link_hints`): id в файловом
+    пути и в кавычках за упоминание не считается (listik-0wpx).
     """
-    import re
+    if mode not in MENTION_MODES:
+        raise ValueError(f"неизвестный режим упоминаний: {mode}")
     from . import store
     row = _tasks_by_id(conn, [task_id]).get(task_id)
     if row is None:
@@ -463,14 +524,15 @@ def mentioned(conn: sqlite3.Connection, task_id: str, limit: int = 50) -> list[d
         conn, "SELECT depends_on FROM deps WHERE issue_id = ?", (task_id,))}
     linked |= {r["issue_id"] for r in _fetch(
         conn, "SELECT issue_id FROM deps WHERE depends_on = ?", (task_id,))}
-    pat = re.compile(r"\b([a-z][a-z0-9_]*(?:-[a-z0-9_]+)*)-([a-z0-9]{2,6}(?:\.[0-9]+)?)\b")
     out: list[dict] = []
     seen: set[str] = set()
-    for m in pat.finditer(text):
+    for m in _MENTION_PAT.finditer(text):
         ref = f"{m.group(1)}-{m.group(2)}"
         if ref == task_id or ref in seen or ref in linked:
             continue
         if ref not in known:
+            continue
+        if mode == "hints" and _technical_mention(text, m.start(), m.end()):
             continue
         seen.add(ref)
         info = _info(conn, ref, "relates-to")

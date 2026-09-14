@@ -128,8 +128,9 @@ const parentDep = computed<DepInfo | null>(() => deps.value?.parent ?? null)
 const childrenOpen = computed<DepInfo[]>(() => deps.value?.children_open ?? [])
 /**
  * Связи карточки как они лежат в `deps` (обе стороны, включая мягкие входящие).
- * `deps_state` для сводки не годится: в `soft_links` попадают только исходящие
- * мягкие связи, а «кто ссылается на эту задачу» там нет вовсе.
+ * `deps_state` для сводки не годится: в `soft_links` из входящих связей есть только
+ * `discovered-from` («найдена при», см. listik-0wpx), а остального «кто ссылается
+ * на эту задачу» там нет.
  */
 const dependencies = computed<TaskDep[]>(() => props.task?.dependencies ?? [])
 const dependents = computed<TaskDependent[]>(() => props.task?.dependents ?? [])
@@ -1346,7 +1347,8 @@ async function loadTree(): Promise<void> {
           <template v-for="(dep, index) in softLinks" :key="`s-${dep.id}`">
             <button type="button" class="listik-link listik-mono" @click="emit('open-other', dep.id)">
               {{ dep.id }}
-            </button><span v-if="index < softLinks.length - 1">, </span>
+            </button>
+            <span v-if="dep.dep_title"> ({{ dep.dep_title }})</span><span v-if="index < softLinks.length - 1">, </span>
           </template>
         </p>
 

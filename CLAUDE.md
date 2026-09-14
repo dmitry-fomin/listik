@@ -179,7 +179,9 @@ spec, acceptance checklist, one child card per portion (`new "…порция b"
 
 **s3-impl** — read `context <id> --stage s3-impl --portion "<portion>"` and always `show <id>`
 (answers to questions; after a FAIL return the last verdict is your list of fixes). Edit code in the card's
-worktree/branch, run checks, log in `comment -k journal`. Don't commit. Next: `stage` → `s4-judge`
+worktree/branch, run checks, log in `comment -k journal`. Don't commit. Found a separate problem along the
+way — don't fix it here: file a card with `new "…" --discovered-from <id текущей>`, so the source card
+shows it in its links. Next: `stage` → `s4-judge`
 (sticky; other judge harness: `stage <id> --holder <judge>`).
 
 **s4-judge** — read `context <id> --stage s4-judge` and the checklist; if the card arrives with
@@ -201,6 +203,8 @@ L=~/Projects/Listik/bin/listik
 $L ready --harness <who>
 $L search "gist of the task"
 $L show <id>
+$L new "…" --parent <id шага>          # portion of a step (parent-child)
+$L new "…" --discovered-from <id>      # found while working on <id>: soft link right away
 $L context <id> --stage <stage> [--portion "<portion>"]
 $L dep add <id> <blocker>              # suggestion (hard only via human)
 $L dep confirm <id> <blocker>          # human confirms

@@ -618,6 +618,9 @@ def handle(method: str, path: str, query: dict, body: dict, authed: bool = False
         parent = body.get("parent")
         if parent is not None and not isinstance(parent, str):
             raise ApiError(400, "parent должен быть строкой")
+        discovered_from = body.get("discovered_from")
+        if discovered_from is not None and not isinstance(discovered_from, str):
+            raise ApiError(400, "discovered_from должен быть строкой")
         # Автостарт без маршрута запускать нечего: задача не создаётся вовсе.
         if autostart and not (route or "").strip():
             raise ApiError(400, "autostart: нужен непустой route")
@@ -650,9 +653,12 @@ def handle(method: str, path: str, query: dict, body: dict, authed: bool = False
                 autostart=autostart,
                 route=route,
                 parent=parent or None,
+                discovered_from=discovered_from or None,
+                # Подсказка «упомянутые id без связи» нужна тому, кто завёл карточку.
+                hints=True,
             )
         except KeyError as exc:
-            # Указан несуществующий parent: задача не создана.
+            # Указан несуществующий parent/discovered_from: задача не создана.
             raise api_error(404, exc) from exc
         except ValueError as exc:
             raise api_error(400, exc) from exc

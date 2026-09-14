@@ -1010,6 +1010,12 @@ def next_stage(conn: sqlite3.Connection, task_id: str, *, holder: str | None = N
         return stage_unchanged(conn, task_id, stage=cur, note=note,
                                harness=harness, actor=actor, holder=holder)
     fields = {"stage": nxt}
+    if nxt == "done":
+        # Этап done — это закрытие, как `listik done`: статус, closed_at и снятый
+        # держатель; иначе карточка висела «в работе» на этапе done (listik-rku8).
+        return update_task(conn, task_id, actor=actor, harness=harness,
+                           note=note or f"этап -> done (закрыта из {cur or '—'})",
+                           stage="done", status="done", holder="")
     transition = config_mod.transition_kind(row["project"], cur, nxt, conn=conn)
     # Handoff intentionally releases the previous writer so the next harness
     # must claim the stage.  Sticky transitions keep/optionally refresh holder.

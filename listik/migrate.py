@@ -35,6 +35,24 @@ def _find_block(text: str) -> tuple[int, int] | None:
 
 TARGETS = ("AGENTS.md", "CLAUDE.md")
 
+# CLAUDE.md читает только Claude Code, а у него есть скил listik:listik с полным протоколом —
+# туда идёт указание на скил. Внешние харнессы (dsh, grok, codex) читают AGENTS.md и скила
+# не имеют, поэтому AGENTS.md получает протокол целиком.
+CLAUDE_BODY = """## Listik
+
+Задачи этого проекта ведутся в Listik. Любое действие с задачами — завести задачу, записать
+проблему, найденную по ходу другой работы, задать вопрос человеку, взять, передать, перевести
+этап или закрыть — делай через скил `listik:listik`: вызови его до первой команды. Не заводи
+TODO в чате или в файлах вместо карточки. Скила нет — полный протокол в блоке Listik файла
+`AGENTS.md` этого проекта.
+"""
+
+
+def body_for(name: str) -> str:
+    """Тело блока для файла `name`: CLAUDE.md — указание на скил, остальные — полный протокол."""
+    return CLAUDE_BODY if name == "CLAUDE.md" else _compute_body()
+
+
 def _compute_body() -> str:
     protocol_path = paths.ROOT_DIR / "docs" / "harness-protocol.md"
     if not protocol_path.exists():
@@ -63,6 +81,8 @@ def block(body: str | None = None) -> str:
 
 def upsert(path: Path, *, dry_run: bool = False, body: str | None = None) -> str:
     """Возвращает: added | updated | unchanged | skipped."""
+    if body is None:
+        body = body_for(path.name)
     if not path.exists():
         if dry_run:
             return "skipped"

@@ -401,8 +401,10 @@ class ProtocolMentionsDiscoveredFromTests(TempDbTestCase):
     def test_generated_block_matches_protocol(self) -> None:
         block = migrate.block()
         self.assertIn("--discovered-from", block)
-        for name in ("AGENTS.md", "CLAUDE.md"):
-            self.assertIn(block, (paths.ROOT_DIR / name).read_text(encoding="utf-8"), name)
+        self.assertIn(block, (paths.ROOT_DIR / "AGENTS.md").read_text(encoding="utf-8"))
+        # CLAUDE.md несёт не протокол, а указание на скил listik:listik.
+        self.assertIn(migrate.block(migrate.CLAUDE_BODY),
+                      (paths.ROOT_DIR / "CLAUDE.md").read_text(encoding="utf-8"))
 
 
 class LocalCallDiscoveredFromTests(TempDbTestCase):

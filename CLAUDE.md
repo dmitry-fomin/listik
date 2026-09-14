@@ -103,8 +103,10 @@ Database migrations exist as two parallel mechanisms — don't confuse them:
   `POST /api/notify` in the background; over HTTP the server publishes the event itself).
 - `listik/migrate.py` — despite the name, this is unrelated to database migrations. It
   inserts/updates the `<!-- BEGIN LISTIK --> / <!-- END LISTIK -->` block in *other* projects'
-  `AGENTS.md`/`CLAUDE.md` (`listik init-projects`) so those projects' agents know to use Listik. The block body is read from `docs/harness-protocol.md` (`migrate.body()`) —
-  change the protocol there, not in `migrate.py`.
+  `AGENTS.md`/`CLAUDE.md` (`listik init-projects`) so those projects' agents know to use Listik.
+  The bodies differ per file (`migrate.body_for`): `AGENTS.md` gets the full protocol read from
+  `docs/harness-protocol.md` (`migrate.body()`) — change the protocol there, not in `migrate.py`;
+  `CLAUDE.md` gets only `CLAUDE_BODY`, a pointer to the `listik:listik` skill.
 - `listik/import_writerllm.py` (CLI: `listik import-from-bd`) — idempotent importer for the
   JSON/JSONL produced by `bd export` on WriterLLM's dolt-backed tracker; idempotency key is
   `(source, project, external_ref)`, `--update` writes a diff to the journal; tests in
@@ -136,3 +138,12 @@ The skills used to run this project's work live in this repo and are made exactl
 Edit skills only there — never the copies under `~/.claude/plugins/cache/` or
 `~/.claude/plugins/marketplaces/`, which are overwritten on plugin update.
 
+<!-- BEGIN LISTIK -->
+## Listik
+
+Задачи этого проекта ведутся в Listik. Любое действие с задачами — завести задачу, записать
+проблему, найденную по ходу другой работы, задать вопрос человеку, взять, передать, перевести
+этап или закрыть — делай через скил `listik:listik`: вызови его до первой команды. Не заводи
+TODO в чате или в файлах вместо карточки. Скила нет — полный протокол в блоке Listik файла
+`AGENTS.md` этого проекта.
+<!-- END LISTIK -->

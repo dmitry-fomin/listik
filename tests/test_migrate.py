@@ -114,6 +114,32 @@ class AgentsMdTests(unittest.TestCase):
         result = migrate.upsert(paths.ROOT_DIR / "AGENTS.md", dry_run=True)
         self.assertEqual(result, "unchanged")
 
+    def test_claude_md_carries_skill_pointer(self) -> None:
+        result = migrate.upsert(paths.ROOT_DIR / "CLAUDE.md", dry_run=True)
+        self.assertEqual(result, "unchanged")
+
+
+class PerFileBodyTests(unittest.TestCase):
+    """AGENTS.md получает протокол целиком, CLAUDE.md — только указание на скил listik:listik."""
+
+    def setUp(self) -> None:
+        self._tmpdir = tempfile.TemporaryDirectory()
+        self.project = Path(self._tmpdir.name)
+
+    def tearDown(self) -> None:
+        self._tmpdir.cleanup()
+
+    def test_migrate_all_writes_protocol_to_agents_and_skill_pointer_to_claude(self) -> None:
+        for name in migrate.TARGETS:
+            (self.project / name).write_text("# Project\n", encoding="utf-8")
+        migrate.migrate_all([self.project], verbose=False)
+        agents = (self.project / "AGENTS.md").read_text(encoding="utf-8")
+        claude = (self.project / "CLAUDE.md").read_text(encoding="utf-8")
+        self.assertIn(migrate.block(), agents)
+        self.assertIn(migrate.block(migrate.CLAUDE_BODY), claude)
+        self.assertIn("listik:listik", claude)
+        self.assertNotIn("### Stages", claude)
+
 
 class MissingProtocolFileTests(unittest.TestCase):
     def test_body_raises_when_protocol_file_missing(self) -> None:

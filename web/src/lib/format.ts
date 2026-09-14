@@ -1,4 +1,5 @@
 import type { Task } from '@/api/types'
+import { COMMENT_KINDS } from './dictionaries'
 
 /** Человекочитаемый возраст из ISO-строки: «3 ч», «2 дн», «5 мин». */
 export function humanAge(iso: string | null | undefined): string {
@@ -56,17 +57,9 @@ export function formatHours(hours: number | null | undefined): string {
 }
 
 
-const COMMENT_KIND_TITLES: Record<string, string> = {
-  comment: 'комментарий',
-  journal: 'журнал',
-  question: 'вопрос',
-  answer: 'ответ',
-  review: 'ревью',
-  verdict: 'вердикт',
-}
-
+/** Подпись вида записи ленты — единственное место подписей: `dictionaries.ts`, COMMENT_KINDS. */
 export function commentKindTitle(kind: string): string {
-  return COMMENT_KIND_TITLES[kind] ?? kind
+  return COMMENT_KINDS.find((item) => item.value === kind)?.label ?? kind
 }
 
 const EVENT_KIND_TITLES: Record<string, string> = {

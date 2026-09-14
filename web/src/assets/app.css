@@ -950,6 +950,151 @@ body .ui-drawer-backdrop.ui-drawer-backdrop--right .ui-drawer.ui-drawer--right.u
   font-size: var(--text-sm);
 }
 
+/* ── Журнал и вердикты (лента на иконках) ─────────────────────────────── */
+
+/* Опция фильтра IconToggle: иконка/подпись «все» + счётчик. */
+.listik-feed-filter {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--space-1);
+}
+
+/* Закреплённый открытый вопрос над лентой (task.needs_owner). */
+.listik-feed-pinned {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-2);
+  padding: var(--space-3);
+  border: 1px solid var(--warning-500);
+  border-radius: var(--radius-md);
+  background: var(--warning-50);
+}
+
+.listik-feed-pinned__head {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+}
+
+.listik-feed-pinned__icon {
+  display: inline-flex;
+  color: var(--warning-700);
+}
+
+.listik-feed-pinned__title {
+  font-weight: var(--weight-semibold);
+  color: var(--warning-700);
+}
+
+.listik-feed-pinned__meta {
+  margin-left: auto;
+  color: var(--ink-3);
+  font-size: var(--text-xs);
+}
+
+.listik-feed-pinned__text {
+  margin: 0;
+  color: var(--ink-1);
+  font-size: var(--text-sm);
+  white-space: pre-wrap;
+}
+
+.listik-feed-pinned__reply {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+}
+
+.listik-feed-pinned__reply .ui-input-wrap {
+  flex: 1 1 auto;
+}
+
+/* Кружок-маркер вида/события в ленте — фон/цвет приходят инлайном из
+   справочника (COMMENT_KINDS/FEED_EVENT_KINDS/verdictMark), полностью
+   закрывая собственный тон точки UiTimeline (--ui-timeline__dot). */
+.listik-feed-marker {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 100%;
+  height: 100%;
+  border-radius: var(--radius-pill);
+}
+
+.listik-feed-marker--sm {
+  width: var(--space-4);
+  height: var(--space-4);
+}
+
+.listik-feed-row {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+
+.listik-feed-row__meta {
+  color: var(--ink-3);
+  font-size: var(--text-xs);
+}
+
+.listik-feed-row__text {
+  margin: 0;
+  color: var(--ink-1);
+  font-size: var(--text-sm);
+  white-space: pre-wrap;
+}
+
+.listik-feed-row__subtext {
+  margin: 0;
+  color: var(--ink-3);
+  font-size: var(--text-xs);
+}
+
+/* Ответ вложен под своим вопросом — с отступом и собственным маленьким маркером. */
+.listik-feed-answer {
+  display: flex;
+  align-items: flex-start;
+  gap: var(--space-2);
+  margin-top: var(--space-2);
+  margin-left: var(--space-5);
+  padding-top: var(--space-2);
+  border-top: 1px solid var(--hairline);
+}
+
+/* Композер: «поле как единая рамка» — своя рамка и фон, IconToggle + инпут +
+   кнопка-стрелка внутри одной визуальной обёртки (у UiInput слоты icon 16×16
+   тесны для шести видов, поэтому раскладка не китовая, а на его токенах). */
+.listik-feed-composer {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+  padding: var(--space-1) var(--space-2);
+  border: 1px solid var(--hairline-strong);
+  border-radius: var(--radius-sm);
+  background: var(--surface);
+  box-shadow: var(--shadow-xs);
+}
+
+.listik-feed-composer:focus-within {
+  border-color: var(--accent-500);
+  box-shadow: var(--focus-ring);
+}
+
+/* Собственная рамка UiInput внутри composer-обёртки приглушена — рамку и фон
+   уже рисует .listik-feed-composer. UiInput — свой (не телепортируемый)
+   компонент со scoped-стилем (`[data-v-…]` в его селекторах — та же
+   специфичность, что у класса): три класса в селекторе побеждают его два
+   независимо от порядка в собранном бандле (тот же приём, что у
+   `.ui-drawer--…` выше). */
+.listik-feed-composer .listik-feed-composer__input.ui-input-wrap,
+.listik-feed-composer .listik-feed-composer__input.ui-input-wrap:hover,
+.listik-feed-composer .listik-feed-composer__input.ui-input-wrap:has(.ui-input:focus-visible) {
+  border: none;
+  box-shadow: none;
+  background: transparent;
+  padding-inline: 0;
+}
+
 /* ── Связи (блок «Связи» панели задачи) ────────────────────────────────── */
 
 /* Сводка иконками у заголовка: ноль не прячем — приглушаем. */

@@ -3,7 +3,7 @@
  * где перечислены ключи, подписи, иконки и цвета: фильтры, модалка создания,
  * глифы, доска и витрина берут значения отсюда, а не держат свои копии.
  */
-import type { AssistantComplexityLevel, PipelineStage, RouteIconKey, TaskStage, TaskStatus } from '@/api/types'
+import type { AssistantComplexityLevel, CommentKind, PipelineStage, RouteIconKey, TaskStage, TaskStatus } from '@/api/types'
 
 export interface DictionaryItem<T extends string | number> {
   value: T
@@ -301,6 +301,105 @@ export const ROUTE_ICON_UNKNOWN = {
   label: 'иконка недоступна',
   icon: 'route-unknown',
 } as const
+
+// ── Вид записи ленты (секция «Журнал и вердикты» панели задачи) ─────────────
+
+export interface CommentKindItem extends DictionaryItem<CommentKind> {
+  /** Имя иконки из `lib/icons.ts` — в фильтре, композере и маркере ленты. У
+   *  `verdict` в ленте иконку/цвет маркера переопределяет `verdictMark` —
+   *  здесь только композерная иконка (`flag`). */
+  icon: string
+  /** Placeholder поля композера для этого вида. */
+  placeholder: string
+  /** Фон и цвет кружка-маркера в ленте — токены кита (без hex). */
+  markerBg: string
+  markerColor: string
+}
+
+/**
+ * Виды записей ленты «Журнал и вердикты»: `comment, journal, question,
+ * answer, review, verdict`. Единственное место подписей — `commentKindTitle`
+ * (`lib/format.ts`) берёт `label` отсюда.
+ */
+export const COMMENT_KINDS: CommentKindItem[] = [
+  { value: 'comment', label: 'комментарий', icon: 'comment', placeholder: 'комментарий', markerBg: 'var(--surface-2)', markerColor: 'var(--ink-3)' },
+  { value: 'journal', label: 'журнал', icon: 'list', placeholder: 'строка журнала', markerBg: 'var(--surface-2)', markerColor: 'var(--ink-3)' },
+  { value: 'question', label: 'вопрос', icon: 'question', placeholder: 'вопрос человеку', markerBg: 'var(--warning-50)', markerColor: 'var(--warning-700)' },
+  { value: 'answer', label: 'ответ', icon: 'answer', placeholder: 'ответ на вопрос', markerBg: 'var(--info-50)', markerColor: 'var(--info-700)' },
+  { value: 'review', label: 'ревью', icon: 'review', placeholder: 'замечание ревью', markerBg: 'var(--surface-2)', markerColor: 'var(--ink-3)' },
+  // Маркер вердикта в ленте считает verdictMark по тексту — markerBg/markerColor
+  // здесь не используются (композеру и фильтру хватает иконки flag).
+  { value: 'verdict', label: 'вердикт', icon: 'flag', placeholder: 'вердикт судьи', markerBg: 'var(--surface-2)', markerColor: 'var(--ink-3)' },
+]
+
+/** Незнакомый вид — первый словарный (`comment`), как и у остальных справочников файла. */
+export function commentKind(value: string): CommentKindItem {
+  return COMMENT_KINDS.find((item) => item.value === value) ?? COMMENT_KINDS[0]
+}
+
+export interface FeedMark {
+  icon: string
+  bg: string
+  color: string
+}
+
+/**
+ * Вид вердикта по тексту — перенос логики прежнего `TaskDrawer.commentTone`:
+ * текст обрезается по краям и приводится к нижнему регистру, начинается на
+ * «красн», «red» или «fail» → иконка `close` и danger-токены, иначе `check`
+ * и success-токены.
+ */
+export function verdictMark(text: string): FeedMark {
+  const trimmed = text.trim().toLowerCase()
+  const danger = trimmed.startsWith('красн') || trimmed.startsWith('red') || trimmed.startsWith('fail')
+  return danger
+    ? { icon: 'close', bg: 'var(--danger-50)', color: 'var(--danger-700)' }
+    : { icon: 'check', bg: 'var(--success-50)', color: 'var(--success-700)' }
+}
+
+export interface FeedEventKindItem {
+  /** Ключ события (`TaskEvent.kind`). */
+  value: string
+  /** Подпись — подсказка иконки-маркера в ленте. */
+  label: string
+  /** Имя иконки из `lib/icons.ts`. */
+  icon: string
+}
+
+/** Иконки и подписи событий ленты; незнакомое событие — иконка `dot`. */
+export const FEED_EVENT_KINDS: FeedEventKindItem[] = [
+  { value: 'created', label: 'создана', icon: 'plus' },
+  { value: 'stage', label: 'этап', icon: 'play' },
+  { value: 'claim', label: 'взял в работу', icon: 'hand' },
+  { value: 'heartbeat', label: 'heartbeat', icon: 'heart' },
+  { value: 'release', label: 'освободил', icon: 'user' },
+  { value: 'done', label: 'закрыта', icon: 'check' },
+  { value: 'route', label: 'маршрут', icon: 'route-direct' },
+  { value: 'document_error', label: 'ошибка документа', icon: 'warning' },
+  { value: 'document_restored', label: 'документ восстановлен', icon: 'check' },
+]
+
+/** Иконка и подпись события; незнакомый `kind` — иконка `dot`, подпись — сам ключ. */
+export function feedEventMark(kind: string): FeedEventKindItem {
+  return FEED_EVENT_KINDS.find((item) => item.value === kind) ?? { value: kind, label: kind, icon: 'dot' }
+}
+
+export type FeedFilterValue = 'all' | 'journal' | 'question' | 'review' | 'verdict'
+
+export interface FeedFilterItem {
+  value: FeedFilterValue
+  label: string
+  /** `null` у `all` — фильтр «все» подписан текстом, без иконки. */
+  icon: string | null
+}
+
+export const FEED_FILTERS: FeedFilterItem[] = [
+  { value: 'all', label: 'все', icon: null },
+  { value: 'journal', label: 'журнал', icon: 'list' },
+  { value: 'question', label: 'вопросы', icon: 'question' },
+  { value: 'review', label: 'ревью', icon: 'review' },
+  { value: 'verdict', label: 'вердикты', icon: 'flag' },
+]
 
 // ── Когнитивная сложность (оценка помощника DeepSeek) ───────────────────────
 

@@ -7,10 +7,13 @@
  *   будущего шага, ряд действий (heartbeat/needs-owner/next-stage/release/
  *   удалить/claim-сплит-кнопка) и подсказка под ним;
  * - «Холодный старт», «Кто держит», «Журнал и вердикты» (единая лента
- *   комментариев+событий с фильтром и формой отправки), «Связи» (сводка
- *   иконками со счётчиками, красные строки открытых блокеров, компактное
- *   дерево «родитель → эта задача → дети» с прогрессом и чипы мягких связей),
- *   «Описание и критерии».
+ *   комментариев+событий на иконках: фильтр IconToggle со счётчиками,
+ *   закреплённый открытый вопрос над лентой при needs_owner, у каждой записи
+ *   кружок-маркер вида/события и строка «автор · время», ответ рисуется
+ *   вложенным в свой вопрос; композер — одна рамка с IconToggle вида, полем
+ *   и кнопкой-стрелкой отправки), «Связи» (сводка иконками со счётчиками,
+ *   красные строки открытых блокеров, компактное дерево «родитель → эта
+ *   задача → дети» с прогрессом и чипы мягких связей), «Описание и критерии».
  *
  * Своя разметка — только раскладка; контролы, бейджи, степпер, лента,
  * сплит-кнопка — из кита.
@@ -25,8 +28,6 @@ import {
   UiDrawer,
   UiInput,
   UiProgress,
-  UiSegmented,
-  UiSelect,
   UiSkeleton,
   UiStatusPill,
   UiSteps,
@@ -34,19 +35,31 @@ import {
   UiTimeline,
   UiTooltip,
   type StatusPillTone,
-  type UiSegmentedOption,
-  type UiSelectOption,
   type UiStepItem,
   type UiStepStatus,
   type UiTimelineItem,
-  type UiTimelineTone,
 } from '@zoloto585/facet'
+import IconToggle, { type IconToggleOption } from './IconToggle.vue'
 import ListikIcon from './ListikIcon.vue'
 import ProjectMark from './marks/ProjectMark.vue'
 import RouteIcon from './marks/RouteIcon.vue'
 import RoutePicker from './RoutePicker.vue'
 import TaskGlyph from './marks/TaskGlyph.vue'
-import { DEP_SUMMARY, priority, linkType, linkTypeLabel, worktreeState, worktreeValue, type DepSummaryKind } from '@/lib/dictionaries'
+import {
+  commentKind,
+  COMMENT_KINDS,
+  DEP_SUMMARY,
+  FEED_FILTERS,
+  feedEventMark,
+  linkType,
+  linkTypeLabel,
+  priority,
+  verdictMark,
+  worktreeState,
+  worktreeValue,
+  type DepSummaryKind,
+  type FeedFilterValue,
+} from '@/lib/dictionaries'
 import HarnessIcon from './marks/HarnessIcon.vue'
 import type {
   CommentKind,
@@ -410,6 +423,7 @@ watch(
     feedText.value = ''
     feedKind.value = 'journal'
     feedFilter.value = 'all'
+    pinnedAnswerText.value = ''
     closeFormOpen.value = false
     removeOpen.value = false
     depFormOpen.value = false
@@ -735,6 +749,14 @@ const coldTone = computed<'success' | 'warning' | 'danger'>(() => {
 })
 
 // ── «Журнал и вердикты» ───────────────────────────────────────────────────
+//
+// Лента — UiTimeline кита без его встроенного заголовка/времени: и `title`, и
+// `timestamp`/`datetime`, и `meta` рисуются им безусловно, поверх любого
+// #content-слота (см. UiTimeline.vue), поэтому у наших FeedRow эти поля не
+// используются (`title` — обязательное поле контракта, оставляем пустым) —
+// вся раскладка «маркер-кружок · автор/время · текст» рисуется в #marker/
+// #content своими средствами на токенах кита. Порядок в ленте — по `sortKey`
+// (ISO-время), а не по built-in `datetime`, ровно по той же причине.
 
 const ALL_EVENT_KINDS = new Set([
   'stage',
@@ -750,18 +772,58 @@ const ALL_EVENT_KINDS = new Set([
   'document_restored',
 ])
 
-const feedFilter = ref<'all' | 'journal' | 'review' | 'verdict'>('all')
+const feedFilter = ref<FeedFilterValue>('all')
 
-function setFeedFilter(value: string): void {
-  if (value === 'all' || value === 'journal' || value === 'review' || value === 'verdict') feedFilter.value = value
+function setFeedFilter(value: FeedFilterValue): void {
+  feedFilter.value = value
 }
 
-const feedFilterOptions: UiSegmentedOption[] = [
-  { value: 'all', label: 'всё' },
-  { value: 'journal', label: 'журнал' },
-  { value: 'review', label: 'ревью' },
-  { value: 'verdict', label: 'вердикт' },
-]
+function matchesCommentFilter(kind: string, filter: FeedFilterValue): boolean {
+  if (filter === 'all') return true
+  if (filter === 'journal') return kind === 'journal'
+  if (filter === 'question') return kind === 'question' || kind === 'answer'
+  if (filter === 'review') return kind === 'review'
+  return kind === 'verdict'
+}
+
+function eventsForFilter(filter: FeedFilterValue, events: TaskEvent[]): TaskEvent[] {
+  if (filter === 'all') return events.filter((event) => ALL_EVENT_KINDS.has(event.kind))
+  if (filter === 'journal') return events.filter((event) => event.kind === 'stage')
+  return []
+}
+
+/** Счётчики фильтра — по «сырым» записям (включая ответы, вложенные в вопросы
+ *  ниже), поэтому видимых записей верхнего уровня после сборки в вопрос может
+ *  быть меньше счётчика. */
+const feedCounts = computed<Record<FeedFilterValue, number>>(() => {
+  const comments = props.task?.comments ?? []
+  const events = props.task?.events ?? []
+  const countComments = (filter: FeedFilterValue): number =>
+    comments.filter((comment) => matchesCommentFilter(comment.kind, filter)).length
+  return {
+    all: countComments('all') + eventsForFilter('all', events).length,
+    journal: countComments('journal') + eventsForFilter('journal', events).length,
+    question: countComments('question'),
+    review: countComments('review'),
+    verdict: countComments('verdict'),
+  }
+})
+
+// IconToggle типизирует опцию слота ровно как IconToggleOption<V> (только
+// value/label) — иконку и счётчик берём по option.value через FEED_FILTERS/
+// feedCounts, а не как лишнее поле на самой опции (кит API менять нельзя).
+const feedFilterOptions: IconToggleOption<FeedFilterValue>[] = FEED_FILTERS.map((item) => ({
+  value: item.value,
+  label: item.label,
+}))
+
+function feedFilterIcon(value: FeedFilterValue): string | null {
+  return FEED_FILTERS.find((item) => item.value === value)?.icon ?? null
+}
+
+function feedFilterCount(value: FeedFilterValue): number {
+  return feedCounts.value[value]
+}
 
 function stageEventTitle(event: TaskEvent): string {
   let title = `stage ${event.from_value ?? '—'} → ${event.to_value}`
@@ -786,68 +848,125 @@ function eventDescription(event: TaskEvent): string | undefined {
   return event.note || undefined
 }
 
-function eventTone(event: TaskEvent): UiTimelineTone {
-  if (event.kind === 'release') return 'warning'
-  if (event.kind === 'stage') {
-    const match = event.note?.match(/\((sticky|handoff)\)/)
-    return match?.[1] === 'handoff' ? 'accent' : 'neutral'
-  }
-  return 'neutral'
+interface FeedMarker {
+  icon: string
+  bg: string
+  color: string
+  hint: string
 }
 
-function commentTone(comment: TaskComment): UiTimelineTone {
-  if (comment.kind === 'verdict') {
-    const lower = comment.text.trim().toLowerCase()
-    if (lower.startsWith('красн') || lower.startsWith('red') || lower.startsWith('fail')) return 'danger'
-    return 'accent'
-  }
-  if (comment.kind === 'review') return 'info'
-  if (comment.kind === 'question') return 'warning'
-  if (comment.kind === 'answer') return 'success'
-  return 'neutral'
+interface FeedAnswer extends FeedMarker {
+  author: string
+  time: string
+  text: string
 }
 
-const feed = computed<UiTimelineItem[]>(() => {
+interface FeedRow extends UiTimelineItem {
+  marker: FeedMarker
+  authorLine?: string
+  text?: string
+  subtext?: string
+  answer: FeedAnswer | null
+  sortKey: string
+}
+
+/** Маркер комментария: иконка/цвет — из COMMENT_KINDS, у `verdict` — по тексту (verdictMark). */
+function commentMark(kind: string, text: string): FeedMarker {
+  if (kind === 'verdict') {
+    const mark = verdictMark(text)
+    return { ...mark, hint: commentKindTitle('verdict') }
+  }
+  const item = commentKind(kind)
+  return { icon: item.icon, bg: item.markerBg, color: item.markerColor, hint: item.label }
+}
+
+function commentTime(iso: string): string {
+  return `${formatDateTime(iso)} · ${humanAge(iso)}`
+}
+
+function answerRow(comment: TaskComment): FeedAnswer {
+  return {
+    ...commentMark(comment.kind, comment.text),
+    author: comment.author || 'без автора',
+    time: commentTime(comment.created_at),
+    text: comment.text,
+  }
+}
+
+function commentRow(comment: TaskComment, answer: TaskComment | null): FeedRow {
+  return {
+    id: `c-${comment.id}`,
+    title: '',
+    marker: commentMark(comment.kind, comment.text),
+    authorLine: `${comment.author || 'без автора'} · ${commentTime(comment.created_at)}`,
+    text: comment.text,
+    answer: answer ? answerRow(answer) : null,
+    sortKey: datetimeAttr(comment.created_at) ?? '',
+  }
+}
+
+function eventRow(event: TaskEvent, index: number): FeedRow {
+  const mark = feedEventMark(event.kind)
+  return {
+    id: `e-${event.ts}-${index}`,
+    title: '',
+    marker: { icon: mark.icon, bg: 'var(--surface-2)', color: 'var(--ink-3)', hint: mark.label },
+    text: eventTitle(event),
+    subtext: eventDescription(event),
+    answer: null,
+    sortKey: datetimeAttr(event.ts) ?? '',
+  }
+}
+
+/**
+ * Пары «вопрос → ответ»: ответ привязывается к ближайшему предшествующему по
+ * времени комментарию `question` без ответа (стек — самый недавний открытый
+ * вопрос из ещё не отвеченных). Считается по всем комментариям задачи, а не
+ * по отфильтрованным — привязка не должна зависеть от активного фильтра.
+ */
+const answerByQuestion = computed<Map<number, TaskComment>>(() => {
+  const map = new Map<number, TaskComment>()
+  const task = props.task
+  if (!task) return map
+  const sorted = [...task.comments].sort((a, b) => Date.parse(a.created_at) - Date.parse(b.created_at))
+  const openQuestions: TaskComment[] = []
+  for (const comment of sorted) {
+    if (comment.kind === 'question') openQuestions.push(comment)
+    else if (comment.kind === 'answer') {
+      const question = openQuestions.pop()
+      if (question) map.set(question.id, comment)
+    }
+  }
+  return map
+})
+
+// UiTimeline типизирует слот ровно как UiTimelineItem (не дженерик) — FeedRow
+// его строго расширяет, поэтому даункаст безопасен: сама лента строится из
+// feed() ниже, никакой другой массив в :items не попадает.
+function asFeedRow(item: UiTimelineItem): FeedRow {
+  return item as FeedRow
+}
+
+const feed = computed<FeedRow[]>(() => {
   const task = props.task
   if (!task) return []
   const filter = feedFilter.value
-  const comments = task.comments.filter((comment) => {
-    if (filter === 'all') return true
-    if (filter === 'journal') return comment.kind === 'journal'
-    if (filter === 'review') return comment.kind === 'review'
-    return comment.kind === 'verdict'
-  })
-  const events =
-    filter === 'all'
-      ? task.events.filter((event) => ALL_EVENT_KINDS.has(event.kind))
-      : filter === 'journal'
-        ? task.events.filter((event) => event.kind === 'stage')
-        : []
-  const commentItems: UiTimelineItem[] = comments.map((comment) => ({
-    id: `c-${comment.id}`,
-    title: `${commentKindTitle(comment.kind)} · ${comment.author || 'без автора'}`,
-    description: comment.text,
-    timestamp: formatDateTime(comment.created_at),
-    datetime: datetimeAttr(comment.created_at),
-    meta: `comment -k ${comment.kind}`,
-    tone: commentTone(comment),
-  }))
-  const eventItems: UiTimelineItem[] = events.map((event, index) => ({
-    id: `e-${event.ts}-${index}`,
-    title: eventTitle(event),
-    description: eventDescription(event),
-    timestamp: `${formatDateTime(event.ts)} · ${humanAge(event.ts)}`,
-    datetime: datetimeAttr(event.ts),
-    meta: [event.actor, event.harness].filter(Boolean).join(' · ') || undefined,
-    tone: eventTone(event),
-  }))
-  const all = [...commentItems, ...eventItems]
-  all.sort((a, b) => (b.datetime ?? '').localeCompare(a.datetime ?? ''))
+  const answers = answerByQuestion.value
+  const answeredCommentIds = new Set([...answers.values()].map((comment) => comment.id))
+  const commentRows = task.comments
+    .filter((comment) => matchesCommentFilter(comment.kind, filter))
+    .filter((comment) => !answeredCommentIds.has(comment.id))
+    .map((comment) => commentRow(comment, comment.kind === 'question' ? answers.get(comment.id) ?? null : null))
+  const eventRows = eventsForFilter(filter, task.events).map((event, index) => eventRow(event, index))
+  const all = [...commentRows, ...eventRows]
+  all.sort((a, b) => b.sortKey.localeCompare(a.sortKey))
   return all
 })
 
 const feedEmptyState = computed<{ title: string; description?: string }>(() => {
-  if (feedFilter.value !== 'verdict' || feed.value.length > 0) return { title: 'Записей нет' }
+  if (feed.value.length > 0) return { title: 'Записей нет' }
+  if (feedFilter.value === 'question') return { title: 'Вопросов нет' }
+  if (feedFilter.value !== 'verdict') return { title: 'Записей нет' }
   const task = props.task
   const reachedJudge = task?.stage === 's4-judge' || task?.stage === 'done'
   if (!reachedJudge) {
@@ -865,15 +984,15 @@ const feedEmptyState = computed<{ title: string; description?: string }>(() => {
   }
 })
 
-const COMMENT_KINDS: CommentKind[] = ['comment', 'journal', 'question', 'answer', 'review', 'verdict']
-
-const feedKind = ref<CommentKind | null>('journal')
+const feedKind = ref<CommentKind>('journal')
 const feedText = ref('')
 
-const feedKindOptions: UiSelectOption<CommentKind>[] = COMMENT_KINDS.map((kind) => ({
-  value: kind,
-  label: commentKindTitle(kind),
+const feedKindOptions: IconToggleOption<CommentKind>[] = COMMENT_KINDS.map((item) => ({
+  value: item.value,
+  label: item.label,
 }))
+
+const feedPlaceholder = computed(() => commentKind(feedKind.value).placeholder)
 
 function onFeedKeydown(event: KeyboardEvent): void {
   if (event.key === 'Enter') submitFeed()
@@ -883,7 +1002,7 @@ function submitFeed(): void {
   if (!props.task) return
   const text = feedText.value.trim()
   if (!text) return
-  const kind = feedKind.value ?? 'comment'
+  const kind = feedKind.value
   if (kind === 'answer') {
     emit('needsOwner', { id: props.task.id, value: false, note: text })
   } else if (kind === 'question') {
@@ -892,6 +1011,36 @@ function submitFeed(): void {
     emit('comment', { id: props.task.id, text, kind, author: (holder.value ?? '').trim() || undefined })
   }
   feedText.value = ''
+}
+
+// ── Закреплённый открытый вопрос (над лентой, при task.needs_owner) ────────
+
+const lastQuestion = computed<TaskComment | null>(() => {
+  const task = props.task
+  if (!task) return null
+  const questions = task.comments.filter((comment) => comment.kind === 'question')
+  if (!questions.length) return null
+  return [...questions].sort((a, b) => Date.parse(a.created_at) - Date.parse(b.created_at)).pop() ?? null
+})
+
+const pinnedAuthor = computed<string>(() => actorShort(lastQuestion.value?.author ?? props.task?.holder ?? null))
+
+const pinnedAge = computed<string>(() => humanAge(lastQuestion.value?.created_at ?? props.task?.holder_at ?? null))
+
+const pinnedText = computed<string>(() => lastQuestion.value?.text || props.task?.holder_note || 'вопрос без текста')
+
+const pinnedAnswerText = ref('')
+
+function onPinnedAnswerKeydown(event: KeyboardEvent): void {
+  if (event.key === 'Enter') submitPinnedAnswer()
+}
+
+function submitPinnedAnswer(): void {
+  if (!props.task) return
+  const text = pinnedAnswerText.value.trim()
+  if (!text) return
+  emit('needsOwner', { id: props.task.id, value: false, note: text })
+  pinnedAnswerText.value = ''
 }
 
 // ── «Связи» ────────────────────────────────────────────────────────────────
@@ -1243,35 +1392,116 @@ async function loadTree(): Promise<void> {
 
       <section class="listik-section">
         <div class="listik-section__head">
-          <h4 class="listik-section__title">
-            Журнал и вердикты
-            <UiBadge tone="neutral" size="sm">{{ feed.length }}</UiBadge>
-          </h4>
-          <UiSegmented
+          <h4 class="listik-section__title">Журнал и вердикты</h4>
+          <IconToggle
             :model-value="feedFilter"
             :options="feedFilterOptions"
+            ariaLabel="Фильтр ленты"
             size="sm"
-            label="Фильтр журнала"
             @update:model-value="setFeedFilter"
-          />
+          >
+            <template #icon="{ option }">
+              <span class="listik-feed-filter">
+                <ListikIcon v-if="feedFilterIcon(option.value)" :name="feedFilterIcon(option.value) ?? 'dot'" size="xs" />
+                <span v-else>{{ option.label }}</span>
+                <span class="tnum">{{ feedFilterCount(option.value) }}</span>
+              </span>
+            </template>
+          </IconToggle>
         </div>
-        <UiTimeline :items="feed" dense :empty-title="feedEmptyState.title" :empty-description="feedEmptyState.description" />
-        <div class="listik-row">
-          <UiSelect
+
+        <!-- Открытый вопрос закреплён сверху — дополнительная копия: тот же
+             вопрос остаётся и в ленте ниже (см. FeedRow). -->
+        <div v-if="task.needs_owner" class="listik-feed-pinned">
+          <div class="listik-feed-pinned__head">
+            <span class="listik-feed-pinned__icon"><ListikIcon name="question" size="sm" /></span>
+            <span class="listik-feed-pinned__title">ждёт ответа</span>
+            <span class="listik-feed-pinned__meta tnum">{{ pinnedAuthor }} · {{ pinnedAge }}</span>
+          </div>
+          <p class="listik-feed-pinned__text">{{ pinnedText }}</p>
+          <div class="listik-feed-pinned__reply">
+            <UiInput
+              v-model="pinnedAnswerText"
+              size="sm"
+              placeholder="ответить…"
+              v-bind="{ 'aria-label': 'Ответ на вопрос', onKeydown: onPinnedAnswerKeydown }"
+            />
+            <UiButton
+              size="sm"
+              variant="ghost"
+              ariaLabel="Ответить"
+              :loading="pending === 'needs-owner' || pending === 'answer'"
+              :disabled="!pinnedAnswerText.trim()"
+              @click="submitPinnedAnswer"
+            >
+              <template #icon><ListikIcon name="send" size="xs" /></template>
+            </UiButton>
+          </div>
+        </div>
+
+        <UiTimeline :items="feed" dense :empty-title="feedEmptyState.title" :empty-description="feedEmptyState.description">
+          <template #marker="{ item }">
+            <span
+              class="listik-feed-marker"
+              :style="{ background: asFeedRow(item).marker.bg, color: asFeedRow(item).marker.color }"
+              :title="asFeedRow(item).marker.hint"
+            >
+              <ListikIcon :name="asFeedRow(item).marker.icon" size="xs" />
+            </span>
+          </template>
+          <template #content="{ item }">
+            <div class="listik-feed-row">
+              <span v-if="asFeedRow(item).authorLine" class="listik-feed-row__meta tnum">{{ asFeedRow(item).authorLine }}</span>
+              <p v-if="asFeedRow(item).text" class="listik-feed-row__text">{{ asFeedRow(item).text }}</p>
+              <p v-if="asFeedRow(item).subtext" class="listik-feed-row__subtext">{{ asFeedRow(item).subtext }}</p>
+            </div>
+            <div v-if="asFeedRow(item).answer" class="listik-feed-answer">
+              <span
+                class="listik-feed-marker listik-feed-marker--sm"
+                :style="{ background: asFeedRow(item).answer!.bg, color: asFeedRow(item).answer!.color }"
+                :title="asFeedRow(item).answer!.hint"
+              >
+                <ListikIcon :name="asFeedRow(item).answer!.icon" size="xs" />
+              </span>
+              <div class="listik-feed-row">
+                <span class="listik-feed-row__meta tnum">{{ asFeedRow(item).answer!.author }} · {{ asFeedRow(item).answer!.time }}</span>
+                <p class="listik-feed-row__text">{{ asFeedRow(item).answer!.text }}</p>
+              </div>
+            </div>
+          </template>
+        </UiTimeline>
+
+        <!-- «Поле как единая рамка»: composer раскладывает вид/текст/отправку в
+             одной визуальной рамке, а не тремя китовыми контролами подряд —
+             своей рамки у UiInput внутри приглушены стилем (см. app.css). -->
+        <div class="listik-feed-composer">
+          <IconToggle
             v-model="feedKind"
             :options="feedKindOptions"
+            ariaLabel="Вид записи"
             size="sm"
-            v-bind="{ 'aria-label': 'Тип записи' }"
-          />
+          >
+            <template #icon="{ option }">
+              <ListikIcon :name="commentKind(option.value).icon" size="xs" />
+            </template>
+          </IconToggle>
           <UiInput
             ref="feedInputRef"
             v-model="feedText"
             size="sm"
-            placeholder="строка журнала или комментарий"
+            class="listik-feed-composer__input"
+            :placeholder="feedPlaceholder"
             v-bind="{ 'aria-label': 'Текст записи', onKeydown: onFeedKeydown }"
           />
-          <UiButton size="sm" variant="primary" :loading="pending === 'comment' || pending === 'answer'" :disabled="!feedText.trim()" @click="submitFeed">
-            Отправить
+          <UiButton
+            size="sm"
+            variant="ghost"
+            ariaLabel="Отправить"
+            :loading="pending === 'comment' || pending === 'answer'"
+            :disabled="!feedText.trim()"
+            @click="submitFeed"
+          >
+            <template #icon><ListikIcon name="send" size="xs" /></template>
           </UiButton>
         </div>
       </section>

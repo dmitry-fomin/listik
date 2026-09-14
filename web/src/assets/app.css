@@ -69,6 +69,8 @@ body {
   --listik-rail-line: 2px;
   --listik-rail-tr-h: 16px; /* высота подписи на рельсе (.listik-rail__tr, text-xs) */
   --listik-card-stripe: 3px;
+  --listik-column-min-h: 220px;
+  --listik-column-max-h: calc(100vh - var(--header-h) - var(--space-16));
 }
 
 /* Свои классы — тоже по токенам: ни одного литерального цвета/отступа. */
@@ -82,7 +84,7 @@ body {
   flex-direction: column;
   min-height: 100vh;
   gap: 0;
-  padding-bottom: 32px;
+  padding-bottom: var(--space-8);
 }
 
 .listik-shell > .ui-app-header {
@@ -111,7 +113,7 @@ body {
      (шаг 06)»). */
   width: var(--listik-page-w) !important;
   max-width: none !important;
-  padding-top: 24px;
+  padding-top: var(--space-6);
 }
 
 .listik-mobile-queue {
@@ -416,15 +418,12 @@ body {
 
 /* Общий прокручиваемый контейнер рельсы переходов и ряда колонок: оба —
    grid с одинаковым `grid-template-columns` (инлайн-стиль, см. BoardView),
-   поэтому подписи переходов едут вместе с колонками при прокрутке. */
+   поэтому подписи переходов едут вместе с колонками при прокрутке. Колонки
+   резиновые и живут на обычном поле контейнера — за поле (`--container-pad-x`)
+   доска не выходит, поэтому её левый край совпадает с вкладками, «Нужен ты» и тулбаром. */
 .listik-board-scroll {
   overflow-x: auto;
   scrollbar-color: var(--hairline) transparent;
-}
-
-/* Колонки резиновые и живут на обычном поле контейнера — за поле (`--container-pad-x`)
-   доска не выходит, поэтому её левый край совпадает с вкладками, «Нужен ты» и тулбаром. */
-.listik-board-scroll {
   /* Геометрия полосы рельсы (см. `.listik-rail` ниже): подпись наполовину
      высотой уходит вверх от линии, и эта верхняя половина обязана жить ВНУТРИ
      скроллера — он режет содержимое по padding-краю, снаружи подпись пропадает.
@@ -511,8 +510,8 @@ body {
   flex-direction: column;
   /* Ширину задаёт дорожка грида доски (`boardTracks` в BoardView). */
   min-width: 0;
-  min-height: 220px;
-  max-height: calc(100vh - var(--header-h) - var(--space-16));
+  min-height: var(--listik-column-min-h);
+  max-height: var(--listik-column-max-h);
   background: var(--surface);
   border: 1px solid var(--hairline);
   border-radius: var(--radius-lg);
@@ -531,11 +530,6 @@ body {
 /* Заголовок колонки сворачивает её в рельсу, в т.ч. с клавиатуры. */
 .listik-column__head--toggleable {
   cursor: pointer;
-}
-
-.listik-column__head--toggleable:focus-visible {
-  outline: 2px solid var(--accent-500);
-  outline-offset: -2px;
 }
 
 .listik-column__title-row {
@@ -606,8 +600,8 @@ body {
   justify-content: center;
   gap: var(--space-2);
   width: var(--listik-rail-w);
-  min-height: 220px;
-  max-height: calc(100vh - var(--header-h) - var(--space-16));
+  min-height: var(--listik-column-min-h);
+  max-height: var(--listik-column-max-h);
   padding: var(--space-3) 0;
   background: var(--surface);
   border: 1px solid var(--hairline);
@@ -640,13 +634,14 @@ body {
   gap: var(--space-2);
   flex: 0 0 var(--listik-rail-w);
   width: var(--listik-rail-w);
-  min-height: 220px;
-  max-height: calc(100vh - var(--header-h) - var(--space-16));
+  min-height: var(--listik-column-min-h);
+  max-height: var(--listik-column-max-h);
   padding: var(--space-3) 0;
   color: var(--ink-2);
   cursor: pointer;
 }
 
+.listik-column__head--toggleable:focus-visible,
 .listik-done-rail:focus-visible {
   outline: 2px solid var(--accent-500);
   outline-offset: -2px;
@@ -810,23 +805,6 @@ body .ui-drawer-backdrop.ui-drawer-backdrop--right .ui-drawer.ui-drawer--right.u
 
 /* ── Зависимости: вердикт и разбор связей ─────────────────────────────── */
 
-.listik-verdict {
-  display: flex;
-  align-items: center;
-  flex-wrap: wrap;
-  gap: var(--space-2);
-}
-
-.listik-verdict__reasons {
-  display: flex;
-  flex-direction: column;
-  gap: var(--space-1);
-  margin: 0;
-  padding-left: var(--space-5);
-  font-size: var(--text-sm);
-  color: var(--ink-2);
-}
-
 .listik-subtitle {
   margin: var(--space-2) 0 0;
   font-size: var(--text-sm);
@@ -851,13 +829,6 @@ body .ui-drawer-backdrop.ui-drawer-backdrop--right .ui-drawer.ui-drawer--right.u
   border: 1px solid var(--hairline);
   border-radius: var(--radius-md);
   background: var(--surface-2);
-}
-
-.listik-dep__main {
-  display: flex;
-  align-items: baseline;
-  flex-wrap: wrap;
-  gap: var(--space-2);
 }
 
 .listik-dep__title {
@@ -1017,25 +988,6 @@ body .ui-drawer-backdrop.ui-drawer-backdrop--right .ui-drawer.ui-drawer--right.u
 
 .listik-drawer__start {
   align-items: flex-start;
-}
-
-.listik-events {
-  display: flex;
-  flex-direction: column;
-  gap: var(--space-1);
-  margin: 0;
-  padding: 0;
-  list-style: none;
-}
-
-.listik-events__row {
-  display: flex;
-  align-items: baseline;
-  gap: var(--space-2);
-  flex-wrap: wrap;
-  padding: var(--space-2) 0;
-  border-bottom: 1px solid var(--hairline);
-  font-size: var(--text-sm);
 }
 
 /* ── Журнал и вердикты (лента на иконках) ─────────────────────────────── */
@@ -1385,8 +1337,7 @@ body .ui-drawer-backdrop.ui-drawer-backdrop--right .ui-drawer.ui-drawer--right.u
   font-size: var(--text-sm);
 }
 
-.listik-cold__row > .ui-tooltip,
-.listik-cold__row > .ui-copy-button {
+.listik-cold__row > .ui-tooltip {
   justify-self: center;
 }
 
@@ -1544,9 +1495,6 @@ body .ui-drawer-backdrop.ui-drawer-backdrop--right .ui-drawer.ui-drawer--right.u
   .listik-shell {
     gap: var(--space-4);
     padding-bottom: var(--space-8);
-  }
-
-  .listik-shell {
     --listik-page-w: min(100% - 24px, 560px);
   }
 

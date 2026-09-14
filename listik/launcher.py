@@ -212,6 +212,20 @@ def start(conn, task_id: str, notify=None, *, log_dir=None) -> str | None:
         return _fail(conn, task_id,
                      f"нет рабочего каталога (worktree или path проекта {project})", notify)
 
+    # Прямой маршрут: харнесс работает сам, оркестратора нет. Карточку выдаём ему до
+    # Popen — этап «ТЗ» (s1-spec, если этапа ещё нет) и держатель-харнесс, — чтобы её
+    # не взял никто другой, пока агент читает код. Это выдача, а не claim за агента:
+    # «взята» карточка станет только после его собственного claim. «Разработку»
+    # (s3-impl) агент ставит сам перед первой правкой кода (listik-tyxn).
+    issued = False
+    if record.get("kind") == "direct" and not (row["holder"] or "").strip():
+        fields = {"holder": record["harness"]}
+        if not (row["stage"] or "").strip():
+            fields["stage"] = "s1-spec"
+        store.update_task(conn, task_id, actor="agent:listik",
+                          note=f"автостарт: выдана {record['harness']}", **fields)
+        issued = True
+
     values = {"task_id": task_id, "project": row["project"] or "", "route": key,
               "cwd": str(cwd), "title": row["title"] or ""}
     argv = [_substitute(element, values) for element in command]
@@ -229,6 +243,9 @@ def start(conn, task_id: str, notify=None, *, log_dir=None) -> str | None:
                                     stdout=log, stderr=subprocess.STDOUT,
                                     start_new_session=True, env=env)
     except OSError as exc:
+        if issued:  # процесса нет — выдача никому: держателя снимаем, этап остаётся
+            store.update_task(conn, task_id, actor="agent:listik", holder="",
+                              note="автостарт не выполнен: выдача снята")
         return _fail(conn, task_id, f"не удалось запустить: {exc}", notify)
 
     pid = proc.pid

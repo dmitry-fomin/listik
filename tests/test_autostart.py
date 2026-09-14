@@ -413,6 +413,51 @@ class LaunchTests(AutostartTestCase):
         self.assertEqual(self.notify, [("task", {"id": task["id"], "action": "launch"}),
                                        ("task", {"id": task["id"], "action": "launch"})])
 
+    def prepare_direct(self, command, *, stage=None):
+        proj_dir = self.tmp_path / "proj"
+        proj_dir.mkdir(exist_ok=True)
+        self.make_project("proj", path=proj_dir)
+        self.set_routes({"key": "grok", "kind": "direct", "harness": "grok", "title": "grok",
+                         "hint": "", "visible": True, "command": command})
+        task = self.make_task(project="proj", autostart=True, route="grok")
+        if stage:
+            store.update_task(self.conn, task["id"], stage=stage)
+        return task
+
+    def test_direct_route_issues_card_on_spec_stage(self) -> None:
+        # Прямой маршрут: Listik сам ставит «ТЗ» и выдаёт карточку харнессу (listik-tyxn).
+        task = self.prepare_direct(self.writer_command(self.tmp_path / "out.json"))
+        self.assertIsNone(self.launch(task["id"]))
+        self.join_tracker(task["id"])
+        row = self.row(task["id"])
+        self.assertEqual(row["stage"], "s1-spec")
+        self.assertEqual(row["holder"], "grok")
+        self.assertEqual(row["status"], "open", "выдача — не claim за агента")
+        card = store.get_task(self.conn, task["id"])
+        self.assertFalse(card["holder_taken"], "до claim самого агента — «выдана, но не взята»")
+        with self.assertRaises(Exception):
+            store.claim(self.conn, task["id"], holder="dsh", actor="agent:dsh")
+        store.claim(self.conn, task["id"], holder="grok", actor="agent:grok")
+        self.assertTrue(store.get_task(self.conn, task["id"])["holder_taken"])
+
+    def test_direct_route_keeps_existing_stage(self) -> None:
+        task = self.prepare_direct(self.writer_command(self.tmp_path / "out.json"),
+                                   stage="s3-impl")
+        self.assertIsNone(self.launch(task["id"]))
+        self.join_tracker(task["id"])
+        row = self.row(task["id"])
+        self.assertEqual(row["stage"], "s3-impl")
+        self.assertEqual(row["holder"], "grok")
+
+    def test_direct_route_oserror_drops_issue(self) -> None:
+        task = self.prepare_direct(["/nonexistent/bin/grok"])
+        with contextlib.redirect_stderr(io.StringIO()):
+            reason = self.launch(task["id"])
+        self.assertTrue(reason.startswith("не удалось запустить"), reason)
+        row = self.row(task["id"])
+        self.assertFalse(row["holder"])
+        self.assertEqual(row["needs_owner"], 1)
+
     def test_worktree_wins_over_project_path(self) -> None:
         out = self.tmp_path / "out.json"
         worktree = self.tmp_path / "дерево"

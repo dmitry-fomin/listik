@@ -75,6 +75,11 @@ on an open blocker, another holder, or a busy worktree; `--force` can't take ano
   the verdict itself; if it held the card under another name it does `release <id>` so the implementer
   can `claim`; in a single session just continue.
 
+**Direct autostart** (a `kind: direct` route launched by Listik): the server has already issued the card
+to you — stage `s1-spec`, holder = your harness. Your very first action is `claim <id> --holder <self>`,
+before reading code. Right before the first code edit run `stage <id> --to s3-impl` yourself; finish with
+`done`.
+
 ### Stages
 
 **s1-spec** — read `show`, `context <id> --stage s1-spec`, existing `spec_path`. Write the Markdown

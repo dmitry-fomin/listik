@@ -1140,6 +1140,8 @@ def build_parser() -> argparse.ArgumentParser:
                         help="кто выполняет действие (me, agent:dsh, agent:claude, ...)")
     common.add_argument("--harness", default=argparse.SUPPRESS,
                         help="какой харнесс: dsh, grok, claude, codex")
+    common.add_argument("--local", action="store_true", default=argparse.SUPPRESS,
+                        help="работать с базой напрямую, минуя сервер")
 
     def add(name: str, func, **kw):
         sp = sub.add_parser(name, parents=[common], **kw)

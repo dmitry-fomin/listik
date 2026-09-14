@@ -202,7 +202,7 @@ pid <N>, лог <path>`. Процесс не блокирует запрос: PO
 | GET | `/api/tasks/{id}` | `details=0/1` | задача + `comments/dependencies/dependents/events/documents` |
 | GET | `/api/tasks/{id}/context` | `stage`, `portion`, `max_chars` | компактный, побайтно стабильный контекст этапа для harness — см. ниже |
 | GET | `/api/tasks/{id}/documents/{kind}` | — (вид документа задан в пути: `spec`, `checklist`, `review`, `decision`) | документ задачи содержимым: `task_id, kind, path, source, revision, content_hash, status, error, content`. `source=upload` — текст из базы (`status=ok`); `source=file` — с диска: `status=ok` и текст, а если файл не читается — `status=missing`, `content=null` и текст ошибки (`revision`/`content_hash` = `null`, если документ ещё не индексировался). 404 — нет такой задачи или у задачи не задан путь к документу этого вида; 400 — неизвестный `kind`; 405 — любой метод по этому пути, кроме `GET` и `PUT` |
-| GET | `/api/search` | `q` (обязателен), `limit`, `project`, `status`, `stage`, `actor`, `needs_owner`, `mode=hybrid\|text\|vector` | `query, mode, took_ms, lexical_docs, vector_docs, count, results[]` |
+| GET | `/api/search` | `q` (обязателен), `limit`, `project`, `status`, `stage`, `actor`, `needs_owner`, `mode=hybrid\|text\|vector` | `query, mode, took_ms, lexical_docs, vector_docs, count, results[]`; совпадения по id задачи идут первыми и помечены `hits[].kind="id"` — см. ниже |
 | GET | `/api/ready` | `project`, `stage`, `harness` (только задачи, чей этап разрешён этому harness в routing проекта; задача без этапа — всем), `include_occupied`, `limit` | `tasks[]` (можно брать: нет незакрытых блокеров и держателя), `cycles[]` |
 | GET | `/api/blocked` | `project`, `limit` | `tasks[]` с разбором `blockers[]`, `blocked_by_stale`, `blocked_by_holder` |
 | GET | `/api/deps/suggested` | `project`, `limit` | `items[]` (предложения агентов, ждущие подтверждения человеком: `issue_id, issue_title, issue_stage, project, depends_on, depends_on_title, depends_on_status, created_by, created_at`), `generated_at` |
@@ -225,6 +225,16 @@ pid <N>, лог <path>`. Процесс не блокирует запрос: PO
 `kind=chunk` в хите есть `heading, breadcrumb, document_id, document_kind, path, start_line,
 end_line` — заголовок и путь заголовков найденного раздела, какому документу он принадлежит
 и на каких строках файла лежит.
+
+Поиск по id задачи: `task_fts` не индексирует `task_id`, поэтому id ищется отдельно по
+`tasks`. Если запрос содержит токен вида `slug-b3j0` (`[\w.-]+-[0-9a-z]{3,}`) или целиком
+состоит из одного слова без кириллицы длиной ≥3 (тогда слово проверяется как хвост id:
+`b3j0` → `%-b3j0`), найденные задачи ставятся первыми в `results[]`, без дублей и с `score`
+выше любого RRF-совпадения. Регистр не важен. У такого результата `hits[]`/`best_hit` имеют
+`kind: "id"`, `doc_id` = id задачи, `rrf` = его `score`, а `snippet` — заголовок задачи;
+остальные поля хита (`heading`, `path`, …) — `null`. Фильтры `project`/`status`/`stage`/
+`actor`/`needs_owner` действуют на id-совпадения так же, как на остальные. В `mode=vector`
+id не подмешивается: там только векторная близость.
 
 ### `GET /api/tasks/{id}/context`
 

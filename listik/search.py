@@ -7,6 +7,7 @@
 from __future__ import annotations
 
 import json
+import re
 import sqlite3
 import time
 
@@ -14,6 +15,10 @@ from . import actors, embed, paths, textutil
 
 RRF_K = 60
 SNIPPET_CHARS = 220
+
+# Токен, похожий на id задачи: `<слово>-<хвост>` (`listik-b3j0`, `zoloto585-search-x3l`).
+ID_TOKEN_RE = re.compile(r"[\w.-]+-[0-9a-z]{3,}", re.IGNORECASE)
+_CYRILLIC_RE = re.compile(r"[а-яё]", re.IGNORECASE)
 
 
 def _filters_sql(project: str | None, status: str | None) -> tuple[str, list]:
@@ -37,6 +42,16 @@ def _row_filter(row: sqlite3.Row, stage: str | None, actor: str | None, needs_ow
     if needs_owner and not row["needs_owner"]:
         return False
     return True
+
+
+def _task_matches(row: sqlite3.Row, project: str | None, status: str | None, stage: str | None,
+                  actor: str | None, needs_owner: bool) -> bool:
+    """Фильтры поиска на уровне задачи — одни и те же для RRF- и id-совпадений."""
+    if project and project.lower() not in (row["project"] or "").lower():
+        return False
+    if status and row["status"] != status:
+        return False
+    return _row_filter(row, stage, actor, needs_owner)
 
 
 def _snippet(text: str, terms: list[str]) -> str:
@@ -253,6 +268,99 @@ def load_task_rows(conn: sqlite3.Connection, ids: list[str]) -> dict[str, sqlite
     return {r["id"]: r for r in rows}
 
 
+def _like_literal(tok: str) -> str:
+    """Экранирует `%`/`_`/`\\`, чтобы хвост id искался буквально, а не как LIKE-шаблон."""
+    return tok.replace("\\", "\\\\").replace("%", "\\%").replace("_", "\\_")
+
+
+def _id_candidates(query: str) -> list[str]:
+    """Кандидаты в id задачи: токены вида `slug-b3j0` и одинокий хвост (`b3j0`)."""
+    q = (query or "").strip()
+    out: list[str] = []
+    for m in ID_TOKEN_RE.finditer(q):
+        tok = m.group(0)
+        if tok not in out:
+            out.append(tok)
+    # Одинокое слово без кириллицы — пробуем как хвост id: `b3j0` → `%-b3j0`.
+    if len(q.split()) == 1 and len(q) >= 3 and not _CYRILLIC_RE.search(q) and q not in out:
+        out.append(q)
+    return out
+
+
+def _id_tasks(conn: sqlite3.Connection, query: str) -> list[tuple[sqlite3.Row, bool]]:
+    """Задачи по точному id или по хвосту id (`b3j0` → `%-b3j0`), без учёта регистра.
+
+    Возвращает пары `(строка задачи, точное ли совпадение)`; точные совпадения идут
+    раньше хвостовых, дублей нет. Фильтры здесь не применяются — их накладывает `search()`.
+    """
+    found: dict[str, tuple[sqlite3.Row, bool]] = {}
+    for tok in _id_candidates(query):
+        rows = conn.execute(
+            "SELECT * FROM tasks WHERE lower(id) = lower(?) ORDER BY updated_at DESC",
+            (tok,)).fetchall()
+        is_exact = bool(rows)
+        if not rows:
+            rows = conn.execute(
+                "SELECT * FROM tasks WHERE lower(id) LIKE lower(?) ESCAPE '\\' "
+                "ORDER BY updated_at DESC", ("%-" + _like_literal(tok),)).fetchall()
+        for row in rows:
+            if row["id"] not in found:
+                found[row["id"]] = (row, is_exact)
+    return sorted(found.values(), key=lambda pair: not pair[1])
+
+
+def _id_hit(row: sqlite3.Row, score: float) -> dict:
+    """Хит по id: та же форма, что у остальных `hits[]`, но `kind=id` и заголовок в snippet."""
+    return {
+        "kind": "id",
+        "doc_id": row["id"],
+        "rrf": round(score, 6),
+        "snippet": row["title"] or "",
+        "author": None,
+        "heading": None,
+        "breadcrumb": None,
+        "document_id": None,
+        "document_kind": None,
+        "path": None,
+        "start_line": None,
+        "end_line": None,
+    }
+
+
+def _card(row: sqlite3.Row, *, snippet: str, score: float, hits: list[dict],
+          best_hit: dict | None) -> dict:
+    """Карточка задачи в ответе поиска — общая для RRF- и id-совпадений."""
+    try:
+        labels = json.loads(row["labels"] or "[]")
+    except json.JSONDecodeError:
+        labels = []
+    try:
+        blocked_by = json.loads(row["blocked_by"] or "[]")
+    except (json.JSONDecodeError, IndexError, KeyError):
+        blocked_by = []
+    return {
+        "blocked_by": blocked_by,
+        "blocked_count": len(blocked_by),
+        "id": row["id"],
+        "project": row["project"],
+        "title": row["title"],
+        "status": row["status"],
+        "stage": row["stage"],
+        "holder": row["holder"],
+        "assignee": row["assignee"],
+        "assignee_title": actors.display(row["assignee"]),
+        "priority": row["priority"],
+        "issue_type": row["issue_type"],
+        "updated_at": row["updated_at"],
+        "labels": labels,
+        "snippet": snippet,
+        "score": score,
+        "hits": hits,
+        "best_hit": best_hit,
+        "needs_owner": bool(row["needs_owner"]),
+    }
+
+
 def search(
     conn: sqlite3.Connection,
     query: str,
@@ -266,6 +374,12 @@ def search(
     mode: str = "hybrid",
     pool: int = 200,
 ) -> dict:
+    """Гибридный поиск по задачам, комментариям, чанкам документов и памяти.
+
+    Совпадения по точному id задачи (а в `text`/`hybrid` — и по хвосту id) идут первыми,
+    с `hits[].kind = "id"` и score выше любого RRF-совпадения; в режиме `vector` id
+    не подмешивается.
+    """
     t0 = time.time()
     lex: list[dict] = []
     vec: list[dict] = []
@@ -273,6 +387,14 @@ def search(
         lex = lexical(conn, query, project, status, pool)
     if mode in ("hybrid", "vector"):
         vec = vector(conn, query, pool)
+
+    # Точное совпадение по id: `task_fts.task_id` объявлен UNINDEXED, поэтому id ищется
+    # отдельным запросом по `tasks` и ставится выше любых RRF-совпадений. В `vector`
+    # режиме id не подмешивается.
+    id_matches: list[tuple[sqlite3.Row, bool]] = []
+    if mode in ("hybrid", "text"):
+        id_matches = [pair for pair in _id_tasks(conn, query)
+                      if _task_matches(pair[0], project, status, stage, actor, needs_owner)]
 
     # Обогащение чанк-хитов метаданными раздела: document_chunk_fts не хранит path/строки/
     # вид документа, поэтому дочитываем их одним запросом для всех chunk_id из обеих веток.
@@ -331,16 +453,12 @@ def search(
         })
 
     rows = load_task_rows(conn, list(per_task))
-    results = []
+    rrf_results = []
     for tid, entry in per_task.items():
         row = rows.get(tid)
         if row is None:
             continue
-        if not _row_filter(row, stage, actor, needs_owner):
-            continue
-        if project and project.lower() not in (row["project"] or "").lower():
-            continue
-        if status and row["status"] != status:
+        if not _task_matches(row, project, status, stage, actor, needs_owner):
             continue
         sorted_hits = sorted(entry["hits"], key=lambda h: -h["rrf"])
         best_hit = dict(sorted_hits[0]) if sorted_hits else None
@@ -351,37 +469,24 @@ def search(
                 break
         if not snippet:
             snippet = _snippet(row["description"] or row["title"], query.split())
-        try:
-            labels = json.loads(row["labels"] or "[]")
-        except json.JSONDecodeError:
-            labels = []
-        try:
-            blocked_by = json.loads(row["blocked_by"] or "[]")
-        except (json.JSONDecodeError, IndexError, KeyError):
-            blocked_by = []
-        results.append({
-            "blocked_by": blocked_by,
-            "blocked_count": len(blocked_by),
-            "id": tid,
-            "project": row["project"],
-            "title": row["title"],
-            "status": row["status"],
-            "stage": row["stage"],
-            "holder": row["holder"],
-            "assignee": row["assignee"],
-            "assignee_title": actors.display(row["assignee"]),
-            "priority": row["priority"],
-            "issue_type": row["issue_type"],
-            "updated_at": row["updated_at"],
-            "labels": labels,
-            "snippet": snippet,
-            "score": round(entry["score"], 6),
-            "hits": entry["hits"][:4],
-            "best_hit": best_hit,
-            "needs_owner": bool(row["needs_owner"]),
-        })
-    results.sort(key=lambda r: -r["score"])
-    results = results[:limit]
+        rrf_results.append(_card(row, snippet=snippet, score=round(entry["score"], 6),
+                                 hits=entry["hits"][:4], best_hit=best_hit))
+    rrf_results.sort(key=lambda r: -r["score"])
+
+    # id-совпадения — строго первыми и с score выше любого RRF: RRF задачи это сумма
+    # 1/(K+rank) по её попаданиям, поэтому max+1 заведомо больше любой такой суммы.
+    id_score = round(max((r["score"] for r in rrf_results), default=0.0) + 1.0, 6)
+    id_results = []
+    id_seen: set[str] = set()
+    for row, _exact in id_matches[:limit]:
+        tid = row["id"]
+        if tid in id_seen:
+            continue
+        id_seen.add(tid)
+        hit = _id_hit(row, id_score)
+        id_results.append(_card(row, snippet=row["title"] or "", score=id_score,
+                                hits=[hit], best_hit=dict(hit)))
+    results = (id_results + [r for r in rrf_results if r["id"] not in id_seen])[:limit]
     # Память ищем тем же запросом: заметка без задачи часто и есть ответ
     try:
         memories = search_memories(conn, query, limit=max(3, limit // 3), project=project,

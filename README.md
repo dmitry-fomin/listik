@@ -433,7 +433,7 @@ model = "deepseek-flash"                  # необязательно
 | Плагин | Что даёт |
 |---|---|
 | `listik` | скил `listik:listik` — работа с задачами по протоколу: ready → claim → heartbeat → stage → done, зависимости, needs-owner, журнал, вердикты |
-| `feature-pipeline` | конвейер ТЗ → критика → реализация → приёмка: скилы-пресеты (`high-pipeline`, `xhigh-pipeline`, `medium-pipeline`, `low-pipeline`, `xlow-pipeline`, `opus-single-pipeline`, `inherit-pipeline`, `opus-sonnet-pipeline`, `feature-pipeline`) и агенты `pipeline-*` |
+| `feature-pipeline` | конвейер ТЗ → критика → реализация → приёмка: скилы-пресеты (`high-pipeline`, `xhigh-pipeline`, `medium-pipeline`, `low-pipeline`, `xlow-pipeline`, `nano-pipeline`, `opus-single-pipeline`, `inherit-pipeline`, `opus-sonnet-pipeline`, `feature-pipeline`) и агенты `pipeline-*` |
 
 **1. Добавить маркетплейс** — один раз, внутри Claude Code:
 
@@ -466,8 +466,8 @@ model = "deepseek-flash"                  # необязательно
 
 **Что нужно пресетам `feature-pipeline`.** Пресеты зовут внешние харнессы, их нужно поставить
 отдельно: `dsh` (DeepSeek Harness) — для `low-pipeline` и `xlow-pipeline`; Grok Build CLI
-(плагин `grok`) — судья в `high`/`medium`/`low`/`xhigh`/`xlow`; Codex — исполнитель в
-`xhigh-pipeline`. `inherit-pipeline`, `opus-single-pipeline` и `opus-sonnet-pipeline` обходятся
+(плагин `grok`) — судья в `high`/`medium`/`low`/`xhigh`/`xlow`/`nano`; Codex — исполнитель в
+`xhigh-pipeline` и `nano-pipeline`. `inherit-pipeline`, `opus-single-pipeline` и `opus-sonnet-pipeline` обходятся
 субагентами Claude. Если в задании назван id карточки Listik, конвейер ведёт её сам (раздел
 `## Listik` в `plugins/feature-pipeline/references/pipeline-core.md`) — для этого нужен и плагин
 `listik`, и доступный `bin/listik`.

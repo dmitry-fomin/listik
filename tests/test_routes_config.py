@@ -45,7 +45,7 @@ DIRECT_KEYS = ["dsh", "grok", "codex"]
 # Порядок записей в routes.json — он же порядок строк формы «Новая задача».
 EXPECTED_KEYS = [
     "xhigh-pipeline", "high-pipeline", "medium-pipeline", "low-pipeline", "xlow-pipeline",
-    "inherit-pipeline", "opus-single-pipeline", "opus-sonnet-pipeline", "feature-pipeline",
+    "nano-pipeline", "inherit-pipeline", "opus-single-pipeline", "opus-sonnet-pipeline", "feature-pipeline",
     *DIRECT_KEYS,
 ]
 
@@ -92,9 +92,9 @@ class RepoRoutesFileTests(unittest.TestCase):
             self.skipTest(f"git недоступен: {exc}")
         self.assertEqual(done.returncode, 1, done.stdout + done.stderr)
 
-    def test_has_twelve_records_in_order(self) -> None:
+    def test_has_thirteen_records_in_order(self) -> None:
         self.assertEqual(self.raw["version"], 1)
-        self.assertEqual(len(self.raw["routes"]), 12)
+        self.assertEqual(len(self.raw["routes"]), 13)
         self.assertEqual([r["key"] for r in self.raw["routes"]], EXPECTED_KEYS)
 
     def test_validates_and_every_record_is_visible(self) -> None:
@@ -105,13 +105,13 @@ class RepoRoutesFileTests(unittest.TestCase):
 
     def test_kinds_match_the_table(self) -> None:
         kinds = [r["kind"] for r in self.raw["routes"]]
-        self.assertEqual(kinds[:9], ["pipeline"] * 9)
-        self.assertEqual(kinds[9:], ["direct"] * 3)
+        self.assertEqual(kinds[:10], ["pipeline"] * 10)
+        self.assertEqual(kinds[10:], ["direct"] * 3)
 
     def test_direct_records_are_exact(self) -> None:
         normalized = routes_mod.validate(self.raw)
         raw_by_key = {record["key"]: record for record in self.raw["routes"]}
-        for key, got in zip(DIRECT_KEYS, normalized[9:]):
+        for key, got in zip(DIRECT_KEYS, normalized[10:]):
             self.assertEqual(got["title"], key)
             self.assertEqual(got, {"key": key, "kind": "direct", "title": key, "hint": "",
                                    "visible": True, "icon": "direct", "harness": key,
@@ -124,6 +124,8 @@ class RepoRoutesFileTests(unittest.TestCase):
         self.assertEqual(normalized["medium-pipeline"], "medium")
         self.assertEqual(normalized["low-pipeline"], "low")
         self.assertEqual(normalized["xlow-pipeline"], "xlow")
+        # Уровень nano из ключа не выводится — стоит явно, на ступени xlow.
+        self.assertEqual(normalized["nano-pipeline"], "xlow")
         for key in DIRECT_KEYS:
             self.assertEqual(normalized[key], "direct")
         # У пресетов без уровня поля нет — иконка не выдумывается.
@@ -640,7 +642,7 @@ class CopyAndStateTests(TempDbTestCase):
         self.assertTrue(state.ok)
         self.assertIsNone(state.error)
         self.assertEqual(state.path, str(self.source))
-        self.assertEqual(len(state.routes), 12)
+        self.assertEqual(len(state.routes), 13)
         self.assertEqual(sorted(state.by_key), sorted(r["key"] for r in state.routes))
         self.assertEqual(state.warnings, [])
 
@@ -706,7 +708,7 @@ class CopyAndStateTests(TempDbTestCase):
         self.assertTrue(state.ok)
         self.assertTrue(self.target.exists())
         self.assertIs(routes_mod.current(), state)
-        self.assertEqual(len(state.routes), 12)
+        self.assertEqual(len(state.routes), 13)
         self.assertEqual(state.path, str(self.target))
 
     def test_init_copy_failure_is_not_raised(self) -> None:
@@ -728,7 +730,7 @@ class CopyAndStateTests(TempDbTestCase):
         self.target.write_text("{ битый", encoding="utf-8")
         self.assertIs(routes_mod.current(), before)
         self.assertEqual([r["key"] for r in routes_mod.current().routes], keys_before)
-        self.assertEqual(len(routes_mod.current().routes), 12)
+        self.assertEqual(len(routes_mod.current().routes), 13)
 
 
 class RoutesApiTests(TempDbTestCase):
@@ -790,7 +792,7 @@ class RoutesApiTests(TempDbTestCase):
         self.assertTrue(data["ok"])
         self.assertIsNone(data["error"])
         self.assertEqual(data["path"], str(self.target))
-        self.assertEqual(len(data["routes"]), 12)
+        self.assertEqual(len(data["routes"]), 13)
         for record in data["routes"]:
             self.assertNotIn("command", record)
             self.assertIn("icon", record)
@@ -878,7 +880,7 @@ class RoutesApiTests(TempDbTestCase):
         self.assertEqual(status, 200)
         data = payload["data"]
         self.assertTrue(data["ok"])
-        self.assertEqual(len(data["routes"]), 12)
+        self.assertEqual(len(data["routes"]), 13)
         self.assertEqual([r["key"] for r in data["routes"]][-3:], DIRECT_KEYS)
         self.assertTrue(all("command" not in r for r in data["routes"]))
 
@@ -905,7 +907,7 @@ class RoutesApiTests(TempDbTestCase):
         status, payload = self._get("/api/routes", token=self.TOKEN)
         self.assertEqual(status, 200)
         self.assertTrue(payload["data"]["ok"])
-        self.assertEqual(len(payload["data"]["routes"]), 12)
+        self.assertEqual(len(payload["data"]["routes"]), 13)
 
     def test_health_reports_routes(self) -> None:
         self._init_from_repo()
@@ -916,7 +918,7 @@ class RoutesApiTests(TempDbTestCase):
         self.assertTrue(state["ok"])
         self.assertIsNone(state["error"])
         self.assertEqual(state["path"], str(self.target))
-        self.assertEqual(state["count"], 12)
+        self.assertEqual(state["count"], 13)
 
     def test_health_error_state_is_reported(self) -> None:
         with contextlib.redirect_stderr(io.StringIO()):

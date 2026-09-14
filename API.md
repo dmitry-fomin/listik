@@ -738,7 +738,8 @@ MCP по stdio (`bin/listik mcp`) пишет в базу мимо сервера
 их routing; удаление задач (`DELETE /api/tasks/{id}`); импорты (
 `listik import-from-bd`); пересчёт векторов (`POST /api/embed`, `listik embed`); серверные
 команды `listik serve`, `listik stop`, `listik status`, `listik init` и `listik token`; раскладка
-блока протокола по чужим `AGENTS.md`/`CLAUDE.md` (`listik init-projects`). Из проектов через MCP
+блока протокола по чужим `AGENTS.md`/`CLAUDE.md` и заведение строки `.worktrees/` в их
+`.gitignore` (`listik init-projects`). Из проектов через MCP
 доступно только чтение — `listik_projects`.
 
 **`confirm` у `listik_deps`.** Инструмент принимает `confirm` и технически может поставить

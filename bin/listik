@@ -510,7 +510,8 @@ def cmd_restore(args) -> int:
 
 
 def cmd_init_projects(args) -> int:
-    """Прописать правила Listik в AGENTS.md/CLAUDE.md всех проектов (блок между маркерами)."""
+    """Прописать правила Listik в AGENTS.md/CLAUDE.md всех проектов (блок между маркерами)
+    и строку .worktrees/ в их .gitignore."""
     from listik import migrate
     conn = db.init()
     rows = conn.execute(
@@ -528,7 +529,8 @@ def cmd_init_projects(args) -> int:
     report = migrate.migrate_all(dirs, dry_run=args.dry_run, remove_block=args.remove,
                                  verbose=not args.quiet)
     print("\nдобавлено: {added}, обновлено: {updated}, без изменений: {unchanged}, "
-          "удалено блоков: {removed}, пропущено: {skipped}".format(**{
+          "удалено блоков: {removed}, пропущено: {skipped}, "
+          "поправлен .gitignore: {gitignore}".format(**{
               k: len(v) for k, v in report.items()}))
     return 0
 
@@ -1478,10 +1480,12 @@ def build_parser() -> argparse.ArgumentParser:
                     help="разрешить откат назад (в копии меньше задач, чем в текущей базе)")
 
     sp = add("init-projects", cmd_init_projects,
-             help="прописать правила Listik в AGENTS.md/CLAUDE.md проектов")
+             help="прописать правила Listik в AGENTS.md/CLAUDE.md проектов, "
+                  "а строку .worktrees/ — в их .gitignore")
     sp.add_argument("--dry-run", action="store_true", help="только показать, что изменится")
     sp.add_argument("--only", help="подстрока slug проекта")
-    sp.add_argument("--remove", action="store_true", help="убрать блок Listik из файлов")
+    sp.add_argument("--remove", action="store_true",
+                    help="убрать блок Listik из файлов (.gitignore не трогает)")
     sp.add_argument("-q", "--quiet", action="store_true")
 
     sp = add("import-from-bd", cmd_import_from_bd,

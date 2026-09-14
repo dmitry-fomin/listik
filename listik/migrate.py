@@ -5,6 +5,11 @@
 * повторный запуск обновляет только этот блок и ничего не дублирует;
 * чужой текст в файле остаётся как есть;
 * `--remove` убирает блок (откат перехода).
+
+Заодно проект получает строку `.worktrees/` в своём `.gitignore`: рабочие деревья задач
+конвейеры и прямые харнессы заводят в `<проект>/.worktrees/<id>`, и без этой строки они
+светятся в `git status` основного дерева. Строка дописывается, только если её ещё нет;
+`--remove` её не трогает — он откатывает блок протокола, а не чужие правила git.
 """
 from __future__ import annotations
 
@@ -34,6 +39,9 @@ def _find_block(text: str) -> tuple[int, int] | None:
     return m_begin.start(), m_end.end()
 
 TARGETS = ("AGENTS.md", "CLAUDE.md")
+
+#: Строка, которой рабочие деревья задач закрываются от git (см. listik-airk).
+GITIGNORE_ENTRY = ".worktrees/"
 
 # CLAUDE.md читает только Claude Code, а у него есть скил listik:listik с полным протоколом —
 # туда идёт указание на скил. Внешние харнессы (dsh, grok, codex) читают AGENTS.md и скила
@@ -119,10 +127,56 @@ def remove(path: Path, *, dry_run: bool = False) -> str:
     return "removed"
 
 
+def _gitignore_has_entry(text: str) -> bool:
+    """Закрывает ли этот .gitignore каталог .worktrees/ — строкой `.worktrees/`,
+    `.worktrees` или `/.worktrees`. Комментарии и пустые строки не считаются."""
+    wanted = GITIGNORE_ENTRY.rstrip("/")
+    for raw in text.splitlines():
+        entry = raw.strip()
+        if not entry or entry.startswith("#"):
+            continue
+        if entry.lstrip("/").rstrip("/") == wanted:
+            return True
+    return False
+
+
+def ensure_gitignore(project_dir: Path, *, dry_run: bool = False) -> str:
+    """Гарантирует строку `.worktrees/` в `<проект>/.gitignore`.
+
+    Возвращает: `added` — файла не было и он создан; `updated` — строка дописана;
+    `unchanged` — строка уже есть; `skipped` — каталога проекта нет. При `dry_run`
+    файл не пишется, а возвращается то, что было бы сделано.
+    """
+    if not project_dir.is_dir():
+        return "skipped"
+    path = project_dir / ".gitignore"
+    if not path.exists():
+        if not dry_run:
+            path.write_text(GITIGNORE_ENTRY + "\n", encoding="utf-8")
+        return "added"
+    text = path.read_text(encoding="utf-8")
+    if _gitignore_has_entry(text):
+        return "unchanged"
+    # Чужой текст не переписываем: только добиваем перевод строки, если файл им не кончался.
+    tail = "" if text.endswith("\n") or not text else "\n"
+    if not dry_run:
+        path.write_text(text + tail + GITIGNORE_ENTRY + "\n", encoding="utf-8")
+    return "updated"
+
+
 def migrate_all(project_dirs: list[Path], *, dry_run: bool = False, remove_block: bool = False,
                 verbose: bool = True) -> dict:
-    report = {"added": [], "updated": [], "unchanged": [], "skipped": [], "removed": []}
+    report: dict = {"added": [], "updated": [], "unchanged": [], "skipped": [], "removed": [],
+                    "gitignore": []}
     for project in project_dirs:
+        # Строку в .gitignore заводим и проекту без AGENTS.md/CLAUDE.md: деревья задач
+        # появляются в нём независимо от того, прописан ли уже блок протокола.
+        if not remove_block:
+            result = ensure_gitignore(project, dry_run=dry_run)
+            if result in ("added", "updated"):
+                report["gitignore"].append(str(project / ".gitignore"))
+                if verbose:
+                    print(f"  {result:9s} {project / '.gitignore'}")
         for name in TARGETS:
             path = project / name
             if not path.exists():

@@ -1,13 +1,20 @@
-"""Tests for listik.migrate — the AGENTS.md/CLAUDE.md protocol block."""
+"""Tests for listik.migrate — the AGENTS.md/CLAUDE.md protocol block and the .worktrees/
+line in the project's .gitignore."""
 from __future__ import annotations
 
+import os
 import re
+import subprocess
+import sys
 import tempfile
 import unittest
 from pathlib import Path
 from unittest.mock import patch
 
-from listik import migrate, paths
+from listik import migrate, paths, store
+from tests.helpers import TempDbTestCase
+
+LISTIK_BIN = Path(__file__).resolve().parent.parent / "bin" / "listik"
 
 _HARNESS_NAMES = re.compile(
     r"claude|codex|dsh|deepseek|grok|gemini|writerllm|opus|sonnet",
@@ -186,6 +193,101 @@ class MarkerSubstringRegressionTests(unittest.TestCase):
         self.assertNotIn(migrate.BEGIN, after)
         self.assertIn("Intro.", after)
         self.assertIn("Trailing.", after)
+
+
+class GitignoreTests(unittest.TestCase):
+    """init-projects заводит строку .worktrees/ в .gitignore проекта (listik-yaz9)."""
+
+    def setUp(self) -> None:
+        self._tmpdir = tempfile.TemporaryDirectory()
+        self.project = Path(self._tmpdir.name)
+        self.gitignore = self.project / ".gitignore"
+
+    def tearDown(self) -> None:
+        self._tmpdir.cleanup()
+
+    def _entries(self) -> list[str]:
+        """Строки .gitignore, закрывающие .worktrees/ (комментарии и пустые не в счёт)."""
+        return [ln.strip() for ln in self.gitignore.read_text(encoding="utf-8").splitlines()
+                if ln.strip().lstrip("/").rstrip("/") == migrate.GITIGNORE_ENTRY.rstrip("/")]
+
+    def test_missing_gitignore_is_created_with_worktrees_line(self) -> None:
+        self.assertEqual(migrate.ensure_gitignore(self.project), "added")
+        self.assertEqual(self.gitignore.read_text(encoding="utf-8"), migrate.GITIGNORE_ENTRY + "\n")
+        self.assertEqual(migrate.ensure_gitignore(self.project), "unchanged")
+
+    def test_existing_gitignore_keeps_its_text_and_gets_the_line_once(self) -> None:
+        original = "# Build\nweb/dist/\n"
+        self.gitignore.write_text(original, encoding="utf-8")
+        self.assertEqual(migrate.ensure_gitignore(self.project), "updated")
+        after = self.gitignore.read_text(encoding="utf-8")
+        self.assertTrue(after.startswith(original))
+        self.assertEqual(self._entries(), [migrate.GITIGNORE_ENTRY])
+        self.assertEqual(migrate.ensure_gitignore(self.project), "unchanged")
+        self.assertEqual(self.gitignore.read_text(encoding="utf-8"), after)
+
+    def test_file_without_trailing_newline_gets_the_line_on_its_own_line(self) -> None:
+        self.gitignore.write_text("web/dist/", encoding="utf-8")
+        self.assertEqual(migrate.ensure_gitignore(self.project), "updated")
+        self.assertEqual(self.gitignore.read_text(encoding="utf-8"),
+                         "web/dist/\n" + migrate.GITIGNORE_ENTRY + "\n")
+
+    def test_equivalent_existing_entry_is_not_duplicated(self) -> None:
+        for entry in (".worktrees/", ".worktrees", "/.worktrees/", "/.worktrees"):
+            with self.subTest(entry=entry):
+                self.gitignore.write_text(f"# Listik\n{entry}\n", encoding="utf-8")
+                self.assertEqual(migrate.ensure_gitignore(self.project), "unchanged")
+                self.assertEqual(self.gitignore.read_text(encoding="utf-8"), f"# Listik\n{entry}\n")
+
+    def test_comment_mentioning_worktrees_does_not_count_as_the_line(self) -> None:
+        self.gitignore.write_text("# .worktrees/ живут в проекте\n", encoding="utf-8")
+        self.assertEqual(migrate.ensure_gitignore(self.project), "updated")
+        self.assertIn("\n" + migrate.GITIGNORE_ENTRY + "\n",
+                      self.gitignore.read_text(encoding="utf-8"))
+
+    def test_dry_run_reports_change_but_writes_nothing(self) -> None:
+        self.assertEqual(migrate.ensure_gitignore(self.project, dry_run=True), "added")
+        self.assertFalse(self.gitignore.exists())
+        self.gitignore.write_text("web/dist/\n", encoding="utf-8")
+        self.assertEqual(migrate.ensure_gitignore(self.project, dry_run=True), "updated")
+        self.assertEqual(self.gitignore.read_text(encoding="utf-8"), "web/dist/\n")
+
+    def test_missing_project_dir_is_skipped(self) -> None:
+        self.assertEqual(migrate.ensure_gitignore(self.project / "nope"), "skipped")
+
+    def test_migrate_all_reports_gitignore_and_remove_leaves_it_alone(self) -> None:
+        (self.project / "AGENTS.md").write_text("# Project\n", encoding="utf-8")
+        report = migrate.migrate_all([self.project], verbose=False)
+        self.assertEqual(report["gitignore"], [str(self.gitignore)])
+        self.assertIn(migrate.GITIGNORE_ENTRY,
+                      self.gitignore.read_text(encoding="utf-8"))
+
+        again = migrate.migrate_all([self.project], verbose=False)
+        self.assertEqual(again["gitignore"], [], "повторный прогон ничего не дописывает")
+
+        removed = migrate.migrate_all([self.project], remove_block=True, verbose=False)
+        self.assertEqual(removed["gitignore"], [])
+        self.assertIn(migrate.GITIGNORE_ENTRY, self.gitignore.read_text(encoding="utf-8"))
+
+
+class InitProjectsCliTests(TempDbTestCase):
+    """`listik init-projects` доводит строку .worktrees/ до .gitignore проекта."""
+
+    def test_command_adds_gitignore_line_to_registered_project(self) -> None:
+        project = (self.tmp_path / "proj").resolve()
+        project.mkdir()
+        (project / "AGENTS.md").write_text("# Project\n", encoding="utf-8")
+        store.add_project(self.conn, path=str(project))
+
+        env = {**os.environ, "LISTIK_DB": str(self.db_path),
+               "LISTIK_LOG": str(self.tmp_path / "listik.log")}
+        proc = subprocess.run(
+            [sys.executable, str(LISTIK_BIN), "--local", "init-projects"],
+            capture_output=True, text=True, env=env, cwd=str(self.tmp_path))
+        self.assertEqual(proc.returncode, 0, proc.stdout + proc.stderr)
+        self.assertIn("поправлен .gitignore: 1", proc.stdout)
+        self.assertEqual((project / ".gitignore").read_text(encoding="utf-8"),
+                         migrate.GITIGNORE_ENTRY + "\n")
 
 
 if __name__ == "__main__":

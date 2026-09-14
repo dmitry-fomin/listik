@@ -30,6 +30,7 @@ import urllib.request
 
 from . import config as config_mod
 from . import db as db_mod
+from . import errors as errors_mod
 from . import routes as routes_mod
 from . import search as search_mod
 from . import store
@@ -637,7 +638,7 @@ def handle(request: dict, conn=None) -> dict | None:
         args = params.get("arguments") or {}
         try:
             payload = call_tool(name, args, conn)
-        except KeyError as exc:
+        except errors_mod.NotFound as exc:
             return {"jsonrpc": "2.0", "id": rid,
                     "result": {"content": [{"type": "text", "text": f"не найдено: {exc}"}],
                                "isError": True}}

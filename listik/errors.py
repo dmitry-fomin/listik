@@ -12,7 +12,7 @@
 не заводим:
 
     bad_argument        команда, аргументы или тело запроса не годятся
-    not_found           нет задачи, проекта, документа
+    not_found           нет задачи, проекта, документа (см. NotFound ниже)
     conflict            состояние не даёт выполнить (занято, заблокировано, закрыто)
     unauthorized        токен не принят
     forbidden           токена нет или прав не хватает
@@ -88,6 +88,18 @@ class ListikError(Exception):
         self.status = status
 
 
+class NotFound(KeyError):
+    """«Сущности нет»: задачи, проекта, документа не существует.
+
+    Отдельный класс, а не голый `KeyError`: в Python `KeyError` — это ещё и
+    обращение к отсутствующему ключу словаря (например, производного поля
+    карточки). Такой KeyError — наша ошибка, а не «не найдено», и отдавать её
+    как `not_found` с подсказкой «проверь идентификатор» нельзя: агент ищет
+    опечатку в id вместо бага (listik-xut1). Поэтому store/documents/deps
+    поднимают именно `NotFound`, а голый `KeyError` остаётся `internal`.
+    """
+
+
 def message_of(exc: BaseException) -> str:
     """Текст исключения без кавычек: `str(KeyError('нет'))` даёт `"'нет'"`."""
     if isinstance(exc, KeyError) and exc.args:
@@ -99,15 +111,21 @@ def message_of(exc: BaseException) -> str:
 def code_of(exc: BaseException) -> str:
     """Код по типу исключения.
 
-    В store/documents `KeyError` значит «не найдено», `ValueError` — «нельзя
-    выполнить в текущем состоянии» (занято, заблокировано, закрыто). Сервер шлёт
-    этот же код в теле ответа (`server.api_error`), а CLI берёт его оттуда, —
-    поэтому HTTP и локальный режим не расходятся.
+    `NotFound` значит «не найдено», `ValueError` — «нельзя выполнить в текущем
+    состоянии» (занято, заблокировано, закрыто). Сервер шлёт этот же код в теле
+    ответа (`server.api_error`), а CLI берёт его оттуда, — поэтому HTTP и
+    локальный режим не расходятся.
+
+    Голый `KeyError` — не «не найдено», а `internal`: это обращение к
+    отсутствующему ключу словаря (нет поля у карточки, опечатка в имени), и
+    подсказка «проверь идентификатор» тут только уводит в сторону.
     """
     if isinstance(exc, ListikError):
         return exc.code
-    if isinstance(exc, KeyError):
+    if isinstance(exc, NotFound):
         return NOT_FOUND
+    if isinstance(exc, KeyError):
+        return INTERNAL
     if isinstance(exc, ValueError):
         return CONFLICT
     return INTERNAL
@@ -127,7 +145,7 @@ def hint_of(exc: BaseException) -> str:
     _, rest = _split(message_of(exc))
     if rest:
         return rest
-    if isinstance(exc, KeyError):
+    if code_of(exc) == NOT_FOUND:
         return "проверь идентификатор: listik list (проекты: listik projects)"
     return ""
 

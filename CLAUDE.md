@@ -71,6 +71,13 @@ Database migrations exist as two parallel mechanisms — don't confuse them:
   an agent without `--confirm` is written as `suggested-blocks` (soft, "предложенный блокер")
   instead, and only becomes hard once a human runs `dep confirm`; `expire_return_handoffs` lazily
   expires the post-red-verdict return window on `ready`/`claim`.
+- `listik/errors.py` — the single error format (`code`/`message`/`hint`) shared by the CLI, the
+  server and the local fallback. "Not found" is raised as `errors.NotFound` (a `KeyError`
+  subclass); a bare `KeyError` (a missing dict key, e.g. a card lacking a derived `*_title` field)
+  stays `internal` — server handlers catch only `NotFound`, so such a bug reports 500/`internal`
+  instead of a 404 telling the agent to "проверь идентификатор" (listik-xut1). `stage --to` with
+  the current stage is a no-op that keeps the card, `stage_at` and holder, and stores the note as
+  an event.
 - `listik/search.py` + `listik/embed.py` — hybrid search: FTS5 (BM25) merged via RRF with vector
   similarity. A background thread in `server.py` recomputes embeddings for new/changed rows every
   45s via Ollama (`bge-m3`); if Ollama isn't running, search silently degrades to lexical-only

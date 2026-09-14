@@ -16,6 +16,8 @@ from __future__ import annotations
 import json
 import sqlite3
 
+from . import errors as errors_mod
+
 OPEN_STATUSES = ("open", "in_progress", "blocked", "review")
 FINAL_STATUSES = ("done", "cancelled")
 
@@ -242,7 +244,7 @@ def ready(conn: sqlite3.Connection, task_id: str) -> dict:
     from . import store
     row = _tasks_by_id(conn, [task_id]).get(task_id)
     if row is None:
-        raise KeyError(f"задача не найдена: {task_id}")
+        raise errors_mod.NotFound(f"задача не найдена: {task_id}")
     task = store.row_to_task(conn, row)
     hard = blockers(conn, task_id)
     children_open = [c for c in children(conn, task_id) if not c["closed"]]
@@ -463,7 +465,7 @@ def mentioned(conn: sqlite3.Connection, task_id: str, limit: int = 50) -> list[d
     from . import store
     row = _tasks_by_id(conn, [task_id]).get(task_id)
     if row is None:
-        raise KeyError(f"задача не найдена: {task_id}")
+        raise errors_mod.NotFound(f"задача не найдена: {task_id}")
     text = " ".join(x or "" for x in (row["title"], row["description"], row["notes"],
                                       row["acceptance"], row["result"]))
     known = {r["id"]: r["id"] for r in _fetch(conn, "SELECT id FROM tasks")}

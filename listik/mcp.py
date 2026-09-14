@@ -5,10 +5,13 @@ JSON-RPC 2.0; поддерживаемые версии протокола MCP �
 
 Транспортов два, разбор сообщений общий (`handle`):
   * stdio — `bin/listik mcp`; работает через локальную базу: сервер Listik может быть и
-    не поднят, а задача должна открываться всегда;
+    не поднят, а задача должна открываться всегда. Пишет stdio мимо сервера, поэтому
+    после пишущего инструмента сам зовёт `POST /api/notify` (в фоне и молча, если
+    сервера нет) — иначе доска не узнала бы о записи до перезагрузки (listik-hkdp);
   * HTTP — `POST /mcp` сервера Listik (Streamable HTTP: один POST — одно сообщение,
     ответ обычным JSON, без SSE и сессий) — для Listik, стоящего на другом сервере;
     авторизация заголовком `Authorization: Bearer <токен>` или `X-Listik-Token`.
+    Здесь событие доске шлёт сам сервер (`server.Handler._mcp`), уведомлять нечего.
 
 Подключение по stdio (claude / dsh):
   claude mcp add listik -- /путь/к/listik/bin/listik mcp
@@ -21,7 +24,11 @@ from __future__ import annotations
 import json
 import os
 import sys
+import threading
+import time
+import urllib.request
 
+from . import config as config_mod
 from . import db as db_mod
 from . import errors as errors_mod
 from . import routes as routes_mod
@@ -649,6 +656,113 @@ def handle(request: dict, conn=None) -> dict | None:
             "error": {"code": -32601, "message": f"неизвестный метод: {method}"}}
 
 
+def _result_id(result: dict) -> str | None:
+    """id задачи из ответа `listik_create`: доска ждёт именно его."""
+    try:
+        payload = json.loads(result["content"][0]["text"])
+    except Exception:  # noqa: BLE001 — ответ не той формы: события не будет
+        return None
+    task_id = payload.get("id") if isinstance(payload, dict) else None
+    return task_id if isinstance(task_id, str) and task_id else None
+
+
+def notify_event(request: dict, response: dict | None) -> tuple[str, str] | None:
+    """Событие доске по вызову инструмента — `(task_id, action)` или None.
+
+    Правила те же, что у HTTP-транспорта (`server.Handler._mcp`): пишущий
+    инструмент из `WRITE_TOOLS`, успешный ответ и известный id задачи. Чтения и
+    ответы `isError` доску не будят.
+    """
+    if not isinstance(request, dict) or request.get("method") != "tools/call":
+        return None
+    params = request.get("params") or {}
+    name = params.get("name")
+    if name not in WRITE_TOOLS:
+        return None
+    result = (response or {}).get("result") or {}
+    if result.get("isError"):
+        return None
+    args = params.get("arguments") or {}
+    task_id = _result_id(result) if name == "listik_create" else args.get("id")
+    return (task_id, name) if isinstance(task_id, str) and task_id else None
+
+
+#: Сколько ждём сервер, пока сообщаем ему о записи. Ответ инструмента этой
+#: отправки не ждёт — поток фоновый, поэтому таймаут короткий: лучше потерять
+#: событие, чем копить висящие потоки у сервера, который не отвечает.
+NOTIFY_TIMEOUT = 1.5
+
+#: Незавершённые отправки: их дожидается `wait_pending_notifies` на выходе.
+_pending_lock = threading.Lock()
+_pending: list[threading.Thread] = []
+
+
+def _post_notify(task_id: str, action: str) -> None:
+    """Один POST /api/notify; любая ошибка — тихий пропуск.
+
+    stdio-MCP работает с локальной базой (`paths.DB_PATH`), поэтому и сервер
+    ищется локальный — по `[server]`/`[auth]` из config.toml, как ходит CLI.
+    В try — весь путь, включая чтение конфига: битый config.toml не должен
+    ронять фоновый поток трейсбеком в stderr.
+    """
+    try:
+        cfg = config_mod.load()
+        host = str(cfg["server"]["host"] or "127.0.0.1")
+        if host in ("0.0.0.0", "::", "*"):
+            host = "127.0.0.1"  # «слушать везде» — не адрес, по которому ходят
+        body = json.dumps({"task_id": task_id, "action": action},
+                          ensure_ascii=False).encode("utf-8")
+        req = urllib.request.Request(
+            f"http://{host}:{int(cfg['server']['port'])}/api/notify",
+            data=body, method="POST")
+        req.add_header("Content-Type", "application/json")
+        token = (cfg.get("auth") or {}).get("token") or ""
+        if token:
+            req.add_header("Authorization", f"Bearer {token}")
+        with urllib.request.urlopen(req, timeout=NOTIFY_TIMEOUT):
+            pass
+    except Exception:  # noqa: BLE001 — сервер не поднят или отказал: доска не при чём
+        pass
+
+
+def notify_board(request: dict, response: dict | None) -> None:
+    """Сказать серверу о записи — в фоне и только если он отвечает.
+
+    Зовётся из stdio-цикла после ответа инструмента: сервер разошлёт кадр
+    подписчикам SSE (`GET /api/stream`), и доска перечитает карточку без
+    перезагрузки. Сервера нет, запрос не прошёл — инструмент всё равно ответил.
+    """
+    event = notify_event(request, response)
+    if event is None:
+        return
+    thread = threading.Thread(target=_post_notify, args=event, name="listik-notify",
+                              daemon=True)
+    with _pending_lock:
+        _pending[:] = [t for t in _pending if t.is_alive()]
+        _pending.append(thread)
+    thread.start()
+
+
+def wait_pending_notifies(timeout: float = NOTIFY_TIMEOUT + 0.5) -> None:
+    """Дождаться фоновых уведомлений перед выходом из stdio-цикла.
+
+    Клиент может закрыть stdin сразу после записи (`echo … | listik mcp`) — без
+    этой паузы процесс убил бы фоновый поток вместе с неотправленным событием.
+    Пауза ограничена таймаутом самого запроса: висящий сервер задержит выход не
+    дольше, чем задержал бы один POST.
+    """
+    deadline = time.monotonic() + timeout
+    while True:
+        with _pending_lock:
+            alive = [t for t in _pending if t.is_alive()]
+        if not alive:
+            return
+        remaining = deadline - time.monotonic()
+        if remaining <= 0:
+            return
+        alive[0].join(remaining)
+
+
 def run() -> int:
     # Одно соединение на весь stdio-процесс: без него call_tool открывал бы
     # новое соединение на каждый вызов и не закрывал его (listik-sxcd).
@@ -669,5 +783,9 @@ def run() -> int:
             continue
         sys.stdout.write(json.dumps(response, ensure_ascii=False) + "\n")
         sys.stdout.flush()
+        # Событие — строго после ответа и в фоне: доска не должна задерживать
+        # инструмент, а сервер, который не отвечает, — ломать его (listik-hkdp).
+        notify_board(request, response)
+    wait_pending_notifies()
     conn.close()
     return 0

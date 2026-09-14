@@ -386,6 +386,32 @@ def publish(kind: str, payload: dict) -> None:
             _subs.remove(q)
 
 
+#: Виды кадров, которые пускает POST /api/notify. Пока один — «задача»: о записи
+#: в неё сообщает stdio-MCP, у которого своего publish нет (listik-hkdp).
+NOTIFY_KINDS = frozenset({"task"})
+
+
+def notify_publish(conn: sqlite3.Connection, body: dict) -> dict:
+    """Разослать доске «перечитай задачу», ничего не меняя в базе.
+
+    `publish` живёт в процессе сервера, а писать в ту же sqlite можно и мимо него
+    (`bin/listik mcp` по stdio): без такого вызова доска показывала бы старую
+    карточку до перезагрузки. Существование задачи проверяется — иначе кадр
+    будил бы доски ради записи, которой сервер не знает.
+    """
+    task_id = str(body.get("task_id") or body.get("id") or "").strip()
+    if not task_id:
+        raise ApiError(400, "не передан обязательный параметр: task_id")
+    kind = str(body.get("kind") or "task").strip() or "task"
+    if kind not in NOTIFY_KINDS:
+        raise ApiError(400, f"неизвестный kind: {kind}")
+    action = str(body.get("action") or "notify").strip()[:200] or "notify"
+    if conn.execute("SELECT 1 FROM tasks WHERE id = ?", (task_id,)).fetchone() is None:
+        raise ApiError(404, f"задача не найдена: {task_id}")
+    publish(kind, {"id": task_id, "action": action})
+    return {"published": True, "kind": kind, "id": task_id, "action": action}
+
+
 # ------------------------------------------------------------------ утилиты
 
 def as_bool(value) -> bool:
@@ -850,6 +876,12 @@ def handle(method: str, path: str, query: dict, body: dict, authed: bool = False
             model=cfg["embed"]["model"], verbose=False,
         )
         return 200, res
+
+    if path == "/api/notify" and method == "POST":
+        # Событие от того, кто писал мимо сервера (stdio-MCP): состояние не
+        # меняется, доска просто перечитывает задачу. Токен проверен выше, как у
+        # остальных /api/*.
+        return 200, notify_publish(conn, body)
 
     if path == "/api/events":
         limit = as_int(q1("limit"), 50) or 50

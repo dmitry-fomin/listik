@@ -398,8 +398,10 @@ done, release, deps, search, memory, put_document/get_document и др.; пол�
 claude mcp add listik -- /путь/к/listik/bin/listik mcp
 ```
 
-Это локальный stdio-транспорт: агент работает на той же машине, где стоит Listik. Для Listik на
-другом сервере — MCP по HTTP, см. «Listik на другом сервере».
+Это локальный stdio-транспорт: агент работает на той же машине, где стоит Listik. Пишет он в
+базу напрямую, но о каждой записи сообщает серверу (`POST /api/notify`) — карточки на доске
+двигаются и от инструментов stdio; если сервер не поднят, инструмент всё равно работает. Для
+Listik на другом сервере — MCP по HTTP, см. «Listik на другом сервере».
 
 **Правила в проектах.** `listik init-projects` вписывает протокол работы с Listik
 (`docs/harness-protocol.md`) в существующие `AGENTS.md`/`CLAUDE.md` проектов, добавленных через

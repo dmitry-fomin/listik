@@ -96,7 +96,9 @@ Database migrations exist as two parallel mechanisms — don't confuse them:
   transports: stdio (`claude mcp add listik -- bin/listik mcp`) and HTTP — `server.py` serves
   `POST /mcp` (Bearer token, no SSE) for a Listik deployed on another machine
   (`claude mcp add --transport http listik https://<host>/mcp --header "Authorization: Bearer …"`).
-  Adding a tool: `TOOLS` + `call_tool`, and `WRITE_TOOLS` if it should push a board event.
+  Adding a tool: `TOOLS` + `call_tool`, and `WRITE_TOOLS` if it should push a board event (over
+  stdio the process writes to sqlite past the server, so after a write tool it calls
+  `POST /api/notify` in the background; over HTTP the server publishes the event itself).
 - `listik/migrate.py` — despite the name, this is unrelated to database migrations. It
   inserts/updates the `<!-- BEGIN LISTIK --> / <!-- END LISTIK -->` block in *other* projects'
   `AGENTS.md`/`CLAUDE.md` (`listik init-projects`) so those projects' agents know to use Listik

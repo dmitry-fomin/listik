@@ -38,6 +38,9 @@ cp config.example.toml config.toml   # необязательно: без фай
 ```
 
 - База `listik.db` создаётся сама при первом `serve`/`init`.
+- Где лежат данные, решает `LISTIK_HOME`: каталог данных — база, `config.toml`, `listik.log`,
+  `listik.pid` и `logs/` запусков; по умолчанию это корень репозитория. Переменные
+  `LISTIK_DB`, `LISTIK_CONFIG` и `LISTIK_LOG` важнее: каждая задаёт свой путь сама.
 - Если в `config.toml` нет токена, `serve` генерирует его и сохраняет конфиг.
 - Векторы: `ollama serve` + `ollama pull bge-m3`. Сервер сам досчитывает векторы новых записей
   раз в 45 секунд; без Ollama поиск молча остаётся лексическим. Отключить: `serve --no-embed`.

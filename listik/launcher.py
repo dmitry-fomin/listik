@@ -233,7 +233,7 @@ def start(conn, task_id: str, notify=None, *, log_dir=None) -> str | None:
               "cwd": str(cwd), "title": row["title"] or ""}
     argv = [_substitute(element, values) for element in command]
 
-    log_dir = Path(log_dir) if log_dir is not None else paths.ROOT_DIR / "logs"
+    log_dir = Path(log_dir) if log_dir is not None else paths.LOGS_DIR
     stamp = datetime.now(timezone.utc).strftime("%Y%m%dT%H%M%SZ")
     log_path = log_dir / f"launch-{task_id}-{stamp}.log"
     env = os.environ | {"LISTIK_TASK_ID": task_id, "LISTIK_ROUTE": key,

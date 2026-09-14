@@ -527,8 +527,8 @@ def runtime_info(root: Path | None = None) -> dict:
     это надо видеть в `/api/health` и `listik status`.
     """
     root = Path(root or paths.ROOT_DIR)
-    info = {"code_dir": str(root), "cwd": os.getcwd(), "worktree": False,
-            "main_repo": None, "warning": None}
+    info = {"code_dir": str(root), "data_dir": str(paths.DATA_DIR), "cwd": os.getcwd(),
+            "worktree": False, "main_repo": None, "warning": None}
     git_dir = store._git_value(root, "rev-parse", "--absolute-git-dir")
     common = store._git_value(root, "rev-parse", "--path-format=absolute", "--git-common-dir")
     if git_dir and common and Path(git_dir).resolve() != Path(common).resolve():
@@ -1345,7 +1345,13 @@ def bind_or_explain(host: str, port: int, quiet: bool) -> Server:
 
 
 def pid_file() -> Path:
-    return paths.ROOT_DIR / "listik.pid"
+    return paths.PID_PATH
+
+
+def write_pid() -> None:
+    """Записать pid-файл, создав каталог данных: при LISTIK_HOME его ещё нет."""
+    pid_file().parent.mkdir(parents=True, exist_ok=True)
+    pid_file().write_text(str(os.getpid()))
 
 
 def log_file() -> Path:
@@ -1371,6 +1377,7 @@ def daemonize() -> None:
     os.setsid()
     if os.fork() > 0:
         os._exit(0)
+    log_file().parent.mkdir(parents=True, exist_ok=True)
     log = open(log_file(), "a", buffering=1)  # noqa: SIM115 — живёт до конца процесса
     os.dup2(log.fileno(), sys.stdout.fileno())
     os.dup2(log.fileno(), sys.stderr.fileno())
@@ -1419,7 +1426,7 @@ def serve(host: str | None = None, port: int | None = None, quiet: bool = False,
         print(f"pid:  {pid_file()}")
         daemonize()
         _exit_on_sigterm()
-        pid_file().write_text(str(os.getpid()))
+        write_pid()
         conn = get_conn()
         # После daemonize: сообщение об ошибке routes.json должно попасть в listik.log.
         routes_mod.init_at_startup()
@@ -1456,7 +1463,7 @@ def serve(host: str | None = None, port: int | None = None, quiet: bool = False,
     print("Ctrl+C — остановить")
     _exit_on_sigterm()
     try:
-        pid_file().write_text(str(os.getpid()))
+        write_pid()
         httpd.serve_forever()
     except KeyboardInterrupt:
         print("\nостановлен")

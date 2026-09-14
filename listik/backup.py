@@ -174,8 +174,11 @@ def running_server(db_path: Path | str | None = None) -> dict | None:
         return {"pid": None, "how": how}
 
     # pid-файл и порт описывают базу установки, а не любую (LISTIK_DB) — иначе
-    # restore временной базы отказывал бы из-за постороннего сервера.
-    if same_file(db, paths.ROOT_DIR / "listik.db"):
+    # restore временной базы отказывал бы из-за постороннего сервера. База установки —
+    # та же, что у CLI и сервера, `paths.DB_PATH` (LISTIK_HOME и LISTIK_DB учтены);
+    # рядом исторический якорь `ROOT_DIR/listik.db`: без LISTIK_HOME это ровно она,
+    # а `test_backup_restore` подменяет ROOT_DIR уже после импорта модуля.
+    if same_file(db, paths.DB_PATH) or same_file(db, paths.ROOT_DIR / "listik.db"):
         pid = server_mod.read_pid()
         if pid:
             return {"pid": pid, "how": "listik.pid"}

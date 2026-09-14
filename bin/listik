@@ -104,6 +104,7 @@ def report_error(exc: BaseException, json_mode: bool) -> int:
 def log_traceback(exc: BaseException) -> None:
     """Трейсбек непойманного исключения — только в listik.log, не в терминал."""
     try:
+        paths.LOG_PATH.parent.mkdir(parents=True, exist_ok=True)
         with open(paths.LOG_PATH, "a", encoding="utf-8") as fh:
             ts = datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
             fh.write(f"\n[{ts}] CLI: {' '.join(sys.argv)}\n")
@@ -413,6 +414,8 @@ def cmd_stop(args) -> int:
 
 def cmd_status(args) -> int:
     from listik import server
+    # Каталог данных — до проверки сервера: он нужен и когда сервер не отвечает.
+    print(f"каталог данных: {paths.DATA_DIR}")
     h = client.health(args.host, args.port)
     pid = server.read_pid()
     cfg, token = client.config_mod.ensure_token()

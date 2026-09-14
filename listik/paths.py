@@ -1,19 +1,26 @@
 """Пути и константы хаба задач Listik.
 
-Всё лежит прямо в корне репозитория Listik: база, конфиг, сервер (`bin/listik`),
-пакет `listik/` и доска `web/`. Отдельной папки hub больше нет.
+Код лежит в репозитории Listik (сервер `bin/listik`, пакет `listik/`, доска `web/`),
+данные — в каталоге данных: `LISTIK_HOME`, а без него — по-прежнему корень репозитория.
+Отдельной папки hub больше нет.
 """
 from __future__ import annotations
 
 import os
 from pathlib import Path
 
-# Корень репозитория Listik — родитель пакета listik/
+# Корень репозитория Listik — родитель пакета listik/. Отсюда считается только код.
 ROOT_DIR = Path(__file__).resolve().parent.parent
-DB_PATH = Path(os.environ.get("LISTIK_DB", ROOT_DIR / "listik.db"))
-CONFIG_PATH = Path(os.environ.get("LISTIK_CONFIG", ROOT_DIR / "config.toml"))
+# Каталог данных: `LISTIK_HOME` (пустая строка — «не задана»), иначе корень репозитория.
+# Отсюда считаются база, конфиг, лог, pid-файл и каталог логов запусков.
+_HOME = (os.environ.get("LISTIK_HOME") or "").strip()
+DATA_DIR = Path(_HOME).expanduser() if _HOME else ROOT_DIR
+DB_PATH = Path(os.environ.get("LISTIK_DB", DATA_DIR / "listik.db"))
+CONFIG_PATH = Path(os.environ.get("LISTIK_CONFIG", DATA_DIR / "config.toml"))
 # Лог сервера и непойманных исключений CLI: трейсбеки пишутся только сюда.
-LOG_PATH = Path(os.environ.get("LISTIK_LOG", ROOT_DIR / "listik.log"))
+LOG_PATH = Path(os.environ.get("LISTIK_LOG", DATA_DIR / "listik.log"))
+PID_PATH = DATA_DIR / "listik.pid"
+LOGS_DIR = DATA_DIR / "logs"
 WEB_DIR = ROOT_DIR / "web"
 
 # Корень, внутри которого ищутся проекты

@@ -1,7 +1,8 @@
 """listik-a7pw: `serve` без --daemon после SIGTERM удаляет pid-файл.
 
-Сервер поднимается в подпроцессе со своим ROOT_DIR (pid-файл), базой, конфигом и логом во
-временном каталоге и на свободном порту; настоящий сервер и listik.pid репозитория не трогаются.
+Сервер поднимается в подпроцессе со своим каталогом данных (`LISTIK_HOME` — pid-файл, база,
+конфиг и лог) во временном каталоге и на свободном порту; настоящий сервер и listik.pid
+репозитория не трогаются.
 """
 from __future__ import annotations
 
@@ -18,10 +19,9 @@ import unittest
 REPO_DIR = pathlib.Path(__file__).resolve().parent.parent
 
 SCRIPT = """
-import pathlib, sys
-from listik import paths, server
-paths.ROOT_DIR = pathlib.Path(sys.argv[1])
-server.serve(host="127.0.0.1", port=int(sys.argv[2]), quiet=True, no_embed=True)
+import sys
+from listik import server
+server.serve(host="127.0.0.1", port=int(sys.argv[1]), quiet=True, no_embed=True)
 """
 
 
@@ -37,11 +37,9 @@ class ServeSigtermTest(unittest.TestCase):
             tmp_path = pathlib.Path(tmp)
             pid_path = tmp_path / "listik.pid"
             env = dict(os.environ,
-                       LISTIK_DB=str(tmp_path / "listik.db"),
-                       LISTIK_CONFIG=str(tmp_path / "config.toml"),
-                       LISTIK_LOG=str(tmp_path / "listik.log"),
+                       LISTIK_HOME=str(tmp_path),
                        PYTHONPATH=str(REPO_DIR))
-            proc = subprocess.Popen([sys.executable, "-c", SCRIPT, tmp, str(_free_port())],
+            proc = subprocess.Popen([sys.executable, "-c", SCRIPT, str(_free_port())],
                                     cwd=tmp, env=env, stdout=subprocess.DEVNULL,
                                     stderr=subprocess.PIPE)
             try:

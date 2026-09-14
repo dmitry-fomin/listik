@@ -191,6 +191,8 @@ def save(cfg: dict, path: Path | None = None) -> Path:
     # так что токен не засветится даже на миг. resolve() — чтобы не подменить
     # символическую ссылку config.toml обычным файлом.
     target = cfg_path.resolve()
+    # Каталог данных создаётся только при записи: при LISTIK_HOME его может ещё не быть.
+    target.parent.mkdir(parents=True, exist_ok=True)
     fd, tmp_name = tempfile.mkstemp(dir=str(target.parent),
                                     prefix=target.name + ".", suffix=".tmp")
     tmp = Path(tmp_name)

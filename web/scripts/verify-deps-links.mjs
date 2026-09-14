@@ -412,7 +412,7 @@ try {
     await openMain()
     const clicked = await evaluate(`(() => {
       const button = [...document.querySelectorAll('.ui-drawer button')]
-        .find((b) => b.textContent.trim() === 'Дерево связей');
+        .find((b) => b.getAttribute('aria-label') === 'Дерево связей');
       if (!button) return false;
       button.click();
       return true;

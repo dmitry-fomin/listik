@@ -193,6 +193,75 @@ export function worktreeValue(
   return [tree, br].filter(Boolean).join(' · ')
 }
 
+// ── Тип связи (блок «Связи» панели задачи) ──────────────────────────────────
+
+export interface LinkTypeItem {
+  /** Ключ связи — `dep_type` из карточки задачи. */
+  value: string
+  /** Подпись — как у серверных `DEP_TITLES` (`listik/deps.py`). */
+  label: string
+  /** Имя иконки из `lib/icons.ts`. */
+  icon: string
+}
+
+/**
+ * Типы связей: ключи сервера, подписи — как у `DEP_TITLES` (`listik/deps.py`).
+ * `dep_title` сервер считает по той же таблице, поэтому подпись берём отсюда;
+ * исключение — незнакомый тип (см. `linkTypeLabel`).
+ */
+export const LINK_TYPES: LinkTypeItem[] = [
+  { value: 'blocks', label: 'блокирует', icon: 'lock' },
+  { value: 'blocked-by', label: 'заблокирована', icon: 'lock' },
+  { value: 'waits-for', label: 'ждёт', icon: 'clock' },
+  { value: 'parent-child', label: 'родитель', icon: 'branch' },
+  { value: 'parent', label: 'родитель', icon: 'branch' },
+  { value: 'relates-to', label: 'связана', icon: 'link' },
+  { value: 'related', label: 'связана', icon: 'link' },
+  { value: 'discovered-from', label: 'найдена при', icon: 'search' },
+  { value: 'duplicates', label: 'дублирует', icon: 'copy' },
+  { value: 'supersedes', label: 'заменяет', icon: 'refresh' },
+  { value: 'replies-to', label: 'ответ на', icon: 'timeline' },
+  { value: 'suggested-blocks', label: 'предложенный блокер', icon: 'warning' },
+]
+
+/** Незнакомый тип: подпись равна самому ключу, иконка — звено цепи. */
+export function linkType(value: string | null | undefined): LinkTypeItem {
+  const key = (value ?? '').trim()
+  return LINK_TYPES.find((item) => item.value === key) ?? { value: key, label: key, icon: 'link' }
+}
+
+/**
+ * Подпись типа связи для подсказки чипа. У типа, которого нет в `LINK_TYPES`,
+ * словарь подписи не знает — тогда берём `dep_title` сервера (в моке он врёт
+ * для известных типов, поэтому приоритет у словаря).
+ */
+export function linkTypeLabel(value: string | null | undefined, depTitle?: string | null): string {
+  const key = (value ?? '').trim()
+  if (LINK_TYPES.some((item) => item.value === key)) return linkType(key).label
+  return (depTitle ?? '').trim() || key
+}
+
+/** Иконка сводки у заголовка «Связи»: родитель, дети, блокеры, мягкие связи. */
+export type DepSummaryKind = 'parent' | 'children' | 'blockers' | 'soft'
+
+export interface DepSummaryItem {
+  /** Подпись — в подсказку иконки. */
+  label: string
+  /** Имя иконки из `lib/icons.ts`. */
+  icon: string
+}
+
+/**
+ * Иконки сводки «Связей» — подписи и иконки держим здесь, чтобы шаблон панели
+ * не собирал их сам (счётчики значений он берёт из данных задачи).
+ */
+export const DEP_SUMMARY: Record<DepSummaryKind, DepSummaryItem> = {
+  parent: { label: 'родитель', icon: 'parent' },
+  children: { label: 'дети: готово/всего', icon: 'branch' },
+  blockers: { label: 'блокеры', icon: 'lock' },
+  soft: { label: 'мягкие связи', icon: 'link' },
+}
+
 // ── Маршрут ─────────────────────────────────────────────────────────────────
 
 export interface RouteIconItem extends DictionaryItem<RouteIconKey> {

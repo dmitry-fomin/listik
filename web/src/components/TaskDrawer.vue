@@ -7,8 +7,10 @@
  *   будущего шага, ряд действий (heartbeat/needs-owner/next-stage/release/
  *   удалить/claim-сплит-кнопка) и подсказка под ним;
  * - «Холодный старт», «Кто держит», «Журнал и вердикты» (единая лента
- *   комментариев+событий с фильтром и формой отправки), «Связи» (сетка
- *   карточек по группам), «Описание и критерии».
+ *   комментариев+событий с фильтром и формой отправки), «Связи» (сводка
+ *   иконками со счётчиками, красные строки открытых блокеров, компактное
+ *   дерево «родитель → эта задача → дети» с прогрессом и чипы мягких связей),
+ *   «Описание и критерии».
  *
  * Своя разметка — только раскладка; контролы, бейджи, степпер, лента,
  * сплит-кнопка — из кита.
@@ -22,6 +24,7 @@ import {
   UiCopyButton,
   UiDrawer,
   UiInput,
+  UiProgress,
   UiSegmented,
   UiSelect,
   UiSkeleton,
@@ -43,7 +46,7 @@ import ProjectMark from './marks/ProjectMark.vue'
 import RouteIcon from './marks/RouteIcon.vue'
 import RoutePicker from './RoutePicker.vue'
 import TaskGlyph from './marks/TaskGlyph.vue'
-import { priority, worktreeState, worktreeValue } from '@/lib/dictionaries'
+import { DEP_SUMMARY, priority, linkType, linkTypeLabel, worktreeState, worktreeValue, type DepSummaryKind } from '@/lib/dictionaries'
 import HarnessIcon from './marks/HarnessIcon.vue'
 import type {
   CommentKind,
@@ -57,6 +60,7 @@ import type {
   TaskDependent,
   TaskDetail,
   TaskEvent,
+  TaskStage,
 } from '@/api/types'
 import {
   commentKindTitle,
@@ -125,6 +129,49 @@ const waitingFor = computed<DepInfo[]>(() => deps.value?.waiting_for ?? [])
 const softLinks = computed<DepInfo[]>(() => deps.value?.soft_links ?? [])
 const parentDep = computed<DepInfo | null>(() => deps.value?.parent ?? null)
 const childrenOpen = computed<DepInfo[]>(() => deps.value?.children_open ?? [])
+
+/** Ребёнок в дереве «Связей» — общая форма для `children` карточки и `children_open`. */
+interface ChildCard {
+  id: string
+  title: string
+  status: string
+  stage: TaskStage
+  holder: string | null
+  holderTitle: string
+  /** Ссылка на id рисуется только в первом по приоритету месте блока. */
+  linked: boolean
+}
+
+/**
+ * Дети для дерева: `task.children` — все дети карточки, включая закрытых, —
+ * если поле пришло; иначе `deps_state.children_open` (только незакрытые).
+ */
+const childCards = computed<Omit<ChildCard, 'linked'>[]>(() => {
+  const cards = props.task?.children
+  if (cards) {
+    return cards.map((child) => ({
+      id: child.id,
+      title: child.title,
+      status: child.status,
+      stage: child.stage ?? null,
+      holder: child.holder ?? null,
+      holderTitle: child.holder_title ?? '',
+    }))
+  }
+  return childrenOpen.value.map((dep) => ({
+    id: dep.id,
+    title: dep.title,
+    status: dep.status,
+    stage: dep.stage ?? null,
+    holder: dep.holder ?? null,
+    holderTitle: dep.holder_title ?? '',
+  }))
+})
+
+/** «Готово» — только `status === 'done'`: отменённый ребёнок входит во «всего», но не сюда. */
+const childrenDone = computed(() => childCards.value.filter((child) => child.status === 'done').length)
+const childrenTotal = computed(() => childCards.value.length)
+
 /**
  * Связи карточки как они лежат в `deps` (обе стороны, включая мягкие входящие).
  * `deps_state` для сводки не годится: в `soft_links` из входящих связей есть только
@@ -133,19 +180,44 @@ const childrenOpen = computed<DepInfo[]>(() => deps.value?.children_open ?? [])
  */
 const dependencies = computed<TaskDep[]>(() => props.task?.dependencies ?? [])
 const dependents = computed<TaskDependent[]>(() => props.task?.dependents ?? [])
+
 /**
- * id, уже показанные выше отдельными карточками/строками: blocked_by,
- * waiting_for, children_open, parent, soft_links. В сводке такие id не
- * повторяются — иначе одна и та же ссылка рисуется дважды.
+ * Раскладка блока «Связи». Строки идут в порядке приоритета (блокер → родитель →
+ * ребёнок в дереве → «её ждут» → чип мягкой связи), и ссылку
+ * (`button.listik-link`) получает только первое появление id: в остальных местах
+ * id показывается текстом. `shownIds` собирает всё показанное, чтобы сводки внизу
+ * не рисовали те же id ссылками второй раз.
  */
-const groupedIds = computed<Set<string>>(() => {
-  const ids = new Set<string>()
-  for (const dep of [...blockedBy.value, ...waitingFor.value, ...childrenOpen.value, ...softLinks.value]) {
-    ids.add(dep.id)
+const depBlock = computed(() => {
+  const shown = new Set<string>()
+  const claim = (id: string): boolean => {
+    const first = !shown.has(id)
+    shown.add(id)
+    return first
   }
-  if (parentDep.value) ids.add(parentDep.value.id)
-  return ids
+  const blockers = blockedBy.value.map((dep) => ({ dep, linked: claim(dep.id) }))
+  const parent = parentDep.value ? { dep: parentDep.value, linked: claim(parentDep.value.id) } : null
+  const children = childCards.value.map((child) => ({ ...child, linked: claim(child.id) }))
+  const waiting = waitingFor.value.map((dep) => ({ dep, linked: claim(dep.id) }))
+  const soft = softLinks.value.map((dep) => ({ dep, linked: claim(dep.id), type: linkType(dep.dep_type) }))
+  return { blockers, parent, children, waiting, soft, shownIds: shown }
 })
+
+/** Сводка у заголовка: счётчики не прячутся даже с нулём — ноль только приглушается. */
+const depCounters = computed<{ kind: DepSummaryKind; value: string; zero: boolean; danger: boolean }[]>(() => [
+  { kind: 'parent', value: parentDep.value ? '1' : '0', zero: !parentDep.value, danger: false },
+  { kind: 'children', value: `${childrenDone.value}/${childrenTotal.value}`, zero: childrenTotal.value === 0, danger: false },
+  { kind: 'blockers', value: String(blockedBy.value.length), zero: blockedBy.value.length === 0, danger: blockedBy.value.length > 0 },
+  { kind: 'soft', value: String(softLinks.value.length), zero: softLinks.value.length === 0, danger: false },
+])
+
+/**
+ * id, показанные в блоке «Связи» строками и чипами (blocked_by, parent, дети,
+ * waiting_for, soft_links). В сводках такие id не повторяются — иначе одна и та
+ * же ссылка рисуется дважды.
+ */
+const groupedIds = computed<Set<string>>(() => depBlock.value.shownIds)
+
 /**
  * Сводка «зависит от» — только то, чего нет в группах выше. Один id — одна ссылка:
  * в `deps` на одного и того же адресата бывает несколько строк с разными `dep_type`
@@ -580,6 +652,11 @@ function submitDep(): void {
   depFormOpen.value = false
 }
 
+/** Enter в поле «ID блокера» отправляет связь так же, как кнопка. */
+function onDepKeydown(event: KeyboardEvent): void {
+  if (event.key === 'Enter') submitDep()
+}
+
 // ── «Холодный старт» ──────────────────────────────────────────────────────
 
 interface ColdRow {
@@ -824,6 +901,12 @@ function depCardHint(dep: DepInfo): string {
   return dep.stale ? `${base} · стоит без движения` : base
 }
 
+/** Держатель ребёнка коротко: ключ актора (`agent:dsh` → dsh), иначе `holder_title`, иначе «—». */
+function childHolder(child: { holder: string | null; holderTitle: string }): string {
+  const short = actorShort(child.holder)
+  return short === '—' && hasHolderTitle(child.holderTitle) ? child.holderTitle : short
+}
+
 /** Дерево связей запрашивается по кнопке: у задачи оно может быть глубоким. */
 async function loadTree(): Promise<void> {
   const task = props.task
@@ -1014,13 +1097,6 @@ async function loadTree(): Promise<void> {
             Закрыть с результатом
           </UiButton>
         </div>
-
-        <div v-if="depFormOpen" class="listik-row">
-          <UiInput v-model="newDep" size="sm" placeholder="ID задачи-блокера" v-bind="{ 'aria-label': 'ID блокера' }" />
-          <UiButton size="sm" variant="secondary" :disabled="!newDep.trim()" @click="submitDep">
-            Добавить связь
-          </UiButton>
-        </div>
       </section>
 
       <section v-if="showLaunch" class="listik-section">
@@ -1204,13 +1280,82 @@ async function loadTree(): Promise<void> {
         <div class="listik-section__head">
           <h4 class="listik-section__title">
             Связи
-            <UiBadge v-if="blockedBy.length" tone="warning" size="sm">ждёт {{ blockedBy.length }}</UiBadge>
-            <UiBadge v-if="waitingFor.length" tone="accent" size="sm">её ждут {{ waitingFor.length }}</UiBadge>
+            <!-- Сводка иконками: ноль не прячем, только приглушаем. -->
+            <span class="listik-dep-summary">
+              <UiTooltip v-for="item in depCounters" :key="item.kind" :text="DEP_SUMMARY[item.kind].label">
+                <span
+                  class="listik-dep-summary__item"
+                  :class="{
+                    'listik-dep-summary__item--zero': item.zero,
+                    'listik-dep-summary__item--danger': item.danger,
+                  }"
+                >
+                  <ListikIcon :name="DEP_SUMMARY[item.kind].icon" size="sm" />
+                  <span>{{ item.value }}</span>
+                </span>
+              </UiTooltip>
+            </span>
           </h4>
-          <UiButton size="sm" variant="ghost" :loading="depTreeLoading" @click="loadTree">
-            <template #icon><ListikIcon name="timeline" size="xs" /></template>
-            Дерево связей
+          <span class="listik-row" style="gap: var(--space-1); flex-wrap: nowrap">
+            <UiTooltip text="Дерево связей">
+              <UiButton
+                size="sm"
+                variant="ghost"
+                ariaLabel="Дерево связей"
+                :loading="depTreeLoading"
+                @click="loadTree"
+              >
+                <template #icon><ListikIcon name="timeline" size="sm" /></template>
+              </UiButton>
+            </UiTooltip>
+            <UiTooltip text="Добавить связь">
+              <UiButton
+                size="sm"
+                variant="ghost"
+                ariaLabel="Добавить связь"
+                @click="depFormOpen = !depFormOpen"
+              >
+                <template #icon><ListikIcon name="plus" size="sm" /></template>
+              </UiButton>
+            </UiTooltip>
+          </span>
+        </div>
+
+        <div v-if="depFormOpen" class="listik-row">
+          <UiInput
+            v-model="newDep"
+            size="sm"
+            placeholder="ID задачи-блокера"
+            v-bind="{ 'aria-label': 'ID блокера', onKeydown: onDepKeydown }"
+          />
+          <UiButton size="sm" variant="secondary" :disabled="!newDep.trim()" @click="submitDep">
+            Добавить связь
           </UiButton>
+        </div>
+
+        <!-- Открытые блокеры — единственное, что требует внимания: красные строки сверху. -->
+        <div v-if="depBlock.blockers.length" class="listik-dep-blockers">
+          <article
+            v-for="(row, index) in depBlock.blockers"
+            :key="`b-${index}-${row.dep.id}`"
+            class="listik-dep-blocker"
+          >
+            <ListikIcon name="lock" size="sm" class="listik-dep-blocker__icon" />
+            <span class="listik-dep-blocker__verb">ждёт</span>
+            <button
+              v-if="row.linked"
+              type="button"
+              class="listik-link listik-mono"
+              @click="emit('open-other', row.dep.id)"
+            >
+              {{ row.dep.id }}
+            </button>
+            <span v-else class="listik-mono">{{ row.dep.id }}</span>
+            <span class="listik-dep-blocker__title">{{ row.dep.title }}</span>
+            <UiBadge v-if="row.dep.missing" tone="danger" size="sm">задача не найдена</UiBadge>
+            <UiBadge v-if="row.dep.stage" tone="info" size="sm">{{ stageCode(row.dep.stage) }}</UiBadge>
+            <span class="listik-dep-blocker__hint">{{ depCardHint(row.dep) }}</span>
+          </article>
         </div>
 
         <UiAlert v-if="blockedBy.length > 0 && blockersIdle" tone="warning">
@@ -1218,78 +1363,95 @@ async function loadTree(): Promise<void> {
           Ждать молча бессмысленно: возьмите блокер сами или поставьте ему «нужен автор».
         </UiAlert>
 
-        <div v-if="blockedBy.length || waitingFor.length || childrenOpen.length" class="listik-dep-grid">
-          <template v-if="blockedBy.length">
-            <h5 class="listik-subtitle listik-dep-grid__head">Ждёт завершения</h5>
-            <article v-for="dep in blockedBy" :key="`b-${dep.id}`" class="listik-dep">
-              <div class="listik-dep__main">
-                <button type="button" class="listik-link listik-mono" @click="emit('open-other', dep.id)">
-                  {{ dep.id }}
-                </button>
-                <span class="listik-dep__title">{{ dep.title }}</span>
-              </div>
-              <div class="listik-row">
-                <UiBadge tone="neutral" size="sm">{{ dep.dep_title || dep.dep_type }}</UiBadge>
-                <UiBadge v-if="dep.stage" tone="info" size="sm">{{ stageCode(dep.stage) }}</UiBadge>
-                <UiBadge v-if="dep.missing" tone="danger" size="sm">задача не найдена</UiBadge>
-              </div>
-              <p class="listik-section__hint">{{ depCardHint(dep) }}</p>
-            </article>
-          </template>
-
-          <template v-if="waitingFor.length">
-            <h5 class="listik-subtitle listik-dep-grid__head">Ждут её завершения</h5>
-            <article v-for="dep in waitingFor" :key="`w-${dep.id}`" class="listik-dep">
-              <div class="listik-dep__main">
-                <button type="button" class="listik-link listik-mono" @click="emit('open-other', dep.id)">
-                  {{ dep.id }}
-                </button>
-                <span class="listik-dep__title">{{ dep.title }}</span>
-              </div>
-              <div class="listik-row">
-                <UiBadge tone="neutral" size="sm">{{ dep.dep_title || dep.dep_type }}</UiBadge>
-                <UiBadge v-if="dep.stage" tone="info" size="sm">{{ stageCode(dep.stage) }}</UiBadge>
-                <UiBadge v-if="dep.missing" tone="danger" size="sm">задача не найдена</UiBadge>
-              </div>
-              <p class="listik-section__hint">{{ depCardHint(dep) }}</p>
-            </article>
-          </template>
-
-          <template v-if="childrenOpen.length">
-            <h5 class="listik-subtitle listik-dep-grid__head">Незакрытые дети</h5>
-            <article v-for="dep in childrenOpen" :key="`c-${dep.id}`" class="listik-dep">
-              <div class="listik-dep__main">
-                <button type="button" class="listik-link listik-mono" @click="emit('open-other', dep.id)">
-                  {{ dep.id }}
-                </button>
-                <span class="listik-dep__title">{{ dep.title }}</span>
-              </div>
-              <div class="listik-row">
-                <UiBadge tone="neutral" size="sm">{{ dep.dep_title || dep.dep_type }}</UiBadge>
-                <UiBadge v-if="dep.stage" tone="info" size="sm">{{ stageCode(dep.stage) }}</UiBadge>
-              </div>
-              <p class="listik-section__hint">{{ depCardHint(dep) }}</p>
-            </article>
-          </template>
+        <!-- Компактное дерево «родитель → эта задача → дети»; без родителя и детей его нет. -->
+        <div v-if="depBlock.parent || depBlock.children.length" class="listik-dep-tree">
+          <div v-if="depBlock.parent" class="listik-dep-tree__row listik-dep-tree__row--parent">
+            <ListikIcon name="epic" size="sm" />
+            <button
+              v-if="depBlock.parent.linked"
+              type="button"
+              class="listik-link listik-mono"
+              @click="emit('open-other', depBlock.parent.dep.id)"
+            >
+              {{ depBlock.parent.dep.id }}
+            </button>
+            <span v-else class="listik-mono">{{ depBlock.parent.dep.id }}</span>
+            <span class="listik-dep-tree__title">{{ depBlock.parent.dep.title }}</span>
+          </div>
+          <div class="listik-dep-tree__row listik-dep-tree__row--self">
+            <span class="listik-dep-tree__dot" />
+            <span class="listik-dep-tree__self">эта задача</span>
+            <span v-if="childrenTotal" class="listik-dep-tree__progress">
+              <UiProgress
+                :value="childrenDone"
+                :max="childrenTotal"
+                size="sm"
+                :label="`дети: ${childrenDone} из ${childrenTotal} готово`"
+              />
+              <span class="listik-dep-tree__progress-text">{{ childrenDone }} из {{ childrenTotal }} готово</span>
+            </span>
+          </div>
+          <div
+            v-for="(child, index) in depBlock.children"
+            :key="`c-${index}-${child.id}`"
+            class="listik-dep-tree__row listik-dep-tree__row--child"
+          >
+            <UiBadge v-if="child.stage" tone="info" size="sm">{{ stageCode(child.stage) }}</UiBadge>
+            <button
+              v-if="child.linked"
+              type="button"
+              class="listik-link listik-mono"
+              @click="emit('open-other', child.id)"
+            >
+              {{ child.id }}
+            </button>
+            <span v-else class="listik-mono">{{ child.id }}</span>
+            <span class="listik-dep-tree__title">{{ child.title }}</span>
+            <span class="listik-dep-tree__holder">
+              <ListikIcon name="user" size="xs" />
+              {{ childHolder(child) }}
+            </span>
+          </div>
         </div>
 
-        <p v-if="parentDep" class="listik-section__hint">
-          родитель:
-          <button type="button" class="listik-link listik-mono" @click="emit('open-other', parentDep.id)">
-            {{ parentDep.id }}
-          </button>
-          {{ parentDep.title }}
-        </p>
-
-        <p v-if="softLinks.length" class="listik-section__hint">
-          связано, не блокирует:
-          <template v-for="(dep, index) in softLinks" :key="`s-${dep.id}`">
-            <button type="button" class="listik-link listik-mono" @click="emit('open-other', dep.id)">
-              {{ dep.id }}
+        <!-- «Её ждут» в макете нет, но данные не теряем: строка-подсказка под деревом. -->
+        <p v-if="depBlock.waiting.length" class="listik-section__hint">
+          её ждут:
+          <template v-for="(row, index) in depBlock.waiting" :key="`w-${index}-${row.dep.id}`">
+            <button
+              v-if="row.linked"
+              type="button"
+              class="listik-link listik-mono"
+              @click="emit('open-other', row.dep.id)"
+            >
+              {{ row.dep.id }}
             </button>
-            <span v-if="dep.dep_title"> ({{ dep.dep_title }})</span><span v-if="index < softLinks.length - 1">, </span>
+            <span v-else class="listik-mono">{{ row.dep.id }}</span><span v-if="index < depBlock.waiting.length - 1">, </span>
           </template>
         </p>
+
+        <!-- Мягкие связи — одной строкой чипами: иконка типа, id, короткое название. -->
+        <div v-if="depBlock.soft.length" class="listik-dep-chips">
+          <UiTooltip
+            v-for="(row, index) in depBlock.soft"
+            :key="`s-${index}-${row.dep.id}`"
+            :text="linkTypeLabel(row.dep.dep_type, row.dep.dep_title)"
+          >
+            <span class="listik-dep-chip">
+              <ListikIcon :name="row.type.icon" size="sm" />
+              <button
+                v-if="row.linked"
+                type="button"
+                class="listik-link listik-mono"
+                @click="emit('open-other', row.dep.id)"
+              >
+                {{ row.dep.id }}
+              </button>
+              <span v-else class="listik-mono">{{ row.dep.id }}</span>
+              <span class="listik-dep-chip__title">{{ row.dep.title }}</span>
+            </span>
+          </UiTooltip>
+        </div>
 
         <UiAlert v-if="!deps" tone="info">
           Сервер не отдал вердикт по зависимостям — возможно, старая версия API.
@@ -1299,7 +1461,7 @@ async function loadTree(): Promise<void> {
         <!-- Сводка связей: id через запятую, каждый — ссылка, открывающая задачу
              в этой же панели. Строится по спискам карточки, поэтому показывает и
              мягкие входящие связи, которых нет ни в blocked_by, ни в waiting_for;
-             id, уже показанные карточками выше, в сводку не попадают. -->
+             id, уже показанные строками и чипами выше, в сводку не попадают. -->
         <p v-if="dependenciesSummary.length" class="listik-section__hint">
           зависит от
           <template v-for="(dep, index) in dependenciesSummary" :key="`d-${dep.depends_on}`">
@@ -1369,7 +1531,7 @@ async function loadTree(): Promise<void> {
   />
 </template>
 
-<!-- Стили панели (шапка, промежуток тела, .listik-cold*, .listik-dep-grid) —
+<!-- Стили панели (шапка, промежуток тела, .listik-cold*, .listik-dep*) —
      в assets/app.css, раздел «Панель задачи»: заголовок телепортируется в
      body вместе с data-v-атрибутом, а .listik-events переиспользуется и вне
      этого компонента (общие «мелочи страницы»). -->

@@ -147,6 +147,36 @@ export interface TaskDetail extends Task {
    * обязано работать и при `undefined`.
    */
   documents?: TaskDocument[]
+  /**
+   * Все дочерние карточки, включая закрытых (`GET /api/tasks/{id}` → `children[]`,
+   * `listik/store.py: child_cards`). Поля может не быть — мок API его не отдаёт,
+   * тогда дети берутся из `deps_state.children_open` (только незакрытые).
+   */
+  children?: TaskChild[]
+}
+
+/**
+ * Дочерняя карточка из `TaskDetail.children` — та же форма, что у строки
+ * `_CARD_LINK_KEYS` в `listik/store.py`; обязательны только id, название и статус.
+ */
+export interface TaskChild {
+  id: string
+  title: string
+  status: TaskStatus
+  project?: string | null
+  status_title?: string
+  stage?: TaskStage
+  stage_title?: string | null
+  priority?: number
+  priority_title?: string
+  holder?: string | null
+  holder_title?: string
+  spec_path?: string | null
+  checklist_path?: string | null
+  review_path?: string | null
+  decision_path?: string | null
+  created_at?: string
+  updated_at?: string
 }
 
 /** Файл задачи (spec/checklist/review/decision) — GET /api/tasks/{id} → documents[]. */

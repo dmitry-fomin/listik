@@ -950,14 +950,185 @@ body .ui-drawer-backdrop.ui-drawer-backdrop--right .ui-drawer.ui-drawer--right.u
   font-size: var(--text-sm);
 }
 
-.listik-dep-grid {
-  display: grid;
-  grid-template-columns: repeat(2, minmax(0, 1fr));
+/* ── Связи (блок «Связи» панели задачи) ────────────────────────────────── */
+
+/* Сводка иконками у заголовка: ноль не прячем — приглушаем. */
+.listik-dep-summary {
+  display: inline-flex;
+  align-items: center;
   gap: var(--space-3);
+  margin-left: var(--space-2);
+  font-size: var(--text-sm);
+  font-weight: var(--weight-regular);
+  color: var(--ink-3);
 }
 
-.listik-dep-grid__head {
-  grid-column: 1 / -1;
+.listik-dep-summary__item {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--space-1);
+}
+
+.listik-dep-summary__item--zero {
+  color: var(--ink-4);
+}
+
+/* Открытые блокеры — красным, как строки блокеров ниже. */
+.listik-dep-summary__item--danger {
+  color: var(--danger-700);
+}
+
+/* Открытый блокер — единственное, что требует внимания: красная строка сверху. */
+.listik-dep-blockers {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-2);
+}
+
+.listik-dep-blocker {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: var(--space-2);
+  padding: var(--space-2) var(--space-3);
+  border: 1px solid var(--danger-500);
+  border-radius: var(--radius-md);
+  background: var(--danger-50);
+  color: var(--ink-1);
+  font-size: var(--text-sm);
+}
+
+.listik-dep-blocker__icon,
+.listik-dep-blocker__verb {
+  color: var(--danger-700);
+}
+
+.listik-dep-blocker__verb {
+  font-weight: var(--weight-semibold);
+}
+
+.listik-dep-blocker__title {
+  flex: 1 1 160px;
+  min-width: 0;
+  overflow: hidden;
+  white-space: nowrap;
+  text-overflow: ellipsis;
+}
+
+.listik-dep-blocker__hint {
+  color: var(--danger-700);
+  font-size: var(--text-xs);
+}
+
+/* Компактное дерево «родитель → эта задача → дети». */
+.listik-dep-tree {
+  display: flex;
+  flex-direction: column;
+  padding: var(--space-1) 0;
+  border-radius: var(--radius-md);
+  background: var(--surface-2);
+}
+
+.listik-dep-tree__row {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+  min-width: 0;
+  padding: var(--space-1) var(--space-3);
+  font-size: var(--text-sm);
+  color: var(--ink-1);
+}
+
+.listik-dep-tree__row--parent {
+  color: var(--ink-3);
+}
+
+.listik-dep-tree__row--self {
+  padding-left: var(--space-6);
+}
+
+/* Уголок-соединитель слева: строка читается как ветка дерева. */
+.listik-dep-tree__row--child::before {
+  content: '';
+  flex: none;
+  width: var(--space-3);
+  height: var(--space-4);
+  border-left: 1px solid var(--hairline-strong);
+  border-bottom: 1px solid var(--hairline-strong);
+  border-bottom-left-radius: var(--radius-sm);
+}
+
+.listik-dep-tree__dot {
+  flex: none;
+  width: var(--space-2);
+  height: var(--space-2);
+  border-radius: var(--radius-pill);
+  background: var(--accent-500);
+}
+
+.listik-dep-tree__self {
+  font-weight: var(--weight-semibold);
+}
+
+.listik-dep-tree__title {
+  flex: 1 1 auto;
+  min-width: 0;
+  overflow: hidden;
+  white-space: nowrap;
+  text-overflow: ellipsis;
+}
+
+.listik-dep-tree__progress {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+  flex: 0 1 220px;
+  min-width: var(--space-12);
+  margin-left: auto;
+  color: var(--ink-3);
+  font-size: var(--text-xs);
+}
+
+.listik-dep-tree__progress .ui-progress {
+  flex: 1 1 auto;
+}
+
+.listik-dep-tree__holder {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--space-1);
+  flex: none;
+  color: var(--ink-3);
+  font-size: var(--text-xs);
+}
+
+/* Мягкие связи — одной строкой чипами. `UiChip` кита рисует только текстовый
+   `label` и не держит внутри ссылку, поэтому раскладка своя, на токенах кита. */
+.listik-dep-chips {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: var(--space-2);
+}
+
+.listik-dep-chip {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--space-1);
+  max-width: 100%;
+  padding: var(--space-1) var(--space-3);
+  border-radius: var(--radius-pill);
+  background: var(--surface-2);
+  color: var(--ink-3);
+  font-size: var(--text-xs);
+}
+
+.listik-dep-chip__title {
+  max-width: 220px;
+  overflow: hidden;
+  white-space: nowrap;
+  text-overflow: ellipsis;
+  color: var(--ink-1);
 }
 
 .listik-cold {
@@ -1162,8 +1333,8 @@ body .ui-drawer-backdrop.ui-drawer-backdrop--right .ui-drawer.ui-drawer--right.u
     gap: var(--space-2) var(--space-3);
   }
 
-  .listik-dep-grid {
-    grid-template-columns: 1fr;
+  .listik-dep-tree__progress {
+    flex-basis: 120px;
   }
 
   /* У этих элементов кит задаёт собственный display в scoped-правиле, поэтому

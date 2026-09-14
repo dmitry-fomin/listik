@@ -1,9 +1,14 @@
 /**
  * Фейковый API Listik для разработки фронтенда без сервера (и в тестах).
- * Запуск: node scripts/mock-api.mjs [port] [--fill=N]   → порт по умолчанию 8788.
+ * Запуск: node scripts/mock-api.mjs [port] [--fill=N] [--links] [--slow-ms=N]
+ *   → порт по умолчанию 8788.
  * Затем: VITE_API_BASE=http://127.0.0.1:8788 npm run dev
  * `--fill=N` (в любом месте после порта) добавляет N сгенерированных задач
  * поверх пяти базовых — без флага поведение мока не меняется.
+ * `--links` добавляет срез «Связи» с краевыми случаями (закрытая связь, удалённая
+ * задача, чужой проект, id в другом регистре, взаимные ссылки); `--slow-ms=N`
+ * задерживает отдачу карточки `listik-links-slow` — так воспроизводится гонка
+ * двух открытий задачи (scripts/verify-deps-links.mjs).
  *
  * Формы ответов повторяют API.md и listik/store.py 1:1 — это заглушка
  * транспорта, а не второй контракт.
@@ -13,6 +18,9 @@ import { createServer } from 'node:http'
 const port = Number(process.argv[2] ?? 8788)
 const fillArg = process.argv.slice(3).find((arg) => arg.startsWith('--fill='))
 const fillCount = fillArg ? Number.parseInt(fillArg.slice('--fill='.length), 10) : 0
+const linksMode = process.argv.slice(3).includes('--links')
+const slowArg = process.argv.slice(3).find((arg) => arg.startsWith('--slow-ms='))
+const slowMs = slowArg ? Number.parseInt(slowArg.slice('--slow-ms='.length), 10) : 0
 const now = Date.now()
 const iso = (hoursAgo) => new Date(now - hoursAgo * 3600_000).toISOString()
 
@@ -228,23 +236,112 @@ if (fillCount >= 1) {
   for (let i = 1; i <= fillCount; i += 1) tasks.push(fillTask(i))
 }
 
-/** Связи задачи как в `deps` на сервере: `blocked_by` (blocks) плюс `parent-child`. */
+/**
+ * `--links`: срез «Связи» с краевыми случаями. Карточка `listik-links-main`
+ * ссылается сразу на все из них, чтобы проверить переходы по ссылкам:
+ * `listik-links-done` — закрытая связь (в `dependencies`, но не в `blocked_by`),
+ * `listik-links-done` вторым типом — тот же id двумя строками,
+ * `listik-links-gone` — задача удалена, `other-links-far` — чужой проект,
+ * `Listik-Links-Case` — id в другом регистре, `listik-links-slow` — медленный ответ.
+ */
+const extraDeps = {}
+if (linksMode) {
+  for (const item of [
+    task({
+      id: 'listik-links-main',
+      title: 'Карточка со связями',
+      project: 'listik',
+      status: 'in_progress',
+      status_title: 'в работе',
+      stage: 's3-impl',
+      stage_title: '3. Реализация',
+      holder: 'agent:dsh',
+      holder_title: 'dsh',
+      blocked_by: ['listik-links-open', 'listik-links-gone', 'Listik-Links-Case', 'listik-links-slow'],
+      parent: 'listik-links-parent',
+      soft_links: ['listik-links-soft'],
+      labels: ['frontend', 'deps'],
+    }),
+    task({ id: 'listik-links-open', title: 'Открытый блокер', status: 'open', status_title: 'открыта' }),
+    task({
+      id: 'listik-links-parent',
+      title: 'Эпик: связи на доске',
+      issue_type: 'epic',
+      status: 'open',
+      status_title: 'открыта',
+      stage: null,
+      stage_title: null,
+    }),
+    task({ id: 'listik-links-soft', title: 'Мягкая связь', status: 'open', status_title: 'открыта' }),
+    task({ id: 'listik-links-done', title: 'Закрытый блокер', status: 'done', status_title: 'готова', closed_at: iso(4) }),
+    task({
+      id: 'listik-links-child',
+      title: 'Ребёнок карточки со связями',
+      status: 'open',
+      status_title: 'открыта',
+      parent: 'listik-links-main',
+    }),
+    task({
+      id: 'other-links-far',
+      title: 'Задача другого проекта',
+      project: 'other',
+      status: 'done',
+      status_title: 'готова',
+      closed_at: iso(6),
+    }),
+    task({ id: 'listik-links-case', title: 'Задача, на которую ссылаются в другом регистре', status: 'open', status_title: 'открыта' }),
+    task({ id: 'listik-links-slow', title: 'Медленная карточка', status: 'open', status_title: 'открыта' }),
+    task({ id: 'listik-links-a', title: 'Взаимная ссылка A', status: 'open', status_title: 'открыта', soft_links: ['listik-links-b'] }),
+    task({ id: 'listik-links-b', title: 'Взаимная ссылка B', status: 'open', status_title: 'открыта', soft_links: ['listik-links-a'] }),
+  ]) {
+    tasks.push(item)
+  }
+  Object.assign(extraDeps, {
+    'listik-links-main': [
+      { depends_on: 'listik-links-done', dep_type: 'blocks' },
+      { depends_on: 'listik-links-done', dep_type: 'waits-for' },
+      { depends_on: 'other-links-far', dep_type: 'blocks' },
+    ],
+  })
+}
+
+/**
+ * Связи задачи как в `deps` на сервере: `blocked_by` (blocks) плюс `parent-child`
+ * плюс краевые строки из `extraDeps` (`--links`). Один и тот же id может прийти
+ * двумя строками с разными `dep_type` — как в таблице `deps`, где ключ
+ * (issue_id, depends_on, dep_type).
+ */
 function dependenciesOf(id) {
   const found = tasks.find((item) => item.id === id)
   if (!found) return []
-  const out = (found.blocked_by ?? []).map((dep) => ({ depends_on: dep, dep_type: 'blocks' }))
-  if (found.parent) out.push({ depends_on: found.parent, dep_type: 'parent-child' })
-  return out
+  const rows = []
+  const seen = new Set()
+  const push = (dependsOn, depType) => {
+    const key = `${dependsOn}\u0000${depType}`
+    if (seen.has(key)) return
+    seen.add(key)
+    rows.push({ depends_on: dependsOn, dep_type: depType })
+  }
+  for (const dep of found.blocked_by ?? []) push(dep, 'blocks')
+  if (found.parent) push(found.parent, 'parent-child')
+  for (const dep of extraDeps[id] ?? []) push(dep.depends_on, dep.dep_type)
+  return rows
 }
 
 /** Обратная сторона `dependenciesOf` — кто ссылается на эту задачу. */
 function dependentsOf(id) {
-  return tasks
-    .filter((item) => (item.blocked_by ?? []).includes(id) || item.parent === id)
-    .map((item) => ({
-      issue_id: item.id,
-      dep_type: item.parent === id ? 'parent-child' : 'blocks',
-    }))
+  const out = []
+  const seen = new Set()
+  for (const item of tasks) {
+    for (const dep of dependenciesOf(item.id)) {
+      if (dep.depends_on !== id) continue
+      const key = `${item.id}\u0000${dep.dep_type}`
+      if (seen.has(key)) continue
+      seen.add(key)
+      out.push({ issue_id: item.id, dep_type: dep.dep_type })
+    }
+  }
+  return out
 }
 
 function details(id) {
@@ -524,6 +621,19 @@ const server = createServer(async (request, response) => {
   }
   const ok = (data) => json(200, { ok: true, data })
 
+  // Запрос с заголовком Authorization — не «простой», браузер шлёт preflight;
+  // без 2xx на OPTIONS fetch падает ещё до GET (реальный сервер это умеет, см. _cors).
+  if (request.method === 'OPTIONS') {
+    response.writeHead(204, {
+      'Access-Control-Allow-Origin': '*',
+      'Access-Control-Allow-Headers': '*',
+      'Access-Control-Allow-Methods': '*',
+      'Access-Control-Max-Age': '600',
+    })
+    response.end()
+    return
+  }
+
   if (url.pathname === '/__token') {
     response.writeHead(200, { 'Content-Type': 'text/html; charset=utf-8' })
     response.end(
@@ -561,9 +671,19 @@ const server = createServer(async (request, response) => {
 
   if (url.pathname === '/api/meta') {
     const fillTasks = tasks.filter((item) => item.project === 'fill')
+    const known = new Set(['listik', 'fill', 'other'])
+    const extra = [...new Set(tasks.map((item) => item.project))].filter((slug) => !known.has(slug))
     const projects = [{ slug: 'listik', title: 'Listik', kind: 'native', n_tasks: tasks.length - fillTasks.length }]
     if (fillCount >= 1) {
       projects.push({ slug: 'fill', title: 'Заполнитель', kind: 'native', n_tasks: fillTasks.length })
+    }
+    if (linksMode) {
+      projects.push({
+        slug: 'other',
+        title: 'Другой проект',
+        kind: 'native',
+        n_tasks: tasks.filter((item) => item.project === 'other').length,
+      })
     }
     return ok({
       projects,
@@ -572,7 +692,7 @@ const server = createServer(async (request, response) => {
         { key: 'agent:dsh', title: 'dsh', kind: 'agent', n_tasks: 1 },
       ],
       facets: {
-        projects: fillCount >= 1 ? ['listik', 'fill'] : ['listik'],
+        projects: [...projects.map((project) => project.slug), ...extra],
         assignees: ['agent:dsh', '—'],
         holders: ['agent:dsh', 'agent:claude', '—'],
         statuses: Object.keys(STATUS_TITLES),
@@ -673,6 +793,11 @@ const server = createServer(async (request, response) => {
       return ok(found)
     }
     if (request.method === 'GET') {
+      // `--slow-ms`: задержка отдачи карточки — гонка «клик по ссылке, потом другая
+      // задача» (scripts/verify-deps-links.mjs) без правки мока не воспроизводится.
+      if (slowMs > 0 && id === 'listik-links-slow') {
+        await new Promise((resolve) => setTimeout(resolve, slowMs))
+      }
       const found = details(id)
       return found ? ok(found) : json(404, { ok: false, error: `задача не найдена: ${id}` })
     }

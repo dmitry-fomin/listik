@@ -15,7 +15,8 @@ API (HTTP и MCP). Кроме задач — журнал
 bin/listik     CLI и клиент API (одна программа)
 listik/        сервер, база, поиск, эмбеддинги, MCP
 web/           доска (Vue 3)
-plugins/       плагин для Claude Code со скилом Listik
+plugins/       плагины Claude Code: listik (скил) и feature-pipeline (конвейер)
+.claude-plugin/marketplace.json   маркетплейс этих плагинов
 API.md         контракт данных и эндпоинтов
 AGENTS.md      правила работы агента с задачами
 ```
@@ -409,12 +410,59 @@ model = "deepseek-flash"                  # необязательно
 
 ## Подключение агентов
 
-**Плагин для Claude Code** — скил, который учит Claude работать по протоколу Listik:
+### Плагины для Claude Code
+
+Репозиторий — это маркетплейс плагинов Claude Code (`.claude-plugin/marketplace.json`, имя
+`listik`). В нём два плагина:
+
+| Плагин | Что даёт |
+|---|---|
+| `listik` | скил `listik:listik` — работа с задачами по протоколу: ready → claim → heartbeat → stage → done, зависимости, needs-owner, журнал, вердикты |
+| `feature-pipeline` | конвейер ТЗ → критика → реализация → приёмка: скилы-пресеты (`high-pipeline`, `xhigh-pipeline`, `medium-pipeline`, `low-pipeline`, `dsh-grok-pipeline`, `opus-single-pipeline`, `inherit-pipeline`, `opus-sonnet-pipeline`, `feature-pipeline`) и агенты `pipeline-*` |
+
+**1. Добавить маркетплейс** — один раз, внутри Claude Code:
 
 ```
 /plugin marketplace add dmitry-fomin/listik
-/plugin install listik@listik
 ```
+
+Из локальной копии репозитория (например, чтобы проверить незапушенные правки плагинов):
+
+```
+/plugin marketplace add ~/Projects/Listik
+```
+
+**2. Установить плагины** — формат `<плагин>@<маркетплейс>`:
+
+```
+/plugin install listik@listik
+/plugin install feature-pipeline@listik
+```
+
+После установки выполните `/reload-plugins` (или перезапустите Claude Code), чтобы скилы и агенты
+подхватились. Проверить, что стоит, — `/plugin` (список, включение/выключение, удаление).
+
+**3. Обновление.** Версия плагина — поле `version` в его `.claude-plugin/plugin.json` и в
+`marketplace.json`; при изменении плагина поднимайте обе. Подтянуть новую версию:
+
+```
+/plugin marketplace update listik
+```
+
+**Что нужно пресетам `feature-pipeline`.** Пресеты зовут внешние харнессы, их нужно поставить
+отдельно: `dsh` (DeepSeek Harness) — для `low-pipeline` и `dsh-grok-pipeline`; Grok Build CLI
+(плагин `grok`) — судья в `high`/`medium`/`low`/`xhigh`/`dsh-grok`; Codex — исполнитель в
+`xhigh-pipeline`. `inherit-pipeline`, `opus-single-pipeline` и `opus-sonnet-pipeline` обходятся
+субагентами Claude. Если в задании назван id карточки Listik, конвейер ведёт её сам (раздел
+`## Listik` в `plugins/feature-pipeline/references/pipeline-core.md`) — для этого нужен и плагин
+`listik`, и доступный `bin/listik`.
+
+В настройках плагина `feature-pipeline` (`/plugin` → плагин → настройки) есть флаг
+`auto_approve_agents` (по умолчанию выключен): хук одобряет без запроса правки файлов проекта и
+неопасные команды исполнителей и судьи конвейера. push, reset, clean, rm -r, sudo, секреты и
+прочее опасное по-прежнему идут запросом.
+
+### Скил `listik`
 
 Скил работает в двух режимах:
 
@@ -422,6 +470,8 @@ model = "deepseek-flash"                  # необязательно
   `PATH` или задайте `LISTIK_BIN=/путь/к/listik/bin/listik`.
 - **Listik на другом сервере** — CLI не нужен: подключите удалённый MCP (см. «Listik на другом
   сервере»), и скил будет работать через инструменты `listik_*`.
+
+### MCP, правила в проектах, переход с beads
 
 **MCP** — 30 инструментов `listik_*`: ready, show, claim, heartbeat, stage, comment, needs_owner,
 done, release, deps, search, memory, put_document/get_document и др.; полный список с параметрами —

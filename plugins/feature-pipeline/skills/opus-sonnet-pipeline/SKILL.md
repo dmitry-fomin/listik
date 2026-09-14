@@ -110,8 +110,14 @@ D="$(git rev-parse --absolute-git-dir)/feature-pipeline"
 ```
 D="$(git rev-parse --absolute-git-dir)/feature-pipeline"; B=$(git rev-parse --short HEAD); echo "база $B"
 git worktree list
-git worktree add -b opus/<id> ../<репо>-opus-<id> "$B"
+git worktree add -b opus/<id> ~/.worktrees/<проект>/<id> "$B"
 { printf '# Задача <id>\n\n## Границы правки\n\nТолько то, что названо в требованиях; остальное не трогать.\n\n## Требования\n\nВсё ниже, до конца файла, — текст задачи из трекера как есть, вместе с его заголовками.\n\n'; cat "$D/<id>.show.txt"; } > "$D/<id>.task.md"
+```
+
+Деревья всех конвейеров лежат в `~/.worktrees/<проект>/…` — `<проект>` это slug проекта в Listik (нет карточки — имя каталога репозитория). Каталог вне `~/Projects`: деревья не мешаются с проектами, а `git worktree add` сам создаёт недостающие родительские каталоги. Если задачи ведутся в Listik, сразу запиши дерево в карточку — иначе доска не видит, где идёт работа, и блокировка по дереву не срабатывает:
+
+```
+~/Projects/Listik/bin/listik set <id> worktree="$HOME/.worktrees/<проект>/<id>" branch=opus/<id> --actor agent:claude --harness claude
 ```
 
 «Требования» стоят последними, потому что в тексте задачи бывают свои заголовки `##`: раздел до конца

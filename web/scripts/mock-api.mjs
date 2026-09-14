@@ -228,6 +228,25 @@ if (fillCount >= 1) {
   for (let i = 1; i <= fillCount; i += 1) tasks.push(fillTask(i))
 }
 
+/** Связи задачи как в `deps` на сервере: `blocked_by` (blocks) плюс `parent-child`. */
+function dependenciesOf(id) {
+  const found = tasks.find((item) => item.id === id)
+  if (!found) return []
+  const out = (found.blocked_by ?? []).map((dep) => ({ depends_on: dep, dep_type: 'blocks' }))
+  if (found.parent) out.push({ depends_on: found.parent, dep_type: 'parent-child' })
+  return out
+}
+
+/** Обратная сторона `dependenciesOf` — кто ссылается на эту задачу. */
+function dependentsOf(id) {
+  return tasks
+    .filter((item) => (item.blocked_by ?? []).includes(id) || item.parent === id)
+    .map((item) => ({
+      issue_id: item.id,
+      dep_type: item.parent === id ? 'parent-child' : 'blocks',
+    }))
+}
+
 function details(id) {
   const found = tasks.find((item) => item.id === id)
   if (!found) return null
@@ -238,8 +257,8 @@ function details(id) {
       { id: 1, author: 'agent:dsh', kind: 'journal', text: 'взял в работу', created_at: iso(2) },
       { id: 2, author: 'me', kind: 'verdict', text: 'ок, собирай', created_at: iso(1) },
     ],
-    dependencies: found.blocked_by.map((dep) => ({ depends_on: dep, dep_type: 'blocks' })),
-    dependents: [],
+    dependencies: dependenciesOf(id),
+    dependents: dependentsOf(id),
     events: [
       {
         ts: iso(2),

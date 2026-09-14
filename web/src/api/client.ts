@@ -105,6 +105,7 @@ async function request<T>(method: string, path: string, body?: unknown): Promise
 const get = <T>(path: string): Promise<T> => request<T>('GET', path)
 const post = <T>(path: string, body: unknown): Promise<T> => request<T>('POST', path, body ?? {})
 const patch = <T>(path: string, body: unknown): Promise<T> => request<T>('PATCH', path, body ?? {})
+const taskPath = (id: string, suffix = '') => `/api/tasks/${encodeURIComponent(id)}${suffix}`
 
 export const api = {
   health: () => get<Health>('/api/health'),
@@ -140,7 +141,7 @@ export const api = {
   tasks: (query: TaskQuery = {}) => get<TasksPage>(`/api/tasks${buildQuery({ ...query })}`),
 
   task: (id: string, details = true) =>
-    get<TaskDetail>(`/api/tasks/${encodeURIComponent(id)}${buildQuery({ details: details ? 1 : 0 })}`),
+    get<TaskDetail>(taskPath(id, buildQuery({ details: details ? 1 : 0 }))),
 
   search: (params: {
     q: string
@@ -164,30 +165,30 @@ export const api = {
     get<BlockedResponse>(`/api/blocked${buildQuery({ ...params })}`),
 
   /** Вердикт по задаче отдельным запросом (то же, что `deps_state` в карточке). */
-  taskReady: (id: string) => post<DepsState>(`/api/tasks/${encodeURIComponent(id)}/ready`, {}),
+  taskReady: (id: string) => post<DepsState>(taskPath(id, '/ready'), {}),
 
   /** Дерево зависимостей: `deps` без `depends_on`. */
   depTree: (id: string, depth = 3) =>
-    post<DepTree>(`/api/tasks/${encodeURIComponent(id)}/deps`, { depth }),
+    post<DepTree>(taskPath(id, '/deps'), { depth }),
 
   createTask: (body: Record<string, unknown>) => post<Task>('/api/tasks', body),
 
   updateTask: (id: string, body: TaskPatch) =>
-    patch<Task | (Task & { unchanged?: boolean })>(`/api/tasks/${encodeURIComponent(id)}`, body),
+    patch<Task | (Task & { unchanged?: boolean })>(taskPath(id), body),
 
-  removeTask: (id: string) => request<{ deleted: string }>('DELETE', `/api/tasks/${encodeURIComponent(id)}`),
+  removeTask: (id: string) => request<{ deleted: string }>('DELETE', taskPath(id)),
 
   claim: (id: string, holder: string, note?: string, harness?: string, force = false) =>
-    post<Task>(`/api/tasks/${encodeURIComponent(id)}/claim`, { holder, note, harness, force }),
+    post<Task>(taskPath(id, '/claim'), { holder, note, harness, force }),
 
   heartbeat: (id: string, holder: string, note?: string) =>
-    post<Task>(`/api/tasks/${encodeURIComponent(id)}/heartbeat`, { holder, note }),
+    post<Task>(taskPath(id, '/heartbeat'), { holder, note }),
 
   nextStage: (id: string, holder?: string, note?: string, harness?: string) =>
-    post<Task>(`/api/tasks/${encodeURIComponent(id)}/stage`, { holder, note, harness }),
+    post<Task>(taskPath(id, '/stage'), { holder, note, harness }),
 
   comment: (id: string, text: string, kind: CommentKind, author?: string, harness?: string) =>
-    post<TaskCommentResponse>(`/api/tasks/${encodeURIComponent(id)}/comment`, {
+    post<TaskCommentResponse>(taskPath(id, '/comment'), {
       text,
       kind,
       author,
@@ -195,16 +196,16 @@ export const api = {
     }),
 
   needsOwner: (id: string, value: boolean, note?: string, actor?: string) =>
-    post<Task>(`/api/tasks/${encodeURIComponent(id)}/needs-owner`, { value, note, actor }),
+    post<Task>(taskPath(id, '/needs-owner'), { value, note, actor }),
 
   release: (id: string, note?: string, actor?: string) =>
-    post<Task>(`/api/tasks/${encodeURIComponent(id)}/release`, { note, actor }),
+    post<Task>(taskPath(id, '/release'), { note, actor }),
 
   done: (id: string, result: string, actor?: string, note?: string) =>
-    post<Task>(`/api/tasks/${encodeURIComponent(id)}/done`, { result, actor, note }),
+    post<Task>(taskPath(id, '/done'), { result, actor, note }),
 
   addDep: (id: string, dependsOn: string, depType = 'blocks', actor?: string) =>
-    post<unknown>(`/api/tasks/${encodeURIComponent(id)}/deps`, {
+    post<unknown>(taskPath(id, '/deps'), {
       depends_on: dependsOn,
       dep_type: depType,
       actor,

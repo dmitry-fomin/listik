@@ -7,8 +7,9 @@
  * сценарий в headless Chrome через CDP.
  *
  * Сценарий: у заведённой задачи в выборе маршрута есть пункт «без маршрута»;
- * сохранение шлёт `route: ''` (как `listik set launch_route=`), уносит метки
- * маршрута и очищает ошибку автостарта — ровно то, что делает `store.update_task`.
+ * сохранение шлёт одно поле `route: ''` (как `listik set launch_route=`), а метки
+ * маршрута и ошибку автостарта уносит сервер — ровно то, что делает
+ * `store.update_task` (доска метки не считает).
  *
  * Запуск: node scripts/verify-route-clear.mjs [url]
  *   Без аргумента сам поднимает мок и статику — нужен собранный `web/dist`
@@ -400,8 +401,8 @@ try {
     }
   })
 
-  // 3. Сохранение: PATCH с `route: ''` и метками без harness:/process:.
-  await record('сохранение шлёт route: «» и снимает метки маршрута', async () => {
+  // 3. Сохранение: PATCH с одним полем `route: ''` — метки маршрута снимает сервер.
+  await record('сохранение шлёт route: «» и не считает метки само', async () => {
     const before = patches.length
     const clicked = await clickSave()
     const sent = await waitFor(async () => (patches.length > before ? patches[patches.length - 1] : null))
@@ -409,12 +410,10 @@ try {
     const ok = Boolean(sent)
       && sent.path.includes(`/api/tasks/${CARD}`)
       && body.route === ''
-      && Array.isArray(body.labels)
-      && body.labels.includes('frontend')
-      && !body.labels.some((label) => /^(harness|process):/.test(label))
+      && body.labels === undefined
     return {
       ok,
-      expect: `PATCH /api/tasks/${CARD} с route:'' и labels без меток маршрута`,
+      expect: `PATCH /api/tasks/${CARD} ровно с route:'' — метки harness:/process: считает сервер`,
       got: { clicked, patch: sent },
     }
   })

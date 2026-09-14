@@ -103,6 +103,96 @@ export function statusTitle(value: TaskStatus): string {
   return STATUSES.find((item) => item.value === value)?.label ?? value
 }
 
+// ── Рабочее дерево (строка «worktree · branch» блока «Холодный старт») ──────
+
+export type WorktreeStateValue = 'worktree' | 'main' | 'missing'
+
+export interface WorktreeStateItem extends DictionaryItem<WorktreeStateValue> {
+  /** Тон для `UiStatusPill`/`UiBadge` кита: зелёный — дерево указано, жёлтый — основная ветка, красный — пусто. */
+  tone: 'success' | 'warning' | 'danger'
+  /** Цвет текста значения — токен кита. */
+  color: string
+  /** Пояснение — в тултип строки. */
+  hint: string
+  /** Заполнено ли поле для счётчика «Холодный старт N из M»: жёлтое состояние считается заполненным. */
+  filled: boolean
+  /** Значение — путь (`true`, моноширинный) или слова состояния (`false`). */
+  mono: boolean
+}
+
+/**
+ * Основные ветки репозитория: их значение в `worktree` — маркер «работа идёт в
+ * основной ветке, отдельного дерева нет». Тот же список на сервере —
+ * `listik/store.py: MAIN_WORKTREE_MARKERS` (API.md, «Работа в основной ветке»).
+ */
+export const MAIN_BRANCHES = ['main', 'master']
+
+export const WORKTREE_STATES: WorktreeStateItem[] = [
+  {
+    value: 'worktree',
+    label: 'дерево указано',
+    tone: 'success',
+    color: 'var(--success-700)',
+    hint: 'указаны рабочее дерево и/или ветка — работа идёт не в основной ветке',
+    filled: true,
+    mono: true,
+  },
+  {
+    value: 'main',
+    label: 'работа в основной ветке',
+    tone: 'warning',
+    color: 'var(--warning-700)',
+    hint: 'работа идёт в основной ветке репозитория, отдельного дерева нет '
+      + '(listik set <id> worktree=main) — поле холодного старта заполнено',
+    filled: true,
+    mono: false,
+  },
+  {
+    value: 'missing',
+    label: 'не указано',
+    tone: 'danger',
+    color: 'var(--danger-700)',
+    hint: 'ни worktree, ни branch не заполнены — принимающий не знает, где искать работу',
+    filled: false,
+    mono: false,
+  },
+]
+
+/** Маркер основной ветки (`main`/`master`) или `''` — как `store.main_worktree` на сервере. */
+export function mainBranchMarker(value: string | null | undefined): string {
+  const marker = (value ?? '').trim().toLowerCase()
+  return MAIN_BRANCHES.includes(marker) ? marker : ''
+}
+
+/**
+ * Состояние строки «worktree · branch»: маркер основной ветки (в `worktree` или,
+ * если дерева нет, в `branch`) — жёлтый, любой другой непустой `worktree`/`branch` —
+ * зелёный, оба пусты — красный.
+ */
+export function worktreeState(
+  worktree: string | null | undefined,
+  branch: string | null | undefined,
+): WorktreeStateItem {
+  const tree = (worktree ?? '').trim()
+  const br = (branch ?? '').trim()
+  if (mainBranchMarker(tree) || (!tree && mainBranchMarker(br))) return WORKTREE_STATES[1]
+  if (tree || br) return WORKTREE_STATES[0]
+  return WORKTREE_STATES[2]
+}
+
+/** Текст строки: «работа в main», «/путь · ветка» или «рабочее дерево не указано». */
+export function worktreeValue(
+  worktree: string | null | undefined,
+  branch: string | null | undefined,
+): string {
+  const state = worktreeState(worktree, branch)
+  const tree = (worktree ?? '').trim()
+  const br = (branch ?? '').trim()
+  if (state.value === 'missing') return 'рабочее дерево не указано'
+  if (state.value === 'main') return `работа в ${mainBranchMarker(tree) || mainBranchMarker(br)}`
+  return [tree, br].filter(Boolean).join(' · ')
+}
+
 // ── Маршрут ─────────────────────────────────────────────────────────────────
 
 export interface RouteIconItem extends DictionaryItem<RouteIconKey> {

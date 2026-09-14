@@ -41,8 +41,10 @@
 иконок нет или в нём не нашлось ни одного имени, проверка `glyph` сводится к формату
 `^[a-z][a-z0-9-]*$` — сервер не должен отказываться работать из-за отсутствующей доски.
 
-Файл читается только в `init_at_startup`; `current()` и обработчики API файл не читают,
-поэтому правка `routes.json` во время работы сервера ничего не меняет до перезапуска.
+Файл читается в `init_at_startup` (сервер) и в `load_local` (CLI без сервера и MCP по
+stdio); `current()` и обработчики API файл не читают, поэтому правка `routes.json` во время
+работы сервера ничего не меняет до перезапуска. Метки карточки для маршрута выводит
+`labels_for` — по ним сервер помечает задачу и переписывает метки при смене маршрута.
 """
 from __future__ import annotations
 
@@ -83,6 +85,10 @@ GLYPH_RE = re.compile(r"^[a-z][a-z0-9-]*$")
 ICON_LINE_RE = re.compile(r"""^  ['"]?([a-zA-Z][a-zA-Z0-9-]*)['"]?: \{""")
 PLACEHOLDER_RE = re.compile(r"\{([^{}]*)\}")
 ICONS_PATH = paths.WEB_DIR / "src" / "lib" / "icons.ts"
+
+#: Префиксы меток маршрута на карточке: их выводит сервер из `launch_route`
+#: (см. `labels_for`) и он же заменяет при смене маршрута. Доска их только показывает.
+LABEL_PREFIXES = ("harness:", "process:")
 
 
 class RoutesError(ValueError):
@@ -387,6 +393,49 @@ def current() -> RoutesState:
         return RoutesState(ok=False, error="routes.json не загружен",
                            path=str(RUNTIME_PATH), routes=[], by_key={})
     return _state
+
+
+def load_local(path=None) -> RoutesState:
+    """Дочитать маршруты процессу без сервера: CLI в локальном режиме и MCP по stdio.
+
+    Сервер зовёт `init_at_startup` — копирует образец из репозитория в рабочую копию
+    и читает её. Здесь только чтение той же рабочей копии (`$LISTIK_ROUTES`, иначе
+    `~/.config/listik/routes.json`), а если её ещё нет — образца `routes.json` из
+    репозитория: заводить чужие файлы конфигов CLI не должен. Уже загруженное
+    состояние не перечитываем — как и `init_at_startup`.
+    """
+    global _state
+    if _state is not None:
+        return _state
+    source = Path(path) if path is not None else (
+        RUNTIME_PATH if RUNTIME_PATH.exists() else SOURCE_PATH)
+    _state = load(source)
+    return _state
+
+
+def is_route_label(label: str) -> bool:
+    """Метка маршрута (`harness:<x>`/`process:<y>`) — её ставит и снимает сервер."""
+    return label.startswith(LABEL_PREFIXES)
+
+
+def labels_for(route_key: str | None) -> list[str]:
+    """Метки карточки для маршрута — те же, что ставит форма «Новая задача» на доске.
+
+    У `direct` — харнесс самой записи (`harness:<harness>`, `process:direct`), у
+    `pipeline` — оркестратор `claude` и ключ записи (`harness:claude`,
+    `process:<key>`): конвейер ведёт claude, а провайдеры ролей у записей разные.
+    Пустой или неизвестный ключ (маршрута нет в таблице, файл не загружен или битый) —
+    пустой список: метки не выдумываем.
+    """
+    key = (route_key or "").strip()
+    if not key:
+        return []
+    record = current().by_key.get(key)
+    if not record:
+        return []
+    if record["kind"] == "direct":
+        return [f"harness:{record['harness']}", "process:direct"]
+    return ["harness:claude", f"process:{record['key']}"]
 
 
 def init_at_startup(source=SOURCE_PATH, target=RUNTIME_PATH) -> RoutesState:

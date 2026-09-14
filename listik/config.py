@@ -5,9 +5,13 @@
 """
 from __future__ import annotations
 
-import secrets
-import tomllib
+import copy
 import json
+import os
+import re
+import secrets
+import tempfile
+import tomllib
 from pathlib import Path
 from typing import Any
 
@@ -74,7 +78,28 @@ def load(path: Path | None = None) -> dict:
     if cfg_path.exists():
         with cfg_path.open("rb") as fh:
             data = tomllib.load(fh)
-    return _merge(DEFAULTS, data)
+    # DEFAULTS глубоко копируем: _merge отдаёт вложенные словари по ссылке, и
+    # мутация загруженного конфига (ensure_token дописывает токен) иначе навсегда
+    # оседала бы в DEFAULTS — следующие load() возвращали бы токен, которого нет
+    # в файле, а тесты зависели бы от порядка запуска.
+    return _merge(copy.deepcopy(DEFAULTS), data)
+
+
+_BARE_KEY_RE = re.compile(r"^[A-Za-z0-9_-]+$")
+
+
+def _key(key: object) -> str:
+    """TOML-ключ: голый, если синтаксис позволяет, иначе — в кавычках.
+
+    Голыми в TOML могут быть только ключи из ``[A-Za-z0-9_-]``.  Ключи вроде
+    ``s1-spec:s2-review`` (переходы конвейера) или slug проекта с «/» и «.»
+    без кавычек делают файл невалидным либо молча распадаются на лишние
+    таблицы, поэтому такие ключи экранируем.
+    """
+    text = str(key)
+    if _BARE_KEY_RE.match(text):
+        return text
+    return json.dumps(text, ensure_ascii=False)
 
 
 def _dump(cfg: dict) -> str:
@@ -99,27 +124,48 @@ def _dump(cfg: dict) -> str:
     def table(path: list[str], obj: dict) -> None:
         scalars = [(k, v) for k, v in obj.items() if not isinstance(v, dict)]
         if path:
-            lines.append("[" + ".".join(path) + "]")
+            lines.append("[" + ".".join(_key(part) for part in path) + "]")
         for key, val in scalars:
-            lines.append(f"{key} = {value(val)}")
+            lines.append(f"{_key(key)} = {value(val)}")
         if scalars:
             lines.append("")
         for key, val in obj.items():
             if isinstance(val, dict):
                 table(path + [str(key)], val)
 
+    # Скаляры корня пишем до таблиц: иначе TOML-парсер отнёс бы их к последней
+    # открытой таблице (например, `[routing.projects."demo"]`).
+    root_scalars = [(k, v) for k, v in cfg.items() if not isinstance(v, dict)]
+    for key, val in root_scalars:
+        lines.append(f"{_key(key)} = {value(val)}")
+    if root_scalars:
+        lines.append("")
     for section, values in cfg.items():
         if isinstance(values, dict):
             table([str(section)], values)
-        else:
-            lines.append(f"{section} = {value(values)}")
     return "\n".join(lines).rstrip() + "\n"
 
 
 def save(cfg: dict, path: Path | None = None) -> Path:
     cfg_path = Path(path or paths.CONFIG_PATH)
-    cfg_path.write_text(_dump(cfg), encoding="utf-8")
-    cfg_path.chmod(0o600)
+    text = _dump(cfg)
+    # Пишем через временный файл в том же каталоге: параллельный читатель (второй
+    # CLI, сервер, тесты) не увидит обрезанный TOML, а mkstemp сразу даёт 0600,
+    # так что токен не засветится даже на миг. resolve() — чтобы не подменить
+    # символическую ссылку config.toml обычным файлом.
+    target = cfg_path.resolve()
+    fd, tmp_name = tempfile.mkstemp(dir=str(target.parent),
+                                    prefix=target.name + ".", suffix=".tmp")
+    tmp = Path(tmp_name)
+    try:
+        with os.fdopen(fd, "w", encoding="utf-8") as fh:
+            fh.write(text)
+        os.chmod(tmp, 0o600)
+        os.replace(tmp, target)
+    except BaseException:
+        tmp.unlink(missing_ok=True)
+        raise
+    target.chmod(0o600)
     return cfg_path
 
 

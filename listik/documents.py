@@ -563,20 +563,40 @@ def _dependencies(conn: sqlite3.Connection, task: dict, task_id: str, stage: str
     return out
 
 
-def _worktree(task: dict) -> dict:
+def _worktree(task: dict, conn: sqlite3.Connection | None = None) -> dict:
+    """Что происходит в рабочем дереве задачи — блок контекста судьи (`s4-judge`).
+
+    `worktree=main`/`master` — маркер «работа идёт в основной ветке репозитория
+    проекта, отдельного дерева нет» (`store.main_worktree`), а не каталог:
+    проверяем репозиторий проекта (`projects.path`), а не значение поля.
+    """
     raw = (task.get("worktree") or "").strip()
     if not raw:
         return {"exists": False, "reason": "worktree не задан в карточке"}
+    marker = store.main_worktree(raw)
+    base = {"value": raw, "mode": "main" if marker else "worktree",
+            "title": store.main_worktree_title(raw)}
+    if marker:
+        project_path = ""
+        if conn is not None and task.get("project"):
+            prow = conn.execute("SELECT path FROM projects WHERE slug = ?",
+                                (task["project"],)).fetchone()
+            project_path = ((prow["path"] if prow else None) or "").strip()
+        if not project_path:
+            return {**base, "exists": False,
+                    "reason": f"{base['title']}, но у проекта {task.get('project') or '—'} не указан путь"}
+        raw = project_path
     path = Path(raw).expanduser()
     try:
         resolved = path.resolve()
     except OSError:
         resolved = path
     if not resolved.is_dir():
-        return {"path": str(resolved), "exists": False, "reason": "каталог не найден"}
+        return {**base, "path": str(resolved), "exists": False, "reason": "каталог не найден"}
     is_git = (resolved / ".git").exists() or bool(store._git_value(resolved, "rev-parse", "--git-dir"))
     if not is_git:
-        return {"path": str(resolved), "exists": True, "git": False, "reason": "не git-репозиторий"}
+        return {**base, "path": str(resolved), "exists": True, "git": False,
+                "reason": "не git-репозиторий"}
     branch_raw = store._git_value(resolved, "rev-parse", "--abbrev-ref", "HEAD")
     # In a repository with no commits `git rev-parse HEAD` fails but still echoes the
     # unresolved argument to stdout, so a raw string check would misread that as a hash.
@@ -588,7 +608,7 @@ def _worktree(task: dict) -> dict:
     files_clipped = len(changed_files) > 200
     if files_clipped:
         changed_files = changed_files[:200]
-    result = {"path": str(resolved), "exists": True, "git": True, "branch": branch,
+    result = {**base, "path": str(resolved), "exists": True, "git": True, "branch": branch,
               "head": head, "changed_files": changed_files, "card_branch": task.get("branch")}
     reason_bits = []
     if head is None:
@@ -826,7 +846,7 @@ def context(conn: sqlite3.Connection, task_id: str, stage: str, *, portion: str 
         reviews_all if stage == "s2-review" else reviews_all[-1:])
     verdict = verdicts_all[-1] if stage == "s4-judge" and verdicts_all else None
     journal = _journal_items(conn, task_id, journals_all) if stage == "s4-judge" else []
-    worktree = _worktree(task) if stage == "s4-judge" else None
+    worktree = _worktree(task, conn) if stage == "s4-judge" else None
 
     stable_task = _stable(task)
     stable_task.pop("deps_state", None)

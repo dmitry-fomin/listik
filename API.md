@@ -219,6 +219,15 @@ pid <N>, лог <path>`. Процесс не блокирует запрос: PO
 | GET | `/api/events` | `limit` | сырые события |
 | GET | `/api/stream` | `token` (обязателен) | SSE: `data: {"kind":"task","at":...,"payload":{"id":...,"action":"updated"}}`, плюс `: ping` каждые 15 с |
 
+**События доске.** Кадры в `/api/stream` шлёт только процесс сервера: записи HTTP API
+(задачи, проекты, документы, зависимости) и успешные пишущие инструменты `POST /mcp`
+(см. «MCP»); чтения событий не создают — в том числе `POST /api/tasks/{id}/deps` без
+`depends_on` (это граф зависимостей), `…/ready` и `…/mentions`. Запись мимо сервера —
+`listik --local`, фолбэк CLI при недоступном сервере, MCP stdio (`bin/listik mcp`),
+`listik import-beads`/`import-writerllm`, `listik remember` — событий не шлёт: `publish`
+живёт в процессе сервера, поэтому доска увидит такую запись только при следующем событии,
+ручном обновлении или перезагрузке (listik-1p86).
+
 `GET /api/health` без токена отдаёт только пробу живости (`status`, `version`, `embed.model`,
 `now`, `authed`) — по ней CLI понимает, поднят ли сервер; подробности (`db`, `counts`,
 `embed.ok`, `routes`) только авторизованному запросу.

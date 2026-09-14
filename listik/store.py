@@ -19,6 +19,7 @@ from . import actors as actors_mod
 from . import config as config_mod
 from . import deps as deps_mod
 from . import errors as errors_mod
+from . import paths
 from . import routes as routes_mod
 from . import textutil
 
@@ -1703,6 +1704,21 @@ def repo_info(path: str | Path) -> dict:
     return info
 
 
+def resolve_project_path(path: str | None) -> str | None:
+    """Путь проекта от API: `~` раскрывается, относительный — от корня проектов.
+
+    Никогда не от `os.getcwd()`: сервер могли запустить из любого каталога
+    (listik-i23u).
+    """
+    raw = str(path).strip() if path is not None else ""
+    if not raw:
+        return None
+    p = Path(raw).expanduser()
+    if not p.is_absolute():
+        p = Path(paths.PROJECTS_ROOT).expanduser() / p
+    return str(p)
+
+
 def project_row(conn: sqlite3.Connection, slug: str) -> dict:
     row = conn.execute("SELECT * FROM projects WHERE slug = ?", (slug,)).fetchone()
     if not row:
@@ -1718,17 +1734,12 @@ def add_project(conn: sqlite3.Connection, *, path: str | None = None, slug: str 
     (`Zoloto585/my-repo`). Если проект с таким slug уже есть — он возвращается
     на доску и обновляется, а не падает с ошибкой.
 
-    `path` — только абсолютный (или от `~`): относительный путь каждый вызывающий
-    разрешил бы от своего cwd, а у сервера и CLI он разный (listik-mo3a). CLI
-    разрешает относительный путь сам, в cwd пользователя, до HTTP-запроса.
+    `path` — абсолютный, от `~` или относительный. Относительный разворачивается
+    от корня проектов (`paths.PROJECTS_ROOT`), а не от cwd процесса: у сервера
+    cwd случаен (listik-mo3a, listik-i23u). CLI относительный путь разрешает сам,
+    в cwd пользователя, до HTTP-запроса.
     """
-    raw_path = str(path).strip() if path is not None else ""
-    if raw_path and not Path(raw_path).expanduser().is_absolute():
-        raise ValueError(
-            f"path должен быть абсолютным: «{raw_path}» — относительный путь сервер "
-            "не разрешает (у него свой рабочий каталог). Передай абсолютный путь, "
-            "например /Users/you/Projects/repo, или путь от ~; CLI разрешает "
-            "относительный путь сам до запроса.")
+    path = resolve_project_path(path)
     info = (repo_info(path) if path
             else {"path": None, "exists": False, "git": False,
                   "git_remote": None, "git_branch": None})
@@ -1768,6 +1779,8 @@ def update_project(conn: sqlite3.Connection, slug: str, **fields) -> dict:
     ``ValueError``).
     """
     project_row(conn, slug)
+    if fields.get("path"):
+        fields["path"] = resolve_project_path(fields["path"])
     routing_value = fields.pop("routing", None)
     changes: dict[str, object] = {
         k: (int(v) if k == "archived" else v) for k, v in fields.items()

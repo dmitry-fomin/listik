@@ -131,5 +131,117 @@ class FeaturePipelinePluginTests(unittest.TestCase):
                          f"ключи прямых маршрутов совпали с именами скилов плагина: {overlap}")
 
 
+#: Пути (относительно PLUGIN_DIR), которые должны называть работу по id карточки (`<id>`), а не
+#: по номеру шага. `agents/*.md` собирается в момент вызова теста, а не при импорте.
+CORE_DOC = pathlib.Path("references") / "pipeline-core.md"
+TRACKS_DOC = pathlib.Path("skills") / "feature-pipeline" / "references" / "tracks.md"
+AGENTS_SUBDIR = "agents"
+
+MANIFEST_LINE = (
+    "трек <трек>: <id>, дерево <путь>, ветка pipeline-<трек>, база <sha7>"
+)
+
+
+def _plugin_text(relative: pathlib.Path) -> str:
+    return (PLUGIN_DIR / relative).read_text(encoding="utf-8")
+
+
+def _agent_paths() -> list[pathlib.Path]:
+    """Все `agents/*.md`, относительно PLUGIN_DIR, в момент вызова."""
+    agents_dir = PLUGIN_DIR / AGENTS_SUBDIR
+    return sorted(
+        (pathlib.Path(AGENTS_SUBDIR) / path.name)
+        for path in agents_dir.glob("*.md")
+    )
+
+
+def _spec_writer_paths() -> list[pathlib.Path]:
+    agents_dir = PLUGIN_DIR / AGENTS_SUBDIR
+    return sorted(
+        (pathlib.Path(AGENTS_SUBDIR) / path.name)
+        for path in agents_dir.glob("pipeline-spec-writer*.md")
+    )
+
+
+class FeaturePipelineStepNamingTests(unittest.TestCase):
+    """Имена бумаг и деревьев (listik-223b, порция a) — по id карточки, не по номеру шага."""
+
+    def test_no_old_step_number_naming(self) -> None:
+        paths = [CORE_DOC, TRACKS_DOC, *_agent_paths()]
+        self.assertGreater(len(_agent_paths()), 0, "в agents/ не нашлось ни одного файла")
+        for relative in paths:
+            with self.subTest(file=str(relative)):
+                text = _plugin_text(relative)
+                self.assertNotIn(
+                    "step-NN", text,
+                    f"{relative}: осталась подстрока 'step-NN' (старое имя по номеру шага)",
+                )
+                self.assertNotIn(
+                    "шаг NN", text,
+                    f"{relative}: осталась подстрока 'шаг NN' (старое имя по номеру шага)",
+                )
+
+    def test_pipeline_core_names_section(self) -> None:
+        text = _plugin_text(CORE_DOC)
+        required = [
+            "## Имена бумаг и деревьев",
+            "<id>.journal.md",
+            "<id>.check-<X>.md",
+            "<id>.diff-<X>.r<R>.txt",
+            "adhoc-<ГГГГ-ММ-ДД>-<слаг>",
+            "listik-n5fe",
+            "<id>-<часть>",
+            ".worktrees/<id>",
+            "pipeline-<id>",
+        ]
+        for needle in required:
+            with self.subTest(needle=needle):
+                self.assertIn(needle, text,
+                              f"{CORE_DOC}: не нашлось обязательной подстроки {needle!r}")
+        self.assertNotIn(
+            "следующим свободным", text,
+            f"{CORE_DOC}: осталась подстрока 'следующим свободным' (старое правило нумерации)",
+        )
+
+    def test_manifest_line_matches_in_core_and_tracks(self) -> None:
+        for relative in (CORE_DOC, TRACKS_DOC):
+            with self.subTest(file=str(relative)):
+                text = _plugin_text(relative)
+                self.assertIn(
+                    MANIFEST_LINE, text,
+                    f"{relative}: не нашлось строки манифеста трека {MANIFEST_LINE!r}",
+                )
+
+    def test_heartbeat_note_uses_id(self) -> None:
+        text = _plugin_text(CORE_DOC)
+        self.assertIn(
+            '--note "<id>, порция X, этап N:', text,
+            f"{CORE_DOC}: heartbeat --note не использует '<id>, порция X, этап N:'",
+        )
+
+    def test_spec_writer_agents_use_paper_name(self) -> None:
+        paths = _spec_writer_paths()
+        self.assertTrue(paths, "в agents/ не нашлось ни одного pipeline-spec-writer*.md")
+        for relative in paths:
+            with self.subTest(file=str(relative)):
+                text = _plugin_text(relative)
+                self.assertIn(
+                    "<id>.check-<X>.md", text,
+                    f"{relative}: не нашлось имени чек-листа '<id>.check-<X>.md'",
+                )
+                self.assertNotIn(
+                    "номер шага", text,
+                    f"{relative}: осталась фраза 'номер шага'",
+                )
+
+    def test_judge_agent_names_dump_by_id(self) -> None:
+        relative = pathlib.Path(AGENTS_SUBDIR) / "pipeline-judge.md"
+        text = _plugin_text(relative)
+        self.assertIn(
+            "<id>.judge-<X>.r<R>.md", text,
+            f"{relative}: не нашлось имени файла судьи '<id>.judge-<X>.r<R>.md'",
+        )
+
+
 if __name__ == "__main__":
     unittest.main()

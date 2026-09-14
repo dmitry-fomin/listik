@@ -578,6 +578,12 @@ let streamTouched = new Set<string>()
 
 function scheduleRefresh(event?: StreamEvent): void {
   const id = event?.payload?.id
+  const action = event?.payload?.action
+  // Удалённую карточку перечитывать некуда: закрываем панель сразу, не дожидаясь
+  // дебаунса — иначе `reloadDetailQuiet` глотает 404 и оставляет призрак.
+  if (typeof id === 'string' && id && action === 'deleted' && openTaskId.value === id) {
+    closeTask()
+  }
   if (typeof id === 'string' && id) streamTouched.add(id)
   if (sseTimer) clearTimeout(sseTimer)
   sseTimer = setTimeout(() => {
@@ -843,6 +849,26 @@ const releaseTask = (id: string, note?: string): Promise<boolean> => act('releas
 
 const doneTask = (id: string, result: string, note?: string): Promise<boolean> =>
   act('done', () => api.done(id, result, undefined, note))
+
+/**
+ * Удалить задачу. `act()` после успеха перечитывает карточку — её уже нет,
+ * поэтому закрываем панель сами и обновляем только доску.
+ */
+async function removeTask(id: string): Promise<boolean> {
+  pending.value = 'remove'
+  try {
+    await api.removeTask(id)
+    lastError.value = null
+    if (openTaskId.value === id) closeTask()
+    await refresh({ silent: true })
+    return true
+  } catch (error) {
+    handleError(error)
+    return false
+  } finally {
+    pending.value = null
+  }
+}
 
 const addComment = (id: string, text: string, kind: CommentKind, author?: string): Promise<boolean> =>
   act('comment', () => api.comment(id, text, kind, author))
@@ -1173,6 +1199,7 @@ export function useListikStore() {
     answerQuestion,
     releaseTask,
     doneTask,
+    removeTask,
     addComment,
     addDependency,
     createTask,

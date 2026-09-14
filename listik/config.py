@@ -42,7 +42,6 @@ DEFAULTS: dict[str, Any] = {
         "max_depth": 6,
     },
     "routing": {
-        "default_process": ["s1-spec", "s2-review", "s3-impl", "s4-judge"],
         "harnesses": {
             "s1-spec": ["claude", "dsh", "codex", "grok"],
             "s2-review": ["claude", "dsh", "codex", "grok"],
@@ -77,6 +76,18 @@ def _merge(base: dict, override: dict) -> dict:
     return out
 
 
+#: Ключи routing, которые больше не поддерживаются, но встречаются в старых
+#: config.toml и переопределениях проектов. `default_process` валидировался, однако
+#: ни на что не влиял: `next_stage` всегда идёт по `PIPELINE_STAGES`. Ключ убран
+#: (listik-sqh6), но читаться старый конфиг обязан по-прежнему — молча игнорируем.
+LEGACY_ROUTING_KEYS = frozenset({"default_process"})
+
+
+def without_legacy_routing(obj: dict) -> dict:
+    """Копия таблицы маршрутизации без устаревших ключей (`LEGACY_ROUTING_KEYS`)."""
+    return {key: value for key, value in obj.items() if key not in LEGACY_ROUTING_KEYS}
+
+
 def load(path: Path | None = None) -> dict:
     cfg_path = Path(path or paths.CONFIG_PATH)
     data: dict = {}
@@ -87,7 +98,29 @@ def load(path: Path | None = None) -> dict:
     # мутация загруженного конфига (ensure_token дописывает токен) иначе навсегда
     # оседала бы в DEFAULTS — следующие load() возвращали бы токен, которого нет
     # в файле, а тесты зависели бы от порядка запуска.
-    return _merge(copy.deepcopy(DEFAULTS), data)
+    cfg = _merge(copy.deepcopy(DEFAULTS), data)
+    _drop_legacy_routing(cfg)
+    return cfg
+
+
+def _drop_legacy_routing(cfg: dict) -> None:
+    """Выкинуть устаревшие ключи `[routing]` прямо при загрузке (listik-sqh6).
+
+    `default_process` больше не поддерживается, но старый config.toml с ним обязан
+    читаться. Чистим и корень `[routing]`, и переопределения проектов
+    `[routing.projects.<slug>]`: тогда ключ не всплывёт ни в действующей таблице, ни
+    в config.toml, перезаписанном `ensure_token`/`save`.
+    """
+    routing_cfg = cfg.get("routing")
+    if not isinstance(routing_cfg, dict):
+        return
+    cfg["routing"] = without_legacy_routing(routing_cfg)
+    projects_cfg = cfg["routing"].get("projects")
+    if isinstance(projects_cfg, dict):
+        cfg["routing"]["projects"] = {
+            slug: without_legacy_routing(value) if isinstance(value, dict) else value
+            for slug, value in projects_cfg.items()
+        }
 
 
 _BARE_KEY_RE = re.compile(r"^[A-Za-z0-9_-]+$")
@@ -208,7 +241,9 @@ def routing(project: str | None = None, conn=None) -> dict:
                     merged = dict(base[key]); merged.update(value); base[key] = merged
                 else:
                     base[key] = value
-    return base
+    # Устаревшие ключи выкидываем в самом конце: они могли прийти и из config.toml,
+    # и из переопределения проекта — наружу действующая таблица уходит уже без них.
+    return without_legacy_routing(base)
 
 def allowed_harnesses(project: str | None, stage: str | None, conn=None) -> list[str]:
     # Прямая задача (без этапа) и задача на done не привязаны к этапу конвейера —
@@ -228,10 +263,11 @@ _TRANSITION_KINDS = {"sticky", "handoff", "sticky-return"}
 def validate_routing(obj: Any) -> dict:
     """Проверить и нормализовать переопределение маршрутизации проекта.
 
-    Принимает словарь с любым подмножеством ключей `harnesses`, `default_process`,
-    `transitions`, `return_window_hours`. Поднимает ``ValueError`` с текстом на
-    русском, если форма не соответствует ожидаемой. Пустой словарь — валиден
-    (значит «нет переопределений»).
+    Принимает словарь с любым подмножеством ключей `harnesses`, `transitions`,
+    `return_window_hours`. Поднимает ``ValueError`` с текстом на русском, если
+    форма не соответствует ожидаемой. Пустой словарь — валиден (значит «нет
+    переопределений»). Устаревшие ключи (`default_process`) молча игнорируются:
+    старые переопределения проектов не должны ломать ни чтение, ни перезапись.
     """
     if not isinstance(obj, dict):
         raise ValueError("routing: ожидается объект (словарь)")
@@ -240,6 +276,8 @@ def validate_routing(obj: Any) -> dict:
 
     out: dict[str, Any] = {}
     for key, value in obj.items():
+        if key in LEGACY_ROUTING_KEYS:
+            continue
         if key == "harnesses":
             if not isinstance(value, dict):
                 raise ValueError("routing: harnesses должен быть словарём этап → список")
@@ -259,19 +297,6 @@ def validate_routing(obj: Any) -> dict:
                         clean.append(name)
                 harnesses[stage] = clean
             out["harnesses"] = harnesses
-        elif key == "default_process":
-            if not isinstance(value, list):
-                raise ValueError("routing: default_process должен быть списком этапов")
-            clean_stages: list[str] = []
-            seen_stages: set[str] = set()
-            for stage in value:
-                if stage not in stages:
-                    raise ValueError(f"routing: неизвестный этап в default_process: {stage}")
-                if stage in seen_stages:
-                    raise ValueError(f"routing: default_process содержит дубль: {stage}")
-                seen_stages.add(stage)
-                clean_stages.append(stage)
-            out["default_process"] = clean_stages
         elif key == "transitions":
             if not isinstance(value, dict):
                 raise ValueError("routing: transitions должен быть словарём")

@@ -323,7 +323,9 @@ const inbox = computed<Task[]>(() => {
   return filtered.slice().sort((left, right) => {
     const rankDiff = rank(left) - rank(right)
     if (rankDiff !== 0) return rankDiff
-    return (right.idle_hours ?? 0) - (left.idle_hours ?? 0)
+    // У «выдана, но не взята» heartbeat ещё не было: её возраст — от выдачи.
+    const age = (task: Task): number => task.idle_hours ?? task.assigned_hours ?? 0
+    return age(right) - age(left)
   })
 })
 

@@ -772,6 +772,12 @@ body {
   color: var(--danger-700);
 }
 
+/* «Выдана, но не взята»: держателя поставил оркестратор, claim от агента нет. */
+.listik-task-card__assigned {
+  color: var(--warning-700);
+  white-space: nowrap;
+}
+
 @media (max-width: 900px) {
   .listik-shell { --listik-page-w: min(100% - 32px, 1440px); }
 }

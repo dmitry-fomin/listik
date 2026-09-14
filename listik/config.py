@@ -61,6 +61,7 @@ DEFAULTS: dict[str, Any] = {
     "board": {
         "stale_hours": 24,       # сколько часов без heartbeat считать бросок
         "wip_warn_hours": 8,     # сколько часов на этапе до жёлтого
+        "assign_warn_minutes": 15,  # сколько минут «выдана, но не взята» до сигнала
     },
 }
 
@@ -322,6 +323,10 @@ def transition_kind(project: str | None, from_stage: str | None, to_stage: str |
     if not from_stage:
         # Задача без этапа ещё не была ничьим "предыдущим этапом" — заводить её в
         # конвейер не то же самое, что передавать другому harness, держателя не снимаем.
+        return "sticky"
+    if from_stage == to_stage:
+        # Повторная выдача на том же этапе (`stage <id> --to s3-impl --holder <кто>`)
+        # — не передача: держателя не снимаем, иначе выдача молча теряла бы его.
         return "sticky"
     r = routing(project, conn=conn)
     return str((r.get("transitions") or {}).get(f"{from_stage}:{to_stage}", "handoff"))

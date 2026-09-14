@@ -425,7 +425,12 @@ defineExpose({ reload: load })
         <template #cell-updated_age="{ row }">
           <span :title="formatDateTime(row.updated_at)">{{ humanAge(row.updated_at) }}</span>
         </template>
-        <template #cell-holder_title="{ row }">{{ row.holder_title || '—' }}</template>
+        <template #cell-holder_title="{ row }">
+          <UiBadge v-if="row.not_taken" tone="warning" size="sm">
+            выдана, не взята {{ row.assigned_age }}
+          </UiBadge>
+          <template v-else>{{ row.holder_title || '—' }}</template>
+        </template>
         <template #cell-labels="{ row }">
           <span class="listik-mono">{{ row.labels.join(', ') || '—' }}</span>
         </template>

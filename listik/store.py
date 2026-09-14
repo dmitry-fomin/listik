@@ -165,13 +165,33 @@ def create_task(
     harness: str | None = None,
     autostart: bool = False,
     route: str | None = None,
+    parent: str | None = None,
 ) -> dict:
     """Создать задачу. `autostart`/`route` только сохраняются: процесс запускает
     не эта функция, а `listik/launcher.py` (сервер — сразу после создания, CLI
-    в локальном режиме — отказом, потому что сервера нет)."""
+    в локальном режиме — отказом, потому что сервера нет).
+
+    `parent` сразу связывает новую карточку с родительской мягкой связью
+    `parent-child`: так заводят порции шага — у каждой свой `spec_path`/
+    `checklist_path`/`review_path`, а родитель видит их все через `show`/`context`.
+    Если `project` не задан, порция наследует проект родителя (иначе она уехала бы
+    на другую доску). Несуществующий родитель — ошибка до вставки: карточка не
+    создаётся."""
     if not title.strip():
         raise ValueError("title не может быть пустым")
+    parent_id = (parent or "").strip() or None
+    parent_project = None
+    if parent_id is not None:
+        parent_row = conn.execute("SELECT project FROM tasks WHERE id = ?",
+                                  (parent_id,)).fetchone()
+        if parent_row is None:
+            raise KeyError(f"задача не найдена: {parent_id}")
+        parent_project = parent_row["project"]
+    if not project and parent_project:
+        project = parent_project
     tid = task_id or gen_id(conn, project)
+    if parent_id is not None and parent_id == tid:
+        raise ValueError(f"задача не может быть родителем самой себе: {tid}")
     ts = created_at or now_iso()
     actor_key, kind = actors_mod.resolve(created_by, conn)
     if created_by:
@@ -201,6 +221,10 @@ def create_task(
         event(conn, tid, "stage", from_value=None, to_value=stage, actor=actor_key,
               harness=harness, ts=ts)
     _index_task(conn, tid)
+    if parent_id is not None:
+        # Порция — дочерняя карточка шага (решение listik-9gsh): мягкая связь
+        # parent-child, родитель закрывается только после закрытия всех детей.
+        add_dep(conn, tid, parent_id, "parent-child", created_by=created_by or actor_key)
     if spec_path or journal_path or checklist_path or review_path or decision_path:
         try:
             from . import documents
@@ -554,14 +578,10 @@ def get_task(conn: sqlite3.Connection, task_id: str, *, with_details: bool = Tru
     except Exception:  # noqa: BLE001 — срез зависимостей не должен ломать карточку
         out["deps_state"] = None
     if with_details:
-        try:
-            out["documents"] = [dict(r) for r in conn.execute(
-                "SELECT id, kind, path, revision, content_hash, title, updated_at, status, error, source, "
-                "(SELECT count(*) FROM document_chunks WHERE document_chunks.document_id = documents.id) "
-                "AS chunk_count FROM documents WHERE task_id=? ORDER BY kind, path",
-                (task_id,))]
-        except sqlite3.OperationalError:
-            out["documents"] = []
+        out["documents"] = task_documents(conn, task_id)
+        # Все порции шага, включая закрытые: холодный старт родителя должен видеть
+        # каждую дочернюю карточку с её spec/checklist/review.
+        out["children"] = child_cards(conn, task_id)
         out["comments"] = [
             dict(r) for r in conn.execute(
                 "SELECT id, author, kind, text, created_at FROM comments WHERE task_id = ? "
@@ -675,6 +695,76 @@ def row_to_task(conn: sqlite3.Connection, row: sqlite3.Row) -> dict:
         "stale": stale,
         "abandoned": abandoned,
     }
+
+
+# ------------------------------------------------------------------ карточки-порции
+
+# Поля соседней карточки, которых достаточно для холодного старта без её `show`:
+# что это за карточка, кто её держит и где её документы.
+_CARD_LINK_KEYS = ("id", "project", "title", "status", "status_title", "stage", "stage_title",
+                   "priority", "priority_title", "holder", "holder_title",
+                   "spec_path", "checklist_path", "review_path", "decision_path",
+                   "created_at", "updated_at")
+
+
+def task_documents(conn: sqlite3.Connection, task_id: str) -> list[dict]:
+    """Метаданные индексированных документов задачи (без чанков) — то же, что `show`."""
+    try:
+        return [dict(r) for r in conn.execute(
+            "SELECT id, kind, path, revision, content_hash, title, updated_at, status, error, source, "
+            "(SELECT count(*) FROM document_chunks WHERE document_chunks.document_id = documents.id) "
+            "AS chunk_count FROM documents WHERE task_id=? ORDER BY kind, path",
+            (task_id,))]
+    except sqlite3.OperationalError:
+        return []
+
+
+def card_link(conn: sqlite3.Connection, task_id: str) -> dict | None:
+    """Короткая справка о карточке вместе с её документами.
+
+    Возрастных полей (`_age`/`_hours`) здесь нет намеренно: `card_link` попадает
+    в ответ `context`, который обязан быть побайтно стабильным (см.
+    `documents.context`)."""
+    row = conn.execute("SELECT * FROM tasks WHERE id = ?", (task_id,)).fetchone()
+    if row is None:
+        return None
+    task = row_to_task(conn, row)
+    out = {k: task[k] for k in _CARD_LINK_KEYS}
+    out["documents"] = task_documents(conn, task_id)
+    return out
+
+
+def child_cards(conn: sqlite3.Connection, task_id: str) -> list[dict]:
+    """Все дочерние карточки (`parent-child`), включая закрытые, по порядку создания.
+
+    Именно так родитель-шаг видит все свои порции: `deps_state.children_open`
+    перечисляет только незакрытых детей и нужен для `can_finish`."""
+    try:
+        rows = conn.execute(
+            "SELECT d.issue_id AS id FROM deps d JOIN tasks t ON t.id = d.issue_id "
+            "WHERE d.depends_on = ? AND d.dep_type = 'parent-child' "
+            "ORDER BY t.created_at, t.rowid", (task_id,)).fetchall()
+    except sqlite3.OperationalError:
+        # База старой версии/битая: карточка всё равно должна открыться.
+        return []
+    out = []
+    for r in rows:
+        link = card_link(conn, r["id"])
+        if link is not None:
+            out.append(link)
+    return out
+
+
+def parent_card(conn: sqlite3.Connection, task_id: str) -> dict | None:
+    """Родительская карточка (связь `parent-child`, либо старое имя `parent`)."""
+    try:
+        row = conn.execute(
+            "SELECT depends_on FROM deps WHERE issue_id = ? "
+            "AND dep_type IN ('parent-child','parent') ORDER BY depends_on LIMIT 1",
+            (task_id,)).fetchone()
+    except sqlite3.OperationalError:
+        return None
+    return card_link(conn, row["depends_on"]) if row else None
 
 
 def list_tasks(conn: sqlite3.Connection, *, project: str | None = None, status: str | None = None,

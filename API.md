@@ -69,10 +69,12 @@ Listik — самостоятельный трекер задач вместо `
 
 `GET /api/tasks/{id}` при `details=1` (по умолчанию включено) добавляет: `comments[]`
 (`id, author, kind, text, created_at`), `dependencies[]`, `dependents[]`, `events[]`
-(`ts, kind, from_value, to_value, actor, harness, note, duration_s`) и `documents[]` — по одной
+(`ts, kind, from_value, to_value, actor, harness, note, duration_s`), `documents[]` — по одной
 записи на каждый индексируемый документ задачи (`spec_path`/`checklist_path`/`review_path`/
 `decision_path`/`journal_path`), с полями `id, kind, path, source, revision, content_hash, title,
-updated_at, status, error, chunk_count`. Колонка `checked_at` (время последней фоновой
+updated_at, status, error, chunk_count`, — и `children[]` — все дочерние карточки связи
+`parent-child` (порции шага), включая закрытые, со своими путями к документам и таким же
+`documents[]` (см. «Карточка-порция»). Колонка `checked_at` (время последней фоновой
 перепроверки файла) есть только в таблице `documents` и в ответы API не попадает — это
 решение ради побайтной стабильности `context` (см. ниже).
 
@@ -194,6 +196,40 @@ pid <N>, лог <path>`. Процесс не блокирует запрос: PO
 `source=upload` путь — только идентификатор записи, а не файл. Повторная загрузка того же текста
 по тому же пути ревизию не меняет (см. «Запись»).
 
+## Карточка-порция: у шага несколько порций
+
+У шага конвейера бывает несколько порций (например, три части одного ТЗ), и у каждой порции
+свои документы. Поэтому **одна карточка хранит ровно один `spec_path`, один `checklist_path`
+и один `review_path`**, а порции шага заводятся отдельными дочерними карточками со связью
+`parent-child` (решение listik-9gsh; вариант «список документов одного вида у одной задачи»
+отклонён).
+
+- Порция создаётся сразу с родителем:
+  `listik new "…порция b" --parent <id шага> --spec … --checklist … --review …` — или парой
+  команд `new` + `dep add <порция> <шаг> --dep-type parent-child`. В API это необязательное
+  поле `parent` у `POST /api/tasks` (и параметр `parent` у MCP `listik_create`), связь
+  пишется как `parent-child`; если `project` не задан, порция наследует проект родителя.
+- `parent-child` — мягкая связь: работу она не блокирует, но родителя нельзя закрыть, пока
+  открыт хоть один ребёнок (`deps_state.can_finish`, `children_open` — только незакрытые).
+- Порядок порций, если он важен, задаётся жёсткой связью `blocks` между ними; `dep add` от
+  агента без `--confirm` остаётся предложением `suggested-blocks`.
+- **Холодный старт родителя.** `show <шаг>` (при `details=1`) и `context <шаг>` отдают
+  `children[]` — все дочерние карточки, включая закрытые, по порядку создания. У каждой:
+  `id, project, title, status, status_title, stage, stage_title, priority, priority_title,
+  holder, holder_title`, четыре пути к документам, `created_at`/`updated_at` и `documents[]`
+  (метаданные документов, без чанков). Текст документов порции читается `show`/`context`
+  самой дочерней карточки: в `context` родителя чанки детей не подмешиваются.
+- **`context --portion` находит порцию.** На `s3-impl`/`s4-judge` `portion` сначала ищется
+  среди дочерних карточек: по id, точному заголовку, слову в заголовке карточки или документа
+  и по токену пути документа (`step-09.check-b.md` → «b»). Если порция разрешилась, контекст
+  строится **по дочерней карточке** — её `task`, `card`, `documents`, `chunks`, `acceptance`,
+  ревью, вердикт, журнал и `worktree`, — а `portion_card` содержит справку этой карточки,
+  `parent` — справку карточки шага. Если подходит несколько карточек одного ранга, порция не
+  разрешается (`portion_card: null`, смотрите `children[]`); тогда и в остальных случаях,
+  когда дочерняя карточка не нашлась, работает прежний отбор чанков по заголовку/breadcrumb
+  раздела ТЗ. На `s1-spec`/`s2-review` `portion` детей не подменяет: `portion_card` там
+  всегда `null`, а в `children[]` видны все порции с их документами.
+
 ## Эндпоинты
 
 Ошибка любого эндпоинта — HTTP-статус (400/401/403/404/405/409/5xx) и тело
@@ -216,7 +252,7 @@ pid <N>, лог <path>`. Процесс не блокирует запрос: PO
 | GET | `/api/stats` | `project` | `by_status{}, by_stage{}, by_project[], by_holder[], by_actor[], stale, needs_owner, closed_7d, closed_prev_7d, closed_delta, closed_by_day[{date,count}] (14 дней), long_stage, running[], generated_at` |
 | GET | `/api/board` | `group_by=status\|stage\|project\|holder`, `project`, `include_closed`, `limit` | `group_by, columns[], total, needs_you[], generated_at` |
 | GET | `/api/tasks` | `project,status,stage,assignee,holder,needs_owner,type,label,text,include_closed,include_archived,limit,offset,order=updated\|created\|priority\|stage` | `total, limit, offset, tasks[]` |
-| GET | `/api/tasks/{id}` | `details=0/1` | задача + `comments/dependencies/dependents/events/documents` |
+| GET | `/api/tasks/{id}` | `details=0/1` | задача + `comments/dependencies/dependents/events/documents/children` |
 | GET | `/api/tasks/{id}/context` | `stage`, `portion`, `max_chars` | компактный, побайтно стабильный контекст этапа для harness — см. ниже |
 | GET | `/api/tasks/{id}/documents/{kind}` | — (вид документа задан в пути: `spec`, `checklist`, `review`, `decision`) | документ задачи содержимым: `task_id, kind, path, source, revision, content_hash, status, error, content`. `source=upload` — текст из базы (`status=ok`); `source=file` — с диска: `status=ok` и текст, а если файл не читается — `status=missing`, `content=null` и текст ошибки (`revision`/`content_hash` = `null`, если документ ещё не индексировался). 404 — нет такой задачи или у задачи не задан путь к документу этого вида; 400 — неизвестный `kind`; 405 — любой метод по этому пути, кроме `GET` и `PUT` |
 | GET | `/api/search` | `q` (обязателен), `limit`, `project`, `status`, `stage`, `actor`, `needs_owner`, `mode=hybrid\|text\|vector` | `query, mode, took_ms, lexical_docs, vector_docs, count, results[]`; совпадения по id задачи идут первыми и помечены `hits[].kind="id"` — см. ниже |
@@ -307,8 +343,9 @@ id не подмешивается: там только векторная бл�
 значения — `s1-spec`, `s2-review`, `s3-impl`, `s4-judge`. Обязательным и ограниченным этим
 списком (`choices`) `stage` является только в CLI (`--stage`, обязателен) и в схеме MCP-инструмента
 `listik_context` — гарантии CLI/MCP не переносятся на голый HTTP-вызов, валидация на сервере в
-этой версии не добавлена. `portion` — свободный текст (совпадение по заголовку/breadcrumb раздела
-ТЗ на s3/s4). `max_chars` — переопределить лимит на суммарный текст выбранных чанков; без
+этой версии не добавлена. `portion` — свободный текст: на `s3-impl`/`s4-judge` им находится
+дочерняя карточка-порция (по id, заголовку или пути документа), а если не нашлась — совпадение
+по заголовку/breadcrumb раздела ТЗ (см. «Карточка-порция»). `max_chars` — переопределить лимит на суммарный текст выбранных чанков; без
 параметра лимит берётся по этапу (`limits.default_for_stage`): 150 000 для `s1-spec`/`s2-review`,
 24 000 для `s3-impl`/`s4-judge` (и для любого неизвестного значения `stage`).
 
@@ -318,7 +355,10 @@ id не подмешивается: там только векторная бл�
 документам, issue_type, labels), `stage`, `portion`, `documents[]` (метаданные документов без
 чанков), `chunks[]` (отобранные чанки с `reason` — почему каждый попал в контекст), `acceptance`,
 `dependencies` (`hard[]` — жёсткие блокеры, `suggested[]` — предложенные связи, плюс вычисленное
-состояние `ready/claimable/can_finish/verdict` и т. д.), `reviews[]`, `verdict`, `journal[]`,
+состояние `ready/claimable/can_finish/verdict` и т. д.), `children[]` (все дочерние карточки
+запрошенной карточки со своими документами), `portion_card` (дочерняя карточка, в которую
+разрешился `portion`, или `null`), `parent` (родитель карточки, по которой построен контекст,
+или `null`), `reviews[]`, `verdict`, `journal[]`,
 `worktree`, `limits` (`max_chars, default_for_stage, used_chars, truncated, truncated_chunks[],
 dropped_chunks, reason`), `reasons[]` (по одному пункту на каждый включённый блок и чанк),
 `generated_at` (не время вызова, а `updated_at` задачи — тоже ради стабильности).
@@ -328,11 +368,12 @@ dropped_chunks, reason`), `reasons[]` (по одному пункту на ка�
 - **s1-spec / s2-review** — в контекст целиком входят все документы задачи (`spec`, `checklist`,
   `review`, `decision`), по порядку spec→checklist→review→decision; `reviews[]` пуст на s1-spec
   и содержит все ревью-комментарии на s2-review; `verdict`, `journal`, `worktree` не заполняются.
-- **s3-impl** — чек-лист входит целиком первым слоем; дальше — либо совпадение `portion` по
-  заголовку/breadcrumb в spec/decision, либо (если `portion` не задан или ничего не нашёл)
-  лексический поиск по названию и acceptance задачи; если ни один чанк spec не попал ни одним из
-  способов — в контекст добавляется начало spec-документа. `reviews[]` — последний ревью-комментарий;
-  `verdict`, `journal`, `worktree` не заполняются.
+- **s3-impl** — чек-лист входит целиком первым слоем; дальше — либо `portion`, разрешённый в
+  дочернюю карточку-порцию (тогда контекст построен по ней — см. «Карточка-порция»), либо
+  совпадение `portion` по заголовку/breadcrumb в spec/decision, либо (если `portion` не задан
+  или ничего не нашёл) лексический поиск по названию и acceptance задачи; если ни один чанк spec
+  не попал ни одним из способов — в контекст добавляется начало spec-документа. `reviews[]` —
+  последний ревью-комментарий; `verdict`, `journal`, `worktree` не заполняются.
 - **s4-judge** — тот же слоёный отбор чанков, что на s3; дополнительно заполняются `verdict`
   (последний комментарий `kind=verdict`), `journal[]` (комментарии `kind=journal` вперемешку с
   событиями перехода этапов, по времени) и `worktree` (путь рабочего дерева, ветка, HEAD, `git
@@ -343,7 +384,7 @@ dropped_chunks, reason`), `reasons[]` (по одному пункту на ка�
 
 | Метод | Путь | Тело | Смысл |
 |---|---|---|---|
-| POST | `/api/tasks` | `title`(обязателен), `project, description, acceptance, design, notes, type, status, priority, assignee, stage, labels[], spec_path, checklist_path, review_path, decision_path, journal_path, external_ref, actor, harness, needs_owner, id, autostart, route` | создать. `autostart: true` сразу запускает процесс по маршруту `route` (см. «Маршруты запуска»): ответ — `201` с перечитанной задачей, отказ запуска не отменяет создание и не даёт `500`. `autostart: true` без непустого `route` — `400`, задача не создаётся; `route` без `autostart` просто сохраняется в `launch_route` |
+| POST | `/api/tasks` | `title`(обязателен), `project, description, acceptance, design, notes, type, status, priority, assignee, stage, labels[], spec_path, checklist_path, review_path, decision_path, journal_path, external_ref, actor, harness, needs_owner, id, autostart, route, parent` | создать. `parent` — ID карточки шага: новая карточка сразу получает мягкую связь `parent-child` (порция), а без своего `project` — ещё и проект родителя; несуществующий `parent` — 404, задача не создаётся. `autostart: true` сразу запускает процесс по маршруту `route` (см. «Маршруты запуска»): ответ — `201` с перечитанной задачей, отказ запуска не отменяет создание и не даёт `500`. `autostart: true` без непустого `route` — `400`, задача не создаётся; `route` без `autostart` просто сохраняется в `launch_route` |
 | PATCH | `/api/tasks/{id}` | любые из `title, description, acceptance, design, notes, result, status, stage, priority, issue_type, assignee, holder, holder_note, project, labels[], spec_path, checklist_path, review_path, decision_path, journal_path, worktree, branch, close_reason, needs_owner, external_ref, archived` + `actor`, `harness`, `note` | изменить (каждое изменение пишется в events) |
 | DELETE | `/api/tasks/{id}` | — | удалить |
 | PUT | `/api/tasks/{id}/documents/{kind}` | `content` (обязателен, строка не длиннее 1 000 000 символов), `path`, `actor` | принять текст документа и хранить его в базе (`source=upload`) — для сервера, где файлов проектов нет. Путь выбирается по шагам, ровно в этом порядке: 1) непустой `path` из тела; 2) иначе — уже записанный в карточке путь этого вида (`spec_path`/`checklist_path`/`review_path`/`decision_path`); 3) иначе, для `decision`, — `journal_path`; 4) иначе — виртуальный `listik://<id>/<kind>.md`. В случаях 1 и 4 выбранный путь дописывается в карточку. `revision` растёт только при смене текста (новая запись — сразу `revision=1`); при новой записи и при смене текста пишется событие `document_uploaded` с пометкой `r<revision>`; повтор с тем же текстом ревизию не меняет и события не создаёт. 400 — неизвестный `kind`, не передан или не строка `content`, текст длиннее 1 000 000 символов, не строка `path`; 404 — нет такой задачи; 405 — любой метод по этому пути, кроме `GET` и `PUT` |
@@ -512,6 +553,8 @@ JSON-RPC-сообщение, ответ — обычный JSON (`Content-Type: 
 
 `parent-child` — отдельный смысл: родитель-эпик закрывается, когда закрыты его дети.
 Поэтому `can_finish` (можно ли закрывать) и `ready` (можно ли брать) — разные вопросы.
+Все дети карточки, включая закрытых, отдаются в `children[]` её `show`/`context`
+(см. «Карточка-порция»); `children_open[]` в `deps_state` — только незакрытые, для `can_finish`.
 
 `deps_state` (в `GET /api/tasks/{id}`, `POST /api/tasks/{id}/ready`, MCP `listik_can_take`):
 
@@ -524,7 +567,7 @@ JSON-RPC-сообщение, ответ — обычный JSON (`Content-Type: 
 | `reasons[]` | почему нельзя, человеческими словами |
 | `blocked_by[]` | незакрытые жёсткие блокеры: `id, title, status, holder_title, holder_age, idle_age, stale, missing, dep_title` |
 | `waiting_for[]` | кто ждёт завершения этой задачи (за ней стоят другие) |
-| `children_open[]` | незакрытые дети (для эпика) |
+| `children_open[]` | незакрытые дети (для эпика); все дети, включая закрытых, — в `children[]` карточки (`show`/`context`) |
 | `parent` | родитель, если есть |
 | `soft_links[]` | мягкие связи с типом |
 | `worktree_busy` | `null`, или (если рабочее дерево этой задачи занято другой пишущей задачей) `{id, title, holder, holder_title, holder_age, stale}`; на `ready`/`claimable` не влияет, но добавляет строку в `reasons` |
@@ -549,6 +592,7 @@ listik import-beads [--dry-run]    # разовый импорт из стары
 listik import-writerllm --source <path> [--project writerllm] [--dry-run] [--update]   # импорт выгрузки bd export WriterLLM, идемпотентно; --project так же сверяется с доской без учёта регистра
 listik new "Заголовок" -p project --type bug --priority 1 --actor agent:dsh
 listik new "Заголовок" -p project --autostart --route low-pipeline   # сразу запустить по маршруту (--autostart без --route — ошибка)
+listik new "Шаг 09, порция b" -p listik --parent <id шага> --spec … --checklist … --review …  # порция — дочерняя карточка шага (parent-child)
 listik ready                        # что можно взять прямо сейчас
 listik ready --harness dsh          # только то, что этому harness разрешено на его этапе
 listik blocked                      # кто кого ждёт и почему
@@ -557,8 +601,8 @@ listik dep confirm <id> <блокер>    # подтвердить предло�
 listik dep suggested [--project]    # предложения агентов, ждущие подтверждения человеком
 listik projects <slug> [--routing '<json>']   # показать/задать маршрутизацию проекта
 listik list --mine --json
-listik show <id> [--json]          # полная карточка задачи
-listik context <id> --stage s1-spec|s2-review|s3-impl|s4-judge [--portion "текст"] [--max-chars N] [--format text|json]
+listik show <id> [--json]          # полная карточка задачи; у шага — порции с их документами
+listik context <id> --stage s1-spec|s2-review|s3-impl|s4-judge [--portion "текст"] [--max-chars N] [--format text|json]  # на s3/s4 порция ищется среди дочерних карточек, иначе — раздел ТЗ
 listik claim <id> --holder dsh/deepseek-flash   # заблокированную, чужую или в занятом дереве не возьмёт, скажет почему
 listik claim <id> --holder dsh/deepseek-flash --force   # осознанный обход запрета по блокеру
 listik heartbeat <id> --holder dsh/deepseek-flash --note "пишу порцию B"

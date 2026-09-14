@@ -609,37 +609,47 @@ def handle(method: str, path: str, query: dict, body: dict, authed: bool = False
         route = body.get("route")
         if route is not None and not isinstance(route, str):
             raise ApiError(400, "route должен быть строкой")
+        parent = body.get("parent")
+        if parent is not None and not isinstance(parent, str):
+            raise ApiError(400, "parent должен быть строкой")
         # Автостарт без маршрута запускать нечего: задача не создаётся вовсе.
         if autostart and not (route or "").strip():
             raise ApiError(400, "autostart: нужен непустой route")
-        task = store.create_task(
-            conn,
-            title=need(body, "title"),
-            project=body.get("project"),
-            description=body.get("description", ""),
-            acceptance=body.get("acceptance", ""),
-            design=body.get("design", ""),
-            notes=body.get("notes", ""),
-            issue_type=body.get("type") or body.get("issue_type") or "task",
-            status=body.get("status", "open"),
-            priority=as_int(body.get("priority"), 2),
-            assignee=body.get("assignee"),
-            stage=body.get("stage"),
-            labels=body.get("labels") or [],
-            spec_path=body.get("spec_path"),
-            checklist_path=body.get("checklist_path"),
-            review_path=body.get("review_path"),
-            decision_path=body.get("decision_path"),
-            journal_path=body.get("journal_path"),
-            external_ref=body.get("external_ref"),
-            source=body.get("source", "native"),
-            task_id=body.get("id"),
-            created_by=body.get("actor") or body.get("created_by"),
-            needs_owner=as_bool(body.get("needs_owner", False)),
-            harness=body.get("harness"),
-            autostart=autostart,
-            route=route,
-        )
+        try:
+            task = store.create_task(
+                conn,
+                title=need(body, "title"),
+                project=body.get("project"),
+                description=body.get("description", ""),
+                acceptance=body.get("acceptance", ""),
+                design=body.get("design", ""),
+                notes=body.get("notes", ""),
+                issue_type=body.get("type") or body.get("issue_type") or "task",
+                status=body.get("status", "open"),
+                priority=as_int(body.get("priority"), 2),
+                assignee=body.get("assignee"),
+                stage=body.get("stage"),
+                labels=body.get("labels") or [],
+                spec_path=body.get("spec_path"),
+                checklist_path=body.get("checklist_path"),
+                review_path=body.get("review_path"),
+                decision_path=body.get("decision_path"),
+                journal_path=body.get("journal_path"),
+                external_ref=body.get("external_ref"),
+                source=body.get("source", "native"),
+                task_id=body.get("id"),
+                created_by=body.get("actor") or body.get("created_by"),
+                needs_owner=as_bool(body.get("needs_owner", False)),
+                harness=body.get("harness"),
+                autostart=autostart,
+                route=route,
+                parent=parent or None,
+            )
+        except KeyError as exc:
+            # Указан несуществующий parent: задача не создана.
+            raise api_error(404, exc) from exc
+        except ValueError as exc:
+            raise api_error(400, exc) from exc
         if autostart:
             # Процесс не ждём: start возвращается сразу после Popen, отказ (битый
             # routes.json, нет маршрута/command/каталога) не отменяет создание задачи.

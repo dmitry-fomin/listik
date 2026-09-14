@@ -169,9 +169,10 @@ on an open blocker, another holder, or a busy worktree; `--force` can't take ano
 ### Stages
 
 **s1-spec** — read `show`, `context <id> --stage s1-spec`, existing `spec_path`. Write the Markdown
-spec, acceptance checklist, portion child cards (`new … --spec … --checklist …`), soft links
-(`dep link`/`relates-to`). `dep add <portion> <blocker>` from an agent is only a suggestion; the
-human confirms with `dep confirm`. Never use `--confirm`. Next: `stage` → `s2-review` (sticky).
+spec, acceptance checklist, one child card per portion (`new "…порция b" --parent <id шага>
+--spec … --checklist … --review …`), soft links (`dep link`/`relates-to`). `dep add <portion>
+<blocker>` from an agent is only a suggestion; the human confirms with `dep confirm`. Never use
+`--confirm`. Next: `stage` → `s2-review` (sticky).
 
 **s2-review** — read `context <id> --stage s2-review`. Change nothing in code or spec; only
 `comment -k review` (and `review_path` if set). Next: `stage` → `s3-impl` (handoff).

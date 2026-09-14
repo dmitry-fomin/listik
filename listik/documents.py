@@ -635,6 +635,50 @@ def _full_doc_chunks(docs: list[dict], stage: str, kinds: tuple[str, ...]) -> li
     return selected
 
 
+_PORTION_SPLIT = re.compile(r"[^0-9a-zа-яё]+")
+
+
+def _portion_rank(child: dict, needle: str, word: re.Pattern) -> int | None:
+    """Насколько карточка похожа на названную порцию: меньше — точнее."""
+    if needle == (child.get("id") or "").lower():
+        return 0
+    if needle == (child.get("title") or "").lower():
+        return 1
+    if word.search((child.get("title") or "").lower()):
+        return 2
+    for doc in child.get("documents") or []:
+        if word.search((doc.get("title") or "").lower()):
+            return 2
+        tokens = [t for t in _PORTION_SPLIT.split((doc.get("path") or "").lower()) if t]
+        if needle in tokens:
+            return 3
+    return None
+
+
+def match_portion_child(children: list[dict], portion: str | None) -> dict | None:
+    """Дочерняя карточка-порция по названию `portion` (s3/s4).
+
+    Совпадение ищется по id, точному заголовку, слову в заголовке карточки или
+    документа и по токену пути документа (`step-09.check-a.md` → «a»). Если лучшее
+    совпадение делят несколько карточек, порция не разрешается: молча вернуть
+    чужую хуже, чем показать `children[]` и не угадывать."""
+    needle = (portion or "").strip().lower()
+    if not needle:
+        return None
+    word = re.compile(rf"(?<![0-9a-zа-яё_]){re.escape(needle)}(?![0-9a-zа-яё_])")
+    best_rank: int | None = None
+    matches: list[dict] = []
+    for child in children:
+        rank = _portion_rank(child, needle, word)
+        if rank is None:
+            continue
+        if best_rank is None or rank < best_rank:
+            best_rank, matches = rank, [child]
+        elif rank == best_rank:
+            matches.append(child)
+    return matches[0] if len(matches) == 1 else None
+
+
 def _layered_chunks(conn: sqlite3.Connection, task_id: str, task: dict, docs: list[dict],
                     portion: str | None) -> list[dict]:
     """s3/s4 chunk selection: checklist in full, then portion match or lexical match,
@@ -712,7 +756,20 @@ def _layered_chunks(conn: sqlite3.Connection, task_id: str, task: dict, docs: li
 
 def context(conn: sqlite3.Connection, task_id: str, stage: str, *, portion: str | None = None,
             max_chars: int | None = None) -> dict:
-    task = store.get_task(conn, task_id, with_details=False)
+    requested_task = store.get_task(conn, task_id, with_details=False)
+    # Порции шага — дочерние карточки (решение listik-9gsh). На s3/s4 `portion`
+    # сначала ищет дочернюю карточку: нашлась — контекст строится по ней (её
+    # spec/checklist/review), а `portion_card` и `parent` показывают, куда он
+    # разрешился. Не нашлась — работает прежний отбор по заголовку раздела ТЗ.
+    children = store.child_cards(conn, task_id)
+    portion_card = (match_portion_child(children, portion)
+                    if stage in ("s3-impl", "s4-judge") else None)
+    if portion_card is not None:
+        task_id = portion_card["id"]
+        task = store.get_task(conn, task_id, with_details=False)
+    else:
+        task = requested_task
+    parent = store.parent_card(conn, task_id)
     docs = index_task_documents(conn, task_id)
     # Comments are the canonical review/journal/verdict stream.  They are kept separate
     # from document chunks so callers can distinguish a decision from source material.
@@ -780,6 +837,14 @@ def context(conn: sqlite3.Connection, task_id: str, stage: str, *, portion: str 
     reasons = [{"block": "card", "reason": "карточка задачи"},
                {"block": "acceptance", "reason": "критерии приёмки"},
                {"block": "dependencies", "reason": "зависимости и блокеры"}]
+    if children:
+        reasons.append({"block": "children",
+                        "reason": "дочерние карточки порций с их документами"})
+    if portion_card is not None:
+        reasons.append({"block": "portion_card",
+                        "reason": f"порция «{portion}» разрешилась в карточку {portion_card['id']}"})
+    if parent is not None:
+        reasons.append({"block": "parent", "reason": f"родительская карточка {parent['id']}"})
     if reviews:
         reasons.append({"block": "review", "reason": "ревью этапа"})
     if verdict is not None:
@@ -799,6 +864,12 @@ def context(conn: sqlite3.Connection, task_id: str, stage: str, *, portion: str 
         "chunks": clipped,
         "acceptance": task.get("acceptance", ""),
         "dependencies": dependencies,
+        # Поля холодного старта карточки-порции: все дочерние карточки шага со своими
+        # документами (даже закрытые), карточка, в которую разрешилась `portion`, и
+        # родитель карточки, по которой построен контекст.
+        "children": children,
+        "portion_card": portion_card,
+        "parent": parent,
         "reviews": reviews,
         "verdict": verdict,
         "journal": journal,

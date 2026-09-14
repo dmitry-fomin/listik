@@ -108,14 +108,14 @@ D="$(git rev-parse --absolute-git-dir)/feature-pipeline"
 ```
 D="$(git rev-parse --absolute-git-dir)/feature-pipeline"; B=$(git rev-parse --short HEAD); echo "база $B"
 git worktree list
-git worktree add -b opus/<id> ~/.worktrees/<проект>/<id> "$B"
+git worktree add -b opus/<id> .worktrees/<id> "$B"
 { printf '# Задача <id>\n\n## Границы правки\n\nТолько то, что названо в требованиях; остальное не трогать.\n\n## Требования\n\nВсё ниже, до конца файла, — текст задачи из трекера как есть, вместе с его заголовками.\n\n'; cat "$D/<id>.show.txt"; } > "$D/<id>.task.md"
 ```
 
-Деревья всех конвейеров лежат в `~/.worktrees/<проект>/…` — `<проект>` это slug проекта в Listik (нет карточки — имя каталога репозитория). Каталог вне `~/Projects`: деревья не мешаются с проектами, а `git worktree add` сам создаёт недостающие родительские каталоги. Если задачи ведутся в Listik, сразу запиши дерево в карточку — иначе доска не видит, где идёт работа, и блокировка по дереву не срабатывает:
+Деревья всех конвейеров лежат в `<основное дерево>/.worktrees/<id>` — внутри папки проекта, а не в отдельном каталоге рядом с ним: дерево видно там же, где код, и на проект не заводится второй папки. `git worktree add` сам создаёт недостающие родительские каталоги, а каталог `.worktrees/` держи в `.gitignore` проекта: нет строки — добавь её до заведения деревьев, иначе `git status` основного дерева перестанет быть пустым. Если задачи ведутся в Listik, сразу запиши дерево в карточку — иначе доска не видит, где идёт работа, и блокировка по дереву не срабатывает:
 
 ```
-~/Projects/Listik/bin/listik set <id> worktree="$HOME/.worktrees/<проект>/<id>" branch=opus/<id> --actor agent:claude --harness claude
+~/Projects/Listik/bin/listik set <id> worktree="$PWD/.worktrees/<id>" branch=opus/<id> --actor agent:claude --harness claude
 ```
 
 «Требования» стоят последними, потому что в тексте задачи бывают свои заголовки `##`: раздел до конца

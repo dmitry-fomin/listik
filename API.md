@@ -201,7 +201,7 @@ pid <N>, лог <path>`. Процесс не блокирует запрос: PO
 
 | Метод | Путь | Параметры | Ответ |
 |---|---|---|---|
-| GET | `/api/health` | — | `status, version, embed{model}, now, authed`; авторизованному — ещё `db`, `counts`, `embed{ok,models}`, `routes{ok,error,path,count}` и `db_error{where,error,at}` — только если последний фоновый проход упал с `sqlite3.DatabaseError` (см. ниже) |
+| GET | `/api/health` | — | `status, version, embed{model}, now, authed`; авторизованному — ещё `db`, `counts`, `embed{ok,models}`, `routes{ok,error,path,count}`, `db_error{where,error,at}` — только если последний фоновый проход упал с `sqlite3.DatabaseError`, и `db_replaced{kind,at,detail,before,after}` — если сервер заметил подмену файла базы или WAL (см. ниже) |
 | GET | `/api/routes` | — | `ok, error, path, routes[]` — записи `routes.json`, загруженные при старте, без `command` (см. «Маршруты запуска»); ошибка файла — `ok=false` и текст, а не HTTP-ошибка |
 | GET | `/api/meta` | `archived` | `projects[], actors[], facets{}, statuses{}, stages{}, priorities{}` |
 | GET | `/api/projects` | — | `projects[]` — все репозитории доски, включая скрытые: `slug, title, kind, path, path_exists, git_remote, git_branch, archived, n_tasks, n_open, n_wip`, плюс `routing` (переопределение проекта — объект или `null`), `routing_effective` (действующая слитая таблица, которой реально пользуются `allowed_harnesses`/`transition_kind`), `routing_source` (`default`\|`config`\|`db`\|`config+db`), плюс `root` (корень поиска проектов) |
@@ -233,6 +233,23 @@ pid <N>, лог <path>`. Процесс не блокирует запрос: PO
 нечитаемый файл документа), поля не создают и снять его не мешают — важно только, падала ли в
 проходе сама база. `listik status` печатает `db_error` отдельной строкой
 `база: ОШИБКА в фоне …`, если поле есть в ответе.
+
+`db_replaced` — факт подмены файла, а не «ошибка сейчас»: поле висит в ответе авторизованному
+до перезапуска сервера. Сервер следит за inode `listik.db` и `listik.db-wal` (фоновый поток
+раз в 2 с и дешёвая проверка на каждом `get_conn`); подмена или удаление файла базы, подмена
+WAL и исчезновение WAL при открытых соединениях — событие (`kind`: `db`, `wal` или `db+wal`,
+плюс `detail`, `before`, `after` с парами `[устройство, inode]`). Событие пишется строкой
+`[watch] ПОДМЕНА ФАЙЛА БАЗЫ: …` в `listik.log`, попадает в `db_error` (как `where="watch"`) и
+в `listik status` (`база: ПОДМЕНА ФАЙЛА …`). Тогда же сервер закрывает все соединения и
+переоткрывает их на новом файле (схема и миграции применяются заново): старые соединения
+остались бы на удалённом inode, а запись в удалённый inode не возвращает ошибку — данные
+теряются молча.
+
+`sqlite3.DatabaseError` и `ProgrammingError` в обработчике (`database disk image is malformed`,
+сбой диска, закрытое после переоткрытия соединение) отвечают **503** с кодом `server_error` и
+текстом «повтори запрос», а не 500: сервер уже переоткрыл соединения, и повтор обычно успешен.
+Такая же ошибка оставляет `db_error` с `where="http"`. `sqlite3.IntegrityError` (нарушение
+ограничений) остаётся 500 `internal` — это логика приложения, а не файл базы.
 
 `/api/board` — форма колонки:
 
@@ -525,6 +542,8 @@ listik board [--group-by stage]
 listik stats
 listik timeline
 listik embed
+listik backup [--out <файл>] [--force]     # согласованная копия базы (sqlite backup API), сервер можно не останавливать
+listik restore <копия> [--stop] [--force]  # восстановление; при работающем сервере отказывает (conflict), --stop гасит его
 ```
 
 Глобальные флаги: `--json`, `--actor <кто>`, `--harness <dsh|grok|claude>`, `--server/--port`.

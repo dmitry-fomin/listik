@@ -347,6 +347,12 @@ def cmd_status(args) -> int:
             print(f"база:   ОШИБКА в фоне [{db_error.get('where')}] "
                   f"{db_error.get('at')}: {db_error.get('error')} — сбросится после "
                   "успешного прохода")
+        # Подмена файла базы или WAL под работающим сервером (listik-cfzk): факт,
+        # а не текущая ошибка, поэтому строка висит до перезапуска сервера.
+        replaced = h.get("db_replaced")
+        if replaced:
+            print(f"база:   ПОДМЕНА ФАЙЛА [{replaced.get('kind')}] {replaced.get('at')}: "
+                  f"{replaced.get('detail')} — соединения переоткрыты, подробности в listik.log")
     else:
         print("(подробности недоступны: токен не принят)")
     # Маршруты — только из ответа /api/health работающего сервера: сам status файл
@@ -365,6 +371,45 @@ def cmd_init(args) -> int:
     print(f"база: {paths.DB_PATH}")
     for k, v in db.counts(conn).items():
         print(f"  {k:12s} {v}")
+    return 0
+
+
+def cmd_backup(args) -> int:
+    """Штатная копия базы (listik-cfzk): sqlite backup API, можно при живом сервере."""
+    from listik import backup as backup_mod
+    info = backup_mod.backup(out_path=args.out, overwrite=args.force)
+    c = info["counts"]
+    emit(args, info,
+         f"копия:  {info['backup']}\n"
+         f"база:   {info['db']}\n"
+         f"размер: {info['bytes']} байт, integrity_check: {info['integrity']}\n"
+         f"данные: {c['tasks']} задач, {c['comments']} комментариев, {c['events']} событий\n"
+         f"восстановить: listik restore {info['backup']}  (сервер должен быть остановлен)")
+    return 0
+
+
+def cmd_restore(args) -> int:
+    """Восстановление из копии (listik-cfzk): при работающем сервере отказывает."""
+    from listik import backup as backup_mod
+    info = backup_mod.restore(args.backup, stop=args.stop, force=args.force)
+    c = info["counts"]
+    lines = [
+        f"восстановлено: {info['db']}",
+        f"из копии:      {info['backup']}",
+        f"данные:        {c['tasks']} задач, {c['comments']} комментариев, "
+        f"{c['events']} событий (integrity_check: {info['integrity']})",
+    ]
+    if info.get("safety_copy"):
+        lines.append(f"на случай отката: {info['safety_copy']}")
+    if info.get("removed_sidecars"):
+        lines.append("удалён журнал прежней базы: "
+                     + ", ".join(Path(p).name for p in info["removed_sidecars"]))
+    srv = info.get("server") or {}
+    if srv.get("stopped"):
+        lines.append(f"сервер остановлен (pid {srv.get('pid')}) — подними его: listik serve --daemon")
+    if info.get("warning"):
+        lines.append(f"! {info['warning']}")
+    emit(args, info, "\n".join(lines))
     return 0
 
 
@@ -1263,6 +1308,27 @@ def build_parser() -> argparse.ArgumentParser:
     add("stop", cmd_stop, help="остановить фоновый сервер")
     add("status", cmd_status, help="состояние сервера, базы и поиска")
     add("init", cmd_init, help="создать/обновить базу")
+
+    sp = add("backup", cmd_backup,
+             help="согласованная копия базы (sqlite backup API, работает при живом сервере)",
+             description="Копия снимается sqlite backup API прямо с файла базы (LISTIK_DB), "
+                         "поэтому можно не останавливать сервер; --local не нужен. "
+                         "Копировать listik.db/-wal через cp при работающем сервере нельзя.")
+    sp.add_argument("--out", metavar="ФАЙЛ",
+                    help="куда положить копию (по умолчанию рядом с базой: listik.db.bak-<время>)")
+    sp.add_argument("--force", action="store_true", help="перезаписать существующий файл копии")
+
+    sp = add("restore", cmd_restore,
+             help="восстановить базу из копии (при работающем сервере отказывает)",
+             description="Подменяет файл базы согласованной копией. Пока сервер Listik работает, "
+                         "команда отказывает (conflict): его соединения остались бы на удалённом "
+                         "inode. Останови сервер сам или добавь --stop. Перед восстановлением "
+                         "текущая база копируется в listik.db.bak-pre-restore-<время>.")
+    sp.add_argument("backup", metavar="КОПИЯ", help="файл, созданный `listik backup`")
+    sp.add_argument("--stop", action="store_true",
+                    help="остановить сервер Listik (SIGTERM) и восстановить базу")
+    sp.add_argument("--force", action="store_true",
+                    help="разрешить откат назад (в копии меньше задач, чем в текущей базе)")
 
     sp = add("init-projects", cmd_init_projects,
              help="прописать правила Listik в AGENTS.md/CLAUDE.md проектов")

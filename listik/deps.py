@@ -16,6 +16,8 @@ from __future__ import annotations
 import json
 import sqlite3
 
+from . import errors as errors_mod
+
 OPEN_STATUSES = ("open", "in_progress", "blocked", "review")
 FINAL_STATUSES = ("done", "cancelled")
 
@@ -195,7 +197,7 @@ def refresh_task(conn: sqlite3.Connection, task_id: str) -> int:
 
 def worktree_conflict(conn: sqlite3.Connection, row: sqlite3.Row,
                       holder: str | None = None) -> sqlite3.Row | None:
-    """First other task holding the same (project, worktree) write lock, if any.
+    """First other task holding the same project tree write lock, if any.
 
     The lock only applies to *writing* tasks: `s3-impl`, `s4-judge`, or no stage at
     all (a direct claim -> code -> done task) — both for `row` itself and for the
@@ -204,24 +206,32 @@ def worktree_conflict(conn: sqlite3.Connection, row: sqlite3.Row,
     conflicts" (used by `ready`, which has no specific claimant to exempt);
     passing a holder exempts that same holder (sticky: judge and implementer in
     the same session hold two writing tasks in one worktree).
+
+    The tree is compared by its canonical key, not by the raw `worktree` string
+    (`store.worktree_lock_key`): an empty `worktree`, the `main`/`master` markers
+    and an explicit path equal to the project directory are one and the same
+    "project main tree" and therefore conflict with each other.
     """
     stage = (row["stage"] or "").strip()
     if stage not in ("", "s3-impl", "s4-judge"):
         return None
+    from . import store  # store импортирует deps на уровне модуля — импорт отложенный
     project = row["project"] or ""
-    worktree = (row["worktree"] or "").strip()
+    project_path = store.project_path(conn, project)
+    key = store.worktree_lock_key(row["worktree"], project_path)
     candidates = _fetch(
         conn,
         "SELECT * FROM tasks WHERE coalesce(project,'') = ? AND id != ? AND archived = 0 "
         "AND status IN ('open','in_progress','review','blocked') "
-        "AND coalesce(worktree,'') = ? AND holder IS NOT NULL AND holder != '' "
+        "AND holder IS NOT NULL AND holder != '' "
         "AND coalesce(stage,'') IN ('', 's3-impl', 's4-judge') ORDER BY id",
-        (project, row["id"], worktree),
+        (project, row["id"]),
     )
     for cand in candidates:
         if holder is not None and cand["holder"] == holder:
             continue
-        return cand
+        if store.worktree_lock_key(cand["worktree"], project_path) == key:
+            return cand
     return None
 
 
@@ -234,7 +244,7 @@ def ready(conn: sqlite3.Connection, task_id: str) -> dict:
     from . import store
     row = _tasks_by_id(conn, [task_id]).get(task_id)
     if row is None:
-        raise KeyError(f"задача не найдена: {task_id}")
+        raise errors_mod.NotFound(f"задача не найдена: {task_id}")
     task = store.row_to_task(conn, row)
     hard = blockers(conn, task_id)
     children_open = [c for c in children(conn, task_id) if not c["closed"]]
@@ -256,6 +266,7 @@ def ready(conn: sqlite3.Connection, task_id: str) -> dict:
             "id": conflict["id"], "title": conflict_task["title"],
             "holder": conflict_task["holder"], "holder_title": conflict_task["holder_title"],
             "holder_age": conflict_task["holder_age"], "stale": conflict_task["stale"],
+            "worktree": (conflict["worktree"] or "").strip(),
         }
         reasons.append(f"дерево занято: {conflict['id']} (держит {conflict_task['holder_title']})")
     return {
@@ -454,7 +465,7 @@ def mentioned(conn: sqlite3.Connection, task_id: str, limit: int = 50) -> list[d
     from . import store
     row = _tasks_by_id(conn, [task_id]).get(task_id)
     if row is None:
-        raise KeyError(f"задача не найдена: {task_id}")
+        raise errors_mod.NotFound(f"задача не найдена: {task_id}")
     text = " ".join(x or "" for x in (row["title"], row["description"], row["notes"],
                                       row["acceptance"], row["result"]))
     known = {r["id"]: r["id"] for r in _fetch(conn, "SELECT id FROM tasks")}

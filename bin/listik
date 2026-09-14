@@ -19,6 +19,7 @@ from pathlib import Path
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
 from listik import __version__, client, db, errors, paths, store  # noqa: E402
+from listik import routes as routes_mod  # noqa: E402
 
 STATUS_ICON = {"open": "○", "in_progress": "▶", "blocked": "■", "review": "◐",
                "done": "✓", "cancelled": "✕"}
@@ -124,6 +125,12 @@ def call(op: str, args, path: str, *, query: dict | None = None, body: dict | No
     if not getattr(args, "local", False):
         print("! сервер Listik не отвечает — команда выполнена напрямую по базе "
               "(доска не получит событие; подними сервер: listik serve)", file=sys.stderr)
+    # Маршруты в локальном режиме никто не загружал — это делает сервер при старте.
+    # Дочитываем файл, только когда команда вообще трогает маршрут: метки
+    # `harness:`/`process:` считает серверная логика (store + routes.labels_for),
+    # и у `new --route`/`set route=` они должны быть те же, что у формы на доске.
+    if any((local_kwargs or {}).get(key) for key in ("route", "launch_route")):
+        routes_mod.load_local()
     return client.local_call(op, **(local_kwargs or {}))
 
 
@@ -148,18 +155,29 @@ def _dur(seconds) -> str:
     return f"{s // 86400} дн"
 
 
+def label_of(t: dict, title_key: str, raw_key: str, fallback: str = "—") -> str:
+    """Производная подпись карточки (`*_title`) с откатом на сырое поле.
+
+    Подписи считает store (`row_to_task`), поэтому у карточки, пришедшей сырой
+    строкой таблицы, их нет. Без отката вывод падал бы KeyError — а он выглядел
+    как «не найдено» с советом «проверь идентификатор» (listik-xut1).
+    """
+    return t.get(title_key) or t.get(raw_key) or fallback
+
+
 def task_line(t: dict, *, width: int = 96) -> str:
-    icon = STATUS_ICON.get(t["status"], "?")
+    icon = STATUS_ICON.get(t.get("status"), "?")
     stage = STAGE_SHORT.get(t.get("stage") or "", t.get("stage") or "")
-    bits = [f"{icon} {t['id']}"]
+    bits = [f"{icon} {t.get('id')}"]
     if t.get("project"):
         bits.append(f"[{t['project']}]")
     if stage:
         bits.append(f"этап {stage}")
     if t.get("holder"):
-        bits.append(f"держит {t['holder_title']} {t.get('holder_age', '')}".strip())
+        holder = label_of(t, "holder_title", "holder")
+        bits.append(f"держит {holder} {t.get('holder_age', '')}".strip())
     elif t.get("assignee"):
-        bits.append(f"назначен {t['assignee_title']}")
+        bits.append(f"назначен {label_of(t, 'assignee_title', 'assignee')}")
     flags = []
     if t.get("needs_owner"):
         flags.append("НУЖЕН ТЫ")
@@ -198,19 +216,22 @@ def _soft_link_label(x: dict) -> str:
 
 
 def show_task(t: dict) -> None:
-    print(f"{STATUS_ICON.get(t['status'], '?')} {t['id']}")
-    print(f"  заголовок:   {t['title']}")
-    print(f"  проект:      {t.get('project') or '—'}   тип: {t['issue_type']}   "
-          f"приоритет: {t['priority_title']}")
-    print(f"  статус:      {t['status_title']}"
-          + (f"   этап: {t['stage_title']} (на этапе {t['stage_age']})" if t.get("stage") else ""))
-    holder = t.get("holder_title") or "—"
+    print(f"{STATUS_ICON.get(t.get('status'), '?')} {t.get('id')}")
+    print(f"  заголовок:   {t.get('title')}")
+    print(f"  проект:      {t.get('project') or '—'}   тип: {t.get('issue_type') or '—'}   "
+          f"приоритет: {label_of(t, 'priority_title', 'priority')}")
+    print(f"  статус:      {label_of(t, 'status_title', 'status')}"
+          + (f"   этап: {label_of(t, 'stage_title', 'stage')} "
+             f"(на этапе {t.get('stage_age') or '—'})"
+             if t.get("stage") else ""))
+    holder = label_of(t, "holder_title", "holder")
     if t.get("holder"):
-        holder += f"   держит {t.get('holder_age')}"
+        holder += f"   держит {t.get('holder_age') or '—'}"
         if t.get("holder_note"):
             holder += f" — {t['holder_note']}"
-    print(f"  исполнитель: {t['assignee_title']}   держатель: {holder}")
-    print(f"  создана:     {t['created_at']}   обновлена: {t['updated_at']} ({t['updated_age']} назад)")
+    print(f"  исполнитель: {label_of(t, 'assignee_title', 'assignee')}   держатель: {holder}")
+    print(f"  создана:     {t.get('created_at') or '—'}   обновлена: {t.get('updated_at') or '—'}"
+          f" ({t.get('updated_age') or '—'} назад)")
     if t.get("started_at"):
         print(f"  начата:      {t['started_at']}")
     if t.get("closed_at"):
@@ -218,7 +239,7 @@ def show_task(t: dict) -> None:
     if t.get("needs_owner"):
         print("  *** ЖДЁТ ЧЕЛОВЕКА ***")
     if t.get("stale"):
-        print(f"  !!! брошена: держатель молчит {t.get('holder_age')}")
+        print(f"  !!! брошена: держатель молчит {t.get('holder_age') or '—'}")
     if t.get("blocked_by"):
         print(f"  заблокирована: {', '.join(t['blocked_by'])}")
     deps_state = t.get("deps_state")
@@ -255,7 +276,10 @@ def show_task(t: dict) -> None:
                     line += " — ФАЙЛ НЕДОСТУПЕН"
                 print(line)
     if t.get("worktree") or t.get("branch"):
-        print(f"  дерево:      {t.get('worktree') or '—'}   ветка: {t.get('branch') or '—'}")
+        # `worktree=main`/`master` — маркер «работа в основной ветке, без дерева»
+        # (API.md, `listik set <id> worktree=main`), а не путь: показываем словами.
+        tree = store.main_worktree_title(t.get("worktree")) or t.get("worktree") or '—'
+        print(f"  дерево:      {tree}   ветка: {t.get('branch') or '—'}")
     if t.get("launch_error"):
         print(f"  автостарт: ОШИБКА {t['launch_error']}")
     elif t.get("autostart") or t.get("launched_by"):
@@ -652,7 +676,12 @@ def cmd_context(args) -> int:
             print(f"  - {j.get('ts')} [{j.get('kind')}] {j.get('actor')}: {j.get('text')}")
     wt = out.get("worktree")
     if wt:
-        print(f"\nworktree: {wt.get('path') or '—'}")
+        if wt.get("mode") == "main":
+            # Маркер основной ветки: `path` — репозиторий проекта, а не поле карточки.
+            print(f"\nworktree: {wt.get('title') or 'работа в основной ветке'}"
+                  f" — репозиторий проекта {wt.get('path') or '—'}")
+        else:
+            print(f"\nworktree: {wt.get('path') or '—'}")
         if wt.get("exists"):
             print(f"  ветка: {wt.get('branch') or '—'}   head: {wt.get('head') or '—'}")
             changed = wt.get("changed_files") or []
@@ -739,6 +768,9 @@ def cmd_stage(args) -> int:
         print(json.dumps(task, ensure_ascii=False, indent=2))
     else:
         print(task_line(task))
+        if task.get("stage_unchanged"):
+            # Задача уже на этом этапе: store ничего не менял (listik-xut1).
+            print(f"  {task.get('message') or 'этап не менялся'}")
     return 0
 
 
@@ -1066,8 +1098,6 @@ def _print_routing(project: dict) -> None:
     source = _ROUTING_SOURCE_TITLES.get(project.get("routing_source"),
                                         project.get("routing_source") or "?")
     print(f"маршрутизация (источник: {source}):")
-    process = eff.get("default_process") or []
-    print(f"  процесс по умолчанию: {' → '.join(process) if process else '—'}")
     harnesses = eff.get("harnesses") or {}
     for stage in store.PIPELINE_STAGES:
         names = harnesses.get(stage) or []
@@ -1252,7 +1282,9 @@ def cmd_dep(args) -> int:
                     store.add_dep(conn, args.issue_id, x["id"], args.dep_type,
                                   created_by=actor_default(args))
                     made += 1
-                except KeyError:
+                except errors.NotFound:
+                    # Связать можно только с существующей задачей: пропускаем
+                    # кандидата из поиска, которого уже нет.
                     continue
             print(f"создано связей: {made} (тип {args.dep_type})")
         return 0
@@ -1409,7 +1441,8 @@ def build_parser() -> argparse.ArgumentParser:
     sp.add_argument("--autostart", action="store_true",
                     help="сервер Listik сам запустит процесс задачи по маршруту (нужен --route)")
     sp.add_argument("--route", metavar="КЛЮЧ",
-                    help="ключ маршрута из routes.json; без --autostart просто сохраняется")
+                    help="ключ маршрута из routes.json; сервер помечает карточку метками "
+                         "harness:/process:, без --autostart маршрут просто сохраняется")
     sp.add_argument("--parent", metavar="ID",
                     help="родительская карточка (шаг/эпик): новая карточка станет её порцией "
                          "(связь parent-child) со своими spec/checklist/review; проект "
@@ -1440,8 +1473,9 @@ def build_parser() -> argparse.ArgumentParser:
     sp.add_argument("--max-chars", type=int, default=None)
     sp.add_argument("--format", choices=["text", "json"], default="text")
 
-    sp = add("set", cmd_set, help="изменить поля: set <id> status=in_progress priority=1 "
-                                  "route=low-pipeline (маршрут — пока задача не начата)")
+    sp = add("set", cmd_set, help="изменить поля: set <id> status=in_progress priority=1, "
+                                  "worktree=main — работа в основной ветке без дерева, "
+                                  "route=low-pipeline — маршрут, пока задача не начата")
     sp.add_argument("task_id")
     sp.add_argument("field", nargs="+")
     sp.add_argument("--note")
@@ -1458,11 +1492,14 @@ def build_parser() -> argparse.ArgumentParser:
             sp.add_argument("--force", action="store_true",
                             help="взять даже заблокированную (останется в истории)")
 
-    sp = add("stage", cmd_stage, help="следующий этап конвейера (или --to)")
+    sp = add("stage", cmd_stage,
+             help="следующий этап конвейера (или --to; текущий этап — no-op с заметкой)")
     sp.add_argument("task_id")
     sp.add_argument("--holder")
     sp.add_argument("--note")
-    sp.add_argument("--to", choices=["s1-spec", "s2-review", "s3-impl", "s4-judge", "done"])
+    sp.add_argument("--to", choices=["s1-spec", "s2-review", "s3-impl", "s4-judge", "done"],
+                    help="явный этап; совпал с текущим — карточка не меняется, "
+                         "заметка уходит в историю")
 
     sp = add("comment", cmd_comment, help="комментарий/журнал")
     sp.add_argument("task_id")
@@ -1598,9 +1635,16 @@ def main(argv: list[str] | None = None) -> int:
     try:
         return int(args.func(args) or 0)
     except (errors.ListikError, KeyError, ValueError) as exc:
-        # Ожидаемые ошибки: разбор аргументов, «не найдено», «нельзя сделать».
-        # Они не нуждаются в трейсбеке — он остаётся только для непойманных.
-        return report_error(exc, json_mode)
+        # Ожидаемые ошибки: разбор аргументов, «не найдено» (errors.NotFound),
+        # «нельзя сделать». Трейсбек им не нужен — он остаётся непойманным.
+        err = errors.as_error(exc)
+        if err.code == errors.INTERNAL and not isinstance(exc, errors.ListikError):
+            # Голый KeyError словаря (нет поля у карточки) — это наша ошибка, а не
+            # «не найдено»: пишем трейсбек в listik.log и не советуем «проверь
+            # идентификатор» (listik-xut1).
+            log_traceback(exc)
+            err.hint = err.hint or f"подробности в {paths.LOG_PATH}"
+        return report_error(err, json_mode)
     except SystemExit as exc:  # чужой SystemExit(строка) — в тот же формат
         if exc.code in (None, 0):
             return 0

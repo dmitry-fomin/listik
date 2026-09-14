@@ -106,10 +106,13 @@ def _fail(conn, task_id: str, reason: str, notify) -> str:
 def _workdir(conn, row) -> Path | None:
     """Каталог запуска: `worktree` задачи, иначе `path` её проекта.
 
+    `worktree=main`/`master` — маркер «работа в основной ветке без отдельного
+    дерева» (`store.main_worktree`), а не каталог: запускаем в каталоге проекта.
+
     None — если оба пусты или выбранного каталога нет на диске.
     """
     worktree = (row["worktree"] or "").strip()
-    if worktree:
+    if worktree and not store.is_main_worktree(worktree):
         chosen = Path(worktree)
     else:
         project_path = ""

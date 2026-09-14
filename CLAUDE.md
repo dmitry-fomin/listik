@@ -71,6 +71,13 @@ Database migrations exist as two parallel mechanisms — don't confuse them:
   an agent without `--confirm` is written as `suggested-blocks` (soft, "предложенный блокер")
   instead, and only becomes hard once a human runs `dep confirm`; `expire_return_handoffs` lazily
   expires the post-red-verdict return window on `ready`/`claim`.
+- `listik/errors.py` — the single error format (`code`/`message`/`hint`) shared by the CLI, the
+  server and the local fallback. "Not found" is raised as `errors.NotFound` (a `KeyError`
+  subclass); a bare `KeyError` (a missing dict key, e.g. a card lacking a derived `*_title` field)
+  stays `internal` — server handlers catch only `NotFound`, so such a bug reports 500/`internal`
+  instead of a 404 telling the agent to "проверь идентификатор" (listik-xut1). `stage --to` with
+  the current stage is a no-op that keeps the card, `stage_at` and holder, and stores the note as
+  an event.
 - `listik/search.py` + `listik/embed.py` — hybrid search: FTS5 (BM25) merged via RRF with vector
   similarity. A background thread in `server.py` recomputes embeddings for new/changed rows every
   45s via Ollama (`bge-m3`); if Ollama isn't running, search silently degrades to lexical-only
@@ -89,7 +96,9 @@ Database migrations exist as two parallel mechanisms — don't confuse them:
   transports: stdio (`claude mcp add listik -- bin/listik mcp`) and HTTP — `server.py` serves
   `POST /mcp` (Bearer token, no SSE) for a Listik deployed on another machine
   (`claude mcp add --transport http listik https://<host>/mcp --header "Authorization: Bearer …"`).
-  Adding a tool: `TOOLS` + `call_tool`, and `WRITE_TOOLS` if it should push a board event.
+  Adding a tool: `TOOLS` + `call_tool`, and `WRITE_TOOLS` if it should push a board event (over
+  stdio the process writes to sqlite past the server, so after a write tool it calls
+  `POST /api/notify` in the background; over HTTP the server publishes the event itself).
 - `listik/migrate.py` — despite the name, this is unrelated to database migrations. It
   inserts/updates the `<!-- BEGIN LISTIK --> / <!-- END LISTIK -->` block in *other* projects'
   `AGENTS.md`/`CLAUDE.md` (`listik init-projects`) so those projects' agents know to use Listik

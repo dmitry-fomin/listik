@@ -242,6 +242,18 @@ def show_task(t: dict) -> None:
             if d.get("status") == "missing":
                 line += f" — ФАЙЛ НЕДОСТУПЕН: {d.get('error')}"
             print(line)
+    if t.get("children"):
+        print(f"\n  порции (дочерние карточки, {len(t['children'])}):")
+        for ch in t["children"]:
+            stage = f" · {ch.get('stage_title')}" if ch.get("stage") else ""
+            holder = f" · держит {ch.get('holder_title')}" if ch.get("holder") else ""
+            print(f"    {ch.get('id')} [{ch.get('status_title') or ch.get('status')}{stage}]{holder}"
+                  f" — {ch.get('title')}")
+            for d in ch.get("documents") or []:
+                line = f"      {d.get('kind')} {d.get('path')} rev {d.get('revision')}"
+                if d.get("status") == "missing":
+                    line += " — ФАЙЛ НЕДОСТУПЕН"
+                print(line)
     if t.get("worktree") or t.get("branch"):
         print(f"  дерево:      {t.get('worktree') or '—'}   ветка: {t.get('branch') or '—'}")
     if t.get("launch_error"):
@@ -519,6 +531,7 @@ def cmd_new(args) -> int:
         "review_path": args.review, "decision_path": args.decision,
         "actor": actor_default(args), "harness": args.harness,
         "autostart": args.autostart, "route": args.route,
+        "parent": args.parent,
     }
     local = dict(body)
     local.pop("type", None)
@@ -526,9 +539,11 @@ def cmd_new(args) -> int:
     local.pop("harness", None)
     local["issue_type"] = args.type
     local["created_by"] = actor_default(args)
+    local["parent"] = args.parent
     task = call("create", args, "/api/tasks", method="POST", body=body, local_kwargs=local)
     emit(args, task, f"создана {task['id']}"
          + (f"  [{task['project']}]" if task.get("project") else "")
+         + (f"\n  порция шага: {task['id']} → родитель {args.parent}" if args.parent else "")
          + f"\n  {task['title']}")
     return 0
 
@@ -579,6 +594,24 @@ def cmd_context(args) -> int:
     print(f"контекст {card.get('id') or args.task_id} · этап {out['stage']}")
     print(f"{card.get('title', '')} [{card.get('project') or '—'}] "
           f"статус {card.get('status')} этап {card.get('stage')} держит {card.get('holder') or '—'}")
+    if out.get("portion"):
+        portion_card = out.get("portion_card")
+        if portion_card:
+            print(f"порция:      «{out['portion']}» → карточка {portion_card.get('id')} "
+                  f"({portion_card.get('title')})")
+        else:
+            print(f"порция:      «{out['portion']}» (дочерняя карточка не найдена — "
+                  f"отбор по разделам ТЗ)")
+    if out.get("parent"):
+        print(f"родитель:    {out['parent'].get('id')} — {out['parent'].get('title')}")
+    children = out.get("children") or []
+    if children:
+        print(f"порции шага ({len(children)}):")
+        for ch in children:
+            print(f"  - {ch.get('id')} [{ch.get('status')}"
+                  + (f"/{ch.get('stage')}" if ch.get("stage") else "") + f"] {ch.get('title')}")
+            for d in ch.get("documents") or []:
+                print(f"      {d.get('kind')}: {d.get('path')} rev {d.get('revision')}")
     if card.get("spec_path"):
         print(f"spec: {card['spec_path']}")
     if card.get("checklist_path"):
@@ -1374,6 +1407,10 @@ def build_parser() -> argparse.ArgumentParser:
                     help="сервер Listik сам запустит процесс задачи по маршруту (нужен --route)")
     sp.add_argument("--route", metavar="КЛЮЧ",
                     help="ключ маршрута из routes.json; без --autostart просто сохраняется")
+    sp.add_argument("--parent", metavar="ID",
+                    help="родительская карточка (шаг/эпик): новая карточка станет её порцией "
+                         "(связь parent-child) со своими spec/checklist/review; проект "
+                         "наследуется от родителя, если не задан -p")
 
     sp = add("list", cmd_list, help="список задач")
     sp.add_argument("--project")

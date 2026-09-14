@@ -93,7 +93,9 @@ TOOLS: list[dict] = [
         "name": "listik_create",
         "description": ("Создать задачу в Listik. spec_path/checklist_path/review_path/decision_path — "
                         "пути к markdown-документам задачи (ТЗ, чек-лист приёмки, ревью, решение); "
-                        "они индексируются по разделам и доступны через listik_context/поиск."),
+                        "они индексируются по разделам и доступны через listik_context/поиск. "
+                        "parent — ID карточки шага: новая карточка станет её порцией "
+                        "(связь parent-child) со своими документами."),
         "inputSchema": {
             "type": "object",
             "properties": {
@@ -112,6 +114,8 @@ TOOLS: list[dict] = [
                 "review_path": {"type": "string"},
                 "decision_path": {"type": "string"},
                 "journal_path": {"type": "string"},
+                "parent": {"type": "string",
+                           "description": "ID родительской карточки (шаг/эпик): связь parent-child"},
                 "actor": ACTOR,
             },
             "required": ["title"],
@@ -148,7 +152,9 @@ TOOLS: list[dict] = [
             "properties": {
                 "id": TASK_ID,
                 "stage": {"type": "string", "enum": ["s1-spec", "s2-review", "s3-impl", "s4-judge"]},
-                "portion": {"type": "string", "description": "какой раздел ТЗ/решения выбрать (s3/s4)"},
+                "portion": {"type": "string",
+                            "description": "порция (s3/s4): id/название дочерней карточки-порции "
+                                           "или заголовок раздела ТЗ/решения"},
                 "max_chars": {"type": "integer",
                              "description": "лимит символов на выбранные блоки; без него — дефолт этапа"},
             },
@@ -456,7 +462,7 @@ def call_tool(name: str, args: dict, conn=None) -> object:
             labels=args.get("labels") or [], spec_path=args.get("spec_path"),
             checklist_path=args.get("checklist_path"), review_path=args.get("review_path"),
             decision_path=args.get("decision_path"), journal_path=args.get("journal_path"),
-            created_by=args.get("actor"))
+            parent=args.get("parent"), created_by=args.get("actor"))
     if name == "listik_update":
         return store.update_task(conn, args["id"], actor=args.get("actor"),
                                  harness=args.get("harness"), note=args.get("note"),

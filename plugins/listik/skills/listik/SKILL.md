@@ -49,7 +49,7 @@ Listik — общая очередь задач и журнал работы д�
 
 | Этап | Что читать | Что менять | Переход |
 |---|---|---|---|
-| `s1-spec` | `show`, `L context <id> --stage s1-spec`, `spec_path` | ТЗ и чек-лист (файлы), порции `L new … --spec … --checklist …` | `stage` → s2, **sticky**: держатель остаётся |
+| `s1-spec` | `show`, `L context <id> --stage s1-spec`, `spec_path` | ТЗ и чек-лист (файлы), порции — дочерние карточки: `L new "…порция b" --parent <id шага> --spec … --checklist … --review …` | `stage` → s2, **sticky**: держатель остаётся |
 | `s2-review` | `L context <id> --stage s2-review` | ничего, кроме `comment -k review` | `stage` → s3, **handoff**: держатель снимается |
 | `s3-impl` | `L context <id> --stage s3-impl --portion "<порция>"` и `show` (ответы, прошлый вердикт) | код в `worktree`/`branch` карточки, проверки, `-k journal` | `stage` → s4, **sticky**; не коммитить |
 | `s4-judge` | `L context <id> --stage s4-judge`, чек-лист, дифф | код не править; `comment -k verdict` | `VERDICT: PASS` — коммит и `done`; `VERDICT: FAIL` — сервер сам вернёт на s3 |

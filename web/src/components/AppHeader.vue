@@ -29,6 +29,7 @@ import ProjectPicker from './ProjectPicker.vue'
 import store from '@/store/listik'
 import { useTheme } from '@/lib/theme'
 import type { Health } from '@/api/types'
+import { formatTime } from '@/lib/format'
 
 const props = withDefaults(
   defineProps<{
@@ -85,7 +86,7 @@ const countsLabel = computed(() => {
 
 const syncLabel = computed(() => {
   if (!props.lastSyncAt) return 'ещё не синхронизировались'
-  return `синхронизировано ${new Date(props.lastSyncAt).toLocaleTimeString('ru-RU')}`
+  return `синхронизировано ${formatTime(props.lastSyncAt)}`
 })
 
 const streamLabel = computed(() => `поток: ${props.live ? 'живой' : 'нет'}`)

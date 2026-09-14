@@ -1,9 +1,9 @@
 /**
- * Списки значений для фильтров. Тип, этап и статус — из справочника
- * `lib/dictionaries.ts`; проекты и исполнители — из /api/meta.
+ * Значения фильтров. Тип, этап и статус — из справочника `dictionaries.ts`;
+ * проекты и исполнители — из /api/meta.
  */
 import type { Meta } from '@/api/types'
-import { STAGES, STATUSES, TASK_TYPES } from '@/lib/dictionaries'
+import { STAGES, STATUSES, TASK_TYPES } from './dictionaries'
 
 export interface FacetsOption {
   value: string

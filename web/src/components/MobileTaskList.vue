@@ -8,16 +8,12 @@ import { UiBadge, UiButton, UiEmptyState } from '@zoloto585/facet'
 import ListikIcon from './ListikIcon.vue'
 import MobileTaskRow from './MobileTaskRow.vue'
 import store from '@/store/listik'
+import { sortedTasksByUpdatedDesc } from '@/lib/task-presentation'
 
 const PAGE = 24
 const shown = ref(PAGE)
 
-const tasks = computed(() =>
-  store.columns.value
-    .flatMap((column) => column.tasks)
-    .slice()
-    .sort((left, right) => Date.parse(right.updated_at) - Date.parse(left.updated_at)),
-)
+const tasks = computed(() => sortedTasksByUpdatedDesc(store.columns.value.flatMap((column) => column.tasks)))
 const visibleTasks = computed(() => tasks.value.slice(0, shown.value))
 
 function openTask(id: string): void {

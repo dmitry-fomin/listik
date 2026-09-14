@@ -20,6 +20,7 @@ import type { Task } from '@/api/types'
 import { taskHealth } from '@/lib/health'
 import { stageCode } from '@/lib/stages'
 import { humanAge } from '@/lib/format'
+import { projectOf } from '@/lib/task-presentation'
 
 const props = defineProps<{
   tasks: Task[]
@@ -64,10 +65,6 @@ function branchOf(task: Task): Branch {
   if (task.needs_owner) return 'needs_owner'
   if (taskHealth(task) === 'dead') return 'dead'
   return 'at-risk'
-}
-
-function projectOf(task: Task) {
-  return store.meta.value?.projects.find((project) => project.slug === task.project) ?? null
 }
 
 function badgeText(task: Task): string {
@@ -159,7 +156,7 @@ function footerText(task: Task): string {
         >
           <div class="listik-inbox-card__top">
             <TaskGlyph kind="type" :value="task.issue_type" />
-            <ProjectMark :project="projectOf(task)" :slug="task.project" with-title size="sm" />
+            <ProjectMark :project="projectOf(task, store.meta.value?.projects)" :slug="task.project" with-title size="sm" />
             <span class="listik-inbox-card__spacer" />
             <UiBadge :tone="badgeTone(task)" size="sm">{{ badgeText(task) }}</UiBadge>
           </div>

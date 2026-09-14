@@ -37,9 +37,9 @@ import MetricsView from '@/views/MetricsView.vue'
 import MobileTaskList from '@/components/MobileTaskList.vue'
 import PhoneQueue from '@/components/PhoneQueue.vue'
 import store, { type ViewKey } from '@/store/listik'
-import { actorList } from '@/components/facets'
+import { actorList } from '@/lib/facets'
 import type { CommentKind, Task, TaskPatch } from '@/api/types'
-import { tasksCountLabel } from '@/lib/format'
+import { formatTime, tasksCountLabel } from '@/lib/format'
 import { useIsPhone } from '@/lib/viewport'
 
 const toast = useToast()
@@ -65,7 +65,7 @@ const saveStatus = computed<SaveStatusValue>(() => {
 })
 
 const saveAt = computed(() =>
-  store.lastSyncAt.value ? new Date(store.lastSyncAt.value).toLocaleTimeString('ru-RU') : undefined,
+  store.lastSyncAt.value ? formatTime(store.lastSyncAt.value) : undefined,
 )
 
 async function refreshAll(): Promise<void> {

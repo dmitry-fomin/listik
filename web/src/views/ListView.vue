@@ -27,7 +27,7 @@ import TaskGlyph from '@/components/marks/TaskGlyph.vue'
 import store, { type Filters } from '@/store/listik'
 import type { Task, TaskPatch } from '@/api/types'
 import { formatDateTime, humanAge } from '@/lib/format'
-import { assigneeOptions, stageOptions, statusOptions, typeOptions } from '@/components/facets'
+import { assigneeOptions, stageOptions, statusOptions, typeOptions } from '@/lib/facets'
 
 const COLUMNS_KEY = 'listik.columns'
 

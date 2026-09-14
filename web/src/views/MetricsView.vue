@@ -29,7 +29,8 @@ import ListikIcon from '@/components/ListikIcon.vue'
 import store from '@/store/listik'
 import type { Task } from '@/api/types'
 import { INTAKE_COLUMN_KEY, PIPELINE_STAGES, priority, statusTitle } from '@/lib/dictionaries'
-import { formatHours } from '@/lib/format'
+import { formatHours, formatTime } from '@/lib/format'
+import { stageCode as stageCodeFor, stageTitle } from '@/lib/stages'
 
 const stats = computed(() => store.stats.value)
 const running = computed(() => stats.value?.running ?? [])
@@ -124,14 +125,6 @@ const runningColumns: UiDataTableColumn[] = [
   { key: 'open', label: '', width: '96px', align: 'end' },
 ]
 
-function stageCode(task: Task): string {
-  return PIPELINE_STAGES.find((step) => step.value === task.stage)?.code ?? '—'
-}
-
-function stageLabel(task: Task): string {
-  return PIPELINE_STAGES.find((step) => step.value === task.stage)?.label ?? (task.stage_title || 'без этапа')
-}
-
 // ── Проекты и держатели ─────────────────────────────────────────────────────
 
 const projectItems = computed<UiProportionalBarListItem[]>(() =>
@@ -174,7 +167,7 @@ const heatmapCells = computed<UiHeatmapCell[]>(() => {
 
 const updatedAt = computed(() =>
   stats.value
-    ? new Date(stats.value.generated_at).toLocaleTimeString('ru-RU', { hour: '2-digit', minute: '2-digit' })
+    ? formatTime(stats.value.generated_at, { hour: '2-digit', minute: '2-digit' })
     : '—',
 )
 
@@ -377,7 +370,7 @@ function openTask(id: string): void {
           </template>
           <template #cell-stage="{ row }">
             <span class="listik-metrics__stage">
-              <span class="listik-flow__code">{{ stageCode(row as Task) }}</span>{{ stageLabel(row as Task) }}
+              <span class="listik-flow__code">{{ stageCodeFor((row as Task).stage) ?? '—' }}</span>{{ stageTitle((row as Task).stage === 'done' ? null : (row as Task).stage) ?? ((row as Task).stage_title || 'без этапа') }}
             </span>
           </template>
           <template #cell-holder="{ row }">

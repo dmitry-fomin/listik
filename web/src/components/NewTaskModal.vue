@@ -48,6 +48,7 @@ import {
   routesAlertText,
   visibleRoutesOf,
 } from '@/lib/routes'
+import { projectBySlug } from '@/lib/projects'
 import store from '@/store/listik'
 
 const props = defineProps<{
@@ -129,7 +130,7 @@ const projectOptions = computed<UiSelectOption[]>(() =>
   props.projects.map((project) => ({ value: project.slug, label: project.title || project.slug })),
 )
 
-const selectedProject = computed(() => props.projects.find((project) => project.slug === form.project) ?? null)
+const selectedProject = computed(() => projectBySlug(props.projects, form.project))
 
 const priorityOptions = computed<IconToggleOption<string>[]>(() => {
   const values = form.type === 'bug' ? ['0', '1', '2', '3'] : ['1', '2', '3', '4']

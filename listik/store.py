@@ -18,6 +18,7 @@ from pathlib import Path
 from . import actors as actors_mod
 from . import config as config_mod
 from . import deps as deps_mod
+from . import errors as errors_mod
 from . import textutil
 
 OPEN_STATUSES = ("open", "in_progress", "blocked", "review")
@@ -185,7 +186,7 @@ def create_task(
         parent_row = conn.execute("SELECT project FROM tasks WHERE id = ?",
                                   (parent_id,)).fetchone()
         if parent_row is None:
-            raise KeyError(f"задача не найдена: {parent_id}")
+            raise errors_mod.NotFound(f"задача не найдена: {parent_id}")
         parent_project = parent_row["project"]
     if not project and parent_project:
         project = parent_project
@@ -333,7 +334,7 @@ def update_task(conn: sqlite3.Connection, task_id: str, *, actor: str | None = N
                 harness: str | None = None, note: str | None = None, **fields) -> dict:
     row = conn.execute("SELECT * FROM tasks WHERE id = ?", (task_id,)).fetchone()
     if not row:
-        raise KeyError(f"задача не найдена: {task_id}")
+        raise errors_mod.NotFound(f"задача не найдена: {task_id}")
     # Маршрут принимаем и под именем создания задачи (`route`): доска и `listik set`
     # шлют его так же, как POST /api/tasks. Каноническое имя — колонка launch_route.
     if ROUTE_ALIAS in fields and ROUTE_FIELD not in fields:
@@ -449,7 +450,7 @@ def update_task(conn: sqlite3.Connection, task_id: str, *, actor: str | None = N
             conn.rollback()
         fresh = conn.execute("SELECT * FROM tasks WHERE id = ?", (task_id,)).fetchone()
         if fresh is None:
-            raise KeyError(f"задача не найдена: {task_id}")
+            raise errors_mod.NotFound(f"задача не найдена: {task_id}")
         raise ValueError(route_change_denied(fresh) or (
             "маршрут нельзя менять: задачу взяли в работу, пока он менялся" + ROUTE_LOCKED_TAIL))
     # статус изменился — пересчитываем флаг блокировки у этой задачи и её ждущих
@@ -476,7 +477,7 @@ def set_needs_owner(conn: sqlite3.Connection, task_id: str, *, value: bool,
     """
     row = conn.execute("SELECT * FROM tasks WHERE id = ?", (task_id,)).fetchone()
     if not row:
-        raise KeyError(f"задача не найдена: {task_id}")
+        raise errors_mod.NotFound(f"задача не найдена: {task_id}")
     old_value = bool(row["needs_owner"])
     new_value = bool(value)
 
@@ -511,7 +512,7 @@ def claim(conn: sqlite3.Connection, task_id: str, *, holder: str, harness: str |
     """
     row = conn.execute("SELECT * FROM tasks WHERE id = ?", (task_id,)).fetchone()
     if not row:
-        raise KeyError(f"задача не найдена: {task_id}")
+        raise errors_mod.NotFound(f"задача не найдена: {task_id}")
     # Harness must be allowed for the task's project/stage.
     allowed = config_mod.allowed_harnesses(row["project"], row["stage"], conn=conn)
     if harness and allowed and harness not in allowed:
@@ -587,7 +588,7 @@ def heartbeat(conn: sqlite3.Connection, task_id: str, *, holder: str, note: str 
     row = conn.execute("SELECT holder, holder_at, holder_note FROM tasks WHERE id = ?",
                        (task_id,)).fetchone()
     if not row:
-        raise KeyError(f"задача не найдена: {task_id}")
+        raise errors_mod.NotFound(f"задача не найдена: {task_id}")
     ts = now_iso()
     # «Что делает» принадлежит тому, кто её написал: heartbeat, сменивший держателя
     # без claim, не наследует чужую заметку — остаётся только переданная явно.
@@ -609,7 +610,7 @@ def add_comment(conn: sqlite3.Connection, task_id: str, text: str, *, author: st
                 kind: str = "comment", harness: str | None = None,
                 created_at: str | None = None) -> dict:
     if not conn.execute("SELECT 1 FROM tasks WHERE id = ?", (task_id,)).fetchone():
-        raise KeyError(f"задача не найдена: {task_id}")
+        raise errors_mod.NotFound(f"задача не найдена: {task_id}")
     failed = parse_verdict(text) if kind == "verdict" else False
     actor_key, a_kind = actors_mod.resolve(author, conn)
     if author:
@@ -653,12 +654,36 @@ def parse_verdict(text: str | None) -> bool:
     raise ValueError(f"bad verdict format: {VERDICT_FORMAT}")
 
 
+def stage_unchanged(conn: sqlite3.Connection, task_id: str, *, stage: str | None,
+                    note: str | None = None, harness: str | None = None,
+                    actor: str | None = None) -> dict:
+    """`stage --to <текущий этап>`: перехода нет, карточка остаётся как была.
+
+    Событие `stage` с одинаковыми from/to соврало бы про смену этапа и обнулило
+    `stage_at`, а handoff по умолчанию снял бы держателя у задачи, которая никуда
+    не поехала. Поэтому не меняем ничего — но заметку сохраняем в истории, чтобы
+    вызов не пропал зря, и возвращаем карточку с флагом `stage_unchanged`, по
+    которому CLI печатает понятную строку (listik-xut1).
+    """
+    if note:
+        actor_key, _kind = actors_mod.resolve(actor, conn)
+        event(conn, task_id, "note", actor=actor_key, harness=harness, note=note)
+        conn.commit()
+    out = get_task(conn, task_id)
+    out["unchanged"] = True
+    out["stage_unchanged"] = True
+    out["message"] = (f"этап не менялся: задача уже на {stage} — перехода нет; "
+                      "держатель тоже не менялся"
+                      + ("; заметка записана в историю" if note else ""))
+    return out
+
+
 def next_stage(conn: sqlite3.Connection, task_id: str, *, holder: str | None = None,
                note: str | None = None, harness: str | None = None,
                to_stage: str | None = None, actor: str | None = None) -> dict:
     row = conn.execute("SELECT stage, project FROM tasks WHERE id = ?", (task_id,)).fetchone()
     if not row:
-        raise KeyError(f"задача не найдена: {task_id}")
+        raise errors_mod.NotFound(f"задача не найдена: {task_id}")
     cur = row["stage"]
     if to_stage is not None:
         if to_stage != "done" and to_stage not in PIPELINE_STAGES:
@@ -669,6 +694,11 @@ def next_stage(conn: sqlite3.Connection, task_id: str, *, holder: str | None = N
         nxt = PIPELINE_STAGES[idx + 1] if idx + 1 < len(PIPELINE_STAGES) else "done"
     else:
         nxt = PIPELINE_STAGES[0]
+    if to_stage is not None and nxt == cur:
+        # Явно попросили этап, на котором задача уже стоит (частый случай —
+        # `stage <id> --to <текущий> --note "…"` после release): это не переход.
+        return stage_unchanged(conn, task_id, stage=cur, note=note,
+                               harness=harness, actor=actor)
     fields = {"stage": nxt}
     transition = config_mod.transition_kind(row["project"], cur, nxt, conn=conn)
     # Handoff intentionally releases the previous writer so the next harness
@@ -686,7 +716,7 @@ def next_stage(conn: sqlite3.Connection, task_id: str, *, holder: str | None = N
 def get_task(conn: sqlite3.Connection, task_id: str, *, with_details: bool = True) -> dict:
     row = conn.execute("SELECT * FROM tasks WHERE id = ?", (task_id,)).fetchone()
     if not row:
-        raise KeyError(f"задача не найдена: {task_id}")
+        raise errors_mod.NotFound(f"задача не найдена: {task_id}")
     out = row_to_task(conn, row)
     try:
         from . import deps as deps_mod
@@ -1277,7 +1307,7 @@ def repo_info(path: str | Path) -> dict:
 def project_row(conn: sqlite3.Connection, slug: str) -> dict:
     row = conn.execute("SELECT * FROM projects WHERE slug = ?", (slug,)).fetchone()
     if not row:
-        raise KeyError(f"проект не найден: {slug}")
+        raise errors_mod.NotFound(f"проект не найден: {slug}")
     return dict(row)
 
 
@@ -1425,7 +1455,7 @@ def add_dep(conn: sqlite3.Connection, issue_id: str, depends_on: str, dep_type: 
             created_by: str | None = None, confirm: bool = False) -> dict:
     for tid in (issue_id, depends_on):
         if not conn.execute("SELECT 1 FROM tasks WHERE id = ?", (tid,)).fetchone():
-            raise KeyError(f"задача не найдена: {tid}")
+            raise errors_mod.NotFound(f"задача не найдена: {tid}")
     if issue_id == depends_on:
         raise ValueError(f"связь задачи с самой собой: {issue_id}")
     actor_key, actor_kind = actors_mod.resolve(created_by, conn)

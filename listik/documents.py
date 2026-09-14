@@ -7,6 +7,7 @@ import sqlite3
 from pathlib import Path
 
 from . import deps as deps_mod
+from . import errors as errors_mod
 from . import paths, search, store, textutil
 
 MAX_CHARS = 6000
@@ -272,7 +273,7 @@ def _drop_chunks(conn: sqlite3.Connection, doc_id: str) -> None:
 def index_document(conn: sqlite3.Connection, task_id: str, path: str, *, kind: str = "spec") -> dict:
     task = conn.execute("SELECT * FROM tasks WHERE id = ?", (task_id,)).fetchone()
     if task is None:
-        raise KeyError(f"задача не найдена: {task_id}")
+        raise errors_mod.NotFound(f"задача не найдена: {task_id}")
     row = conn.execute("SELECT * FROM documents WHERE task_id=? AND kind=? AND path=?",
                        (task_id, kind, path)).fetchone()
     now = store.now_iso()
@@ -360,7 +361,7 @@ def put_document(conn: sqlite3.Connection, task_id: str, kind: str, content: str
     """
     task = conn.execute("SELECT * FROM tasks WHERE id = ?", (task_id,)).fetchone()
     if task is None:
-        raise KeyError(f"задача не найдена: {task_id}")
+        raise errors_mod.NotFound(f"задача не найдена: {task_id}")
     _check_kind(kind)
     if not isinstance(content, str):
         raise ValueError("content должен быть строкой")
@@ -429,14 +430,14 @@ def get_document(conn: sqlite3.Connection, task_id: str, kind: str) -> dict:
     """Прочитать документ задачи: загруженный — из базы, файловый — с диска. Базу не пишет."""
     task = conn.execute("SELECT * FROM tasks WHERE id = ?", (task_id,)).fetchone()
     if task is None:
-        raise KeyError(f"задача не найдена: {task_id}")
+        raise errors_mod.NotFound(f"задача не найдена: {task_id}")
     _check_kind(kind)
     field = DOC_FIELDS[kind]
     path = task[field] if field in task.keys() else None
     if not path and kind == "decision" and "journal_path" in task.keys():
         path = task["journal_path"]
     if not path:
-        raise KeyError(f"у задачи {task_id} нет документа {kind}")
+        raise errors_mod.NotFound(f"у задачи {task_id} нет документа {kind}")
     row = conn.execute("SELECT * FROM documents WHERE task_id=? AND kind=? AND path=?",
                        (task_id, kind, path)).fetchone()
     if row is not None and "source" in row.keys() and row["source"] == "upload":
@@ -457,7 +458,7 @@ def get_document(conn: sqlite3.Connection, task_id: str, kind: str) -> dict:
 def index_task_documents(conn: sqlite3.Connection, task_id: str) -> list[dict]:
     task = conn.execute("SELECT * FROM tasks WHERE id=?", (task_id,)).fetchone()
     if not task:
-        raise KeyError(f"задача не найдена: {task_id}")
+        raise errors_mod.NotFound(f"задача не найдена: {task_id}")
     paths_to_index: list[tuple[str, str]] = []
     if task["spec_path"]:
         paths_to_index.append(("spec", task["spec_path"]))
@@ -516,7 +517,7 @@ def refresh_all(conn: sqlite3.Connection) -> dict:
 def document_json(conn: sqlite3.Connection, doc_id: str) -> dict:
     row = conn.execute("SELECT * FROM documents WHERE id=?", (doc_id,)).fetchone()
     if not row:
-        raise KeyError(f"документ не найден: {doc_id}")
+        raise errors_mod.NotFound(f"документ не найден: {doc_id}")
     chunks = [dict(r) for r in conn.execute("SELECT * FROM document_chunks WHERE document_id=? ORDER BY ordinal", (doc_id,))]
     status = row["status"] if "status" in row.keys() else "ok"
     error = row["error"] if "error" in row.keys() else None

@@ -466,7 +466,7 @@ dropped_chunks, reason`), `reasons[]` (по одному пункту на ка�
 | PUT | `/api/tasks/{id}/documents/{kind}` | `content` (обязателен, строка не длиннее 1 000 000 символов), `path`, `actor` | принять текст документа и хранить его в базе (`source=upload`) — для сервера, где файлов проектов нет. Путь выбирается по шагам, ровно в этом порядке: 1) непустой `path` из тела; 2) иначе — уже записанный в карточке путь этого вида (`spec_path`/`checklist_path`/`review_path`/`decision_path`); 3) иначе, для `decision`, — `journal_path`; 4) иначе — виртуальный `listik://<id>/<kind>.md`. В случаях 1 и 4 выбранный путь дописывается в карточку. `revision` растёт только при смене текста (новая запись — сразу `revision=1`); при новой записи и при смене текста пишется событие `document_uploaded` с пометкой `r<revision>`; повтор с тем же текстом ревизию не меняет и события не создаёт. 400 — неизвестный `kind`, не передан или не строка `content`, текст длиннее 1 000 000 символов, не строка `path`; 404 — нет такой задачи; 405 — любой метод по этому пути, кроме `GET` и `PUT` |
 | POST | `/api/tasks/{id}/claim` | `holder`(обязателен), `harness`, `note`, `force=false` | взять в работу. 400 по трём причинам: незакрытые жёсткие блокеры (обходится `force`, пишет предупреждение в историю), чужой держатель, занятое рабочее дерево — держатель и рабочее дерево `force` не обходят. `harness` проверяется, только если передан (сверяется с routing проекта на этапе задачи) |
 | POST | `/api/tasks/{id}/heartbeat` | `holder`(обязателен), `note` | отметка «жив, работаю» (событие не чаще 10 мин). Если `holder` отличается от текущего, держатель перезаписывается без проверок, `holder_note` прежнего сбрасывается (сохраняется только явно переданный `note`), а событие пишется всегда — смена держателя видна в истории |
-| POST | `/api/tasks/{id}/stage` | `holder`, `note`, `harness` | следующий этап конвейера s1→s2→s3→s4→done, считает длительность прошлого этапа |
+| POST | `/api/tasks/{id}/stage` | `holder`, `note`, `harness`, `to` | следующий этап конвейера s1→s2→s3→s4→done, считает длительность прошлого этапа. `to` — явный этап (`s1-spec`…`s4-judge`/`done`); если `to` совпал с текущим этапом, это не переход, а no-op: карточка, `stage_at` и держатель остаются как были, событие `stage` не пишется, а непустой `note` уходит событием `note` в историю; в ответе та же карточка с `stage_unchanged: true`, `unchanged: true` и `message`. Сценарий «release → `stage --to <текущий>`» безопасен (listik-xut1) |
 | POST | `/api/tasks/{id}/comment` | `text`(обязателен), `author`/`actor`, `kind=comment\|journal\|question\|answer\|review\|verdict`, `harness` | комментарий в журнал задачи; `kind=question`/`answer` — те же виды, что пишет `needs-owner` (см. ниже), их можно оставить и вручную, но сам флаг `needs_owner` они не меняют; `kind=verdict` — первая строка ровно `VERDICT: PASS` или `VERDICT: FAIL` (после `FAIL` — список правок), иначе 400 |
 | POST | `/api/tasks/{id}/needs-owner` | `value=true\|false`, `note`, `actor`, `harness` | поднять/снять флаг «нужен человек»: при непустом `note` создаётся комментарий `kind=question` (`value=true`) или `kind=answer` (`value=false`); событие `question`/`answer` пишется при каждом вызове, даже если флаг уже стоит в нужном значении; ответ — полная карточка, как у `PATCH`. `PATCH /api/tasks/{id}` с `needs_owner` меняет только флаг и комментария не пишет |
 | POST | `/api/tasks/{id}/release` | `note`, `actor` | освободить задачу |
@@ -684,6 +684,7 @@ listik claim <id> --holder dsh/deepseek-flash   # заблокированную
 listik claim <id> --holder dsh/deepseek-flash --force   # осознанный обход запрета по блокеру
 listik heartbeat <id> --holder dsh/deepseek-flash --note "пишу порцию B"
 listik stage <id> --holder dsh/deepseek-flash      # следующий этап
+listik stage <id> --to s3-impl --note "вернул на тот же этап"   # явный этап; текущий — no-op с заметкой в истории
 listik comment <id> "текст" --kind journal
 listik needs-owner <id> "вопрос автору"
 listik needs-owner <id> --clear "ответ"
@@ -722,8 +723,14 @@ listik restore <копия> [--stop] [--force]  # восстановление; 
 |---|---|---|
 | разбор аргументов (`ListikParser.error`) | всегда `bad_argument`, код возврата 2 | `listik new x --stage s9 --json` |
 | ответ сервера (`client.request`) | `code` из тела ответа, иначе по HTTP-статусу (404 → `not_found`, 409 → `conflict`, 5xx → `server_error`) | `listik show <нет такого> --json` |
-| локальный режим (`client.local_call`) | `KeyError` → `not_found`, `ValueError` → `conflict` | то же без запущенного сервера |
+| локальный режим (`client.local_call`) | `errors.NotFound` → `not_found`, `ValueError` → `conflict` | то же без запущенного сервера |
 | непойманное исключение | `internal`, трейсбек пишется только в `listik.log` | сломанная база |
+
+«Не найдено» поднимают только `errors.NotFound` (store/documents/deps) — это осознанный ответ
+«такой задачи/проекта/документа нет». Голый `KeyError` (обращение к отсутствующему ключу
+словаря: нет поля у карточки) — это `internal`: сервер отдаёт по нему 500 с текстом
+`KeyError: <ключ>`, CLI — `internal` и трейсбек в `listik.log`. Маскировать баг под `not_found`
+с подсказкой «проверь идентификатор» нельзя — так теряется причина (listik-xut1).
 
 `--priority` (`new`, `set`) принимает и число, и подпись: `--priority 2` = `--priority P2`,
 `listik set <id> priority=P2`; вне диапазона 0–4 — `bad_argument` с подсказкой.

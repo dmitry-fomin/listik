@@ -1079,7 +1079,18 @@ def add_project(conn: sqlite3.Connection, *, path: str | None = None, slug: str 
     Slug по умолчанию — имя каталога; можно передать свой, чтобы лечь в категорию
     (`Zoloto585/my-repo`). Если проект с таким slug уже есть — он возвращается
     на доску и обновляется, а не падает с ошибкой.
+
+    `path` — только абсолютный (или от `~`): относительный путь каждый вызывающий
+    разрешил бы от своего cwd, а у сервера и CLI он разный (listik-mo3a). CLI
+    разрешает относительный путь сам, в cwd пользователя, до HTTP-запроса.
     """
+    raw_path = str(path).strip() if path is not None else ""
+    if raw_path and not Path(raw_path).expanduser().is_absolute():
+        raise ValueError(
+            f"path должен быть абсолютным: «{raw_path}» — относительный путь сервер "
+            "не разрешает (у него свой рабочий каталог). Передай абсолютный путь, "
+            "например /Users/you/Projects/repo, или путь от ~; CLI разрешает "
+            "относительный путь сам до запроса.")
     info = (repo_info(path) if path
             else {"path": None, "exists": False, "git": False,
                   "git_remote": None, "git_branch": None})

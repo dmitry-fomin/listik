@@ -350,7 +350,9 @@ claude mcp add listik -- /путь/к/listik/bin/listik mcp
 **Правила в проектах.** `listik init-projects` вписывает протокол работы с Listik
 (`docs/harness-protocol.md`) в существующие `AGENTS.md`/`CLAUDE.md` проектов, добавленных через
 `listik projects --add <путь>`, — между маркерами `<!-- BEGIN LISTIK -->`/`<!-- END LISTIK -->`,
-не трогая остальной текст. `--dry-run` — посмотреть, `--remove` — убрать.
+не трогая остальной текст. `--dry-run` — посмотреть, `--remove` — убрать. У `projects --add`
+относительный путь CLI разрешает сам (в своём cwd), а каталог внутри git-репозитория приводит к
+его корню и печатает, куда именно добавлен проект.
 
 **Переход с beads.** `listik import-beads` разово переносит `.beads`-трекеры из каталога проектов
 (старый ID сохраняется в `external_ref`), затем — `docs/beads-migration.md`. Проект берётся с

@@ -47,7 +47,7 @@ class SwapStateCase(unittest.TestCase):
     """Своя временная база и чистое глобальное состояние server на каждый тест."""
 
     _GLOBALS = ("_conn_local", "_conn_made", "_conns", "_db_generation",
-                "_schema_generation", "_fingerprint", "_db_replaced", "_db_error",
+                "_schema_generation", "_fingerprint", "_fingerprint_path", "_db_replaced", "_db_error",
                 "_last_watch", "_dbwatch_stop", "_dbwatch_thread")
 
     def setUp(self) -> None:
@@ -68,6 +68,7 @@ class SwapStateCase(unittest.TestCase):
         server._db_generation = 0
         server._schema_generation = -1
         server._fingerprint = None
+        server._fingerprint_path = None
         server._db_replaced = None
         server._db_error = None
         server._last_watch = 0.0
@@ -172,6 +173,28 @@ class WatchTests(SwapStateCase):
         server._watch_tick(force=True)
         server.close_thread_conn()
         self.assertIsNone(server._watch_tick(force=True))
+
+    def test_switching_db_path_is_not_a_swap(self) -> None:
+        """Другой `paths.DB_PATH` (следующий тест, своя база) — новая базовая линия (listik-mfpl)."""
+        self.make_task("в первой базе")
+        server._watch_tick(force=True)
+        other = self.tmp_path / "next-test.db"
+        db_mod.init(other).close()
+        paths.DB_PATH = other
+
+        self.assertIsNone(server._watch_tick())  # без force: смена пути не ждёт интервала
+        self.assertEqual(server._fingerprint_path, other)
+        self.assertIsNone(server._db_replaced)
+        self.assertEqual(server._db_generation, 0)
+        self.assertNotIn("ПОДМЕНА", self.watch_output.getvalue())
+
+        # Подмена уже нового файла по-прежнему замечается.
+        replacement = self.tmp_path / "replacement.db"
+        db_mod.init(replacement).close()
+        os.replace(replacement, other)
+        event = server._watch_tick(force=True)
+        self.assertIsNotNone(event)
+        self.assertIn("файл базы заменён", event["detail"])
 
 
 class FingerprintDiffTests(unittest.TestCase):

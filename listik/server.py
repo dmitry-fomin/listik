@@ -127,6 +127,10 @@ DB_WATCH_INTERVAL = 2.0
 _watch_lock = threading.Lock()
 #: Последний замер: {"db": (dev, ino) | None, "wal": (dev, ino) | None}.
 _fingerprint: dict | None = None
+#: Путь базы, к которому относится `_fingerprint`. Другой путь (тест подставил
+#: свою временную базу в `paths.DB_PATH`) — не подмена, а новая базовая линия
+#: (listik-mfpl): иначе сравнивали бы inode разных файлов.
+_fingerprint_path: Path | None = None
 #: Последняя подмена файла в этом процессе — уходит в /api/health и `listik status`
 #: (в отличие от `_db_error`, это не «прямо сейчас», а факт: он не сбрасывается).
 _db_replaced: dict | None = None
@@ -205,9 +209,14 @@ def _fingerprint_diff(before: dict, after: dict, open_conns: int) -> dict | None
 
 def _watch_tick(*, force: bool = False) -> dict | None:
     """Один замер файлов базы; событие подмены уходит в лог, health и status."""
-    global _fingerprint, _last_watch
+    global _fingerprint, _fingerprint_path, _last_watch
     now = time.monotonic()
     with _watch_lock:
+        path = Path(paths.DB_PATH)
+        if path != _fingerprint_path:
+            # Сменился сам путь базы — прошлый замер про другой файл (listik-mfpl).
+            _fingerprint, _fingerprint_path = None, path
+            force = True
         if not force and now - _last_watch < DB_WATCH_INTERVAL:
             return None
         _last_watch = now

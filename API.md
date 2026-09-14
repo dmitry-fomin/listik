@@ -192,7 +192,7 @@ pid <N>, лог <path>`. Процесс не блокирует запрос: PO
 
 | Метод | Путь | Параметры | Ответ |
 |---|---|---|---|
-| GET | `/api/health` | — | `status, version, db, counts, embed{ok,models}, now`; авторизованному — ещё `routes{ok,error,path,count}` |
+| GET | `/api/health` | — | `status, version, embed{model}, now, authed`; авторизованному — ещё `db`, `counts`, `embed{ok,models}`, `routes{ok,error,path,count}` и `db_error{where,error,at}` — только если последний фоновый проход упал с `sqlite3.DatabaseError` (см. ниже) |
 | GET | `/api/routes` | — | `ok, error, path, routes[]` — записи `routes.json`, загруженные при старте, без `command` (см. «Маршруты запуска»); ошибка файла — `ok=false` и текст, а не HTTP-ошибка |
 | GET | `/api/meta` | `archived` | `projects[], actors[], facets{}, statuses{}, stages{}, priorities{}` |
 | GET | `/api/projects` | — | `projects[]` — все репозитории доски, включая скрытые: `slug, title, kind, path, path_exists, git_remote, git_branch, archived, n_tasks, n_open, n_wip`, плюс `routing` (переопределение проекта — объект или `null`), `routing_effective` (действующая слитая таблица, которой реально пользуются `allowed_harnesses`/`transition_kind`), `routing_source` (`default`\|`config`\|`db`\|`config+db`), плюс `root` (корень поиска проектов) |
@@ -209,6 +209,21 @@ pid <N>, лог <path>`. Процесс не блокирует запрос: PO
 | GET | `/api/timeline` | `limit` | `items[]`: `ts, kind, from_value, to_value, actor, actor_title, harness, note, duration_s, task_id, title, project, stage, status, age` |
 | GET | `/api/events` | `limit` | сырые события |
 | GET | `/api/stream` | `token` (обязателен) | SSE: `data: {"kind":"task","at":...,"payload":{"id":...,"action":"updated"}}`, плюс `: ping` каждые 15 с |
+
+`GET /api/health` без токена отдаёт только пробу живости (`status`, `version`, `embed.model`,
+`now`, `authed`) — по ней CLI понимает, поднят ли сервер; подробности (`db`, `counts`,
+`embed.ok`, `routes`) только авторизованному запросу.
+
+`db_error` — здоровье базы в фоновом потоке сервера, а не история. Поле появляется в ответе
+авторизованному запросу, когда проход `documents` или `embed` (раз в 45 с) поймал
+`sqlite3.DatabaseError` — например, «database disk image is malformed», если базу или её WAL
+подменили под работающим сервером. Формат: `{where, error, at}` — шаг (`documents` или `embed`),
+текст `<Тип>: <сообщение>` и время события, ISO-8601 UTC. Первый же проход, в котором база ни
+разу не упала, снимает поле: после восстановления базы health снова отвечает без `db_error`, а
+не показывает старую ошибку (listik-9csm). Ошибки, не связанные с базой (недоступный ollama,
+нечитаемый файл документа), поля не создают и снять его не мешают — важно только, падала ли в
+проходе сама база. `listik status` печатает `db_error` отдельной строкой
+`база: ОШИБКА в фоне …`, если поле есть в ответе.
 
 `/api/board` — форма колонки:
 

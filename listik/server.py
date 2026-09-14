@@ -84,6 +84,9 @@ def close_thread_conn() -> None:
 
 
 # Последняя ошибка базы в фоновом потоке — отдаётся в /api/health, чтобы не молчать.
+# Это состояние «прямо сейчас», а не история: первый же проход без DatabaseError
+# снимает его (_background_db_ok), иначе health показывал бы старую ошибку даже
+# после восстановления базы (listik-9csm).
 _db_error: dict | None = None
 
 
@@ -100,7 +103,59 @@ def _background_db_error(where: str, exc: Exception) -> None:
     close_thread_conn()
 
 
+def _background_db_ok() -> None:
+    """Проход без DatabaseError: снять прошлую ошибку из /api/health (listik-9csm).
+
+    База восстановилась (её пересоздали, вернули WAL, отпустил busy_timeout) — молчать
+    об этом нельзя ровно так же, как об ошибке: держатель смотрит на health и решает,
+    нужен ли перезапуск демона.
+    """
+    global _db_error
+    if _db_error is None:
+        return
+    where = _db_error.get("where") or "db"
+    print(f"[{where}] база снова отвечает — сбрасываю db_error", flush=True)
+    _db_error = None
+
+
 _embed_stop = threading.Event()
+
+
+def _background_pass(batch_limit: int = 200) -> None:
+    """Один проход фоновой индексации: сначала documents, затем embed.
+
+    DatabaseError каждого шага уходит в `_background_db_error` и оставляет запись в
+    /api/health; если за весь проход база ни разу не упала — `_background_db_ok`
+    снимает прошлую ошибку (listik-9csm). Ошибки, не связанные с базой (нет ollama,
+    битый файл документа), записи не создают и снять её не мешают: проход, в котором
+    база читалась нормально, не должен держать старую ошибку из-за недоступного ollama.
+    """
+    db_ok = True
+    try:
+        from . import documents as documents_mod
+        res = documents_mod.refresh_all(get_conn())
+        if res.get("reindexed"):
+            print(f"[documents] переиндексировано: {res['reindexed']}", flush=True)
+            publish("documents", res)
+    except sqlite3.DatabaseError as exc:
+        db_ok = False
+        _background_db_error("documents", exc)
+    except Exception as exc:  # noqa: BLE001
+        print(f"[documents] пропуск: {type(exc).__name__}: {exc}", flush=True)
+    try:
+        # соединение своё на поток, поэтому лок больше не нужен
+        res = embed_mod.embed_pending(get_conn(), limit=batch_limit, verbose=False)
+        if res.get("embedded"):
+            search_mod.invalidate_vectors()
+            print(f"[embed] досчитано векторов: {res['embedded']}", flush=True)
+            publish("embed", res)
+    except sqlite3.DatabaseError as exc:
+        db_ok = False
+        _background_db_error("embed", exc)
+    except Exception as exc:  # noqa: BLE001
+        print(f"[embed] пропуск: {type(exc).__name__}: {exc}", flush=True)
+    if db_ok:
+        _background_db_ok()
 
 
 def start_embed_worker(interval: float = 45.0, batch_limit: int = 200) -> threading.Thread:
@@ -113,27 +168,7 @@ def start_embed_worker(interval: float = 45.0, batch_limit: int = 200) -> thread
     """
     def loop() -> None:
         while not _embed_stop.wait(interval):
-            try:
-                from . import documents as documents_mod
-                res = documents_mod.refresh_all(get_conn())
-                if res.get("reindexed"):
-                    print(f"[documents] переиндексировано: {res['reindexed']}", flush=True)
-                    publish("documents", res)
-            except sqlite3.DatabaseError as exc:
-                _background_db_error("documents", exc)
-            except Exception as exc:  # noqa: BLE001
-                print(f"[documents] пропуск: {type(exc).__name__}: {exc}", flush=True)
-            try:
-                # соединение своё на поток, поэтому лок больше не нужен
-                res = embed_mod.embed_pending(get_conn(), limit=batch_limit, verbose=False)
-                if res.get("embedded"):
-                    search_mod.invalidate_vectors()
-                    print(f"[embed] досчитано векторов: {res['embedded']}", flush=True)
-                    publish("embed", res)
-            except sqlite3.DatabaseError as exc:
-                _background_db_error("embed", exc)
-            except Exception as exc:  # noqa: BLE001
-                print(f"[embed] пропуск: {type(exc).__name__}: {exc}", flush=True)
+            _background_pass(batch_limit)
 
     thread = threading.Thread(target=loop, name="listik-embed", daemon=True)
     thread.start()

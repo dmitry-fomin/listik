@@ -252,6 +252,13 @@ def cmd_status(args) -> int:
         emb = h.get("embed") or {}
         print(f"поиск:  модель {emb.get('model')} "
               + ("готова" if emb.get("ok") else "НЕДОСТУПНА — векторов не будет"))
+        # Последний сбой базы в фоновом потоке сервера: без этой строки о нём
+        # молчал и status (listik-9csm). Снимается первым успешным проходом.
+        db_error = h.get("db_error")
+        if db_error:
+            print(f"база:   ОШИБКА в фоне [{db_error.get('where')}] "
+                  f"{db_error.get('at')}: {db_error.get('error')} — сбросится после "
+                  "успешного прохода")
     else:
         print("(подробности недоступны: токен не принят)")
     # Маршруты — только из ответа /api/health работающего сервера: сам status файл

@@ -343,8 +343,22 @@ class ValidateTests(unittest.TestCase):
     def test_strip_empty_object(self) -> None:
         self.check_error(document({**pipeline_record(), "strip": {}}), "routes[0].strip.label")
 
-    def test_strip_glyph_not_in_icons(self) -> None:
-        strip = {"glyph": "nosuchicon", "label": "x"}
+    def test_strip_glyph_not_in_icons_warns(self) -> None:
+        """Неизвестный глиф — предупреждение, а не ошибка файла (listik-uiza)."""
+        bad = {**pipeline_record(), "strip": {"glyph": "nosuchicon", "label": "x"}}
+        good = {**pipeline_record(), "key": "other",
+                "strip": {"glyph": "gear", "label": "y"}}
+        warnings: list[str] = []
+        normalized = routes_mod.validate(document(bad, good), warnings)
+        self.assertEqual(len(warnings), 1)
+        self.assertIn("routes[0].strip.glyph", warnings[0])
+        self.assertIn("'nosuchicon'", warnings[0])
+        self.assertEqual(normalized[0]["strip"],
+                         {"glyph": None, "label": "x", "glyph_error": warnings[0]})
+        self.assertEqual(normalized[1]["strip"], {"glyph": "gear", "label": "y"})
+
+    def test_strip_glyph_bad_format_still_error(self) -> None:
+        strip = {"glyph": "Bad Glyph", "label": "x"}
         self.check_error(document({**pipeline_record(), "strip": strip}),
                          "routes[0].strip.glyph")
 
@@ -619,6 +633,19 @@ class CopyAndStateTests(TempDbTestCase):
         path.write_text(json.dumps({"version": 1, "routes": list(records)}, ensure_ascii=False),
                         encoding="utf-8")
         return path
+
+    def test_load_unknown_strip_glyph_warns_but_keeps_the_file(self) -> None:
+        """listik-uiza: опечатка в `strip.glyph` не выключает автостарт."""
+        bad = {**pipeline_record(), "strip": {"glyph": "nosuchicon", "label": "x"}}
+        path = self._write_routes([bad, direct_record()])
+        with contextlib.redirect_stderr(io.StringIO()) as err:
+            state = routes_mod.load(path)
+        self.assertTrue(state.ok)
+        self.assertEqual(len(state.routes), 2)
+        self.assertEqual(len(state.warnings), 1)
+        self.assertIn("routes[0].strip.glyph", state.warnings[0])
+        self.assertIsNone(state.routes[0]["strip"]["glyph"])
+        self.assertIn("routes[0].strip.glyph", err.getvalue())
 
     def test_load_unknown_icon_warns_but_keeps_the_file(self) -> None:
         """Опечатка в `icon` — предупреждение, а не ошибка файла (приёмка 1).

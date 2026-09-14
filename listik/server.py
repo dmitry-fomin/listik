@@ -1323,6 +1323,18 @@ def daemonize() -> None:
     os.dup2(devnull.fileno(), sys.stdin.fileno())
 
 
+def _exit_on_sigterm() -> None:
+    """SIGTERM (так останавливает `listik stop`) по умолчанию убивает процесс без раскрутки
+    стека, и `finally` в `serve()` не удаляет listik.pid (listik-a7pw). Превращаем сигнал в
+    SystemExit(0): `serve_forever` прерывается, `finally` закрывает сокет и убирает pid-файл."""
+    def _handler(signum, frame):
+        raise SystemExit(0)
+    try:
+        signal.signal(signal.SIGTERM, _handler)
+    except (AttributeError, ValueError):
+        pass  # не главный поток — оставляем поведение по умолчанию
+
+
 def serve(host: str | None = None, port: int | None = None, quiet: bool = False,
           background: bool = False, no_embed: bool = False) -> None:
     # Сервер поднимают и фоновым запуском: без этого SIGHUP от закрытия терминала
@@ -1351,6 +1363,7 @@ def serve(host: str | None = None, port: int | None = None, quiet: bool = False,
         print(f"лог:  {log_file()}")
         print(f"pid:  {pid_file()}")
         daemonize()
+        _exit_on_sigterm()
         pid_file().write_text(str(os.getpid()))
         conn = get_conn()
         # После daemonize: сообщение об ошибке routes.json должно попасть в listik.log.
@@ -1385,6 +1398,7 @@ def serve(host: str | None = None, port: int | None = None, quiet: bool = False,
     print(f"база:           {paths.DB_PATH}")
     print(f"токен:          {token}")
     print("Ctrl+C — остановить")
+    _exit_on_sigterm()
     try:
         pid_file().write_text(str(os.getpid()))
         httpd.serve_forever()

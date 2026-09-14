@@ -426,6 +426,11 @@ def cmd_status(args) -> int:
     if h.get("authed") and h.get("counts"):
         c = h["counts"]
         print(f"база:   {h.get('db')}")
+        rt = h.get("runtime") or {}
+        if rt:
+            print(f"код:    {rt.get('code_dir')}   cwd: {rt.get('cwd')}")
+            if rt.get("warning"):
+                print(f"ВНИМАНИЕ: {rt['warning']}")
         print(f"данные: {c['tasks']} задач, {c['comments']} комментариев, "
               f"{c['events']} событий, {c['embeddings']} векторов")
         emb = h.get("embed") or {}

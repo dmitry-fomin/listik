@@ -61,17 +61,41 @@ class ProjectSlugCaseTests(TempDbTestCase):
 
 
 class RelativePathTests(TempDbTestCase):
-    """Относительный путь отклоняется, а не разрешается от чьего-то cwd (listik-mo3a)."""
+    """Относительный путь — от корня проектов, не от чьего-то cwd (listik-mo3a, listik-i23u)."""
 
     def _count_projects(self) -> int:
         return self.conn.execute("SELECT count(*) FROM projects").fetchone()[0]
 
-    def test_store_refuses_relative_path(self) -> None:
-        with self.assertRaises(ValueError) as ctx:
-            store.add_project(self.conn, path="Listik")
-        self.assertIn("абсолютн", str(ctx.exception))
-        self.assertIn("Listik", str(ctx.exception))
+    def test_store_resolves_relative_path_from_projects_root(self) -> None:
+        """listik-i23u: относительный путь — от корня проектов, не от cwd процесса."""
+        root = (self.tmp_path / "Projects").resolve()
+        (root / "Zoloto585" / "Parser").mkdir(parents=True)
+        (self.tmp_path / "elsewhere").mkdir()
+        old_cwd = os.getcwd()
+        try:
+            os.chdir(self.tmp_path / "elsewhere")
+            with mock.patch.object(store.paths, "PROJECTS_ROOT", root):
+                project = store.add_project(self.conn, path="Zoloto585/Parser",
+                                            slug="Zoloto585Parser")
+        finally:
+            os.chdir(old_cwd)
+        self.assertEqual(Path(project["path"]), root / "Zoloto585" / "Parser")
+
+    def test_missing_relative_dir_names_full_path(self) -> None:
+        root = (self.tmp_path / "Projects").resolve()
+        root.mkdir()
+        with mock.patch.object(store.paths, "PROJECTS_ROOT", root):
+            with self.assertRaises(ValueError) as ctx:
+                store.add_project(self.conn, path="Nope/Repo")
+        self.assertIn(str(root / "Nope" / "Repo"), str(ctx.exception))
         self.assertEqual(self._count_projects(), 0)
+
+    def test_update_project_relative_path_from_root(self) -> None:
+        root = (self.tmp_path / "Projects").resolve()
+        store.add_project(self.conn, slug="p1")
+        with mock.patch.object(store.paths, "PROJECTS_ROOT", root):
+            out = store.update_project(self.conn, "p1", path="a/b")
+        self.assertEqual(out["path"], str(root / "a" / "b"))
 
     def test_cli_resolves_relative_path_in_its_own_cwd(self) -> None:
         """CLI по-прежнему принимает относительный путь: разрешает его сам до запроса."""
@@ -102,22 +126,40 @@ class ProjectsApiPathTests(TempDbTestCase):
     def post(self, body: dict) -> tuple[int, dict]:
         return server.handle("POST", "/api/projects", {}, body, authed=True)
 
-    def test_relative_path_is_rejected_even_if_it_exists(self) -> None:
-        # Точная ловушка из карточки: «Listik» при cwd=~/Projects/Listik разрешался
-        # в существующий ~/Projects/Listik/Listik (регистронезависимая APFS).
+    def test_relative_path_from_projects_root_despite_foreign_cwd(self) -> None:
+        # Ловушки mo3a/i23u: cwd сервера (чужой worktree с таким же подкаталогом)
+        # не влияет — путь берётся от корня проектов.
+        root = (self.tmp_path / "Projects").resolve()
+        (root / "Zoloto585" / "Parser").mkdir(parents=True)
+        wt = self.tmp_path / "wt"
+        (wt / "Zoloto585" / "Parser").mkdir(parents=True)
         old_cwd = os.getcwd()
-        with self.assertRaises(server.ApiError) as ctx:
-            try:
-                os.chdir(self.tmp_path)
-                (self.tmp_path / "Listik" / "Listik").mkdir(parents=True)
-                self.post({"path": "Listik"})
-            finally:
-                os.chdir(old_cwd)
-        self.assertEqual(ctx.exception.status, 400)
-        self.assertEqual(ctx.exception.code, "bad_argument")
-        self.assertIn("абсолютн", ctx.exception.message)
-        self.assertIn("Listik", ctx.exception.message)
-        self.assertEqual(self.conn.execute("SELECT count(*) FROM projects").fetchone()[0], 0)
+        try:
+            os.chdir(wt)
+            with mock.patch.object(store.paths, "PROJECTS_ROOT", root):
+                status, project = self.post({"path": "Zoloto585/Parser", "slug": "Zoloto585Parser"})
+        finally:
+            os.chdir(old_cwd)
+        self.assertEqual(status, 201)
+        self.assertEqual(Path(project["path"]), root / "Zoloto585" / "Parser")
+
+    def test_health_reports_runtime(self) -> None:
+        status, data = server.handle("GET", "/api/health", {}, {}, authed=True)
+        self.assertEqual(data["runtime"]["cwd"], os.getcwd())
+        self.assertEqual(data["runtime"]["code_dir"], str(server.paths.ROOT_DIR))
+
+    def test_runtime_warns_for_linked_worktree(self) -> None:
+        main = self.tmp_path / "main"
+        subprocess.run(["git", "init", "-q", str(main)], check=True)
+        subprocess.run(["git", "-C", str(main), "-c", "user.name=t", "-c", "user.email=t@t",
+                        "commit", "-q", "--allow-empty", "-m", "i"], check=True)
+        wt = self.tmp_path / "wt2"
+        subprocess.run(["git", "-C", str(main), "worktree", "add", "-q", str(wt)], check=True)
+        self.assertFalse(server.runtime_info(main)["worktree"])
+        info = server.runtime_info(wt)
+        self.assertTrue(info["worktree"])
+        self.assertEqual(Path(info["main_repo"]), main.resolve())
+        self.assertIn("worktree", info["warning"])
 
     def test_absolute_nested_path_is_adjusted_to_git_root(self) -> None:
         repo = (self.tmp_path / "repo").resolve()

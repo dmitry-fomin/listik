@@ -486,6 +486,26 @@ def need(body: dict, key: str):
 
 # ------------------------------------------------------------------ обработчики
 
+def runtime_info(root: Path | None = None) -> dict:
+    """Откуда запущен сервер: каталог кода, cwd и не чужой ли это worktree (listik-i23u).
+
+    Сервер, поднятый из связанного git worktree, работает на коде ветки задачи —
+    это надо видеть в `/api/health` и `listik status`.
+    """
+    root = Path(root or paths.ROOT_DIR)
+    info = {"code_dir": str(root), "cwd": os.getcwd(), "worktree": False,
+            "main_repo": None, "warning": None}
+    git_dir = store._git_value(root, "rev-parse", "--absolute-git-dir")
+    common = store._git_value(root, "rev-parse", "--path-format=absolute", "--git-common-dir")
+    if git_dir and common and Path(git_dir).resolve() != Path(common).resolve():
+        info["worktree"] = True
+        info["main_repo"] = str(Path(common).resolve().parent)
+        info["warning"] = (f"сервер запущен из git worktree {root}, а не из основного "
+                           f"репозитория {info['main_repo']} — код ветки задачи; "
+                           "перезапусти из основного каталога")
+    return info
+
+
 def handle(method: str, path: str, query: dict, body: dict, authed: bool = False) -> tuple[int, object]:
     conn = get_conn()
     parts = [p for p in path.strip("/").split("/") if p]
@@ -512,6 +532,7 @@ def handle(method: str, path: str, query: dict, body: dict, authed: bool = False
             routes_state = routes_mod.current()
             data.update({
                 "db": str(paths.DB_PATH),
+                "runtime": runtime_info(),
                 "counts": db_mod.counts(conn),
                 "embed": embed_mod.health(cfg["embed"]["model"]),
                 "routes": {

@@ -357,9 +357,10 @@ class ServeOrderTests(_TempDirTests):
 
     def test_daemon_with_live_pid_file_does_not_bind(self) -> None:
         """Живой pid-файл: `serve --daemon` сообщает и выходит, порт не трогает."""
-        (self.tmp_path / "listik.pid").write_text(str(os.getpid()), encoding="utf-8")
+        pid_path = self.tmp_path / "listik.pid"
+        pid_path.write_text(str(os.getpid()), encoding="utf-8")
         out = io.StringIO()
-        with mock.patch.object(paths, "ROOT_DIR", self.tmp_path), \
+        with mock.patch.object(paths, "PID_PATH", pid_path), \
              mock.patch.object(server, "bind_or_explain") as bind, \
              mock.patch.object(server, "daemonize") as daemonize, \
              contextlib.redirect_stdout(out):

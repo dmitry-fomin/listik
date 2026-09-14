@@ -34,6 +34,8 @@ web/dist/
 web/.env
 web/.env.local
 
+dist/
+
 __pycache__/
 *.pyc
 .DS_Store

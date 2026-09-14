@@ -1,0 +1,557 @@
+#!/bin/sh
+# install.sh — установка и обновление Listik одной строкой.
+#
+#   curl -fsSL https://github.com/dmitry-fomin/listik/releases/latest/download/install.sh | sh
+#
+# Скрипт рассчитан и на `curl … | sh`: stdin — это он сам, поэтому ни данных, ни
+# ответов на вопросы из stdin он не читает. Единственный источник ответа — /dev/tty.
+#
+# Раскладка установки:
+#   <home>/app/<версия>/   код этой версии (старые версии не удаляются)
+#   <home>/app/current     ссылка на текущую версию (относительная)
+#   <bin-dir>/listik       обёртка: exec python3 <home>/app/current/bin/listik "$@"
+# Данные (<home>/listik.db, config.toml, listik.log, logs/) установщик не создаёт,
+# не перезаписывает и не удаляет; что нужно, создаст сам Listik (`listik init`).
+set -eu
+
+prog=install.sh
+
+DEFAULT_RELEASES_API=https://api.github.com/repos/dmitry-fomin/listik/releases/latest
+DEFAULT_DOWNLOAD_BASE=https://github.com/dmitry-fomin/listik/releases/download
+DEFAULT_ROUTES_POLICY=ask
+
+die() {
+    printf '%s: ошибка: %s\n' "$prog" "$1" >&2
+    exit 1
+}
+
+note() {
+    printf '%s\n' "$1"
+}
+
+usage() {
+    cat <<'USAGE'
+Установка и обновление Listik.
+
+Использование:
+  curl -fsSL https://github.com/dmitry-fomin/listik/releases/latest/download/install.sh | sh
+  sh install.sh [флаги]
+
+Флаги (флаг важнее переменной окружения):
+  --version X.Y.Z       какую версию ставить (LISTIK_VERSION)
+  --archive <путь>      поставить из локального архива, без сети (LISTIK_ARCHIVE);
+                        версия берётся из файла VERSION внутри архива
+  --home <каталог>      каталог установки и данных (LISTIK_HOME), по умолчанию ~/.listik
+  --bin-dir <каталог>   куда положить обёртку listik (LISTIK_BIN_DIR),
+                        по умолчанию ~/.local/bin
+  --routes keep|replace|ask
+                        что делать с рабочей копией routes.json, если она отличается
+                        от новой (LISTIK_ROUTES_POLICY), по умолчанию ask;
+                        keep — не трогать, replace — заменить, сохранив .bak-<время>,
+                        ask — спросить в /dev/tty
+  --service yes|no      поставить и (пере)запустить автозапуск сервера
+                        (launchd/systemd --user), по умолчанию yes
+  --mcp yes|no          подключить MCP-сервер (claude mcp add), по умолчанию yes
+  --plugins yes|no      поставить плагины Claude (marketplace + listik/feature-pipeline),
+                        по умолчанию yes
+  --yes                 на вопросы без явного флага отвечать значением по умолчанию
+                        (для routes это keep, для service/mcp/plugins — yes)
+  --help                эта справка
+
+Переменные окружения:
+  LISTIK_HOME           каталог данных (по умолчанию ~/.listik); обёртка ставит его
+                        по умолчанию, но заданное пользователем значение важнее
+  LISTIK_VERSION, LISTIK_ARCHIVE, LISTIK_BIN_DIR, LISTIK_ROUTES_POLICY — см. флаги
+  LISTIK_ROUTES         рабочая копия routes.json
+                        (по умолчанию ~/.config/listik/routes.json)
+  LISTIK_RELEASES_API   откуда брать последнюю версию, по умолчанию
+                        https://api.github.com/repos/dmitry-fomin/listik/releases/latest
+  LISTIK_DOWNLOAD_BASE  откуда качать архивы, по умолчанию
+                        https://github.com/dmitry-fomin/listik/releases/download
+
+Нужны: Darwin или Linux, python3 3.11+ и tar; для установки из сети — ещё curl или
+wget; для проверки суммы — sha256sum или shasum.
+USAGE
+}
+
+# ------------------------------------------------------------------ параметры
+
+version=${LISTIK_VERSION:-}
+archive=${LISTIK_ARCHIVE:-}
+home=${LISTIK_HOME:-}
+bin_dir=${LISTIK_BIN_DIR:-}
+routes_policy=${LISTIK_ROUTES_POLICY:-}
+service_answer=
+mcp_answer=
+plugins_answer=
+assume_yes=0
+
+while [ $# -gt 0 ]; do
+    case $1 in
+        --version)
+            [ $# -ge 2 ] || die "--version требует версию вида X.Y.Z"
+            version=$2
+            shift
+            ;;
+        --version=*) version=${1#--version=} ;;
+        --archive)
+            [ $# -ge 2 ] || die "--archive требует путь к архиву"
+            archive=$2
+            shift
+            ;;
+        --archive=*) archive=${1#--archive=} ;;
+        --home)
+            [ $# -ge 2 ] || die "--home требует каталог"
+            home=$2
+            shift
+            ;;
+        --home=*) home=${1#--home=} ;;
+        --bin-dir)
+            [ $# -ge 2 ] || die "--bin-dir требует каталог"
+            bin_dir=$2
+            shift
+            ;;
+        --bin-dir=*) bin_dir=${1#--bin-dir=} ;;
+        --routes)
+            [ $# -ge 2 ] || die "--routes ждёт keep, replace или ask"
+            routes_policy=$2
+            shift
+            ;;
+        --routes=*) routes_policy=${1#--routes=} ;;
+        --service)
+            [ $# -ge 2 ] || die "--service ждёт yes или no"
+            service_answer=$2
+            shift
+            ;;
+        --service=*) service_answer=${1#--service=} ;;
+        --mcp)
+            [ $# -ge 2 ] || die "--mcp ждёт yes или no"
+            mcp_answer=$2
+            shift
+            ;;
+        --mcp=*) mcp_answer=${1#--mcp=} ;;
+        --plugins)
+            [ $# -ge 2 ] || die "--plugins ждёт yes или no"
+            plugins_answer=$2
+            shift
+            ;;
+        --plugins=*) plugins_answer=${1#--plugins=} ;;
+        --yes|-y) assume_yes=1 ;;
+        -h|--help)
+            usage
+            exit 0
+            ;;
+        *) die "неизвестный флаг: $1 (справка: --help)" ;;
+    esac
+    shift
+done
+
+[ -n "${HOME:-}" ] || die "HOME не задан — укажите каталог установки флагом --home"
+[ -n "$home" ] || home=$HOME/.listik
+[ -n "$bin_dir" ] || bin_dir=$HOME/.local/bin
+[ -n "$routes_policy" ] || routes_policy=$DEFAULT_ROUTES_POLICY
+case $routes_policy in
+    keep|replace|ask) ;;
+    *) die "--routes ждёт keep, replace или ask, а не '$routes_policy'" ;;
+esac
+case $service_answer in
+    ""|yes|no) ;;
+    *) die "--service ждёт yes или no, а не '$service_answer'" ;;
+esac
+case $mcp_answer in
+    ""|yes|no) ;;
+    *) die "--mcp ждёт yes или no, а не '$mcp_answer'" ;;
+esac
+case $plugins_answer in
+    ""|yes|no) ;;
+    *) die "--plugins ждёт yes или no, а не '$plugins_answer'" ;;
+esac
+[ -n "$home" ] || die "--home не может быть пустым"
+
+# `~` в значении флага оболочка раскрывает сама, а в кавычках и в переменной — нет.
+resolve_dir() {
+    # shellcheck disable=SC2088  # тильда в кавычках не раскрывается — это и нужно: шаблон
+    case $1 in
+        "~/"*) printf '%s/%s' "$HOME" "${1#\~/}" ;;
+        "~") printf '%s' "$HOME" ;;
+        /*) printf '%s' "$1" ;;
+        *) printf '%s/%s' "$PWD" "$1" ;;
+    esac
+}
+home=$(resolve_dir "$home")
+bin_dir=$(resolve_dir "$bin_dir")
+
+# ------------------------------------------------------- предусловия (до HOME)
+
+os=$(uname -s) || die "не удалось определить систему (uname)"
+case $os in
+    Darwin|Linux) ;;
+    *) die "поддерживаются только Darwin и Linux, а система — $os" ;;
+esac
+
+command -v tar >/dev/null 2>&1 || die "tar не найден в PATH — распаковать архив нечем"
+
+command -v python3 >/dev/null 2>&1 || die "python3 не найден в PATH — Listik требует Python 3.11+"
+python3_bin=$(resolve_dir "$(command -v python3)")
+python3 -c 'import sys; sys.exit(sys.version_info < (3, 11))' ||
+    die "python3 ($python3_bin) старее 3.11 — Listik требует Python 3.11+"
+
+checksum_file=
+fetcher=
+local_archive=0
+if [ -n "$archive" ]; then
+    local_archive=1
+    [ -f "$archive" ] || die "нет файла архива: $archive"
+    # Сумму проверяем, только если она лежит рядом с архивом.
+    if [ -f "$archive.sha256" ]; then
+        checksum_file=$archive.sha256
+    fi
+else
+    if command -v curl >/dev/null 2>&1; then
+        fetcher=curl
+    elif command -v wget >/dev/null 2>&1; then
+        fetcher=wget
+    else
+        die "нет ни curl, ни wget — скачать релиз нечем (или укажите --archive)"
+    fi
+    # При установке из сети сумма обязательна.
+    checksum_file=network
+fi
+
+sha_tool=
+if [ -n "$checksum_file" ]; then
+    if command -v sha256sum >/dev/null 2>&1; then
+        sha_tool=sha256sum
+    elif command -v shasum >/dev/null 2>&1; then
+        sha_tool=shasum
+    else
+        die "нет ни sha256sum, ни shasum — проверить сумму нечем"
+    fi
+fi
+
+# ------------------------------------------------------------ временный каталог
+
+tmp=$(mktemp -d "${TMPDIR:-/tmp}/listik-install.XXXXXX") ||
+    die "не удалось создать временный каталог"
+staging=
+cleanup() {
+    if [ -n "$staging" ] && [ -d "$staging" ]; then
+        rm -rf "$staging"
+    fi
+    rm -rf "$tmp"
+}
+trap cleanup EXIT HUP INT TERM
+
+download() {
+    if [ "$fetcher" = curl ]; then
+        curl -fsSL "$1" -o "$2"
+    else
+        wget -q -O "$2" "$1"
+    fi
+}
+
+# --------------------------------------------------------- шаг 1: сам архив
+
+if [ -n "$fetcher" ]; then
+    releases_api=${LISTIK_RELEASES_API:-$DEFAULT_RELEASES_API}
+    download_base=${LISTIK_DOWNLOAD_BASE:-$DEFAULT_DOWNLOAD_BASE}
+    if [ -z "$version" ]; then
+        download "$releases_api" "$tmp/releases.json" ||
+            die "не удалось получить последнюю версию: $releases_api"
+        version=$(sed -n \
+            's/.*"tag_name": *"v\([^"]*\)".*/\1/p' \
+            "$tmp/releases.json" | sed -n '1p')
+        [ -n "$version" ] ||
+            die "в ответе $releases_api нет \"tag_name\": \"v<версия>\" — укажите --version"
+    fi
+    printf '%s\n' "$version" | grep -Eq '^[0-9]+\.[0-9]+\.[0-9]+$' ||
+        die "версия должна быть вида X.Y.Z, а не '$version'"
+    archive=$tmp/listik-$version.tar.gz
+    url=$download_base/v$version/listik-$version.tar.gz
+    download "$url" "$archive" || die "не удалось скачать архив: $url"
+    download "$url.sha256" "$archive.sha256" ||
+        die "не удалось скачать сумму: $url.sha256 — релиз без .sha256 не ставим"
+    checksum_file=$archive.sha256
+fi
+
+# Верхний каталог архива — listik-<версия>, он же нужен, чтобы достать VERSION.
+tar -tzf "$archive" > "$tmp/members" 2>/dev/null || die "не удалось прочитать архив: $archive"
+tops=$(sed -e 's|/.*||' -e '/^$/d' "$tmp/members" | sort -u)
+top=$(printf '%s\n' "$tops" | sed -n '1p')
+[ -n "$top" ] || die "архив пуст: $archive"
+[ "$(printf '%s\n' "$tops" | wc -l | tr -d ' ')" = 1 ] ||
+    die "в архиве должен быть один верхний каталог listik-<версия>: $archive"
+
+if [ "$local_archive" = 1 ]; then
+    # Локальный архив: версия — из VERSION внутри него, а не из имени файла.
+    tar -xzOf "$archive" "$top/VERSION" > "$tmp/VERSION" 2>/dev/null ||
+        die "в архиве нет $top/VERSION — версию взять неоткуда"
+    version=$(tr -d '[:space:]' < "$tmp/VERSION")
+    printf '%s\n' "$version" | grep -Eq '^[0-9]+\.[0-9]+\.[0-9]+$' ||
+        die "VERSION в архиве должен быть вида X.Y.Z, а в нём: '$version'"
+fi
+
+# ------------------------------------------------------ шаг 2: проверка суммы
+
+if [ -n "$checksum_file" ]; then
+    if [ "$sha_tool" = sha256sum ]; then
+        actual=$(sha256sum "$archive" | awk '{print $1}')
+    else
+        actual=$(shasum -a 256 "$archive" | awk '{print $1}')
+    fi
+    expected=$(awk 'NR == 1 {print $1}' "$checksum_file")
+    [ -n "$expected" ] || die "файл суммы пуст: $checksum_file"
+    actual=$(printf '%s' "$actual" | tr 'A-F' 'a-f')
+    expected=$(printf '%s' "$expected" | tr 'A-F' 'a-f')
+    [ "$actual" = "$expected" ] ||
+        die "сумма не совпала: ожидалась $expected, получена $actual — установка отменена"
+fi
+
+# ------------------------------------- шаг 3: распаковка во временный каталог
+
+app_dir=$home/app
+staging=$app_dir/.new-$version-$$
+mkdir -p "$staging" || die "не удалось создать каталог распаковки: $staging"
+tar -xzf "$archive" -C "$staging" --strip-components=1 ||
+    die "не удалось распаковать архив: $archive"
+[ -f "$staging/bin/listik" ] || die "в архиве нет bin/listik"
+[ -f "$staging/VERSION" ] || die "в архиве нет VERSION"
+
+# ------------------------------------------------------- шаг 4: поставить на место
+
+code_dir=$app_dir/$version
+if [ -e "$code_dir" ]; then
+    old=$app_dir/.old-$version-$$
+    rm -rf "$old"
+    mv "$code_dir" "$old" || die "не удалось отодвинуть прежнюю версию: $code_dir"
+    if ! mv "$staging" "$code_dir"; then
+        mv "$old" "$code_dir" 2>/dev/null || true
+        die "не удалось поставить версию $version на место: $code_dir"
+    fi
+    rm -rf "$old"
+else
+    mv "$staging" "$code_dir" || die "не удалось поставить версию $version на место: $code_dir"
+fi
+staging=
+
+# Куда указывал current до переключения: понадобится для сверки протокола (шаг 9).
+prev_code=
+if [ -e "$app_dir/current" ]; then
+    prev_code=$(cd "$app_dir/current" 2>/dev/null && pwd -P) || prev_code=
+fi
+if [ -n "$prev_code" ] && [ -f "$prev_code/docs/harness-protocol.md" ]; then
+    cp "$prev_code/docs/harness-protocol.md" "$tmp/prev-protocol.md" || true
+fi
+
+# ---------------------------------------------------------- шаг 5: обёртка
+
+mkdir -p "$bin_dir" || die "не удалось создать каталог обёртки: $bin_dir"
+wrapper=$bin_dir/listik
+cat > "$wrapper" <<WRAPPER
+#!/bin/sh
+# Обёртка Listik: каталог данных и код текущей версии. Перезаписывается установщиком.
+: "\${LISTIK_HOME:=$home}"
+export LISTIK_HOME
+export LISTIK_WRAPPER="$wrapper"
+exec "$python3_bin" "$home/app/current/bin/listik" "\$@"
+WRAPPER
+chmod +x "$wrapper" || die "не удалось сделать обёртку исполняемой: $wrapper"
+
+case ":${PATH:-}:" in
+    *":$bin_dir:"*) ;;
+    *)
+        note "$prog: каталога $bin_dir нет в PATH — добавьте в профиль:"
+        note "  export PATH=\"$bin_dir:\$PATH\""
+        ;;
+esac
+
+# ------------------------------------------------- шаг 6: переключить current
+
+ln -sfn "$version" "$app_dir/current" || die "не удалось переключить current на $version"
+
+# ------------------------------------------------------------ шаг 7: listik init
+
+if ! "$wrapper" init; then
+    note "$prog: код установлен: $code_dir, current переключён на $version, но listik init упал" >&2
+    note "$prog: исправьте причину и выполните listik init" >&2
+    exit 1
+fi
+
+# ------------------------------------ шаг 7.1: автозапуск, MCP и плагины Claude
+
+ask_yes_default_yes() {
+    # $1 — значение флага (может быть пустым), $2 — текст вопроса. Результат — $decision
+    # (yes/no), по умолчанию yes: без флага, без --yes и при открытом /dev/tty спрашиваем,
+    # иначе (нет /dev/tty или задан --yes) отвечаем по умолчанию.
+    if [ -n "$1" ]; then
+        decision=$1
+        return
+    fi
+    if [ "$assume_yes" = 1 ]; then
+        decision=yes
+        return
+    fi
+    if ! printf '%s' "$2" >/dev/tty 2>/dev/null; then
+        decision=yes
+        return
+    fi
+    answer=
+    if ! read -r answer < /dev/tty 2>/dev/null; then
+        decision=yes
+        return
+    fi
+    case $answer in
+        [nN]*) decision=no ;;
+        *) decision=yes ;;
+    esac
+}
+
+ask_yes_default_yes "$service_answer" "Установить автозапуск сервера (launchd/systemd)? [Y/n] "
+service_answer=$decision
+ask_yes_default_yes "$mcp_answer" "Подключить MCP-сервер Claude (claude mcp add)? [Y/n] "
+mcp_answer=$decision
+ask_yes_default_yes "$plugins_answer" \
+    "Установить плагины Claude (marketplace + listik/feature-pipeline)? [Y/n] "
+plugins_answer=$decision
+
+service_status=пропущен
+if [ "$service_answer" = yes ]; then
+    if service_out=$("$wrapper" service install 2>&1); then
+        service_status=ok
+    else
+        service_status="не удалось"
+        note "$prog: автозапуск: 'listik service install' не выполнился:" >&2
+        note "$service_out" >&2
+    fi
+fi
+
+mcp_status=пропущен
+if [ "$mcp_answer" = yes ]; then
+    if command -v claude >/dev/null 2>&1; then
+        if claude mcp get listik >/dev/null 2>&1; then
+            claude mcp remove --scope user listik >/dev/null 2>&1 || true
+        fi
+        if claude mcp add --scope user listik -- "$wrapper" mcp >/dev/null 2>&1; then
+            mcp_status=ok
+        else
+            mcp_status="не удалось"
+            note "$prog: MCP: команда не выполнилась — подключите вручную:" >&2
+            note "  claude mcp add --scope user listik -- \"$wrapper\" mcp" >&2
+        fi
+    else
+        mcp_status="не удалось"
+        note "$prog: MCP: нет claude в PATH — подключите вручную:"
+        note "  claude mcp add --scope user listik -- \"$wrapper\" mcp"
+    fi
+fi
+
+plugins_status=пропущен
+if [ "$plugins_answer" = yes ]; then
+    if command -v claude >/dev/null 2>&1 && claude plugin --help >/dev/null 2>&1; then
+        plugins_ok=1
+        if ! claude plugin marketplace add dmitry-fomin/listik >/dev/null 2>&1; then
+            claude plugin marketplace update listik >/dev/null 2>&1 || plugins_ok=0
+        fi
+        claude plugin install listik@listik >/dev/null 2>&1 || plugins_ok=0
+        claude plugin install feature-pipeline@listik >/dev/null 2>&1 || plugins_ok=0
+        if [ "$plugins_ok" = 1 ]; then
+            plugins_status=ok
+        else
+            plugins_status="не удалось"
+            note "$prog: плагины: не все команды claude plugin отработали — поставьте вручную:" >&2
+            note "  /plugin marketplace add dmitry-fomin/listik" >&2
+            note "  /plugin install listik@listik" >&2
+            note "  /plugin install feature-pipeline@listik" >&2
+        fi
+    else
+        plugins_status="не удалось"
+        note "$prog: плагины: claude недоступен (нет в PATH или без подкоманды plugin) — поставьте вручную:"
+        note "  /plugin marketplace add dmitry-fomin/listik"
+        note "  /plugin install listik@listik"
+        note "  /plugin install feature-pipeline@listik"
+    fi
+fi
+
+# ------------------------------------------------- шаг 8: routes.json
+
+replace_routes() {
+    bak=$runtime_routes.bak-$(date +%Y%m%d-%H%M%S)
+    mv "$runtime_routes" "$bak" || die "не удалось переименовать $runtime_routes"
+    cp "$sample_routes" "$runtime_routes" || die "не удалось записать $runtime_routes"
+    note "$prog: routes.json: рабочая копия заменена, прежняя — $bak"
+}
+
+ask_routes() {
+    # 0 — заменить, 1 — оставить (в ask_reason причина).
+    ask_reason="нет /dev/tty"
+    if [ "$assume_yes" = 1 ]; then
+        ask_reason="--yes"
+        return 1
+    fi
+    if ! printf 'routes.json отличается от нового образца. Заменить рабочую копию? [y/N] ' \
+            >/dev/tty 2>/dev/null; then
+        return 1
+    fi
+    answer=
+    if ! read -r answer < /dev/tty 2>/dev/null; then
+        return 1
+    fi
+    case $answer in
+        [yY]*) return 0 ;;
+        *)
+            ask_reason="ответ '$answer'"
+            return 1
+            ;;
+    esac
+}
+
+runtime_routes=${LISTIK_ROUTES:-$HOME/.config/listik/routes.json}
+sample_routes=$app_dir/current/routes.json
+if [ ! -f "$runtime_routes" ]; then
+    : # копии нет — её создаст сервер при первом старте
+elif cmp -s "$sample_routes" "$runtime_routes"; then
+    : # копия совпадает с образцом
+else
+    case $routes_policy in
+        keep)
+            note "$prog: routes.json: рабочая копия оставлена без изменений, новый образец: $sample_routes"
+            ;;
+        replace) replace_routes ;;
+        ask)
+            if ask_routes; then
+                replace_routes
+            else
+                note "$prog: routes.json: рабочая копия оставлена без изменений ($ask_reason), новый образец: $sample_routes"
+            fi
+            ;;
+    esac
+fi
+
+# ------------------------------------------------- шаг 9: протокол и шаг 10: сводка
+
+protocol_changed=0
+if [ -f "$tmp/prev-protocol.md" ] && [ -f "$code_dir/docs/harness-protocol.md" ]; then
+    if ! cmp -s "$tmp/prev-protocol.md" "$code_dir/docs/harness-protocol.md"; then
+        protocol_changed=1
+    fi
+fi
+
+note "Listik $version установлен."
+note "версия:  $version"
+note "код:     $app_dir/current"
+note "данные:  $home"
+note "обёртка: $wrapper"
+if [ "$protocol_changed" = 1 ]; then
+    note "протокол изменился: выполните listik init-projects (сначала можно с --dry-run)"
+fi
+note "автозапуск: $service_status"
+note "MCP: $mcp_status"
+note "плагины: $plugins_status"
+note "дальше:"
+if [ "$service_status" = ok ]; then
+    note "  listik service status"
+    note "  listik token"
+else
+    note "  listik serve --daemon"
+    note "  listik token"
+fi

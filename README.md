@@ -26,6 +26,71 @@ AGENTS.md      правила работы агента с задачами
 Нужно: Python 3.11+ (только стандартная библиотека). Для доски — Node.js. Для векторного поиска —
 [Ollama](https://ollama.com) с моделью `bge-m3` (необязательно: без неё поиск лексический).
 
+### Установка одной строкой
+
+```sh
+curl -fsSL https://github.com/dmitry-fomin/listik/releases/latest/download/install.sh | sh
+```
+
+Однострочник оживёт после публикации релиза (`scripts/release.sh --publish`); до неё ставьте
+[из исходников](#из-исходников). Установщик кладёт код в `~/.listik/app/<версия>`, ссылку
+`~/.listik/app/current` — на текущую, обёртку `listik` — в `~/.local/bin`, данные — в
+`~/.listik`. Повторный запуск обновляет версию; старые версии и данные остаются на месте,
+`listik.db`, `config.toml` и `listik.log` установщик не трогает.
+
+Флаги (флаг важнее переменной окружения):
+
+| Флаг | Переменная | Смысл |
+|---|---|---|
+| `--version X.Y.Z` | `LISTIK_VERSION` | какую версию ставить (по умолчанию — последний релиз) |
+| `--archive <путь>` | `LISTIK_ARCHIVE` | поставить из локального архива, без сети; версия — из `VERSION` внутри |
+| `--home <каталог>` | `LISTIK_HOME` | каталог установки и данных, по умолчанию `~/.listik` |
+| `--bin-dir <каталог>` | `LISTIK_BIN_DIR` | куда положить обёртку, по умолчанию `~/.local/bin` |
+| `--routes keep\|replace\|ask` | `LISTIK_ROUTES_POLICY` | что делать с рабочей копией `routes.json`, если она отличается от новой (по умолчанию `ask`) |
+| `--service yes\|no` | | поставить и (пере)запустить автозапуск сервера, по умолчанию `yes` — см. [«Автозапуск»](#автозапуск) |
+| `--mcp yes\|no` | | подключить MCP-сервер (`claude mcp add`), по умолчанию `yes` |
+| `--plugins yes\|no` | | поставить плагины Claude (маркетплейс + `listik`/`feature-pipeline`), по умолчанию `yes` |
+| `--yes` | | на вопросы без явного флага отвечать значением по умолчанию (для `--service`/`--mcp`/`--plugins` это `yes`) |
+| `--help` | | справка по всем флагам и переменным |
+
+Без явного флага и без `--yes` установщик спрашивает про автозапуск, MCP и плагины в `/dev/tty`
+(если его нет — по умолчанию `yes`). Сбой любого из трёх шагов не останавливает установку:
+предупреждение уходит в stderr, итоговый код — 0, а в сводке — по строке `автозапуск:`,
+`MCP:` и `плагины:` со значением `ok`, `не удалось` или `пропущен`.
+
+Для тестов и зеркал: `LISTIK_RELEASES_API` (по умолчанию
+`https://api.github.com/repos/dmitry-fomin/listik/releases/latest`) — откуда брать последнюю
+версию, `LISTIK_DOWNLOAD_BASE` (по умолчанию
+`https://github.com/dmitry-fomin/listik/releases/download`) — откуда качать архивы.
+
+### Автозапуск
+
+`listik service install|uninstall|status` ставит сервер в автозапуск: launchd на macOS
+(`~/Library/LaunchAgents/dev.listik.server.plist`), systemd `--user` на Linux
+(`~/.config/systemd/user/listik.service`). Юнит запускает `<бинарь> serve --quiet` с
+`LISTIK_HOME=<каталог данных>` и пишет лог в `logs/service.log` (рядом с базой, в каталоге
+данных). Установщик сам предлагает поставить автозапуск (см. таблицу выше); поставить или
+снять его отдельно можно и вручную:
+
+```sh
+listik service install            # поставить юнит и (пере)загрузить сервис
+listik service install --bin <путь>   # какой бинарь listik использовать (по умолчанию —
+                                       # обёртка, которой запущена команда, иначе bin/listik)
+listik service install --no-load  # только записать юнит, не (пере)загружать
+listik service status              # платформа, путь юнита, установлен ли, загружен ли
+listik service status --json
+listik service uninstall           # выгрузить и удалить юнит; данные (LISTIK_HOME) не трогает
+listik service uninstall --no-load # удалить только файл; загруженный сервис работает до ручной
+                                    # выгрузки (`launchctl bootout …` / `systemctl --user
+                                    # disable --now listik.service`)
+```
+
+`install` отказывает (`conflict`), если `listik serve` уже запущен отдельно от сервиса и юнит
+ещё не загружен: сначала `listik stop`, потом `listik service install`. Платформы вне macOS/Linux
+не поддерживаются (`unsupported`).
+
+### Из исходников
+
 ```sh
 git clone https://github.com/dmitry-fomin/listik.git && cd listik
 cp config.example.toml config.toml   # необязательно: без файла serve создаст конфиг сам
@@ -37,7 +102,19 @@ cp config.example.toml config.toml   # необязательно: без фай
 ./bin/listik stop
 ```
 
+### Перенос базы в каталог установки
+
+База из репозитория (или из другого каталога) переносится штатными командами:
+
+```sh
+./bin/listik backup                                  # копия рядом со старой базой
+LISTIK_HOME=~/.listik listik restore <копия>         # положить её в ~/.listik/listik.db
+```
+
 - База `listik.db` создаётся сама при первом `serve`/`init`.
+- Где лежат данные, решает `LISTIK_HOME`: каталог данных — база, `config.toml`, `listik.log`,
+  `listik.pid` и `logs/` запусков; по умолчанию это корень репозитория. Переменные
+  `LISTIK_DB`, `LISTIK_CONFIG` и `LISTIK_LOG` важнее: каждая задаёт свой путь сама.
 - Если в `config.toml` нет токена, `serve` генерирует его и сохраняет конфиг.
 - Векторы: `ollama serve` + `ollama pull bge-m3`. Сервер сам досчитывает векторы новых записей
   раз в 45 секунд; без Ollama поиск молча остаётся лексическим. Отключить: `serve --no-embed`.
@@ -45,6 +122,21 @@ cp config.example.toml config.toml   # необязательно: без фай
   предупреждает об этом). `--json` есть у всех команд.
 - Копировать базу через `cp`/`mv`/`rm`, пока сервер работает, **нельзя** — для копий есть
   `listik backup` и `listik restore` (см. «Резервные копии и восстановление базы»).
+
+### `listik status --json`
+
+`status` печатает один JSON-объект (`--local` — не опрашивать сервер, `server` = `skipped`,
+код 0; без `--local` код 1, когда сервер не отвечает):
+
+- `server` — `up`, `down`, `unauthorized` или `skipped`;
+- `pid` — pid сервера из `listik.pid` или `null`;
+- `url` — `http://<host>:<port>/` из конфига, **без токена**;
+- `version` — версия Listik;
+- `data_dir`, `db_path`, `config_path`, `log_path`, `code_dir` — пути каталога данных,
+  базы, конфига, лога и кода;
+- `health` — ответ `/api/health` как есть при `up`/`unauthorized`, иначе `null`.
+
+Токена и содержимого `config.toml` в JSON нет: ссылка с токеном — `listik token`.
 
 Кто выполняет команду — актор: флаг `--actor` или `LISTIK_ACTOR` (по умолчанию `$USER`).
 Агенты представляются как `agent:<harness>` флагом в каждой команде, например
@@ -609,7 +701,8 @@ inode, фоновые потоки начинают писать `database disk 
 
 | Группа | Команды |
 |---|---|
-| Сервер | `serve [--daemon] [--no-embed]`, `stop`, `status`, `init`, `token`, `mcp` |
+| Сервер | `serve [--daemon] [--no-embed]`, `stop`, `status [--local] [--json]`, `init`, `token`, `mcp` |
+| Автозапуск | `service install\|uninstall\|status [--bin] [--no-load]` — [launchd/systemd](#автозапуск) |
 | Копии | `backup [--out] [--force]`, `restore <копия> [--stop] [--force]` |
 | Задачи | `new`, `list`, `show`, `set`, `context`, `board`, `stats`, `timeline` |
 | Работа | `ready`, `claim`, `heartbeat`, `stage [--to]`, `release`, `done`, `needs-owner`, `inbox` |

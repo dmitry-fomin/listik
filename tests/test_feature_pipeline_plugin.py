@@ -243,5 +243,119 @@ class FeaturePipelineStepNamingTests(unittest.TestCase):
         )
 
 
+#: Пресеты, у которых по канону есть строка `BASE=<id>` в примере префикса команд.
+BASE_ID_SKILLS = (
+    "high-pipeline",
+    "xhigh-pipeline",
+    "medium-pipeline",
+    "low-pipeline",
+    "xlow-pipeline",
+)
+
+#: Пресеты, у которых `argument-hint` называет бумаги по `<id>.<X>.md`.
+ARGUMENT_HINT_ID_SKILLS = (
+    "high-pipeline",
+    "xhigh-pipeline",
+    "medium-pipeline",
+    "low-pipeline",
+    "inherit-pipeline",
+    "feature-pipeline",
+)
+
+BASE_LINE_RE = re.compile(r"^BASE=<id>", re.MULTILINE)
+
+
+class FeaturePipelineSkillNamingTests(unittest.TestCase):
+    """Имена бумаг и деревьев в самих скилах (listik-223b, порция b) — по id карточки."""
+
+    def test_no_old_step_number_naming_in_skills(self) -> None:
+        names = sorted(_skill_names())
+        self.assertTrue(names, "в плагине нет ни одного каталога скила")
+        forbidden = ("step-NN", "шаг NN", "pipeline-step-", "следующим свободным")
+        for name in names:
+            with self.subTest(skill=name):
+                text = _skill_text(name)
+                for needle in forbidden:
+                    self.assertNotIn(
+                        needle, text,
+                        f"{name}/{SKILL_FILE}: осталась запрещённая подстрока {needle!r}",
+                    )
+
+    def test_base_id_line(self) -> None:
+        for name in BASE_ID_SKILLS:
+            with self.subTest(skill=name):
+                text = _skill_text(name)
+                self.assertTrue(
+                    BASE_LINE_RE.search(text),
+                    f"{name}/{SKILL_FILE}: не нашлось строки, начинающейся с 'BASE=<id>'",
+                )
+
+    def test_argument_hint_uses_id(self) -> None:
+        for name in ARGUMENT_HINT_ID_SKILLS:
+            with self.subTest(skill=name):
+                text = _skill_text(name)
+                hint_lines = [line for line in text.splitlines()
+                              if line.startswith("argument-hint:")]
+                self.assertTrue(hint_lines, f"{name}/{SKILL_FILE}: нет строки argument-hint")
+                self.assertIn(
+                    "<id>.<X>.md", hint_lines[0],
+                    f"{name}/{SKILL_FILE}: argument-hint не содержит '<id>.<X>.md'",
+                )
+
+    def test_inherit_pipeline_naming(self) -> None:
+        text = _skill_text("inherit-pipeline")
+        required = [
+            "<id>.journal.md",
+            "*.journal.md",
+            "<id>-<часть>",
+            "<id>.diff-<X>.r<R>.txt",
+            "adhoc-<ГГГГ-ММ-ДД>-<слаг>.journal.md",
+            MANIFEST_LINE,
+        ]
+        for needle in required:
+            with self.subTest(needle=needle):
+                self.assertIn(
+                    needle, text,
+                    f"inherit-pipeline/{SKILL_FILE}: не нашлось обязательной подстроки {needle!r}",
+                )
+
+    def test_feature_pipeline_naming(self) -> None:
+        text = _skill_text("feature-pipeline")
+        required = [
+            "<id>.journal.md",
+            "pipeline-<id>",
+            ".worktrees/<id>",
+            "<id>.diff-<X>.r<R>.txt",
+            "adhoc-<ГГГГ-ММ-ДД>-<слаг>.journal.md",
+        ]
+        for needle in required:
+            with self.subTest(needle=needle):
+                self.assertIn(
+                    needle, text,
+                    f"feature-pipeline/{SKILL_FILE}: не нашлось обязательной подстроки {needle!r}",
+                )
+
+    def test_opus_single_pipeline_naming(self) -> None:
+        text = _skill_text("opus-single-pipeline")
+        required = [
+            "<steps>/<id>.md",
+            "<steps>/<id>.journal.md",
+            "single-<ГГГГ-ММ-ДД>-<слаг>",
+        ]
+        for needle in required:
+            with self.subTest(needle=needle):
+                self.assertIn(
+                    needle, text,
+                    f"opus-single-pipeline/{SKILL_FILE}: не нашлось обязательной подстроки {needle!r}",
+                )
+
+    def test_xlow_pipeline_naming(self) -> None:
+        text = _skill_text("xlow-pipeline")
+        self.assertIn(
+            "<steps>/<id>.a.md", text,
+            f"xlow-pipeline/{SKILL_FILE}: не нашлось обязательной подстроки '<steps>/<id>.a.md'",
+        )
+
+
 if __name__ == "__main__":
     unittest.main()

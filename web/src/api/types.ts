@@ -351,7 +351,9 @@ export interface RouteStrip {
   label: string
   /** ровно одно из `provider`/`glyph` (проверяет сервер) */
   provider?: ProviderKey
-  glyph?: string
+  /** `null` — имени нет в icons.ts, причина в `glyph_error` (listik-uiza) */
+  glyph?: string | null
+  glyph_error?: string
 }
 
 interface RouteBase {

@@ -44,6 +44,9 @@
 Глиф `strip.glyph` — имя ключа верхнего уровня из `web/src/lib/icons.ts`. Если файла
 иконок нет или в нём не нашлось ни одного имени, проверка `glyph` сводится к формату
 `^[a-z][a-z0-9-]*$` — сервер не должен отказываться работать из-за отсутствующей доски.
+Имя в верном формате, которого нет в icons.ts, — предупреждение, а не ошибка файла
+(listik-uiza): `strip.glyph` становится `None`, у `strip` появляется `glyph_error`, текст
+уходит в `warnings`.
 
 Файл читается в `init_at_startup` (сервер) и в `load_local` (CLI без сервера и MCP по
 stdio); `current()` и обработчики API файл не читают, поэтому правка `routes.json` во время
@@ -202,7 +205,7 @@ def _validate_roles(value, where: str) -> dict:
     return roles
 
 
-def _validate_strip(value, where: str) -> dict:
+def _validate_strip(value, where: str, warnings: list[str] | None = None) -> dict:
     if not isinstance(value, dict):
         raise _err(where, "должен быть объектом {label, provider|glyph}")
     _extra_fields(value, STRIP_FIELDS, where)
@@ -223,7 +226,12 @@ def _validate_strip(value, where: str) -> dict:
         raise _err(f"{where}.glyph", "имя иконки должно подходить под ^[a-z][a-z0-9-]*$")
     known = icon_names(ICONS_PATH)
     if known and glyph not in known:
-        raise _err(f"{where}.glyph", f"иконки {glyph!r} нет в icons.ts")
+        # Как с `icon` (listik-itg8): опечатка в имени глифа не отменяет файл
+        # (listik-uiza) — глиф не рисуется, причина в `glyph_error` и в `warnings`.
+        warning = f"{where}.glyph: иконки {glyph!r} нет в icons.ts; глиф не будет показан"
+        if warnings is not None:
+            warnings.append(warning)
+        return {"glyph": None, "label": label, "glyph_error": warning}
     return {"glyph": glyph, "label": label}
 
 
@@ -335,7 +343,7 @@ def _validate_route(item, where: str, warnings: list[str] | None = None) -> dict
         record["harness"] = harness
 
     if "strip" in item:
-        record["strip"] = _validate_strip(item["strip"], f"{where}.strip")
+        record["strip"] = _validate_strip(item["strip"], f"{where}.strip", warnings)
     record["command"] = (_validate_command(item["command"], f"{where}.command")
                          if "command" in item else None)
     return record

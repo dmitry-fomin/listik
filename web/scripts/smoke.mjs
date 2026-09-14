@@ -21,6 +21,28 @@ const url = process.argv[2] ?? 'http://localhost:5199/'
 const width = Number.parseInt(process.argv[3] ?? '1440', 10) || 1440
 const chromePath =
   process.env.CHROME_PATH ?? '/Applications/Google Chrome.app/Contents/MacOS/Google Chrome'
+// Без живого API страница рисует пустую доску, и отчёт выходит «зелёным» с нулём
+// колонок. Проверяем приложение и API до запуска Chrome и падаем с понятной ошибкой.
+// Адрес API по умолчанию — `<url>/api/health` (dev-сервер проксирует /api),
+// переопределяется переменной SMOKE_API (например http://127.0.0.1:8788/api/health).
+const apiHealth = process.env.SMOKE_API ?? new URL('api/health', url).href
+for (const [what, address] of [['приложение', url], ['API', apiHealth]]) {
+  let problem = null
+  try {
+    const response = await fetch(address, { signal: AbortSignal.timeout(3000) })
+    if (!response.ok) problem = `HTTP ${response.status}`
+  } catch (error) {
+    problem = error.cause?.code ?? error.message
+  }
+  if (problem) {
+    console.error(
+      `smoke: ${what} недоступно по ${address} (${problem}). Поднимите bin/listik serve ` +
+        'или scripts/mock-api.mjs и npm run dev / npm run preview; адрес API — SMOKE_API.',
+    )
+    process.exit(1)
+  }
+}
+
 const port = 9333 + Math.floor(Math.random() * 200)
 const profile = mkdtempSync(join(tmpdir(), 'listik-smoke-'))
 

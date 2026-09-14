@@ -19,6 +19,7 @@ from pathlib import Path
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
 from listik import __version__, client, db, errors, paths, store  # noqa: E402
+from listik import routes as routes_mod  # noqa: E402
 
 STATUS_ICON = {"open": "○", "in_progress": "▶", "blocked": "■", "review": "◐",
                "done": "✓", "cancelled": "✕"}
@@ -124,6 +125,12 @@ def call(op: str, args, path: str, *, query: dict | None = None, body: dict | No
     if not getattr(args, "local", False):
         print("! сервер Listik не отвечает — команда выполнена напрямую по базе "
               "(доска не получит событие; подними сервер: listik serve)", file=sys.stderr)
+    # Маршруты в локальном режиме никто не загружал — это делает сервер при старте.
+    # Дочитываем файл, только когда команда вообще трогает маршрут: метки
+    # `harness:`/`process:` считает серверная логика (store + routes.labels_for),
+    # и у `new --route`/`set route=` они должны быть те же, что у формы на доске.
+    if any((local_kwargs or {}).get(key) for key in ("route", "launch_route")):
+        routes_mod.load_local()
     return client.local_call(op, **(local_kwargs or {}))
 
 
@@ -1409,7 +1416,8 @@ def build_parser() -> argparse.ArgumentParser:
     sp.add_argument("--autostart", action="store_true",
                     help="сервер Listik сам запустит процесс задачи по маршруту (нужен --route)")
     sp.add_argument("--route", metavar="КЛЮЧ",
-                    help="ключ маршрута из routes.json; без --autostart просто сохраняется")
+                    help="ключ маршрута из routes.json; сервер помечает карточку метками "
+                         "harness:/process:, без --autostart маршрут просто сохраняется")
     sp.add_argument("--parent", metavar="ID",
                     help="родительская карточка (шаг/эпик): новая карточка станет её порцией "
                          "(связь parent-child) со своими spec/checklist/review; проект "

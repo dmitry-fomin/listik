@@ -1,9 +1,10 @@
 /**
  * Правила маршрута «Новой задачи» — поверх данных `GET /api/routes` (записи
  * `routes.json`, тип `RouteDef`). Сами маршруты, их порядок, роли и иконки в коде
- * не зашиты: здесь только выбор по умолчанию, доступность по типу задачи и метки
- * для карточки. Метки `harness:<x>`/`process:<y>` сервер не читает — они для
- * человека и поиска; кто реально допущен до этапа, решает routing проекта.
+ * не зашиты: здесь только выбор по умолчанию, доступность по типу задачи и поиск
+ * записи по ключу. Метки `harness:<x>`/`process:<y>` доска не считает: их выводит
+ * сервер из маршрута (`routes.labels_for`) и он же переписывает при смене — они для
+ * человека и поиска, а кто реально допущен до этапа, решает routing проекта.
  */
 import type { PipelineRouteDef, RouteDef } from '@/api/types'
 
@@ -48,15 +49,6 @@ export function defaultPipelineFor(type: string, routes: RouteDef[]): PipelineRo
   )
   const preferred = type === 'epic' ? 'high-pipeline' : 'low-pipeline'
   return allowed.find((route) => route.key === preferred) ?? allowed[0] ?? null
-}
-
-/**
- * Метки выбранного маршрута: у `pipeline` роль исполнителя всегда claude,
- * у `direct` — харнесс из самой записи (зашитого соответствия ключ → харнесс нет).
- */
-export function routeLabels(route: RouteDef): string[] {
-  if (route.kind === 'direct') return [`harness:${route.harness}`, 'process:direct']
-  return ['harness:claude', `process:${route.key}`]
 }
 
 /**

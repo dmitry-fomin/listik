@@ -18,6 +18,7 @@ from pathlib import Path
 from . import actors as actors_mod
 from . import config as config_mod
 from . import deps as deps_mod
+from . import routes as routes_mod
 from . import textutil
 
 OPEN_STATUSES = ("open", "in_progress", "blocked", "review")
@@ -135,6 +136,44 @@ def _index_comment(conn: sqlite3.Connection, comment_id: str) -> None:
         )
 
 
+def labels_with_route(labels: list[str] | None, route_key: str | None) -> list[str]:
+    """Метки карточки: явные плюс метки маршрута, без дублей (явные идут первыми).
+
+    Одно правило для всех, кто создаёт задачу: CLI (`new --route`), `POST /api/tasks`
+    с `route` и MCP `listik_create`. Метки маршрута считает `routes.labels_for`;
+    заданную вручную метку (`--label harness:claude`) второй раз не добавляем.
+    """
+    out = [str(label) for label in (labels or [])]
+    for label in routes_mod.labels_for(route_key):
+        if label not in out:
+            out.append(label)
+    return out
+
+
+def labels_after_route_change(labels: list[str], route_key: str | None) -> list[str] | None:
+    """Метки карточки при смене маршрута; `None` — оставить как есть.
+
+    Старые метки маршрута (`harness:`/`process:`) заменяются метками нового, чужие
+    метки задачи остаются. Не трогаем их, когда у нового непустого ключа меток нет:
+    маршрута нет в таблице (устаревший или битый `routes.json`) — стирать чужие
+    данные нельзя. Снятие маршрута (пустой ключ) метки маршрута убирает.
+    """
+    fresh = routes_mod.labels_for(route_key)
+    if not fresh and (route_key or "").strip():
+        return None
+    keep = [str(label) for label in labels if not routes_mod.is_route_label(str(label))]
+    return keep + [label for label in fresh if label not in keep]
+
+
+def route_labels_from_row(row: sqlite3.Row) -> list[str]:
+    """Метки карточки из строки таблицы (в колонке — JSON-массив)."""
+    try:
+        value = json.loads(row["labels"] or "[]")
+    except (json.JSONDecodeError, TypeError):
+        return []
+    return [str(label) for label in value] if isinstance(value, list) else []
+
+
 def create_task(
     conn: sqlite3.Connection,
     *,
@@ -169,7 +208,8 @@ def create_task(
 ) -> dict:
     """Создать задачу. `autostart`/`route` только сохраняются: процесс запускает
     не эта функция, а `listik/launcher.py` (сервер — сразу после создания, CLI
-    в локальном режиме — отказом, потому что сервера нет).
+    в локальном режиме — отказом, потому что сервера нет). `route` вдобавок помечает
+    карточку метками маршрута (`labels_with_route`) — как форма на доске.
 
     `parent` сразу связывает новую карточку с родительской мягкой связью
     `parent-child`: так заводят порции шага — у каждой свой `spec_path`/
@@ -189,6 +229,9 @@ def create_task(
         parent_project = parent_row["project"]
     if not project and parent_project:
         project = parent_project
+    # Маршрут помечает карточку теми же метками, что и форма «Новая задача» на доске:
+    # их считает сервер (routes.labels_for), а не доска и не CLI по отдельности.
+    labels = labels_with_route(labels, route)
     tid = task_id or gen_id(conn, project)
     if parent_id is not None and parent_id == tid:
         raise ValueError(f"задача не может быть родителем самой себе: {tid}")
@@ -211,7 +254,7 @@ def create_task(
         """,
         (tid, project, title, description, acceptance, design, notes, result, status, stage,
          ts if stage else None, priority, issue_type, assignee,
-         json.dumps(labels or [], ensure_ascii=False), spec_path, journal_path,
+         json.dumps(labels, ensure_ascii=False), spec_path, journal_path,
          source, external_ref, ts, created_by, ts, 1 if needs_owner else 0,
          checklist_path, review_path, decision_path, 1 if autostart else 0, route),
     )
@@ -342,6 +385,17 @@ def update_task(conn: sqlite3.Connection, task_id: str, *, actor: str | None = N
         if not isinstance(fields[ROUTE_FIELD], str):
             raise ValueError("маршрут должен быть строкой — ключом из routes.json")
         fields[ROUTE_FIELD] = fields[ROUTE_FIELD].strip()
+    # Вместе с маршрутом сервер сам переписывает его метки (`harness:`/`process:`) —
+    # ровно так же, как при создании задачи: старые снимаются, метки нового встают на
+    # их место, чужие метки остаются. Клиент про них больше не думает.
+    if ROUTE_FIELD in fields and fields[ROUTE_FIELD] != (row[ROUTE_FIELD] or ""):
+        base = fields.get("labels")
+        if base is None:
+            base = route_labels_from_row(row)
+        if isinstance(base, list):
+            merged = labels_after_route_change(base, fields[ROUTE_FIELD])
+            if merged is not None:
+                fields["labels"] = merged
     # Смену маршрута проверяем по карточке, какой она станет после этого вызова:
     # в тех же полях может прийти начало работы (`status`/`stage`/`holder`).
     effective = route_card_after(row, fields)

@@ -69,7 +69,7 @@ import {
 import { PIPELINE, TRANSITIONS, stageCode, stageIndex, stageTitle, transitionOut, type TransitionKey } from '@/lib/stages'
 import { HEALTH_TITLES, healthReason, taskHealth } from '@/lib/health'
 import { HARNESS_TITLES, harnessOf } from '@/lib/harness'
-import { routeAllowedForType, routeByKey, routeLabels, routesAlertText } from '@/lib/routes'
+import { routeAllowedForType, routeByKey, routesAlertText } from '@/lib/routes'
 import store from '@/store/listik'
 
 const props = defineProps<{
@@ -288,23 +288,16 @@ const routeOptions = computed<UiSelectOption<string>[]>(() => {
 const routeDirty = computed(() => routeDraft.value !== (props.task?.launch_route ?? null))
 
 /**
- * Метки маршрута (`harness:<…>`/`process:<…>`) — как при создании: старые метки
- * маршрута заменяются метками нового, чужие метки задачи остаются. Маршрута нет
- * в списке (битый `routes.json`) — метки не трогаем.
+ * Смена маршрута: уходит на сервер одним полем `route`. Метки маршрута
+ * (`harness:<…>`/`process:<…>`) сервер переписывает сам — старые снимает, метки
+ * нового ставит, чужие метки задачи оставляет: то же правило, что при создании
+ * (`routes.labels_for`), поэтому доска их не считает.
  */
-function routeLabelsPatch(): string[] | null {
-  const route = store.routes.value.find((item) => item.key === routeDraft.value)
-  if (!route) return null
-  const keep = (props.task?.labels ?? []).filter((label) => !/^(harness|process):/.test(label))
-  return [...keep, ...routeLabels(route)]
-}
-
 function submitRoute(): void {
   if (!props.task || !routeDirty.value || routeDraft.value === null) return
-  const labels = routeLabelsPatch()
   emit('patch', {
     id: props.task.id,
-    body: { route: routeDraft.value, ...(labels ? { labels } : {}) },
+    body: { route: routeDraft.value },
     label: 'route',
   })
 }

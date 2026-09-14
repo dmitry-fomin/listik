@@ -758,7 +758,12 @@ def handle(method: str, path: str, query: dict, body: dict, authed: bool = False
                 raise api_error(404, exc) from exc
             except ValueError as exc:
                 raise api_error(400, exc) from exc
-            publish("task", {"id": tid, "action": action})
+            # Читающие действия ходят тем же путём (граф зависимостей, ready,
+            # упоминания), но доску не меняют: событие шлём только от записей,
+            # иначе чтение карточки будило бы все открытые доски (listik-1p86).
+            if action not in ("ready", "mentions") and not (
+                    action == "deps" and not body.get("depends_on")):
+                publish("task", {"id": tid, "action": action})
             return 200, out
 
     if path == "/api/search":

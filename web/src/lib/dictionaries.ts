@@ -3,7 +3,7 @@
  * где перечислены ключи, подписи, иконки и цвета: фильтры, модалка создания,
  * глифы, доска и витрина берут значения отсюда, а не держат свои копии.
  */
-import type { PipelineStage, TaskStage, TaskStatus } from '@/api/types'
+import type { PipelineStage, RouteIconKey, TaskStage, TaskStatus } from '@/api/types'
 
 export interface DictionaryItem<T extends string | number> {
   value: T
@@ -101,4 +101,32 @@ export const STATUSES: DictionaryItem<TaskStatus>[] = [
 
 export function statusTitle(value: TaskStatus): string {
   return STATUSES.find((item) => item.value === value)?.label ?? value
+}
+
+// ── Маршрут ─────────────────────────────────────────────────────────────────
+
+export interface RouteIconItem extends DictionaryItem<RouteIconKey> {
+  /** Имя иконки из `lib/icons.ts` (16×16, currentColor). */
+  icon: string
+  /** Расшифровка уровня — в подсказку иконки. */
+  hint: string
+}
+
+/**
+ * Уровни маршрута разработки — значения поля `icon` записи `routes.json`
+ * (`GET /api/routes`). Сам уровень считает сервер: явное поле или фолбэк по
+ * ключу маршрута (`xhigh-pipeline` → `xhigh`, `direct`-записи → `direct`), —
+ * поэтому таблица нужна только для подписи и иконки.
+ */
+export const ROUTE_ICONS: RouteIconItem[] = [
+  { value: 'xhigh', label: 'xhigh', icon: 'route-xhigh', hint: 'xhigh · самый дорогой и долгий маршрут' },
+  { value: 'high', label: 'high', icon: 'route-high', hint: 'high · обычный маршрут' },
+  { value: 'medium', label: 'medium', icon: 'route-medium', hint: 'medium · средний маршрут' },
+  { value: 'low', label: 'low', icon: 'route-low', hint: 'low · самый дешёвый и быстрый' },
+  { value: 'direct', label: 'direct', icon: 'route-direct', hint: 'direct · один харнесс, без конвейера' },
+]
+
+/** Уровня нет (поле пустое) или он незнаком — иконку не рисуем. */
+export function routeIcon(value: string | null | undefined): RouteIconItem | null {
+  return ROUTE_ICONS.find((item) => item.value === value) ?? null
 }

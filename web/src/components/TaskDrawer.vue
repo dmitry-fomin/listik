@@ -41,6 +41,7 @@ import {
 } from '@zoloto585/facet'
 import ListikIcon from './ListikIcon.vue'
 import ProjectMark from './marks/ProjectMark.vue'
+import RouteIcon from './marks/RouteIcon.vue'
 import TaskGlyph from './marks/TaskGlyph.vue'
 import { priority } from '@/lib/dictionaries'
 import HarnessIcon from './marks/HarnessIcon.vue'
@@ -68,6 +69,8 @@ import {
 import { PIPELINE, TRANSITIONS, stageCode, stageIndex, stageTitle, transitionOut, type TransitionKey } from '@/lib/stages'
 import { HEALTH_TITLES, healthReason, taskHealth } from '@/lib/health'
 import { HARNESS_TITLES, harnessOf } from '@/lib/harness'
+import { routeByKey } from '@/lib/routes'
+import store from '@/store/listik'
 
 const props = defineProps<{
   modelValue: boolean
@@ -202,6 +205,12 @@ const statusTone = computed<StatusPillTone>(() => {
 })
 
 // ── «Автостарт»: процесс маршрута поднимает сервер (см. API.md) ───────────
+
+/**
+ * Маршрут задачи (`launch_route` — ключ записи `routes.json`) для иконки уровня;
+ * записи нет в списке `GET /api/routes` — иконки не будет.
+ */
+const launchRoute = computed(() => routeByKey(props.task?.launch_route, store.routes.value))
 
 /** Блок нужен, только если автостарт заказан, запуск был или о нём есть ошибка. */
 const showLaunch = computed(() => {
@@ -958,7 +967,15 @@ async function loadTree(): Promise<void> {
         <h4 class="listik-section__title">Автостарт</h4>
         <dl class="listik-dl">
           <dt>маршрут</dt>
-          <dd><span class="listik-mono">{{ task.launch_route || '—' }}</span></dd>
+          <dd class="listik-row" style="flex-wrap: nowrap">
+            <RouteIcon
+              v-if="launchRoute"
+              :route="launchRoute"
+              size="sm"
+              :title="`маршрут: ${launchRoute.title}`"
+            />
+            <span class="listik-mono">{{ task.launch_route || '—' }}</span>
+          </dd>
           <template v-if="task.launched_by === 'listik'">
             <dt>запуск</dt>
             <dd>

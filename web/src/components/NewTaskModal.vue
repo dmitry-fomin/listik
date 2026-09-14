@@ -30,8 +30,9 @@ import ListikIcon from '@/components/ListikIcon.vue'
 import HarnessIcon from '@/components/marks/HarnessIcon.vue'
 import ProjectMark from '@/components/marks/ProjectMark.vue'
 import ProviderIcon from '@/components/marks/ProviderIcon.vue'
+import RouteIcon from '@/components/marks/RouteIcon.vue'
 import TaskGlyph from '@/components/marks/TaskGlyph.vue'
-import { TASK_TYPES, priority } from '@/lib/dictionaries'
+import { ROUTE_ICONS, TASK_TYPES, priority } from '@/lib/dictionaries'
 import type { DirectRouteDef, PipelineRouteDef, ProjectRow, RouteDef } from '@/api/types'
 import { HARNESS_TITLES } from '@/lib/harness'
 import { ROLE_KEYS, ROLE_TITLES } from '@/lib/pipelines'
@@ -65,6 +66,9 @@ const emit = defineEmits<{
 const isOpen = defineModel<boolean>({ default: false })
 
 const TYPE_OPTIONS: IconToggleOption<string>[] = TASK_TYPES.map((item) => ({ value: item.value, label: item.hint }))
+
+/** Перечень уровней для подсказки под таблицей — из справочника, без копии списка. */
+const routeLevels = ROUTE_ICONS.map((item) => item.label).join('/')
 
 const CREATE_LABEL: Record<string, string> = Object.fromEntries(
   TASK_TYPES.map((item) => [item.value, item.createLabel]),
@@ -409,8 +413,11 @@ function cancel(): void {
               @keydown="onRouteKeydown($event, route)"
             >
               <span class="listik-pipelines__row-title">
-                <span class="listik-pipelines__row-name">{{ route.title }}</span>
-                <span class="listik-pipelines__row-hint">{{ route.hint }}</span>
+                <RouteIcon :route="route" size="sm" />
+                <span class="listik-pipelines__row-text">
+                  <span class="listik-pipelines__row-name">{{ route.title }}</span>
+                  <span class="listik-pipelines__row-hint">{{ route.hint }}</span>
+                </span>
               </span>
 
               <span v-for="role in ROLE_KEYS" :key="role" class="listik-pipelines__cell">
@@ -442,6 +449,7 @@ function cancel(): void {
                 @click="selectRoute(route)"
                 @keydown="onRouteKeydown($event, route)"
               >
+                <RouteIcon :route="route" size="sm" />
                 <ProviderIcon v-if="route.strip?.provider" :provider="route.strip.provider" size="md" />
                 <ListikIcon v-else-if="route.strip?.glyph" :name="route.strip.glyph" size="md" />
                 {{ route.strip?.label }}
@@ -463,6 +471,7 @@ function cancel(): void {
                 @click="selectRoute(route)"
                 @keydown="onRouteKeydown($event, route)"
               >
+                <RouteIcon :route="route" size="sm" />
                 <HarnessIcon :harness="route.harness" size="md" />
                 {{ route.title }}
               </button>
@@ -478,7 +487,8 @@ function cancel(): void {
           <p class="listik-section__hint">
             строка таблицы — пресет конвейера из <span class="listik-mono">routes.json</span> (его отдаёт
             сервер): кто пишет ТЗ, кто критикует, кто пишет код, кто принимает и коммитит. «Отдельно» —
-            записи без таблицы ролей: одна иконка и подпись вместо четырёх ячеек.
+            записи без таблицы ролей: одна иконка и подпись вместо четырёх ячеек. Слева у записи —
+            иконка уровня маршрута ({{ routeLevels }}): её же показывает карточка заведённой задачи.
           </p>
           <p class="listik-section__hint">
             эпик всегда начинается с ТЗ, поэтому для него закрыто всё без этапа ТЗ. Выбор уходит на сервер

@@ -11,11 +11,13 @@ import ProjectMark from '../marks/ProjectMark.vue'
 import CountGlyph from '../marks/CountGlyph.vue'
 import HealthDot from '../marks/HealthDot.vue'
 import HarnessIcon from '../marks/HarnessIcon.vue'
+import RouteIcon from '../marks/RouteIcon.vue'
 import ListikIcon from '../ListikIcon.vue'
 import type { ProjectRow, Task } from '@/api/types'
-import type { DepsSummary } from '@/store/listik'
+import store, { type DepsSummary } from '@/store/listik'
 import { AT_RISK_IDLE_HOURS, taskHealth, healthReason } from '@/lib/health'
 import { statusTitle } from '@/lib/dictionaries'
+import { routeByKey } from '@/lib/routes'
 
 const props = defineProps<{
   task: Task
@@ -78,6 +80,13 @@ const blockedBy = computed(() => props.deps?.blockedBy ?? [])
 const blockedCount = computed(() => blockedBy.value.length || props.task.blocked_by.length)
 const waitingForCount = computed(() => props.deps?.waitingForCount ?? 0)
 
+/**
+ * Маршрут разработки задачи: `launch_route` — ключ записи `routes.json`, которую
+ * список отдаёт `GET /api/routes` (грузятся при старте доски). Задача заведена
+ * без маршрута или запись из файла убрали — иконки нет.
+ */
+const taskRoute = computed(() => routeByKey(props.task.launch_route, store.routes.value))
+
 const blockedTooltip = computed(() => {
   if (blockedBy.value.length > 0) {
     const names = blockedBy.value.map((dep) => dep.id).join(', ')
@@ -112,6 +121,12 @@ function onKeydown(event: KeyboardEvent): void {
   >
     <div class="listik-task-card__top">
       <TaskGlyph kind="type" :value="task.issue_type" />
+      <RouteIcon
+        v-if="taskRoute"
+        :route="taskRoute"
+        size="xs"
+        :title="`маршрут: ${taskRoute.title}`"
+      />
       <ProjectMark :project="project ?? null" :slug="task.project" with-title size="sm" />
       <span class="listik-task-card__spacer" />
       <TaskGlyph kind="priority" :value="task.priority" />

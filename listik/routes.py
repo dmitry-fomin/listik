@@ -22,6 +22,12 @@
     строк (провайдер — `claude`/`glm`/`openai`/`grok`/`deepseek`);
   * `strip` — необязательная одна иконка вместо таблицы ролей: `{label}` плюс ровно
     одно из `provider`/`glyph`;
+  * `icon` — необязательный уровень маршрута для иконки на доске, одно из
+    `xhigh`/`high`/`medium`/`low`/`direct`. Если поля нет, уровень выводится из самой
+    записи (`fallback_icon`): у `direct` это `direct`, у `pipeline` — часть ключа до
+    первого `-`, если она из того же набора (`xhigh-pipeline` → `xhigh`); у записи без
+    выводимого уровня (`feature-pipeline`) иконки нет. Рабочая копия `routes.json`,
+    созданная до появления поля, поэтому продолжает работать без правок;
   * `harness` — обязателен для `direct` и запрещён для `pipeline` (`claude`, `dsh`,
     `codex`, `grok`, `gemini`);
   * `command` — необязательный непустой массив непустых строк, argv запуска.
@@ -59,10 +65,13 @@ KINDS = ("pipeline", "direct")
 ROLE_KEYS = ("spec", "critic", "impl", "judge")
 PROVIDERS = ("claude", "glm", "openai", "grok", "deepseek")
 HARNESSES = ("claude", "dsh", "codex", "grok", "gemini")
+# Уровни маршрута — значения поля `icon`; подписи и иконки для доски лежат в
+# `web/src/lib/dictionaries.ts` (`ROUTE_ICONS`).
+ROUTE_ICONS = ("xhigh", "high", "medium", "low", "direct")
 PLACEHOLDERS = ("task_id", "project", "route", "cwd", "title")
 
 ROOT_FIELDS = ("version", "routes")
-RECORD_FIELDS = ("key", "kind", "title", "hint", "visible", "roles", "strip", "harness",
+RECORD_FIELDS = ("key", "kind", "title", "hint", "visible", "icon", "roles", "strip", "harness",
                  "command")
 ROLE_FIELDS = ("provider", "label", "title")
 STRIP_FIELDS = ("label", "provider", "glyph")
@@ -70,7 +79,8 @@ STRIP_FIELDS = ("label", "provider", "glyph")
 KEY_RE = re.compile(r"^[a-z0-9][a-z0-9-]*$")
 GLYPH_RE = re.compile(r"^[a-z][a-z0-9-]*$")
 # Имя иконки верхнего уровня в icons.ts: ровно два пробела отступа и `: {`.
-ICON_LINE_RE = re.compile(r"^  ([a-zA-Z][a-zA-Z0-9-]*): \{")
+# Имя может быть в кавычках — так записываются имена с дефисом (`'route-xhigh': {`).
+ICON_LINE_RE = re.compile(r"""^  ['"]?([a-zA-Z][a-zA-Z0-9-]*)['"]?: \{""")
 PLACEHOLDER_RE = re.compile(r"\{([^{}]*)\}")
 ICONS_PATH = paths.WEB_DIR / "src" / "lib" / "icons.ts"
 
@@ -125,7 +135,8 @@ def icon_names(path=ICONS_PATH) -> set[str]:
 
     Строки берутся между `export const icons` и первой строкой, равной `}`; из них
     подходят только строки вида `^  ([a-zA-Z][a-zA-Z0-9-]*): \\{` — ровно два пробела
-    отступа, то есть верхний уровень объекта. Если файла нет или имён не нашлось,
+    отступа, то есть верхний уровень объекта (имя может быть и в кавычках: имена с
+    дефисом в JS-объекте иначе не записать). Если файла нет или имён не нашлось,
     возвращается пустое множество: тогда проверка `strip.glyph` смотрит только на
     формат `^[a-z][a-z0-9-]*$` и не зависит от собранной доски.
     """
@@ -220,6 +231,31 @@ def _validate_command(value, where: str) -> list[str]:
     return command
 
 
+def fallback_icon(kind: str, key: str) -> str | None:
+    """Уровень маршрута для записи без поля `icon`.
+
+    У `direct`-записи уровня в ключе нет (`dsh`, `grok`, `codex`) — она и есть
+    `direct`. У `pipeline` берётся часть ключа до первого `-` (`xhigh-pipeline` →
+    `xhigh`), но только если она из `ROUTE_ICONS`: у `feature-pipeline` и
+    `inherit-pipeline` уровня нет, и иконка для них не выдумывается (`None`).
+    """
+    if kind == "direct":
+        return "direct"
+    prefix = key.split("-", 1)[0]
+    return prefix if prefix in ROUTE_ICONS else None
+
+
+def _validate_icon(item: dict, kind: str, key: str, where: str) -> str | None:
+    """Поле `icon`: явный уровень, иначе фолбэк по записи; `None` — иконки нет."""
+    if "icon" not in item:
+        return fallback_icon(kind, key)
+    value = item["icon"]
+    if value not in ROUTE_ICONS:
+        raise _err(f"{where}.icon",
+                   "уровень маршрута, допустимы: " + ", ".join(ROUTE_ICONS))
+    return value
+
+
 def _validate_route(item, where: str) -> dict:
     if not isinstance(item, dict):
         raise _err(where, "запись должна быть объектом")
@@ -245,7 +281,8 @@ def _validate_route(item, where: str) -> dict:
     if not isinstance(visible, bool):
         raise _err(f"{where}.visible", "должно быть true или false, не строка и не число")
 
-    record = {"key": key, "kind": kind, "title": title, "hint": hint, "visible": visible}
+    record = {"key": key, "kind": kind, "title": title, "hint": hint, "visible": visible,
+              "icon": _validate_icon(item, kind, key, where)}
 
     if kind == "pipeline":
         if "roles" not in item:
@@ -274,7 +311,8 @@ def validate(obj) -> list[dict]:
 
     При первой же ошибке бросает `RoutesError` с путём до поля (`routes[3].roles.impl.provider`)
     и причиной по-русски. Возвращает нормализованные записи: `hint` по умолчанию подставлен,
-    `command` — список или `None`.
+    `icon` — явный уровень или фолбэк по записи (`None` — иконки нет), `command` — список
+    или `None`.
     """
     if not isinstance(obj, dict):
         raise _err("routes.json", 'корень — объект {"version": 1, "routes": [...]}')

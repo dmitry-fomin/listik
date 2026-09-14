@@ -49,8 +49,13 @@ usage() {
                         от новой (LISTIK_ROUTES_POLICY), по умолчанию ask;
                         keep — не трогать, replace — заменить, сохранив .bak-<время>,
                         ask — спросить в /dev/tty
+  --service yes|no      поставить и (пере)запустить автозапуск сервера
+                        (launchd/systemd --user), по умолчанию yes
+  --mcp yes|no          подключить MCP-сервер (claude mcp add), по умолчанию yes
+  --plugins yes|no      поставить плагины Claude (marketplace + listik/feature-pipeline),
+                        по умолчанию yes
   --yes                 на вопросы без явного флага отвечать значением по умолчанию
-                        (для routes это keep)
+                        (для routes это keep, для service/mcp/plugins — yes)
   --help                эта справка
 
 Переменные окружения:
@@ -76,6 +81,9 @@ archive=${LISTIK_ARCHIVE:-}
 home=${LISTIK_HOME:-}
 bin_dir=${LISTIK_BIN_DIR:-}
 routes_policy=${LISTIK_ROUTES_POLICY:-}
+service_answer=
+mcp_answer=
+plugins_answer=
 assume_yes=0
 
 while [ $# -gt 0 ]; do
@@ -110,6 +118,24 @@ while [ $# -gt 0 ]; do
             shift
             ;;
         --routes=*) routes_policy=${1#--routes=} ;;
+        --service)
+            [ $# -ge 2 ] || die "--service ждёт yes или no"
+            service_answer=$2
+            shift
+            ;;
+        --service=*) service_answer=${1#--service=} ;;
+        --mcp)
+            [ $# -ge 2 ] || die "--mcp ждёт yes или no"
+            mcp_answer=$2
+            shift
+            ;;
+        --mcp=*) mcp_answer=${1#--mcp=} ;;
+        --plugins)
+            [ $# -ge 2 ] || die "--plugins ждёт yes или no"
+            plugins_answer=$2
+            shift
+            ;;
+        --plugins=*) plugins_answer=${1#--plugins=} ;;
         --yes|-y) assume_yes=1 ;;
         -h|--help)
             usage
@@ -127,6 +153,18 @@ done
 case $routes_policy in
     keep|replace|ask) ;;
     *) die "--routes ждёт keep, replace или ask, а не '$routes_policy'" ;;
+esac
+case $service_answer in
+    ""|yes|no) ;;
+    *) die "--service ждёт yes или no, а не '$service_answer'" ;;
+esac
+case $mcp_answer in
+    ""|yes|no) ;;
+    *) die "--mcp ждёт yes или no, а не '$mcp_answer'" ;;
+esac
+case $plugins_answer in
+    ""|yes|no) ;;
+    *) die "--plugins ждёт yes или no, а не '$plugins_answer'" ;;
 esac
 [ -n "$home" ] || die "--home не может быть пустым"
 
@@ -339,6 +377,101 @@ if ! "$wrapper" init; then
     exit 1
 fi
 
+# ------------------------------------ шаг 7.1: автозапуск, MCP и плагины Claude
+
+ask_yes_default_yes() {
+    # $1 — значение флага (может быть пустым), $2 — текст вопроса. Результат — $decision
+    # (yes/no), по умолчанию yes: без флага, без --yes и при открытом /dev/tty спрашиваем,
+    # иначе (нет /dev/tty или задан --yes) отвечаем по умолчанию.
+    if [ -n "$1" ]; then
+        decision=$1
+        return
+    fi
+    if [ "$assume_yes" = 1 ]; then
+        decision=yes
+        return
+    fi
+    if ! printf '%s' "$2" >/dev/tty 2>/dev/null; then
+        decision=yes
+        return
+    fi
+    answer=
+    if ! read -r answer < /dev/tty 2>/dev/null; then
+        decision=yes
+        return
+    fi
+    case $answer in
+        [nN]*) decision=no ;;
+        *) decision=yes ;;
+    esac
+}
+
+ask_yes_default_yes "$service_answer" "Установить автозапуск сервера (launchd/systemd)? [Y/n] "
+service_answer=$decision
+ask_yes_default_yes "$mcp_answer" "Подключить MCP-сервер Claude (claude mcp add)? [Y/n] "
+mcp_answer=$decision
+ask_yes_default_yes "$plugins_answer" \
+    "Установить плагины Claude (marketplace + listik/feature-pipeline)? [Y/n] "
+plugins_answer=$decision
+
+service_status=пропущен
+if [ "$service_answer" = yes ]; then
+    if service_out=$("$wrapper" service install 2>&1); then
+        service_status=ok
+    else
+        service_status="не удалось"
+        note "$prog: автозапуск: 'listik service install' не выполнился:" >&2
+        note "$service_out" >&2
+    fi
+fi
+
+mcp_status=пропущен
+if [ "$mcp_answer" = yes ]; then
+    if command -v claude >/dev/null 2>&1; then
+        if claude mcp get listik >/dev/null 2>&1; then
+            claude mcp remove --scope user listik >/dev/null 2>&1 || true
+        fi
+        if claude mcp add --scope user listik -- "$wrapper" mcp >/dev/null 2>&1; then
+            mcp_status=ok
+        else
+            mcp_status="не удалось"
+            note "$prog: MCP: команда не выполнилась — подключите вручную:" >&2
+            note "  claude mcp add --scope user listik -- \"$wrapper\" mcp" >&2
+        fi
+    else
+        mcp_status="не удалось"
+        note "$prog: MCP: нет claude в PATH — подключите вручную:"
+        note "  claude mcp add --scope user listik -- \"$wrapper\" mcp"
+    fi
+fi
+
+plugins_status=пропущен
+if [ "$plugins_answer" = yes ]; then
+    if command -v claude >/dev/null 2>&1 && claude plugin --help >/dev/null 2>&1; then
+        plugins_ok=1
+        if ! claude plugin marketplace add dmitry-fomin/listik >/dev/null 2>&1; then
+            claude plugin marketplace update listik >/dev/null 2>&1 || plugins_ok=0
+        fi
+        claude plugin install listik@listik >/dev/null 2>&1 || plugins_ok=0
+        claude plugin install feature-pipeline@listik >/dev/null 2>&1 || plugins_ok=0
+        if [ "$plugins_ok" = 1 ]; then
+            plugins_status=ok
+        else
+            plugins_status="не удалось"
+            note "$prog: плагины: не все команды claude plugin отработали — поставьте вручную:" >&2
+            note "  /plugin marketplace add dmitry-fomin/listik" >&2
+            note "  /plugin install listik@listik" >&2
+            note "  /plugin install feature-pipeline@listik" >&2
+        fi
+    else
+        plugins_status="не удалось"
+        note "$prog: плагины: claude недоступен (нет в PATH или без подкоманды plugin) — поставьте вручную:"
+        note "  /plugin marketplace add dmitry-fomin/listik"
+        note "  /plugin install listik@listik"
+        note "  /plugin install feature-pipeline@listik"
+    fi
+fi
+
 # ------------------------------------------------- шаг 8: routes.json
 
 replace_routes() {
@@ -411,6 +544,14 @@ note "обёртка: $wrapper"
 if [ "$protocol_changed" = 1 ]; then
     note "протокол изменился: выполните listik init-projects (сначала можно с --dry-run)"
 fi
+note "автозапуск: $service_status"
+note "MCP: $mcp_status"
+note "плагины: $plugins_status"
 note "дальше:"
-note "  listik serve --daemon"
-note "  listik token"
+if [ "$service_status" = ok ]; then
+    note "  listik service status"
+    note "  listik token"
+else
+    note "  listik serve --daemon"
+    note "  listik token"
+fi

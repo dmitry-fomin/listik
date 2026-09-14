@@ -1,4 +1,5 @@
 """Шаг 12, порция c: `install.sh` (пункты 1–10 и 15).
+Шаг 12, порция d (пункт 14): вопросы `--service`/`--mcp`/`--plugins`.
 
 Сети наружу нет: архивы собираются во временном каталоге вручную (`tarfile`) в формате
 порции b, а «сеть» изображает `http.server` из stdlib на `127.0.0.1:0`. Установка идёт
@@ -7,6 +8,17 @@
 
 Скрипт ставит обёртку, которая запускает установленный код тем `python3`, который нашёлся
 в `PATH`, — поэтому в сценариях с поддельным старым `python3` вокруг ничего не создаётся.
+
+Пункт 14 гоняет настоящий `install.sh` в подпроцессе — поэтому `listik.service.run` в нём
+не подменить, как в `tests/test_service.py`. Вместо этого поддельные `launchctl`,
+`systemctl` и `claude` кладутся первыми в `PATH` (см. `make_fake_tools`): они пишут свой
+argv в общий лог-файл и выходят с кодом, который задаёт сама переменная окружения теста
+(`FAKE_LAUNCHCTL_EXIT`/`FAKE_SYSTEMCTL_EXIT`/`FAKE_CLAUDE_EXIT`/`FAKE_CLAUDE_MCP_GET_EXIT`).
+Настоящие `launchctl`/`systemctl`/`claude` эти тесты не зовут ни разу: на хосте, где `claude`
+уже стоит (сам харнесс), сценарий «нет claude в PATH» вычищает из `PATH` именно тот каталог,
+где лежит настоящий `claude`, а не полагается на его отсутствие. У каждого сценария —
+свой временный `LISTIK_PORT`: без него `listik service install` в подпроцессе видел бы порт
+8787 живого сервера Listik (если он поднят на машине разработчика) как «чужой процесс».
 """
 from __future__ import annotations
 
@@ -18,7 +30,9 @@ import json
 import os
 import pathlib
 import shutil
+import socket
 import subprocess
+import sys
 import tarfile
 import tempfile
 import threading
@@ -45,6 +59,50 @@ case "${1:-}" in
 esac
 exit 0
 """
+
+#: Поддельные launchctl/systemctl/claude (пункт 14): пишут argv в общий $FAKE_LOG,
+#: код выхода берут из своей переменной окружения (по умолчанию — успех).
+FAKE_LAUNCHCTL_SH = """#!/bin/sh
+printf 'launchctl %s\\n' "$*" >> "$FAKE_LOG"
+exit "${FAKE_LAUNCHCTL_EXIT:-0}"
+"""
+
+FAKE_SYSTEMCTL_SH = """#!/bin/sh
+printf 'systemctl %s\\n' "$*" >> "$FAKE_LOG"
+exit "${FAKE_SYSTEMCTL_EXIT:-0}"
+"""
+
+#: `claude mcp get` по умолчанию «не найдена» (1) — так `install.sh` не пытается `mcp remove`
+#: лишний раз; тест на `mcp get` -> 0 подменяет `FAKE_CLAUDE_MCP_GET_EXIT`.
+FAKE_CLAUDE_SH = """#!/bin/sh
+printf 'claude %s\\n' "$*" >> "$FAKE_LOG"
+if [ "$1" = mcp ] && [ "$2" = get ]; then
+    exit "${FAKE_CLAUDE_MCP_GET_EXIT:-1}"
+fi
+exit "${FAKE_CLAUDE_EXIT:-0}"
+"""
+
+
+def free_port() -> int:
+    """Свободный порт: без него `listik service install` мог бы решить, что 8787 занят."""
+    with socket.socket() as sock:
+        sock.bind(("127.0.0.1", 0))
+        return int(sock.getsockname()[1])
+
+
+def path_without(dirs_containing: str, path: str | None = None) -> str:
+    """`PATH` без каталогов, где лежит исполняемый файл `dirs_containing`.
+
+    Нужно сценарию «нет claude в PATH»: на машине разработчика/харнесса `claude` уже
+    стоит (это сам агент), поэтому недостаточно понадеяться на его отсутствие — каталог
+    с ним нужно явно вырезать из `PATH`.
+    """
+    kept = []
+    for d in (path if path is not None else os.environ.get("PATH", "")).split(os.pathsep):
+        if not d or os.path.isfile(os.path.join(d, dirs_containing)):
+            continue
+        kept.append(d)
+    return os.pathsep.join(kept)
 
 
 def sha256_file(path: pathlib.Path) -> str:
@@ -87,6 +145,23 @@ class InstallScriptTests(unittest.TestCase):
         env["LISTIK_ROUTES"] = str(self.routes_copy)
         env.update(overrides)
         return env
+
+    def make_fake_tools(self) -> tuple[pathlib.Path, pathlib.Path]:
+        """Каталог с поддельными launchctl/systemctl/claude и общий лог их вызовов.
+
+        Кладётся первым в `PATH` (см. пункт 14): настоящие launchctl/systemctl/claude эти
+        тесты не зовут — даже если они есть на машине.
+        """
+        fake_dir = self.tmp / "fake-tools"
+        fake_dir.mkdir(exist_ok=True)
+        log = self.tmp / "fake-tools.log"
+        for name, script in (("launchctl", FAKE_LAUNCHCTL_SH),
+                             ("systemctl", FAKE_SYSTEMCTL_SH),
+                             ("claude", FAKE_CLAUDE_SH)):
+            path = fake_dir / name
+            path.write_text(script, encoding="utf-8")
+            path.chmod(0o755)
+        return fake_dir, log
 
     @staticmethod
     def _add_bytes(tf: tarfile.TarFile, arcname: str, data: bytes, mode: int = 0o644) -> None:
@@ -155,7 +230,9 @@ class InstallScriptTests(unittest.TestCase):
         self.assertEqual(names, [], "остались временные каталоги установки")
 
     def install(self, archive: pathlib.Path, *extra: str, env: dict | None = None):
-        result = self.run_install("--archive", str(archive), "--yes", *extra, env=env)
+        result = self.run_install("--archive", str(archive), "--yes",
+                                  "--service", "no", "--mcp", "no", "--plugins", "no",
+                                  *extra, env=env)
         self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
         return result
 
@@ -265,6 +342,7 @@ class InstallScriptTests(unittest.TestCase):
         old = self._differing_routes()
         # stdin=/dev/null и своя сессия — управляющего терминала нет вовсе.
         result = self.run_install("--archive", str(archive), "--routes", "ask",
+                                  "--service", "no", "--mcp", "no", "--plugins", "no",
                                   stdin=subprocess.DEVNULL, session=True)
         self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
         self.assertEqual(self.routes_copy.read_text(encoding="utf-8"), old)
@@ -309,7 +387,8 @@ class InstallScriptTests(unittest.TestCase):
         archive = self.make_archive(VERSION)
         sum_file = archive.parent / (archive.name + ".sha256")
         sum_file.write_text(f"{'0' * 64}  {archive.name}\n", encoding="utf-8")
-        result = self.run_install("--archive", str(archive), "--yes")
+        result = self.run_install("--archive", str(archive), "--yes",
+                                  "--service", "no", "--mcp", "no", "--plugins", "no")
         self.assertNotEqual(result.returncode, 0, result.stdout + result.stderr)
         self.assertFalse(self.installed_home.exists(), "каталог данных создан установкой")
         self.assertFalse(self.wrapper.exists(), "обёртка записана при плохой сумме")
@@ -320,7 +399,8 @@ class InstallScriptTests(unittest.TestCase):
         archive = self.make_archive(NEXT_VERSION)
         (archive.parent / (archive.name + ".sha256")).write_text(
             f"{'1' * 64}  {archive.name}\n", encoding="utf-8")
-        result = self.run_install("--archive", str(archive), "--yes")
+        result = self.run_install("--archive", str(archive), "--yes",
+                                  "--service", "no", "--mcp", "no", "--plugins", "no")
         self.assertNotEqual(result.returncode, 0)
         self.assert_installed(VERSION)
         self.assertEqual(sha256_file(self.wrapper), wrapper_before)
@@ -328,7 +408,8 @@ class InstallScriptTests(unittest.TestCase):
 
     def test_broken_init_reports(self) -> None:
         archive = self.make_archive(NEXT_VERSION, broken_init=True)
-        result = self.run_install("--archive", str(archive), "--yes")
+        result = self.run_install("--archive", str(archive), "--yes",
+                                  "--service", "no", "--mcp", "no", "--plugins", "no")
         self.assertNotEqual(result.returncode, 0, result.stdout + result.stderr)
         self.assert_installed(NEXT_VERSION)
         self.assertIn("listik init", result.stdout + result.stderr)
@@ -341,7 +422,8 @@ class InstallScriptTests(unittest.TestCase):
         fake_python.write_text("#!/bin/sh\nexit 1\n", encoding="utf-8")
         fake_python.chmod(0o755)
         env = self.env(PATH=f"{fake_bin}:{os.environ.get('PATH', '')}")
-        result = self.run_install("--archive", str(archive), "--yes", env=env)
+        result = self.run_install("--archive", str(archive), "--yes",
+                                  "--service", "no", "--mcp", "no", "--plugins", "no", env=env)
         self.assertNotEqual(result.returncode, 0, result.stdout + result.stderr)
         self.assertFalse(self.installed_home.exists(), "$HOME/.listik создан")
 
@@ -350,7 +432,8 @@ class InstallScriptTests(unittest.TestCase):
     def test_network_install_without_version(self) -> None:
         base = self.start_stub(VERSION)
         env = self.env(LISTIK_RELEASES_API=f"{base}/latest", LISTIK_DOWNLOAD_BASE=base)
-        result = self.run_install("--yes", env=env)
+        result = self.run_install("--yes", "--service", "no", "--mcp", "no", "--plugins", "no",
+                                  env=env)
         self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
         self.assert_installed(VERSION)
 
@@ -358,7 +441,8 @@ class InstallScriptTests(unittest.TestCase):
         base = self.start_stub(VERSION)
         env = self.env(LISTIK_RELEASES_API=f"{base}/latest", LISTIK_DOWNLOAD_BASE=base,
                        LISTIK_VERSION="9.9.9")
-        result = self.run_install("--version", VERSION, "--yes", env=env)
+        result = self.run_install("--version", VERSION, "--yes",
+                                  "--service", "no", "--mcp", "no", "--plugins", "no", env=env)
         self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
         self.assert_installed(VERSION)
         self.assertFalse((self.app / "9.9.9").exists())
@@ -366,7 +450,8 @@ class InstallScriptTests(unittest.TestCase):
     def test_network_without_sha256_fails(self) -> None:
         base = self.start_stub(VERSION, sha=False)
         env = self.env(LISTIK_RELEASES_API=f"{base}/latest", LISTIK_DOWNLOAD_BASE=base)
-        result = self.run_install("--yes", env=env)
+        result = self.run_install("--yes", "--service", "no", "--mcp", "no", "--plugins", "no",
+                                  env=env)
         self.assertNotEqual(result.returncode, 0, result.stdout + result.stderr)
         self.assertFalse(self.installed_home.exists(), "что-то поставлено без суммы")
         self.assertFalse(self.wrapper.exists())
@@ -376,7 +461,8 @@ class InstallScriptTests(unittest.TestCase):
     def test_piped_to_sh(self) -> None:
         archive = self.make_archive(VERSION)
         result = subprocess.run(
-            [SH, "-s", "--", "--archive", str(archive), "--yes"],
+            [SH, "-s", "--", "--archive", str(archive), "--yes",
+             "--service", "no", "--mcp", "no", "--plugins", "no"],
             input=INSTALL_SH.read_text(encoding="utf-8"), env=self.env(),
             capture_output=True, text=True, timeout=240)
         self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
@@ -388,6 +474,100 @@ class InstallScriptTests(unittest.TestCase):
         for text in ("--version", "--archive", "--routes", "LISTIK_DOWNLOAD_BASE",
                      "LISTIK_HOME"):
             self.assertIn(text, result.stdout, f"в --help нет {text}")
+
+    # --- шаг 12, порция d, пункт 14: --service/--mcp/--plugins -----------
+
+    def test_yes_runs_service_mcp_plugins(self) -> None:
+        fake_dir, log = self.make_fake_tools()
+        archive = self.make_archive(VERSION)
+        env = self.env(PATH=f"{fake_dir}:{os.environ.get('PATH', '')}",
+                       FAKE_LOG=str(log), LISTIK_PORT=str(free_port()))
+        result = self.run_install("--archive", str(archive), "--yes", env=env)
+        self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+        text = log.read_text(encoding="utf-8") if log.exists() else ""
+        if sys.platform == "darwin":
+            self.assertIn("launchctl print", text)
+            self.assertIn("launchctl bootstrap", text)
+        else:
+            self.assertIn("systemctl --user is-active", text)
+            self.assertIn("systemctl --user restart", text)
+        self.assertIn(f"mcp add --scope user listik -- {self.wrapper} mcp", text)
+        self.assertIn("plugin marketplace add dmitry-fomin/listik", text)
+        self.assertIn("plugin install listik@listik", text)
+        self.assertIn("plugin install feature-pipeline@listik", text)
+
+    def test_mcp_get_zero_removes_before_add(self) -> None:
+        fake_dir, log = self.make_fake_tools()
+        archive = self.make_archive(VERSION)
+        env = self.env(PATH=f"{fake_dir}:{os.environ.get('PATH', '')}",
+                       FAKE_LOG=str(log), FAKE_CLAUDE_MCP_GET_EXIT="0",
+                       LISTIK_PORT=str(free_port()))
+        result = self.run_install("--archive", str(archive), "--yes",
+                                  "--service", "no", "--plugins", "no", env=env)
+        self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+        lines = [ln for ln in log.read_text(encoding="utf-8").splitlines()
+                if ln.startswith("claude mcp")]
+        remove_idx = next(i for i, ln in enumerate(lines) if ln.startswith("claude mcp remove"))
+        add_idx = next(i for i, ln in enumerate(lines) if ln.startswith("claude mcp add"))
+        self.assertLess(remove_idx, add_idx, lines)
+
+    def test_all_no_skips_everything(self) -> None:
+        fake_dir, log = self.make_fake_tools()
+        archive = self.make_archive(VERSION)
+        env = self.env(PATH=f"{fake_dir}:{os.environ.get('PATH', '')}",
+                       FAKE_LOG=str(log), LISTIK_PORT=str(free_port()))
+        result = self.run_install("--archive", str(archive), "--yes",
+                                  "--service", "no", "--mcp", "no", "--plugins", "no", env=env)
+        self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+        self.assertFalse(log.exists(), "раннер вызван, хотя все три шага пропущены")
+        self.assertIn("автозапуск: пропущен", result.stdout)
+        self.assertIn("MCP: пропущен", result.stdout)
+        self.assertIn("плагины: пропущен", result.stdout)
+
+    def test_no_claude_in_path(self) -> None:
+        archive = self.make_archive(VERSION)
+        env = self.env(PATH=path_without("claude"), LISTIK_PORT=str(free_port()))
+        result = self.run_install("--archive", str(archive), "--yes", "--service", "no",
+                                  env=env)
+        self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+        self.assertIn("claude mcp add", result.stdout)
+        self.assertIn("/plugin install", result.stdout)
+        self.assertIn("MCP: не удалось", result.stdout)
+        self.assertIn("плагины: не удалось", result.stdout)
+
+    def test_claude_fails_reports_but_continues(self) -> None:
+        fake_dir, log = self.make_fake_tools()
+        archive = self.make_archive(VERSION)
+        env = self.env(PATH=f"{fake_dir}:{os.environ.get('PATH', '')}",
+                       FAKE_LOG=str(log), FAKE_CLAUDE_EXIT="1",
+                       LISTIK_PORT=str(free_port()))
+        result = self.run_install("--archive", str(archive), "--yes", env=env)
+        self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+        self.assertTrue(result.stderr.strip(), "ожидалось предупреждение в stderr")
+        self.assertIn("MCP: не удалось", result.stdout)
+        self.assertIn("плагины: не удалось", result.stdout)
+        self.assert_installed(VERSION)
+        version_out = self.run_wrapper("--version", env=env)
+        self.assertEqual(version_out.returncode, 0, version_out.stderr)
+        self.assertEqual(version_out.stdout.strip(), f"listik {VERSION}")
+
+    def test_reinstall_with_loaded_unit_reloads(self) -> None:
+        fake_dir, log = self.make_fake_tools()
+        env = self.env(PATH=f"{fake_dir}:{os.environ.get('PATH', '')}",
+                       FAKE_LOG=str(log), FAKE_LAUNCHCTL_EXIT="0", FAKE_SYSTEMCTL_EXIT="0",
+                       LISTIK_PORT=str(free_port()))
+        first = self.make_archive(VERSION)
+        result = self.run_install("--archive", str(first), "--yes",
+                                  "--mcp", "no", "--plugins", "no", env=env)
+        self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+        log.write_text("", encoding="utf-8")  # чистим лог первой установки
+
+        second = self.make_archive(NEXT_VERSION)
+        result = self.run_install("--archive", str(second), "--yes",
+                                  "--mcp", "no", "--plugins", "no", env=env)
+        self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+        text = log.read_text(encoding="utf-8")
+        self.assertTrue("bootstrap" in text or "restart" in text, text)
 
 
 if __name__ == "__main__":

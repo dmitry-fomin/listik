@@ -47,13 +47,47 @@ curl -fsSL https://github.com/dmitry-fomin/listik/releases/latest/download/insta
 | `--home <каталог>` | `LISTIK_HOME` | каталог установки и данных, по умолчанию `~/.listik` |
 | `--bin-dir <каталог>` | `LISTIK_BIN_DIR` | куда положить обёртку, по умолчанию `~/.local/bin` |
 | `--routes keep\|replace\|ask` | `LISTIK_ROUTES_POLICY` | что делать с рабочей копией `routes.json`, если она отличается от новой (по умолчанию `ask`) |
-| `--yes` | | на вопросы без явного флага отвечать значением по умолчанию |
+| `--service yes\|no` | | поставить и (пере)запустить автозапуск сервера, по умолчанию `yes` — см. [«Автозапуск»](#автозапуск) |
+| `--mcp yes\|no` | | подключить MCP-сервер (`claude mcp add`), по умолчанию `yes` |
+| `--plugins yes\|no` | | поставить плагины Claude (маркетплейс + `listik`/`feature-pipeline`), по умолчанию `yes` |
+| `--yes` | | на вопросы без явного флага отвечать значением по умолчанию (для `--service`/`--mcp`/`--plugins` это `yes`) |
 | `--help` | | справка по всем флагам и переменным |
+
+Без явного флага и без `--yes` установщик спрашивает про автозапуск, MCP и плагины в `/dev/tty`
+(если его нет — по умолчанию `yes`). Сбой любого из трёх шагов не останавливает установку:
+предупреждение уходит в stderr, итоговый код — 0, а в сводке — по строке `автозапуск:`,
+`MCP:` и `плагины:` со значением `ok`, `не удалось` или `пропущен`.
 
 Для тестов и зеркал: `LISTIK_RELEASES_API` (по умолчанию
 `https://api.github.com/repos/dmitry-fomin/listik/releases/latest`) — откуда брать последнюю
 версию, `LISTIK_DOWNLOAD_BASE` (по умолчанию
 `https://github.com/dmitry-fomin/listik/releases/download`) — откуда качать архивы.
+
+### Автозапуск
+
+`listik service install|uninstall|status` ставит сервер в автозапуск: launchd на macOS
+(`~/Library/LaunchAgents/dev.listik.server.plist`), systemd `--user` на Linux
+(`~/.config/systemd/user/listik.service`). Юнит запускает `<бинарь> serve --quiet` с
+`LISTIK_HOME=<каталог данных>` и пишет лог в `logs/service.log` (рядом с базой, в каталоге
+данных). Установщик сам предлагает поставить автозапуск (см. таблицу выше); поставить или
+снять его отдельно можно и вручную:
+
+```sh
+listik service install            # поставить юнит и (пере)загрузить сервис
+listik service install --bin <путь>   # какой бинарь listik использовать (по умолчанию —
+                                       # обёртка, которой запущена команда, иначе bin/listik)
+listik service install --no-load  # только записать юнит, не (пере)загружать
+listik service status              # платформа, путь юнита, установлен ли, загружен ли
+listik service status --json
+listik service uninstall           # выгрузить и удалить юнит; данные (LISTIK_HOME) не трогает
+listik service uninstall --no-load # удалить только файл; загруженный сервис работает до ручной
+                                    # выгрузки (`launchctl bootout …` / `systemctl --user
+                                    # disable --now listik.service`)
+```
+
+`install` отказывает (`conflict`), если `listik serve` уже запущен отдельно от сервиса и юнит
+ещё не загружен: сначала `listik stop`, потом `listik service install`. Платформы вне macOS/Linux
+не поддерживаются (`unsupported`).
 
 ### Из исходников
 
@@ -665,6 +699,7 @@ inode, фоновые потоки начинают писать `database disk 
 | Группа | Команды |
 |---|---|
 | Сервер | `serve [--daemon] [--no-embed]`, `stop`, `status [--local] [--json]`, `init`, `token`, `mcp` |
+| Автозапуск | `service install\|uninstall\|status [--bin] [--no-load]` — [launchd/systemd](#автозапуск) |
 | Копии | `backup [--out] [--force]`, `restore <копия> [--stop] [--force]` |
 | Задачи | `new`, `list`, `show`, `set`, `context`, `board`, `stats`, `timeline` |
 | Работа | `ready`, `claim`, `heartbeat`, `stage [--to]`, `release`, `done`, `needs-owner`, `inbox` |

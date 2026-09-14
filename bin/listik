@@ -1445,6 +1445,48 @@ def cmd_mcp(args) -> int:
     return mcp.run()
 
 
+def cmd_service(args) -> int:
+    from listik import service
+    json_mode = bool(getattr(args, "json", False))
+    if args.action == "install":
+        info = service.install(args.bin, args.no_load)
+        if json_mode:
+            print(json.dumps({"ok": True, **info}, ensure_ascii=False))
+        else:
+            print(f"сервис установлен: {info['unit_path']}")
+            print(f"бинарь: {info['bin']}")
+            if args.no_load:
+                print("не загружен (--no-load): listik service install без --no-load")
+            else:
+                print("сервис загружен")
+        return 0
+    if args.action == "uninstall":
+        info = service.uninstall(args.no_load)
+        if json_mode:
+            print(json.dumps({"ok": True, **info}, ensure_ascii=False))
+        else:
+            if info["existed"]:
+                print(f"сервис удалён: {info['unit_path']}")
+            else:
+                print("сервис не установлен")
+            if info["warning"]:
+                print(info["warning"])
+        return 0
+    # action == "status"
+    st = service.status()
+    if json_mode:
+        print(json.dumps(st, ensure_ascii=False))
+        return 0
+    print(f"платформа: {st['platform']}")
+    print(f"юнит:      {st['unit_path']}")
+    print(f"установлен: {'да' if st['installed'] else 'нет'}")
+    loaded_text = {True: "да", False: "нет", None: "неизвестно"}[st["loaded"]]
+    print(f"загружен:  {loaded_text}")
+    print(f"бинарь:    {st['bin'] or '—'}")
+    print(f"данные:    {st['data_dir']}")
+    return 0
+
+
 # ------------------------------------------------------------------ парсер
 
 def build_parser() -> argparse.ArgumentParser:
@@ -1721,6 +1763,14 @@ def build_parser() -> argparse.ArgumentParser:
 
     add("token", cmd_token, help="показать токен и ссылку на доску")
     add("mcp", cmd_mcp, help="MCP-сервер (stdio) для агентов")
+
+    sp = add("service", cmd_service,
+             help="автозапуск сервера: install, uninstall, status (launchd/systemd --user)")
+    sp.add_argument("action", choices=["install", "uninstall", "status"])
+    sp.add_argument("--bin", help="бинарь listik для юнита (по умолчанию: обёртка "
+                                  "LISTIK_WRAPPER, иначе ROOT_DIR/bin/listik)")
+    sp.add_argument("--no-load", action="store_true",
+                    help="только записать/удалить юнит, не (пере)загружать сервис")
 
     return p
 

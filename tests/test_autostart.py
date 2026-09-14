@@ -733,6 +733,25 @@ class RecoverTests(AutostartTestCase):
         self.assertEqual(self.comments(task["id"], "journal"), [])
         self.assertEqual(self.notify, [])
 
+    def test_live_pid_poller_records_finish(self) -> None:
+        import subprocess
+        proc = subprocess.Popen([sys.executable, "-c", "import time; time.sleep(0.5)"])
+        task = self.make_launched(proc.pid)
+        with mock.patch.object(launcher_mod, "POLL_INTERVAL", 0.05):
+            self.assertEqual(launcher_mod.recover(self.conn, notify=self.notify_cb), [])
+            self.assertIsNone(self.row(task["id"])["launch_finished_at"])
+            thread = launcher_mod.tracker(task["id"])
+            self.assertIsNotNone(thread)
+            proc.wait()  # снять зомби, иначе kill(pid, 0) считает процесс живым
+            thread.join(10)
+        self.assertFalse(thread.is_alive())
+        row = self.row(task["id"])
+        self.assertTrue(row["launch_finished_at"])
+        self.assertIsNone(row["launch_exit_code"])
+        texts = [c["text"] for c in self.comments(task["id"], "journal")]
+        self.assertTrue(any("код выхода неизвестен" in t for t in texts), texts)
+        self.assertEqual(self.notify, [("task", {"id": task["id"], "action": "launch"})])
+
     def test_permission_error_means_alive(self) -> None:
         task = self.make_launched(1)
         with mock.patch.object(launcher_mod.os, "kill", side_effect=PermissionError):

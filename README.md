@@ -26,6 +26,37 @@ AGENTS.md      правила работы агента с задачами
 Нужно: Python 3.11+ (только стандартная библиотека). Для доски — Node.js. Для векторного поиска —
 [Ollama](https://ollama.com) с моделью `bge-m3` (необязательно: без неё поиск лексический).
 
+### Установка одной строкой
+
+```sh
+curl -fsSL https://github.com/dmitry-fomin/listik/releases/latest/download/install.sh | sh
+```
+
+Однострочник оживёт после публикации релиза (`scripts/release.sh --publish`); до неё ставьте
+[из исходников](#из-исходников). Установщик кладёт код в `~/.listik/app/<версия>`, ссылку
+`~/.listik/app/current` — на текущую, обёртку `listik` — в `~/.local/bin`, данные — в
+`~/.listik`. Повторный запуск обновляет версию; старые версии и данные остаются на месте,
+`listik.db`, `config.toml` и `listik.log` установщик не трогает.
+
+Флаги (флаг важнее переменной окружения):
+
+| Флаг | Переменная | Смысл |
+|---|---|---|
+| `--version X.Y.Z` | `LISTIK_VERSION` | какую версию ставить (по умолчанию — последний релиз) |
+| `--archive <путь>` | `LISTIK_ARCHIVE` | поставить из локального архива, без сети; версия — из `VERSION` внутри |
+| `--home <каталог>` | `LISTIK_HOME` | каталог установки и данных, по умолчанию `~/.listik` |
+| `--bin-dir <каталог>` | `LISTIK_BIN_DIR` | куда положить обёртку, по умолчанию `~/.local/bin` |
+| `--routes keep\|replace\|ask` | `LISTIK_ROUTES_POLICY` | что делать с рабочей копией `routes.json`, если она отличается от новой (по умолчанию `ask`) |
+| `--yes` | | на вопросы без явного флага отвечать значением по умолчанию |
+| `--help` | | справка по всем флагам и переменным |
+
+Для тестов и зеркал: `LISTIK_RELEASES_API` (по умолчанию
+`https://api.github.com/repos/dmitry-fomin/listik/releases/latest`) — откуда брать последнюю
+версию, `LISTIK_DOWNLOAD_BASE` (по умолчанию
+`https://github.com/dmitry-fomin/listik/releases/download`) — откуда качать архивы.
+
+### Из исходников
+
 ```sh
 git clone https://github.com/dmitry-fomin/listik.git && cd listik
 cp config.example.toml config.toml   # необязательно: без файла serve создаст конфиг сам
@@ -35,6 +66,15 @@ cp config.example.toml config.toml   # необязательно: без фай
 ./bin/listik token            # ссылка на доску с токеном
 ./bin/listik status           # сервер, база, поиск
 ./bin/listik stop
+```
+
+### Перенос базы в каталог установки
+
+База из репозитория (или из другого каталога) переносится штатными командами:
+
+```sh
+./bin/listik backup                                  # копия рядом со старой базой
+LISTIK_HOME=~/.listik listik restore <копия>         # положить её в ~/.listik/listik.db
 ```
 
 - База `listik.db` создаётся сама при первом `serve`/`init`.
@@ -48,6 +88,21 @@ cp config.example.toml config.toml   # необязательно: без фай
   предупреждает об этом). `--json` есть у всех команд.
 - Копировать базу через `cp`/`mv`/`rm`, пока сервер работает, **нельзя** — для копий есть
   `listik backup` и `listik restore` (см. «Резервные копии и восстановление базы»).
+
+### `listik status --json`
+
+`status` печатает один JSON-объект (`--local` — не опрашивать сервер, `server` = `skipped`,
+код 0; без `--local` код 1, когда сервер не отвечает):
+
+- `server` — `up`, `down`, `unauthorized` или `skipped`;
+- `pid` — pid сервера из `listik.pid` или `null`;
+- `url` — `http://<host>:<port>/` из конфига, **без токена**;
+- `version` — версия Listik;
+- `data_dir`, `db_path`, `config_path`, `log_path`, `code_dir` — пути каталога данных,
+  базы, конфига, лога и кода;
+- `health` — ответ `/api/health` как есть при `up`/`unauthorized`, иначе `null`.
+
+Токена и содержимого `config.toml` в JSON нет: ссылка с токеном — `listik token`.
 
 Кто выполняет команду — актор: флаг `--actor` или `LISTIK_ACTOR` (по умолчанию `$USER`).
 Агенты представляются как `agent:<harness>` флагом в каждой команде, например
@@ -609,7 +664,7 @@ inode, фоновые потоки начинают писать `database disk 
 
 | Группа | Команды |
 |---|---|
-| Сервер | `serve [--daemon] [--no-embed]`, `stop`, `status`, `init`, `token`, `mcp` |
+| Сервер | `serve [--daemon] [--no-embed]`, `stop`, `status [--local] [--json]`, `init`, `token`, `mcp` |
 | Копии | `backup [--out] [--force]`, `restore <копия> [--stop] [--force]` |
 | Задачи | `new`, `list`, `show`, `set`, `context`, `board`, `stats`, `timeline` |
 | Работа | `ready`, `claim`, `heartbeat`, `stage [--to]`, `release`, `done`, `needs-owner`, `inbox` |

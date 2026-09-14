@@ -414,18 +414,48 @@ def cmd_stop(args) -> int:
 
 def cmd_status(args) -> int:
     from listik import server
-    # Каталог данных — до проверки сервера: он нужен и когда сервер не отвечает.
-    print(f"каталог данных: {paths.DATA_DIR}")
-    h = client.health(args.host, args.port)
+    # `--local` отменяет только опрос сервера: pid, каталог данных и токен — как раньше.
+    local = bool(getattr(args, "local", False))
+    h = None if local else client.health(args.host, args.port)
     pid = server.read_pid()
     cfg, token = client.config_mod.ensure_token()
-    url = f"http://{cfg['server']['host']}:{cfg['server']['port']}/?token={token}"
+    url = f"http://{cfg['server']['host']}:{cfg['server']['port']}/"
+    if getattr(args, "json", False):
+        if local:
+            state = "skipped"
+        elif h is None:
+            state = "down"
+        elif h.get("authed") is False:
+            state = "unauthorized"
+        else:
+            state = "up"
+        # Токена и содержимого config.toml здесь нет: ссылка с токеном — `listik token`.
+        print(json.dumps({
+            "server": state,
+            "pid": pid,
+            "url": url,
+            "version": __version__,
+            "data_dir": str(paths.DATA_DIR),
+            "db_path": str(paths.DB_PATH),
+            "config_path": str(paths.CONFIG_PATH),
+            "log_path": str(paths.LOG_PATH),
+            "code_dir": str(paths.ROOT_DIR),
+            # Ответ /api/health как есть — только когда он что-то значит.
+            "health": h if state in ("up", "unauthorized") else None,
+        }, ensure_ascii=False))
+        return 1 if state == "down" else 0
+    # Каталог данных — до проверки сервера: он нужен и когда сервер не отвечает.
+    print(f"каталог данных: {paths.DATA_DIR}")
+    if local:
+        print(f"база:   {paths.DB_PATH}")
+        print("сервер: не проверялся (--local)")
+        return 0
     if h is None:
         print("сервер: не отвечает" + (f" (pid-файл: {pid})" if pid else ""))
         print("поднять: listik serve --daemon")
         return 1
     print(f"сервер: работает{' (pid ' + str(pid) + ')' if pid else ''}")
-    print(f"доска:  {url}")
+    print(f"доска:  {url}?token={token}")
     if h.get("authed") and h.get("counts"):
         c = h["counts"]
         print(f"база:   {h.get('db')}")

@@ -29,7 +29,13 @@
           "label": "xhigh",
           "title": "Grok 4.6 · xhigh"
         }
-      }
+      },
+      "command": [
+        "claude",
+        "--dangerously-skip-permissions",
+        "-p",
+        "Задача {task_id} (проект {project}), маршрут {route}. Запусти скил /feature-pipeline:{route} и веди карточку по нему: ты оркестратор, кода не пишешь и порцию не коммитишь. Протокол — AGENTS.md. Первым действием, до чтения кода и show: claim {task_id} --holder claude. Дальше heartbeat каждые 10–15 мин, пока карточку держишь ты. Все команды с --actor agent:claude --harness claude."
+      ]
     },
     {
       "key": "high-pipeline",
@@ -59,7 +65,13 @@
           "label": "xhigh",
           "title": "Grok 4.6 · xhigh"
         }
-      }
+      },
+      "command": [
+        "claude",
+        "--dangerously-skip-permissions",
+        "-p",
+        "Задача {task_id} (проект {project}), маршрут {route}. Запусти скил /feature-pipeline:{route} и веди карточку по нему: ты оркестратор, кода не пишешь и порцию не коммитишь. Протокол — AGENTS.md. Первым действием, до чтения кода и show: claim {task_id} --holder claude. Дальше heartbeat каждые 10–15 мин, пока карточку держишь ты. Все команды с --actor agent:claude --harness claude."
+      ]
     },
     {
       "key": "medium-pipeline",
@@ -89,7 +101,13 @@
           "label": "medium",
           "title": "Grok 4.6 · medium"
         }
-      }
+      },
+      "command": [
+        "claude",
+        "--dangerously-skip-permissions",
+        "-p",
+        "Задача {task_id} (проект {project}), маршрут {route}. Запусти скил /feature-pipeline:{route} и веди карточку по нему: ты оркестратор, кода не пишешь и порцию не коммитишь. Протокол — AGENTS.md. Первым действием, до чтения кода и show: claim {task_id} --holder claude. Дальше heartbeat каждые 10–15 мин, пока карточку держишь ты. Все команды с --actor agent:claude --harness claude."
+      ]
     },
     {
       "key": "low-pipeline",
@@ -116,10 +134,16 @@
         },
         "judge": {
           "provider": "grok",
-          "label": "low",
-          "title": "Grok 4.6 · low"
+          "label": "medium",
+          "title": "Grok 4.6 · medium"
         }
-      }
+      },
+      "command": [
+        "claude",
+        "--dangerously-skip-permissions",
+        "-p",
+        "Задача {task_id} (проект {project}), маршрут {route}. Запусти скил /feature-pipeline:{route} и веди карточку по нему: ты оркестратор, кода не пишешь и порцию не коммитишь. Протокол — AGENTS.md. Первым действием, до чтения кода и show: claim {task_id} --holder claude. Дальше heartbeat каждые 10–15 мин, пока карточку держишь ты. Все команды с --actor agent:claude --harness claude."
+      ]
     },
     {
       "key": "xlow-pipeline",
@@ -139,7 +163,13 @@
           "label": "high",
           "title": "Grok 4.6 · high"
         }
-      }
+      },
+      "command": [
+        "claude",
+        "--dangerously-skip-permissions",
+        "-p",
+        "Задача {task_id} (проект {project}), маршрут {route}. Запусти скил /feature-pipeline:{route} и веди карточку по нему: ты оркестратор, кода не пишешь и порцию не коммитишь. Протокол — AGENTS.md. Первым действием, до чтения кода и show: claim {task_id} --holder claude. Дальше heartbeat каждые 10–15 мин, пока карточку держишь ты. Все команды с --actor agent:claude --harness claude."
+      ]
     },
     {
       "key": "inherit-pipeline",
@@ -168,7 +198,13 @@
           "label": "Opus",
           "title": "Opus (судья) · effort наследует от оркестратора"
         }
-      }
+      },
+      "command": [
+        "claude",
+        "--dangerously-skip-permissions",
+        "-p",
+        "Задача {task_id} (проект {project}), маршрут {route}. Запусти скил /feature-pipeline:{route} и веди карточку по нему: ты оркестратор, кода не пишешь и порцию не коммитишь. Протокол — AGENTS.md. Первым действием, до чтения кода и show: claim {task_id} --holder claude. Дальше heartbeat каждые 10–15 мин, пока карточку держишь ты. Все команды с --actor agent:claude --harness claude."
+      ]
     },
     {
       "key": "opus-single-pipeline",
@@ -186,7 +222,13 @@
       "strip": {
         "provider": "claude",
         "label": "Opus"
-      }
+      },
+      "command": [
+        "claude",
+        "--dangerously-skip-permissions",
+        "-p",
+        "Задача {task_id} (проект {project}), маршрут {route}. Запусти скил /feature-pipeline:{route} и веди карточку по нему: ты оркестратор, кода не пишешь и порцию не коммитишь. Протокол — AGENTS.md. Первым действием, до чтения кода и show: claim {task_id} --holder claude. Дальше heartbeat каждые 10–15 мин, пока карточку держишь ты. Все команды с --actor agent:claude --harness claude."
+      ]
     },
     {
       "key": "opus-sonnet-pipeline",
@@ -205,7 +247,13 @@
           "label": "Sonnet",
           "title": "Sonnet-судья, коммитит"
         }
-      }
+      },
+      "command": [
+        "claude",
+        "--dangerously-skip-permissions",
+        "-p",
+        "Задача {task_id} (проект {project}), маршрут {route}. Запусти скил /feature-pipeline:{route} и веди карточку по нему: ты оркестратор, кода не пишешь и порцию не коммитишь. Протокол — AGENTS.md. Первым действием, до чтения кода и show: claim {task_id} --holder claude. Дальше heartbeat каждые 10–15 мин, пока карточку держишь ты. Все команды с --actor agent:claude --harness claude."
+      ]
     },
     {
       "key": "feature-pipeline",
@@ -238,7 +286,13 @@
       "strip": {
         "glyph": "gear",
         "label": "по конфигу"
-      }
+      },
+      "command": [
+        "claude",
+        "--dangerously-skip-permissions",
+        "-p",
+        "Задача {task_id} (проект {project}), маршрут {route}. Запусти скил /feature-pipeline:{route} и веди карточку по нему: ты оркестратор, кода не пишешь и порцию не коммитишь. Протокол — AGENTS.md. Первым действием, до чтения кода и show: claim {task_id} --holder claude. Дальше heartbeat каждые 10–15 мин, пока карточку держишь ты. Все команды с --actor agent:claude --harness claude."
+      ]
     },
     {
       "key": "dsh",

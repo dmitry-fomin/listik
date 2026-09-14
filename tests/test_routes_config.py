@@ -131,16 +131,23 @@ class RepoRoutesFileTests(unittest.TestCase):
                     "feature-pipeline"):
             self.assertIsNone(normalized[key])
 
-    def test_repo_commands_only_on_direct(self) -> None:
-        """В образце готовый argv автостарта — у прямых маршрутов; конвейеры без command."""
+    def test_repo_every_record_has_command(self) -> None:
+        """В образце у каждой записи есть argv автостарта: конвейер — claude, прямой — свой харнесс."""
         normalized = {record["key"]: record for record in routes_mod.validate(self.raw)}
+        pipeline_cmd = None
         for raw in self.raw["routes"]:
-            if raw["kind"] == "direct":
-                self.assertIn("command", raw, raw["key"])
-                self.assertEqual(normalized[raw["key"]]["command"], raw["command"])
+            self.assertIn("command", raw, raw["key"])
+            self.assertEqual(normalized[raw["key"]]["command"], raw["command"])
+            if raw["kind"] == "pipeline":
+                self.assertEqual(raw["command"][:3],
+                                 ["claude", "--dangerously-skip-permissions", "-p"], raw["key"])
+                self.assertIn("/feature-pipeline:{route}", raw["command"][-1], raw["key"])
+                if pipeline_cmd is None:
+                    pipeline_cmd = raw["command"]
+                else:
+                    self.assertEqual(raw["command"], pipeline_cmd, raw["key"])
             else:
-                self.assertNotIn("command", raw, raw["key"])
-                self.assertIsNone(normalized[raw["key"]]["command"])
+                self.assertNotEqual(raw["command"][0], "claude", raw["key"])
 
     def test_web_src_has_no_embedded_route_tables(self) -> None:
         offenders: list[str] = []

@@ -25,7 +25,7 @@ PRESETS = {
     "3. Лошадь":   dict(spec="claude-fable-5-1-low", critic="glm-5-3-flash",
                         dev="claude-opus-5-medium", judge="grok-4-6-medium"),
     "4. Дёшево":   dict(spec="claude-opus-5-low", critic="glm-5-3-flash",
-                        dev="deepseek-v4-1-flash", judge="grok-4-6-low"),
+                        dev="deepseek-v4-1-flash", judge="grok-4-6-medium"),
     "5. Один прогон": dict(dev="claude-opus-5-medium"),
 }
 ROLES = [("spec", "Писатель ТЗ"), ("critic", "Критик"), ("dev", "Разработчик"), ("judge", "Судья")]

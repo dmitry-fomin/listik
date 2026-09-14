@@ -12,10 +12,10 @@
  * отчёт при этом всегда содержит блок `phone` с полями, посчитанными только
  * по видимым элементам (`offsetParent !== null`).
  */
-import { spawn } from 'node:child_process'
 import { mkdtempSync, rmSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
+import { cdpTarget, connect, sleep, startChrome } from './lib/browser-harness.mjs'
 
 const url = process.argv[2] ?? 'http://localhost:5199/'
 const width = Number.parseInt(process.argv[3] ?? '1440', 10) || 1440
@@ -49,72 +49,11 @@ const profile = mkdtempSync(join(tmpdir(), 'listik-smoke-'))
 const emulatePhone = width < 768
 const windowSize = emulatePhone ? '1200,900' : `${width},900`
 
-const chrome = spawn(
-  chromePath,
-  [
-    '--headless=old',
-    '--disable-gpu',
-    `--window-size=${windowSize}`,
-    '--no-sandbox',
-    '--disable-dev-shm-usage',
-    `--remote-debugging-port=${port}`,
-    `--user-data-dir=${profile}`,
-    'about:blank',
-  ],
-  { stdio: 'ignore' },
-)
-
-const sleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms))
-
-async function target() {
-  for (let attempt = 0; attempt < 40; attempt += 1) {
-    try {
-      const response = await fetch(`http://127.0.0.1:${port}/json/list`)
-      const list = await response.json()
-      const page = list.find((item) => item.type === 'page')
-      if (page?.webSocketDebuggerUrl) return page.webSocketDebuggerUrl
-    } catch {
-      /* chrome ещё поднимается */
-    }
-    await sleep(250)
-  }
-  throw new Error('не дождались CDP-таргета Chrome')
-}
-
-function connect(wsUrl) {
-  return new Promise((resolve, reject) => {
-    const socket = new WebSocket(wsUrl)
-    let nextId = 1
-    const pending = new Map()
-    const events = []
-    socket.addEventListener('open', () =>
-      resolve({
-        socket,
-        events,
-        send(method, params) {
-          const id = nextId++
-          socket.send(JSON.stringify({ id, method, params }))
-          return new Promise((res, rej) => pending.set(id, { res, rej }))
-        },
-      }),
-    )
-    socket.addEventListener('error', reject)
-    socket.addEventListener('message', (event) => {
-      const message = JSON.parse(event.data)
-      if (message.id && pending.has(message.id)) {
-        const { res, rej } = pending.get(message.id)
-        pending.delete(message.id)
-        if (message.error) rej(new Error(message.error.message))
-        else res(message.result)
-        return
-      }
-      if (message.method) events.push(message)
-    })
-  })
-}
+const chrome = startChrome(chromePath, port, profile, windowSize)
 
 async function main() {
-  const client = await connect(await target())
+  const client = connect(await cdpTarget(port))
+  await client.ready
   await client.send('Runtime.enable')
   await client.send('Log.enable')
   await client.send('Page.enable')

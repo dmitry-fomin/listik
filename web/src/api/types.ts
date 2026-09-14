@@ -1,6 +1,8 @@
 /**
  * Типы ответов API Listik. Источник правды — API.md и listik/store.py.
  */
+import type { HarnessKey } from '@/lib/harness'
+import type { ProviderKey, RoleCell, RoleKey } from '@/lib/pipelines'
 
 export type TaskStatus = 'open' | 'in_progress' | 'blocked' | 'review' | 'done' | 'cancelled'
 export type PipelineStage = 's1-spec' | 's2-review' | 's3-impl' | 's4-judge'
@@ -65,6 +67,17 @@ export interface Task {
   archived: boolean
   stale: boolean
   abandoned: boolean
+  // ── запуск процесса (см. API.md, «Маршруты запуска»): пишет только сервер,
+  // поля есть у каждой задачи, у незапущенных — null/false
+  autostart: boolean
+  launch_route: string | null
+  launched_by: string | null
+  launch_pid: number | null
+  launched_at: string | null
+  launch_log: string | null
+  launch_exit_code: number | null
+  launch_finished_at: string | null
+  launch_error: string | null
 }
 
 export interface TaskComment {
@@ -288,6 +301,49 @@ export interface ProjectRemoved {
   slug: string
   removed: boolean
   removed_tasks: number
+}
+
+// ── маршруты запуска: routes.json, GET /api/routes (см. API.md) ─────────────
+
+/** Одна иконка и подпись вместо таблицы ролей — `strip` в routes.json. */
+export interface RouteStrip {
+  label: string
+  /** ровно одно из `provider`/`glyph` (проверяет сервер) */
+  provider?: ProviderKey
+  glyph?: string
+}
+
+interface RouteBase {
+  key: string
+  title: string
+  /** цена/квота/повод одной строкой — под названием пресета */
+  hint: string
+  /** показывать ли запись на доске; скрытая не выбирается и не ловится стрелками */
+  visible: boolean
+}
+
+/** Пресет конвейера: роли ТЗ/критик/исполнитель/судья. */
+export interface PipelineRouteDef extends RouteBase {
+  kind: 'pipeline'
+  roles: Partial<Record<RoleKey, RoleCell>>
+  /** пресеты строки «Отдельно» — без таблицы ролей */
+  strip?: RouteStrip
+}
+
+/** Прямой маршрут: харнесс делает задачу целиком, без ролей. */
+export interface DirectRouteDef extends RouteBase {
+  kind: 'direct'
+  harness: HarnessKey
+}
+
+export type RouteDef = PipelineRouteDef | DirectRouteDef
+
+/** GET /api/routes: ошибка файла — `ok:false` с текстом, а не HTTP-ошибкой. */
+export interface RoutesResponse {
+  ok: boolean
+  error: string | null
+  path: string
+  routes: RouteDef[]
 }
 
 export interface ActorRow {

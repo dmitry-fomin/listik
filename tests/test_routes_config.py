@@ -1,8 +1,10 @@
 """Тесты routes.json (шаг 09, порция a; чек-лист `step-09.check-a.md`).
 
 Настоящий `~/.config/listik/` тесты не трогают: везде явные пути во временном каталоге
-или `LISTIK_ROUTES`. Файл `routes.json` из репозитория только читается; тексты восьми
-пресетов сверяются с `web/src/lib/pipelines.ts` разбором, а не на глаз.
+или `LISTIK_ROUTES`. Файл `routes.json` из репозитория только читается: его структура
+проверяется по самому файлу, а зашитых таблиц маршрутов в `web/src` быть не должно —
+единственный источник данных для доски это `routes.json` через `GET /api/routes`
+(шаг 09, порция c).
 """
 from __future__ import annotations
 
@@ -14,7 +16,6 @@ import importlib.util
 import io
 import json
 import pathlib
-import re
 import subprocess
 import threading
 import unittest
@@ -28,48 +29,21 @@ from tests.helpers import TempDbTestCase
 
 REPO_DIR = pathlib.Path(__file__).resolve().parent.parent
 ROUTES_JSON = REPO_DIR / "routes.json"
-PIPELINES_TS = REPO_DIR / "web" / "src" / "lib" / "pipelines.ts"
-ROUTES_TS = REPO_DIR / "web" / "src" / "lib" / "routes.ts"
 ICONS_TS = REPO_DIR / "web" / "src" / "lib" / "icons.ts"
+WEB_SRC = REPO_DIR / "web" / "src"
 LISTIK_BIN = REPO_DIR / "bin" / "listik"
 
 DIRECT_KEYS = ["dsh", "grok", "codex"]
 
-ROLE_LINE_RE = re.compile(
-    r"^\s{6}(\w+): \{ provider: '([^']*)', label: '([^']*)', title: '([^']*)' \},", re.M)
-STRIP_RE = re.compile(r"strip: \{ (provider|glyph): '([^']*)', label: '([^']*)' \}")
+# Порядок записей в routes.json — он же порядок строк формы «Новая задача».
+EXPECTED_KEYS = [
+    "xhigh-pipeline", "high-pipeline", "medium-pipeline", "low-pipeline", "inherit-pipeline",
+    "opus-single-pipeline", "opus-sonnet-pipeline", "feature-pipeline",
+    *DIRECT_KEYS,
+]
 
-
-def pipelines_from_ts() -> list[dict]:
-    """Разобрать массив `PIPELINES` из pipelines.ts в те же записи, что ждём в routes.json."""
-    source = PIPELINES_TS.read_text(encoding="utf-8")
-    match = re.search(r"export const PIPELINES: PipelineDef\[\] = \[(.*?)\n\]\n", source, re.S)
-    if match is None:
-        raise AssertionError("в pipelines.ts не найден массив PIPELINES")
-    out: list[dict] = []
-    for chunk in re.split(r"\n  \{\n", match.group(1)):
-        if not chunk.strip():
-            continue
-        key = re.search(r"^\s*key: '([^']*)'", chunk, re.M).group(1)
-        title = re.search(r"^\s*title: '([^']*)'", chunk, re.M).group(1)
-        hint = re.search(r"^\s*hint: '([^']*)'", chunk, re.M).group(1)
-        roles = {role: {"provider": provider, "label": label, "title": cell_title}
-                 for role, provider, label, cell_title in ROLE_LINE_RE.findall(chunk)}
-        record = {"key": key, "kind": "pipeline", "title": title, "hint": hint,
-                  "visible": True, "roles": roles}
-        strip = STRIP_RE.search(chunk)
-        if strip:
-            record["strip"] = {strip.group(1): strip.group(2), "label": strip.group(3)}
-        out.append(record)
-    return out
-
-
-def direct_keys_from_ts() -> list[str]:
-    source = ROUTES_TS.read_text(encoding="utf-8")
-    match = re.search(r"DIRECT_HARNESSES: HarnessKey\[\] = \[([^\]]*)\]", source)
-    if match is None:
-        raise AssertionError("в routes.ts не найден DIRECT_HARNESSES")
-    return re.findall(r"'([^']*)'", match.group(1))
+# Таблицы маршрутов, зашитые в доске до шага 09, порции c: их заменил ответ API.
+REMOVED_TS_TABLES = ("PIPELINES", "DIRECT_HARNESSES")
 
 
 def pipeline_record() -> dict:
@@ -93,11 +67,15 @@ def document(*records) -> dict:
 
 
 class RepoRoutesFileTests(unittest.TestCase):
-    """Пункты 1–3 чек-листа: файл в репозитории, перенос данных, проверка."""
+    """Пункты 1–3 чек-листа: файл в репозитории, перенос данных, проверка.
+
+    Сверки с `web/src` больше нет: зашитые таблицы маршрутов оттуда убраны
+    (шаг 09, порция c), единственный источник — сам `routes.json`. Здесь
+    проверяются его структура и отсутствие этих таблиц в исходниках доски.
+    """
 
     def setUp(self) -> None:
         self.raw = json.loads(ROUTES_JSON.read_text(encoding="utf-8"))
-        self.parsed = pipelines_from_ts()
 
     def test_not_ignored_by_git(self) -> None:
         try:
@@ -110,28 +88,23 @@ class RepoRoutesFileTests(unittest.TestCase):
     def test_has_eleven_records_in_order(self) -> None:
         self.assertEqual(self.raw["version"], 1)
         self.assertEqual(len(self.raw["routes"]), 11)
-        keys = [r["key"] for r in self.raw["routes"]]
-        self.assertEqual(keys, [r["key"] for r in self.parsed] + DIRECT_KEYS)
-        self.assertEqual(direct_keys_from_ts(), DIRECT_KEYS)
+        self.assertEqual([r["key"] for r in self.raw["routes"]], EXPECTED_KEYS)
 
     def test_validates_and_every_record_is_visible(self) -> None:
         normalized = routes_mod.validate(self.raw)
-        self.assertEqual(len(normalized), 11)
+        self.assertEqual([r["key"] for r in normalized], EXPECTED_KEYS)
         self.assertTrue(all(r["visible"] is True for r in normalized))
         self.assertTrue(all(r["visible"] is True for r in self.raw["routes"]))
 
-    def test_pipeline_texts_match_pipelines_ts(self) -> None:
-        normalized = routes_mod.validate(self.raw)
-        for got, want in zip(normalized, self.parsed):
-            self.assertEqual(got["kind"], "pipeline")
-            self.assertEqual(got["title"], want["title"], got["key"])
-            self.assertEqual(got["hint"], want["hint"], got["key"])
-            self.assertEqual(got["roles"], want["roles"], got["key"])
-            self.assertEqual(got.get("strip"), want.get("strip"), got["key"])
+    def test_kinds_match_the_table(self) -> None:
+        kinds = [r["kind"] for r in self.raw["routes"]]
+        self.assertEqual(kinds[:8], ["pipeline"] * 8)
+        self.assertEqual(kinds[8:], ["direct"] * 3)
 
     def test_direct_records_are_exact(self) -> None:
         normalized = routes_mod.validate(self.raw)
-        for key, got in zip(DIRECT_KEYS, normalized[len(self.parsed):]):
+        for key, got in zip(DIRECT_KEYS, normalized[8:]):
+            self.assertEqual(got["title"], key)
             self.assertEqual(got, {"key": key, "kind": "direct", "title": key, "hint": "",
                                    "visible": True, "harness": key, "command": None})
 
@@ -139,6 +112,17 @@ class RepoRoutesFileTests(unittest.TestCase):
         for raw in self.raw["routes"]:
             self.assertNotIn("command", raw)
         self.assertTrue(all(r["command"] is None for r in routes_mod.validate(self.raw)))
+
+    def test_web_src_has_no_embedded_route_tables(self) -> None:
+        offenders: list[str] = []
+        for path in sorted(WEB_SRC.rglob("*")):
+            if not path.is_file() or path.suffix not in {".ts", ".vue", ".js", ".mjs"}:
+                continue
+            text = path.read_text(encoding="utf-8")
+            for name in REMOVED_TS_TABLES:
+                if name in text:
+                    offenders.append(f"{path.relative_to(REPO_DIR)}: {name}")
+        self.assertEqual(offenders, [])
 
 
 class ValidateTests(unittest.TestCase):

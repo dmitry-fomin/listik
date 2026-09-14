@@ -12,6 +12,7 @@ import type {
   ProjectRow,
   ProjectsResponse,
   ReadyResponse,
+  RoutesResponse,
   SearchMode,
   SearchResponse,
   Stats,
@@ -104,6 +105,9 @@ const patch = <T>(path: string, body: unknown): Promise<T> => request<T>('PATCH'
 
 export const api = {
   health: () => get<Health>('/api/health'),
+
+  /** Маршруты запуска из `routes.json` (загружены сервером при старте, без `command`). */
+  routes: () => get<RoutesResponse>('/api/routes'),
 
   meta: (archived = false) => get<Meta>(`/api/meta${buildQuery({ archived })}`),
 

@@ -20,6 +20,7 @@ import type {
   Health,
   Meta,
   ProjectRow,
+  RouteDef,
   SearchMode,
   ReadyTask,
   SearchResponse,
@@ -130,6 +131,21 @@ const projects = ref<ProjectRow[]>([])
 const projectsRoot = ref('')
 const projectsLoading = ref(false)
 const projectsError = ref<string | null>(null)
+
+/**
+ * Маршруты запуска (`GET /api/routes`, файл `routes.json`): грузятся один раз за
+ * сессию доски — при первом открытии «Новой задачи» (`ensureRoutes`) либо повторно
+ * кнопкой «повторить» (`loadRoutes`). Ошибка самого файла приходит в ответе
+ * (`ok:false` + `error`), отказ запроса — исключением; в обоих случаях форма
+ * показывает алерт и создаёт задачу без маршрута.
+ */
+const routes = ref<RouteDef[]>([])
+const routesOk = ref(true)
+const routesError = ref<string | null>(null)
+/** Запрос `routes()` не удался (сеть или HTTP) — текста из файла в этом случае нет. */
+const routesRequestFailed = ref(false)
+const routesLoading = ref(false)
+let routesRequested = false
 
 let healthTimer: ReturnType<typeof setInterval> | null = null
 let sseTimer: ReturnType<typeof setTimeout> | null = null
@@ -747,6 +763,37 @@ async function bulkPatch(ids: string[], changes: TaskPatch): Promise<void> {
 }
 
 /**
+ * Запрос маршрутов — ровно один на вызов. Первое открытие формы зовёт
+ * `ensureRoutes`, кнопка «повторить» — `loadRoutes`; результат (в том числе
+ * ошибка) кешируется, повторное открытие формы запрос не повторяет.
+ */
+async function loadRoutes(): Promise<void> {
+  if (routesLoading.value) return
+  routesRequested = true
+  routesLoading.value = true
+  try {
+    const data = await api.routes()
+    routesOk.value = data.ok
+    routesError.value = data.error
+    routesRequestFailed.value = false
+    routes.value = data.routes ?? []
+  } catch (error) {
+    routesOk.value = false
+    routesError.value = errorMessage(error)
+    routesRequestFailed.value = true
+    routes.value = []
+  } finally {
+    routesLoading.value = false
+  }
+}
+
+/** Ленивая загрузка при первом открытии формы: одно обращение на сессию доски. */
+function ensureRoutes(): void {
+  if (routesRequested) return
+  void loadRoutes()
+}
+
+/**
  * Репозитории доски (проекты). Доска показывает ровно те, что лежат в таблице
  * `projects` и не скрыты, поэтому «добавить репозиторий» и «убрать с доски» —
  * это операции над проектом, а не фильтр по задачам.
@@ -906,6 +953,11 @@ export function useListikStore() {
     projectsRoot,
     projectsLoading,
     projectsError,
+    routes,
+    routesOk,
+    routesError,
+    routesRequestFailed,
+    routesLoading,
     inboxQuestions,
     // производные
     columns,
@@ -958,6 +1010,8 @@ export function useListikStore() {
     addDependency,
     createTask,
     bulkPatch,
+    loadRoutes,
+    ensureRoutes,
     loadProjects,
     openProjects,
     addProject,

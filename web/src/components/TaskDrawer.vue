@@ -171,6 +171,29 @@ const statusTone = computed<StatusPillTone>(() => {
   return 'healthy'
 })
 
+// ── «Автостарт»: процесс маршрута поднимает сервер (см. API.md) ───────────
+
+/** Блок нужен, только если автостарт заказан, запуск был или о нём есть ошибка. */
+const showLaunch = computed(() => {
+  const task = props.task
+  if (!task) return false
+  return Boolean(task.autostart || task.launched_by || task.launch_error)
+})
+
+/**
+ * Статус запуска: «идёт», пока процесс не завершён; «код N» — код выхода;
+ * «отслеживание потеряно» — `launch_finished_at` заполнен, а код null (сервер
+ * потерял процесс). Задача без попытки запуска строки статуса не получает.
+ */
+const launchStatus = computed<string | null>(() => {
+  const task = props.task
+  if (!task) return null
+  if (task.launched_by === 'listik' && !task.launch_finished_at) return 'идёт'
+  if (task.launch_finished_at && task.launch_exit_code != null) return `код ${task.launch_exit_code}`
+  if (task.launch_finished_at) return 'отслеживание потеряно'
+  return null
+})
+
 function defaultHolder(): string {
   try {
     const stored = window.localStorage.getItem(HOLDER_KEY)
@@ -899,6 +922,41 @@ async function loadTree(): Promise<void> {
             Добавить связь
           </UiButton>
         </div>
+      </section>
+
+      <section v-if="showLaunch" class="listik-section">
+        <h4 class="listik-section__title">Автостарт</h4>
+        <dl class="listik-dl">
+          <dt>маршрут</dt>
+          <dd><span class="listik-mono">{{ task.launch_route || '—' }}</span></dd>
+          <template v-if="task.launched_by === 'listik'">
+            <dt>запуск</dt>
+            <dd>
+              запущена Listik<template v-if="task.launch_pid != null"> · pid {{ task.launch_pid }}</template>
+              <template v-if="task.launched_at"> · {{ formatDateTime(task.launched_at) }}</template>
+            </dd>
+          </template>
+          <template v-if="launchStatus">
+            <dt>статус</dt>
+            <dd>{{ launchStatus }}</dd>
+          </template>
+          <template v-if="task.launch_error">
+            <dt>ошибка</dt>
+            <dd class="listik-row" style="flex-wrap: nowrap; align-items: flex-start">
+              <ListikIcon name="warning" size="xs" />
+              <span>{{ task.launch_error }}</span>
+            </dd>
+          </template>
+          <template v-if="task.launch_log">
+            <dt>лог</dt>
+            <dd class="listik-row" style="flex-wrap: nowrap; min-width: 0">
+              <span class="listik-mono">{{ task.launch_log }}</span>
+              <UiCopyButton :value="task.launch_log" label="Путь к логу запуска">
+                <template #icon="{ copied }"><ListikIcon :name="copied ? 'check' : 'copy'" size="sm" /></template>
+              </UiCopyButton>
+            </dd>
+          </template>
+        </dl>
       </section>
 
       <section class="listik-section">

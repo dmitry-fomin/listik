@@ -6,16 +6,17 @@
  * (решение автора). Два отличия от прототипа: порядок первого ряда
  * Тип → Приоритет → Проект (в прототипе Проект второй) и подсказка приоритета
  * тултипом UiTooltip на контроле, а не строкой под ним. Блок «Маршрут» — свой (кит не знает такого
- * контрола): список пресетов конвейера из `lib/pipelines.ts` (роли ТЗ/критик/исполнитель/судья —
- * из `SKILL.md` плагина `feature-pipeline`, `~/Agents/Claude/homemade-skills-claude-code/plugins/
- * feature-pipeline`) плюс отдельный ряд «просто исполнитель» (dsh/grok/codex без ролей), логика
- * выбора — `lib/routes.ts`. Выбор уходит в метки `harness:<x>`/`process:<y>` на карточке — сервер их
- * не читает, полей `harness`/`skill` у задачи нет и после шага 04; кто реально допущен до этапа,
- * решает routing проекта на сервере (`ready --harness`, отказ в `claim`).
+ * контрола): записи (пресеты конвейера и прямые харнессы) отдаёт сервер — `GET /api/routes`,
+ * файл `routes.json`; грузятся один раз за сессию доски, логика выбора — `lib/routes.ts`.
+ * Выбранный ключ уходит на сервер полем `route`; метки `harness:<x>`/`process:<y>` — для
+ * человека и поиска, кто реально допущен до этапа, решает routing проекта на сервере
+ * (`ready --harness`, отказ в `claim`).
  */
 import { computed, reactive, ref, watch } from 'vue'
 import {
+  UiAlert,
   UiButton,
+  UiCheckbox,
   UiDrawer,
   UiField,
   UiInput,
@@ -31,20 +32,11 @@ import ProjectMark from '@/components/marks/ProjectMark.vue'
 import ProviderIcon from '@/components/marks/ProviderIcon.vue'
 import TaskGlyph from '@/components/marks/TaskGlyph.vue'
 import { TASK_TYPES, priority } from '@/lib/dictionaries'
-import type { ProjectRow } from '@/api/types'
-import { HARNESS_TITLES, type HarnessKey } from '@/lib/harness'
-import { ROLE_KEYS, ROLE_TITLES, type PipelineDef } from '@/lib/pipelines'
-import {
-  DEFAULT_ROUTE,
-  defaultPipelineFor,
-  DIRECT_HARNESSES,
-  directAllowed,
-  pipelineAllowed,
-  PIPELINES,
-  routeLabels,
-  STRIP_PIPELINES,
-  TABLE_PIPELINES,
-} from '@/lib/routes'
+import type { DirectRouteDef, PipelineRouteDef, ProjectRow, RouteDef } from '@/api/types'
+import { HARNESS_TITLES } from '@/lib/harness'
+import { ROLE_KEYS, ROLE_TITLES } from '@/lib/pipelines'
+import { defaultPipelineFor, directAllowed, pipelineAllowed, routeLabels } from '@/lib/routes'
+import store from '@/store/listik'
 
 const props = defineProps<{
   projects: ProjectRow[]
@@ -62,6 +54,9 @@ const emit = defineEmits<{
       acceptance: string
       spec_path?: string
       labels: string[]
+      /** Ключ маршрута из routes.json; нет — задача создаётся без маршрута. */
+      route?: string
+      autostart: boolean
       actor: 'me'
     },
   ]
@@ -84,9 +79,8 @@ function defaults() {
     description: '',
     acceptance: '',
     specPath: '',
-    routeMode: DEFAULT_ROUTE.mode as 'pipeline' | 'direct',
-    pipeline: defaultPipelineFor('task'),
-    directHarness: 'dsh' as HarnessKey,
+    /** Ключ выбранной записи `routes.json`; null — маршрут не выбран. */
+    routeKey: null as string | null,
   }
 }
 
@@ -94,15 +88,25 @@ const form = reactive(defaults())
 const submitted = ref(false)
 /** Пока false — маршрут следует умолчанию по типу (эпик → high, иначе low); ручной выбор это выключает. */
 const routeTouched = ref(false)
+/** Галочка «Автостарт»: доступна только при выбранном маршруте и живых данных маршрутов. */
+const autostart = ref(false)
 
 function resetForm(): void {
   Object.assign(form, defaults())
   submitted.value = false
   routeTouched.value = false
+  autostart.value = false
+  applyDefaultRoute()
 }
 
 watch(isOpen, (open) => {
-  if (!open) resetForm()
+  if (!open) {
+    resetForm()
+    return
+  }
+  // Первое открытие формы — единственный запрос маршрутов за сессию доски.
+  store.ensureRoutes()
+  if (!routeTouched.value) applyDefaultRoute()
 })
 
 const projectOptions = computed<UiSelectOption[]>(() =>
@@ -132,15 +136,14 @@ watch(
 
     if (!routeTouched.value) {
       // Маршрут ещё не трогали руками — держим умолчание своим для каждого типа.
-      form.routeMode = DEFAULT_ROUTE.mode
-      form.pipeline = defaultPipelineFor(type)
-    } else if (type === 'epic') {
-      const currentPipeline = PIPELINES.find((item) => item.key === form.pipeline)
-      const stillAllowed = form.routeMode === 'pipeline' && currentPipeline && pipelineAllowed(currentPipeline, type)
-      if (!stillAllowed) {
-        form.routeMode = DEFAULT_ROUTE.mode
-        form.pipeline = defaultPipelineFor(type)
-      }
+      applyDefaultRoute()
+      return
+    }
+    // Выбранный вручную маршрут мог стать недоступным (эпику нужен этап ТЗ) —
+    // тогда возвращаемся к умолчанию по типу.
+    if (!selectedRoute.value) {
+      routeTouched.value = false
+      applyDefaultRoute()
     }
   },
 )
@@ -149,89 +152,98 @@ const titleError = computed(() => (submitted.value && !form.title.trim() ? 'ну
 
 const createDisabled = computed(() => props.pending || !form.title.trim() || !form.project)
 
-// ── маршрут: пайплайн (ТЗ → критик → исполнитель → судья) или просто исполнитель ──
+// ── маршрут: записи из routes.json (`GET /api/routes`), правила — lib/routes.ts ──
 
-interface PipelineRow {
-  pipeline: PipelineDef
-  allowed: boolean
-  selected: boolean
-}
+/** Ошибка файла (`ok:false`) или самого запроса — таблицу и ряд «Отдельно» не рисуем. */
+const routesFailed = computed(() => store.routesRequestFailed.value || !store.routesOk.value)
 
-interface DirectItem {
-  harness: HarnessKey
-  allowed: boolean
-  selected: boolean
-}
-
-function pipelineRowOf(pipeline: PipelineDef): PipelineRow {
-  return {
-    pipeline,
-    allowed: pipelineAllowed(pipeline, form.type),
-    selected: form.routeMode === 'pipeline' && form.pipeline === pipeline.key,
-  }
-}
-
-const pipelineRows = computed<PipelineRow[]>(() => TABLE_PIPELINES.map(pipelineRowOf))
-
-/** Пресеты без таблицы ролей (одна роль или роли из конфига) — в строке «Отдельно», не в таблице. */
-const stripRows = computed<PipelineRow[]>(() => STRIP_PIPELINES.map(pipelineRowOf))
-
-const directItems = computed<DirectItem[]>(() =>
-  DIRECT_HARNESSES.map((harness) => ({
-    harness,
-    allowed: directAllowed(form.type),
-    selected: form.routeMode === 'direct' && form.directHarness === harness,
-  })),
+const visibleRoutes = computed<RouteDef[]>(() =>
+  routesFailed.value ? [] : store.routes.value.filter((route) => route.visible),
 )
 
-type RouteOption = ({ kind: 'pipeline' } & PipelineRow) | ({ kind: 'direct' } & DirectItem)
+/** Строки таблицы ролей — пресеты конвейера без `strip`. */
+const pipelineRows = computed(() =>
+  visibleRoutes.value.filter(
+    (route): route is PipelineRouteDef => route.kind === 'pipeline' && !route.strip,
+  ),
+)
 
-const routeOptions = computed<RouteOption[]>(() => [
-  ...pipelineRows.value.map((row): RouteOption => ({ kind: 'pipeline', ...row })),
-  ...stripRows.value.map((row): RouteOption => ({ kind: 'pipeline', ...row })),
-  ...directItems.value.map((item): RouteOption => ({ kind: 'direct', ...item })),
+/** Строка «Отдельно» — сначала `pipeline` со `strip`, затем `direct`, в порядке ответа. */
+const stripRoutes = computed(() =>
+  visibleRoutes.value.filter(
+    (route): route is PipelineRouteDef => route.kind === 'pipeline' && Boolean(route.strip),
+  ),
+)
+
+const directRoutes = computed(() =>
+  visibleRoutes.value.filter((route): route is DirectRouteDef => route.kind === 'direct'),
+)
+
+function routeAllowed(route: RouteDef): boolean {
+  return route.kind === 'direct' ? directAllowed(form.type) : pipelineAllowed(route, form.type)
+}
+
+const routeOptions = computed<RouteDef[]>(() => [
+  ...pipelineRows.value,
+  ...stripRoutes.value,
+  ...directRoutes.value,
 ])
 
-function selectPipeline(pipeline: PipelineDef): void {
-  if (!pipelineAllowed(pipeline, form.type)) return
+/** Выбранная запись: видимая (то есть из `routeOptions`) и разрешённая текущему типу. */
+const selectedRoute = computed<RouteDef | null>(() => {
+  const route = routeOptions.value.find((item) => item.key === form.routeKey)
+  return route && routeAllowed(route) ? route : null
+})
+
+function applyDefaultRoute(): void {
+  form.routeKey = defaultPipelineFor(form.type, visibleRoutes.value)?.key ?? null
+}
+
+// Маршруты приехали после первого открытия формы — подставляем умолчание по типу.
+watch(
+  () => store.routes.value,
+  () => {
+    if (!routeTouched.value) applyDefaultRoute()
+  },
+)
+
+function selectRoute(route: RouteDef): void {
+  if (!routeAllowed(route)) return
   routeTouched.value = true
-  form.routeMode = 'pipeline'
-  form.pipeline = pipeline.key
+  form.routeKey = route.key
 }
 
-function selectDirect(harness: HarnessKey): void {
-  if (!directAllowed(form.type)) return
-  routeTouched.value = true
-  form.routeMode = 'direct'
-  form.directHarness = harness
+function routeTooltip(route: RouteDef): string {
+  if (route.kind === 'direct') {
+    if (routeAllowed(route)) {
+      return `${HARNESS_TITLES[route.harness]} делает задачу напрямую, без ТЗ, критики и приёмки`
+    }
+    return 'Эпик всегда режется на шаги через ТЗ (s1) — прямой маршрут в обход разбивки на шаги и критики закрыт для эпиков.'
+  }
+  if (routeAllowed(route)) return route.hint
+  return 'Эпик всегда режется на шаги через ТЗ (s1) — пресеты без этапа ТЗ для эпиков закрыты.'
 }
 
-function routeOptionKey(option: RouteOption): string {
-  return option.kind === 'pipeline' ? `pipeline:${option.pipeline.key}` : `direct:${option.harness}`
-}
-
-function routeTabindex(option: RouteOption): number {
-  if (!option.allowed) return -1
-  if (option.selected) return 0
-  const hasSelected = routeOptions.value.some((item) => item.allowed && item.selected)
+function routeTabindex(route: RouteDef): number {
+  if (!routeAllowed(route)) return -1
+  if (selectedRoute.value?.key === route.key) return 0
+  const hasSelected = routeOptions.value.some((item) => routeAllowed(item) && item.key === selectedRoute.value?.key)
   if (hasSelected) return -1
-  // Ни одна опция не выбрана (не должно случаться — есть DEFAULT_ROUTE) —
-  // фокусируемая первая доступная.
-  const firstAllowed = routeOptions.value.find((item) => item.allowed)
-  return firstAllowed && routeOptionKey(firstAllowed) === routeOptionKey(option) ? 0 : -1
+  // Ни одна опция не выбрана (нет данных или всё скрыто) — фокусируемая первая доступная.
+  const firstAllowed = routeOptions.value.find((item) => routeAllowed(item))
+  return firstAllowed?.key === route.key ? 0 : -1
 }
 
 const routeRefs = new Map<string, HTMLButtonElement>()
 
-function setRouteRef(option: RouteOption, el: Element | null): void {
-  const key = routeOptionKey(option)
+function setRouteRef(key: string, el: Element | null): void {
   if (el) routeRefs.set(key, el as HTMLButtonElement)
   else routeRefs.delete(key)
 }
 
-function onRouteKeydown(event: KeyboardEvent, option: RouteOption): void {
-  const allowedOptions = routeOptions.value.filter((item) => item.allowed)
-  const at = allowedOptions.findIndex((item) => routeOptionKey(item) === routeOptionKey(option))
+function onRouteKeydown(event: KeyboardEvent, route: RouteDef): void {
+  const allowedOptions = routeOptions.value.filter((item) => routeAllowed(item))
+  const at = allowedOptions.findIndex((item) => item.key === route.key)
   if (at === -1) return
   let target = -1
   if (event.key === 'ArrowRight' || event.key === 'ArrowDown') target = (at + 1) % allowedOptions.length
@@ -241,19 +253,27 @@ function onRouteKeydown(event: KeyboardEvent, option: RouteOption): void {
   else return
   event.preventDefault()
   const next = allowedOptions[target]!
-  if (next.kind === 'pipeline') selectPipeline(next.pipeline)
-  else selectDirect(next.harness)
-  routeRefs.get(routeOptionKey(next))?.focus()
+  selectRoute(next)
+  routeRefs.get(next.key)?.focus()
 }
 
-function pipelineRowTooltip(row: PipelineRow): string {
-  if (row.allowed) return row.pipeline.hint
-  return 'Эпик всегда режется на шаги через ТЗ (s1) — пресеты без этапа ТЗ для эпиков закрыты.'
-}
+/** Галочка доступна, только когда маршрут выбран и данные маршрутов живые. */
+const autostartAvailable = computed(() => Boolean(selectedRoute.value) && !routesFailed.value)
 
-function directItemTooltip(item: DirectItem): string {
-  if (item.allowed) return `${HARNESS_TITLES[item.harness]} делает задачу напрямую, без ТЗ, критики и приёмки`
-  return 'Эпик всегда режется на шаги через ТЗ (s1) — прямой маршрут в обход разбивки на шаги и критики закрыт для эпиков.'
+// Сняли маршрут, файл сломан, запрос упал — галочка выключается и сбрасывается.
+watch(autostartAvailable, (available) => {
+  if (!available) autostart.value = false
+})
+
+const routesAlertText = computed(() => {
+  const error = store.routesError.value ?? 'неизвестная ошибка'
+  if (store.routesRequestFailed.value) return `${error} — нужен ты`
+  return `routes.json с ошибкой: ${error} — нужен ты`
+})
+
+/** Кнопка «повторить» — ровно один запрос, кеш до этого не трогаем. */
+function retryRoutes(): void {
+  void store.loadRoutes()
 }
 
 // ── отправка ──────────────────────────────────────────────────────────────
@@ -261,6 +281,7 @@ function directItemTooltip(item: DirectItem): string {
 function submit(): void {
   submitted.value = true
   if (createDisabled.value) return
+  const route = selectedRoute.value
   emit('submit', {
     title: form.title.trim(),
     project: form.project as string,
@@ -269,7 +290,10 @@ function submit(): void {
     description: form.description,
     acceptance: form.acceptance,
     ...(form.specPath.trim() ? { spec_path: form.specPath.trim() } : {}),
-    labels: routeLabels(form.routeMode, form.pipeline, form.directHarness),
+    // Без выбранного маршрута — пустые метки, без `route` и с выключенным автостартом.
+    labels: route ? routeLabels(route) : [],
+    ...(route ? { route: route.key } : {}),
+    autostart: route ? autostart.value : false,
     actor: 'me',
   })
 }
@@ -348,107 +372,121 @@ function cancel(): void {
           Маршрут · кто исполняет и по какому процессу
         </h4>
 
-        <div class="listik-pipelines" role="radiogroup" aria-label="Маршрут: пайплайн">
-          <div class="listik-pipelines__header">
-            <span class="listik-pipelines__header-spacer" aria-hidden="true" />
-            <span v-for="role in ROLE_KEYS" :key="role" class="listik-pipelines__col-title">
-              {{ ROLE_TITLES[role] }}
-            </span>
-          </div>
+        <template v-if="routesFailed">
+          <UiAlert tone="warning">
+            {{ routesAlertText }}
+            <div class="listik-row" style="margin-top: var(--space-3)">
+              <UiButton size="sm" variant="secondary" :loading="store.routesLoading.value" @click="retryRoutes">
+                Повторить
+              </UiButton>
+            </div>
+          </UiAlert>
+        </template>
 
-          <button
-            v-for="row in pipelineRows"
-            :key="row.pipeline.key"
-            :ref="(el) => setRouteRef({ kind: 'pipeline', ...row }, el as Element | null)"
-            type="button"
-            role="radio"
-            class="listik-pipelines__row"
-            :class="{ 'is-on': row.selected, 'is-off': !row.allowed }"
-            :aria-checked="row.selected"
-            :aria-disabled="!row.allowed || undefined"
-            :disabled="!row.allowed"
-            :tabindex="routeTabindex({ kind: 'pipeline', ...row })"
-            :title="pipelineRowTooltip(row)"
-            @click="selectPipeline(row.pipeline)"
-            @keydown="onRouteKeydown($event, { kind: 'pipeline', ...row })"
-          >
-            <span class="listik-pipelines__row-title">
-              <span class="listik-pipelines__row-name">{{ row.pipeline.title }}</span>
-              <span class="listik-pipelines__row-hint">{{ row.pipeline.hint }}</span>
-            </span>
-
-            <span v-for="role in ROLE_KEYS" :key="role" class="listik-pipelines__cell">
-              <template v-if="row.pipeline.roles[role]">
-                <ProviderIcon :provider="row.pipeline.roles[role]!.provider" size="sm" />
-                <span class="listik-pipelines__cell-label">{{ row.pipeline.roles[role]!.label }}</span>
-              </template>
-              <span v-else class="listik-pipelines__cell-empty" aria-hidden="true">—</span>
-            </span>
-          </button>
-        </div>
-
-        <div class="listik-direct">
-          <span class="listik-direct__title">Отдельно · без таблицы ролей</span>
-          <div class="listik-direct__items">
-            <button
-              v-for="item in directItems"
-              :key="item.harness"
-              :ref="(el) => setRouteRef({ kind: 'direct', ...item }, el as Element | null)"
-              type="button"
-              role="radio"
-              class="listik-direct__item"
-              :class="{ 'is-on': item.selected, 'is-off': !item.allowed }"
-              :aria-checked="item.selected"
-              :aria-disabled="!item.allowed || undefined"
-              :disabled="!item.allowed"
-              :tabindex="routeTabindex({ kind: 'direct', ...item })"
-              :title="directItemTooltip(item)"
-              @click="selectDirect(item.harness)"
-              @keydown="onRouteKeydown($event, { kind: 'direct', ...item })"
-            >
-              <HarnessIcon :harness="item.harness" size="md" />
-              {{ HARNESS_TITLES[item.harness] }}
-            </button>
+        <template v-else>
+          <div class="listik-pipelines" role="radiogroup" aria-label="Маршрут: пайплайн">
+            <div class="listik-pipelines__header">
+              <span class="listik-pipelines__header-spacer" aria-hidden="true" />
+              <span v-for="role in ROLE_KEYS" :key="role" class="listik-pipelines__col-title">
+                {{ ROLE_TITLES[role] }}
+              </span>
+            </div>
 
             <button
-              v-for="row in stripRows"
-              :key="row.pipeline.key"
-              :ref="(el) => setRouteRef({ kind: 'pipeline', ...row }, el as Element | null)"
+              v-for="route in pipelineRows"
+              :key="route.key"
+              :ref="(el) => setRouteRef(route.key, el as Element | null)"
               type="button"
               role="radio"
-              class="listik-direct__item"
-              :class="{ 'is-on': row.selected, 'is-off': !row.allowed }"
-              :aria-checked="row.selected"
-              :aria-disabled="!row.allowed || undefined"
-              :disabled="!row.allowed"
-              :tabindex="routeTabindex({ kind: 'pipeline', ...row })"
-              :title="pipelineRowTooltip(row)"
-              @click="selectPipeline(row.pipeline)"
-              @keydown="onRouteKeydown($event, { kind: 'pipeline', ...row })"
+              class="listik-pipelines__row"
+              :class="{ 'is-on': selectedRoute?.key === route.key, 'is-off': !routeAllowed(route) }"
+              :aria-checked="selectedRoute?.key === route.key"
+              :aria-disabled="!routeAllowed(route) || undefined"
+              :disabled="!routeAllowed(route)"
+              :tabindex="routeTabindex(route)"
+              :title="routeTooltip(route)"
+              @click="selectRoute(route)"
+              @keydown="onRouteKeydown($event, route)"
             >
-              <ProviderIcon v-if="row.pipeline.strip?.provider" :provider="row.pipeline.strip.provider" size="md" />
-              <ListikIcon v-else-if="row.pipeline.strip?.glyph" :name="row.pipeline.strip.glyph" size="md" />
-              {{ row.pipeline.strip?.label }}
+              <span class="listik-pipelines__row-title">
+                <span class="listik-pipelines__row-name">{{ route.title }}</span>
+                <span class="listik-pipelines__row-hint">{{ route.hint }}</span>
+              </span>
+
+              <span v-for="role in ROLE_KEYS" :key="role" class="listik-pipelines__cell">
+                <template v-if="route.roles[role]">
+                  <ProviderIcon :provider="route.roles[role]!.provider" size="sm" />
+                  <span class="listik-pipelines__cell-label">{{ route.roles[role]!.label }}</span>
+                </template>
+                <span v-else class="listik-pipelines__cell-empty" aria-hidden="true">—</span>
+              </span>
             </button>
           </div>
-        </div>
 
-        <p class="listik-section__hint">
-          строка таблицы — пресет конвейера из плагина <span class="listik-mono">feature-pipeline</span>: кто
-          пишет ТЗ, кто критикует, кто пишет код, кто принимает и коммитит. «Отдельно»: dsh/grok/codex делают
-          задачу напрямую целиком; Opus — так же, без ТЗ и критики, коммитит сам; «по конфигу» —
-          тот же конвейер из четырёх ролей, но кто есть кто, решает <span class="listik-mono"
-            >.claude/feature-pipeline.yaml</span
-          > проекта, а не эта таблица.
-        </p>
-        <p class="listik-section__hint">
-          эпик всегда начинается с ТЗ, поэтому для него закрыто всё без этапа ТЗ — dsh/grok/codex,
-          Opus и <span class="listik-mono">opus & sonnet</span>; «по конфигу» ТЗ пишет, поэтому
-          остаётся открытым. Выбор
-          сохраняется метками <span class="listik-mono">harness:&lt;…&gt;</span> и
-          <span class="listik-mono">process:&lt;…&gt;</span> — их читает человек, автоматической раздачи
-          задач по ним нет; кто допущен до этапа, решает сервер по routing проекта.
-        </p>
+          <div class="listik-direct">
+            <span class="listik-direct__title">Отдельно · без таблицы ролей</span>
+            <div class="listik-direct__items">
+              <button
+                v-for="route in stripRoutes"
+                :key="route.key"
+                :ref="(el) => setRouteRef(route.key, el as Element | null)"
+                type="button"
+                role="radio"
+                class="listik-direct__item"
+                :class="{ 'is-on': selectedRoute?.key === route.key, 'is-off': !routeAllowed(route) }"
+                :aria-checked="selectedRoute?.key === route.key"
+                :aria-disabled="!routeAllowed(route) || undefined"
+                :disabled="!routeAllowed(route)"
+                :tabindex="routeTabindex(route)"
+                :title="routeTooltip(route)"
+                @click="selectRoute(route)"
+                @keydown="onRouteKeydown($event, route)"
+              >
+                <ProviderIcon v-if="route.strip?.provider" :provider="route.strip.provider" size="md" />
+                <ListikIcon v-else-if="route.strip?.glyph" :name="route.strip.glyph" size="md" />
+                {{ route.strip?.label }}
+              </button>
+
+              <button
+                v-for="route in directRoutes"
+                :key="route.key"
+                :ref="(el) => setRouteRef(route.key, el as Element | null)"
+                type="button"
+                role="radio"
+                class="listik-direct__item"
+                :class="{ 'is-on': selectedRoute?.key === route.key, 'is-off': !routeAllowed(route) }"
+                :aria-checked="selectedRoute?.key === route.key"
+                :aria-disabled="!routeAllowed(route) || undefined"
+                :disabled="!routeAllowed(route)"
+                :tabindex="routeTabindex(route)"
+                :title="routeTooltip(route)"
+                @click="selectRoute(route)"
+                @keydown="onRouteKeydown($event, route)"
+              >
+                <HarnessIcon :harness="route.harness" size="md" />
+                {{ route.title }}
+              </button>
+            </div>
+          </div>
+        </template>
+
+        <UiTooltip text="Listik сам запустит команду маршрута после создания" placement="bottom">
+          <UiCheckbox v-model="autostart" :disabled="!autostartAvailable">Автостарт</UiCheckbox>
+        </UiTooltip>
+
+        <template v-if="!routesFailed">
+          <p class="listik-section__hint">
+            строка таблицы — пресет конвейера из <span class="listik-mono">routes.json</span> (его отдаёт
+            сервер): кто пишет ТЗ, кто критикует, кто пишет код, кто принимает и коммитит. «Отдельно» —
+            записи без таблицы ролей: одна иконка и подпись вместо четырёх ячеек.
+          </p>
+          <p class="listik-section__hint">
+            эпик всегда начинается с ТЗ, поэтому для него закрыто всё без этапа ТЗ. Выбор уходит на сервер
+            ключом маршрута и сохраняется метками <span class="listik-mono">harness:&lt;…&gt;</span> и
+            <span class="listik-mono">process:&lt;…&gt;</span> — их читает человек, автоматической раздачи
+            задач по ним нет; кто допущен до этапа, решает сервер по routing проекта.
+          </p>
+        </template>
       </section>
     </div>
 

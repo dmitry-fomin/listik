@@ -272,6 +272,9 @@ def show_task(t: dict) -> None:
             code = t.get("launch_exit_code")
             bits.append(f"код {code if code is not None else 'идёт'}")
         print("  " + " · ".join(bits))
+    elif t.get("launch_route"):
+        # Маршрут без автостарта: сохранённый «тип запуска», запуска не было.
+        print(f"  маршрут:     {t['launch_route']} (без автостарта)")
     if t.get("external_ref"):
         print(f"  старый ID ({t.get('source')}): {t['external_ref']}")
     for field, label in (("description", "описание"), ("acceptance", "приёмка"),
@@ -1071,8 +1074,6 @@ def _print_routing(project: dict) -> None:
     source = _ROUTING_SOURCE_TITLES.get(project.get("routing_source"),
                                         project.get("routing_source") or "?")
     print(f"маршрутизация (источник: {source}):")
-    process = eff.get("default_process") or []
-    print(f"  процесс по умолчанию: {' → '.join(process) if process else '—'}")
     harnesses = eff.get("harnesses") or {}
     for stage in store.PIPELINE_STAGES:
         names = harnesses.get(stage) or []
@@ -1446,7 +1447,8 @@ def build_parser() -> argparse.ArgumentParser:
     sp.add_argument("--format", choices=["text", "json"], default="text")
 
     sp = add("set", cmd_set, help="изменить поля: set <id> status=in_progress priority=1, "
-                                  "worktree=main — работа в основной ветке без дерева")
+                                  "worktree=main — работа в основной ветке без дерева, "
+                                  "route=low-pipeline — маршрут, пока задача не начата")
     sp.add_argument("task_id")
     sp.add_argument("field", nargs="+")
     sp.add_argument("--note")

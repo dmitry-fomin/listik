@@ -7,7 +7,10 @@
  *
  * Уровень считает сервер (`GET /api/routes`, поле `icon` с фолбэком по ключу) —
  * компонент получает готовую запись маршрута. Записи нет или у неё нет уровня
- * (`inherit-pipeline` и подобные) — не рисуем ничего.
+ * (`inherit-pipeline` и подобные) — не рисуем ничего. Если сервер не принял
+ * явный `icon` записи и уровня в ключе не нашлось (`icon: null` + `icon_error`),
+ * рисуем серый кружок с крестиком: так видно, что иконка недоступна из-за
+ * опечатки в `routes.json`, а не просто не задана (`ROUTE_ICON_UNKNOWN`).
  *
  * Подсказка — нативным `title`, а не `UiTooltip`: иконка стоит и внутри
  * строки-кнопки выбора маршрута, у которой уже есть свой `title`, — второй слой
@@ -15,7 +18,7 @@
  */
 import { computed } from 'vue'
 import ListikIcon from '@/components/ListikIcon.vue'
-import { routeIcon } from '@/lib/dictionaries'
+import { ROUTE_ICON_UNKNOWN, routeIcon } from '@/lib/dictionaries'
 import type { RouteDef } from '@/api/types'
 
 const props = withDefaults(
@@ -30,11 +33,28 @@ const props = withDefaults(
 )
 
 const item = computed(() => routeIcon(props.route?.icon))
-const hint = computed(() => props.title ?? item.value?.hint ?? '')
+/** Причина, по которой явный `icon` записи не принят, — только когда уровня нет вовсе. */
+const unavailable = computed(() => (!item.value ? (props.route?.icon_error ?? null) : null))
+const glyph = computed(
+  () => item.value?.icon ?? (unavailable.value ? ROUTE_ICON_UNKNOWN.icon : null),
+)
+const hint = computed(() => {
+  if (unavailable.value) {
+    const reason = `${ROUTE_ICON_UNKNOWN.label} — ${unavailable.value}`
+    return props.title ? `${props.title} · ${reason}` : reason
+  }
+  return props.title ?? item.value?.hint ?? ''
+})
 </script>
 
 <template>
-  <span v-if="item" class="listik-route-icon" :title="hint" :aria-label="hint">
-    <ListikIcon :name="item.icon" :size="size" />
+  <span
+    v-if="glyph"
+    class="listik-route-icon"
+    :class="{ 'listik-route-icon--unknown': unavailable }"
+    :title="hint"
+    :aria-label="hint"
+  >
+    <ListikIcon :name="glyph" :size="size" />
   </span>
 </template>

@@ -27,7 +27,11 @@
     записи (`fallback_icon`): у `direct` это `direct`, у `pipeline` — часть ключа до
     первого `-`, если она из того же набора (`xhigh-pipeline` → `xhigh`); у записи без
     выводимого уровня (`feature-pipeline`) иконки нет. Рабочая копия `routes.json`,
-    созданная до появления поля, поэтому продолжает работать без правок;
+    созданная до появления поля, поэтому продолжает работать без правок. Неизвестное
+    значение — не ошибка файла, а предупреждение (listik-itg8): запись получает
+    уровень по ключу, поле `icon_error` с причиной и текст в `warnings` ответа
+    `GET /api/routes`; строка уходит в stderr (у демона — в `listik.log`), а
+    остальные записи и автостарт работают как обычно;
   * `harness` — обязателен для `direct` и запрещён для `pipeline` (`claude`, `dsh`,
     `codex`, `grok`, `gemini`);
   * `command` — необязательный непустой массив непустых строк, argv запуска.
@@ -91,13 +95,19 @@ class RoutesError(ValueError):
 
 @dataclass
 class RoutesState:
-    """Результат загрузки файла: `ok=False` — автостарт выключен, `error` объясняет почему."""
+    """Результат загрузки файла: `ok=False` — автостарт выключен, `error` объясняет почему.
+
+    `warnings` — замечания, которые файл не отменяют (сейчас это неизвестный `icon`
+    записи): автостарт работает, запись получает уровень по ключу и поле `icon_error`,
+    а тексты предупреждений уходят в `GET /api/routes` и в stderr.
+    """
 
     ok: bool
     error: str | None
     path: str
     routes: list[dict] = field(default_factory=list)
     by_key: dict = field(default_factory=dict)
+    warnings: list[str] = field(default_factory=list)
 
 
 _state: RoutesState | None = None
@@ -245,18 +255,32 @@ def fallback_icon(kind: str, key: str) -> str | None:
     return prefix if prefix in ROUTE_ICONS else None
 
 
-def _validate_icon(item: dict, kind: str, key: str, where: str) -> str | None:
-    """Поле `icon`: явный уровень, иначе фолбэк по записи; `None` — иконки нет."""
+def _validate_icon(item: dict, kind: str, key: str, where: str,
+                   warnings: list[str] | None = None) -> tuple[str | None, str | None]:
+    """Поле `icon`: явный уровень, иначе фолбэк по записи; `None` — иконки нет.
+
+    Неизвестный уровень не отменяет весь файл (listik-itg8): запись получает
+    фолбэк по ключу, предупреждение добавляется в `warnings`, а второй элемент
+    результата — `icon_error` с причиной, по которой явный уровень не принят
+    (его отдаёт `GET /api/routes` — доска помечает такую иконку как недоступную).
+    """
     if "icon" not in item:
-        return fallback_icon(kind, key)
+        return fallback_icon(kind, key), None
     value = item["icon"]
-    if value not in ROUTE_ICONS:
-        raise _err(f"{where}.icon",
-                   "уровень маршрута, допустимы: " + ", ".join(ROUTE_ICONS))
-    return value
+    if value in ROUTE_ICONS:
+        return value, None
+    fallback = fallback_icon(kind, key)
+    error = (f"неизвестный уровень {value!r}, допустимы: " + ", ".join(ROUTE_ICONS))
+    if fallback is not None:
+        warning = f"{where}.icon: {error}; беру уровень из ключа {key!r}: {fallback!r}"
+    else:
+        warning = f"{where}.icon: {error}; из ключа {key!r} уровень не выводится — иконки не будет"
+    if warnings is not None:
+        warnings.append(warning)
+    return fallback, warning
 
 
-def _validate_route(item, where: str) -> dict:
+def _validate_route(item, where: str, warnings: list[str] | None = None) -> dict:
     if not isinstance(item, dict):
         raise _err(where, "запись должна быть объектом")
     _extra_fields(item, RECORD_FIELDS, where)
@@ -281,8 +305,13 @@ def _validate_route(item, where: str) -> dict:
     if not isinstance(visible, bool):
         raise _err(f"{where}.visible", "должно быть true или false, не строка и не число")
 
+    icon, icon_error = _validate_icon(item, kind, key, where, warnings)
     record = {"key": key, "kind": kind, "title": title, "hint": hint, "visible": visible,
-              "icon": _validate_icon(item, kind, key, where)}
+              "icon": icon}
+    # Поле появляется только у записи с непринятым `icon`: у остальных записей
+    # набор полей не меняется, а доска по нему рисует «иконка недоступна».
+    if icon_error is not None:
+        record["icon_error"] = icon_error
 
     if kind == "pipeline":
         if "roles" not in item:
@@ -306,13 +335,16 @@ def _validate_route(item, where: str) -> dict:
     return record
 
 
-def validate(obj) -> list[dict]:
+def validate(obj, warnings: list[str] | None = None) -> list[dict]:
     """Проверить разобранный JSON по формату версии 1.
 
     При первой же ошибке бросает `RoutesError` с путём до поля (`routes[3].roles.impl.provider`)
     и причиной по-русски. Возвращает нормализованные записи: `hint` по умолчанию подставлен,
     `icon` — явный уровень или фолбэк по записи (`None` — иконки нет), `command` — список
     или `None`.
+
+    Неизвестный `icon` ошибкой не считается: запись получает фолбэк по ключу и поле
+    `icon_error`, а тексты предупреждений складываются в переданный `warnings` (listik-itg8).
     """
     if not isinstance(obj, dict):
         raise _err("routes.json", 'корень — объект {"version": 1, "routes": [...]}')
@@ -327,7 +359,7 @@ def validate(obj) -> list[dict]:
     out: list[dict] = []
     seen: set[str] = set()
     for i, item in enumerate(routes):
-        record = _validate_route(item, f"routes[{i}]")
+        record = _validate_route(item, f"routes[{i}]", warnings)
         if record["key"] in seen:
             raise _err(f"routes[{i}].key", f"дубликат ключа {record['key']!r}")
         seen.add(record["key"])
@@ -349,6 +381,15 @@ def _failed(error: str, path) -> RoutesState:
     return RoutesState(ok=False, error=error, path=str(path), routes=[], by_key={})
 
 
+def _warned(warning: str) -> None:
+    """Предупреждение проверки в stderr (у демона — в listik.log).
+
+    Файл при этом рабочий: автостарт включён, запись получила фолбэк, — поэтому
+    «нужен ты» не пишем, в отличие от `_failed`.
+    """
+    print(f"routes.json: предупреждение: {warning}", file=sys.stderr, flush=True)
+
+
 def ensure_runtime_copy(source=SOURCE_PATH, target=RUNTIME_PATH) -> bool:
     """Скопировать `source` в `target`, если копии ещё нет.
 
@@ -368,17 +409,23 @@ def load(path=SOURCE_PATH) -> RoutesState:
     """Прочитать, разобрать и проверить файл. Никогда не бросает исключений.
 
     Любая ошибка (нет файла, нет прав, путь — каталог, битый JSON, `RoutesError`)
-    даёт `ok=False`, текст ошибки и строку в stderr. Состояние модуля не меняет —
-    его кладёт `init_at_startup`.
+    даёт `ok=False`, текст ошибки и строку в stderr. Неизвестный `icon` — не ошибка:
+    запись получает фолбэк, каждый такой случай идёт в `warnings` состояния и
+    отдельной строкой в stderr. Состояние модуля не меняет — его кладёт
+    `init_at_startup`.
     """
     file = Path(path)
+    warnings: list[str] = []
     try:
         obj = json.loads(file.read_text(encoding="utf-8"))
-        records = validate(obj)
+        records = validate(obj, warnings)
     except Exception as exc:  # noqa: BLE001 — наружу не бросаем ничего
         return _failed(_describe(exc), file)
+    for warning in warnings:
+        _warned(warning)
     return RoutesState(ok=True, error=None, path=str(file), routes=records,
-                       by_key={record["key"]: record for record in records})
+                       by_key={record["key"]: record for record in records},
+                       warnings=warnings)
 
 
 def current() -> RoutesState:

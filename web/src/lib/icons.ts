@@ -69,4 +69,8 @@ export const icons: Record<string, IconDef> = {
   'route-high': { stroke: 'M2.6 13.4h10.8M4.6 13.4V10.2M7.4 13.4V8.4M10.2 13.4V6.2' },
   'route-xhigh': { stroke: 'M2.6 13.4h10.8M4.6 13.4V10.2M7.4 13.4V8.4M10.2 13.4V6.2M13 13.4V4.2' },
   'route-direct': { stroke: 'M2.6 8h9.8M8.8 4.4 12.4 8l-3.6 3.6' },
+  // Запись, у которой `icon` в routes.json не принят сервером (`icon_error`):
+  // серый кружок с крестиком — «иконка недоступна». Цвет даёт currentColor,
+  // приглушает класс .listik-route-icon--unknown в app.css.
+  'route-unknown': { stroke: 'M8 14A6 6 0 1 0 8 2a6 6 0 0 0 0 12ZM6.2 6.2l3.6 3.6M9.8 6.2l-3.6 3.6' },
 }

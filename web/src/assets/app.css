@@ -1292,6 +1292,13 @@ body .ui-drawer-backdrop.ui-drawer-backdrop--right .ui-drawer.ui-drawer--right.u
   color: var(--ink-3);
 }
 
+/* Уровня нет: сервер не принял явный `icon` записи (`icon_error`), и по ключу
+   уровень не вывелся. Кружок с крестиком светлее обычной иконки — видно, что
+   это не уровень маршрута, а «иконка недоступна». */
+.listik-route-icon--unknown {
+  color: var(--ink-4);
+}
+
 .listik-count-glyph {
   display: inline-flex;
   align-items: center;

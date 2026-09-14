@@ -318,6 +318,14 @@ watch(autostartAvailable, (available) => {
 
 const routesAlert = computed(() => routesAlertText(store.routesRequestFailed.value, store.routesError.value))
 
+/**
+ * Замечания проверки файла (`warnings` ответа) — неизвестный `icon` записи.
+ * Маршруты при этом работают: у записи посчитан фолбэк по ключу. Это не ошибка,
+ * а предупреждение автору `routes.json`; запись без фолбэка доска помечает
+ * серым кружком с крестиком (`RouteIcon`).
+ */
+const routesWarnings = computed(() => store.routesWarnings.value)
+
 /** Кнопка «повторить» — ровно один запрос, кеш до этого не трогаем. */
 function retryRoutes(): void {
   void store.loadRoutes()
@@ -475,6 +483,13 @@ function cancel(): void {
         </template>
 
         <template v-else>
+          <UiAlert v-if="routesWarnings.length" tone="warning">
+            <template #title>routes.json: предупреждения</template>
+            <div v-for="warning in routesWarnings" :key="warning" class="listik-mono">
+              {{ warning }}
+            </div>
+          </UiAlert>
+
           <div class="listik-pipelines" role="radiogroup" aria-label="Маршрут: пайплайн">
             <div class="listik-pipelines__header">
               <span class="listik-pipelines__header-spacer" aria-hidden="true" />

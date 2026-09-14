@@ -487,11 +487,14 @@ def handle(method: str, path: str, query: dict, body: dict, authed: bool = False
     if path == "/api/routes":
         # Данные — из состояния, загруженного один раз при старте: правка файла на
         # ходу сервер не перечитывает. `command` наружу не отдаём — это argv запуска.
+        # `warnings` — замечания, которые файл не отменяют (неизвестный `icon` записи):
+        # у такой записи посчитан фолбэк по ключу и есть поле `icon_error`.
         state = routes_mod.current()
         return 200, {
             "ok": state.ok,
             "error": state.error,
             "path": state.path,
+            "warnings": state.warnings,
             "routes": [{k: v for k, v in record.items() if k != "command"}
                        for record in state.routes],
         }

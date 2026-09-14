@@ -139,11 +139,14 @@ const projectsError = ref<string | null>(null)
  * сессию доски — при её старте (`init`, иконки уровней нужны карточкам задач) —
  * либо повторно кнопкой «повторить» (`loadRoutes`). Ошибка самого файла приходит
  * в ответе (`ok:false` + `error`), отказ запроса — исключением; в обоих случаях
- * форма показывает алерт и создаёт задачу без маршрута.
+ * форма показывает алерт и создаёт задачу без маршрута. `routesWarnings` —
+ * замечания проверки, которые файл не отменяют (неизвестный `icon` записи):
+ * маршруты и автостарт работают, но автору стоит поправить `routes.json`.
  */
 const routes = ref<RouteDef[]>([])
 const routesOk = ref(true)
 const routesError = ref<string | null>(null)
+const routesWarnings = ref<string[]>([])
 /** Запрос `routes()` не удался (сеть или HTTP) — текста из файла в этом случае нет. */
 const routesRequestFailed = ref(false)
 const routesLoading = ref(false)
@@ -831,11 +834,13 @@ async function loadRoutes(): Promise<void> {
     routesOk.value = data.ok
     routesError.value = data.error
     routesRequestFailed.value = false
+    routesWarnings.value = data.warnings ?? []
     routes.value = data.routes ?? []
   } catch (error) {
     routesOk.value = false
     routesError.value = errorMessage(error)
     routesRequestFailed.value = true
+    routesWarnings.value = []
     routes.value = []
   } finally {
     routesLoading.value = false
@@ -1065,6 +1070,7 @@ export function useListikStore() {
     routes,
     routesOk,
     routesError,
+    routesWarnings,
     routesRequestFailed,
     routesLoading,
     assistantEnabled,

@@ -109,7 +109,11 @@ updated_at, status, error, chunk_count`, — и `children[]` — все доче
 и `command` — непустой массив непустых строк, argv процесса.
 
 `icon` — уровень маршрута для иконки на доске: `xhigh`, `high`, `medium`, `low` или
-`direct`; любое другое значение — ошибка проверки. Если поля в записи нет, сервер выводит
+`direct`; неизвестное значение файл не отменяет: это предупреждение — запись получает
+уровень по ключу, в `GET /api/routes` у неё появляется `icon_error` с причиной, а текст
+предупреждения уходит в `warnings` ответа и отдельной строкой в лог сервера (`listik.log`).
+Проверка файла остаётся строгой ко всему остальному, поэтому опечатка в `icon` больше не
+лишает доску всех маршрутов и не выключает автостарт. Если поля в записи нет, сервер выводит
 уровень сам: у `direct`-записи это `direct`, у `pipeline` — часть ключа до первого `-`,
 если она из того же набора (`xhigh-pipeline` → `xhigh`, `medium-pipeline` → `medium`).
 У записи без выводимого уровня (`feature-pipeline`, `inherit-pipeline`) иконки нет —
@@ -321,7 +325,7 @@ Listik и никогда не отдаёт его доске:
 | Метод | Путь | Параметры | Ответ |
 |---|---|---|---|
 | GET | `/api/health` | — | `status, version, embed{model}, now, authed`; авторизованному — ещё `db`, `counts`, `embed{ok,models}`, `routes{ok,error,path,count}`, `db_error{where,error,at}` — только если последний фоновый проход упал с `sqlite3.DatabaseError`, и `db_replaced{kind,at,detail,before,after}` — если сервер заметил подмену файла базы или WAL (см. ниже) |
-| GET | `/api/routes` | — | `ok, error, path, routes[]` — записи `routes.json`, загруженные при старте, без `command`, но с посчитанным `icon` (см. «Маршруты запуска»); ошибка файла — `ok=false` и текст, а не HTTP-ошибка |
+| GET | `/api/routes` | — | `ok, error, path, warnings[], routes[]` — записи `routes.json`, загруженные при старте, без `command`, но с посчитанным `icon` (см. «Маршруты запуска»); `warnings` — замечания, которые файл не отменяют (неизвестный `icon` записи: у неё есть фолбэк по ключу и поле `icon_error` с причиной); ошибка файла — `ok=false` и текст, а не HTTP-ошибка |
 | GET | `/api/assistant/status` | — | `enabled, model, base_url` — настроен ли помощник DeepSeek (`[assistant]` в `config.toml`); ключ наружу не отдаётся (см. «Помощник DeepSeek») |
 | GET | `/api/meta` | `archived` | `projects[], actors[], facets{}, statuses{}, stages{}, priorities{}` |
 | GET | `/api/projects` | — | `projects[]` — все репозитории доски, включая скрытые: `slug, title, kind, path, path_exists, git_remote, git_branch, archived, n_tasks, n_open, n_wip`, плюс `routing` (переопределение проекта — объект или `null`), `routing_effective` (действующая слитая таблица, которой реально пользуются `allowed_harnesses`/`transition_kind`), `routing_source` (`default`\|`config`\|`db`\|`config+db`), плюс `root` (корень поиска проектов) |

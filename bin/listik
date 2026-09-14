@@ -19,6 +19,7 @@ from pathlib import Path
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
 from listik import __version__, client, db, errors, paths, store  # noqa: E402
+from listik import routes as routes_mod  # noqa: E402
 
 STATUS_ICON = {"open": "○", "in_progress": "▶", "blocked": "■", "review": "◐",
                "done": "✓", "cancelled": "✕"}
@@ -124,6 +125,12 @@ def call(op: str, args, path: str, *, query: dict | None = None, body: dict | No
     if not getattr(args, "local", False):
         print("! сервер Listik не отвечает — команда выполнена напрямую по базе "
               "(доска не получит событие; подними сервер: listik serve)", file=sys.stderr)
+    # Маршруты в локальном режиме никто не загружал — это делает сервер при старте.
+    # Дочитываем файл, только когда команда вообще трогает маршрут: метки
+    # `harness:`/`process:` считает серверная логика (store + routes.labels_for),
+    # и у `new --route`/`set route=` они должны быть те же, что у формы на доске.
+    if any((local_kwargs or {}).get(key) for key in ("route", "launch_route")):
+        routes_mod.load_local()
     return client.local_call(op, **(local_kwargs or {}))
 
 
@@ -255,7 +262,10 @@ def show_task(t: dict) -> None:
                     line += " — ФАЙЛ НЕДОСТУПЕН"
                 print(line)
     if t.get("worktree") or t.get("branch"):
-        print(f"  дерево:      {t.get('worktree') or '—'}   ветка: {t.get('branch') or '—'}")
+        # `worktree=main`/`master` — маркер «работа в основной ветке, без дерева»
+        # (API.md, `listik set <id> worktree=main`), а не путь: показываем словами.
+        tree = store.main_worktree_title(t.get("worktree")) or t.get("worktree") or '—'
+        print(f"  дерево:      {tree}   ветка: {t.get('branch') or '—'}")
     if t.get("launch_error"):
         print(f"  автостарт: ОШИБКА {t['launch_error']}")
     elif t.get("autostart") or t.get("launched_by"):
@@ -652,7 +662,12 @@ def cmd_context(args) -> int:
             print(f"  - {j.get('ts')} [{j.get('kind')}] {j.get('actor')}: {j.get('text')}")
     wt = out.get("worktree")
     if wt:
-        print(f"\nworktree: {wt.get('path') or '—'}")
+        if wt.get("mode") == "main":
+            # Маркер основной ветки: `path` — репозиторий проекта, а не поле карточки.
+            print(f"\nworktree: {wt.get('title') or 'работа в основной ветке'}"
+                  f" — репозиторий проекта {wt.get('path') or '—'}")
+        else:
+            print(f"\nworktree: {wt.get('path') or '—'}")
         if wt.get("exists"):
             print(f"  ветка: {wt.get('branch') or '—'}   head: {wt.get('head') or '—'}")
             changed = wt.get("changed_files") or []
@@ -1066,8 +1081,6 @@ def _print_routing(project: dict) -> None:
     source = _ROUTING_SOURCE_TITLES.get(project.get("routing_source"),
                                         project.get("routing_source") or "?")
     print(f"маршрутизация (источник: {source}):")
-    process = eff.get("default_process") or []
-    print(f"  процесс по умолчанию: {' → '.join(process) if process else '—'}")
     harnesses = eff.get("harnesses") or {}
     for stage in store.PIPELINE_STAGES:
         names = harnesses.get(stage) or []
@@ -1409,7 +1422,8 @@ def build_parser() -> argparse.ArgumentParser:
     sp.add_argument("--autostart", action="store_true",
                     help="сервер Listik сам запустит процесс задачи по маршруту (нужен --route)")
     sp.add_argument("--route", metavar="КЛЮЧ",
-                    help="ключ маршрута из routes.json; без --autostart просто сохраняется")
+                    help="ключ маршрута из routes.json; сервер помечает карточку метками "
+                         "harness:/process:, без --autostart маршрут просто сохраняется")
     sp.add_argument("--parent", metavar="ID",
                     help="родительская карточка (шаг/эпик): новая карточка станет её порцией "
                          "(связь parent-child) со своими spec/checklist/review; проект "
@@ -1440,8 +1454,9 @@ def build_parser() -> argparse.ArgumentParser:
     sp.add_argument("--max-chars", type=int, default=None)
     sp.add_argument("--format", choices=["text", "json"], default="text")
 
-    sp = add("set", cmd_set, help="изменить поля: set <id> status=in_progress priority=1 "
-                                  "route=low-pipeline (маршрут — пока задача не начата)")
+    sp = add("set", cmd_set, help="изменить поля: set <id> status=in_progress priority=1, "
+                                  "worktree=main — работа в основной ветке без дерева, "
+                                  "route=low-pipeline — маршрут, пока задача не начата")
     sp.add_argument("task_id")
     sp.add_argument("field", nargs="+")
     sp.add_argument("--note")

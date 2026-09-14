@@ -1,6 +1,6 @@
 /**
  * Фейковый API Listik для разработки фронтенда без сервера (и в тестах).
- * Запуск: node scripts/mock-api.mjs [port] [--fill=N] [--links] [--slow-ms=N]
+ * Запуск: node scripts/mock-api.mjs [port] [--fill=N] [--links] [--cold] [--slow-ms=N]
  *   → порт по умолчанию 8788.
  * Затем: VITE_API_BASE=http://127.0.0.1:8788 npm run dev
  * `--fill=N` (в любом месте после порта) добавляет N сгенерированных задач
@@ -9,6 +9,9 @@
  * задача, чужой проект, id в другом регистре, взаимные ссылки); `--slow-ms=N`
  * задерживает отдачу карточки `listik-links-slow` — так воспроизводится гонка
  * двух открытий задачи (scripts/verify-deps-links.mjs).
+ * `--cold` добавляет четыре задачи под строку «worktree · branch» блока
+ * «Холодный старт»: отдельное дерево, работа в `main`, она же в `master`, и
+ * карточка совсем без дерева и ветки (scripts/verify-cold-start.mjs).
  *
  * Формы ответов повторяют API.md и listik/store.py 1:1 — это заглушка
  * транспорта, а не второй контракт.
@@ -19,6 +22,7 @@ const port = Number(process.argv[2] ?? 8788)
 const fillArg = process.argv.slice(3).find((arg) => arg.startsWith('--fill='))
 const fillCount = fillArg ? Number.parseInt(fillArg.slice('--fill='.length), 10) : 0
 const linksMode = process.argv.slice(3).includes('--links')
+const coldMode = process.argv.slice(3).includes('--cold')
 const slowArg = process.argv.slice(3).find((arg) => arg.startsWith('--slow-ms='))
 const slowMs = slowArg ? Number.parseInt(slowArg.slice('--slow-ms='.length), 10) : 0
 const now = Date.now()
@@ -303,6 +307,54 @@ if (linksMode) {
       { depends_on: 'other-links-far', dep_type: 'blocks' },
     ],
   })
+}
+
+/**
+ * `--cold`: четыре задачи под строку «worktree · branch» блока «Холодный старт»
+ * (scripts/verify-cold-start.mjs) — отдельное дерево с веткой, маркер основной
+ * ветки `main`, он же `master`, и карточка без `worktree`/`branch`. Все прочие
+ * поля холодного старта у них заполнены одинаково, поэтому счётчик «N из M»
+ * отличается только состоянием дерева: у трёх первых 7 из 7 (жёлтое состояние
+ * считается заполненным), у последней 6 из 7.
+ */
+if (coldMode) {
+  const coldFields = {
+    status: 'open',
+    status_title: 'открыта',
+    stage: 's3-impl',
+    stage_title: '3. Реализация',
+    holder: null,
+    holder_title: '',
+    holder_at: null,
+    holder_age: '',
+    holder_hours: null,
+    spec_path: 'docs/listik-cold.md',
+    acceptance: 'строка «worktree · branch» красится по состоянию дерева',
+    journal_path: 'docs/listik-cold.journal.md',
+    review_path: 'docs/listik-cold.review.md',
+    blocked_by: [],
+    parent: null,
+    soft_links: [],
+    labels: [],
+    needs_owner: false,
+  }
+  for (const item of [
+    task({
+      ...coldFields,
+      id: 'listik-cold-branch',
+      title: 'Холодный старт: дерево и ветка',
+      worktree: '/Users/dmitry.fomin/Projects/Listik-wt/listik-cold-branch',
+      branch: 'task/listik-cold-branch',
+    }),
+    task({ ...coldFields, id: 'listik-cold-main', title: 'Холодный старт: работа в main',
+           worktree: 'main', branch: 'main' }),
+    task({ ...coldFields, id: 'listik-cold-master', title: 'Холодный старт: работа в master',
+           worktree: 'master', branch: 'master' }),
+    task({ ...coldFields, id: 'listik-cold-none', title: 'Холодный старт: дерево не указано',
+           worktree: null, branch: null }),
+  ]) {
+    tasks.push(item)
+  }
 }
 
 /**

@@ -30,6 +30,7 @@ import {
   UiSteps,
   UiTextarea,
   UiTimeline,
+  UiTooltip,
   type StatusPillTone,
   type UiSegmentedOption,
   type UiSelectOption,
@@ -43,7 +44,7 @@ import ListikIcon from './ListikIcon.vue'
 import ProjectMark from './marks/ProjectMark.vue'
 import RouteIcon from './marks/RouteIcon.vue'
 import TaskGlyph from './marks/TaskGlyph.vue'
-import { priority } from '@/lib/dictionaries'
+import { priority, worktreeState, worktreeValue } from '@/lib/dictionaries'
 import HarnessIcon from './marks/HarnessIcon.vue'
 import type {
   CommentKind,
@@ -652,67 +653,77 @@ const actorOptions = computed<UiSelectOption<string>[]>(() => {
 interface ColdRow {
   key: string
   label: string
+  /** Заполнено ли поле для счётчика «Холодный старт N из M»: жёлтое состояние — заполнено. */
   ok: boolean
   value: string
+  /** Тон точки-статуса (`UiStatusPill`): success — заполнено, warning — основная ветка, danger — пусто. */
+  tone: 'success' | 'warning' | 'danger'
+  /** Цвет значения и пояснение — из справочника `WORKTREE_STATES` (строка worktree). */
+  color?: string
+  hint?: string
+  /** Значение — слова состояния, а не путь: строку показываем не моноширинной. */
+  words?: boolean
 }
 
 const coldRows = computed<ColdRow[]>(() => {
   const task = props.task
   if (!task) return []
   const rows: ColdRow[] = []
-  rows.push({
-    key: 'spec_path',
-    label: 'spec_path',
-    ok: Boolean(task.spec_path),
-    value: task.spec_path || 'ТЗ не привязано',
+  const simpleRow = (key: string, label: string, ok: boolean, value: string): ColdRow => ({
+    key,
+    label,
+    ok,
+    value,
+    tone: ok ? 'success' : 'warning',
   })
+  rows.push(simpleRow('spec_path', 'spec_path', Boolean(task.spec_path),
+                  task.spec_path || 'ТЗ не привязано'))
   const checklistPath = task.checklist_path ?? null
   const acceptanceText = task.acceptance?.trim() || ''
-  rows.push({
-    key: 'acceptance',
-    label: 'acceptance',
-    ok: Boolean(checklistPath) || Boolean(acceptanceText),
-    value: checklistPath || (acceptanceText ? acceptanceText.split('\n')[0] : 'чек-листа нет'),
-  })
+  rows.push(simpleRow('acceptance', 'acceptance', Boolean(checklistPath) || Boolean(acceptanceText),
+                  checklistPath || (acceptanceText ? acceptanceText.split('\n')[0] : 'чек-листа нет')))
   const journalRef = task.decision_path ?? task.journal_path
-  rows.push({
-    key: 'journal_path',
-    label: 'journal_path',
-    ok: Boolean(journalRef),
-    value: journalRef || 'журнала нет',
-  })
+  rows.push(simpleRow('journal_path', 'journal_path', Boolean(journalRef), journalRef || 'журнала нет'))
+  // Три состояния строки: жёлтое «работа в main» (маркер основной ветки),
+  // зелёное с путём и веткой, красное «рабочее дерево не указано». Жёлтое —
+  // заполненное поле, поэтому в счётчике холодного старта идёт как ok.
+  const worktree = worktreeState(task.worktree, task.branch)
   rows.push({
     key: 'worktree',
     label: 'worktree · branch',
-    ok: Boolean(task.worktree),
-    value: task.worktree ? `${task.worktree}${task.branch ? ` · ${task.branch}` : ''}` : 'рабочее дерево не указано',
+    ok: worktree.filled,
+    value: worktreeValue(task.worktree, task.branch),
+    tone: worktree.tone,
+    color: worktree.color,
+    hint: worktree.hint,
+    words: !worktree.mono,
   })
   const blockedIds = blockedBy.value.map((dep) => dep.id)
   const waitingIds = waitingFor.value.map((dep) => dep.id)
   let blocksValue = blockedIds.length ? `ждёт ${blockedIds.join(', ')}` : 'ничего не ждёт'
   if (waitingIds.length) blocksValue += ` · её ждут ${waitingIds.join(', ')}`
-  rows.push({ key: 'blocks', label: 'blocks', ok: true, value: blocksValue })
+  rows.push(simpleRow('blocks', 'blocks', true, blocksValue))
   const journalComments = task.comments
     .filter((comment) => comment.kind === 'journal')
     .sort((a, b) => Date.parse(a.created_at) - Date.parse(b.created_at))
   const lastJournal = journalComments[journalComments.length - 1]
-  rows.push({
-    key: 'comment_journal',
-    label: 'comment -k journal',
-    ok: Boolean(lastJournal),
-    value: lastJournal ? lastJournal.text.slice(0, 80) : 'журнальных записей нет',
-  })
+  rows.push(simpleRow('comment_journal', 'comment -k journal', Boolean(lastJournal),
+                  lastJournal ? lastJournal.text.slice(0, 80) : 'журнальных записей нет'))
   const reviewComments = task.comments.filter((comment) => comment.kind === 'review')
-  rows.push({
-    key: 'comment_review',
-    label: 'comment -k review',
-    ok: Boolean(task.review_path) || reviewComments.length > 0,
-    value: task.review_path || (reviewComments.length ? `${reviewComments.length} замечаний` : 'ревью нет'),
-  })
+  rows.push(simpleRow('comment_review', 'comment -k review',
+                  Boolean(task.review_path) || reviewComments.length > 0,
+                  task.review_path || (reviewComments.length ? `${reviewComments.length} замечаний` : 'ревью нет')))
   return rows
 })
 
 const coldOkCount = computed(() => coldRows.value.filter((row) => row.ok).length)
+
+/** Тон счётчика: всё заполнено — зелёный; красная строка (worktree не указан) — красный; иначе жёлтый. */
+const coldTone = computed<'success' | 'warning' | 'danger'>(() => {
+  const rows = coldRows.value
+  if (rows.length && rows.every((row) => row.ok)) return 'success'
+  return rows.some((row) => row.tone === 'danger') ? 'danger' : 'warning'
+})
 
 // ── «Журнал и вердикты» ───────────────────────────────────────────────────
 
@@ -1175,17 +1186,21 @@ async function loadTree(): Promise<void> {
       <section class="listik-section">
         <div class="listik-section__head">
           <h4 class="listik-section__title">Холодный старт</h4>
-          <UiBadge :tone="coldOkCount === 7 ? 'success' : 'warning'" size="sm">{{ coldOkCount }} из 7</UiBadge>
+          <UiBadge :tone="coldTone" size="sm">{{ coldOkCount }} из {{ coldRows.length }}</UiBadge>
           <span class="listik-section__hint">что увидит принимающий по <code class="listik-mono">listik show</code></span>
         </div>
         <div class="listik-cold">
           <div v-for="row in coldRows" :key="row.key" class="listik-cold__row">
-            <span class="listik-cold__icon" :class="row.ok ? 'listik-cold__icon--ok' : 'listik-cold__icon--warn'">
-              <ListikIcon :name="row.ok ? 'check' : 'warning'" size="xs" />
-            </span>
+            <UiTooltip :text="row.hint ?? ''" :disabled="!row.hint">
+              <UiStatusPill :tone="row.tone" size="sm" />
+            </UiTooltip>
             <span class="listik-cold__key">{{ row.label }}</span>
             <span class="listik-row" style="flex-wrap: nowrap; min-width: 0">
-              <span class="listik-cold__value" :class="{ 'listik-cold__value--warn': !row.ok }">{{ row.value }}</span>
+              <span
+                class="listik-cold__value"
+                :class="{ 'listik-cold__value--state': row.words }"
+                :style="row.color ? { color: row.color } : undefined"
+              >{{ row.value }}</span>
               <UiCopyButton :value="row.value" :label="row.label">
                 <template #icon="{ copied }"><ListikIcon :name="copied ? 'check' : 'copy'" size="sm" /></template>
               </UiCopyButton>

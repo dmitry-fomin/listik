@@ -12,6 +12,8 @@ from pathlib import Path
 ROOT_DIR = Path(__file__).resolve().parent.parent
 DB_PATH = Path(os.environ.get("LISTIK_DB", ROOT_DIR / "listik.db"))
 CONFIG_PATH = Path(os.environ.get("LISTIK_CONFIG", ROOT_DIR / "config.toml"))
+# Лог сервера и непойманных исключений CLI: трейсбеки пишутся только сюда.
+LOG_PATH = Path(os.environ.get("LISTIK_LOG", ROOT_DIR / "listik.log"))
 WEB_DIR = ROOT_DIR / "web"
 
 # Корень, внутри которого ищутся проекты с .beads

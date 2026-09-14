@@ -52,6 +52,8 @@ import type {
   PipelineStage,
   ProjectRow,
   TaskComment,
+  TaskDep,
+  TaskDependent,
   TaskDetail,
   TaskEvent,
 } from '@/api/types'
@@ -121,6 +123,34 @@ const waitingFor = computed<DepInfo[]>(() => deps.value?.waiting_for ?? [])
 const softLinks = computed<DepInfo[]>(() => deps.value?.soft_links ?? [])
 const parentDep = computed<DepInfo | null>(() => deps.value?.parent ?? null)
 const childrenOpen = computed<DepInfo[]>(() => deps.value?.children_open ?? [])
+/**
+ * Связи карточки как они лежат в `deps` (обе стороны, включая мягкие входящие).
+ * `deps_state` для сводки не годится: в `soft_links` попадают только исходящие
+ * мягкие связи, а «кто ссылается на эту задачу» там нет вовсе.
+ */
+const dependencies = computed<TaskDep[]>(() => props.task?.dependencies ?? [])
+const dependents = computed<TaskDependent[]>(() => props.task?.dependents ?? [])
+/**
+ * id, уже показанные выше отдельными карточками/строками: blocked_by,
+ * waiting_for, children_open, parent, soft_links. В сводке такие id не
+ * повторяются — иначе одна и та же ссылка рисуется дважды.
+ */
+const groupedIds = computed<Set<string>>(() => {
+  const ids = new Set<string>()
+  for (const dep of [...blockedBy.value, ...waitingFor.value, ...childrenOpen.value, ...softLinks.value]) {
+    ids.add(dep.id)
+  }
+  if (parentDep.value) ids.add(parentDep.value.id)
+  return ids
+})
+/** Сводка «зависит от» — только то, чего нет в группах выше. */
+const dependenciesSummary = computed<TaskDep[]>(
+  () => dependencies.value.filter((dep) => !groupedIds.value.has(dep.depends_on)),
+)
+/** Сводка «от неё зависит» — только то, чего нет в группах выше. */
+const dependentsSummary = computed<TaskDependent[]>(
+  () => dependents.value.filter((dep) => !groupedIds.value.has(dep.issue_id)),
+)
 const canFinish = computed(() => deps.value?.can_finish !== false)
 const reasons = computed<string[]>(() => deps.value?.reasons ?? [])
 /** Серверная семантика «взять можно»: нет блокеров, нет держателя, не закрыта. */
@@ -1134,17 +1164,27 @@ async function loadTree(): Promise<void> {
           Сервер не отдал вердикт по зависимостям — возможно, старая версия API.
           Показаны только связи из карточки задачи.
         </UiAlert>
-        <ul v-else-if="!blockedBy.length && !waitingFor.length" class="listik-events">
-          <li v-for="dep in task.dependencies" :key="`d-${dep.depends_on}`" class="listik-events__row">
-            <span class="listik-mono">зависит от</span>
-            <span class="listik-mono">{{ dep.depends_on }}</span>
-            <span class="listik-section__hint">{{ dep.dep_type }}</span>
-          </li>
-          <li v-for="dep in task.dependents" :key="`r-${dep.issue_id}`" class="listik-events__row">
-            <span class="listik-mono">от неё зависит</span>
-            <span class="listik-mono">{{ dep.issue_id }}</span>
-          </li>
-        </ul>
+
+        <!-- Сводка связей: id через запятую, каждый — ссылка, открывающая задачу
+             в этой же панели. Строится по спискам карточки, поэтому показывает и
+             мягкие входящие связи, которых нет ни в blocked_by, ни в waiting_for;
+             id, уже показанные карточками выше, в сводку не попадают. -->
+        <p v-if="dependenciesSummary.length" class="listik-section__hint">
+          зависит от
+          <template v-for="(dep, index) in dependenciesSummary" :key="`d-${dep.depends_on}`">
+            <button type="button" class="listik-link listik-mono" @click="emit('open-other', dep.depends_on)">
+              {{ dep.depends_on }}
+            </button><span v-if="index < dependenciesSummary.length - 1">, </span>
+          </template>
+        </p>
+        <p v-if="dependentsSummary.length" class="listik-section__hint">
+          от неё зависит
+          <template v-for="(dep, index) in dependentsSummary" :key="`r-${dep.issue_id}`">
+            <button type="button" class="listik-link listik-mono" @click="emit('open-other', dep.issue_id)">
+              {{ dep.issue_id }}
+            </button><span v-if="index < dependentsSummary.length - 1">, </span>
+          </template>
+        </p>
 
         <div v-if="depTree" class="listik-stack">
           <h5 class="listik-subtitle">Дерево (глубина 3)</h5>

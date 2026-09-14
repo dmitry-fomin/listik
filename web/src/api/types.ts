@@ -305,6 +305,13 @@ export interface ProjectRemoved {
 
 // ── маршруты запуска: routes.json, GET /api/routes (см. API.md) ─────────────
 
+/**
+ * Уровень маршрута — значение поля `icon` записи `routes.json`. Набор уровней и
+ * правила фолбэка по ключу — `listik/routes.py` (`ROUTE_ICONS`, `fallback_icon`),
+ * подписи и иконки — `lib/dictionaries.ts` (`ROUTE_ICONS`).
+ */
+export type RouteIconKey = 'xhigh' | 'high' | 'medium' | 'low' | 'direct'
+
 /** Одна иконка и подпись вместо таблицы ролей — `strip` в routes.json. */
 export interface RouteStrip {
   label: string
@@ -320,6 +327,11 @@ interface RouteBase {
   hint: string
   /** показывать ли запись на доске; скрытая не выбирается и не ловится стрелками */
   visible: boolean
+  /**
+   * Уровень маршрута для иконки; `null` — уровня нет (сервер не вывел его из
+   * `key`/`kind`). Необязательно: сервер до появления поля его не отдаёт.
+   */
+  icon?: RouteIconKey | null
 }
 
 /** Пресет конвейера: роли ТЗ/критик/исполнитель/судья. */

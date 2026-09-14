@@ -100,8 +100,16 @@ updated_at, status, error, chunk_count`. Колонка `checked_at` (время
 Формат (версия 1): `{"version": 1, "routes": [ {...}, ... ]}`. Лишние поля — ошибка.
 Запись: `key` (`^[a-z0-9][a-z0-9-]*$`, уникален), `kind` (`pipeline` или `direct`),
 `title`, `hint`, `visible` (именно JSON `true`/`false`); у `pipeline` обязателен `roles`
-(`spec`/`critic`/`impl`/`judge`), у `direct` — `harness`; необязательный `strip` и
-необязательный `command` — непустой массив непустых строк, argv процесса.
+(`spec`/`critic`/`impl`/`judge`), у `direct` — `harness`; необязательные `strip`, `icon`
+и `command` — непустой массив непустых строк, argv процесса.
+
+`icon` — уровень маршрута для иконки на доске: `xhigh`, `high`, `medium`, `low` или
+`direct`; любое другое значение — ошибка проверки. Если поля в записи нет, сервер выводит
+уровень сам: у `direct`-записи это `direct`, у `pipeline` — часть ключа до первого `-`,
+если она из того же набора (`xhigh-pipeline` → `xhigh`, `medium-pipeline` → `medium`).
+У записи без выводимого уровня (`feature-pipeline`, `inherit-pipeline`) иконки нет —
+в ответе `icon: null`. Рабочая копия `routes.json`, созданная до появления поля, поэтому
+работает без правок: доска показывает уровень по ключу.
 
 В `command` допустимы только подстановки `{task_id}`, `{project}` (пусто, если проекта
 нет), `{route}`, `{cwd}`, `{title}`; любая другая фигурная скобка — ошибка проверки.
@@ -202,7 +210,7 @@ pid <N>, лог <path>`. Процесс не блокирует запрос: PO
 | Метод | Путь | Параметры | Ответ |
 |---|---|---|---|
 | GET | `/api/health` | — | `status, version, embed{model}, now, authed`; авторизованному — ещё `db`, `counts`, `embed{ok,models}`, `routes{ok,error,path,count}`, `db_error{where,error,at}` — только если последний фоновый проход упал с `sqlite3.DatabaseError`, и `db_replaced{kind,at,detail,before,after}` — если сервер заметил подмену файла базы или WAL (см. ниже) |
-| GET | `/api/routes` | — | `ok, error, path, routes[]` — записи `routes.json`, загруженные при старте, без `command` (см. «Маршруты запуска»); ошибка файла — `ok=false` и текст, а не HTTP-ошибка |
+| GET | `/api/routes` | — | `ok, error, path, routes[]` — записи `routes.json`, загруженные при старте, без `command`, но с посчитанным `icon` (см. «Маршруты запуска»); ошибка файла — `ok=false` и текст, а не HTTP-ошибка |
 | GET | `/api/meta` | `archived` | `projects[], actors[], facets{}, statuses{}, stages{}, priorities{}` |
 | GET | `/api/projects` | — | `projects[]` — все репозитории доски, включая скрытые: `slug, title, kind, path, path_exists, git_remote, git_branch, archived, n_tasks, n_open, n_wip`, плюс `routing` (переопределение проекта — объект или `null`), `routing_effective` (действующая слитая таблица, которой реально пользуются `allowed_harnesses`/`transition_kind`), `routing_source` (`default`\|`config`\|`db`\|`config+db`), плюс `root` (корень поиска проектов) |
 | GET | `/api/stats` | `project` | `by_status{}, by_stage{}, by_project[], by_holder[], by_actor[], stale, needs_owner, closed_7d, closed_prev_7d, closed_delta, closed_by_day[{date,count}] (14 дней), long_stage, running[], generated_at` |

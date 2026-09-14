@@ -1283,6 +1283,15 @@ body .ui-drawer-backdrop.ui-drawer-backdrop--right .ui-drawer.ui-drawer--right.u
   align-items: center;
 }
 
+/* Уровень маршрута: габарит как у глифов типа/приоритета, но спокойный ink-3 —
+   в строке карточки он не должен спорить с цветными типом и приоритетом. */
+.listik-route-icon {
+  display: inline-flex;
+  flex: none;
+  align-items: center;
+  color: var(--ink-3);
+}
+
 .listik-count-glyph {
   display: inline-flex;
   align-items: center;
@@ -1382,6 +1391,14 @@ body .ui-drawer-backdrop.ui-drawer-backdrop--right .ui-drawer.ui-drawer--right.u
 }
 
 .listik-pipelines__row-title {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+  min-width: 0;
+}
+
+/* Название и подсказка пресета — колонкой рядом с иконкой уровня маршрута. */
+.listik-pipelines__row-text {
   display: flex;
   flex-direction: column;
   gap: 1px;

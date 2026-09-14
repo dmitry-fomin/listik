@@ -7,6 +7,7 @@
       "title": "xhigh",
       "hint": "от 50 мин на задачу",
       "visible": true,
+      "icon": "xhigh",
       "roles": {
         "spec": {
           "provider": "claude",
@@ -36,6 +37,7 @@
       "title": "high · по умолчанию",
       "hint": "от 40 мин на задачу",
       "visible": true,
+      "icon": "high",
       "roles": {
         "spec": {
           "provider": "claude",
@@ -65,6 +67,7 @@
       "title": "medium",
       "hint": "30 мин на задачу, когда работа понятная",
       "visible": true,
+      "icon": "medium",
       "roles": {
         "spec": {
           "provider": "claude",
@@ -94,6 +97,7 @@
       "title": "low",
       "hint": "на 20 мин, самый дешевый",
       "visible": true,
+      "icon": "low",
       "roles": {
         "spec": {
           "provider": "claude",
@@ -222,7 +226,8 @@
       "harness": "dsh",
       "title": "dsh",
       "hint": "",
-      "visible": true
+      "visible": true,
+      "icon": "direct"
     },
     {
       "key": "grok",
@@ -230,7 +235,8 @@
       "harness": "grok",
       "title": "grok",
       "hint": "",
-      "visible": true
+      "visible": true,
+      "icon": "direct"
     },
     {
       "key": "codex",
@@ -238,7 +244,8 @@
       "harness": "codex",
       "title": "codex",
       "hint": "",
-      "visible": true
+      "visible": true,
+      "icon": "direct"
     }
   ]
 }

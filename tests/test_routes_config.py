@@ -16,6 +16,7 @@ import importlib.util
 import io
 import json
 import pathlib
+import re
 import subprocess
 import threading
 import unittest
@@ -30,8 +31,14 @@ from tests.helpers import TempDbTestCase
 REPO_DIR = pathlib.Path(__file__).resolve().parent.parent
 ROUTES_JSON = REPO_DIR / "routes.json"
 ICONS_TS = REPO_DIR / "web" / "src" / "lib" / "icons.ts"
+DICTIONARIES_TS = REPO_DIR / "web" / "src" / "lib" / "dictionaries.ts"
 WEB_SRC = REPO_DIR / "web" / "src"
 LISTIK_BIN = REPO_DIR / "bin" / "listik"
+
+# Внутри блока `export const ROUTE_ICONS` справочника доски: `value: 'xhigh'` и
+# `icon: 'route-xhigh'` — уровни маршрута и имена их иконок.
+ROUTE_LEVEL_RE = re.compile(r"value: '([a-z0-9-]+)'")
+ROUTE_GLYPH_RE = re.compile(r"icon: '([a-z0-9-]+)'")
 
 DIRECT_KEYS = ["dsh", "grok", "codex"]
 
@@ -106,7 +113,21 @@ class RepoRoutesFileTests(unittest.TestCase):
         for key, got in zip(DIRECT_KEYS, normalized[8:]):
             self.assertEqual(got["title"], key)
             self.assertEqual(got, {"key": key, "kind": "direct", "title": key, "hint": "",
-                                   "visible": True, "harness": key, "command": None})
+                                   "visible": True, "icon": "direct", "harness": key,
+                                   "command": None})
+
+    def test_icons_are_the_route_levels(self) -> None:
+        normalized = {r["key"]: r["icon"] for r in routes_mod.validate(self.raw)}
+        self.assertEqual(normalized["xhigh-pipeline"], "xhigh")
+        self.assertEqual(normalized["high-pipeline"], "high")
+        self.assertEqual(normalized["medium-pipeline"], "medium")
+        self.assertEqual(normalized["low-pipeline"], "low")
+        for key in DIRECT_KEYS:
+            self.assertEqual(normalized[key], "direct")
+        # У пресетов без уровня поля нет — иконка не выдумывается.
+        for key in ("inherit-pipeline", "opus-single-pipeline", "opus-sonnet-pipeline",
+                    "feature-pipeline"):
+            self.assertIsNone(normalized[key])
 
     def test_no_record_has_command_in_repo(self) -> None:
         for raw in self.raw["routes"]:
@@ -163,6 +184,37 @@ class ValidateTests(unittest.TestCase):
         record = pipeline_record()
         del record["visible"]
         self.check_error(document(record), "routes[0].visible")
+
+    # -- icon --------------------------------------------------------------
+
+    def test_icon_unknown_level(self) -> None:
+        self.check_error(document({**pipeline_record(), "icon": "xhihg"}), "routes[0].icon")
+
+    def test_icon_not_string(self) -> None:
+        self.check_error(document({**pipeline_record(), "icon": 4}), "routes[0].icon")
+
+    def test_icon_null_is_not_a_level(self) -> None:
+        self.check_error(document({**pipeline_record(), "icon": None}), "routes[0].icon")
+
+    def test_icon_explicit_level_passes(self) -> None:
+        record = {**pipeline_record(), "key": "feature-pipeline", "icon": "high"}
+        self.assertEqual(routes_mod.validate(document(record))[0]["icon"], "high")
+
+    def test_icon_falls_back_to_key_prefix(self) -> None:
+        for key, level in (("xhigh-pipeline", "xhigh"), ("high-pipeline", "high"),
+                           ("medium-pipeline", "medium"), ("low-pipeline", "low")):
+            with self.subTest(key=key):
+                normalized = routes_mod.validate(document({**pipeline_record(), "key": key}))
+                self.assertEqual(normalized[0]["icon"], level)
+
+    def test_icon_falls_back_for_direct_by_kind(self) -> None:
+        self.assertEqual(routes_mod.validate(document(direct_record()))[0]["icon"], "direct")
+
+    def test_icon_fallback_has_nothing_for_unknown_prefix(self) -> None:
+        for key in ("feature-pipeline", "inherit-pipeline", "demo-pipeline"):
+            with self.subTest(key=key):
+                normalized = routes_mod.validate(document({**pipeline_record(), "key": key}))
+                self.assertIsNone(normalized[0]["icon"])
 
     # -- title -------------------------------------------------------------
 
@@ -332,7 +384,9 @@ class IconNamesTests(unittest.TestCase):
     def test_real_icons_file(self) -> None:
         names = routes_mod.icon_names(ICONS_TS)
         self.assertTrue(names)
-        for expected in ("gear", "warning", "check"):
+        # `route-xhigh` — имя с дефисом: в icons.ts оно записано в кавычках,
+        # но верхним уровнем объекта, и тоже должно читаться.
+        for expected in ("gear", "warning", "check", "route-xhigh"):
             self.assertIn(expected, names)
 
     def test_missing_file_gives_empty_set(self) -> None:
@@ -347,6 +401,32 @@ class IconNamesTests(unittest.TestCase):
             with self.assertRaises(routes_mod.RoutesError) as ctx:
                 routes_mod.validate(document(bad))
             self.assertIn("routes[0].strip.glyph", str(ctx.exception))
+
+
+class RouteIconDictionaryTests(unittest.TestCase):
+    """Уровни `icon` и их иконки: сервер и справочник доски не разъезжаются.
+
+    Проверка читает `web/src/lib/dictionaries.ts` так же, как `icon_names` читает
+    `icons.ts`: без сборки доски. Уровень, который сервер разрешает в `routes.json`,
+    но которого нет в `ROUTE_ICONS`, доска молча показала бы без иконки.
+    """
+
+    def setUp(self) -> None:
+        text = DICTIONARIES_TS.read_text(encoding="utf-8")
+        self.assertTrue("export const ROUTE_ICONS" in text, "в dictionaries.ts нет ROUTE_ICONS")
+        self.block = text.split("export const ROUTE_ICONS", 1)[1].split("\n]", 1)[0]
+
+    def test_levels_match_the_backend(self) -> None:
+        self.assertEqual(ROUTE_LEVEL_RE.findall(self.block), list(routes_mod.ROUTE_ICONS))
+
+    def test_glyphs_are_distinct_and_known_to_icons_ts(self) -> None:
+        glyphs = ROUTE_GLYPH_RE.findall(self.block)
+        self.assertEqual(len(glyphs), len(routes_mod.ROUTE_ICONS))
+        self.assertEqual(len(set(glyphs)), len(glyphs))
+        known = routes_mod.icon_names(ICONS_TS)
+        self.assertTrue(known)
+        for glyph in glyphs:
+            self.assertIn(glyph, known)
 
 
 class CopyAndStateTests(TempDbTestCase):
@@ -535,6 +615,29 @@ class RoutesApiTests(TempDbTestCase):
         self.assertEqual(len(data["routes"]), 11)
         for record in data["routes"]:
             self.assertNotIn("command", record)
+            self.assertIn("icon", record)
+        icons = {record["key"]: record["icon"] for record in data["routes"]}
+        self.assertEqual(icons["xhigh-pipeline"], "xhigh")
+        self.assertEqual(icons["medium-pipeline"], "medium")
+        self.assertEqual(icons["dsh"], "direct")
+        self.assertIsNone(icons["feature-pipeline"])
+
+    def test_icon_falls_back_to_key_for_old_runtime_copy(self) -> None:
+        """Рабочая копия без поля `icon` (создана до его появления) — уровни по ключу."""
+        records = [
+            {**pipeline_record(), "key": "low-pipeline"},
+            {**pipeline_record(), "key": "feature-pipeline"},
+            direct_record(),
+        ]
+        self.target.parent.mkdir(parents=True)
+        self.target.write_text(json.dumps({"version": 1, "routes": records}, ensure_ascii=False),
+                               encoding="utf-8")
+        state = routes_mod.init_at_startup(source=ROUTES_JSON, target=self.target)
+        self.assertTrue(state.ok)
+        status, payload = self._get("/api/routes", token=self.TOKEN)
+        self.assertEqual(status, 200)
+        icons = {record["key"]: record["icon"] for record in payload["data"]["routes"]}
+        self.assertEqual(icons, {"low-pipeline": "low", "feature-pipeline": None, "dsh": "direct"})
 
     def test_handle_routes_reports_error_state(self) -> None:
         with contextlib.redirect_stderr(io.StringIO()):

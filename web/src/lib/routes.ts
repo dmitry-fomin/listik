@@ -40,3 +40,13 @@ export function routeLabels(route: RouteDef): string[] {
   if (route.kind === 'direct') return [`harness:${route.harness}`, 'process:direct']
   return ['harness:claude', `process:${route.key}`]
 }
+
+/**
+ * Запись маршрута по ключу задачи (`launch_route`): иконку уровня и подпись
+ * карточка берёт из неё. Ключа нет или записи в списке нет (маршрут убрали из
+ * `routes.json` после заведения задачи) — `null`, иконка не рисуется.
+ */
+export function routeByKey(key: string | null | undefined, routes: RouteDef[]): RouteDef | null {
+  if (!key) return null
+  return routes.find((route) => route.key === key) ?? null
+}

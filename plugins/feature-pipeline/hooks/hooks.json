@@ -1,0 +1,18 @@
+{
+  "description": "Автоодобрение запросов разрешений от агентов конвейера (pipeline-implementer, pipeline-implementer-high, pipeline-implementer-solo, pipeline-judge), если в настройках плагина включён auto_approve_agents. Опасные команды и секреты по-прежнему идут запросом.",
+  "hooks": {
+    "PermissionRequest": [
+      {
+        "matcher": "Bash|Edit|Write|MultiEdit|NotebookEdit",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "python3",
+            "args": ["${CLAUDE_PLUGIN_ROOT}/hooks/approve-pipeline-agents.py"],
+            "timeout": 10
+          }
+        ]
+      }
+    ]
+  }
+}

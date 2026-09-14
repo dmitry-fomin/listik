@@ -1,0 +1,446 @@
+id,name,ctx,in_$1m,out_$1m,cache_read_$1m,cache_write_$1m,reasoning_$1m,img_$,modalities,created
+aion-labs/aion-2.0,AionLabs: Aion-2.0,131072,0.8,1.6,0.2,,,,text,1771881306
+aion-labs/aion-3.0,AionLabs: Aion-3.0,131072,3.0,6.0,0.75,,,,text,1783443095
+aion-labs/aion-3.0-mini,AionLabs: Aion-3.0-Mini,131072,0.7,1.4,0.18,,,,text,1783443096
+aion-labs/aion-rp-llama-3.1-8b,AionLabs: Aion-RP 1.0 (8B),32768,0.8,1.6,,,,,text,1738696718
+amazon/nova-2-lite-v1,Amazon: Nova 2 Lite,1000000,0.3,2.5,,,,,"text,image,video,file",1764696672
+amazon/nova-lite-v1,Amazon: Nova Lite 1.0,300000,0.06,0.24,,,,,"text,image",1733437363
+amazon/nova-micro-v1,Amazon: Nova Micro 1.0,128000,0.035,0.14,,,,,text,1733437237
+amazon/nova-premier-v1,Amazon: Nova Premier 1.0,1000000,2.5,12.5,0.625,,,,"text,image",1761950332
+amazon/nova-pro-v1,Amazon: Nova Pro 1.0,300000,0.8,3.2,,,,,"text,image",1733436303
+anthracite-org/magnum-v4-72b,Magnum v4 72B,32768,2.5,5.0,,,,,text,1729555200
+anthropic/claude-3-haiku,Anthropic: Claude 3 Haiku,200000,0.25,1.25,0.03,0.3,,,"text,image",1710288000
+anthropic/claude-fable-5,Anthropic: Claude Fable 5,1000000,10.0,50.0,1.0,12.5,,,"text,image,file",1781007515
+anthropic/claude-fable-5.1,Anthropic: Claude Fable 5.1,1000000,10.0,50.0,0.25,12.5,,,"text,image,file",1788285838
+anthropic/claude-fable-5.1:batch,Anthropic: Claude Fable 5.1 (batch),1000000,5.0,25.0,0.125,6.25,,,"text,image,file",1788285838
+anthropic/claude-fable-5:batch,Anthropic: Claude Fable 5 (batch),1000000,5.0,25.0,0.5,6.25,,,"text,image,file",1781007515
+anthropic/claude-haiku-4.5,Anthropic: Claude Haiku 4.5,200000,1.0,5.0,0.1,1.25,,,"text,image,file",1760547638
+anthropic/claude-haiku-4.5:batch,Anthropic: Claude Haiku 4.5 (batch),200000,0.5,2.5,0.05,0.625,,,"text,image,file",1760547638
+anthropic/claude-opus-4,Anthropic: Claude Opus 4,200000,15.0,75.0,1.5,18.75,,,"image,text,file",1747931245
+anthropic/claude-opus-4.1,Anthropic: Claude Opus 4.1,200000,15.0,75.0,1.5,18.75,,,"image,text,file",1754411591
+anthropic/claude-opus-4.1:batch,Anthropic: Claude Opus 4.1 (batch),200000,7.5,37.5,0.75,9.375,,,"image,text,file",1754411591
+anthropic/claude-opus-4.5,Anthropic: Claude Opus 4.5,200000,5.0,25.0,0.5,6.25,,,"file,image,text",1764010580
+anthropic/claude-opus-4.5:batch,Anthropic: Claude Opus 4.5 (batch),200000,2.5,12.5,0.25,3.125,,,"file,image,text",1764010580
+anthropic/claude-opus-4.6,Anthropic: Claude Opus 4.6,1000000,5.0,25.0,0.5,6.25,,,"text,image,file",1770219050
+anthropic/claude-opus-4.6:batch,Anthropic: Claude Opus 4.6 (batch),1000000,2.5,12.5,0.25,3.125,,,"text,image,file",1770219050
+anthropic/claude-opus-4.7,Anthropic: Claude Opus 4.7,1000000,5.0,25.0,0.5,6.25,,,"text,image,file",1776351100
+anthropic/claude-opus-4.7:batch,Anthropic: Claude Opus 4.7 (batch),1000000,2.5,12.5,0.25,3.125,,,"text,image,file",1776351100
+anthropic/claude-opus-4.8,Anthropic: Claude Opus 4.8,1000000,5.0,25.0,0.5,6.25,,,"text,image,file",1779905091
+anthropic/claude-opus-4.8:batch,Anthropic: Claude Opus 4.8 (batch),1000000,2.5,12.5,0.25,3.125,,,"text,image,file",1779905091
+anthropic/claude-opus-5,Claude Opus 5,1000000,5.0,25.0,0.5,6.25,,,"text,image,file",1784912544
+anthropic/claude-opus-5:batch,Claude Opus 5 (batch),1000000,2.5,12.5,0.25,3.125,,,"text,image,file",1784912544
+anthropic/claude-sonnet-4,Anthropic: Claude Sonnet 4,1000000,3.0,15.0,0.3,3.75,,,"image,text,file",1747930371
+anthropic/claude-sonnet-4.5,Anthropic: Claude Sonnet 4.5,1000000,3.0,15.0,0.3,3.75,,,"text,image,file",1759161676
+anthropic/claude-sonnet-4.5:batch,Anthropic: Claude Sonnet 4.5 (batch),1000000,1.5,7.5,0.15,1.875,,,"text,image,file",1759161676
+anthropic/claude-sonnet-4.6,Anthropic: Claude Sonnet 4.6,1000000,3.0,15.0,0.3,3.75,,,"text,image,file",1771342990
+anthropic/claude-sonnet-4.6:batch,Anthropic: Claude Sonnet 4.6 (batch),1000000,1.5,7.5,0.15,1.875,,,"text,image,file",1771342990
+anthropic/claude-sonnet-5,Anthropic: Claude Sonnet 5,1000000,2.0,10.0,0.2,2.5,,,"text,image,file",1782843083
+anthropic/claude-sonnet-5:batch,Anthropic: Claude Sonnet 5 (batch),1000000,1.0,5.0,0.1,1.25,,,"text,image,file",1782843083
+arcee-ai/trinity-large-thinking,Arcee AI: Trinity Large Thinking,262144,0.25,0.8,0.06,,,,text,1775058318
+baidu/ernie-4.5-vl-424b-a47b,Baidu: ERNIE 4.5 VL 424B A47B ,123000,0.42,1.25,,,,,"image,text",1751300903
+bytedance-seed/seed-1.6,ByteDance Seed: Seed 1.6,262144,0.25,2.0,,,,,"image,text,video",1766504997
+bytedance-seed/seed-1.6-flash,ByteDance Seed: Seed 1.6 Flash,262144,0.075,0.3,,,,,"image,text,video",1766505011
+bytedance-seed/seed-2-1-turbo,ByteDance Seed: Seed 2.1 Turbo,262144,0.5,2.5,,,,,"text,image,video",1786552176
+bytedance-seed/seed-2.0-code,ByteDance Seed: Seed-2.0-Code,262144,0.5,3.0,,,,,"text,image,video",1786550701
+bytedance-seed/seed-2.0-lite,ByteDance Seed: Seed-2.0-Lite,262144,0.25,2.0,,,,,"text,image,video",1773157231
+bytedance-seed/seed-2.0-mini,ByteDance Seed: Seed-2.0-Mini,262144,0.1,0.4,,,,,"text,image,video",1772131107
+bytedance/ui-tars-1.5-7b,ByteDance: UI-TARS 7B ,128000,0.1,0.2,0.1,,,,"image,text",1753205056
+cognitivecomputations/dolphin-mistral-24b-venice-edition,Venice: Uncensored,128000,0.2,0.9,,,,,text,1752094966
+cohere/command-a,Cohere: Command A,256000,2.5,10.0,,,,,text,1741894342
+cohere/command-r-08-2024,Cohere: Command R (08-2024),128000,0.15,0.6,,,,,text,1724976000
+cohere/command-r-plus-08-2024,Cohere: Command R+ (08-2024),128000,2.5,10.0,,,,,text,1724976000
+cohere/command-r7b-12-2024,Cohere: Command R7B (12-2024),128000,0.0375,0.15,,,,,text,1734158152
+cohere/north-mini-code:free,Cohere: North Mini Code (free),256000,0.0,0.0,,,,,text,1781723748
+deepseek/deepseek-chat,DeepSeek: DeepSeek V3,163840,0.2574,1.0287,,,,,text,1735241320
+deepseek/deepseek-chat-v3-0324,DeepSeek: DeepSeek V3 0324,163840,0.25,1.0,,,,,text,1742824755
+deepseek/deepseek-chat-v3.1,DeepSeek: DeepSeek V3.1,163840,0.25,0.95,0.13,,,,text,1755779628
+deepseek/deepseek-r1,DeepSeek: R1,64000,0.7,2.5,,,,,text,1737381095
+deepseek/deepseek-r1-0528,DeepSeek: R1 0528,163840,0.5,2.15,0.35,,,,text,1748455170
+deepseek/deepseek-r1-distill-llama-70b,DeepSeek: R1 Distill Llama 70B,8192,0.8,0.8,,,,,text,1737663169
+deepseek/deepseek-v3.1-terminus,DeepSeek: DeepSeek V3.1 Terminus,163840,0.27,1.0,0.135,,,,text,1758548275
+deepseek/deepseek-v3.2,DeepSeek: DeepSeek V3.2,163840,0.269,0.4,0.1345,,,,text,1764594642
+deepseek/deepseek-v3.2-exp,DeepSeek: DeepSeek V3.2 Exp,163840,0.27,0.41,,,,,text,1759150481
+deepseek/deepseek-v4-flash,DeepSeek: DeepSeek V4 Flash 0423,1048576,0.0659,0.1319,0.0132,,,,text,1777000666
+deepseek/deepseek-v4-flash-0731,DeepSeek: DeepSeek V4 Flash 0731,1310720,0.04,0.08,0.008,,,,text,1785478908
+deepseek/deepseek-v4-flash-0731:batch,DeepSeek: DeepSeek V4 Flash 0731 (batch),1048576,0.11,0.33,0.0035,,,,text,1785478908
+deepseek/deepseek-v4-flash-vision-exp,DeepSeek: DeepSeek V4 Flash Vision Exp,1048576,0.22,0.66,0.007,,,,"text,image",1787311563
+deepseek/deepseek-v4-flash-vision-exp:batch,DeepSeek: DeepSeek V4 Flash Vision Exp (batch),1048576,0.11,0.33,0.0035,,,,"text,image",1787311563
+deepseek/deepseek-v4-pro,DeepSeek: DeepSeek V4 Pro 0423,1048576,1.6,3.2,0.135,,,,text,1777000679
+deepseek/deepseek-v4-pro-0813,DeepSeek: DeepSeek V4 Pro 0813,1048576,0.5795,1.7384,0.0193,,,,text,1786549364
+deepseek/deepseek-v4-pro-0813:batch,DeepSeek: DeepSeek V4 Pro 0813 (batch),1048576,0.66,1.98,0.022,,,,text,1786549364
+deepseek/deepseek-v4.1-flash,DeepSeek: DeepSeek V4.1 Flash,1048576,0.15,0.6,0.003,,,,"text,image",1789021285
+dots-studio/dots-3-note-preview:free,Dots Studio: Dots3-Note Preview (free),512000,0.0,0.0,,,,,"text,image",1786680361
+google/gemini-2.5-flash,Google: Gemini 2.5 Flash,1048576,0.3,2.5,0.03,0.0833,2.5,0.0000003,"file,image,text,audio,video",1750172488
+google/gemini-2.5-flash-image,Google: Nano Banana (Gemini 2.5 Flash Image),32768,0.3,2.5,0.03,0.0833,2.5,0.0000003,"image,text",1759870431
+google/gemini-2.5-flash-lite,Google: Gemini 2.5 Flash Lite,1048576,0.1,0.4,0.01,0.0833,0.4,0.0000001,"text,image,file,audio,video",1753200276
+google/gemini-2.5-flash-lite:batch,Google: Gemini 2.5 Flash Lite (batch),1048576,0.05,0.2,0.01,,0.2,0.00000005,"text,image,file,audio,video",1753200276
+google/gemini-2.5-flash:batch,Google: Gemini 2.5 Flash (batch),1048576,0.15,1.25,0.03,,1.25,0.00000015,"file,image,text,audio,video",1750172488
+google/gemini-2.5-pro,Google: Gemini 2.5 Pro,1048576,1.25,10.0,0.125,0.375,10.0,0.00000125,"text,image,file,audio,video",1750169544
+google/gemini-2.5-pro-preview,Google: Gemini 2.5 Pro Preview 06-05,1048576,1.25,10.0,0.125,0.375,10.0,0.00000125,"file,image,text,audio",1749137257
+google/gemini-2.5-pro-preview-05-06,Google: Gemini 2.5 Pro Preview 05-06,1048576,1.25,10.0,0.125,0.375,10.0,0.00000125,"text,image,file,audio,video",1746578513
+google/gemini-2.5-pro:batch,Google: Gemini 2.5 Pro (batch),1048576,0.625,5.0,0.125,,5.0,0.000000625,"text,image,file,audio,video",1750169544
+google/gemini-3-flash-preview,Google: Gemini 3 Flash Preview,1048576,0.5,3.0,0.05,0.0833,3.0,0.0000005,"text,image,file,audio,video",1765987078
+google/gemini-3-flash-preview:batch,Google: Gemini 3 Flash Preview (batch),1048576,0.25,1.5,,,1.5,0.00000025,"text,image,file,audio,video",1765987078
+google/gemini-3-pro-image,Google: Nano Banana Pro (Gemini 3 Pro Image),131072,2.0,12.0,0.2,0.375,12.0,0.000002,"image,text",1781754054
+google/gemini-3-pro-image-preview,Google: Nano Banana Pro (Gemini 3 Pro Image Preview),65536,2.0,12.0,0.2,0.375,12.0,0.000002,"image,text",1763653797
+google/gemini-3.1-flash-image,Google: Nano Banana 2 (Gemini 3.1 Flash Image),131072,0.5,3.0,,,,,"image,text",1781754065
+google/gemini-3.1-flash-image-preview,Google: Nano Banana 2 (Gemini 3.1 Flash Image Preview),65536,0.5,3.0,,,,,"image,text",1772119558
+google/gemini-3.1-flash-lite,Google: Gemini 3.1 Flash Lite,1048576,0.25,1.5,0.025,0.0833,1.5,0.00000025,"text,image,video,file,audio",1778168828
+google/gemini-3.1-flash-lite-image,Google: Nano Banana 2 Lite (Gemini 3.1 Flash Lite Image),65536,0.25,1.5,,,,,"image,text",1782837225
+google/gemini-3.1-flash-lite-preview,Google: Gemini 3.1 Flash Lite Preview,1048576,0.25,1.5,0.025,0.0833,1.5,0.00000025,"text,image,video,file,audio",1772512673
+google/gemini-3.1-flash-lite:batch,Google: Gemini 3.1 Flash Lite (batch),1048576,0.125,0.75,0.0125,,0.75,0.000000125,"text,image,video,file,audio",1778168828
+google/gemini-3.1-pro-preview,Google: Gemini 3.1 Pro Preview,1048576,2.0,12.0,0.2,0.375,12.0,0.000002,"audio,file,image,text,video",1771509627
+google/gemini-3.1-pro-preview-customtools,Google: Gemini 3.1 Pro Preview Custom Tools,1048576,2.0,12.0,0.2,0.375,12.0,0.000002,"text,audio,image,video,file",1772045923
+google/gemini-3.1-pro-preview:batch,Google: Gemini 3.1 Pro Preview (batch),1048576,1.0,6.0,,,6.0,0.000001,"audio,file,image,text,video",1771509627
+google/gemini-3.5-flash,Google: Gemini 3.5 Flash,1048576,1.5,9.0,0.15,0.0833,9.0,0.0000015,"text,image,video,file,audio",1779193800
+google/gemini-3.5-flash-lite,Google: Gemini 3.5 Flash Lite,1048576,0.3,2.5,0.03,0.0833,2.5,0.0000003,"text,image,video,file,audio",1784646726
+google/gemini-3.5-flash-lite:batch,Google: Gemini 3.5 Flash Lite (batch),1048576,0.15,1.25,0.015,,1.25,0.00000015,"text,image,video,file,audio",1784646726
+google/gemini-3.5-flash:batch,Google: Gemini 3.5 Flash (batch),1048576,0.75,4.5,0.075,,4.5,0.00000075,"text,image,video,file,audio",1779193800
+google/gemini-3.6-flash,Google: Gemini 3.6 Flash,1048576,0.75,3.75,0.075,0.0417,3.75,0.00000075,"text,image,video,file,audio",1784646733
+google/gemini-3.6-flash:batch,Google: Gemini 3.6 Flash (batch),1048576,0.375,1.875,0.0375,0.0417,1.875,0.000000375,"text,image,video,file,audio",1784646733
+google/gemini-3.7-flash,Google: Gemini 3.7 Flash,1048576,0.75,3.75,0.075,0.0417,3.75,0.00000075,"text,image,video,file,audio",1786640581
+google/gemini-3.7-flash:batch,Google: Gemini 3.7 Flash (batch),1048576,0.375,1.875,0.0375,0.0417,1.875,0.000000375,"text,image,video,file,audio",1786640581
+google/gemini-3.8-flash,Google: Gemini 3.8 Flash,1048576,0.75,3.75,0.075,0.0417,3.75,0.00000075,"text,image,video,file,audio",1788362056
+google/gemini-3.8-flash:batch,Google: Gemini 3.8 Flash (batch),1048576,0.375,1.875,0.0375,0.0417,1.875,0.000000375,"text,image,video,file,audio",1788362056
+google/gemma-2-27b-it,Google: Gemma 2 27B,8192,0.65,0.65,,,,,text,1720828800
+google/gemma-3-12b-it,Google: Gemma 3 12B,131072,0.05,0.15,,,,,"text,image",1741902625
+google/gemma-3-27b-it,Google: Gemma 3 27B,131072,0.08,0.45,0.04,,,,"text,image",1741756359
+google/gemma-3-4b-it,Google: Gemma 3 4B,131072,0.05,0.1,,,,,"text,image",1741905510
+google/gemma-4-26b-a4b-it,Google: Gemma 4 26B A4B ,262144,0.042,0.22,,,,,"image,text,video",1775227989
+google/gemma-4-26b-a4b-it:free,Google: Gemma 4 26B A4B  (free),262144,0.0,0.0,,,,,"image,text,video",1775227989
+google/gemma-4-31b-it,Google: Gemma 4 31B,262144,0.09,0.34,0.05,,,,"image,text,video",1775148486
+google/gemma-4-31b-it:batch,Google: Gemma 4 31B (batch),262144,0.39,0.97,,,,,"image,text,video",1775148486
+google/gemma-4-31b-it:free,Google: Gemma 4 31B (free),262144,0.0,0.0,,,,,"image,text,video",1775148486
+google/lyria-3-clip-preview,Google: Lyria 3 Clip Preview,1048576,0.0,0.0,,,,,"text,image",1774907255
+google/lyria-3-pro-preview,Google: Lyria 3 Pro Preview,1048576,0.0,0.0,,,,,"text,image",1774907286
+gryphe/mythomax-l2-13b,MythoMax 13B,8192,0.06,0.06,,,,,text,1688256000
+ibm-granite/granite-4.0-h-micro,IBM: Granite 4.0 Micro,131000,0.017,0.112,,,,,text,1760927695
+ibm-granite/granite-4.2-8b,IBM: Granite 4.2 8B,131072,0.06,0.25,0.015,,,,text,1788206780
+inception/mercury-2,Inception: Mercury 2,128000,0.25,0.75,0.025,,,,text,1772636275
+inception/mercury-2.5,Inception: Mercury 2.5,260000,0.04,0.15,0.004,,,,text,1788892137
+inclusionai/ling-3.0-flash,inclusionAI: Ling 3.0 Flash,262144,0.021,0.063,0.0042,,,,text,1784818580
+inclusionai/ling-3.0-flash-fin,inclusionAI: Ling 3.0 Flash Fin,262144,0.06,0.18,0.012,,,,text,1787846290
+inclusionai/ling-3.0-flash-fin:free,inclusionAI: Ling 3.0 Flash Fin (free),262144,0.0,0.0,,,,,text,1787846290
+inclusionai/ling-3.0-flash-sante:free,inclusionAI: Ling 3.0 Flash Sante (free),262144,0.0,0.0,,,,,text,1788545946
+inclusionai/ling-3.0-flash-vl,inclusionAI: Ling 3.0 Flash VL,131072,0.06,0.18,0.012,,,,"text,image,video",1789056114
+inclusionai/ling-3.0-flash-vl:free,inclusionAI: Ling 3.0 Flash VL (free),262144,0.0,0.0,,,,,"text,image,video",1789056114
+inference-net/schematron-v2-small,Inference.net: Schematron V2 Small,128000,0.05,0.23,,,,,text,1789176933
+inference-net/schematron-v2-turbo,Inference.net: Schematron V2 Turbo,128000,0.03,0.15,,,,,text,1789176949
+kwaipilot/kat-coder-pro-v2,Kwaipilot: KAT-Coder-Pro V2,262144,0.3,1.2,0.06,,,,text,1774649310
+kwaipilot/kat-coder-pro-v2.5,Kwaipilot: KAT-Coder-Pro V2.5,262144,0.74,2.96,0.15,,,,text,1783714589
+liquid/lfm-2.5-2.6b:free,LiquidAI: LFM2.5-2.6B (free),65536,0.0,0.0,,,,,text,1786470519
+mancer/weaver,Mancer: Weaver (alpha),8000,0.4,0.75,,,,,text,1690934400
+meituan/longcat-2.0,Meituan: LongCat 2.0,1048756,0.3,1.2,0.006,,,,text,1784554658
+meta-llama/llama-3.1-70b-instruct,Meta: Llama 3.1 70B Instruct,131072,0.72,0.72,,,,,text,1721692800
+meta-llama/llama-3.1-8b-instruct,Meta: Llama 3.1 8B Instruct,131072,0.05,0.08,0.025,,,,text,1721692800
+meta-llama/llama-3.2-1b-instruct,Meta: Llama 3.2 1B Instruct,60000,0.027,0.201,,,,,text,1727222400
+meta-llama/llama-3.2-3b-instruct,Meta: Llama 3.2 3B Instruct,131072,0.05,0.33,,,,,text,1727222400
+meta-llama/llama-3.3-70b-instruct,Meta: Llama 3.3 70B Instruct,131072,0.1,0.32,,,,,text,1733506137
+meta-llama/llama-4-maverick,Meta: Llama 4 Maverick,1048576,0.2,0.696,,,,,"text,image",1743881822
+meta-llama/llama-4-scout,Meta: Llama 4 Scout,1310720,0.1,0.3,,,,,"text,image",1743881519
+meta-llama/llama-guard-4-12b,Meta: Llama Guard 4 12B,163840,0.18,0.18,,,,,"image,text",1745975193
+meta/muse-glimmer-30b,Meta: Muse Glimmer 30B,131072,0.3,1.1,0.04,,,,"text,image",1786302394
+meta/muse-glimmer-30b:batch,Meta: Muse Glimmer 30B (batch),131072,0.175,0.75,0.02,,,,"text,image",1786302394
+meta/muse-spark-1.1,Meta: Muse Spark 1.1,1048576,1.25,4.25,0.15,,,,"text,image,video,file,audio",1784215741
+meta/muse-spark-1.2,Meta: Muse Spark 1.2,1048576,1.25,4.25,0.15,,,,"text,image,video,file,audio",1785959287
+meta/muse-spark-1.2-contributor,Meta: Muse Spark 1.2 Contributor,1048576,0.1,0.2,0.002,,,,"text,image,video,file,audio",1787336476
+meta/muse-spark-1.3,Meta: Muse Spark 1.3,1048576,1.25,4.25,0.15,,,,"text,image,video,file,audio",1788378359
+meta/muse-spark-1.3-contributor,Meta: Muse Spark 1.3 Contributor,1048576,0.1,0.2,0.002,,,,"text,image,video,file,audio",1788381519
+microsoft/phi-4,Microsoft: Phi 4,16384,0.07,0.14,,,,,text,1736489872
+microsoft/wizardlm-2-8x22b,WizardLM-2 8x22B,65535,0.62,0.62,,,,,text,1713225600
+minimax/minimax-01,MiniMax: MiniMax-01,1000192,0.2,1.1,,,,,"text,image",1736915462
+minimax/minimax-m1,MiniMax: MiniMax M1,1000000,0.55,2.2,,,,,text,1750200414
+minimax/minimax-m2,MiniMax: MiniMax M2,204800,0.255,1.02,,,,,text,1761252093
+minimax/minimax-m2-her,MiniMax: MiniMax M2-her,65536,0.3,1.2,0.03,,,,text,1769177239
+minimax/minimax-m2.1,MiniMax: MiniMax M2.1,204800,0.3,1.2,0.03,,,,text,1766454997
+minimax/minimax-m2.5,MiniMax: MiniMax M2.5,204800,0.27,1.08,0.027,,,,text,1770908502
+minimax/minimax-m2.7,MiniMax: MiniMax M2.7,204800,0.3,1.2,0.06,,,,text,1773836697
+minimax/minimax-m3,MiniMax: MiniMax M3,1048576,0.3,1.2,0.06,,,,"text,image,video",1780245374
+minimax/minimax-m3:batch,MiniMax: MiniMax M3 (batch),524288,0.3,1.2,0.06,,,,"text,image,video",1780245374
+mistralai/codestral-2508,Mistral: Codestral 2508,256000,0.3,0.9,0.03,,,,"text,file",1754079630
+mistralai/codestral-2508:batch,Mistral: Codestral 2508 (batch),256000,0.15,0.45,0.015,,,,"text,file",1754079630
+mistralai/devstral-2512,Mistral: Devstral 2 2512,262144,0.4,2.0,0.04,,,,"text,file",1765285419
+mistralai/ministral-14b-2512,Mistral: Ministral 3 14B 2512,262144,0.2,0.2,0.02,,,,"text,image",1764681735
+mistralai/ministral-3b-2512,Mistral: Ministral 3 3B 2512,131072,0.1,0.1,0.01,,,,"text,image",1764681560
+mistralai/ministral-8b-2512,Mistral: Ministral 3 8B 2512,262144,0.15,0.15,0.015,,,,"text,image",1764681654
+mistralai/ministral-8b-2512:batch,Mistral: Ministral 3 8B 2512 (batch),262144,0.075,0.075,0.0075,,,,"text,image",1764681654
+mistralai/mistral-large,Mistral Large,128000,2.0,6.0,0.2,,,,"text,file",1708905600
+mistralai/mistral-large-2407,Mistral Large 2407,131072,2.0,6.0,0.2,,,,"text,file",1731978415
+mistralai/mistral-large-2512,Mistral: Mistral Large 3 2512,262144,0.5,1.5,0.05,,,,"text,image,file",1764624472
+mistralai/mistral-large-2512:batch,Mistral: Mistral Large 3 2512 (batch),262144,0.25,0.75,0.025,,,,"text,image,file",1764624472
+mistralai/mistral-medium-3,Mistral: Mistral Medium 3,131072,0.4,2.0,0.04,,,,"text,image,file",1746627341
+mistralai/mistral-medium-3-5,Mistral: Mistral Medium 3.5,262144,1.5,7.5,,,,,"text,image,file",1777570439
+mistralai/mistral-medium-3-5:batch,Mistral: Mistral Medium 3.5 (batch),262144,0.75,3.75,,,,,"text,image,file",1777570439
+mistralai/mistral-medium-3.1,Mistral: Mistral Medium 3.1,131072,0.4,2.0,0.04,,,,"text,image,file",1755095639
+mistralai/mistral-medium-3.1:batch,Mistral: Mistral Medium 3.1 (batch),131072,0.2,1.0,0.02,,,,"text,image,file",1755095639
+mistralai/mistral-nemo,Mistral: Mistral Nemo,131072,0.019,0.03,,,,,text,1721347200
+mistralai/mistral-saba,Mistral: Saba,32768,0.2,0.6,0.02,,,,"text,file",1739803239
+mistralai/mistral-small-24b-instruct-2501,Mistral: Mistral Small 3,32768,0.05,0.08,,,,,text,1738255409
+mistralai/mistral-small-2603,Mistral: Mistral Small 4,262144,0.15,0.6,0.015,,,,"text,image",1773695685
+mistralai/mistral-small-2603:batch,Mistral: Mistral Small 4 (batch),262144,0.075,0.3,0.0075,,,,"text,image",1773695685
+mistralai/mistral-small-3.1-24b-instruct,Mistral: Mistral Small 3.1 24B,128000,0.351,0.555,,,,,"text,image",1742238937
+mistralai/mistral-small-3.2-24b-instruct,Mistral: Mistral Small 3.2 24B,256000,0.075,0.2,,,,,"image,text",1750443016
+mistralai/mixtral-8x22b-instruct,Mistral: Mixtral 8x22B Instruct,65536,2.0,6.0,0.2,,,,"text,file",1713312000
+mistralai/voxtral-small-24b-2507,Mistral: Voxtral Small 24B 2507,32768,0.1,0.3,0.01,,,,"text,audio,file",1761835144
+moonshotai/kimi-k2,MoonshotAI: Kimi K2 0711,131072,0.57,2.3,,,,,text,1752263252
+moonshotai/kimi-k2-0905,MoonshotAI: Kimi K2 0905,262144,0.6,2.5,,,,,text,1757021147
+moonshotai/kimi-k2-thinking,MoonshotAI: Kimi K2 Thinking,262144,0.6,2.5,,,,,text,1762440622
+moonshotai/kimi-k2.5,MoonshotAI: Kimi K2.5,262144,0.45,2.25,0.07,,,,"text,image",1769487076
+moonshotai/kimi-k2.6,MoonshotAI: Kimi K2.6,262144,0.95,4.0,0.16,,,,"text,image",1776699402
+moonshotai/kimi-k2.7-code,MoonshotAI: Kimi K2.7 Code,262144,0.71,3.5,0.15,,,,"text,image",1781266361
+moonshotai/kimi-k3,MoonshotAI: Kimi K3,1048576,2.6481,13.2827,0.3026,,,,"text,image,video",1784215858
+moonshotai/kimi-k3:batch,MoonshotAI: Kimi K3 (batch),1048576,3.0,15.0,0.3,,,,"text,image,video",1784215858
+morph/morph-v3-fast,Morph: Morph V3 Fast,81920,0.8,1.2,,,,,text,1751910002
+morph/morph-v3-large,Morph: Morph V3 Large,262144,0.9,1.9,,,,,text,1751910858
+nex-agi/nex-n2.5-mini:free,Nex AGI: Nex-N2.5-Mini (free),262144,0.0,0.0,,,,,"text,image",1788890061
+nex-agi/nex-n2.5-pro:free,Nex AGI: Nex-N2.5-Pro (free),262144,0.0,0.0,,,,,"text,image",1788890050
+nousresearch/hermes-3-llama-3.1-405b,Nous: Hermes 3 405B Instruct,131072,1.0,1.0,,,,,text,1723766400
+nousresearch/hermes-3-llama-3.1-70b,Nous: Hermes 3 70B Instruct,131072,0.7,0.7,,,,,text,1723939200
+nousresearch/hermes-4-405b,Nous: Hermes 4 405B,131072,1.0,3.0,,,,,text,1756235463
+nvidia/nemotron-3-nano-30b-a3b,NVIDIA: Nemotron 3 Nano 30B A3B,262144,0.05,0.2,0.03,,,,text,1765731275
+nvidia/nemotron-3-nano-omni-30b-a3b-reasoning:free,NVIDIA: Nemotron 3 Nano Omni (free),256000,0.0,0.0,,,,,"text,audio,image,video",1777393095
+nvidia/nemotron-3-super-120b-a12b,NVIDIA: Nemotron 3 Super,262144,0.085,0.4,,,,,text,1773245239
+nvidia/nemotron-3-super-120b-a12b:free,NVIDIA: Nemotron 3 Super (free),262144,0.0,0.0,,,,,text,1773245239
+nvidia/nemotron-3-ultra-550b-a55b,NVIDIA: Nemotron 3 Ultra,262144,0.625,3.125,0.1875,,,,text,1780551208
+nvidia/nemotron-3-ultra-550b-a55b:free,NVIDIA: Nemotron 3 Ultra (free),1000000,0.0,0.0,,,,,text,1780551208
+nvidia/nemotron-3.5-content-safety,NVIDIA: Nemotron 3.5 Content Safety,131072,0.2,0.2,,,,,"text,image",1780581864
+nvidia/nemotron-3.5-content-safety:free,NVIDIA: Nemotron 3.5 Content Safety (free),128000,0.0,0.0,,,,,"text,image",1780581864
+nvidia/nemotron-3.5-lightning,NVIDIA: Nemotron 3.5 Lightning,262144,0.08,0.2,0.04,,,,text,1786452751
+nvidia/nemotron-3.5-lightning:free,NVIDIA: Nemotron 3.5 Lightning (free),1000000,0.0,0.0,,,,,text,1786452751
+openai/gpt-3.5-turbo,OpenAI: GPT-3.5 Turbo,16385,0.5,1.5,,,,,text,1685232000
+openai/gpt-3.5-turbo-0613,OpenAI: GPT-3.5 Turbo (older v0613),4095,1.0,2.0,,,,,text,1706140800
+openai/gpt-3.5-turbo-16k,OpenAI: GPT-3.5 Turbo 16k,16385,3.0,4.0,,,,,text,1693180800
+openai/gpt-3.5-turbo-instruct,OpenAI: GPT-3.5 Turbo Instruct,4095,1.5,2.0,,,,,text,1695859200
+openai/gpt-3.5-turbo:batch,OpenAI: GPT-3.5 Turbo (batch),16385,0.25,0.75,,,,,text,1685232000
+openai/gpt-4,OpenAI: GPT-4,8191,30.0,60.0,,,,,text,1685232000
+openai/gpt-4-turbo,OpenAI: GPT-4 Turbo,128000,10.0,30.0,,,,,"text,image",1712620800
+openai/gpt-4-turbo-preview,OpenAI: GPT-4 Turbo Preview,128000,10.0,30.0,,,,,text,1706140800
+openai/gpt-4-turbo:batch,OpenAI: GPT-4 Turbo (batch),128000,5.0,15.0,,,,,"text,image",1712620800
+openai/gpt-4.1,OpenAI: GPT-4.1,1047576,2.0,8.0,0.5,,,,"image,text,file",1744651385
+openai/gpt-4.1-mini,OpenAI: GPT-4.1 Mini,1047576,0.4,1.6,0.1,,,,"image,text,file",1744651381
+openai/gpt-4.1-mini:batch,OpenAI: GPT-4.1 Mini (batch),1047576,0.2,0.8,0.05,,,,"image,text,file",1744651381
+openai/gpt-4.1-nano,OpenAI: GPT-4.1 Nano,1047576,0.1,0.4,0.025,,,,"image,text,file",1744651369
+openai/gpt-4.1-nano:batch,OpenAI: GPT-4.1 Nano (batch),1047576,0.05,0.2,0.0125,,,,"image,text,file",1744651369
+openai/gpt-4.1:batch,OpenAI: GPT-4.1 (batch),1047576,1.0,4.0,0.25,,,,"image,text,file",1744651385
+openai/gpt-4o,OpenAI: GPT-4o,128000,2.5,10.0,1.25,,,,"text,image,file",1715558400
+openai/gpt-4o-2024-05-13,OpenAI: GPT-4o (2024-05-13),128000,5.0,15.0,,,,,"text,image,file",1715558400
+openai/gpt-4o-2024-08-06,OpenAI: GPT-4o (2024-08-06),128000,2.5,10.0,1.25,,,,"text,image,file",1722902400
+openai/gpt-4o-2024-11-20,OpenAI: GPT-4o (2024-11-20),128000,2.5,10.0,1.25,,,,"text,image,file",1732127594
+openai/gpt-4o-mini,OpenAI: GPT-4o-mini,128000,0.15,0.6,0.075,,,,"text,image,file",1721260800
+openai/gpt-4o-mini-2024-07-18,OpenAI: GPT-4o-mini (2024-07-18),128000,0.15,0.6,0.075,,,,"text,image,file",1721260800
+openai/gpt-4o-mini:batch,OpenAI: GPT-4o-mini (batch),128000,0.075,0.3,0.0375,,,,"text,image,file",1721260800
+openai/gpt-4o:batch,OpenAI: GPT-4o (batch),128000,1.25,5.0,0.625,,,,"text,image,file",1715558400
+openai/gpt-5,OpenAI: GPT-5,400000,1.25,10.0,0.125,,,,"text,image,file",1754587413
+openai/gpt-5-image,OpenAI: GPT-5 Image,400000,10.0,10.0,1.25,,,,"image,text,file",1760447986
+openai/gpt-5-image-mini,OpenAI: GPT-5 Image Mini,400000,2.5,2.0,0.25,,,,"file,image,text",1760624583
+openai/gpt-5-mini,OpenAI: GPT-5 Mini,400000,0.25,2.0,0.025,,,,"text,image,file",1754587407
+openai/gpt-5-mini:batch,OpenAI: GPT-5 Mini (batch),400000,0.125,1.0,0.0125,,,,"text,image,file",1754587407
+openai/gpt-5-nano,OpenAI: GPT-5 Nano,400000,0.05,0.4,0.005,,,,"text,image,file",1754587402
+openai/gpt-5-nano:batch,OpenAI: GPT-5 Nano (batch),400000,0.025,0.2,0.0025,,,,"text,image,file",1754587402
+openai/gpt-5-pro,OpenAI: GPT-5 Pro,400000,15.0,120.0,,,,,"image,text,file",1759776663
+openai/gpt-5-pro:batch,OpenAI: GPT-5 Pro (batch),400000,7.5,60.0,,,,,"image,text,file",1759776663
+openai/gpt-5.1,OpenAI: GPT-5.1,400000,1.25,10.0,0.125,,,,"image,text,file",1763060305
+openai/gpt-5.1-codex,OpenAI: GPT-5.1-Codex,400000,1.25,10.0,0.13,,,,"text,image",1763060298
+openai/gpt-5.1-codex-max,OpenAI: GPT-5.1-Codex-Max,400000,1.25,10.0,0.125,,,,"text,image",1764878934
+openai/gpt-5.1-codex-mini,OpenAI: GPT-5.1-Codex-Mini,400000,0.25,2.0,0.03,,,,"image,text",1763057820
+openai/gpt-5.1:batch,OpenAI: GPT-5.1 (batch),400000,0.625,5.0,0.0625,,,,"image,text,file",1763060305
+openai/gpt-5.2,OpenAI: GPT-5.2,400000,1.75,14.0,0.175,,,,"file,image,text",1765389775
+openai/gpt-5.2-chat,OpenAI: GPT-5.2 Chat,128000,1.75,14.0,0.175,,,,"file,image,text",1765389783
+openai/gpt-5.2-codex,OpenAI: GPT-5.2-Codex,400000,1.75,14.0,0.175,,,,"text,image",1768409315
+openai/gpt-5.2-pro,OpenAI: GPT-5.2 Pro,400000,21.0,168.0,,,,,"image,text,file",1765389780
+openai/gpt-5.2-pro:batch,OpenAI: GPT-5.2 Pro (batch),400000,10.5,84.0,,,,,"image,text,file",1765389780
+openai/gpt-5.2:batch,OpenAI: GPT-5.2 (batch),400000,0.875,7.0,0.0875,,,,"file,image,text",1765389775
+openai/gpt-5.3-codex,OpenAI: GPT-5.3-Codex,400000,1.75,14.0,0.175,,,,"text,image,file",1771959164
+openai/gpt-5.4,OpenAI: GPT-5.4,1050000,2.5,15.0,0.25,,,,"text,image,file",1772734352
+openai/gpt-5.4-image-2,OpenAI: GPT-5.4 Image 2,272000,8.0,15.0,2.0,,,,"image,text,file",1776797528
+openai/gpt-5.4-mini,OpenAI: GPT-5.4 Mini,400000,0.75,4.5,0.075,,,,"file,image,text",1773748178
+openai/gpt-5.4-mini:batch,OpenAI: GPT-5.4 Mini (batch),400000,0.375,2.25,0.0375,,,,"file,image,text",1773748178
+openai/gpt-5.4-nano,OpenAI: GPT-5.4 Nano,400000,0.2,1.25,0.02,,,,"file,image,text",1773748187
+openai/gpt-5.4-nano:batch,OpenAI: GPT-5.4 Nano (batch),400000,0.1,0.625,0.01,,,,"file,image,text",1773748187
+openai/gpt-5.4-pro,OpenAI: GPT-5.4 Pro,1050000,30.0,180.0,,,,,"text,image,file",1772734366
+openai/gpt-5.4-pro:batch,OpenAI: GPT-5.4 Pro (batch),1050000,15.0,90.0,,,,,"text,image,file",1772734366
+openai/gpt-5.4:batch,OpenAI: GPT-5.4 (batch),1050000,1.25,7.5,0.125,,,,"text,image,file",1772734352
+openai/gpt-5.5,OpenAI: GPT-5.5,1050000,5.0,30.0,0.5,,,,"file,image,text",1777051893
+openai/gpt-5.5-pro,OpenAI: GPT-5.5 Pro,1050000,30.0,180.0,,,,,"file,image,text",1777051896
+openai/gpt-5.5-pro:batch,OpenAI: GPT-5.5 Pro (batch),1050000,15.0,90.0,,,,,"file,image,text",1777051896
+openai/gpt-5.5:batch,OpenAI: GPT-5.5 (batch),1050000,2.5,15.0,0.25,,,,"file,image,text",1777051893
+openai/gpt-5.6-luna,OpenAI: GPT-5.6 Luna,1050000,0.2,1.2,0.02,0.25,,,"file,image,text",1783590864
+openai/gpt-5.6-luna-pro,OpenAI: GPT-5.6 Luna Pro,1050000,0.2,1.2,0.02,0.25,,,"file,image,text",1783590867
+openai/gpt-5.6-luna-pro:batch,OpenAI: GPT-5.6 Luna Pro (batch),1050000,0.1,0.6,0.01,,,,"file,image,text",1783590867
+openai/gpt-5.6-luna:batch,OpenAI: GPT-5.6 Luna (batch),1050000,0.1,0.6,0.01,,,,"file,image,text",1783590864
+openai/gpt-5.6-sol,OpenAI: GPT-5.6 Sol,1050000,2.0,10.0,0.2,2.5,,,"file,image,text",1783590850
+openai/gpt-5.6-sol-pro,OpenAI: GPT-5.6 Sol Pro,1050000,2.0,10.0,0.2,2.5,,,"file,image,text",1783590854
+openai/gpt-5.6-sol-pro:batch,OpenAI: GPT-5.6 Sol Pro (batch),1050000,1.0,5.0,0.1,1.25,,,"file,image,text",1783590854
+openai/gpt-5.6-sol:batch,OpenAI: GPT-5.6 Sol (batch),1050000,1.0,5.0,0.1,1.25,,,"file,image,text",1783590850
+openai/gpt-5.6-terra,OpenAI: GPT-5.6 Terra,1050000,2.0,12.0,0.2,2.5,,,"file,image,text",1783590857
+openai/gpt-5.6-terra-pro,OpenAI: GPT-5.6 Terra Pro,1050000,2.0,12.0,0.2,2.5,,,"file,image,text",1783590861
+openai/gpt-5.6-terra-pro:batch,OpenAI: GPT-5.6 Terra Pro (batch),1050000,1.0,6.0,0.1,,,,"file,image,text",1783590861
+openai/gpt-5.6-terra:batch,OpenAI: GPT-5.6 Terra (batch),1050000,1.0,6.0,0.1,,,,"file,image,text",1783590857
+openai/gpt-5:batch,OpenAI: GPT-5 (batch),400000,0.625,5.0,0.0625,,,,"text,image,file",1754587413
+openai/gpt-6-astra,OpenAI: GPT-6 Astra,1050000,10.0,50.0,1.0,12.5,,,"file,image,text",1788552838
+openai/gpt-6-astra-pro,OpenAI: GPT-6 Astra Pro,1050000,10.0,50.0,1.0,12.5,,,"file,image,text",1788552835
+openai/gpt-6-astra-pro:batch,OpenAI: GPT-6 Astra Pro (batch),1050000,5.0,25.0,0.5,6.25,,,"file,image,text",1788552835
+openai/gpt-6-astra:batch,OpenAI: GPT-6 Astra (batch),1050000,5.0,25.0,0.5,6.25,,,"file,image,text",1788552838
+openai/gpt-audio,OpenAI: GPT Audio,128000,2.5,10.0,,,,,"text,audio",1768862569
+openai/gpt-audio-mini,OpenAI: GPT Audio Mini,128000,0.6,2.4,,,,,"text,audio",1768859419
+openai/gpt-chat-latest,OpenAI: GPT Chat Latest,400000,5.0,30.0,0.5,,,,"text,image,file",1778000212
+openai/gpt-oss-120b,OpenAI: gpt-oss-120b,131072,0.037,0.17,,,,,text,1754414231
+openai/gpt-oss-120b:batch,OpenAI: gpt-oss-120b (batch),131072,0.15,0.6,,,,,text,1754414231
+openai/gpt-oss-20b,OpenAI: gpt-oss-20b,131072,0.03,0.13,0.03,,,,text,1754414229
+openai/gpt-oss-20b:batch,OpenAI: gpt-oss-20b (batch),131072,0.05,0.2,,,,,text,1754414229
+openai/gpt-oss-safeguard-20b,OpenAI: gpt-oss-safeguard-20b,131072,0.075,0.3,0.0375,,,,text,1761752836
+openai/o1,OpenAI: o1,200000,15.0,60.0,7.5,,,,"text,image,file",1734459999
+openai/o1-pro,OpenAI: o1-pro,200000,150.0,600.0,,,,,"text,image,file",1742423211
+openai/o3,OpenAI: o3,200000,2.0,8.0,0.5,,,,"image,text,file",1744823457
+openai/o3-mini,OpenAI: o3 Mini,200000,1.1,4.4,0.55,,,,"text,file",1738351721
+openai/o3-mini-high,OpenAI: o3 Mini High,200000,1.1,4.4,0.55,,,,"text,file",1739372611
+openai/o3-mini:batch,OpenAI: o3 Mini (batch),200000,0.55,2.2,0.275,,,,"text,file",1738351721
+openai/o3-pro,OpenAI: o3 Pro,200000,20.0,80.0,,,,,"text,file,image",1749598352
+openai/o3:batch,OpenAI: o3 (batch),200000,1.0,4.0,0.25,,,,"image,text,file",1744823457
+openai/o4-mini,OpenAI: o4 Mini,200000,1.1,4.4,0.275,,,,"image,text,file",1744820942
+openai/o4-mini-high,OpenAI: o4 Mini High,200000,1.1,4.4,0.275,,,,"image,text,file",1744824212
+openai/o4-mini:batch,OpenAI: o4 Mini (batch),200000,0.55,2.2,0.1375,,,,"image,text,file",1744820942
+openrouter/auto,Auto Router,2000000,-1000000.0,-1000000.0,,,,,"text,image,audio,file,video",1699401600
+openrouter/auto-beta,Auto Router (Beta),2000000,-1000000.0,-1000000.0,,,,,"text,image,audio,file,video",1784311165
+openrouter/bodybuilder,Body Builder (beta),128000,-1000000.0,-1000000.0,,,,,text,1764903653
+openrouter/free,Free Models Router,200000,0.0,0.0,,,,,"text,image",1769917427
+openrouter/fusion,OpenRouter: Fusion,1000000,-1000000.0,-1000000.0,,,,,text,1781371647
+openrouter/pareto-code,Pareto Code Router,2000000,-1000000.0,-1000000.0,,,,,text,1776747900
+perceptron/perceptron-mk1,Perceptron: Perceptron Mk1,32768,0.15,1.5,,,,,"text,image,video",1778597029
+perplexity/sonar,Perplexity: Sonar,127072,1.0,1.0,,,,,"text,image",1738013808
+perplexity/sonar-deep-research,Perplexity: Sonar Deep Research,128000,2.0,8.0,,,3.0,,text,1741311246
+perplexity/sonar-pro,Perplexity: Sonar Pro,200000,3.0,15.0,,,,,"text,image",1741312423
+perplexity/sonar-pro-search,Perplexity: Sonar Pro Search,200000,3.0,15.0,,,,,"text,image",1761854366
+perplexity/sonar-reasoning-pro,Perplexity: Sonar Reasoning Pro,128000,2.0,8.0,,,,,"text,image",1741313308
+poolside/laguna-s-2.1,Poolside: Laguna S 2.1,1048576,0.09,0.18,0.009,,,,text,1784652683
+poolside/laguna-s-2.1:free,Poolside: Laguna S 2.1 (free),262144,0.0,0.0,,,,,text,1784652683
+poolside/laguna-xs-2.1,Poolside: Laguna XS 2.1,262144,0.06,0.12,0.03,,,,text,1783002429
+poolside/laguna-xs-2.1:free,Poolside: Laguna XS 2.1 (free),262144,0.0,0.0,,,,,text,1783002429
+qwen/qwen-2.5-72b-instruct,Qwen2.5 72B Instruct,32768,0.36,0.4,,,,,text,1726704000
+qwen/qwen-2.5-7b-instruct,Qwen: Qwen2.5 7B Instruct,32768,0.1,0.2,,,,,text,1729036800
+qwen/qwen-2.5-coder-32b-instruct,Qwen2.5 Coder 32B Instruct,32768,0.66,1.0,,,,,text,1731368400
+qwen/qwen-plus,Qwen: Qwen-Plus,1000000,0.26,0.78,0.052,0.325,,,text,1738409840
+qwen/qwen-plus-2025-07-28,Qwen: Qwen Plus 0728,1000000,0.26,0.78,,,,,text,1757347599
+qwen/qwen2.5-vl-72b-instruct,Qwen: Qwen2.5 VL 72B Instruct,128000,0.8,1.0,0.4,,,,"text,image",1738410311
+qwen/qwen3-14b,Qwen: Qwen3 14B,131072,0.2275,0.91,,,,,text,1745876478
+qwen/qwen3-235b-a22b,Qwen: Qwen3 235B A22B,131072,0.455,1.82,,,,,text,1745875757
+qwen/qwen3-235b-a22b-2507,Qwen: Qwen3 235B A22B Instruct 2507,262144,0.0875,0.35,0.0175,,,,text,1753119555
+qwen/qwen3-235b-a22b-thinking-2507,Qwen: Qwen3 235B A22B Thinking 2507,131072,0.23,2.3,,,,,text,1753449557
+qwen/qwen3-30b-a3b,Qwen: Qwen3 30B A3B,131072,0.12,0.5,,,,,text,1745878604
+qwen/qwen3-30b-a3b-instruct-2507,Qwen: Qwen3 30B A3B Instruct 2507,262144,0.09,0.3,,,,,text,1753806965
+qwen/qwen3-30b-a3b-thinking-2507,Qwen: Qwen3 30B A3B Thinking 2507,81920,0.2,2.4,,,,,text,1756399192
+qwen/qwen3-32b,Qwen: Qwen3 32B,131072,0.08,0.28,,,,,text,1745875945
+qwen/qwen3-8b,Qwen: Qwen3 8B,131072,0.117,0.455,,,,,text,1745876632
+qwen/qwen3-coder,Qwen: Qwen3 Coder 480B A35B,262144,0.3,1.0,0.1,,,,text,1753230546
+qwen/qwen3-coder-30b-a3b-instruct,Qwen: Qwen3 Coder 30B A3B Instruct,262144,0.07,0.28,,,,,text,1753972379
+qwen/qwen3-coder-flash,Qwen: Qwen3 Coder Flash,1000000,0.195,0.975,0.039,0.2437,,,text,1758115536
+qwen/qwen3-coder-next,Qwen: Qwen3 Coder Next,262144,0.12,0.8,0.07,,,,text,1770164101
+qwen/qwen3-coder-plus,Qwen: Qwen3 Coder Plus,1000000,0.65,3.25,0.13,0.8125,,,text,1758662707
+qwen/qwen3-max,Qwen: Qwen3 Max,262144,0.78,3.9,0.156,0.975,,,text,1758662808
+qwen/qwen3-max-thinking,Qwen: Qwen3 Max Thinking,262144,0.78,3.9,,,,,text,1770671901
+qwen/qwen3-next-80b-a3b-instruct,Qwen: Qwen3 Next 80B A3B Instruct,262144,0.09,1.1,,,,,text,1757612213
+qwen/qwen3-next-80b-a3b-thinking,Qwen: Qwen3 Next 80B A3B Thinking,262144,0.15,1.2,,,,,text,1757612284
+qwen/qwen3-vl-235b-a22b-instruct,Qwen: Qwen3 VL 235B A22B Instruct,262144,0.21,1.9,0.1,,,,"text,image",1758668687
+qwen/qwen3-vl-235b-a22b-thinking,Qwen: Qwen3 VL 235B A22B Thinking,131072,0.4,4.0,,,,,"text,image",1758668690
+qwen/qwen3-vl-30b-a3b-instruct,Qwen: Qwen3 VL 30B A3B Instruct,262144,0.15,0.6,,,,,"text,image",1759794476
+qwen/qwen3-vl-30b-a3b-thinking,Qwen: Qwen3 VL 30B A3B Thinking,262144,0.2,2.4,,,,,"text,image",1759794479
+qwen/qwen3-vl-32b-instruct,Qwen: Qwen3 VL 32B Instruct,131072,0.104,0.416,,,,,"text,image",1761231332
+qwen/qwen3-vl-8b-instruct,Qwen: Qwen3 VL 8B Instruct,262144,0.117,0.455,,,,,"image,text",1760463308
+qwen/qwen3-vl-8b-thinking,Qwen: Qwen3 VL 8B Thinking,131072,0.18,2.1,,,,,"image,text",1760463746
+qwen/qwen3.5-122b-a10b,Qwen: Qwen3.5-122B-A10B,262144,0.26,2.08,,,,,"text,image,video",1772053789
+qwen/qwen3.5-27b,Qwen: Qwen3.5-27B,262144,0.195,1.56,,,,,"text,image,video",1772053810
+qwen/qwen3.5-35b-a3b,Qwen: Qwen3.5-35B-A3B,262144,0.3125,1.25,0.1562,,,,"text,image,video",1772053822
+qwen/qwen3.5-397b-a17b,Qwen: Qwen3.5 397B A17B,262144,0.55,3.5,0.225,,,,"text,image,video",1771223018
+qwen/qwen3.5-9b,Qwen: Qwen3.5-9B,262144,0.1,0.15,,,,,"text,image,video",1773152396
+qwen/qwen3.5-9b:batch,Qwen: Qwen3.5-9B (batch),262144,0.17,0.25,,,,,"text,image,video",1773152396
+qwen/qwen3.5-flash-02-23,Qwen: Qwen3.5-Flash,1000000,0.065,0.26,,,,,"text,image,video",1772053776
+qwen/qwen3.5-plus-02-15,Qwen: Qwen3.5 Plus 2026-02-15,1000000,0.26,1.56,,,,,"text,image,video",1771229416
+qwen/qwen3.5-plus-20260420,Qwen: Qwen3.5 Plus 2026-04-20,1000000,0.3,1.8,,0.375,,,"text,image,video",1777261368
+qwen/qwen3.6-27b,Qwen: Qwen3.6 27B,262144,0.3,2.0,0.03,,,,"text,image,video",1777255064
+qwen/qwen3.6-35b-a3b,Qwen: Qwen3.6 35B A3B,262144,0.1,0.9,0.05,,,,"text,image,video",1777260255
+qwen/qwen3.6-flash,Qwen: Qwen3.6 Flash,1000000,0.1875,1.125,,0.2344,,,"text,image,video",1777261362
+qwen/qwen3.6-max-preview,Qwen: Qwen3.6 Max Preview,262144,1.027,6.162,,1.2837,,,text,1777260242
+qwen/qwen3.6-plus,Qwen: Qwen3.6 Plus,1000000,0.325,1.95,,0.4062,,,"text,image,video",1775133557
+qwen/qwen3.7-flash,Qwen: Qwen3.7 Flash,1000000,0.03,0.13,0.006,0.038,,,"text,image,video",1785190561
+qwen/qwen3.7-max,Qwen: Qwen3.7 Max,1000000,1.475,4.425,0.295,1.8438,,,text,1779376861
+qwen/qwen3.7-plus,Qwen: Qwen3.7 Plus,1000000,0.32,1.28,0.064,0.4,,,"text,image",1780491783
+qwen/qwen3.8-2.4t-a95b,Qwen: Qwen3.8 2.4T A95B,1048576,2.0,6.0,0.25,,,,text,1786551702
+qwen/qwen3.8-2.4t-a95b:batch,Qwen: Qwen3.8 2.4T A95B (batch),1010000,2.0,6.0,0.25,,,,text,1786551702
+qwen/qwen3.8-27b,Qwen: Qwen3.8 27B,1000000,0.214,2.55,0.15,,,,"text,image,video",1786722910
+qwen/qwen3.8-flash,Qwen: Qwen3.8 Flash,1000000,0.15,0.47,0.016,0.2,,,"text,image,video",1787773060
+qwen/qwen3.8-max-0902,Qwen: Qwen3.8 Max (0902),1000000,2.0,6.0,0.25,2.5,,,"text,image,video",1788469704
+rekaai/reka-edge,Reka Edge,16384,0.1,0.1,,,,,"image,text,video",1774026965
+rekaai/reka-flash-3,Reka Flash 3,65536,0.1,0.2,,,,,text,1741812813
+relace/relace-apply-3,Relace: Relace Apply 3,256000,0.85,1.25,,,,,text,1758891572
+relace/relace-search,Relace: Relace Search,256000,1.0,3.0,,,,,text,1765213560
+sakana/fugu-max,Sakana: Fugu Max,1000000,2.0,6.0,0.25,,,,"text,image,file",1789104771
+sakana/fugu-ultra,Sakana: Fugu Ultra,1000000,5.0,30.0,0.5,,,,"text,image",1782276303
+sakana/fugu-ultra-v2,Sakana: Fugu Ultra v2,1000000,5.0,30.0,0.5,,,,"text,image,file",1789105383
+sakana/sakana-namazu,Sakana: Sakana Namazu,262144,0.95,4.0,0.15,,,,"text,image,file",1786410129
+sao10k/l3-lunaris-8b,Sao10K: Llama 3 8B Lunaris,8192,0.04,0.05,,,,,text,1723507200
+sao10k/l3.1-euryale-70b,Sao10K: Llama 3.1 Euryale 70B v2.2,131072,0.85,0.85,,,,,text,1724803200
+sao10k/l3.3-euryale-70b,Sao10K: Llama 3.3 Euryale 70B,131072,0.65,0.75,,,,,text,1734535928
+stepfun/step-3.5-flash,StepFun: Step 3.5 Flash,262144,0.1,0.3,,,,,text,1769728337
+stepfun/step-3.7-flash,StepFun: Step 3.7 Flash,262144,0.2,1.15,0.04,,,,"text,image,video",1779985069
+tencent/hunyuan-a13b-instruct,Tencent: Hunyuan A13B Instruct,131072,0.14,0.57,,,,,text,1751987664
+tencent/hy-mt2-1.8b,Tencent: Hy-MT2-1.8B,8192,0.044,0.177,,,,,text,1787231581
+tencent/hy-mt2-30b-a3b,Tencent: Hy-MT2-30B-A3B,8192,0.074,0.295,,,,,text,1787231561
+tencent/hy-mt2-7b,Tencent: Hy-MT2-7B,8192,0.074,0.295,,,,,text,1787148797
+tencent/hy3,Tencent: Hy3,262144,0.0825,0.33,0.0206,,,,text,1783344048
+tencent/hy3-preview,Tencent: Hy3 preview,262144,0.18,0.6,0.06,,,,text,1776878150
+tencent/hy4-preview,Tencent: Hy4 preview,1048576,0.834,2.501,0.042,,,,text,1787897375
+thedrummer/cydonia-24b-v4.1,TheDrummer: Cydonia 24B V4.1,131072,0.3,0.5,0.15,,,,text,1758931878
+thedrummer/skyfall-36b-v2,TheDrummer: Skyfall 36B V2,32768,0.55,0.8,0.25,,,,text,1741636566
+thedrummer/unslopnemo-12b,TheDrummer: UnslopNemo 12B,1024000,0.4,0.4,,,,,text,1731103448
+thinkingmachines/inkling,Thinking Machines: Inkling,1048576,1.0,4.05,0.17,,,,"text,image,audio",1784325956
+thinkingmachines/inkling-small,Thinking Machines: Inkling Small,1048576,0.45,1.2,0.1,,,,"text,image,audio",1785443117
+thinkingmachines/inkling-small:batch,Thinking Machines: Inkling Small (batch),524288,0.5,1.2,0.1,,,,"text,image,audio",1785443117
+thinkingmachines/inkling-small:free,Thinking Machines: Inkling Small (free),1048576,0.0,0.0,,,,,"text,image,audio",1785443117
+thinkingmachines/inkling:batch,Thinking Machines: Inkling (batch),524288,1.0,4.05,0.17,,,,"text,image,audio",1784325956
+thinkingmachines/inkling:free,Thinking Machines: Inkling (free),1048576,0.0,0.0,,,,,"text,image,audio",1784325956
+undi95/remm-slerp-l2-13b,ReMM SLERP 13B,6144,0.35,0.65,,,,,text,1689984000
+upstage/solar-pro-3,Upstage: Solar Pro 3,131072,0.15,0.6,0.015,,,,text,1769481200
+upstage/solar-pro4,Upstage: Solar Pro 4,524288,0.09,0.36,0.018,,,,text,1786371636
+writer/palmyra-x5,Writer: Palmyra X5,1040000,0.6,6.0,,,,,text,1769003823
+x-ai/grok-4.20,SpaceXAI: Grok 4.20,2000000,1.25,2.5,0.2,,,,"text,image,file",1774979019
+x-ai/grok-4.20-multi-agent,SpaceXAI: Grok 4.20 Multi-Agent,2000000,1.25,2.5,0.2,,,,"text,image,file",1774979158
+x-ai/grok-4.3,SpaceXAI: Grok 4.3,1000000,1.25,2.5,0.2,,,,"text,image,file",1777591821
+x-ai/grok-4.3:batch,SpaceXAI: Grok 4.3 (batch),1000000,1.0,2.0,0.16,,,,"text,image,file",1777591821
+x-ai/grok-4.5,SpaceXAI: Grok 4.5,500000,2.0,6.0,0.3,,,,"text,image,file",1783523154
+x-ai/grok-4.6,SpaceXAI: Grok 4.6,500000,2.0,6.0,0.5,,,,"text,image,file",1786548957
+x-ai/grok-build-0.1,SpaceXAI: Grok Build 0.1,256000,1.0,2.0,0.2,,,,"text,image,file",1779298123
+xiaomi/mimo-v2.5,Xiaomi: MiMo-V2.5,1050000,0.14,0.28,0.0028,,,,"text,audio,image,video",1776874269
+xiaomi/mimo-v2.5-pro,Xiaomi: MiMo-V2.5-Pro,1050000,0.435,0.87,0.0036,,,,text,1776874273
+z-ai/glm-4.5,Z.ai: GLM 4.5,131072,0.6,2.2,0.11,,,,text,1753471347
+z-ai/glm-4.5-air,Z.ai: GLM 4.5 Air,131072,0.13,0.85,0.025,,,,text,1753471258
+z-ai/glm-4.5v,Z.ai: GLM 4.5V,65536,0.6,1.8,0.11,,,,"text,image",1754922288
+z-ai/glm-4.6,Z.ai: GLM 4.6,204800,0.43,1.75,0.08,,,,text,1759235576
+z-ai/glm-4.6v,Z.ai: GLM 4.6V,131072,0.3,0.9,0.055,,,,"image,text,video",1765207462
+z-ai/glm-4.7,Z.ai: GLM 4.7,204800,0.4,1.75,0.08,,,,text,1766378014
+z-ai/glm-4.7-flash,Z.ai: GLM 4.7 Flash,200000,0.0605,0.4,,,,,text,1768833913
+z-ai/glm-5,Z.ai: GLM 5,204800,0.6,1.92,0.12,,,,text,1770829182
+z-ai/glm-5-turbo,Z.ai: GLM 5 Turbo,202752,1.2,4.0,0.24,,,,text,1773583573
+z-ai/glm-5.1,Z.ai: GLM 5.1,204800,0.966,3.036,0.1794,,,,text,1775578025
+z-ai/glm-5.2,Z.ai: GLM 5.2,1048576,0.6,2.0,0.15,,,,text,1781631930
+z-ai/glm-5.2:batch,Z.ai: GLM 5.2 (batch),1048576,0.7,2.2,0.07,,,,text,1781631930
+z-ai/glm-5.3,Z.ai: GLM 5.3,1310720,1.4,4.4,0.26,,,,text,1787086655
+z-ai/glm-5.3-flash,Z.ai: GLM 5.3 Flash,1310720,0.15,0.5,0.03,,,,"text,image,video",1787752741
+z-ai/glm-5.3-flash:batch,Z.ai: GLM 5.3 Flash (batch),1048576,0.075,0.25,0.015,,,,"text,image,video",1787752741
+z-ai/glm-5.3:batch,Z.ai: GLM 5.3 (batch),1048576,0.7,2.2,0.13,,,,text,1787086655
+z-ai/glm-5v-turbo,Z.ai: GLM 5V Turbo,202752,1.2,4.0,0.24,,,,"image,text,video",1775061458
+~anthropic/claude-fable-latest,Anthropic: Claude Fable Latest,1000000,10.0,50.0,0.25,12.5,,,"text,image,file",1781029944
+~anthropic/claude-haiku-latest,Anthropic: Claude Haiku Latest,200000,1.0,5.0,0.1,1.25,,,"text,image,file",1777318492
+~anthropic/claude-opus-latest,Anthropic: Claude Opus Latest,1000000,5.0,25.0,0.5,6.25,,,"text,image,file",1776795361
+~anthropic/claude-sonnet-latest,Anthropic: Claude Sonnet Latest,1000000,2.0,10.0,0.2,2.5,,,"text,image,file",1777318368
+~deepseek/deepseek-v4-flash-latest,DeepSeek: DeepSeek V4 Flash Latest,1310720,0.03,0.07,0.003,,,,text,1785606009
+~google/gemini-flash-latest,Google: Gemini Flash Latest,1048576,0.75,3.75,0.075,0.0417,3.75,0.00000075,"text,image,video,file,audio",1777318398
+~google/gemini-pro-latest,Google: Gemini Pro Latest,1048576,2.0,12.0,0.2,0.375,12.0,0.000002,"audio,file,image,text,video",1777318451
+~moonshotai/kimi-latest,MoonshotAI: Kimi Latest,1048576,2.375,13.3,0.2755,,,,"text,image,video",1777318428
+~openai/gpt-astra-latest,OpenAI: GPT Astra Latest,1050000,10.0,50.0,1.0,12.5,,,"file,image,text",1789130932
+~openai/gpt-luna-latest,OpenAI: GPT Luna Latest,1050000,0.2,1.2,0.02,0.25,,,"file,image,text",1789130922
+~openai/gpt-mini-latest,OpenAI: GPT Mini Latest,400000,0.75,4.5,0.075,,,,"file,image,text",1777318471
+~openai/gpt-sol-latest,OpenAI: GPT Sol Latest,1050000,2.0,10.0,0.2,2.5,,,"file,image,text",1789130928
+~openai/gpt-terra-latest,OpenAI: GPT Terra Latest,1050000,2.0,12.0,0.2,2.5,,,"file,image,text",1789130925
+~x-ai/grok-latest,xAI: Grok Latest,500000,2.0,6.0,0.5,,,,"text,image,file",1783519360
+~z-ai/glm-flash-latest,Z.ai: GLM Flash Latest,1310720,0.075,0.25,0.015,,,,"text,image,video",1787817633
+~z-ai/glm-latest,Z.ai: GLM Latest,1310720,0.8727,3.36,0.1639,,,,text,1787151053

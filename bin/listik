@@ -155,6 +155,8 @@ def call(op: str, args, path: str, *, query: dict | None = None, body: dict | No
     """Идём в сервер, если он поднят; иначе — прямо в базу (агент не должен падать)."""
     if getattr(args, "local", False):
         warn_local_bypass(args, writing=op in WRITE_OPS)
+        if any((local_kwargs or {}).get(key) for key in ("route", "launch_route")):
+            routes_mod.load_local()
         return client.local_call(op, **(local_kwargs or {}))
     if client.is_up(args.host, args.port):
         return client.request(method, path, query=query, body=body,

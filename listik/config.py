@@ -234,12 +234,11 @@ def routing(project: str | None = None, conn=None) -> dict:
         except Exception:
             pass
     if project and isinstance(override, dict):
-        if isinstance(override, dict):
-            for key, value in override.items():
-                if isinstance(value, dict) and isinstance(base.get(key), dict):
-                    merged = dict(base[key]); merged.update(value); base[key] = merged
-                else:
-                    base[key] = value
+        for key, value in override.items():
+            if isinstance(value, dict) and isinstance(base.get(key), dict):
+                merged = dict(base[key]); merged.update(value); base[key] = merged
+            else:
+                base[key] = value
     # Устаревшие ключи выкидываем в самом конце: они могли прийти и из config.toml,
     # и из переопределения проекта — наружу действующая таблица уходит уже без них.
     return without_legacy_routing(base)

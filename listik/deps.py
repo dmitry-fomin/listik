@@ -530,7 +530,6 @@ def mentioned(conn: sqlite3.Connection, task_id: str, limit: int = 50, *,
     text = " ".join(x or "" for x in (row["title"], row["description"], row["notes"],
                                       row["acceptance"], row["result"]))
     known = {r["id"]: r["id"] for r in _fetch(conn, "SELECT id FROM tasks")}
-    prefixes = {i.rsplit("-", 1)[0] for i in known}
     linked = {r["depends_on"] for r in _fetch(
         conn, "SELECT depends_on FROM deps WHERE issue_id = ?", (task_id,))}
     linked |= {r["issue_id"] for r in _fetch(

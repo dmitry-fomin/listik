@@ -16,7 +16,7 @@ each shell call is a new process, and a leftover value may belong to a parent ag
 5. Change stages only with `stage`, never by editing the card text.
 6. Comment kinds: `review` for remarks, `journal` for decisions/progress, `verdict` for verdicts.
 7. Questions for the human go to `needs-owner <id> "exact question"`, not just the chat. When the human
-   launched the work through your session (you orchestrate dsh/grok/subagents), also put the full question
+   launched the work through your session (you orchestrate other harnesses or subagents), also put the full question
    text in the chat — both places, never a one-line summary; relay executors' questions verbatim. Questions
    never stall the pipeline: keep working other tasks, apply the answer (`needs-owner --clear`) when it comes.
 8. Before handoff check `spec_path`, acceptance, worktree/branch, deps and journal.

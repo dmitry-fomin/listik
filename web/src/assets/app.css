@@ -1307,7 +1307,7 @@ body .ui-drawer-backdrop.ui-drawer-backdrop--right .ui-drawer.ui-drawer--right.u
   color: var(--ink-3);
 }
 
-/* ── Матрица маршрута (NewTaskModal) ─────────────────────────────────────
+/* ── Матрица маршрута (RoutePicker: «Новая задача» и панель карточки) ────
    Референс: NewTask.dc.html `.field`/`.seg`/`.route`/`.chain` — своя разметка,
    в ките нет ни матрицы «харнесс × процесс», ни цепочки-иконок этапов. */
 
@@ -1328,6 +1328,12 @@ body .ui-drawer-backdrop.ui-drawer-backdrop--right .ui-drawer.ui-drawer--right.u
 }
 
 /* ── Маршрут: пресеты конвейера (таблица) + «просто исполнитель» (ряд) ───── */
+
+.listik-route-picker {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-2);
+}
 
 .listik-pipelines {
   display: flex;

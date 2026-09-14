@@ -7,13 +7,14 @@
  * кнопкой у каждого текстового поля (`AssistantField`), и применяется только по
  * подтверждению. Два отличия от прототипа: порядок первого ряда
  * Тип → Приоритет → Проект (в прототипе Проект второй) и подсказка приоритета
- * тултипом UiTooltip на контроле, а не строкой под ним. Блок «Маршрут» — свой (кит не знает такого
- * контрола): записи (пресеты конвейера и прямые харнессы) отдаёт сервер — `GET /api/routes`,
- * файл `routes.json`; грузятся один раз за сессию доски, логика выбора — `lib/routes.ts`.
- * Выбранный ключ уходит на сервер полем `route`; метки `harness:<x>`/`process:<y>` сервер
- * ставит по нему сам (`routes.labels_for`) — доска их не считает, они для человека и поиска;
- * кто реально допущен до этапа, решает routing проекта на сервере
- * (`ready --harness`, отказ в `claim`).
+ * тултипом UiTooltip на контроле, а не строкой под ним. Блок «Маршрут» —
+ * общий `RoutePicker` (кит такого контрола не знает): записи (пресеты
+ * конвейера и прямые харнессы) отдаёт сервер — `GET /api/routes`, файл
+ * `routes.json`; грузятся один раз за сессию доски, логика выбора —
+ * `lib/routes.ts`. Выбранный ключ уходит на сервер полем `route`; метки
+ * `harness:<x>`/`process:<y>` сервер ставит по нему сам (`routes.labels_for`)
+ * — доска их не считает, они для человека и поиска; кто реально допущен до
+ * этапа, решает routing проекта на сервере (`ready --harness`, отказ в `claim`).
  */
 import { computed, reactive, ref, watch } from 'vue'
 import {
@@ -31,23 +32,22 @@ import {
 import IconToggle, { type IconToggleOption } from '@/components/IconToggle.vue'
 import ListikIcon from '@/components/ListikIcon.vue'
 import AssistantField from '@/components/AssistantField.vue'
-import HarnessIcon from '@/components/marks/HarnessIcon.vue'
 import ProjectMark from '@/components/marks/ProjectMark.vue'
-import ProviderIcon from '@/components/marks/ProviderIcon.vue'
-import RouteIcon from '@/components/marks/RouteIcon.vue'
+import RoutePicker from '@/components/RoutePicker.vue'
 import TaskGlyph from '@/components/marks/TaskGlyph.vue'
 import { ROUTE_ICONS, TASK_TYPES, priority } from '@/lib/dictionaries'
 import type {
   AssistantContext,
   AssistantField as AssistantFieldKey,
-  DirectRouteDef,
-  PipelineRouteDef,
   ProjectRow,
   RouteDef,
 } from '@/api/types'
-import { HARNESS_TITLES } from '@/lib/harness'
-import { ROLE_KEYS, ROLE_TITLES } from '@/lib/pipelines'
-import { defaultPipelineFor, routeAllowedForType, routesAlertText } from '@/lib/routes'
+import {
+  defaultPipelineFor,
+  routeAllowedForType,
+  routesAlertText,
+  visibleRoutesOf,
+} from '@/lib/routes'
 import store from '@/store/listik'
 
 const props = defineProps<{
@@ -199,8 +199,7 @@ function appendAcceptance(criteria: string[]): void {
 
 /** Маршрут от помощника проходит те же правила, что и клик по матрице. */
 function applyAssistantRoute(key: string): void {
-  const route = routeOptions.value.find((item) => item.key === key)
-  if (route) selectRoute(route)
+  onPickRoute(key)
 }
 
 // ── маршрут: записи из routes.json (`GET /api/routes`), правила — lib/routes.ts ──
@@ -209,40 +208,16 @@ function applyAssistantRoute(key: string): void {
 const routesFailed = computed(() => store.routesRequestFailed.value || !store.routesOk.value)
 
 const visibleRoutes = computed<RouteDef[]>(() =>
-  routesFailed.value ? [] : store.routes.value.filter((route) => route.visible),
-)
-
-/** Строки таблицы ролей — пресеты конвейера без `strip`. */
-const pipelineRows = computed(() =>
-  visibleRoutes.value.filter(
-    (route): route is PipelineRouteDef => route.kind === 'pipeline' && !route.strip,
-  ),
-)
-
-/** Строка «Отдельно» — сначала `pipeline` со `strip`, затем `direct`, в порядке ответа. */
-const stripRoutes = computed(() =>
-  visibleRoutes.value.filter(
-    (route): route is PipelineRouteDef => route.kind === 'pipeline' && Boolean(route.strip),
-  ),
-)
-
-const directRoutes = computed(() =>
-  visibleRoutes.value.filter((route): route is DirectRouteDef => route.kind === 'direct'),
+  routesFailed.value ? [] : visibleRoutesOf(store.routes.value),
 )
 
 function routeAllowed(route: RouteDef): boolean {
   return routeAllowedForType(route, form.type)
 }
 
-const routeOptions = computed<RouteDef[]>(() => [
-  ...pipelineRows.value,
-  ...stripRoutes.value,
-  ...directRoutes.value,
-])
-
-/** Выбранная запись: видимая (то есть из `routeOptions`) и разрешённая текущему типу. */
+/** Выбранная запись: видимая и разрешённая текущему типу. */
 const selectedRoute = computed<RouteDef | null>(() => {
-  const route = routeOptions.value.find((item) => item.key === form.routeKey)
+  const route = visibleRoutes.value.find((item) => item.key === form.routeKey)
   return route && routeAllowed(route) ? route : null
 })
 
@@ -264,48 +239,10 @@ function selectRoute(route: RouteDef): void {
   form.routeKey = route.key
 }
 
-function routeTooltip(route: RouteDef): string {
-  if (route.kind === 'direct') {
-    if (routeAllowed(route)) {
-      return `${HARNESS_TITLES[route.harness]} делает задачу напрямую, без ТЗ, критики и приёмки`
-    }
-    return 'Эпик всегда режется на шаги через ТЗ (s1) — прямой маршрут в обход разбивки на шаги и критики закрыт для эпиков.'
-  }
-  if (routeAllowed(route)) return route.hint
-  return 'Эпик всегда режется на шаги через ТЗ (s1) — пресеты без этапа ТЗ для эпиков закрыты.'
-}
-
-function routeTabindex(route: RouteDef): number {
-  if (!routeAllowed(route)) return -1
-  if (selectedRoute.value?.key === route.key) return 0
-  const hasSelected = routeOptions.value.some((item) => routeAllowed(item) && item.key === selectedRoute.value?.key)
-  if (hasSelected) return -1
-  // Ни одна опция не выбрана (нет данных или всё скрыто) — фокусируемая первая доступная.
-  const firstAllowed = routeOptions.value.find((item) => routeAllowed(item))
-  return firstAllowed?.key === route.key ? 0 : -1
-}
-
-const routeRefs = new Map<string, HTMLButtonElement>()
-
-function setRouteRef(key: string, el: Element | null): void {
-  if (el) routeRefs.set(key, el as HTMLButtonElement)
-  else routeRefs.delete(key)
-}
-
-function onRouteKeydown(event: KeyboardEvent, route: RouteDef): void {
-  const allowedOptions = routeOptions.value.filter((item) => routeAllowed(item))
-  const at = allowedOptions.findIndex((item) => item.key === route.key)
-  if (at === -1) return
-  let target = -1
-  if (event.key === 'ArrowRight' || event.key === 'ArrowDown') target = (at + 1) % allowedOptions.length
-  else if (event.key === 'ArrowLeft' || event.key === 'ArrowUp') target = (at - 1 + allowedOptions.length) % allowedOptions.length
-  else if (event.key === 'Home') target = 0
-  else if (event.key === 'End') target = allowedOptions.length - 1
-  else return
-  event.preventDefault()
-  const next = allowedOptions[target]!
-  selectRoute(next)
-  routeRefs.get(next.key)?.focus()
+/** Клик по матрице — тот же путь, что и маршрут от помощника. */
+function onPickRoute(key: string): void {
+  const route = visibleRoutes.value.find((item) => item.key === key)
+  if (route) selectRoute(route)
 }
 
 /** Галочка доступна, только когда маршрут выбран и данные маршрутов живые. */
@@ -490,95 +427,12 @@ function cancel(): void {
             </div>
           </UiAlert>
 
-          <div class="listik-pipelines" role="radiogroup" aria-label="Маршрут: пайплайн">
-            <div class="listik-pipelines__header">
-              <span class="listik-pipelines__header-spacer" aria-hidden="true" />
-              <span v-for="role in ROLE_KEYS" :key="role" class="listik-pipelines__col-title">
-                {{ ROLE_TITLES[role] }}
-              </span>
-            </div>
-
-            <button
-              v-for="route in pipelineRows"
-              :key="route.key"
-              :ref="(el) => setRouteRef(route.key, el as Element | null)"
-              type="button"
-              role="radio"
-              class="listik-pipelines__row"
-              :class="{ 'is-on': selectedRoute?.key === route.key, 'is-off': !routeAllowed(route) }"
-              :aria-checked="selectedRoute?.key === route.key"
-              :aria-disabled="!routeAllowed(route) || undefined"
-              :disabled="!routeAllowed(route)"
-              :tabindex="routeTabindex(route)"
-              :title="routeTooltip(route)"
-              @click="selectRoute(route)"
-              @keydown="onRouteKeydown($event, route)"
-            >
-              <span class="listik-pipelines__row-title">
-                <RouteIcon :route="route" size="sm" />
-                <span class="listik-pipelines__row-text">
-                  <span class="listik-pipelines__row-name">{{ route.title }}</span>
-                  <span class="listik-pipelines__row-hint">{{ route.hint }}</span>
-                </span>
-              </span>
-
-              <span v-for="role in ROLE_KEYS" :key="role" class="listik-pipelines__cell">
-                <template v-if="route.roles[role]">
-                  <ProviderIcon :provider="route.roles[role]!.provider" size="sm" />
-                  <span class="listik-pipelines__cell-label">{{ route.roles[role]!.label }}</span>
-                </template>
-                <span v-else class="listik-pipelines__cell-empty" aria-hidden="true">—</span>
-              </span>
-            </button>
-          </div>
-
-          <div class="listik-direct">
-            <span class="listik-direct__title">Отдельно · без таблицы ролей</span>
-            <div class="listik-direct__items">
-              <button
-                v-for="route in stripRoutes"
-                :key="route.key"
-                :ref="(el) => setRouteRef(route.key, el as Element | null)"
-                type="button"
-                role="radio"
-                class="listik-direct__item"
-                :class="{ 'is-on': selectedRoute?.key === route.key, 'is-off': !routeAllowed(route) }"
-                :aria-checked="selectedRoute?.key === route.key"
-                :aria-disabled="!routeAllowed(route) || undefined"
-                :disabled="!routeAllowed(route)"
-                :tabindex="routeTabindex(route)"
-                :title="routeTooltip(route)"
-                @click="selectRoute(route)"
-                @keydown="onRouteKeydown($event, route)"
-              >
-                <RouteIcon :route="route" size="sm" />
-                <ProviderIcon v-if="route.strip?.provider" :provider="route.strip.provider" size="md" />
-                <ListikIcon v-else-if="route.strip?.glyph" :name="route.strip.glyph" size="md" />
-                {{ route.strip?.label }}
-              </button>
-
-              <button
-                v-for="route in directRoutes"
-                :key="route.key"
-                :ref="(el) => setRouteRef(route.key, el as Element | null)"
-                type="button"
-                role="radio"
-                class="listik-direct__item"
-                :class="{ 'is-on': selectedRoute?.key === route.key, 'is-off': !routeAllowed(route) }"
-                :aria-checked="selectedRoute?.key === route.key"
-                :aria-disabled="!routeAllowed(route) || undefined"
-                :disabled="!routeAllowed(route)"
-                :tabindex="routeTabindex(route)"
-                :title="routeTooltip(route)"
-                @click="selectRoute(route)"
-                @keydown="onRouteKeydown($event, route)"
-              >
-                <RouteIcon :route="route" size="sm" />
-                <HarnessIcon :harness="route.harness" size="md" />
-                {{ route.title }}
-              </button>
-            </div>
-          </div>
+          <RoutePicker
+            :routes="store.routes.value"
+            :selected-key="form.routeKey"
+            :issue-type="form.type"
+            @select="onPickRoute"
+          />
         </template>
 
         <UiTooltip text="Listik сам запустит команду маршрута после создания" placement="bottom">

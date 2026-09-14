@@ -5,9 +5,12 @@
  * одна из трёх веток (needs_owner → dead → at-risk), проверяемых строго по
  * порядку; первая сработавшая задаёт бейдж, левую полосу, текст причины и
  * набор кнопок целиком (карточка не красится по статусу целиком).
+ *
+ * Если задач, где нужен человек, нет, блок не рендерится вовсе — ни заголовка,
+ * ни пустого состояния (listik-05pe).
  */
 import { computed, ref, watch } from 'vue'
-import { UiBadge, UiButton, UiEmptyState } from '@zoloto585/facet'
+import { UiBadge, UiButton } from '@zoloto585/facet'
 import ListikIcon from './ListikIcon.vue'
 import ProjectMark from './marks/ProjectMark.vue'
 import TaskGlyph from './marks/TaskGlyph.vue'
@@ -111,19 +114,18 @@ function footerText(task: Task): string {
 </script>
 
 <template>
-  <section class="listik-section" aria-label="Нужен ты">
+  <section v-if="tasks.length > 0" class="listik-section" aria-label="Нужен ты">
     <div class="listik-section__head">
       <h2 class="listik-section__title">
         <ListikIcon name="hand" size="md" />
         Нужен ты
-        <UiBadge :tone="tasks.length ? 'accent' : 'neutral'" size="sm">{{ tasks.length }}</UiBadge>
+        <UiBadge tone="accent" size="sm">{{ tasks.length }}</UiBadge>
       </h2>
       <div class="listik-row">
         <span class="listik-section__hint">
           вопрос автору, брошенные и молчащие держатели — то, без чего конвейер стоит
         </span>
         <UiButton
-          v-if="tasks.length > 0"
           size="sm"
           variant="ghost"
           v-bind="{ 'aria-label': collapsed ? 'Развернуть' : 'Свернуть', 'aria-expanded': !collapsed }"
@@ -136,16 +138,7 @@ function footerText(task: Task): string {
       </div>
     </div>
 
-    <UiEmptyState
-      v-if="tasks.length === 0"
-      compact
-      title="Никто тебя не ждёт"
-      description="Ни одной задачи с флагом «нужен человек», брошенной или с молчащим держателем."
-    >
-      <template #icon><ListikIcon name="check" size="lg" /></template>
-    </UiEmptyState>
-
-    <template v-else-if="!collapsed">
+    <template v-if="!collapsed">
       <div class="listik-inbox">
         <article
           v-for="task in visibleTasks"

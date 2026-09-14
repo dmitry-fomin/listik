@@ -6,10 +6,11 @@
  * человек», метки `harness:`/`process:`), отдаёт собранный `web/dist` и гоняет
  * сценарий в headless Chrome через CDP.
  *
- * Сценарий: у заведённой задачи в выборе маршрута есть пункт «без маршрута»;
- * сохранение шлёт одно поле `route: ''` (как `listik set launch_route=`), а метки
- * маршрута и ошибку автостарта уносит сервер — ровно то, что делает
- * `store.update_task` (доска метки не считает).
+ * Сценарий: у заведённой задачи матрица маршрута та же, что при создании
+ * (`RoutePicker`, иконки и роли); пункт «без маршрута» кликом сразу шлёт
+ * одно поле `route: ''` (как `listik set launch_route=`), а метки маршрута
+ * и ошибку автостарта уносит сервер — ровно то, что делает `store.update_task`
+ * (доска метки не считает).
  *
  * Запуск: node scripts/verify-route-clear.mjs [url]
  *   Без аргумента сам поднимает мок и статику — нужен собранный `web/dist`
@@ -191,31 +192,41 @@ function connect(url) {
 
 /* ── Сценарии ───────────────────────────────────────────────────────────── */
 
-/** Состояние блока «Маршрут запуска»: селект, кнопка, алерт, метки задачи. */
+/** Состояние блока «Маршрут запуска»: матрица, выбранный ключ, алерт, метки. */
 const ROUTE_STATE = `(() => {
   const drawer = document.querySelector('.ui-drawer');
   if (!drawer) return { open: false };
-  const trigger = drawer.querySelector('button.ui-select__trigger[aria-label="Маршрут запуска"]');
-  const section = trigger ? trigger.closest('.listik-section') : null;
+  const picker = drawer.querySelector('[role="radiogroup"][aria-label="Маршрут запуска"]');
+  const section = picker ? picker.closest('.listik-section') : null;
+  const selected = picker ? picker.querySelector('[role="radio"].is-on') : null;
   const save = section
     ? [...section.querySelectorAll('button')].find((b) => b.textContent.trim() === 'Сохранить маршрут')
     : null;
+  const radios = picker
+    ? [...picker.querySelectorAll('[role="radio"]')].map((el) => ({
+        key: el.hasAttribute('data-route-clear') ? '' : el.getAttribute('data-route-key'),
+        on: el.classList.contains('is-on'),
+        label: (el.querySelector('.listik-pipelines__row-name')?.textContent
+          ?? el.textContent)?.replace(/\\s+/g, ' ').trim(),
+      }))
+    : [];
   return {
     open: true,
     id: drawer.querySelector('.listik-drawer__id .listik-mono')?.textContent?.trim() ?? null,
     sectionTitle: section?.querySelector('.listik-section__title')?.textContent?.trim() ?? null,
-    select: trigger?.querySelector('.ui-select__value')?.textContent?.trim() ?? null,
-    placeholder: trigger ? trigger.classList.contains('is-placeholder') : null,
-    saveDisabled: save ? save.disabled : null,
-    saveLabel: save ? save.textContent.trim() : null,
+    hasPicker: Boolean(picker),
+    selectedKey: selected
+      ? (selected.hasAttribute('data-route-clear') ? '' : selected.getAttribute('data-route-key'))
+      : null,
+    selectedLabel: radios.find((item) => item.on)?.label ?? null,
+    hasClear: radios.some((item) => item.key === '' || item.label === 'без маршрута'),
+    hasSave: Boolean(save),
+    icons: picker ? picker.querySelectorAll('.listik-route-icon').length : 0,
     alert: section?.querySelector('.ui-alert')?.textContent?.replace(/\\s+/g, ' ').trim() ?? null,
     labels: [...drawer.querySelectorAll('.ui-badge')].map((b) => b.textContent.trim()),
+    routes: radios,
   };
 })()`
-
-/** Пункты открытого списка выбора (панель UiSelect телепортируется в body). */
-const OPTIONS = `(() => [...document.querySelectorAll('li.ui-select__option')]
-  .map((li) => li.querySelector('.ui-select__option-label')?.textContent?.trim() ?? ''))()`
 
 const report = { cases: [], patches: [], consoleErrors: [] }
 let mock = null
@@ -304,35 +315,14 @@ try {
     if (!ok) throw new Error(`панель не открыла ${id}: ${JSON.stringify(await state())}`)
   }
 
-  /** Открыть выпадающий список маршрута и вернуть его пункты. */
-  const openRouteOptions = async () => {
-    const opened = await evaluate(`(() => {
-      const trigger = document.querySelector('.ui-drawer button.ui-select__trigger[aria-label="Маршрут запуска"]');
-      if (!trigger) return false;
-      trigger.click();
-      return true;
-    })()`)
-    if (!opened) return null
-    return waitFor(async () => {
-      const options = await evaluate(OPTIONS)
-      return options.length ? options : null
-    })
-  }
-
-  const pickOption = (label) =>
+  const clickRoute = (key) =>
     evaluate(`(() => {
-      const option = [...document.querySelectorAll('li.ui-select__option')]
-        .find((li) => li.querySelector('.ui-select__option-label')?.textContent.trim() === ${JSON.stringify(label)});
-      if (!option) return false;
-      option.click();
-      return true;
-    })()`)
-
-  const clickSave = () =>
-    evaluate(`(() => {
-      const drawer = document.querySelector('.ui-drawer');
-      const button = [...drawer.querySelectorAll('button')]
-        .find((b) => b.textContent.trim() === 'Сохранить маршрут');
+      const picker = document.querySelector('.ui-drawer [role="radiogroup"][aria-label="Маршрут запуска"]');
+      if (!picker) return false;
+      const button = ${JSON.stringify(key) === '""'}
+        ? picker.querySelector('[data-route-clear]')
+        : [...picker.querySelectorAll('[role="radio"]')]
+            .find((el) => el.getAttribute('data-route-key') === ${JSON.stringify(key)});
       if (!button) return false;
       button.click();
       return true;
@@ -363,82 +353,69 @@ try {
     throw new Error(`доска не отрисовалась: ${JSON.stringify(diagnostics)} ${JSON.stringify(consoleErrors)}`)
   }
 
-  // 1. Заведённая задача: выбор маршрута показан, ошибка автостарта и метки маршрута на месте.
-  await record('карточка с отказом автостарта: выбор маршрута показан', async () => {
+  // 1. Заведённая задача: матрица маршрута с иконками, текущий пресет выбран,
+  //    кнопки «Сохранить» нет, ошибка автостарта и метки на месте.
+  await record('карточка с отказом автостарта: матрица маршрута показана', async () => {
     await openCard('Автостарт упал: маршрут можно сменить', CARD)
-    // Ждём `GET /api/routes`: до него карточка показывает ключ маршрута, а не его название.
     const current = await waitFor(async () => {
       const seen = await state()
-      return seen.select === 'Низкий — конвейер' ? seen : null
+      return seen.hasPicker && seen.selectedKey === ROUTE ? seen : null
     })
     const ok = Boolean(current)
       && current.sectionTitle === 'Маршрут запуска'
-      && current.saveDisabled === true
+      && current.selectedLabel === 'Низкий — конвейер'
+      && current.hasClear === true
+      && current.hasSave === false
+      && current.icons > 0
       && Boolean(current.alert?.includes('маршрута low-pipeline нет в routes.json'))
       && current.labels.includes('harness:claude')
       && current.labels.includes('process:low-pipeline')
     return {
       ok,
-      expect: 'селект с текущим маршрутом, алерт об ошибке, метки harness:/process:',
+      expect: 'матрица с текущим маршрутом и иконками, без кнопки сохранения, алерт, метки harness:/process:',
       got: current ? { ...current, labels: current.labels.join(', ') } : null,
     }
   })
 
-  // 2. В списке есть пункт «без маршрута» — первым, до записей routes.json.
-  await record('в выборе маршрута есть пункт «без маршрута»', async () => {
-    const options = await openRouteOptions()
-    const ok = Array.isArray(options) && options[0] === 'без маршрута'
-    if (!ok) return { ok, expect: 'первый пункт «без маршрута»', got: options }
-    const picked = await pickOption('без маршрута')
-    const after = await state()
-    // До сохранения карточка не менялась: алерт об отказе автостарта ещё на месте.
-    const clean = picked && after.select === 'без маршрута' && after.saveDisabled === false
-      && Boolean(after.alert?.includes('маршрута low-pipeline нет в routes.json'))
-    return {
-      ok: clean,
-      expect: 'пункт выбран, кнопка «Сохранить маршрут» активна, алерт ещё не снят',
-      got: { options, picked, select: after.select, saveDisabled: after.saveDisabled, alert: after.alert },
-    }
-  })
-
-  // 3. Сохранение: PATCH с одним полем `route: ''` — метки маршрута снимает сервер.
-  await record('сохранение шлёт route: «» и не считает метки само', async () => {
+  // 2. Клик по «без маршрута» сразу шлёт PATCH с одним полем `route: ''`.
+  await record('клик по «без маршрута» сразу шлёт route: «»', async () => {
     const before = patches.length
-    const clicked = await clickSave()
+    const clicked = await clickRoute('')
     const sent = await waitFor(async () => (patches.length > before ? patches[patches.length - 1] : null))
     const body = sent?.body ?? {}
-    const ok = Boolean(sent)
+    const ok = Boolean(clicked)
+      && Boolean(sent)
       && sent.path.includes(`/api/tasks/${CARD}`)
       && body.route === ''
       && body.labels === undefined
     return {
       ok,
-      expect: `PATCH /api/tasks/${CARD} ровно с route:'' — метки harness:/process: считает сервер`,
+      expect: `клик сразу PATCH /api/tasks/${CARD} ровно с route:'' — метки harness:/process: считает сервер`,
       got: { clicked, patch: sent },
     }
   })
 
-  // 4. Карточка после сохранения: маршрута нет, ошибка автостарта снята, метки уехали.
+  // 3. Карточка после сохранения: выбран «без маршрута», ошибка снята, метки уехали.
   await record('карточка после сохранения: без маршрута и без ошибки', async () => {
     const after = await waitFor(async () => {
       const current = await state()
-      return current.select === 'без маршрута' && current.alert === null ? current : null
+      return current.selectedKey === '' && current.alert === null ? current : null
     })
     const ok = Boolean(after)
-      && after.select === 'без маршрута'
-      && after.placeholder === false
+      && after.selectedKey === ''
+      && after.selectedLabel === 'без маршрута'
       && after.alert === null
-      && after.saveDisabled === true
+      && after.hasSave === false
       && after.labels.includes('frontend')
       && !after.labels.some((label) => /^(harness|process):/.test(label))
     return {
       ok,
-      expect: 'селект «без маршрута», алерта нет, метки маршрута сняты',
+      expect: 'выбран «без маршрута», алерта нет, метки маршрута сняты',
       got: after ? { ...after, labels: after.labels.join(', ') } : null,
     }
   })
 
-  // 5. Мок (он повторяет `store.update_task`) подтверждает состояние задачи.
+  // 4. Мок (он повторяет `store.update_task`) подтверждает состояние задачи.
   await record('состояние задачи на сервере: маршрут и отказ автостарта сняты', async () => {
     if (!apiPort) return { ok: false, got: 'прогон с готовым url: состояние мока не проверить' }
     const response = await fetch(`http://127.0.0.1:${apiPort}/api/tasks/${CARD}`)
@@ -461,15 +438,45 @@ try {
     }
   })
 
-  // 6. Задача, заведённая без маршрута: пункт «без маршрута» выбран сразу, сохранять нечего.
+  // 5. Задача, заведённая без маршрута: пункт «без маршрута» выбран сразу.
   await record('задача без маршрута: пункт выбран сразу', async () => {
     await openCard('Заведена без маршрута', FRESH)
-    const current = await state()
-    const ok = current.select === 'без маршрута' && current.placeholder === false && current.saveDisabled === true
+    const current = await waitFor(async () => {
+      const seen = await state()
+      return seen.hasPicker && seen.selectedKey === '' ? seen : null
+    })
+    const ok = Boolean(current)
+      && current.selectedLabel === 'без маршрута'
+      && current.hasSave === false
     return {
       ok,
-      expect: 'селект показывает «без маршрута», кнопка выключена',
-      got: { select: current.select, placeholder: current.placeholder, saveDisabled: current.saveDisabled },
+      expect: 'в матрице выбран «без маршрута», кнопки сохранения нет',
+      got: current
+        ? { selectedKey: current.selectedKey, selectedLabel: current.selectedLabel, hasSave: current.hasSave }
+        : await state(),
+    }
+  })
+
+  // 6. Клик по пресету сразу шлёт его ключ — без отдельной кнопки «Сохранить».
+  await record('клик по пресету сразу сохраняет маршрут', async () => {
+    const before = patches.length
+    const clicked = await clickRoute('high-pipeline')
+    const sent = await waitFor(async () => (patches.length > before ? patches[patches.length - 1] : null))
+    const body = sent?.body ?? {}
+    const after = await waitFor(async () => {
+      const current = await state()
+      return current.selectedKey === 'high-pipeline' ? current : null
+    })
+    const ok = Boolean(clicked)
+      && Boolean(sent)
+      && sent.path.includes(`/api/tasks/${FRESH}`)
+      && body.route === 'high-pipeline'
+      && body.labels === undefined
+      && after?.selectedLabel === 'Высокий — конвейер'
+    return {
+      ok,
+      expect: `клик сразу PATCH /api/tasks/${FRESH} с route:'high-pipeline', пресет выбран`,
+      got: { clicked, patch: sent, selectedKey: after?.selectedKey, selectedLabel: after?.selectedLabel },
     }
   })
 

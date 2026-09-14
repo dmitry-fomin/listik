@@ -162,8 +162,8 @@ async function main() {
     await new Promise((resolve) => setTimeout(resolve, 700))
     const result = {
       modal: document.querySelectorAll('.ui-modal').length > 0,
-      routeCells: document.querySelectorAll('.listik-route__cell').length,
-      routeOff: document.querySelectorAll('.listik-route__cell.is-off').length,
+      routeCells: document.querySelectorAll('.listik-pipelines__row').length,
+      routeOff: document.querySelectorAll('.listik-pipelines__row.is-off, .listik-direct__item.is-off').length,
       typeOptions: document.querySelectorAll('[aria-label="Тип задачи"] .ui-segmented__item').length,
     }
     window.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape', bubbles: true }))

@@ -1,12 +1,19 @@
 /**
- * Правила маршрута «Новой задачи» — поверх данных `GET /api/routes` (записи
- * `routes.json`, тип `RouteDef`). Сами маршруты, их порядок, роли и иконки в коде
- * не зашиты: здесь только выбор по умолчанию, доступность по типу задачи и поиск
- * записи по ключу. Метки `harness:<x>`/`process:<y>` доска не считает: их выводит
- * сервер из маршрута (`routes.labels_for`) и он же переписывает при смене — они для
- * человека и поиска, а кто реально допущен до этапа, решает routing проекта.
+ * Правила маршрута — поверх данных `GET /api/routes` (записи `routes.json`,
+ * тип `RouteDef`). Сами маршруты, их порядок, роли и иконки в коде не зашиты:
+ * здесь только выбор по умолчанию, доступность по типу задачи, группировка
+ * для матрицы (`RoutePicker`) и поиск записи по ключу. Метки
+ * `harness:<x>`/`process:<y>` доска не считает: их выводит сервер из маршрута
+ * (`routes.labels_for`) и он же переписывает при смене — они для человека и
+ * поиска, а кто реально допущен до этапа, решает routing проекта.
  */
-import type { PipelineRouteDef, RouteDef } from '@/api/types'
+import type { DirectRouteDef, PipelineRouteDef, RouteDef } from '@/api/types'
+
+/**
+ * Пустая строка — снять маршрут на сервере (`set launch_route=` / PATCH
+ * `route: ''`). `null` у выбора означает «ещё не выбрано» и на сервер не идёт.
+ */
+export const NO_ROUTE = ''
 
 /** Эпику всегда нужно ТЗ (он режется на шаги через этап 1) — записи без `roles.spec` закрыты. */
 export function pipelineAllowed(route: PipelineRouteDef, type: string): boolean {
@@ -59,4 +66,44 @@ export function defaultPipelineFor(type: string, routes: RouteDef[]): PipelineRo
 export function routeByKey(key: string | null | undefined, routes: RouteDef[]): RouteDef | null {
   if (!key) return null
   return routes.find((route) => route.key === key) ?? null
+}
+
+/** Видимые записи — ими рисуется матрица, скрытые (`visible:false`) в выбор не входят. */
+export function visibleRoutesOf(routes: RouteDef[]): RouteDef[] {
+  return routes.filter((route) => route.visible)
+}
+
+/**
+ * Записи для матрицы: видимые, плюс текущий ключ, даже если он скрыт —
+ * иначе выбранный маршрут пропал бы из выбора (как раньше отдельной
+ * строкой селекта).
+ */
+export function pickerRoutesOf(
+  routes: RouteDef[],
+  selectedKey: string | null | undefined,
+): RouteDef[] {
+  const visible = visibleRoutesOf(routes)
+  const current = routeByKey(selectedKey, routes)
+  if (current && !visible.some((route) => route.key === current.key)) {
+    return [...visible, current]
+  }
+  return visible
+}
+
+/** Строки таблицы ролей — пресеты конвейера без `strip`. */
+export function pipelineRowsOf(routes: RouteDef[]): PipelineRouteDef[] {
+  return routes.filter(
+    (route): route is PipelineRouteDef => route.kind === 'pipeline' && !route.strip,
+  )
+}
+
+/** Пресеты строки «Отдельно» — `pipeline` со `strip`. */
+export function stripRoutesOf(routes: RouteDef[]): PipelineRouteDef[] {
+  return routes.filter(
+    (route): route is PipelineRouteDef => route.kind === 'pipeline' && Boolean(route.strip),
+  )
+}
+
+export function directRoutesOf(routes: RouteDef[]): DirectRouteDef[] {
+  return routes.filter((route): route is DirectRouteDef => route.kind === 'direct')
 }

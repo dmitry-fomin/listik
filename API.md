@@ -290,10 +290,17 @@ dropped_chunks, reason`), `reasons[]` (по одному пункту на ка�
 | DELETE | `/api/tasks/{id}/deps/{depends_on}` | `dep_type` строкой запроса | снять связь; без `dep_type` снимает разом `blocks` и `suggested-blocks` между той же парой задач. Ответ: `removed` (число снятых строк), `dep_types[]` |
 | POST | `/api/tasks/{id}/ready` | — | вердикт по задаче (`deps_state`, см. ниже) |
 | POST | `/api/tasks/{id}/mentions` | `limit` | задачи, упомянутые в тексте этой задачи, но не связанные с ней |
-| POST | `/api/projects` | `path` (каталог репозитория) или `slug`, `title`, `kind=native` | добавить репозиторий на доску; slug по умолчанию — имя каталога, git remote/ветка подтягиваются сами. Существующий slug не падает: проект возвращается на доску и обновляется |
+| POST | `/api/projects` | `path` (каталог репозитория) или `slug`, `title`, `kind=native` | добавить репозиторий на доску; slug по умолчанию — имя каталога, git remote/ветка подтягиваются сами. Существующий slug не падает: проект возвращается на доску и обновляется. Сверка slug идёт **без учёта регистра** (`store.existing_slug`): если проект с таким slug уже есть в другом написании, возвращается он — с прежним регистром slug, `created=false`, — а не второй проект-дубль |
 | PATCH | `/api/projects/{slug}` | `title`, `path`, `color`, `kind`, `archived=0/1`, `routing` | правка проекта; `archived=1` — убрать с доски, не теряя задачи; `routing` — объект-переопределение маршрутизации проекта (`{}` сбрасывает его), проверяется `config.validate_routing`: допустимые ключи — `harnesses` (словарь этап → список имён, этапы и имена без дублей), `default_process` (список этапов без дублей), `transitions` (словарь `"<этап>:<этап-или-done>"` → `sticky`\|`handoff`\|`sticky-return`), `return_window_hours` (число > 0); неизвестный ключ или неверная форма — 400 с текстом на русском |
 | DELETE | `/api/projects/{slug}` | `force=1` (или в теле) | убрать проект из Listik. Проект с задачами отвечает 409 — их сначала скрывают; `force` удаляет задачи вместе с проектом |
 | POST | `/api/embed` | `limit`, `kinds=task,comment,chunk` (по умолчанию все три) | досчитать векторы (ollama bge-m3) |
+
+Slug проекта — ключ, и тот, кто проект **создаёт** (`POST /api/projects`, импортёры
+`listik import-beads` и `listik import-writerllm`), сверяется с существующими slug'ами без учёта
+регистра и переиспользует найденный: и строка проекта, и `tasks.project` ложатся на прежнее
+написание, поэтому проектов-дублей `writerllm`/`WriterLLM` и задач с разным регистром `project`
+не появляется. Правка и удаление (`PATCH`/`DELETE /api/projects/{slug}`) по-прежнему ищут slug
+точно, как он записан в базе.
 
 Загрузка документа (`PUT .../documents/{kind}`) пишет строку в `documents` до того, как путь
 допишется в карточку, — поэтому переиндексация внутри `PATCH /api/tasks/{id}` уже видит
@@ -457,8 +464,8 @@ JSON-RPC-сообщение, ответ — обычный JSON (`Content-Type: 
 
 ```
 listik serve                       # поднять сервер и доску
-listik import-beads [--dry-run]    # разовый импорт из старых .beads
-listik import-writerllm --source <path> [--project writerllm] [--dry-run] [--update]   # импорт выгрузки bd export WriterLLM, идемпотентно
+listik import-beads [--dry-run]    # разовый импорт из старых .beads; проект берётся с доски без учёта регистра slug
+listik import-writerllm --source <path> [--project writerllm] [--dry-run] [--update]   # импорт выгрузки bd export WriterLLM, идемпотентно; --project так же сверяется с доской без учёта регистра
 listik new "Заголовок" -p project --type bug --priority 1 --actor agent:dsh
 listik new "Заголовок" -p project --autostart --route low-pipeline   # сразу запустить по маршруту (--autostart без --route — ошибка)
 listik ready                        # что можно взять прямо сейчас

@@ -277,7 +277,9 @@ claude mcp add listik -- /путь/к/listik/bin/listik mcp
 не трогая остальной текст. `--dry-run` — посмотреть, `--remove` — убрать.
 
 **Переход с beads.** `listik import-beads` разово переносит `.beads`-трекеры из каталога проектов
-(старый ID сохраняется в `external_ref`), затем — `docs/beads-migration.md`.
+(старый ID сохраняется в `external_ref`), затем — `docs/beads-migration.md`. Проект берётся с
+доски без учёта регистра slug: каталог `Sub/Repo` при уже стоящем `sub/repo` не заводит второй
+проект, а задачи ложатся в существующий (так же ведёт себя `listik import-writerllm --project`).
 
 ## Listik на другом сервере
 

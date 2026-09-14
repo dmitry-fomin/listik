@@ -7,6 +7,10 @@
 Дубликаты трекеров (один префикс в двух каталогах — например, Dif/TN-feed-redesign
 и Dif/TelegramNews, оба tn-*) разрешаются один раз: побеждает каталог с большим
 числом задач, проигравший помечается и его задачи не импортируются.
+
+Slug проекта ищется среди уже стоящих на доске без учёта регистра (`store.existing_slug`):
+импорт ложится в существующий проект, а не заводит дубль `Foo`/`foo` с разными `project`
+у задач (listik-ovjr).
 """
 from __future__ import annotations
 
@@ -113,6 +117,10 @@ def import_all(
     for entry in keep:
         if not entry["issues"]:
             continue
+        # Slug — ключ проекта: если на доске уже есть проект, отличающийся только регистром
+        # (каталог на macOS регистр не различает), импорт идёт в него. Иначе появился бы
+        # проект-дубль, а задачи повисли бы на другом написании `project` (listik-ovjr).
+        slug = store.existing_slug(conn, entry["slug"]) or entry["slug"]
         report["projects"] += 1
         imported = 0
         for obj in entry["issues"]:
@@ -135,7 +143,7 @@ def import_all(
                 VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)
                 """,
                 (
-                    tid, entry["slug"], obj.get("title") or "", obj.get("description") or "",
+                    tid, slug, obj.get("title") or "", obj.get("description") or "",
                     obj.get("acceptance_criteria") or "", obj.get("design") or "",
                     obj.get("notes") or "", (obj.get("close_reason") or "") if obj.get("status") == "done" else "",
                     _status(obj.get("status")), stage, None,
@@ -180,23 +188,24 @@ def import_all(
                 "VALUES(?,?,'beads',?,?,?) ON CONFLICT(slug) DO UPDATE SET "
                 "kind='beads', path=excluded.path, imported_at=excluded.imported_at, "
                 "import_note=excluded.import_note",
-                (entry["slug"], entry["slug"], entry["path"], store.now_iso(),
+                (slug, slug, entry["path"], store.now_iso(),
                  f"{imported} задач из beads"),
             )
-        report["per_project"].append({"slug": entry["slug"], "tasks": imported,
+        report["per_project"].append({"slug": slug, "tasks": imported,
                                       "memories": len(entry["memories"])})
         if verbose:
-            print(f"  {entry['slug']}: {imported} задач")
+            print(f"  {slug}: {imported} задач")
         report["memories"] += len(entry["memories"])
 
     # Проекты без задач — тоже регистрируем, чтобы было видно пустые трекеры
     for entry in keep:
         if entry["issues"] or dry_run:
             continue
+        slug = store.existing_slug(conn, entry["slug"]) or entry["slug"]
         conn.execute(
             "INSERT INTO projects(slug, title, kind, path, imported_at, import_note) "
             "VALUES(?,?,'beads',?,?,?) ON CONFLICT(slug) DO NOTHING",
-            (entry["slug"], entry["slug"], entry["path"], store.now_iso(), "пустой трекер"),
+            (slug, slug, entry["path"], store.now_iso(), "пустой трекер"),
         )
 
     if not dry_run:

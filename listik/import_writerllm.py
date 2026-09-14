@@ -9,6 +9,10 @@
 `dry_run=True` не должен приводить ни к одной записи в базу — см. `import_file` и
 комментарии по коду: любой SQL кроме `SELECT` и любой вызов `store.*`, который сам
 делает `INSERT/UPDATE/commit`, стоит за проверкой `if not dry_run`.
+
+`--project` сверяется с уже стоящими на доске slug'ами без учёта регистра
+(`store.existing_slug`): выгрузка ложится в существующий проект, а не заводит дубль
+`writerllm`/`WriterLLM` (listik-ovjr).
 """
 from __future__ import annotations
 
@@ -456,6 +460,11 @@ def import_file(conn: sqlite3.Connection, path: str | Path, *, project: str | No
                 dry_run: bool = False, update: bool = False) -> dict:
     source_path = Path(path).expanduser()
     slug = str(project) if project else "writerllm"
+    # Slug — ключ проекта, и сверка идёт без учёта регистра: `--project WriterLLM` при уже
+    # стоящем на доске `writerllm` пишет задачи в него, а не заводит дубль (listik-ovjr).
+    # Заодно не рвётся идемпотентность: ключ — (source, project, external_ref), и второй
+    # запуск с другим регистром находит те же задачи, а не создаёт их заново.
+    slug = store.existing_slug(conn, slug) or slug
     try:
         source_display = str(source_path.resolve())
     except OSError:

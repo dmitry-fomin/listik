@@ -449,11 +449,18 @@ def heartbeat(conn: sqlite3.Connection, task_id: str, *, holder: str, note: str 
     if not row:
         raise KeyError(f"задача не найдена: {task_id}")
     ts = now_iso()
+    # «Что делает» принадлежит тому, кто её написал: heartbeat, сменивший держателя
+    # без claim, не наследует чужую заметку — остаётся только переданная явно.
+    holder_changed = (row["holder"] or "").strip() != (holder or "").strip()
+    holder_note = note or (row["holder_note"] if not holder_changed else None)
     conn.execute("UPDATE tasks SET holder = ?, holder_at = ?, holder_note = ?, updated_at = ? "
-                 "WHERE id = ?", (holder, ts, note or row["holder_note"], ts, task_id))
+                 "WHERE id = ?", (holder, ts, holder_note, ts, task_id))
     last = parse_ts(row["holder_at"])
-    if not last or (datetime.now(timezone.utc) - last) > timedelta(minutes=min_interval_min):
-        event(conn, task_id, "heartbeat", to_value=holder, note=note, harness=harness)
+    # Смену держателя пишем в историю всегда, даже если 10 минут ещё не прошли:
+    # иначе перехват чужой задачи остался бы незаметным.
+    if holder_changed or not last or (datetime.now(timezone.utc) - last) > timedelta(minutes=min_interval_min):
+        event(conn, task_id, "heartbeat", from_value=row["holder"] if holder_changed else None,
+              to_value=holder, note=note, harness=harness)
     conn.commit()
     return get_task(conn, task_id)
 

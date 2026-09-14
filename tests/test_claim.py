@@ -416,3 +416,23 @@ class HolderNoteResetTest(TempDbTestCase):
     def test_holder_change_clears_note(self) -> None:
         out = store.update_task(self.conn, self.t, holder="claude")
         self.assertFalse(out["holder_note"])
+
+    # listik-gvtm: heartbeat без claim не наследует заметку прежнего держателя.
+    def test_heartbeat_by_other_holder_clears_note(self) -> None:
+        out = store.heartbeat(self.conn, self.t, holder="claude")
+        self.assertEqual(out["holder"], "claude")
+        self.assertFalse(out["holder_note"])
+
+    def test_heartbeat_by_other_holder_keeps_explicit_note(self) -> None:
+        out = store.heartbeat(self.conn, self.t, holder="claude", note="пишу тесты")
+        self.assertEqual(out["holder_note"], "пишу тесты")
+
+    def test_heartbeat_by_same_holder_keeps_note(self) -> None:
+        out = store.heartbeat(self.conn, self.t, holder="codex")
+        self.assertEqual(out["holder_note"], "готовлю ТЗ")
+
+    def test_heartbeat_holder_change_is_logged_without_waiting_interval(self) -> None:
+        store.heartbeat(self.conn, self.t, holder="claude")
+        hb = _events(self.conn, self.t, "heartbeat")
+        self.assertEqual(hb[-1]["from_value"], "codex")
+        self.assertEqual(hb[-1]["to_value"], "claude")

@@ -473,7 +473,7 @@ $L claim <id> --holder claude --actor agent:claude --harness claude
 ```
 
 **Эпик без писателя ТЗ — стоп.** Пресеты без писателя ТЗ: `opus-single-pipeline`, `opus-sonnet-pipeline`
-и будущий `dsh-grok-pipeline`. Если `issue_type == "epic"`, а пресет из этого списка:
+и `xlow-pipeline`. Если `issue_type == "epic"`, а пресет из этого списка:
 
 ```
 $L needs-owner <id> "эпик нельзя вести пресетом без писателя ТЗ: порции и дочерние карточки заводит только писатель ТЗ. Выберите пресет с писателем ТЗ — xhigh-pipeline, high-pipeline, medium-pipeline, low-pipeline, inherit-pipeline или feature-pipeline — либо заведите обычную задачу." --actor agent:claude --harness claude
@@ -588,7 +588,7 @@ $L stage <id> --to s4-judge --holder <судья> --actor agent:claude --harness
 исполнителю снова и запускает его с красными пунктами дословно. Зелёный — коммит судьи и
 `$L done <id> -r "<коммит <hash7>>" --actor agent:claude --harness claude` за оркестратором.
 
-Пресет **без писателя ТЗ** (adhoc-ветка, `dsh-grok-pipeline`): этапов 1–2 нет, карточка одна:
+Пресет **без писателя ТЗ** (adhoc-ветка, `xlow-pipeline`): этапов 1–2 нет, карточка одна:
 
 ```
 $L set <id> spec_path=<абс. путь adhoc-файла> checklist_path=<тот же adhoc-файл> decision_path=<абс. путь журнала> worktree=<абс. путь дерева> branch=$(git branch --show-current) --actor agent:claude --harness claude

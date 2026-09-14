@@ -1,6 +1,6 @@
 ---
 name: pipeline-implementer-high
-description: Тот же исполнитель одной порции ТЗ, что pipeline-implementer, но с effort high — для неочевидных порций; в opus-sonnet-pipeline зовётся с model opus. Получает ровно один путь к файлу порции и больше ничего. Не коммитит и за границы порции не выходит.
+description: Тот же исполнитель одной порции ТЗ, что pipeline-implementer, но с effort high — для неочевидных порций. Получает ровно один путь к файлу порции и больше ничего. Не коммитит и за границы порции не выходит.
 model: sonnet
 effort: high
 tools: Read, Write, Edit, Bash, Grep, Glob

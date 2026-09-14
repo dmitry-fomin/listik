@@ -866,8 +866,36 @@ def port_holder(port: int) -> tuple[int, str] | None:
     return pid, cmd
 
 
+def _cmd_tokens(cmd: str) -> list[str]:
+    """Токены командной строки: кавычки учитываем, битую строку разбираем по пробелам."""
+    import shlex
+    try:
+        return shlex.split(cmd)
+    except ValueError:
+        return cmd.split()
+
+
+def _is_listik_binary(token: str) -> bool:
+    """Токен — имя бинаря Listik: `listik`, `bin/listik`, `/opt/listik/bin/listik`.
+
+    Именно имя (последний компонент пути), а не подстрока: `listik-l2fy/vite` и
+    `listik-helper/bin/app` бинарём Listik не являются.
+    """
+    return not token.startswith("-") and Path(token).name == "listik"
+
+
 def is_listik_serve(cmd: str) -> bool:
-    return "listik" in cmd and " serve" in cmd
+    """Командная строка вида `.../bin/listik serve` — сервер Listik, а не чужой процесс.
+
+    `listik` обязан быть именем бинаря, а `serve` — отдельным токеном после него:
+    `vite serve` из каталога `listik-l2fy`, `listik-helper/bin/app serve` и
+    `listik --mode server` (`server` — не токен `serve`) сервером Listik не считаются.
+    """
+    tokens = _cmd_tokens(cmd)
+    for i, token in enumerate(tokens):
+        if _is_listik_binary(token) and "serve" in tokens[i + 1:]:
+            return True
+    return False
 
 
 def bind_or_explain(host: str, port: int, quiet: bool) -> Server:

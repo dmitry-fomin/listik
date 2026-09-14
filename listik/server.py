@@ -386,6 +386,32 @@ def publish(kind: str, payload: dict) -> None:
             _subs.remove(q)
 
 
+#: Виды кадров, которые пускает POST /api/notify. Пока один — «задача»: о записи
+#: в неё сообщает stdio-MCP, у которого своего publish нет (listik-hkdp).
+NOTIFY_KINDS = frozenset({"task"})
+
+
+def notify_publish(conn: sqlite3.Connection, body: dict) -> dict:
+    """Разослать доске «перечитай задачу», ничего не меняя в базе.
+
+    `publish` живёт в процессе сервера, а писать в ту же sqlite можно и мимо него
+    (`bin/listik mcp` по stdio): без такого вызова доска показывала бы старую
+    карточку до перезагрузки. Существование задачи проверяется — иначе кадр
+    будил бы доски ради записи, которой сервер не знает.
+    """
+    task_id = str(body.get("task_id") or body.get("id") or "").strip()
+    if not task_id:
+        raise ApiError(400, "не передан обязательный параметр: task_id")
+    kind = str(body.get("kind") or "task").strip() or "task"
+    if kind not in NOTIFY_KINDS:
+        raise ApiError(400, f"неизвестный kind: {kind}")
+    action = str(body.get("action") or "notify").strip()[:200] or "notify"
+    if conn.execute("SELECT 1 FROM tasks WHERE id = ?", (task_id,)).fetchone() is None:
+        raise ApiError(404, f"задача не найдена: {task_id}")
+    publish(kind, {"id": task_id, "action": action})
+    return {"published": True, "kind": kind, "id": task_id, "action": action}
+
+
 # ------------------------------------------------------------------ утилиты
 
 def as_bool(value) -> bool:
@@ -413,8 +439,14 @@ class ApiError(Exception):
 
 
 def api_error(status: int, exc: BaseException) -> ApiError:
-    """ApiError по пойманному исключению: сообщение без кавычек KeyError + код по типу."""
-    return ApiError(status, errors_mod.message_of(exc), code=errors_mod.code_of(exc))
+    """ApiError по пойманному исключению: сообщение без кавычек KeyError + код по типу.
+
+    Статус здесь не перебивает код: `NotFound` — «не найдено» (404), голый
+    `KeyError` словаря (нет поля у карточки) — наша ошибка, и `error_response`
+    отдаст по ней 500/internal, а не «проверь идентификатор» (listik-xut1).
+    """
+    err = errors_mod.as_error(exc)
+    return ApiError(status, err.message, code=err.code)
 
 
 def error_response(exc: BaseException) -> tuple[int, str, str]:
@@ -425,6 +457,11 @@ def error_response(exc: BaseException) -> tuple[int, str, str]:
     (listik-cfzk), а закрытое соединение (`ProgrammingError` после переоткрытия)
     значит «повтори запрос». Нарушение ограничений (IntegrityError) — это логика
     приложения, а не файл базы, и остаётся 500.
+
+    Непойманный `KeyError` (обращение к отсутствующему ключу словаря) сюда и
+    попадает: обработчики ловят только `errors.NotFound`, поэтому баг не
+    притворяется 404 («проверь идентификатор»), а честно отдаётся как 500/internal
+    с текстом без кавычек (listik-xut1).
     """
     if isinstance(exc, ApiError):
         return exc.status, exc.message, exc.code
@@ -435,7 +472,9 @@ def error_response(exc: BaseException) -> tuple[int, str, str]:
         return 503, (f"база Listik недоступна ({type(exc).__name__}: {exc}); "
                      "соединения переоткрыты — повтори запрос, состояние: listik status"), \
             errors_mod.SERVER_ERROR
-    return 500, f"{type(exc).__name__}: {exc}", errors_mod.INTERNAL
+    # KeyError печатаем без кавычек: `str(KeyError("нет"))` даёт `"'нет'"`.
+    text = errors_mod.message_of(exc) if isinstance(exc, KeyError) else str(exc)
+    return 500, f"{type(exc).__name__}: {text}", errors_mod.INTERNAL
 
 
 def need(body: dict, key: str):
@@ -542,7 +581,7 @@ def handle(method: str, path: str, query: dict, body: dict, authed: bool = False
                     conn, slug, title=body.get("title"), path=body.get("path"),
                     color=body.get("color"), archived=body.get("archived"),
                     kind=body.get("kind"), routing=body.get("routing"))
-            except KeyError as exc:
+            except errors_mod.NotFound as exc:
                 raise api_error(404, exc) from exc
             except ValueError as exc:
                 raise api_error(400, exc) from exc
@@ -554,7 +593,7 @@ def handle(method: str, path: str, query: dict, body: dict, authed: bool = False
                 # поддерживают не все клиенты, а удаление проекта с задачами — редкое
                 force = as_bool(body.get("force", False)) or as_bool(q1("force", False))
                 out = store.remove_project(conn, slug, force=force)
-            except KeyError as exc:
+            except errors_mod.NotFound as exc:
                 raise api_error(404, exc) from exc
             except ValueError as exc:
                 raise api_error(409, exc) from exc
@@ -654,7 +693,7 @@ def handle(method: str, path: str, query: dict, body: dict, authed: bool = False
                 route=route,
                 parent=parent or None,
             )
-        except KeyError as exc:
+        except errors_mod.NotFound as exc:
             # Указан несуществующий parent: задача не создана.
             raise api_error(404, exc) from exc
         except ValueError as exc:
@@ -680,7 +719,7 @@ def handle(method: str, path: str, query: dict, body: dict, authed: bool = False
                 try:
                     out = documents.put_document(conn, tid, kind, content,
                                                  path=body.get("path"), actor=body.get("actor"))
-                except KeyError as exc:
+                except errors_mod.NotFound as exc:
                     raise api_error(404, exc) from exc
                 except ValueError as exc:
                     raise api_error(400, exc) from exc
@@ -689,7 +728,7 @@ def handle(method: str, path: str, query: dict, body: dict, authed: bool = False
             if method == "GET":
                 try:
                     out = documents.get_document(conn, tid, kind)
-                except KeyError as exc:
+                except errors_mod.NotFound as exc:
                     raise api_error(404, exc) from exc
                 except ValueError as exc:
                     raise api_error(400, exc) from exc
@@ -708,7 +747,7 @@ def handle(method: str, path: str, query: dict, body: dict, authed: bool = False
                     if as_bool(q1("deps", True)):
                         task["deps_state"] = deps_mod.ready(conn, tid)
                     return 200, task
-                except KeyError as exc:
+                except errors_mod.NotFound as exc:
                     raise api_error(404, exc) from exc
             if method in ("PATCH", "PUT"):
                 # `route` — то же поле, что колонка `launch_route`: так маршрут
@@ -722,7 +761,7 @@ def handle(method: str, path: str, query: dict, body: dict, authed: bool = False
                     task = store.update_task(conn, tid, actor=body.get("actor"),
                                              harness=body.get("harness"),
                                              note=body.get("note"), **fields)
-                except KeyError as exc:
+                except errors_mod.NotFound as exc:
                     raise api_error(404, exc) from exc
                 except ValueError as exc:
                     # store refuses changes the current state does not allow —
@@ -742,20 +781,23 @@ def handle(method: str, path: str, query: dict, body: dict, authed: bool = False
                     out = documents.context(conn, tid, q1("stage") or "s1-spec",
                                              portion=q1("portion"),
                                              max_chars=as_int(q1("max_chars"), None))
-                except KeyError as exc:
+                except errors_mod.NotFound as exc:
                     raise api_error(404, exc) from exc
                 return 200, out
             try:
                 if action == "claim":
                     out = store.claim(conn, tid, holder=need(body, "holder"),
                                       harness=body.get("harness"), note=body.get("note"),
+                                      actor=body.get("actor"),
                                       force=as_bool(body.get("force", False)))
                 elif action == "heartbeat":
                     out = store.heartbeat(conn, tid, holder=need(body, "holder"),
-                                          note=body.get("note"), harness=body.get("harness"))
+                                          note=body.get("note"), harness=body.get("harness"),
+                                          actor=body.get("actor"))
                 elif action == "stage":
                     out = store.next_stage(conn, tid, holder=body.get("holder"),
                                            note=body.get("note"), harness=body.get("harness"),
+                                           actor=body.get("actor"),
                                            to_stage=body.get("to") or body.get("stage"))
                 elif action == "comment":
                     out = store.add_comment(conn, tid, need(body, "text"),
@@ -786,7 +828,7 @@ def handle(method: str, path: str, query: dict, body: dict, authed: bool = False
                                             note=body.get("note"))
                 else:
                     raise ApiError(404, f"неизвестное действие: {action}")
-            except KeyError as exc:
+            except errors_mod.NotFound as exc:
                 raise api_error(404, exc) from exc
             except ValueError as exc:
                 raise api_error(400, exc) from exc
@@ -840,6 +882,12 @@ def handle(method: str, path: str, query: dict, body: dict, authed: bool = False
             model=cfg["embed"]["model"], verbose=False,
         )
         return 200, res
+
+    if path == "/api/notify" and method == "POST":
+        # Событие от того, кто писал мимо сервера (stdio-MCP): состояние не
+        # меняется, доска просто перечитывает задачу. Токен проверен выше, как у
+        # остальных /api/*.
+        return 200, notify_publish(conn, body)
 
     if path == "/api/events":
         limit = as_int(q1("limit"), 50) or 50

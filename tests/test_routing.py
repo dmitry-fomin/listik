@@ -332,6 +332,12 @@ class TransitionKindEmptyFromStageTests(unittest.TestCase):
     def test_empty_string_from_stage_is_sticky_not_handoff(self) -> None:
         self.assertEqual(config_mod.transition_kind(None, "", "s1-spec"), "sticky")
 
+    def test_same_stage_is_sticky_not_handoff(self) -> None:
+        """Повторная выдача на том же этапе (`stage --to s3-impl --holder dsh`) —
+        не передача: держатель остаётся назначенным, а не снимается молча."""
+        self.assertEqual(config_mod.transition_kind(None, "s3-impl", "s3-impl"), "sticky")
+        self.assertEqual(config_mod.transition_kind(None, "s4-judge", "s4-judge"), "sticky")
+
     def test_defined_transitions_still_work(self) -> None:
         self.assertEqual(config_mod.transition_kind(None, "s1-spec", "s2-review"), "sticky")
         self.assertEqual(config_mod.transition_kind(None, "s2-review", "s3-impl"), "handoff")

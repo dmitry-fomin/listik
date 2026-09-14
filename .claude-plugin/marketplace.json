@@ -10,12 +10,12 @@
       "name": "listik",
       "source": "./plugins/listik",
       "description": "Работа с задачами в Listik: очередь, этапы конвейера, heartbeat, зависимости, вопросы человеку и журнал.",
-      "version": "0.5.0"
+      "version": "0.6.0"
     },
     {
       "name": "feature-pipeline",
       "source": "./plugins/feature-pipeline",
-      "version": "0.14.0",
+      "version": "0.15.0",
       "description": "Конвейер ТЗ → критика → реализация → приёмка: скилы-пресеты, которые ведут задачу через четыре этапа силами субагентов и внешних агентных харнессов."
     }
   ]

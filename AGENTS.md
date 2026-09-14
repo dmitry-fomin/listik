@@ -24,6 +24,15 @@ Listik is the single work queue and journal: `L=~/Projects/Listik/bin/listik`.
 each shell call is a new process, and a leftover value may belong to a parent agent. Without
 `--actor` writes are attributed to `$USER` (the human) and `dep add` creates a hard blocker.
 
+**Who writes to the card.** The one who took the task writes to it: `claim` is the first action,
+`heartbeat` keeps it alive, `comment -k journal` records the result, `comment -k verdict` is the
+judge's own. The orchestrator only issues the card (`stage <id> --holder <next>`), watches that it
+was taken, merges and closes. It does not claim, heartbeat, comment or write verdicts for another
+harness: a card held by a writer who never claimed is indistinguishable from an abandoned run.
+The board tells the two apart — `holder_taken=false` / `not_taken=true` means «выдана, но не
+взята» (a holder was assigned, its own `claim` never came; after `board.assign_warn_minutes`,
+15 min by default, the card shows up in «нужен ты»).
+
 ### Rules
 
 1. Start with `ready`, `search`, then `show <id>`.
@@ -47,10 +56,13 @@ on an open blocker, another holder, or a busy worktree; `--force` can't take ano
 
 - **handoff** (`s2→s3`, `s4→done`): the server clears the holder; next harness does `ready` → `claim`.
 - **sticky** (`s1→s2`, `s3→s4`): the holder stays. Same session continues as is; to pass to another
-  harness run `stage <id> --holder <next>`, and the receiver runs `claim <id> --holder <self>`
-  (idempotent), then `heartbeat`.
-- **FAIL verdict return** keeps the holder: a judge holding under its own name does `release <id>`
-  so the implementer can `claim`; in a single session just continue.
+  harness run `stage <id> --holder <next>` — this only issues the card (it becomes «выдана, но не
+  взята», `holder_taken=false`), the receiver starts with `claim <id> --holder <self>` (idempotent:
+  the holder is already there, but the first claim of the holder itself is written to the history
+  and turns the card into «взята»), then `heartbeat`.
+- **FAIL verdict return** keeps the holder: the judge claims `s4-judge` under its own name and writes
+  the verdict itself; if it held the card under another name it does `release <id>` so the implementer
+  can `claim`; in a single session just continue.
 
 ### Stages
 
@@ -64,14 +76,15 @@ spec, acceptance checklist, one child card per portion (`new "…порция b"
 `comment -k review` (and `review_path` if set). Next: `stage` → `s3-impl` (handoff).
 
 **s3-impl** — read `context <id> --stage s3-impl --portion "<portion>"` and always `show <id>`
-(answers to questions; after a FAIL return the last verdict is your list of fixes). Edit code in the card's
-worktree/branch, run checks, log in `comment -k journal`. Don't commit. Next: `stage` → `s4-judge`
-(sticky; other judge harness: `stage <id> --holder <judge>`).
+(answers to questions; after a FAIL return the last verdict is your list of fixes). The first action is
+`claim <id> --holder <self>`, then `heartbeat` every 10–15 min while working. Edit code in the card's
+worktree/branch, run checks, log in `comment -k journal` (progress and result). Don't commit. Next:
+`stage` → `s4-judge` (sticky; other judge harness: `stage <id> --holder <judge>`).
 
-**s4-judge** — read `context <id> --stage s4-judge` and the checklist; if the card arrives with
-another holder, first `claim <id> --holder <self>`. Never edit code. Write `comment -k verdict`
-whose first line is exactly `VERDICT: PASS` or `VERDICT: FAIL` — the server reads only that line and
-rejects any other format.
+**s4-judge** — the judge takes the card itself (`claim <id> --holder <self>` if it arrived with another
+holder), reads `context <id> --stage s4-judge` and the checklist, and never edits code. Write
+`comment -k verdict` whose first line is exactly `VERDICT: PASS` or `VERDICT: FAIL` — the server reads
+only that line and rejects any other format.
 - PASS: nothing else is required. Commit, then `done <id> -r "…"`.
 - FAIL: below the first line list the fixes, one per line: checklist item — what is wrong —
   file:line — what to do. This list is all the implementer gets. The server returns the card to
@@ -93,7 +106,7 @@ $L dep confirm <id> <blocker>          # human confirms
 $L claim <id> --holder <who>
 $L heartbeat <id> --holder <who> --note "what I'm doing"
 $L stage <id>                          # next stage
-$L stage <id> --holder <next>          # sticky pass to another harness
+$L stage <id> --holder <next>          # sticky pass: issues the card, the receiver claims it
 $L comment <id> "text" -k journal|review
 $L comment <id> "VERDICT: PASS" -k verdict
 $L comment <id> $'VERDICT: FAIL\n1. <item> — <problem> — <file:line> — <fix>' -k verdict
@@ -104,7 +117,7 @@ $L done <id> -r "short verifiable result"
 ```
 
 Cold start: everything needed is in `show <id>` (holder, stage, Q&A, journal, verdicts,
-`spec_path`, worktree/branch) and `context` — no chat history required.
+`spec_path`, worktree/branch, `holder_taken`/`not_taken`) and `context` — no chat history required.
 <!-- END LISTIK -->
 
 ## Зависимости

@@ -356,10 +356,14 @@ watch(
                     <template #actions>
                       <UiBadge v-if="project.path_exists === false" tone="warning" size="sm">нет каталога</UiBadge>
                       <UiTooltip text="Вернуть на доску">
+                        <!-- UiSwitch отдаёт новое значение тумблера: здесь он включён,
+                             клик присылает `false` — это и есть целевое `archived`.
+                             Инвертировать его нельзя: вернуть проект было невозможно
+                             (listik-54be). -->
                         <UiSwitch
                           :model-value="true"
                           v-bind="{ 'aria-label': `Вернуть проект ${project.slug}` }"
-                          @update:model-value="(value: boolean) => toggleArchived(project, !value)"
+                          @update:model-value="(value: boolean) => toggleArchived(project, value)"
                         />
                       </UiTooltip>
                       <UiButton

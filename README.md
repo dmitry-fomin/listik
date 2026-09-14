@@ -565,7 +565,7 @@ Listik можно держать на одном сервере, а агенто
 
 6. **Что остаётся только локально:** CLI `bin/listik` (удалённого режима CLI нет),
    администрирование проектов и routing, удаление задач, импорты (
-   `import-writerllm`), пересчёт векторов (`listik embed`) и `listik init-projects`.
+   `import-from-bd`), пересчёт векторов (`listik embed`) и `listik init-projects`.
 
 ## Резервные копии и восстановление базы
 
@@ -613,7 +613,7 @@ inode, фоновые потоки начинают писать `database disk 
 | Связи | `dep add\|confirm\|rm\|tree\|cycles\|suggest\|link\|suggested`, `blocked`, `tree`, `cycles` |
 | Поиск | `search`, `memory`, `remember`, `embed` |
 | Проекты | `projects [--add\|--archive\|--unarchive\|--remove\|--routing]`, `actors`, `init-projects` |
-| Импорт | `import-writerllm` |
+| Импорт | `import-from-bd` |
 
 `listik <команда> --help` — все флаги. Полный контракт данных и HTTP API — [API.md](API.md).
 

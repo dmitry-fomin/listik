@@ -432,7 +432,7 @@ def _diff_display(value: Any) -> str:
 
 
 def _journal_text(diff: dict[str, tuple]) -> str:
-    lines = ["[import-writerllm] update:"]
+    lines = ["[import-from-bd] update:"]
     for field, (old, new) in diff.items():
         lines.append(f"{field}: {_diff_display(old)} → {_diff_display(new)}")
     return "\n".join(lines)

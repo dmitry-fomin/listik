@@ -105,7 +105,7 @@ Database migrations exist as two parallel mechanisms — don't confuse them:
   inserts/updates the `<!-- BEGIN LISTIK --> / <!-- END LISTIK -->` block in *other* projects'
   `AGENTS.md`/`CLAUDE.md` (`listik init-projects`) so those projects' agents know to use Listik. The block body is read from `docs/harness-protocol.md` (`migrate.body()`) —
   change the protocol there, not in `migrate.py`.
-- `listik/import_writerllm.py` (CLI: `listik import-writerllm`) — idempotent importer for the
+- `listik/import_writerllm.py` (CLI: `listik import-from-bd`) — idempotent importer for the
   JSON/JSONL produced by `bd export` on WriterLLM's dolt-backed tracker; idempotency key is
   `(source, project, external_ref)`, `--update` writes a diff to the journal; tests in
   `tests/test_import_writerllm.py`.

@@ -290,7 +290,7 @@ class ImportWriterllmUpdateTests(TempDbTestCase):
         self.assertFalse(a2["close_reason"])
         journal_a2 = [c for c in a2["comments"] if c["kind"] == "journal"]
         self.assertEqual(len(journal_a2), 1)
-        self.assertTrue(journal_a2[0]["text"].startswith("[import-writerllm] update:"))
+        self.assertTrue(journal_a2[0]["text"].startswith("[import-from-bd] update:"))
         self.assertIn("title:", journal_a2[0]["text"])
         self.assertNotIn("status:", journal_a2[0]["text"])
 
@@ -381,7 +381,7 @@ class ImportWriterllmCliTests(unittest.TestCase):
     def _run(self, *args: str) -> subprocess.CompletedProcess:
         env = {**os.environ, "LISTIK_DB": str(self.db_path)}
         return subprocess.run(
-            [str(self.bin_listik), "import-writerllm", *args],
+            [str(self.bin_listik), "import-from-bd", *args],
             cwd=self.repo_root, env=env, capture_output=True, text=True,
         )
 
@@ -413,7 +413,7 @@ class ImportWriterllmCliTests(unittest.TestCase):
     def test_24_export_v2_jsonl_on_a_clean_db_exits_0(self) -> None:
         clean_db = pathlib.Path(self.tmp_dir.name) / "clean.db"
         result = subprocess.run(
-            [str(self.bin_listik), "import-writerllm",
+            [str(self.bin_listik), "import-from-bd",
              "--source", "tests/fixtures/writerllm/export-v2.jsonl"],
             cwd=self.repo_root,
             env={**os.environ, "LISTIK_DB": str(clean_db)},

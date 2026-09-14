@@ -534,7 +534,7 @@ def cmd_init_projects(args) -> int:
 
 
 
-def cmd_import_writerllm(args) -> int:
+def cmd_import_from_bd(args) -> int:
     from listik import import_writerllm
     conn = db.init()
     report = import_writerllm.import_file(conn, args.source, project=args.project,
@@ -1484,7 +1484,7 @@ def build_parser() -> argparse.ArgumentParser:
     sp.add_argument("--remove", action="store_true", help="убрать блок Listik из файлов")
     sp.add_argument("-q", "--quiet", action="store_true")
 
-    sp = add("import-writerllm", cmd_import_writerllm,
+    sp = add("import-from-bd", cmd_import_from_bd,
              help="идемпотентный импорт WriterLLM (работает с базой напрямую, --local не нужен)",
              description="Пишет в SQLite напрямую, как все импорты: запущенный сервер и --local "
                           "не нужны; HTTP-эндпоинта и MCP-инструмента у импорта нет.")

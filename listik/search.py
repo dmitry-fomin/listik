@@ -198,7 +198,7 @@ def vector(conn: sqlite3.Connection, query: str, limit: int,
 
 def search_memories(conn: sqlite3.Connection, query: str, *, limit: int = 10,
                     project: str | None = None, mode: str = "hybrid") -> list[dict]:
-    """Поиск по долговременной памяти: заметки, не привязанные к задаче (аналог bd remember)."""
+    """Поиск по долговременной памяти: заметки, не привязанные к задаче."""
     scores: dict[str, float] = {}
     expr = textutil.fts_query(query)
     rows: list = []

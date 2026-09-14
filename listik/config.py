@@ -37,7 +37,6 @@ DEFAULTS: dict[str, Any] = {
     # в чужой config.toml `[assistant]` с пустым api_key. Дефолты помощника
     # (base_url, model) живут в `assistant.settings()`.
     "import": {
-        # Откуда разово забираем задачи из старых .beads
         "projects_root": str(paths.PROJECTS_ROOT),
         "max_depth": 6,
     },

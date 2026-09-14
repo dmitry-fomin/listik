@@ -16,7 +16,7 @@ CONFIG_PATH = Path(os.environ.get("LISTIK_CONFIG", ROOT_DIR / "config.toml"))
 LOG_PATH = Path(os.environ.get("LISTIK_LOG", ROOT_DIR / "listik.log"))
 WEB_DIR = ROOT_DIR / "web"
 
-# Корень, внутри которого ищутся проекты с .beads
+# Корень, внутри которого ищутся проекты
 PROJECTS_ROOT = Path(os.environ.get("LISTIK_PROJECTS_ROOT", Path.home() / "Projects"))
 
 # Ollama

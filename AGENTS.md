@@ -1,20 +1,12 @@
 ## Что это
 
-`Listik` (`~/Projects/Listik/bin/listik`) — единственный трекер задач по всем проектам,
-вместо `bd`/beads. Здесь же долговременная память и гибридный поиск
+`Listik` (`~/Projects/Listik/bin/listik`) — единственный трекер задач по всем проектам.
+Здесь же долговременная память и гибридный поиск
 (полнотекст + векторы) по всей истории задач.
 
 Полный контракт данных — `API.md`, ежедневные команды — `README.md`.
 
 <!-- BEGIN LISTIK -->
-## Трекер задач — Listik, а не beads
-
-Задачи ведутся в Listik: `~/Projects/Listik/bin/listik`. Каталог `.beads` в проекте —
-архив: его никто не обновляет, писать туда нельзя (новые задачи должны попадать на общую
-доску, а не в мёртвый трекер).
-
-Полные правила: `~/Projects/Listik/AGENTS.md`, контракт данных: `~/Projects/Listik/API.md`.
-
 ## Listik — harness protocol
 
 Listik is the single work queue and journal: `L=~/Projects/Listik/bin/listik`.
@@ -154,8 +146,6 @@ Cold start: everything needed is in `show <id>` (holder, stage, Q&A, journal, ve
 - `--json` есть у всех команд — для машинной обработки.
 - `listik` в MCP: `claude mcp add listik -- /Users/dmitry.fomin/Projects/Listik/bin/listik mcp`
   (18 инструментов, имена `listik_*`).
-- Импортированные из beads задачи имеют `source=beads` и старое ID в `external_ref`;
-  ссылки вида «см. zoloto585-search-x3l» продолжают работать.
 
 ## UI-кит @zoloto585/facet
 

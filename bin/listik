@@ -525,31 +525,8 @@ def cmd_init_projects(args) -> int:
     print("\nдобавлено: {added}, обновлено: {updated}, без изменений: {unchanged}, "
           "удалено блоков: {removed}, пропущено: {skipped}".format(**{
               k: len(v) for k, v in report.items()}))
-    if not args.dry_run and not args.remove:
-        print("\nДальше по каждому проекту: выключить авто-экспорт beads, чтобы репозиторий "
-              "перестал коммитить .beads/issues.jsonl — см. docs/beads-migration.md")
     return 0
 
-
-def cmd_import(args) -> int:
-    from listik import import_beads
-    conn = db.init()
-    print(f"ищу .beads в {paths.PROJECTS_ROOT} …")
-    report = import_beads.import_all(conn, only=args.only, dry_run=args.dry_run,
-                                     verbose=not args.quiet)
-    if report["skipped_duplicates"]:
-        print("\nдубликаты трекеров (пропущены):")
-        for d in report["skipped_duplicates"]:
-            print(f"  ! {d['slug']} — тот же префикс {d['prefix']}, что и у {d['winner']}; "
-                  f"задач в копии: {d['issues']}")
-    print(f"\nпроектов: {report['projects']}, задач: {report['tasks']}, "
-          f"комментариев: {report['comments']}, связей: {report['deps']}, "
-          f"памятей beads: {report['memories']}"
-          + (f", пропущено уже импортированных: {report['skipped_tasks']}"
-             if report["skipped_tasks"] else ""))
-    if report["dry_run"]:
-        print("(dry-run: ничего не записано)")
-    return 0
 
 
 def cmd_import_writerllm(args) -> int:
@@ -941,7 +918,7 @@ def cmd_memory(args) -> int:
         print(json.dumps([dict(r) for r in rows], ensure_ascii=False, indent=2))
         return 0
     if not rows:
-        print("памяти пока нет (появятся из beads-импорта или командой listik remember)")
+        print("памяти пока нет (появятся командой listik remember)")
         return 0
     for r in rows:
         body = " ".join((r["body"] or "").split())
@@ -1502,14 +1479,9 @@ def build_parser() -> argparse.ArgumentParser:
     sp.add_argument("--remove", action="store_true", help="убрать блок Listik из файлов")
     sp.add_argument("-q", "--quiet", action="store_true")
 
-    sp = add("import-beads", cmd_import, help="разовый импорт из старых .beads")
-    sp.add_argument("--dry-run", action="store_true")
-    sp.add_argument("--only", help="подстрока slug проекта")
-    sp.add_argument("-q", "--quiet", action="store_true")
-
     sp = add("import-writerllm", cmd_import_writerllm,
              help="идемпотентный импорт WriterLLM (работает с базой напрямую, --local не нужен)",
-             description="Пишет в SQLite напрямую, как import-beads: запущенный сервер и --local "
+             description="Пишет в SQLite напрямую, как все импорты: запущенный сервер и --local "
                           "не нужны; HTTP-эндпоинта и MCP-инструмента у импорта нет.")
     sp.add_argument("--source", required=True,
                     help="JSONL из bd export или JSON-массив из bd list --json (файл; каталог не принимается)")

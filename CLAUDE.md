@@ -4,7 +4,7 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 ## What this is
 
-Listik replaces `bd` (beads): one server, one SQLite database, one API — a task tracker plus
+Listik: one server, one SQLite database, one API — a task tracker plus
 long-term memory with hybrid (full-text + vector) search, used across all of Дмитрий's projects.
 `bin/listik` is both the CLI and the API client. `README.md` has the full command reference;
 `API.md` is the authoritative data/endpoint contract — read it before changing task/comment/dep
@@ -101,14 +101,10 @@ Database migrations exist as two parallel mechanisms — don't confuse them:
   `POST /api/notify` in the background; over HTTP the server publishes the event itself).
 - `listik/migrate.py` — despite the name, this is unrelated to database migrations. It
   inserts/updates the `<!-- BEGIN LISTIK --> / <!-- END LISTIK -->` block in *other* projects'
-  `AGENTS.md`/`CLAUDE.md` (`listik init-projects`) so those projects' agents know to use Listik
-  instead of `bd`. The block body is read from `docs/harness-protocol.md` (`migrate.body()`) —
+  `AGENTS.md`/`CLAUDE.md` (`listik init-projects`) so those projects' agents know to use Listik. The block body is read from `docs/harness-protocol.md` (`migrate.body()`) —
   change the protocol there, not in `migrate.py`.
-- `listik/import_beads.py` — one-time importer walking `.beads/issues.jsonl` under `~/Projects`;
-  imported tasks carry `source=beads` and keep their old ID in `external_ref`.
-  `listik/import_writerllm.py` (CLI: `listik import-writerllm`) — idempotent importer for the
-  JSON/JSONL produced by `bd export` on WriterLLM's dolt-backed beads tracker (outside
-  `~/Projects`, so `import_beads` can't see it); idempotency key is
+- `listik/import_writerllm.py` (CLI: `listik import-writerllm`) — idempotent importer for the
+  JSON/JSONL produced by `bd export` on WriterLLM's dolt-backed tracker; idempotency key is
   `(source, project, external_ref)`, `--update` writes a diff to the journal; tests in
   `tests/test_import_writerllm.py`.
 - `web/` — the board UI. Every `Ui*` component must come from `@zoloto585/facet`
@@ -130,14 +126,6 @@ Work on this codebase is itself queued in Listik (project `listik`). Read the ta
 committed (see `.gitignore`).
 
 <!-- BEGIN LISTIK -->
-## Трекер задач — Listik, а не beads
-
-Задачи ведутся в Listik: `~/Projects/Listik/bin/listik`. Каталог `.beads` в проекте —
-архив: его никто не обновляет, писать туда нельзя (новые задачи должны попадать на общую
-доску, а не в мёртвый трекер).
-
-Полные правила: `~/Projects/Listik/AGENTS.md`, контракт данных: `~/Projects/Listik/API.md`.
-
 ## Listik — harness protocol
 
 Listik is the single work queue and journal: `L=~/Projects/Listik/bin/listik`.

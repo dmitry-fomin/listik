@@ -716,7 +716,7 @@ function normalizeTaskId(id: string): string {
 
 /**
  * Карточка задачи одним запросом. Регистр id: канонические id строчные, но в
- * связях мог остаться id из импорта (beads/WriterLLM) с заглавными буквами —
+ * связях мог остаться id из импорта (WriterLLM) с заглавными буквами —
  * сервер ищет задачу по точному id, поэтому 404 повторяем в нижнем регистре.
  */
 async function fetchDetail(id: string): Promise<TaskDetail> {

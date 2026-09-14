@@ -1,13 +1,10 @@
 """Перевод проектов на Listik: блок правил в AGENTS.md/CLAUDE.md каждого проекта.
 
-Пока в проекте написано «используй bd», агент продолжит писать задачи в мёртвый трекер,
-и на доске их не будет видно. Блок вставляется между маркерами, поэтому:
+Блок вставляется между маркерами, поэтому:
 
 * повторный запуск обновляет только этот блок и ничего не дублирует;
 * чужой текст в файле остаётся как есть;
 * `--remove` убирает блок (откат перехода).
-
-Ничего, кроме инструкций, скрипт не меняет: `.beads` и хуки проекта не трогает.
 """
 from __future__ import annotations
 
@@ -38,17 +35,6 @@ def _find_block(text: str) -> tuple[int, int] | None:
 
 TARGETS = ("AGENTS.md", "CLAUDE.md")
 
-INTRO = """## Трекер задач — Listik, а не beads
-
-Задачи ведутся в Listik: `~/Projects/Listik/bin/listik`. Каталог `.beads` в проекте —
-архив: его никто не обновляет, писать туда нельзя (новые задачи должны попадать на общую
-доску, а не в мёртвый трекер).
-
-Полные правила: `~/Projects/Listik/AGENTS.md`, контракт данных: `~/Projects/Listik/API.md`.
-
-"""
-
-
 def _compute_body() -> str:
     protocol_path = paths.ROOT_DIR / "docs" / "harness-protocol.md"
     if not protocol_path.exists():
@@ -57,7 +43,7 @@ def _compute_body() -> str:
             "блок правил без протокола ставить нельзя"
         )
     protocol = protocol_path.read_text(encoding="utf-8")
-    return INTRO + protocol
+    return protocol
 
 
 def body() -> str:

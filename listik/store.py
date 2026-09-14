@@ -1123,7 +1123,7 @@ def row_to_task(conn: sqlite3.Connection, row: sqlite3.Row) -> dict:
     # поэтому в «брошенные» они не попадают: иначе весь бэклог висит в линии «нужен ты».
     running = row["status"] in ("in_progress", "review")
     # «в работе», но держателя нет — типичный след брошенной задачи (и всех
-    # импортированных из beads: там статус ставили руками и не снимали).
+    # импортированных: там статус ставили руками и не снимали).
     orphan = bool(running and not row["holder"])
     missing_heartbeat = bool(running and row["holder"] and holder_hours is None)
     idle_hours = holder_hours if holder_hours is not None else (
@@ -1658,7 +1658,7 @@ def norm_slug(value: str) -> str:
     """Slug проекта из произвольной строки.
 
     Буквы (в том числе кириллица) и «/» сохраняются: проекты лежат категориями
-    (`Zoloto585/zoloto585-search`), и такие slug'и уже есть в базе с импорта beads.
+    (`Zoloto585/zoloto585-search`), и такие slug'и уже есть в базе с импорта.
     """
     slug = re.sub(r"[^0-9a-zA-Zа-яА-Я_\-/]+", "-", str(value).strip()).strip("-/")
     return re.sub(r"/{2,}", "/", slug)
@@ -2026,7 +2026,7 @@ def recompute_blocked(conn: sqlite3.Connection) -> int:
 
 def remember(conn: sqlite3.Connection, text: str, *, key: str | None = None,
              project: str | None = None) -> dict:
-    """Записать заметку в долговременную память (аналог `bd remember`).
+    """Записать заметку в долговременную память.
 
     Ключ по умолчанию — `note/<unix-время>`, проект — `personal`. Повторная запись
     с тем же ключом перезаписывает тело заметки и её строку в полнотекстовом индексе.

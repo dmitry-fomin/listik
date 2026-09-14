@@ -9,7 +9,6 @@ from __future__ import annotations
 import json
 from pathlib import Path
 
-from listik import import_beads
 from listik import import_writerllm
 from listik import store
 from tests.helpers import FIXTURES_DIR, TempDbTestCase
@@ -43,33 +42,3 @@ class WriterllmSlugCaseTests(ProjectSlugCaseAssertions):
         self.assertEqual(second["skipped"], first["created"])
         self.assertEqual(self.project_slugs(), ["writerllm"])
         self.assertEqual(self.task_projects(), ["writerllm"])
-
-
-class BeadsSlugCaseTests(ProjectSlugCaseAssertions):
-    def beads_root(self) -> Path:
-        root = self.tmp_path / "projects"
-        beads = root / "Sub" / "Repo" / ".beads"
-        beads.mkdir(parents=True)
-        issue = {"id": "sr-1", "title": "Задача из beads", "status": "open", "priority": 2,
-                 "issue_type": "task", "created_at": "2024-01-01T00:00:00Z",
-                 "updated_at": "2024-01-02T00:00:00Z"}
-        (beads / "issues.jsonl").write_text(
-            json.dumps(issue, ensure_ascii=False) + "\n", encoding="utf-8")
-        return root
-
-    def test_project_with_other_case_is_reused(self) -> None:
-        root = self.beads_root()
-        store.add_project(self.conn, slug="sub/repo")
-        report = import_beads.import_all(self.conn, root=root, verbose=False)
-        self.assertEqual(report["tasks"], 1)
-        self.assertEqual(report["per_project"][0]["slug"], "sub/repo")
-        self.assertEqual(self.project_slugs(), ["sub/repo"])
-        self.assertEqual(self.task_projects(), ["sub/repo"])
-
-    def test_empty_tracker_with_other_case_is_not_a_duplicate(self) -> None:
-        root = self.tmp_path / "projects"
-        (root / "Sub" / "Repo" / ".beads").mkdir(parents=True)
-        store.add_project(self.conn, slug="sub/repo")
-        report = import_beads.import_all(self.conn, root=root, verbose=False)
-        self.assertEqual(report["projects"], 0)
-        self.assertEqual(self.project_slugs(), ["sub/repo"])

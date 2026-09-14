@@ -2,7 +2,7 @@
 
 ## Что это
 
-Listik — самостоятельный трекер задач вместо `bd` (beads). Один сервер, одна база SQLite,
+Listik — самостоятельный трекер задач. Один сервер, одна база SQLite,
 один API. Все агенты (dsh, grok, claude, codex) и доска работают с ним же.
 
 - База: `listik.db` в корне Listik
@@ -70,7 +70,7 @@ Listik — самостоятельный трекер задач вместо `
 | `launch_finished_at` | str? | когда процесс завершился или когда слежение потеряно |
 | `launch_error` | str? | почему не запустили; `null` — запуск был или его не пытались |
 | `source` | str | `native` \| `beads` \| `writerllm` (импортированные задачи) |
-| `external_ref` | str? | старое ID в beads/WriterLLM |
+| `external_ref` | str? | старое ID во внешнем трекере |
 | `created_at`/`updated_at`/`started_at`/`closed_at` | str | ISO-8601 UTC |
 | `stage_title`/`status_title`/`holder_title`/`assignee_title`/`holder_age`/`stage_age`/`updated_age` | str | готовые к показу подписи |
 
@@ -448,7 +448,7 @@ id внутри файлового пути (`docs/specs/<id>.md`, `/wt/<id>/lis
 чтения событий не создают — в том числе `POST /api/tasks/{id}/deps` без
 `depends_on` (это граф зависимостей), `…/ready` и `…/mentions`. Остальные записи мимо
 сервера — `listik --local`, фолбэк CLI при недоступном сервере,
-`listik import-beads`/`import-writerllm`, `listik remember` — событий не шлют: `publish`
+`listik import-writerllm`, `listik remember` — событий не шлют: `publish`
 живёт в процессе сервера, поэтому доска увидит такую запись только при следующем событии,
 ручном обновлении или перезагрузке (listik-1p86). CLI не молчит об этом: пишущая команда
 с `--local` при живом сервере печатает в stderr «доска не получит событие» (чтения молчат,
@@ -593,7 +593,7 @@ dropped_chunks, reason`), `reasons[]` (по одному пункту на ка�
 | POST | `/api/assistant/suggest` | `field`(обязателен: `title`\|`description`\|`acceptance`\|`spec_path`), `text`, `context{type,priority,project,title,description,acceptance,spec_path}` | помощник DeepSeek: переписать поле, дописать критерии приёмки, оценить когнитивную сложность и предложить маршрут из `routes.json`; ключ остаётся на сервере, предложение ничего не меняет само (см. «Помощник DeepSeek») |
 
 Slug проекта — ключ, и тот, кто проект **создаёт** (`POST /api/projects`, импортёры
-`listik import-beads` и `listik import-writerllm`), сверяется с существующими slug'ами без учёта
+`listik import-writerllm`), сверяется с существующими slug'ами без учёта
 регистра и переиспользует найденный: и строка проекта, и `tasks.project` ложатся на прежнее
 написание, поэтому проектов-дублей `writerllm`/`WriterLLM` и задач с разным регистром `project`
 не появляется. Правка и удаление (`PATCH`/`DELETE /api/projects/{slug}`) по-прежнему ищут slug
@@ -729,7 +729,7 @@ MCP по stdio (`bin/listik mcp`) пишет в базу мимо сервера
 **Чего через MCP нет.** Администрирование намеренно оставлено только локальному CLI на самой
 машине: проекты — добавление на доску (`POST /api/projects`), правка и скрытие
 (`PATCH /api/projects/{slug}`, `archived=1`) и удаление (`DELETE /api/projects/{slug}`) — вместе с
-их routing; удаление задач (`DELETE /api/tasks/{id}`); импорты (`listik import-beads`,
+их routing; удаление задач (`DELETE /api/tasks/{id}`); импорты (
 `listik import-writerllm`); пересчёт векторов (`POST /api/embed`, `listik embed`); серверные
 команды `listik serve`, `listik stop`, `listik status`, `listik init` и `listik token`; раскладка
 блока протокола по чужим `AGENTS.md`/`CLAUDE.md` (`listik init-projects`). Из проектов через MCP
@@ -792,7 +792,6 @@ MCP по stdio (`bin/listik mcp`) пишет в базу мимо сервера
 
 ```
 listik serve                       # поднять сервер и доску
-listik import-beads [--dry-run]    # разовый импорт из старых .beads; проект берётся с доски без учёта регистра slug
 listik import-writerllm --source <path> [--project writerllm] [--dry-run] [--update]   # импорт выгрузки bd export WriterLLM, идемпотентно; --project так же сверяется с доской без учёта регистра
 listik new "Заголовок" -p project --type bug --priority 1 --actor agent:dsh
 listik new "Заголовок" -p project --autostart --route low-pipeline   # сразу запустить по маршруту (--autostart без --route — ошибка)

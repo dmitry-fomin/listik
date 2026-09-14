@@ -477,7 +477,7 @@ model = "deepseek-flash"                  # необязательно
 - **Listik на другом сервере** — CLI не нужен: подключите удалённый MCP (см. «Listik на другом
   сервере»), и скил будет работать через инструменты `listik_*`.
 
-### MCP, правила в проектах, переход с beads
+### MCP, правила в проектах
 
 **MCP** — 30 инструментов `listik_*`: ready, show, claim, heartbeat, stage, comment, needs_owner,
 done, release, deps, search, memory, put_document/get_document и др.; полный список с параметрами —
@@ -499,10 +499,6 @@ Listik на другом сервере — MCP по HTTP, см. «Listik на �
 относительный путь CLI разрешает сам (в своём cwd), а каталог внутри git-репозитория приводит к
 его корню и печатает, куда именно добавлен проект.
 
-**Переход с beads.** `listik import-beads` разово переносит `.beads`-трекеры из каталога проектов
-(старый ID сохраняется в `external_ref`), затем — `docs/beads-migration.md`. Проект берётся с
-доски без учёта регистра slug: каталог `Sub/Repo` при уже стоящем `sub/repo` не заводит второй
-проект, а задачи ложатся в существующий (так же ведёт себя `listik import-writerllm --project`).
 
 ## Listik на другом сервере
 
@@ -560,7 +556,7 @@ Listik можно держать на одном сервере, а агенто
    (см. [API.md](API.md), «Документы и чанки»).
 
 6. **Что остаётся только локально:** CLI `bin/listik` (удалённого режима CLI нет),
-   администрирование проектов и routing, удаление задач, импорты (`import-beads`,
+   администрирование проектов и routing, удаление задач, импорты (
    `import-writerllm`), пересчёт векторов (`listik embed`) и `listik init-projects`.
 
 ## Резервные копии и восстановление базы
@@ -609,7 +605,7 @@ inode, фоновые потоки начинают писать `database disk 
 | Связи | `dep add\|confirm\|rm\|tree\|cycles\|suggest\|link\|suggested`, `blocked`, `tree`, `cycles` |
 | Поиск | `search`, `memory`, `remember`, `embed` |
 | Проекты | `projects [--add\|--archive\|--unarchive\|--remove\|--routing]`, `actors`, `init-projects` |
-| Импорт | `import-beads`, `import-writerllm` |
+| Импорт | `import-writerllm` |
 
 `listik <команда> --help` — все флаги. Полный контракт данных и HTTP API — [API.md](API.md).
 

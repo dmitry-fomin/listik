@@ -1109,6 +1109,35 @@ def holder_claim_state(conn: sqlite3.Connection, task_id: str, holder: str | Non
     return out
 
 
+def _open_children_activity(conn: sqlite3.Connection, task_id: str) -> tuple[datetime | None, str | None]:
+    """Самая свежая метка простоя среди открытых прямых детей задачи.
+
+    Ребёнок — строка `deps(dep_type='parent-child', depends_on=task_id)`, его
+    метка — `holder_at`, иначе `started_at`; ребёнок без обеих меток ничего не
+    даёт. Смотрятся только прямые дети (один нерекурсивный запрос; внуки и
+    другие типы связей не важны), статус ребёнка — из `OPEN_STATUSES`.
+    Возвращает метку и как `datetime` в UTC, и как исходную строку.
+    """
+    placeholders = ", ".join("?" for _ in OPEN_STATUSES)
+    rows = conn.execute(
+        "SELECT t.holder_at, t.started_at FROM deps d JOIN tasks t ON t.id = d.issue_id "
+        f"WHERE d.dep_type = 'parent-child' AND d.depends_on = ? "
+        f"AND t.status IN ({placeholders})",
+        (task_id, *OPEN_STATUSES)).fetchall()
+    latest_ts: datetime | None = None
+    latest_label: str | None = None
+    for r in rows:
+        label = r["holder_at"] or r["started_at"]
+        ts = parse_ts(label)
+        if ts is None:
+            continue
+        if ts.tzinfo is None:
+            ts = ts.replace(tzinfo=timezone.utc)
+        if latest_ts is None or ts > latest_ts:
+            latest_ts, latest_label = ts, label
+    return latest_ts, latest_label
+
+
 def row_to_task(conn: sqlite3.Connection, row: sqlite3.Row) -> dict:
     cfg = config_mod.load()
     warn = float((cfg.get("board") or {}).get("wip_warn_hours", 8))
@@ -1135,6 +1164,19 @@ def row_to_task(conn: sqlite3.Connection, row: sqlite3.Row) -> dict:
     missing_heartbeat = bool(running and row["holder"] and holder_hours is None)
     idle_hours = holder_hours if holder_hours is not None else (
         hours_since(row["started_at"]) if running else None)
+    idle_age = human_age(row["holder_at"] or row["started_at"] or row["updated_at"])
+    # Открытая карточка «молчит» только пока молчат её открытые прямые дети:
+    # свежая метка ребёнка сдвигает её простой вперёд. Детей слушают лишь тогда,
+    # когда у самой карточки есть своя метка простоя (`idle_hours is not None`),
+    # — закрытая или открытая без метки считается ровно как раньше (API.md).
+    if open_now and idle_hours is not None:
+        own_ts = parse_ts(row["holder_at"]) or (parse_ts(row["started_at"]) if running else None)
+        if own_ts is not None and own_ts.tzinfo is None:
+            own_ts = own_ts.replace(tzinfo=timezone.utc)
+        child_ts, child_label = _open_children_activity(conn, row["id"])
+        if own_ts is not None and child_ts is not None and child_ts > own_ts:
+            idle_hours = hours_since(child_label)
+            idle_age = human_age(child_label)
     stale = bool(running and not orphan and idle_hours is not None and idle_hours > stale_h)
     abandoned = orphan or missing_heartbeat
     # «Выдана, но не взята»: держателя поставил оркестратор (`stage --holder`), а
@@ -1180,10 +1222,11 @@ def row_to_task(conn: sqlite3.Connection, row: sqlite3.Row) -> dict:
         "not_taken": not_taken,
         "not_taken_warn": bool(not_taken and assigned_hours is not None
                                and assigned_hours > assign_warn_min / 60.0),
-        # сколько задача стоит без движения: у брошенной — от последнего heartbeat,
-        # у задачи «в работе без держателя» — от начала работы, иначе — от обновления
+        # сколько задача стоит без движения: от последнего heartbeat, иначе —
+        # от начала работы; у открытой карточки — от свежайшей метки её открытых
+        # прямых детей, если она новее собственной
         "idle_hours": idle_hours,
-        "idle_age": human_age(row["holder_at"] or row["started_at"] or row["updated_at"]),
+        "idle_age": idle_age,
         "stage_at": row["stage_at"],
         "stage_age": human_age(row["stage_at"]),
         "stage_hours": stage_hours,

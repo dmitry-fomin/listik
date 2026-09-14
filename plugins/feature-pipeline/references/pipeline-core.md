@@ -275,7 +275,10 @@ git branch -d pipeline-<трек>
 
 `W` — дерево, из которого он собирается: в треке это дерево трека, и `git` без `-C "$W"` вернёт
 пустой дифф основного дерева, то есть приёмку по пустому месту и коммит несделанной порции.
-`P='.'` означает корень `$W`. А `D` считается **без** `-C`, намеренно: дамп живёт в git-каталоге
+`P` — ровно один pathspec: несколько путей в одной строковой переменной zsh не делит на слова, и в пакет
+уезжает пустое место. Путей несколько — массив `PATHS=(<путь1> <путь2>)`, а в четырёх командах `git` ниже
+вместо `"$P"` стоит `"${PATHS[@]}"`; `PATHS=(.)` — корень `$W`, и в bash, и в zsh это одно и то же.
+А `D` считается **без** `-C`, намеренно: дамп живёт в git-каталоге
 основного дерева, потому что каталог трека уезжает с `worktree remove`.
 
 `<steps>` и `*.journal.md` исключаются, иначе приёмка закоммитит бумаги как часть порции; путь
@@ -286,13 +289,16 @@ git branch -d pipeline-<трек>
 ```
 W=.        # в треке: путь дерева трека
 D="$(git rev-parse --absolute-git-dir)/feature-pipeline"; mkdir -p "$D"
-P='.'; E1=':(exclude)<steps>'; E2=':(exclude)*.journal.md'
-git -C "$W" add -A -N -- "$P" "$E1" "$E2"
-{ git -C "$W" status --short    -- "$P" "$E1" "$E2"
-  git -C "$W" diff HEAD --stat  -- "$P" "$E1" "$E2"
-  git -C "$W" diff HEAD -U10    -- "$P" "$E1" "$E2"
+PATHS=(.)  # корень $W; несколько путей — PATHS=(<путь1> <путь2>)
+E1=':(exclude)<steps>'; E2=':(exclude)*.journal.md'
+git -C "$W" add -A -N -- "${PATHS[@]}" "$E1" "$E2"
+{ git -C "$W" status --short    -- "${PATHS[@]}" "$E1" "$E2"
+  git -C "$W" diff HEAD --stat  -- "${PATHS[@]}" "$E1" "$E2"
+  git -C "$W" diff HEAD -U10    -- "${PATHS[@]}" "$E1" "$E2"
 } > "$D/step-NN.diff-<X>.r<R>.txt"
-git -C "$W" reset -q -- "$P" "$E1" "$E2"; echo "$D/step-NN.diff-<X>.r<R>.txt"
+git -C "$W" diff HEAD --stat -- "${PATHS[@]}" "$E1" "$E2" | grep -q . \
+  || { echo "порция <X>: пакет диффа пуст — стоп, судья не запускается"; exit 1; }
+git -C "$W" reset -q -- "${PATHS[@]}" "$E1" "$E2"; echo "$D/step-NN.diff-<X>.r<R>.txt"
 ```
 
 `git reset -q -- …` сбрасывает индекс к `HEAD` по этим путям: рабочее дерево цело, файлы никуда
@@ -300,6 +306,12 @@ git -C "$W" reset -q -- "$P" "$E1" "$E2"; echo "$D/step-NN.diff-<X>.r<R>.txt"
 считать частью порции на шаге 0. Скажи ему об этом строкой, когда он такое разрешение даёт; без
 `reset` `git status` до конца порции показывает чужие ` A`. Дампы треков не сталкиваются именами —
 у треков разные номера шагов.
+
+**Проверка «пакет не пустой» идёт после сборки и до `reset`** (потому что `reset` снимает `-N`, и новые
+файлы из `--stat` пропадут): `git -C "$W" diff HEAD --stat -- "${PATHS[@]}" "$E1" "$E2"` не напечатал
+ни строки — пакет пуст, судья не запускается, стоп и строка в журнал
+`порция <X>: пакет диффа пуст — стоп, судья не запускается`. Пустое место — это не «нечего проверять»,
+а «путь схлопнулся»: приёмка закоммитит воздух и закроет порцию.
 
 `<R>` — номер захода приёмки: первый вердикт — `r1`, после каждого красного плюс один. Путь дампа —
 в журнал: `порция <X>: дамп r<R> <путь>`, на повторном заходе предыдущий дамп берётся оттуда.
@@ -383,6 +395,160 @@ git -C "$W" reset -q -- "$P" "$E1" "$E2"; echo "$D/step-NN.diff-<X>.r<R>.txt"
 | бумаги | `шаг NN: бумаги закоммичены (<hash7>), запушено` |
 | решение оркестратора | `порция <X>: решение — <что> — <чем плохо, если неверно>` |
 
+## Listik
+
+**Когда действует.** Раздел включается, если в `$ARGUMENTS` или в журнале шага назван id карточки Listik
+(`<проект>-<xxxx>`). Id нет — раздел пропускается, в журнал одна строка: `Listik: карточки нет, иду как раньше`.
+Префикс команд — один на шаг:
+
+```
+L=~/Projects/Listik/bin/listik
+```
+
+Все команды ниже дописываются `--actor agent:claude --harness claude`: без них запись уйдёт автору как от
+человека, а `dep add` заведёт жёсткий блокер. `$L` — этот префикс.
+
+### Шаг 0 — карточка
+
+Первым делом — карточка: прочитать `issue_type`, `children`, `stage`, `holder`, id — строкой в журнал
+(`шаг NN: карточка <id>, issue_type <…>, этап <…>, держит <…>`):
+
+```
+$L show <id> --json --actor agent:claude --harness claude
+```
+
+Дальше карточка берётся:
+
+```
+$L claim <id> --holder claude --actor agent:claude --harness claude
+```
+
+**Эпик без писателя ТЗ — стоп.** Пресеты без писателя ТЗ: `opus-single-pipeline`, `opus-sonnet-pipeline`
+и будущий `dsh-grok-pipeline`. Если `issue_type == "epic"`, а пресет из этого списка:
+
+```
+$L needs-owner <id> "эпик нельзя вести пресетом без писателя ТЗ: порции и дочерние карточки заводит только писатель ТЗ. Выберите пресет с писателем ТЗ — xhigh-pipeline, high-pipeline, medium-pipeline, low-pipeline, inherit-pipeline или feature-pipeline — либо заведите обычную задачу." --actor agent:claude --harness claude
+```
+
+Вопрос — дословно в чат, дальше стоп: этапы не начинаются.
+
+### Эпик в пресете с писателем ТЗ
+
+После `готово` этапа 1 карточка шага получает документы, дерево и ветку:
+
+```
+$L set <id> spec_path=<абс. путь step-NN.md> decision_path=<абс. путь журнала> worktree=<абс. путь дерева> branch=$(git branch --show-current) --actor agent:claude --harness claude
+```
+
+Дальше **оркестратор** заводит по дочерней карточке на каждую порцию `<X>` из таблицы `step-NN.md`, по порядку:
+
+```
+$L new "<заголовок шага>, порция <X>" --parent <id> --stage s1-spec --spec <абс. путь step-NN.<X>.md> --checklist <абс. путь step-NN.check-<X>.md> --actor agent:claude --harness claude
+```
+
+`--parent` даёт связь parent-child: родителя не закрыть, пока открыт ребёнок. id новой карточки — строкой
+в журнал (`порция <X>: карточка <id порции>`), дерево и ветка — на ней:
+
+```
+$L set <id порции> worktree=<абс. путь дерева> branch=$(git branch --show-current) --actor agent:claude --harness claude
+```
+
+**`$L stage <id>` у карточки-эпика не двигается дальше `s1-spec`, пока идут порции** — шаг закрывается
+`done <id>` после `done` последней порции, не раньше.
+
+Этапы порции `<X>` идут на **её** карточке (`<P>` — id порции):
+
+```
+$L claim <P> --holder claude --actor agent:claude --harness claude        # s1-spec
+$L stage <P> --actor agent:claude --harness claude                        # → s2-review, перед критикой
+$L set <P> review_path=<абс. путь step-NN.review-<X>.md> --actor agent:claude --harness claude
+$L comment <P> "<итог критики: N блокирующих, M существенных, файл <путь>>" -k review --actor agent:claude --harness claude
+$L stage <P> --actor agent:claude --harness claude                        # → s3-impl, переход снимает держателя
+$L claim <P> --holder claude --actor agent:claude --harness claude        # s2→s3 держателя снял
+$L stage <P> --actor agent:claude --harness claude                        # → s4-judge, перед этапом 4
+```
+
+Вердикт — на карточке порции, командой, первая строка аргумента которой и есть вердикт (сервер читает
+только её):
+
+```
+$L comment <P> $'VERDICT: PASS\n<hash7>' -k verdict --actor agent:claude --harness claude
+$L done <P> -r "коммит <hash7>" --actor agent:claude --harness claude
+
+$L comment <P> $'VERDICT: FAIL\n<пункты дословно, по одному в строке>' -k verdict --actor agent:claude --harness claude
+$L heartbeat <P> --holder claude --note "красный вердикт, возврат на этап 3" --actor agent:claude --harness claude
+```
+
+Красный сервер возвращает `<P>` на `s3-impl` sticky-переходом, держатель остаётся — `heartbeat` сразу
+после возврата. После `done` последней порции:
+
+```
+$L done <id> -r "<порций K, коммиты <hash7>…>" --actor agent:claude --harness claude
+```
+
+### Не эпик (любой пресет)
+
+Дочерних карточек нет — задача целиком на одной карточке `<id>`, на порции не делится.
+
+Пресет **с писателем ТЗ**: после `готово` этапа 1 — документы первой порции и переход на критику:
+
+```
+$L set <id> spec_path=<абс. путь step-NN.md> checklist_path=<чек-лист первой порции> decision_path=<абс. путь журнала> worktree=<абс. путь дерева> branch=$(git branch --show-current) --actor agent:claude --harness claude
+$L stage <id> --actor agent:claude --harness claude
+```
+
+Порции идут подряд на этой карточке: при переходе к порции `<X>` — её чек-лист, после её критики —
+замечания и итог критики:
+
+```
+$L set <id> checklist_path=<её чек-лист> --actor agent:claude --harness claude
+$L set <id> review_path=<абс. путь step-NN.review-<X>.md> --actor agent:claude --harness claude
+$L comment <id> "<итог критики: N блокирующих, M существенных, файл <путь>>" -k review --actor agent:claude --harness claude
+```
+
+Этапы двигаются по первой порции; у каждой следующей перед критикой:
+
+```
+$L stage <id> --to s2-review --actor agent:claude --harness claude
+```
+
+Пресет **без писателя ТЗ** (adhoc-ветка, `dsh-grok-pipeline`): этапов 1–2 нет, карточка одна:
+
+```
+$L set <id> spec_path=<абс. путь adhoc-файла> checklist_path=<тот же adhoc-файл> decision_path=<абс. путь журнала> worktree=<абс. путь дерева> branch=$(git branch --show-current) --actor agent:claude --harness claude
+$L stage <id> --to s3-impl --actor agent:claude --harness claude     # перед этапом 3
+$L stage <id> --actor agent:claude --harness claude                  # → s4-judge, перед этапом 4
+```
+
+`review_path` здесь не ставится: критики не было. Вердикт — как у эпика, но на `<id>`, и закрытие после
+зелёного единственной порции:
+
+```
+$L done <id> -r "<коммит <hash7>>" --actor agent:claude --harness claude
+```
+
+### Всегда
+
+При каждой смене этапа или порции и не реже раза в 15 минут ожидания харнесса — heartbeat с тем, что идёт
+сейчас:
+
+```
+$L heartbeat <карточка> --holder claude --note "шаг NN, порция X, этап N: <что идёт>" --actor agent:claude --harness claude
+```
+
+Вопрос автору идёт и в чат, и в карточку; ответ — снятием флажка:
+
+```
+$L needs-owner <карточка> "<полный текст>" --actor agent:claude --harness claude
+$L needs-owner <карточка> --clear "<ответ>" --actor agent:claude --harness claude
+```
+
+Строки журнала о старте шага, `готово` порции и остановке дублируются в карточку:
+
+```
+$L comment <карточка> "<строка журнала>" -k journal --actor agent:claude --harness claude
+```
+
 ## Грабли, общие для всех пресетов
 
 | Симптом | Причина | Что делать |
@@ -402,3 +568,4 @@ git -C "$W" reset -q -- "$P" "$E1" "$E2"; echo "$D/step-NN.diff-<X>.r<R>.txt"
 | Треки объявлены независимыми, а merge второго дал конфликт | оба правили общий файл в корне (lock, конфиг воркспейса) | такую правку — в трек-предшественник до старта остальных; конфликт разрешает автор |
 | Порции трека написаны против устаревшего кода | дерево заведено не от `HEAD`, а от дефолтной ветки | `git worktree add … "$(git rev-parse HEAD)"` |
 | Фоновая задача харнесса «пропала» | `status`/`result` вызваны из другого каталога, чем `run` | реестр задач привязан к каталогу запуска: все вызовы харнесса — из одного каталога |
+| пакет диффа пустой, судья принял пустое место | несколько путей в одной строковой переменной — zsh не делит её на слова | массив `PATHS` и `"${PATHS[@]}"`, проверка непустого `--stat` |

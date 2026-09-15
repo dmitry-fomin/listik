@@ -11,7 +11,7 @@ from pathlib import Path
 
 from . import paths
 
-SCHEMA_VERSION = 7
+SCHEMA_VERSION = 8
 
 SCHEMA = """
 PRAGMA journal_mode = WAL;
@@ -48,6 +48,7 @@ CREATE TABLE IF NOT EXISTS tasks (
     priority     INTEGER NOT NULL DEFAULT 2,
     issue_type   TEXT NOT NULL DEFAULT 'task',   -- task|bug|feature|epic|chore|decision|question
     assignee     TEXT,                   -- actor_key: me | agent:claude | agent:dsh | ...
+    owner        TEXT,                   -- владелец-человек, серверный режим ([server] users)
     holder       TEXT,                   -- кто держит прямо сейчас (может отличаться от assignee)
     holder_at    TEXT,                   -- heartbeat держащего
     holder_note  TEXT,                   -- что именно он делает сейчас
@@ -257,6 +258,7 @@ MIGRATIONS: list[tuple[str, str, str]] = [
     ("projects", "import_note", "TEXT"),
     ("projects", "routing", "TEXT"),
     ("tasks", "result", "TEXT NOT NULL DEFAULT ''"),
+    ("tasks", "owner", "TEXT"),
     ("tasks", "holder", "TEXT"),
     ("tasks", "holder_at", "TEXT"),
     ("tasks", "holder_note", "TEXT"),

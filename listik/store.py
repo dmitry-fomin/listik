@@ -873,10 +873,27 @@ def add_comment(conn: sqlite3.Connection, task_id: str, text: str, *, author: st
                 created_at: str | None = None) -> dict:
     if not store_helpers.task_exists(conn, task_id):
         raise errors_mod.NotFound(f"задача не найдена: {task_id}")
+    requested_kind = kind
+    verdict_accepted = None
+    verdict_message = None
+    actor_key, actor_kind = actors_mod.resolve(author, conn)
+    is_agent = actor_kind == "agent" or (author or "").strip().lower().startswith("agent:")
+    if kind == "verdict":
+        task_row = conn.execute("SELECT stage, status, holder FROM tasks WHERE id = ?",
+                                (task_id,)).fetchone()
+        stage = task_row["stage"]
+        if stage != "s4-judge" and is_agent:
+            kind = "comment"
+            verdict_accepted = False
+            verdict_message = (
+                f"вердикт не принят: карточка не на этапе s4-judge "
+                f"и автор не человек (текущий этап: {stage or 'не задан'}); "
+                "текст сохранён как обычный комментарий")
+        else:
+            verdict_accepted = True
     failed = parse_verdict(text) if kind == "verdict" else False
-    actor_key, a_kind = actors_mod.resolve(author, conn)
     if author:
-        actors_mod.remember(conn, author, actor_key, a_kind)
+        actors_mod.remember(conn, author, actor_key, actor_kind)
     cid = f"{task_id}:{int(datetime.now().timestamp() * 1000)}:{random.randint(100, 999)}"
     ts = created_at or now_iso()
     conn.execute(
@@ -894,8 +911,13 @@ def add_comment(conn: sqlite3.Connection, task_id: str, text: str, *, author: st
                       note="возврат после красного verdict")
     _index_comment(conn, cid)
     conn.commit()
-    return {"id": cid, "task_id": task_id, "author": author, "kind": kind, "text": text,
-            "created_at": ts}
+    out = {"id": cid, "task_id": task_id, "author": author, "kind": kind, "text": text,
+           "created_at": ts}
+    if requested_kind == "verdict":
+        out["verdict_accepted"] = verdict_accepted
+        if verdict_message:
+            out["message"] = verdict_message
+    return out
 
 
 VERDICT_FORMAT = ('first line must be exactly "VERDICT: PASS" or "VERDICT: FAIL"; '

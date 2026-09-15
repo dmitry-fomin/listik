@@ -47,11 +47,11 @@ const COLD_STATE = `(() => {
   );
   if (!section) return { open: true, cold: false };
   const rows = [...section.querySelectorAll('.listik-cold__row')].map((row) => {
-    const pill = row.querySelector('.ui-status-pill');
+    const dot = row.querySelector('.listik-cold__dot');
     return {
       key: row.querySelector('.listik-cold__key')?.textContent?.trim() ?? '',
       value: row.querySelector('.listik-cold__value')?.textContent?.trim() ?? '',
-      tone: pill ? [...pill.classList].find((cls) => cls.startsWith('ui-status-pill--')) ?? null : null,
+      tone: dot ? [...dot.classList].find((cls) => cls.startsWith('listik-cold__dot--')) ?? null : null,
     };
   });
   const badge = section.querySelector('.ui-badge');
@@ -152,7 +152,7 @@ try {
   await record('дерево и ветка — зелёная строка с путём и веткой', async () => {
     const drawn = await openCard('Холодный старт: дерево и ветка', 'listik-cold-branch')
     const row = worktreeRow(drawn)
-    const ok = row?.tone === 'ui-status-pill--success'
+    const ok = row?.tone === 'listik-cold__dot--success'
       && row.value === '/Users/dmitry.fomin/Projects/Listik-wt/listik-cold-branch · task/listik-cold-branch'
       && drawn.counter === '7 из 7'
       && drawn.badgeTone === 'ui-badge--success'
@@ -168,7 +168,7 @@ try {
   await record('работа в main — жёлтая строка, счётчик считает её заполненной', async () => {
     const drawn = await openCard('Холодный старт: работа в main', 'listik-cold-main')
     const row = worktreeRow(drawn)
-    const ok = row?.tone === 'ui-status-pill--warning'
+    const ok = row?.tone === 'listik-cold__dot--warning'
       && row.value === 'работа в main'
       && drawn.counter === '7 из 7'
       && drawn.badgeTone === 'ui-badge--success'
@@ -183,7 +183,7 @@ try {
   await record('работа в master — жёлтая строка с подписью master', async () => {
     const drawn = await openCard('Холодный старт: работа в master', 'listik-cold-master')
     const row = worktreeRow(drawn)
-    const ok = row?.tone === 'ui-status-pill--warning'
+    const ok = row?.tone === 'listik-cold__dot--warning'
       && row.value === 'работа в master'
       && drawn.counter === '7 из 7'
     return { ok, expect: 'жёлтая строка «работа в master»', got: { row, counter: drawn.counter } }
@@ -193,7 +193,7 @@ try {
   await record('дерево не указано — красная строка и счётчик 6 из 7', async () => {
     const drawn = await openCard('Холодный старт: дерево не указано', 'listik-cold-none')
     const row = worktreeRow(drawn)
-    const ok = row?.tone === 'ui-status-pill--danger'
+    const ok = row?.tone === 'listik-cold__dot--danger'
       && row.value === 'рабочее дерево не указано'
       && drawn.counter === '6 из 7'
       && drawn.badgeTone === 'ui-badge--danger'
@@ -204,14 +204,66 @@ try {
     }
   })
 
-  // 5. Точка-статус каждой строки — компонент кита, а не своя разметка.
-  await record('точка-статус строки — UiStatusPill кита', async () => {
+  // 5. Точка-статус каждой строки — своя разметка `.listik-cold__dot`, пилюли кита в строках нет.
+  await record('точка-статус строки — .listik-cold__dot вместо UiStatusPill', async () => {
     const drawn = await openCard('Холодный старт: работа в main', 'listik-cold-main')
+    const dots = await evaluate(
+      `document.querySelectorAll('.ui-drawer .listik-cold__row .listik-cold__dot').length`,
+    )
     const pills = await evaluate(
       `document.querySelectorAll('.ui-drawer .listik-cold__row .ui-status-pill').length`,
     )
-    const ok = pills === drawn.rows.length && drawn.rows.length > 0
-    return { ok, expect: `${drawn.rows.length} пилюль на ${drawn.rows.length} строк`, got: pills }
+    const ok = dots === drawn.rows.length && drawn.rows.length > 0 && pills === 0
+    return {
+      ok,
+      expect: `${drawn.rows.length} точек на ${drawn.rows.length} строк, пилюль 0`,
+      got: { dots, pills },
+    }
+  })
+
+  // 6. У последней строки нет своей полосы (под ней — разделитель блока, а не вторая
+  //    полоса), у остальных она есть; обрезка значения слева не переставляет символы:
+  //    у длинного пути и у строки-состояния первый символ остаётся левее последнего.
+  const valueOrder = `(() => {
+    const row = [...document.querySelectorAll('.ui-drawer .listik-cold__row')]
+      .find((el) => el.querySelector('.listik-cold__key')?.textContent?.trim() === 'worktree · branch');
+    const value = row?.querySelector('.listik-cold__value');
+    if (!value) return null;
+    const text = document.createTreeWalker(value, NodeFilter.SHOW_TEXT).nextNode();
+    if (!text?.length) return null;
+    const edge = (from, to) => {
+      const range = document.createRange();
+      range.setStart(text, from);
+      range.setEnd(text, to);
+      return range.getBoundingClientRect();
+    };
+    return {
+      text: text.textContent,
+      truncated: value.scrollWidth > value.clientWidth,
+      firstLeft: edge(0, 1).left,
+      lastLeft: edge(text.length - 1, text.length).left,
+    };
+  })()`
+
+  const orderOk = (order) => Boolean(order) && order.firstLeft < order.lastLeft
+
+  await record('последняя строка без полосы, обрезка слева не переставляет символы', async () => {
+    const drawn = await openCard('Холодный старт: дерево и ветка', 'listik-cold-branch')
+    const borders = await evaluate(
+      `[...document.querySelectorAll('.ui-drawer .listik-cold__row')]
+        .map((row) => getComputedStyle(row).borderBottomWidth)`,
+    )
+    const path = await evaluate(valueOrder)
+    const stateRow = await openCard('Холодный старт: работа в main', 'listik-cold-main').then(() => evaluate(valueOrder))
+    const borderOk = borders.length === drawn.rows.length
+      && borders.slice(0, -1).every((width) => width !== '0px')
+      && borders[borders.length - 1] === '0px'
+    const ok = borderOk && path?.truncated === true && orderOk(path) && orderOk(stateRow)
+    return {
+      ok,
+      expect: `полоса у всех строк кроме последней (${drawn.rows.length}), путь обрезан слева, порядок символов прежний`,
+      got: { borders, path, state: stateRow },
+    }
   })
 
   report.consoleErrors = consoleErrors

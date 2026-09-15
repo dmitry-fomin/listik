@@ -1235,14 +1235,14 @@ async function loadTree(): Promise<void> {
         <div class="listik-cold">
           <div v-for="row in coldRows" :key="row.key" class="listik-cold__row">
             <UiTooltip :text="row.hint ?? ''" :disabled="!row.hint">
-              <UiStatusPill :tone="row.tone" size="sm" />
+              <span class="listik-cold__dot" :class="`listik-cold__dot--${row.tone}`" />
             </UiTooltip>
             <span class="listik-cold__key">{{ row.label }}</span>
             <span
               class="listik-cold__value"
               :class="{ 'listik-cold__value--state': row.words }"
               :style="row.color ? { color: row.color } : undefined"
-            >{{ row.value }}</span>
+            ><span class="listik-cold__value-text">{{ row.value }}</span></span>
             <UiCopyButton :value="row.value" :label="row.label">
               <template #icon="{ copied }"><ListikIcon :name="copied ? 'check' : 'copy'" size="sm" /></template>
             </UiCopyButton>

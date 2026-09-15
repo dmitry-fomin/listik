@@ -884,7 +884,8 @@ body .ui-drawer-backdrop.ui-drawer-backdrop--right .ui-drawer.ui-drawer--right.u
 :root {
   --listik-vsep-w: 1px;
   --listik-vsep-h: var(--space-4);
-  --listik-cold-dot: var(--space-4);
+  --listik-cold-dot-col: var(--space-4);
+  --listik-cold-dot: var(--space-2);
   --listik-cold-key: 140px;
   --listik-cold-copy: 24px;
   --listik-cold-row: 40px;
@@ -1329,7 +1330,7 @@ body .ui-drawer-backdrop.ui-drawer-backdrop--right .ui-drawer.ui-drawer--right.u
 
 .listik-cold__row {
   display: grid;
-  grid-template-columns: var(--listik-cold-dot) var(--listik-cold-key) minmax(0, 1fr) var(--listik-cold-copy);
+  grid-template-columns: var(--listik-cold-dot-col) var(--listik-cold-key) minmax(0, 1fr) var(--listik-cold-copy);
   align-items: center;
   column-gap: var(--space-3);
   height: var(--listik-cold-row);
@@ -1337,8 +1338,35 @@ body .ui-drawer-backdrop.ui-drawer-backdrop--right .ui-drawer.ui-drawer--right.u
   font-size: var(--text-sm);
 }
 
-.listik-cold__row > .ui-tooltip {
+/* Полоса строки — разделитель между строками; под последней её нет: там уже стоит
+   разделитель блока (`.listik-drawer__body > * + *`) и вышло бы две полосы подряд. */
+.listik-cold__row:last-child {
+  border-bottom: 0;
+}
+
+.listik-cold__row > .ui-tooltip__trigger {
   justify-self: center;
+}
+
+/* Точка-статус строки: своего компонента «точка без подписи» в ките нет, поэтому
+   разметка своя (как `.listik-dep-tree__dot`); цвет — только токенами, по `row.tone`. */
+.listik-cold__dot {
+  flex: none;
+  width: var(--listik-cold-dot);
+  height: var(--listik-cold-dot);
+  border-radius: var(--radius-pill);
+}
+
+.listik-cold__dot--success {
+  background: var(--success-500);
+}
+
+.listik-cold__dot--warning {
+  background: var(--warning-500);
+}
+
+.listik-cold__dot--danger {
+  background: var(--danger-500);
 }
 
 .listik-cold__row > .ui-copy-button {
@@ -1356,6 +1384,19 @@ body .ui-drawer-backdrop.ui-drawer-backdrop--right .ui-drawer.ui-drawer--right.u
   text-overflow: ellipsis;
   font-family: var(--font-mono);
   font-size: var(--text-xs);
+  /* Обрезка слева — «…» в начале, виден конец значения. `direction: rtl` живёт
+     только на этом элементе и вместе с `text-align: left` (иначе короткие
+     значения уехали бы вправо), а сам текст изолирован внутренним
+     `.listik-cold__value-text`: без изоляции двунаправленный алгоритм переставил
+     бы нейтральные символы — ведущий «/» уехал бы в конец, «--state» стал бы
+     «state--». */
+  direction: rtl;
+  text-align: left;
+}
+
+.listik-cold__value-text {
+  direction: ltr;
+  unicode-bidi: isolate;
 }
 
 /* Состояние словами («работа в main», «рабочее дерево не указано») — не путь:

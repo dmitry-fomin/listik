@@ -99,6 +99,7 @@ listik restore --stop <копия>  # остановить сервер и ве�
 # агент добавляет к каждой команде: --actor agent:<harness> --harness <harness>
 listik ready                                        # что можно брать
 listik show <id>                                    # вся карточка
+listik worktree <id>                                # дерево .worktrees/<id>, ветка task/<id>, от HEAD
 listik claim <id> --holder claude --note "беру"
 listik heartbeat <id> --holder claude --note "…"    # каждые 10–15 минут
 listik comment <id> "решение и почему" -k journal
@@ -175,7 +176,7 @@ claude mcp add --transport http listik https://<домен>/mcp \
 | Сервер | `serve`, `stop`, `status`, `init`, `token`, `mcp`, `service` |
 | Копии | `backup`, `restore` |
 | Задачи | `new`, `list`, `show`, `set`, `context`, `board`, `stats`, `timeline` |
-| Работа | `ready`, `claim`, `heartbeat`, `stage`, `release`, `done`, `needs-owner`, `inbox` |
+| Работа | `ready`, `worktree`, `claim`, `heartbeat`, `stage`, `release`, `done`, `needs-owner`, `inbox` |
 | Журнал | `comment -k comment\|journal\|review\|verdict\|question\|answer` |
 | Связи | `dep add\|confirm\|rm\|suggest\|link\|suggested`, `blocked`, `tree`, `cycles` |
 | Поиск | `search`, `memory`, `remember`, `embed` |

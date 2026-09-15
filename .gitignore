@@ -9,6 +9,12 @@ listik.log
 # Логи автостарта задач: logs/launch-<id>-<время>.log (см. listik/launcher.py)
 logs/
 
+# для агентов
+CLAUDE.md
+AGENTS.md
+.claude/*
+.grok/*
+
 # Рабочие деревья задач: конвейеры и прямые харнессы заводят их внутри папки
 # проекта. В git им не место — ни содержимым, ни gitlink'ом.
 .worktrees/
@@ -38,5 +44,3 @@ dist/
 __pycache__/
 *.pyc
 .DS_Store
-.claude/*
-.grok/*

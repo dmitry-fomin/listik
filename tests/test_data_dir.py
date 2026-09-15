@@ -331,10 +331,10 @@ class VersionTests(unittest.TestCase):
         self.addCleanup(self._tmpdir.cleanup)
 
     def test_version_file_and_cli_output(self) -> None:
-        self.assertEqual((REPO_DIR / "VERSION").read_text(encoding="utf-8").strip(), "0.5.0")
+        self.assertEqual((REPO_DIR / "VERSION").read_text(encoding="utf-8").strip(), "0.6.0")
         result = run_cli(["--version"], env=clean_env(), cwd=self.tmp_path)
         self.assertEqual(result.returncode, 0, result.stderr)
-        self.assertEqual(result.stdout.strip(), "listik 0.5.0")
+        self.assertEqual(result.stdout.strip(), "listik 0.6.0")
 
     def test_copy_without_version_file(self) -> None:
         copy = self.tmp_path / "без-версии"

@@ -9,7 +9,7 @@
 <!-- BEGIN LISTIK -->
 ## Listik — harness protocol
 
-Listik is the single work queue and journal: `listik`.
+Listik is the single work queue and journal: `L=~/Projects/Listik/bin/listik`.
 
 **Identify yourself.** Pass `--actor agent:<harness> --harness <harness>` on every command
 (names from `listik actors`; `--holder` uses the same name). Don't rely on `export LISTIK_ACTOR`:
@@ -104,29 +104,29 @@ only that line and rejects any other format.
 ### Commands
 
 ```sh
-listik
+L=~/Projects/Listik/bin/listik
 # append to every command: --actor agent:<who> --harness <who>
 
-listik ready --harness <who>
-listik search "gist of the task"
-listik show <id>
-listik new "…" --parent <id шага>          # portion of a step (parent-child)
-listik new "…" --discovered-from <id>      # found while working on <id>: soft link right away
-listik context <id> --stage <stage> [--portion "<portion>"]
-listik dep add <id> <blocker>              # suggestion (hard only via human)
-listik dep confirm <id> <blocker>          # human confirms
-listik claim <id> --holder <who>
-listik heartbeat <id> --holder <who> --note "what I'm doing"
-listik stage <id>                          # next stage
-listik stage <id> --holder <next>          # issue the card: holder is set, the receiver claims it
-listik stage <id> --to <same stage> --holder <next>   # re-issue after release: same stage, fresh assignment
-listik comment <id> "text" -k journal|review
-listik comment <id> "VERDICT: PASS" -k verdict
-listik comment <id> $'VERDICT: FAIL\n1. <item> — <problem> — <file:line> — <fix>' -k verdict
-listik needs-owner <id> "question"
-listik needs-owner <id> --clear "answer"
-listik release <id>
-listik done <id> -r "short verifiable result"
+$L ready --harness <who>
+$L search "gist of the task"
+$L show <id>
+$L new "…" --parent <id шага>          # portion of a step (parent-child)
+$L new "…" --discovered-from <id>      # found while working on <id>: soft link right away
+$L context <id> --stage <stage> [--portion "<portion>"]
+$L dep add <id> <blocker>              # suggestion (hard only via human)
+$L dep confirm <id> <blocker>          # human confirms
+$L claim <id> --holder <who>
+$L heartbeat <id> --holder <who> --note "what I'm doing"
+$L stage <id>                          # next stage
+$L stage <id> --holder <next>          # issue the card: holder is set, the receiver claims it
+$L stage <id> --to <same stage> --holder <next>   # re-issue after release: same stage, fresh assignment
+$L comment <id> "text" -k journal|review
+$L comment <id> "VERDICT: PASS" -k verdict
+$L comment <id> $'VERDICT: FAIL\n1. <item> — <problem> — <file:line> — <fix>' -k verdict
+$L needs-owner <id> "question"
+$L needs-owner <id> --clear "answer"
+$L release <id>
+$L done <id> -r "short verifiable result"
 ```
 
 Cold start: everything needed is in `show <id>` (holder, stage, Q&A, journal, verdicts,

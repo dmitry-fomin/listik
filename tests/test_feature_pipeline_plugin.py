@@ -457,5 +457,68 @@ class FeaturePipelineSkillNamingTests(unittest.TestCase):
         )
 
 
+#: Строки журнала шага про сессию исполнителя (listik-auj4): id сессии, факт продолжения
+#: и откат на новый прогон — «три строки, как сделано», ответ автора.
+SESSION_JOURNAL_LINES = (
+    "<харнесс> сессия <id>",
+    "<харнесс> продолжение <id>",
+    "<харнесс> продолжение <id> не удалось — новый прогон",
+)
+
+#: Пресеты с исполнителем этапа 3 и подстрока, которой пресет называет продолжение той же
+#: сессии: локальный субагент — `SendMessage` по agent id, внешний харнесс — сессия по id
+#: из журнала. Продолжение обязательно и после `вопрос`, и после красного вердикта.
+EXECUTOR_PRESETS = {
+    "feature-pipeline": "SendMessage",
+    "high-pipeline": "SendMessage",
+    "medium-pipeline": "SendMessage",
+    "inherit-pipeline": "SendMessage",
+    "opus-single-pipeline": "SendMessage",
+    "opus-sonnet-pipeline": "SendMessage",
+    "xhigh-pipeline": "сессия <id>",
+    "low-pipeline": "сессия <id>",
+    "xlow-pipeline": "сессия <id>",
+    "nano-pipeline": "сессия <id>",
+}
+
+
+class FeaturePipelineResumeRuleTests(unittest.TestCase):
+    """Продолжение сессии исполнителя (listik-auj4): одно правило для всех пресетов, задано
+    протоколом, ключа настройки в конфиге нет, откат — новый прогон или новый субагент."""
+
+    def test_core_keeps_session_journal_lines(self) -> None:
+        text = _plugin_text(CORE_DOC)
+        for needle in SESSION_JOURNAL_LINES:
+            with self.subTest(needle=needle):
+                self.assertIn(
+                    needle, text,
+                    f"{CORE_DOC}: нет строки журнала шага про сессию {needle!r}",
+                )
+
+    def test_core_has_no_resume_setting_key(self) -> None:
+        """Ответ автора: настройка живёт только в коде, ключа и места «выбирает автор» нет."""
+        text = _plugin_text(CORE_DOC)
+        for needle in ("resume_after_red", "выбирает автор"):
+            with self.subTest(needle=needle):
+                self.assertNotIn(
+                    needle, text,
+                    f"{CORE_DOC}: осталось место {needle!r} — правило задано протоколом, "
+                    "а не ключом настройки",
+                )
+
+    def test_every_executor_preset_continues_session(self) -> None:
+        for name, needle in sorted(EXECUTOR_PRESETS.items()):
+            with self.subTest(skill=name):
+                text = _skill_text(name)
+                self.assertIn(
+                    needle, text,
+                    f"{name}/{SKILL_FILE}: не нашлось продолжения той же сессии ({needle!r})",
+                )
+                self.assertIn(
+                    "откат", text,
+                    f"{name}/{SKILL_FILE}: нет отката на новый прогон, когда продолжить нельзя",
+                )
+
+
 if __name__ == "__main__":
     unittest.main()

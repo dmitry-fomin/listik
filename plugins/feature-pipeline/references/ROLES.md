@@ -17,7 +17,7 @@ python3 presets.py --check   # проверить утверждения док�
 ## Вводные
 
 Доступные для разработки вендоры: **OpenAI** (Codex), **Anthropic** (Claude Code),
-**DeepSeek** (`dsh`), **SpaceXAI/Grok** (`dsh-plugin-grok`), **Z AI/GLM**.
+**DeepSeek** (`dsh`), **SpaceXAI/Grok** (плагин `grok`, CLI), **Z AI/GLM**.
 Всё остальное из снимка (Google, Alibaba, Kimi, Muse) не берём, даже когда оно
 выигрывает по цифрам.
 

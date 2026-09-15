@@ -21,6 +21,7 @@ from . import deps as deps_mod
 from . import errors as errors_mod
 from . import paths
 from . import routes as routes_mod
+from . import store_helpers
 from . import textutil
 
 OPEN_STATUSES = ("open", "in_progress", "blocked", "review")
@@ -159,7 +160,7 @@ def gen_id(conn: sqlite3.Connection, project: str | None, *, prefix: str | None 
     base = re.sub(r"[^0-9a-zA-Zа-яА-Я_\-]+", "-", base).strip("-").lower() or "lk"
     for _ in range(50):
         cand = f"{base}-{''.join(random.choice(_SUFFIX_ALPHABET) for _ in range(4))}"
-        if not conn.execute("SELECT 1 FROM tasks WHERE id = ?", (cand,)).fetchone():
+        if not store_helpers.task_exists(conn, cand):
             return cand
     return f"{base}-{int(datetime.now().timestamp())}"
 
@@ -175,7 +176,7 @@ def event(conn: sqlite3.Connection, task_id: str, kind: str, *, from_value=None,
 
 
 def _index_task(conn: sqlite3.Connection, task_id: str) -> None:
-    row = conn.execute("SELECT * FROM tasks WHERE id = ?", (task_id,)).fetchone()
+    row = store_helpers.task_row(conn, task_id, required=False)
     if not row:
         return
     body = "\n\n".join(
@@ -242,11 +243,7 @@ def labels_after_route_change(labels: list[str], route_key: str | None) -> list[
 
 def route_labels_from_row(row: sqlite3.Row) -> list[str]:
     """Метки карточки из строки таблицы (в колонке — JSON-массив)."""
-    try:
-        value = json.loads(row["labels"] or "[]")
-    except (json.JSONDecodeError, TypeError):
-        return []
-    return [str(label) for label in value] if isinstance(value, list) else []
+    return [str(label) for label in store_helpers.json_list(row["labels"])]
 
 
 def create_task(
@@ -315,8 +312,7 @@ def create_task(
             raise errors_mod.NotFound(f"задача не найдена: {parent_id}")
         parent_project = parent_row["project"]
     source_id = (discovered_from or "").strip() or None
-    if source_id is not None and not conn.execute(
-            "SELECT 1 FROM tasks WHERE id = ?", (source_id,)).fetchone():
+    if source_id is not None and not store_helpers.task_exists(conn, source_id):
         raise KeyError(f"задача не найдена: {source_id}")
     if not project and parent_project:
         project = parent_project
@@ -544,17 +540,13 @@ def delete_task(conn: sqlite3.Connection, task_id: str) -> None:
 
 def update_task(conn: sqlite3.Connection, task_id: str, *, actor: str | None = None,
                 harness: str | None = None, note: str | None = None, **fields) -> dict:
-    row = conn.execute("SELECT * FROM tasks WHERE id = ?", (task_id,)).fetchone()
-    if not row:
-        raise errors_mod.NotFound(f"задача не найдена: {task_id}")
+    row = store_helpers.task_row(conn, task_id)
     # Маршрут принимаем и под именем создания задачи (`route`): доска и `listik set`
     # шлют его так же, как POST /api/tasks. Каноническое имя — колонка launch_route.
     if ROUTE_ALIAS in fields and ROUTE_FIELD not in fields:
         fields[ROUTE_FIELD] = fields.pop(ROUTE_ALIAS)
     if ROUTE_FIELD in fields and fields[ROUTE_FIELD] is not None:
-        if not isinstance(fields[ROUTE_FIELD], str):
-            raise ValueError("маршрут должен быть строкой — ключом из routes.json")
-        fields[ROUTE_FIELD] = fields[ROUTE_FIELD].strip()
+        fields[ROUTE_FIELD] = store_helpers.normalize_route(fields[ROUTE_FIELD])
     # Вместе с маршрутом сервер сам переписывает его метки (`harness:`/`process:`) —
     # ровно так же, как при создании задачи: старые снимаются, метки нового встают на
     # их место, чужие метки остаются. Клиент про них больше не думает.
@@ -685,7 +677,7 @@ def update_task(conn: sqlite3.Connection, task_id: str, *, actor: str | None = N
         # и события этого вызова откатываем целиком.
         if conn.in_transaction:
             conn.rollback()
-        fresh = conn.execute("SELECT * FROM tasks WHERE id = ?", (task_id,)).fetchone()
+        fresh = store_helpers.task_row(conn, task_id, required=False)
         if fresh is None:
             raise errors_mod.NotFound(f"задача не найдена: {task_id}")
         raise ValueError(route_change_denied(fresh) or (
@@ -712,9 +704,7 @@ def set_needs_owner(conn: sqlite3.Connection, task_id: str, *, value: bool,
     при каждом вызове — даже если флаг уже стоит в нужном значении, чтобы второй
     вопрос с другим текстом не терялся.
     """
-    row = conn.execute("SELECT * FROM tasks WHERE id = ?", (task_id,)).fetchone()
-    if not row:
-        raise errors_mod.NotFound(f"задача не найдена: {task_id}")
+    row = store_helpers.task_row(conn, task_id)
     old_value = bool(row["needs_owner"])
     new_value = bool(value)
 
@@ -752,9 +742,7 @@ def claim(conn: sqlite3.Connection, task_id: str, *, holder: str, harness: str |
     идемпотентен, но если держателя до этого поставил оркестратор (`stage
     --holder`), первый claim агента пишет событие — «выдана» становится «взята».
     """
-    row = conn.execute("SELECT * FROM tasks WHERE id = ?", (task_id,)).fetchone()
-    if not row:
-        raise errors_mod.NotFound(f"задача не найдена: {task_id}")
+    row = store_helpers.task_row(conn, task_id)
     # Harness must be allowed for the task's project/stage.
     allowed = config_mod.allowed_harnesses(row["project"], row["stage"], conn=conn)
     if harness and allowed and harness not in allowed:
@@ -766,7 +754,7 @@ def claim(conn: sqlite3.Connection, task_id: str, *, holder: str, harness: str |
     # удерживается" instead of taking over.  Re-read the row: expiry commits its own
     # UPDATE, which the row fetched above cannot see.
     deps_mod.expire_return_handoffs(conn, task_id=task_id)
-    row = conn.execute("SELECT * FROM tasks WHERE id = ?", (task_id,)).fetchone()
+    row = store_helpers.task_row(conn, task_id)
     # Claim is idempotent for the current holder, but must never replace another
     # holder.  This also makes a repeated claim in the same worktree safe.
     current_holder = (row["holder"] or "").strip()
@@ -883,7 +871,7 @@ def heartbeat(conn: sqlite3.Connection, task_id: str, *, holder: str, note: str 
 def add_comment(conn: sqlite3.Connection, task_id: str, text: str, *, author: str | None = None,
                 kind: str = "comment", harness: str | None = None,
                 created_at: str | None = None) -> dict:
-    if not conn.execute("SELECT 1 FROM tasks WHERE id = ?", (task_id,)).fetchone():
+    if not store_helpers.task_exists(conn, task_id):
         raise errors_mod.NotFound(f"задача не найдена: {task_id}")
     failed = parse_verdict(text) if kind == "verdict" else False
     actor_key, a_kind = actors_mod.resolve(author, conn)
@@ -1035,9 +1023,7 @@ def next_stage(conn: sqlite3.Connection, task_id: str, *, holder: str | None = N
 # ------------------------------------------------------------------ чтение
 
 def get_task(conn: sqlite3.Connection, task_id: str, *, with_details: bool = True) -> dict:
-    row = conn.execute("SELECT * FROM tasks WHERE id = ?", (task_id,)).fetchone()
-    if not row:
-        raise errors_mod.NotFound(f"задача не найдена: {task_id}")
+    row = store_helpers.task_row(conn, task_id)
     out = row_to_task(conn, row)
     try:
         from . import deps as deps_mod
@@ -1049,24 +1035,16 @@ def get_task(conn: sqlite3.Connection, task_id: str, *, with_details: bool = Tru
         # Все порции шага, включая закрытые: холодный старт родителя должен видеть
         # каждую дочернюю карточку с её spec/checklist/review.
         out["children"] = child_cards(conn, task_id)
-        out["comments"] = [
-            dict(r) for r in conn.execute(
-                "SELECT id, author, kind, text, created_at FROM comments WHERE task_id = ? "
-                "ORDER BY created_at", (task_id,))
-        ]
-        out["dependencies"] = [
-            dict(r) for r in conn.execute(
-                "SELECT depends_on, dep_type, created_at FROM deps WHERE issue_id = ?", (task_id,))
-        ]
-        out["dependents"] = [
-            dict(r) for r in conn.execute(
-                "SELECT issue_id, dep_type FROM deps WHERE depends_on = ?", (task_id,))
-        ]
-        out["events"] = [
-            dict(r) for r in conn.execute(
-                "SELECT ts, kind, from_value, to_value, actor, harness, note, duration_s "
-                "FROM events WHERE task_id = ? ORDER BY ts DESC LIMIT 100", (task_id,))
-        ]
+        out["comments"] = store_helpers.dict_rows(conn.execute(
+            "SELECT id, author, kind, text, created_at FROM comments WHERE task_id = ? "
+            "ORDER BY created_at", (task_id,)))
+        out["dependencies"] = store_helpers.dict_rows(conn.execute(
+            "SELECT depends_on, dep_type, created_at FROM deps WHERE issue_id = ?", (task_id,)))
+        out["dependents"] = store_helpers.dict_rows(conn.execute(
+            "SELECT issue_id, dep_type FROM deps WHERE depends_on = ?", (task_id,)))
+        out["events"] = store_helpers.dict_rows(conn.execute(
+            "SELECT ts, kind, from_value, to_value, actor, harness, note, duration_s "
+            "FROM events WHERE task_id = ? ORDER BY ts DESC LIMIT 100", (task_id,)))
     return out
 
 
@@ -1143,14 +1121,8 @@ def row_to_task(conn: sqlite3.Connection, row: sqlite3.Row) -> dict:
     warn = float((cfg.get("board") or {}).get("wip_warn_hours", 8))
     stale_h = float((cfg.get("board") or {}).get("stale_hours", 24))
     assign_warn_min = float((cfg.get("board") or {}).get("assign_warn_minutes", 15))
-    try:
-        labels = json.loads(row["labels"] or "[]")
-    except json.JSONDecodeError:
-        labels = []
-    try:
-        blockers = json.loads(row["blocked_by"] or "[]")
-    except json.JSONDecodeError:
-        blockers = []
+    labels = store_helpers.json_list(row["labels"])
+    blockers = store_helpers.json_list(row["blocked_by"])
     stage_hours = hours_since(row["stage_at"]) if row["stage_at"] else None
     holder_hours = hours_since(row["holder_at"]) if row["holder_at"] else None
     open_now = row["status"] in OPEN_STATUSES
@@ -1282,11 +1254,11 @@ _CARD_LINK_KEYS = ("id", "project", "title", "status", "status_title", "stage", 
 def task_documents(conn: sqlite3.Connection, task_id: str) -> list[dict]:
     """Метаданные индексированных документов задачи (без чанков) — то же, что `show`."""
     try:
-        return [dict(r) for r in conn.execute(
+        return store_helpers.dict_rows(conn.execute(
             "SELECT id, kind, path, revision, content_hash, title, updated_at, status, error, source, "
             "(SELECT count(*) FROM document_chunks WHERE document_chunks.document_id = documents.id) "
             "AS chunk_count FROM documents WHERE task_id=? ORDER BY kind, path",
-            (task_id,))]
+            (task_id,)))
     except sqlite3.OperationalError:
         return []
 
@@ -1297,7 +1269,7 @@ def card_link(conn: sqlite3.Connection, task_id: str) -> dict | None:
     Возрастных полей (`_age`/`_hours`) здесь нет намеренно: `card_link` попадает
     в ответ `context`, который обязан быть побайтно стабильным (см.
     `documents.context`)."""
-    row = conn.execute("SELECT * FROM tasks WHERE id = ?", (task_id,)).fetchone()
+    row = store_helpers.task_row(conn, task_id, required=False)
     if row is None:
         return None
     task = row_to_task(conn, row)
@@ -1887,7 +1859,7 @@ def list_actors(conn: sqlite3.Connection) -> list[dict]:
                          (SELECT count(*) FROM tasks t WHERE t.holder = a.key
                         AND t.status IN ('open','in_progress','blocked','review')) n_held
            FROM actors a ORDER BY n_tasks DESC""").fetchall()
-    return [dict(r) for r in rows]
+    return store_helpers.dict_rows(rows)
 
 
 def facet_values(conn: sqlite3.Connection) -> dict:
@@ -1901,15 +1873,15 @@ def facet_values(conn: sqlite3.Connection) -> dict:
         "types": "SELECT DISTINCT issue_type v FROM tasks ORDER BY v",
     }.items():
         out[name] = [r["v"] for r in conn.execute(sql)]
-    out["actors"] = {"key": "actors", "values": [dict(r) for r in conn.execute(
-        "SELECT key, title, kind FROM actors ORDER BY key")]}
+    out["actors"] = {"key": "actors", "values": store_helpers.dict_rows(conn.execute(
+        "SELECT key, title, kind FROM actors ORDER BY key"))}
     return out
 
 
 def add_dep(conn: sqlite3.Connection, issue_id: str, depends_on: str, dep_type: str = "blocks",
             created_by: str | None = None, confirm: bool = False) -> dict:
     for tid in (issue_id, depends_on):
-        if not conn.execute("SELECT 1 FROM tasks WHERE id = ?", (tid,)).fetchone():
+        if not store_helpers.task_exists(conn, tid):
             raise errors_mod.NotFound(f"задача не найдена: {tid}")
     if issue_id == depends_on:
         raise ValueError(f"связь задачи с самой собой: {issue_id}")

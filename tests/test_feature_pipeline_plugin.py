@@ -135,6 +135,7 @@ class FeaturePipelinePluginTests(unittest.TestCase):
 #: по номеру шага. `agents/*.md` собирается в момент вызова теста, а не при импорте.
 CORE_DOC = pathlib.Path("references") / "pipeline-core.md"
 TRACKS_DOC = pathlib.Path("skills") / "feature-pipeline" / "references" / "tracks.md"
+INHERIT_SKILL = pathlib.Path("skills") / "inherit-pipeline" / SKILL_FILE
 AGENTS_SUBDIR = "agents"
 
 MANIFEST_LINE = (
@@ -150,16 +151,25 @@ def _plugin_text(relative: pathlib.Path) -> str:
 ADHOC_PARAGRAPH_START = "**Adhoc-файл для широкой правки.**"
 
 
-def _core_paragraph(start: str) -> str:
-    """Абзац `CORE_DOC` от строки `start` до первой пустой строки, одной строкой."""
-    lines = _plugin_text(CORE_DOC).splitlines()
+#: Начало абзаца шага 0 про журнал: список имён журнала по случаям.
+JOURNAL_PARAGRAPH_START = "`ls <steps> <specs>`"
+
+
+def _paragraph(relative: pathlib.Path, start: str) -> str:
+    """Абзац `relative` от строки `start` до первой пустой строки, одной строкой."""
+    lines = _plugin_text(relative).splitlines()
     for index, line in enumerate(lines):
         if line.startswith(start):
             end = index
             while end < len(lines) and lines[end].strip():
                 end += 1
             return " ".join(lines[index:end])
-    raise AssertionError(f"{CORE_DOC}: не нашлось абзаца, начинающегося с {start!r}")
+    raise AssertionError(f"{relative}: не нашлось абзаца, начинающегося с {start!r}")
+
+
+def _core_paragraph(start: str) -> str:
+    """Абзац `CORE_DOC` от строки `start` до первой пустой строки, одной строкой."""
+    return _paragraph(CORE_DOC, start)
 
 
 def _agent_paths() -> list[pathlib.Path]:
@@ -244,6 +254,53 @@ class FeaturePipelineStepNamingTests(unittest.TestCase):
             paragraph.index("<steps>/adhoc-<ГГГГ-ММ-ДД>-<слаг>.a.md"),
             f"{CORE_DOC}: в абзаце {ADHOC_PARAGRAPH_START!r} adhoc-имя названо раньше файла "
             "по карточке (правило 4 требует обратного)",
+        )
+
+    def test_adhoc_paragraph_in_inherit_pipeline_names_paper_by_card(self) -> None:
+        """Абзац «Adhoc-файл для широкой правки» скила inherit-pipeline (listik-ivt3) — по правилу 4:
+        при карточке файл `<steps>/<id>.a.md`, adhoc-имя остаётся ветке без карточки."""
+        paragraph = _paragraph(INHERIT_SKILL, ADHOC_PARAGRAPH_START)
+        self.assertIn(
+            "<steps>/<id>.a.md", paragraph,
+            f"{INHERIT_SKILL}: абзац {ADHOC_PARAGRAPH_START!r} не называет файл по карточке",
+        )
+        self.assertIn(
+            "при карточке", paragraph,
+            f"{INHERIT_SKILL}: абзац {ADHOC_PARAGRAPH_START!r} не оговаривает случай карточки",
+        )
+        self.assertIn(
+            "<steps>/adhoc-<ГГГГ-ММ-ДД>-<слаг>.a.md", paragraph,
+            f"{INHERIT_SKILL}: абзац {ADHOC_PARAGRAPH_START!r} не оставил adhoc-имя ветке без карточки",
+        )
+        self.assertIn(
+            "без карточки", paragraph,
+            f"{INHERIT_SKILL}: абзац {ADHOC_PARAGRAPH_START!r} не оговаривает случай без карточки",
+        )
+        self.assertLess(
+            paragraph.index("<steps>/<id>.a.md"),
+            paragraph.index("<steps>/adhoc-<ГГГГ-ММ-ДД>-<слаг>.a.md"),
+            f"{INHERIT_SKILL}: в абзаце {ADHOC_PARAGRAPH_START!r} adhoc-имя названо раньше файла "
+            "по карточке (правило 4 требует обратного)",
+        )
+
+    def test_journal_paragraph_names_wide_edit_by_card(self) -> None:
+        """Абзац шага 0 про журнал (listik-ivt3): adhoc-имя остаётся широкой правке без карточки,
+        при карточке действует правило 2 — `<steps>/<id>.journal.md`."""
+        paragraph = _paragraph(CORE_DOC, JOURNAL_PARAGRAPH_START)
+        self.assertIn(
+            "<steps>/<id>.journal.md", paragraph,
+            f"{CORE_DOC}: абзац {JOURNAL_PARAGRAPH_START!r} не называет журнал по карточке "
+            "(правило 2)",
+        )
+        adhoc_name = "<steps>/adhoc-<ГГГГ-ММ-ДД>-<слаг>.journal.md"
+        self.assertIn(
+            adhoc_name, paragraph,
+            f"{CORE_DOC}: абзац {JOURNAL_PARAGRAPH_START!r} не оставил adhoc-имя без карточки",
+        )
+        self.assertIn(
+            "без карточки", paragraph[paragraph.index(adhoc_name):],
+            f"{CORE_DOC}: абзац {JOURNAL_PARAGRAPH_START!r} называет adhoc-журнал широкой правке "
+            "безусловно: после него нет оговорки «без карточки» (listik-ivt3)",
         )
 
     def test_manifest_line_matches_in_core_and_tracks(self) -> None:

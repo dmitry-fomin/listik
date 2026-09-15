@@ -7,7 +7,7 @@
 Все вызовы `launchctl`/`systemctl` идут через единственную функцию `run()`: тесты
 подменяют её (и `sys.platform`), поэтому настоящие системные команды в юнит-тестах
 никогда не выполняются. Юнит запускает `<bin> serve --quiet` с `LISTIK_HOME=<DATA_DIR>`
-и пишет лог в `<LOGS_DIR>/service.log`.
+и PATH для харнессов, пишет лог в `<LOGS_DIR>/service.log`.
 """
 from __future__ import annotations
 
@@ -69,6 +69,42 @@ def log_path() -> Path:
     return paths.LOGS_DIR / "service.log"
 
 
+def _service_path() -> str:
+    """PATH для юнита: окружение установки плюс стандартные CLI-каталоги.
+
+    launchd и systemd не читают интерактивный shell-профиль, поэтому одного
+    PATH процесса, который установил сервис, может быть недостаточно после
+    перезапуска. Каталоги добавляются даже до их создания: это позволяет
+    установить сервис до установки конкретного харнесса.
+    """
+    candidates = [
+        *(os.environ.get("PATH") or os.defpath).split(os.pathsep),
+        str(Path.home() / ".local" / "bin"),
+        str(Path.home() / "bin"),
+        "/opt/homebrew/bin",
+        "/opt/homebrew/sbin",
+        "/usr/local/bin",
+        "/usr/local/sbin",
+        "/home/linuxbrew/.linuxbrew/bin",
+        "/home/linuxbrew/.linuxbrew/sbin",
+    ]
+    seen: set[str] = set()
+    entries: list[str] = []
+    for item in candidates:
+        if item and item not in seen:
+            seen.add(item)
+            entries.append(item)
+    return os.pathsep.join(entries)
+
+
+def _systemd_environment(name: str, value: str) -> str:
+    """Строка `Environment=` с корректным quoting для путей с пробелами."""
+    if any(char.isspace() or char in '\\"' for char in value):
+        escaped = value.replace("\\", "\\\\").replace('"', '\\"')
+        return f'Environment="{name}={escaped}"\n'
+    return f"Environment={name}={value}\n"
+
+
 def resolve_bin(bin_arg: str | None) -> Path:
     """Какой бинарь пишется в юнит: `--bin`, иначе `LISTIK_WRAPPER`, иначе `ROOT_DIR/bin/listik`."""
     if bin_arg:
@@ -125,6 +161,7 @@ def _unit_text(plat: str, bin_path: Path) -> str:
         "[Service]\n"
         f"ExecStart={bin_path} serve --quiet\n"
         f"Environment=LISTIK_HOME={paths.DATA_DIR}\n"
+        f"{_systemd_environment('PATH', _service_path())}"
         "Restart=on-failure\n"
         f"StandardOutput=append:{log}\n"
         f"StandardError=append:{log}\n"
@@ -143,7 +180,10 @@ def write_unit(plat: str, bin_path: Path) -> Path:
         data = {
             "Label": LABEL,
             "ProgramArguments": [str(bin_path), "serve", "--quiet"],
-            "EnvironmentVariables": {"LISTIK_HOME": str(paths.DATA_DIR)},
+            "EnvironmentVariables": {
+                "LISTIK_HOME": str(paths.DATA_DIR),
+                "PATH": _service_path(),
+            },
             "RunAtLoad": True,
             "KeepAlive": True,
             "StandardOutPath": str(log),

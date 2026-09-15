@@ -66,6 +66,8 @@ listik service uninstall   # данные не трогает
 
 На macOS launchd-плист хранится в `~/Library/LaunchAgents/listik.server.plist`, на Linux
 systemd-юнит — в `~/.config/systemd/user/listik.service`. Лог сервиса — `logs/service.log`;
+юнит сохраняет PATH установки и добавляет стандартные каталоги пользовательских CLI
+(`~/.local/bin`, `~/bin`, Homebrew/Linuxbrew), чтобы автостарт находил харнессы без shell-профиля;
 `uninstall --no-load` удаляет файл, но оставляет уже загруженный сервис работать до ручной выгрузки.
 
 ### Резервные копии

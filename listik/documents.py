@@ -8,7 +8,7 @@ from pathlib import Path
 
 from . import deps as deps_mod
 from . import errors as errors_mod
-from . import paths, search, store, textutil
+from . import paths, search, store, textutil, util
 
 MAX_CHARS = 6000
 OVERLAP = 240
@@ -39,17 +39,17 @@ _DEPENDENCIES_DEFAULTS = {
 
 
 def _resolve(conn: sqlite3.Connection, task: sqlite3.Row, raw: str) -> Path:
-    p = Path(raw).expanduser()
+    p = util.expanduser(raw)
     candidates = [p]
     if not p.is_absolute():
         project = conn.execute("SELECT path FROM projects WHERE slug = ?", (task["project"],)).fetchone()
         if project and project[0]:
-            candidates.insert(0, Path(project[0]) / p)
+            candidates.insert(0, util.path(project[0]) / p)
         candidates.append(paths.ROOT_DIR / p)
     for candidate in candidates:
         try:
             if candidate.is_file():
-                return candidate.resolve()
+                return util.resolved(candidate)
         except OSError:
             continue
     return p
@@ -284,7 +284,7 @@ def index_document(conn: sqlite3.Connection, task_id: str, path: str, *, kind: s
     else:
         resolved = _resolve(conn, task, path)
         try:
-            content = resolved.read_text(encoding="utf-8")
+            content = util.read_text(resolved)
         except (OSError, UnicodeError) as exc:
             error_text = str(exc)
             if row is None:
@@ -445,7 +445,7 @@ def get_document(conn: sqlite3.Connection, task_id: str, kind: str) -> dict:
                 "revision": row["revision"], "content_hash": row["content_hash"],
                 "status": "ok", "error": None, "content": row["content"] or ""}
     try:
-        content = _resolve(conn, task, path).read_text(encoding="utf-8")
+        content = util.read_text(_resolve(conn, task, path))
         status, error = "ok", None
     except (OSError, UnicodeError) as exc:
         content, status, error = None, "missing", str(exc)
@@ -586,9 +586,9 @@ def _worktree(task: dict, conn: sqlite3.Connection | None = None) -> dict:
             return {**base, "exists": False,
                     "reason": f"{base['title']}, но у проекта {task.get('project') or '—'} не указан путь"}
         raw = project_path
-    path = Path(raw).expanduser()
+    path = util.expanduser(raw)
     try:
-        resolved = path.resolve()
+        resolved = util.resolved(path)
     except OSError:
         resolved = path
     if not resolved.is_dir():

@@ -16,12 +16,12 @@ used while working *any* task, see `AGENTS.md` — this file covers code archite
 Backend (pure stdlib Python, no build step, no package manager):
 
 ```sh
-./bin/listik serve --daemon   # start server + board at http://127.0.0.1:8787
-./bin/listik stop
-./bin/listik status           # server/db/search health
-./bin/listik init             # create/update the sqlite schema
-./bin/listik <command> --json # machine-readable output, available on every command
-./bin/listik projects <slug> --routing '<json>'   # show/set the project's harness routing
+listik serve --daemon   # start server + board at http://127.0.0.1:8787
+listik stop
+listik status           # server/db/search health
+listik init             # create/update the sqlite schema
+listik <command> --json # machine-readable output, available on every command
+listik projects <slug> --routing '<json>'   # show/set the project's harness routing
 ```
 
 ```sh
@@ -95,7 +95,7 @@ Database migrations exist as two parallel mechanisms — don't confuse them:
   `cp` of a WAL database is inconsistent). `restore` refuses while the server is running unless
   `--stop`, keeps a `listik.db.bak-pre-restore-*` safety copy and removes stale `-wal`/`-shm`.
 - `listik/mcp.py` — MCP server exposing `listik_*` tools; the same store/db as the CLI. Two
-  transports: stdio (`claude mcp add listik -- bin/listik mcp`) and HTTP — `server.py` serves
+  transports: stdio (`claude mcp add listik -- listik mcp`) and HTTP — `server.py` serves
   `POST /mcp` (Bearer token, no SSE) for a Listik deployed on another machine
   (`claude mcp add --transport http listik https://<host>/mcp --header "Authorization: Bearer …"`).
   Adding a tool: `TOOLS` + `call_tool`, and `WRITE_TOOLS` if it should push a board event (over

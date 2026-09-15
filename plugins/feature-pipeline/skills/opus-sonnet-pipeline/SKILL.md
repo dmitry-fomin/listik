@@ -115,7 +115,7 @@ git worktree add -b opus/<id> .worktrees/<id> "$B"
 Деревья всех конвейеров лежат в `<основное дерево>/.worktrees/<id>` — внутри папки проекта, а не в отдельном каталоге рядом с ним: дерево видно там же, где код, и на проект не заводится второй папки. `git worktree add` сам создаёт недостающие родительские каталоги, а каталог `.worktrees/` держи в `.gitignore` проекта: нет строки — добавь её до заведения деревьев, иначе `git status` основного дерева перестанет быть пустым. Если задачи ведутся в Listik, сразу запиши дерево в карточку — иначе доска не видит, где идёт работа, и блокировка по дереву не срабатывает:
 
 ```
-~/Projects/Listik/bin/listik set <id> worktree="$PWD/.worktrees/<id>" branch=opus/<id> --actor agent:claude --harness claude
+listik set <id> worktree="$PWD/.worktrees/<id>" branch=opus/<id> --actor agent:claude --harness claude
 ```
 
 «Требования» стоят последними, потому что в тексте задачи бывают свои заголовки `##`: раздел до конца

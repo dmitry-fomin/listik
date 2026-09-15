@@ -151,7 +151,7 @@ echo "exit=$?"; rm -f "$REV.tmp"
 его. Подсказок «это не дефект» ему не давай: находку разрешаешь ты по отчёту.
 
 Собери пакет диффа по `pipeline-core.md` («Пакет диффа для приёмки»), выдай карточку судье
-(`$L stage <P> --holder grok --actor agent:claude --harness claude`; `claim` и вердикт он пишет сам,
+(`listik stage <P> --holder grok --actor agent:claude --harness claude`; `claim` и вердикт он пишет сам,
 за него — нельзя) и запусти судью. `--write`
 обязателен — без него он не закоммитит; `--cwd` задаёт и его рабочий каталог, и каталог реестра
 задач, поэтому **тот же `--cwd` идёт в `status` и `result`**:
@@ -192,12 +192,12 @@ cd "$WT" && node "$GROK" task --background --write --no-web \
 каждая / что отложено или перенесено. Листинги и логи в ответ не клади.
 
 Listik, карточка <P> (подставь её id буквально): судья берёт её сам и сам пишет вердикт — за тебя его не напишут.
-L=~/Projects/Listik/bin/listik
-Первым действием: $L claim <P> --holder grok --actor agent:grok --harness grok
+listik
+Первым действием: listik claim <P> --holder grok --actor agent:grok --harness grok
 Вердикт — сразу после ответа, первой строкой аргумента ровно `VERDICT: PASS` или `VERDICT: FAIL`
 (сервер читает только её), дальше хеш коммита или красные пункты дословно, по одному в строке:
-  $L comment <P> $'VERDICT: PASS\n<hash7>' -k verdict --actor agent:grok --harness grok
-  $L comment <P> $'VERDICT: FAIL\n<пункты дословно>' -k verdict --actor agent:grok --harness grok
+  listik comment <P> $'VERDICT: PASS\n<hash7>' -k verdict --actor agent:grok --harness grok
+  listik comment <P> $'VERDICT: FAIL\n<пункты дословно>' -k verdict --actor agent:grok --harness grok
 Красный вердикт — ещё и release <P>: карточку снова возьмёт исполнитель.
 TASK
 ```

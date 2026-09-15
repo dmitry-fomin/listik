@@ -14,7 +14,7 @@ cd ~/Projects/Listik/web
 npm install
 
 # API Listik (в другом терминале)
-cd .. && ./bin/listik serve
+cd .. && listik serve
 
 npm run dev        # http://127.0.0.1:5173, /api проксируется на 127.0.0.1:8787
 npm run build      # → web/dist (сервер Listik отдаёт dist/index.html как SPA-фолбэк)
@@ -22,13 +22,13 @@ npm run preview    # посмотреть сборку
 npm run typecheck  # vue-tsc --noEmit (strictTemplates включён в tsconfig.json)
 ```
 
-Сборка кладётся в `web/dist` — её и отдаёт `./bin/listik serve` по адресу
-`http://127.0.0.1:8787/` (ссылка с токеном печатается в `./bin/listik status`).
+Сборка кладётся в `web/dist` — её и отдаёт `listik serve` по адресу
+`http://127.0.0.1:8787/` (ссылка с токеном печатается в `listik status`).
 
 ## Токен и адрес API
 
 - Токен: параметр `?token=` в адресе (сервер сам печатает такую ссылку в
-  `./bin/listik status`), либо `localStorage['listik.token']`, либо `VITE_LISTIK_TOKEN`.
+  `listik status`), либо `localStorage['listik.token']`, либо `VITE_LISTIK_TOKEN`.
   Найденный в адресе токен запоминается в localStorage, а параметр из строки адреса
   убирается — чтобы не оставался в истории и закладках. В запросах уходит заголовком
   `Authorization: Bearer`, а для SSE — параметром `?token=` (EventSource не умеет заголовки).
@@ -191,7 +191,7 @@ DeepSeek) показывает панель помощника и не роня�
 - **убрать совсем** — кнопка удаления с подтверждением; проект с задачами сервер без
   `force` не удалит, и интерфейс предлагает второй шаг — «удалить вместе с задачами».
 
-То же самое из терминала: `bin/listik projects`, `--add <путь>`, `--archive`, `--unarchive`,
+То же самое из терминала: `listik projects`, `--add <путь>`, `--archive`, `--unarchive`,
 `--remove [--force]`.
 
 ## Проверка живой страницы

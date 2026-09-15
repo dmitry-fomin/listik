@@ -126,7 +126,7 @@ echo "exit=$?"; rm -f "$REV.tmp"
 **Запуск** — фоном: порция легко выходит за лимит одного вызова Bash, а таймаут обвязки в foreground 540 с против
 7200 с в фоне. Промпт идёт **на stdin**, лимита на его размер обвязка не ставит. `--write` обязателен — по умолчанию
 Codex работает только на чтение; `--model gpt-6-astra` обязателен, потому что дефолт у Codex другой и молчаливый.
-Карточку Listik выдаёшь до запуска (`$L stage <P> --to s3-impl --holder codex --actor agent:claude --harness claude`),
+Карточку Listik выдаёшь до запуска (`listik stage <P> --to s3-impl --holder codex --actor agent:claude --harness claude`),
 а `claim` за codex не пишешь — он сам.
 
 ```
@@ -144,12 +144,12 @@ cd "$WT" && "$CODEX" run --background --write \
 
 Listik, карточка <P> (подставь её id буквально): отчитывайся по ней, а не только в дереве. Писать в трекер
 не запрещено — это твоя карточка, и claim в ней и есть доказательство, что ты запустился.
-L=~/Projects/Listik/bin/listik
-Первым действием возьми её сам: $L claim <P> --holder codex --actor agent:codex --harness codex
+listik
+Первым действием возьми её сам: listik claim <P> --holder codex --actor agent:codex --harness codex
 Дальше каждые 10–15 минут работы — heartbeat с тем, что идёт сейчас:
-  $L heartbeat <P> --holder codex --note "<что делаешь>" --actor agent:codex --harness codex
+  listik heartbeat <P> --holder codex --note "<что делаешь>" --actor agent:codex --harness codex
 Перед ответом — итог в журнал:
-  $L comment <P> "<первая строка отчёта и суть: файлы, проверки>" -k journal --actor agent:codex --harness codex
+  listik comment <P> "<первая строка отчёта и суть: файлы, проверки>" -k journal --actor agent:codex --harness codex
 Не смог или вопрос — тот же journal и release <P>: не держи карточку, если по ней не работаешь.
 TASK
 ```
@@ -177,7 +177,7 @@ cd "$WT" && "$CODEX" result "$CJOB"
 
 Судья единственный видит требования, чек-лист и код одновременно, поэтому вердикт и коммит — его. Подсказок «это
 не дефект» ему не давай: находку разрешаешь ты по отчёту. Собери пакет диффа по `pipeline-core.md` («Пакет диффа для
-приёмки»), выдай карточку судье (`$L stage <P> --holder grok --actor agent:claude --harness claude`; `claim` и
+приёмки»), выдай карточку судье (`listik stage <P> --holder grok --actor agent:claude --harness claude`; `claim` и
 вердикт он пишет сам, за него — нельзя) и запусти судью. `--write` обязателен — без него он не закоммитит; `--cwd` задаёт и рабочий каталог,
 и каталог реестра задач, поэтому **тот же `--cwd` идёт в `status` и `result`**:
 
@@ -217,12 +217,12 @@ cd "$WT" && node "$GROK" task --background --write --no-web \
 каждая / что отложено или перенесено. Листинги и логи в ответ не клади.
 
 Listik, карточка <P> (подставь её id буквально): судья берёт её сам и сам пишет вердикт — за тебя его не напишут.
-L=~/Projects/Listik/bin/listik
-Первым действием: $L claim <P> --holder grok --actor agent:grok --harness grok
+listik
+Первым действием: listik claim <P> --holder grok --actor agent:grok --harness grok
 Вердикт — сразу после ответа, первой строкой аргумента ровно `VERDICT: PASS` или `VERDICT: FAIL`
 (сервер читает только её), дальше хеш коммита или красные пункты дословно, по одному в строке:
-  $L comment <P> $'VERDICT: PASS\n<hash7>' -k verdict --actor agent:grok --harness grok
-  $L comment <P> $'VERDICT: FAIL\n<пункты дословно>' -k verdict --actor agent:grok --harness grok
+  listik comment <P> $'VERDICT: PASS\n<hash7>' -k verdict --actor agent:grok --harness grok
+  listik comment <P> $'VERDICT: FAIL\n<пункты дословно>' -k verdict --actor agent:grok --harness grok
 Красный вердикт — ещё и release <P>: карточку снова возьмёт исполнитель.
 TASK
 ```

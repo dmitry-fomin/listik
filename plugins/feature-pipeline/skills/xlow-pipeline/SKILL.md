@@ -61,7 +61,7 @@ adhoc-файла — в `pipeline-core.md` («Adhoc-файл для широко
 эпика из «Когда не подходит»:
 
 ```
-$L show <id> --json --actor agent:claude --harness claude
+listik show <id> --json --actor agent:claude --harness claude
 ```
 
 ## Префикс команд
@@ -115,7 +115,7 @@ node "$GROK" task --cwd "$PWD" --no-web --effort high "Ответь ровно �
 Три вызова через `$DSH`, все **из одного каталога** либо с одним `--cwd`: реестр задач привязан к каталогу
 запуска, и `status` из другого места job не найдёт. **Запуск** — фоном, порция легко выходит за лимит одного
 вызова Bash; `--write` обязателен. Карточку Listik выдаёшь до запуска, а `claim` за dsh не пишешь — он сам:
-`$L stage <P> --to s3-impl --holder dsh --actor agent:claude --harness claude`:
+`listik stage <P> --to s3-impl --holder dsh --actor agent:claude --harness claude`:
 
 ```
 cd "$WT" && "$DSH" run --background --write --cwd "$WT" --label "$BASE <X>" <<'TASK'
@@ -131,12 +131,12 @@ credentials.json. Не правь тесты под реализацию и не
 
 Listik, карточка <P> (подставь её id буквально): отчитывайся по ней, а не только в дереве. Писать в трекер
 не запрещено — это твоя карточка, и claim в ней и есть доказательство, что ты запустился.
-L=~/Projects/Listik/bin/listik
-Первым действием возьми её сам: $L claim <P> --holder dsh --actor agent:dsh --harness dsh
+listik
+Первым действием возьми её сам: listik claim <P> --holder dsh --actor agent:dsh --harness dsh
 Дальше каждые 10–15 минут работы — heartbeat с тем, что идёт сейчас:
-  $L heartbeat <P> --holder dsh --note "<что делаешь>" --actor agent:dsh --harness dsh
+  listik heartbeat <P> --holder dsh --note "<что делаешь>" --actor agent:dsh --harness dsh
 Перед ответом — итог в журнал:
-  $L comment <P> "<первая строка отчёта и суть: файлы, проверки>" -k journal --actor agent:dsh --harness dsh
+  listik comment <P> "<первая строка отчёта и суть: файлы, проверки>" -k journal --actor agent:dsh --harness dsh
 Не смог или вопрос — тот же journal и release <P>: не держи карточку, если по ней не работаешь.
 TASK
 ```
@@ -167,7 +167,7 @@ cd "$WT" && "$DSH" result "$DJOB"
 и единственная проверка работы исполнителя. Чек-листом приёмки служит **сам adhoc-файл**: разделы
 «Требования» и «Границы правки» — это и порция, и её чек-лист. Подсказок «это не дефект» ему не давай:
 находку разрешаешь ты по отчёту. Собери пакет диффа по `pipeline-core.md` («Пакет диффа для приёмки»),
-выдай карточку судье (`$L stage <P> --holder grok --actor agent:claude --harness claude`; `claim`
+выдай карточку судье (`listik stage <P> --holder grok --actor agent:claude --harness claude`; `claim`
 и вердикт он пишет сам, за него — нельзя) и запусти судью. `--write` обязателен — без него он
 не закоммитит; `--cwd` задаёт и рабочий каталог, и каталог реестра задач, поэтому **тот же `--cwd`**
 идёт в `status` и `result`:
@@ -205,12 +205,12 @@ cd "$WT" && node "$GROK" task --background --write --no-web \
 ответ не клади.
 
 Listik, карточка <P> (подставь её id буквально): судья берёт её сам и сам пишет вердикт — за тебя его не напишут.
-L=~/Projects/Listik/bin/listik
-Первым действием: $L claim <P> --holder grok --actor agent:grok --harness grok
+listik
+Первым действием: listik claim <P> --holder grok --actor agent:grok --harness grok
 Вердикт — сразу после ответа, первой строкой аргумента ровно `VERDICT: PASS` или `VERDICT: FAIL`
 (сервер читает только её), дальше хеш коммита или красные пункты дословно, по одному в строке:
-  $L comment <P> $'VERDICT: PASS\n<hash7>' -k verdict --actor agent:grok --harness grok
-  $L comment <P> $'VERDICT: FAIL\n<пункты дословно>' -k verdict --actor agent:grok --harness grok
+  listik comment <P> $'VERDICT: PASS\n<hash7>' -k verdict --actor agent:grok --harness grok
+  listik comment <P> $'VERDICT: FAIL\n<пункты дословно>' -k verdict --actor agent:grok --harness grok
 Красный вердикт — ещё и release <P>: карточку снова возьмёт исполнитель.
 TASK
 ```

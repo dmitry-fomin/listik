@@ -42,10 +42,10 @@ MCP и плагины Claude; все флаги (`--version`, `--archive`, `--ho
 git clone https://github.com/dmitry-fomin/listik.git && cd listik
 (cd web && npm install && npm run build)   # собрать доску
 
-./bin/listik serve --daemon   # сервер и доска на http://127.0.0.1:8787
-./bin/listik token            # ссылка на доску с токеном
-./bin/listik status           # сервер, база, поиск (--json)
-./bin/listik stop
+listik serve --daemon   # сервер и доска на http://127.0.0.1:8787
+listik token            # ссылка на доску с токеном
+listik status           # сервер, база, поиск (--json)
+listik stop
 ```
 
 - База и `config.toml` (с токеном) создаются сами при первом `serve`/`init`.
@@ -134,7 +134,7 @@ listik memory "про что-то"
 **MCP** (инструменты `listik_*`, список — в docs/API.md):
 
 ```sh
-claude mcp add listik -- /путь/к/listik/bin/listik mcp                       # локально
+claude mcp add listik -- listik mcp                                          # локально
 claude mcp add --transport http listik https://<домен>/mcp \
   --header "Authorization: Bearer <токен>"                                   # удалённый сервер
 ```

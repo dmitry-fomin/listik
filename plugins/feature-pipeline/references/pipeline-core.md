@@ -446,11 +446,11 @@ git -C "$W" reset -q -- "${PATHS[@]}" "$E1" "$E2"; echo "$D/<трек>.diff-<X>.
 Префикс команд — один на шаг:
 
 ```
-L=~/Projects/Listik/bin/listik
+listik
 ```
 
 Команды **оркестратора** ниже дописываются `--actor agent:claude --harness claude`: без них запись уйдёт автору
-как от человека, а `dep add` заведёт жёсткий блокер. `$L` — этот префикс. У команд в задании харнессу свой
+как от человека, а `dep add` заведёт жёсткий блокер. `listik` — этот префикс. У команд в задании харнессу свой
 актор — он подставляется в шаблоне.
 
 **Кто пишет в карточку.** Кто взял работу — тот и пишет. Этапы 1–2 (ТЗ и критика) ведёт сама сессия, поэтому
@@ -473,17 +473,17 @@ L=~/Projects/Listik/bin/listik
 ### Шаблон задания харнессу
 
 В текст задачи любому внешнему харнессу — и исполнителю на этапе 3, и судье на этапе 4 — идёт блок с id
-карточки и командами. Id и имена подставляются буквально, heredoc-маркер закавычен, пути к `$L` — абсолютные:
+карточки и командами. Id и имена подставляются буквально, heredoc-маркер закавычен, команда вызывается как `listik`:
 
 ```
 Listik, карточка <карточка>: отчитывайся по ней, а не только в дереве.
-L=~/Projects/Listik/bin/listik
+listik
 Первым действием возьми карточку сам:
-  $L claim <карточка> --holder <харнесс> --actor agent:<харнесс> --harness <харнесс>
+  listik claim <карточка> --holder <харнесс> --actor agent:<харнесс> --harness <харнесс>
 Каждые 10–15 минут работы — heartbeat с тем, что идёт сейчас:
-  $L heartbeat <карточка> --holder <харнесс> --note "<что делаешь>" --actor agent:<харнесс> --harness <харнесс>
+  listik heartbeat <карточка> --holder <харнесс> --note "<что делаешь>" --actor agent:<харнесс> --harness <харнесс>
 Перед ответом — итог в журнал:
-  $L comment <карточка> "<первая строка отчёта и суть: файлы, проверки>" -k journal --actor agent:<харнесс> --harness <харнесс>
+  listik comment <карточка> "<первая строка отчёта и суть: файлы, проверки>" -k journal --actor agent:<харнесс> --harness <харнесс>
 Не смог или вопрос — тот же journal и release <карточка>: не держи карточку, если по ней не работаешь.
 ```
 
@@ -491,8 +491,8 @@ L=~/Projects/Listik/bin/listik
 сервер читает только её, а красный список правок уходит исполнителю дословно:
 
 ```
-  $L comment <карточка> $'VERDICT: PASS\n<hash7>' -k verdict --actor agent:<харнесс> --harness <харнесс>
-  $L comment <карточка> $'VERDICT: FAIL\n<пункты дословно, по одному в строке>' -k verdict --actor agent:<харнесс> --harness <харнесс>
+  listik comment <карточка> $'VERDICT: PASS\n<hash7>' -k verdict --actor agent:<харнесс> --harness <харнесс>
+  listik comment <карточка> $'VERDICT: FAIL\n<пункты дословно, по одному в строке>' -k verdict --actor agent:<харнесс> --harness <харнесс>
 ```
 
 `<харнесс>` в `--holder` и `--harness` — одно и то же имя (`dsh`, `grok`, `codex`), подставляй то, что реально
@@ -505,20 +505,20 @@ L=~/Projects/Listik/bin/listik
 (`шаг <id>: issue_type <…>, этап <…>, держит <…>`):
 
 ```
-$L show <id> --json --actor agent:claude --harness claude
+listik show <id> --json --actor agent:claude --harness claude
 ```
 
 Дальше карточка берётся:
 
 ```
-$L claim <id> --holder claude --actor agent:claude --harness claude
+listik claim <id> --holder claude --actor agent:claude --harness claude
 ```
 
 **Эпик без писателя ТЗ — стоп.** Пресеты без писателя ТЗ: `opus-single-pipeline`, `opus-sonnet-pipeline`,
 `xlow-pipeline` и `nano-pipeline`. Если `issue_type == "epic"`, а пресет из этого списка:
 
 ```
-$L needs-owner <id> "эпик нельзя вести пресетом без писателя ТЗ: порции и дочерние карточки заводит только писатель ТЗ. Выберите пресет с писателем ТЗ — xhigh-pipeline, high-pipeline, medium-pipeline, low-pipeline, inherit-pipeline или feature-pipeline — либо заведите обычную задачу." --actor agent:claude --harness claude
+listik needs-owner <id> "эпик нельзя вести пресетом без писателя ТЗ: порции и дочерние карточки заводит только писатель ТЗ. Выберите пресет с писателем ТЗ — xhigh-pipeline, high-pipeline, medium-pipeline, low-pipeline, inherit-pipeline или feature-pipeline — либо заведите обычную задачу." --actor agent:claude --harness claude
 ```
 
 Вопрос — дословно в чат, дальше стоп: этапы не начинаются.
@@ -528,33 +528,33 @@ $L needs-owner <id> "эпик нельзя вести пресетом без п
 После `готово` этапа 1 карточка шага получает документы, дерево и ветку:
 
 ```
-$L set <id> spec_path=<абс. путь <id>.md> decision_path=<абс. путь журнала> worktree=<абс. путь дерева> branch=$(git branch --show-current) --actor agent:claude --harness claude
+listik set <id> spec_path=<абс. путь <id>.md> decision_path=<абс. путь журнала> worktree=<абс. путь дерева> branch=$(git branch --show-current) --actor agent:claude --harness claude
 ```
 
 Дальше **оркестратор** заводит по дочерней карточке на каждую порцию `<X>` из таблицы `<id>.md`, по порядку (`<id>` — id эпика):
 
 ```
-$L new "<заголовок шага>, порция <X>" --parent <id> --stage s1-spec --spec <абс. путь <id>.<X>.md> --checklist <абс. путь <id>.check-<X>.md> --actor agent:claude --harness claude
+listik new "<заголовок шага>, порция <X>" --parent <id> --stage s1-spec --spec <абс. путь <id>.<X>.md> --checklist <абс. путь <id>.check-<X>.md> --actor agent:claude --harness claude
 ```
 
 `--parent` даёт связь parent-child: родителя не закрыть, пока открыт ребёнок. id новой карточки — строкой
 в журнал (`порция <X>: карточка <id порции>`), дерево и ветка — на ней:
 
 ```
-$L set <id порции> worktree=<абс. путь дерева> branch=$(git branch --show-current) --actor agent:claude --harness claude
+listik set <id порции> worktree=<абс. путь дерева> branch=$(git branch --show-current) --actor agent:claude --harness claude
 ```
 
-**`$L stage <id>` у карточки-эпика не двигается дальше `s1-spec`, пока идут порции** — шаг закрывается
+**`listik stage <id>` у карточки-эпика не двигается дальше `s1-spec`, пока идут порции** — шаг закрывается
 `done <id>` после `done` последней порции, не раньше.
 
 Этапы порции `<X>` идут на **её** карточке (`<P>` — id порции). Этапы 1–2 — работа сессии, она и держит порцию:
 
 ```
-$L claim <P> --holder claude --actor agent:claude --harness claude        # s1-spec: порция под ТЗ
-$L stage <P> --actor agent:claude --harness claude                        # → s2-review, перед критикой
-$L set <P> review_path=<абс. путь <id>.review-<X>.md> --actor agent:claude --harness claude   # <id> эпика
-$L comment <P> "<итог критики: N блокирующих, M существенных, файл <путь>>" -k review --actor agent:claude --harness claude
-$L stage <P> --actor agent:claude --harness claude                        # → s3-impl, handoff снимает держателя
+listik claim <P> --holder claude --actor agent:claude --harness claude        # s1-spec: порция под ТЗ
+listik stage <P> --actor agent:claude --harness claude                        # → s2-review, перед критикой
+listik set <P> review_path=<абс. путь <id>.review-<X>.md> --actor agent:claude --harness claude   # <id> эпика
+listik comment <P> "<итог критики: N блокирующих, M существенных, файл <путь>>" -k review --actor agent:claude --harness claude
+listik stage <P> --actor agent:claude --harness claude                        # → s3-impl, handoff снимает держателя
 ```
 
 Дальше этап 3 — внешний исполнитель. Перед запуском карточка выдаётся, в текст задачи идёт шаблон из
@@ -563,7 +563,7 @@ $L stage <P> --actor agent:claude --harness claude                        # → 
 из «выдана» в «взята»:
 
 ```
-$L stage <P> --to s3-impl --holder <харнесс> --actor agent:claude --harness claude   # выдача на этапе 3
+listik stage <P> --to s3-impl --holder <харнесс> --actor agent:claude --harness claude   # выдача на этапе 3
 ```
 
 Повторный запуск по той же порции (после красного) — та же выдача на том же этапе: `--to s3-impl`
@@ -574,14 +574,14 @@ $L stage <P> --to s3-impl --holder <харнесс> --actor agent:claude --harne
 Перед этапом 4 карточка выдаётся судье — судью он тоже берёт сам:
 
 ```
-$L stage <P> --holder <судья> --actor agent:claude --harness claude       # → s4-judge, выдача судье
+listik stage <P> --holder <судья> --actor agent:claude --harness claude       # → s4-judge, выдача судье
 ```
 
 Вердикт пишет **судья**, не оркестратор: первая строка ровно `VERDICT: PASS` или `VERDICT: FAIL` (сервер
 читает только её). Зелёный — коммит и закрытие порции оркестратором:
 
 ```
-$L done <P> -r "коммит <hash7>" --actor agent:claude --harness claude
+listik done <P> -r "коммит <hash7>" --actor agent:claude --harness claude
 ```
 
 Красный сервер возвращает `<P>` на `s3-impl` sticky-переходом, держатель (судья) остаётся — судья сам делает
@@ -589,7 +589,7 @@ $L done <P> -r "коммит <hash7>" --actor agent:claude --harness claude
 После `done` последней порции:
 
 ```
-$L done <id> -r "<порций K, коммиты <hash7>…>" --actor agent:claude --harness claude
+listik done <id> -r "<порций K, коммиты <hash7>…>" --actor agent:claude --harness claude
 ```
 
 ### Не эпик (любой пресет)
@@ -599,43 +599,43 @@ $L done <id> -r "<порций K, коммиты <hash7>…>" --actor agent:clau
 Пресет **с писателем ТЗ**: после `готово` этапа 1 — документы первой порции и переход на критику:
 
 ```
-$L set <id> spec_path=<абс. путь <id>.md> checklist_path=<чек-лист первой порции> decision_path=<абс. путь журнала> worktree=<абс. путь дерева> branch=$(git branch --show-current) --actor agent:claude --harness claude
-$L stage <id> --actor agent:claude --harness claude
+listik set <id> spec_path=<абс. путь <id>.md> checklist_path=<чек-лист первой порции> decision_path=<абс. путь журнала> worktree=<абс. путь дерева> branch=$(git branch --show-current) --actor agent:claude --harness claude
+listik stage <id> --actor agent:claude --harness claude
 ```
 
 Порции идут подряд на этой карточке: при переходе к порции `<X>` — её чек-лист, после её критики —
 замечания и итог критики:
 
 ```
-$L set <id> checklist_path=<её чек-лист> --actor agent:claude --harness claude
-$L set <id> review_path=<абс. путь <id>.review-<X>.md> --actor agent:claude --harness claude
-$L comment <id> "<итог критики: N блокирующих, M существенных, файл <путь>>" -k review --actor agent:claude --harness claude
+listik set <id> checklist_path=<её чек-лист> --actor agent:claude --harness claude
+listik set <id> review_path=<абс. путь <id>.review-<X>.md> --actor agent:claude --harness claude
+listik comment <id> "<итог критики: N блокирующих, M существенных, файл <путь>>" -k review --actor agent:claude --harness claude
 ```
 
 Этапы двигаются по первой порции; у каждой следующей перед критикой:
 
 ```
-$L stage <id> --to s2-review --actor agent:claude --harness claude
+listik stage <id> --to s2-review --actor agent:claude --harness claude
 ```
 
 Перед этапом 3 карточка выдаётся исполнителю, перед этапом 4 — судье (оба берут её сами, шаблон «Задание
 харнессу»); своего claim за них оркестратор не пишет:
 
 ```
-$L stage <id> --to s3-impl --holder <харнесс> --actor agent:claude --harness claude   # исполнителю
-$L stage <id> --to s4-judge --holder <судья> --actor agent:claude --harness claude    # судье
+listik stage <id> --to s3-impl --holder <харнесс> --actor agent:claude --harness claude   # исполнителю
+listik stage <id> --to s4-judge --holder <судья> --actor agent:claude --harness claude    # судье
 ```
 
 Красный вердикт судья пишет в карточку сам и освобождает её (`release <id>`); оркестратор выдаёт карточку
 исполнителю снова и запускает его с красными пунктами дословно. Зелёный — коммит судьи и
-`$L done <id> -r "<коммит <hash7>>" --actor agent:claude --harness claude` за оркестратором.
+`listik done <id> -r "<коммит <hash7>>" --actor agent:claude --harness claude` за оркестратором.
 
 Пресет **без писателя ТЗ** (adhoc-ветка, `xlow-pipeline`, `nano-pipeline`): этапов 1–2 нет, карточка одна:
 
 ```
-$L set <id> spec_path=<абс. путь adhoc-файла> checklist_path=<тот же adhoc-файл> decision_path=<абс. путь журнала> worktree=<абс. путь дерева> branch=$(git branch --show-current) --actor agent:claude --harness claude
-$L stage <id> --to s3-impl --holder <харнесс> --actor agent:claude --harness claude   # выдача исполнителю
-$L stage <id> --to s4-judge --holder <судья> --actor agent:claude --harness claude    # выдача судье
+listik set <id> spec_path=<абс. путь adhoc-файла> checklist_path=<тот же adhoc-файл> decision_path=<абс. путь журнала> worktree=<абс. путь дерева> branch=$(git branch --show-current) --actor agent:claude --harness claude
+listik stage <id> --to s3-impl --holder <харнесс> --actor agent:claude --harness claude   # выдача исполнителю
+listik stage <id> --to s4-judge --holder <судья> --actor agent:claude --harness claude    # выдача судье
 ```
 
 `claim` за исполнителя и судью не пишется: каждый берёт карточку сам (шаблон «Задание харнессу»),
@@ -643,7 +643,7 @@ $L stage <id> --to s4-judge --holder <судья> --actor agent:claude --harness
 эпика, но на `<id>`, и закрытие после зелёного единственной порции:
 
 ```
-$L done <id> -r "<коммит <hash7>>" --actor agent:claude --harness claude
+listik done <id> -r "<коммит <hash7>>" --actor agent:claude --harness claude
 ```
 
 ### Всегда
@@ -654,20 +654,20 @@ heartbeat шлёт он сам; оркестратор вместо этого �
 — прогон не запустился, проверь job и перезапусти.
 
 ```
-$L heartbeat <карточка> --holder claude --note "<id>, порция X, этап N: <что идёт>" --actor agent:claude --harness claude
+listik heartbeat <карточка> --holder claude --note "<id>, порция X, этап N: <что идёт>" --actor agent:claude --harness claude
 ```
 
 Вопрос автору идёт и в чат, и в карточку; ответ — снятием флажка:
 
 ```
-$L needs-owner <карточка> "<полный текст>" --actor agent:claude --harness claude
-$L needs-owner <карточка> --clear "<ответ>" --actor agent:claude --harness claude
+listik needs-owner <карточка> "<полный текст>" --actor agent:claude --harness claude
+listik needs-owner <карточка> --clear "<ответ>" --actor agent:claude --harness claude
 ```
 
 Строки журнала о старте шага, `готово` порции и остановке дублируются в карточку:
 
 ```
-$L comment <карточка> "<строка журнала>" -k journal --actor agent:claude --harness claude
+listik comment <карточка> "<строка журнала>" -k journal --actor agent:claude --harness claude
 ```
 
 ## Грабли, общие для всех пресетов

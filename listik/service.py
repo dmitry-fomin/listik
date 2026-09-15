@@ -19,7 +19,8 @@ from pathlib import Path
 
 from . import errors, paths
 
-LABEL = "dev.listik.server"
+LABEL = "listik.server"
+LEGACY_LABEL = "dev.listik.server"
 SYSTEMD_UNIT_NAME = "listik.service"
 
 
@@ -56,6 +57,14 @@ def unit_path(plat: str | None = None) -> Path:
     return Path.home() / ".config" / "systemd" / "user" / SYSTEMD_UNIT_NAME
 
 
+def _legacy_unit_path(plat: str | None = None) -> Path | None:
+    """Путь к launchd-плисту до переименования метки службы."""
+    plat = plat or platform_kind()
+    if plat != "launchd":
+        return None
+    return Path.home() / "Library" / "LaunchAgents" / f"{LEGACY_LABEL}.plist"
+
+
 def log_path() -> Path:
     return paths.LOGS_DIR / "service.log"
 
@@ -77,8 +86,22 @@ def resolve_bin(bin_arg: str | None) -> Path:
     return paths.ROOT_DIR / "bin" / "listik"
 
 
-def _launchd_target() -> str:
-    return f"gui/{os.getuid()}/{LABEL}"
+def _launchd_target(label: str = LABEL) -> str:
+    return f"gui/{os.getuid()}/{label}"
+
+
+def _remove_legacy_unit(*, unload: bool) -> bool:
+    """Выгрузить и удалить старый launchd-плист, если он остался."""
+    path = _legacy_unit_path("launchd")
+    if path is None or not path.is_file():
+        return False
+    if unload:
+        run(["launchctl", "bootout", _launchd_target(LEGACY_LABEL)])  # ошибка игнорируется
+    try:
+        path.unlink()
+    except FileNotFoundError:
+        pass
+    return True
 
 
 def is_loaded(plat: str | None = None) -> bool | None:
@@ -186,6 +209,8 @@ def install(bin_arg: str | None, no_load: bool) -> dict:
     """
     plat = platform_kind()
     loaded = False if no_load else is_loaded(plat)
+    if plat == "launchd":
+        _remove_legacy_unit(unload=not no_load)
     if not loaded:
         pid = _foreign_server_pid()
         if pid:
@@ -227,24 +252,33 @@ def uninstall(no_load: bool) -> dict:
     """`listik service uninstall`: данные (`DATA_DIR`) не трогает."""
     plat = platform_kind()
     path = unit_path(plat)
-    existed = path.is_file()
+    legacy_path = _legacy_unit_path(plat)
+    existed = path.is_file() or bool(legacy_path and legacy_path.is_file())
     warning = None
     if no_load:
+        if plat == "launchd":
+            _remove_legacy_unit(unload=False)
         warning = ("загруженный сервис продолжит работать до ручной выгрузки: "
                    + _manual_unload_hint(plat))
     else:
         if plat == "launchd":
+            _remove_legacy_unit(unload=True)
             run(["launchctl", "bootout", _launchd_target()])  # ошибка игнорируется
         else:
             run(["systemctl", "--user", "disable", "--now", SYSTEMD_UNIT_NAME])
     if existed:
-        path.unlink()
+        try:
+            path.unlink()
+        except FileNotFoundError:
+            pass
     return {"platform": plat, "unit_path": str(path), "existed": existed, "warning": warning}
 
 
 def status() -> dict:
     """Состояние сервиса — то же, что печатает `listik service status --json`."""
     plat = platform_kind()
+    if plat == "launchd":
+        _remove_legacy_unit(unload=True)
     path = unit_path(plat)
     installed = path.is_file()
     loaded = is_loaded(plat)

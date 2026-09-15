@@ -112,6 +112,9 @@ class ServiceCliTestCase(unittest.TestCase):
         return p
 
     def launchd_unit(self) -> pathlib.Path:
+        return self.home / "Library" / "LaunchAgents" / "listik.server.plist"
+
+    def legacy_launchd_unit(self) -> pathlib.Path:
         return self.home / "Library" / "LaunchAgents" / "dev.listik.server.plist"
 
     def systemd_unit(self) -> pathlib.Path:
@@ -129,7 +132,7 @@ class ServiceCliTestCase(unittest.TestCase):
         self.assertTrue(plist_path.is_file())
         with plist_path.open("rb") as fh:
             data = plistlib.load(fh)
-        self.assertEqual(data["Label"], "dev.listik.server")
+        self.assertEqual(data["Label"], "listik.server")
         self.assertEqual(data["ProgramArguments"], [str(fake_bin), "serve", "--quiet"])
         self.assertEqual(data["EnvironmentVariables"]["LISTIK_HOME"], str(self.data_dir))
         self.assertIs(data["RunAtLoad"], True)
@@ -152,6 +155,30 @@ class ServiceCliTestCase(unittest.TestCase):
         self.assertEqual(self.runner.calls[2][1], "bootstrap")
         self.assertEqual(self.runner.calls[2][2], f"gui/{os.getuid()}")
         self.assertEqual(self.runner.calls[2][3], str(self.launchd_unit()))
+
+    def test_darwin_install_migrates_legacy_plist(self) -> None:
+        legacy = self.legacy_launchd_unit()
+        legacy.parent.mkdir(parents=True, exist_ok=True)
+        legacy.write_bytes(plistlib.dumps({"Label": "dev.listik.server"}))
+
+        code, out = self.run_cli("install", "--bin", str(self.make_bin()))
+        self.assertEqual(code, 0, out)
+        self.assertFalse(legacy.exists())
+        self.assertTrue(self.launchd_unit().exists())
+        self.assertIn(
+            ["launchctl", "bootout", f"gui/{os.getuid()}/dev.listik.server"],
+            self.runner.calls,
+        )
+
+    def test_darwin_install_no_load_removes_legacy_without_runner(self) -> None:
+        legacy = self.legacy_launchd_unit()
+        legacy.parent.mkdir(parents=True, exist_ok=True)
+        legacy.write_bytes(plistlib.dumps({"Label": "dev.listik.server"}))
+
+        code, out = self.run_cli("install", "--no-load", "--bin", str(self.make_bin()))
+        self.assertEqual(code, 0, out)
+        self.assertFalse(legacy.exists())
+        self.assertEqual(self.runner.calls, [])
 
     # --- linux ---------------------------------------------------------------
 
@@ -263,6 +290,20 @@ class ServiceCliTestCase(unittest.TestCase):
         self.assertFalse(self.launchd_unit().exists())
         self.assertIn("launchctl bootout", out)
 
+    def test_uninstall_migrates_legacy_plist(self) -> None:
+        legacy = self.legacy_launchd_unit()
+        legacy.parent.mkdir(parents=True, exist_ok=True)
+        legacy.write_bytes(plistlib.dumps({"Label": "dev.listik.server"}))
+
+        code, info = self.run_json("uninstall")
+        self.assertEqual(code, 0, info)
+        self.assertTrue(info["existed"])
+        self.assertFalse(legacy.exists())
+        self.assertIn(
+            ["launchctl", "bootout", f"gui/{os.getuid()}/dev.listik.server"],
+            self.runner.calls,
+        )
+
     # --- status ------------------------------------------------------------
 
     def test_status_json_reflects_install_and_uninstall(self) -> None:
@@ -281,6 +322,20 @@ class ServiceCliTestCase(unittest.TestCase):
         code, out = self.run_json("status")
         self.assertEqual(code, 0, out)
         self.assertFalse(out["installed"])
+
+    def test_status_migrates_legacy_plist(self) -> None:
+        legacy = self.legacy_launchd_unit()
+        legacy.parent.mkdir(parents=True, exist_ok=True)
+        legacy.write_bytes(plistlib.dumps({"Label": "dev.listik.server"}))
+
+        code, out = self.run_json("status")
+        self.assertEqual(code, 0, out)
+        self.assertFalse(out["installed"])
+        self.assertFalse(legacy.exists())
+        self.assertIn(
+            ["launchctl", "bootout", f"gui/{os.getuid()}/dev.listik.server"],
+            self.runner.calls,
+        )
 
     # --- платформа не поддерживается -----------------------------------------
 

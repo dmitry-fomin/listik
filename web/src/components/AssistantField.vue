@@ -11,6 +11,10 @@
  * читает сервер Listik, в браузер он не попадает. Если сервер сказал
  * `enabled=false` (в `[assistant]` нет `api_key`), кнопки нет вовсе; ошибку
  * запроса панель показывает понятным текстом и не роняет доску.
+ *
+ * Применение не закрывает поповер: применённая секция скрывается целиком (до
+ * следующего запроса — `ask`), а видимые соседи остаются на месте — можно
+ * применить и текст, и критерии, и маршрут за один заход.
  */
 import { computed, ref, watch } from 'vue'
 import { UiAlert, UiBadge, UiButton, UiPopover, UiSpinner } from '@zoloto585/facet'
@@ -52,6 +56,20 @@ const loading = ref(false)
 const error = ref<string | null>(null)
 const suggestion = ref<AssistantSuggestion | null>(null)
 
+/** Что уже применили: секция прячется целиком и живёт так до следующего запроса. */
+interface AppliedMarks {
+  text: boolean
+  acceptance: boolean
+  route: boolean
+}
+
+const applied = ref<AppliedMarks>({ text: false, acceptance: false, route: false })
+
+/** Сброс отметок — в начале `ask()`: и новое открытие, и «Повторить» показывают ответ целиком. */
+function resetApplied(): void {
+  applied.value = { text: false, acceptance: false, route: false }
+}
+
 /** Пока сервер не подтвердил `enabled`, кнопки нет — как и без ключа в конфиге. */
 const enabled = computed(() => store.assistantEnabled.value)
 const modelTitle = computed(() => store.assistantModel.value || 'DeepSeek')
@@ -90,10 +108,40 @@ const routeBlockedReason = computed(() => {
   return null
 })
 
+// Секции, которые уже применили, не показываем — иначе «Маршрут» воскрес бы
+// веткой «Уже выбран», а текст — кнопкой «Текст уже такой».
+
+/** «Переписанный текст»: пустого предложения не рисуем, применённого — тоже. */
+const textBlockShown = computed(() => Boolean(suggestion.value?.text) && !applied.value.text)
+
+/** «Дописать в приёмку»: у самого поля приёмки секции нет, пустой список её не рисует. */
+const acceptanceBlockShown = computed(
+  () =>
+    props.field !== 'acceptance' &&
+    Boolean(suggestion.value?.acceptance.length) &&
+    !applied.value.acceptance,
+)
+
+/** «Маршрут»: применённая секция скрыта целиком — вместе с обеими ветками. */
+const routeBlockShown = computed(() => !applied.value.route)
+
+/** Кнопка применения есть только у ветки с предложенным маршрутом. */
+const routeButtonShown = computed(() => routeBlockShown.value && Boolean(suggestion.value?.route))
+
+/** Видимых секций с кнопкой применения не осталось — все предложения применены. */
+const allApplied = computed(
+  () =>
+    Boolean(suggestion.value) &&
+    !textBlockShown.value &&
+    !acceptanceBlockShown.value &&
+    !routeButtonShown.value,
+)
+
 async function ask(): Promise<void> {
   loading.value = true
   error.value = null
   suggestion.value = null
+  resetApplied()
   try {
     const response = await store.askAssistant({
       field: props.field,
@@ -117,20 +165,20 @@ watch(open, (isOpen) => {
 function applyText(): void {
   if (!suggestion.value) return
   emit('applyText', suggestion.value.text)
-  open.value = false
+  applied.value.text = true
 }
 
 function applyAcceptance(): void {
   if (!suggestion.value?.acceptance.length) return
   emit('applyAcceptance', suggestion.value.acceptance)
-  open.value = false
+  applied.value.acceptance = true
 }
 
 function applyRoute(): void {
   const key = suggestion.value?.route?.key
   if (!key || routeBlockedReason.value || routeSelected.value) return
   emit('applyRoute', key)
-  open.value = false
+  applied.value.route = true
 }
 </script>
 
@@ -179,7 +227,7 @@ function applyRoute(): void {
               {{ suggestion.complexity.reason }}
             </p>
 
-            <section v-if="suggestion.text" class="listik-assist__block">
+            <section v-if="textBlockShown" class="listik-assist__block">
               <span class="listik-assist__block-title">Переписанный текст</span>
               <p class="listik-assist__text">{{ suggestion.text }}</p>
               <UiButton size="sm" variant="secondary" :disabled="!textChanged" @click="applyText">
@@ -190,7 +238,7 @@ function applyRoute(): void {
             <!-- Для самого поля «приёмка» переписанный текст уже содержит критерии:
                  отдельный список «дописать» здесь только путал бы. -->
             <section
-              v-if="field !== 'acceptance' && suggestion.acceptance.length"
+              v-if="acceptanceBlockShown"
               class="listik-assist__block"
             >
               <span class="listik-assist__block-title">Дописать в приёмку</span>
@@ -202,7 +250,7 @@ function applyRoute(): void {
               </UiButton>
             </section>
 
-            <section class="listik-assist__block">
+            <section v-if="routeBlockShown" class="listik-assist__block">
               <span class="listik-assist__block-title">Маршрут</span>
               <template v-if="suggestion.route">
                 <div class="listik-row">
@@ -226,6 +274,8 @@ function applyRoute(): void {
               </template>
               <span v-else class="listik-section__hint">DeepSeek не выбрал маршрут</span>
             </section>
+
+            <p v-if="allApplied" class="listik-section__hint">Все предложения применены.</p>
 
             <p class="listik-assist__footnote">Ничего не меняется без подтверждения.</p>
           </template>

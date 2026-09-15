@@ -13,6 +13,16 @@
  * отказавшим автостартом (`launch_error`, флаг «нужен человек», метки маршрута) —
  * так проверяется пункт «без маршрута» в панели задачи
  * (scripts/verify-route-clear.mjs).
+ * `--assistant` добавляет `GET /api/assistant/status` (`enabled`) и
+ * `POST /api/assistant/suggest`; формы — `AssistantStatus` и
+ * `AssistantSuggestResponse` из `web/src/api/types.ts`. Ответ подбирается по
+ * тексту поля `text` из тела: `full` — переписанный текст, два критерия,
+ * сложность с причиной и видимый маршрут из `--routes`; `same` — текст равен
+ * входному; `blocked` — маршрут не из `routes.json`; `noroute` — `route: null`;
+ * `noacc` — пустой список критериев; `error` — запросы чередуются: нечётный
+ * отвечает ошибкой (HTTP 500), чётный — как `full`; любой другой текст — как
+ * `full`. Без флага ручек помощника нет, как и раньше
+ * (scripts/verify-assistant-apply.mjs).
  * `--cold` добавляет четыре задачи под строку «worktree · branch» блока
  * «Холодный старт»: отдельное дерево, работа в `main`, она же в `master`, и
  * карточка совсем без дерева и ветки (scripts/verify-cold-start.mjs).
@@ -37,6 +47,7 @@ const fillArg = process.argv.slice(3).find((arg) => arg.startsWith('--fill='))
 const fillCount = fillArg ? Number.parseInt(fillArg.slice('--fill='.length), 10) : 0
 const linksMode = process.argv.slice(3).includes('--links')
 const routesMode = process.argv.slice(3).includes('--routes')
+const assistantMode = process.argv.slice(3).includes('--assistant')
 const coldMode = process.argv.slice(3).includes('--cold')
 const hintMode = process.argv.slice(3).includes('--hint')
 const slowArg = process.argv.slice(3).find((arg) => arg.startsWith('--slow-ms='))
@@ -500,6 +511,73 @@ const ROUTES = [
     harness: 'codex',
   },
 ]
+
+/* ── помощник DeepSeek (`--assistant`): заглушка транспорта ──────────────────── */
+
+/** Модель в ответе — она же в шапке панели помощника («Помощник · deepseek-mock»). */
+const ASSISTANT_MODEL = 'deepseek-mock'
+
+/** Критерии приёмки ответа `full` — два пункта, как у настоящего предложения. */
+const ASSISTANT_ACCEPTANCE = [
+  'npm run build проходит без ошибок',
+  'поповер помощника остаётся открытым после применения',
+]
+
+/** Сложность с причиной: бейдж «сложность: средняя» и строка причины в панели. */
+const ASSISTANT_COMPLEXITY = {
+  level: 'medium',
+  reason: 'несколько шагов: правка панели и стенда проверки',
+}
+
+/**
+ * Маршрут ответа `full` — видимая запись из `--routes`, допустимая типу `task`.
+ * Умолчание формы для задачи (`lib/routes.ts` → `low-pipeline`) пропускаем: оно и
+ * так выбрано, и кнопка была бы «Уже выбран» — применить маршрут нечем.
+ */
+function assistantRouteOf() {
+  const visible = ROUTES.filter((route) => route.visible)
+  return visible.find((route) => route.key !== 'low-pipeline') ?? visible[0] ?? null
+}
+
+/** Поле `route` ответа: `noroute` — null, `blocked` — ключ, которого нет в routes. */
+function assistantRouteFor(mode) {
+  if (mode === 'noroute') return null
+  if (mode === 'blocked') {
+    return {
+      key: 'ghost-pipeline',
+      kind: 'pipeline',
+      title: 'Маршрут, которого нет в routes.json',
+      hint: 'появится после правки файла',
+      reason: 'модель предложила ключ, которого доска не знает',
+    }
+  }
+  const route = assistantRouteOf()
+  if (!route) return null
+  return {
+    key: route.key,
+    kind: route.kind,
+    title: route.title,
+    hint: route.hint,
+    reason: 'подходит по типу и объёму задачи',
+  }
+}
+
+/** Ответ `POST /api/assistant/suggest` — форма `AssistantSuggestResponse` из types.ts. */
+function assistantResponse(field, text, mode) {
+  return {
+    field,
+    model: ASSISTANT_MODEL,
+    suggestion: {
+      text: mode === 'same' ? text : `${text} — переписано помощником`,
+      acceptance: mode === 'noacc' ? [] : [...ASSISTANT_ACCEPTANCE],
+      complexity: { ...ASSISTANT_COMPLEXITY },
+      route: assistantRouteFor(mode),
+    },
+  }
+}
+
+/** `error`: 1-й, 3-й, … запросы с этим текстом — ошибка, 2-й, 4-й, … — как `full`. */
+let assistantErrorCalls = 0
 
 if (routesMode) {
   for (const item of [
@@ -1161,6 +1239,36 @@ const server = createServer(async (request, response) => {
       path: '~/.config/listik/routes.json',
       routes: routesMode ? ROUTES : [],
     })
+  }
+
+  // Без `--assistant` ручек нет вовсе — мок отвечает как до правки (404 ниже).
+  if (assistantMode && url.pathname === '/api/assistant/status') {
+    // Ключ наружу не отдаётся и моком: только факт «настроен» и имя модели.
+    return ok({ enabled: true, model: ASSISTANT_MODEL, base_url: 'https://api.deepseek.com' })
+  }
+
+  if (assistantMode && url.pathname === '/api/assistant/suggest' && request.method === 'POST') {
+    const body = await readJsonBody(request)
+    const text = typeof body.text === 'string' ? body.text : ''
+    const asked = text.trim()
+    let mode = ['full', 'same', 'blocked', 'noroute', 'noacc', 'error'].includes(asked) ? asked : 'full'
+    if (mode === 'error') {
+      assistantErrorCalls += 1
+      if (assistantErrorCalls % 2 === 1) {
+        const message = 'DeepSeek недоступен: мок отдаёт ошибку на каждый нечётный запрос'
+        // Доска читает `error` (client.ts → ApiError.message), а `code`/`message`/`hint` —
+        // триада единого формата ошибок listik/errors.py.
+        return json(500, {
+          ok: false,
+          error: message,
+          code: 'server_error',
+          message,
+          hint: 'повторите запрос: следующий ответ мока будет успешным',
+        })
+      }
+      mode = 'full'
+    }
+    return ok(assistantResponse(body.field, text, mode))
   }
 
   if (url.pathname === '/api/tasks') {

@@ -554,6 +554,13 @@ def handle(method: str, path: str, query: dict, body: dict, authed: bool = False
             "now": store.now_iso(),
             "embed": {"model": cfg["embed"]["model"]},
             "authed": authed,
+            # Только пути установки для диагностики несовпадений даже при отказе
+            # токена. Содержимое конфига и подробности базы остаются закрытыми.
+            "installation": {
+                "code_dir": str(paths.ROOT_DIR.resolve()),
+                "data_dir": str(paths.DATA_DIR.resolve()),
+                "config_path": str(paths.CONFIG_PATH.resolve()),
+            },
         }
         if authed and _db_error is not None:
             data["db_error"] = _db_error

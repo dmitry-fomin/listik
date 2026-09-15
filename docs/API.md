@@ -480,7 +480,7 @@ id внутри файлового пути (`docs/specs/<id>.md`, `/wt/<id>/lis
 
 | Метод | Путь | Параметры | Ответ |
 |---|---|---|---|
-| GET | `/api/health` | — | `status, version, embed{model}, now, authed`; авторизованному — ещё `db`, `counts`, `embed{ok,models}`, `routes{ok,error,path,count}`, `db_error{where,error,at}` — только если последний фоновый проход упал с `sqlite3.DatabaseError`, и `runtime{code_dir,data_dir,cwd,worktree,main_repo,warning}` — откуда запущен сервер (`data_dir` — каталог данных, `LISTIK_HOME`; `warning` — если из связанного git worktree, listik-i23u), `db_replaced{kind,at,detail,before,after}` — если сервер заметил подмену файла базы или WAL (см. ниже) |
+| GET | `/api/health` | — | `status, version, embed{model}, now, authed, installation{code_dir,data_dir,config_path}` (пути установки доступны и без токена для диагностики CLI, содержимое config не отдаётся); авторизованному — ещё `db`, `counts`, `embed{ok,models}`, `routes{ok,error,path,count}`, `db_error{where,error,at}` — только если последний фоновый проход упал с `sqlite3.DatabaseError`, и `runtime{code_dir,data_dir,cwd,worktree,main_repo,warning}` — откуда запущен сервер (`data_dir` — каталог данных, `LISTIK_HOME`; `warning` — если из связанного git worktree, listik-i23u), `db_replaced{kind,at,detail,before,after}` — если сервер заметил подмену файла базы или WAL (см. ниже) |
 | GET | `/api/routes` | — | `ok, error, path, warnings[], routes[]` — записи `routes.json`, загруженные при старте, без `command`, но с посчитанным `icon` (см. «Маршруты запуска»); `warnings` — замечания, которые файл не отменяют (неизвестный `icon` записи: у неё есть фолбэк по ключу и поле `icon_error` с причиной; неизвестный `strip.glyph`: `glyph: null` и `strip.glyph_error`); ошибка файла — `ok=false` и текст, а не HTTP-ошибка |
 | GET | `/api/assistant/status` | — | `enabled, model, base_url, voice` — настроен ли помощник DeepSeek (`[assistant]` в `config.toml`) и голосовой ввод (`voice=true` — непусты оба ключа, `[assistant]` и `[deepgram]`); ключи наружу не отдаются (см. «Помощник DeepSeek») |
 | GET | `/api/meta` | `archived` | `projects[], actors[], facets{}, statuses{}, stages{}, priorities{}` |
@@ -498,6 +498,15 @@ id внутри файлового пути (`docs/specs/<id>.md`, `/wt/<id>/lis
 | GET | `/api/timeline` | `limit` | `items[]`: `ts, kind, from_value, to_value, actor, actor_title, harness, note, duration_s, task_id, title, project, stage, status, age` |
 | GET | `/api/events` | `limit` | сырые события |
 | GET | `/api/stream` | `token` (обязателен) | SSE: `data: {"kind":"task","at":...,"payload":{"id":...,"action":"updated"}}`, плюс `: ping` каждые 15 с |
+
+`listik status --json` дополнительно отдаёт `bin_path` (реальный путь CLI) и
+`diagnostics{installation,token,warnings[],hint?}`. `installation` — `match`, `mismatch`,
+`unknown` (сервер не сообщил все пути) или `unchecked` (down/--local); `token` —
+`accepted`, `rejected`, `unknown` или `unchecked`. Сверяются канонические `data_dir`,
+`config_path` и `code_dir` CLI/сервера; при расхождении `installation=mismatch`,
+`warnings` и `hint` объясняют исправление. Коды возврата сохранены: 1 при down, иначе 0;
+агенты проверяют `diagnostics` и `server=unauthorized`. Старый сервер без новых полей
+не считается совпадающей установкой. `status` подготавливает локальный config/token как и прежде.
 
 **События доске.** Кадры в `/api/stream` шлёт только процесс сервера: записи HTTP API
 (задачи, проекты, документы, зависимости), успешные пишущие инструменты `POST /mcp`

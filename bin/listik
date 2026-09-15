@@ -419,13 +419,50 @@ def cmd_stop(args) -> int:
     return 0
 
 
+def _status_diagnostics(health: dict | None) -> dict:
+    """Сверка установки и принятия токена; никаких запасных запросов или записей."""
+    result = {"installation": "unchecked", "token": "unchecked", "warnings": []}
+    if health is None:
+        return result
+    warnings = result["warnings"]
+    authed = health.get("authed")
+    result["token"] = "accepted" if authed is True else "rejected" if authed is False else "unknown"
+    if authed is False:
+        warnings.append("токен не принят сервером; возможно, CLI и сервер из разных установок")
+    elif authed is not True:
+        warnings.append("сервер не сообщил, принят ли токен")
+    installation = health.get("installation") or health.get("runtime") or {}
+    expected = {"data_dir": paths.DATA_DIR, "config_path": paths.CONFIG_PATH,
+                "code_dir": paths.ROOT_DIR}
+    mismatches = [key for key, value in expected.items()
+                  if installation.get(key) and Path(installation[key]).resolve() != value.resolve()]
+    missing = [key for key in expected if not installation.get(key)]
+    if mismatches:
+        result["installation"] = "mismatch"
+        warnings.append("несовпадение установок CLI и сервера: " + ", ".join(mismatches))
+    elif missing:
+        result["installation"] = "unknown"
+    else:
+        result["installation"] = "match"
+    if missing:
+        warnings.append("сервер не отдал пути для полной сверки: " + ", ".join(missing)
+                        + "; обновите сервер Listik")
+    if warnings:
+        result["hint"] = ("Проверьте установленный listik в PATH и настройки LISTIK_HOME/LISTIK_CONFIG "
+                          "у CLI и сервера; выберите одну установку и при необходимости перезапустите "
+                          "её сервер. Не обходите отказ через --local и не подбирайте токены/бинарники.")
+    return result
+
+
 def cmd_status(args) -> int:
     from listik import server
-    # `--local` отменяет только опрос сервера: pid, каталог данных и токен — как раньше.
+    # Подготовить конфиг и токен для штатной работы status.
     local = bool(getattr(args, "local", False))
     h = None if local else client.health(args.host, args.port)
     pid = server.read_pid()
     cfg, token = client.config_mod.ensure_token()
+    diagnostics = _status_diagnostics(h)
+    bin_path = str(Path(__file__).resolve())
     url = f"http://{cfg['server']['host']}:{cfg['server']['port']}/"
     if getattr(args, "json", False):
         if local:
@@ -439,6 +476,8 @@ def cmd_status(args) -> int:
         # Токена и содержимого config.toml здесь нет: ссылка с токеном — `listik token`.
         emit(args, {
             "server": state,
+            "bin_path": bin_path,
+            "diagnostics": diagnostics,
             "pid": pid,
             "url": url,
             "version": __version__,
@@ -452,7 +491,9 @@ def cmd_status(args) -> int:
         }, "", force_json=True, indent=None)
         return 1 if state == "down" else 0
     # Каталог данных — до проверки сервера: он нужен и когда сервер не отвечает.
+    print(f"бинарник CLI: {bin_path}")
     print(f"каталог данных: {paths.DATA_DIR}")
+    print(f"config CLI: {paths.CONFIG_PATH}")
     if local:
         print(f"база:   {paths.DB_PATH}")
         print("сервер: не проверялся (--local)")
@@ -462,7 +503,18 @@ def cmd_status(args) -> int:
         print("поднять: listik serve --daemon")
         return 1
     print(f"сервер: работает{' (pid ' + str(pid) + ')' if pid else ''}")
-    print(f"доска:  {url}?token={token}")
+    installation = h.get("installation") or h.get("runtime") or {}
+    print(f"данные сервера: {installation.get('data_dir') or 'неизвестно'}")
+    print(f"config сервера: {installation.get('config_path') or 'неизвестно'}")
+    print(f"код сервера: {installation.get('code_dir') or 'неизвестно'}")
+    token_state = {"accepted": "принят", "rejected": "не принят", "unknown": "не проверен"}
+    print(f"токен: {token_state[diagnostics['token']]}")
+    for warning in diagnostics["warnings"]:
+        print(f"ВНИМАНИЕ: {warning}")
+    if diagnostics.get("hint"):
+        print(diagnostics["hint"])
+    if h.get("authed") is True:
+        print(f"доска:  {url}?token={token}")
     if h.get("authed") and h.get("counts"):
         c = h["counts"]
         print(f"база:   {h.get('db')}")

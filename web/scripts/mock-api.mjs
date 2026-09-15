@@ -29,6 +29,12 @@
  * `--hint` добавляет карточку `listik-hint-hub` со ссылками на шесть задач, на
  * которых проверяется строка «закрывать нельзя: открыты дети» в панели задачи
  * (scripts/verify-children-hint.mjs).
+ * `--markdown` добавляет карточку `listik-markdown-case`, у которой поле
+ * `description` — полный набор markdown-конструкций (заголовок `##`,
+ * маркированный и нумерованный списки, инлайн-код, блок кода в тройных
+ * кавычках, ссылка и строка с HTML-разметкой), а остальные текстовые поля
+ * пусты. По ней проверяется вывод markdown в панели задачи
+ * (scripts/verify-markdown.mjs).
  *
  * Служебные ручки для скриптов проверки (в docs/API.md их нет — это не контракт, а
  * ручки управления моком, как `__token`): `POST /__event` рассылает кадр в
@@ -50,6 +56,7 @@ const routesMode = process.argv.slice(3).includes('--routes')
 const assistantMode = process.argv.slice(3).includes('--assistant')
 const coldMode = process.argv.slice(3).includes('--cold')
 const hintMode = process.argv.slice(3).includes('--hint')
+const markdownMode = process.argv.slice(3).includes('--markdown')
 const slowArg = process.argv.slice(3).find((arg) => arg.startsWith('--slow-ms='))
 const slowMs = slowArg ? Number.parseInt(slowArg.slice('--slow-ms='.length), 10) : 0
 const now = Date.now()
@@ -455,6 +462,52 @@ if (hintMode) {
   ]) {
     tasks.push(item)
   }
+}
+
+/**
+ * `--markdown`: карточка `listik-markdown-case` для проверки markdown-вывода
+ * панели задачи (scripts/verify-markdown.mjs). В `description` — только целевые
+ * конструкции: заголовок `##`, маркированный и нумерованный списки, инлайн-код,
+ * блок в тройных кавычках, ссылка и строка с HTML. Вне этих конструкций `##`,
+ * `- ` в начале строки и тройных кавычек в тексте нет — иначе проверка «сырой
+ * разметки не осталось» была бы ложной. Остальные текстовые поля пусты, чтобы
+ * кейсы в поддереве секции описания не ловили чужие элементы.
+ */
+const MARKDOWN_DESCRIPTION = [
+  '## Разметка карточки',
+  '',
+  'Проверяем вывод: заголовок, списки, инлайн-код, блок кода и ссылку.',
+  '',
+  '- первый пункт маркированного списка',
+  '- второй пункт маркированного списка',
+  '',
+  '1. первый пункт нумерованного списка',
+  '2. второй пункт нумерованного списка',
+  '',
+  'Инлайн-код `npm run build` стоит прямо в абзаце.',
+  '',
+  '```js',
+  'const answer = 42',
+  'console.log(answer)',
+  '```',
+  '',
+  'Ссылка: [текст](https://example.com).',
+  '',
+  '<script>alert(1)</script>',
+].join('\n')
+
+if (markdownMode) {
+  tasks.push(
+    task({
+      id: 'listik-markdown-case',
+      title: 'Карточка с markdown-разметкой',
+      description: MARKDOWN_DESCRIPTION,
+      acceptance: '',
+      design: '',
+      notes: '',
+      result: '',
+    }),
+  )
 }
 
 /**

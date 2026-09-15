@@ -139,7 +139,7 @@ INHERIT_SKILL = pathlib.Path("skills") / "inherit-pipeline" / SKILL_FILE
 AGENTS_SUBDIR = "agents"
 
 MANIFEST_LINE = (
-    "трек <трек>: <id>, дерево <путь>, ветка pipeline-<трек>, база <sha7>"
+    "трек <трек>: <id>, дерево <путь>, ветка task/<трек>, база <sha7>"
 )
 
 
@@ -218,7 +218,8 @@ class FeaturePipelineStepNamingTests(unittest.TestCase):
             "listik-n5fe",
             "<id>-<часть>",
             ".worktrees/<id>",
-            "pipeline-<id>",
+            "task/<id>",
+            "listik worktree <id>",
         ]
         for needle in required:
             with self.subTest(needle=needle):
@@ -411,6 +412,8 @@ class FeaturePipelineSkillNamingTests(unittest.TestCase):
             "<id>.diff-<X>.r<R>.txt",
             "adhoc-<ГГГГ-ММ-ДД>-<слаг>.journal.md",
             MANIFEST_LINE,
+            "task/<id>",
+            "listik worktree <id>",
         ]
         for needle in required:
             with self.subTest(needle=needle):
@@ -455,6 +458,37 @@ class FeaturePipelineSkillNamingTests(unittest.TestCase):
             "<steps>/<id>.a.md", text,
             f"xlow-pipeline/{SKILL_FILE}: не нашлось обязательной подстроки '<steps>/<id>.a.md'",
         )
+
+    def test_no_pipeline_branch_prefix_in_core_tracks_inherit(self) -> None:
+        """pipeline-< и git worktree add -b pipeline больше не используются."""
+        for relative in (CORE_DOC, TRACKS_DOC, INHERIT_SKILL):
+            with self.subTest(file=str(relative)):
+                text = _plugin_text(relative)
+                self.assertNotIn(
+                    "pipeline-<", text,
+                    f"{relative}: осталась подстрока 'pipeline-<' (старое имя ветки)",
+                )
+                self.assertNotIn(
+                    "git worktree add -b pipeline", text,
+                    f"{relative}: осталась команда 'git worktree add -b pipeline' (заменена на listik worktree)",
+                )
+
+    def test_core_tracks_inherit_create_tree_with_listik_worktree(self) -> None:
+        """Дерево заводится через listik worktree <id> [--track <часть>]."""
+        for relative in (CORE_DOC, TRACKS_DOC, INHERIT_SKILL):
+            with self.subTest(file=str(relative)):
+                text = _plugin_text(relative)
+                self.assertIn(
+                    "listik worktree <id>", text,
+                    f"{relative}: не нашлось команды 'listik worktree <id>'",
+                )
+        for relative in (CORE_DOC, TRACKS_DOC):
+            with self.subTest(file=str(relative), flag="--track"):
+                text = _plugin_text(relative)
+                self.assertIn(
+                    "--track <часть>", text,
+                    f"{relative}: не нашлось флага '--track <часть>' для трекового режима",
+                )
 
 
 #: Строки журнала шага про сессию исполнителя (listik-auj4): id сессии, факт продолжения

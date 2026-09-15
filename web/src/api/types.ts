@@ -355,6 +355,19 @@ export interface ProjectRow {
   path_adjusted_from?: string | null
 }
 
+/**
+ * Поля, которые правит доска через `PATCH /api/projects/<slug>`.
+ *
+ * Сервер принимает ещё `color`, `kind`, `archived` и `routing`, но у них на
+ * доске свои места: скрытие — тумблер в списке репозиториев, маршрутизация —
+ * `listik projects <slug> --routing`. Slug здесь нет намеренно: это ключ
+ * проекта (по нему лежат задачи), и переименования у API не существует.
+ */
+export interface ProjectPatch {
+  title?: string
+  path?: string
+}
+
 export interface ProjectsResponse {
   projects: ProjectRow[]
   /** Корень, внутри которого ищутся проекты (`[import] projects_root`). */

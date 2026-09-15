@@ -11,6 +11,7 @@ import type {
   DepTree,
   DepsState,
   Meta,
+  ProjectPatch,
   ProjectRemoved,
   ProjectRow,
   ProjectsResponse,
@@ -214,7 +215,7 @@ export const api = {
   embed: (limit = 0, kinds = 'task,comment') =>
     post<Record<string, unknown>>('/api/embed', { limit, kinds }),
 
-  // --- репозитории (проекты) доски: настройка «добавить / убрать»
+  // --- репозитории (проекты) доски: настройка «добавить / изменить / убрать»
 
   /** Все репозитории, включая скрытые с доски, и корень поиска проектов. */
   projects: () => get<ProjectsResponse>('/api/projects'),
@@ -222,6 +223,13 @@ export const api = {
   /** Добавить репозиторий на доску: путь к каталогу + необязательный slug/название. */
   addProject: (body: { path?: string; slug?: string; title?: string }) =>
     post<ProjectRow>('/api/projects', body),
+
+  /**
+   * Поправить репозиторий: название и/или путь. Slug — ключ проекта, в теле его
+   * нет: `PATCH` ищет проект по slug из адреса и переименовывать не умеет.
+   */
+  updateProject: (slug: string, body: ProjectPatch) =>
+    patch<ProjectRow>(`/api/projects/${encodeURIComponent(slug)}`, body),
 
   /** Скрыть проект с доски (`archived=true`) или вернуть обратно. */
   setProjectArchived: (slug: string, archived: boolean) =>

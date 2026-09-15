@@ -22,6 +22,7 @@ import type {
   DepInfo,
   Health,
   Meta,
+  ProjectPatch,
   ProjectRow,
   RouteDef,
   SearchMode,
@@ -1029,6 +1030,21 @@ async function addProject(body: { path: string; slug?: string; title?: string })
   )
 }
 
+/**
+ * Поправить репозиторий: название и путь (`PATCH /api/projects/<slug>`).
+ *
+ * Возвращает сохранённый проект, а не просто «получилось»: на ответе форма
+ * показывает, что именно записалось, и видит `path_exists` — каталог мог
+ * исчезнуть, тогда доска пометит проект «нет каталога». Ошибка — null,
+ * текст в `projectsError`.
+ */
+async function updateProject(slug: string, body: ProjectPatch): Promise<ProjectRow | null> {
+  return projectAction(
+    () => api.updateProject(slug, body),
+    () => Promise.all([loadProjects(), loadMeta(), loadBoard()]).then(() => undefined),
+  )
+}
+
 /** Скрыть репозиторий с доски или вернуть обратно: задачи при этом не теряются. */
 async function setProjectArchived(slug: string, archived: boolean): Promise<boolean> {
   const result = await projectAction(
@@ -1211,6 +1227,7 @@ export function useListikStore() {
     loadProjects,
     openProjects,
     addProject,
+    updateProject,
     setProjectArchived,
     removeProject,
     importEmbeddings,

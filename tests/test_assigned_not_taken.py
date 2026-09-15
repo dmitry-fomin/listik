@@ -195,13 +195,13 @@ class PipelineIssueStoreTests(TempDbTestCase):
                                 harness=kwargs.pop("harness", "claude"), **kwargs)
 
     def _to_review(self) -> None:
-        """Карточка на s2-review: ТЗ писал и держит сам оркестратор."""
+        """Карточка на s2-review: handoff после ТЗ освобождает держателя."""
         store.claim(self.conn, self.task, holder="claude", actor="agent:claude", harness="claude")
         store.next_stage(self.conn, self.task, to_stage="s1-spec",
                          actor="agent:claude", harness="claude")
         store.next_stage(self.conn, self.task, to_stage="s2-review",
                          actor="agent:claude", harness="claude")
-        self.assertEqual(store.get_task(self.conn, self.task)["holder"], "claude")
+        self.assertEqual(store.get_task(self.conn, self.task)["holder"], "")
 
     def test_handoff_with_holder_assigns_not_taken(self) -> None:
         self._to_review()

@@ -37,17 +37,17 @@ class BoardStageColumnTests(TempDbTestCase):
         self.assertEqual(ids(board, S2), [task["id"]])
         self.assertEqual(ids(board, "s1-spec"), [])
 
-    def test_critic_stage_after_spec_is_s2_and_keeps_holder(self) -> None:
+    def test_critic_stage_after_spec_is_s2_and_releases_holder(self) -> None:
         # Ровно то, что делает пайплайн при запуске критика: ТЗ написано на s1,
-        # `stage` переводит задачу на s2; переход s1→s2 sticky — держатель остаётся.
+        # `stage` переводит задачу на s2; handoff освобождает держателя для ревью.
         task = store.create_task(self.conn, title="ТЗ и критик", project="demo")
         store.claim(self.conn, task["id"], holder="claude", harness="claude")
         spec = store.next_stage(self.conn, task["id"], holder="claude", harness="claude")
-        review = store.next_stage(self.conn, task["id"], holder="claude", harness="claude")
+        review = store.next_stage(self.conn, task["id"], harness="claude")
 
         self.assertEqual(spec["stage"], "s1-spec")
         self.assertEqual(review["stage"], S2)
-        self.assertEqual(review["holder"], "claude")
+        self.assertEqual(review["holder"], "")
         self.assertIn(task["id"], ids(store.board(self.conn, group_by="stage"), S2))
 
     def test_explicit_to_s2_from_scratch(self) -> None:

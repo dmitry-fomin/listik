@@ -147,16 +147,18 @@ def _clip(value: str, limit: int) -> str:
     return text[:limit] + "…"
 
 
-def _log_upstream(what: str, body: str, api_key: str = "") -> None:
-    """Тело ответа DeepSeek — только в лог сервера, обрезанное и без api_key.
+def log_upstream(what: str, body: str, api_key: str = "",
+                 target: logging.Logger | None = None) -> None:
+    """Тело ответа провайдера — только в лог сервера, обрезанное и без api_key.
 
     Ответ апстрима никогда не попадает в `AssistantError.message`: сообщение
     видит браузер (и доска), а при 401/403 провайдер может эхоить наш ключ.
+    `target` — логгер другого модуля (расшифровка речи пишет в `listik.voice`).
     """
     text = body if isinstance(body, str) else str(body)
     if api_key:
         text = text.replace(api_key, "***")
-    logger.warning("%s: %s", what, _clip(text, MAX_LOGGED_ERROR_CHARS))
+    (target or logger).warning("%s: %s", what, _clip(text, MAX_LOGGED_ERROR_CHARS))
 
 
 def _clean_context(context) -> dict:
@@ -257,8 +259,8 @@ def chat(messages: list[dict], cfg_settings: dict, *, opener=None,
             detail = exc.read().decode("utf-8", "replace")
         except Exception:  # noqa: BLE001 — тело ошибки уже не важно
             detail = ""
-        _log_upstream(f"DeepSeek ответил HTTP {exc.code}", detail,
-                      cfg_settings["api_key"])
+        log_upstream(f"DeepSeek ответил HTTP {exc.code}", detail,
+                     cfg_settings["api_key"])
         if exc.code in (401, 403):
             message = ("DeepSeek отклонил ключ (HTTP %d): проверьте [assistant].api_key "
                        "в config.toml" % exc.code)
@@ -277,13 +279,13 @@ def chat(messages: list[dict], cfg_settings: dict, *, opener=None,
     try:
         data = util.json_loads(raw)
     except util.JSONDecodeError as exc:
-        _log_upstream("ответ DeepSeek не JSON", raw, cfg_settings["api_key"])
+        log_upstream("ответ DeepSeek не JSON", raw, cfg_settings["api_key"])
         raise AssistantError("ответ DeepSeek не JSON", status=502) from exc
     try:
         return data["choices"][0]["message"]["content"]
     except (KeyError, IndexError, TypeError) as exc:
-        _log_upstream("в ответе DeepSeek нет choices[0].message.content", raw,
-                      cfg_settings["api_key"])
+        log_upstream("в ответе DeepSeek нет choices[0].message.content", raw,
+                     cfg_settings["api_key"])
         raise AssistantError(
             "в ответе DeepSeek нет choices[0].message.content", status=502) from exc
 

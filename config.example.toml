@@ -21,6 +21,17 @@ api_key = ""
 base_url = "https://api.deepseek.com"
 model = "deepseek-flash"
 
+# Расшифровка голосовой записи (Deepgram, POST /v1/listen). Пустой api_key =
+# голос выключен: кнопка записи у формы не появляется, а
+# POST /api/assistant/transcribe отвечает понятной ошибкой. Голос включается
+# только вместе с помощником — нужны оба ключа, [deepgram] и [assistant].
+# Ключ читает только сервер — в браузер он не уходит.
+[deepgram]
+api_key = ""
+base_url = "https://api.deepgram.com"
+model = "nova-2"
+language = "ru"
+
 [import]
 projects_root = "/Users/pathToProjects"
 max_depth = 6

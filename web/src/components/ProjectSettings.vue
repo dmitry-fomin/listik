@@ -16,6 +16,10 @@
  *   лежал внутри репозитория и приведён к его корню) — плашка после добавления
  *   говорит, куда именно лёг проект. Путь абсолютный, от `~` или
  *   относительный — от корня проектов, не от cwd сервера (listik-i23u);
+ * - править название и путь (`PATCH /api/projects/<slug>`, listik-y32w): каталог
+ *   мог переехать, а подпись проекта — смениться. Slug в форме только показан:
+ *   это ключ, по которому лежат задачи, и переименования у API нет. Путь сервер
+ *   принимает и несуществующий — тогда проект помечается «нет каталога»;
  * - скрыть проект с доски (`archived=1`) — задачи остаются в истории и поиске,
  *   доска просто перестаёт его показывать; вернуть обратно — тем же тумблером;
  * - убрать проект совсем. Проект с задачами сервер без `force` не удалит:
@@ -37,6 +41,8 @@ import {
   UiConfirmDialog,
   UiEmptyState,
   UiEntityCard,
+  UiField,
+  UiFormModal,
   UiInput,
   UiModal,
   UiSpinner,
@@ -50,7 +56,7 @@ import {
 import IconToggle from './IconToggle.vue'
 import ListikIcon from './ListikIcon.vue'
 import store from '@/store/listik'
-import type { ProjectRow } from '@/api/types'
+import type { ProjectPatch, ProjectRow } from '@/api/types'
 import { projectGitHint, projectIsGit, projectPathLabel, projectTasksLabel } from '@/lib/projects'
 
 const ADMIN_NAME_KEY = 'listik.adminName'
@@ -63,6 +69,12 @@ const action = ref<string | null>(null)
 const addResult = ref<ProjectRow | null>(null)
 const removeTarget = ref<ProjectRow | null>(null)
 const forceOpen = ref(false)
+/** Правка репозитория: что правим, черновик полей и чем она кончилась. */
+const editTarget = ref<ProjectRow | null>(null)
+const editTitle = ref('')
+const editPath = ref('')
+const editError = ref<string | null>(null)
+const editResult = ref<ProjectRow | null>(null)
 
 type SettingsTab = 'repos' | 'appearance' | 'name'
 
@@ -154,6 +166,66 @@ async function toggleArchived(project: ProjectRow, archived: boolean): Promise<v
   if (ok) emit('changed')
 }
 
+/** Открыта ли форма правки. Закрытие во время запроса игнорируем: UiFormModal
+ *  сам держит оверлей, пока `loading`, — терять введённое нельзя. */
+const editOpen = computed({
+  get: () => editTarget.value !== null,
+  set: (value: boolean) => {
+    if (!value && action.value === null) editTarget.value = null
+  },
+})
+
+/**
+ * Что реально уходит в `PATCH`: только изменённые поля. Пустое название — это
+ * «показывать slug» (штатное значение), а пустой путь — «не менять»: стирать
+ * каталог у проекта из формы правки незачем, а промах по полю обнулил бы путь.
+ */
+const editPatch = computed<ProjectPatch>(() => {
+  const project = editTarget.value
+  if (!project) return {}
+  const patch: ProjectPatch = {}
+  const title = editTitle.value.trim()
+  const path = editPath.value.trim()
+  if (title !== (project.title ?? '')) patch.title = title
+  if (path && path !== (project.path ?? '')) patch.path = path
+  return patch
+})
+
+function askEdit(project: ProjectRow): void {
+  editTarget.value = project
+  editTitle.value = project.title ?? ''
+  editPath.value = project.path ?? ''
+  editError.value = null
+  editResult.value = null
+}
+
+async function submitEdit(): Promise<void> {
+  const project = editTarget.value
+  if (!project || action.value !== null) return
+  const patch = editPatch.value
+  if (Object.keys(patch).length === 0) {
+    // Поля не тронули: PATCH с пустым телом ничего не сохранит, а «Сохранить»
+    // не должна молчать — просто закрываем форму.
+    editTarget.value = null
+    return
+  }
+  action.value = `edit:${project.slug}`
+  const saved = await store.updateProject(project.slug, patch)
+  action.value = null
+  if (saved) {
+    editTarget.value = null
+    editError.value = null
+    editResult.value = saved
+    emit('changed')
+    return
+  }
+  // Ошибку показывает сама форма: вкладка «Репозитории» под оверлеем, и её
+  // плашка была бы не видна, пока пользователь не закроет форму. В стор текст
+  // уже положен — забираем его и гасим, чтобы не задвоить.
+  editError.value = store.projectsError.value ?? 'Не получилось сохранить проект'
+  store.projectsError.value = null
+}
+
 function askRemove(project: ProjectRow): void {
   removeTarget.value = project
   forceOpen.value = false
@@ -184,6 +256,9 @@ watch(
       removeTarget.value = null
       forceOpen.value = false
       addResult.value = null
+      editTarget.value = null
+      editError.value = null
+      editResult.value = null
       activeTab.value = 'repos'
       emit('close')
     }
@@ -258,6 +333,22 @@ watch(
             <template v-else-if="addResult.git">Это корень git-репозитория.</template>
           </UiAlert>
 
+          <UiAlert
+            v-if="editResult"
+            :tone="editResult.path_exists === false ? 'warning' : 'success'"
+            closable
+            @close="editResult = null"
+          >
+            <template #title>
+              {{ editResult.path_exists === false ? 'Сохранено, но каталога нет' : 'Репозиторий обновлён' }}
+            </template>
+            Проект <code class="listik-mono">{{ editResult.slug }}</code>:
+            <code class="listik-mono">{{ editResult.path ?? 'без каталога' }}</code>.
+            <template v-if="editResult.path_exists === false">
+              Такого каталога на диске нет — проект остаётся на доске с пометкой «нет каталога».
+            </template>
+          </UiAlert>
+
           <div
             v-if="store.projectsLoading.value && store.projects.value.length === 0"
             class="listik-projects__loading"
@@ -312,6 +403,16 @@ watch(
                           @update:model-value="(value: boolean) => toggleArchived(project, value)"
                         />
                       </UiTooltip>
+                      <UiTooltip text="Название и путь к каталогу">
+                        <UiButton
+                          size="sm"
+                          variant="ghost"
+                          v-bind="{ 'aria-label': `Изменить проект ${project.slug}` }"
+                          @click="askEdit(project)"
+                        >
+                          <template #icon><ListikIcon name="edit" size="xs" /></template>
+                        </UiButton>
+                      </UiTooltip>
                       <UiButton
                         size="sm"
                         variant="ghost"
@@ -355,6 +456,16 @@ watch(
                           v-bind="{ 'aria-label': `Вернуть проект ${project.slug}` }"
                           @update:model-value="(value: boolean) => toggleArchived(project, value)"
                         />
+                      </UiTooltip>
+                      <UiTooltip text="Название и путь к каталогу">
+                        <UiButton
+                          size="sm"
+                          variant="ghost"
+                          v-bind="{ 'aria-label': `Изменить проект ${project.slug}` }"
+                          @click="askEdit(project)"
+                        >
+                          <template #icon><ListikIcon name="edit" size="xs" /></template>
+                        </UiButton>
                       </UiTooltip>
                       <UiButton
                         size="sm"
@@ -413,6 +524,54 @@ watch(
       <UiButton variant="ghost" @click="open = false">Закрыть</UiButton>
     </template>
   </UiModal>
+
+  <!-- Правка репозитория — своя модалка вровень с настройками (тот же приём,
+       что у подтверждений ниже): форма живёт, пока идёт запрос, и несёт свои
+       ошибки — за оверлеем плашку вкладки не видно. -->
+  <UiFormModal
+    v-model="editOpen"
+    title="Изменить репозиторий"
+    :loading="action === `edit:${editTarget?.slug ?? ''}`"
+    submit-label="Сохранить"
+    cancel-label="Отмена"
+    @submit="submitEdit"
+    @cancel="editTarget = null"
+  >
+    <p class="listik-prose">
+      Slug <code class="listik-mono">{{ editTarget?.slug }}</code> — ключ проекта: задачи лежат
+      по нему, поэтому он не меняется.
+    </p>
+
+    <UiAlert v-if="editError" tone="danger">
+      <template #title>Не получилось сохранить</template>
+      {{ editError }}
+    </UiAlert>
+
+    <UiField
+      label="Название"
+      hint="Подпись проекта в фильтре и в знаке проекта. Пусто — показываем slug."
+    >
+      <UiInput v-model="editTitle" placeholder="название проекта" />
+    </UiField>
+
+    <UiField
+      label="Путь к каталогу"
+      hint="Абсолютный, от ~ или относительный — от корня проектов. Пусто — оставить прежний: стереть каталог из этой формы нельзя."
+    >
+      <UiInput
+        v-model="editPath"
+        placeholder="путь к каталогу, например ~/Projects/Zoloto585/new-repo"
+      />
+    </UiField>
+
+    <span class="listik-section__hint">
+      При правке каталог не проверяется: если пути нет, проект остаётся на доске с пометкой
+      «нет каталога».
+      <template v-if="store.projectsRoot.value">
+        · корень проектов: <code class="listik-mono">{{ store.projectsRoot.value }}</code>
+      </template>
+    </span>
+  </UiFormModal>
 
   <!-- Подтверждения — сосед модалки, а не её содержимое: оба оверлея
        телепортируются в body, и вложенность ломала бы порядок и фокус. -->

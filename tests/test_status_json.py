@@ -221,6 +221,73 @@ class StatusJsonServerCase(StatusJsonCase):
         self.assertEqual(data["server"], "unauthorized")
         self.assertIs(data["health"]["authed"], False)
 
+    def test_different_installation_is_marked_even_with_valid_token(self) -> None:
+        with mock.patch.object(paths, "DATA_DIR", self.server_home):
+            data, code = self.json_from_server(token=TOKEN)
+        self.assertEqual(code, 0, data)  # Совместимость: расхождение помечено в JSON.
+        self.assertEqual(data["diagnostics"]["installation"], "mismatch")
+        self.assertEqual(data["diagnostics"]["token"], "accepted")
+        self.assertTrue(data["diagnostics"]["warnings"])
+        self.assertEqual(data["bin_path"], str(LISTIK_BIN.resolve()))
+        self.assertEqual(data["health"]["installation"]["data_dir"],
+                         str(self.server_home.resolve()))
+        self.assertEqual(data["health"]["installation"]["config_path"],
+                         str((self.server_home / "config.toml").resolve()))
+
+    def test_wrong_token_still_reports_server_paths_without_private_data(self) -> None:
+        with mock.patch.object(paths, "DATA_DIR", self.server_home):
+            data, _ = self.json_from_server(token=WRONG_TOKEN)
+        self.assertEqual(data["diagnostics"]["installation"], "mismatch")
+        self.assertEqual(data["diagnostics"]["token"], "rejected")
+        self.assertEqual(data["health"]["installation"]["code_dir"], str(REPO_DIR.resolve()))
+        for private in ("counts", "db", "db_error", "db_replaced", "routes", "runtime"):
+            self.assertNotIn(private, data["health"])
+        rendered = json.dumps(data)
+        self.assertNotIn(TOKEN, rendered)
+        self.assertNotIn(WRONG_TOKEN, rendered)
+
+    def test_text_mismatch_explains_paths_and_repair(self) -> None:
+        self.write_config(token=WRONG_TOKEN)
+        before = self.config.read_bytes()
+        with mock.patch.object(paths, "DATA_DIR", self.server_home):
+            result = self.run_cli("--port", str(self.srv_port), "status")
+        self.assertEqual(result.returncode, 0, result.stderr)
+        for expected in ("ВНИМАНИЕ: несовпадение установок", "токен: не принят",
+                         str(LISTIK_BIN.resolve()), str(self.home), str(self.config),
+                         str(self.server_home), str(paths.CONFIG_PATH), str(REPO_DIR),
+                         "LISTIK_HOME/LISTIK_CONFIG", "Не обходите отказ через --local"):
+            self.assertIn(expected, result.stdout)
+        self.assertNotIn(WRONG_TOKEN, result.stdout)
+        self.assertEqual(self.config.read_bytes(), before)
+
+    def test_matching_installation_has_no_warning(self) -> None:
+        self.write_config()
+        with mock.patch.object(paths, "DATA_DIR", self.home), \
+             mock.patch.object(paths, "CONFIG_PATH", self.config):
+            data, code = self.json_from_server(token=TOKEN)
+        self.assertEqual(code, 0, data)
+        self.assertEqual(data["diagnostics"]["installation"], "match")
+        self.assertEqual(data["diagnostics"]["token"], "accepted")
+        self.assertEqual(data["diagnostics"]["warnings"], [])
+
+    def test_config_mismatch_with_same_data_dir(self) -> None:
+        with mock.patch.object(paths, "DATA_DIR", self.home):
+            data, _ = self.json_from_server(token=TOKEN)
+        self.assertEqual(data["diagnostics"]["installation"], "mismatch")
+        self.assertIn("config_path", " ".join(data["diagnostics"]["warnings"]))
+
+    def test_symlink_to_same_installation_is_not_a_mismatch(self) -> None:
+        self.write_config()
+        alias = self.tmp / "home-link"
+        alias.symlink_to(self.home, target_is_directory=True)
+        with mock.patch.object(paths, "DATA_DIR", self.home), \
+             mock.patch.object(paths, "CONFIG_PATH", self.config):
+            result = self.run_cli("--port", str(self.srv_port), "status", "--json",
+                                  env=self.env(LISTIK_HOME=str(alias)))
+        data = json.loads(result.stdout)
+        self.assertEqual(data["diagnostics"]["installation"], "match")
+        self.assertEqual(data["diagnostics"]["warnings"], [])
+
     def test_text_up_prints_board_link(self) -> None:
         self.write_config(token=TOKEN)
         result = self.run_cli("--port", str(self.srv_port), "status")

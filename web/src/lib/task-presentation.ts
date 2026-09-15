@@ -70,6 +70,36 @@ export function stageStartedText(task: TaskDetail): string {
   return task.stage_at ? `${formatDateTime(task.stage_at)} · ${task.stage_age}` : '—'
 }
 
+export interface DesktopHolderPresentation {
+  holder: string
+  holderHasTitle: boolean
+  holderAge: string | null
+  notTaken: boolean
+  assigned: string
+  assignedBy: string | null
+  heartbeat: string
+  stageStarted: string
+  assignee: string | null
+  note: string
+}
+
+/** Значения блока «Кто держит» в настольной карточке. Разметка остаётся в TaskDrawer. */
+export function desktopHolderPresentation(task: TaskDetail): DesktopHolderPresentation {
+  const hasTitle = hasHolderTitle(task.holder_title)
+  return {
+    holder: hasTitle ? task.holder_title : 'никто',
+    holderHasTitle: hasTitle,
+    holderAge: hasTitle ? task.holder_age : null,
+    notTaken: task.not_taken,
+    assigned: `выдана, не взята ${task.assigned_age}`,
+    assignedBy: task.holder_assigned_by_title,
+    heartbeat: heartbeatText(task),
+    stageStarted: task.stage_at ? `${formatDateTime(task.stage_at)} · ${task.stage_age}` : `— · ${task.stage_age}`,
+    assignee: task.assignee && task.assignee !== task.holder ? (task.assignee_title || task.assignee) : null,
+    note: task.holder_note ? `«${task.holder_note}»` : '—',
+  }
+}
+
 export function latestReview(comments: TaskComment[]): TaskComment | null {
   const candidates = comments.filter((comment) => comment.kind === 'review' || comment.kind === 'verdict')
   return sortedCommentsDesc(candidates)[0] ?? null

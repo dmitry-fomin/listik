@@ -35,6 +35,10 @@ import type {
   TaskPatch,
   TasksPage,
   TimelineItem,
+  VoiceDraftRequest,
+  VoiceDraftResponse,
+  VoiceTranscribeRequest,
+  VoiceTranscribeResponse,
 } from '@/api/types'
 
 export type ViewKey = 'board' | 'list' | 'metrics'
@@ -164,6 +168,12 @@ let routesRequested = false
  */
 const assistantEnabled = ref(false)
 const assistantModel = ref('')
+/**
+ * Голосовой ввод (`voice: true` в статусе): `[deepgram]` и `[assistant]`
+ * настроены. Пока флаг не подтверждён, кнопка записи не рисуется; отказ
+ * запроса — «выключено».
+ */
+const voiceEnabled = ref(false)
 const assistantLoading = ref(false)
 let assistantRequested = false
 
@@ -947,9 +957,11 @@ async function loadAssistant(): Promise<void> {
       const status = await api.assistantStatus()
       assistantEnabled.value = status.enabled
       assistantModel.value = status.model
+      voiceEnabled.value = status.voice === true
     } catch {
       assistantEnabled.value = false
       assistantModel.value = ''
+      voiceEnabled.value = false
     }
   })
 }
@@ -967,6 +979,23 @@ function ensureAssistant(): void {
  */
 async function askAssistant(body: AssistantSuggestRequest): Promise<AssistantSuggestResponse> {
   return withLoading(assistantLoading, () => api.assistantSuggest(body))
+}
+
+/**
+ * Расшифровать запись. Ошибку не глотаем и в общий `handleError` не отдаём:
+ * её показывает панель записи (`errorMessage`), а отказ Deepgram не должен
+ * выглядеть как «сервер Listik недоступен».
+ */
+async function transcribeVoice(body: VoiceTranscribeRequest): Promise<VoiceTranscribeResponse> {
+  return withLoading(assistantLoading, () => api.assistantTranscribe(body))
+}
+
+/**
+ * Собрать черновик задачи по расшифровке. Ошибка пробрасывается наружу — так
+ * же, как у `transcribeVoice`: панель ловит её сама.
+ */
+async function draftVoice(body: VoiceDraftRequest): Promise<VoiceDraftResponse> {
+  return withLoading(assistantLoading, () => api.assistantDraft(body))
 }
 
 /**
@@ -1166,6 +1195,7 @@ export function useListikStore() {
     assistantEnabled,
     assistantModel,
     assistantLoading,
+    voiceEnabled,
     inboxQuestions,
     // производные
     columns,
@@ -1224,6 +1254,8 @@ export function useListikStore() {
     loadAssistant,
     ensureAssistant,
     askAssistant,
+    transcribeVoice,
+    draftVoice,
     loadProjects,
     openProjects,
     addProject,

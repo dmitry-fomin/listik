@@ -27,6 +27,10 @@ import type {
   TaskQuery,
   TasksPage,
   TimelineItem,
+  VoiceDraftRequest,
+  VoiceDraftResponse,
+  VoiceTranscribeRequest,
+  VoiceTranscribeResponse,
 } from './types'
 
 export class ApiError extends Error {
@@ -127,6 +131,20 @@ export const api = {
    */
   assistantSuggest: (body: AssistantSuggestRequest) =>
     post<AssistantSuggestResponse>('/api/assistant/suggest', body),
+
+  /**
+   * Расшифровать запись через сервер Listik (Deepgram): в браузер ни ключ, ни
+   * запрос к провайдеру не попадают. Тишина — не ошибка: пустой `transcript`.
+   */
+  assistantTranscribe: (body: VoiceTranscribeRequest) =>
+    post<VoiceTranscribeResponse>('/api/assistant/transcribe', body),
+
+  /**
+   * Собрать черновик задачи из расшифровки через сервер Listik (DeepSeek).
+   * Черновик ничего не создаёт — форму заполняет человек.
+   */
+  assistantDraft: (body: VoiceDraftRequest) =>
+    post<VoiceDraftResponse>('/api/assistant/draft', body),
 
   meta: (archived = false) => get<Meta>(`/api/meta${buildQuery({ archived })}`),
 

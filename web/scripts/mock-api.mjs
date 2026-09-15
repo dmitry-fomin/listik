@@ -23,6 +23,14 @@
  * отвечает ошибкой (HTTP 500), чётный — как `full`; любой другой текст — как
  * `full`. Без флага ручек помощника нет, как и раньше
  * (scripts/verify-assistant-apply.mjs).
+ * `--voice` добавляет голосовой ввод: `GET /api/assistant/status` отдаёт
+ * `voice: true` (без флага поля `voice` нет вовсе), `POST /api/assistant/transcribe`
+ * (`{audio_base64, mime}`) и `POST /api/assistant/draft` (`{text}`). Мок декодирует
+ * base64 в строку-маркер сценария: транскрипт — пустой при `silence`, HTTP 502 при
+ * `transcribe-fail`, иначе непустой и содержит маркер; черновик — `project: null`
+ * при `noproject`, `title: null` при `notitle`, HTTP 502 при `draft-fail`, иначе
+ * полный (`project: 'listik'`, `type: 'task'`, видимый маршрут `low-pipeline`).
+ * Только под `--voice` ручки голоса и живут.
  * `--cold` добавляет четыре задачи под строку «worktree · branch» блока
  * «Холодный старт»: отдельное дерево, работа в `main`, она же в `master`, и
  * карточка совсем без дерева и ветки (scripts/verify-cold-start.mjs).
@@ -35,7 +43,11 @@
  * открытые `/api/stream` (тело `{kind, payload, patch?, comment?}`, patch/comment
  * сперва меняют заглушку — так проверяется, что доска увидела запись), а
  * `GET /__requests` и `POST /__requests/reset` считают чтения карточек
- * `GET /api/tasks/{id}` (scripts/verify-detail-sse.mjs).
+ * `GET /api/tasks/{id}` (scripts/verify-detail-sse.mjs). `GET /__requests` дополнительно
+ * отдаёт `voice: {transcribe, draft, create}` — сколько раз пришли
+ * `POST /api/assistant/transcribe`, `POST /api/assistant/draft`, `POST /api/tasks`, —
+ * и `last_create` (тело последнего `POST /api/tasks` или `null`); `POST /__requests`
+ * обнуляет эти счётчики вместе с прежними.
  *
  * Формы ответов повторяют docs/API.md и listik/store.py 1:1 — это заглушка
  * транспорта, а не второй контракт.
@@ -48,6 +60,7 @@ const fillCount = fillArg ? Number.parseInt(fillArg.slice('--fill='.length), 10)
 const linksMode = process.argv.slice(3).includes('--links')
 const routesMode = process.argv.slice(3).includes('--routes')
 const assistantMode = process.argv.slice(3).includes('--assistant')
+const voiceMode = process.argv.slice(3).includes('--voice')
 const coldMode = process.argv.slice(3).includes('--cold')
 const hintMode = process.argv.slice(3).includes('--hint')
 const slowArg = process.argv.slice(3).find((arg) => arg.startsWith('--slow-ms='))
@@ -579,6 +592,101 @@ function assistantResponse(field, text, mode) {
 /** `error`: 1-й, 3-й, … запросы с этим текстом — ошибка, 2-й, 4-й, … — как `full`. */
 let assistantErrorCalls = 0
 
+/* ── голосовой ввод (`--voice`): заглушка транспорта ─────────────────────────── */
+
+/** Модель распознавания — имя в ответе `transcribe`; ключ Deepgram наружу не отдаётся. */
+const VOICE_MODEL = 'nova-mock'
+
+/** Критерии приёмки полного черновика — 2–3 непустые строки, как у настоящего разбора. */
+const VOICE_DRAFT_ACCEPTANCE = [
+  'npm run build проходит без ошибок',
+  'кнопка «Голосом» появляется только при voice:true',
+]
+
+/** Счётчики голосовых ручек и созданий задачи — их читает `GET /__requests`. */
+const voiceCounters = { transcribe: 0, draft: 0, create: 0 }
+/** Тело последнего `POST /api/tasks` — для скриптовых проверок порций b/c. */
+let lastCreate = null
+/** id созданных моком карточек: `mock-1`, `mock-2`, … */
+let nextMockId = 1
+
+/** Маршрут полного черновика — видимая запись `ROUTES` (`key: 'low-pipeline'`). */
+function voiceDraftRoute() {
+  const route =
+    ROUTES.find((item) => item.key === 'low-pipeline' && item.visible) ??
+    ROUTES.find((item) => item.visible)
+  if (!route) return null
+  return {
+    key: route.key,
+    kind: route.kind,
+    title: route.title,
+    hint: route.hint,
+    reason: 'мок: подходит по типу и объёму задачи',
+  }
+}
+
+/** Черновик ответа `draft`: все шесть ключей есть всегда, ненайденное — `null`. */
+function voiceDraftOf(mode, text) {
+  const project = mode === 'noproject' ? null : 'listik'
+  const title = mode === 'notitle' ? null : text.slice(0, 60)
+  return {
+    project,
+    type: 'task',
+    title,
+    description: `Рассказ человека: ${text}`,
+    acceptance: [...VOICE_DRAFT_ACCEPTANCE],
+    route: voiceDraftRoute(),
+  }
+}
+
+/** Единый формат ошибки listik/errors.py: `ok:false`, `error`, `code`, `message`, `hint`. */
+function errorBody(code, message, hint) {
+  return { ok: false, error: message, code, message, hint }
+}
+
+/** Декодировать base64; `null` — пустая или невалидная строка. */
+function decodeBase64(value) {
+  if (typeof value !== 'string' || value.length === 0) return null
+  if (!/^[A-Za-z0-9+/]+={0,2}$/.test(value) || value.length % 4 !== 0) return null
+  try {
+    return Buffer.from(value, 'base64').toString('utf8')
+  } catch {
+    return null
+  }
+}
+
+/**
+ * Создать карточку в массиве `tasks` по телу `POST /api/tasks`: поля из тела —
+ * `title`, `project`, `type`, `priority`, остальное — как у заведённой задачи.
+ */
+function createTaskFromBody(body) {
+  const priority = Number.isFinite(Number(body.priority)) ? Number(body.priority) : 2
+  return task({
+    id: `mock-${nextMockId++}`,
+    title: typeof body.title === 'string' ? body.title : '',
+    project: typeof body.project === 'string' ? body.project : null,
+    issue_type: typeof body.type === 'string' ? body.type : 'task',
+    priority,
+    priority_title: PRIORITY_TITLES[priority] ?? PRIORITY_TITLES[2],
+    status: 'open',
+    status_title: 'открыта',
+    stage: null,
+    stage_title: null,
+    holder: null,
+    holder_title: '',
+    holder_at: null,
+    holder_age: '',
+    holder_hours: null,
+    holder_note: null,
+    stage_at: null,
+    stage_age: '',
+    stage_hours: null,
+    needs_owner: false,
+    created_by: 'me',
+    labels: [],
+  })
+}
+
 if (routesMode) {
   for (const item of [
     task({
@@ -1082,9 +1190,23 @@ const server = createServer(async (request, response) => {
   if (url.pathname === '/__requests') {
     if (request.method === 'POST') {
       detailReads.clear()
-      return ok({ detail_reads: {}, streams: streamClients.size })
+      voiceCounters.transcribe = 0
+      voiceCounters.draft = 0
+      voiceCounters.create = 0
+      lastCreate = null
+      return ok({
+        detail_reads: {},
+        streams: streamClients.size,
+        voice: { transcribe: 0, draft: 0, create: 0 },
+        last_create: null,
+      })
     }
-    return ok({ detail_reads: Object.fromEntries(detailReads), streams: streamClients.size })
+    return ok({
+      detail_reads: Object.fromEntries(detailReads),
+      streams: streamClients.size,
+      voice: { ...voiceCounters },
+      last_create: lastCreate,
+    })
   }
 
   if (url.pathname === '/__event') {
@@ -1244,7 +1366,10 @@ const server = createServer(async (request, response) => {
   // Без `--assistant` ручек нет вовсе — мок отвечает как до правки (404 ниже).
   if (assistantMode && url.pathname === '/api/assistant/status') {
     // Ключ наружу не отдаётся и моком: только факт «настроен» и имя модели.
-    return ok({ enabled: true, model: ASSISTANT_MODEL, base_url: 'https://api.deepseek.com' })
+    const status = { enabled: true, model: ASSISTANT_MODEL, base_url: 'https://api.deepseek.com' }
+    // Без `--voice` поля нет вовсе — доска читает `undefined` как «выключено».
+    if (voiceMode) status.voice = true
+    return ok(status)
   }
 
   if (assistantMode && url.pathname === '/api/assistant/suggest' && request.method === 'POST') {
@@ -1271,7 +1396,46 @@ const server = createServer(async (request, response) => {
     return ok(assistantResponse(body.field, text, mode))
   }
 
+  // Голосовые ручки живут только под `--voice` — как ветки помощника под `--assistant`.
+  if (voiceMode && url.pathname === '/api/assistant/transcribe' && request.method === 'POST') {
+    const body = await readJsonBody(request)
+    voiceCounters.transcribe += 1
+    const marker = decodeBase64(body.audio_base64)
+    const mime = typeof body.mime === 'string' ? body.mime : ''
+    if (marker === null || !mime.startsWith('audio/')) {
+      return json(400, errorBody('bad_argument', 'пустая или невалидная запись', 'нужен base64 аудио и mime вида audio/…'))
+    }
+    if (marker.includes('transcribe-fail')) {
+      return json(502, errorBody('server_error', 'распознавание речи не ответило', 'повторите запрос позже'))
+    }
+    // Тишина — не ошибка: 200 с пустым `transcript`.
+    if (marker.includes('silence')) return ok({ transcript: '', model: VOICE_MODEL })
+    return ok({ transcript: `Расшифровка: ${marker}`, model: VOICE_MODEL })
+  }
+
+  if (voiceMode && url.pathname === '/api/assistant/draft' && request.method === 'POST') {
+    const body = await readJsonBody(request)
+    voiceCounters.draft += 1
+    const text = typeof body.text === 'string' ? body.text : ''
+    if (!text.trim()) {
+      return json(400, errorBody('bad_argument', 'нечего разбирать: запись пустая', 'передайте непустой text'))
+    }
+    if (text.includes('draft-fail')) {
+      return json(502, errorBody('server_error', 'DeepSeek не ответил', 'повторите запрос позже'))
+    }
+    const mode = text.includes('noproject') ? 'noproject' : text.includes('notitle') ? 'notitle' : 'full'
+    return ok({ model: ASSISTANT_MODEL, draft: voiceDraftOf(mode, text) })
+  }
+
   if (url.pathname === '/api/tasks') {
+    if (request.method === 'POST') {
+      const body = await readJsonBody(request)
+      voiceCounters.create += 1
+      lastCreate = body
+      const created = createTaskFromBody(body)
+      tasks.push(created)
+      return ok(created)
+    }
     return ok(listTasks(url.searchParams))
   }
 

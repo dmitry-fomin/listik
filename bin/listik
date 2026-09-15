@@ -337,7 +337,7 @@ def show_task(t: dict) -> None:
                 print(line)
     if t.get("worktree") or t.get("branch"):
         # `worktree=main`/`master` — маркер «работа в основной ветке, без дерева»
-        # (API.md, `listik set <id> worktree=main`), а не путь: показываем словами.
+        # (docs/API.md, `listik set <id> worktree=main`), а не путь: показываем словами.
         tree = store.main_worktree_title(t.get("worktree")) or t.get("worktree") or '—'
         print(f"  дерево:      {tree}   ветка: {t.get('branch') or '—'}")
     if t.get("launch_error"):

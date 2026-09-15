@@ -1,5 +1,5 @@
 /**
- * Типы ответов API Listik. Источник правды — API.md и listik/store.py.
+ * Типы ответов API Listik. Источник правды — docs/API.md и listik/store.py.
  */
 import type { HarnessKey } from '@/lib/harness'
 import type { ProviderKey, RoleCell, RoleKey } from '@/lib/pipelines'
@@ -46,7 +46,7 @@ export interface Task {
   labels: string[]
   spec_path: string | null
   journal_path: string | null
-  /** Путь к чек-листу приёмки (`ready`/`checklist_path` из карточки, см. API.md). */
+  /** Путь к чек-листу приёмки (`ready`/`checklist_path` из карточки, см. docs/API.md). */
   checklist_path?: string | null
   /** Путь к файлу ревью (`comment -k review` дублируется файлом на диске). */
   review_path?: string | null
@@ -83,7 +83,7 @@ export interface Task {
   not_taken: boolean
   /** «Выдана, но не взята» дольше `board.assign_warn_minutes` (15 мин). */
   not_taken_warn: boolean
-  // ── запуск процесса (см. API.md, «Маршруты запуска»): пишет только сервер,
+  // ── запуск процесса (см. docs/API.md, «Маршруты запуска»): пишет только сервер,
   // поля есть у каждой задачи, у незапущенных — null/false
   autostart: boolean
   launch_route: string | null
@@ -142,7 +142,7 @@ export interface TaskDetail extends Task {
    */
   deps_state?: DepsState | null
   /**
-   * Файлы задачи (ТЗ/чек-лист/ревью/решение) — см. API.md, «Модель задачи».
+   * Файлы задачи (ТЗ/чек-лист/ревью/решение) — см. docs/API.md, «Модель задачи».
    * Мок API их не отдаёт, поэтому в клиенте всё построенное на этом поле
    * обязано работать и при `undefined`.
    */
@@ -367,7 +367,7 @@ export interface ProjectRemoved {
   removed_tasks: number
 }
 
-// ── маршруты запуска: routes.json, GET /api/routes (см. API.md) ─────────────
+// ── маршруты запуска: routes.json, GET /api/routes (см. docs/API.md) ─────────────
 
 /**
  * Уровень маршрута — значение поля `icon` записи `routes.json`. Набор уровней и
@@ -437,7 +437,7 @@ export interface RoutesResponse {
 }
 
 // ── помощник DeepSeek при создании задачи: GET /api/assistant/status,
-//    POST /api/assistant/suggest (см. API.md «Помощник DeepSeek») ─────────────
+//    POST /api/assistant/suggest (см. docs/API.md «Помощник DeepSeek») ─────────────
 
 /** Поля формы, у которых есть кнопка помощника (белый список `assistant.FIELDS`). */
 export type AssistantField = 'title' | 'description' | 'acceptance' | 'spec_path'

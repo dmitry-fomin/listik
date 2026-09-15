@@ -46,7 +46,7 @@ PRIORITY_TITLES = {0: "P0 срочно", 1: "P1 высокий", 2: "P2 обыч
 
 # `worktree` хранит либо путь к отдельному рабочему дереву, либо маркер основной
 # ветки (`main`/`master`): он значит «работа идёт в основной ветке репозитория
-# проекта, отдельного дерева нет» (`listik set <id> worktree=main`, см. API.md).
+# проекта, отдельного дерева нет» (`listik set <id> worktree=main`, см. docs/API.md).
 # Маркер остаётся ключом блокировки дерева — две задачи в основной ветке одного
 # проекта не пишут в неё одновременно, как и в общем дереве (см. `worktree_lock_key`).
 MAIN_WORKTREE_MARKERS = ("main", "master")
@@ -1140,7 +1140,7 @@ def row_to_task(conn: sqlite3.Connection, row: sqlite3.Row) -> dict:
     # Открытая карточка «молчит» только пока молчат её открытые прямые дети:
     # свежая метка ребёнка сдвигает её простой вперёд. Детей слушают лишь тогда,
     # когда у самой карточки есть своя метка простоя (`idle_hours is not None`),
-    # — закрытая или открытая без метки считается ровно как раньше (API.md).
+    # — закрытая или открытая без метки считается ровно как раньше (docs/API.md).
     if open_now and idle_hours is not None:
         own_ts = parse_ts(row["holder_at"]) or (parse_ts(row["started_at"]) if running else None)
         if own_ts is not None and own_ts.tzinfo is None:

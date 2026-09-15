@@ -40,7 +40,7 @@ TRACKED_FILES = {
     "routes.json": "{}\n",
     "config.example.toml": "[server]\n",
     "README.md": "# Listik\n",
-    "API.md": "# API\n",
+    "docs/API.md": "# API\n",
     "AGENTS.md": "# AGENTS\n",
     "docs/harness-protocol.md": "# protocol\n",
     "docs/specs/x.md": "# spec\n",
@@ -229,7 +229,7 @@ class ReleaseScriptTests(unittest.TestCase):
         self.assertEqual([], [name for name in names if "._" in name],
                          "в архиве не должно быть AppleDouble-мусора macOS")
         for rel in ("bin/listik", "listik/paths.py", "alembic/env.py", "alembic.ini", "VERSION",
-                    "routes.json", "config.example.toml", "README.md", "API.md", "AGENTS.md",
+                    "routes.json", "config.example.toml", "README.md", "docs/API.md", "AGENTS.md",
                     "docs/harness-protocol.md", "web/dist/index.html"):
             self.assert_in_archive(names, rel)
         for rel in ("tests", "docs/specs", "plugins", ".claude-plugin", "web/src",

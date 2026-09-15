@@ -119,7 +119,7 @@ git -C "$root" ls-files > "$tracked" || die "git ls-files не сработал 
 while IFS= read -r path; do
     [ -n "$path" ] || continue
     case $path in
-        bin/*|listik/*|alembic/*|VERSION|routes.json|config.example.toml|alembic.ini|README.md|API.md|AGENTS.md|docs/harness-protocol.md|install.sh)
+        bin/*|listik/*|alembic/*|VERSION|routes.json|config.example.toml|alembic.ini|README.md|docs/API.md|AGENTS.md|docs/harness-protocol.md|install.sh)
             printf '%s\n' "$path" >> "$selected"
             ;;
     esac
@@ -129,7 +129,7 @@ for dir in bin listik alembic; do
     grep -q "^$dir/" "$tracked" ||
         die "в git нет ни одного файла под $dir/ — релиз неполный"
 done
-for path in VERSION routes.json config.example.toml alembic.ini README.md API.md AGENTS.md docs/harness-protocol.md; do
+for path in VERSION routes.json config.example.toml alembic.ini README.md docs/API.md AGENTS.md docs/harness-protocol.md; do
     grep -qxF "$path" "$tracked" ||
         die "обязательный файл $path не отслеживается git — релиз неполный"
 done

@@ -123,7 +123,7 @@ export interface WorktreeStateItem extends DictionaryItem<WorktreeStateValue> {
 /**
  * Основные ветки репозитория: их значение в `worktree` — маркер «работа идёт в
  * основной ветке, отдельного дерева нет». Тот же список на сервере —
- * `listik/store.py: MAIN_WORKTREE_MARKERS` (API.md, «Работа в основной ветке»).
+ * `listik/store.py: MAIN_WORKTREE_MARKERS` (docs/API.md, «Работа в основной ветке»).
  */
 export const MAIN_BRANCHES = ['main', 'master']
 

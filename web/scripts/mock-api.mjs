@@ -20,14 +20,14 @@
  * которых проверяется строка «закрывать нельзя: открыты дети» в панели задачи
  * (scripts/verify-children-hint.mjs).
  *
- * Служебные ручки для скриптов проверки (в API.md их нет — это не контракт, а
+ * Служебные ручки для скриптов проверки (в docs/API.md их нет — это не контракт, а
  * ручки управления моком, как `__token`): `POST /__event` рассылает кадр в
  * открытые `/api/stream` (тело `{kind, payload, patch?, comment?}`, patch/comment
  * сперва меняют заглушку — так проверяется, что доска увидела запись), а
  * `GET /__requests` и `POST /__requests/reset` считают чтения карточек
  * `GET /api/tasks/{id}` (scripts/verify-detail-sse.mjs).
  *
- * Формы ответов повторяют API.md и listik/store.py 1:1 — это заглушка
+ * Формы ответов повторяют docs/API.md и listik/store.py 1:1 — это заглушка
  * транспорта, а не второй контракт.
  */
 import { createServer } from 'node:http'
@@ -93,7 +93,7 @@ function task(overrides) {
     stage_hours: 2,
     stage_warn: false,
     needs_owner: false,
-    // Девять колонок запуска (API.md): у базовых задач автостарта нет.
+    // Девять колонок запуска (docs/API.md): у базовых задач автостарта нет.
     autostart: false,
     launch_route: null,
     launched_by: null,
@@ -722,7 +722,7 @@ function applyPatch(id, body) {
       found.labels = Array.isArray(value) ? value : found.labels
     } else if (key === 'route' || key === 'launch_route') {
       // Пустая строка — «без маршрута»; смена маршрута снимает прошлый отказ
-      // автостарта вместе с флагом — как store.update_task (API.md).
+      // автостарта вместе с флагом — как store.update_task (docs/API.md).
       const next = value === '' || value == null ? null : String(value)
       if (next !== found.launch_route) {
         found.launch_route = next
@@ -1000,7 +1000,7 @@ const server = createServer(async (request, response) => {
     return
   }
 
-  // ── служебные ручки скриптов проверки (не часть API.md) ────────────────
+  // ── служебные ручки скриптов проверки (не часть docs/API.md) ────────────────
   if (url.pathname === '/__requests') {
     if (request.method === 'POST') {
       detailReads.clear()

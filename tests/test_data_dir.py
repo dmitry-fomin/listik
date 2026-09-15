@@ -364,10 +364,10 @@ class VersionTests(unittest.TestCase):
 
 
 class DocumentationTests(unittest.TestCase):
-    """Пункт 8: `data_dir` в API.md и пункт про LISTIK_HOME в README."""
+    """Пункт 8: `data_dir` в docs/API.md и пункт про LISTIK_HOME в README."""
 
     def test_api_documents_data_dir(self) -> None:
-        api = (REPO_DIR / "API.md").read_text(encoding="utf-8")
+        api = (REPO_DIR / "docs/API.md").read_text(encoding="utf-8")
         row = next(line for line in api.splitlines() if line.startswith("| GET | `/api/health`"))
         runtime = row.split("runtime{", 1)[1].split("}", 1)[0]
         self.assertIn("data_dir", runtime)

@@ -84,7 +84,7 @@ import {
   humanAge,
 } from '@/lib/format'
 import { PIPELINE, TRANSITIONS, stageCode, stageIndex, stageTitle, transitionOut, type TransitionKey } from '@/lib/stages'
-import { taskHealth } from '@/lib/health'
+import { healthTone } from '@/lib/health'
 import {
   actorShort,
   coldStartRows,
@@ -1034,7 +1034,7 @@ async function loadTree(): Promise<void> {
         </div>
         <h2 class="listik-drawer__title">{{ task.title }}</h2>
         <div class="listik-row listik-drawer__pills">
-          <UiStatusPill :tone="taskHealth(task)" size="md">{{ healthPillText(task) }}</UiStatusPill>
+          <UiStatusPill :tone="healthTone(task)" size="md">{{ healthPillText(task) }}</UiStatusPill>
           <UiStatusPill :tone="statusTone" size="md">{{ task.status_title }}</UiStatusPill>
           <span class="listik-row" style="gap: var(--space-1); flex-wrap: nowrap">
             <TaskGlyph kind="priority" :value="task.priority" />

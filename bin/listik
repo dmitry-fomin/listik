@@ -21,6 +21,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
 from listik import __version__, client, db, errors, paths, store  # noqa: E402
 from listik import routes as routes_mod  # noqa: E402
+from listik import worktree as worktree_mod  # noqa: E402
 
 STATUS_ICON = {"open": "○", "in_progress": "▶", "blocked": "■", "review": "◐",
                "done": "✓", "cancelled": "✕"}
@@ -874,6 +875,58 @@ def cmd_set(args) -> int:
     return 0
 
 
+def cmd_worktree(args) -> int:
+    """Рабочее дерево задачи: `<проект>/.worktrees/<id>` на ветке `task/<id>`.
+
+    git работает там, где лежит проект, — то есть на машине, где запущен CLI;
+    поэтому у команды нет HTTP-эндпоинта: карточка и проект читаются обычными
+    операциями (`show`/`projects`), путь и ветка пишутся обычным `update`.
+    """
+    task = call("show", args, f"/api/tasks/{args.task_id}", local_kwargs={"task_id": args.task_id})
+    task_id = task.get("id") or args.task_id
+    # Маркер «работа в основной ветке» сильнее всего остального: отдельное дерево
+    # такой карточке не заводится, пока человек сам не снимет маркер.
+    if store.is_main_worktree(task.get("worktree")):
+        marker = store.main_worktree(task.get("worktree"))
+        raise errors.ListikError(
+            f"карточка {task_id} помечена как работа в {marker}, отдельное дерево не заводится",
+            code=errors.CONFLICT,
+            hint=f"сними маркер: listik set {task_id} worktree= branch=")
+
+    track = getattr(args, "track", None)
+    name = worktree_mod.worktree_name(task_id, track)
+
+    slug = task.get("project") or ""
+    res = call("projects", args, "/api/projects", local_kwargs={}, fallback_warning=False)
+    project = next((p for p in (res.get("projects") or []) if p.get("slug") == slug), None)
+    project_path = ((project or {}).get("path") or "").strip()
+    if not project_path:
+        raise errors.ListikError(f"у проекта {slug or '—'} не указан путь",
+                                 code=errors.BAD_ARGUMENT,
+                                 hint="listik projects --add <каталог>")
+
+    out = worktree_mod.ensure(project_path, name,
+                              card_path=None if track else task.get("worktree"),
+                              recreate=bool(getattr(args, "recreate", False)))
+
+    # У трековой задачи деревьев несколько — в карточке им места нет, манифест
+    # ведёт оркестратор в журнале.
+    card_updated = False
+    if not track:
+        fields = worktree_mod.card_fields(task, out["path"], out["branch"])
+        if fields:
+            body = {**fields, "actor": actor_default(args), "harness": args.harness}
+            call("update", args, f"/api/tasks/{task_id}", method="PATCH", body=body,
+                 local_kwargs={**body, "task_id": task_id})
+            card_updated = True
+
+    payload = {"task_id": task_id, "name": name, "path": out["path"], "branch": out["branch"],
+               "base": out["base"], "status": out["status"], "dirty": out["dirty"],
+               "gitignore": out["gitignore"], "card_updated": card_updated}
+    emit(args, payload, "\n".join(worktree_mod.human_lines(payload)))
+    return 0
+
+
 def _holder_action(args, action: str) -> int:
     body = {"holder": args.holder or actor_default(args), "harness": args.harness,
             "actor": actor_default(args), "note": args.note}
@@ -1692,6 +1745,28 @@ def build_parser() -> argparse.ArgumentParser:
     add_task_id(sp)
     sp.add_argument("field", nargs="+")
     add_note(sp)
+
+    sp = add("worktree", cmd_worktree,
+             help="завести или переиспользовать рабочее дерево задачи: "
+                  "<проект>/.worktrees/<id>, ветка task/<id>, от текущего HEAD",
+             description="Заводит дерево <проект>/.worktrees/<id> на ветке task/<id> от HEAD "
+                         "основного дерева проекта и записывает путь и ветку в карточку. "
+                         "Повторный запуск ничего не пересоздаёт: существующее дерево "
+                         "переиспользуется как есть (status reused), грязное — тоже, файлы "
+                         "не трогаются; протухшая запись (каталог удалён руками) "
+                         "восстанавливается на той же ветке, коммиты ветки сохраняются. "
+                         "--recreate удаляет и заводит дерево заново, но только когда терять "
+                         "нечего: при незакоммиченных правках или коммитах ветки, которых нет "
+                         "в HEAD проекта, команда отказывает и ничего не трогает. "
+                         "Карточке с worktree=main/master дерево не заводится. "
+                         "HTTP-эндпоинта у команды нет: git работает там, где запущен CLI.")
+    add_task_id(sp)
+    sp.add_argument("--track", metavar="ЧАСТЬ",
+                    help="дерево параллельного трека: <id>-<часть>, ветка task/<id>-<часть>; "
+                         "в карточку не пишется (строка из [a-z0-9-])")
+    sp.add_argument("--recreate", action="store_true",
+                    help="пересоздать дерево от HEAD проекта (отказ, если дерево грязное "
+                         "или у ветки есть свои коммиты)")
 
     for name, func, helptext in (
         ("claim", cmd_claim, "взять задачу в работу"),

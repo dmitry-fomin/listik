@@ -18,7 +18,8 @@ executor:
   fallback: dsh:dsh-runner
   local: feature-pipeline:pipeline-implementer   # внутри Claude, доступен всегда
   on_fallback: auto   # auto — переехать и записать в журнал; ask — спросить автора
-  effort: high        # low|medium|high|xhigh|max; только для grok — dsh и локальный игнорируют
+  effort: high        # low|medium|high|xhigh|max; только для grok: dsh идёт на настройках
+                      # пользователя, у локального субагента усилие во frontmatter
 
 opus:
   # Только для /feature-pipeline:opus-sonnet-pipeline (задачи трекера: Opus пишет, Sonnet-судья коммитит).
@@ -35,8 +36,8 @@ opus:
   #   close: bd close {id}
 
 presets:
-  # Только для пяти скилов-пресетов: high-pipeline, xhigh-pipeline, medium-pipeline,
-  # low-pipeline, opus-single-pipeline.
+  # Только для скилов-пресетов с внешним судьёй: xhigh-pipeline, high-pipeline,
+  # medium-pipeline, low-pipeline, xlow-pipeline, nano-pipeline.
   #
   # Расстановка моделей по ролям здесь НЕ настраивается — она зашита в каждый скил
   # и обоснована расчётом в references/ROLES.md. Нужен другой расклад — это другой

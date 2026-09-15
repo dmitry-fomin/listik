@@ -30,15 +30,14 @@ OpenAI-совместимому `chat/completions`. Ключ никогда не
 """
 from __future__ import annotations
 
-import json
 import logging
 import re
 import urllib.error
 import urllib.request
 
-from . import config as config_mod
 from . import errors as errors_mod
 from . import routes as routes_mod
+from . import util
 
 DEFAULT_BASE_URL = "https://api.deepseek.com"
 DEFAULT_MODEL = "deepseek-flash"
@@ -105,7 +104,7 @@ class AssistantError(Exception):
 
 def settings(cfg: dict | None = None) -> dict:
     """Настройки помощника из `[assistant]`; значения по умолчанию — для пустых полей."""
-    cfg = cfg if cfg is not None else config_mod.load()
+    cfg = cfg if cfg is not None else util.load_config()
     section = cfg.get("assistant") or {}
     if not isinstance(section, dict):
         section = {}
@@ -223,7 +222,7 @@ def _messages(field: str, text: str, context: dict, routes: list[dict]) -> list[
     }
     return [
         {"role": "system", "content": SYSTEM_PROMPT},
-        {"role": "user", "content": json.dumps(payload, ensure_ascii=False)},
+        {"role": "user", "content": util.json_dumps(payload)},
     ]
 
 
@@ -247,7 +246,7 @@ def chat(messages: list[dict], cfg_settings: dict, *, opener=None,
     }
     url = endpoint(cfg_settings["base_url"])
     request = urllib.request.Request(
-        url, data=json.dumps(payload, ensure_ascii=False).encode("utf-8"),
+        url, data=util.json_dumps(payload).encode("utf-8"),
         headers=headers, method="POST")
     open_url = opener or urllib.request.urlopen
     try:
@@ -276,8 +275,8 @@ def chat(messages: list[dict], cfg_settings: dict, *, opener=None,
             status=504) from exc
 
     try:
-        data = json.loads(raw)
-    except json.JSONDecodeError as exc:
+        data = util.json_loads(raw)
+    except util.JSONDecodeError as exc:
         _log_upstream("ответ DeepSeek не JSON", raw, cfg_settings["api_key"])
         raise AssistantError("ответ DeepSeek не JSON", status=502) from exc
     try:
@@ -301,16 +300,16 @@ def parse_suggestion(content: str) -> dict:
     if fenced:
         text = fenced.group(1).strip()
     try:
-        data = json.loads(text)
-    except json.JSONDecodeError:
+        data = util.json_loads(text)
+    except util.JSONDecodeError:
         start, end = text.find("{"), text.rfind("}")
         if start == -1 or end <= start:
             raise AssistantError(
                 f"не удалось разобрать ответ DeepSeek как JSON: {_clip(content, 200)}",
                 status=502) from None
         try:
-            data = json.loads(text[start:end + 1])
-        except json.JSONDecodeError as exc:
+            data = util.json_loads(text[start:end + 1])
+        except util.JSONDecodeError as exc:
             raise AssistantError(
                 f"не удалось разобрать ответ DeepSeek как JSON: {_clip(content, 200)}",
                 status=502) from exc

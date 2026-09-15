@@ -21,14 +21,13 @@ from __future__ import annotations
 import os
 import signal
 import sqlite3
-import time
-from datetime import datetime
 from pathlib import Path
 
 from . import db as db_mod
 from . import errors
 from . import paths
 from . import store
+from . import util
 
 #: Как называются копии рядом с базой: listik.db.bak-2026-09-14-105500.
 #: Шаблон уже покрыт .gitignore (`listik.db.bak-*`).
@@ -43,11 +42,11 @@ STOP_TIMEOUT = 15.0
 
 def db_path_of(db_path: Path | str | None = None) -> Path:
     """Путь к базе: явный аргумент или общий `paths.DB_PATH` (уважает LISTIK_DB)."""
-    return Path(db_path or paths.DB_PATH)
+    return util.path(db_path or paths.DB_PATH)
 
 
 def _stamp() -> str:
-    return datetime.now().strftime("%Y-%m-%d-%H%M%S")
+    return util.stamp()
 
 
 def default_backup_path(db_path: Path | str | None = None) -> Path:
@@ -57,7 +56,7 @@ def default_backup_path(db_path: Path | str | None = None) -> Path:
 
 
 def sidecar_paths(db: Path) -> list[Path]:
-    return [Path(str(db) + suffix) for suffix in SIDECARS]
+    return [util.path(str(db) + suffix) for suffix in SIDECARS]
 
 
 def _unique_path(path: Path) -> Path:
@@ -76,12 +75,12 @@ def same_file(left, right) -> bool:
     try:
         return os.path.samefile(str(left), str(right))
     except OSError:
-        return Path(left).resolve() == Path(right).resolve()
+        return util.resolved(left) == util.resolved(right)
 
 
 def _open_readonly(path: Path) -> sqlite3.Connection:
     """Соединение только на чтение. URI-форма: путь может содержать пробелы."""
-    return sqlite3.connect(path.resolve().as_uri() + "?mode=ro", uri=True, timeout=30.0)
+    return sqlite3.connect(util.resolved(path).as_uri() + "?mode=ro", uri=True, timeout=30.0)
 
 
 def _open_source(path: Path) -> sqlite3.Connection:
@@ -152,11 +151,10 @@ def running_server(db_path: Path | str | None = None) -> dict | None:
     по умолчанию — на случай, когда токен не принят и health не отдаёт подробностей.
     """
     from . import client
-    from . import config as config_mod
     from . import server as server_mod
 
     db = db_path_of(db_path)
-    cfg = config_mod.load()
+    cfg = util.load_config()
     host = cfg["server"]["host"]
     port = int(cfg["server"]["port"])
 
@@ -236,11 +234,11 @@ def stop_server(info: dict, *, timeout: float = STOP_TIMEOUT) -> dict:
             f"нет прав остановить сервер (pid {pid}): {exc}",
             code=errors.CONFLICT, hint="останови его сам: listik stop") from exc
 
-    deadline = time.monotonic() + timeout
-    while time.monotonic() < deadline:
+    deadline = util.monotonic() + timeout
+    while util.monotonic() < deadline:
         if not _alive(int(pid)):
             return {"stopped": True, "pid": int(pid), "how": info.get("how")}
-        time.sleep(0.1)
+        util.sleep(0.1)
     raise errors.ListikError(
         f"сервер (pid {pid}) не остановился за {timeout:.0f} с",
         code=errors.CONFLICT,
@@ -270,7 +268,7 @@ def backup(db_path: Path | str | None = None, out_path: Path | str | None = None
         raise errors.ListikError(
             f"базы нет: {db}", code=errors.NOT_FOUND,
             hint="создать базу: listik init (или укажи LISTIK_DB)")
-    out = Path(out_path).expanduser() if out_path else default_backup_path(db)
+    out = util.expanduser(out_path) if out_path else default_backup_path(db)
     if out.is_dir():
         raise errors.ListikError(
             f"по пути копии каталог: {out}", code=errors.BAD_ARGUMENT,
@@ -329,7 +327,7 @@ def restore(backup_path: Path | str, db_path: Path | str | None = None, *,
     файла, даже если сервер успел подняться снова.
     """
     db = db_path_of(db_path)
-    src_path = Path(backup_path).expanduser()
+    src_path = util.expanduser(backup_path)
     if not src_path.is_file():
         raise errors.ListikError(
             f"файла копии нет: {src_path}", code=errors.NOT_FOUND,

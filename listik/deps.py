@@ -13,11 +13,11 @@
 """
 from __future__ import annotations
 
-import json
 import re
 import sqlite3
 
 from . import errors as errors_mod
+from . import util
 
 OPEN_STATUSES = ("open", "in_progress", "blocked", "review")
 FINAL_STATUSES = ("done", "cancelled")
@@ -187,7 +187,7 @@ def refresh_blocked_column(conn: sqlite3.Connection) -> int:
             per_task.setdefault(r["issue_id"], []).append(r["depends_on"])
     changed = 0
     for r in _fetch(conn, "SELECT id, blocked_by FROM tasks"):
-        new = json.dumps(sorted(set(per_task.get(r["id"], []))), ensure_ascii=False)
+        new = util.json_dumps(sorted(set(per_task.get(r["id"], []))))
         if (r["blocked_by"] or "[]") != new:
             conn.execute("UPDATE tasks SET blocked_by = ? WHERE id = ?", (new, r["id"]))
             changed += 1
@@ -210,9 +210,9 @@ def refresh_task(conn: sqlite3.Connection, task_id: str) -> int:
     for tid in targets:
         rows = _fetch(conn, f"SELECT depends_on FROM deps WHERE issue_id = ? AND dep_type IN "
                             f"({marks})", (tid, *HARD_BLOCKERS))
-        fresh = json.dumps(sorted({r["depends_on"] for r in rows
-                                   if statuses.get(r["depends_on"], "open")
-                                   not in FINAL_STATUSES}), ensure_ascii=False)
+        fresh = util.json_dumps(sorted({r["depends_on"] for r in rows
+                                        if statuses.get(r["depends_on"], "open")
+                                        not in FINAL_STATUSES}))
         row = _fetch(conn, "SELECT blocked_by FROM tasks WHERE id = ?", (tid,))
         if row and (row[0]["blocked_by"] or "[]") != fresh:
             conn.execute("UPDATE tasks SET blocked_by = ? WHERE id = ?", (fresh, tid))
@@ -328,7 +328,6 @@ def expire_return_handoffs(conn: sqlite3.Connection, *, task_id: str | None = No
     A holder who was active *after* the return (a `heartbeat`, or a repeat `claim`
     which now also refreshes `holder_at`) keeps the task — only silence counts.
     """
-    from . import config as config_mod
     from . import store
     # Return windows may be overridden per project, just like harness routing.
     where = "stage='s3-impl' AND holder IS NOT NULL AND holder != ''"
@@ -342,7 +341,7 @@ def expire_return_handoffs(conn: sqlite3.Connection, *, task_id: str | None = No
         ev = _fetch(conn, "SELECT ts FROM events WHERE task_id=? AND kind='stage' AND from_value='s4-judge' AND to_value='s3-impl' ORDER BY ts DESC LIMIT 1", (row["id"],))
         if not ev:
             continue
-        routing = config_mod.routing(row["project"], conn=conn)
+        routing = util.routing(row["project"], conn=conn)
         hours = float((routing.get("return_window_hours") or 24))
         age = store.hours_since(ev[0]["ts"])
         if age is None or age <= hours:
@@ -399,10 +398,9 @@ def ready_tasks(conn: sqlite3.Connection, *, project: str | None = None,
             continue
         task = store.row_to_task(conn, row)
         if harness:
-            from . import config as config_mod
             key = (row["project"], row["stage"])
             if key not in harness_cache:
-                harness_cache[key] = config_mod.allowed_harnesses(row["project"], row["stage"], conn=conn)
+                harness_cache[key] = util.allowed_harnesses(row["project"], row["stage"], conn=conn)
             allowed = harness_cache[key]
             if allowed and harness not in allowed:
                 continue

@@ -6,12 +6,10 @@
 """
 from __future__ import annotations
 
-import json
 import re
 import sqlite3
-import time
 
-from . import actors, embed, paths, textutil
+from . import actors, embed, paths, textutil, util
 
 RRF_K = 60
 SNIPPET_CHARS = 220
@@ -148,9 +146,8 @@ _VEC_TTL = 300.0
 
 
 def _vectors(conn: sqlite3.Connection, model: str) -> list:
-    import time as _time
     cached = _VEC_CACHE.get(model)
-    now = _time.monotonic()
+    now = util.monotonic()
     if cached and now - cached[0] < _VEC_TTL:
         return cached[1]
     rows = conn.execute(
@@ -331,12 +328,12 @@ def _card(row: sqlite3.Row, *, snippet: str, score: float, hits: list[dict],
           best_hit: dict | None) -> dict:
     """Карточка задачи в ответе поиска — общая для RRF- и id-совпадений."""
     try:
-        labels = json.loads(row["labels"] or "[]")
-    except json.JSONDecodeError:
+        labels = util.json_loads(row["labels"] or "[]")
+    except util.JSONDecodeError:
         labels = []
     try:
-        blocked_by = json.loads(row["blocked_by"] or "[]")
-    except (json.JSONDecodeError, IndexError, KeyError):
+        blocked_by = util.json_loads(row["blocked_by"] or "[]")
+    except (util.JSONDecodeError, IndexError, KeyError):
         blocked_by = []
     return {
         "blocked_by": blocked_by,
@@ -380,7 +377,7 @@ def search(
     с `hits[].kind = "id"` и score выше любого RRF-совпадения; в режиме `vector` id
     не подмешивается.
     """
-    t0 = time.time()
+    t0 = util.wall_time()
     lex: list[dict] = []
     vec: list[dict] = []
     if mode in ("hybrid", "text"):
@@ -497,7 +494,7 @@ def search(
         "memories": memories,
         "query": query,
         "mode": mode,
-        "took_ms": int((time.time() - t0) * 1000),
+        "took_ms": int((util.wall_time() - t0) * 1000),
         "lexical_docs": len(lex),
         "vector_docs": len(vec),
         "count": len(results),

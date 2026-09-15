@@ -56,19 +56,16 @@ stdio); `current()` и обработчики API файл не читают, п
 """
 from __future__ import annotations
 
-import json
-import os
 import re
 import shutil
 import sys
 from dataclasses import dataclass, field
 from pathlib import Path
 
-from . import paths
+from . import paths, util
 
 SOURCE_PATH = paths.ROOT_DIR / "routes.json"
-RUNTIME_PATH = (Path(os.environ["LISTIK_ROUTES"]) if os.environ.get("LISTIK_ROUTES")
-                else Path.home() / ".config" / "listik" / "routes.json")
+RUNTIME_PATH = util.env_path("LISTIK_ROUTES", Path.home() / ".config" / "listik" / "routes.json")
 
 VERSION = 1
 KINDS = ("pipeline", "direct")
@@ -161,7 +158,7 @@ def icon_names(path=ICONS_PATH) -> set[str]:
     формат `^[a-z][a-z0-9-]*$` и не зависит от собранной доски.
     """
     try:
-        text = Path(path).read_text(encoding="utf-8")
+        text = util.read_text(path)
     except OSError:
         return set()
     names: set[str] = set()
@@ -412,7 +409,7 @@ def ensure_runtime_copy(source=SOURCE_PATH, target=RUNTIME_PATH) -> bool:
     `True`, если файл скопирован, и `False`, если копия уже была. `FileNotFoundError`,
     если копии нет и недоступен источник.
     """
-    target = Path(target)
+    target = util.path(target)
     if target.exists():
         return False
     target.parent.mkdir(parents=True, exist_ok=True)
@@ -429,10 +426,10 @@ def load(path=SOURCE_PATH) -> RoutesState:
     отдельной строкой в stderr. Состояние модуля не меняет — его кладёт
     `init_at_startup`.
     """
-    file = Path(path)
+    file = util.path(path)
     warnings: list[str] = []
     try:
-        obj = json.loads(file.read_text(encoding="utf-8"))
+        obj = util.json_loads(util.read_text(file))
         records = validate(obj, warnings)
     except Exception as exc:  # noqa: BLE001 — наружу не бросаем ничего
         return _failed(_describe(exc), file)
@@ -463,7 +460,7 @@ def load_local(path=None) -> RoutesState:
     global _state
     if _state is not None:
         return _state
-    source = Path(path) if path is not None else (
+    source = util.path(path) if path is not None else (
         RUNTIME_PATH if RUNTIME_PATH.exists() else SOURCE_PATH)
     _state = load(source)
     return _state

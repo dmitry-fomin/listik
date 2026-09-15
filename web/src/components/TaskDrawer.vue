@@ -88,6 +88,7 @@ import {
   actorShort,
   coldStartRows,
   coldStartTone,
+  desktopHolderPresentation,
   hasHolderTitle,
   healthPillText,
   projectOf,
@@ -662,6 +663,8 @@ const coldOkCount = computed(() => coldRows.value.filter((row) => row.ok).length
 
 /** Тон счётчика: всё заполнено — зелёный; красная строка (worktree не указан) — красный; иначе жёлтый. */
 const coldTone = computed(() => coldStartTone(coldRows.value))
+
+const holderBlock = computed(() => (props.task ? desktopHolderPresentation(props.task) : null))
 
 // ── «Журнал и вердикты» ───────────────────────────────────────────────────
 //
@@ -1255,26 +1258,25 @@ async function loadTree(): Promise<void> {
           <dt>держит</dt>
           <dd>
             <HarnessIcon :actor="task.holder" />
-            {{ hasHolderTitle(task.holder_title) ? task.holder_title : 'никто' }}<template v-if="hasHolderTitle(task.holder_title)"> · {{ task.holder_age }}</template>
+            {{ holderBlock?.holder }}<template v-if="holderBlock?.holderHasTitle"> · {{ holderBlock.holderAge }}</template>
           </dd>
-          <template v-if="task.not_taken">
+          <template v-if="holderBlock?.notTaken">
             <dt>взята</dt>
             <dd>
-              <UiBadge tone="warning" size="sm">выдана, не взята {{ task.assigned_age }}</UiBadge>
-              <span v-if="task.holder_assigned_by_title"> — выдал {{ task.holder_assigned_by_title }}.</span>
+              <UiBadge tone="warning" size="sm">{{ holderBlock.assigned }}</UiBadge>
+              <span v-if="holderBlock.assignedBy"> — выдал {{ holderBlock.assignedBy }}.</span>
               <span>Claim от агента не приходил: прогон не запустился?</span>
             </dd>
           </template>
           <dt>heartbeat</dt>
           <dd>
-            {{ task.holder_at ? formatDateTime(task.holder_at) : '—' }}
-            <template v-if="task.holder_at"> · {{ humanAge(task.holder_at) }} назад</template>
+            {{ holderBlock?.heartbeat }}
           </dd>
           <dt>этап с</dt>
-          <dd>{{ task.stage_at ? formatDateTime(task.stage_at) : '—' }} · {{ task.stage_age }}</dd>
-          <template v-if="task.assignee && task.assignee !== task.holder">
+          <dd>{{ holderBlock?.stageStarted }}</dd>
+          <template v-if="holderBlock?.assignee">
             <dt>исполнитель</dt>
-            <dd>{{ task.assignee_title || task.assignee }}</dd>
+            <dd>{{ holderBlock.assignee }}</dd>
           </template>
             </dl>
           </section>
@@ -1307,7 +1309,7 @@ async function loadTree(): Promise<void> {
         </div>
         <dl class="listik-dl">
           <dt>что делает</dt>
-          <dd>{{ task.holder_note ? `«${task.holder_note}»` : '—' }}</dd>
+          <dd>{{ holderBlock?.note }}</dd>
         </dl>
       </div>
 

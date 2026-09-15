@@ -314,9 +314,6 @@ watch(
             </div>
             <span class="listik-section__hint">
               {{ slugHint() }} · путь — абсолютный, от ~ или относительный — от корня проектов · git remote и ветка подтянутся сами, если это git-репозиторий
-              <template v-if="store.projectsRoot.value">
-                · корень проектов: <code class="listik-mono">{{ store.projectsRoot.value }}</code>
-              </template>
             </span>
           </section>
 

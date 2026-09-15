@@ -158,6 +158,7 @@ class FeaturePipelinePluginTests(unittest.TestCase):
 #: по номеру шага. `agents/*.md` собирается в момент вызова теста, а не при импорте.
 CORE_DOC = pathlib.Path("references") / "pipeline-core.md"
 INHERIT_SKILL = pathlib.Path("skills") / "inherit-pipeline" / SKILL_FILE
+FEATURE_SKILL = pathlib.Path("skills") / "feature-pipeline" / SKILL_FILE
 AGENTS_SUBDIR = "agents"
 
 MANIFEST_LINE = (
@@ -171,11 +172,6 @@ def _plugin_text(relative: pathlib.Path) -> str:
 
 #: Начало абзаца шага 0 про файл широкой механической правки.
 ADHOC_PARAGRAPH_START = "**Adhoc-файл для широкой правки.**"
-
-
-#: Скилы, которым до порции b позволено упоминать удалённый `tracks.md`
-#: (снимается в порции b — там `feature-pipeline/SKILL.md` переписывается целиком).
-TRACKS_MENTION_ALLOWED_UNTIL_B = ("feature-pipeline",)
 
 
 #: Начало абзаца ядра про переиспользованное дерево трека.
@@ -373,15 +369,13 @@ class FeaturePipelineStepNamingTests(unittest.TestCase):
         )
 
     def test_tracks_doc_removed(self) -> None:
-        """`tracks.md` удалён; ссылка на него осталась только там, где её снимает порция b."""
+        """`tracks.md` удалён, и ни один `SKILL.md` на него больше не ссылается."""
         tracks_doc = PLUGIN_DIR / "skills" / "feature-pipeline" / "references" / "tracks.md"
         self.assertFalse(
             tracks_doc.exists(),
             f"{tracks_doc}: файл должен быть удалён — его содержимое переехало в {CORE_DOC}",
         )
         for name in sorted(_skill_names()):
-            if name in TRACKS_MENTION_ALLOWED_UNTIL_B:
-                continue
             with self.subTest(skill=name):
                 self.assertNotIn(
                     "tracks.md", _skill_text(name),
@@ -480,17 +474,96 @@ class FeaturePipelineSkillNamingTests(unittest.TestCase):
     def test_feature_pipeline_naming(self) -> None:
         text = _skill_text("feature-pipeline")
         required = [
-            "<id>.journal.md",
-            "pipeline-<id>",
-            ".worktrees/<id>",
-            "<id>.diff-<X>.r<R>.txt",
-            "adhoc-<ГГГГ-ММ-ДД>-<слаг>.journal.md",
+            "[pipeline-core.md](../../references/pipeline-core.md)",
+            "Ниже — только то, чем feature-pipeline отличается",
+            "process:feature-pipeline",
+            "## Роли",
+            "## Конфиг пресета",
+            "## Нужные скилы",
+            "## Префикс",
+            "JOB",
+            "executor.primary",
+            "executor.fallback",
+            "executor.local",
+            "on_fallback",
+            "second_opinion.when",
+            "spec-only",
+            "feature-pipeline:pipeline-spec-writer",
+            "feature-pipeline:pipeline-implementer",
+            "feature-pipeline:pipeline-judge",
+            "--no-system",
+            "VERDICT: PASS",
+            "VERDICT: FAIL",
+            "фолбэк",
+            'git -C "$WT" log --oneline -1',
         ]
         for needle in required:
             with self.subTest(needle=needle):
                 self.assertIn(
                     needle, text,
                     f"feature-pipeline/{SKILL_FILE}: не нашлось обязательной подстроки {needle!r}",
+                )
+
+    def test_feature_pipeline_has_no_core_copies(self) -> None:
+        """Пресет не держит своей копии ядра: ни шага 0, ни пределов, ни общих граблей."""
+        text = _skill_text("feature-pipeline")
+        lowered = text.lower()
+        forbidden = [
+            "pipeline-<",
+            "EnterWorktree",
+            "--ff-only",
+            "git worktree add",
+            "grok:grok-delegate",
+            "dsh:dsh-runner",
+            "tracks.md",
+            "## Жёсткие правила",
+            "## Пределы на порцию",
+            "## Формат отчёта",
+            "Сколько раз можно",
+            "полный круг",
+            "листинги, логи, цитаты кода",
+            "paths.tz",
+            "add -A -N",
+            "diff HEAD -U10",
+            "reset -q",
+            "disable-model-invocation",
+            "синхронный",
+            "SECOND_OPINION_NO_SYSTEM",
+        ]
+        for needle in forbidden:
+            with self.subTest(needle=needle):
+                self.assertNotIn(
+                    needle, text,
+                    f"feature-pipeline/{SKILL_FILE}: осталась копия ядра — {needle!r}",
+                )
+        with self.subTest(needle="разведк"):
+            self.assertNotIn(
+                "разведк", lowered,
+                f"feature-pipeline/{SKILL_FILE}: остался класс задачи «разведка», "
+                "которого у пресета нет",
+            )
+
+    def test_config_example_names_readers(self) -> None:
+        """Образец конфига называет каналы именами каналов и честно — своих читателей."""
+        path = PLUGIN_DIR / "skills" / "feature-pipeline" / "config.example.yaml"
+        text = path.read_text(encoding="utf-8")
+        for needle in (
+            "primary: grok",
+            "fallback: dsh",
+            "local: feature-pipeline:pipeline-implementer",
+            "feature-pipeline",
+            "opus-sonnet-pipeline",
+        ):
+            with self.subTest(needle=needle):
+                self.assertIn(
+                    needle, text,
+                    f"{path.name}: не нашлось обязательной подстроки {needle!r}",
+                )
+        for needle in ("grok:grok-delegate", "dsh:dsh-runner", "пресетами не читаются"):
+            with self.subTest(needle=needle):
+                self.assertNotIn(
+                    needle, text,
+                    f"{path.name}: осталась устаревшая подстрока {needle!r}",
                 )
 
     def test_opus_single_pipeline_naming(self) -> None:
@@ -516,7 +589,7 @@ class FeaturePipelineSkillNamingTests(unittest.TestCase):
 
     def test_no_pipeline_branch_prefix_in_core_tracks_inherit(self) -> None:
         """pipeline-< и git worktree add -b pipeline больше не используются."""
-        for relative in (CORE_DOC, INHERIT_SKILL):
+        for relative in (CORE_DOC, INHERIT_SKILL, FEATURE_SKILL):
             with self.subTest(file=str(relative)):
                 text = _plugin_text(relative)
                 self.assertNotIn(

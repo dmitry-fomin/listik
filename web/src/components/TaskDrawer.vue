@@ -42,6 +42,7 @@ import {
 } from '@zoloto585/facet'
 import IconToggle, { type IconToggleOption } from './IconToggle.vue'
 import ListikIcon from './ListikIcon.vue'
+import MarkdownProse from './MarkdownProse.vue'
 import ProjectMark from './marks/ProjectMark.vue'
 import RouteIcon from './marks/RouteIcon.vue'
 import RoutePicker from './RoutePicker.vue'
@@ -1667,20 +1668,20 @@ async function loadTree(): Promise<void> {
 
       <section class="listik-section">
         <h4 class="listik-section__title">Описание · ТЗ</h4>
-        <p class="listik-prose">{{ task.description || '—' }}</p>
+        <MarkdownProse :text="task.description" />
         <h4 class="listik-section__title">Критерии приёмки</h4>
-        <p class="listik-prose">{{ task.acceptance || '—' }}</p>
+        <MarkdownProse :text="task.acceptance" />
         <template v-if="task.design">
           <h4 class="listik-section__title">Дизайн</h4>
-          <p class="listik-prose">{{ task.design }}</p>
+          <MarkdownProse :text="task.design" />
         </template>
         <template v-if="task.notes">
           <h4 class="listik-section__title">Заметки</h4>
-          <p class="listik-prose">{{ task.notes }}</p>
+          <MarkdownProse :text="task.notes" />
         </template>
         <template v-if="task.result">
           <h4 class="listik-section__title">Результат</h4>
-          <p class="listik-prose">{{ task.result }}</p>
+          <MarkdownProse :text="task.result" />
         </template>
       </section>
     </div>

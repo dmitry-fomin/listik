@@ -1,7 +1,7 @@
 {
   "name": "dsh",
   "displayName": "DeepSeek Harness bridge",
-  "version": "0.5.1",
+  "version": "0.6.0",
   "description": "Delegate tasks to DeepSeek Harness (dsh) from Claude Code: it explores the codebase itself, read-only by default.",
   "author": {
     "name": "Dmitry Fomin",

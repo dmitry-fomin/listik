@@ -9,6 +9,7 @@
 #   dsh-run.sh cancel <job-id|--all>
 #   dsh-run.sh clean [--older-than <дней>] [--all]
 #   dsh-run.sh transcript [job-id]
+#   dsh-run.sh resume <job-id> [опции] < prompt.txt
 #
 # Инвариант, на котором держится вся обвязка: в stdout подкоманд `run`
 # (foreground) и `result` попадает РОВНО финальный ответ dsh и ничего больше.
@@ -125,6 +126,8 @@ usage:
   dsh-run.sh cancel <job-id|--all>
   dsh-run.sh clean [--older-than <дней>] [--all]
   dsh-run.sh transcript [job-id]
+  dsh-run.sh resume <job-id> [--background] [--timeout <сек>] [--label <текст>]
+                 < prompt.txt
 USAGE
   exit 2
 }
@@ -508,6 +511,7 @@ run_background() {
     echo "effort=${effort:-—}"
     echo "label=${label:-—}"
     echo "session=${SESSION_ID:-—}"
+    echo "dsh_session=—"
     echo "timeout=$(if [[ -n "$(pick_timeout_bin)" ]]; then echo "$timeout_s"; else echo "none (нет coreutils timeout)"; fi)"
     echo "started=$(date -u +%Y-%m-%dT%H:%M:%SZ)"
     echo "started_epoch=$(date +%s)"
@@ -521,7 +525,7 @@ run_background() {
   # оболочки (таймаут или прерывание Claude Code), уносит и воркер, и харнесс.
   set -m
   (
-    local tb rc=0 inner
+    local tb rc=0 inner sid
     # Закрытие терминала или выход вызвавшей сессии не должны уносить прогон:
     # ради этого джоба и делалась фоновой.
     trap '' HUP INT TERM
@@ -554,6 +558,8 @@ run_background() {
     meta_set finished "$(date -u +%Y-%m-%dT%H:%M:%SZ)" "$job_dir/meta"
     meta_set exit "$rc" "$job_dir/meta"
     meta_set status "$final" "$job_dir/meta"
+    sid="$(discover_dsh_session "$job_dir")"
+    [[ -n "$sid" ]] && meta_set dsh_session "$sid" "$job_dir/meta"
     [[ -n "$tmpdir" ]] && rm -rf "$tmpdir"
   ) >/dev/null 2>&1 &
   disown 2>/dev/null || true
@@ -719,7 +725,7 @@ cmd_status() {
 
 job_json() {
   local dir="$1" st="$2"
-  printf '{"id":"%s","status":"%s","meta_status":"%s","label":"%s","cwd":"%s","mode":"%s","model":"%s","provider":"%s","effort":"%s","session":"%s","started":"%s","elapsed":"%s","timeout":"%s","exit":"%s","output_bytes":%s}' \
+  printf '{"id":"%s","status":"%s","meta_status":"%s","label":"%s","cwd":"%s","mode":"%s","model":"%s","provider":"%s","effort":"%s","session":"%s","dsh_session":"%s","started":"%s","elapsed":"%s","timeout":"%s","exit":"%s","output_bytes":%s}' \
     "$(json_escape "$(meta_get id "$dir/meta")")" \
     "$(json_escape "$st")" \
     "$(json_escape "$(meta_get status "$dir/meta")")" \
@@ -730,6 +736,7 @@ job_json() {
     "$(json_escape "$(meta_get provider "$dir/meta")")" \
     "$(json_escape "$(meta_get effort "$dir/meta")")" \
     "$(json_escape "$(meta_get session "$dir/meta")")" \
+    "$(json_escape "$(meta_get dsh_session "$dir/meta")")" \
     "$(json_escape "$(meta_get started "$dir/meta")")" \
     "$(json_escape "$(elapsed_of "$dir")")" \
     "$(json_escape "$(meta_get timeout "$dir/meta")")" \
@@ -959,6 +966,59 @@ cmd_clean() {
 # Полный ход рассуждений и вызовов инструментов dsh пишет в свою сессию;
 # наружу он отдаёт только финальное сообщение. Разбор нужен, когда ответ
 # выглядит неправдоподобно и надо посмотреть, что харнесс делал на самом деле.
+file_mtime_epoch() {
+  local f="$1"
+  stat -f %m "$f" 2>/dev/null || stat -c %Y "$f" 2>/dev/null
+}
+
+# Имя каталога сессии dsh (session-<uuid>) для этой задачи, если он уже записался.
+discover_dsh_session() {
+  local dir="$1"
+  local workdir since slug root cand mt
+  workdir="$(meta_get cwd "$dir/meta")"
+  since="$(meta_get started_epoch "$dir/meta")"
+  slug="--$(printf '%s' "$workdir" | sed 's|^/||; s|/|-|g')--"
+  root="$DSH_HOME_DIR/sessions/$slug"
+  [[ -d "$root" ]] || return 0
+  for cand in $(ls -1td "$root"/session-* 2>/dev/null); do
+    [[ -d "$cand" ]] || continue
+    mt="$(file_mtime_epoch "$cand")"
+    if [[ -n "$since" && -n "$mt" ]]; then
+      (( mt >= since - 2 )) || continue
+    fi
+    printf '%s' "$(basename "$cand")"
+    return 0
+  done
+}
+
+# Headless dsh не продолжает сессию: --resume есть только у профиля tui.
+# Команда всё равно есть, чтобы оркестратор отличил «продолжить нельзя» от
+# «скрипта нет» и откатился на новый прогон.
+cmd_resume() {
+  local job_id=""
+  while [[ $# -gt 0 ]]; do
+    case "$1" in
+      --background) shift ;;
+      --timeout|--label) shift 2 ;;
+      -h|--help)    usage ;;
+      -*)           die 2 "неизвестная опция '$1'" ;;
+      *)            job_id="$1"; shift ;;
+    esac
+  done
+  if [[ -n "$job_id" ]]; then
+    local dir st sid
+    dir="$(job_dir_of "$job_id")"
+    st="$(job_status_of "$dir")"
+    sid="$(meta_get dsh_session "$dir/meta")"
+    if [[ -z "$sid" || "$sid" == "—" ]]; then
+      sid="$(discover_dsh_session "$dir")"
+      [[ -n "$sid" ]] && meta_set dsh_session "$sid" "$dir/meta"
+    fi
+    [[ "$st" == "running" ]] && die 2 "задача '$job_id' ещё выполняется, а headless dsh сессию всё равно не продолжит — оркестратор должен откатиться на новый прогон"
+  fi
+  die 2 "headless-профиль dsh не умеет продолжать сессию: --resume есть только у профиля tui, у \`dsh --profile headless\` такого флага нет. Команда resume у обвязки есть, чтобы оркестратор отличил это от отсутствия скрипта. Откатись на новый прогон: dsh-run.sh run."
+}
+
 cmd_transcript() {
   local job_id="${1:-}" workdir="$PWD"
   [[ "$job_id" == "-h" || "$job_id" == "--help" ]] && usage
@@ -1000,6 +1060,7 @@ sub="$1"; shift
 case "$sub" in
   check)      cmd_check "$@" ;;
   run)        cmd_run "$@" ;;
+  resume)     cmd_resume "$@" ;;
   status)     cmd_status "$@" ;;
   result)     cmd_result "$@" ;;
   logs)       cmd_logs "$@" ;;

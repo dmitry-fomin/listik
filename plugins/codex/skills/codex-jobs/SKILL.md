@@ -29,6 +29,7 @@ allowed-tools: Bash(${CLAUDE_PLUGIN_ROOT}/scripts/codex-run.sh *)
 | снять задачу | `cancel <job-id>`; все свои в этом каталоге — `cancel --all` |
 | прибрать завершённые | `clean` (старше недели) или `clean --all` |
 | увидеть весь ход рассуждений | `transcript <job-id>` |
+| продолжить ту же сессию | `resume <job-id>` — промпт на stdin; нет `codex_session` — код 2 |
 
 Все команды — через `${CLAUDE_PLUGIN_ROOT}/scripts/codex-run.sh`.
 

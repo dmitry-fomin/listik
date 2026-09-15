@@ -141,6 +141,7 @@ EOF
 | `cancel <job-id\|--all>` | kill a job and its whole process tree |
 | `clean [--older-than <days>] [--all]` | drop finished jobs; running ones are left alone |
 | `transcript [job-id]` | full JSONL session — what the harness actually did |
+| `resume <job-id>` | always exits 2: the headless profile cannot continue a session (`--resume` exists only on tui). The caller should start a fresh `run` |
 
 | Option | Default | Meaning |
 | --- | --- | --- |

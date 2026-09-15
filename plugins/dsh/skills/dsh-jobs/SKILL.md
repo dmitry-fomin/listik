@@ -29,6 +29,7 @@ allowed-tools: Bash(${CLAUDE_PLUGIN_ROOT}/scripts/dsh-run.sh *)
 | снять задачу | `cancel <job-id>`; все свои в этом каталоге — `cancel --all` |
 | прибрать завершённые | `clean` (старше недели) или `clean --all` |
 | увидеть весь ход рассуждений | `transcript <job-id>` |
+| продолжить сессию | `resume <job-id>` — у headless dsh всегда код 2, это откат на новый `run` |
 
 Все команды — через `${CLAUDE_PLUGIN_ROOT}/scripts/dsh-run.sh`.
 

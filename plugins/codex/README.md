@@ -130,6 +130,7 @@ EOF
 | `cancel <job-id\|--all>` | kill a job and its whole process tree |
 | `clean [--older-than <days>] [--all]` | drop finished jobs; running ones are left alone |
 | `transcript [job-id]` | the codex session's JSONL for that working directory — what it actually did |
+| `resume <job-id>` | continue that job's Codex session (`codex exec resume`); prompt on stdin. Reuses the original `--write`/`--model`/`--effort`/`--cwd`. `--background` like `run`. Exit 2 if the session id is missing — the caller should start a fresh `run` |
 
 | Option | Default | Meaning |
 | --- | --- | --- |
@@ -262,9 +263,10 @@ stops writes, not reads — whoever writes the task owns this.
 
 ## Limits
 
-- One task per run. `codex exec` has no follow-up turn in this bridge's usage, so repeat the
-  context in a new task instead of continuing a conversation. (Codex itself has `resume` and
-  `fork` for interactive sessions; this bridge does not use them.)
+- Follow-up turns go through `resume <job-id>`. The Codex session UUID is stored on the job
+  as `codex_session` (see `status --json`) once the rollout file exists. Missing id, a still-
+  running job, or a `codex exec resume` failure is exit 2/6 — start a new `run` rather than
+  inventing another invocation.
 - Background jobs leave their prompt, answer, and codex's own log as plain files under
   `CODEX_CLAUDE_STATE_DIR` (mode 700). They are never pruned on their own — run `clean` if
   the prompts are sensitive.

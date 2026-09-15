@@ -51,6 +51,8 @@ DeepSeek Harness — не «вторая модель, которой задаю
    `logs <job-id>`.
 
 5. **Забери ответ:** `${CLAUDE_PLUGIN_ROOT}/scripts/dsh-run.sh result <job-id>`.
+   Продолжить сессию headless dsh нельзя: `resume <job-id>` выходит с кодом 2. Нужен
+   повтор — новый `run` с текущим текстом задачи.
    Если ответ огромный и нужен не дословно, а разобранным, отдай забор субагенту
    `dsh:dsh-runner` вызовом `Agent` с `subagent_type: "dsh:dsh-runner"`, передав ему
    идентификатор.

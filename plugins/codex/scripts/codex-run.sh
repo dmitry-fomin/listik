@@ -9,6 +9,7 @@
 #   codex-run.sh cancel <job-id|--all>
 #   codex-run.sh clean [--older-than <дней>] [--all]
 #   codex-run.sh transcript [job-id]
+#   codex-run.sh resume <job-id> [опции] < prompt.txt
 #
 # Инвариант, на котором держится вся обвязка: в stdout подкоманд `run`
 # (foreground) и `result` попадает РОВНО финальный ответ codex и ничего больше.
@@ -70,6 +71,10 @@ DEFAULT_BG_TIMEOUT=7200
 # CLAUDE_SESSION_ID не появляется, поэтому полагаться на неё как на
 # единственную границу нельзя — она уточняет фильтр, когда её всё же передали.
 SESSION_ID="${CODEX_CLAUDE_SESSION:-${CLAUDE_SESSION_ID:-}}"
+# Id сессии Codex CLI (UUID из session_meta), не путать с SESSION_ID выше —
+# тот тегирует джобы сессией Claude Code. Resume читает только это поле.
+RESUME_SID=""
+RESUME_FROM=""
 
 # Пути, которые надо убрать при любом выходе. die() уходит через exit, поэтому
 # уборка в конце функции недостижима — только trap.
@@ -161,6 +166,8 @@ usage:
   codex-run.sh cancel <job-id|--all>
   codex-run.sh clean [--older-than <дней>] [--all]
   codex-run.sh transcript [job-id]
+  codex-run.sh resume <job-id> [--background] [--timeout <сек>] [--label <текст>]
+                    < prompt.txt
 USAGE
   exit 2
 }
@@ -405,10 +412,15 @@ run_foreground() {
   # инструментов) уходит в err_file и наружу как ответ никогда не идёт —
   # тот же принцип разведения потоков, что и в dsh-run.sh, только здесь его
   # обеспечивает не перенаправление, а выделенный флаг CLI.
+  local cmd=("$bin" exec "${args[@]}")
+  if [[ -n "${RESUME_SID:-}" ]]; then
+    cmd+=(resume "$RESUME_SID" -)
+  fi
+  cmd+=(-o "$out_file")
   if [[ -n "$tb" ]]; then
-    (cd "$workdir" && printf '%s' "$prompt" | "$tb" "$timeout_s" "$bin" exec "${args[@]}" -o "$out_file") >"$err_file" 2>&1 || rc=$?
+    (cd "$workdir" && printf '%s' "$prompt" | "$tb" "$timeout_s" "${cmd[@]}") >"$err_file" 2>&1 || rc=$?
   else
-    (cd "$workdir" && printf '%s' "$prompt" | "$bin" exec "${args[@]}" -o "$out_file") >"$err_file" 2>&1 || rc=$?
+    (cd "$workdir" && printf '%s' "$prompt" | "${cmd[@]}") >"$err_file" 2>&1 || rc=$?
   fi
 
   local err_text=""
@@ -470,6 +482,8 @@ run_background() {
     echo "effort=${effort:-—}"
     echo "label=${label:-—}"
     echo "session=${SESSION_ID:-—}"
+    echo "codex_session=${RESUME_SID:-—}"
+    echo "resumed_from=${RESUME_FROM:-—}"
     echo "timeout=$(if [[ -n "$(pick_timeout_bin)" ]]; then echo "$timeout_s"; else echo "none (нет coreutils timeout)"; fi)"
     echo "started=$(date -u +%Y-%m-%dT%H:%M:%SZ)"
     echo "started_epoch=$(date +%s)"
@@ -482,7 +496,7 @@ run_background() {
   # прерывание Claude Code), уносит и воркер, и харнесс.
   set -m
   (
-    local tb rc=0 inner
+    local tb rc=0 inner sid cmd
     # Закрытие терминала или выход вызвавшей сессии не должны уносить прогон:
     # ради этого джоба и делалась фоновой.
     trap '' HUP INT TERM
@@ -492,11 +506,16 @@ run_background() {
     meta_set worker_pid "$(sh -c 'echo $PPID')" "$job_dir/meta"
     tb="$(pick_timeout_bin)"
     cd "$workdir" || exit 1
+    cmd=("$bin" exec "${args[@]}")
+    if [[ -n "${RESUME_SID:-}" ]]; then
+      cmd+=(resume "$RESUME_SID" -)
+    fi
+    cmd+=(-o "$job_dir/output.txt")
     if [[ -n "$tb" ]]; then
-      cat "$job_dir/prompt.txt" | "$tb" "$timeout_s" "$bin" exec "${args[@]}" -o "$job_dir/output.txt" \
+      cat "$job_dir/prompt.txt" | "$tb" "$timeout_s" "${cmd[@]}" \
         > "$job_dir/stderr.txt" 2>&1 &
     else
-      cat "$job_dir/prompt.txt" | "$bin" exec "${args[@]}" -o "$job_dir/output.txt" \
+      cat "$job_dir/prompt.txt" | "${cmd[@]}" \
         > "$job_dir/stderr.txt" 2>&1 &
     fi
     inner=$!
@@ -515,6 +534,10 @@ run_background() {
     meta_set finished "$(date -u +%Y-%m-%dT%H:%M:%SZ)" "$job_dir/meta"
     meta_set exit "$rc" "$job_dir/meta"
     meta_set status "$final" "$job_dir/meta"
+    if [[ -z "${RESUME_SID:-}" || "${RESUME_SID}" == "—" ]]; then
+      sid="$(discover_codex_session "$job_dir")"
+      [[ -n "$sid" ]] && meta_set codex_session "$sid" "$job_dir/meta"
+    fi
   ) >/dev/null 2>&1 &
   disown 2>/dev/null || true
   set +m
@@ -679,7 +702,7 @@ cmd_status() {
 
 job_json() {
   local dir="$1" st="$2"
-  printf '{"id":"%s","status":"%s","meta_status":"%s","label":"%s","cwd":"%s","mode":"%s","model":"%s","provider":"%s","effort":"%s","session":"%s","started":"%s","elapsed":"%s","timeout":"%s","exit":"%s","output_bytes":%s}' \
+  printf '{"id":"%s","status":"%s","meta_status":"%s","label":"%s","cwd":"%s","mode":"%s","model":"%s","provider":"%s","effort":"%s","session":"%s","codex_session":"%s","resumed_from":"%s","started":"%s","elapsed":"%s","timeout":"%s","exit":"%s","output_bytes":%s}' \
     "$(json_escape "$(meta_get id "$dir/meta")")" \
     "$(json_escape "$st")" \
     "$(json_escape "$(meta_get status "$dir/meta")")" \
@@ -690,6 +713,8 @@ job_json() {
     "$(json_escape "$(meta_get provider "$dir/meta")")" \
     "$(json_escape "$(meta_get effort "$dir/meta")")" \
     "$(json_escape "$(meta_get session "$dir/meta")")" \
+    "$(json_escape "$(meta_get codex_session "$dir/meta")")" \
+    "$(json_escape "$(meta_get resumed_from "$dir/meta")")" \
     "$(json_escape "$(meta_get started "$dir/meta")")" \
     "$(json_escape "$(elapsed_of "$dir")")" \
     "$(json_escape "$(meta_get timeout "$dir/meta")")" \
@@ -932,6 +957,96 @@ cmd_clean() {
 # интерактивную сессию, запущенную в том же каталоге до или после задачи,
 # даже не зная точного значения originator, которое `codex exec` пишет
 # (не проверялось вживую — реальный прогон стоит денег).
+# rollout-*.jsonl этой задачи: cwd совпал и mtime попал в окно started…finished.
+# Пусто, если сессия ещё не записалась или CODEX_HOME другой.
+find_codex_rollout() {
+  local workdir="$1" since_epoch="${2:-}" until_epoch="${3:-}"
+  local sessions_root="$CODEX_HOME_DIR/sessions"
+  [[ -d "$sessions_root" ]] || return 0
+  local f mt
+  while IFS= read -r f; do
+    [[ -n "$f" ]] || continue
+    [[ "$(session_meta_cwd "$f")" == "$workdir" ]] || continue
+    if [[ -n "$since_epoch" ]]; then
+      mt="$(file_mtime_epoch "$f")"
+      [[ -n "$mt" ]] || continue
+      (( mt >= since_epoch - 2 )) || continue
+      [[ -n "$until_epoch" ]] && ! (( mt <= until_epoch + 300 )) && continue
+    fi
+    printf '%s' "$f"
+    return 0
+  done < <(find "$sessions_root" -type f -name 'rollout-*.jsonl' -print0 2>/dev/null | xargs -0 ls -t 2>/dev/null)
+}
+
+discover_codex_session() {
+  local dir="$1" f
+  f="$(find_codex_rollout "$(meta_get cwd "$dir/meta")" "$(meta_get started_epoch "$dir/meta")" "$(meta_get finished_epoch "$dir/meta")")"
+  [[ -n "$f" ]] || return 0
+  session_meta_field "$f" session_id
+}
+
+# Продолжить сессию Codex задачи: те же --write/--model/--effort/--cwd, новый промпт.
+# Нет id сессии или задача ещё running — код 2, оркестратор откатывается на run.
+cmd_resume() {
+  local job_id="" background=0 timeout_s="" label=""
+  while [[ $# -gt 0 ]]; do
+    case "$1" in
+      --background) background=1; shift ;;
+      --timeout)    timeout_s="${2:-}"; [[ -z "$timeout_s" ]] && die 2 "--timeout требует значение"; shift 2 ;;
+      --label)      label="${2:-}"; [[ -z "$label" ]] && die 2 "--label требует значение"; shift 2 ;;
+      -h|--help)    usage ;;
+      -*)           die 2 "неизвестная опция '$1' (промпт передаётся на stdin, не аргументом)" ;;
+      *)            [[ -n "$job_id" ]] && die 2 "лишний аргумент '$1'"
+                    job_id="$1"; shift ;;
+    esac
+  done
+  local dir; dir="$(job_dir_of "$job_id")"
+  local st; st="$(job_status_of "$dir")"
+  [[ "$st" == "running" ]] && die 2 "задача '$job_id' ещё выполняется — resume после её окончания; иначе оркестратор откатывается на новый прогон"
+
+  local sid
+  sid="$(meta_get codex_session "$dir/meta")"
+  if [[ -z "$sid" || "$sid" == "—" ]]; then
+    sid="$(discover_codex_session "$dir")"
+    [[ -n "$sid" ]] && meta_set codex_session "$sid" "$dir/meta"
+  fi
+  [[ -n "$sid" && "$sid" != "—" ]] || die 2 "нет id сессии Codex у задачи '$job_id' — оркестратор должен откатиться на новый прогон (codex-run.sh run)"
+
+  local prompt
+  prompt="$(cat)"
+  [[ -z "${prompt//[[:space:]]/}" ]] && die 2 "пустой промпт на stdin"
+
+  local workdir mode model effort provider
+  workdir="$(meta_get cwd "$dir/meta")"
+  mode="$(meta_get mode "$dir/meta")"
+  model="$(meta_get model "$dir/meta")"
+  effort="$(meta_get effort "$dir/meta")"
+  provider="$(meta_get provider "$dir/meta")"
+  [[ -d "$workdir" ]] || die 2 "каталог '$workdir' из задачи '$job_id' не существует"
+
+  if [[ -z "$timeout_s" ]]; then
+    if [[ $background -eq 1 ]]; then timeout_s="$DEFAULT_BG_TIMEOUT"; else timeout_s="$DEFAULT_TIMEOUT"; fi
+  fi
+  [[ "$timeout_s" =~ ^[0-9]+$ ]] || die 2 "--timeout принимает целое число секунд (0 — без ограничения)"
+
+  local bin; bin="$(resolve_codex)"
+  [[ -n "$mode" && "$mode" != "—" ]] || mode="read-only"
+  local args=(--skip-git-repo-check -s "$mode" -C "$workdir")
+  [[ -n "$model" && "$model" != "—" ]] && args+=(-m "$model")
+  [[ -n "$effort" && "$effort" != "—" ]] && args+=(-c "model_reasoning_effort=\"$effort\"")
+  [[ -n "$provider" && "$provider" != "—" ]] && args+=(-c "model_provider=\"$provider\"")
+  [[ -n "$label" ]] || label="resume $job_id"
+
+  RESUME_SID="$sid"
+  RESUME_FROM="$job_id"
+  if [[ $background -eq 1 ]]; then
+    run_background "$bin" "$mode" "$workdir" "$timeout_s" "$prompt" \
+      "$model" "$effort" "$provider" "$label" "${args[@]}"
+  else
+    run_foreground "$bin" "$workdir" "$timeout_s" "$prompt" "${args[@]}"
+  fi
+}
+
 cmd_transcript() {
   local job_id="${1:-}" workdir="$PWD"
   [[ "$job_id" == "-h" || "$job_id" == "--help" ]] && usage
@@ -946,24 +1061,9 @@ cmd_transcript() {
   local sessions_root="$CODEX_HOME_DIR/sessions"
   [[ -d "$sessions_root" ]] || die 2 "нет каталога сессий: $sessions_root (--ephemeral-прогоны сессию на диск не пишут, но эта обвязка --ephemeral не использует)"
 
-  local f matched="" matched_originator=""
-  while IFS= read -r f; do
-    [[ -n "$f" ]] || continue
-    local line_cwd
-    line_cwd="$(session_meta_cwd "$f")"
-    [[ "$line_cwd" == "$workdir" ]] || continue
-    if [[ -n "$since_epoch" ]]; then
-      local mt; mt="$(file_mtime_epoch "$f")"
-      [[ -n "$mt" ]] || continue
-      # −2с запас: файл создаётся в момент старта, до первой строки проходят доли секунды
-      (( mt >= since_epoch - 2 )) || continue
-      # +300с запас на воркер, который дописывает файл уже после finished_epoch
-      [[ -n "$until_epoch" ]] && ! (( mt <= until_epoch + 300 )) && continue
-    fi
-    matched="$f"
-    matched_originator="$(session_meta_originator "$f")"
-    break
-  done < <(find "$sessions_root" -type f -name 'rollout-*.jsonl' -print0 2>/dev/null | xargs -0 ls -t 2>/dev/null)
+  local matched="" matched_originator=""
+  matched="$(find_codex_rollout "$workdir" "$since_epoch" "$until_epoch")"
+  [[ -n "$matched" ]] && matched_originator="$(session_meta_originator "$matched")"
 
   if [[ -z "$matched" ]]; then
     if [[ -n "$job_id" ]]; then
@@ -1015,6 +1115,7 @@ sub="$1"; shift
 case "$sub" in
   check)      cmd_check "$@" ;;
   run)        cmd_run "$@" ;;
+  resume)     cmd_resume "$@" ;;
   status)     cmd_status "$@" ;;
   result)     cmd_result "$@" ;;
   logs)       cmd_logs "$@" ;;

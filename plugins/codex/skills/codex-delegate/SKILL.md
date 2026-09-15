@@ -52,6 +52,17 @@ OpenAI Codex CLI — не «вторая модель, которой задаю
    `logs <job-id>`.
 
 5. **Забери ответ:** `${CLAUDE_PLUGIN_ROOT}/scripts/codex-run.sh result <job-id>`.
+   Id сессии Codex после завершения — в `status --json` поле `codex_session`; его же
+   пиши в журнал, если задачу потом надо продолжить. Продолжение той же сессии:
+
+   ```bash
+   ${CLAUDE_PLUGIN_ROOT}/scripts/codex-run.sh resume <job-id> --background --label "<продолжение>" <<'TASK'
+   <текст продолжения>
+   TASK
+   ```
+
+   Код 2 (нет сессии, задача ещё running) — откат: новый `run` с текущим текстом, не
+   выдумывай другой вызов.
    Если ответ огромный и нужен не дословно, а разобранным, отдай забор субагенту
    `codex:codex-runner` вызовом `Agent` с `subagent_type: "codex:codex-runner"`, передав
    ему идентификатор.

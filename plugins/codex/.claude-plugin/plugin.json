@@ -1,7 +1,7 @@
 {
   "name": "codex",
   "displayName": "OpenAI Codex CLI bridge",
-  "version": "0.1.0",
+  "version": "0.2.0",
   "description": "Delegate tasks to OpenAI Codex CLI (codex exec) from Claude Code: it explores the codebase itself, read-only by default.",
   "author": {
     "name": "Dmitry Fomin",

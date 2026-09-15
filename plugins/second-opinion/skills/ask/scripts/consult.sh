@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# consult.sh <provider> [model] [--stage N] [--portion X] [--note "текст"] < prompt.txt
+# consult.sh <provider> [model] [--no-system] [--stage N] [--portion X] [--note "текст"] < prompt.txt
 #
 # Печатает текстовый ответ внешней модели в stdout. Ошибки — в stderr, ненулевой exit code.
 # Если задан журнал использования моделей (см. log_usage ниже), пишет туда строку
@@ -32,7 +32,7 @@ conf_providers() {
 }
 
 usage() {
-  echo "usage: consult.sh <provider> [model] [--stage N] [--portion X] [--note \"текст\"] < prompt.txt" >&2
+  echo "usage: consult.sh <provider> [model] [--no-system] [--stage N] [--portion X] [--note \"текст\"] < prompt.txt" >&2
   echo "       consult.sh challenge < statement.txt   # локально, без вызова модели" >&2
   [[ -f "$CONF_FILE" ]] && echo "провайдеры: grok,$(conf_providers)" >&2
   exit 2
@@ -52,8 +52,10 @@ so_stage="${SO_STAGE:-}"
 so_portion="${SO_PORTION:-}"
 so_note="${SO_NOTE:-}"
 so_log="${MODEL_USAGE_LOG:-}"
+no_system=0
 while [[ $# -gt 0 ]]; do
   case "$1" in
+    --no-system) no_system=1; shift ;;
     --stage)   so_stage="${2:-}"; shift 2 ;;
     --portion) so_portion="${2:-}"; shift 2 ;;
     --note)    so_note="${2:-}"; shift 2 ;;
@@ -261,6 +263,7 @@ SYSEOF
 # Один и тот же промпт для HTTP-провайдеров (ролью system) и для grok
 # (префиксом к тексту: у CLI роли system нет).
 use_system=1
+[[ "$no_system" -eq 1 ]] && use_system=0
 [[ -n "${SECOND_OPINION_NO_SYSTEM:-}" ]] && use_system=0
 
 # --- grok: локальный CLI плагина grok-build, а не HTTP-провайдер из ---

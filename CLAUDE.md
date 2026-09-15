@@ -45,7 +45,7 @@ npm run smoke        # web/scripts/smoke.mjs
 ```
 
 `web/scripts/verify-*.mjs` (`verify-projects`, `verify-deps-links`, `verify-cold-start`,
-`verify-route-clear`, `verify-detail-sse`, `verify-task-delete`) are additional scripted checks
+`verify-route-clear`, `verify-detail-sse`, `verify-task-delete`, `verify-assistant-apply`) are additional scripted checks
 used in place of a unit test suite for board behavior; most run against `scripts/mock-api.mjs`.
 `smoke` needs a reachable app and API and exits non-zero with an error if `/api/health` is down.
 

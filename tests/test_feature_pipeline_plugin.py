@@ -157,7 +157,6 @@ class FeaturePipelinePluginTests(unittest.TestCase):
 #: Пути (относительно PLUGIN_DIR), которые должны называть работу по id карточки (`<id>`), а не
 #: по номеру шага. `agents/*.md` собирается в момент вызова теста, а не при импорте.
 CORE_DOC = pathlib.Path("references") / "pipeline-core.md"
-TRACKS_DOC = pathlib.Path("skills") / "feature-pipeline" / "references" / "tracks.md"
 INHERIT_SKILL = pathlib.Path("skills") / "inherit-pipeline" / SKILL_FILE
 AGENTS_SUBDIR = "agents"
 
@@ -172,6 +171,15 @@ def _plugin_text(relative: pathlib.Path) -> str:
 
 #: Начало абзаца шага 0 про файл широкой механической правки.
 ADHOC_PARAGRAPH_START = "**Adhoc-файл для широкой правки.**"
+
+
+#: Скилы, которым до порции b позволено упоминать удалённый `tracks.md`
+#: (снимается в порции b — там `feature-pipeline/SKILL.md` переписывается целиком).
+TRACKS_MENTION_ALLOWED_UNTIL_B = ("feature-pipeline",)
+
+
+#: Начало абзаца ядра про переиспользованное дерево трека.
+TRACKS_REUSE_PARAGRAPH_START = "Каталог или ветка уже есть"
 
 
 #: Начало абзаца шага 0 про журнал: список имён журнала по случаям.
@@ -216,7 +224,7 @@ class FeaturePipelineStepNamingTests(unittest.TestCase):
     """Имена бумаг и деревьев (listik-223b, порция a) — по id карточки, не по номеру шага."""
 
     def test_no_old_step_number_naming(self) -> None:
-        paths = [CORE_DOC, TRACKS_DOC, *_agent_paths()]
+        paths = [CORE_DOC, *_agent_paths()]
         self.assertGreater(len(_agent_paths()), 0, "в agents/ не нашлось ни одного файла")
         for relative in paths:
             with self.subTest(file=str(relative)):
@@ -327,14 +335,12 @@ class FeaturePipelineStepNamingTests(unittest.TestCase):
             "безусловно: после него нет оговорки «без карточки» (listik-ivt3)",
         )
 
-    def test_manifest_line_matches_in_core_and_tracks(self) -> None:
-        for relative in (CORE_DOC, TRACKS_DOC):
-            with self.subTest(file=str(relative)):
-                text = _plugin_text(relative)
-                self.assertIn(
-                    MANIFEST_LINE, text,
-                    f"{relative}: не нашлось строки манифеста трека {MANIFEST_LINE!r}",
-                )
+    def test_manifest_line_in_core(self) -> None:
+        text = _plugin_text(CORE_DOC)
+        self.assertIn(
+            MANIFEST_LINE, text,
+            f"{CORE_DOC}: не нашлось строки манифеста трека {MANIFEST_LINE!r}",
+        )
 
     def test_heartbeat_note_uses_id(self) -> None:
         text = _plugin_text(CORE_DOC)
@@ -365,6 +371,32 @@ class FeaturePipelineStepNamingTests(unittest.TestCase):
             "<id>.judge-<X>.r<R>.md", text,
             f"{relative}: не нашлось имени файла судьи '<id>.judge-<X>.r<R>.md'",
         )
+
+    def test_tracks_doc_removed(self) -> None:
+        """`tracks.md` удалён; ссылка на него осталась только там, где её снимает порция b."""
+        tracks_doc = PLUGIN_DIR / "skills" / "feature-pipeline" / "references" / "tracks.md"
+        self.assertFalse(
+            tracks_doc.exists(),
+            f"{tracks_doc}: файл должен быть удалён — его содержимое переехало в {CORE_DOC}",
+        )
+        for name in sorted(_skill_names()):
+            if name in TRACKS_MENTION_ALLOWED_UNTIL_B:
+                continue
+            with self.subTest(skill=name):
+                self.assertNotIn(
+                    "tracks.md", _skill_text(name),
+                    f"{name}/{SKILL_FILE}: ссылка на удалённый tracks.md",
+                )
+
+    def test_core_tracks_mention_worktree_list(self) -> None:
+        """Абзац про переиспользованное дерево зовёт `git worktree list` после `/clear`."""
+        paragraph = _paragraph(CORE_DOC, TRACKS_REUSE_PARAGRAPH_START)
+        for needle in ("`git worktree list`", "/clear"):
+            with self.subTest(needle=needle):
+                self.assertIn(
+                    needle, paragraph,
+                    f"{CORE_DOC}: в абзаце {TRACKS_REUSE_PARAGRAPH_START!r} нет {needle!r}",
+                )
 
 
 #: Пресеты, у которых по канону есть строка `BASE=<id>` в примере префикса команд.
@@ -484,7 +516,7 @@ class FeaturePipelineSkillNamingTests(unittest.TestCase):
 
     def test_no_pipeline_branch_prefix_in_core_tracks_inherit(self) -> None:
         """pipeline-< и git worktree add -b pipeline больше не используются."""
-        for relative in (CORE_DOC, TRACKS_DOC, INHERIT_SKILL):
+        for relative in (CORE_DOC, INHERIT_SKILL):
             with self.subTest(file=str(relative)):
                 text = _plugin_text(relative)
                 self.assertNotIn(
@@ -498,20 +530,19 @@ class FeaturePipelineSkillNamingTests(unittest.TestCase):
 
     def test_core_tracks_inherit_create_tree_with_listik_worktree(self) -> None:
         """Дерево заводится через listik worktree <id> [--track <часть>]."""
-        for relative in (CORE_DOC, TRACKS_DOC, INHERIT_SKILL):
+        for relative in (CORE_DOC, INHERIT_SKILL):
             with self.subTest(file=str(relative)):
                 text = _plugin_text(relative)
                 self.assertIn(
                     "listik worktree <id>", text,
                     f"{relative}: не нашлось команды 'listik worktree <id>'",
                 )
-        for relative in (CORE_DOC, TRACKS_DOC):
-            with self.subTest(file=str(relative), flag="--track"):
-                text = _plugin_text(relative)
-                self.assertIn(
-                    "--track <часть>", text,
-                    f"{relative}: не нашлось флага '--track <часть>' для трекового режима",
-                )
+        with self.subTest(file=str(CORE_DOC), flag="--track"):
+            text = _plugin_text(CORE_DOC)
+            self.assertIn(
+                "--track <часть>", text,
+                f"{CORE_DOC}: не нашлось флага '--track <часть>' для трекового режима",
+            )
 
 
 #: Строки журнала шага про сессию исполнителя (listik-auj4): id сессии, факт продолжения

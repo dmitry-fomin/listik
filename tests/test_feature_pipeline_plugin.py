@@ -146,6 +146,22 @@ def _plugin_text(relative: pathlib.Path) -> str:
     return (PLUGIN_DIR / relative).read_text(encoding="utf-8")
 
 
+#: Начало абзаца шага 0 про файл широкой механической правки.
+ADHOC_PARAGRAPH_START = "**Adhoc-файл для широкой правки.**"
+
+
+def _core_paragraph(start: str) -> str:
+    """Абзац `CORE_DOC` от строки `start` до первой пустой строки, одной строкой."""
+    lines = _plugin_text(CORE_DOC).splitlines()
+    for index, line in enumerate(lines):
+        if line.startswith(start):
+            end = index
+            while end < len(lines) and lines[end].strip():
+                end += 1
+            return " ".join(lines[index:end])
+    raise AssertionError(f"{CORE_DOC}: не нашлось абзаца, начинающегося с {start!r}")
+
+
 def _agent_paths() -> list[pathlib.Path]:
     """Все `agents/*.md`, относительно PLUGIN_DIR, в момент вызова."""
     agents_dir = PLUGIN_DIR / AGENTS_SUBDIR
@@ -201,6 +217,33 @@ class FeaturePipelineStepNamingTests(unittest.TestCase):
         self.assertNotIn(
             "следующим свободным", text,
             f"{CORE_DOC}: осталась подстрока 'следующим свободным' (старое правило нумерации)",
+        )
+
+    def test_adhoc_paragraph_names_paper_by_card(self) -> None:
+        """Абзац «Adhoc-файл для широкой правки» (listik-vus7) — по правилу 4: при карточке файл
+        `<steps>/<id>.a.md`, adhoc-имя остаётся ветке без карточки."""
+        paragraph = _core_paragraph(ADHOC_PARAGRAPH_START)
+        self.assertIn(
+            "<steps>/<id>.a.md", paragraph,
+            f"{CORE_DOC}: абзац {ADHOC_PARAGRAPH_START!r} не называет файл по карточке",
+        )
+        self.assertIn(
+            "при карточке", paragraph,
+            f"{CORE_DOC}: абзац {ADHOC_PARAGRAPH_START!r} не оговаривает случай карточки",
+        )
+        self.assertIn(
+            "<steps>/adhoc-<ГГГГ-ММ-ДД>-<слаг>.a.md", paragraph,
+            f"{CORE_DOC}: абзац {ADHOC_PARAGRAPH_START!r} не оставил adhoc-имя ветке без карточки",
+        )
+        self.assertIn(
+            "без карточки", paragraph,
+            f"{CORE_DOC}: абзац {ADHOC_PARAGRAPH_START!r} не оговаривает случай без карточки",
+        )
+        self.assertLess(
+            paragraph.index("<steps>/<id>.a.md"),
+            paragraph.index("<steps>/adhoc-<ГГГГ-ММ-ДД>-<слаг>.a.md"),
+            f"{CORE_DOC}: в абзаце {ADHOC_PARAGRAPH_START!r} adhoc-имя названо раньше файла "
+            "по карточке (правило 4 требует обратного)",
         )
 
     def test_manifest_line_matches_in_core_and_tracks(self) -> None:

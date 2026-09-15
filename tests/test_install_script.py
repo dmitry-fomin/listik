@@ -37,6 +37,7 @@ import tarfile
 import tempfile
 import threading
 import time
+import tomllib
 import unittest
 
 REPO_ROOT = pathlib.Path(__file__).resolve().parent.parent
@@ -141,6 +142,9 @@ class InstallScriptTests(unittest.TestCase):
     def env(self, **overrides: str) -> dict:
         env = {k: v for k, v in os.environ.items() if not k.startswith("LISTIK_")}
         env["HOME"] = str(self.home)
+        # Конфиг Codex установщик ищет в CODEX_HOME: в тестах это только временный HOME,
+        # иначе при заданном в окружении CODEX_HOME он смотрел бы в настоящий ~/.codex.
+        env["CODEX_HOME"] = str(self.home / ".codex")
         env["LISTIK_BIN_DIR"] = str(self.bin_dir)
         env["LISTIK_ROUTES"] = str(self.routes_copy)
         env.update(overrides)
@@ -568,6 +572,157 @@ class InstallScriptTests(unittest.TestCase):
         self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
         text = log.read_text(encoding="utf-8")
         self.assertTrue("bootstrap" in text or "restart" in text, text)
+
+    # --- порция a: Codex и network_access в песочнице --------------------
+
+    @property
+    def codex_config(self) -> pathlib.Path:
+        """Тот же путь, что берёт установщик: `$CODEX_HOME/config.toml` (см. `env`)."""
+        return self.home / ".codex" / "config.toml"
+
+    def make_fake_codex(self) -> pathlib.Path:
+        """Поддельный `codex` в PATH: установщику достаточно `command -v codex`."""
+        fake_dir = self.tmp / "fake-codex"
+        fake_dir.mkdir(exist_ok=True)
+        path = fake_dir / "codex"
+        path.write_text("#!/bin/sh\nexit 0\n", encoding="utf-8")
+        path.chmod(0o755)
+        return fake_dir
+
+    def env_with_codex(self, **overrides: str) -> dict:
+        path = os.pathsep.join([str(self.make_fake_codex()), os.environ.get("PATH", "")])
+        return self.env(PATH=path, **overrides)
+
+    def path_without_codex(self) -> str:
+        """`PATH`, в котором нет исполняемого `codex`, но есть все остальные файлы.
+
+        `path_without` выбросил бы каталог целиком, а `codex` на машине разработчика
+        лежит рядом с brew-питоном (`/opt/homebrew/bin`) — вместе с ним из `PATH` ушёл бы
+        и python3 3.11+. Поэтому каждый файл из `PATH` получает ссылку в отдельном
+        каталоге, кроме самого `codex`.
+        """
+        farm = self.tmp / "path-without-codex"
+        farm.mkdir(exist_ok=True)
+        for directory in os.environ.get("PATH", "").split(os.pathsep):
+            if not directory or not os.path.isdir(directory):
+                continue
+            try:
+                names = os.listdir(directory)
+            except OSError:
+                continue
+            for name in names:
+                link = farm / name
+                if name == "codex" or link.exists() or link.is_symlink():
+                    continue
+                try:
+                    link.symlink_to(os.path.join(directory, name))
+                except OSError:
+                    continue
+        return str(farm)
+
+    def test_codex_network_already_enabled_keeps_config(self) -> None:
+        archive = self.make_archive(VERSION)
+        self.codex_config.parent.mkdir(parents=True)
+        before = 'model = "gpt-5"\n\n[sandbox_workspace_write]\nnetwork_access = true\n'
+        self.codex_config.write_text(before, encoding="utf-8")
+        result = self.install(archive, env=self.env_with_codex())
+        self.assertEqual(self.codex_config.read_text(encoding="utf-8"), before)
+        self.assertEqual(list(self.codex_config.parent.glob("config.toml.bak-*")), [],
+                         "настройка уже есть, а копия конфига сделана")
+        self.assertIn("Codex: уже включён", result.stdout)
+        self.assertNotIn("не сможет", result.stdout + result.stderr)
+
+    def test_codex_network_flag_yes_appends_and_keeps_backup(self) -> None:
+        archive = self.make_archive(VERSION)
+        self.codex_config.parent.mkdir(parents=True)
+        before = 'model = "gpt-5"\n'
+        self.codex_config.write_text(before, encoding="utf-8")
+        result = self.install(archive, "--codex-network", "yes", env=self.env_with_codex())
+        data = tomllib.loads(self.codex_config.read_text(encoding="utf-8"))
+        self.assertIs(data["sandbox_workspace_write"]["network_access"], True)
+        self.assertEqual(data["model"], "gpt-5", "остальной конфиг потерян")
+        backups = list(self.codex_config.parent.glob("config.toml.bak-*"))
+        self.assertEqual([b.read_text(encoding="utf-8") for b in backups], [before],
+                         "нет резервной копии конфига")
+        self.assertIn("Codex: включён", result.stdout)
+        self.assertNotIn("не сможет", result.stdout + result.stderr)
+
+    def test_codex_network_creates_config_when_missing(self) -> None:
+        archive = self.make_archive(VERSION)
+        self.install(archive, "--codex-network", "yes", env=self.env_with_codex())
+        data = tomllib.loads(self.codex_config.read_text(encoding="utf-8"))
+        self.assertIs(data["sandbox_workspace_write"]["network_access"], True)
+
+    def test_codex_network_keeps_mode_and_leaves_no_temp(self) -> None:
+        archive = self.make_archive(VERSION)
+        self.codex_config.parent.mkdir(parents=True)
+        self.codex_config.write_text('model = "gpt-5"\n', encoding="utf-8")
+        self.codex_config.chmod(0o600)
+        self.install(archive, "--codex-network", "yes", env=self.env_with_codex())
+        self.assertEqual(self.codex_config.stat().st_mode & 0o777, 0o600,
+                         "права конфига не сохранены")
+        self.assertEqual(list(self.codex_config.parent.glob("config.toml.listik-new-*")), [],
+                         "остался временный файл правки")
+
+    def test_codex_network_replaces_false_in_existing_section(self) -> None:
+        archive = self.make_archive(VERSION)
+        self.codex_config.parent.mkdir(parents=True)
+        self.codex_config.write_text(
+            '[sandbox_workspace_write]\nsandbox_mode = "workspace-write"\n'
+            'network_access = false\n\n[other]\nkey = 1\n', encoding="utf-8")
+        self.install(archive, "--codex-network", "yes", env=self.env_with_codex())
+        text = self.codex_config.read_text(encoding="utf-8")
+        data = tomllib.loads(text)
+        self.assertIs(data["sandbox_workspace_write"]["network_access"], True)
+        self.assertEqual(data["sandbox_workspace_write"]["sandbox_mode"], "workspace-write")
+        self.assertEqual(data["other"], {"key": 1})
+        self.assertEqual(text.count("network_access"), 1, "ключ задвоился — TOML сломан")
+
+    def test_codex_network_adds_key_into_existing_section(self) -> None:
+        archive = self.make_archive(VERSION)
+        self.codex_config.parent.mkdir(parents=True)
+        self.codex_config.write_text(
+            '[sandbox_workspace_write]\nsandbox_mode = "workspace-write"\n\n[other]\nkey = 1\n',
+            encoding="utf-8")
+        self.install(archive, "--codex-network", "yes", env=self.env_with_codex())
+        data = tomllib.loads(self.codex_config.read_text(encoding="utf-8"))
+        self.assertIs(data["sandbox_workspace_write"]["network_access"], True)
+        self.assertEqual(data["other"], {"key": 1}, "ключ ушёл в чужую секцию")
+
+    def test_codex_network_flag_no_warns_and_keeps_config(self) -> None:
+        archive = self.make_archive(VERSION)
+        result = self.install(archive, "--codex-network", "no", env=self.env_with_codex())
+        self.assertFalse(self.codex_config.exists(), "конфиг создан при --codex-network no")
+        self.assertIn("127.0.0.1", result.stderr)
+        self.assertIn("не сможет", result.stderr)
+        self.assertIn("--codex-network yes", result.stderr)
+
+    def test_codex_network_without_tty_keeps_config(self) -> None:
+        archive = self.make_archive(VERSION)
+        result = self.run_install("--archive", str(archive), "--service", "no", "--mcp", "no",
+                                  "--plugins", "no", env=self.env_with_codex(),
+                                  stdin=subprocess.DEVNULL, session=True)
+        self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+        self.assertFalse(self.codex_config.exists(), "конфиг изменён без ответа пользователя")
+        self.assertIn("не сможет", result.stderr)
+
+    def test_codex_not_installed_skips(self) -> None:
+        archive = self.make_archive(VERSION)
+        env = self.env(PATH=self.path_without_codex())
+        result = self.install(archive, "--codex-network", "yes", env=env)
+        self.assertFalse(self.codex_config.exists(), "конфиг создан без codex в PATH")
+        self.assertIn("Codex: пропущен", result.stdout)
+
+    def test_codex_network_flag_invalid(self) -> None:
+        result = self.run_install("--codex-network", "maybe", "--yes")
+        self.assertNotEqual(result.returncode, 0, result.stdout + result.stderr)
+        self.assertIn("--codex-network", result.stderr)
+
+    def test_codex_network_in_help(self) -> None:
+        result = self.run_install("--help")
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertIn("--codex-network", result.stdout)
+        self.assertIn("CODEX_HOME", result.stdout)
 
 
 if __name__ == "__main__":

@@ -54,14 +54,24 @@ usage() {
   --mcp yes|no          подключить MCP-сервер (claude mcp add), по умолчанию yes
   --plugins yes|no      поставить плагины Claude (marketplace + listik/feature-pipeline),
                         по умолчанию yes
+  --codex-network yes|no|ask
+                        если codex установлен, а в его config.toml нет
+                        [sandbox_workspace_write] с network_access = true — дописать
+                        (LISTIK_CODEX_NETWORK), по умолчанию ask; yes — дописать,
+                        сохранив копию конфига рядом (.bak-<время>), no — только
+                        предупредить, ask — спросить в /dev/tty
   --yes                 на вопросы без явного флага отвечать значением по умолчанию
-                        (для routes это keep, для service/mcp/plugins — yes)
+                        (для routes это keep, для service/mcp/plugins — yes; вопрос
+                        Codex он не закрывает — нужен --codex-network yes)
   --help                эта справка
 
 Переменные окружения:
   LISTIK_HOME           каталог данных (по умолчанию ~/.listik); обёртка ставит его
                         по умолчанию, но заданное пользователем значение важнее
-  LISTIK_VERSION, LISTIK_ARCHIVE, LISTIK_BIN_DIR, LISTIK_ROUTES_POLICY — см. флаги
+  LISTIK_VERSION, LISTIK_ARCHIVE, LISTIK_BIN_DIR, LISTIK_ROUTES_POLICY,
+  LISTIK_CODEX_NETWORK — см. флаги
+  CODEX_HOME            каталог настроек Codex (по умолчанию ~/.codex); в нём
+                        установщик смотрит config.toml
   LISTIK_ROUTES         рабочая копия routes.json
                         (по умолчанию ~/.config/listik/routes.json)
   LISTIK_RELEASES_API   откуда брать последнюю версию, по умолчанию
@@ -84,6 +94,7 @@ routes_policy=${LISTIK_ROUTES_POLICY:-}
 service_answer=
 mcp_answer=
 plugins_answer=
+codex_network=${LISTIK_CODEX_NETWORK:-}
 assume_yes=0
 
 while [ $# -gt 0 ]; do
@@ -136,6 +147,12 @@ while [ $# -gt 0 ]; do
             shift
             ;;
         --plugins=*) plugins_answer=${1#--plugins=} ;;
+        --codex-network)
+            [ $# -ge 2 ] || die "--codex-network ждёт yes, no или ask"
+            codex_network=$2
+            shift
+            ;;
+        --codex-network=*) codex_network=${1#--codex-network=} ;;
         --yes|-y) assume_yes=1 ;;
         -h|--help)
             usage
@@ -165,6 +182,10 @@ esac
 case $plugins_answer in
     ""|yes|no) ;;
     *) die "--plugins ждёт yes или no, а не '$plugins_answer'" ;;
+esac
+case $codex_network in
+    ""|yes|no|ask) ;;
+    *) die "--codex-network ждёт yes, no или ask, а не '$codex_network'" ;;
 esac
 [ -n "$home" ] || die "--home не может быть пустым"
 
@@ -472,6 +493,174 @@ if [ "$plugins_answer" = yes ]; then
     fi
 fi
 
+# ------------------------------------ шаг 7.2: Codex и network_access
+
+# Codex в режиме записи ходит в сеть из песочницы, а Listik слушает 127.0.0.1: без
+# `network_access = true` в [sandbox_workspace_write] агент не возьмёт задачу,
+# не отправит heartbeat и не запишет журнал (listik-htgq).
+codex_config=${CODEX_HOME:-$HOME/.codex}/config.toml
+codex_status="пропущен (codex не найден)"
+codex_reason=
+codex_backup=
+codex_warn=0
+
+codex_network_enabled() {
+    # 0 — в конфиге уже есть [sandbox_workspace_write] network_access = true.
+    # Понимает и точечную запись `sandbox_workspace_write.network_access = true`.
+    [ -f "$1" ] || return 1
+    awk '
+        function norm(s) { gsub(/[[:space:]]/, "", s); gsub(/["\047]/, "", s); return s }
+        /^[[:space:]]*\[/ {
+            section = $0
+            sub(/^[[:space:]]*\[/, "", section)
+            sub(/\].*$/, "", section)
+            section = norm(section)
+            next
+        }
+        {
+            line = $0
+            sub(/#.*/, "", line)
+            if (line !~ /=/) next
+            split(line, kv, "=")
+            if (norm(kv[2]) != "true") next
+            key = norm(kv[1])
+            if (section == "sandbox_workspace_write" && key == "network_access") enabled = 1
+            if (section == "" && key == "sandbox_workspace_write.network_access") enabled = 1
+        }
+        END { exit(enabled ? 0 : 1) }
+    ' "$1"
+}
+
+codex_network_write() {
+    # $1 — конфиг: ставит network_access = true в [sandbox_workspace_write].
+    # Ключ уже есть — меняет значение, секции нет — дописывает её в конец файла,
+    # секция есть без ключа — дописывает ключ внутрь неё (дубль ключа сломал бы TOML).
+    cfg=$1
+    cfg_new=$cfg.listik-new-$$
+    [ -f "$cfg" ] || : > "$cfg" || return 1
+    awk '
+        function norm(s) { gsub(/[[:space:]]/, "", s); gsub(/["\047]/, "", s); return s }
+        function secname(line) {
+            sub(/^[[:space:]]*\[/, "", line)
+            sub(/\].*$/, "", line)
+            return norm(line)
+        }
+        BEGIN { section = ""; seen = 0; written = 0 }
+        /^[[:space:]]*\[/ {
+            if (section == "sandbox_workspace_write" && !written) {
+                print "network_access = true"
+                written = 1
+            }
+            section = secname($0)
+            if (section == "sandbox_workspace_write") seen = 1
+            print
+            next
+        }
+        {
+            if (section == "sandbox_workspace_write") {
+                line = $0
+                sub(/#.*/, "", line)
+                if (line ~ /=/) {
+                    split(line, kv, "=")
+                    if (norm(kv[1]) == "network_access") {
+                        print "network_access = true"
+                        written = 1
+                        next
+                    }
+                }
+            }
+            print
+        }
+        END {
+            if (written) exit 0
+            if (seen) { print "network_access = true"; exit 0 }
+            print ""
+            print "[sandbox_workspace_write]"
+            print "network_access = true"
+        }
+    ' "$cfg" > "$cfg_new" || return 1
+    # Копируем поверх, а не mv: так у конфига сохраняются права (обычно 0600) и
+    # ссылка, если ~/.codex/config.toml — симлинк в дотфайлы.
+    if ! cp "$cfg_new" "$cfg"; then
+        rm -f "$cfg_new"
+        return 1
+    fi
+    rm -f "$cfg_new"
+}
+
+codex_enable_network() {
+    # $1 — конфиг: резервная копия рядом (.bak-<время>), затем правка (в codex_backup).
+    cfg=$1
+    codex_backup=
+    if [ -f "$cfg" ]; then
+        codex_backup=$cfg.bak-$(date +%Y%m%d-%H%M%S)
+        cp -p "$cfg" "$codex_backup" || return 1
+    else
+        mkdir -p "$(dirname "$cfg")" || return 1
+    fi
+    codex_network_write "$cfg"
+}
+
+ask_codex_network() {
+    # 0 — дописать настройку, 1 — не трогать (в codex_reason причина).
+    codex_reason="нет /dev/tty"
+    case $codex_network in
+        yes) return 0 ;;
+        no)
+            codex_reason="--codex-network no"
+            return 1
+            ;;
+    esac
+    if [ "$assume_yes" = 1 ]; then
+        # Открытый вопрос: считать ли --yes согласием на правку чужого config.toml.
+        # Пока --yes на этот вопрос «да» не отвечает и конфиг Codex не трогается.
+        codex_reason="--yes"
+        return 1
+    fi
+    if ! printf 'Codex: в %s нет [sandbox_workspace_write] network_access = true. Дописать? [Y/n] ' \
+            "$codex_config" >/dev/tty 2>/dev/null; then
+        return 1
+    fi
+    answer=
+    read -r answer < /dev/tty 2>/dev/null || return 1
+    case $answer in
+        [nN]*)
+            codex_reason="ответ '$answer'"
+            return 1
+            ;;
+        *) return 0 ;;
+    esac
+}
+
+if command -v codex >/dev/null 2>&1; then
+    if codex_network_enabled "$codex_config"; then
+        codex_status="уже включён"
+    elif ask_codex_network; then
+        if codex_enable_network "$codex_config"; then
+            codex_status="включён"
+            note "$prog: Codex: network_access = true добавлен в $codex_config"
+            [ -z "$codex_backup" ] ||
+                note "$prog: Codex: резервная копия конфига — $codex_backup"
+        else
+            codex_status="не удалось"
+            codex_warn=1
+            note "$prog: Codex: не удалось изменить $codex_config" >&2
+        fi
+    else
+        codex_status="не включён"
+        codex_warn=1
+    fi
+fi
+
+if [ "$codex_warn" = 1 ]; then
+    note "$prog: Codex: network_access = true не включён ($codex_reason)" >&2
+    note "$prog: без него Codex в режиме записи не достучится до сервера Listik (127.0.0.1):" >&2
+    note "$prog: не сможет брать задачи, слать heartbeat и писать журнал." >&2
+    note "$prog: допишите в $codex_config сами или повторите с --codex-network yes:" >&2
+    note "  [sandbox_workspace_write]" >&2
+    note "  network_access = true" >&2
+fi
+
 # ------------------------------------------------- шаг 8: routes.json
 
 replace_routes() {
@@ -547,6 +736,7 @@ fi
 note "автозапуск: $service_status"
 note "MCP: $mcp_status"
 note "плагины: $plugins_status"
+note "Codex: $codex_status"
 note "дальше:"
 if [ "$service_status" = ok ]; then
     note "  listik service status"

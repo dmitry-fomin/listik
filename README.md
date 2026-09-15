@@ -33,8 +33,19 @@ curl -fsSL https://github.com/dmitry-fomin/listik/releases/latest/download/insta
 Работает после публикации релиза (`scripts/release.sh --publish`). Код ставится в
 `~/.listik/app/<версия>`, обёртка `listik` — в `~/.local/bin`, данные — в `~/.listik`.
 Повторный запуск обновляет версию, данные не трогает. Установщик по ходу предлагает автозапуск,
-MCP и плагины Claude; все флаги (`--version`, `--archive`, `--home`, `--service`, `--mcp`,
-`--plugins`, `--yes`, …) — `install.sh --help`.
+MCP и плагины Claude.
+
+Если установлен Codex, установщик проверяет его `config.toml` (`$CODEX_HOME/config.toml`,
+по умолчанию `~/.codex/config.toml`): нет секции `[sandbox_workspace_write]` с
+`network_access = true` — предложит дописать, сохранив рядом копию конфига
+(`config.toml.bak-<время>`). При отказе — предупреждение: без этой настройки Codex в режиме
+записи не достучится до сервера Listik (127.0.0.1) и не сможет брать задачи, слать heartbeat
+и писать журнал. Ответ задаёт флаг `--codex-network yes|no|ask` (по умолчанию `ask` — вопрос
+в `/dev/tty`); `--yes` этот вопрос не закрывает — конфиг Codex правится только явным
+`--codex-network yes`.
+
+Все флаги (`--version`, `--archive`, `--home`, `--service`, `--mcp`, `--plugins`,
+`--codex-network`, `--yes`, …) — `install.sh --help`.
 
 ### Из исходников
 

@@ -79,6 +79,7 @@ async function refreshAll(): Promise<void> {
 async function openTaskWithComment(task: Task, mode: 'comment' | 'answer' = 'comment'): Promise<void> {
   await store.openTask(task.id)
   await nextTick()
+  if (!drawerOpen.value || store.detailLoading.value || store.detailError.value || store.detail.value?.id !== task.id) return
   if (mode === 'answer') drawerRef.value?.focusAnswer()
   else drawerRef.value?.focusComment()
 }

@@ -144,6 +144,8 @@ const depFormOpen = ref(false)
 const needsOwnerFormOpen = ref(false)
 const needsOwnerNote = ref('')
 const feedInputRef = ref<ComponentPublicInstance | null>(null)
+const journalSectionRef = ref<HTMLElement | null>(null)
+const pinnedAnswerRef = ref<ComponentPublicInstance | null>(null)
 
 const deps = computed<DepsState | null>(() => props.task?.deps_state ?? null)
 const depTree = ref<DepTree | null>(null)
@@ -447,10 +449,14 @@ function focusComment(): void {
   focusFeedInput()
 }
 
-/** Ставит вид «ответ» и фокус — кнопка «Ответить» инбокса «нужен ты». */
+/** «Ответить» инбокса: показывает начало диалога и фокусирует ответ без второй прокрутки. */
 function focusAnswer(): void {
   feedKind.value = 'answer'
-  focusFeedInput()
+  void nextTick(() => {
+    journalSectionRef.value?.scrollIntoView({ behavior: 'auto', block: 'start' })
+    const root = (pinnedAnswerRef.value ?? feedInputRef.value)?.$el
+    if (root instanceof HTMLElement) root.querySelector('input')?.focus({ preventScroll: true })
+  })
 }
 
 defineExpose({ focusComment, focusAnswer })
@@ -1322,7 +1328,7 @@ async function loadTree(): Promise<void> {
         </dl>
       </div>
 
-      <section class="listik-section">
+      <section ref="journalSectionRef" class="listik-section">
         <div class="listik-section__head">
           <h4 class="listik-section__title">Журнал и вердикты</h4>
           <IconToggle
@@ -1353,6 +1359,7 @@ async function loadTree(): Promise<void> {
           <p class="listik-feed-pinned__text">{{ pinnedText }}</p>
           <div class="listik-feed-pinned__reply">
             <UiInput
+              ref="pinnedAnswerRef"
               v-model="pinnedAnswerText"
               size="sm"
               placeholder="ответить…"

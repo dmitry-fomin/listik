@@ -149,6 +149,12 @@ function footerText(task: Task): string {
           v-for="task in visibleTasks"
           :key="task.id"
           class="listik-inbox-card"
+          role="button"
+          tabindex="0"
+          :aria-label="`Открыть задачу ${task.title}`"
+          @click="emit('open', task.id)"
+          @keydown.enter.self.prevent="emit('open', task.id)"
+          @keydown.space.self.prevent="emit('open', task.id)"
           :class="{
             'is-danger': branchOf(task) === 'dead',
             'is-warning': branchOf(task) === 'at-risk',
@@ -177,7 +183,7 @@ function footerText(task: Task): string {
               <ListikIcon name="clock" size="xs" />
               {{ footerText(task) }}
             </span>
-            <div class="listik-inbox-card__actions">
+            <div class="listik-inbox-card__actions" @click.stop>
               <template v-if="branchOf(task) === 'needs_owner'">
                 <UiButton size="sm" variant="primary" @click="emit('answer', task)">Ответить</UiButton>
                 <UiButton size="sm" variant="ghost" @click="emit('open', task.id)">Открыть</UiButton>
@@ -239,6 +245,12 @@ function footerText(task: Task): string {
   border-radius: var(--radius-lg);
   background: var(--surface);
   box-shadow: var(--shadow-xs);
+  cursor: pointer;
+}
+
+.listik-inbox-card:focus-visible {
+  outline: none;
+  box-shadow: var(--focus-ring);
 }
 
 .listik-inbox-card.is-danger {

@@ -42,8 +42,10 @@ from — an `export` added to your shell profile after the session started is no
 
 `/codex:codex-check` prints the active provider, model, and auth status from
 `codex doctor --json`. **The model is yours to choose, in this file.** The skills and the
-`codex-runner` subagent never override it per run: they pass the prompt and let the CLI use
-your settings. The script still accepts `--provider <route>`, `--model <id>` and
+`codex-runner` subagent do not override it per run: they pass the prompt and let the CLI use
+your settings. The one exception is a run started by a `feature-pipeline` preset, which pins
+the model and effort on purpose — the role line-up is what the preset is picked for. The
+script also accepts `--provider <route>`, `--model <id>` and
 `--effort <level>` for manual use; unlike the DeepSeek bridge, these need no alias table or
 settings-file overlay — they pass straight through as `-m` and `-c key="value"` on top of
 `~/.codex/config.toml`.
@@ -135,8 +137,8 @@ EOF
 | Option | Default | Meaning |
 | --- | --- | --- |
 | `--write` | off | allow writes to the working directory (`-s workspace-write`) |
-| `--model <name>` | user's setting | manual use only — the skills never pass it (`-m`) |
-| `--effort <level>` | user's setting | manual use only; not validated against a fixed list — valid values are model-dependent (`-c model_reasoning_effort="<level>"`) |
+| `--model <name>` | user's setting | manual use, and `feature-pipeline` presets, which pin it on purpose (`-m`) |
+| `--effort <level>` | user's setting | manual use and `feature-pipeline` presets; not validated against a fixed list — valid values are model-dependent (`-c model_reasoning_effort="<level>"`) |
 | `--provider <route>` | user's setting | manual use only — switch `[model_providers.<name>]` route for one run (`-c model_provider="<route>"`) |
 | `--cwd <dir>` | current directory | working directory and sandbox boundary (`-C`) |
 | `--timeout <sec>` | 540 foreground, 7200 background | `0` removes the limit entirely |

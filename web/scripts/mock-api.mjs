@@ -16,6 +16,9 @@
  * `--cold` добавляет четыре задачи под строку «worktree · branch» блока
  * «Холодный старт»: отдельное дерево, работа в `main`, она же в `master`, и
  * карточка совсем без дерева и ветки (scripts/verify-cold-start.mjs).
+ * `--hint` добавляет карточку `listik-hint-hub` со ссылками на шесть задач, на
+ * которых проверяется строка «закрывать нельзя: открыты дети» в панели задачи
+ * (scripts/verify-children-hint.mjs).
  *
  * Служебные ручки для скриптов проверки (в API.md их нет — это не контракт, а
  * ручки управления моком, как `__token`): `POST /__event` рассылает кадр в
@@ -35,6 +38,7 @@ const fillCount = fillArg ? Number.parseInt(fillArg.slice('--fill='.length), 10)
 const linksMode = process.argv.slice(3).includes('--links')
 const routesMode = process.argv.slice(3).includes('--routes')
 const coldMode = process.argv.slice(3).includes('--cold')
+const hintMode = process.argv.slice(3).includes('--hint')
 const slowArg = process.argv.slice(3).find((arg) => arg.startsWith('--slow-ms='))
 const slowMs = slowArg ? Number.parseInt(slowArg.slice('--slow-ms='.length), 10) : 0
 const now = Date.now()
@@ -343,6 +347,103 @@ if (linksMode) {
       { depends_on: 'other-links-far', dep_type: 'blocks' },
     ],
   })
+}
+
+/**
+ * `--hint`: карточка `listik-hint-hub` (открыта, без детей) ссылается мягкими
+ * связями на шесть задач, на которых проверяется строка «закрывать нельзя:
+ * открыты дети» (scripts/verify-children-hint.mjs): закрытая и отменённая с
+ * открытым ребёнком, закрытая без детей, открытая с открытым ребёнком,
+ * открытая с закрытым ребёнком и открытая без детей. Ребёнок привязывается
+ * полем `parent` у самого ребёнка.
+ */
+if (hintMode) {
+  for (const item of [
+    task({
+      id: 'listik-hint-hub',
+      title: 'Хаб подсказки про открытых детей',
+      status: 'open',
+      status_title: 'открыта',
+      soft_links: [
+        'listik-hint-closed',
+        'listik-hint-closed-kids',
+        'listik-hint-cancelled-kids',
+        'listik-hint-open-kids',
+        'listik-hint-open-no-kids',
+        'listik-hint-open-done-kids',
+      ],
+    }),
+    task({
+      id: 'listik-hint-closed',
+      title: 'Закрытая задача без детей',
+      status: 'done',
+      status_title: 'готова',
+      closed_at: iso(5),
+    }),
+    task({
+      id: 'listik-hint-closed-kids',
+      title: 'Закрытая задача с открытым ребёнком',
+      status: 'done',
+      status_title: 'готова',
+      closed_at: iso(5),
+    }),
+    task({
+      id: 'listik-hint-kid-1',
+      title: 'Открытый ребёнок закрытой задачи',
+      status: 'open',
+      status_title: 'открыта',
+      parent: 'listik-hint-closed-kids',
+    }),
+    task({
+      id: 'listik-hint-cancelled-kids',
+      title: 'Отменённая задача с открытым ребёнком',
+      status: 'cancelled',
+      status_title: 'отменена',
+      closed_at: iso(7),
+    }),
+    task({
+      id: 'listik-hint-kid-2',
+      title: 'Открытый ребёнок отменённой задачи',
+      status: 'open',
+      status_title: 'открыта',
+      parent: 'listik-hint-cancelled-kids',
+    }),
+    task({
+      id: 'listik-hint-open-kids',
+      title: 'Открытая задача с открытым ребёнком',
+      status: 'open',
+      status_title: 'открыта',
+    }),
+    task({
+      id: 'listik-hint-kid-3',
+      title: 'Открытый ребёнок открытой задачи',
+      status: 'open',
+      status_title: 'открыта',
+      parent: 'listik-hint-open-kids',
+    }),
+    task({
+      id: 'listik-hint-open-no-kids',
+      title: 'Открытая задача без детей',
+      status: 'open',
+      status_title: 'открыта',
+    }),
+    task({
+      id: 'listik-hint-open-done-kids',
+      title: 'Открытая задача с закрытым ребёнком',
+      status: 'open',
+      status_title: 'открыта',
+    }),
+    task({
+      id: 'listik-hint-kid-4',
+      title: 'Закрытый ребёнок открытой задачи',
+      status: 'done',
+      status_title: 'готова',
+      closed_at: iso(3),
+      parent: 'listik-hint-open-done-kids',
+    }),
+  ]) {
+    tasks.push(item)
+  }
 }
 
 /**

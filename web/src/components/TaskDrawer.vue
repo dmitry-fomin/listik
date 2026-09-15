@@ -271,6 +271,18 @@ const dependentsSummary = computed<TaskDependent[]>(() => {
   return out
 })
 const canFinish = computed(() => deps.value?.can_finish !== false)
+/**
+ * Строка «закрывать нельзя: открыты дети» — только у незакрытой задачи с
+ * незакрытыми детьми. Бэкендный `can_finish` для неё не годится: у `done` и
+ * `cancelled` он всегда `false`, и у закрытой задачи без детей строка врала
+ * (listik-kwht).
+ */
+const childrenBlockClose = computed(
+  () =>
+    props.task?.status !== 'done' &&
+    props.task?.status !== 'cancelled' &&
+    childrenOpen.value.some((dep) => dep.status !== 'done'),
+)
 const reasons = computed<string[]>(() => deps.value?.reasons ?? [])
 /** Блокеры стоят без движения: ни держателя, ни свежего heartbeat. */
 const blockersIdle = computed(
@@ -1151,7 +1163,7 @@ async function loadTree(): Promise<void> {
             <ListikIcon :name="deps?.ready ? 'check' : 'lock'" size="sm" />
             <span>{{ belowRowHint }}</span>
           </div>
-          <div v-if="!canFinish" class="listik-drawer__reason listik-drawer__reason--warning">
+          <div v-if="childrenBlockClose" class="listik-drawer__reason listik-drawer__reason--warning">
             <ListikIcon name="warning" size="sm" />
             <span>закрывать нельзя: открыты дети</span>
           </div>

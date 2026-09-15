@@ -1469,6 +1469,112 @@ body .ui-drawer-backdrop.ui-drawer-backdrop--right .ui-drawer.ui-drawer--right.u
   white-space: pre-wrap;
 }
 
+/**
+ * Markdown-вывод карточки (MarkdownProse). У вывода кита блочная разметка —
+ * заголовки, списки, pre, — поэтому `white-space: pre-wrap` от `.listik-prose`
+ * перекрыт: иначе переносы исходника дали бы двойные интервалы между абзацами.
+ * Значения — только токены кита и переменные проекта.
+ */
+.listik-prose--markdown {
+  white-space: normal;
+  display: flow-root;
+  overflow-wrap: anywhere;
+}
+
+.listik-prose--markdown > :first-child {
+  margin-top: 0;
+}
+
+.listik-prose--markdown > :last-child {
+  margin-bottom: 0;
+}
+
+.listik-prose--markdown h1,
+.listik-prose--markdown h2,
+.listik-prose--markdown h3,
+.listik-prose--markdown h4,
+.listik-prose--markdown h5,
+.listik-prose--markdown h6 {
+  margin: var(--space-4) 0 var(--space-2);
+  color: var(--ink-1);
+  font-weight: var(--weight-semibold);
+  line-height: var(--leading-snug);
+}
+
+.listik-prose--markdown h1 {
+  font-size: var(--text-xl);
+}
+
+.listik-prose--markdown h2 {
+  font-size: var(--text-lg);
+}
+
+.listik-prose--markdown h3 {
+  font-size: var(--text-md);
+}
+
+.listik-prose--markdown h4,
+.listik-prose--markdown h5,
+.listik-prose--markdown h6 {
+  font-size: var(--text-base);
+}
+
+.listik-prose--markdown p {
+  margin: 0 0 var(--space-2);
+}
+
+.listik-prose--markdown ul,
+.listik-prose--markdown ol {
+  margin: 0 0 var(--space-2);
+  padding-left: var(--space-5);
+}
+
+.listik-prose--markdown li {
+  margin: var(--space-1) 0;
+}
+
+.listik-prose--markdown code {
+  padding: 0 var(--space-1);
+  border-radius: var(--radius-xs);
+  background: var(--surface-2);
+  color: var(--ink-2);
+  font-family: var(--font-mono);
+  font-size: var(--text-xs);
+}
+
+/* Длинный код прокручивается внутри блока и не растягивает дровер. */
+.listik-prose--markdown pre {
+  max-width: 100%;
+  margin: 0 0 var(--space-2);
+  padding: var(--space-3);
+  border-radius: var(--radius-md);
+  background: var(--surface-2);
+  overflow-x: auto;
+}
+
+.listik-prose--markdown pre code {
+  padding: 0;
+  background: none;
+  color: var(--ink-1);
+  white-space: pre;
+}
+
+/* Длинные ссылки переносятся, а не растягивают панель. */
+.listik-prose--markdown a {
+  color: var(--accent-700);
+  overflow-wrap: anywhere;
+  text-decoration: underline;
+}
+
+.listik-prose--markdown strong {
+  color: var(--ink-1);
+  font-weight: var(--weight-semibold);
+}
+
+.listik-prose--markdown em {
+  font-style: italic;
+}
+
 .listik-token-form {
   display: flex;
   flex-direction: column;

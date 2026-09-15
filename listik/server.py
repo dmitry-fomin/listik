@@ -6,6 +6,7 @@
 """
 from __future__ import annotations
 
+import base64
 import json
 import mimetypes
 import os
@@ -33,6 +34,7 @@ from . import paths
 from . import routes as routes_mod
 from . import search as search_mod
 from . import store
+from . import voice as voice_mod
 
 # Соединение с базой — своё на каждый поток.
 #
@@ -594,8 +596,12 @@ def handle(method: str, path: str, query: dict, body: dict, authed: bool = False
 
     if path == "/api/assistant/status":
         # Настроен ли помощник: без api_key в [assistant] доска прячет кнопки.
-        # Ключ наружу не отдаётся — только факт его наличия.
-        return 200, assistant_mod.status()
+        # `voice` — голосовой ввод: нужны оба ключа, [assistant] и [deepgram].
+        # Ключи наружу не отдаются — только факт их наличия.
+        cfg = config_mod.load()
+        data = assistant_mod.status(cfg)
+        data["voice"] = voice_mod.available(cfg)
+        return 200, data
 
     if path == "/api/meta":
         return 200, {
@@ -931,6 +937,33 @@ def handle(method: str, path: str, query: dict, body: dict, authed: bool = False
         try:
             return 200, assistant_mod.suggest(
                 body.get("field"), body.get("text", ""), body.get("context"))
+        except assistant_mod.AssistantError as exc:
+            raise ApiError(exc.status, exc.message, exc.code) from exc
+
+    if path == "/api/assistant/transcribe" and method == "POST":
+        # Голос: запись приходит в JSON как base64 (сырые байты в JSON не влезают).
+        # Ключ Deepgram читается на сервере и в браузер не уходит; размер записи
+        # проверяется уже после декодирования.
+        raw_audio = body.get("audio_base64")
+        if not isinstance(raw_audio, str):
+            raise ApiError(400, "нужен audio_base64", code=errors_mod.BAD_ARGUMENT)
+        try:
+            audio = base64.b64decode(raw_audio, validate=True)
+        except ValueError as exc:
+            raise ApiError(400, f"невалидный base64: {exc}",
+                           code=errors_mod.BAD_ARGUMENT) from exc
+        try:
+            return 200, voice_mod.transcribe(audio, body.get("mime") or "")
+        except assistant_mod.AssistantError as exc:
+            raise ApiError(exc.status, exc.message, exc.code) from exc
+
+    if path == "/api/assistant/draft" and method == "POST":
+        # Черновик задачи из рассказа: проекты сервер берёт сам из базы
+        # (неархивные), маршруты — из routes.json. Ничего не создаётся:
+        # ответ — только черновик для формы.
+        try:
+            return 200, voice_mod.draft(body.get("text", ""),
+                                        projects=store.list_projects(conn))
         except assistant_mod.AssistantError as exc:
             raise ApiError(exc.status, exc.message, exc.code) from exc
 

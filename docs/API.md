@@ -322,6 +322,55 @@ Listik и никогда не отдаёт его доске:
 текст ошибки не проксируется — только код статуса (для 401/403 — подсказка про
 `[assistant].api_key`); тело пишется в лог сервера, с замаскированным ключом.
 
+### Голосом
+
+Голосовой ввод — та же форма «Новая задача»: запись расшифровывает Deepgram, а черновик
+задачи собирает DeepSeek. Настройки расшифровки — `config.toml`, раздел `[deepgram]`:
+`api_key` (обязателен; пустой — голос выключен), `base_url` (по умолчанию
+`https://api.deepgram.com`), `model` (`nova-2`), `language` (`ru`). Раздел пользовательский,
+как `[assistant]`: Listik не создаёт и не перезаписывает его сам. `GET /api/assistant/status`
+отдаёт дополнительный ключ `voice` — `true`, только если непусты оба ключа, `[deepgram]` и
+`[assistant]`; доска показывает кнопку записи, только когда `voice=true`. Ключи наружу не
+отдаются ни в каком виде.
+
+`POST /api/assistant/transcribe` — тело `{audio_base64, mime}`:
+
+- `audio_base64` — запись целиком в base64; невалидный base64 — 400 `bad_argument`, пустая
+  запись — 400 «пустая запись», больше 10 МБ — 400 «запись длиннее допустимого (10 МБ)»
+  (размер проверяется после декодирования);
+- `mime` — тип записи, обязательно `audio/…`; параметры после `;`
+  (`audio/webm;codecs=opus`) уходят в Deepgram как есть;
+- сервер делает `POST <base_url>/v1/listen?model=…&language=…&smart_format=true&punctuate=true`
+  с заголовками `Authorization: Token <api_key>` и `Content-Type: <mime>`, тело — сырые байты.
+
+Ответ: `{"transcript": "…", "model": "nova-2"}`. Тишина — не ошибка: `transcript` пустой.
+Нет ключа — 503 `server_error` «распознавание речи не настроено: добавьте api_key в
+config.toml, раздел [deepgram]»; Deepgram ответил ошибкой — 502 `server_error` (для 401/403
+текст указывает на `[deepgram].api_key`); сеть или таймаут — 504 `server_error`;
+неразбираемый ответ — 502 `server_error`. Тело ответа Deepgram в текст ошибки не
+проксируется — только в лог сервера, с замаскированным ключом.
+
+`POST /api/assistant/draft` — тело `{text}`: рассказ человека словами. Пустой текст — 400
+`bad_argument` «нечего разбирать: запись пустая», длиннее 8000 символов — 400; без ключа
+`[assistant]` — 503 (тот же текст, что у `suggest`). Проекты сервер берёт сам из базы
+(неархивные, в промпт уходят первые 100 по `slug`), маршруты — из видимых записей
+`routes.json`; из тела запроса они не принимаются.
+
+Ответ: `model` (DeepSeek) и `draft`:
+
+```json
+{"model": "deepseek-flash",
+ "draft": {"project": "listik", "type": "task", "title": "…", "description": "…",
+           "acceptance": ["…"], "route": {"key": "low-pipeline", "kind": "pipeline",
+                                          "title": "low", "hint": "…", "reason": "…"}}}
+```
+
+Все шесть ключей `draft` есть всегда. Поле, которое модель не вывела из рассказа или
+которое не прошло проверку, — `null`: `project` — только точный `slug` неархивного проекта,
+`type` — только `epic`/`task`/`bug`, `acceptance` — до 10 непустых строк без дублей,
+`route` — только ключ из видимых маршрутов. **Черновик ничего не создаёт**: после
+`POST /api/assistant/draft` задач в базе не прибавляется, форму заполняет человек.
+
 ## Документы и чанки
 
 Задача может ссылаться на markdown-файлы четырёх видов: `spec` (ТЗ, поле `spec_path`),
@@ -433,7 +482,7 @@ id внутри файлового пути (`docs/specs/<id>.md`, `/wt/<id>/lis
 |---|---|---|---|
 | GET | `/api/health` | — | `status, version, embed{model}, now, authed`; авторизованному — ещё `db`, `counts`, `embed{ok,models}`, `routes{ok,error,path,count}`, `db_error{where,error,at}` — только если последний фоновый проход упал с `sqlite3.DatabaseError`, и `runtime{code_dir,data_dir,cwd,worktree,main_repo,warning}` — откуда запущен сервер (`data_dir` — каталог данных, `LISTIK_HOME`; `warning` — если из связанного git worktree, listik-i23u), `db_replaced{kind,at,detail,before,after}` — если сервер заметил подмену файла базы или WAL (см. ниже) |
 | GET | `/api/routes` | — | `ok, error, path, warnings[], routes[]` — записи `routes.json`, загруженные при старте, без `command`, но с посчитанным `icon` (см. «Маршруты запуска»); `warnings` — замечания, которые файл не отменяют (неизвестный `icon` записи: у неё есть фолбэк по ключу и поле `icon_error` с причиной; неизвестный `strip.glyph`: `glyph: null` и `strip.glyph_error`); ошибка файла — `ok=false` и текст, а не HTTP-ошибка |
-| GET | `/api/assistant/status` | — | `enabled, model, base_url` — настроен ли помощник DeepSeek (`[assistant]` в `config.toml`); ключ наружу не отдаётся (см. «Помощник DeepSeek») |
+| GET | `/api/assistant/status` | — | `enabled, model, base_url, voice` — настроен ли помощник DeepSeek (`[assistant]` в `config.toml`) и голосовой ввод (`voice=true` — непусты оба ключа, `[assistant]` и `[deepgram]`); ключи наружу не отдаются (см. «Помощник DeepSeek») |
 | GET | `/api/meta` | `archived` | `projects[], actors[], facets{}, statuses{}, stages{}, priorities{}` |
 | GET | `/api/projects` | — | `projects[]` — все репозитории доски, включая скрытые: `slug, title, kind, path, path_exists, git_remote, git_branch, archived, n_tasks, n_open, n_wip`, плюс `routing` (переопределение проекта — объект или `null`), `routing_effective` (действующая слитая таблица, которой реально пользуются `allowed_harnesses`/`transition_kind`), `routing_source` (`default`\|`config`\|`db`\|`config+db`), плюс `root` (корень поиска проектов) |
 | GET | `/api/stats` | `project` | `by_status{}, by_stage{}, by_project[], by_holder[], by_actor[], stale, needs_owner, closed_7d, closed_prev_7d, closed_delta, closed_by_day[{date,count}] (14 дней), long_stage, running[], generated_at` |
@@ -599,6 +648,8 @@ dropped_chunks, reason`), `reasons[]` (по одному пункту на ка�
 | POST | `/api/embed` | `limit`, `kinds=task,comment,chunk` (по умолчанию все три) | досчитать векторы (ollama bge-m3) |
 | POST | `/api/notify` | `task_id`(обязателен), `action=notify`, `kind=task` | сказать доске «перечитай задачу», ничего не меняя в базе: сервер рассылает подписчикам `/api/stream` кадр `{"kind":"task","payload":{"id":…,"action":…}}` — такой же, как от записи по HTTP. Ответ `{published, kind, id, action}`. 400 — нет `task_id` или неизвестный `kind`, 404 — нет такой задачи; отказ события не шлёт. Токен — как у остальных `/api/*` |
 | POST | `/api/assistant/suggest` | `field`(обязателен: `title`\|`description`\|`acceptance`\|`spec_path`), `text`, `context{type,priority,project,title,description,acceptance,spec_path}` | помощник DeepSeek: переписать поле, дописать критерии приёмки, оценить когнитивную сложность и предложить маршрут из `routes.json`; ключ остаётся на сервере, предложение ничего не меняет само (см. «Помощник DeepSeek») |
+| POST | `/api/assistant/transcribe` | `audio_base64`(запись целиком в base64, до 10 МБ), `mime`(`audio/…`) | расшифровка записи через Deepgram (`[deepgram]` в `config.toml`); ответ `transcript, model`, ключ остаётся на сервере (см. «Помощник DeepSeek» → «Голосом») |
+| POST | `/api/assistant/draft` | `text`(рассказ человека, до 8000 символов) | черновик задачи через DeepSeek: `project, type, title, description, acceptance, route`; проекты берутся из базы, маршруты из `routes.json`, ничего не создаётся (см. «Помощник DeepSeek» → «Голосом») |
 
 Slug проекта — ключ, и тот, кто проект **создаёт** (`POST /api/projects`, импортёры
 `listik import-from-bd`), сверяется с существующими slug'ами без учёта

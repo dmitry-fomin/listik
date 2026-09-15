@@ -3,7 +3,6 @@
 # База создаётся сама при `listik init`/`listik serve`.
 listik.db
 listik.db-*
-listik.db.bak-*
 listik.pid
 listik.log
 
@@ -26,7 +25,7 @@ docs/listik-vision.md
 docs/listik-orchestration-scheme.md
 docs/listik-pipeline-binding.md
 docs/facet-prototype-map.md
-project-skills/
+docs/design/
 
 # Доска
 web/node_modules/
@@ -39,5 +38,5 @@ dist/
 __pycache__/
 *.pyc
 .DS_Store
-.claude/*.lock
-.claude/settings.json
+.claude/*
+.grok/*

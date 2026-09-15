@@ -407,8 +407,7 @@ def start_embed_worker(interval: float = 45.0, batch_limit: int = 200) -> thread
 
 def publish(kind: str, payload: dict) -> None:
     """Рассылка событий подписчикам SSE (доска обновляется без перезагрузки)."""
-    message = json.dumps({"kind": kind, "at": store.now_iso(), "payload": payload},
-                         ensure_ascii=False)
+    message = errors_mod.json_dumps({"kind": kind, "at": store.now_iso(), "payload": payload})
     with _subs_lock:
         dead = []
         for q in _subs:
@@ -1001,13 +1000,11 @@ class Handler(BaseHTTPRequestHandler):
         self.wfile.write(payload)
 
     def _json(self, status: int, data) -> None:
-        self._send(status, json.dumps(data, ensure_ascii=False).encode("utf-8"),
+        self._send(status, errors_mod.json_dumps(data).encode("utf-8"),
                    "application/json; charset=utf-8")
 
     def _error(self, status: int, message: str, code: str | None = None) -> None:
-        body = {"ok": False, "error": message,
-                "code": code or errors_mod.code_for_status(status)}
-        self._json(status, body)
+        self._json(status, errors_mod.http_error_body(status, message, code))
 
     def _read_body(self) -> dict:
         length = int(self.headers.get("Content-Length") or 0)
@@ -1015,7 +1012,7 @@ class Handler(BaseHTTPRequestHandler):
             return {}
         raw = self.rfile.read(length)
         try:
-            data = json.loads(raw.decode("utf-8"))
+            data = errors_mod.json_loads(raw)
         except (json.JSONDecodeError, UnicodeDecodeError) as exc:
             raise ApiError(400, f"невалидный JSON: {exc}") from exc
         if not isinstance(data, dict):
@@ -1033,8 +1030,7 @@ class Handler(BaseHTTPRequestHandler):
 
         if path == "/mcp":
             # Транспорт MCP — только POST, токен здесь не проверяется.
-            payload = json.dumps({"ok": False, "error": "MCP: только POST"},
-                                 ensure_ascii=False).encode("utf-8")
+            payload = errors_mod.json_dumps({"ok": False, "error": "MCP: только POST"}).encode("utf-8")
             return self._send(405, payload, "application/json; charset=utf-8", {"Allow": "POST"})
 
         if path.startswith("/.well-known/"):
@@ -1090,8 +1086,7 @@ class Handler(BaseHTTPRequestHandler):
         parsed = urllib.parse.urlparse(self.path)
         if parsed.path == "/mcp":
             # PUT/PATCH/DELETE на /mcp — только 405, без проверки токена.
-            payload = json.dumps({"ok": False, "error": "MCP: только POST"},
-                                 ensure_ascii=False).encode("utf-8")
+            payload = errors_mod.json_dumps({"ok": False, "error": "MCP: только POST"}).encode("utf-8")
             return self._send(405, payload, "application/json; charset=utf-8", {"Allow": "POST"})
         query = urllib.parse.parse_qs(parsed.query)
         if not self._authed(query):
@@ -1113,14 +1108,11 @@ class Handler(BaseHTTPRequestHandler):
         доске; на сам ответ событие не влияет и отправляется уже после него.
         """
         def plain(status: int, message: str, extra: dict | None = None) -> None:
-            body = json.dumps({"ok": False, "error": message},
-                              ensure_ascii=False).encode("utf-8")
+            body = errors_mod.json_dumps({"ok": False, "error": message}).encode("utf-8")
             self._send(status, body, "application/json; charset=utf-8", extra)
 
         def rpc_error(status: int, code: int, message: str, rid) -> None:
-            body = json.dumps({"jsonrpc": "2.0", "id": rid,
-                               "error": {"code": code, "message": message}},
-                              ensure_ascii=False).encode("utf-8")
+            body = errors_mod.json_dumps(mcp.rpc_error(rid, code, message)).encode("utf-8")
             self._send(status, body, "application/json; charset=utf-8")
 
         # 1. Защита от DNS rebinding: браузер шлёт Origin, MCP-клиенты — нет.
@@ -1149,7 +1141,7 @@ class Handler(BaseHTTPRequestHandler):
         # 4. Тело и разбор JSON.
         raw = self.rfile.read(length) if length > 0 else b""
         try:
-            request = json.loads(raw.decode("utf-8"))
+            request = errors_mod.json_loads(raw)
         except (json.JSONDecodeError, UnicodeDecodeError) as exc:
             return rpc_error(400, -32700, f"невалидный JSON: {exc}", None)
 
@@ -1176,18 +1168,11 @@ class Handler(BaseHTTPRequestHandler):
 
         # 9. Событие доске — уже после ответа; любой сбой здесь на ответ не влияет.
         try:
-            if request["method"] == "tools/call":
-                params = request.get("params") or {}
-                name = params.get("name")
-                result = response.get("result") or {}
-                if name in mcp.WRITE_TOOLS and not result.get("isError"):
-                    args = params.get("arguments") or {}
-                    task_id = args.get("id")
-                    if name == "listik_create":
-                        task_id = json.loads(result["content"][0]["text"])["id"]
-                    if task_id:
-                        publish("task", {"id": task_id, "action": name})
-        except Exception:  # noqa: BLE001
+            event = mcp.notify_event(request, response)
+            if event is not None:
+                task_id, action = event
+                publish("task", {"id": task_id, "action": action})
+        except Exception:  # noqa: BLE001 — событие не влияет на ответ MCP
             pass
 
     # --- статика доски

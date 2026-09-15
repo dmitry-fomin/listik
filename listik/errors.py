@@ -25,6 +25,8 @@
 """
 from __future__ import annotations
 
+import json
+
 BAD_ARGUMENT = "bad_argument"
 NOT_FOUND = "not_found"
 CONFLICT = "conflict"
@@ -178,3 +180,31 @@ def text_lines(err: ListikError) -> list[str]:
         # «одна-две строки» остаётся.
         return [f"ошибка: {first}", f"  подсказка: {hint}"]
     return [line]
+
+
+def json_dumps(value, *, indent: int | None = None) -> str:
+    """Единая сериализация JSON для CLI, HTTP и MCP.
+
+    Все внешние протоколы Listik передают Unicode как есть; параметры здесь
+    намеренно повторяют прежние вызовы ``json.dumps``.
+    """
+    return json.dumps(value, ensure_ascii=False, indent=indent)
+
+
+def json_loads(value):
+    """Разбор JSON из текста или UTF-8 тела запроса."""
+    if isinstance(value, (bytes, bytearray)):
+        value = value.decode("utf-8")
+    return json.loads(value)
+
+
+def http_error_body(status: int, message: str, code: str | None = None) -> dict:
+    """Стандартное тело ошибки API, включая машинный код."""
+    return {"ok": False, "error": message, "code": code or code_for_status(status)}
+
+
+def mcp_error_text(exc: BaseException) -> str:
+    """Текст ошибки инструмента MCP в совместимом с прежним API виде."""
+    if isinstance(exc, NotFound):
+        return f"не найдено: {exc}"
+    return f"ошибка {type(exc).__name__}: {exc}"

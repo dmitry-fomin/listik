@@ -4,7 +4,6 @@ from __future__ import annotations
 import hashlib
 import re
 import sqlite3
-from pathlib import Path
 
 from . import deps as deps_mod
 from . import errors as errors_mod
@@ -38,7 +37,8 @@ _DEPENDENCIES_DEFAULTS = {
 }
 
 
-def _resolve(conn: sqlite3.Connection, task: sqlite3.Row, raw: str) -> Path:
+def _resolve(conn: sqlite3.Connection, task: sqlite3.Row, raw: str):
+    """Существующий файл документа (pathlib.Path) либо исходный путь."""
     p = util.expanduser(raw)
     candidates = [p]
     if not p.is_absolute():

@@ -42,7 +42,7 @@ class DumpTests(unittest.TestCase):
 
     def test_transition_keys_are_quoted(self) -> None:
         text = config_mod._dump(config_mod.DEFAULTS)
-        self.assertIn('"s1-spec:s2-review" = "sticky"', text)
+        self.assertIn('"s1-spec:s2-review" = "handoff"', text)
         parsed = tomllib.loads(text)
         self.assertEqual(parsed["routing"]["transitions"],
                          config_mod.DEFAULTS["routing"]["transitions"])

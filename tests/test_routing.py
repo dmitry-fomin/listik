@@ -339,7 +339,7 @@ class TransitionKindEmptyFromStageTests(unittest.TestCase):
         self.assertEqual(config_mod.transition_kind(None, "s4-judge", "s4-judge"), "sticky")
 
     def test_defined_transitions_still_work(self) -> None:
-        self.assertEqual(config_mod.transition_kind(None, "s1-spec", "s2-review"), "sticky")
+        self.assertEqual(config_mod.transition_kind(None, "s1-spec", "s2-review"), "handoff")
         self.assertEqual(config_mod.transition_kind(None, "s2-review", "s3-impl"), "handoff")
         self.assertEqual(config_mod.transition_kind(None, "s4-judge", "s3-impl"), "sticky-return")
 

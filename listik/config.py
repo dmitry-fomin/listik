@@ -48,7 +48,9 @@ DEFAULTS: dict[str, Any] = {
             "s4-judge": ["claude", "dsh", "codex", "grok"],
         },
         "transitions": {
-            "s1-spec:s2-review": "sticky",
+            # После подготовки ТЗ следующий harness забирает этап ревью сам.
+            # Без явного --holder переход освобождает держателя.
+            "s1-spec:s2-review": "handoff",
             "s2-review:s3-impl": "handoff",
             "s3-impl:s4-judge": "sticky",
             "s4-judge:s3-impl": "sticky-return",

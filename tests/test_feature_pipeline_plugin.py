@@ -121,6 +121,29 @@ class FeaturePipelinePluginTests(unittest.TestCase):
         self.assertTrue(description.strip(), f"description записи {PLUGIN_NAME} пустое")
         self.assertNotIn("\n", description, f"description записи {PLUGIN_NAME} многострочное")
 
+    def test_marketplace_plugin_sources_match_manifests(self) -> None:
+        entries = _read_json(MARKETPLACE_JSON)["plugins"]
+        names = [entry.get("name") for entry in entries]
+        self.assertEqual(
+            names,
+            ["listik", "feature-pipeline", "dsh", "codex", "second-opinion"],
+            f"состав маркетплейса не тот: {names}",
+        )
+        for entry in entries:
+            name = entry["name"]
+            with self.subTest(plugin=name):
+                source = entry.get("source")
+                self.assertIsInstance(source, str, f"{name}: source не строка")
+                plugin_dir = REPO_DIR / source
+                self.assertTrue(plugin_dir.is_dir(), f"{name}: {source} не каталог")
+                manifest = _read_json(plugin_dir / PLUGIN_MANIFEST)
+                self.assertEqual(
+                    entry.get("version"), manifest.get("version"),
+                    f"{name}: версия marketplace.json и plugin.json разошлась",
+                )
+                self.assertEqual(manifest.get("name"), name,
+                                 f"{name}: name в plugin.json не совпал")
+
     def test_direct_routes_are_not_skills(self) -> None:
         keys = _keys_of_kind("direct")
         skills = _skill_names()
@@ -552,6 +575,87 @@ class FeaturePipelineResumeRuleTests(unittest.TestCase):
                     "откат", text,
                     f"{name}/{SKILL_FILE}: нет отката на новый прогон, когда продолжить нельзя",
                 )
+
+
+#: Имя скила в сессии → файл в репозитории Listik. Grok сюда не входит: его в маркетплейсе нет.
+VENDORED_SESSION_TO_PATH = {
+    "dsh:dsh-delegate": "plugins/dsh/skills/dsh-delegate/SKILL.md",
+    "dsh:dsh-check": "plugins/dsh/skills/dsh-check/SKILL.md",
+    "dsh:dsh-jobs": "plugins/dsh/skills/dsh-jobs/SKILL.md",
+    "dsh:dsh-runtime": "plugins/dsh/skills/dsh-runtime/SKILL.md",
+    "codex:codex-delegate": "plugins/codex/skills/codex-delegate/SKILL.md",
+    "codex:codex-check": "plugins/codex/skills/codex-check/SKILL.md",
+    "codex:codex-jobs": "plugins/codex/skills/codex-jobs/SKILL.md",
+    "codex:codex-runtime": "plugins/codex/skills/codex-runtime/SKILL.md",
+    "second-opinion:ask": "plugins/second-opinion/skills/ask/SKILL.md",
+    "listik:listik": "plugins/listik/skills/listik/SKILL.md",
+}
+
+#: Канал в пресете называется запуском; у него в тексте ещё и путь `plugins/…`.
+VENDORED_LAUNCH_SKILLS = (
+    "dsh:dsh-delegate",
+    "codex:codex-delegate",
+    "second-opinion:ask",
+    "listik:listik",
+)
+
+MD_SKILL_LINK_RE = re.compile(r"\[`(?P<name>[^`]+)`\]\((?P<href>[^)]+)\)")
+VENDORED_HREF_MARKS = ("/dsh/", "/codex/", "/second-opinion/", "/listik/")
+
+
+def _pipeline_docs() -> list[pathlib.Path]:
+    """Ядро и SKILL.md всех пресетов — там, где оркестратор ищет внешний скил."""
+    docs = [PLUGIN_DIR / CORE_DOC]
+    docs.extend(
+        PLUGIN_DIR / SKILLS_SUBDIR / name / SKILL_FILE
+        for name in sorted(_skill_names())
+    )
+    return docs
+
+
+class FeaturePipelineVendoredSkillPathTests(unittest.TestCase):
+    """Скилы dsh/Codex/второго мнения/Listik живут в этом репозитории; пресеты указывают путь."""
+
+    def test_vendored_skill_files_exist(self) -> None:
+        for name, relative in VENDORED_SESSION_TO_PATH.items():
+            with self.subTest(skill=name):
+                path = REPO_DIR / relative
+                self.assertTrue(path.is_file(), f"{name}: нет файла {relative}")
+
+    def test_markdown_links_to_listik_plugins_resolve(self) -> None:
+        for path in _pipeline_docs():
+            text = path.read_text(encoding="utf-8")
+            rel = path.relative_to(REPO_DIR)
+            for match in MD_SKILL_LINK_RE.finditer(text):
+                href = match.group("href")
+                if not any(mark in href for mark in VENDORED_HREF_MARKS):
+                    continue
+                resolved = (path.parent / href).resolve()
+                with self.subTest(file=str(rel), href=href):
+                    self.assertTrue(
+                        resolved.is_file(),
+                        f"{rel}: ссылка {href} не указывает на файл (ожидался {resolved})",
+                    )
+
+    def test_mentioned_vendored_skills_have_link_and_repo_path(self) -> None:
+        for path in _pipeline_docs():
+            text = path.read_text(encoding="utf-8")
+            rel = path.relative_to(REPO_DIR)
+            linked = {match.group("name") for match in MD_SKILL_LINK_RE.finditer(text)}
+            for name, repo_path in VENDORED_SESSION_TO_PATH.items():
+                mentioned = f"`{name}`" in text or f"[`{name}`]" in text
+                if not mentioned:
+                    continue
+                with self.subTest(file=str(rel), skill=name):
+                    self.assertIn(
+                        name, linked,
+                        f"{rel}: упоминается {name}, но нет markdown-ссылки [`{name}`](...)",
+                    )
+                    if name in VENDORED_LAUNCH_SKILLS:
+                        self.assertIn(
+                            f"`{repo_path}`", text,
+                            f"{rel}: упоминается {name}, но нет пути `{repo_path}`",
+                        )
 
 
 if __name__ == "__main__":

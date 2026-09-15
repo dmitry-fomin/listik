@@ -14,7 +14,7 @@ API (HTTP и MCP). Кроме задач — журнал работы по ка
 bin/listik     CLI и клиент API (одна программа)
 listik/        сервер, база, поиск, эмбеддинги, MCP
 web/           доска (Vue 3)
-plugins/       плагины Claude Code: listik (скил) и feature-pipeline (конвейер)
+plugins/       плагины Claude Code: listik, feature-pipeline, dsh, codex, second-opinion
 docs/API.md         контракт данных и эндпоинтов — источник истины по поведению
 AGENTS.md      правила работы агента с задачами
 ```
@@ -144,11 +144,14 @@ listik memory "про что-то"
 /plugin marketplace add dmitry-fomin/listik
 /plugin install listik@listik             # скил listik:listik — протокол задач
 /plugin install feature-pipeline@listik   # пресеты конвейера *-pipeline и агенты pipeline-*
+/plugin install dsh@listik                # DeepSeek Harness: dsh:dsh-delegate
+/plugin install codex@listik              # OpenAI Codex CLI: codex:codex-delegate
+/plugin install second-opinion@listik     # критика ТЗ: second-opinion:ask
 ```
 
-Пресеты `feature-pipeline` зовут внешние харнессы (dsh, Grok, Codex) — их ставят отдельно;
-`inherit-pipeline`, `opus-single-pipeline` и `opus-sonnet-pipeline` обходятся субагентами Claude.
-При изменении плагина поднимайте `version` в его `plugin.json` и в `marketplace.json`.
+Пресеты `feature-pipeline` зовут внешние харнессы скилами этих плагинов; Grok остаётся отдельным
+(`grok@grok-build`). `inherit-pipeline`, `opus-single-pipeline` и `opus-sonnet-pipeline` обходятся
+субагентами Claude. При изменении плагина поднимайте `version` в его `plugin.json` и в `marketplace.json`.
 
 **MCP** (инструменты `listik_*`, список — в docs/API.md):
 

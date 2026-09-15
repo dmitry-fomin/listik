@@ -7,7 +7,7 @@ license: MIT
 
 # Локальный конвейер
 
-Карточка Listik ведётся по разделу `## Listik` файла `../../references/pipeline-core.md`: карточка
+Карточка Listik ведётся по разделу `## Listik` файла `../../references/pipeline-core.md` и скилу [`listik:listik`](../../../listik/skills/listik/SKILL.md) (`plugins/listik/skills/listik/SKILL.md`): карточка
 берётся на шаге 0, порции шага — дочерними карточками, вердикт и `done` — на карточке порции.
 
 Основной контекст здесь — **оркестратор**: маршрутизирует, ведёт журнал, носит вопросы этапов

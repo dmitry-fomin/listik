@@ -475,6 +475,9 @@ if [ "$plugins_answer" = yes ]; then
         fi
         claude plugin install listik@listik >/dev/null 2>&1 || plugins_ok=0
         claude plugin install feature-pipeline@listik >/dev/null 2>&1 || plugins_ok=0
+        claude plugin install dsh@listik >/dev/null 2>&1 || plugins_ok=0
+        claude plugin install codex@listik >/dev/null 2>&1 || plugins_ok=0
+        claude plugin install second-opinion@listik >/dev/null 2>&1 || plugins_ok=0
         if [ "$plugins_ok" = 1 ]; then
             plugins_status=ok
         else
@@ -483,6 +486,9 @@ if [ "$plugins_answer" = yes ]; then
             note "  /plugin marketplace add dmitry-fomin/listik" >&2
             note "  /plugin install listik@listik" >&2
             note "  /plugin install feature-pipeline@listik" >&2
+            note "  /plugin install dsh@listik" >&2
+            note "  /plugin install codex@listik" >&2
+            note "  /plugin install second-opinion@listik" >&2
         fi
     else
         plugins_status="не удалось"
@@ -490,6 +496,9 @@ if [ "$plugins_answer" = yes ]; then
         note "  /plugin marketplace add dmitry-fomin/listik"
         note "  /plugin install listik@listik"
         note "  /plugin install feature-pipeline@listik"
+        note "  /plugin install dsh@listik"
+        note "  /plugin install codex@listik"
+        note "  /plugin install second-opinion@listik"
     fi
 fi
 

@@ -7,7 +7,7 @@ license: MIT
 
 # Очередь на Opus
 
-Карточка Listik ведётся по разделу `## Listik` файла `../../references/pipeline-core.md`: карточка
+Карточка Listik ведётся по разделу `## Listik` файла `../../references/pipeline-core.md` и скилу [`listik:listik`](../../../listik/skills/listik/SKILL.md) (`plugins/listik/skills/listik/SKILL.md`): карточка
 берётся на шаге 0, вердикт и `done` — на карточке задачи.
 
 Основной контекст — **оркестратор**: берёт задачи из трекера, заводит под каждую своё дерево,

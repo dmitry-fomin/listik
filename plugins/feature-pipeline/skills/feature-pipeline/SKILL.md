@@ -46,6 +46,15 @@ license: MIT
 - **Идущую задачу не перехватывай.** Она доходит до конца у того, кто её ведёт. Второй конвейер
   в том же рабочем дереве не заводится — параллель даётся треками, врезка «Треки». Этапов сверх четырёх не придумывай, списков дел сверх названного автором — тоже.
 
+## Нужные скилы
+
+Стоп, если нет хотя бы одного нужного каналу — раздел «Внешние скилы» `pipeline-core.md`. Скрипты из кэша не зови. Grok в Listik нет; нет `/grok:delegate` — вниз по цепочке исполнителей, не стоп.
+
+- [`second-opinion:ask`](../../../second-opinion/skills/ask/SKILL.md) (`plugins/second-opinion/skills/ask/SKILL.md`) — этап 2, когда `when` не `off`;
+- [`dsh:dsh-delegate`](../../../dsh/skills/dsh-delegate/SKILL.md) (`plugins/dsh/skills/dsh-delegate/SKILL.md`) — фолбэк исполнителя; [`dsh:dsh-check`](../../../dsh/skills/dsh-check/SKILL.md) — готовность; [`dsh:dsh-jobs`](../../../dsh/skills/dsh-jobs/SKILL.md) — ход; [`dsh:dsh-runtime`](../../../dsh/skills/dsh-runtime/SKILL.md) — контракт;
+- `/grok:delegate` — primary исполнителя; `/grok:setup` — готовность; `/grok:status` и `/grok:result` — ход и забор; `grok:grok-cli-runtime` — контракт;
+- [`listik:listik`](../../../listik/skills/listik/SKILL.md) (`plugins/listik/skills/listik/SKILL.md`) — карточка, этапы, журнал, вопросы автору.
+
 ## Шаг 0 — нужен ли конвейер вообще
 
 Задача от автора: `$ARGUMENTS`. Пусто — спроси, какой шаг или порцию берём в работу,
@@ -166,8 +175,8 @@ license: MIT
 
 | Исполнитель | Как проверяется | Если нет |
 | --- | --- | --- |
-| `executor.primary` (`grok:grok-delegate`) | `/grok:check` — CLI в PATH, вход выполнен | вниз по цепочке |
-| `executor.fallback` (`dsh:dsh-runner`) | `/dsh:dsh-check` — dsh установлен, профиль поднимается, авторизация есть | вниз по цепочке |
+| `executor.primary` (`grok:grok-delegate`) | `/grok:setup` — CLI в PATH, вход выполнен; нет `/grok:delegate` в сессии — скила нет, вниз по цепочке | вниз по цепочке |
+| `executor.fallback` (`dsh:dsh-runner`) | `/dsh:dsh-check` — dsh установлен, профиль поднимается, авторизация есть; нет `dsh:dsh-delegate`/`dsh:dsh-check` в сессии — скила нет, вниз по цепочке | вниз по цепочке |
 | `executor.local` (`feature-pipeline:pipeline-implementer`) | внешних зависимостей нет, доступен всегда | — |
 
 Спустился ниже primary — **скажи автору одной строкой, кто будет писать код и почему**, и запиши
@@ -202,9 +211,9 @@ license: MIT
 после `/clear` возобновлять некого, и ответы автора берутся оттуда в задачу нового запуска.
 Отчёт `готово` — список порций, допущения агента покажи автору одной репликой.
 
-### 2. Второе мнение по ТЗ — скил `/second-opinion:ask`
+### 2. Второе мнение по ТЗ — скил [`second-opinion:ask`](../../../second-opinion/skills/ask/SKILL.md)
 
-`when: off` — этап пропускается целиком. `spec-only` — только если у шага есть спека. Спека — это
+`when` не `off`, а скила `second-opinion:ask` в сессии нет — **стоп и вопрос автору** (раздел «Внешние скилы» `pipeline-core.md`); сам `consult.sh` из кэша не зови. `when: off` — этап пропускается целиком. `spec-only` — только если у шага есть спека. Спека — это
 **файл** `.md` на верхнем уровне `<specs>`, не журнал и не каталог:
 
 ```

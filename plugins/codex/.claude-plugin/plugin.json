@@ -1,0 +1,20 @@
+{
+  "name": "codex",
+  "displayName": "OpenAI Codex CLI bridge",
+  "version": "0.1.0",
+  "description": "Delegate tasks to OpenAI Codex CLI (codex exec) from Claude Code: it explores the codebase itself, read-only by default.",
+  "author": {
+    "name": "Dmitry Fomin",
+    "url": "https://github.com/dmitry-fomin"
+  },
+  "homepage": "https://github.com/dmitry-fomin/listik",
+  "repository": "https://github.com/dmitry-fomin/listik",
+  "license": "MIT",
+  "keywords": [
+    "openai",
+    "codex",
+    "delegation",
+    "subagent",
+    "second-opinion"
+  ]
+}

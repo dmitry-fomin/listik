@@ -23,6 +23,7 @@ import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { fileURLToPath } from 'node:url'
 import { cdpTarget, connect, freePort, serveDist, sleep, startChrome, startMock } from './lib/browser-harness.mjs'
+import { record as recordCase, waitFor as waitForCommon } from './lib/verify-helpers.mjs'
 
 const root = fileURLToPath(new URL('..', import.meta.url))
 const dist = join(root, 'dist')
@@ -75,6 +76,8 @@ const DRAWER_STATE = `(() => {
 })()`
 
 const report = { cases: [], consoleErrors: [] }
+const record = (name, run) => recordCase(report, name, run)
+const waitFor = (check, timeout = 6000) => waitForCommon(check, timeout)
 let mock = null
 let staticServer = null
 let chrome = null
@@ -98,17 +101,6 @@ try {
 
   const state = () => evaluate(DRAWER_STATE)
 
-  async function waitFor(check, timeout = 6000) {
-    const until = Date.now() + timeout
-    let last = null
-    while (Date.now() < until) {
-      last = await check()
-      if (last) return last
-      await sleep(50)
-    }
-    return last
-  }
-
   const cardExists = (title) =>
     evaluate(
       `[...document.querySelectorAll('.listik-task-card')]` +
@@ -123,15 +115,6 @@ try {
       card.click();
       return true;
     })()`)
-
-  /** Сценарий не роняет прогон: его ошибка попадает в отчёт как провал. */
-  const record = async (name, run) => {
-    try {
-      report.cases.push({ name, ...(await run()) })
-    } catch (error) {
-      report.cases.push({ name, ok: false, got: String(error?.message ?? error) })
-    }
-  }
 
   await send('Page.navigate', { url })
   const boardReady = await waitFor(

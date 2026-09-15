@@ -836,12 +836,7 @@ const claimTask = (id: string, holder: string, note?: string, force = false): Pr
 
 /** Дерево зависимостей задачи (POST …/deps без depends_on). */
 async function loadDepTree(id: string, depth = 3): Promise<DepTree | null> {
-  try {
-    return await api.depTree(id, depth)
-  } catch (error) {
-    handleError(error)
-    return null
-  }
+  return tryRequest(() => api.depTree(id, depth), handleError)
 }
 
 const heartbeatTask = (id: string, holder: string, note?: string): Promise<boolean> =>
@@ -1061,27 +1056,29 @@ async function loadListTasks(params: {
   offset: number
   order?: 'updated' | 'created' | 'priority' | 'stage'
 }): Promise<{ tasks: Task[]; total: number }> {
-  try {
-    const page = await api.tasks({
-      project: filters.project || undefined,
-      status: filters.status || undefined,
-      stage: filters.stage || undefined,
-      assignee: filters.assignee || undefined,
-      needs_owner: filters.needsOwner || undefined,
-      type: filters.type || undefined,
-      limit: params.limit,
-      offset: params.offset,
-      order: params.order ?? 'updated',
-    })
-    let tasks = page.tasks
-    if (filters.health) tasks = tasks.filter((task) => taskHealth(task) === filters.health)
-    if (filters.updatedFrom) tasks = tasks.filter((task) => task.updated_at >= `${filters.updatedFrom}T00:00:00`)
-    if (filters.updatedTo) tasks = tasks.filter((task) => task.updated_at <= `${filters.updatedTo}T23:59:59`)
-    return { tasks, total: page.total }
-  } catch (error) {
-    handleError(error)
+  const page = await tryRequest(
+    () =>
+      api.tasks({
+        project: filters.project || undefined,
+        status: filters.status || undefined,
+        stage: filters.stage || undefined,
+        assignee: filters.assignee || undefined,
+        needs_owner: filters.needsOwner || undefined,
+        type: filters.type || undefined,
+        limit: params.limit,
+        offset: params.offset,
+        order: params.order ?? 'updated',
+      }),
+    handleError,
+  )
+  if (page === null) {
     return { tasks: [], total: 0 }
   }
+  let tasks = page.tasks
+  if (filters.health) tasks = tasks.filter((task) => taskHealth(task) === filters.health)
+  if (filters.updatedFrom) tasks = tasks.filter((task) => task.updated_at >= `${filters.updatedFrom}T00:00:00`)
+  if (filters.updatedTo) tasks = tasks.filter((task) => task.updated_at <= `${filters.updatedTo}T23:59:59`)
+  return { tasks, total: page.total }
 }
 
 function init(): void {

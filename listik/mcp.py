@@ -630,14 +630,22 @@ def _norm_actor(value: str | None) -> str | None:
 def _result(payload: object) -> dict:
     if isinstance(payload, list):
         payload = {"items": payload}
-    text = json.dumps(payload, ensure_ascii=False, indent=2)
+    text = errors_mod.json_dumps(payload, indent=2)
     return {"content": [{"type": "text", "text": text}]}
 
 
+def request_parts(request: dict) -> tuple[str | None, object, dict]:
+    """Достаёт метод, id и параметры JSON-RPC одинаково для обоих транспортов."""
+    return request.get("method"), request.get("id"), request.get("params") or {}
+
+
+def rpc_error(rid, code: int, message: str) -> dict:
+    """Формирует JSON-RPC ошибку; HTTP-транспорт только добавляет статус."""
+    return {"jsonrpc": "2.0", "id": rid, "error": {"code": code, "message": message}}
+
+
 def handle(request: dict, conn=None) -> dict | None:
-    method = request.get("method")
-    rid = request.get("id")
-    params = request.get("params") or {}
+    method, rid, params = request_parts(request)
 
     if method == "initialize":
         # Согласование версии: клиент получает свою же версию, если Listik её знает,
@@ -660,26 +668,25 @@ def handle(request: dict, conn=None) -> dict | None:
             payload = call_tool(name, args, conn)
         except errors_mod.NotFound as exc:
             return {"jsonrpc": "2.0", "id": rid,
-                    "result": {"content": [{"type": "text", "text": f"не найдено: {exc}"}],
+                    "result": {"content": [{"type": "text", "text": errors_mod.mcp_error_text(exc)}],
                                "isError": True}}
         except Exception as exc:  # noqa: BLE001
             return {"jsonrpc": "2.0", "id": rid,
                     "result": {"content": [{"type": "text",
-                                            "text": f"ошибка {type(exc).__name__}: {exc}"}],
+                                            "text": errors_mod.mcp_error_text(exc)}],
                                "isError": True}}
         return {"jsonrpc": "2.0", "id": rid, "result": _result(payload)}
     if method == "ping":
         return {"jsonrpc": "2.0", "id": rid, "result": {}}
     if rid is None:
         return None
-    return {"jsonrpc": "2.0", "id": rid,
-            "error": {"code": -32601, "message": f"неизвестный метод: {method}"}}
+    return rpc_error(rid, -32601, f"неизвестный метод: {method}")
 
 
 def _result_id(result: dict) -> str | None:
     """id задачи из ответа `listik_create`: доска ждёт именно его."""
     try:
-        payload = json.loads(result["content"][0]["text"])
+        payload = errors_mod.json_loads(result["content"][0]["text"])
     except Exception:  # noqa: BLE001 — ответ не той формы: события не будет
         return None
     task_id = payload.get("id") if isinstance(payload, dict) else None
@@ -695,7 +702,7 @@ def notify_event(request: dict, response: dict | None) -> tuple[str, str] | None
     """
     if not isinstance(request, dict) or request.get("method") != "tools/call":
         return None
-    params = request.get("params") or {}
+    _method, _rid, params = request_parts(request)
     name = params.get("name")
     if name not in WRITE_TOOLS:
         return None
@@ -730,8 +737,7 @@ def _post_notify(task_id: str, action: str) -> None:
         host = str(cfg["server"]["host"] or "127.0.0.1")
         if host in ("0.0.0.0", "::", "*"):
             host = "127.0.0.1"  # «слушать везде» — не адрес, по которому ходят
-        body = json.dumps({"task_id": task_id, "action": action},
-                          ensure_ascii=False).encode("utf-8")
+        body = errors_mod.json_dumps({"task_id": task_id, "action": action}).encode("utf-8")
         req = urllib.request.Request(
             f"http://{host}:{int(cfg['server']['port'])}/api/notify",
             data=body, method="POST")
@@ -795,13 +801,13 @@ def run() -> int:
         if not line:
             continue
         try:
-            request = json.loads(line)
+            request = errors_mod.json_loads(line)
         except json.JSONDecodeError:
             continue
         response = handle(request, conn=conn)
         if response is None:
             continue
-        sys.stdout.write(json.dumps(response, ensure_ascii=False) + "\n")
+        sys.stdout.write(errors_mod.json_dumps(response) + "\n")
         sys.stdout.flush()
         # Событие — строго после ответа и в фоне: доска не должна задерживать
         # инструмент, а сервер, который не отвечает, — ломать его (listik-hkdp).

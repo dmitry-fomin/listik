@@ -19,7 +19,7 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
-from listik import __version__, client, db, errors, paths, store  # noqa: E402
+from listik import __version__, client, cwd_project, db, errors, paths, store  # noqa: E402
 from listik import routes as routes_mod  # noqa: E402
 from listik import worktree as worktree_mod  # noqa: E402
 
@@ -134,6 +134,61 @@ def owner_default(args) -> str:
     затем `[auth] owner` из config.toml. Пусто — не представились.
     """
     return client.owner(getattr(args, "owner", None))
+
+
+#: Команды, где `--project` — фильтр выдачи и куда подставляется проект по cwd.
+#: У `memory`, `remember`, `dep suggested`, `import-from-bd`, `projects` тот же флаг
+#: значит другое (куда писать/что показать) — автоопределение им не подставляется.
+PROJECT_DEFAULT_COMMANDS = frozenset({
+    "ready", "list", "board", "stats", "search", "blocked", "new",
+})
+
+#: Зарезервированное значение `--project`/`LISTIK_PROJECT` — «все проекты».
+ALL_PROJECTS = "all"
+
+#: Начало строки в stderr, которой сообщаем о подстановке проекта по каталогу.
+PROJECT_DETECTED_PREFIX = "# проект определён по каталогу"
+
+
+def _detect_project(args) -> str | None:
+    """Проект по cwd; любая ошибка получения списка — автоопределения просто нет."""
+    try:
+        data = client.list_projects(host=getattr(args, "host", None),
+                                    port=getattr(args, "port", None),
+                                    local=getattr(args, "local", False))
+        projects = list((data or {}).get("projects") or [])
+        try:
+            root = client.config_mod.load().get("import", {}).get("projects_root")
+        except Exception:  # noqa: BLE001 — битый config.toml не должен ломать команду
+            root = None
+        return cwd_project.detect(projects, os.getcwd(), projects_root=root)
+    except Exception:  # noqa: BLE001 — мусор от сервера/базы не должен ломать команду
+        return None
+
+
+def project_default(args) -> str | None:
+    """Итоговое значение `args.project` для команд с фильтром по проекту.
+
+    Приоритет: явный флаг → `LISTIK_PROJECT` → автоопределение по cwd → без
+    фильтра. Пустая переменная окружения — «не задана». Значение `all` (регистр
+    не важен) зарезервировано под «все проекты»: фильтр не подставляется и
+    автоопределение не запускается. Список проектов запрашивается лениво — только
+    когда ни флаг, ни переменная ничего не дали.
+    """
+    explicit = getattr(args, "project", None)
+    if explicit is not None and str(explicit).strip():
+        value = str(explicit).strip()
+        return None if value.casefold() == ALL_PROJECTS else value
+    env_value = (os.environ.get("LISTIK_PROJECT") or "").strip()
+    if env_value:
+        return None if env_value.casefold() == ALL_PROJECTS else env_value
+    slug = _detect_project(args)
+    if not slug:
+        return None
+    if not getattr(args, "json", False):
+        print(f"{PROJECT_DETECTED_PREFIX}: {slug} (все проекты: --project all)",
+              file=sys.stderr)
+    return slug
 
 
 #: Операции `call()`, которым нужна идентичность: у остальных владелец ничего не
@@ -1774,7 +1829,7 @@ def build_parser() -> argparse.ArgumentParser:
                          "связь discovered-from, и исходная карточка видит находку в связях")
 
     sp = add("list", cmd_list, help="список задач")
-    sp.add_argument("--project")
+    sp.add_argument("-p", "--project")
     sp.add_argument("--status")
     sp.add_argument("--stage")
     sp.add_argument("--assignee")
@@ -1873,7 +1928,7 @@ def build_parser() -> argparse.ArgumentParser:
     sp.add_argument("query")
     sp.add_argument("-n", "--limit", type=int, default=15)
     sp.add_argument("--mode", choices=["hybrid", "text", "vector"], default="hybrid")
-    sp.add_argument("--project")
+    sp.add_argument("-p", "--project")
     sp.add_argument("--stage")
     sp.add_argument("--status")
 
@@ -1888,13 +1943,13 @@ def build_parser() -> argparse.ArgumentParser:
     sp.add_argument("-p", "--project")
 
     sp = add("ready", cmd_ready, help="что можно взять прямо сейчас (нет блокеров)")
-    sp.add_argument("--project")
+    sp.add_argument("-p", "--project")
     sp.add_argument("--stage")
     sp.add_argument("-n", "--limit", type=int, default=40)
     sp.add_argument("--with-occupied", action="store_true", help="включая занятые кем-то")
 
     sp = add("blocked", cmd_blocked, help="кто кого ждёт: незакрытые блокеры задач")
-    sp.add_argument("--project")
+    sp.add_argument("-p", "--project")
     sp.add_argument("-n", "--limit", type=int, default=60)
 
     sp = add("inbox", cmd_inbox, help="что требует человека: вопросы и брошенные задачи")
@@ -1903,11 +1958,11 @@ def build_parser() -> argparse.ArgumentParser:
     sp = add("board", cmd_board, help="состояние доски в терминале")
     sp.add_argument("--group-by", default="status",
                     choices=["status", "stage", "project", "holder"])
-    sp.add_argument("--project")
+    sp.add_argument("-p", "--project")
     sp.add_argument("-a", "--all", action="store_true")
 
     sp = add("stats", cmd_stats, help="сводка")
-    sp.add_argument("--project")
+    sp.add_argument("-p", "--project")
 
     sp = add("timeline", cmd_timeline, help="лента событий")
     sp.add_argument("-n", "--limit", type=int, default=60)
@@ -1987,6 +2042,8 @@ def main(argv: list[str] | None = None) -> int:
     if not hasattr(args, "json"):
         args.json = False
     json_mode = json_mode or args.json
+    if getattr(args, "cmd", None) in PROJECT_DEFAULT_COMMANDS:
+        args.project = project_default(args)
     try:
         return int(args.func(args) or 0)
     except (errors.ListikError, KeyError, ValueError, PermissionError) as exc:

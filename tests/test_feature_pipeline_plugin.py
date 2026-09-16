@@ -1075,5 +1075,150 @@ class FeaturePipelineInlineJudgeRuleTests(unittest.TestCase):
         )
 
 
+#: Дословные строки раздела ядра `## Рабочее дерево в файле порции` (listik-tula, порция a):
+#: заголовок, правило строки, эталон и оба сообщения предстартовой проверки.
+CORE_WORKTREE_LINES = (
+    "## Рабочее дерево в файле порции",
+    "Первой строкой шапки файла порции стоит `Рабочее дерево: <абсолютный путь>` — "
+    "отдельной строкой, без пояснений и без кавычек после пути.",
+    "Строка обязательна в любом режиме, а не только в треке.",
+    "Своего дерева у работы нет — в строке стоит абсолютный путь основного дерева.",
+    "У `opus-single-pipeline` та же строка стоит в файле задачи.",
+    "Эталон — путь из строки журнала шага `дерево <путь>`.",
+    "Сравнение — точное равенство путей после `cd … && pwd -P`, не префикс и не вхождение "
+    "подстроки.",
+    "порция <X>: в ТЗ нет пути рабочего дерева — стоп",
+    "порция <X>: путь в ТЗ не совпал с деревом работы — стоп",
+    "Путь из этой строки идёт первой строкой задачи исполнителю в любом режиме, а внешнему "
+    "харнессу — рабочим каталогом в вызове скила запуска.",
+)
+
+#: Пять строк блока предстартовой проверки перед этапом 3: присваивание `WT`, поиск маркера
+#: с якорем `^`, извлечение пути через `sed` и стоп-сообщение.
+PRESTART_CHECK_LINES = (
+    'WT="$(cd <дерево работы> && pwd -P)"',
+    "grep -n '^Рабочее дерево: /' <steps>/<имя>.<X>.md \\",
+    'P="$(sed -n \'s/^Рабочее дерево: //p\' <steps>/<имя>.<X>.md | head -1)"',
+    '[ "$(cd "$P" 2>/dev/null && pwd -P)" = "$WT" ] \\',
+    '|| echo "порция <X>: в ТЗ нет пути рабочего дерева — стоп"',
+)
+
+#: Заголовки ядра, порядок которых закреплён: новый раздел стоит между именами бумаг и каналом.
+CORE_NAMES_HEADING = "## Имена бумаг и деревьев"
+CORE_WORKTREE_HEADING = "## Рабочее дерево в файле порции"
+CORE_EXTERNAL_HEADING = "## Внешние скилы"
+
+#: Начало абзаца автора ТЗ про обязательную строку рабочего дерева в каждом файле порции.
+SPEC_WRITER_PARAGRAPH_START = (
+    "**Рабочее дерево — обязательная строка каждого файла порции.**"
+)
+
+#: Начало абзаца `## Файлы` про несколько одновременно пишущихся частей: он не должен пропасть,
+#: когда рядом встал абзац про рабочее дерево.
+SPEC_WRITER_MULTI_PARTS_PARAGRAPH_START = (
+    "Задача может быть **одной из нескольких частей, которые пишутся одновременно**"
+)
+
+#: Ожидаемые пути `_spec_writer_paths()`: четыре писателя ТЗ без потерь.
+EXPECTED_SPEC_WRITER_PATHS = (
+    pathlib.Path(AGENTS_SUBDIR) / "pipeline-spec-writer-low.md",
+    pathlib.Path(AGENTS_SUBDIR) / "pipeline-spec-writer-medium.md",
+    pathlib.Path(AGENTS_SUBDIR) / "pipeline-spec-writer-xhigh.md",
+    pathlib.Path(AGENTS_SUBDIR) / "pipeline-spec-writer.md",
+)
+
+
+class FeaturePipelineSpecWriterWorktreeTests(unittest.TestCase):
+    """Рабочее дерево — обязательная строка файла порции (listik-tula, порция b): проверка
+    в ядре конвейера и дословный абзац во всех определениях автора ТЗ."""
+
+    def test_core_worktree_lines_verbatim(self) -> None:
+        """Десять дословных строк раздела ядра о рабочем дереве на месте."""
+        text = _plugin_text(CORE_DOC)
+        for needle in CORE_WORKTREE_LINES:
+            with self.subTest(needle=needle):
+                self.assertIn(
+                    needle, text,
+                    f"{CORE_DOC}: не нашлось дословной строки {needle!r}",
+                )
+
+    def test_core_prestart_check_block_verbatim(self) -> None:
+        """Пять строк блока предстартовой проверки перед этапом 3 на месте."""
+        text = _plugin_text(CORE_DOC)
+        for needle in PRESTART_CHECK_LINES:
+            with self.subTest(needle=needle):
+                self.assertIn(
+                    needle, text,
+                    f"{CORE_DOC}: в блоке предстартовой проверки нет строки {needle!r}",
+                )
+
+    def test_core_worktree_heading_order(self) -> None:
+        """`## Имена бумаг и деревьев` < `## Рабочее дерево в файле порции` < `## Внешние скилы`."""
+        lines = _plugin_text(CORE_DOC).splitlines()
+        for heading in (CORE_NAMES_HEADING, CORE_WORKTREE_HEADING, CORE_EXTERNAL_HEADING):
+            self.assertIn(heading, lines, f"{CORE_DOC}: нет заголовка {heading!r}")
+        self.assertLess(
+            lines.index(CORE_NAMES_HEADING), lines.index(CORE_WORKTREE_HEADING),
+            f"{CORE_DOC}: {CORE_WORKTREE_HEADING!r} стоит не после {CORE_NAMES_HEADING!r}",
+        )
+        self.assertLess(
+            lines.index(CORE_WORKTREE_HEADING), lines.index(CORE_EXTERNAL_HEADING),
+            f"{CORE_DOC}: {CORE_WORKTREE_HEADING!r} стоит не перед {CORE_EXTERNAL_HEADING!r}",
+        )
+
+    def test_spec_writer_worktree_paragraph(self) -> None:
+        """У каждого писателя ТЗ абзац велит ставить строку и не выдумывать путь."""
+        for relative in _spec_writer_paths():
+            with self.subTest(file=str(relative)):
+                paragraph = _paragraph(relative, SPEC_WRITER_PARAGRAPH_START)
+                for needle in (
+                    "`Рабочее дерево: <абсолютный путь>`",
+                    "а не только когда работа идёт несколькими треками",
+                    "первая строка которого `вопрос`",
+                ):
+                    with self.subTest(needle=needle):
+                        self.assertIn(
+                            needle, paragraph,
+                            f"{relative}: в абзаце {SPEC_WRITER_PARAGRAPH_START!r} нет {needle!r}",
+                        )
+
+    def test_spec_writer_paths_exactly_four(self) -> None:
+        """Список писателей ТЗ — ровно четыре пути, ни один не потерян."""
+        self.assertEqual(
+            _spec_writer_paths(), list(EXPECTED_SPEC_WRITER_PATHS),
+            "список pipeline-spec-writer*.md разошёлся с ожидаемым",
+        )
+
+    def test_spec_writer_bodies_identical(self) -> None:
+        """Тела четырёх писателей ТЗ после frontmatter совпадают посимвольно."""
+        paths = _spec_writer_paths()
+        self.assertTrue(paths, "в agents/ не нашлось ни одного pipeline-spec-writer*.md")
+        bodies: dict[str, str] = {}
+        for relative in paths:
+            lines = _plugin_text(relative).splitlines()
+            frontmatter = _frontmatter(lines)
+            self.assertIsNotNone(
+                frontmatter, f"{relative}: frontmatter не закрыт строкой ---",
+            )
+            bodies[str(relative)] = "\n".join(lines[len(frontmatter or []) + 2:])
+        first = bodies[str(paths[0])]
+        for relative in paths:
+            with self.subTest(file=str(relative)):
+                self.assertEqual(
+                    bodies[str(relative)], first,
+                    f"{relative}: тело разъехалось с {paths[0]}",
+                )
+
+    def test_spec_writer_multi_parts_paragraph_kept(self) -> None:
+        """Абзац про несколько одновременно пишущихся частей остался у каждого писателя ТЗ."""
+        for relative in _spec_writer_paths():
+            with self.subTest(file=str(relative)):
+                paragraph = _paragraph(relative, SPEC_WRITER_MULTI_PARTS_PARAGRAPH_START)
+                self.assertTrue(
+                    paragraph.startswith(SPEC_WRITER_MULTI_PARTS_PARAGRAPH_START),
+                    f"{relative}: пропал абзац {SPEC_WRITER_MULTI_PARTS_PARAGRAPH_START!r}",
+                )
+
+
 if __name__ == "__main__":
     unittest.main()

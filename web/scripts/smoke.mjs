@@ -308,8 +308,8 @@ async function main() {
       rowsFullyVisible,
       tabsVisible: Boolean(document.querySelector('.ui-tabs') && isVisible(document.querySelector('.ui-tabs'))),
       inboxVisible: Boolean(
-        document.querySelector('[aria-label="Нужен ты"]') &&
-          isVisible(document.querySelector('[aria-label="Нужен ты"]')),
+        document.querySelector('[aria-label="Ты нужен"]') &&
+          isVisible(document.querySelector('[aria-label="Ты нужен"]')),
       ),
       chipsVisible: [...document.querySelectorAll('.listik-toolbar .ui-chip')].filter(isVisible).length,
       headerButtons,

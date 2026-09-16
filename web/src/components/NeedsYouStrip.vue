@@ -1,6 +1,6 @@
 <script setup lang="ts">
 /**
- * Инбокс «Нужен ты» — главный блок страницы: вопросы автору, брошенные задачи
+ * Инбокс «Ты нужен» — главный блок страницы: вопросы автору, брошенные задачи
  * и молчащие держатели одной сеткой карточек над доской. Состояние карточки —
  * одна из трёх веток (needs_owner → dead → at-risk), проверяемых строго по
  * порядку; первая сработавшая задаёт бейдж, левую полосу, текст причины и
@@ -119,11 +119,11 @@ function footerText(task: Task): string {
 </script>
 
 <template>
-  <section v-if="tasks.length > 0" class="listik-section" aria-label="Нужен ты">
+  <section v-if="tasks.length > 0" class="listik-section" aria-label="Ты нужен">
     <div class="listik-section__head">
       <h2 class="listik-section__title">
         <ListikIcon name="hand" size="md" />
-        Нужен ты
+        Ты нужен
         <UiBadge tone="accent" size="sm">{{ tasks.length }}</UiBadge>
       </h2>
       <div class="listik-row">

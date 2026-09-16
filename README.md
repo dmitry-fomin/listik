@@ -220,3 +220,15 @@ cd web && npm run typecheck && npm run build
 ```
 
 Устройство кода — [CLAUDE.md](CLAUDE.md), доска — [web/README.md](web/README.md).
+
+### Миграции Alembic
+
+`alembic/` — отдельный путь миграции схемы. Для безопасности команда требует явно указать
+файл базы через `LISTIK_DB`; без переменной Alembic завершается с подсказкой и не открывает
+`listik.db` репозитория. При разработке используйте временный файл, например:
+
+```sh
+LISTIK_DB=/tmp/listik-alembic.db alembic upgrade head
+```
+
+Новые изменения схемы должны включать и мягкую миграцию в `listik/db.py`, и ревизию Alembic.

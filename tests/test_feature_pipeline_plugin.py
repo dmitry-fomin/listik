@@ -800,5 +800,185 @@ class FeaturePipelineVendoredSkillPathTests(unittest.TestCase):
                         )
 
 
+#: Канон правила о коммите порции приёмкой (listik-4n4y): заголовок раздела ядра.
+COMMIT_RULE_HEADING = "## Коммит порции приёмкой"
+
+#: Запрещающие маркеры для строки, где упомянут `amend`: строка обязана содержать хотя бы один
+#: из них, иначе скан считает, что amend в ней разрешён. Все маркеры — запрет по смыслу:
+#: «запрещ…», «нельзя», «недопустим», «не трогать», «не твои», «не делает», «не обходит».
+AMEND_FORBID_MARKERS = (
+    "запрещ",
+    "нельзя",
+    "недопустим",
+    "не трогать",
+    "не твои",
+    "не делает",
+    "не обходит",
+)
+
+#: Направления скана «нигде не разрешён amend»: references/*.md, agents/*.md, skills/*/SKILL.md.
+REFERENCES_SUBDIR = "references"
+
+
+def _commit_rule_block() -> str:
+    """Раздел `CORE_DOC` от заголовка COMMIT_RULE_HEADING до следующего `## `."""
+    lines = _plugin_text(CORE_DOC).splitlines()
+    start = None
+    for index, line in enumerate(lines):
+        if line.startswith(COMMIT_RULE_HEADING):
+            start = index
+        elif start is not None and line.startswith("## "):
+            return "\n".join(lines[start:index])
+    if start is None:
+        raise AssertionError(f"{CORE_DOC}: не нашлось раздела {COMMIT_RULE_HEADING!r}")
+    return "\n".join(lines[start:])
+
+
+def _amend_scan_paths() -> list[pathlib.Path]:
+    """Файлы скана: references/*.md, agents/*.md и skills/*/SKILL.md (hooks/ не входит)."""
+    paths = sorted(
+        pathlib.Path(REFERENCES_SUBDIR) / path.name
+        for path in (PLUGIN_DIR / REFERENCES_SUBDIR).glob("*.md")
+    )
+    paths.extend(_agent_paths())
+    paths.extend(
+        pathlib.Path(SKILLS_SUBDIR) / name / SKILL_FILE
+        for name in sorted(_skill_names())
+    )
+    return paths
+
+
+def _line_forbids_amend(line: str) -> bool:
+    """True, если строка с `amend` содержит запрещающий маркер, а не разрешение."""
+    lowered = line.lower()
+    return any(marker in lowered for marker in AMEND_FORBID_MARKERS)
+
+
+class FeaturePipelineCommitRuleTests(unittest.TestCase):
+    """Коммит порции с удалёнными через `git rm` файлами (listik-4n4y): правило вместо amend."""
+
+    def test_core_has_commit_rule_block(self) -> None:
+        block = _commit_rule_block()
+        required = (
+            "rev-parse",
+            "BASE=",
+            "git add",
+            "новые и изменённые пути",
+            "git commit -m",
+            "-- <все пути",
+            "git rm",
+            "did not match any files",
+            "git show --stat --name-status",
+            "$BASE..HEAD",
+            "2.50.1",
+            "второй коммит",
+            "Оба хеша",
+            "--amend",
+            "reset",
+            "stash",
+            "checkout",
+            "clean",
+            "rebase",
+            "--no-verify",
+        )
+        for needle in required:
+            with self.subTest(needle=needle):
+                self.assertIn(
+                    needle, block,
+                    f"{CORE_DOC}: в разделе {COMMIT_RULE_HEADING!r} нет {needle!r}",
+                )
+
+    def test_core_journal_and_done_know_several_hashes(self) -> None:
+        text = _plugin_text(CORE_DOC)
+        required = (
+            "коммит <hash7>",
+            "коммиты <hash7>, <hash7>",
+            "<коммиты <hash7>, <hash7>>",
+        )
+        for needle in required:
+            with self.subTest(needle=needle):
+                self.assertIn(
+                    needle, text,
+                    f"{CORE_DOC}: нет варианта с несколькими хешами {needle!r}",
+                )
+
+    def test_judge_agent_states_commit_rule(self) -> None:
+        relative = pathlib.Path(AGENTS_SUBDIR) / "pipeline-judge.md"
+        text = _plugin_text(relative)
+        required = (
+            "rev-parse",
+            "git add",
+            "git rm",
+            "did not match any files",
+            "git commit -m",
+            "-- <все пути",
+            "git show --stat --name-status",
+            "$BASE..HEAD",
+            "второй коммит",
+            "--amend",
+            "через запятую",
+        )
+        for needle in required:
+            with self.subTest(needle=needle):
+                self.assertIn(
+                    needle, text,
+                    f"{relative}: нет элемента правила коммита порции {needle!r}",
+                )
+
+    def test_solo_implementer_states_commit_rule(self) -> None:
+        relative = pathlib.Path(AGENTS_SUBDIR) / "pipeline-implementer-solo.md"
+        text = _plugin_text(relative)
+        required = (
+            "git rm",
+            "did not match any files",
+            "git commit -m",
+            "git show --stat --name-status",
+            "$BASE..HEAD",
+            "второй коммит",
+            "--amend",
+            "оба хеша",
+        )
+        for needle in required:
+            with self.subTest(needle=needle):
+                self.assertIn(
+                    needle, text,
+                    f"{relative}: нет элемента правила коммита порции {needle!r}",
+                )
+
+    def test_nothing_in_plugin_allows_amend(self) -> None:
+        """Ни одна строка с `amend` в references/, agents/ и skills/*/SKILL.md не разрешает его.
+
+        Запрещающие маркеры (AMEND_FORBID_MARKERS) перечислены явно: «запрещ…», «нельзя»,
+        «недопустим», «не трогать», «не твои», «не делает», «не обходит». Строка с `amend`,
+        не содержащая ни одного из них, считается разрешением и валит скан; `hooks/` в скан
+        не входит — там `--amend` это регулярка запрещающего списка.
+        """
+        found = 0
+        for relative in _amend_scan_paths():
+            for number, line in enumerate(_plugin_text(relative).splitlines(), start=1):
+                if "amend" not in line:
+                    continue
+                found += 1
+                with self.subTest(file=str(relative), line=number):
+                    self.assertTrue(
+                        _line_forbids_amend(line),
+                        f"{relative}:{number}: amend упомянут без запрещающего маркера: {line!r}",
+                    )
+        self.assertGreater(found, 0, "скан не нашёл ни одной строки с amend — сломан обход")
+
+    def test_amend_predicate_rejects_permitting_line(self) -> None:
+        """Синтетическая строка, разрешающая amend, обязана быть отвергнута предикатом."""
+        synthetic = "при неполном коммите допустим `git commit --amend`"
+        self.assertIn("amend", synthetic)
+        self.assertFalse(
+            _line_forbids_amend(synthetic),
+            "предикат принял строку, разрешающую amend, за запрет",
+        )
+        self.assertTrue(
+            _line_forbids_amend("`git commit --amend` запрещён"),
+            "предикат отверг настоящий запрет amend",
+        )
+
+
 if __name__ == "__main__":
     unittest.main()

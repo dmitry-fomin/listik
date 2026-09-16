@@ -23,7 +23,7 @@
  * задач (HealthDot) остаются нейтральными.
  */
 import { computed } from 'vue'
-import { UiAppHeader, UiButton, UiStatusPill, UiTooltip } from '@zoloto585/facet'
+import { UiAppHeader, UiButton, UiChip, UiSelect, UiStatusPill, UiTooltip, type UiSelectOption } from '@zoloto585/facet'
 import ListikIcon from './ListikIcon.vue'
 import ProjectPicker from './ProjectPicker.vue'
 import store from '@/store/listik'
@@ -95,6 +95,19 @@ const healthTooltip = computed(
   () => `${healthLabel.value} · ${streamLabel.value} · ${embedLabel.value} · ${syncLabel.value} · ${countsLabel.value}`,
 )
 
+/**
+ * «Я — …»: кем доска представляется серверу. Не вход и не пароль — просто выбор
+ * имени из `server.users` (`/api/health`), которое уходит заголовком на каждый
+ * запрос; сервер по нему фильтрует списки и не даёт брать чужое. Пункт «все
+ * задачи» снимает имя — он же и единственный способ сброса (кнопки очистки у
+ * UiSelect нет). В локальном режиме выбора нет вовсе: сервер заголовок
+ * игнорирует, у задач владельца нет.
+ */
+const ownerOptions = computed<UiSelectOption[]>(() => [
+  { value: '', label: 'все задачи' },
+  ...store.users.value.map((user) => ({ value: user, label: user })),
+])
+
 const themeLabel = computed(() => (theme.value === 'dark' ? 'Включить светлую тему' : 'Включить тёмную тему'))
 </script>
 
@@ -118,6 +131,17 @@ const themeLabel = computed(() => (theme.value === 'dark' ? 'Включить с
       <div class="listik-shell__actions">
         <template v-if="!phone">
           <ProjectPicker />
+          <template v-if="store.isServerMode.value">
+            <UiSelect
+              :model-value="store.owner.value"
+              :options="ownerOptions"
+              placeholder="Я — …"
+              ariaLabel="От чьего имени"
+              size="sm"
+              @update:model-value="store.setOwner($event ?? '')"
+            />
+            <UiChip v-if="!store.owner.value" label="Представьтесь, чтобы брать задачи" size="sm" />
+          </template>
           <UiTooltip text="Поиск по задачам · Cmd K" placement="bottom">
             <UiButton size="sm" variant="ghost" @click="store.openSearch('')">
               <template #icon><ListikIcon name="search" size="sm" /></template>

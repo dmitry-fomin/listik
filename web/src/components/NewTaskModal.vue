@@ -68,6 +68,11 @@ const emit = defineEmits<{
       spec_path?: string
       /** Ключ маршрута из routes.json; нет — задача создаётся без маршрута. */
       route?: string
+      /**
+       * Владелец задачи (серверный режим): ключ есть, только если он отличается
+       * от представившегося — иначе владельца проставит сервер по заголовку.
+       */
+      owner?: string
       autostart: boolean
       actor: 'me'
     },
@@ -96,6 +101,8 @@ function defaults() {
     specPath: '',
     /** Ключ выбранной записи `routes.json`; null — маршрут не выбран. */
     routeKey: null as string | null,
+    /** Владелец задачи в серверном режиме; по умолчанию — тот, кто представился. */
+    owner: store.owner.value,
   }
 }
 
@@ -119,6 +126,8 @@ watch(isOpen, (open) => {
     resetForm()
     return
   }
+  // Имя в шапке могли сменить, пока форма была закрыта — подставляем текущее.
+  form.owner = store.owner.value
   // Первое открытие формы — единственный запрос маршрутов за сессию доски.
   store.ensureRoutes()
   // И единственный запрос статуса помощника: без ключа кнопок у полей не будет.
@@ -166,6 +175,21 @@ watch(
 )
 
 const titleError = computed(() => (submitted.value && !form.title.trim() ? 'нужен заголовок' : null))
+
+/**
+ * Владелец задачи — только серверный режим: сервер ставит его сам по заголовку
+ * «я — …», поэтому пункта «без владельца» тут нет. Никто не представился и
+ * владелец не выбран — сервер откажет (400), не отправляем.
+ */
+const ownerOptions = computed<UiSelectOption[]>(() =>
+  store.users.value.map((user) => ({ value: user, label: user })),
+)
+
+const ownerMissing = computed(() => store.isServerMode.value && !form.owner && !store.owner.value)
+
+const ownerError = computed(() =>
+  submitted.value && ownerMissing.value ? 'В серверном режиме у задачи должен быть владелец' : null,
+)
 
 const createDisabled = computed(() => props.pending || !form.title.trim() || !form.project)
 
@@ -273,8 +297,11 @@ function retryRoutes(): void {
 
 function submit(): void {
   submitted.value = true
-  if (createDisabled.value) return
+  if (createDisabled.value || ownerMissing.value) return
   const route = selectedRoute.value
+  // Совпал с представившимся — ключа в теле нет: владельца проставит сервер по
+  // заголовку. Отличается — это «завести на другого».
+  const owner = store.isServerMode.value && form.owner && form.owner !== store.owner.value ? form.owner : ''
   emit('submit', {
     title: form.title.trim(),
     project: form.project as string,
@@ -286,6 +313,7 @@ function submit(): void {
     // Метки маршрута ставит сервер (`routes.labels_for`); без маршрута — `route` нет
     // и автостарт выключен.
     ...(route ? { route: route.key } : {}),
+    ...(owner ? { owner } : {}),
     autostart: route ? autostart.value : false,
     actor: 'me',
   })
@@ -337,6 +365,16 @@ function cancel(): void {
           </div>
         </UiField>
       </div>
+
+      <UiField v-if="store.isServerMode.value" label="Владелец" required :error="ownerError">
+        <UiSelect
+          :model-value="form.owner"
+          :options="ownerOptions"
+          @update:model-value="form.owner = $event ?? ''"
+          placeholder="кому принадлежит задача"
+          :invalid="Boolean(ownerError)"
+        />
+      </UiField>
 
       <UiField label="Заголовок" required :error="titleError">
         <AssistantField

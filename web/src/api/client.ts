@@ -1,4 +1,4 @@
-import { apiUrl, readStoredToken } from './config'
+import { apiUrl, readStoredOwner, readStoredToken } from './config'
 import type {
   AssistantStatus,
   AssistantSuggestRequest,
@@ -70,6 +70,11 @@ async function request<T>(method: string, path: string, body?: unknown): Promise
   const headers: Record<string, string> = { Accept: 'application/json' }
   const token = readStoredToken()
   if (token) headers.Authorization = `Bearer ${token}`
+  // Идентичность «я — …»: сервер фильтрует списки по владельцу и запрещает брать
+  // чужое. Заголовок уходит на любой метод и в любом режиме — в локальном сервер
+  // его просто игнорирует, поэтому условий на `mode` тут нет.
+  const owner = readStoredOwner()
+  if (owner) headers['X-Listik-Owner'] = owner
   if (body !== undefined) headers['Content-Type'] = 'application/json'
 
   let response: Response

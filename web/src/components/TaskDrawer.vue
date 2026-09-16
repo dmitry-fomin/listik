@@ -28,6 +28,7 @@ import {
   UiDrawer,
   UiInput,
   UiProgress,
+  UiSelect,
   UiSkeleton,
   UiStatusPill,
   UiSteps,
@@ -36,6 +37,7 @@ import {
   UiTimeline,
   UiTooltip,
   type StatusPillTone,
+  type UiSelectOption,
   type UiStepItem,
   type UiStepStatus,
   type UiTimelineItem,
@@ -980,6 +982,25 @@ function submitPinnedAnswer(): void {
   pinnedAnswerText.value = ''
 }
 
+/**
+ * Владелец задачи (серверный режим): смена уходит обычным PATCH одним полем
+ * `owner` — тем же путём, что и остальные правки панели. Пункт «без владельца»
+ * шлёт пустую строку: сервер снимает владельца. В локальном режиме строки нет
+ * вовсе (владельцев там не существует).
+ */
+const ownerOptions = computed<UiSelectOption[]>(() => [
+  { value: '', label: 'без владельца' },
+  ...store.users.value.map((user) => ({ value: user, label: user })),
+])
+
+function pickOwner(value: string | null): void {
+  const task = props.task
+  if (!task) return
+  const next = value ?? ''
+  if (next === (task.owner ?? '')) return
+  emit('patch', { id: task.id, body: { owner: next }, label: 'owner' })
+}
+
 // ── «Связи» ────────────────────────────────────────────────────────────────
 
 function depCardHint(dep: DepInfo): string {
@@ -1290,6 +1311,20 @@ async function loadTree(): Promise<void> {
           </dd>
           <dt>этап с</dt>
           <dd>{{ holderBlock?.stageStarted }}</dd>
+          <template v-if="store.isServerMode.value">
+            <dt>владелец</dt>
+            <dd>
+              <UiSelect
+                :model-value="task.owner ?? ''"
+                :options="ownerOptions"
+                placeholder="без владельца"
+                ariaLabel="Владелец задачи"
+                size="sm"
+                :disabled="pending === 'owner'"
+                @update:model-value="pickOwner($event)"
+              />
+            </dd>
+          </template>
           <template v-if="holderBlock?.assignee">
             <dt>исполнитель</dt>
             <dd>{{ holderBlock.assignee }}</dd>

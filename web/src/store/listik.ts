@@ -7,7 +7,7 @@
  */
 import { computed, reactive, ref, shallowRef } from 'vue'
 import { ApiError, api, subscribeStream } from '@/api/client'
-import { readStoredToken, writeStoredToken } from '@/api/config'
+import { readStoredOwner, readStoredToken, writeStoredOwner, writeStoredToken } from '@/api/config'
 import { AT_RISK_IDLE_HOURS, taskHealth } from '@/lib/health'
 import { INTAKE_COLUMN_KEY, PIPELINE_STAGE_KEYS, STAGES } from '@/lib/dictionaries'
 import { tryRequest, withLoading } from './helpers'
@@ -75,6 +75,12 @@ const HEALTH_POLL_MS = 30000
 const SSE_DEBOUNCE_MS = 500
 
 const token = ref(readStoredToken())
+/**
+ * «Я — …»: имя из `server.users`, которым доска представляется серверу
+ * (заголовок `X-Listik-Owner` ставит api/client.ts на каждый запрос). Пусто —
+ * доска не представилась: сервер отдаёт все задачи и не даёт ничего взять.
+ */
+const owner = ref(readStoredOwner())
 const view = ref<ViewKey>('board')
 
 const health = ref<Health | null>(null)
@@ -396,7 +402,36 @@ async function loadHealth(): Promise<void> {
     return
   }
   health.value = data
+  // Сохранённое имя могло исчезнуть из `server.users` (правка config.toml, другой
+  // сервер): с ним сервер отвечает 400 на каждый список, поэтому снимаем его
+  // сразу после health и до остальных запросов. Поля `users` нет вовсе (старый
+  // сервер, ответ без токена) — не трогаем ничего.
+  const known = data.users
+  if (data.mode === 'server' && Array.isArray(known) && owner.value && !known.includes(owner.value)) {
+    owner.value = ''
+    writeStoredOwner('')
+  }
   connectionLost.value = false
+}
+
+/** Серверный режим: есть список пользователей и владелец у задач (см. /api/health). */
+const isServerMode = computed(() => health.value?.mode === 'server')
+
+/** Кем можно представиться — `server.users`; в локальном режиме пусто. */
+const users = computed<string[]>(() => health.value?.users ?? [])
+
+/**
+ * Сменить «я — …». Это только идентичность запросов: данные не меняются, ни
+ * PATCH, ни POST не уходит — но списки фильтрует сервер по заголовку, поэтому
+ * их надо перечитать. Поток SSE не трогаем: он заголовков не умеет и лишь
+ * планирует тот же refresh.
+ */
+function setOwner(value: string): void {
+  const next = value.trim()
+  if (next === owner.value) return
+  owner.value = next
+  writeStoredOwner(next)
+  void refresh({ silent: true })
 }
 
 async function loadMeta(): Promise<void> {
@@ -530,7 +565,11 @@ async function refresh(options: { silent?: boolean } = {}): Promise<void> {
     return
   }
   async function refreshData(): Promise<void> {
-    await Promise.all([loadBoard(), loadStats(), loadHealth(), loadDeps(), loadDoneWeek()])
+    // health — первым и отдельно: он приносит режим и список пользователей, и
+    // только он снимает имя, которого сервер уже не знает. Уйди он в общий
+    // Promise.all — списки ушли бы со старым именем и получили 400.
+    await loadHealth()
+    await Promise.all([loadBoard(), loadStats(), loadDeps(), loadDoneWeek()])
     if (meta.value === null) await loadMeta()
     // /api/timeline нужен только блоку «активность» в метриках — отдельной вкладки нет
     if (view.value === 'metrics') await loadTimeline()
@@ -1126,6 +1165,7 @@ export function useListikStore() {
   return {
     // состояние
     token,
+    owner,
     view,
     phone,
     queueTick,
@@ -1168,6 +1208,8 @@ export function useListikStore() {
     assistantLoading,
     inboxQuestions,
     // производные
+    isServerMode,
+    users,
     columns,
     inbox,
     counts,
@@ -1200,6 +1242,7 @@ export function useListikStore() {
     openDoneList,
     setPhone,
     setToken,
+    setOwner,
     clearFilters,
     applyFilters,
     // действия

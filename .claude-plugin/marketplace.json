@@ -31,6 +31,12 @@
       "description": "Отдать задачу OpenAI Codex CLI из Claude Code: второй агент сам ходит по коду, по умолчанию только читает."
     },
     {
+      "name": "opencode",
+      "source": "./plugins/opencode",
+      "version": "0.1.0",
+      "description": "Отдать задачу opencode (по умолчанию GLM 5.3 Flash) из Claude Code: второй агент сам ходит по коду, по умолчанию только читает, сессию можно продолжить по имени."
+    },
+    {
       "name": "second-opinion",
       "source": "./plugins/second-opinion",
       "version": "0.4.0",

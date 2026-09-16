@@ -1,0 +1,20 @@
+{
+  "name": "opencode",
+  "displayName": "opencode bridge",
+  "version": "0.1.0",
+  "description": "Delegate tasks to opencode (GLM 5.3 Flash by default) from Claude Code: it explores the codebase itself, read-only by default, and its sessions can be resumed by name.",
+  "author": {
+    "name": "Dmitry Fomin",
+    "url": "https://github.com/dmitry-fomin"
+  },
+  "homepage": "https://github.com/dmitry-fomin/listik",
+  "repository": "https://github.com/dmitry-fomin/listik",
+  "license": "MIT",
+  "keywords": [
+    "opencode",
+    "glm",
+    "delegation",
+    "subagent",
+    "second-opinion"
+  ]
+}

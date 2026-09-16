@@ -360,7 +360,7 @@ function cancel(): void {
   <UiDrawer v-model="isOpen" size="lg" side="right" title="Новая задача">
     <template #header>
       <div class="listik-stack" style="gap: var(--space-1)">
-        <h2 class="ui-drawer__title">Новая задача</h2>
+        <h2 class="listik-drawer__title">Новая задача</h2>
         <span class="listik-section__hint">что делаем, в каком проекте и как: кто исполняет и по какому процессу</span>
       </div>
     </template>
@@ -475,7 +475,7 @@ function cancel(): void {
       </UiField>
 
       <section class="listik-stack" style="gap: var(--space-2)">
-        <h4 class="listik-section__title" style="font-size: var(--text-md)">
+        <h4 class="listik-section__title">
           Маршрут · кто исполняет и по какому процессу
         </h4>
 

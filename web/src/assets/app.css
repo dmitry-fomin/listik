@@ -2586,3 +2586,147 @@ body .ui-drawer-backdrop.ui-drawer-backdrop--right .ui-drawer.ui-drawer--right.u
 .listik-metrics .listik-mono {
   white-space: nowrap;
 }
+
+/* ── Голосовой ввод задачи (VoiceCapture.vue) ──────────────────────────────
+   Панель — поповер кита (телепорт в body), поэтому здесь только содержимое;
+   волна — столбики, высота которых задаётся `transform` из уровня записи. */
+
+:root {
+  --listik-voice-panel-w: 340px;
+  --listik-voice-wave-h: 18px;
+}
+
+.listik-voice {
+  display: inline-flex;
+  min-width: 0;
+}
+
+.listik-voice__panel {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-3);
+  width: min(var(--listik-voice-panel-w), calc(100vw - var(--space-8)));
+}
+
+.listik-voice__title {
+  font-size: var(--text-sm);
+  font-weight: var(--weight-medium);
+  color: var(--ink-1);
+}
+
+.listik-voice__processing {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+}
+
+.listik-voice__timer {
+  font-size: var(--text-sm);
+  color: var(--ink-2);
+}
+
+.listik-voice__wave {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--space-1);
+  height: var(--listik-voice-wave-h);
+}
+
+.listik-voice__bar {
+  width: var(--space-1);
+  height: 100%;
+  border-radius: var(--radius-pill);
+  background: var(--accent-500);
+  transform-origin: center;
+  transition: transform var(--duration-fast) var(--ease-out);
+}
+
+.listik-voice__block {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-1);
+  padding-top: var(--space-2);
+  border-top: 1px solid var(--hairline);
+}
+
+.listik-voice__block-title {
+  font-size: var(--text-xs);
+  font-weight: var(--weight-medium);
+  color: var(--ink-3);
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+}
+
+.listik-voice__transcript,
+.listik-voice__draft-description {
+  margin: 0;
+  max-height: 160px;
+  overflow: auto;
+  font-size: var(--text-sm);
+  line-height: var(--leading-normal);
+  color: var(--ink-1);
+  white-space: pre-wrap;
+}
+
+.listik-voice__draft-title {
+  font-size: var(--text-sm);
+  font-weight: var(--weight-medium);
+  color: var(--ink-1);
+}
+
+.listik-voice__draft-list {
+  margin: 0;
+  padding-left: var(--space-4);
+  font-size: var(--text-sm);
+  line-height: var(--leading-normal);
+  color: var(--ink-1);
+}
+
+.listik-voice__chip {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--space-1);
+  padding: 0 var(--space-2);
+  border: 1px solid var(--hairline);
+  border-radius: var(--radius-pill);
+  font-size: var(--text-xs);
+  color: var(--ink-2);
+}
+
+.listik-voice__warn {
+  margin: 0;
+  font-size: var(--text-xs);
+  color: var(--warning-700);
+}
+
+.listik-voice__server-error {
+  margin: 0;
+  font-size: var(--text-xs);
+  color: var(--danger-700);
+}
+
+.listik-voice__created-id {
+  color: var(--ink-2);
+}
+
+/* Телефон (порция c): круглая FAB над очередью. `position: fixed` у самой кнопки
+   разрешён (лист/оверлей/блокировку прокрутки делает UiDrawer). Ширина, высота и
+   радиус — `!important`: стили кита (`.ui-button--lg[data-v-…]`, 0,2,0) встают в
+   бандл позже app.css, при равной специфичности побеждают они (ср. комментарий у
+   `.listik-shell > .ui-container`). `z-floating` — ниже бэкдропа листа. */
+.listik-voice__fab {
+  position: fixed;
+  right: var(--space-4);
+  bottom: calc(var(--space-6) + env(safe-area-inset-bottom, 0px));
+  z-index: var(--z-floating);
+  width: var(--space-14) !important;
+  height: var(--space-14) !important;
+  padding: 0 !important;
+  border-radius: var(--radius-pill) !important;
+}
+
+/* Лист снизу занимает всю ширину — панель поповера на телефоне не должна
+   оставаться 340px. */
+.listik-voice__panel--phone {
+  width: 100%;
+}

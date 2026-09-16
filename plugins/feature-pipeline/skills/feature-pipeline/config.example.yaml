@@ -9,17 +9,22 @@ paths:
 
 second_opinion:
   when: always        # always | spec-only | off
-  provider: grok      # имя из scripts/providers.conf скила /second-opinion:ask
+  provider: grok      # имя из scripts/providers.conf скила second-opinion:ask
+                      # или grok (локальный CLI)
   model: ""           # пусто — модель провайдера по умолчанию
 
 executor:
   # Цепочка исполнителей этапа 3: сверху вниз до первого доступного.
-  primary: grok:grok-delegate
-  fallback: dsh:dsh-runner
-  local: feature-pipeline:pipeline-implementer   # внутри Claude, доступен всегда
+  # primary и fallback — имя канала из таблицы «Внешние скилы» pipeline-core.md:
+  # grok | dsh | codex; пусто — звено пропускается.
+  primary: grok
+  fallback: dsh
+  local: feature-pipeline:pipeline-implementer   # обязателен, пустым быть не может —
+                      # последнее звено цепочки; внутри Claude, доступен всегда
   on_fallback: auto   # auto — переехать и записать в журнал; ask — спросить автора
-  effort: high        # low|medium|high|xhigh|max; только для grok: dsh идёт на настройках
-                      # пользователя, у локального субагента усилие во frontmatter
+  effort: high        # low|medium|high|xhigh|max; только для каналов, принимающих --effort
+                      # (grok, codex); dsh идёт на настройках пользователя, у локального
+                      # субагента усилие во frontmatter
 
 opus:
   # Только для /feature-pipeline:opus-sonnet-pipeline (задачи трекера: Opus пишет, Sonnet-судья коммитит).
@@ -45,8 +50,9 @@ presets:
   # роль на ходу. Подмена судьи или критика на то, что под рукой, ломает ровно то,
   # за что пресет выбран, — независимость приёмки от вендора автора.
   #
-  # Секции second_opinion, executor и opus выше пресетами не читаются:
-  # они про старые конвейеры. Общее у всех — только paths.
+  # Кто какую секцию читает: paths — все пресеты; second_opinion и executor — только
+  # feature-pipeline; opus — только opus-sonnet-pipeline; presets.judge_preflight —
+  # пресеты с внешним судьёй, они перечислены выше.
   judge_preflight: true   # прогнать судью одной дешёвой задачей до этапа 1.
                           # Ловит то, чего не видно по статусу и авторизации: исчерпанный
                           # баланс харнесса (HTTP 402). Стоит одного короткого прогона,

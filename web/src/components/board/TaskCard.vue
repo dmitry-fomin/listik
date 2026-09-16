@@ -15,7 +15,7 @@ import RouteIcon from '../marks/RouteIcon.vue'
 import ListikIcon from '../ListikIcon.vue'
 import type { ProjectRow, Task } from '@/api/types'
 import store, { type DepsSummary } from '@/store/listik'
-import { AT_RISK_IDLE_HOURS, taskHealth, healthReason } from '@/lib/health'
+import { AT_RISK_IDLE_HOURS, taskHealth, healthReason, healthTone } from '@/lib/health'
 import { statusTitle } from '@/lib/dictionaries'
 import { routeByKey } from '@/lib/routes'
 
@@ -61,7 +61,7 @@ const isIdleAtRisk = computed(
   () => props.task.idle_hours !== null && props.task.idle_hours >= AT_RISK_IDLE_HOURS,
 )
 
-const stateBadge = computed<{ tone: 'accent' | 'danger' | 'warning'; text: string } | null>(() => {
+const stateBadge = computed<{ tone: 'accent' | 'danger' | 'warning' | 'success'; text: string } | null>(() => {
   if (branch.value === 'needs') return { tone: 'accent', text: 'нужен ты' }
   if (branch.value === 'dead') return { tone: 'danger', text: healthReason(props.task) }
   // «Выдана, но не взята» дольше порога — свой бейдж: видно, что прогон не
@@ -69,7 +69,15 @@ const stateBadge = computed<{ tone: 'accent' | 'danger' | 'warning'; text: strin
   if (branch.value === 'at-risk' && props.task.not_taken_warn) {
     return { tone: 'warning', text: `не взята ${props.task.assigned_age}` }
   }
-  if (branch.value === 'at-risk' && isIdleAtRisk.value) return { tone: 'warning', text: healthReason(props.task) }
+  // Молчание — шкала, а не одно состояние: тон растёт ступенями вместе с возрастом
+  // (см. healthTone), поэтому «молчит 15 мин» не кричит так же, как «молчит час».
+  if (branch.value === 'at-risk' && isIdleAtRisk.value) {
+    const tone = healthTone(props.task)
+    return {
+      tone: tone === 'danger' ? 'danger' : tone === 'warning' ? 'warning' : 'success',
+      text: healthReason(props.task),
+    }
+  }
   return null
 })
 

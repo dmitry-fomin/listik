@@ -9,6 +9,33 @@ export type Health = 'healthy' | 'at-risk' | 'dead' | 'unknown'
 /** Heartbeat старше этого числа часов (15 мин) переводит здоровую задачу в at-risk. */
 export const AT_RISK_IDLE_HOURS = 0.25
 
+/** Молчание дольше этого (30 мин) красит пилюлю at-risk в оранжевый. */
+export const IDLE_WARN_HOURS = 0.5
+
+/** Молчание дольше этого (45 мин) красит пилюлю at-risk в красный. */
+export const IDLE_DANGER_HOURS = 0.75
+
+/** Тон пилюли кита: у at-risk он ступенчатый по времени молчания. */
+export type PillTone = 'healthy' | 'at-risk' | 'dead' | 'unknown' | 'success' | 'warning' | 'danger'
+
+/**
+ * Цвет пилюли здоровья. `at-risk` — не одно состояние, а шкала: «молчит
+ * 15 мин» и «молчит 3 часа» одинаково тревожными выглядеть не должны, поэтому
+ * тон растёт ступенями AT_RISK_IDLE_HOURS → IDLE_WARN_HOURS → IDLE_DANGER_HOURS
+ * (зелёный → оранжевый → красный). Ступени считаются только по молчанию: у
+ * at-risk по `stage_warn` или «выдана, но не взята» своего возраста нет, и такая
+ * задача остаётся на базовом тоне at-risk. Остальные состояния — как были.
+ */
+export function healthTone(task: Task): PillTone {
+  const health = taskHealth(task)
+  if (health !== 'at-risk') return health
+  const idle = task.idle_hours
+  if (idle === null || idle < AT_RISK_IDLE_HOURS) return 'at-risk'
+  if (idle >= IDLE_DANGER_HOURS) return 'danger'
+  if (idle >= IDLE_WARN_HOURS) return 'warning'
+  return 'success'
+}
+
 export const HEALTH_TITLES: Record<Health, string> = {
   healthy: 'здорова',
   'at-risk': 'под угрозой',

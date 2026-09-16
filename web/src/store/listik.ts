@@ -318,7 +318,7 @@ const columns = computed<BoardColumn[]>(() => {
 const allBoardTasks = computed<Task[]>(() => (board.value?.columns ?? []).flatMap((column) => column.tasks))
 
 /**
- * Инбокс «Нужен ты»: объединение серверного `board.needs_you` (needs_owner /
+ * Инбокс «Ты нужен»: объединение серверного `board.needs_you` (needs_owner /
  * stale / abandoned) и задач, ставших at-risk по heartbeat на клиенте (сервер
  * этот срез отдельно не считает). Без дублей по id; порядок — needs_owner,
  * затем dead, затем at-risk, внутри группы — по убыванию idle_hours.

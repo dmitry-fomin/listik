@@ -70,6 +70,39 @@ export function writeStoredToken(token: string): void {
   }
 }
 
+/**
+ * «Кто я» для сервера: имя из `server.users` уходит заголовком `X-Listik-Owner`
+ * на каждый запрос (см. api/client.ts). Хранится там же, где токен — память
+ * вкладки плюс localStorage, — но, в отличие от токена, ни из адреса, ни из
+ * `VITE_*` не читается: имя выбирают селектом в шапке, а в локальном режиме его
+ * вообще нет (сервер заголовок игнорирует).
+ */
+export const OWNER_STORAGE_KEY = 'listik.owner'
+
+let memoryOwner: string | null = null
+
+export function readStoredOwner(): string {
+  if (memoryOwner !== null) return memoryOwner
+  let stored: string | null = null
+  try {
+    stored = window.localStorage.getItem(OWNER_STORAGE_KEY)
+  } catch {
+    stored = null
+  }
+  memoryOwner = (stored ?? '').trim()
+  return memoryOwner
+}
+
+export function writeStoredOwner(value: string): void {
+  memoryOwner = value.trim()
+  try {
+    if (memoryOwner) window.localStorage.setItem(OWNER_STORAGE_KEY, memoryOwner)
+    else window.localStorage.removeItem(OWNER_STORAGE_KEY)
+  } catch {
+    /* localStorage недоступен — имя живёт только в памяти вкладки */
+  }
+}
+
 /** URL для пути API: относительный (тот же origin) либо с базой из VITE_API_BASE. */
 export function apiUrl(path: string): string {
   const base = API_BASE

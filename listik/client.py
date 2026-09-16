@@ -7,6 +7,7 @@
 from __future__ import annotations
 
 import json
+import os
 from pathlib import Path
 import urllib.error
 import urllib.parse
@@ -42,11 +43,43 @@ def token() -> str:
     return (cfg.get("auth") or {}).get("token", "")
 
 
-def health(host: str | None = None, port: int | None = None, timeout: float = 2.0) -> dict | None:
+def owner(explicit: str | None = None) -> str:
+    """От чьего имени работаем: флаг → `LISTIK_OWNER` → `[auth] owner` → пусто.
+
+    Пустая строка значит «не представились»: в серверном режиме такой вызов
+    отклонит store, в локальном — владелец не нужен вовсе.
+    """
+    cfg_owner = ""
+    try:
+        cfg_owner = config_mod.default_owner()
+    except Exception:  # noqa: BLE001 — битый config.toml не должен ломать команду
+        cfg_owner = ""
+    for candidate in (explicit, os.environ.get("LISTIK_OWNER"), cfg_owner):
+        value = (candidate or "").strip()
+        if value:
+            return value
+    return ""
+
+
+#: Операции `local_call`, которые понимают `as_owner`. Остальным ключ не передаём:
+#: у их функций store такого аргумента нет и вызов упал бы TypeError.
+OWNER_LOCAL_OPS = frozenset({"list", "board", "ready", "create", "claim", "heartbeat",
+                             "stage", "update"})
+
+#: Тот же `owner()` под именем без конфликта: в `request()`/`health()` параметр
+#: называется `owner` и перекрывает имя функции.
+_resolve_owner = owner
+
+
+def health(host: str | None = None, port: int | None = None, timeout: float = 2.0,
+           owner: str | None = None) -> dict | None:
     """Состояние сервера: None — не отвечает. 401 тоже считается «отвечает»."""
     req = urllib.request.Request(f"{base_url(host, port)}/api/health")
     if token():
         req.add_header("Authorization", f"Bearer {token()}")
+    who = _resolve_owner(owner)
+    if who:
+        req.add_header("X-Listik-Owner", who)
     try:
         with urllib.request.urlopen(req, timeout=timeout) as r:
             data = json.loads(r.read().decode("utf-8"))
@@ -77,7 +110,8 @@ def _query_string(query: dict) -> str:
 
 
 def request(method: str, path: str, *, query: dict | None = None, body: dict | None = None,
-            host: str | None = None, port: int | None = None, timeout: float = 60.0) -> dict:
+            host: str | None = None, port: int | None = None, timeout: float = 60.0,
+            owner: str | None = None) -> dict:
     # Кириллица в пути (например, в ID задачи) кодируется здесь: иначе urllib падает
     # с UnicodeEncodeError ещё до запроса. Уже закодированные сегменты (%2F) целы —
     # «%» в safe.
@@ -89,6 +123,10 @@ def request(method: str, path: str, *, query: dict | None = None, body: dict | N
     data = json.dumps(body or {}, ensure_ascii=False).encode("utf-8") if body is not None else None
     req = urllib.request.Request(url, data=data, method=method)
     req.add_header("Authorization", f"Bearer {token()}")
+    # Идентичность — только заголовком: в строке запроса и теле её нет.
+    who = _resolve_owner(owner)
+    if who:
+        req.add_header("X-Listik-Owner", who)
     if data is not None:
         req.add_header("Content-Type", "application/json")
     try:
@@ -130,6 +168,10 @@ def local_call(op: str, **kwargs):
     from . import store
 
     conn = db_mod.init()
+    if op not in OWNER_LOCAL_OPS:
+        # `as_owner` — идентичность вызова, её понимают не все операции store.
+        # Поле `owner` (данные карточки) остаётся: его пишут create/update.
+        kwargs.pop("as_owner", None)
     if op == "meta":
         return {
             "projects": store.list_projects(conn),
@@ -145,7 +187,8 @@ def local_call(op: str, **kwargs):
         return store.board(conn, group_by=kwargs.get("group_by", "status"),
                            project=kwargs.get("project"),
                            include_closed=kwargs.get("include_closed", False),
-                           limit_per_column=kwargs.get("limit", 300))
+                           limit_per_column=kwargs.get("limit", 300),
+                           as_owner=kwargs.get("as_owner"))
     if op == "list":
         return store.list_tasks(conn, **kwargs)
     if op == "show":
@@ -190,7 +233,8 @@ def local_call(op: str, **kwargs):
         return {"tasks": deps_mod.ready_tasks(conn, project=kwargs.get("project"),
                                               stage=kwargs.get("stage"), harness=kwargs.get("harness"),
                                               include_occupied=kwargs.get("include_occupied", False),
-                                              limit=kwargs.get("limit", 50)),
+                                              limit=kwargs.get("limit", 50),
+                                              as_owner=kwargs.get("as_owner")),
                 "cycles": deps_mod.cycles(conn)}
     if op == "blocked":
         from . import deps as deps_mod

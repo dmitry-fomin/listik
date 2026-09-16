@@ -500,6 +500,14 @@ def error_response(exc: BaseException) -> tuple[int, str, str]:
     """
     if isinstance(exc, ApiError):
         return exc.status, exc.message, exc.code
+    if isinstance(exc, errors_mod.BadArgument):
+        # Негодный аргумент — 400 даже там, где обработчик ValueError не ловит
+        # (чтения: /api/tasks, /api/board, /api/ready с неизвестным владельцем).
+        return 400, str(exc), errors_mod.BAD_ARGUMENT
+    if isinstance(exc, errors_mod.Forbidden):
+        # Чужой владелец: обработчики её не ловят (это PermissionError, а не
+        # KeyError/ValueError), и до 500 доходить она не должна.
+        return 403, str(exc), errors_mod.FORBIDDEN
     if isinstance(exc, sqlite3.IntegrityError):
         return 500, f"{type(exc).__name__}: {exc}", errors_mod.INTERNAL
     if isinstance(exc, (sqlite3.DatabaseError, sqlite3.ProgrammingError)):
@@ -541,7 +549,12 @@ def runtime_info(root: Path | None = None) -> dict:
     return info
 
 
-def handle(method: str, path: str, query: dict, body: dict, authed: bool = False) -> tuple[int, object]:
+def handle(method: str, path: str, query: dict, body: dict, authed: bool = False,
+           owner: str | None = None) -> tuple[int, object]:
+    """`owner` — идентичность запроса из заголовка `X-Listik-Owner` (None, если его нет).
+
+    Она уходит в store как `as_owner`; в локальном режиме store её игнорирует.
+    """
     conn = get_conn()
     parts = [p for p in path.strip("/").split("/") if p]
     q1 = lambda k, d=None: query.get(k, [d])[0] if isinstance(query.get(k), list) else query.get(k, d)  # noqa: E731
@@ -562,6 +575,12 @@ def handle(method: str, path: str, query: dict, body: dict, authed: bool = False
                 "config_path": str(paths.CONFIG_PATH.resolve()),
             },
         }
+        # Режим — без токена: по нему клиент понимает, нужно ли представляться.
+        # Список людей и то, как сервер понял заголовок, — только авторизованному.
+        data["mode"] = "server" if config_mod.is_server_mode(cfg) else "local"
+        if authed:
+            data["users"] = config_mod.users(cfg) if config_mod.is_server_mode(cfg) else []
+            data["owner"] = owner if config_mod.is_server_mode(cfg) else None
         if authed and _db_error is not None:
             data["db_error"] = _db_error
         # Подмена файла базы (listik-cfzk): не «ошибка сейчас», а факт — висит в
@@ -677,6 +696,7 @@ def handle(method: str, path: str, query: dict, body: dict, authed: bool = False
             project=q1("project"),
             include_closed=as_bool(q1("include_closed", False)),
             limit_per_column=as_int(q1("limit"), 300) or 300,
+            as_owner=owner,
         )
 
     if path == "/api/ready":
@@ -684,7 +704,7 @@ def handle(method: str, path: str, query: dict, body: dict, authed: bool = False
             "tasks": deps_mod.ready_tasks(
                 conn, project=q1("project"), stage=q1("stage"), harness=q1("harness"),
                 include_occupied=as_bool(q1("include_occupied", False)),
-                limit=as_int(q1("limit"), 50) or 50),
+                limit=as_int(q1("limit"), 50) or 50, as_owner=owner),
             "cycles": deps_mod.cycles(conn),
             "generated_at": store.now_iso(),
         }
@@ -717,6 +737,7 @@ def handle(method: str, path: str, query: dict, body: dict, authed: bool = False
             include_archived=as_bool(q1("include_archived", False)),
             limit=as_int(q1("limit"), 200) or 200, offset=as_int(q1("offset"), 0) or 0,
             order=q1("order", "updated") or "updated",
+            as_owner=owner,
         )
 
     if path == "/api/tasks" and method == "POST":
@@ -756,6 +777,9 @@ def handle(method: str, path: str, query: dict, body: dict, authed: bool = False
                 external_ref=body.get("external_ref"),
                 source=body.get("source", "native"),
                 task_id=body.get("id"),
+                # Поле `owner` — «на кого» заводим; заголовок — «кто заводит».
+                owner=body.get("owner"),
+                as_owner=owner,
                 created_by=body.get("actor") or body.get("created_by"),
                 needs_owner=as_bool(body.get("needs_owner", False)),
                 harness=body.get("harness"),
@@ -833,7 +857,8 @@ def handle(method: str, path: str, query: dict, body: dict, authed: bool = False
                 try:
                     task = store.update_task(conn, tid, actor=body.get("actor"),
                                              harness=body.get("harness"),
-                                             note=body.get("note"), **fields)
+                                             note=body.get("note"), as_owner=owner,
+                                             **fields)
                 except errors_mod.NotFound as exc:
                     raise api_error(404, exc) from exc
                 except ValueError as exc:
@@ -861,16 +886,16 @@ def handle(method: str, path: str, query: dict, body: dict, authed: bool = False
                 if action == "claim":
                     out = store.claim(conn, tid, holder=need(body, "holder"),
                                       harness=body.get("harness"), note=body.get("note"),
-                                      actor=body.get("actor"),
+                                      actor=body.get("actor"), as_owner=owner,
                                       force=as_bool(body.get("force", False)))
                 elif action == "heartbeat":
                     out = store.heartbeat(conn, tid, holder=need(body, "holder"),
                                           note=body.get("note"), harness=body.get("harness"),
-                                          actor=body.get("actor"))
+                                          actor=body.get("actor"), as_owner=owner)
                 elif action == "stage":
                     out = store.next_stage(conn, tid, holder=body.get("holder"),
                                            note=body.get("note"), harness=body.get("harness"),
-                                           actor=body.get("actor"),
+                                           actor=body.get("actor"), as_owner=owner,
                                            to_stage=body.get("to") or body.get("stage"))
                 elif action == "comment":
                     out = store.add_comment(conn, tid, need(body, "text"),
@@ -1016,6 +1041,11 @@ class Handler(BaseHTTPRequestHandler):
         cfg = config_mod.load()
         return (cfg.get("auth") or {}).get("token", "")
 
+    def _owner(self) -> str | None:
+        """Идентичность запроса: `X-Listik-Owner` после strip; пустой заголовок — None."""
+        value = (self.headers.get("X-Listik-Owner") or "").strip()
+        return value or None
+
     def _authed(self, query: dict) -> bool:
         token = self._token()
         if not token:
@@ -1032,7 +1062,8 @@ class Handler(BaseHTTPRequestHandler):
         self.send_header("Content-Type", ctype)
         self.send_header("Content-Length", str(len(payload)))
         self.send_header("Access-Control-Allow-Origin", "*")
-        self.send_header("Access-Control-Allow-Headers", "Authorization,Content-Type,X-Listik-Token")
+        self.send_header("Access-Control-Allow-Headers",
+                         "Authorization,Content-Type,X-Listik-Token,X-Listik-Owner")
         self.send_header("Access-Control-Allow-Methods", "GET,POST,PATCH,PUT,DELETE,OPTIONS")
         for k, v in (extra or {}).items():
             self.send_header(k, v)
@@ -1089,7 +1120,8 @@ class Handler(BaseHTTPRequestHandler):
             if path != "/api/health" and not authed:
                 return self._error(401, "нужен токен: Authorization: Bearer <token>")
             try:
-                status, data = handle("GET", path, query, {}, authed=authed)
+                status, data = handle("GET", path, query, {}, authed=authed,
+                                      owner=self._owner())
             except Exception as exc:  # noqa: BLE001
                 status, message, code = error_response(exc)
                 return self._error(status, message, code)
@@ -1107,7 +1139,8 @@ class Handler(BaseHTTPRequestHandler):
             return self._error(401, "нужен токен")
         try:
             body = self._read_body()
-            status, data = handle("POST", parsed.path, query, body, authed=True)
+            status, data = handle("POST", parsed.path, query, body, authed=True,
+                                  owner=self._owner())
         except Exception as exc:  # noqa: BLE001
             status, message, code = error_response(exc)
             return self._error(status, message, code)
@@ -1133,7 +1166,8 @@ class Handler(BaseHTTPRequestHandler):
             return self._error(401, "нужен токен")
         try:
             body = self._read_body()
-            status, data = handle(method, parsed.path, query, body, authed=True)
+            status, data = handle(method, parsed.path, query, body, authed=True,
+                                  owner=self._owner())
         except Exception as exc:  # noqa: BLE001
             status, message, code = error_response(exc)
             return self._error(status, message, code)
@@ -1194,7 +1228,7 @@ class Handler(BaseHTTPRequestHandler):
 
         # 6. Разбор сообщения — тот же, что у stdio.
         try:
-            response = mcp.handle(request, conn=get_conn())
+            response = mcp.handle(request, conn=get_conn(), owner=self._owner())
         except Exception as exc:  # noqa: BLE001
             status, message, _code = error_response(exc)
             return rpc_error(status, -32603, message, rid)

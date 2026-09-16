@@ -135,6 +135,9 @@ TOOLS: list[dict] = [
                                                    "сразу ставит мягкую связь discovered-from"},
                 "route": {"type": "string",
                           "description": "ключ маршрута из routes.json (low-pipeline, dsh, …)"},
+                "owner": {"type": "string",
+                          "description": "владелец-человек, серверный режим; "
+                                         "по умолчанию — представившийся"},
                 "actor": ACTOR,
             },
             "required": ["title"],
@@ -222,6 +225,9 @@ TOOLS: list[dict] = [
                         "Задачу берёт тот, кто по ней работает: `actor` = `agent:<себя>`, "
                         "`holder` — то же имя. Пока своего claim от держателя нет, карточка "
                         "считается выданной, а не взятой. "
+                        "В серверном режиме нужен владелец (заголовок X-Listik-Owner у "
+                        "HTTP-транспорта, переменная LISTIK_OWNER у stdio): чужую задачу "
+                        "взять нельзя. "
                         "После этого регулярно вызывай listik_heartbeat."),
         "inputSchema": {
             "type": "object",
@@ -461,13 +467,33 @@ TOOLS: list[dict] = [
 ]
 
 
+class _FromEnv:
+    """Метка «транспорт владельца не передавал» — только у stdio."""
+
+    def __repr__(self) -> str:  # pragma: no cover — для отладочного вывода
+        return "FROM_ENV"
+
+
+FROM_ENV = _FromEnv()
+
+
 def _conn():
     return db_mod.init()
 
 
-def call_tool(name: str, args: dict, conn=None) -> object:
+def call_tool(name: str, args: dict, conn=None, owner=FROM_ENV) -> object:
+    """`owner` — владелец-человек, от чьего имени идёт вызов (серверный режим).
+
+    Источник имени определяет транспорт, а не пустота значения. У HTTP владелец
+    приходит только заголовком `X-Listik-Owner` (его передаёт `server.Handler._mcp`),
+    и `owner=None` там значит «клиент не представился» — окружение сервера в это
+    место не подставляется. У stdio транспорт имени не несёт: вызов идёт без
+    аргумента (`FROM_ENV`), и имя берётся из `LISTIK_OWNER` — там же, где `LISTIK_ACTOR`.
+    """
     if conn is None:
         conn = _conn()
+    if owner is FROM_ENV:
+        owner = (os.environ.get("LISTIK_OWNER") or "").strip() or None
     if name == "listik_search":
         return search_mod.search(conn, args["query"], limit=int(args.get("limit", 10)),
                                  project=args.get("project"), status=args.get("status"),
@@ -478,7 +504,8 @@ def call_tool(name: str, args: dict, conn=None) -> object:
             stage=args.get("stage"), assignee=args.get("assignee"), holder=args.get("holder"),
             needs_owner=bool(args.get("needs_owner")), issue_type=args.get("type"),
             text=args.get("text"), include_closed=bool(args.get("include_closed")),
-            limit=int(args.get("limit", 50)), order=args.get("order", "updated"))
+            limit=int(args.get("limit", 50)), order=args.get("order", "updated"),
+            as_owner=owner)
     if name == "listik_show":
         from . import deps as deps_mod
         task = store.get_task(conn, args["id"])
@@ -494,10 +521,12 @@ def call_tool(name: str, args: dict, conn=None) -> object:
             checklist_path=args.get("checklist_path"), review_path=args.get("review_path"),
             decision_path=args.get("decision_path"), journal_path=args.get("journal_path"),
             parent=args.get("parent"), discovered_from=args.get("discovered_from"),
-            route=args.get("route"), hints=True, created_by=args.get("actor"))
+            route=args.get("route"), hints=True, created_by=args.get("actor"),
+            owner=args.get("owner"), as_owner=owner)
     if name == "listik_update":
         return store.update_task(conn, args["id"], actor=args.get("actor"),
                                  harness=args.get("harness"), note=args.get("note"),
+                                 as_owner=owner,
                                  # `route` — алиас колонки launch_route, как в POST /api/tasks.
                                  **{k: v for k, v in (args.get("fields") or {}).items()
                                     if k in store.UPDATABLE or k == store.ROUTE_ALIAS})
@@ -516,14 +545,15 @@ def call_tool(name: str, args: dict, conn=None) -> object:
     if name == "listik_claim":
         return store.claim(conn, args["id"], holder=_norm_actor(args["holder"]),
                            harness=args.get("harness"), note=args.get("note"),
-                           actor=args.get("actor"), force=bool(args.get("force")))
+                           actor=args.get("actor"), as_owner=owner,
+                           force=bool(args.get("force")))
     if name == "listik_ready":
         from . import deps as deps_mod
         return {"tasks": deps_mod.ready_tasks(
                     conn, project=args.get("project"), stage=args.get("stage"),
                     harness=args.get("harness"),
                     include_occupied=bool(args.get("include_occupied")),
-                    limit=int(args.get("limit", 30))),
+                    limit=int(args.get("limit", 30)), as_owner=owner),
                 "cycles": deps_mod.cycles(conn)}
     if name == "listik_blocked":
         from . import deps as deps_mod
@@ -541,15 +571,16 @@ def call_tool(name: str, args: dict, conn=None) -> object:
     if name == "listik_heartbeat":
         return store.heartbeat(conn, args["id"], holder=_norm_actor(args["holder"]),
                                note=args.get("note"), harness=args.get("harness"),
-                               actor=args.get("actor"))
+                               actor=args.get("actor"), as_owner=owner)
     if name == "listik_stage":
         if args.get("to"):
             return store.next_stage(conn, args["id"], holder=_norm_actor(args.get("holder")),
                                     harness=args.get("harness"), note=args.get("note"),
-                                    actor=args.get("actor"), to_stage=args["to"])
+                                    actor=args.get("actor"), as_owner=owner,
+                                    to_stage=args["to"])
         return store.next_stage(conn, args["id"], holder=_norm_actor(args.get("holder")),
                                 note=args.get("note"), harness=args.get("harness"),
-                                actor=args.get("actor"))
+                                actor=args.get("actor"), as_owner=owner)
     if name == "listik_comment":
         return store.add_comment(conn, args["id"], args["text"],
                                  author=args.get("author"), kind=args.get("kind", "comment"),
@@ -589,7 +620,8 @@ def call_tool(name: str, args: dict, conn=None) -> object:
     if name == "listik_board":
         return store.board(conn, group_by=args.get("group_by", "status"),
                            project=args.get("project"),
-                           include_closed=bool(args.get("include_closed")))
+                           include_closed=bool(args.get("include_closed")),
+                           as_owner=owner)
     if name == "listik_stats":
         return store.stats(conn, project=args.get("project"))
     if name == "listik_projects":
@@ -644,7 +676,9 @@ def rpc_error(rid, code: int, message: str) -> dict:
     return {"jsonrpc": "2.0", "id": rid, "error": {"code": code, "message": message}}
 
 
-def handle(request: dict, conn=None) -> dict | None:
+def handle(request: dict, conn=None, owner=FROM_ENV) -> dict | None:
+    """`owner` — см. `call_tool`: HTTP всегда передаёт значение заголовка (в том
+    числе `None`, если заголовка нет), stdio вызывает без аргумента."""
     method, rid, params = request_parts(request)
 
     if method == "initialize":
@@ -665,7 +699,7 @@ def handle(request: dict, conn=None) -> dict | None:
         name = params.get("name")
         args = params.get("arguments") or {}
         try:
-            payload = call_tool(name, args, conn)
+            payload = call_tool(name, args, conn, owner)
         except errors_mod.NotFound as exc:
             return {"jsonrpc": "2.0", "id": rid,
                     "result": {"content": [{"type": "text", "text": errors_mod.mcp_error_text(exc)}],

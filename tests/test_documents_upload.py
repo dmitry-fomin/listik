@@ -73,7 +73,7 @@ class SchemaTests(TempDbTestCase):
         self.assertIn("content", columns)
         self.assertEqual(columns["source"]["notnull"], 1)
         self.assertEqual(str(columns["source"]["dflt_value"]).strip("'\""), "file")
-        self.assertEqual(db_mod.SCHEMA_VERSION, 7)
+        self.assertEqual(db_mod.SCHEMA_VERSION, 8)
 
     def test_file_document_is_source_file_with_null_content(self) -> None:
         spec_path = self.fixture_copy("long-spec.md")

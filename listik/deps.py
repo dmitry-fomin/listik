@@ -365,12 +365,23 @@ def expire_return_handoffs(conn: sqlite3.Connection, *, task_id: str | None = No
 def ready_tasks(conn: sqlite3.Connection, *, project: str | None = None,
                 stage: str | None = None, harness: str | None = None,
                 include_occupied: bool = False,
-                limit: int = 50) -> list[dict]:
-    """Задачи, которые можно взять прямо сейчас (нет незакрытых блокеров)."""
+                limit: int = 50, as_owner: str | None = None) -> list[dict]:
+    """Задачи, которые можно взять прямо сейчас (нет незакрытых блокеров).
+
+    `as_owner` — кто спрашивает (серверный режим): в ответ идут его задачи и общий
+    пул (без владельца). В локальном режиме аргумент игнорируется.
+    """
+    from . import config as config_mod
     from . import store
     expire_return_handoffs(conn)
     where = ["t.archived = 0", "t.status IN ('open','in_progress','review')"]
     params: list = []
+    owner_cfg = config_mod.load()
+    if config_mod.is_server_mode(owner_cfg):
+        owner_value = config_mod.check_owner(as_owner, owner_cfg)
+        if owner_value:
+            where.append("(t.owner = ? OR t.owner IS NULL)")
+            params.append(owner_value)
     if project:
         where.append("t.project = ?")
         params.append(project)

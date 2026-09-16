@@ -147,10 +147,15 @@ function onKeydown(event: KeyboardEvent): void {
 
     <h3 class="listik-task-card__title">{{ task.title }}</h3>
 
-    <div v-if="stateBadge || statusBadge || blockedCount > 0 || waitingForCount > 0" class="listik-task-card__meta">
+    <div
+      v-if="stateBadge || statusBadge || task.owner || blockedCount > 0 || waitingForCount > 0"
+      class="listik-task-card__meta"
+    >
       <div class="listik-task-card__badges">
         <UiBadge v-if="stateBadge" :tone="stateBadge.tone" size="sm">{{ stateBadge.text }}</UiBadge>
         <UiBadge v-if="statusBadge" :tone="statusBadge.tone" size="sm">{{ statusBadge.text }}</UiBadge>
+        <!-- Владелец задачи (серверный режим): в локальном owner всегда null и бейджа нет. -->
+        <UiBadge v-if="task.owner" tone="info" size="sm">{{ task.owner }}</UiBadge>
       </div>
       <div class="listik-task-card__counts">
         <CountGlyph icon="lock" tone="warning" :count="blockedCount" :title="blockedTooltip" />

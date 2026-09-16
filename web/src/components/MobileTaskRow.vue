@@ -29,6 +29,8 @@ const holderText = computed(() => {
     <strong class="listik-mobile-task__title">{{ props.task.title }}</strong>
     <span class="listik-mobile-task__meta">
       <UiBadge tone="neutral" size="sm">{{ props.task.project || 'без проекта' }}</UiBadge>
+      <!-- Владелец задачи (серверный режим): в локальном owner всегда null и бейджа нет. -->
+      <UiBadge v-if="props.task.owner" tone="info" size="sm">{{ props.task.owner }}</UiBadge>
       <span>{{ taskStageLabel(props.task) }}</span>
     </span>
     <span class="listik-mobile-task__meta listik-mobile-task__meta--muted">

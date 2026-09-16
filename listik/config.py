@@ -15,12 +15,17 @@ import tomllib
 from pathlib import Path
 from typing import Any
 
+from . import errors as errors_mod
 from . import paths
 
 DEFAULTS: dict[str, Any] = {
     "server": {
         "host": "127.0.0.1",
         "port": paths.DEFAULT_PORT,
+        # Ключей `mode`/`users` здесь намеренно нет, как и `[assistant]`: `save()`
+        # пишет весь merged-словарь, и всё из DEFAULTS попадало бы в чужой
+        # config.toml при первом же `ensure_token`. Режим и список людей читают
+        # `server_mode()`/`users()` прямо из файла, с запасным значением.
     },
     "auth": {
         "token": "",
@@ -219,6 +224,70 @@ def ensure_token(cfg: dict | None = None) -> tuple[dict, str]:
         cfg.setdefault("auth", {})["token"] = token
         save(cfg)
     return cfg, token
+
+
+#: Режимы работы хаба: «локальный» (один человек, владелец задачи не нужен) и
+#: «серверный» (общий Listik, у задачи есть владелец-человек из `server.users`).
+SERVER_MODES = ("local", "server")
+
+
+def server_mode(cfg: dict | None = None) -> str:
+    """Режим хаба из `[server] mode`; по умолчанию — `"local"`."""
+    cfg = load() if cfg is None else cfg
+    value = (cfg.get("server") or {}).get("mode", "local")
+    if not isinstance(value, str) or value not in SERVER_MODES:
+        raise ValueError(
+            f"server.mode: ожидается \"local\" или \"server\", а не {value!r}")
+    return value
+
+
+def is_server_mode(cfg: dict | None = None) -> bool:
+    """True, если хаб поднят в серверном режиме (владелец задачи включён)."""
+    return server_mode(cfg) == "server"
+
+
+def users(cfg: dict | None = None) -> list[str]:
+    """Закрытый список людей из `[server] users`; по умолчанию пустой."""
+    cfg = load() if cfg is None else cfg
+    value = (cfg.get("server") or {}).get("users", [])
+    if value is None:
+        return []
+    if not isinstance(value, list):
+        raise ValueError("server.users: ожидается список имён")
+    out: list[str] = []
+    for item in value:
+        if not isinstance(item, str) or not item.strip():
+            raise ValueError(f"server.users: непустое имя-строка ожидается, а не {item!r}")
+        out.append(item)
+    return out
+
+
+def check_owner(owner: str | None, cfg: dict | None = None) -> str | None:
+    """Владелец, каким его надо записать: `None` — «не представился».
+
+    В локальном режиме владелец игнорируется полностью (даже мусорный), поэтому
+    всегда `None`. В серверном пустое значение — то же «не представился», а имя
+    не из `server.users` — `errors.BadArgument`. Регистр не нормализуется: имя
+    в конфиге и есть каноническое.
+    """
+    cfg = load() if cfg is None else cfg
+    if not is_server_mode(cfg):
+        return None
+    if owner is None:
+        return None
+    value = owner.strip() if isinstance(owner, str) else str(owner).strip()
+    if not value:
+        return None
+    if value not in users(cfg):
+        raise errors_mod.BadArgument(f"владелец {value!r} не в списке server.users")
+    return value
+
+
+def default_owner(cfg: dict | None = None) -> str:
+    """Владелец по умолчанию для этой машины — `[auth] owner` (может быть пустым)."""
+    cfg = load() if cfg is None else cfg
+    value = (cfg.get("auth") or {}).get("owner", "")
+    return value.strip() if isinstance(value, str) else ""
 
 
 def routing(project: str | None = None, conn=None) -> dict:

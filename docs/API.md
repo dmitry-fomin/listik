@@ -593,7 +593,7 @@ id внутри файлового пути (`docs/specs/<id>.md`, `/wt/<id>/lis
 | GET | `/api/ready` | `project`, `stage`, `harness` (только задачи, чей этап разрешён этому harness в routing проекта; задача без этапа — всем), `include_occupied`, `limit` | `tasks[]` (можно брать: нет незакрытых блокеров и держателя), `cycles[]`. Фильтр по `X-Listik-Owner` — тот же, что у `/api/tasks` |
 | GET | `/api/blocked` | `project`, `limit` | `tasks[]` с разбором `blockers[]`, `blocked_by_stale`, `blocked_by_holder` |
 | GET | `/api/deps/suggested` | `project`, `limit` | `items[]` (предложения агентов, ждущие подтверждения человеком: `issue_id, issue_title, issue_stage, project, depends_on, depends_on_title, depends_on_status, created_by, created_at`), `generated_at` |
-| GET | `/api/timeline` | `limit` | `items[]`: `ts, kind, from_value, to_value, actor, actor_title, harness, note, duration_s, task_id, title, project, stage, status, age` |
+| GET | `/api/timeline` | `limit`, `project` (оставляет только события задач этого проекта) | `items[]`: `ts, kind, from_value, to_value, actor, actor_title, harness, note, duration_s, task_id, title, project, stage, status, age` |
 | GET | `/api/events` | `limit` | сырые события |
 | GET | `/api/stream` | `token` (обязателен) | SSE: `data: {"kind":"task","at":...,"payload":{"id":...,"action":"updated"}}`, плюс `: ping` каждые 15 с |
 

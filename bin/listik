@@ -140,7 +140,7 @@ def owner_default(args) -> str:
 #: У `memory`, `remember`, `dep suggested`, `import-from-bd`, `projects` тот же флаг
 #: значит другое (куда писать/что показать) — автоопределение им не подставляется.
 PROJECT_DEFAULT_COMMANDS = frozenset({
-    "ready", "list", "board", "stats", "search", "blocked", "new",
+    "ready", "list", "board", "stats", "search", "blocked", "new", "inbox", "timeline",
 })
 
 #: Зарезервированное значение `--project`/`LISTIK_PROJECT` — «все проекты».
@@ -1292,8 +1292,9 @@ def cmd_dep_cycles(args) -> int:
 def cmd_inbox(args) -> int:
     """Что требует человека: вопросы, брошенные задачи и всё, что ждёт решения."""
     res = call("board", args, "/api/board",
-               query={"group_by": "status", "include_closed": "false"},
-               local_kwargs={"group_by": "status"})
+               query={"group_by": "status", "include_closed": "false",
+                      "project": args.project},
+               local_kwargs={"group_by": "status", "project": args.project})
     items = res.get("needs_you") or []
     questions = [t for t in items if t.get("needs_owner")]
     dropped = [t for t in items if not t.get("needs_owner")]
@@ -1368,8 +1369,9 @@ def cmd_stats(args) -> int:
 
 
 def cmd_timeline(args) -> int:
-    res = call("timeline", args, "/api/timeline", query={"limit": args.limit},
-               local_kwargs={"limit": args.limit})
+    res = call("timeline", args, "/api/timeline",
+               query={"limit": args.limit, "project": args.project},
+               local_kwargs={"limit": args.limit, "project": args.project})
     if getattr(args, "json", False):
         emit(args, res, "")
         return 0
@@ -1953,6 +1955,7 @@ def build_parser() -> argparse.ArgumentParser:
     sp.add_argument("-n", "--limit", type=int, default=60)
 
     sp = add("inbox", cmd_inbox, help="что требует человека: вопросы и брошенные задачи")
+    sp.add_argument("--project")
     sp.add_argument("-n", "--limit", type=int, default=25)
 
     sp = add("board", cmd_board, help="состояние доски в терминале")
@@ -1965,6 +1968,7 @@ def build_parser() -> argparse.ArgumentParser:
     sp.add_argument("-p", "--project")
 
     sp = add("timeline", cmd_timeline, help="лента событий")
+    sp.add_argument("--project")
     sp.add_argument("-n", "--limit", type=int, default=60)
 
     sp = add("embed", cmd_embed, help="досчитать векторы (ollama bge-m3)")

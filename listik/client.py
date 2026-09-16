@@ -250,7 +250,8 @@ def local_call(op: str, **kwargs):
         from . import deps as deps_mod
         return deps_mod.ready(conn, kwargs["task_id"])
     if op == "timeline":
-        return {"items": store.task_timeline(conn, limit=kwargs.get("limit", 100))}
+        return {"items": store.task_timeline(conn, limit=kwargs.get("limit", 100),
+                                             project=kwargs.get("project"))}
     if op == "memory":
         return search_mod.search_memories(conn, kwargs["query"], limit=kwargs.get("limit", 20),
                                           project=kwargs.get("project"))

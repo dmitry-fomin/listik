@@ -724,7 +724,8 @@ def handle(method: str, path: str, query: dict, body: dict, authed: bool = False
         }
 
     if path == "/api/timeline":
-        return 200, {"items": store.task_timeline(conn, limit=as_int(q1("limit"), 100) or 100)}
+        return 200, {"items": store.task_timeline(
+            conn, limit=as_int(q1("limit"), 100) or 100, project=q1("project"))}
 
     if path == "/api/tasks" and method == "GET":
         return 200, store.list_tasks(

@@ -57,7 +57,7 @@ import IconToggle from './IconToggle.vue'
 import ListikIcon from './ListikIcon.vue'
 import store from '@/store/listik'
 import type { ProjectPatch, ProjectRow } from '@/api/types'
-import { projectGitHint, projectIsGit, projectPathLabel, projectTasksLabel } from '@/lib/projects'
+import { projectGitHint, projectIsGit, projectMetaLabel, projectTitleLabel } from '@/lib/projects'
 
 const ADMIN_NAME_KEY = 'listik.adminName'
 
@@ -380,9 +380,9 @@ watch(
               <ul v-else class="listik-projects__rows">
                 <li v-for="project in visible" :key="project.slug">
                   <UiEntityCard
-                    :title="project.slug"
+                    :title="projectTitleLabel(project)"
                     size="sm"
-                    :meta="`${projectTasksLabel(project)} · ${projectPathLabel(project)}`"
+                    :meta="projectMetaLabel(project)"
                     :loading="action === `archive:${project.slug}` || action === `remove:${project.slug}`"
                   >
                     <template #avatar>
@@ -433,9 +433,9 @@ watch(
               <ul class="listik-projects__rows">
                 <li v-for="project in hidden" :key="project.slug">
                   <UiEntityCard
-                    :title="project.slug"
+                    :title="projectTitleLabel(project)"
                     size="sm"
-                    :meta="`${projectTasksLabel(project)} · ${projectPathLabel(project)}`"
+                    :meta="projectMetaLabel(project)"
                     :loading="action === `archive:${project.slug}` || action === `remove:${project.slug}`"
                   >
                     <template #avatar>

@@ -18,6 +18,22 @@ export function projectTasksLabel(project: ProjectRow): string {
   return `задач: ${total} · живых: ${open}`
 }
 
+/** Заголовок строки репозитория: человеку — название, и только без него — slug. */
+export function projectTitleLabel(project: ProjectRow): string {
+  return project.title || project.slug
+}
+
+/**
+ * Подпись строки репозитория. Slug уехал из заголовка в подпись, но не пропал:
+ * им проект зовётся в CLI (`listik -p <slug>`), поэтому он остаётся видимым —
+ * кроме случая, когда названия нет и slug уже стоит заголовком.
+ */
+export function projectMetaLabel(project: ProjectRow): string {
+  const parts = project.title ? [project.slug] : []
+  parts.push(projectTasksLabel(project), projectPathLabel(project))
+  return parts.join(' · ')
+}
+
 export function projectPathLabel(project: ProjectRow): string {
   if (!project.path) return 'каталог не указан'
   return project.path_exists === false ? `${project.path} — каталога нет` : project.path

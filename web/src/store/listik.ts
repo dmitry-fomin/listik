@@ -60,6 +60,12 @@ export interface Filters {
   deps: DepsFilter
 }
 
+/** Фильтры чипов тулбара: действуют только на выборку доски и инбокс. */
+export interface BoardFilters {
+  health: Filters['health']
+  deps: DepsFilter
+}
+
 export function emptyFilters(): Filters {
   return {
     project: '',
@@ -129,6 +135,7 @@ const queueTick = ref(0)
 let initialised = false
 
 const filters = reactive<Filters>(emptyFilters())
+const boardFilters = reactive<BoardFilters>({ health: '', deps: 'all' })
 const query = ref('')
 const searchMode = ref<SearchMode>('hybrid')
 
@@ -217,10 +224,12 @@ function handleError(error: unknown): void {
   connectionLost.value = false
 }
 
-function matchesFilters(task: Task, f: Filters): boolean {
+function matchesFilters(task: Task, f: Filters, board: BoardFilters = { health: '', deps: 'all' }): boolean {
   if (f.needsOwner && !task.needs_owner) return false
   if (f.health === 'dead' && taskHealth(task) !== 'dead') return false
   if (f.health === 'at-risk' && taskHealth(task) !== 'at-risk') return false
+  if (board.health === 'dead' && taskHealth(task) !== 'dead') return false
+  if (board.health === 'at-risk' && taskHealth(task) !== 'at-risk') return false
   if (f.type && task.issue_type !== f.type) return false
   if (f.assignee) {
     const target = f.assignee === '—' ? null : f.assignee
@@ -231,13 +240,16 @@ function matchesFilters(task: Task, f: Filters): boolean {
   if (f.deps === 'blocked' && !(depsSummary.value[task.id]?.blockedBy.length ?? 0)) return false
   // «готовые к работе» — ровно то, что вернул /api/ready (нет блокеров и держателя)
   if (f.deps === 'ready' && !readyTasks.value.some((item) => item.id === task.id)) return false
+  if (board.deps === 'blocked' && !(depsSummary.value[task.id]?.blockedBy.length ?? 0)) return false
+  if (board.deps === 'ready' && !readyTasks.value.some((item) => item.id === task.id)) return false
   return true
 }
 
 /** Часть фильтров сервер для доски не умеет — эти применяются на клиенте. */
-function needsClientFilter(f: Filters): boolean {
+function needsClientFilter(f: Filters, board: BoardFilters = { health: '', deps: 'all' }): boolean {
   return Boolean(
-    f.needsOwner || f.health || f.type || f.assignee || f.updatedFrom || f.updatedTo || f.deps !== 'all',
+    f.needsOwner || f.health || f.type || f.assignee || f.updatedFrom || f.updatedTo || f.deps !== 'all' ||
+      board.health || board.deps !== 'all',
   )
 }
 
@@ -291,7 +303,7 @@ const columns = computed<BoardColumn[]>(() => {
   const source = orderColumns(board.value?.columns ?? [])
   // счётчик «ждёт N» в колонке приходит из /api/blocked, поэтому колонки
   // пересобираются и без клиентских фильтров
-  if (!needsClientFilter(filters)) {
+  if (!needsClientFilter(filters, boardFilters)) {
     // «Готово» режем окном в 7 дней БЕЗУСЛОВНО (не только внутри клиентских
     // фильтров ниже) — иначе быстрый путь без фильтров показывал бы в колонке
     // все закрытые задачи сервера (до `limit: 300`), а рельса «Готово» рядом —
@@ -308,7 +320,7 @@ const columns = computed<BoardColumn[]>(() => {
   return source
     .map((column) => {
       const tasks = column.tasks
-        .filter((task) => matchesFilters(task, filters))
+        .filter((task) => matchesFilters(task, filters, boardFilters))
         .filter((task) => column.key !== 'done' || isRecentlyDone(task))
       return { ...column, tasks, ...columnCounter(tasks) }
     })
@@ -335,7 +347,9 @@ const inbox = computed<Task[]>(() => {
     seen.add(task.id)
     merged.push(task)
   }
-  const filtered = needsClientFilter(filters) ? merged.filter((task) => matchesFilters(task, filters)) : merged
+  const filtered = needsClientFilter(filters, boardFilters)
+    ? merged.filter((task) => matchesFilters(task, filters, boardFilters))
+    : merged
   const rank = (task: Task): number => {
     if (task.needs_owner) return 0
     if (taskHealth(task) === 'dead') return 1
@@ -1210,6 +1224,7 @@ export function useListikStore() {
     live,
     lastSyncAt,
     filters,
+    boardFilters,
     query,
     searchMode,
     openTaskId,

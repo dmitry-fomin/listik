@@ -41,6 +41,7 @@ import type {
   AssistantField as AssistantFieldKey,
   ProjectRow,
   RouteDef,
+  VoiceDraft,
 } from '@/api/types'
 import {
   defaultPipelineFor,
@@ -54,6 +55,11 @@ import store from '@/store/listik'
 const props = defineProps<{
   projects: ProjectRow[]
   pending: boolean
+  /**
+   * Черновик голосового ввода (порция b): предзаполняет форму в момент открытия
+   * окна. `null`/не передан — поведение формы не меняется ни в чём.
+   */
+  draft?: VoiceDraft | null
 }>()
 
 const emit = defineEmits<{
@@ -126,8 +132,12 @@ watch(isOpen, (open) => {
     resetForm()
     return
   }
-  // Имя в шапке могли сменить, пока форма была закрыта — подставляем текущее.
+  // Открытие начинается с умолчаний: поверх них ложится черновик голосового ввода.
+  resetForm()
+  // Имя в шапке могли сменить, пока форма была закрыта — подставляем текущее
+  // (после resetForm, иначе умолчания затрут подстановку).
   form.owner = store.owner.value
+  applyDraft(props.draft)
   // Первое открытие формы — единственный запрос маршрутов за сессию доски.
   store.ensureRoutes()
   // И единственный запрос статуса помощника: без ключа кнопок у полей не будет.
@@ -257,6 +267,31 @@ watch(
     if (!routeTouched.value) applyDefaultRoute()
   },
 )
+
+/**
+ * Черновик голосового ввода поверх умолчаний: пустые/нераспознанные поля не
+ * трогаются, чтобы форма честно потребовала их выбрать. Тип — только из
+ * `epic|task|bug`; проект — только если такой slug есть на доске; маршрут —
+ * только видимый и допустимый итоговому типу (применённый помечается
+ * `routeTouched`, иначе смена типа в форме затрёт его умолчанием).
+ */
+function applyDraft(draft: VoiceDraft | null | undefined): void {
+  if (!draft) return
+  if (draft.title) form.title = draft.title
+  if (draft.description) form.description = draft.description
+  if (draft.acceptance?.length) form.acceptance = draft.acceptance.join('\n')
+  if (draft.type === 'epic' || draft.type === 'task' || draft.type === 'bug') form.type = draft.type
+  if (draft.project && props.projects.some((project) => project.slug === draft.project)) {
+    form.project = draft.project
+  }
+  const key = draft.route?.key
+  if (!key) return
+  const route = visibleRoutes.value.find((item) => item.key === key)
+  if (route && routeAllowedForType(route, form.type)) {
+    form.routeKey = route.key
+    routeTouched.value = true
+  }
+}
 
 function selectRoute(route: RouteDef): void {
   if (!routeAllowed(route)) return

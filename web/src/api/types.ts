@@ -471,6 +471,11 @@ export interface AssistantStatus {
   enabled: boolean
   model: string
   base_url: string
+  /**
+   * Голосовой ввод (`[deepgram]` + `[assistant]` настроены). Необязательно:
+   * сервер до появления голоса поля не отдавал, `undefined` — «выключено».
+   */
+  voice?: boolean
 }
 
 /** Контекст карточки, который уходит на сервер вместе с текстом поля. */
@@ -518,6 +523,55 @@ export interface AssistantSuggestRequest {
   field: AssistantField
   text: string
   context: AssistantContext
+}
+
+// ── голосовой ввод: POST /api/assistant/transcribe, POST /api/assistant/draft
+//    (см. docs/API.md «Помощник DeepSeek» → «Голосом») ──────────────────────────
+
+/** Тело `POST /api/assistant/transcribe`: запись целиком в base64, без `data:…;base64,`. */
+export interface VoiceTranscribeRequest {
+  audio_base64: string
+  mime: string
+}
+
+/** Ответ `transcribe`: тишина — не ошибка, `transcript` пустой. */
+export interface VoiceTranscribeResponse {
+  transcript: string
+  model: string
+}
+
+/** Тело `POST /api/assistant/draft`: рассказ человека словами. */
+export interface VoiceDraftRequest {
+  text: string
+}
+
+/** Маршрут черновика: только видимая запись `routes.json` (проверяет сервер). */
+export interface VoiceDraftRoute {
+  key: string
+  kind: string | null
+  title: string | null
+  hint: string
+  reason: string
+}
+
+/**
+ * Черновик задачи. Все шесть полей есть всегда; поле, которое модель не
+ * вывела или которое не прошло проверку, — `null`, поэтому UI обязан
+ * показать ветку «не распознано».
+ */
+export interface VoiceDraft {
+  project: string | null
+  type: 'epic' | 'task' | 'bug' | null
+  title: string | null
+  description: string | null
+  acceptance: string[] | null
+  route: VoiceDraftRoute | null
+}
+
+/** Ответ `POST /api/assistant/draft`: черновик ничего не создаёт. */
+export interface VoiceDraftResponse {
+  model: string
+  draft: VoiceDraft
 }
 
 export interface ActorRow {

@@ -157,8 +157,8 @@ class FeaturePipelinePluginTests(unittest.TestCase):
 #: Пути (относительно PLUGIN_DIR), которые должны называть работу по id карточки (`<id>`), а не
 #: по номеру шага. `agents/*.md` собирается в момент вызова теста, а не при импорте.
 CORE_DOC = pathlib.Path("references") / "pipeline-core.md"
-TRACKS_DOC = pathlib.Path("skills") / "feature-pipeline" / "references" / "tracks.md"
 INHERIT_SKILL = pathlib.Path("skills") / "inherit-pipeline" / SKILL_FILE
+FEATURE_SKILL = pathlib.Path("skills") / "feature-pipeline" / SKILL_FILE
 AGENTS_SUBDIR = "agents"
 
 MANIFEST_LINE = (
@@ -172,6 +172,10 @@ def _plugin_text(relative: pathlib.Path) -> str:
 
 #: Начало абзаца шага 0 про файл широкой механической правки.
 ADHOC_PARAGRAPH_START = "**Adhoc-файл для широкой правки.**"
+
+
+#: Начало абзаца ядра про переиспользованное дерево трека.
+TRACKS_REUSE_PARAGRAPH_START = "Каталог или ветка уже есть"
 
 
 #: Начало абзаца шага 0 про журнал: список имён журнала по случаям.
@@ -216,7 +220,7 @@ class FeaturePipelineStepNamingTests(unittest.TestCase):
     """Имена бумаг и деревьев (listik-223b, порция a) — по id карточки, не по номеру шага."""
 
     def test_no_old_step_number_naming(self) -> None:
-        paths = [CORE_DOC, TRACKS_DOC, *_agent_paths()]
+        paths = [CORE_DOC, *_agent_paths()]
         self.assertGreater(len(_agent_paths()), 0, "в agents/ не нашлось ни одного файла")
         for relative in paths:
             with self.subTest(file=str(relative)):
@@ -280,33 +284,6 @@ class FeaturePipelineStepNamingTests(unittest.TestCase):
             "по карточке (правило 4 требует обратного)",
         )
 
-    def test_adhoc_paragraph_in_inherit_pipeline_names_paper_by_card(self) -> None:
-        """Абзац «Adhoc-файл для широкой правки» скила inherit-pipeline (listik-ivt3) — по правилу 4:
-        при карточке файл `<steps>/<id>.a.md`, adhoc-имя остаётся ветке без карточки."""
-        paragraph = _paragraph(INHERIT_SKILL, ADHOC_PARAGRAPH_START)
-        self.assertIn(
-            "<steps>/<id>.a.md", paragraph,
-            f"{INHERIT_SKILL}: абзац {ADHOC_PARAGRAPH_START!r} не называет файл по карточке",
-        )
-        self.assertIn(
-            "при карточке", paragraph,
-            f"{INHERIT_SKILL}: абзац {ADHOC_PARAGRAPH_START!r} не оговаривает случай карточки",
-        )
-        self.assertIn(
-            "<steps>/adhoc-<ГГГГ-ММ-ДД>-<слаг>.a.md", paragraph,
-            f"{INHERIT_SKILL}: абзац {ADHOC_PARAGRAPH_START!r} не оставил adhoc-имя ветке без карточки",
-        )
-        self.assertIn(
-            "без карточки", paragraph,
-            f"{INHERIT_SKILL}: абзац {ADHOC_PARAGRAPH_START!r} не оговаривает случай без карточки",
-        )
-        self.assertLess(
-            paragraph.index("<steps>/<id>.a.md"),
-            paragraph.index("<steps>/adhoc-<ГГГГ-ММ-ДД>-<слаг>.a.md"),
-            f"{INHERIT_SKILL}: в абзаце {ADHOC_PARAGRAPH_START!r} adhoc-имя названо раньше файла "
-            "по карточке (правило 4 требует обратного)",
-        )
-
     def test_journal_paragraph_names_wide_edit_by_card(self) -> None:
         """Абзац шага 0 про журнал (listik-ivt3): adhoc-имя остаётся широкой правке без карточки,
         при карточке действует правило 2 — `<steps>/<id>.journal.md`."""
@@ -327,14 +304,12 @@ class FeaturePipelineStepNamingTests(unittest.TestCase):
             "безусловно: после него нет оговорки «без карточки» (listik-ivt3)",
         )
 
-    def test_manifest_line_matches_in_core_and_tracks(self) -> None:
-        for relative in (CORE_DOC, TRACKS_DOC):
-            with self.subTest(file=str(relative)):
-                text = _plugin_text(relative)
-                self.assertIn(
-                    MANIFEST_LINE, text,
-                    f"{relative}: не нашлось строки манифеста трека {MANIFEST_LINE!r}",
-                )
+    def test_manifest_line_in_core(self) -> None:
+        text = _plugin_text(CORE_DOC)
+        self.assertIn(
+            MANIFEST_LINE, text,
+            f"{CORE_DOC}: не нашлось строки манифеста трека {MANIFEST_LINE!r}",
+        )
 
     def test_heartbeat_note_uses_id(self) -> None:
         text = _plugin_text(CORE_DOC)
@@ -366,10 +341,35 @@ class FeaturePipelineStepNamingTests(unittest.TestCase):
             f"{relative}: не нашлось имени файла судьи '<id>.judge-<X>.r<R>.md'",
         )
 
+    def test_tracks_doc_removed(self) -> None:
+        """`tracks.md` удалён, и ни один `SKILL.md` на него больше не ссылается."""
+        tracks_doc = PLUGIN_DIR / "skills" / "feature-pipeline" / "references" / "tracks.md"
+        self.assertFalse(
+            tracks_doc.exists(),
+            f"{tracks_doc}: файл должен быть удалён — его содержимое переехало в {CORE_DOC}",
+        )
+        for name in sorted(_skill_names()):
+            with self.subTest(skill=name):
+                self.assertNotIn(
+                    "tracks.md", _skill_text(name),
+                    f"{name}/{SKILL_FILE}: ссылка на удалённый tracks.md",
+                )
+
+    def test_core_tracks_mention_worktree_list(self) -> None:
+        """Абзац про переиспользованное дерево зовёт `git worktree list` после `/clear`."""
+        paragraph = _paragraph(CORE_DOC, TRACKS_REUSE_PARAGRAPH_START)
+        for needle in ("`git worktree list`", "/clear"):
+            with self.subTest(needle=needle):
+                self.assertIn(
+                    needle, paragraph,
+                    f"{CORE_DOC}: в абзаце {TRACKS_REUSE_PARAGRAPH_START!r} нет {needle!r}",
+                )
+
 
 #: Пресеты, у которых по канону есть строка `BASE=<id>` в примере префикса команд.
 BASE_ID_SKILLS = (
     "high-pipeline",
+    "inherit-pipeline",
     "xhigh-pipeline",
     "medium-pipeline",
     "low-pipeline",
@@ -387,6 +387,12 @@ ARGUMENT_HINT_ID_SKILLS = (
 )
 
 BASE_LINE_RE = re.compile(r"^BASE=<id>", re.MULTILINE)
+
+#: Ссылка на ядро, которую держит каждый SKILL.md пресета.
+CORE_LINK = "[pipeline-core.md](../../references/pipeline-core.md)"
+
+#: Пресет, который ссылается на ядро разделом Listik, структура своя.
+PRESETS_WITHOUT_CORE_LINK = ("opus-sonnet-pipeline",)
 
 
 class FeaturePipelineSkillNamingTests(unittest.TestCase):
@@ -429,14 +435,24 @@ class FeaturePipelineSkillNamingTests(unittest.TestCase):
     def test_inherit_pipeline_naming(self) -> None:
         text = _skill_text("inherit-pipeline")
         required = [
-            "<id>.journal.md",
-            "*.journal.md",
-            "<id>-<часть>",
-            "<id>.diff-<X>.r<R>.txt",
-            "adhoc-<ГГГГ-ММ-ДД>-<слаг>.journal.md",
-            MANIFEST_LINE,
-            "task/<id>",
-            "listik worktree <id>",
+            "[pipeline-core.md](../../references/pipeline-core.md)",
+            "Ниже — только то, чем inherit-pipeline отличается",
+            "process:inherit-pipeline",
+            "## Роли",
+            "## Нужные скилы",
+            "## Префикс",
+            "STEPS=<paths.steps",
+            "BASE=<id>",
+            "WT=",
+            "feature-pipeline:pipeline-spec-writer",
+            "feature-pipeline:pipeline-critic",
+            "feature-pipeline:pipeline-implementer",
+            "feature-pipeline:pipeline-judge",
+            "пресет inherit-pipeline",
+            "judge_preflight",
+            "VERDICT: PASS",
+            "VERDICT: FAIL",
+            'git -C "$WT" log --oneline -1',
         ]
         for needle in required:
             with self.subTest(needle=needle):
@@ -445,20 +461,147 @@ class FeaturePipelineSkillNamingTests(unittest.TestCase):
                     f"inherit-pipeline/{SKILL_FILE}: не нашлось обязательной подстроки {needle!r}",
                 )
 
+    def test_inherit_pipeline_has_no_core_copies(self) -> None:
+        """Пресет не держит своей копии ядра: ни шага 0, ни треков, ни пределов, ни общих граблей."""
+        text = _skill_text("inherit-pipeline")
+        forbidden = [
+            "## Жёсткие правила",
+            "**Цикл.**",
+            "## Протокол вопросов",
+            "## Шаг 0",
+            "## Треки",
+            "## Пределы на порцию",
+            "## Журнал",
+            "### Правила треков",
+            "### Сведение и уборка",
+            "listik worktree",
+            "merge --no-ff",
+            "git worktree remove",
+            "add -A -N",
+            "diff HEAD -U10",
+            "reset -q",
+            "M ≤ 2",
+            MANIFEST_LINE,
+            ADHOC_PARAGRAPH_START,
+            "Названная правка в одном-двух файлах",
+        ]
+        for needle in forbidden:
+            with self.subTest(needle=needle):
+                self.assertNotIn(
+                    needle, text,
+                    f"inherit-pipeline/{SKILL_FILE}: осталась копия ядра — {needle!r}",
+                )
+        with self.subTest(needle="## Грабли"):
+            self.assertIsNone(
+                re.search(r"^## Грабли$", text, re.MULTILINE),
+                f"inherit-pipeline/{SKILL_FILE}: остался заголовок общих граблей ядра "
+                "«## Грабли» (у пресета бывает только «## Грабли пресета»)",
+            )
+
+    def test_presets_read_core(self) -> None:
+        """Каждый пресет отсылает к ядру ссылкой на pipeline-core.md."""
+        for name in sorted(_skill_names()):
+            if name in PRESETS_WITHOUT_CORE_LINK:
+                continue
+            with self.subTest(skill=name):
+                self.assertIn(
+                    CORE_LINK, _skill_text(name),
+                    f"{name}/{SKILL_FILE}: нет ссылки на ядро {CORE_LINK!r}",
+                )
+
     def test_feature_pipeline_naming(self) -> None:
         text = _skill_text("feature-pipeline")
         required = [
-            "<id>.journal.md",
-            "pipeline-<id>",
-            ".worktrees/<id>",
-            "<id>.diff-<X>.r<R>.txt",
-            "adhoc-<ГГГГ-ММ-ДД>-<слаг>.journal.md",
+            "[pipeline-core.md](../../references/pipeline-core.md)",
+            "Ниже — только то, чем feature-pipeline отличается",
+            "process:feature-pipeline",
+            "## Роли",
+            "## Конфиг пресета",
+            "## Нужные скилы",
+            "## Префикс",
+            "JOB",
+            "executor.primary",
+            "executor.fallback",
+            "executor.local",
+            "on_fallback",
+            "second_opinion.when",
+            "spec-only",
+            "feature-pipeline:pipeline-spec-writer",
+            "feature-pipeline:pipeline-implementer",
+            "feature-pipeline:pipeline-judge",
+            "--no-system",
+            "VERDICT: PASS",
+            "VERDICT: FAIL",
+            "фолбэк",
+            'git -C "$WT" log --oneline -1',
         ]
         for needle in required:
             with self.subTest(needle=needle):
                 self.assertIn(
                     needle, text,
                     f"feature-pipeline/{SKILL_FILE}: не нашлось обязательной подстроки {needle!r}",
+                )
+
+    def test_feature_pipeline_has_no_core_copies(self) -> None:
+        """Пресет не держит своей копии ядра: ни шага 0, ни пределов, ни общих граблей."""
+        text = _skill_text("feature-pipeline")
+        lowered = text.lower()
+        forbidden = [
+            "pipeline-<",
+            "EnterWorktree",
+            "--ff-only",
+            "git worktree add",
+            "grok:grok-delegate",
+            "dsh:dsh-runner",
+            "tracks.md",
+            "## Жёсткие правила",
+            "## Пределы на порцию",
+            "## Формат отчёта",
+            "Сколько раз можно",
+            "полный круг",
+            "листинги, логи, цитаты кода",
+            "paths.tz",
+            "add -A -N",
+            "diff HEAD -U10",
+            "reset -q",
+            "disable-model-invocation",
+            "синхронный",
+            "SECOND_OPINION_NO_SYSTEM",
+        ]
+        for needle in forbidden:
+            with self.subTest(needle=needle):
+                self.assertNotIn(
+                    needle, text,
+                    f"feature-pipeline/{SKILL_FILE}: осталась копия ядра — {needle!r}",
+                )
+        with self.subTest(needle="разведк"):
+            self.assertNotIn(
+                "разведк", lowered,
+                f"feature-pipeline/{SKILL_FILE}: остался класс задачи «разведка», "
+                "которого у пресета нет",
+            )
+
+    def test_config_example_names_readers(self) -> None:
+        """Образец конфига называет каналы именами каналов и честно — своих читателей."""
+        path = PLUGIN_DIR / "skills" / "feature-pipeline" / "config.example.yaml"
+        text = path.read_text(encoding="utf-8")
+        for needle in (
+            "primary: grok",
+            "fallback: dsh",
+            "local: feature-pipeline:pipeline-implementer",
+            "feature-pipeline",
+            "opus-sonnet-pipeline",
+        ):
+            with self.subTest(needle=needle):
+                self.assertIn(
+                    needle, text,
+                    f"{path.name}: не нашлось обязательной подстроки {needle!r}",
+                )
+        for needle in ("grok:grok-delegate", "dsh:dsh-runner", "пресетами не читаются"):
+            with self.subTest(needle=needle):
+                self.assertNotIn(
+                    needle, text,
+                    f"{path.name}: осталась устаревшая подстрока {needle!r}",
                 )
 
     def test_opus_single_pipeline_naming(self) -> None:
@@ -482,9 +625,9 @@ class FeaturePipelineSkillNamingTests(unittest.TestCase):
             f"xlow-pipeline/{SKILL_FILE}: не нашлось обязательной подстроки '<steps>/<id>.a.md'",
         )
 
-    def test_no_pipeline_branch_prefix_in_core_tracks_inherit(self) -> None:
+    def test_no_pipeline_branch_prefix(self) -> None:
         """pipeline-< и git worktree add -b pipeline больше не используются."""
-        for relative in (CORE_DOC, TRACKS_DOC, INHERIT_SKILL):
+        for relative in (CORE_DOC, INHERIT_SKILL, FEATURE_SKILL):
             with self.subTest(file=str(relative)):
                 text = _plugin_text(relative)
                 self.assertNotIn(
@@ -496,22 +639,21 @@ class FeaturePipelineSkillNamingTests(unittest.TestCase):
                     f"{relative}: осталась команда 'git worktree add -b pipeline' (заменена на listik worktree)",
                 )
 
-    def test_core_tracks_inherit_create_tree_with_listik_worktree(self) -> None:
+    def test_core_creates_tree_with_listik_worktree(self) -> None:
         """Дерево заводится через listik worktree <id> [--track <часть>]."""
-        for relative in (CORE_DOC, TRACKS_DOC, INHERIT_SKILL):
+        for relative in (CORE_DOC,):
             with self.subTest(file=str(relative)):
                 text = _plugin_text(relative)
                 self.assertIn(
                     "listik worktree <id>", text,
                     f"{relative}: не нашлось команды 'listik worktree <id>'",
                 )
-        for relative in (CORE_DOC, TRACKS_DOC):
-            with self.subTest(file=str(relative), flag="--track"):
-                text = _plugin_text(relative)
-                self.assertIn(
-                    "--track <часть>", text,
-                    f"{relative}: не нашлось флага '--track <часть>' для трекового режима",
-                )
+        with self.subTest(file=str(CORE_DOC), flag="--track"):
+            text = _plugin_text(CORE_DOC)
+            self.assertIn(
+                "--track <часть>", text,
+                f"{CORE_DOC}: не нашлось флага '--track <часть>' для трекового режима",
+            )
 
 
 #: Строки журнала шага про сессию исполнителя (listik-auj4): id сессии, факт продолжения

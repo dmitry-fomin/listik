@@ -21,9 +21,10 @@ import {
 } from '@zoloto585/facet'
 import ProjectMark from './marks/ProjectMark.vue'
 import TaskGlyph from './marks/TaskGlyph.vue'
+import MarkdownProse from './MarkdownProse.vue'
 import type { DepInfo, ProjectRow, TaskComment, TaskDetail } from '@/api/types'
 import { commentKindTitle, datetimeAttr, humanAge, taskStageLabel } from '@/lib/format'
-import { HEALTH_TITLES, taskHealth } from '@/lib/health'
+import { HEALTH_TITLES, healthTone, taskHealth } from '@/lib/health'
 import { stageCode } from '@/lib/stages'
 import {
   depHolderHint,
@@ -92,7 +93,7 @@ const journalItems = computed<UiTimelineItem[]>(() => {
         </div>
         <h2 class="listik-drawer__title">{{ task.title }}</h2>
         <div class="listik-row listik-drawer__pills">
-          <UiStatusPill :tone="taskHealth(task)" size="md">{{ HEALTH_TITLES[taskHealth(task)] }}</UiStatusPill>
+          <UiStatusPill :tone="healthTone(task)" size="md">{{ HEALTH_TITLES[taskHealth(task)] }}</UiStatusPill>
           <UiBadge tone="info" size="sm">{{ taskStageLabel(task) }}</UiBadge>
           <UiBadge v-if="task.needs_owner" tone="accent" size="sm">нужен ты</UiBadge>
           <span class="listik-mono">{{ task.id }}</span>
@@ -137,7 +138,7 @@ const journalItems = computed<UiTimelineItem[]>(() => {
 
         <section class="listik-section">
           <h4 class="listik-section__title">Критерии приёмки</h4>
-          <p class="listik-prose">{{ task.acceptance || '—' }}</p>
+          <MarkdownProse :text="task.acceptance" />
         </section>
 
         <section class="listik-section">
@@ -166,7 +167,7 @@ const journalItems = computed<UiTimelineItem[]>(() => {
             <p class="listik-section__hint">
               {{ commentKindTitle(lastReview.kind) }} · {{ lastReview.author || '—' }} · {{ humanAge(lastReview.created_at) }}
             </p>
-            <p class="listik-prose">{{ lastReview.text }}</p>
+            <MarkdownProse :text="lastReview.text" />
           </template>
           <p v-else class="listik-section__hint">ещё нет</p>
         </section>

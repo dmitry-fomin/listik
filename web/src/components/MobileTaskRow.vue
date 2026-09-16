@@ -7,7 +7,7 @@ import { UiBadge, UiStatusPill } from '@zoloto585/facet'
 import { computed } from 'vue'
 import type { Task } from '@/api/types'
 import { humanAge, taskStageLabel } from '@/lib/format'
-import { HEALTH_TITLES, taskHealth } from '@/lib/health'
+import { HEALTH_TITLES, healthTone, taskHealth } from '@/lib/health'
 
 const props = defineProps<{ task: Task }>()
 const emit = defineEmits<{ open: [id: string] }>()
@@ -24,7 +24,7 @@ const holderText = computed(() => {
   <button type="button" class="listik-mobile-task" @click="emit('open', props.task.id)">
     <span class="listik-mobile-task__top">
       <span class="listik-mono">{{ props.task.id }}</span>
-      <UiStatusPill :tone="taskHealth(props.task)" size="sm">{{ HEALTH_TITLES[taskHealth(props.task)] }}</UiStatusPill>
+      <UiStatusPill :tone="healthTone(props.task)" size="sm">{{ HEALTH_TITLES[taskHealth(props.task)] }}</UiStatusPill>
     </span>
     <strong class="listik-mobile-task__title">{{ props.task.title }}</strong>
     <span class="listik-mobile-task__meta">

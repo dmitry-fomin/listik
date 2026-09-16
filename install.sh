@@ -128,9 +128,6 @@ ui_leaf_at() {
 ui_splash() {
     if [ "$ui_enabled" != 1 ]; then
         # Нет интерактива — нет и заставки: вывод остаётся ровно таким, как раньше.
-        if [ -t 1 ]; then
-            note "Listik: установка"
-        fi
         return
     fi
     ui_cursor_hide
@@ -172,14 +169,14 @@ ui_read_key() {
     ch=${ch%x}
     case $ch in
         "$esc")
-            stty min 0 time 1 </dev/tty 2>/dev/null
+            stty min 0 time 1 </dev/tty 2>/dev/null || true
             rest=$(dd bs=1 count=2 2>/dev/null </dev/tty; printf x)
             rest=${rest%x}
-            stty min 1 time 0 </dev/tty 2>/dev/null
+            stty min 1 time 0 </dev/tty 2>/dev/null || true
             case $rest in
                 '[A' | 'OA') key=up ;;
                 '[B' | 'OB') key=down ;;
-                '') key=esc ;;
+                '') key=other ;;
                 *) key=other ;;
             esac
             ;;
@@ -202,6 +199,9 @@ ui_menu_draw() {
         label=${item%%|*}
         hint=${item#*|}
         [ "$hint" = "$item" ] && hint=
+        # Перенос строки пункта сбил бы перерисовку меню (курсор ходит по строкам),
+        # поэтому на узком терминале пояснение не печатаем вовсе.
+        [ "$ui_cols" -lt 80 ] && hint=
         if [ "$i" = "$1" ]; then
             ui_line "  ${c_ok}❯ ●${c_off} ${c_sel}$label${c_off}  ${c_dim}$hint${c_off}"
         else
@@ -225,7 +225,7 @@ ui_menu2() {
         printf '%s[2K    %s%s%s\n' "$esc" "${c_dim}" "$2" "${c_off}"
     fi
     ui_menu_draw "$menu_choice"
-    printf '%s[2K  %s↑ ↓ выбор · Enter подтвердить%s\n' "$esc" "${c_dim}" "${c_off}"
+    printf '%s[2K  %s↑ ↓ выбор · Enter подтвердить · Ctrl+C отмена%s\n' "$esc" "${c_dim}" "${c_off}"
     while :; do
         ui_read_key
         case $key in
@@ -243,9 +243,9 @@ ui_menu2() {
         # перерисовываем два пункта и строку клавиш
         printf '%s[3A' "$esc"
         ui_menu_draw "$menu_choice"
-        printf '%s[2K  %s↑ ↓ выбор · Enter подтвердить%s\n' "$esc" "${c_dim}" "${c_off}"
+        printf '%s[2K  %s↑ ↓ выбор · Enter подтвердить · Ctrl+C отмена%s\n' "$esc" "${c_dim}" "${c_off}"
         case $key in
-            enter | esc) break ;;
+            enter) break ;;
         esac
     done
     ui_tty_restore
@@ -427,6 +427,10 @@ esac
 [ -n "$home" ] || die "--home не может быть пустым"
 
 ui_init
+# Заставка начинается раньше, чем появляется временный каталог, а курсор к этому
+# моменту уже спрятан: до настоящего cleanup терминал возвращает этот трап.
+trap 'ui_cursor_show; ui_tty_restore; exit 130' HUP INT TERM QUIT
+trap 'ui_cursor_show; ui_tty_restore' EXIT
 ui_splash
 
 # `~` в значении флага оболочка раскрывает сама, а в кавычках и в переменной — нет.
@@ -503,7 +507,7 @@ cleanup() {
     fi
     rm -rf "$tmp"
 }
-trap cleanup EXIT HUP INT TERM
+trap cleanup EXIT HUP INT TERM QUIT
 
 download() {
     if [ "$fetcher" = curl ]; then

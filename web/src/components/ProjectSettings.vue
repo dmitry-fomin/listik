@@ -8,6 +8,12 @@
  * не фильтр по задачам), и «ФИО» — локальная подпись автора для этого браузера,
  * сервер её не хранит и нигде не использует (нет такого поля в API).
  *
+ * Добавление и правка репозитория — одно окно (`UiFormModal`, listik-zmos):
+ * сценарии отличаются набором полей (в создании ещё и slug) и адресом запроса,
+ * поэтому черновик и обработка ошибок у них общие, а в списке не осталось ни
+ * формы добавления сверху, ни инлайновой правки строки — строка только
+ * показывает проект и несёт действия.
+ *
  * Репозитории умеют:
  * - добавить каталог по пути (`POST /api/projects`): slug берётся из имени
  *   каталога, но его можно задать вручную — так проект ложится в категорию
@@ -61,19 +67,26 @@ import { projectGitHint, projectIsGit, projectMetaLabel, projectTitleLabel } fro
 
 const ADMIN_NAME_KEY = 'listik.adminName'
 
-const pathInput = ref('')
-const slugInput = ref('')
-const titleInput = ref('')
 const action = ref<string | null>(null)
 /** Ответ `POST /api/projects` последнего удачного добавления — показываем, куда лёг проект. */
 const addResult = ref<ProjectRow | null>(null)
 const removeTarget = ref<ProjectRow | null>(null)
 const forceOpen = ref(false)
-/** Правка репозитория: что правим, черновик полей и чем она кончилась. */
-const editTarget = ref<ProjectRow | null>(null)
-const editTitle = ref('')
-const editPath = ref('')
-const editError = ref<string | null>(null)
+
+/**
+ * Одно окно на оба сценария: добавление и правка отличаются только набором
+ * полей и адресом запроса, поэтому черновик у них общий. `formMode === null`
+ * — окно закрыто; `formTarget` заполнен только в правке.
+ */
+type RepoFormMode = 'create' | 'edit'
+const formMode = ref<RepoFormMode | null>(null)
+const formTarget = ref<ProjectRow | null>(null)
+const formPath = ref('')
+const formSlug = ref('')
+const formTitle = ref('')
+/** Ошибка сервера показывается в самом окне: вкладку за оверлеем не видно. */
+const formError = ref<string | null>(null)
+/** Чем кончилась правка — плашка на вкладке, когда окно уже закрыто. */
 const editResult = ref<ProjectRow | null>(null)
 
 type SettingsTab = 'repos' | 'appearance' | 'name'
@@ -128,35 +141,12 @@ const open = computed({
 const visible = computed(() => store.projects.value.filter((project) => !project.archived))
 const hidden = computed(() => store.projects.value.filter((project) => project.archived))
 
-const canAdd = computed(() => pathInput.value.trim().length > 0 && action.value === null)
-
-/** Задач в проекте: сервер отдаёт и живые, и всего — в подсказке показываем оба. */
+/** Подсказка про slug — только в режиме создания: в правке slug не меняется. */
 function slugHint(): string {
-  const value = slugInput.value.trim()
+  const value = formSlug.value.trim()
   if (value) return `проект ляжет в «${value}»`
-  const base = pathInput.value.trim().replace(/\/+$/, '').split('/').pop()
+  const base = formPath.value.trim().replace(/\/+$/, '').split('/').pop()
   return base ? `slug будет «${base}» (имя каталога)` : 'slug по умолчанию — имя каталога'
-}
-
-async function submitAdd(): Promise<void> {
-  if (!canAdd.value) return
-  action.value = 'add'
-  addResult.value = null
-  const project = await store.addProject({
-    path: pathInput.value.trim(),
-    slug: slugInput.value.trim(),
-    title: titleInput.value.trim(),
-  })
-  action.value = null
-  if (project) {
-    // Ответ сервера не выбрасываем: в нём итоговый путь (и path_adjusted_from,
-    // если каталог привели к корню git) — пользователь должен видеть, куда попал проект.
-    addResult.value = project
-    pathInput.value = ''
-    slugInput.value = ''
-    titleInput.value = ''
-    emit('changed')
-  }
 }
 
 async function toggleArchived(project: ProjectRow, archived: boolean): Promise<void> {
@@ -166,14 +156,23 @@ async function toggleArchived(project: ProjectRow, archived: boolean): Promise<v
   if (ok) emit('changed')
 }
 
-/** Открыта ли форма правки. Закрытие во время запроса игнорируем: UiFormModal
+/** Открыто ли окно формы. Закрытие во время запроса игнорируем: UiFormModal
  *  сам держит оверлей, пока `loading`, — терять введённое нельзя. */
-const editOpen = computed({
-  get: () => editTarget.value !== null,
+const formOpen = computed({
+  get: () => formMode.value !== null,
   set: (value: boolean) => {
-    if (!value && action.value === null) editTarget.value = null
+    if (!value) closeForm()
   },
 })
+
+const formBusy = computed(() => action.value === 'form')
+
+function closeForm(): void {
+  if (formBusy.value) return
+  formMode.value = null
+  formTarget.value = null
+  formError.value = null
+}
 
 /**
  * Что реально уходит в `PATCH`: только изменённые поля. Пустое название — это
@@ -181,49 +180,102 @@ const editOpen = computed({
  * каталог у проекта из формы правки незачем, а промах по полю обнулил бы путь.
  */
 const editPatch = computed<ProjectPatch>(() => {
-  const project = editTarget.value
+  const project = formTarget.value
   if (!project) return {}
   const patch: ProjectPatch = {}
-  const title = editTitle.value.trim()
-  const path = editPath.value.trim()
+  const title = formTitle.value.trim()
+  const path = formPath.value.trim()
   if (title !== (project.title ?? '')) patch.title = title
   if (path && path !== (project.path ?? '')) patch.path = path
   return patch
 })
 
+function askAdd(): void {
+  formMode.value = 'create'
+  formTarget.value = null
+  formPath.value = ''
+  formSlug.value = ''
+  formTitle.value = ''
+  formError.value = null
+}
+
 function askEdit(project: ProjectRow): void {
-  editTarget.value = project
-  editTitle.value = project.title ?? ''
-  editPath.value = project.path ?? ''
-  editError.value = null
+  formMode.value = 'edit'
+  formTarget.value = project
+  formPath.value = project.path ?? ''
+  formSlug.value = project.slug
+  formTitle.value = project.title ?? ''
+  formError.value = null
   editResult.value = null
 }
 
+/** Кнопка отправки одна на два сценария — что делать, решает режим окна. */
+function submitForm(): Promise<void> {
+  if (formMode.value === 'edit') return submitEdit()
+  return submitAdd()
+}
+
+async function submitAdd(): Promise<void> {
+  if (formBusy.value) return
+  const path = formPath.value.trim()
+  if (!path) {
+    // «Сохранить» в ките не блокируется — пустой путь ловим здесь, иначе
+    // кнопка молчала бы, и было бы непонятно, чего форма ждёт.
+    formError.value = 'Укажите путь к каталогу репозитория.'
+    return
+  }
+  action.value = 'form'
+  addResult.value = null
+  editResult.value = null
+  const project = await store.addProject({
+    path,
+    slug: formSlug.value.trim(),
+    title: formTitle.value.trim(),
+  })
+  action.value = null
+  if (project) {
+    // Ответ сервера не выбрасываем: в нём итоговый путь (и path_adjusted_from,
+    // если каталог привели к корню git) — пользователь должен видеть, куда попал проект.
+    addResult.value = project
+    closeForm()
+    emit('changed')
+    return
+  }
+  formError.value = takeStoreError('Не получилось добавить репозиторий')
+}
+
 async function submitEdit(): Promise<void> {
-  const project = editTarget.value
-  if (!project || action.value !== null) return
+  const project = formTarget.value
+  if (!project || formBusy.value) return
   const patch = editPatch.value
   if (Object.keys(patch).length === 0) {
     // Поля не тронули: PATCH с пустым телом ничего не сохранит, а «Сохранить»
     // не должна молчать — просто закрываем форму.
-    editTarget.value = null
+    closeForm()
     return
   }
-  action.value = `edit:${project.slug}`
+  action.value = 'form'
+  addResult.value = null
   const saved = await store.updateProject(project.slug, patch)
   action.value = null
   if (saved) {
-    editTarget.value = null
-    editError.value = null
     editResult.value = saved
+    closeForm()
     emit('changed')
     return
   }
-  // Ошибку показывает сама форма: вкладка «Репозитории» под оверлеем, и её
-  // плашка была бы не видна, пока пользователь не закроет форму. В стор текст
-  // уже положен — забираем его и гасим, чтобы не задвоить.
-  editError.value = store.projectsError.value ?? 'Не получилось сохранить проект'
+  formError.value = takeStoreError('Не получилось сохранить проект')
+}
+
+/**
+ * Ошибку показывает само окно: вкладка «Репозитории» под оверлеем, и её плашка
+ * была бы не видна, пока пользователь не закроет окно. В сторе текст уже
+ * лежит — забираем его и гасим, чтобы не задвоить.
+ */
+function takeStoreError(fallback: string): string {
+  const message = store.projectsError.value ?? fallback
   store.projectsError.value = null
+  return message
 }
 
 function askRemove(project: ProjectRow): void {
@@ -256,8 +308,9 @@ watch(
       removeTarget.value = null
       forceOpen.value = false
       addResult.value = null
-      editTarget.value = null
-      editError.value = null
+      formMode.value = null
+      formTarget.value = null
+      formError.value = null
       editResult.value = null
       activeTab.value = 'repos'
       emit('close')
@@ -286,36 +339,12 @@ watch(
             {{ store.projectsError.value }}
           </UiAlert>
 
-          <section class="listik-projects__add">
-            <h3 class="listik-section__title">
-              <ListikIcon name="plus" size="md" />
+          <div class="listik-projects__actions">
+            <UiButton variant="primary" @click="askAdd">
+              <template #icon><ListikIcon name="plus" size="xs" /></template>
               Добавить репозиторий
-            </h3>
-            <div class="listik-projects__form">
-              <UiInput
-                v-model="pathInput"
-                placeholder="путь к каталогу, например ~/Projects/Zoloto585/new-repo"
-                v-bind="{ 'aria-label': 'Путь к каталогу репозитория' }"
-              />
-              <UiInput
-                v-model="slugInput"
-                placeholder="slug (необязательно)"
-                v-bind="{ 'aria-label': 'Slug проекта' }"
-              />
-              <UiInput
-                v-model="titleInput"
-                placeholder="название (необязательно)"
-                v-bind="{ 'aria-label': 'Название проекта' }"
-              />
-              <UiButton variant="primary" :loading="action === 'add'" :disabled="!canAdd" @click="submitAdd">
-                <template #icon><ListikIcon name="plus" size="xs" /></template>
-                Добавить
-              </UiButton>
-            </div>
-            <span class="listik-section__hint">
-              {{ slugHint() }} · путь — абсолютный, от ~ или относительный — от корня проектов · git remote и ветка подтянутся сами, если это git-репозиторий
-            </span>
-          </section>
+            </UiButton>
+          </div>
 
           <UiAlert v-if="addResult" tone="success" closable @close="addResult = null">
             <template #title>
@@ -522,52 +551,88 @@ watch(
     </template>
   </UiModal>
 
-  <!-- Правка репозитория — своя модалка вровень с настройками (тот же приём,
-       что у подтверждений ниже): форма живёт, пока идёт запрос, и несёт свои
-       ошибки — за оверлеем плашку вкладки не видно. -->
+  <!-- Добавление и правка репозитория — одно окно вровень с настройками (тот же
+       приём, что у подтверждений ниже): форма живёт, пока идёт запрос, и несёт
+       свои ошибки — за оверлеем плашку вкладки не видно. Различаются только
+       набор полей (в правке slug уже занят и не меняется) и адрес запроса. -->
   <UiFormModal
-    v-model="editOpen"
-    title="Изменить репозиторий"
-    :loading="action === `edit:${editTarget?.slug ?? ''}`"
-    submit-label="Сохранить"
+    v-model="formOpen"
+    :title="formMode === 'edit' ? 'Изменить репозиторий' : 'Добавить репозиторий'"
+    :loading="formBusy"
+    :submit-label="formMode === 'edit' ? 'Сохранить' : 'Добавить'"
     cancel-label="Отмена"
-    @submit="submitEdit"
-    @cancel="editTarget = null"
+    @submit="submitForm"
+    @cancel="closeForm"
   >
-    <p class="listik-prose">
-      Slug <code class="listik-mono">{{ editTarget?.slug }}</code> — ключ проекта: задачи лежат
+    <p v-if="formMode === 'edit'" class="listik-prose">
+      Slug <code class="listik-mono">{{ formTarget?.slug }}</code> — ключ проекта: задачи лежат
       по нему, поэтому он не меняется.
     </p>
 
-    <UiAlert v-if="editError" tone="danger">
-      <template #title>Не получилось сохранить</template>
-      {{ editError }}
+    <UiAlert v-if="formError" tone="danger">
+      <template #title>
+        {{ formMode === 'edit' ? 'Не получилось сохранить' : 'Не получилось добавить' }}
+      </template>
+      {{ formError }}
     </UiAlert>
 
-    <UiField
-      label="Название"
-      hint="Подпись проекта в фильтре и в знаке проекта. Пусто — показываем slug."
-    >
-      <UiInput v-model="editTitle" placeholder="название проекта" />
-    </UiField>
+    <template v-if="formMode === 'create'">
+      <UiField
+        label="Путь к каталогу"
+        required
+        hint="Абсолютный, от ~ или относительный — от корня проектов, а не от каталога сервера."
+      >
+        <UiInput
+          v-model="formPath"
+          placeholder="путь к каталогу, например ~/Projects/Zoloto585/new-repo"
+        />
+      </UiField>
 
-    <UiField
-      label="Путь к каталогу"
-      hint="Абсолютный, от ~ или относительный — от корня проектов. Пусто — оставить прежний: стереть каталог из этой формы нельзя."
-    >
-      <UiInput
-        v-model="editPath"
-        placeholder="путь к каталогу, например ~/Projects/Zoloto585/new-repo"
-      />
-    </UiField>
+      <UiField label="Slug" :hint="slugHint()">
+        <UiInput v-model="formSlug" placeholder="slug (необязательно)" />
+      </UiField>
 
-    <span class="listik-section__hint">
-      При правке каталог не проверяется: если пути нет, проект остаётся на доске с пометкой
-      «нет каталога».
-      <template v-if="store.projectsRoot.value">
-        · корень проектов: <code class="listik-mono">{{ store.projectsRoot.value }}</code>
-      </template>
-    </span>
+      <UiField
+        label="Название"
+        hint="Подпись проекта в фильтре и в знаке проекта. Пусто — показываем slug."
+      >
+        <UiInput v-model="formTitle" placeholder="название (необязательно)" />
+      </UiField>
+
+      <span class="listik-section__hint">
+        git remote и ветка подтянутся сами, если это git-репозиторий.
+        <template v-if="store.projectsRoot.value">
+          · корень проектов: <code class="listik-mono">{{ store.projectsRoot.value }}</code>
+        </template>
+      </span>
+    </template>
+
+    <template v-else>
+      <UiField
+        label="Название"
+        hint="Подпись проекта в фильтре и в знаке проекта. Пусто — показываем slug."
+      >
+        <UiInput v-model="formTitle" placeholder="название проекта" />
+      </UiField>
+
+      <UiField
+        label="Путь к каталогу"
+        hint="Абсолютный, от ~ или относительный — от корня проектов. Пусто — оставить прежний: стереть каталог из этой формы нельзя."
+      >
+        <UiInput
+          v-model="formPath"
+          placeholder="путь к каталогу, например ~/Projects/Zoloto585/new-repo"
+        />
+      </UiField>
+
+      <span class="listik-section__hint">
+        При правке каталог не проверяется: если пути нет, проект остаётся на доске с пометкой
+        «нет каталога».
+        <template v-if="store.projectsRoot.value">
+          · корень проектов: <code class="listik-mono">{{ store.projectsRoot.value }}</code>
+        </template>
+      </span>
+    </template>
   </UiFormModal>
 
   <!-- Подтверждения — сосед модалки, а не её содержимое: оба оверлея
@@ -607,22 +672,10 @@ watch(
   min-width: 0;
 }
 
-.listik-projects__add {
+/* Кнопка добавления не должна растягиваться на всю ширину колонки настроек. */
+.listik-projects__actions {
   display: flex;
-  flex-direction: column;
-  gap: var(--space-3);
-  padding: var(--space-4);
-  border: 1px solid var(--hairline);
-  border-radius: var(--radius-lg);
-  background: var(--surface-2);
-}
-
-/* Путь к каталогу длиннее остальных полей — он и тянется, остальные фиксированы. */
-.listik-projects__form {
-  display: grid;
-  grid-template-columns: minmax(0, 1fr) 200px 200px auto;
-  gap: var(--space-2);
-  align-items: center;
+  justify-content: flex-start;
 }
 
 .listik-projects__list {
@@ -655,9 +708,4 @@ watch(
   min-width: 0;
 }
 
-@media (max-width: 860px) {
-  .listik-projects__form {
-    grid-template-columns: minmax(0, 1fr);
-  }
-}
 </style>

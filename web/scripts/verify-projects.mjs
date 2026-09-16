@@ -3,6 +3,9 @@
  * интерфейс настроек: скрытый проект возвращается на доску тумблером в разделе
  * «Скрыты с доски» и остаётся возвращённым после перезагрузки страницы
  * (возврат — это запись в базе, а не только вид; listik-54be).
+ * Добавление и правка живут в одном окне (listik-zmos): его открывают кнопкой
+ * «Добавить репозиторий» и действием правки у строки — инлайновых форм в списке
+ * больше нет, поэтому поля скрипт ищет внутри формы окна, а не в списке.
  * Работает с живой страницей (dev или прод) и настоящим API Listik, поэтому
  * трогает базу: используйте временный каталог и slug вида `listik-check-*`.
  *
@@ -36,9 +39,9 @@ async function evaluate(expression) {
   return result.result.value
 }
 
-/** Ввод в поле кита: UiInput слушает input, значение ставим нативным сеттером. */
+/** Ввод в поле формы окна: UiInput слушает input, значение ставим нативным сеттером. */
 const typeInto = (index, value) => evaluate(`(() => {
-  const input = document.querySelectorAll('.ui-modal input')[${index}];
+  const input = document.querySelectorAll('.ui-form-modal__form input')[${index}];
   if (!input) return false;
   const setter = Object.getOwnPropertyDescriptor(window.HTMLInputElement.prototype, 'value').set;
   setter.call(input, ${JSON.stringify(value)});
@@ -64,22 +67,48 @@ await sleep(2000)
 report.settingsOpen = await evaluate(`Boolean(document.querySelector('.ui-modal'))`)
 report.rowsBefore = await evaluate(`document.querySelectorAll('.ui-entity-card').length`)
 
-// добавить каталог
+// добавить каталог: кнопка открывает общее окно, поля — внутри него
+await evaluate(
+  `[...document.querySelectorAll('.ui-modal button')]
+    .find((b) => b.textContent.trim() === 'Добавить репозиторий')?.click()`,
+)
+await sleep(1200)
+report.addFormFields = await evaluate(
+  `document.querySelectorAll('.ui-form-modal__form input').length`,
+)
 await typeInto(0, folder)
 await typeInto(1, slug)
 await sleep(500)
-report.addDisabledBefore = await evaluate(
-  `[...document.querySelectorAll('.ui-modal button')].find((b) => b.textContent.includes('Добавить'))?.disabled`,
-)
-await evaluate(
-  `[...document.querySelectorAll('.ui-modal button')].find((b) => b.textContent.includes('Добавить'))?.click()`,
-)
+/** Кнопка отправки окна — единственная `type=submit` с привязкой к форме. */
+const submitForm = `document.querySelector('button[type=submit][form]')`
+report.submitLabel = await evaluate(`${submitForm}?.textContent.trim()`)
+await evaluate(`${submitForm}?.click()`)
 await sleep(3000)
 report.afterAdd = await evaluate(`JSON.stringify({
   rows: document.querySelectorAll('.ui-entity-card').length,
   hasSlug: [...document.querySelectorAll('.ui-entity-card__title')].some((el) => el.textContent.trim() === ${JSON.stringify(slug)}),
   error: document.querySelector('.ui-modal .ui-alert')?.textContent?.trim()?.slice(0, 120),
 })`)
+
+// правка открывает то же окно: два поля (название и путь), slug — только подпись
+await evaluate(`(() => {
+  const card = [...document.querySelectorAll('.ui-entity-card')]
+    .find((el) => el.querySelector('.ui-entity-card__title')?.textContent.trim() === ${JSON.stringify(slug)});
+  const btn = [...(card?.querySelectorAll('button') ?? [])].find((b) => (b.getAttribute('aria-label') || '').startsWith('Изменить проект'));
+  btn?.click();
+})()`)
+await sleep(1200)
+report.editForm = await evaluate(`JSON.stringify({
+  fields: document.querySelectorAll('.ui-form-modal__form input').length,
+  slugShown: [...document.querySelectorAll('.ui-form-modal__form code')].some((el) => el.textContent.trim() === ${JSON.stringify(slug)}),
+  submit: document.querySelector('button[type=submit][form]')?.textContent.trim(),
+})`)
+await evaluate(
+  `[...document.querySelectorAll('button')].find((b) => b.textContent.trim() === 'Отмена')?.click()`,
+)
+await sleep(800)
+// инлайновых форм в списке не осталось — поля есть только внутри окна
+report.inlineInputs = await evaluate(`document.querySelectorAll('.listik-projects input').length`)
 
 // скрыть добавленный проект тумблером
 await evaluate(`(() => {

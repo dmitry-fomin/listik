@@ -854,6 +854,64 @@ def _line_forbids_amend(line: str) -> bool:
     return any(marker in lowered for marker in AMEND_FORBID_MARKERS)
 
 
+#: Шесть `SKILL.md`, где задание судье лежит inline (listik-4n4y, порция b). Список закрытый
+#: и явный: именно он — основа выбора файлов, страховочный скан ниже лишь ловит расширение.
+INLINE_JUDGE_SKILLS = (
+    pathlib.Path(SKILLS_SUBDIR) / "high-pipeline" / SKILL_FILE,
+    pathlib.Path(SKILLS_SUBDIR) / "xhigh-pipeline" / SKILL_FILE,
+    pathlib.Path(SKILLS_SUBDIR) / "medium-pipeline" / SKILL_FILE,
+    pathlib.Path(SKILLS_SUBDIR) / "low-pipeline" / SKILL_FILE,
+    pathlib.Path(SKILLS_SUBDIR) / "xlow-pipeline" / SKILL_FILE,
+    pathlib.Path(SKILLS_SUBDIR) / "nano-pipeline" / SKILL_FILE,
+)
+
+#: Начало блока inline-задания судье: строка про зелёный вердикт и коммит порции. В пяти
+#: пресетах это «сам закоммить порцию», в nano сжатый пересказ — «сам коммитит порцию».
+INLINE_JUDGE_START_MARKERS = ("закоммить порцию", "сам коммитит порцию")
+
+#: Маркер для страховочного скана «в списке нет лишнего и список не устарел»: перечень
+#: запретов, который несёт только inline-задание судье.
+INLINE_JUDGE_MARKER = "reset, stash"
+
+#: Требования к блоку задания судье: имя пункта и обязательные фрагменты внутри блока.
+INLINE_JUDGE_REQUIREMENTS = (
+    ("git rm", ("git rm",)),
+    ("commit с -- и путями", ("git commit", "-- <все пути")),
+    ("проверка diff коммита", ("git show --stat --name-status",)),
+    ("второй коммит вместо amend", ("второй коммит поверх", "amend")),
+    ("оба хеша во второй строке", ("оба хеша", "вторая строка")),
+)
+
+
+def _judge_task_block(relative: pathlib.Path) -> str:
+    """Блок inline-задания судье: от строки про зелёный коммит до конца задания.
+
+    Для пяти пресетов задание лежит в fenced-блоке — конец по закрывающему ```. У nano
+    задание — пункт списка: конец по следующему `## ` или нумерованному пункту верхнего
+    уровня.
+    """
+    lines = _plugin_text(relative).splitlines()
+    start = None
+    for index, line in enumerate(lines):
+        if any(marker in line for marker in INLINE_JUDGE_START_MARKERS):
+            start = index
+            break
+    if start is None:
+        raise AssertionError(f"{relative}: не нашлось начала inline-задания судье")
+    fenced = sum(1 for line in lines[:start] if line.strip().startswith("```")) % 2 == 1
+    block = [lines[start]]
+    for line in lines[start + 1:]:
+        if fenced:
+            block.append(line)
+            if line.strip().startswith("```"):
+                break
+        elif line.startswith("## ") or re.match(r"^\d+\. ", line):
+            break
+        else:
+            block.append(line)
+    return "\n".join(block)
+
+
 class FeaturePipelineCommitRuleTests(unittest.TestCase):
     """Коммит порции с удалёнными через `git rm` файлами (listik-4n4y): правило вместо amend."""
 
@@ -977,6 +1035,43 @@ class FeaturePipelineCommitRuleTests(unittest.TestCase):
         self.assertTrue(
             _line_forbids_amend("`git commit --amend` запрещён"),
             "предикат отверг настоящий запрет amend",
+        )
+
+
+class FeaturePipelineInlineJudgeRuleTests(unittest.TestCase):
+    """Inline-задание судье в шести SKILL.md несёт правило коммита порции (listik-4n4y, порция b)."""
+
+    def test_inline_judge_states_commit_rule(self) -> None:
+        """Каждый из шести SKILL.md: внутри блока задания судье — все пункты правила."""
+        for relative in INLINE_JUDGE_SKILLS:
+            block = _judge_task_block(relative)
+            for name, needles in INLINE_JUDGE_REQUIREMENTS:
+                with self.subTest(file=str(relative), requirement=name):
+                    missing = [needle for needle in needles if needle not in block]
+                    self.assertFalse(
+                        missing,
+                        f"{relative}: в блоке задания судье нет {missing!r} "
+                        f"(требование {name!r})",
+                    )
+
+    def test_judge_marker_skills_are_all_listed(self) -> None:
+        """Любой SKILL.md с маркером inline-задания судье обязан входить в INLINE_JUDGE_SKILLS."""
+        listed = set(INLINE_JUDGE_SKILLS)
+        marked = 0
+        for name in sorted(_skill_names()):
+            relative = pathlib.Path(SKILLS_SUBDIR) / name / SKILL_FILE
+            if INLINE_JUDGE_MARKER not in _plugin_text(relative):
+                continue
+            marked += 1
+            with self.subTest(file=str(relative)):
+                self.assertIn(
+                    relative, listed,
+                    f"{relative}: несёт маркер inline-задания судье "
+                    f"{INLINE_JUDGE_MARKER!r}, но не входит в INLINE_JUDGE_SKILLS",
+                )
+        self.assertGreater(
+            marked, 0,
+            "страховочный скан не нашёл ни одного inline-задания судье — сломан маркер",
         )
 
 

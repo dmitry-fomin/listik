@@ -35,7 +35,7 @@ import AssistantField from '@/components/AssistantField.vue'
 import ProjectMark from '@/components/marks/ProjectMark.vue'
 import RoutePicker from '@/components/RoutePicker.vue'
 import TaskGlyph from '@/components/marks/TaskGlyph.vue'
-import { ROUTE_ICONS, TASK_TYPES, priority } from '@/lib/dictionaries'
+import { TASK_TYPES, priority } from '@/lib/dictionaries'
 import type {
   AssistantContext,
   AssistantField as AssistantFieldKey,
@@ -88,9 +88,6 @@ const emit = defineEmits<{
 const isOpen = defineModel<boolean>({ default: false })
 
 const TYPE_OPTIONS: IconToggleOption<string>[] = TASK_TYPES.map((item) => ({ value: item.value, label: item.hint }))
-
-/** Перечень уровней для подсказки под таблицей — из справочника, без копии списка. */
-const routeLevels = ROUTE_ICONS.map((item) => item.label).join('/')
 
 const CREATE_LABEL: Record<string, string> = Object.fromEntries(
   TASK_TYPES.map((item) => [item.value, item.createLabel]),
@@ -512,22 +509,6 @@ function cancel(): void {
         <UiTooltip text="Listik сам запустит команду маршрута после создания" placement="bottom">
           <UiCheckbox v-model="autostart" :disabled="!autostartAvailable">Автостарт</UiCheckbox>
         </UiTooltip>
-
-        <template v-if="!routesFailed">
-          <p class="listik-section__hint">
-            строка таблицы — пресет конвейера из <span class="listik-mono">routes.json</span> (его отдаёт
-            сервер): кто пишет ТЗ, кто критикует, кто пишет код, кто принимает и коммитит. «Отдельно» —
-            записи без таблицы ролей: одна иконка и подпись вместо четырёх ячеек. Слева у записи —
-            иконка уровня маршрута ({{ routeLevels }}): её же показывает карточка заведённой задачи.
-          </p>
-          <p class="listik-section__hint">
-            эпик всегда начинается с ТЗ, поэтому для него закрыто всё без этапа ТЗ. Выбор уходит на сервер
-            ключом маршрута, и сервер сам помечает задачу метками
-            <span class="listik-mono">harness:&lt;…&gt;</span> и
-            <span class="listik-mono">process:&lt;…&gt;</span> — их читает человек, автоматической раздачи
-            задач по ним нет; кто допущен до этапа, решает сервер по routing проекта.
-          </p>
-        </template>
       </section>
     </div>
 

@@ -842,9 +842,6 @@ async function act(label: string, action: () => Promise<unknown>): Promise<boole
 const patchTask = (id: string, body: TaskPatch, label = 'update'): Promise<boolean> =>
   act(label, () => api.updateTask(id, body))
 
-const claimTask = (id: string, holder: string, note?: string, force = false): Promise<boolean> =>
-  act('claim', () => api.claim(id, holder, note, undefined, force))
-
 /** Дерево зависимостей задачи (POST …/deps без depends_on). */
 async function loadDepTree(id: string, depth = 3): Promise<DepTree | null> {
   return tryRequest(() => api.depTree(id, depth), handleError)
@@ -1237,7 +1234,6 @@ export function useListikStore() {
     closeTask,
     reloadDetail,
     patchTask,
-    claimTask,
     heartbeatTask,
     nextStage,
     setNeedsOwner,

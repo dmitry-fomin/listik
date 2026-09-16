@@ -28,8 +28,9 @@
  * (`{audio_base64, mime}`) и `POST /api/assistant/draft` (`{text}`). Мок декодирует
  * base64 в строку-маркер сценария: транскрипт — пустой при `silence`, HTTP 502 при
  * `transcribe-fail`, иначе непустой и содержит маркер; черновик — `project: null`
- * при `noproject`, `title: null` при `notitle`, HTTP 502 при `draft-fail`, иначе
- * полный (`project: 'listik'`, `type: 'task'`, видимый маршрут `low-pipeline`).
+ * при `noproject`, `project: 'ghost-project'` (нет в `/api/meta`) при `badproject`,
+ * `title: null` при `notitle`, HTTP 502 при `draft-fail`, иначе полный
+ * (`project: 'listik'`, `type: 'task'`, видимый маршрут `low-pipeline`).
  * Только под `--voice` ручки голоса и живут.
  * `--cold` добавляет четыре задачи под строку «worktree · branch» блока
  * «Холодный старт»: отдельное дерево, работа в `main`, она же в `master`, и
@@ -627,7 +628,7 @@ function voiceDraftRoute() {
 
 /** Черновик ответа `draft`: все шесть ключей есть всегда, ненайденное — `null`. */
 function voiceDraftOf(mode, text) {
-  const project = mode === 'noproject' ? null : 'listik'
+  const project = mode === 'noproject' ? null : mode === 'badproject' ? 'ghost-project' : 'listik'
   const title = mode === 'notitle' ? null : text.slice(0, 60)
   return {
     project,
@@ -1423,7 +1424,13 @@ const server = createServer(async (request, response) => {
     if (text.includes('draft-fail')) {
       return json(502, errorBody('server_error', 'DeepSeek не ответил', 'повторите запрос позже'))
     }
-    const mode = text.includes('noproject') ? 'noproject' : text.includes('notitle') ? 'notitle' : 'full'
+    const mode = text.includes('badproject')
+      ? 'badproject'
+      : text.includes('noproject')
+        ? 'noproject'
+        : text.includes('notitle')
+          ? 'notitle'
+          : 'full'
     return ok({ model: ASSISTANT_MODEL, draft: voiceDraftOf(mode, text) })
   }
 

@@ -15,17 +15,26 @@ import { computed, ref, watch } from 'vue'
 import { UiBadge, UiButton } from '@zoloto585/facet'
 import BoardColumn from '@/components/board/BoardColumn.vue'
 import ListikIcon from '@/components/ListikIcon.vue'
+import VoiceCapture from '@/components/VoiceCapture.vue'
 import store from '@/store/listik'
-import type { ProjectRow, TaskStage } from '@/api/types'
+import type { ProjectRow, TaskStage, VoiceDraft } from '@/api/types'
 import { PIPELINE_STAGE_KEYS, transitionOut } from '@/lib/stages'
 import { INTAKE_COLUMN_KEY } from '@/lib/dictionaries'
 
 const props = defineProps<{
   projects?: ProjectRow[]
+  /** id задачи, созданной голосом: подтверждение в панели записи (см. App.vue). */
+  voiceCreatedId?: string | null
+  /** Ошибка создания голосом — текст под черновиком, доска её общим алертом не показывает. */
+  voiceCreateError?: string | null
 }>()
 
 const emit = defineEmits<{
   create: []
+  /** «Создать задачу» из панели записи: тело уходит в App.vue (store.createTask). */
+  voiceCreate: [body: Record<string, unknown>]
+  /** «Открыть форму» из панели записи: черновик предзаполняет «Новую задачу». */
+  voiceOpenForm: [draft: VoiceDraft]
 }>()
 
 const COLLAPSED_KEY = 'listik.board.collapsed'
@@ -105,6 +114,12 @@ const gridStyle = computed(() => ({ gridTemplateColumns: boardTracks.value }))
       </div>
       <div class="listik-row">
         <span class="listik-section__hint tnum">{{ store.board.value?.total ?? 0 }} задач в выборке</span>
+        <VoiceCapture
+          :created-id="props.voiceCreatedId"
+          :create-error="props.voiceCreateError"
+          @create="(body) => emit('voiceCreate', body)"
+          @open-form="(draft) => emit('voiceOpenForm', draft)"
+        />
         <UiButton size="sm" variant="secondary" @click="emit('create')">
           <template #icon><ListikIcon name="plus" size="xs" /></template>
           Новая задача

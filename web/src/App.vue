@@ -38,7 +38,7 @@ import MobileTaskList from '@/components/MobileTaskList.vue'
 import PhoneQueue from '@/components/PhoneQueue.vue'
 import store, { type ViewKey } from '@/store/listik'
 import { actorList } from '@/lib/facets'
-import type { CommentKind, Task, TaskPatch } from '@/api/types'
+import type { CommentKind, Task, TaskPatch, VoiceDraft } from '@/api/types'
 import { formatTime, tasksCountLabel } from '@/lib/format'
 import { useIsPhone } from '@/lib/viewport'
 
@@ -50,6 +50,13 @@ const drawerRef = ref<InstanceType<typeof TaskDrawer> | null>(null)
 const drawerOpen = ref(false)
 
 const createOpen = ref(false)
+
+/** Черновик голосового ввода: живёт от «Открыть форму» до закрытия/успеха «Новой задачи». */
+const voiceDraft = ref<VoiceDraft | null>(null)
+/** id задачи, созданной голосом, — подтверждение в панели записи; `''` — id неизвестен. */
+const voiceCreatedId = ref<string | null>(null)
+/** Ошибка создания голосом — текстом в панели, без общего алерта доски. */
+const voiceCreateError = ref<string | null>(null)
 
 const tabs = computed<UiTabItem[]>(() => [
   { key: 'board', label: `Доска (${store.counts.value.total})` },
@@ -105,9 +112,36 @@ async function createTask(body: Record<string, unknown>): Promise<void> {
   const ok = await store.createTask(body)
   if (ok) {
     toast.success('Задача создана')
+    voiceDraft.value = null
     createOpen.value = false
   } else {
     toast.danger(store.lastError.value ?? 'Не удалось создать задачу')
+  }
+}
+
+/** «Открыть форму» из панели записи: черновик (или один текст) предзаполняет «Новую задачу». */
+function openCreateForm(draft: VoiceDraft): void {
+  voiceDraft.value = draft
+  createOpen.value = true
+}
+
+/**
+ * «Создать задачу» одной кнопкой из панели записи: то же создание, что у формы,
+ * и те же тосты. id созданной карточки — разницей доски до/после, чтобы панель
+ * показала подтверждение; не нашли — `''` (задача всё равно создана).
+ */
+async function createFromVoice(body: Record<string, unknown>): Promise<void> {
+  const before = new Set(store.allBoardTasks.value.map((task) => task.id))
+  voiceCreatedId.value = null
+  voiceCreateError.value = null
+  const ok = await store.createTask(body)
+  if (ok) {
+    const fresh = store.allBoardTasks.value.find((task) => !before.has(task.id))
+    voiceCreatedId.value = fresh?.id ?? ''
+    toast.success('Задача создана')
+  } else {
+    voiceCreateError.value = store.lastError.value ?? 'Не удалось создать задачу'
+    toast.danger(voiceCreateError.value)
   }
 }
 
@@ -210,6 +244,11 @@ watch(drawerOpen, (open) => {
   if (!open) store.closeTask()
 })
 
+// Закрытие «Новой задачи» сбрасывает и голосовой черновик: следующее открытие — с чистого листа.
+watch(createOpen, (open) => {
+  if (!open) voiceDraft.value = null
+})
+
 const isPhone = useIsPhone()
 store.phone.value = isPhone.value
 watch(isPhone, (value) => store.setPhone(value))
@@ -294,7 +333,14 @@ onBeforeUnmount(() => {
           <template v-if="store.view.value === 'board'">
             <MobileTaskList />
             <div class="listik-board-only">
-              <BoardView :projects="store.meta.value?.projects" @create="createOpen = true" />
+              <BoardView
+                :projects="store.meta.value?.projects"
+                :voice-created-id="voiceCreatedId"
+                :voice-create-error="voiceCreateError"
+                @create="createOpen = true"
+                @voice-create="createFromVoice"
+                @voice-open-form="openCreateForm"
+              />
             </div>
           </template>
           <ListView v-else-if="store.view.value === 'list'" />
@@ -358,6 +404,7 @@ onBeforeUnmount(() => {
       v-model="createOpen"
       :projects="store.meta.value?.projects ?? []"
       :pending="store.pending.value === 'create'"
+      :draft="voiceDraft"
       @submit="createTask"
     />
 

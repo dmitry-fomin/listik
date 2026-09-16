@@ -53,9 +53,10 @@ used in place of a unit test suite for board behavior; most run against `scripts
 Database migrations exist as two parallel mechanisms — don't confuse them:
 - `listik/db.py` (`SCHEMA_VERSION`) runs a soft, in-process migration automatically on every
   `listik init`/`serve`; this is what actually keeps `listik.db` current.
-- `alembic/` (`alembic upgrade head`, `sqlalchemy.url = sqlite:///listik.db`) is an explicit,
-  separate migration path mirroring the same schema. New schema changes should get both an
-  update to `db.SCHEMA`/`SCHEMA_VERSION` and a corresponding alembic revision.
+- `alembic/` is an explicit, separate migration path mirroring the same schema. Set `LISTIK_DB`
+  to a temporary SQLite file before `alembic upgrade head`; without it Alembic refuses to run.
+  New schema changes should get both an update to `db.SCHEMA`/`SCHEMA_VERSION` and a
+  corresponding alembic revision.
 
 ## Architecture
 

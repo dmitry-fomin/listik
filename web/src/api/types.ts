@@ -32,6 +32,8 @@ export interface Task {
   assignee_title: string
   holder: string | null
   holder_title: string
+  /** Владелец задачи (`server.users`): чьи задачи видно и кому их можно брать; null — без владельца. */
+  owner: string | null
   holder_note: string | null
   holder_at: string | null
   holder_age: string
@@ -326,6 +328,12 @@ export interface Health {
   counts: Record<string, number>
   embed: HealthEmbed | null
   now: string
+  /** Режим сервера: `server` — есть список пользователей и владелец у задач, `local` — нет. */
+  mode?: 'local' | 'server'
+  /** Имена из `server.users`; в локальном режиме пусто, у старого сервера поля нет. */
+  users?: string[]
+  /** Кем представился этот запрос (заголовок `X-Listik-Owner`), null — никем. */
+  owner?: string | null
 }
 
 export interface ProjectRow {
@@ -734,6 +742,8 @@ export interface TaskPatch {
   assignee?: string
   holder?: string
   holder_note?: string
+  /** Смена владельца задачи; пустая строка снимает владельца. */
+  owner?: string
   project?: string
   labels?: string[]
   spec_path?: string

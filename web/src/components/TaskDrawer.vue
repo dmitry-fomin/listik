@@ -5,7 +5,7 @@
  *   и бейджей с id справа;
  * - «Где стоит процесс»: степпер s1…s4→done с описанием прошлого/текущего/
  *   будущего шага, ряд действий (heartbeat/needs-owner/next-stage/release/
- *   удалить/claim-сплит-кнопка) и подсказка под ним;
+ *   удалить) и подсказка под ним;
  * - «Холодный старт», «Кто держит», «Журнал и вердикты» (единая лента
  *   комментариев+событий на иконках: фильтр IconToggle со счётчиками,
  *   закреплённый открытый вопрос над лентой при needs_owner, у каждой записи
@@ -28,6 +28,7 @@ import {
   UiDrawer,
   UiInput,
   UiProgress,
+  UiSelect,
   UiSkeleton,
   UiStatusPill,
   UiSteps,
@@ -36,6 +37,7 @@ import {
   UiTimeline,
   UiTooltip,
   type StatusPillTone,
+  type UiSelectOption,
   type UiStepItem,
   type UiStepStatus,
   type UiTimelineItem,
@@ -104,8 +106,6 @@ const props = defineProps<{
   loading?: boolean
   error?: string | null
   pending?: string | null
-  /** Список акторов из /api/meta — для подсказки, кто держит. */
-  actors?: { key: string; title: string | null }[]
   /** Проекты из /api/meta — для монограммы/названия в шапке. */
   projects?: ProjectRow[]
   /** Запрос дерева зависимостей (POST …/deps без depends_on). */
@@ -120,7 +120,6 @@ const emit = defineEmits<{
   'update:modelValue': [value: boolean]
   reload: []
   patch: [payload: { id: string; body: Record<string, unknown>; label: string }]
-  claim: [payload: { id: string; holder: string; note?: string; force?: boolean }]
   heartbeat: [payload: { id: string; holder: string; note?: string }]
   stage: [payload: { id: string; holder?: string; note?: string }]
   needsOwner: [payload: { id: string; value: boolean; note?: string }]
@@ -980,6 +979,25 @@ function submitPinnedAnswer(): void {
   pinnedAnswerText.value = ''
 }
 
+/**
+ * Владелец задачи (серверный режим): смена уходит обычным PATCH одним полем
+ * `owner` — тем же путём, что и остальные правки панели. Пункт «без владельца»
+ * шлёт пустую строку: сервер снимает владельца. В локальном режиме строки нет
+ * вовсе (владельцев там не существует).
+ */
+const ownerOptions = computed<UiSelectOption[]>(() => [
+  { value: '', label: 'без владельца' },
+  ...store.users.value.map((user) => ({ value: user, label: user })),
+])
+
+function pickOwner(value: string | null): void {
+  const task = props.task
+  if (!task) return
+  const next = value ?? ''
+  if (next === (task.owner ?? '')) return
+  emit('patch', { id: task.id, body: { owner: next }, label: 'owner' })
+}
+
 // ── «Связи» ────────────────────────────────────────────────────────────────
 
 function depCardHint(dep: DepInfo): string {
@@ -1290,6 +1308,20 @@ async function loadTree(): Promise<void> {
           </dd>
           <dt>этап с</dt>
           <dd>{{ holderBlock?.stageStarted }}</dd>
+          <template v-if="store.isServerMode.value">
+            <dt>владелец</dt>
+            <dd>
+              <UiSelect
+                :model-value="task.owner ?? ''"
+                :options="ownerOptions"
+                placeholder="без владельца"
+                ariaLabel="Владелец задачи"
+                size="sm"
+                :disabled="pending === 'owner'"
+                @update:model-value="pickOwner($event)"
+              />
+            </dd>
+          </template>
           <template v-if="holderBlock?.assignee">
             <dt>исполнитель</dt>
             <dd>{{ holderBlock.assignee }}</dd>

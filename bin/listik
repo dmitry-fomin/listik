@@ -119,6 +119,29 @@ def actor_default(args) -> str | None:
     return args.actor or os.environ.get("LISTIK_ACTOR") or os.environ.get("USER")
 
 
+def server_mode_enabled() -> bool:
+    """Серверный ли режим по своему config.toml (битый конфиг — считаем локальным)."""
+    try:
+        return client.config_mod.is_server_mode()
+    except Exception:  # noqa: BLE001 — мусор в [server] не должен ломать команду
+        return False
+
+
+def owner_default(args) -> str:
+    """Владелец-человек, от чьего имени идёт команда (серверный режим).
+
+    Приоритет источников — в `client.owner`: `--owner`, затем `LISTIK_OWNER`,
+    затем `[auth] owner` из config.toml. Пусто — не представились.
+    """
+    return client.owner(getattr(args, "owner", None))
+
+
+#: Операции `call()`, которым нужна идентичность: у остальных владелец ничего не
+#: решает, и `as_owner` им не передаётся (см. client.OWNER_LOCAL_OPS).
+OWNER_OPS = frozenset({"list", "board", "ready", "create", "claim", "heartbeat",
+                       "stage", "update"})
+
+
 #: Операции `call()`, которые пишут в базу, — только им терять событие доски
 #: (listik-f6kt). Список по операциям, а не по HTTP-методу: `dep_tree` и
 #: `mentions` шлют POST, но это чтения графа, событий они не создают.
@@ -158,14 +181,21 @@ def call(op: str, args, path: str, *, query: dict | None = None, body: dict | No
          method: str = "GET", local_kwargs: dict | None = None,
          fallback_warning: bool = True, timeout: float = 60.0):
     """Идём в сервер, если он поднят; иначе — прямо в базу (агент не должен падать)."""
+    # Владельца резолвим один раз: в HTTP он уходит заголовком, в локальный
+    # фолбэк — аргументом as_owner, и оба пути должны видеть одно имя.
+    owner = owner_default(args)
+    local_kwargs = dict(local_kwargs or {})
+    if owner and op in OWNER_OPS:
+        local_kwargs["as_owner"] = owner
     if getattr(args, "local", False):
         warn_local_bypass(args, writing=op in WRITE_OPS)
-        if any((local_kwargs or {}).get(key) for key in ("route", "launch_route")):
+        if any(local_kwargs.get(key) for key in ("route", "launch_route")):
             routes_mod.load_local()
-        return client.local_call(op, **(local_kwargs or {}))
+        return client.local_call(op, **local_kwargs)
     if client.is_up(args.host, args.port):
         return client.request(method, path, query=query, body=body,
-                              host=args.host, port=args.port, timeout=timeout)
+                              host=args.host, port=args.port, timeout=timeout,
+                              owner=owner or None)
     if not getattr(args, "local", False) and fallback_warning:
         print("! сервер Listik не отвечает — команда выполнена напрямую по базе "
               "(доска не получит событие; подними сервер: listik serve)", file=sys.stderr)
@@ -173,9 +203,9 @@ def call(op: str, args, path: str, *, query: dict | None = None, body: dict | No
     # Дочитываем файл, только когда команда вообще трогает маршрут: метки
     # `harness:`/`process:` считает серверная логика (store + routes.labels_for),
     # и у `new --route`/`set route=` они должны быть те же, что у формы на доске.
-    if any((local_kwargs or {}).get(key) for key in ("route", "launch_route")):
+    if any(local_kwargs.get(key) for key in ("route", "launch_route")):
         routes_mod.load_local()
-    return client.local_call(op, **(local_kwargs or {}))
+    return client.local_call(op, **local_kwargs)
 
 
 def emit(args, payload, human: str, *, force_json: bool = False, indent: int | None = 2) -> None:
@@ -288,6 +318,10 @@ def show_task(t: dict) -> None:
         if t.get("holder_note"):
             holder += f" — {t['holder_note']}"
     print(f"  исполнитель: {label_of(t, 'assignee_title', 'assignee')}   держатель: {holder}")
+    # Строка владельца — только в серверном режиме: в локальном владелец ничего не
+    # значит (store его не пишет), и старое значение в базе не должно всплывать.
+    if t.get("owner") and server_mode_enabled():
+        print(f"  владелец: {t['owner']}")
     print(f"  создана:     {t.get('created_at') or '—'}   обновлена: {t.get('updated_at') or '—'}"
           f" ({t.get('updated_age') or '—'} назад)")
     if t.get("started_at"):
@@ -455,14 +489,27 @@ def _status_diagnostics(health: dict | None) -> dict:
     return result
 
 
+def _mode_of(h: dict | None) -> str:
+    """Режим Listik для `status`: из ответа сервера, иначе из своего config.toml."""
+    mode = (h or {}).get("mode")
+    if mode in ("server", "local"):
+        return mode
+    return "server" if server_mode_enabled() else "local"
+
+
 def cmd_status(args) -> int:
     from listik import server
     # Подготовить конфиг и токен для штатной работы status.
     local = bool(getattr(args, "local", False))
-    h = None if local else client.health(args.host, args.port)
+    who = owner_default(args)
+    h = None if local else client.health(args.host, args.port, owner=who or None)
     pid = server.read_pid()
     cfg, token = client.config_mod.ensure_token()
     diagnostics = _status_diagnostics(h)
+    mode = _mode_of(h)
+    # Владелец — тот, которым CLI представился бы сейчас; в локальном режиме он
+    # ничего не значит, поэтому там его нет.
+    owner = (who or None) if mode == "server" else None
     bin_path = str(Path(__file__).resolve())
     url = f"http://{cfg['server']['host']}:{cfg['server']['port']}/"
     if getattr(args, "json", False):
@@ -477,6 +524,8 @@ def cmd_status(args) -> int:
         # Токена и содержимого config.toml здесь нет: ссылка с токеном — `listik token`.
         emit(args, {
             "server": state,
+            "mode": mode,
+            "owner": owner,
             "bin_path": bin_path,
             "diagnostics": diagnostics,
             "pid": pid,
@@ -495,6 +544,10 @@ def cmd_status(args) -> int:
     print(f"бинарник CLI: {bin_path}")
     print(f"каталог данных: {paths.DATA_DIR}")
     print(f"config CLI: {paths.CONFIG_PATH}")
+    print(f"режим: {'серверный' if mode == 'server' else 'локальный'}")
+    if mode == "server":
+        print(f"владелец: {owner}" if owner
+              else "владелец: не задан (--owner / LISTIK_OWNER / [auth] owner)")
     if local:
         print(f"база:   {paths.DB_PATH}")
         print("сервер: не проверялся (--local)")
@@ -1593,6 +1646,9 @@ def build_parser() -> argparse.ArgumentParser:
     p.add_argument("--version", action="version", version=f"listik {__version__}")
     p.add_argument("--json", action="store_true", help="вывод в JSON (для агентов)")
     p.add_argument("--actor", help="кто выполняет действие (me, agent:dsh, ...)")
+    p.add_argument("--owner",
+                   help="от чьего имени: владелец-человек, серверный режим; "
+                        "иначе LISTIK_OWNER, иначе [auth] owner в config.toml")
     p.add_argument("--harness", help="какой харнесс: dsh, grok, claude, codex")
     p.add_argument("--host", help="хост сервера Listik")
     p.add_argument("--port", type=int, help="порт сервера Listik")
@@ -1610,6 +1666,9 @@ def build_parser() -> argparse.ArgumentParser:
                         help="вывод в JSON (для агентов)")
     common.add_argument("--actor", default=argparse.SUPPRESS,
                         help="кто выполняет действие (me, agent:dsh, agent:claude, ...)")
+    common.add_argument("--owner", default=argparse.SUPPRESS,
+                        help="от чьего имени: владелец-человек, серверный режим; "
+                             "иначе LISTIK_OWNER, иначе [auth] owner в config.toml")
     common.add_argument("--harness", default=argparse.SUPPRESS,
                         help="какой харнесс: dsh, grok, claude, codex")
     common.add_argument("--local", action="store_true", default=argparse.SUPPRESS,
@@ -1930,7 +1989,7 @@ def main(argv: list[str] | None = None) -> int:
     json_mode = json_mode or args.json
     try:
         return int(args.func(args) or 0)
-    except (errors.ListikError, KeyError, ValueError) as exc:
+    except (errors.ListikError, KeyError, ValueError, PermissionError) as exc:
         # Ожидаемые ошибки: разбор аргументов, «не найдено» (errors.NotFound),
         # «нельзя сделать». Трейсбек им не нужен — он остаётся непойманным.
         err = errors.as_error(exc)

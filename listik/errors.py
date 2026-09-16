@@ -56,7 +56,6 @@ CODE_BY_STATUS = {
 #: какие есть варианты, а общее «проверь аргументы» только сбивало бы с толку.
 HINT_BY_STATUS = {
     401: "проверь токен: listik token (и config.toml, [auth].token)",
-    403: "проверь токен: listik token (и config.toml, [auth].token)",
     404: "проверь идентификатор: listik list (проекты: listik projects)",
     405: "этот метод у эндпоинта не поддерживается",
     409: "посмотри состояние карточки: listik show <id>",
@@ -102,6 +101,28 @@ class NotFound(KeyError):
     """
 
 
+class BadArgument(ValueError):
+    """«Аргумент не годится»: команда, флаг или поле тела запроса неверны.
+
+    Подкласс `ValueError`, чтобы старые обработчики (сервер, CLI) ловили её как
+    и раньше, но код у неё — `bad_argument` (HTTP 400), а не общий `conflict`:
+    неверный аргумент исправляет вызывающий, а не состояние карточки.
+    """
+
+
+class Forbidden(PermissionError):
+    """«Чужая задача»: владелец задачи не тот, от чьего имени пришёл запрос."""
+
+
+#: Подсказка к `Forbidden`: про владельца, а не про токен — он к «чужой задаче»
+#: отношения не имеет.
+OWNER_HINT = "задачу держит другой владелец; смена владельца — listik set <id> owner=<кто>"
+
+#: 403 сервер отдаёт только за чужого владельца: за непринятый токен `_authed`
+#: отвечает 401, поэтому прежняя подсказка про токен была мёртвой.
+HINT_BY_STATUS[403] = OWNER_HINT
+
+
 def message_of(exc: BaseException) -> str:
     """Текст исключения без кавычек: `str(KeyError('нет'))` даёт `"'нет'"`."""
     if isinstance(exc, KeyError) and exc.args:
@@ -128,8 +149,12 @@ def code_of(exc: BaseException) -> str:
         return NOT_FOUND
     if isinstance(exc, KeyError):
         return INTERNAL
+    if isinstance(exc, BadArgument):
+        return BAD_ARGUMENT
     if isinstance(exc, ValueError):
         return CONFLICT
+    if isinstance(exc, Forbidden):
+        return FORBIDDEN
     return INTERNAL
 
 
@@ -147,6 +172,8 @@ def hint_of(exc: BaseException) -> str:
     _, rest = _split(message_of(exc))
     if rest:
         return rest
+    if isinstance(exc, Forbidden):
+        return OWNER_HINT
     if code_of(exc) == NOT_FOUND:
         return "проверь идентификатор: listik list (проекты: listik projects)"
     return ""
@@ -207,4 +234,8 @@ def mcp_error_text(exc: BaseException) -> str:
     """Текст ошибки инструмента MCP в совместимом с прежним API виде."""
     if isinstance(exc, NotFound):
         return f"не найдено: {exc}"
+    if isinstance(exc, Forbidden):
+        # Имя класса здесь ничего не объясняет, а причина («задача принадлежит …»)
+        # — объясняет: MCP-клиент видит её текстом.
+        return f"нельзя: {exc}"
     return f"ошибка {type(exc).__name__}: {exc}"

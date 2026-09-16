@@ -13,21 +13,18 @@ ROOT = Path(__file__).resolve().parents[1]
 if str(ROOT) not in sys.path:
     sys.path.insert(0, str(ROOT))
 
-from listik import paths  # noqa: E402
-
 config = context.config
 
 
 def _database_url() -> str:
-    """Resolve the same database path used by ``listik.db``.
-
-    ``LISTIK_DB`` is intentionally read at invocation time, so one checkout can
-    migrate a temporary/test database without modifying alembic.ini.
-    """
-    configured = os.environ.get("LISTIK_DB")
-    if configured:
-        return f"sqlite:///{Path(configured).expanduser().resolve().as_posix()}"
-    return f"sqlite:///{Path(paths.DB_PATH).resolve().as_posix()}"
+    """Require an explicit database path for every Alembic invocation."""
+    configured = (os.environ.get("LISTIK_DB") or "").strip()
+    if not configured:
+        raise SystemExit(
+            "Alembic database is not configured; set LISTIK_DB to a temporary "
+            "SQLite file, for example: LISTIK_DB=/tmp/listik-alembic.db alembic upgrade head"
+        )
+    return f"sqlite:///{Path(configured).expanduser().resolve().as_posix()}"
 
 
 config.set_main_option("sqlalchemy.url", _database_url())

@@ -58,6 +58,44 @@ MAIN_TREE_LOCK_KEY = "\x00main-tree"
 
 _SUFFIX_ALPHABET = string.ascii_lowercase + string.digits
 
+#: Отказ, когда в серверном режиме не представились там, где владелец обязателен.
+OWNER_REQUIRED_CREATE = ("серверный режим: укажи владельца задачи "
+                         "(--owner, LISTIK_OWNER или [auth] owner)")
+OWNER_REQUIRED_TAKE = ("серверный режим: укажи, от чьего имени берёшь задачу "
+                       "(--owner, LISTIK_OWNER или [auth] owner)")
+
+
+def server_cfg() -> dict | None:
+    """Конфиг, если хаб в серверном режиме; `None` — локальный режим.
+
+    Читается в момент вызова, а не на импорте: тесты и `listik --local` подменяют
+    `paths.CONFIG_PATH`, а сервер перечитывает config.toml на лету. В локальном
+    режиме владелец (`owner`/`as_owner`) игнорируется полностью — ни записи, ни
+    фильтра, ни отказов, — поэтому все вызывающие проверяют этот `None` первым.
+    """
+    cfg = config_mod.load()
+    return cfg if config_mod.is_server_mode(cfg) else None
+
+
+def check_task_owner(row, as_owner: str | None, *, task_id: str) -> None:
+    """Серверный режим: представился ли берущий и не чужая ли это задача.
+
+    Зовётся сразу после чтения строки задачи и до любой другой проверки и любой
+    записи: отказ «чужая задача» должен звучать про владельца, а не про держателя
+    или блокеры, и не оставлять следов (события, updated_at). Задачу без
+    владельца берёт любой, владельцем она при этом не обзаводится.
+    """
+    cfg = server_cfg()
+    if cfg is None:
+        return
+    value = config_mod.check_owner(as_owner, cfg)
+    if value is None:
+        raise errors_mod.BadArgument(OWNER_REQUIRED_TAKE)
+    row_owner = (row["owner"] or "").strip() if row is not None else ""
+    if row_owner and row_owner != value:
+        raise errors_mod.Forbidden(
+            f"задача {task_id} принадлежит {row_owner}: чужую задачу брать нельзя")
+
 
 def main_worktree(value: str | None) -> str:
     """Канонический маркер основной ветки (`main`/`master`) или `''`.
@@ -260,6 +298,8 @@ def create_task(
     status: str = "open",
     priority: int = 2,
     assignee: str | None = None,
+    owner: str | None = None,
+    as_owner: str | None = None,
     stage: str | None = None,
     labels: list[str] | None = None,
     spec_path: str | None = None,
@@ -303,6 +343,15 @@ def create_task(
     это не нужно, поэтому по умолчанию выключено."""
     if not title.strip():
         raise ValueError("title не может быть пустым")
+    # Владелец-человек: явный `owner` сильнее того, кто представился (`as_owner`).
+    # В локальном режиме поле не пишется вовсе и оба аргумента игнорируются.
+    owner_value = None
+    cfg = server_cfg()
+    if cfg is not None:
+        owner_value = (config_mod.check_owner(owner, cfg)
+                       or config_mod.check_owner(as_owner, cfg))
+        if owner_value is None:
+            raise errors_mod.BadArgument(OWNER_REQUIRED_CREATE)
     parent_id = (parent or "").strip() or None
     parent_project = None
     if parent_id is not None:
@@ -331,10 +380,11 @@ def create_task(
     conn.execute(
         """
         INSERT INTO tasks(id, project, title, description, acceptance, design, notes, result, status, stage,
-                          stage_at, priority, issue_type, assignee, labels, spec_path, journal_path,
+                          stage_at, priority, issue_type, assignee, owner, labels, spec_path,
+                          journal_path,
                           source, external_ref, created_at, created_by, updated_at, needs_owner,
                           checklist_path, review_path, decision_path, autostart, launch_route)
-        VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)
+        VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)
         ON CONFLICT(id) DO UPDATE SET
             title=excluded.title, description=excluded.description, acceptance=excluded.acceptance,
             design=excluded.design, notes=excluded.notes, status=excluded.status,
@@ -342,7 +392,7 @@ def create_task(
             updated_at=excluded.updated_at
         """,
         (tid, project, title, description, acceptance, design, notes, result, status, stage,
-         ts if stage else None, priority, issue_type, assignee,
+         ts if stage else None, priority, issue_type, assignee, owner_value,
          json.dumps(labels, ensure_ascii=False), spec_path, journal_path,
          source, external_ref, ts, created_by, ts, 1 if needs_owner else 0,
          checklist_path, review_path, decision_path, 1 if autostart else 0, route),
@@ -396,7 +446,7 @@ def link_hints(conn: sqlite3.Connection, task_id: str, *, limit: int = 5) -> lis
 
 UPDATABLE = {
     "title", "description", "acceptance", "design", "notes", "result", "status", "stage",
-    "priority", "issue_type", "assignee", "holder", "holder_note", "project", "labels",
+    "priority", "issue_type", "assignee", "owner", "holder", "holder_note", "project", "labels",
     "spec_path", "checklist_path", "review_path", "decision_path", "journal_path", "worktree", "branch", "close_reason", "needs_owner",
     "external_ref", "archived",
     # «Тип запуска» задачи. Остальные восемь колонок запуска по-прежнему пишут
@@ -539,8 +589,26 @@ def delete_task(conn: sqlite3.Connection, task_id: str) -> None:
 
 
 def update_task(conn: sqlite3.Connection, task_id: str, *, actor: str | None = None,
-                harness: str | None = None, note: str | None = None, **fields) -> dict:
+                harness: str | None = None, note: str | None = None,
+                as_owner: str | None = None, **fields) -> dict:
     row = store_helpers.task_row(conn, task_id)
+    # Владелец: в локальном режиме поле молча выбрасываем (карточка по нему не
+    # меняется, события нет), в серверном — проверяем по `server.users`. Чужую
+    # задачу нельзя править, но сменить или снять у неё владельца можно: иначе
+    # задачу, оставленную уехавшим человеком, никто бы не подобрал.
+    owner_cfg = server_cfg()
+    if owner_cfg is None:
+        fields.pop("owner", None)
+    else:
+        if "owner" in fields:
+            fields["owner"] = config_mod.check_owner(fields["owner"], owner_cfg) or ""
+        as_owner_value = config_mod.check_owner(as_owner, owner_cfg)
+        row_owner = (row["owner"] or "").strip()
+        other_fields = [key for key, value in fields.items()
+                        if key != "owner" and value is not None]
+        if as_owner_value and row_owner and row_owner != as_owner_value and other_fields:
+            raise errors_mod.Forbidden(
+                f"задача {task_id} принадлежит {row_owner}: чужую задачу править нельзя")
     # Маршрут принимаем и под именем создания задачи (`route`): доска и `listik set`
     # шлют его так же, как POST /api/tasks. Каноническое имя — колонка launch_route.
     if ROUTE_ALIAS in fields and ROUTE_FIELD not in fields:
@@ -572,6 +640,9 @@ def update_task(conn: sqlite3.Connection, task_id: str, *, actor: str | None = N
             value = json.dumps(value, ensure_ascii=False)
         if key == "needs_owner":
             value = 1 if value else 0
+        elif key == "owner":
+            # Пустая строка снимает владельца (None до полей не доходит — см. выше).
+            value = value or None
         elif key == "worktree" and isinstance(value, str):
             # Маркер основной ветки храним канонически (`MAIN` → `main`), путь —
             # как дали, только без крайних пробелов (маркер `main` иначе не
@@ -729,7 +800,8 @@ def set_needs_owner(conn: sqlite3.Connection, task_id: str, *, value: bool,
 
 
 def claim(conn: sqlite3.Connection, task_id: str, *, holder: str, harness: str | None = None,
-          note: str | None = None, force: bool = False, actor: str | None = None) -> dict:
+          note: str | None = None, force: bool = False, actor: str | None = None,
+          as_owner: str | None = None) -> dict:
     """Агент берёт задачу: держатель, heartbeat, статус в работе.
 
     Заблокированную задачу взять нельзя: сначала надо закрыть блокеры.
@@ -743,6 +815,9 @@ def claim(conn: sqlite3.Connection, task_id: str, *, holder: str, harness: str |
     --holder`), первый claim агента пишет событие — «выдана» становится «взята».
     """
     row = store_helpers.task_row(conn, task_id)
+    # Чужую задачу не берут: проверка идёт раньше харнесса, статуса, держателя и
+    # блокеров — и `force` её не обходит (он про блокеры, а не про владельца).
+    check_task_owner(row, as_owner, task_id=task_id)
     # Harness must be allowed for the task's project/stage.
     allowed = config_mod.allowed_harnesses(row["project"], row["stage"], conn=conn)
     if harness and allowed and harness not in allowed:
@@ -838,11 +913,12 @@ def claim(conn: sqlite3.Connection, task_id: str, *, holder: str, harness: str |
 
 def heartbeat(conn: sqlite3.Connection, task_id: str, *, holder: str, note: str | None = None,
               harness: str | None = None, actor: str | None = None,
-              min_interval_min: int = 10) -> dict:
-    row = conn.execute("SELECT holder, holder_at, holder_note FROM tasks WHERE id = ?",
+              min_interval_min: int = 10, as_owner: str | None = None) -> dict:
+    row = conn.execute("SELECT holder, holder_at, holder_note, owner FROM tasks WHERE id = ?",
                        (task_id,)).fetchone()
     if not row:
         raise errors_mod.NotFound(f"задача не найдена: {task_id}")
+    check_task_owner(row, as_owner, task_id=task_id)
     ts = now_iso()
     actor_key, a_kind = actors_mod.resolve(actor, conn)
     if actor:
@@ -1000,10 +1076,16 @@ def stage_unchanged(conn: sqlite3.Connection, task_id: str, *, stage: str | None
 
 def next_stage(conn: sqlite3.Connection, task_id: str, *, holder: str | None = None,
                note: str | None = None, harness: str | None = None,
-               to_stage: str | None = None, actor: str | None = None) -> dict:
-    row = conn.execute("SELECT stage, project FROM tasks WHERE id = ?", (task_id,)).fetchone()
+               to_stage: str | None = None, actor: str | None = None,
+               as_owner: str | None = None) -> dict:
+    row = conn.execute("SELECT stage, project, owner FROM tasks WHERE id = ?",
+                       (task_id,)).fetchone()
     if not row:
         raise errors_mod.NotFound(f"задача не найдена: {task_id}")
+    # Владельца спрашиваем только при выдаче карточки (`--holder`): перевод этапа
+    # без держателя владельца не требует и не проверяет вовсе (решение автора).
+    if (holder or "").strip():
+        check_task_owner(row, as_owner, task_id=task_id)
     cur = row["stage"]
     if to_stage is not None:
         if to_stage != "done" and to_stage not in PIPELINE_STAGES:
@@ -1198,6 +1280,8 @@ def row_to_task(conn: sqlite3.Connection, row: sqlite3.Row) -> dict:
         "issue_type": row["issue_type"],
         "assignee": row["assignee"],
         "assignee_title": actors_mod.display(row["assignee"]),
+        # Владелец-человек: в локальном режиме всегда null — там его не пишут.
+        "owner": row["owner"],
         "holder": row["holder"],
         "holder_title": actors_mod.display(row["holder"]),
         "holder_note": row["holder_note"],
@@ -1337,8 +1421,17 @@ def list_tasks(conn: sqlite3.Connection, *, project: str | None = None, status: 
                stage: str | None = None, assignee: str | None = None, holder: str | None = None,
                needs_owner: bool = False, issue_type: str | None = None, label: str | None = None,
                text: str | None = None, include_closed: bool = False, include_archived: bool = False,
-               limit: int = 200, offset: int = 0, order: str = "updated") -> dict:
+               limit: int = 200, offset: int = 0, order: str = "updated",
+               as_owner: str | None = None) -> dict:
     where, params = [], []
+    owner_cfg = server_cfg()
+    if owner_cfg is not None:
+        # Свои задачи и общий пул: без этого карточки без владельца (все
+        # существующие) пропали бы у каждого, кто представился.
+        owner_value = config_mod.check_owner(as_owner, owner_cfg)
+        if owner_value:
+            where.append("(owner = ? OR owner IS NULL)")
+            params.append(owner_value)
     if project:
         where.append("project = ?")
         params.append(project)
@@ -1402,9 +1495,15 @@ def task_timeline(conn: sqlite3.Connection, limit: int = 100) -> list[dict]:
 
 def board(conn: sqlite3.Connection, *, group_by: str = "status", project: str | None = None,
           include_closed: bool = False, limit_per_column: int = 300,
-          ready_limit: int = 15) -> dict:
+          ready_limit: int = 15, as_owner: str | None = None) -> dict:
     """Данные для канбан-доски: колонки с задачами."""
     where, params = [], []
+    owner_cfg = server_cfg()
+    if owner_cfg is not None:
+        owner_value = config_mod.check_owner(as_owner, owner_cfg)
+        if owner_value:
+            where.append("(owner = ? OR owner IS NULL)")
+            params.append(owner_value)
     if project:
         where.append("project = ?")
         params.append(project)
@@ -1479,7 +1578,8 @@ def board(conn: sqlite3.Connection, *, group_by: str = "status", project: str | 
     blocked_count = 0
     if ready_limit:
         try:
-            ready_list = deps_mod.ready_tasks(conn, project=project, limit=ready_limit)
+            ready_list = deps_mod.ready_tasks(conn, project=project, limit=ready_limit,
+                                              as_owner=as_owner)
         except Exception:  # noqa: BLE001 — доска не должна падать из-за графа
             ready_list = []
     try:

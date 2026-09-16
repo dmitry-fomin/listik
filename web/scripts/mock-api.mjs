@@ -45,6 +45,19 @@
  * пусты. По ней проверяется вывод markdown в панели задачи
  * (scripts/verify-markdown.mjs).
  *
+ * `--server-mode` включает серверный режим владельцев (шаг listik-xt69):
+ * `/api/health` отдаёт `mode: 'server'`, `users: ['ann','bob']` и `owner` —
+ * имя из заголовка `X-Listik-Owner`. Сидовые задачи в этом режиме свои: часть
+ * у `ann`, часть у `bob`, часть без владельца, все без держателей и блокеров
+ * (чтобы не было фоновых heartbeat). Списки (`/api/tasks`, `/api/board`,
+ * `/api/ready`) с заголовком отдают «свои + без владельца», без заголовка — все,
+ * с незнакомым именем — 400; карточка `GET /api/tasks/{id}` не фильтруется;
+ * `claim`/`heartbeat`/`stage` без заголовка — 400, на чужую задачу — 403.
+ * В этом режиме мок пишет в stdout строку на каждый запрос (метод, путь,
+ * значение заголовка) — по ней scripts/verify-owner.mjs проверяет заголовки.
+ * Без флага `/api/health` отдаёт `mode: 'local'`, `users: []`, `owner: null`,
+ * а всё остальное — как раньше.
+ *
  * Служебные ручки для скриптов проверки (в docs/API.md их нет — это не контракт, а
  * ручки управления моком, как `__token`): `POST /__event` рассылает кадр в
  * открытые `/api/stream` (тело `{kind, payload, patch?, comment?}`, patch/comment
@@ -71,6 +84,9 @@ const voiceMode = process.argv.slice(3).includes('--voice')
 const coldMode = process.argv.slice(3).includes('--cold')
 const hintMode = process.argv.slice(3).includes('--hint')
 const markdownMode = process.argv.slice(3).includes('--markdown')
+const serverMode = process.argv.slice(3).includes('--server-mode')
+/** `server.users` из config.toml — кем можно представиться в серверном режиме. */
+const SERVER_USERS = ['ann', 'bob']
 const slowArg = process.argv.slice(3).find((arg) => arg.startsWith('--slow-ms='))
 const slowMs = slowArg ? Number.parseInt(slowArg.slice('--slow-ms='.length), 10) : 0
 const now = Date.now()
@@ -115,6 +131,8 @@ function task(overrides) {
     holder: 'agent:dsh',
     holder_title: 'dsh',
     holder_note: 'пишу панель задачи',
+    // Владелец задачи: в локальном режиме его нет ни у кого (`null`).
+    owner: null,
     holder_at: iso(0.3),
     holder_age: '18 мин',
     holder_hours: 0.3,
@@ -254,6 +272,56 @@ const tasks = [
     priority: 2,
   }),
 ]
+
+/**
+ * `--server-mode`: свой набор задач — по две на `ann` и `bob` и две без
+ * владельца. Все открыты, без держателя и без блокеров: доска не шлёт по ним
+ * фоновых heartbeat, и каждая попадает в `ready` — так видно ровно фильтрацию
+ * по владельцу, а не гонку с чем-то ещё.
+ */
+function ownerTask(id, title, owner, priority) {
+  return task({
+    id,
+    title,
+    owner,
+    priority,
+    priority_title: PRIORITY_TITLES[priority],
+    status: 'open',
+    status_title: 'открыта',
+    stage: null,
+    stage_title: null,
+    holder: null,
+    holder_title: '',
+    holder_note: null,
+    holder_at: null,
+    holder_age: '',
+    holder_hours: null,
+    idle_hours: null,
+    idle_age: '',
+    stage_warn: false,
+    needs_owner: false,
+    stale: false,
+    abandoned: false,
+    blocked_by: [],
+    parent: null,
+    soft_links: [],
+    assignee: null,
+    assignee_title: '',
+    labels: [],
+  })
+}
+
+if (serverMode) {
+  tasks.length = 0
+  tasks.push(
+    ownerTask('listik-owner-ann1', 'Ann: первая задача', 'ann', 1),
+    ownerTask('listik-owner-ann2', 'Ann: вторая задача', 'ann', 2),
+    ownerTask('listik-owner-bob1', 'Bob: первая задача', 'bob', 1),
+    ownerTask('listik-owner-bob2', 'Bob: вторая задача', 'bob', 2),
+    ownerTask('listik-owner-free1', 'Ничья задача раз', null, 2),
+    ownerTask('listik-owner-free2', 'Ничья задача два', null, 3),
+  )
+}
 
 /** `--fill=N`: N дополнительных задач поверх пяти базовых, для проверки пагинации/сортировки. */
 const STAGE_CYCLE = ['s1-spec', 's2-review', 's3-impl', 's4-judge', null]
@@ -956,6 +1024,9 @@ function applyPatch(id, body) {
     } else if (key === 'holder' || key === 'assignee' || key === 'project' || key === 'title') {
       found[key] = value === '' ? null : value
       if (key === 'holder') found.holder_title = value || ''
+    } else if (key === 'owner') {
+      // Пустая строка снимает владельца — как `PATCH {owner: ''}` на сервере.
+      found.owner = value === '' || value == null ? null : String(value)
     } else if (key === 'needs_owner') {
       found.needs_owner = Boolean(value)
     } else if (key === 'labels') {
@@ -1007,7 +1078,7 @@ const ORDER_KEYS = {
 }
 
 /** `GET /api/tasks`: фильтры/сортировка/пагинация как в listik/store.py list_tasks. */
-function listTasks(params) {
+function listTasks(params, source = tasks) {
   const project = params.get('project')
   const status = params.get('status')
   const includeClosed = ['1', 'true'].includes(params.get('include_closed') ?? '')
@@ -1018,7 +1089,7 @@ function listTasks(params) {
   let offset = Number.parseInt(params.get('offset') ?? '', 10)
   if (!Number.isFinite(offset) || offset < 0) offset = 0
 
-  let filtered = tasks.slice()
+  let filtered = source.slice()
   if (project) filtered = filtered.filter((item) => item.project === project)
   if (status) {
     filtered = filtered.filter((item) => item.status === status)
@@ -1053,8 +1124,8 @@ function listTasks(params) {
   return { total, limit, offset, tasks: page }
 }
 
-function board(groupBy) {
-  const open = tasks.filter((item) => !['done', 'cancelled'].includes(item.status))
+function board(groupBy, source = tasks) {
+  const open = source.filter((item) => !['done', 'cancelled'].includes(item.status))
   const columnsMap = new Map()
   const keyOf = (item) => {
     if (groupBy === 'stage') return item.stage ?? 'none'
@@ -1101,9 +1172,15 @@ function board(groupBy) {
   }
 }
 
-/** Тело запроса: у createServer колбэк не async, поэтому собираем чанки вручную. */
+/**
+ * Тело запроса: у createServer колбэк не async, поэтому собираем чанки вручную.
+ * Результат кешируется на самом запросе: поток читается ровно один раз, и второй
+ * вызов (лог заголовков в серверном режиме + сам обработчик) не виснет на `end`,
+ * который уже случился.
+ */
 function readJsonBody(request) {
-  return new Promise((resolve) => {
+  if (request.__body) return request.__body
+  const promise = new Promise((resolve) => {
     const chunks = []
     request.on('data', (chunk) => chunks.push(chunk))
     request.on('end', () => {
@@ -1115,6 +1192,8 @@ function readJsonBody(request) {
       }
     })
   })
+  request.__body = promise
+  return promise
 }
 
 /** Справка о связанной задаче — форма deps._info на сервере. */
@@ -1213,8 +1292,55 @@ const server = createServer(async (request, response) => {
       'Access-Control-Allow-Methods': '*',
     })
     response.end(JSON.stringify(body))
+    // Возврат — не данные, а «ответ отправлен»: вызывающий код пишет
+    // `return json(...)`, а проверки владельца — `if (denied) return denied`,
+    // и им нужен истинный признак, иначе ответ уйдёт дважды.
+    return true
   }
   const ok = (data) => json(200, { ok: true, data })
+
+  // ── идентичность «я — …» (только `--server-mode`) ──────────────────────────
+  // Node отдаёт имена заголовков в нижнем регистре; пустой/пробельный = нет.
+  const viewer = String(request.headers['x-listik-owner'] ?? '').trim()
+  if (serverMode) {
+    // Строка на запрос: метод, путь, заголовок и (у пишущих запросов) ключи тела
+    // — по ней verify-owner.mjs и судья видят, с каким именем шёл запрос и что
+    // смена «я — …» ничего не пишет.
+    let keys = null
+    if (url.pathname.startsWith('/api/') && ['POST', 'PATCH', 'PUT'].includes(request.method)) {
+      keys = Object.keys((await readJsonBody(request)) ?? {})
+    }
+    const body = keys ? ` body: ${keys.join(',') || '-'}` : ''
+    console.log(`${request.method} ${url.pathname}${url.search} x-listik-owner: ${viewer || '-'}${body}`)
+  }
+  /** Незнакомое имя — 400, как на сервере: доска обязана его снять, а не слать дальше. */
+  const unknownViewer = () =>
+    json(400, {
+      ok: false,
+      error: `владелец ${viewer} не в списке server.users`,
+      code: 'bad_argument',
+      message: `владелец ${viewer} не в списке server.users`,
+      hint: `известны: ${SERVER_USERS.join(', ')}`,
+    })
+  const viewerBad = serverMode && viewer !== '' && !SERVER_USERS.includes(viewer)
+  /** Что видно в списках: с заголовком — свои и ничьи, без заголовка — все. */
+  const visibleTasks = () =>
+    serverMode && viewer ? tasks.filter((item) => !item.owner || item.owner === viewer) : tasks
+  const forbidden = (id, ownerName) => {
+    const message = `задача ${id} принадлежит ${ownerName}: чужую задачу брать нельзя`
+    return json(403, { ok: false, error: message, code: 'forbidden', message, hint: 'смените «я — …»' })
+  }
+  /** Проверка перед claim/heartbeat/stage с держателем: кто взял, тот и владелец. */
+  const denyForeign = (id) => {
+    if (!serverMode) return null
+    if (!viewer) {
+      const message = 'не указано, от чьего имени: заголовок X-Listik-Owner пуст'
+      return json(400, { ok: false, error: message, code: 'bad_argument', message, hint: 'выберите «я — …»' })
+    }
+    const found = tasks.find((item) => item.id === id)
+    if (found?.owner && found.owner !== viewer) return forbidden(id, found.owner)
+    return null
+  }
 
   // Запрос с заголовком Authorization — не «простой», браузер шлёт preflight;
   // без 2xx на OPTIONS fetch падает ещё до GET (реальный сервер это умеет, см. _cors).
@@ -1315,6 +1441,11 @@ const server = createServer(async (request, response) => {
       counts: { tasks: tasks.length, comments: 2 },
       embed: { ok: true, models: ['bge-m3'] },
       now: new Date().toISOString(),
+      // Режим и список пользователей доска читает отсюда: без `--server-mode`
+      // это `local` с пустым списком — новых элементов на доске не будет.
+      mode: serverMode ? 'server' : 'local',
+      users: serverMode ? SERVER_USERS : [],
+      owner: serverMode && SERVER_USERS.includes(viewer) ? viewer : null,
     })
   }
 
@@ -1369,7 +1500,8 @@ const server = createServer(async (request, response) => {
   }
 
   if (url.pathname === '/api/ready') {
-    const open = tasks.filter((item) => !FINAL.includes(item.status) && !item.archived)
+    if (viewerBad) return unknownViewer()
+    const open = visibleTasks().filter((item) => !FINAL.includes(item.status) && !item.archived)
     return ok({
       tasks: open
         .filter((item) => blockersOf(item.id).length === 0 && !item.holder)
@@ -1403,7 +1535,8 @@ const server = createServer(async (request, response) => {
   }
 
   if (url.pathname === '/api/board') {
-    return ok(board(url.searchParams.get('group_by') ?? 'status'))
+    if (viewerBad) return unknownViewer()
+    return ok(board(url.searchParams.get('group_by') ?? 'status', visibleTasks()))
   }
 
   if (url.pathname === '/api/routes') {
@@ -1488,15 +1621,24 @@ const server = createServer(async (request, response) => {
   }
 
   if (url.pathname === '/api/tasks') {
+    if (viewerBad) return unknownViewer()
     if (request.method === 'POST') {
       const body = await readJsonBody(request)
       voiceCounters.create += 1
       lastCreate = body
+      const wanted = typeof body.owner === 'string' ? body.owner.trim() : ''
+      if (serverMode && !wanted && !viewer) {
+        const message = 'у задачи должен быть владелец: представьтесь или укажите owner'
+        return json(400, { ok: false, error: message, code: 'bad_argument', message, hint: 'выберите «я — …»' })
+      }
       const created = createTaskFromBody(body)
+      // Владелец: в серверном режиме — из тела или представившийся, локально — ничей.
+      created.owner = serverMode ? wanted || viewer : null
       tasks.push(created)
       return ok(created)
     }
-    return ok(listTasks(url.searchParams))
+    // Без серверного режима visibleTasks() — это весь `tasks`, фильтр включается с «я — …».
+    return ok(listTasks(url.searchParams, visibleTasks()))
   }
 
   if (url.pathname.startsWith('/api/tasks/')) {
@@ -1516,6 +1658,25 @@ const server = createServer(async (request, response) => {
       return removeTask(id)
         ? ok({ deleted: id })
         : json(404, { ok: false, error: `задача не найдена: ${id}` })
+    }
+    // Серверный режим: `claim`/`heartbeat`/`stage` с держателем — только своя
+    // задача и только от представившегося. Тело читается один раз: повторный
+    // readJsonBody по уже прочитанному потоку не дождался бы `end`.
+    if (serverMode && request.method === 'POST' && ['claim', 'heartbeat', 'stage'].includes(action)) {
+      const body = await readJsonBody(request)
+      if (String(body.holder ?? '').trim()) {
+        const denied = denyForeign(id)
+        if (denied) return denied
+      }
+      const found = tasks.find((item) => item.id === id)
+      if (!found) return json(404, { ok: false, error: `задача не найдена: ${id}` })
+      if (action === 'claim') {
+        found.holder = body.holder ?? 'probe'
+        found.holder_title = body.holder ?? 'probe'
+        if (found.status === 'open') { found.status = 'in_progress'; found.status_title = 'в работе' }
+        return ok(found)
+      }
+      return ok(applyPatch(id, body))
     }
     if (action === 'claim') {
       const body = await readJsonBody(request)
@@ -1545,7 +1706,16 @@ const server = createServer(async (request, response) => {
       const found = details(id)
       return found ? ok(found) : json(404, { ok: false, error: `задача не найдена: ${id}` })
     }
-    const updated = applyPatch(id, await readJsonBody(request))
+    const body = await readJsonBody(request)
+    // Смена владельца проходит при любом заголовке (тело только с `owner`);
+    // любая другая правка чужой задачи — 403, как на сервере.
+    if (serverMode && request.method === 'PATCH') {
+      const keys = Object.keys(body ?? {})
+      const ownerOnly = keys.length > 0 && keys.every((key) => key === 'owner')
+      const found = tasks.find((item) => item.id === id)
+      if (!ownerOnly && viewer && found?.owner && found.owner !== viewer) return forbidden(id, found.owner)
+    }
+    const updated = applyPatch(id, body)
     return updated ? ok(updated) : json(404, { ok: false, error: `задача не найдена: ${id}` })
   }
 

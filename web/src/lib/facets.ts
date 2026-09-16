@@ -44,16 +44,3 @@ export function assigneeOptions(meta: Meta | null): FacetsOption[] {
 export function typeOptions(): FacetsOption[] {
   return TASK_TYPES.map(({ value, label }) => ({ value, label }))
 }
-
-export interface ActorOption {
-  key: string
-  title: string | null
-}
-
-export function actorList(meta: Meta | null): ActorOption[] {
-  const fromFacets = meta?.facets?.actors?.values
-  if (fromFacets && fromFacets.length > 0) {
-    return fromFacets.map((actor) => ({ key: actor.key, title: actor.title }))
-  }
-  return (meta?.actors ?? []).map((actor) => ({ key: actor.key, title: actor.title }))
-}

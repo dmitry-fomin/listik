@@ -5,7 +5,7 @@
  *   и бейджей с id справа;
  * - «Где стоит процесс»: степпер s1…s4→done с описанием прошлого/текущего/
  *   будущего шага, ряд действий (heartbeat/needs-owner/next-stage/release/
- *   удалить/claim-сплит-кнопка) и подсказка под ним;
+ *   удалить) и подсказка под ним;
  * - «Холодный старт», «Кто держит», «Журнал и вердикты» (единая лента
  *   комментариев+событий на иконках: фильтр IconToggle со счётчиками,
  *   закреплённый открытый вопрос над лентой при needs_owner, у каждой записи
@@ -106,8 +106,6 @@ const props = defineProps<{
   loading?: boolean
   error?: string | null
   pending?: string | null
-  /** Список акторов из /api/meta — для подсказки, кто держит. */
-  actors?: { key: string; title: string | null }[]
   /** Проекты из /api/meta — для монограммы/названия в шапке. */
   projects?: ProjectRow[]
   /** Запрос дерева зависимостей (POST …/deps без depends_on). */
@@ -122,7 +120,6 @@ const emit = defineEmits<{
   'update:modelValue': [value: boolean]
   reload: []
   patch: [payload: { id: string; body: Record<string, unknown>; label: string }]
-  claim: [payload: { id: string; holder: string; note?: string; force?: boolean }]
   heartbeat: [payload: { id: string; holder: string; note?: string }]
   stage: [payload: { id: string; holder?: string; note?: string }]
   needsOwner: [payload: { id: string; value: boolean; note?: string }]

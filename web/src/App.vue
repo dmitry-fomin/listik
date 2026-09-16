@@ -37,7 +37,6 @@ import MetricsView from '@/views/MetricsView.vue'
 import MobileTaskList from '@/components/MobileTaskList.vue'
 import PhoneQueue from '@/components/PhoneQueue.vue'
 import store, { type ViewKey } from '@/store/listik'
-import { actorList } from '@/lib/facets'
 import type { CommentKind, Task, TaskPatch, VoiceDraft } from '@/api/types'
 import { formatTime, tasksCountLabel } from '@/lib/format'
 import { useIsPhone } from '@/lib/viewport'
@@ -151,24 +150,6 @@ async function onPatch(payload: { id: string; body: Record<string, unknown>; lab
   const ok = await store.patchTask(payload.id, payload.body as TaskPatch, payload.label)
   if (ok) toast.success('Изменения сохранены')
   else toast.danger(store.lastError.value ?? 'Не удалось сохранить изменения')
-}
-
-async function onClaim(payload: {
-  id: string
-  holder: string
-  note?: string
-  force?: boolean
-}): Promise<void> {
-  const ok = await store.claimTask(payload.id, payload.holder, payload.note, payload.force)
-  if (ok) {
-    toast[payload.force ? 'warning' : 'success'](
-      payload.force
-        ? `${payload.id} взята в работу в обход блокеров (запись в истории)`
-        : `${payload.id} взята в работу: ${payload.holder}`,
-    )
-  } else {
-    toast.danger(store.lastError.value ?? 'Не удалось взять задачу')
-  }
 }
 
 async function onHeartbeat(payload: { id: string; holder: string; note?: string }): Promise<void> {
@@ -364,13 +345,11 @@ onBeforeUnmount(() => {
       :loading="store.detailLoading.value"
       :error="store.detailError.value"
       :pending="store.pending.value"
-      :actors="actorList(store.meta.value)"
       :projects="store.meta.value?.projects"
       :load-tree="store.loadDepTree"
       @reload="store.reloadDetail()"
       @open-other="store.openTask"
       @patch="onPatch"
-      @claim="onClaim"
       @heartbeat="onHeartbeat"
       @stage="onStage"
       @needs-owner="onNeedsOwner"

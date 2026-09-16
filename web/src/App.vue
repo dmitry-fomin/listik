@@ -298,7 +298,12 @@ onBeforeUnmount(() => {
         </UiAlert>
 
         <template v-if="store.phone.value">
-          <PhoneQueue />
+          <PhoneQueue
+            :voice-created-id="voiceCreatedId"
+            :voice-create-error="voiceCreateError"
+            @voice-create="createFromVoice"
+            @voice-open-form="openCreateForm"
+          />
         </template>
         <template v-else>
           <UiAlert v-if="store.cycles.value.length > 0" tone="danger">

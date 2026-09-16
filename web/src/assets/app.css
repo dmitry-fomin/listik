@@ -2708,3 +2708,25 @@ body .ui-drawer-backdrop.ui-drawer-backdrop--right .ui-drawer.ui-drawer--right.u
 .listik-voice__created-id {
   color: var(--ink-2);
 }
+
+/* Телефон (порция c): круглая FAB над очередью. `position: fixed` у самой кнопки
+   разрешён (лист/оверлей/блокировку прокрутки делает UiDrawer). Ширина, высота и
+   радиус — `!important`: стили кита (`.ui-button--lg[data-v-…]`, 0,2,0) встают в
+   бандл позже app.css, при равной специфичности побеждают они (ср. комментарий у
+   `.listik-shell > .ui-container`). `z-floating` — ниже бэкдропа листа. */
+.listik-voice__fab {
+  position: fixed;
+  right: var(--space-4);
+  bottom: calc(var(--space-6) + env(safe-area-inset-bottom, 0px));
+  z-index: var(--z-floating);
+  width: var(--space-14) !important;
+  height: var(--space-14) !important;
+  padding: 0 !important;
+  border-radius: var(--radius-pill) !important;
+}
+
+/* Лист снизу занимает всю ширину — панель поповера на телефоне не должна
+   оставаться 340px. */
+.listik-voice__panel--phone {
+  width: 100%;
+}

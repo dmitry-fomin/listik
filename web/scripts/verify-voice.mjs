@@ -1,14 +1,17 @@
 /**
- * Проверка голосового ввода задачи на доске (порция b, listik-8hrq):
- * `web/src/components/VoiceCapture.vue` — кнопка «Голосом» рядом с «Новая задача»,
- * запись через стаб микрофона, расшифровка, черновик, создание одной кнопкой и
- * предзаполнение формы «Новая задача».
+ * Проверка голосового ввода задачи на доске (listik-8hrq): десктоп (порция b) и
+ * телефон (порция c) — `web/src/components/VoiceCapture.vue` (кнопка «Голосом» /
+ * кружок-FAB, `UiPopover` / `UiDrawer side="bottom"`), запись через стаб
+ * микрофона, расшифровка, черновик, создание одной кнопкой и предзаполнение
+ * формы «Новая задача».
  *
  * Поднимает `scripts/mock-api.mjs` в двух режимах: без `--voice` (кнопки нет) и с
  * `--routes --assistant --voice` (полный голосовой поток, маркеры сценариев
  * `silence`, `transcribe-fail`, `draft-fail`, `noproject`, `notitle`,
  * `badproject` — неизвестный доске slug), отдаёт
- * собранный `web/dist` и гоняет сценарии в headless Chrome по CDP. Микрофон
+ * собранный `web/dist` и гоняет сценарии в headless Chrome по CDP. Телефон
+ * эмулируется `Emulation.setDeviceMetricsOverride` (390×844, mobile) — порог
+ * `PHONE_MAX_WIDTH = 767` переключает стор в `phone`. Микрофон
  * подменяется стабом, внедрённым до загрузки страницы
  * (`Page.addScriptToEvaluateOnNewDocument`): `navigator.mediaDevices.getUserMedia`,
  * `MediaRecorder` и счётчики `window.__listikVoiceStats`.
@@ -102,13 +105,33 @@ const STUB = `
 /** Состояние панели, модалки «Новая задача» и доски одним вызовом. */
 const STATE = `(() => {
   const text = (el) => (el ? el.textContent.replace(/\\s+/g, ' ').trim() : null);
-  const trigger = document.querySelector('button[aria-label="Голосовой ввод задачи"]');
+  const triggers = [...document.querySelectorAll('button[aria-label="Голосовой ввод задачи"]')];
+  const trigger = triggers[0] ?? null;
+  const closing = (node) =>
+    Boolean(
+      node &&
+        [...node.classList, ...(node.closest('.ui-drawer-backdrop')?.classList ?? [])].some((cls) =>
+          cls.includes('leave'),
+        ),
+    );
   // Открытость берём с триггера: поповер кита закрывается через свой стор и
   // ставит aria-expanded=false, но скрытая headless-страница не завершает
   // transitionend, и снятая панель ещё висит в DOM.
   const expanded = Boolean(trigger) && trigger.getAttribute('aria-expanded') === 'true';
   const panels = [...document.querySelectorAll('.listik-voice__panel')];
-  const panel = expanded ? (panels[panels.length - 1] ?? null) : null;
+  // Телефон: панель живёт в открытом UiDrawer (лист снизу), у поповера такого нет.
+  const voiceDrawer =
+    [...document.querySelectorAll('.ui-drawer')]
+      .filter((el) => el.querySelector('.listik-voice__panel') && !closing(el))
+      .pop() ?? null;
+  const panel = voiceDrawer
+    ? voiceDrawer.querySelector('.listik-voice__panel')
+    : expanded
+      ? (panels[panels.length - 1] ?? null)
+      : null;
+  const fabStyle = trigger ? getComputedStyle(trigger) : null;
+  const fabWidth = fabStyle ? parseFloat(fabStyle.width) || 0 : 0;
+  const fabRadius = fabStyle ? parseFloat(fabStyle.borderTopLeftRadius) || 0 : 0;
   const buttonText = (el) => el.textContent.replace(/\\s+/g, ' ').trim();
   const drawerNodes = [...document.querySelectorAll('.ui-drawer')].filter(
     (el) => el.querySelector('.ui-drawer__title')?.textContent.includes('Новая задача'),
@@ -131,6 +154,7 @@ const STATE = `(() => {
     branch: panel ? panel.getAttribute('data-branch') : null,
     title: text(panel && panel.querySelector('.listik-voice__title')),
     timer: text(panel && panel.querySelector('.listik-voice__timer')),
+    panelText: text(panel),
     transcript: text(panel && panel.querySelector('.listik-voice__transcript')),
     draftTitle: text(panel && panel.querySelector('.listik-voice__draft-title')),
     draftDescription: text(panel && panel.querySelector('.listik-voice__draft-description')),
@@ -145,6 +169,13 @@ const STATE = `(() => {
       ? [...panel.querySelectorAll('button')].map((el) => ({ text: buttonText(el), disabled: el.disabled }))
       : [],
     trigger: Boolean(trigger),
+    triggerCount: triggers.length,
+    fab: Boolean(trigger && trigger.classList.contains('listik-voice__fab')),
+    fabRound: { width: fabWidth, radius: fabRadius, round: fabWidth > 0 && fabRadius >= fabWidth / 2 - 0.5 },
+    drawerSide: voiceDrawer
+      ? (['bottom', 'top', 'left', 'right'].find((side) => voiceDrawer.classList.contains('ui-drawer--' + side)) ?? null)
+      : null,
+    phoneRows: document.querySelectorAll('.listik-mobile-task').length,
     newTask: Boolean([...document.querySelectorAll('button')].find((el) => buttonText(el) === 'Новая задача')),
     modal: Boolean(drawer),
     modalTitle: inputs[0] ? inputs[0].value : null,
@@ -212,12 +243,57 @@ try {
   })()`)
 
   const clickPanelButton = (label) => evaluate(`(() => {
+    const closing = (node) => Boolean(node && [...node.classList, ...(node.closest('.ui-drawer-backdrop')?.classList ?? [])].some((cls) => cls.includes('leave')));
+    const voiceDrawer = [...document.querySelectorAll('.ui-drawer')]
+      .filter((el) => el.querySelector('.listik-voice__panel') && !closing(el))
+      .pop() ?? null;
     const trigger = document.querySelector('button[aria-label="Голосовой ввод задачи"]');
     const panels = [...document.querySelectorAll('.listik-voice__panel')];
-    const panel = trigger?.getAttribute('aria-expanded') === 'true' ? panels[panels.length - 1] : null;
+    const panel = voiceDrawer
+      ? voiceDrawer.querySelector('.listik-voice__panel')
+      : trigger?.getAttribute('aria-expanded') === 'true'
+        ? panels[panels.length - 1]
+        : null;
     if (!panel) return false;
     const button = [...panel.querySelectorAll('button')]
       .find((el) => el.textContent.replace(/\\s+/g, ' ').trim() === ${JSON.stringify(label)});
+    if (!button) return false;
+    button.click();
+    return true;
+  })()`)
+
+  /**
+   * Телефонный жест на кружке: pointerdown, пауза, затем pointerup/pointercancel.
+   * Короткое нажатие (`holdMs = 0`) шлём без таймера: в скрытой headless-странице
+   * `setTimeout` троттлится и «короткое» превратилось бы в удержание.
+   */
+  const phoneGesture = (kind, holdMs) => evaluate(`(async () => {
+    const button = document.querySelector('button[aria-label="Голосовой ввод задачи"]');
+    if (!button) return false;
+    const rect = button.getBoundingClientRect();
+    const options = {
+      bubbles: true,
+      cancelable: true,
+      pointerId: 1,
+      pointerType: 'touch',
+      isPrimary: true,
+      clientX: rect.left + rect.width / 2,
+      clientY: rect.top + rect.height / 2,
+    };
+    button.dispatchEvent(new PointerEvent('pointerdown', options));
+    if (${holdMs} > 0) await new Promise((resolve) => setTimeout(resolve, ${holdMs}));
+    button.dispatchEvent(new PointerEvent(${JSON.stringify(kind)}, options));
+    return true;
+  })()`)
+
+  /** Закрыть голосовой лист крестиком (как это сделал бы пользователь). */
+  const closeVoiceSheet = () => evaluate(`(() => {
+    const closing = (node) => Boolean(node && [...node.classList, ...(node.closest('.ui-drawer-backdrop')?.classList ?? [])].some((cls) => cls.includes('leave')));
+    const voiceDrawer = [...document.querySelectorAll('.ui-drawer')]
+      .filter((el) => el.querySelector('.listik-voice__panel') && !closing(el))
+      .pop() ?? null;
+    if (!voiceDrawer) return false;
+    const button = voiceDrawer.querySelector('.ui-drawer__close');
     if (!button) return false;
     button.click();
     return true;
@@ -295,6 +371,26 @@ try {
     const draft = await waitFor(async () => ((await state()).stage === 'draft' ? true : null), 10000)
     if (!draft) throw new Error(`черновик не собрался: ${JSON.stringify(await state())}`)
   }
+
+  /* ── телефонные хелперы (порция c) ─────────────────────────────────────── */
+
+  /** Короткое нажатие на кружок: запись идёт, лист открыт. */
+  async function phoneStartRecording() {
+    if (!(await phoneGesture('pointerup', 0))) throw new Error('кружок «Голосовой ввод задачи» не найден')
+    const recording = await waitFor(async () => ((await state()).stage === 'recording' ? true : null), 5000)
+    if (!recording) throw new Error(`запись на телефоне не началась: ${JSON.stringify(await state())}`)
+  }
+
+  /** Короткое нажатие → «Готово» в листе → черновик. */
+  async function phoneGoToDraft() {
+    await phoneStartRecording()
+    if (!(await clickPanelButton('Готово'))) throw new Error('кнопка «Готово» не найдена в листе')
+    const draft = await waitFor(async () => ((await state()).stage === 'draft' ? true : null), 10000)
+    if (!draft) throw new Error(`черновик на телефоне не собрался: ${JSON.stringify(await state())}`)
+  }
+
+  const phoneQueueReady = () =>
+    waitFor(async () => ((await evaluate(`document.querySelectorAll('.listik-mobile-task').length`)) > 0 ? true : null), 15000)
 
   /* ── сценарии ──────────────────────────────────────────────────────────── */
 
@@ -692,6 +788,286 @@ try {
       ok: Boolean(recording),
       expect: 'панель снова «Слушаю»',
       got: { stage: (await state()).stage },
+    }
+  })
+
+  /* ── телефонные сценарии (порция c) ────────────────────────────────────── */
+
+  // Узкий экран: эмуляция до перезагрузки, чтобы `useIsPhone` увидел порог
+  // PHONE_MAX_WIDTH=767 и App.vue показал PhoneQueue с кружком.
+  await send('Emulation.setDeviceMetricsOverride', {
+    width: 390,
+    height: 844,
+    deviceScaleFactor: 2,
+    mobile: true,
+  })
+  await send('Page.navigate', { url: voiceUrl })
+  if (!(await phoneQueueReady())) throw new Error('телефонная очередь не отрисовалась')
+  const phoneTriggerReady = await waitFor(async () => ((await state()).trigger ? true : null), 10000)
+  if (!phoneTriggerReady) throw new Error('кружок «Голосовой ввод задачи» не появился на телефоне')
+
+  await record('телефон: ровно один круглый кружок с aria-label', async () => {
+    await resetUi()
+    const seen = await state()
+    return {
+      ok: seen.triggerCount === 1 && seen.fab && seen.fabRound.round,
+      expect: 'единственный элемент с доступным именем, класс listik-voice__fab, скругление ≥ половины ширины',
+      got: { triggerCount: seen.triggerCount, fab: seen.fab, fabRound: seen.fabRound },
+    }
+  })
+
+  await record('телефон: короткое нажатие открывает лист снизу, «Слушаю» и таймер', async () => {
+    await resetUi()
+    await setCase('ok')
+    await resetRequests()
+    await phoneStartRecording()
+    const seen = await waitFor(async () => {
+      const current = await state()
+      return current.drawerSide === 'bottom' && current.stage === 'recording' && current.timer ? current : null
+    }, 5000)
+    return {
+      ok: Boolean(seen) && seen.title === 'Слушаю' && /^0:0\d$/.test(seen.timer ?? ''),
+      expect: 'UiDrawer side="bottom", «Слушаю» и таймер 0:0X — короткое отпускание запись не закончило',
+      got: {
+        drawerSide: seen?.drawerSide ?? null,
+        stage: seen?.stage ?? null,
+        title: seen?.title ?? null,
+        timer: seen?.timer ?? null,
+      },
+    }
+  })
+
+  await record('телефон: подсказка «держи кнопку и говори» в «Слушаю»', async () => {
+    await resetUi()
+    await setCase('ok')
+    await resetRequests()
+    await phoneStartRecording()
+    const seen = await state()
+    return {
+      ok: (seen.panelText ?? '').includes('на телефоне голос — основной ввод: держи кнопку и говори'),
+      expect: 'в состоянии «Слушаю» видна подсказка про основной ввод голосом',
+      got: { panelText: seen.panelText },
+    }
+  })
+
+  await record('телефон: удержание дольше порога заканчивает запись', async () => {
+    await resetUi()
+    await setCase('ok')
+    await resetRequests()
+    if (!(await phoneGesture('pointerup', 600))) throw new Error('кружок не найден')
+    const seen = await waitFor(async () => {
+      const current = await state()
+      return current.stage === 'transcribing' || current.stage === 'drafting' || current.stage === 'draft'
+        ? current
+        : null
+    }, 10000)
+    return {
+      ok: Boolean(seen),
+      expect: 'pointerup после удержания уводит лист в «Разбираю»/черновик',
+      got: { stage: seen?.stage ?? null },
+    }
+  })
+
+  await record('телефон: отпускание удержания до выдачи микрофона заканчивает запись', async () => {
+    await resetUi()
+    await setCase('ok')
+    await resetRequests()
+    // Микрофон отдаётся с задержкой — отпускаем раньше, чем пришёл поток.
+    await evaluate('(window.__listikVoiceDelay = 3000, true)')
+    const before = await voiceStats()
+    if (!(await phoneGesture('pointerup', 600))) throw new Error('кружок не найден')
+    // Поток ещё не выдан: лист обязан остаться «Слушаю», но не зависнуть навсегда.
+    const releasedBeforeStream = (await state()).stage
+    const finished = await waitFor(async () => {
+      const current = await state()
+      return current.stage === 'draft' || current.stage === 'error' ? current : null
+    }, 12000)
+    await evaluate('(window.__listikVoiceDelay = 0, true)')
+    const after = await voiceStats()
+    return {
+      ok:
+        releasedBeforeStream === 'recording' &&
+        finished?.stage === 'draft' &&
+        after.stopped > before.stopped &&
+        after.tracksStopped > before.tracksStopped,
+      expect: 'после отпускания до выдачи потока лист сам уходит в черновик, дорожка и MediaRecorder остановлены',
+      got: { releasedBeforeStream, finishedStage: finished?.stage ?? null, before, after },
+    }
+  })
+
+  await record('телефон: черновик — заголовок и обе кнопки, «Создать задачу» даёт одну карточку', async () => {
+    await resetUi()
+    await setCase('ok')
+    await resetRequests()
+    await phoneGoToDraft()
+    const seen = await state()
+    const create = seen.buttons.find((item) => item.text === 'Создать задачу')
+    const openForm = seen.buttons.find((item) => item.text === 'Открыть форму')
+    if (!create || !openForm) throw new Error(`нет кнопок черновика: ${JSON.stringify(seen.buttons)}`)
+    if (!(await clickPanelButton('Создать задачу'))) throw new Error('кнопка «Создать задачу» не найдена')
+    const created = await waitFor(async () => ((await state()).stage === 'created' ? true : null), 10000)
+    const data = await apiRequests()
+    const body = data.last_create ?? {}
+    return {
+      ok:
+        Boolean(seen.draftTitle) &&
+        Boolean(created) &&
+        data.voice.create === 1 &&
+        body.autostart === false &&
+        !('holder' in body) &&
+        !('stage' in body),
+      expect:
+        'заголовок черновика, «Открыть форму» и «Создать задачу»; одна карточка, autostart:false, без holder/stage',
+      got: {
+        draftTitle: seen.draftTitle,
+        buttons: seen.buttons,
+        created: Boolean(created),
+        counts: data.voice,
+        last_create: body,
+      },
+    }
+  })
+
+  await record('телефон: двойной клик «Создать задачу» — одна задача', async () => {
+    await resetUi()
+    await setCase('ok')
+    await resetRequests()
+    await phoneGoToDraft()
+    await evaluate(`(() => {
+      const closing = (node) => Boolean(node && [...node.classList, ...(node.closest('.ui-drawer-backdrop')?.classList ?? [])].some((cls) => cls.includes('leave')));
+      const voiceDrawer = [...document.querySelectorAll('.ui-drawer')].filter((el) => el.querySelector('.listik-voice__panel') && !closing(el)).pop();
+      const panel = voiceDrawer.querySelector('.listik-voice__panel');
+      const button = [...panel.querySelectorAll('button')]
+        .find((el) => el.textContent.replace(/\\s+/g, ' ').trim() === 'Создать задачу');
+      button.click();
+      button.click();
+      return true;
+    })()`)
+    await waitFor(async () => ((await state()).stage === 'created' ? true : null), 10000)
+    const afterDouble = (await apiRequests()).voice.create
+    const extraClick = await clickPanelButton('Создать задачу')
+    await sleep(400)
+    const afterExtra = (await apiRequests()).voice.create
+    return {
+      ok: afterDouble === 1 && afterExtra === 1,
+      expect: 'voice.create === 1 и после второго клика, и после клика по исчезнувшей кнопке',
+      got: { afterDouble, afterExtra, extraClick },
+    }
+  })
+
+  const phoneErrorCases = [
+    { marker: 'transcribe-fail', branch: 'transcribe', alert: 'Расшифровка не удалась' },
+    { marker: 'draft-fail', branch: 'draft', alert: 'Черновик не собрался' },
+    { marker: 'silence', branch: 'silence', alert: 'Ничего не расслышал' },
+    { marker: 'denied', branch: 'mic', alert: 'Микрофон не разрешён' },
+  ]
+  for (const item of phoneErrorCases) {
+    await record(`телефон · ${item.marker}: «${item.alert}», очередь под листом жива`, async () => {
+      await resetUi()
+      await setCase(item.marker)
+      await resetRequests()
+      if (!(await phoneGesture('pointerup', 0))) throw new Error('кружок не найден')
+      if (item.marker !== 'denied') {
+        const recording = await waitFor(async () => ((await state()).stage === 'recording' ? true : null), 5000)
+        if (!recording) throw new Error(`запись не началась: ${JSON.stringify(await state())}`)
+        if (!(await clickPanelButton('Готово'))) throw new Error('кнопка «Готово» не найдена')
+      }
+      const seen = await waitFor(async () => {
+        const current = await state()
+        return current.stage === 'error' ? current : null
+      }, 10000)
+      const rows = (await state()).phoneRows
+      return {
+        ok: Boolean(seen) && seen.branch === item.branch && (seen.alert ?? '').includes(item.alert) && rows > 0,
+        expect: `ветка ${item.branch} с текстом «${item.alert}», строки очереди остаются в DOM`,
+        got: { branch: seen?.branch ?? null, alert: seen?.alert ?? null, phoneRows: rows },
+      }
+    })
+  }
+
+  await record('телефон: pointercancel после удержания отменяет запись', async () => {
+    await resetUi()
+    await setCase('ok')
+    await resetRequests()
+    const before = await voiceStats()
+    if (!(await phoneGesture('pointercancel', 600))) throw new Error('кружок не найден')
+    await sleep(400)
+    const data = await apiRequests()
+    const after = await voiceStats()
+    return {
+      ok: data.voice.transcribe === 0 && data.voice.draft === 0 && after.tracksStopped > before.tracksStopped,
+      expect: 'ни одного transcribe/draft, дорожки микрофона погашены',
+      got: { counts: data.voice, before, after },
+    }
+  })
+
+  await record('телефон: «Отмена» в листе отменяет запись', async () => {
+    await resetUi()
+    await setCase('ok')
+    await resetRequests()
+    const before = await voiceStats()
+    await phoneStartRecording()
+    if (!(await clickPanelButton('Отмена'))) throw new Error('кнопка «Отмена» не найдена')
+    await sleep(400)
+    const data = await apiRequests()
+    const after = await voiceStats()
+    return {
+      ok: data.voice.transcribe === 0 && data.voice.draft === 0 && after.tracksStopped > before.tracksStopped,
+      expect: 'ни одного transcribe/draft, дорожки микрофона погашены',
+      got: { counts: data.voice, before, after },
+    }
+  })
+
+  await record('телефон: закрытие листа до выдачи микрофона отменяет запись', async () => {
+    await resetUi()
+    await setCase('ok')
+    await resetRequests()
+    // Микрофон отдаётся с задержкой: лист закрываем, пока запись ещё без потока.
+    await evaluate('(window.__listikVoiceDelay = 1500, true)')
+    const before = await voiceStats()
+    if (!(await phoneGesture('pointerup', 0))) throw new Error('кружок не найден')
+    const sheetOpen = await waitFor(async () => ((await state()).drawerSide === 'bottom' ? true : null), 3000)
+    const closed = sheetOpen ? await closeVoiceSheet() : false
+    await sleep(2000)
+    await evaluate('(window.__listikVoiceDelay = 0, true)')
+    const data = await apiRequests()
+    const after = await voiceStats()
+    return {
+      ok:
+        Boolean(closed) &&
+        data.voice.transcribe === 0 &&
+        data.voice.draft === 0 &&
+        after.tracksStopped > before.tracksStopped,
+      expect: 'закрытие листа до getUserMedia отменяет запись: ни запросов, ни живой дорожки',
+      got: { sheetOpen: Boolean(sheetOpen), closed, counts: data.voice, before, after },
+    }
+  })
+
+  await record('телефон · noproject: «Создать задачу» не создаёт, виден текст про проект', async () => {
+    await resetUi()
+    await setCase('noproject')
+    await resetRequests()
+    await phoneGoToDraft()
+    const seen = await state()
+    await clickPanelButton('Создать задачу')
+    await sleep(300)
+    const data = await apiRequests()
+    return {
+      ok: (seen.warn ?? '').includes('проект не распознан — откройте форму') && data.voice.create === 0,
+      expect: 'текст «проект не распознан — откройте форму», POST /api/tasks не ушёл (критерий — счётчик)',
+      got: { warn: seen.warn, counts: data.voice },
+    }
+  })
+
+  await record('телефон без --voice: кружка нет', async () => {
+    await send('Page.navigate', { url: noVoiceUrl })
+    const ready = await phoneQueueReady()
+    await sleep(1000)
+    const seen = await state()
+    return {
+      ok: Boolean(ready) && seen.triggerCount === 0,
+      expect: 'телефонная очередь отрисована, элементов с aria-label «Голосовой ввод задачи» нет',
+      got: { ready: Boolean(ready), triggerCount: seen.triggerCount },
     }
   })
 

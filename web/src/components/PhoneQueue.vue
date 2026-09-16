@@ -13,9 +13,26 @@ import { computed, ref, watch } from 'vue'
 import { UiBadge, UiButton, UiEmptyState, UiInput, UiSelect, UiSkeleton, type UiSelectOption } from '@zoloto585/facet'
 import ListikIcon from '@/components/ListikIcon.vue'
 import MobileTaskRow from '@/components/MobileTaskRow.vue'
+import VoiceCapture from '@/components/VoiceCapture.vue'
 import store from '@/store/listik'
 import { projectOptions } from '@/lib/facets'
-import type { Task } from '@/api/types'
+import type { Task, VoiceDraft } from '@/api/types'
+
+withDefaults(
+  defineProps<{
+    /** Подтверждение/ошибка создания из голосовой панели — из App.vue, как на доске. */
+    voiceCreatedId?: string | null
+    voiceCreateError?: string | null
+  }>(),
+  { voiceCreatedId: null, voiceCreateError: null },
+)
+
+const emit = defineEmits<{
+  /** «Создать задачу» из телефонного листа: обработчик один — `createFromVoice` App.vue. */
+  voiceCreate: [body: Record<string, unknown>]
+  /** «Открыть форму»: черновик для «Новой задачи», обработчик также из App.vue. */
+  voiceOpenForm: [draft: VoiceDraft]
+}>()
 
 const searchText = ref(store.query.value)
 
@@ -163,5 +180,14 @@ const moreCount = computed(() => Math.min(PHONE_PAGE, total.value - tasks.value.
     >
       Показать ещё {{ moreCount }}
     </UiButton>
+
+    <!-- Голосовой ввод на телефоне: кружок над очередью + лист снизу (порция c). -->
+    <VoiceCapture
+      variant="phone"
+      :created-id="voiceCreatedId"
+      :create-error="voiceCreateError"
+      @create="(body) => emit('voiceCreate', body)"
+      @open-form="(draft) => emit('voiceOpenForm', draft)"
+    />
   </section>
 </template>

@@ -1,8 +1,9 @@
 <script setup lang="ts">
 /**
- * Голосовой ввод задачи (шаг listik-8hrq, порция b): кнопка «Голосом» рядом с
- * «Новая задача», панель записи на `UiPopover`, расшифровка и черновик. Телефон —
- * порция c.
+ * Голосовой ввод задачи (шаг listik-8hrq). Десктоп (порция b): кнопка «Голосом»
+ * рядом с «Новая задача», панель записи на `UiPopover`. Телефон (порция c):
+ * круглая FAB над очередью и лист `UiDrawer side="bottom"`. Режим — проп
+ * `variant`; состояние, поток `transcribe → draft` и ветки ошибок общие.
  *
  * Поток: старт записи → стоп даёт `{blob, mime}` → base64 → `store.transcribeVoice`
  * (`POST /api/assistant/transcribe`) → пустой `transcript` — ветка «Ничего не
@@ -17,7 +18,7 @@
  * `ensureAssistant` один раз за сессию); пока флага нет — в DOM ничего.
  */
 import { computed, onBeforeUnmount, onMounted, ref, watch } from 'vue'
-import { UiAlert, UiButton, UiPopover, UiSpinner } from '@zoloto585/facet'
+import { UiAlert, UiButton, UiDrawer, UiPopover, UiSpinner } from '@zoloto585/facet'
 import ListikIcon from '@/components/ListikIcon.vue'
 import ProjectMark from '@/components/marks/ProjectMark.vue'
 import TaskGlyph from '@/components/marks/TaskGlyph.vue'
@@ -38,8 +39,10 @@ const props = withDefaults(
     createdId?: string | null
     /** Ошибка создания — текстом под черновиком, доска общим алертом её не показывает. */
     createError?: string | null
+    /** Вид: десктоп — кнопка + поповер, телефон — кружок + лист снизу. */
+    variant?: 'desktop' | 'phone'
   }>(),
-  { createdId: null, createError: null },
+  { createdId: null, createError: null, variant: 'desktop' },
 )
 
 const emit = defineEmits<{
@@ -54,6 +57,9 @@ type ErrorBranch = 'mic' | 'silence' | 'transcribe' | 'draft'
 
 /** Амплитудные множители столбиков волны — «живость» при общем уровне записи. */
 const WAVE_BARS = [0.5, 0.85, 1, 0.7, 0.9]
+
+/** Порог телефонного жеста: короче — короткое нажатие, дольше — удержание. */
+const HOLD_MS = 350
 
 const open = ref(false)
 const stage = ref<Stage>('idle')
@@ -81,8 +87,20 @@ let voiceKeyHeld = false
  * сразу, как только поток придёт, — иначе панель навсегда остаётся в «Слушаю».
  */
 let finishRequested = false
+/** Телефонный жест: момент `pointerdown` и признак «этот тап уже обработан». */
+let pressStartedAt = 0
+let pressHandled = false
 
 const voiceEnabled = computed(() => store.voiceEnabled.value)
+const isPhone = computed(() => props.variant === 'phone')
+/** Кнопки панели: на телефоне крупнее и во всю ширину (`block`). */
+const actionSize = computed<'sm' | 'md'>(() => (isPhone.value ? 'md' : 'sm'))
+/** Пропсы обёртки панели: поповер на десктопе, лист снизу на телефоне. */
+const wrapperProps = computed(() =>
+  isPhone.value
+    ? ({ side: 'bottom', title: 'Голосом' } as const)
+    : ({ placement: 'bottom', label: 'Голосовой ввод задачи' } as const),
+)
 
 const timerText = computed(() => {
   const total = Math.max(0, Math.floor(elapsed.value / 1000))
@@ -397,6 +415,59 @@ function onTrigger(): void {
   open.value = !open.value
 }
 
+// ── телефонный жест: короткое нажатие открывает лист, удержание завершает ────
+
+/**
+ * `pointerdown` на кружке: короткое нажатие и удержание начинаются одинаково —
+ * запись и лист. Повторный тап во время записи завершает её (как «Готово»).
+ */
+function onPhonePointerDown(): void {
+  pressStartedAt = Date.now()
+  pressHandled = false
+  if (stage.value === 'recording') {
+    pressHandled = true
+    void finishRecording()
+    return
+  }
+  if (stage.value === 'idle') {
+    void beginRecording()
+    return
+  }
+  if (stage.value === 'transcribing' || stage.value === 'drafting') return
+  open.value = !open.value
+}
+
+/** `pointerup`: удержание дольше порога заканчивает запись, короткое — продолжает. */
+function onPhonePointerUp(): void {
+  if (pressHandled) {
+    pressHandled = false
+    return
+  }
+  if (stage.value !== 'recording') return
+  if (Date.now() - pressStartedAt < HOLD_MS) return
+  void finishRecording()
+}
+
+/** `pointercancel` (палец ушёл, системный жест) — запись выбрасывается. */
+function onPhonePointerCancel(): void {
+  pressHandled = false
+  if (stage.value === 'recording') resetToIdle()
+}
+
+/**
+ * Слушатели жеста на FAB. Отдаются через `v-bind`, а не `@pointerdown`: у `UiButton`
+ * объявлен только `click`, и строгая проверка шаблонов не пропускает нативные
+ * слушатели как пропсы.
+ */
+const fabGestures = {
+  onPointerdown: (event: PointerEvent) => {
+    event.preventDefault()
+    onPhonePointerDown()
+  },
+  onPointerup: () => onPhonePointerUp(),
+  onPointercancel: () => onPhonePointerCancel(),
+}
+
 // Результат создания из App.vue: id — подтверждение, ошибка — строкой в черновике.
 watch(
   () => props.createdId,
@@ -492,9 +563,24 @@ onBeforeUnmount(() => {
 
 <template>
   <div v-if="voiceEnabled" class="listik-voice">
-    <UiPopover v-model="open" placement="bottom" label="Голосовой ввод задачи">
+    <!-- Телефон: кружок-триггер (FAB) поверх очереди; жест — pointer-события. -->
+    <UiButton
+      v-if="isPhone"
+      class="listik-voice__fab"
+      size="lg"
+      variant="primary"
+      ariaLabel="Голосовой ввод задачи"
+      :loading="stage === 'transcribing' || stage === 'drafting'"
+      v-bind="fabGestures"
+    >
+      <template #icon><ListikIcon name="mic" size="md" /></template>
+    </UiButton>
+
+    <!-- Обёртка панели: десктоп — поповер с кнопкой-триггером, телефон — лист снизу. -->
+    <component :is="isPhone ? UiDrawer : UiPopover" v-model="open" v-bind="wrapperProps">
       <template #trigger>
         <UiButton
+          v-if="!isPhone"
           size="sm"
           variant="secondary"
           ariaLabel="Голосовой ввод задачи"
@@ -518,7 +604,12 @@ onBeforeUnmount(() => {
         </UiButton>
       </template>
 
-      <div class="listik-voice__panel" :data-stage="stage" :data-branch="branch ?? undefined">
+      <div
+        class="listik-voice__panel"
+        :class="{ 'listik-voice__panel--phone': isPhone }"
+        :data-stage="stage"
+        :data-branch="branch ?? undefined"
+      >
         <!-- 1. Слушаю -->
         <template v-if="stage === 'recording'">
           <span class="listik-voice__title">Слушаю</span>
@@ -532,11 +623,14 @@ onBeforeUnmount(() => {
               :style="{ transform: barTransform(index) }"
             />
           </span>
-          <p class="listik-section__hint">Enter — закончить · Esc — отменить</p>
+          <p v-if="!isPhone" class="listik-section__hint">Enter — закончить · Esc — отменить</p>
           <div class="listik-row">
-            <UiButton size="sm" variant="ghost" @click="resetToIdle">Отмена</UiButton>
-            <UiButton size="sm" variant="primary" @click="finishRecording">Готово</UiButton>
+            <UiButton :size="actionSize" :block="isPhone" variant="ghost" @click="resetToIdle">Отмена</UiButton>
+            <UiButton :size="actionSize" :block="isPhone" variant="primary" @click="finishRecording">Готово</UiButton>
           </div>
+          <p v-if="isPhone" class="listik-section__hint">
+            на телефоне голос — основной ввод: держи кнопку и говори
+          </p>
         </template>
 
         <!-- 2. Разбираю -->
@@ -548,7 +642,7 @@ onBeforeUnmount(() => {
             </span>
           </div>
           <div class="listik-row">
-            <UiButton size="sm" variant="ghost" @click="resetToIdle">Отмена</UiButton>
+            <UiButton :size="actionSize" :block="isPhone" variant="ghost" @click="resetToIdle">Отмена</UiButton>
           </div>
         </template>
 
@@ -592,10 +686,11 @@ onBeforeUnmount(() => {
           <p v-if="serverError" class="listik-voice__server-error">{{ serverError }}</p>
 
           <div class="listik-row">
-            <UiButton size="sm" variant="ghost" @click="beginRecording">Переписать</UiButton>
-            <UiButton size="sm" variant="secondary" @click="openForm">Открыть форму</UiButton>
+            <UiButton v-if="!isPhone" :size="actionSize" variant="ghost" @click="beginRecording">Переписать</UiButton>
+            <UiButton :size="actionSize" :block="isPhone" variant="secondary" @click="openForm">Открыть форму</UiButton>
             <UiButton
-              size="sm"
+              :size="actionSize"
+              :block="isPhone"
               variant="primary"
               :disabled="!canCreate"
               :loading="creating"
@@ -611,7 +706,7 @@ onBeforeUnmount(() => {
           <span class="listik-voice__title">Задача создана</span>
           <span v-if="localCreatedId" class="listik-voice__created-id listik-mono">{{ localCreatedId }}</span>
           <div class="listik-row">
-            <UiButton size="sm" variant="secondary" @click="closePanel">Закрыть</UiButton>
+            <UiButton :size="actionSize" :block="isPhone" variant="secondary" @click="closePanel">Закрыть</UiButton>
           </div>
         </template>
 
@@ -621,10 +716,10 @@ onBeforeUnmount(() => {
             <template #title>{{ branchInfo.title }}</template>
             {{ branchInfo.text }}
             <div class="listik-row" style="margin-top: var(--space-2)">
-              <UiButton size="sm" variant="ghost" @click="branchActions.secondary.run">
+              <UiButton :size="actionSize" :block="isPhone" variant="ghost" @click="branchActions.secondary.run">
                 {{ branchActions.secondary.label }}
               </UiButton>
-              <UiButton size="sm" variant="primary" @click="branchActions.primary.run">
+              <UiButton :size="actionSize" :block="isPhone" variant="primary" @click="branchActions.primary.run">
                 {{ branchActions.primary.label }}
               </UiButton>
             </div>
@@ -632,6 +727,6 @@ onBeforeUnmount(() => {
           <p v-if="serverError" class="listik-voice__server-error">{{ serverError }}</p>
         </template>
       </div>
-    </UiPopover>
+    </component>
   </div>
 </template>

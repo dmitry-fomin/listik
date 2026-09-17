@@ -566,6 +566,8 @@ def handle(method: str, path: str, query: dict, body: dict, authed: bool = False
     """`owner` — идентичность запроса из заголовка `X-Listik-Owner` (None, если его нет).
 
     Она уходит в store как `as_owner`; в локальном режиме store её игнорирует.
+    У комментария без явного автора она становится автором-человеком: иначе
+    клиент без `author` оставлял бы запись без автора вовсе.
     """
     conn = get_conn()
     parts = [p for p in path.strip("/").split("/") if p]
@@ -981,8 +983,12 @@ def handle(method: str, path: str, query: dict, body: dict, authed: bool = False
                                            actor=body.get("actor"), as_owner=owner,
                                            to_stage=body.get("to") or body.get("stage"))
                 elif action == "comment":
+                    # Явный автор (`--actor`/`author`) сильнее: агент остаётся
+                    # `agent:<имя>`. Без автора комментарий приписываем человеку,
+                    # представившемуся заголовком `X-Listik-Owner`, — а не держателю
+                    # карточки, которым часто оказывается агент (listik-015y).
                     out = store.add_comment(conn, tid, need(body, "text"),
-                                            author=body.get("author") or body.get("actor"),
+                                            author=body.get("author") or body.get("actor") or owner,
                                             kind=body.get("kind", "comment"),
                                             harness=body.get("harness"))
                 elif action == "deps" and body.get("depends_on"):

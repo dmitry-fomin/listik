@@ -21,6 +21,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
 from listik import __version__, client, cwd_project, db, errors, paths, store  # noqa: E402
 from listik import routes as routes_mod  # noqa: E402
+from listik import routes_store  # noqa: E402
 from listik import worktree as worktree_mod  # noqa: E402
 
 STATUS_ICON = {"open": "○", "in_progress": "▶", "blocked": "■", "review": "◐",
@@ -666,6 +667,9 @@ def cmd_status(args) -> int:
 def cmd_init(args) -> int:
     conn = db.init(verbose=True)
     print(f"база: {paths.DB_PATH}")
+    imported = routes_store.ensure_imported(conn)
+    if imported.get("imported"):
+        print(f"маршруты: ввезено {imported['imported']} из {imported['source']}")
     for k, v in db.counts(conn).items():
         print(f"  {k:12s} {v}")
     return 0

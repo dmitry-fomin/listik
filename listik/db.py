@@ -11,7 +11,7 @@ from pathlib import Path
 
 from . import paths
 
-SCHEMA_VERSION = 8
+SCHEMA_VERSION = 9
 
 SCHEMA = """
 PRAGMA journal_mode = WAL;
@@ -180,6 +180,25 @@ CREATE TABLE IF NOT EXISTS meta (
     key   TEXT PRIMARY KEY,
     value TEXT
 );
+
+-- Маршруты запуска задач (шаг 09, порция b): таблица переезжает из routes.json.
+-- Пока только хранилище: читатели (routes.current, API, launcher) ещё смотрят
+-- в файл; первичный ввоз делает listik/routes_store.py.
+CREATE TABLE IF NOT EXISTS routes (
+    key        TEXT PRIMARY KEY,
+    kind       TEXT NOT NULL,              -- pipeline | direct
+    title      TEXT NOT NULL,
+    hint       TEXT NOT NULL DEFAULT '',
+    icon       TEXT,                       -- xhigh|high|medium|low|xlow|direct, NULL — уровня нет
+    visible    INTEGER NOT NULL DEFAULT 1, -- 0/1
+    position   INTEGER NOT NULL DEFAULT 0, -- порядок в списке и в «Новой задаче»
+    harness    TEXT,                       -- только у kind=direct, иначе NULL
+    command    TEXT,                       -- JSON-массив argv, либо NULL
+    roles      TEXT,                       -- JSON {"spec":{provider,label,title},…}, либо NULL
+    created_at TEXT,
+    updated_at TEXT
+);
+CREATE INDEX IF NOT EXISTS idx_routes_position ON routes(position);
 
 -- Долговременная память: заметки, не привязанные к задаче (аналог bd remember)
 CREATE TABLE IF NOT EXISTS memories (

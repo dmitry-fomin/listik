@@ -1,0 +1,366 @@
+"""Тесты таблицы `routes` и ввоза `routes.json` (шаг 09, порция b).
+
+База — временная (`TempDbTestCase`), настоящий `~/.config/listik/` не трогается:
+у ввоза всегда явный путь, а `RUNTIME_PATH`/`SOURCE_PATH` подменяются на файлы
+во временном каталоге.  Файл `routes.json` из корня репозитория только читается.
+"""
+from __future__ import annotations
+
+import contextlib
+import io
+import json
+import pathlib
+import tempfile
+import unittest
+from unittest import mock
+
+from listik import db as db_mod
+from listik import errors
+from listik import routes as routes_mod
+from listik import routes_store
+from tests.helpers import TempDbTestCase
+
+REPO_DIR = pathlib.Path(__file__).resolve().parent.parent
+ROUTES_JSON = REPO_DIR / "routes.json"
+
+EXPECTED_KEYS = [
+    "xhigh-pipeline", "high-pipeline", "medium-pipeline", "low-pipeline", "xlow-pipeline",
+    "nano-pipeline", "inherit-pipeline", "opus-single-pipeline", "opus-sonnet-pipeline",
+    "feature-pipeline", "dsh", "grok", "codex",
+]
+DIRECT_KEYS = ["dsh", "grok", "codex"]
+
+
+def pipeline_record() -> dict:
+    return {
+        "key": "demo-pipeline",
+        "kind": "pipeline",
+        "title": "Демо",
+        "hint": "подсказка",
+        "visible": True,
+        "roles": {"impl": {"provider": "claude", "label": "Opus", "title": "Opus · medium"}},
+    }
+
+
+def direct_record() -> dict:
+    return {"key": "dsh", "kind": "direct", "harness": "dsh", "title": "dsh",
+            "hint": "", "visible": True}
+
+
+def document(*records) -> dict:
+    return {"version": 1, "routes": list(records) if records else [pipeline_record()]}
+
+
+class RoutesDbTestCase(TempDbTestCase):
+    """Общая обвязка: тихий stderr и подмена путей ввоза."""
+
+    def import_sample(self, *, replace=False) -> dict:
+        with contextlib.redirect_stderr(io.StringIO()):
+            return routes_store.import_file(self.conn, ROUTES_JSON, replace=replace)
+
+    def patch_paths(self, *, source=None, runtime=None):
+        """Подменить пути ввоза на временные, чтобы не смотреть в ~/.config."""
+        source = source if source is not None else self.tmp_path / "нет-образца.json"
+        runtime = runtime if runtime is not None else self.tmp_path / "нет-копии.json"
+        return mock.patch.multiple(routes_mod, SOURCE_PATH=source, RUNTIME_PATH=runtime)
+
+    def write_routes(self, records, name: str = "routes.json"):
+        path = self.tmp_path / name
+        path.write_text(json.dumps({"version": 1, "routes": list(records)},
+                                   ensure_ascii=False), encoding="utf-8")
+        return path
+
+
+class ImportSampleTests(RoutesDbTestCase):
+    """Пункты чек-листа про ввоз образца `routes.json`."""
+
+    def test_sample_imports_in_file_order(self) -> None:
+        report = self.import_sample()
+        self.assertEqual(report, {"imported": 13, "skipped": False,
+                                  "source": str(ROUTES_JSON), "replaced": False})
+        records = routes_store.list_routes(self.conn)
+        self.assertEqual([r["key"] for r in records], EXPECTED_KEYS)
+        self.assertEqual([r["position"] for r in records], list(range(13)))
+
+    def test_high_pipeline_roles_keep_providers(self) -> None:
+        self.import_sample()
+        record = routes_store.get_route(self.conn, "high-pipeline")
+        self.assertEqual(list(record["roles"]), ["spec", "critic", "impl", "judge"])
+        for cell in record["roles"].values():
+            self.assertTrue(cell["provider"])
+            self.assertTrue(cell["label"])
+            self.assertTrue(cell["title"])
+
+    def test_direct_dsh_has_harness_and_command(self) -> None:
+        self.import_sample()
+        record = routes_store.get_route(self.conn, "dsh")
+        self.assertEqual(record["kind"], "direct")
+        self.assertEqual(record["harness"], "dsh")
+        self.assertTrue(record["command"])
+        self.assertNotIn("roles", record)
+
+    def test_types_are_python_not_json(self) -> None:
+        self.import_sample()
+        for record in routes_store.list_routes(self.conn):
+            self.assertIsInstance(record["visible"], bool)
+            self.assertIsInstance(record["position"], int)
+            if record["kind"] == "pipeline":
+                self.assertIsInstance(record["roles"], dict)
+            else:
+                self.assertTrue(record["command"] is None or isinstance(record["command"], list))
+
+
+class ReimportTests(RoutesDbTestCase):
+    """Идемпотентность ввоза и `replace`."""
+
+    def test_second_import_without_replace_is_skipped(self) -> None:
+        self.import_sample()
+        routes_store.update_route(self.conn, "dsh", title="Правленый")
+        report = self.import_sample()
+        self.assertTrue(report["skipped"])
+        self.assertEqual(report["imported"], 0)
+        self.assertFalse(report["replaced"])
+        self.assertEqual(routes_store.get_route(self.conn, "dsh")["title"], "Правленый")
+
+    def test_import_with_replace_rewrites(self) -> None:
+        self.import_sample()
+        routes_store.update_route(self.conn, "dsh", title="Правленый", visible=False)
+        report = self.import_sample(replace=True)
+        self.assertFalse(report["skipped"])
+        self.assertTrue(report["replaced"])
+        self.assertEqual(report["imported"], 13)
+        record = routes_store.get_route(self.conn, "dsh")
+        self.assertEqual(record["title"], "dsh")
+        self.assertTrue(record["visible"])
+
+    def test_broken_file_keeps_db_and_raises(self) -> None:
+        self.import_sample()
+        bad = self.tmp_path / "bad.json"
+        bad.write_text(json.dumps({"version": 2, "routes": []}), encoding="utf-8")
+        before = routes_store.list_routes(self.conn)
+        with contextlib.redirect_stderr(io.StringIO()):
+            with self.assertRaises(routes_mod.RoutesError):
+                routes_store.import_file(self.conn, bad)
+        self.assertEqual(routes_store.list_routes(self.conn), before)
+        self.assertEqual(routes_store.count(self.conn), 13)
+
+    def test_ensure_imported_swallows_broken_file(self) -> None:
+        bad = self.tmp_path / "broken.json"
+        bad.write_text("{", encoding="utf-8")
+        with self.patch_paths(source=bad), contextlib.redirect_stderr(io.StringIO()) as err:
+            report = routes_store.ensure_imported(self.conn)
+        self.assertIn("error", report)
+        self.assertEqual(routes_store.count(self.conn), 0)
+        self.assertIn("routes: ввоз не удался", err.getvalue())
+
+    def test_default_source_is_sample_when_no_runtime_copy(self) -> None:
+        with self.patch_paths(source=ROUTES_JSON):
+            report = routes_store.ensure_imported(self.conn)
+        self.assertEqual(report["imported"], 13)
+        self.assertEqual(report["source"], str(ROUTES_JSON))
+
+    def test_runtime_copy_wins_over_sample(self) -> None:
+        runtime = self.write_routes([direct_record()], name="runtime.json")
+        with self.patch_paths(source=ROUTES_JSON, runtime=runtime):
+            report = routes_store.ensure_imported(self.conn)
+        self.assertEqual(report["source"], str(runtime))
+        self.assertEqual([r["key"] for r in routes_store.list_routes(self.conn)], ["dsh"])
+
+    def test_strip_field_is_not_stored(self) -> None:
+        source = self.write_routes([{**pipeline_record(),
+                                     "strip": {"glyph": "gear", "label": "x"}}])
+        self.import_sample()  # прогреваем базу, дальше replace
+        with contextlib.redirect_stderr(io.StringIO()):
+            routes_store.import_file(self.conn, source, replace=True)
+        record = routes_store.get_route(self.conn, "demo-pipeline")
+        self.assertNotIn("strip", record)
+        columns = {row["name"] for row in self.conn.execute("PRAGMA table_info(routes)")}
+        self.assertNotIn("strip", columns)
+
+
+class FieldRulesTests(RoutesDbTestCase):
+    """Правила полей — по одному случаю на нарушение."""
+
+    def setUp(self) -> None:
+        super().setUp()
+        self.import_sample()
+
+    def bad(self, **fields) -> str:
+        with self.assertRaises(ValueError) as ctx:
+            routes_store.update_route(self.conn, "high-pipeline", **fields)
+        return str(ctx.exception)
+
+    def test_title_empty(self) -> None:
+        self.assertIn("title", self.bad(title=""))
+
+    def test_title_spaces(self) -> None:
+        self.assertIn("title", self.bad(title="   "))
+
+    def test_hint_none(self) -> None:
+        self.assertIn("hint", self.bad(hint=None))
+
+    def test_icon_unknown(self) -> None:
+        self.assertIn("icon", self.bad(icon="turbo"))
+
+    def test_visible_int(self) -> None:
+        self.assertIn("visible", self.bad(visible=1))
+
+    def test_command_string(self) -> None:
+        self.assertIn("command", self.bad(command="строка"))
+
+    def test_command_empty(self) -> None:
+        self.assertIn("command", self.bad(command=[]))
+
+    def test_command_empty_element(self) -> None:
+        self.assertIn("command", self.bad(command=["", "x"]))
+
+    def test_hint_empty_is_allowed(self) -> None:
+        self.assertEqual(routes_store.update_route(self.conn, "high-pipeline", hint="")["hint"], "")
+
+    def test_icon_none_is_allowed(self) -> None:
+        self.assertIsNone(routes_store.update_route(self.conn, "high-pipeline", icon=None)["icon"])
+
+    def test_visible_false_is_allowed(self) -> None:
+        self.assertFalse(routes_store.update_route(self.conn, "high-pipeline",
+                                                   visible=False)["visible"])
+
+
+class UpdateRouteTests(RoutesDbTestCase):
+    """`update_route`: допустимые и отвергаемые поля."""
+
+    def setUp(self) -> None:
+        super().setUp()
+        self.import_sample()
+
+    def test_rejected_fields_name_the_field(self) -> None:
+        # `key` сюда не подставить: оно уже занято позиционным параметром
+        # сигнатуры, Python отвергнет вызов раньше проверки.
+        for name, value in (("roles", {}), ("kind", "direct"),
+                            ("harness", "dsh"), ("position", 0)):
+            with self.subTest(name=name):
+                with self.assertRaises(ValueError) as ctx:
+                    routes_store.update_route(self.conn, "high-pipeline", **{name: value})
+                self.assertIn(name, str(ctx.exception))
+
+    def test_command_on_pipeline_is_rejected(self) -> None:
+        with self.assertRaises(ValueError) as ctx:
+            routes_store.update_route(self.conn, "high-pipeline", command=["echo", "{task_id}"])
+        self.assertIn("command", str(ctx.exception))
+
+    def test_command_on_direct_is_saved(self) -> None:
+        updated = routes_store.update_route(self.conn, "dsh", command=["echo", "{task_id}"])
+        self.assertEqual(updated["command"], ["echo", "{task_id}"])
+        self.assertEqual(routes_store.get_route(self.conn, "dsh")["command"],
+                         ["echo", "{task_id}"])
+
+    def test_partial_update_keeps_other_fields(self) -> None:
+        before = routes_store.get_route(self.conn, "dsh")
+        after = routes_store.update_route(self.conn, "dsh", title="Новый")
+        self.assertEqual(after["title"], "Новый")
+        self.assertEqual(after["command"], before["command"])
+        self.assertEqual(after["harness"], before["harness"])
+
+
+class CrudTests(RoutesDbTestCase):
+    """`create_route`, `get_route`, `count`, `delete_route`, `reorder`."""
+
+    def setUp(self) -> None:
+        super().setUp()
+        self.import_sample()
+
+    def test_create_uses_max_position_plus_one(self) -> None:
+        record = routes_store.create_route(self.conn, key="zzz-direct", kind="direct",
+                                           title="Zzz", harness="dsh")
+        self.assertEqual(record["position"], 13)
+        self.assertEqual(routes_store.list_routes(self.conn)[-1]["key"], "zzz-direct")
+
+    def test_create_duplicate_key(self) -> None:
+        with self.assertRaises(ValueError) as ctx:
+            routes_store.create_route(self.conn, key="dsh", kind="direct", title="Dup",
+                                      harness="dsh")
+        self.assertIn("dsh", str(ctx.exception))
+
+    def test_get_unknown_raises_not_found(self) -> None:
+        with self.assertRaises(errors.NotFound):
+            routes_store.get_route(self.conn, "нет-такого")
+
+    def test_count_matches_list(self) -> None:
+        self.assertEqual(routes_store.count(self.conn),
+                         len(routes_store.list_routes(self.conn)))
+
+    def test_delete_counts_tasks_but_keeps_them(self) -> None:
+        self.conn.execute("INSERT INTO tasks(id, launch_route) VALUES('t1', 'dsh')")
+        self.conn.execute("INSERT INTO tasks(id, launch_route) VALUES('t2', 'dsh')")
+        self.conn.execute("INSERT INTO tasks(id, launch_route) VALUES('t3', 'grok')")
+        self.conn.commit()
+        removed = routes_store.delete_route(self.conn, "dsh")
+        self.assertEqual(removed, 2)
+        self.assertEqual(self.conn.execute("SELECT COUNT(*) FROM tasks").fetchone()[0], 3)
+        self.assertNotIn("dsh", [r["key"] for r in routes_store.list_routes(self.conn)])
+        with self.assertRaises(errors.NotFound):
+            routes_store.get_route(self.conn, "dsh")
+
+    def test_reorder_full(self) -> None:
+        reordered = routes_store.reorder(self.conn, list(reversed(EXPECTED_KEYS)))
+        self.assertEqual([r["key"] for r in reordered], list(reversed(EXPECTED_KEYS)))
+        self.assertEqual([r["position"] for r in reordered], list(range(13)))
+        self.assertEqual([r["key"] for r in routes_store.list_routes(self.conn)],
+                         list(reversed(EXPECTED_KEYS)))
+
+    def test_reorder_subset_pushes_rest_to_end(self) -> None:
+        rest = [k for k in EXPECTED_KEYS if k not in ("dsh", "grok")]
+        reordered = routes_store.reorder(self.conn, ["dsh", "grok"])
+        self.assertEqual([r["key"] for r in reordered], ["dsh", "grok", *rest])
+        positions = [r["position"] for r in reordered]
+        self.assertEqual(positions, list(range(13)))
+
+    def test_reorder_unknown_key(self) -> None:
+        with self.assertRaises(ValueError) as ctx:
+            routes_store.reorder(self.conn, ["нет-такого"])
+        self.assertIn("нет-такого", str(ctx.exception))
+
+
+class BrokenJsonColumnsTests(RoutesDbTestCase):
+    """Битый JSON в колонках — пустое значение, а не исключение."""
+
+    def test_list_routes_survives_broken_columns(self) -> None:
+        self.import_sample()
+        self.conn.execute("UPDATE routes SET roles = '{', command = '[' WHERE key = 'high-pipeline'")
+        self.conn.commit()
+        record = routes_store.get_route(self.conn, "high-pipeline")
+        self.assertEqual(record["roles"], {})
+        self.assertIsNone(record["command"])
+
+
+class SchemaUpgradeTests(unittest.TestCase):
+    """`db.init` создаёт `routes` на старой базе, не портя задачи и проекты."""
+
+    def test_init_creates_routes_on_old_db(self) -> None:
+        tmp = tempfile.TemporaryDirectory()
+        self.addCleanup(tmp.cleanup)
+        path = pathlib.Path(tmp.name) / "old.db"
+        conn = db_mod.init(path)
+        conn.execute("INSERT INTO projects(slug, title) VALUES('p1', 'Старый')")
+        conn.execute("INSERT INTO tasks(id, project, title) VALUES('t1', 'p1', 'Старая')")
+        conn.execute("DROP TABLE routes")
+        conn.execute("UPDATE meta SET value = '8' WHERE key = 'schema_version'")
+        conn.commit()
+        conn.close()
+
+        conn = db_mod.init(path)
+        try:
+            tables = {row[0] for row in conn.execute(
+                "SELECT name FROM sqlite_master WHERE type = 'table'")}
+            self.assertIn("routes", tables)
+            self.assertEqual(conn.execute("SELECT COUNT(*) FROM routes").fetchone()[0], 0)
+            self.assertEqual(conn.execute("SELECT COUNT(*) FROM tasks").fetchone()[0], 1)
+            self.assertEqual(conn.execute("SELECT COUNT(*) FROM projects").fetchone()[0], 1)
+            version = conn.execute(
+                "SELECT value FROM meta WHERE key = 'schema_version'").fetchone()[0]
+            self.assertEqual(version, "9")
+        finally:
+            conn.close()
+
+
+if __name__ == "__main__":
+    unittest.main()

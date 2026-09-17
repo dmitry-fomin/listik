@@ -233,7 +233,7 @@ def _validate_strip(value, where: str, warnings: list[str] | None = None) -> dic
     return {"glyph": glyph, "label": label}
 
 
-def _validate_command(value, where: str) -> list[str]:
+def validate_command(value, where: str) -> list[str]:
     if not isinstance(value, list) or not value:
         raise _err(where, "непустой массив строк")
     command: list[str] = []
@@ -342,7 +342,7 @@ def _validate_route(item, where: str, warnings: list[str] | None = None) -> dict
 
     if "strip" in item:
         record["strip"] = _validate_strip(item["strip"], f"{where}.strip", warnings)
-    record["command"] = (_validate_command(item["command"], f"{where}.command")
+    record["command"] = (validate_command(item["command"], f"{where}.command")
                          if "command" in item else None)
     return record
 

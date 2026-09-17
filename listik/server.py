@@ -32,6 +32,7 @@ from . import launcher as launcher_mod
 from . import mcp
 from . import paths
 from . import routes as routes_mod
+from . import routes_store
 from . import search as search_mod
 from . import store
 from . import voice as voice_mod
@@ -1490,6 +1491,7 @@ def serve(host: str | None = None, port: int | None = None, quiet: bool = False,
         conn = get_conn()
         # После daemonize: сообщение об ошибке routes.json должно попасть в listik.log.
         routes_mod.init_at_startup()
+        routes_store.ensure_imported(conn)
         launcher_mod.recover(conn, notify=publish)
         # Надзор за файлами базы — до фоновой индексации: подмену нужно заметить,
         # даже если ollama нет и векторы не считаются (listik-cfzk).
@@ -1511,6 +1513,7 @@ def serve(host: str | None = None, port: int | None = None, quiet: bool = False,
     httpd = bind_or_explain(host, port, quiet=quiet)
     conn = get_conn()
     routes_mod.init_at_startup()
+    routes_store.ensure_imported(conn)
     launcher_mod.recover(conn, notify=publish)
     start_db_watch()
     if not no_embed:

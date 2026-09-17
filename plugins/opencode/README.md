@@ -23,13 +23,30 @@ bridge, not a sandbox: installing it means your working directory can leave your
 Read-only mode prevents writes, not reads. Decide whether that is acceptable for a given
 repository *before* you delegate, and scope every task to the files it actually needs.
 
-## The default model
+## Two channels
 
-Every run goes to `b.ai/glm-5.3-flash` unless told otherwise. Unlike `codex`, `opencode`
-has no single "active model" in its settings — the model is chosen per run, so the bridge
-has to pick one. Override it for a single run with `--model <provider/model>`, or globally
-with the `OPENCODE_DEFAULT_MODEL` environment variable. `/opencode:opencode-check` prints
-the model in use and whether the provider has credentials.
+Unlike `codex`, `opencode` has no single "active model" in its settings — the model is
+chosen per run, so the bridge picks one. Two are wired in, and both are addressable by a
+short channel name:
+
+| Channel | Model | Notes |
+| --- | --- | --- |
+| `glm` | `b.ai/glm-5.3-flash` | the default: every run without `--model` goes here |
+| `deepseek` | `b.ai/deepseek-v4.1-flash` | second opinion from a different family — **prone to making things up**: it will invent a file, a flag or an API that does not exist and sound sure about it, so treat every concrete claim as a lead to verify, not as a fact |
+
+`--model deepseek` and `--model b.ai/deepseek-v4.1-flash` are the same thing: the short name
+is expanded by the bridge, and a full `provider/model` id is passed through untouched, so
+any other model your provider offers is available without patching the script. A bare name
+that is neither a channel nor a `provider/model` id is refused with exit 2 — it is almost
+always a typo in the channel name.
+
+`OPENCODE_DEFAULT_MODEL` moves the default globally and takes a channel name too.
+`/opencode:opencode-check` prints both channels with their availability and marks the
+default one.
+
+`resume` stays on the channel the session was started on — both when resuming by job id and
+by session name — unless `--model` says otherwise. Switching channels mid-session is
+allowed and keeps the same opencode session, so the new model sees the whole history.
 
 ## Requirements
 
@@ -105,13 +122,13 @@ EOF
 | --- | --- |
 | `run` | one shot; prompt on stdin. With `--background`, stdout is a job id instead of the answer |
 | `resume <name\|job-id>` | continue that session; prompt on stdin, same options as `run`. Exit 2 if there is no such session — the caller should start a fresh `run` |
-| `check [--json]` | readiness report: binary, version, model, credentials, JSON parser, running jobs |
+| `check [--json]` | readiness report: binary, version, both channels, credentials, JSON parser, running jobs |
 | `status [--json] [--all] [--running] [job-id]` | jobs from this directory, or one job's card |
 | `result <job-id> [--wait [sec]]` | collect a finished job; `--wait` polls for you |
 | `logs <job-id> [--tail N]` | a running job's progress, rendered from the event stream: which tools it called and how they ended |
 | `cancel <job-id\|--all>` | kill a job and its whole process tree |
 | `clean [--older-than <days>] [--all]` | drop finished jobs; running ones and opencode's own sessions are left alone |
-| `sessions [--json]` | the session names this bridge knows: name, id, directory, last use |
+| `sessions [--json]` | the session names this bridge knows — both as a table and as JSON: name, id, model, last use, directory |
 | `transcript [job-id] [--session <name>]` | the whole session as JSON, straight from `opencode export` |
 
 | Option | Default | Meaning |
@@ -119,7 +136,7 @@ EOF
 | `--session <name>` | none | name the session (`run`) or find it (`resume`) |
 | `--write` | off | full access: file edits and bash |
 | `--bash` | off | allow bash, keep edits denied |
-| `--model <provider/model>` | `b.ai/glm-5.3-flash` | manual use, and `feature-pipeline` presets, which pin it on purpose |
+| `--model <channel\|provider/model>` | `glm` = `b.ai/glm-5.3-flash` | `glm` or `deepseek`, or a full model id; used manually and by `feature-pipeline` presets, which pin it on purpose |
 | `--variant <level>` | model default | provider-specific reasoning effort; not validated against a fixed list |
 | `--agent <name>` | `build` | another opencode agent (`opencode agent list`) |
 | `--cwd <dir>` | current directory | working directory of the run |
@@ -199,6 +216,8 @@ absence of `--auto`.
 бинарь:       /Users/you/.opencode/bin/opencode (ok)
 версия:       1.18.31
 модель:       b.ai/glm-5.3-flash (доступна)
+каналы:       glm → b.ai/glm-5.3-flash (доступна, по умолчанию)
+              deepseek → b.ai/deepseek-v4.1-flash (доступна)
 провайдер:    b.ai (учётные данные: есть)
 агент:        build (по умолчанию только чтение (правка и bash запрещены))
 разбор ответа: python3
@@ -214,7 +233,7 @@ verbatim.
 | Variable | Default | Purpose |
 | --- | --- | --- |
 | `OPENCODE_BIN` | `opencode` from `PATH` | full path to the CLI binary when it isn't on `PATH` |
-| `OPENCODE_DEFAULT_MODEL` | `b.ai/glm-5.3-flash` | model used when `--model` is not given |
+| `OPENCODE_DEFAULT_MODEL` | `b.ai/glm-5.3-flash` | model used when `--model` is not given; accepts a channel name (`glm`, `deepseek`) or a full model id |
 | `OPENCODE_DEFAULT_AGENT` | `build` | opencode agent used when `--agent` is not given |
 | `OPENCODE_CLAUDE_STATE_DIR` | `${XDG_STATE_HOME:-~/.local/state}/opencode-claude` | where background jobs and session names are kept |
 | `OPENCODE_CLAUDE_SESSION` | `CLAUDE_SESSION_ID` | tags jobs so `status` scopes by session instead of by directory |
@@ -246,7 +265,8 @@ changed the implementation:
   `--bash` exists as a separate mode.
 - **The model has to be chosen by the bridge.** codex inherits the user's
   `~/.codex/config.toml`; opencode takes the model per run, so a default
-  (`b.ai/glm-5.3-flash`) is part of this bridge's contract.
+  (`b.ai/glm-5.3-flash`) and the channel names on top of it (`glm`, `deepseek`) are part of
+  this bridge's contract.
 - **`--variant` instead of `--effort`, no `--provider`.** opencode's reasoning-effort knob
   is `--variant`, and the provider is already part of the model id (`b.ai/glm-5.3-flash`),
   so there is no separate provider flag.

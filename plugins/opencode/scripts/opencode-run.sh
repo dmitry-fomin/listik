@@ -53,6 +53,11 @@
 #    настроек пользователя: у opencode нет одной «активной модели», модель
 #    выбирается на каждый запуск. Переопределяется флагом --model или
 #    переменной OPENCODE_DEFAULT_MODEL.
+#
+# 6. Каналов два: `glm` (b.ai/glm-5.3-flash, по умолчанию) и `deepseek`
+#    (b.ai/deepseek-v4.1-flash). Короткое имя канала раскрывается обвязкой в
+#    полный идентификатор; полный идентификатор принимается как есть, поэтому
+#    любая другая модель провайдера доступна без правки скрипта.
 set -euo pipefail
 
 STATE_DIR="${OPENCODE_CLAUDE_STATE_DIR:-${XDG_STATE_HOME:-$HOME/.local/state}/opencode-claude}"
@@ -60,9 +65,46 @@ JOBS_DIR="$STATE_DIR/jobs"
 # Имя сессии → id сессии opencode. Один файл на имя, формат тот же key=value,
 # что и у meta джобы.
 NAMES_DIR="$STATE_DIR/sessions"
+# Каналы: короткое имя → полный идентификатор модели. Пара «имя:модель» на
+# строку, порядок — порядок печати в check; первый канал считается каналом по
+# умолчанию. Короткие имена нужны, чтобы ни человеку, ни скилу не приходилось
+# помнить версию модели, а смена версии оставалась правкой одной строки.
+CHANNELS=(
+  "glm:b.ai/glm-5.3-flash"
+  "deepseek:b.ai/deepseek-v4.1-flash"
+)
+
+# Короткое имя канала → полный идентификатор. Всё, что не короткое имя,
+# возвращается как есть: полный идентификатор провайдера обвязка не
+# перепроверяет и не сужает списком.
+expand_channel() {
+  local want="$1" pair
+  for pair in "${CHANNELS[@]}"; do
+    [[ "$want" == "${pair%%:*}" ]] && { printf '%s' "${pair#*:}"; return 0; }
+  done
+  printf '%s' "$want"
+}
+
 # Модель по умолчанию. У opencode нет «текущей модели» в настройках, которую
 # можно было бы просто унаследовать, — её передают на каждый запуск.
-DEFAULT_MODEL="${OPENCODE_DEFAULT_MODEL:-b.ai/glm-5.3-flash}"
+# OPENCODE_DEFAULT_MODEL принимает и короткое имя канала, и полный
+# идентификатор.
+DEFAULT_MODEL="$(expand_channel "${OPENCODE_DEFAULT_MODEL:-${CHANNELS[0]#*:}}")"
+
+# Значение --model: короткое имя канала раскрываем, полный идентификатор
+# пропускаем. Голое имя без провайдера — почти всегда опечатка в названии
+# канала, и opencode на него ответит своей невнятной ошибкой уже после запуска,
+# поэтому отбиваем здесь.
+resolve_model() {
+  local want="$1" resolved names="" pair
+  resolved="$(expand_channel "$want")"
+  case "$resolved" in
+    */*) printf '%s' "$resolved"; return 0 ;;
+  esac
+  for pair in "${CHANNELS[@]}"; do names="${names:+$names, }${pair%%:*}"; done
+  die 2 "неизвестный канал '$want' — короткие имена: $names; либо полный идентификатор вида provider/model"
+}
+
 # Агент opencode по умолчанию: основной `build`. Режим чтения обеспечивает не
 # он, а OPENCODE_PERMISSION (см. permission_json).
 DEFAULT_AGENT="${OPENCODE_DEFAULT_AGENT:-build}"
@@ -176,6 +218,9 @@ usage:
   opencode-run.sh clean [--older-than <дней>] [--all]
   opencode-run.sh sessions [--json]
   opencode-run.sh transcript [job-id] [--session <имя>]
+
+каналы (значение --model): glm = b.ai/glm-5.3-flash (по умолчанию),
+  deepseek = b.ai/deepseek-v4.1-flash; принимается и полный provider/model
 USAGE
   exit 2
 }
@@ -391,16 +436,23 @@ print(pick.get("id", ""))
   fi
 }
 
+# Модель запоминается вместе с именем: resume по имени (в отличие от resume по
+# job-id) больше неоткуда её взять, а молча уехать с deepseek обратно на модель
+# по умолчанию продолжение той же сессии не должно. Вызов без модели её не
+# затирает — так запасной путь (сессия найдена по title в самом opencode)
+# не теряет то, что обвязка уже знала.
 remember_session_name() {
-  local name="$1" id="$2" workdir="${3:-}" file
+  local name="$1" id="$2" workdir="${3:-}" model="${4:-}" file
   [[ -n "$name" && -n "$id" ]] || return 0
   mkdir -p "$NAMES_DIR" 2>/dev/null || return 0
   chmod 700 "$STATE_DIR" "$NAMES_DIR" 2>/dev/null || true
   file="$(name_file "$name")"
+  [[ -n "$model" ]] || model="$(meta_get model "$file")"
   {
     echo "name=$name"
     echo "id=$id"
     echo "cwd=${workdir:-}"
+    echo "model=${model:-}"
     echo "updated=$(date -u +%Y-%m-%dT%H:%M:%SZ)"
   } > "$file"
 }
@@ -433,14 +485,23 @@ cmd_check() {
   local model_status="unknown" models_out=""
   if [[ "$bin_status" == "ok" ]]; then
     models_out="$("$bin" models 2>/dev/null)" || models_out=""
-    if [[ -n "$models_out" ]]; then
-      if printf '%s\n' "$models_out" | grep -qxF "$model"; then
-        model_status="ok"
-      else
-        model_status="missing"
-      fi
-    fi
   fi
+  model_status="$(model_status_in "$model" "$models_out")"
+
+  # Каналов больше одного, и «готов ли opencode» — это доступность каждого:
+  # прогон на deepseek не спасёт то, что glm на месте. Каталог моделей
+  # спрашиваем один раз, а разбираем по каналам.
+  local chan_json="" chan_lines="" pair cname cmodel cstatus cmark
+  for pair in "${CHANNELS[@]}"; do
+    cname="${pair%%:*}"; cmodel="${pair#*:}"
+    cstatus="$(model_status_in "$cmodel" "$models_out")"
+    cmark=""
+    [[ "$cmodel" == "$DEFAULT_MODEL" ]] && cmark=", по умолчанию"
+    chan_json="${chan_json:+$chan_json,}$(printf '{"name":"%s","model":"%s","status":"%s","default":"%s"}' \
+      "$(json_escape "$cname")" "$(json_escape "$cmodel")" "$(json_escape "$cstatus")" \
+      "$(if [[ -n "$cmark" ]]; then echo yes; else echo no; fi)")"
+    chan_lines="${chan_lines}${chan_lines:+$'\n'}$cname → $cmodel ($(model_status_ru "$cstatus")$cmark)"
+  done
 
   local auth_status="unknown"
   if [[ "$bin_status" == "ok" ]]; then
@@ -466,10 +527,10 @@ cmd_check() {
   [[ "$bin_status" == "ok" && "$model_status" != "missing" && -n "$parser" ]] && ready="yes"
 
   if [[ $as_json -eq 1 ]]; then
-    printf '{"ready":"%s","binary":"%s","binary_status":"%s","version":"%s","model":"%s","model_status":"%s","provider":"%s","auth_status":"%s","agent":"%s","json_parser":"%s","running_jobs":%s,"named_sessions":%s,"state_dir":"%s"}\n' \
+    printf '{"ready":"%s","binary":"%s","binary_status":"%s","version":"%s","model":"%s","model_status":"%s","channels":[%s],"provider":"%s","auth_status":"%s","agent":"%s","json_parser":"%s","running_jobs":%s,"named_sessions":%s,"state_dir":"%s"}\n' \
       "$(json_escape "$ready")" "$(json_escape "$bin")" "$(json_escape "$bin_status")" \
       "$(json_escape "$version")" "$(json_escape "$model")" "$(json_escape "$model_status")" \
-      "$(json_escape "$provider")" "$(json_escape "$auth_status")" \
+      "$chan_json" "$(json_escape "$provider")" "$(json_escape "$auth_status")" \
       "$(json_escape "$DEFAULT_AGENT")" "$(json_escape "${parser:-нет}")" \
       "$running" "${named:-0}" "$(json_escape "$STATE_DIR")"
   else
@@ -477,6 +538,7 @@ cmd_check() {
     echo "бинарь:       ${bin:-не найден} ($bin_status)"
     echo "версия:       ${version:-—}"
     echo "модель:       $model ($(model_status_ru "$model_status"))"
+    printf 'каналы:       %s\n' "$(printf '%s' "$chan_lines" | sed '2,$s/^/              /')"
     echo "провайдер:    $provider (учётные данные: $(auth_status_ru "$auth_status"))"
     echo "агент:        $DEFAULT_AGENT (по умолчанию $(mode_ru read-only))"
     echo "разбор ответа: ${parser:-нет (нужен python3 или jq)}"
@@ -485,6 +547,14 @@ cmd_check() {
     echo "каталог состояния: $STATE_DIR"
   fi
   [[ "$ready" == "yes" ]] || exit 1
+}
+
+# Статус модели по каталогу `opencode models`. Пустой каталог — это «спросить
+# не удалось» (нет сети, битый бинарь), а не «модели нет».
+model_status_in() {
+  local model="$1" models_out="$2"
+  [[ -n "$models_out" ]] || { echo unknown; return 0; }
+  if printf '%s\n' "$models_out" | grep -qxF "$model"; then echo ok; else echo missing; fi
 }
 
 model_status_ru() {
@@ -522,7 +592,9 @@ cmd_run() {
       --session)    name="$(need_value --session "${2:-}")"; shift 2 ;;
       --write)      mode="write"; shift ;;
       --bash)       [[ "$mode" == "write" ]] || mode="read-bash"; shift ;;
-      --model)      model="$(need_value --model "${2:-}")"; shift 2 ;;
+      --model)      model="$(need_value --model "${2:-}")" || exit $?
+                    model="$(resolve_model "$model")" || exit $?
+                    shift 2 ;;
       --agent)      agent="$(need_value --agent "${2:-}")"; shift 2 ;;
       --variant)    variant="$(need_value --variant "${2:-}")"; shift 2 ;;
       --cwd)        workdir="$(need_value --cwd "${2:-}")"; shift 2 ;;
@@ -570,7 +642,7 @@ start_run() {
   [[ -z "${prompt//[[:space:]]/}" ]] && die 2 "пустой промпт на stdin"
 
   local bin; bin="$(resolve_opencode)"
-  model="${model:-$DEFAULT_MODEL}"
+  model="$(expand_channel "${model:-$DEFAULT_MODEL}")"
   agent="${agent:-$DEFAULT_AGENT}"
 
   # --auto обязателен: у headless-прогона нет интерактивного канала одобрения,
@@ -592,11 +664,11 @@ start_run() {
     return 0
   fi
 
-  run_foreground "$bin" "$mode" "$workdir" "$timeout_s" "$prompt" "$name" "${args[@]}"
+  run_foreground "$bin" "$mode" "$workdir" "$timeout_s" "$prompt" "$name" "$model" "${args[@]}"
 }
 
 run_foreground() {
-  local bin="$1" mode="$2" workdir="$3" timeout_s="$4" prompt="$5" name="$6"; shift 6
+  local bin="$1" mode="$2" workdir="$3" timeout_s="$4" prompt="$5" name="$6" model="$7"; shift 7
   local args=("$@")
   local tb; tb="$(pick_timeout_bin)"
   local events_file err_file out_file rc=0
@@ -617,7 +689,7 @@ run_foreground() {
   # продолжать надо именно её.
   if [[ -n "$name" ]]; then
     local sid; sid="$(session_id_from_events "$events_file" || true)"
-    [[ -n "$sid" ]] && remember_session_name "$name" "$sid" "$workdir"
+    [[ -n "$sid" ]] && remember_session_name "$name" "$sid" "$workdir" "$model"
   fi
 
   extract_answer "$events_file" > "$out_file" || true
@@ -725,7 +797,7 @@ run_background() {
     sid="$(session_id_from_events "$job_dir/events.jsonl" || true)"
     if [[ -n "$sid" ]]; then
       meta_set opencode_session "$sid" "$job_dir/meta"
-      [[ -n "$name" ]] && remember_session_name "$name" "$sid" "$workdir"
+      [[ -n "$name" ]] && remember_session_name "$name" "$sid" "$workdir" "$model"
     fi
 
     local final="completed"
@@ -1232,7 +1304,9 @@ cmd_resume() {
       --session)    name="$(need_value --session "${2:-}")"; shift 2 ;;
       --write)      mode="write"; shift ;;
       --bash)       [[ "$mode" == "write" ]] || mode="read-bash"; shift ;;
-      --model)      model="$(need_value --model "${2:-}")"; shift 2 ;;
+      --model)      model="$(need_value --model "${2:-}")" || exit $?
+                    model="$(resolve_model "$model")" || exit $?
+                    shift 2 ;;
       --agent)      agent="$(need_value --agent "${2:-}")"; shift 2 ;;
       --variant)    variant="$(need_value --variant "${2:-}")"; shift 2 ;;
       --cwd)        workdir="$(need_value --cwd "${2:-}")"; shift 2 ;;
@@ -1293,6 +1367,7 @@ cmd_resume() {
     [[ -n "$sid" ]] \
       || die 2 "сессии с именем '$name' нет ни в состоянии обвязки, ни в списке opencode — начни новую: opencode-run.sh run --session '$name'"
     src_cwd="$(meta_get cwd "$(name_file "$name")")"
+    src_model="$(meta_get model "$(name_file "$name")")"
   fi
 
   # Каталог, модель и права по умолчанию наследуются от прошлого прогона —
@@ -1321,6 +1396,12 @@ cmd_resume() {
 }
 
 # --- sessions ---------------------------------------------------------------
+# Пустое значение в колонке — это «неизвестно», а не пустая строка в таблице.
+model_or_dash() {
+  local v="$1"
+  [[ -n "$v" ]] && printf '%s' "$v" || printf '%s' "—"
+}
+
 cmd_sessions() {
   local as_json=0
   case "${1:-}" in
@@ -1341,14 +1422,20 @@ cmd_sessions() {
     [[ -f "$f" ]] || continue
     shown=$((shown+1))
     if [[ $as_json -eq 1 ]]; then
-      out+="$(printf '{"name":"%s","id":"%s","cwd":"%s","updated":"%s"}' \
+      out+="$(printf '{"name":"%s","id":"%s","cwd":"%s","model":"%s","updated":"%s"}' \
         "$(json_escape "$(meta_get name "$f")")" \
         "$(json_escape "$(meta_get id "$f")")" \
         "$(json_escape "$(meta_get cwd "$f")")" \
+        "$(json_escape "$(meta_get model "$f")")" \
         "$(json_escape "$(meta_get updated "$f")")"),"
     else
-      printf '%-28s %-32s %-22s %s\n' \
+      # Канал печатается и здесь, а не только в --json: по человеческому
+      # списку выбирают, какую сессию продолжать, а продолжение идёт на её
+      # модели. Прочерк — сессия из состояния, записанного до появления
+      # каналов; продолжится она на модели по умолчанию.
+      printf '%-28s %-32s %-26s %-22s %s\n' \
         "$(meta_get name "$f")" "$(meta_get id "$f")" \
+        "$(model_or_dash "$(meta_get model "$f")")" \
         "$(meta_get updated "$f")" "$(meta_get cwd "$f")"
     fi
   done

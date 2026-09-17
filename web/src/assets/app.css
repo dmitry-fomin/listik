@@ -393,6 +393,15 @@ body {
   color: var(--ink-1);
 }
 
+/* Внутри окон (карточка задачи, новая задача, настройки) заголовок секции стоит
+   ступенью ниже заголовка окна (--text-xl), иначе разница в 4px читается как один
+   уровень. На страницах доски секции остаются на --text-lg. */
+.listik-drawer__body .listik-section__title,
+.listik-newtask .listik-section__title,
+.listik-projects .listik-section__title {
+  font-size: var(--text-md);
+}
+
 .listik-section__hint {
   font-size: var(--text-sm);
   color: var(--ink-3);
@@ -860,6 +869,8 @@ body .ui-drawer-backdrop.ui-drawer-backdrop--right .ui-drawer.ui-drawer--right.u
   min-width: 0;
 }
 
+/* Заголовок окна: и у дровера (карточка, новая задача), и у модалки настроек —
+   один размер, крупнее заголовков секций внутри. */
 .listik-drawer__title {
   margin: 0;
   font-size: var(--text-xl);

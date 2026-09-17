@@ -365,7 +365,7 @@ function cancel(): void {
       </div>
     </template>
 
-    <div class="listik-stack">
+    <div class="listik-stack listik-newtask">
       <div class="listik-newtask-row">
         <UiField label="Тип">
           <IconToggle v-model="form.type" :options="TYPE_OPTIONS" ariaLabel="Тип задачи" size="md">

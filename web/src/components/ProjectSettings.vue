@@ -320,7 +320,13 @@ watch(
 </script>
 
 <template>
+  <!-- Заголовок рисуем слотом: своя разметка даёт тот же размер, что у заголовка
+       карточки и формы новой задачи; проп title остаётся доступным именем окна. -->
   <UiModal v-model="open" title="Настройки" size="lg">
+    <template #header>
+      <h2 class="listik-drawer__title">Настройки</h2>
+    </template>
+
     <UiTabs
       :model-value="activeTab"
       :tabs="settingsTabs"

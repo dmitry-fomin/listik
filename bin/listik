@@ -20,6 +20,7 @@ from pathlib import Path
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
 from listik import __version__, client, cwd_project, db, errors, paths, store  # noqa: E402
+from listik import routes as routes_mod  # noqa: E402
 from listik import routes_store  # noqa: E402
 from listik import worktree as worktree_mod  # noqa: E402
 
@@ -1433,6 +1434,16 @@ def _projects_table(rows: list[dict], *, with_path: bool = False) -> None:
         print(line)
 
 
+def _routes_table(rows: list[dict]) -> None:
+    head = f"{'#':>3s} {'ключ':24s} {'вид':9s} {'заголовок':32s} скрыт  нет скила"
+    print(head)
+    for i, r in enumerate(rows):
+        title = (r.get("title") or "")[:32]
+        print(f"{i:3d} {r.get('key', ''):24s} {r.get('kind', ''):9s} {title:32s} "
+              f"{'да' if not r.get('visible') else '  ':4s}   "
+              f"{'да' if r.get('skill_missing') else '':s}")
+
+
 def cmd_projects(args) -> int:
     """Список репозиториев доски; добавление, скрытие и удаление.
 
@@ -1527,6 +1538,74 @@ def cmd_actors(args) -> int:
     for a in res["actors"]:
         print(f"  {a['key']:22s} {(a['title'] or ''):26s} {a['kind']:6s} "
               f"задач {a['n_tasks']:4d}  держит {a['n_held']:3d}")
+    return 0
+
+
+def cmd_routes(args) -> int:
+    """Маршруты запуска: список (через сервер/базу, как все команды), ввоз и вывоз файла.
+
+    `import`/`export` работают прямо с базой в обоих режимах (сервер их не
+    отдаёт отдельными ручками) — только после успешного ввоза, если сервер
+    поднят, дёргаем `POST /api/notify`, как это делает MCP по stdio, чтобы
+    доска перечитала таблицу.
+    """
+    action = getattr(args, "action", None) or "list"
+    if action == "import":
+        return _cmd_routes_import(args)
+    if action == "export":
+        return _cmd_routes_export(args)
+    return _cmd_routes_list(args)
+
+
+def _cmd_routes_list(args) -> int:
+    data = call("routes", args, "/api/routes", local_kwargs={}, fallback_warning=False)
+    rows = data.get("routes") or []
+    if getattr(args, "json", False):
+        emit(args, data, "")
+        return 0
+    if not data.get("ok", True):
+        print(f"! маршруты недоступны: {data.get('error')}")
+    _routes_table(rows)
+    for w in data.get("warnings") or []:
+        print(f"! {w}")
+    print(f"\nвсего: {len(rows)}")
+    return 0
+
+
+def _cmd_routes_import(args) -> int:
+    path = Path(args.path).expanduser() if getattr(args, "path", None) else None
+    conn = db.init()
+    try:
+        report = routes_store.import_file(conn, path, replace=bool(getattr(args, "replace", False)))
+    except (routes_mod.RoutesError, ValueError) as exc:
+        raise errors.ListikError(errors.message_of(exc), code=errors.BAD_ARGUMENT,
+                                 hint="проверь файл маршрутов (нет — рабочая копия/образец)") from exc
+    if report.get("skipped"):
+        emit(args, report, "маршруты уже есть, нужен --replace")
+        return 1
+    if client.is_up(getattr(args, "host", None), getattr(args, "port", None)):
+        try:
+            client.request("POST", "/api/notify", body={"kind": "route", "action": "imported"},
+                          host=getattr(args, "host", None), port=getattr(args, "port", None))
+        except Exception:  # noqa: BLE001 — доска не получит событие, но ввоз уже прошёл
+            pass
+    emit(args, report,
+         f"маршруты ввезены: {report['imported']} из {report['source']}"
+         + (" (замена таблицы)" if report.get("replaced") else ""))
+    return 0
+
+
+def _cmd_routes_export(args) -> int:
+    conn = db.init()
+    payload = {"version": 1, "routes": routes_store.export_records(conn)}
+    text = errors.json_dumps(payload, indent=2)
+    out_path = Path(args.path).expanduser() if getattr(args, "path", None) else None
+    if out_path is None:
+        print(text)
+        return 0
+    out_path.write_text(text + "\n", encoding="utf-8")
+    emit(args, {"path": str(out_path), **payload},
+         f"выгружено {len(payload['routes'])} маршрутов в {out_path}")
     return 0
 
 
@@ -1989,6 +2068,15 @@ def build_parser() -> argparse.ArgumentParser:
                     help="установить переопределение маршрутизации проекта (JSON); "
                          "'{}' — сбросить; нужен позиционный slug проекта")
     add("actors", cmd_actors, help="список исполнителей")
+
+    sp = add("routes", cmd_routes, help="маршруты запуска: список, ввоз, вывоз routes.json")
+    sp.add_argument("action", nargs="?", default="list", choices=["list", "import", "export"],
+                    help="list (по умолчанию), import ФАЙЛ [--replace], export [ФАЙЛ]")
+    sp.add_argument("path", nargs="?",
+                    help="import: файл ввоза (по умолчанию рабочая копия/образец); "
+                         "export: файл вывоза (по умолчанию stdout)")
+    sp.add_argument("--replace", action="store_true",
+                    help="import: заменить всю таблицу (без флага непустая таблица не трогается)")
 
     sp = add("dep", cmd_dep,
              help="связи между задачами: add, confirm, rm, tree, cycles, suggest, link, suggested")

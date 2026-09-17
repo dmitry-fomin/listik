@@ -93,6 +93,18 @@ Database migrations exist as two parallel mechanisms — don't confuse them:
   watcher thread (`start_db_watch`) notices that `listik.db`/`listik.db-wal` changed inode —
   the "database swapped under a running server" case (`_db_replaced` in `/api/health` and
   `listik status`).
+- `listik/routes_store.py` (+ `listik/skills.py`) — the `routes` table backing task launch
+  presets: pipeline conveyor pipelines and direct harnesses, plus the command each launches.
+  `routes.json` (root of the repo) / `~/.config/listik/routes.json` (`$LISTIK_ROUTES`) are the
+  import/export file format only — the table is what both the server and CLI actually read and
+  write (`GET/PATCH/POST/DELETE /api/routes`, `/api/routes/reorder`, `/api/routes/sync`,
+  `listik routes`). **Pipeline roles (`roles`) live in the db and are not editable from the UI
+  or any HTTP route** — no endpoint accepts `roles`/`kind`/`key`/`harness`/`position`; changed
+  the skill set under `plugins/feature-pipeline/skills/*`? Fix the matching route's `roles` in
+  the db yourself (`listik routes export`, edit the file, `listik routes import --replace`) —
+  otherwise the board keeps showing the old composition. `listik/skills.py` is a read-only
+  catalogue of `plugins/feature-pipeline/skills/*/SKILL.md` (title/hint/path) used to prefill new
+  pipeline routes and to flag routes whose skill directory disappeared — never a source of roles.
 - `listik/backup.py` — `listik backup` / `listik restore` via the sqlite backup API (a plain
   `cp` of a WAL database is inconsistent). `restore` refuses while the server is running unless
   `--stop`, keeps a `listik.db.bak-pre-restore-*` safety copy and removes stale `-wal`/`-shm`.

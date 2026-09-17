@@ -674,7 +674,8 @@ class RoutesApiTests(TempDbTestCase):
 
     # -- handle() ------------------------------------------------------------
 
-    def test_handle_routes_without_command(self) -> None:
+    def test_handle_routes_includes_command(self) -> None:
+        """Порция c (listik-8jgz): `command` больше не вырезается из ответа."""
         self._init_from_repo()
         status, data = server.handle("GET", "/api/routes", {}, {}, authed=True)
         self.assertEqual(status, 200)
@@ -683,7 +684,7 @@ class RoutesApiTests(TempDbTestCase):
         self.assertEqual(data["path"], str(paths.DB_PATH))
         self.assertEqual(len(data["routes"]), 13)
         for record in data["routes"]:
-            self.assertNotIn("command", record)
+            self.assertIn("command", record)
             self.assertNotIn("strip", record)
             self.assertIn("icon", record)
         icons = {record["key"]: record["icon"] for record in data["routes"]}
@@ -717,7 +718,8 @@ class RoutesApiTests(TempDbTestCase):
         self.assertNotIn("icon_error", records["feature-pipeline"])
         self.assertEqual(records["dsh"]["icon"], "direct")
         for record in records.values():
-            self.assertNotIn("command", record)
+            self.assertIn("command", record)
+            self.assertIsNone(record["command"])
 
     def test_handle_routes_has_empty_warnings_for_valid_file(self) -> None:
         self._init_from_repo()
@@ -766,7 +768,7 @@ class RoutesApiTests(TempDbTestCase):
         self.assertTrue(data["ok"])
         self.assertEqual(len(data["routes"]), 13)
         self.assertEqual([r["key"] for r in data["routes"]][-3:], DIRECT_KEYS)
-        self.assertTrue(all("command" not in r for r in data["routes"]))
+        self.assertTrue(all("command" in r for r in data["routes"]))
 
     def test_invisible_records_are_returned(self) -> None:
         hidden = {**pipeline_record(), "key": "hidden-pipeline", "visible": False,
@@ -780,7 +782,7 @@ class RoutesApiTests(TempDbTestCase):
         records = payload["data"]["routes"]
         self.assertEqual([r["key"] for r in records], ["hidden-pipeline", "dsh"])
         self.assertFalse(records[0]["visible"])
-        self.assertNotIn("command", records[0])
+        self.assertEqual(records[0]["command"], ["run", "{task_id}"])
 
     def test_file_change_after_import_is_not_reflected(self) -> None:
         self._init_from_repo()

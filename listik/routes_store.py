@@ -23,7 +23,7 @@ import json
 import sqlite3
 import sys
 
-from . import errors, routes, store
+from . import errors, routes, skills, store
 
 #: Поля, которые вообще разрешено менять точечно.  Всё остальное (`roles`,
 #: `kind`, `key`, `harness`, `position`) через `update_route` недоступно.
@@ -370,3 +370,85 @@ def ensure_imported(conn: sqlite3.Connection) -> dict:
         message = errors.message_of(exc)
         print(f"routes: ввоз не удался: {message}", file=sys.stderr, flush=True)
         return {"error": message}
+
+
+# ------------------------------------------------------------------ скилы (справочник)
+
+def _skill_missing_warning(key: str) -> str:
+    return f"маршрута {key!r}: скила /feature-pipeline:{key} нет, маршрут скрыт"
+
+
+def routes_response(conn: sqlite3.Connection) -> dict:
+    """Тело `GET /api/routes` — общее для HTTP-обработчика и локального фолбэка CLI.
+
+    Записи — `routes.state(conn).routes` (то есть `list_routes`, порядок
+    `position, key`) плюс у `kind=pipeline`: `skill_path` (путь к `SKILL.md` или
+    `None`) и, если скилы установлены, а каталога этого скила нет, —
+    `skill_missing: true` и `visible` переписанный в ответе на `False` (в базе
+    значение не меняется — маршрут скрыт автоматически, а не переписан).
+    Установленный Listik может быть без каталога `plugins/` вовсе
+    (`skills.skills_available() is False`): тогда ни один маршрут не помечается
+    «без скила», чтобы не спрятать разом все конвейеры.
+    """
+    state = routes.state(conn)
+    warnings = list(state.warnings)
+    available = skills.skills_available()
+    keys = set(skills.skill_keys()) if available else set()
+    out_routes: list[dict] = []
+    for record in state.routes:
+        record = dict(record)
+        if record["kind"] == "pipeline":
+            if available and record["key"] not in keys:
+                record["skill_missing"] = True
+                record["visible"] = False
+                record["skill_path"] = None
+                warnings.append(_skill_missing_warning(record["key"]))
+            else:
+                info = skills.skill_info(record["key"]) if available else None
+                record["skill_path"] = info["skill_path"] if info else None
+        out_routes.append(record)
+    return {"ok": state.ok, "error": state.error, "path": state.path,
+            "warnings": warnings, "routes": out_routes}
+
+
+def sync_report(conn: sqlite3.Connection) -> dict:
+    """Тело `GET /api/routes/sync` — сверка таблицы маршрутов со скилами.
+
+    `skills_available=False` (нет каталога `plugins/` вовсе) — оба списка
+    пустые: без установленных скилов сверять не с чем, и она не должна
+    выглядеть так, будто пропали все конвейеры.
+    """
+    if not skills.skills_available():
+        return {"skills_available": False, "missing_skill": [], "missing_route": []}
+    keys = set(skills.skill_keys())
+    pipelines = [r for r in list_routes(conn) if r["kind"] == "pipeline"]
+    route_keys = {r["key"] for r in pipelines}
+    missing_skill = [r for r in pipelines if r["key"] not in keys]
+    missing_route = [skills.skill_info(key) for key in sorted(keys) if key not in route_keys]
+    return {"skills_available": True, "missing_skill": missing_skill,
+            "missing_route": missing_route}
+
+
+def export_records(conn: sqlite3.Connection) -> list[dict]:
+    """Таблица маршрутов в формате файла версии 1 (без `position`: порядок — сам массив).
+
+    Поля, которых в записи фактически нет (`icon`/`command` — `None`), в файл
+    не пишутся вовсе: файловая проверка (`routes.validate`) читает их как
+    необязательные и без ключа выводит тот же результат (фолбэк `icon`,
+    отсутствующий `command`) — так `routes export` → `routes import --replace`
+    даёт ту же таблицу.
+    """
+    out: list[dict] = []
+    for record in list_routes(conn):
+        item = {"key": record["key"], "kind": record["kind"], "title": record["title"],
+                "hint": record["hint"], "visible": record["visible"]}
+        if record.get("icon") is not None:
+            item["icon"] = record["icon"]
+        if record["kind"] == "pipeline":
+            item["roles"] = record.get("roles") or {}
+        else:
+            item["harness"] = record.get("harness")
+        if record.get("command") is not None:
+            item["command"] = record["command"]
+        out.append(item)
+    return out

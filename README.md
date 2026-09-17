@@ -85,9 +85,9 @@ MCP-инструментами `listik_*` или командой `listik new`. 
 | `inherit-pipeline` | Fable | Opus | Sonnet | Opus | всё внутри Claude, наружу ничего не уходит |
 | `nano-pipeline` | — | — | Codex | Grok | короткая задача: сделать и принять |
 
-Полный список — `listik projects`, `GET /api/routes` и ваш `routes.json`; там же собирается
-свой набор. Исполнители подключаются плагинами Claude Code, репозиторий сам является
-маркетплейсом:
+Полный список — `listik routes` (список, ввоз/вывоз `routes.json`), `GET /api/routes` или
+доска; там же собирается свой набор. Исполнители подключаются плагинами Claude Code,
+репозиторий сам является маркетплейсом:
 
 ```
 /plugin marketplace add dmitry-fomin/listik

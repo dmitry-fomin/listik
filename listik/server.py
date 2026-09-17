@@ -34,6 +34,7 @@ from . import paths
 from . import routes as routes_mod
 from . import routes_store
 from . import search as search_mod
+from . import skills as skills_mod
 from . import store
 from . import voice as voice_mod
 
@@ -422,26 +423,36 @@ def publish(kind: str, payload: dict) -> None:
             _subs.remove(q)
 
 
-#: Виды кадров, которые пускает POST /api/notify. Пока один — «задача»: о записи
-#: в неё сообщает stdio-MCP, у которого своего publish нет (listik-hkdp).
-NOTIFY_KINDS = frozenset({"task"})
+#: Виды кадров, которые пускает POST /api/notify: «задача» — о записи в неё
+#: сообщает stdio-MCP, у которого своего publish нет (listik-hkdp); «маршрут» —
+#: `listik routes import` пишет таблицу `routes` в обход сервера и так же будит
+#: доску (шаг listik-8jgz, порция c).
+NOTIFY_KINDS = frozenset({"task", "route"})
 
 
 def notify_publish(conn: sqlite3.Connection, body: dict) -> dict:
-    """Разослать доске «перечитай задачу», ничего не меняя в базе.
+    """Разослать доске «перечитай», ничего не меняя в базе.
 
     `publish` живёт в процессе сервера, а писать в ту же sqlite можно и мимо него
-    (`bin/listik mcp` по stdio): без такого вызова доска показывала бы старую
-    карточку до перезагрузки. Существование задачи проверяется — иначе кадр
-    будил бы доски ради записи, которой сервер не знает.
+    (`bin/listik mcp` по stdio, `listik routes import`): без такого вызова доска
+    показывала бы старое до перезагрузки. `kind="route"` — кадр по всей таблице
+    маршрутов, задачи он не касается и не проверяет: `key` в нём необязателен
+    (`None` — «перечитай список целиком»). `kind="task"` (по умолчанию) требует
+    `task_id` и существующую задачу — иначе кадр будил бы доски ради записи,
+    которой сервер не знает.
     """
-    task_id = str(body.get("task_id") or body.get("id") or "").strip()
-    if not task_id:
-        raise ApiError(400, "не передан обязательный параметр: task_id")
     kind = str(body.get("kind") or "task").strip() or "task"
     if kind not in NOTIFY_KINDS:
         raise ApiError(400, f"неизвестный kind: {kind}")
     action = str(body.get("action") or "notify").strip()[:200] or "notify"
+    if kind == "route":
+        key = body.get("key")
+        key = str(key).strip() or None if key is not None else None
+        publish("route", {"key": key, "action": action})
+        return {"published": True, "kind": "route", "key": key, "action": action}
+    task_id = str(body.get("task_id") or body.get("id") or "").strip()
+    if not task_id:
+        raise ApiError(400, "не передан обязательный параметр: task_id")
     if conn.execute("SELECT 1 FROM tasks WHERE id = ?", (task_id,)).fetchone() is None:
         raise ApiError(404, f"задача не найдена: {task_id}")
     publish(kind, {"id": task_id, "action": action})
@@ -608,17 +619,88 @@ def handle(method: str, path: str, query: dict, body: dict, authed: bool = False
 
     if path == "/api/routes":
         # Данные — из таблицы `routes`: правка записи в базе видна сразу, перезапуск
-        # сервера не нужен. `command` наружу не отдаём — это argv запуска.
-        # Предупреждения относятся к проверке файла при ввозе, у базы их нет.
-        state = routes_mod.state(conn)
-        return 200, {
-            "ok": state.ok,
-            "error": state.error,
-            "path": state.path,
-            "warnings": state.warnings,
-            "routes": [{k: v for k, v in record.items() if k != "command"}
-                       for record in state.routes],
-        }
+        # сервера не нужен. `command` отдаётся, как и всё в /api/*, — только по токену.
+        if method == "GET":
+            return 200, routes_store.routes_response(conn)
+        if method == "POST":
+            unknown = [k for k in body if k != "key"]
+            if unknown:
+                raise ApiError(400, f"поле нельзя передать: {unknown[0]}",
+                               code=errors_mod.BAD_ARGUMENT)
+            key = str(need(body, "key")).strip()
+            info = skills_mod.skill_info(key)
+            if info is None:
+                raise ApiError(400, f"скила {key!r} нет среди "
+                               f"plugins/feature-pipeline/skills", code=errors_mod.BAD_ARGUMENT)
+            try:
+                routes_store.get_route(conn, key)
+            except errors_mod.NotFound:
+                pass
+            else:
+                raise ApiError(409, f"маршрут {key!r} уже есть", code=errors_mod.CONFLICT)
+            record = routes_store.create_route(
+                conn, key=key, kind="pipeline", title=info["title"], hint=info["hint"],
+                icon=routes_mod.fallback_icon("pipeline", key), visible=False,
+                harness=None, command=None, roles=None)
+            publish("route", {"key": key, "action": "created"})
+            return 201, record
+        raise ApiError(405, "метод не поддерживается")
+
+    if path == "/api/routes/sync":
+        if method != "GET":
+            raise ApiError(405, "метод не поддерживается")
+        return 200, routes_store.sync_report(conn)
+
+    if path == "/api/routes/reorder":
+        if method != "POST":
+            raise ApiError(405, "метод не поддерживается")
+        unknown = [k for k in body if k != "keys"]
+        if unknown:
+            raise ApiError(400, f"поле нельзя передать: {unknown[0]}",
+                           code=errors_mod.BAD_ARGUMENT)
+        keys = need(body, "keys")
+        if not isinstance(keys, list) or not all(isinstance(k, str) for k in keys):
+            raise ApiError(400, "keys: должен быть массивом строк", code=errors_mod.BAD_ARGUMENT)
+        try:
+            records = routes_store.reorder(conn, keys)
+        except ValueError as exc:
+            raise ApiError(400, errors_mod.message_of(exc), code=errors_mod.BAD_ARGUMENT) from exc
+        publish("route", {"key": None, "action": "reordered"})
+        return 200, records
+
+    if len(parts) == 3 and parts[0] == "api" and parts[1] == "routes":
+        key = urllib.parse.unquote(parts[2])
+        if method == "PATCH":
+            unknown = [k for k in body if k not in routes_store.UPDATE_FIELDS]
+            if unknown:
+                raise ApiError(400, f"поле нельзя менять: {unknown[0]}",
+                               code=errors_mod.BAD_ARGUMENT)
+            if not body:
+                raise ApiError(400, "нечего менять", code=errors_mod.BAD_ARGUMENT)
+            try:
+                record = routes_store.update_route(conn, key, **body)
+            except errors_mod.NotFound as exc:
+                raise api_error(404, exc) from exc
+            except ValueError as exc:
+                raise ApiError(400, errors_mod.message_of(exc),
+                               code=errors_mod.BAD_ARGUMENT) from exc
+            publish("route", {"key": key, "action": "updated"})
+            return 200, record
+        if method == "DELETE":
+            try:
+                routes_store.get_route(conn, key)
+            except errors_mod.NotFound as exc:
+                raise api_error(404, exc) from exc
+            # Удаление справочной записи, а не смена маршрута задачи: снимаем
+            # launch_route/метки у всех задач без гарда route_change_denied
+            # (store.clear_route_on_route_removed), иначе половина из них,
+            # взятых в работу, получила бы отказ, а ссылка на удалённый
+            # маршрут осталась бы висеть.
+            tasks_cleared = store.clear_route_on_route_removed(conn, key)
+            routes_store.delete_route(conn, key)
+            publish("route", {"key": key, "action": "removed"})
+            return 200, {"removed": key, "tasks_cleared": tasks_cleared}
+        raise ApiError(405, "метод не поддерживается")
 
     if path == "/api/assistant/status":
         # Настроен ли помощник: без api_key в [assistant] доска прячет кнопки.

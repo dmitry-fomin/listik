@@ -273,6 +273,9 @@ def local_call(op: str, **kwargs):
                 "generated_at": store.now_iso()}
     if op == "projects":
         return {"projects": store.list_all_projects(conn), "root": str(paths.PROJECTS_ROOT)}
+    if op == "routes":
+        from . import routes_store
+        return routes_store.routes_response(conn)
     if op == "project_add":
         try:
             return store.add_project(conn, path=kwargs.get("path"), slug=kwargs.get("slug"),

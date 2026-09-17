@@ -531,6 +531,31 @@ def route_card_after(row, fields: dict) -> dict:
     return effective
 
 
+def clear_route_on_route_removed(conn: sqlite3.Connection, route_key: str) -> int:
+    """Снять `launch_route` и его метки со всех задач — маршрут сам удаляется.
+
+    Для `DELETE /api/routes/<key>` (шаг listik-8jgz, порция c): это не смена
+    маршрута задачи автором, а удаление справочной записи, на которую эти
+    задачи ссылались, — поэтому `route_change_denied` тут не действует, в
+    отличие от обычного пути `update_task`: задачу в любом статусе и на любом
+    этапе всё равно нужно избавить от ссылки на маршрут, которого больше нет.
+    Трогает только `launch_route` и метки (`labels_after_route_change(labels,
+    "")` — то же правило, что снимает маршрут при обычной смене); статус, этап,
+    держатель и любые другие поля задачи не меняются, `updated_at` не двигается.
+    Возвращает число затронутых задач.
+    """
+    rows = conn.execute("SELECT id, labels FROM tasks WHERE launch_route = ?",
+                        (route_key,)).fetchall()
+    for row in rows:
+        labels = route_labels_from_row(row)
+        cleared = labels_after_route_change(conn, labels, "") or []
+        conn.execute("UPDATE tasks SET launch_route = NULL, labels = ? WHERE id = ?",
+                     (json.dumps(cleared, ensure_ascii=False), row["id"]))
+        _index_task(conn, row["id"])
+    conn.commit()
+    return len(rows)
+
+
 def autostart_flag_raised(conn: sqlite3.Connection, task_id: str) -> bool:
     """Флаг «нужен человек» поднят отказом автостарта, а не вопросом человека.
 

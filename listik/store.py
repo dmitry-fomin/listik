@@ -1478,12 +1478,20 @@ def list_tasks(conn: sqlite3.Connection, *, project: str | None = None, status: 
             "tasks": [row_to_task(conn, r) for r in rows]}
 
 
-def task_timeline(conn: sqlite3.Connection, limit: int = 100) -> list[dict]:
-    rows = conn.execute(
-        """SELECT e.ts, e.kind, e.from_value, e.to_value, e.actor, e.harness, e.note,
-                  e.duration_s, e.task_id, t.title, t.project, t.stage, t.status
-           FROM events e LEFT JOIN tasks t ON t.id = e.task_id
-           ORDER BY e.ts DESC LIMIT ?""", (limit,)).fetchall()
+def task_timeline(conn: sqlite3.Connection, limit: int = 100, *,
+                  project: str | None = None) -> list[dict]:
+    sql = """SELECT e.ts, e.kind, e.from_value, e.to_value, e.actor, e.harness, e.note,
+                    e.duration_s, e.task_id, t.title, t.project, t.stage, t.status
+             FROM events e LEFT JOIN tasks t ON t.id = e.task_id"""
+    params: list = []
+    if project:
+        # Фильтр по проекту задачи: события без задачи (LEFT JOIN → NULL) тоже
+        # отсекаются. Срез по limit идёт после фильтра, а не до.
+        sql += " WHERE t.project = ?"
+        params.append(project)
+    sql += " ORDER BY e.ts DESC LIMIT ?"
+    params.append(limit)
+    rows = conn.execute(sql, params).fetchall()
     out = []
     for r in rows:
         d = dict(r)

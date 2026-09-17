@@ -22,6 +22,7 @@ from unittest import mock
 
 from listik import cwd_project, store
 from tests.helpers import TempDbTestCase
+from tests.test_local_bypass_warning import LocalBypassWarningCase
 
 LISTIK_BIN = Path(__file__).resolve().parent.parent / "bin" / "listik"
 REPO_DIR = LISTIK_BIN.parent.parent
@@ -332,6 +333,213 @@ class CliProjectDetectTests(TempDbTestCase):
         machine = self.run_cli("ready", "--json", cwd=self.alpha)
         self.assertNotIn(DETECTED, machine.stderr)
         json.loads(machine.stdout)
+
+
+class TaskTimelineProjectFilterTests(TempDbTestCase):
+    """Юнит-тест фильтра по проекту у `store.task_timeline` (п. 1)."""
+
+    def setUp(self) -> None:
+        super().setUp()
+        self.alpha_task = store.create_task(self.conn, title="alpha", project="alpha",
+                                            created_at="2024-01-01T00:00:00")["id"]
+        self.beta_task = store.create_task(self.conn, title="beta", project="beta",
+                                           created_at="2024-01-01T00:00:00")["id"]
+        store.event(self.conn, self.alpha_task, "note", note="alpha", ts="2024-01-01T00:00:01")
+        store.event(self.conn, self.beta_task, "note", note="beta", ts="2024-01-01T00:00:02")
+
+    def test_without_project_keeps_all_events(self) -> None:
+        items = store.task_timeline(self.conn)
+        self.assertEqual({i["task_id"] for i in items}, {self.alpha_task, self.beta_task})
+
+    def test_project_keeps_only_its_events(self) -> None:
+        items = store.task_timeline(self.conn, project="alpha")
+        self.assertTrue(items)
+        self.assertEqual({i["task_id"] for i in items}, {self.alpha_task})
+
+    def test_event_without_task_is_hidden_by_filter(self) -> None:
+        store.event(self.conn, "gone-task", "note", note="orphan", ts="2024-01-01T00:00:03")
+        self.assertIn("gone-task", [i["task_id"] for i in store.task_timeline(self.conn)])
+        filtered = store.task_timeline(self.conn, project="alpha")
+        self.assertNotIn("gone-task", [i["task_id"] for i in filtered])
+
+    def test_limit_applies_after_filter(self) -> None:
+        store.event(self.conn, self.alpha_task, "note", note="alpha2", ts="2024-01-01T00:00:04")
+        store.event(self.conn, self.beta_task, "note", note="beta2", ts="2024-01-01T00:00:05")
+        items = store.task_timeline(self.conn, limit=1, project="alpha")
+        self.assertEqual([i["task_id"] for i in items], [self.alpha_task])
+        self.assertEqual(items[0]["note"], "alpha2")
+
+
+class CliInboxTimelineProjectTests(TempDbTestCase):
+    """`inbox`/`timeline` подпроцессом: фильтр по проекту и автоопределение (пп. 2, 3, 5)."""
+
+    def setUp(self) -> None:
+        super().setUp()
+        self.root = (self.tmp_path / "projects").resolve()
+        self.alpha = self.root / "alpha"
+        self.beta = self.root / "beta"
+        self.outside = (self.tmp_path / "elsewhere").resolve()
+        for path in (self.alpha, self.beta, self.outside):
+            path.mkdir(parents=True)
+        store.add_project(self.conn, path=str(self.alpha), slug="alpha")
+        store.add_project(self.conn, path=str(self.beta), slug="beta")
+        # created_at фиксирован: возраст в JSON не зависит от момента прогона.
+        self.alpha_q = store.create_task(
+            self.conn, title="вопрос alpha", project="alpha", needs_owner=True,
+            created_at="2024-01-01T00:00:01")["id"]
+        self.beta_q = store.create_task(
+            self.conn, title="вопрос beta", project="beta", needs_owner=True,
+            created_at="2024-01-01T00:00:02")["id"]
+        self.alpha_d = store.create_task(
+            self.conn, title="брошена alpha", project="alpha", status="in_progress",
+            created_at="2024-01-01T00:00:03")["id"]
+        self.beta_d = store.create_task(
+            self.conn, title="брошена beta", project="beta", status="in_progress",
+            created_at="2024-01-01T00:00:04")["id"]
+        store.event(self.conn, self.alpha_q, "note", note="alpha-event",
+                    ts="2024-01-01T00:00:10")
+        store.event(self.conn, self.beta_q, "note", note="beta-event",
+                    ts="2024-01-01T00:00:11")
+        self.conn.commit()  # `store.event` не коммитит: отпускаем блокировку базы
+        self.config = self.tmp_path / "config.toml"
+        self.config.write_text(f'[import]\nprojects_root = "{self.root}"\n', encoding="utf-8")
+
+    def run_cli(self, *args, cwd=None, env_extra=None):
+        env = {**os.environ,
+               "LISTIK_DB": str(self.db_path),
+               "LISTIK_CONFIG": str(self.config),
+               "LISTIK_LOG": str(self.tmp_path / "listik.log")}
+        env.pop("LISTIK_PROJECT", None)
+        env.update(env_extra or {})
+        return subprocess.run([sys.executable, str(LISTIK_BIN), "--local", *args],
+                              capture_output=True, text=True, env=env,
+                              cwd=str(cwd or REPO_DIR))
+
+    @staticmethod
+    def event_projects(proc):
+        return {i["project"] for i in json.loads(proc.stdout)["items"]}
+
+    @staticmethod
+    def inbox_tasks(proc):
+        data = json.loads(proc.stdout)
+        return (sorted(t["id"] for t in data["questions"]),
+                sorted(t["id"] for t in data["dropped"]))
+
+    def test_timeline_from_project_dir_only_its_events(self) -> None:
+        proc = self.run_cli("timeline", "--json", cwd=self.alpha)
+        self.assertEqual(proc.returncode, 0, proc.stderr)
+        self.assertEqual(self.event_projects(proc), {"alpha"})
+
+    def test_timeline_all_shows_every_project(self) -> None:
+        proc = self.run_cli("timeline", "--json", "--project", "all", cwd=self.alpha)
+        self.assertEqual(self.event_projects(proc), {"alpha", "beta"})
+        self.assertNotIn(DETECTED, proc.stderr)
+
+    def test_timeline_flag_overrides_cwd(self) -> None:
+        proc = self.run_cli("timeline", "--json", "--project", "beta", cwd=self.alpha)
+        self.assertEqual(self.event_projects(proc), {"beta"})
+
+    def test_timeline_env_project_overrides_cwd(self) -> None:
+        proc = self.run_cli("timeline", "--json", cwd=self.alpha,
+                            env_extra={"LISTIK_PROJECT": "beta"})
+        self.assertEqual(self.event_projects(proc), {"beta"})
+        self.assertNotIn(DETECTED, proc.stderr)
+
+    def test_timeline_flag_beats_env(self) -> None:
+        proc = self.run_cli("timeline", "--json", "--project", "alpha", cwd=self.alpha,
+                            env_extra={"LISTIK_PROJECT": "beta"})
+        self.assertEqual(self.event_projects(proc), {"alpha"})
+
+    def test_detected_line_only_in_human_mode(self) -> None:
+        human = self.run_cli("timeline", cwd=self.alpha)
+        self.assertEqual(human.returncode, 0, human.stderr)
+        self.assertIn(f"{DETECTED}: alpha", human.stderr)
+
+        machine = self.run_cli("timeline", "--json", cwd=self.alpha)
+        self.assertNotIn(DETECTED, machine.stderr)
+        json.loads(machine.stdout)
+
+    def test_inbox_from_project_dir_only_its_tasks(self) -> None:
+        proc = self.run_cli("inbox", "--json", cwd=self.alpha)
+        self.assertEqual(proc.returncode, 0, proc.stderr)
+        self.assertEqual(self.inbox_tasks(proc), ([self.alpha_q], [self.alpha_d]))
+
+    def test_inbox_env_project_overrides_cwd(self) -> None:
+        proc = self.run_cli("inbox", "--json", cwd=self.alpha,
+                            env_extra={"LISTIK_PROJECT": "beta"})
+        self.assertEqual(self.inbox_tasks(proc), ([self.beta_q], [self.beta_d]))
+
+    def test_unfiltered_output_matches_all(self) -> None:
+        # Эталон «как до правки»: CLI без фильтра (каталог вне проектов) и раньше
+        # звал store без project. `--project all` обязан дать тот же JSON, сохранив
+        # и порядок элементов.
+        base = self.run_cli("timeline", "--json", cwd=self.outside)
+        allp = self.run_cli("timeline", "--json", "--project", "all", cwd=self.alpha)
+        self.assertEqual(base.returncode, 0, base.stderr)
+        self.assertEqual(allp.returncode, 0, allp.stderr)
+        self.assertEqual(json.loads(base.stdout), json.loads(allp.stdout))
+
+        base_in = self.run_cli("inbox", "--json", cwd=self.outside)
+        all_in = self.run_cli("inbox", "--json", "--project", "all", cwd=self.alpha)
+        self.assertEqual(base_in.returncode, 0, base_in.stderr)
+        self.assertEqual(all_in.returncode, 0, all_in.stderr)
+        self.assertEqual(json.loads(base_in.stdout), json.loads(all_in.stdout))
+
+
+class ServerLocalParityTests(LocalBypassWarningCase):
+    """HTTP и `--local` для `timeline`/`inbox` дают один состав (п. 5)."""
+
+    def setUp(self) -> None:
+        super().setUp()
+        self.root = (self.tmp_path / "projects").resolve()
+        self.alpha = self.root / "alpha"
+        self.beta = self.root / "beta"
+        for path in (self.alpha, self.beta):
+            path.mkdir(parents=True)
+        store.add_project(self.conn, path=str(self.alpha), slug="alpha")
+        store.add_project(self.conn, path=str(self.beta), slug="beta")
+        self.alpha_t = store.create_task(self.conn, title="alpha", project="alpha",
+                                         needs_owner=True,
+                                         created_at="2024-01-01T00:00:01")["id"]
+        self.beta_t = store.create_task(self.conn, title="beta", project="beta",
+                                        created_at="2024-01-01T00:00:02")["id"]
+        store.event(self.conn, self.alpha_t, "note", note="a", ts="2024-01-01T00:00:10")
+        store.event(self.conn, self.beta_t, "note", note="b", ts="2024-01-01T00:00:11")
+        self.conn.commit()  # `store.event` не коммитит: иначе база заперта для CLI
+        self.config_path.write_text(
+            f'[auth]\ntoken = "test-token"\n[import]\nprojects_root = "{self.root}"\n',
+            encoding="utf-8")
+
+    def run_cli_at(self, *args, cwd, local):
+        cmd = [sys.executable, str(LISTIK_BIN)]
+        if local:
+            cmd.append("--local")
+        cmd += ["--port", str(self.port), *args]
+        env = {**os.environ, "LISTIK_CONFIG": str(self.config_path),
+               "LISTIK_DB": str(self.db_path),
+               "LISTIK_LOG": str(self.tmp_path / "listik.log")}
+        return subprocess.run(cmd, capture_output=True, text=True, env=env, cwd=str(cwd))
+
+    def test_timeline_paths_agree(self) -> None:
+        local = self.run_cli_at("timeline", "--json", cwd=self.alpha, local=True)
+        remote = self.run_cli_at("timeline", "--json", cwd=self.alpha, local=False)
+        self.assertEqual(local.returncode, 0, local.stderr)
+        self.assertEqual(remote.returncode, 0, remote.stderr)
+        self.assertEqual([i["task_id"] for i in json.loads(remote.stdout)["items"]],
+                         [i["task_id"] for i in json.loads(local.stdout)["items"]])
+
+    def test_inbox_paths_agree(self) -> None:
+        local = self.run_cli_at("inbox", "--json", cwd=self.alpha, local=True)
+        remote = self.run_cli_at("inbox", "--json", cwd=self.alpha, local=False)
+        self.assertEqual(local.returncode, 0, local.stderr)
+        self.assertEqual(remote.returncode, 0, remote.stderr)
+
+        def ids(proc):
+            data = json.loads(proc.stdout)
+            return ([t["id"] for t in data["questions"]],
+                    [t["id"] for t in data["dropped"]])
+
+        self.assertEqual(ids(remote), ids(local))
 
 
 if __name__ == "__main__":

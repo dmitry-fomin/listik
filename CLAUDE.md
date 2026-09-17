@@ -46,8 +46,9 @@ npm run smoke        # web/scripts/smoke.mjs
 
 `web/scripts/verify-*.mjs` (`verify-projects`, `verify-deps-links`, `verify-cold-start`,
 `verify-route-clear`, `verify-detail-sse`, `verify-task-delete`, `verify-assistant-apply`,
-`verify-markdown`) are additional scripted checks
-used in place of a unit test suite for board behavior; most run against `scripts/mock-api.mjs`.
+`verify-markdown`, `verify-routes-settings`) are additional scripted checks
+used in place of a unit test suite for board behavior; most run against `scripts/mock-api.mjs`
+(`verify-routes-settings` is the exception — it needs a live server, like `verify-projects`).
 `smoke` needs a reachable app and API and exits non-zero with an error if `/api/health` is down.
 
 Database migrations exist as two parallel mechanisms — don't confuse them:

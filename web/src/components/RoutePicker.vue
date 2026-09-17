@@ -22,7 +22,6 @@ import {
   pipelineRowsOf,
   routeAllowedForType,
   routeByKey,
-  stripRoutesOf,
 } from '@/lib/routes'
 
 const props = withDefaults(
@@ -51,7 +50,6 @@ const emit = defineEmits<{
 const shownRoutes = computed(() => pickerRoutesOf(props.routes, props.selectedKey))
 
 const pipelineRows = computed(() => pipelineRowsOf(shownRoutes.value))
-const stripRoutes = computed(() => stripRoutesOf(shownRoutes.value))
 const directRoutes = computed(() => directRoutesOf(shownRoutes.value))
 
 /**
@@ -78,10 +76,7 @@ const pickerItems = computed<PickerItem[]>(() => {
     ...pipelineRows.value.map((route) => ({ key: route.key, route })),
   ]
   if (props.allowClear) items.push({ key: NO_ROUTE, route: null })
-  items.push(
-    ...stripRoutes.value.map((route) => ({ key: route.key, route })),
-    ...directRoutes.value.map((route) => ({ key: route.key, route })),
-  )
+  items.push(...directRoutes.value.map((route) => ({ key: route.key, route })))
   if (orphanKey.value) items.push({ key: orphanKey.value, route: null })
   return items
 })
@@ -225,29 +220,6 @@ function onRouteKeydown(event: KeyboardEvent, key: string): void {
         >
           <ListikIcon name="close" size="sm" />
           без маршрута
-        </button>
-
-        <button
-          v-for="route in stripRoutes"
-          :key="route.key"
-          :ref="(el) => setRouteRef(route.key, el)"
-          type="button"
-          role="radio"
-          class="listik-direct__item"
-          :class="{ 'is-on': isOn(route.key), 'is-off': !routeAllowed(route) }"
-          :data-route-key="route.key"
-          :aria-checked="isOn(route.key)"
-          :aria-disabled="!routeAllowed(route) || undefined"
-          :disabled="disabled || !routeAllowed(route)"
-          :tabindex="routeTabindex(route.key)"
-          :title="routeTooltip(route)"
-          @click="selectRoute(route)"
-          @keydown="onRouteKeydown($event, route.key)"
-        >
-          <RouteIcon :route="route" size="sm" />
-          <ProviderIcon v-if="route.strip?.provider" :provider="route.strip.provider" size="md" />
-          <ListikIcon v-else-if="route.strip?.glyph" :name="route.strip.glyph" size="md" />
-          {{ route.strip?.label }}
         </button>
 
         <button

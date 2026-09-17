@@ -61,6 +61,7 @@ import {
 } from '@zoloto585/facet'
 import IconToggle from './IconToggle.vue'
 import ListikIcon from './ListikIcon.vue'
+import RoutesSettings from './RoutesSettings.vue'
 import store from '@/store/listik'
 import type { ProjectPatch, ProjectRow } from '@/api/types'
 import { projectGitHint, projectIsGit, projectMetaLabel, projectTitleLabel } from '@/lib/projects'
@@ -89,12 +90,13 @@ const formError = ref<string | null>(null)
 /** Чем кончилась правка — плашка на вкладке, когда окно уже закрыто. */
 const editResult = ref<ProjectRow | null>(null)
 
-type SettingsTab = 'repos' | 'appearance' | 'name'
+type SettingsTab = 'repos' | 'appearance' | 'name' | 'routes'
 
 const settingsTabs: UiTabItem[] = [
   { key: 'repos', label: 'Репозитории' },
   { key: 'appearance', label: 'Оформление' },
   { key: 'name', label: 'ФИО' },
+  { key: 'routes', label: 'Маршруты' },
 ]
 const activeTab = ref<SettingsTab>('repos')
 
@@ -549,6 +551,10 @@ watch(
             v-bind="{ 'aria-label': 'ФИО' }"
           />
         </div>
+      </template>
+
+      <template #panel-routes>
+        <RoutesSettings />
       </template>
     </UiTabs>
 

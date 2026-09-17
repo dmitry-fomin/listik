@@ -90,18 +90,9 @@ export function pickerRoutesOf(
   return visible
 }
 
-/** Строки таблицы ролей — пресеты конвейера без `strip`. */
+/** Строки таблицы ролей — все пресеты конвейера. */
 export function pipelineRowsOf(routes: RouteDef[]): PipelineRouteDef[] {
-  return routes.filter(
-    (route): route is PipelineRouteDef => route.kind === 'pipeline' && !route.strip,
-  )
-}
-
-/** Пресеты строки «Отдельно» — `pipeline` со `strip`. */
-export function stripRoutesOf(routes: RouteDef[]): PipelineRouteDef[] {
-  return routes.filter(
-    (route): route is PipelineRouteDef => route.kind === 'pipeline' && Boolean(route.strip),
-  )
+  return routes.filter((route): route is PipelineRouteDef => route.kind === 'pipeline')
 }
 
 export function directRoutesOf(routes: RouteDef[]): DirectRouteDef[] {

@@ -2,7 +2,7 @@
  * Типы ответов API Listik. Источник правды — docs/API.md и listik/store.py.
  */
 import type { HarnessKey } from '@/lib/harness'
-import type { ProviderKey, RoleCell, RoleKey } from '@/lib/pipelines'
+import type { RoleCell, RoleKey } from '@/lib/pipelines'
 
 export type TaskStatus = 'open' | 'in_progress' | 'blocked' | 'review' | 'done' | 'cancelled'
 export type PipelineStage = 's1-spec' | 's2-review' | 's3-impl' | 's4-judge'
@@ -397,16 +397,6 @@ export interface ProjectRemoved {
  */
 export type RouteIconKey = 'xhigh' | 'high' | 'medium' | 'low' | 'xlow' | 'direct'
 
-/** Одна иконка и подпись вместо таблицы ролей — `strip` в routes.json. */
-export interface RouteStrip {
-  label: string
-  /** ровно одно из `provider`/`glyph` (проверяет сервер) */
-  provider?: ProviderKey
-  /** `null` — имени нет в icons.ts, причина в `glyph_error` (listik-uiza) */
-  glyph?: string | null
-  glyph_error?: string
-}
-
 interface RouteBase {
   key: string
   title: string
@@ -425,14 +415,20 @@ interface RouteBase {
    * вместе с ним значит «иконки нет» — доска рисует серый кружок с крестиком.
    */
   icon_error?: string | null
+  /** Порядок записи (сквозной по всей таблице `routes`) — `GET /api/routes/reorder`. */
+  position: number
+  /** Argv процесса автостарта; `null` — команды нет (роли ещё не переввезены и т.п.). */
+  command: string[] | null
 }
 
 /** Пресет конвейера: роли ТЗ/критик/исполнитель/судья. */
 export interface PipelineRouteDef extends RouteBase {
   kind: 'pipeline'
   roles: Partial<Record<RoleKey, RoleCell>>
-  /** пресеты строки «Отдельно» — без таблицы ролей */
-  strip?: RouteStrip
+  /** Путь к `SKILL.md` относительно корня Listik; каталога скила нет — `null`. */
+  skill_path?: string | null
+  /** Каталог скила пропал (переименовали/удалили) — запись отдаётся скрытой (`visible:false`). */
+  skill_missing?: boolean
 }
 
 /** Прямой маршрут: харнесс делает задачу целиком, без ролей. */
@@ -455,6 +451,32 @@ export interface RoutesResponse {
    */
   warnings?: string[]
   routes: RouteDef[]
+}
+
+/** Правка записи — PATCH /api/routes/{key}; последнее поле только у `kind=direct`. */
+export interface RoutePatch {
+  title?: string
+  hint?: string
+  icon?: RouteIconKey | null
+  visible?: boolean
+  command?: string[] | null
+}
+
+/** Скил без записи в таблице — GET /api/routes/sync → missing_route[]. */
+export interface RouteSkillInfo {
+  key: string
+  title: string
+  hint: string
+  skill_path: string
+}
+
+/** GET /api/routes/sync: сверка таблицы `routes` со скилами `feature-pipeline`. */
+export interface RoutesSyncResponse {
+  skills_available: boolean
+  /** Записи `kind=pipeline` из базы, для которых нет каталога скила. */
+  missing_skill: RouteDef[]
+  /** Скилы, для которых нет записи в базе. */
+  missing_route: RouteSkillInfo[]
 }
 
 // ── помощник DeepSeek при создании задачи: GET /api/assistant/status,

@@ -16,7 +16,10 @@ import type {
   ProjectRow,
   ProjectsResponse,
   ReadyResponse,
+  RouteDef,
+  RoutePatch,
   RoutesResponse,
+  RoutesSyncResponse,
   SearchMode,
   SearchResponse,
   Stats,
@@ -120,8 +123,31 @@ const taskPath = (id: string, suffix = '') => `/api/tasks/${encodeURIComponent(i
 export const api = {
   health: () => get<Health>('/api/health'),
 
-  /** Маршруты запуска из `routes.json` (загружены сервером при старте, без `command`). */
+  /** Маршруты запуска — таблица `routes` в базе (см. docs/API.md «Маршруты запуска»). */
   routes: () => get<RoutesResponse>('/api/routes'),
+
+  /**
+   * Правка записи маршрута: `title|hint|icon|visible` у обоих видов, `command` —
+   * только у `kind=direct` (сервер отвечает `400` на `command` у `pipeline`).
+   */
+  patchRoute: (key: string, body: RoutePatch) =>
+    patch<RouteDef>(`/api/routes/${encodeURIComponent(key)}`, body),
+
+  /** Завести маршрут `kind=pipeline` под существующий скил конвейера. */
+  createRoute: (key: string) => post<RouteDef>('/api/routes', { key }),
+
+  /** Удалить маршрут: у задач с этим `launch_route` снимается маршрут и метки. */
+  deleteRoute: (key: string) =>
+    request<{ removed: string; tasks_cleared: number }>(
+      'DELETE',
+      `/api/routes/${encodeURIComponent(key)}`,
+    ),
+
+  /** Переставить маршруты — общий сквозной порядок, ключи не из списка уезжают в конец. */
+  reorderRoutes: (keys: string[]) => post<RouteDef[]>('/api/routes/reorder', { keys }),
+
+  /** Сверка таблицы маршрутов со скилами `feature-pipeline` на диске. */
+  routesSync: () => get<RoutesSyncResponse>('/api/routes/sync'),
 
   /**
    * Настроен ли помощник DeepSeek (`[assistant]` в config.toml). Ключ наружу не

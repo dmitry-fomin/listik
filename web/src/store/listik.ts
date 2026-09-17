@@ -25,6 +25,8 @@ import type {
   ProjectPatch,
   ProjectRow,
   RouteDef,
+  RoutePatch,
+  RoutesSyncResponse,
   SearchMode,
   ReadyTask,
   SearchResponse,
@@ -171,6 +173,15 @@ const routesWarnings = ref<string[]>([])
 const routesRequestFailed = ref(false)
 const routesLoading = ref(false)
 let routesRequested = false
+
+/**
+ * Вкладка «Маршруты» настроек (`RoutesSettings.vue`): правка/заведение/удаление/
+ * порядок записей. Своё состояние загрузки и ошибки — общий алерт «Новой задачи»
+ * (`routesError`) сюда не подмешиваем, вкладка живёт своей вкладкой.
+ */
+const routesSettingsLoading = ref(false)
+const routesSettingsError = ref<string | null>(null)
+const routesSync = ref<RoutesSyncResponse | null>(null)
 
 /**
  * Помощник DeepSeek (`GET /api/assistant/status`): ключ живёт в конфиге сервера,
@@ -995,6 +1006,81 @@ function ensureRoutes(): void {
 }
 
 /**
+ * Вкладка «Маршруты» настроек: свежий список поверх общего `routes` — та же
+ * иконка уровня и матрица маршрутов видят обновление сразу, но ошибка и флаг
+ * загрузки отдельные (`routesSettingsError`/`routesSettingsLoading`), чтобы не
+ * зажечь общий алерт формы «Новая задача».
+ */
+async function reloadRoutes(): Promise<boolean> {
+  return withLoading(routesSettingsLoading, async () => {
+    try {
+      const data = await api.routes()
+      routesOk.value = data.ok
+      routesWarnings.value = data.warnings ?? []
+      routes.value = data.routes ?? []
+      routesRequested = true
+      routesRequestFailed.value = false
+      routesSettingsError.value = data.ok ? null : data.error
+      return data.ok
+    } catch (error) {
+      routesSettingsError.value = errorMessage(error)
+      return false
+    }
+  })
+}
+
+/** Общая обёртка действий вкладки «Маршруты»: ошибка — в `routesSettingsError`. */
+async function routesSettingsAction<T>(action: () => Promise<T>): Promise<T | null> {
+  return withLoading(routesSettingsLoading, async () => {
+    const result = await tryRequest(action, (error) => {
+      routesSettingsError.value = errorMessage(error)
+    })
+    if (result === null) return null
+    routesSettingsError.value = null
+    return result
+  })
+}
+
+/**
+ * Поправить запись (`title|hint|icon|visible|command`). Ответ сервера не несёт
+ * `skill_path`/`skill_missing` (их добавляет только `GET /api/routes`), поэтому
+ * после успеха список перечитывается целиком, а не патчится точечно.
+ */
+async function patchRoute(key: string, body: RoutePatch): Promise<RouteDef | null> {
+  const result = await routesSettingsAction(() => api.patchRoute(key, body))
+  if (result) await reloadRoutes()
+  return result
+}
+
+/** Завести маршрут `kind=pipeline` под существующий скил конвейера. */
+async function createRoute(key: string): Promise<RouteDef | null> {
+  const result = await routesSettingsAction(() => api.createRoute(key))
+  if (result) await reloadRoutes()
+  return result
+}
+
+/** Удалить маршрут: у задач с этим `launch_route` сервер снимает маршрут и метки. */
+async function deleteRoute(key: string): Promise<{ removed: string; tasks_cleared: number } | null> {
+  const result = await routesSettingsAction(() => api.deleteRoute(key))
+  if (result) await reloadRoutes()
+  return result
+}
+
+/** Переставить маршруты по общему сквозному порядку ключей. */
+async function reorderRoutes(keys: string[]): Promise<RouteDef[] | null> {
+  const result = await routesSettingsAction(() => api.reorderRoutes(keys))
+  if (result) await reloadRoutes()
+  return result
+}
+
+/** Сверка таблицы маршрутов со скилами `feature-pipeline` — модалка «Завести маршрут». */
+async function loadRoutesSync(): Promise<RoutesSyncResponse | null> {
+  const result = await routesSettingsAction(() => api.routesSync())
+  if (result) routesSync.value = result
+  return result
+}
+
+/**
  * Статус помощника — ровно один запрос за сессию (`ensureAssistant` из формы).
  * Ошибка запроса не всплывает на доску: кнопки просто не показываются, а сама
  * причина видна в консоли — помощник необязателен.
@@ -1244,6 +1330,9 @@ export function useListikStore() {
     routesWarnings,
     routesRequestFailed,
     routesLoading,
+    routesSettingsLoading,
+    routesSettingsError,
+    routesSync,
     assistantEnabled,
     assistantModel,
     assistantLoading,
@@ -1305,6 +1394,12 @@ export function useListikStore() {
     bulkPatch,
     loadRoutes,
     ensureRoutes,
+    reloadRoutes,
+    patchRoute,
+    createRoute,
+    deleteRoute,
+    reorderRoutes,
+    loadRoutesSync,
     loadAssistant,
     ensureAssistant,
     askAssistant,

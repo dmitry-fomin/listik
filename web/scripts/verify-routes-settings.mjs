@@ -7,6 +7,15 @@
  * (перехват `window.fetch` на странице): в `keys` приходят ключи ВСЕХ
  * маршрутов, а не только той группы, где случилась перестановка.
  *
+ * Порция `e` (карточка выбранного маршрута) добавляет проверку автосохранения
+ * шапки: серия «нажатий» в поле «Подпись» без потери фокуса даёт ровно один
+ * `PATCH /api/routes/<key>` — с единственным ключом `hint` (не все четыре поля
+ * «на всякий случай»), — статус в карточке показывает «Сохранено»; переключатель
+ * «Показывать автору» и уровень (семь кнопок-глифов) сохраняются сразу, тоже
+ * по одному ключу за раз (`visible`/`icon`). Все три поля возвращаются к
+ * исходному значению по ходу сценария тем же путём (ввод/клик), а не только
+ * прямым PATCH — тем самым заодно проверяется round-trip.
+ *
  * Работает с живой страницей (dev или прод) и настоящим API Listik, поэтому
  * трогает базу маршрутов: исходный порядок возвращается и при успехе сценария
  * (кнопкой ▼ по ходу проверки), и при падении посреди него (прямым
@@ -14,7 +23,9 @@
  * откат живёт в `finalize()`, общей для обычного `finally` и для `SIGINT`/
  * `SIGTERM`: голый `try/finally` не сработал бы на Ctrl-C (Node завершает
  * процесс по умолчанию раньше, чем размотался бы стек), поэтому оба сигнала
- * перехвачены отдельно и вызывают тот же откат перед выходом.
+ * перехвачены отдельно и вызывают тот же откат перед выходом. Та же схема —
+ * `hintRestoreNeeded`/`visibleRestoreNeeded`/`iconRestoreNeeded` и прямой
+ * `PATCH` в `finalize()` — страхует карточку маршрута.
  *
  * Запуск: node scripts/verify-routes-settings.mjs "http://localhost:5173/?token=<токен>"
  * Печатает JSON-отчёт и «ок»/«ошибка: …» последней строкой; код выхода
@@ -49,11 +60,14 @@ const client = connect(await cdpTarget(port))
 await client.ready
 const { send, evaluate, consoleErrors } = client
 
-/* ── перехват fetch на странице: копится в window.__routesReorderCalls,
- * добавлен как «скрипт на новый документ» — переживает Page.navigate сам,
- * повторно вставлять после перезагрузки не нужно. */
+/* ── перехват fetch на странице: копится в window.__routesReorderCalls и
+ * window.__routesPatchCalls (последний — тела PATCH /api/routes/<key>,
+ * автосохранение карточки, порция `e`), добавлен как «скрипт на новый
+ * документ» — переживает Page.navigate сам, повторно вставлять после
+ * перезагрузки не нужно. */
 const REORDER_PATCH = `(() => {
   window.__routesReorderCalls = window.__routesReorderCalls ?? [];
+  window.__routesPatchCalls = window.__routesPatchCalls ?? [];
   if (window.__routesFetchPatched) return;
   window.__routesFetchPatched = true;
   const original = window.fetch.bind(window);
@@ -62,6 +76,10 @@ const REORDER_PATCH = `(() => {
       const reqUrl = typeof input === 'string' ? input : (input && input.url) || '';
       if (reqUrl.includes('/api/routes/reorder') && init && typeof init.body === 'string') {
         window.__routesReorderCalls.push(JSON.parse(init.body));
+      }
+      const patchMatch = reqUrl.match(/\\/api\\/routes\\/([^/?]+)$/);
+      if (patchMatch && init && init.method === 'PATCH' && typeof init.body === 'string') {
+        window.__routesPatchCalls.push({ key: patchMatch[1], body: JSON.parse(init.body) });
       }
     } catch (_e) { /* тело не JSON — не мешаем запросу */ }
     return original(input, init);
@@ -130,9 +148,89 @@ const forceReorder = (keys) => `(async () => {
   }
 })()`
 
+/** Прямой PATCH записи в обход UI — для той же цели у карточки автосохранения (порция `e`). */
+const forcePatch = (key, body) => `(async () => {
+  try {
+    const token = localStorage.getItem('listik.token') ?? ''
+    const response = await fetch('/api/routes/' + ${JSON.stringify(key)}, {
+      method: 'PATCH',
+      headers: { 'Content-Type': 'application/json', Authorization: 'Bearer ' + token },
+      body: JSON.stringify(${JSON.stringify(body)}),
+    })
+    return response.ok
+  } catch (_e) {
+    return false
+  }
+})()`
+
+/** Текущая запись маршрута по ключу — читает `GET /api/routes` прямо со страницы (свой токен). */
+const fetchRoute = (key) => `(async () => {
+  try {
+    const token = localStorage.getItem('listik.token') ?? ''
+    const response = await fetch('/api/routes', { headers: { Authorization: 'Bearer ' + token } })
+    if (!response.ok) return null
+    const payload = await response.json()
+    const data = payload.data ?? payload
+    return (data.routes || []).find((r) => r.key === ${JSON.stringify(key)}) ?? null
+  } catch (_e) {
+    return null
+  }
+})()`
+
+/**
+ * Печатает символы `value` в поле `input[index]` карточки одним нативным
+ * сеттером на символ + событие `input` — без `blur`, чтобы проверить именно
+ * debounce (600мс после последней «клавиши»), а не сохранение по потере
+ * фокуса. Серия быстрых вызовов должна дать один `PATCH`, а не по символу.
+ */
+const typeCardField = (index, value) => `(async () => {
+  const input = document.querySelectorAll('.listik-routes-settings__card input')[${index}]
+  if (!input) return false
+  const setter = Object.getOwnPropertyDescriptor(window.HTMLInputElement.prototype, 'value').set
+  setter.call(input, '')
+  input.dispatchEvent(new Event('input', { bubbles: true }))
+  let acc = ''
+  for (const ch of ${JSON.stringify(value)}) {
+    acc += ch
+    setter.call(input, acc)
+    input.dispatchEvent(new Event('input', { bubbles: true }))
+    await new Promise((r) => setTimeout(r, 25))
+  }
+  return true
+})()`
+
+const clickSwitch = `(() => {
+  const btn = document.querySelector('.listik-routes-settings__card .ui-switch__track')
+  if (!btn) return false
+  btn.click()
+  return true
+})()`
+
+const levelState = `(() => {
+  const buttons = [...document.querySelectorAll('.listik-routes-settings__card [role="radiogroup"] [role="radio"]')]
+  return { count: buttons.length, checked: buttons.findIndex((b) => b.getAttribute('aria-checked') === 'true') }
+})()`
+
+const clickLevel = (index) => `(() => {
+  const buttons = [...document.querySelectorAll('.listik-routes-settings__card [role="radiogroup"] [role="radio"]')]
+  const btn = buttons[${index}]
+  if (!btn) return false
+  btn.click()
+  return true
+})()`
+
+const patchCallsSince = (from) => `window.__routesPatchCalls.slice(${from})`
+const patchCallsCount = `window.__routesPatchCalls.length`
+const saveStatusText = `document.querySelector('.listik-routes-settings__card .ui-save-status')?.textContent ?? ''`
+
 const report = { ok: false }
 let originalPipelineKeys = null
 let restoreNeeded = false
+let cardKey = null
+let cardOriginal = null
+let hintRestoreNeeded = false
+let visibleRestoreNeeded = false
+let iconRestoreNeeded = false
 let finalized = false
 
 /**
@@ -158,6 +256,23 @@ async function finalize() {
     } catch (restoreError) {
       report.restoreFallbackOk = false
       report.restoreError = String(restoreError?.stack ?? restoreError)
+    }
+  }
+  if ((hintRestoreNeeded || visibleRestoreNeeded || iconRestoreNeeded) && cardKey && cardOriginal) {
+    try {
+      await withTimeout(
+        (async () => {
+          const body = {}
+          if (hintRestoreNeeded) body.hint = cardOriginal.hint
+          if (visibleRestoreNeeded) body.visible = cardOriginal.visible
+          if (iconRestoreNeeded) body.icon = cardOriginal.icon ?? null
+          report.cardRestoreFallbackOk = await evaluate(forcePatch(cardKey, body))
+        })(),
+        10000,
+      )
+    } catch (restoreError) {
+      report.cardRestoreFallbackOk = false
+      report.cardRestoreError = String(restoreError?.stack ?? restoreError)
     }
   }
   try {
@@ -255,6 +370,94 @@ try {
   report.restoredCorrectly = JSON.stringify(report.afterRestore) === JSON.stringify(originalPipelineKeys)
   restoreNeeded = !report.restoredCorrectly
 
+  /*
+   * ── карточка выбранного маршрута (порция `e`): шапка сохраняется сама.
+   * `Page.navigate` выше перезагрузил страницу — выбор маршрута живёт только в
+   * памяти вкладки (`selectedKey` в `RoutesSettings.vue`), поэтому после
+   * перезагрузки справа снова «Выбери маршрут слева»: строку нужно выбрать
+   * заново. Порядок к этому моменту уже восстановлен (`afterRestore`), поэтому
+   * строка 1 — снова тот же маршрут, что и в начале сценария.
+   */
+  report.cardRowReselected = await evaluate(clickRow('Конвейеры', 1))
+  await sleep(500)
+  report.cardTitleShown = await evaluate(detailTitle)
+
+  cardKey = originalPipelineKeys[1]
+  cardOriginal = await evaluate(fetchRoute(cardKey))
+  if (!cardOriginal) throw new Error(`не нашли запись ${cardKey} для проверки карточки`)
+
+  // 1) «Подпись»: серия «нажатий» без blur — ровно один PATCH после debounce, только hint
+  const hintProbe = `${cardOriginal.hint} · автотест ${Date.now()}`
+  hintRestoreNeeded = true
+  const callsBeforeHint = (await evaluate(patchCallsCount)) ?? 0
+  report.hintTyped = await evaluate(typeCardField(1, hintProbe))
+  await sleep(1000)
+  const hintCalls = ((await evaluate(patchCallsSince(callsBeforeHint))) ?? []).filter(
+    (call) => call.key === cardKey && 'hint' in call.body,
+  )
+  report.hintCallsCount = hintCalls.length
+  report.hintCallSingleKey = hintCalls.length > 0 && Object.keys(hintCalls[hintCalls.length - 1].body).length === 1
+  report.hintCallValueMatches = hintCalls[hintCalls.length - 1]?.body.hint === hintProbe
+  report.hintSavedShown = (await evaluate(saveStatusText)).includes('Сохранено')
+
+  // вернуть исходную подпись тем же путём
+  const callsBeforeHintRestore = (await evaluate(patchCallsCount)) ?? 0
+  await evaluate(typeCardField(1, cardOriginal.hint))
+  await sleep(1000)
+  const hintRestoreCalls = (await evaluate(patchCallsSince(callsBeforeHintRestore))) ?? []
+  report.hintRestored = hintRestoreCalls.some(
+    (call) => call.key === cardKey && call.body.hint === cardOriginal.hint && Object.keys(call.body).length === 1,
+  )
+  hintRestoreNeeded = !report.hintRestored
+
+  // 2) «Показывать автору» — сохранение сразу, PATCH с единственным ключом visible
+  visibleRestoreNeeded = true
+  const callsBeforeVisible = (await evaluate(patchCallsCount)) ?? 0
+  report.visibleClicked = await evaluate(clickSwitch)
+  await sleep(500)
+  const visibleCalls = ((await evaluate(patchCallsSince(callsBeforeVisible))) ?? []).filter(
+    (call) => call.key === cardKey && 'visible' in call.body,
+  )
+  report.visibleCallsCount = visibleCalls.length
+  report.visibleCallSingleKey = visibleCalls.length > 0 && Object.keys(visibleCalls[0].body).length === 1
+  report.visibleCallFlipped = visibleCalls[0]?.body.visible === !cardOriginal.visible
+
+  const callsBeforeVisibleRestore = (await evaluate(patchCallsCount)) ?? 0
+  await evaluate(clickSwitch)
+  await sleep(500)
+  const visibleRestoreCalls = (await evaluate(patchCallsSince(callsBeforeVisibleRestore))) ?? []
+  report.visibleRestored = visibleRestoreCalls.some(
+    (call) =>
+      call.key === cardKey && call.body.visible === cardOriginal.visible && Object.keys(call.body).length === 1,
+  )
+  visibleRestoreNeeded = !report.visibleRestored
+
+  // 3) уровень — семь кнопок-глифов, тоже сразу, PATCH с единственным ключом icon
+  const levelBefore = await evaluate(levelState)
+  report.levelButtonsCount = levelBefore?.count ?? 0
+  report.levelInitialChecked = levelBefore?.checked ?? -1
+  const levelTargetIndex = report.levelInitialChecked === 0 ? 1 : 0
+  iconRestoreNeeded = true
+  const callsBeforeIcon = (await evaluate(patchCallsCount)) ?? 0
+  report.levelClicked = await evaluate(clickLevel(levelTargetIndex))
+  await sleep(500)
+  const iconCalls = ((await evaluate(patchCallsSince(callsBeforeIcon))) ?? []).filter(
+    (call) => call.key === cardKey && 'icon' in call.body,
+  )
+  report.iconCallsCount = iconCalls.length
+  report.iconCallSingleKey = iconCalls.length > 0 && Object.keys(iconCalls[0].body).length === 1
+
+  const callsBeforeIconRestore = (await evaluate(patchCallsCount)) ?? 0
+  await evaluate(clickLevel(report.levelInitialChecked))
+  await sleep(500)
+  const iconRestoreCalls = (await evaluate(patchCallsSince(callsBeforeIconRestore))) ?? []
+  report.iconRestored = iconRestoreCalls.some(
+    (call) => call.key === cardKey && 'icon' in call.body && Object.keys(call.body).length === 1,
+  )
+  iconRestoreNeeded = !report.iconRestored
+  const levelAfterRestore = await evaluate(levelState)
+  report.levelRestoredChecked = levelAfterRestore?.checked === report.levelInitialChecked
+
   report.consoleErrors = consoleErrors
   report.ok =
     report.settingsOpen === true &&
@@ -268,6 +471,22 @@ try {
     report.persistedAfterReload === true &&
     report.restoreClicked === true &&
     report.restoredCorrectly === true &&
+    report.cardRowReselected === true &&
+    report.cardTitleShown === pipelineBefore[1].title &&
+    report.hintCallsCount === 1 &&
+    report.hintCallSingleKey === true &&
+    report.hintCallValueMatches === true &&
+    report.hintSavedShown === true &&
+    report.hintRestored === true &&
+    report.visibleCallsCount === 1 &&
+    report.visibleCallSingleKey === true &&
+    report.visibleCallFlipped === true &&
+    report.visibleRestored === true &&
+    report.levelButtonsCount === 7 &&
+    report.iconCallsCount === 1 &&
+    report.iconCallSingleKey === true &&
+    report.iconRestored === true &&
+    report.levelRestoredChecked === true &&
     consoleErrors.length === 0
 } catch (error) {
   report.error = String(error?.stack ?? error)
@@ -277,7 +496,9 @@ try {
 
 console.log(JSON.stringify(report, null, 2))
 if (report.ok) {
-  console.error('ок: вкладка «Маршруты» — список, выбор, перестановка и сохранение порядка работают')
+  console.error(
+    'ок: вкладка «Маршруты» — список/выбор/перестановка и автосохранение карточки (hint/visible/icon) работают',
+  )
 } else {
   console.error(`ошибка: ${report.error ?? 'сценарий не прошёл — см. отчёт выше'}`)
   process.exitCode = 1

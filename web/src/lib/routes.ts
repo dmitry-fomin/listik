@@ -98,3 +98,73 @@ export function pipelineRowsOf(routes: RouteDef[]): PipelineRouteDef[] {
 export function directRoutesOf(routes: RouteDef[]): DirectRouteDef[] {
   return routes.filter((route): route is DirectRouteDef => route.kind === 'direct')
 }
+
+// ── подстановки команды (`command`, argv записи маршрута) ───────────────────
+// Правила и сам набор — `listik/routes.py` (`PLACEHOLDERS`, `PLACEHOLDER_RE`):
+// в argv допустимы только эти шесть имён в фигурных скобках, любое другое —
+// «незнакомая подстановка». Здесь — то же самое для карточки маршрута:
+// разбор строки на куски для подсветки (`splitPlaceholders`), подсчёт
+// вхождений для панели «Подстановки» (`countPlaceholders`) и список
+// незнакомых имён для блока «Чем запускается» и порции `f` (`unknownPlaceholders`).
+
+export const ROUTE_PLACEHOLDERS = ['task_id', 'project', 'route', 'cwd', 'worktree', 'branch'] as const
+export type RoutePlaceholder = (typeof ROUTE_PLACEHOLDERS)[number]
+
+const PLACEHOLDER_RE = /\{([^{}]*)\}/g
+
+function commandText(argv: string[] | string | null | undefined): string {
+  if (!argv) return ''
+  return Array.isArray(argv) ? argv.join(' ') : argv
+}
+
+function isKnownPlaceholder(name: string): name is RoutePlaceholder {
+  return (ROUTE_PLACEHOLDERS as readonly string[]).includes(name)
+}
+
+/** Кусок разобранной команды — для подсветки в шаблоне без выражений там. */
+export interface PlaceholderChunk {
+  type: 'text' | 'placeholder' | 'unknown'
+  /** Текст куска (`text`) или имя подстановки без фигурных скобок (остальные). */
+  value: string
+}
+
+/** Разбирает строку на текст и подстановки — рендер решает подсветку по `type`. */
+export function splitPlaceholders(text: string): PlaceholderChunk[] {
+  const chunks: PlaceholderChunk[] = []
+  let lastIndex = 0
+  for (const match of text.matchAll(PLACEHOLDER_RE)) {
+    const index = match.index ?? 0
+    if (index > lastIndex) chunks.push({ type: 'text', value: text.slice(lastIndex, index) })
+    const name = match[1] ?? ''
+    chunks.push({ type: isKnownPlaceholder(name) ? 'placeholder' : 'unknown', value: name })
+    lastIndex = index + match[0].length
+  }
+  if (lastIndex < text.length) chunks.push({ type: 'text', value: text.slice(lastIndex) })
+  return chunks
+}
+
+/** Сколько раз `{name}` встречается в команде — панель «Подстановки». */
+export function countPlaceholders(argv: string[] | string | null | undefined, name: string): number {
+  const text = commandText(argv)
+  const token = `{${name}}`
+  if (!token || text.length === 0) return 0
+  let count = 0
+  let index = text.indexOf(token)
+  while (index !== -1) {
+    count += 1
+    index = text.indexOf(token, index + token.length)
+  }
+  return count
+}
+
+/** Имена подстановок в команде, которых нет в `ROUTE_PLACEHOLDERS` — такая команда невалидна. */
+export function unknownPlaceholders(argv: string[] | string | null | undefined): string[] {
+  const text = commandText(argv)
+  if (!text) return []
+  const found = new Set<string>()
+  for (const match of text.matchAll(PLACEHOLDER_RE)) {
+    const name = match[1] ?? ''
+    if (!isKnownPlaceholder(name)) found.add(name)
+  }
+  return [...found]
+}

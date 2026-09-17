@@ -29,13 +29,11 @@ import {
   UiButton,
   UiConfirmDialog,
   UiEmptyState,
-  UiField,
-  UiInput,
   UiModal,
   UiRecordList,
-  UiSwitch,
   type UiRecordListColumn,
 } from '@zoloto585/facet'
+import RouteCard from './RouteCard.vue'
 import RouteIcon from './marks/RouteIcon.vue'
 import store from '@/store/listik'
 import type { DirectRouteDef, PipelineRouteDef, RouteDef, RouteSkillInfo } from '@/api/types'
@@ -277,15 +275,7 @@ onMounted(() => {
       <div class="listik-routes-settings__detail">
         <UiEmptyState v-if="!selected" compact title="Выбери маршрут слева" />
         <div v-else class="listik-routes-settings__card">
-          <UiField label="Заголовок">
-            <UiInput :model-value="selected.title" disabled />
-          </UiField>
-          <UiField label="Подпись">
-            <UiInput :model-value="selected.hint" disabled />
-          </UiField>
-          <UiField label="Показывать автору">
-            <UiSwitch :model-value="selected.visible" disabled />
-          </UiField>
+          <RouteCard :key="selected.key" :route="selected" />
         </div>
       </div>
     </div>

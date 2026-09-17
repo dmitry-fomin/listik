@@ -138,7 +138,7 @@ The skills used to run this project's work live in this repo and are made exactl
 - `plugins/listik/` — the `listik:listik` task-protocol skill;
 - `plugins/dsh/` — DeepSeek Harness bridge (`dsh:dsh-delegate` and related skills);
 - `plugins/codex/` — OpenAI Codex CLI bridge (`codex:codex-delegate` and related skills);
-- `plugins/opencode/` — opencode CLI bridge to GLM 5.3 Flash (`opencode:opencode-delegate` and related skills);
+- `plugins/opencode/` — opencode CLI bridge, two channels: GLM 5.3 Flash and DeepSeek v4.1 Flash (`opencode:opencode-delegate` and related skills);
 - `plugins/second-opinion/` — independent LLM review (`second-opinion:ask`).
 
 Edit skills only there — never the copies under `~/.claude/plugins/cache/` or

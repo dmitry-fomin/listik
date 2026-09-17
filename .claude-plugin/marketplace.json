@@ -10,7 +10,7 @@
       "name": "listik",
       "source": "./plugins/listik",
       "description": "Работа с задачами в Listik: очередь, этапы конвейера, heartbeat, зависимости, вопросы человеку и журнал.",
-      "version": "0.8.0"
+      "version": "0.8.1"
     },
     {
       "name": "feature-pipeline",
@@ -34,7 +34,7 @@
       "name": "opencode",
       "source": "./plugins/opencode",
       "version": "0.1.0",
-      "description": "Отдать задачу opencode (по умолчанию GLM 5.3 Flash) из Claude Code: второй агент сам ходит по коду, по умолчанию только читает, сессию можно продолжить по имени."
+      "description": "Мост в opencode CLI: делегирование задач в GLM 5.3 Flash и DeepSeek v4.1 Flash с фоновыми задачами и продолжением сессии"
     },
     {
       "name": "second-opinion",

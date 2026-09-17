@@ -117,14 +117,38 @@ function commandText(argv: string[] | string | null | undefined): string {
   return Array.isArray(argv) ? argv.join(' ') : argv
 }
 
+/** Команда поэлементно: сервер проверяет каждый элемент argv отдельно, а не склейку. */
+function commandElements(argv: string[] | string | null | undefined): string[] {
+  if (!argv) return []
+  return Array.isArray(argv) ? argv : [argv]
+}
+
+/** Скобки, оставшиеся после вырезания подстановок, — ровно проверка сервера. */
+function bareBraces(value: string): string[] {
+  const rest = value.replace(PLACEHOLDER_RE, '')
+  return [...rest].filter((char) => char === '{' || char === '}')
+}
+
+/** `{name}` — строкой: буквальные `{}` в шаблонах Vue путают парсер, а тут они нужны. */
+export function braced(name: string): string {
+  return '{' + name + '}'
+}
+
 function isKnownPlaceholder(name: string): name is RoutePlaceholder {
   return (ROUTE_PLACEHOLDERS as readonly string[]).includes(name)
 }
 
 /** Кусок разобранной команды — для подсветки в шаблоне без выражений там. */
 export interface PlaceholderChunk {
-  type: 'text' | 'placeholder' | 'unknown'
-  /** Текст куска (`text`) или имя подстановки без фигурных скобок (остальные). */
+  /**
+   * `text` — обычный текст, `placeholder` — одна из шести допустимых,
+   * `unknown` — `{имя}` не из набора, `brace` — голая скобка вне подстановки
+   * (`{{`, одиночная `{`, `{foo`): сервер такую команду тоже не принимает.
+   * `brace` выдаёт только `splitCommandChunks`; `splitPlaceholders` его не
+   * возвращает — разбор команды, уже принятой сервером, в нём не нуждается.
+   */
+  type: 'text' | 'placeholder' | 'unknown' | 'brace'
+  /** Текст куска (`text`), сама скобка (`brace`) или имя подстановки без фигурных скобок. */
   value: string
 }
 
@@ -157,14 +181,128 @@ export function countPlaceholders(argv: string[] | string | null | undefined, na
   return count
 }
 
-/** Имена подстановок в команде, которых нет в `ROUTE_PLACEHOLDERS` — такая команда невалидна. */
+/**
+ * Всё, на что сервер ответит «неизвестная подстановка»/«фигурные скобки» —
+ * именами подстановок и самими скобками. Повторяет `routes.validate_command`
+ * поэлементно и в том же порядке: сначала «после вырезания подстановок осталась
+ * скобка» (тогда в ответе `{`/`}`), потом имена вырезанных подстановок. Список
+ * пуст ровно тогда, когда команду примет сервер, — поэтому по нему и решается,
+ * слать ли `PATCH` вовсе (карточка прямой выдачи).
+ */
 export function unknownPlaceholders(argv: string[] | string | null | undefined): string[] {
-  const text = commandText(argv)
-  if (!text) return []
   const found = new Set<string>()
-  for (const match of text.matchAll(PLACEHOLDER_RE)) {
-    const name = match[1] ?? ''
-    if (!isKnownPlaceholder(name)) found.add(name)
+  for (const element of commandElements(argv)) {
+    for (const brace of bareBraces(element)) found.add(brace)
+    for (const match of element.matchAll(PLACEHOLDER_RE)) {
+      const name = match[1] ?? ''
+      if (!isKnownPlaceholder(name)) found.add(name)
+    }
   }
   return [...found]
+}
+
+/**
+ * Причина отказа одного элемента argv (аргумента или промпта) словами сервера,
+ * `null` — элемент годится. Порядок проверок — серверный: голая скобка раньше
+ * незнакомого имени (`listik/routes.py`, `validate_command`), чтобы на одном и
+ * том же вводе доска и сервер называли одну и ту же причину.
+ */
+export function commandProblemText(value: string): string | null {
+  if (bareBraces(value).length > 0) {
+    return `фигурные скобки допустимы только в подстановках ${ROUTE_PLACEHOLDERS.map(braced).join(', ')}`
+  }
+  for (const match of value.matchAll(PLACEHOLDER_RE)) {
+    const name = match[1] ?? ''
+    if (!isKnownPlaceholder(name)) return `неизвестная подстановка ${braced(name)}`
+  }
+  return null
+}
+
+/**
+ * Разбор строки для подсветки в редакторе команды: то же, что
+ * `splitPlaceholders`, плюс голые скобки отдельными кусками (`brace`) — в
+ * редакторе автор видит и недописанную `{`, а не только целое `{имя}`.
+ */
+export function splitCommandChunks(text: string): PlaceholderChunk[] {
+  const chunks: PlaceholderChunk[] = []
+  for (const chunk of splitPlaceholders(text)) {
+    if (chunk.type !== 'text') {
+      chunks.push(chunk)
+      continue
+    }
+    let plain = ''
+    for (const char of chunk.value) {
+      if (char === '{' || char === '}') {
+        if (plain) chunks.push({ type: 'text', value: plain })
+        plain = ''
+        chunks.push({ type: 'brace', value: char })
+        continue
+      }
+      plain += char
+    }
+    if (plain) chunks.push({ type: 'text', value: plain })
+  }
+  return chunks
+}
+
+// ── опасные флаги и предпросмотр команды ───────────────────────────────────
+
+/**
+ * Аргументы, снимающие подтверждения у харнесса: процесс получает полный доступ
+ * к репозиторию. Доска ими ничего не запрещает и сама их не убирает — только
+ * помечает («полный доступ к репозиторию»), чтобы автор оставлял такой флаг
+ * осознанно.
+ */
+export const DANGEROUS_ARGS = [
+  '--dangerously-skip-permissions',
+  '--yolo',
+  '--write',
+  '--full-auto',
+  '--dangerously-bypass-approvals-and-sandbox',
+] as const
+
+/** Флаг с `=значением` (`--write=all`) — тот же флаг, поэтому сравнение не только точное. */
+export function isDangerousArg(value: string): boolean {
+  const arg = value.trim()
+  return DANGEROUS_ARGS.some((flag) => arg === flag || arg.startsWith(`${flag}=`))
+}
+
+/**
+ * Значения подстановок «для примера» — общие у панели «Подстановки» и у
+ * предпросмотра команды, поэтому живут здесь, а не в компоненте. `{route}` —
+ * ключ самой записи, остальные из `docs/specs/routes-settings-ui.md`.
+ */
+const PLACEHOLDER_EXAMPLES: Record<string, string> = {
+  task_id: 'listik-8jgz',
+  project: 'listik',
+  cwd: '/Users/dmitry.fomin/Projects/Listik',
+  worktree: '/Users/dmitry.fomin/Projects/Listik/.worktrees/listik-8jgz',
+  branch: 'listik-8jgz',
+}
+
+export function placeholderExample(name: string, routeKey: string): string {
+  if (name === 'route') return routeKey
+  return PLACEHOLDER_EXAMPLES[name] ?? ''
+}
+
+/** Подстановки заменены примерными значениями — один элемент argv. */
+export function previewArg(value: string, routeKey: string): string {
+  return value.replace(PLACEHOLDER_RE, (whole, name: string) =>
+    isKnownPlaceholder(name) ? placeholderExample(name, routeKey) : whole,
+  )
+}
+
+/**
+ * Картинка того, что получится: элементы argv с подставленными примерными
+ * значениями, соединённые пробелами; элемент с пробелом внутри — в кавычках,
+ * чтобы было видно его границы. Это только показ: на сервер уходит массив
+ * строк, shell не участвует и склейка нигде больше не используется.
+ */
+export function previewCommand(argv: string[], routeKey: string): string {
+  return argv
+    .map((element) => {
+      const shown = previewArg(element, routeKey)
+      return /\s/.test(shown) ? `"${shown.replace(/"/g, '\\"')}"` : shown
+    })
+    .join(' ')
 }

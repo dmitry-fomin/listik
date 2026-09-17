@@ -4,10 +4,12 @@
  * записи маршрута (`listik/routes.py`, `PLACEHOLDERS`), значение для примера и
  * счётчик, сколько раз имя встречается в текущей команде записи. Только чтение —
  * используется картой конвейера (`RouteCard.vue`, эта порция) и картой прямой
- * выдачи (порция `f`), поэтому вынесена отдельным компонентом.
+ * выдачи (порция `f`), поэтому вынесена отдельным компонентом. Значения для
+ * примера живут в `lib/routes.ts` (`placeholderExample`): те же значения
+ * подставляет предпросмотр команды в карточке прямой выдачи.
  */
 import { computed } from 'vue'
-import { ROUTE_PLACEHOLDERS, countPlaceholders } from '@/lib/routes'
+import { ROUTE_PLACEHOLDERS, countPlaceholders, placeholderExample } from '@/lib/routes'
 
 const props = defineProps<{
   /** Ключ выбранного маршрута — значение примера для `{route}`. */
@@ -15,20 +17,6 @@ const props = defineProps<{
   /** Команда записи (argv); `null` — подстановки не встречаются нигде. */
   command: string[] | null
 }>()
-
-/** Значения для примера — те же, что в `docs/specs/routes-settings-ui.md`; `{route}` — ключ карточки. */
-const EXAMPLES: Record<string, string> = {
-  task_id: 'listik-8jgz',
-  project: 'listik',
-  cwd: '/Users/dmitry.fomin/Projects/Listik',
-  worktree: '/Users/dmitry.fomin/Projects/Listik/.worktrees/listik-8jgz',
-  branch: 'listik-8jgz',
-}
-
-function exampleFor(name: string): string {
-  if (name === 'route') return props.routeKey
-  return EXAMPLES[name] ?? ''
-}
 
 /** `{name}` — вынесено функцией: буквальные `{}` внутри `{{ }}` шаблона путают парсер Vue. */
 function braced(name: string): string {
@@ -38,7 +26,7 @@ function braced(name: string): string {
 const rows = computed(() =>
   ROUTE_PLACEHOLDERS.map((name) => ({
     name,
-    example: exampleFor(name),
+    example: placeholderExample(name, props.routeKey),
     count: countPlaceholders(props.command, name),
   })),
 )

@@ -2,9 +2,10 @@
 /**
  * Вкладка «Маршруты» настроек (`ProjectSettings.vue` → `#panel-routes`):
  * список записей `routes` (конвейеры и прямая выдача), их порядок, скрытие,
- * заведение под скил и удаление. Правка полей записи с автосохранением
- * (`title`/`hint`/`icon`/`visible`), состав ролей и argv команды — другие
- * порции (`e`/`f`); здесь правая карточка только читает.
+ * заведение под скил и удаление. Правку самой записи ведут карточки справа:
+ * `RouteCard.vue` (конвейер, автосохранение шапки) и `RouteDirectCard.vue`
+ * (прямая выдача, явное «Сохранить» и редактор argv). Вторая правится не сама
+ * собой, поэтому этот файл сторожит уход с несохранённой карточки.
  *
  * Список — два экземпляра `UiRecordList` (кит сам даёт перетаскивание за
  * ручку, кнопки ▲/▼, ✕ у строки и кнопку добавления снизу): один под
@@ -34,6 +35,7 @@ import {
   type UiRecordListColumn,
 } from '@zoloto585/facet'
 import RouteCard from './RouteCard.vue'
+import RouteDirectCard from './RouteDirectCard.vue'
 import RouteIcon from './marks/RouteIcon.vue'
 import store from '@/store/listik'
 import type { DirectRouteDef, PipelineRouteDef, RouteDef, RouteSkillInfo } from '@/api/types'
@@ -72,8 +74,47 @@ const selected = computed<RouteDef | null>(
   () => store.routes.value.find((route) => route.key === selectedKey.value) ?? null,
 )
 
+/**
+ * Разновидность выбранной записи отдельными computed, а не `v-if` по
+ * `selected.kind` в шаблоне: так карточка получает уже сузившийся тип
+ * (`PipelineRouteDef`/`DirectRouteDef`), а не `RouteDef` с приведением.
+ */
+const selectedPipeline = computed<PipelineRouteDef | null>(() =>
+  selected.value?.kind === 'pipeline' ? selected.value : null,
+)
+const selectedDirect = computed<DirectRouteDef | null>(() =>
+  selected.value?.kind === 'direct' ? selected.value : null,
+)
+
+/*
+ * Карточка прямой выдачи сохраняется явно (порция `f`), поэтому уход с неё —
+ * потеря правок: пока `directDirty`, выбор другой строки не меняет
+ * `selectedKey`, а откладывает его в `leaveTarget` и спрашивает подтверждение.
+ * Флаг приходит от самой карточки (`update:dirty`) и сбрасывается ею же при
+ * пересоздании под другой ключ.
+ */
+const directDirty = ref(false)
+const leaveTarget = ref<RouteDef | null>(null)
+
 function selectRoute(route: RouteDef): void {
+  if (route.key === selectedKey.value) return
+  if (directDirty.value && selectedDirect.value) {
+    leaveTarget.value = route
+    return
+  }
   selectedKey.value = route.key
+}
+
+function confirmLeave(): void {
+  const route = leaveTarget.value
+  leaveTarget.value = null
+  if (!route) return
+  directDirty.value = false
+  selectedKey.value = route.key
+}
+
+function cancelLeave(): void {
+  leaveTarget.value = null
 }
 
 /**
@@ -275,7 +316,13 @@ onMounted(() => {
       <div class="listik-routes-settings__detail">
         <UiEmptyState v-if="!selected" compact title="Выбери маршрут слева" />
         <div v-else class="listik-routes-settings__card">
-          <RouteCard :key="selected.key" :route="selected" />
+          <RouteDirectCard
+            v-if="selectedDirect"
+            :key="selectedDirect.key"
+            :route="selectedDirect"
+            @update:dirty="(value: boolean) => (directDirty = value)"
+          />
+          <RouteCard v-else-if="selectedPipeline" :key="selectedPipeline.key" :route="selectedPipeline" />
         </div>
       </div>
     </div>
@@ -291,6 +338,18 @@ onMounted(() => {
       @update:model-value="(value: boolean) => { if (!value) removeTarget = null }"
       @confirm="confirmRemove"
       @cancel="cancelRemove"
+    />
+
+    <UiConfirmDialog
+      :model-value="Boolean(leaveTarget)"
+      tone="danger"
+      title="Уйти и потерять правки?"
+      description="Команда маршрута изменена, но не сохранена — уход с карточки вернёт её к тому, что в базе."
+      confirm-label="Уйти"
+      cancel-label="Остаться"
+      @update:model-value="(value: boolean) => { if (!value) leaveTarget = null }"
+      @confirm="confirmLeave"
+      @cancel="cancelLeave"
     />
 
     <UiModal v-model="addOpen" title="Завести маршрут">
@@ -340,9 +399,14 @@ onMounted(() => {
   font-size: var(--text-md);
 }
 
+/* Половина на половину, а не 3:2, как было до карточки прямой выдачи: в её
+   правой колонке живёт редактор argv (поле аргумента, бейдж, разбор подстановок),
+   и на 2fr от ширины модалки поле аргумента уезжало под горизонтальный скролл.
+   Списку маршрутов лишняя ширина была не нужна — там строка из иконки, названия
+   и ключа. */
 .listik-routes-settings__layout {
   display: grid;
-  grid-template-columns: minmax(0, 3fr) minmax(0, 2fr);
+  grid-template-columns: minmax(0, 1fr) minmax(0, 1fr);
   gap: var(--space-4);
   align-items: start;
 }
@@ -408,6 +472,14 @@ onMounted(() => {
   min-width: 0;
   overflow: hidden;
   text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+/* Ключ маршрута не переносится: он короткий, а рвался бы по дефисам
+   (`opus-single-pipeline`) и делал строку списка двухэтажной. Ужимается
+   вместо него название — у него многоточие. */
+.listik-routes-row .listik-mono {
+  flex: 0 0 auto;
   white-space: nowrap;
 }
 

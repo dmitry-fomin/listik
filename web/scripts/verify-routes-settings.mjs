@@ -27,6 +27,17 @@
  * `hintRestoreNeeded`/`visibleRestoreNeeded`/`iconRestoreNeeded` и прямой
  * `PATCH` в `finalize()` — страхует карточку маршрута.
  *
+ * Порция `f` (карточка прямой выдачи, `RouteDirectCard.vue`) добавляет проверку
+ * редактора argv на маршруте `dsh`: аргументы и промпт на экране совпадают с
+ * `GET /api/routes`, держатель показан только на чтение, без правок «Сохранить»
+ * выключена; правка промпта включает её, `{foo}` в промпте и отдельно в
+ * аргументе — снова выключает, называет подстановку рядом с кнопкой и метит
+ * поле `aria-invalid`; уход с несохранённой карточки спрашивает подтверждение;
+ * сохранение шлёт ровно один `PATCH` с единственным ключом `command` — массивом,
+ * новый промпт переживает перезагрузку страницы, а переставленный кнопкой ▼
+ * аргумент — сохранение (порядок сверяется по ответу сервера). Исходная команда
+ * возвращается прямым `PATCH` в `finalize()` и на успехе, и на падении.
+ *
  * Запуск: node scripts/verify-routes-settings.mjs "http://localhost:5173/?token=<токен>"
  * Печатает JSON-отчёт и «ок»/«ошибка: …» последней строкой; код выхода
  * ненулевой, если сценарий не прошёл (или прерван сигналом).
@@ -219,6 +230,77 @@ const clickLevel = (index) => `(() => {
   return true
 })()`
 
+/* ── карточка прямой выдачи (порция `f`): argv, промпт, явное «Сохранить» ── */
+
+/** Состояние кнопки «Сохранить» и текста причины рядом с ней. */
+const directSaveState = `(() => {
+  const button = document.querySelector('.listik-route-direct__save')
+  const reason = document.querySelector('.listik-route-direct__reason')
+  return {
+    present: Boolean(button),
+    disabled: button ? button.disabled : null,
+    reason: reason ? reason.textContent.trim() : '',
+  }
+})()`
+
+const clickDirectSave = `(() => {
+  const button = document.querySelector('.listik-route-direct__save')
+  if (!button || button.disabled) return false
+  button.click()
+  return true
+})()`
+
+/** Значение поля целиком через нативный сеттер: v-model слушает событие `input`. */
+const setFieldValue = (selector, value) => `(() => {
+  const el = document.querySelector(${JSON.stringify(selector)})
+  if (!el) return false
+  const proto = el.tagName === 'TEXTAREA' ? window.HTMLTextAreaElement.prototype : window.HTMLInputElement.prototype
+  Object.getOwnPropertyDescriptor(proto, 'value').set.call(el, ${JSON.stringify(value)})
+  el.dispatchEvent(new Event('input', { bubbles: true }))
+  return true
+})()`
+
+const fieldValue = (selector) => `document.querySelector(${JSON.stringify(selector)})?.value ?? null`
+
+const PROMPT_SELECTOR = 'textarea.listik-route-direct__prompt'
+const ARG_INPUTS = '.listik-route-direct__args .listik-route-direct__arg-input input'
+
+const directArgValues = `[...document.querySelectorAll('${ARG_INPUTS}')].map((el) => el.value)`
+
+const setDirectArg = (index, value) => `(() => {
+  const el = [...document.querySelectorAll('${ARG_INPUTS}')][${index}]
+  if (!el) return false
+  Object.getOwnPropertyDescriptor(window.HTMLInputElement.prototype, 'value').set.call(el, ${JSON.stringify(value)})
+  el.dispatchEvent(new Event('input', { bubbles: true }))
+  return true
+})()`
+
+/** Перестановка аргумента кнопкой ▲/▼ кита — внутри списка аргументов карточки. */
+const clickArgStep = (index, dir) => `(() => {
+  const rows = [...document.querySelectorAll('.listik-route-direct__args .ui-record-list__row')]
+  const row = rows[${index}]
+  const label = ${JSON.stringify(dir === 'up' ? 'Переместить выше' : 'Переместить ниже')}
+  const button = row ? [...row.querySelectorAll('button')].find((b) => b.getAttribute('aria-label') === label) : null
+  if (!button || button.disabled) return false
+  button.click()
+  return true
+})()`
+
+const ariaInvalid = (selector) =>
+  `document.querySelector(${JSON.stringify(selector)})?.getAttribute('aria-invalid') === 'true'`
+
+const argAriaInvalid = (index) =>
+  `[...document.querySelectorAll('${ARG_INPUTS}')][${index}]?.getAttribute('aria-invalid') === 'true'`
+
+const leaveDialogShown = `[...document.querySelectorAll('.ui-modal')].some((el) => el.textContent.includes('Уйти и потерять правки?'))`
+
+const clickByText = (text) => `(() => {
+  const button = [...document.querySelectorAll('button')].find((b) => b.textContent.trim() === ${JSON.stringify(text)})
+  if (!button) return false
+  button.click()
+  return true
+})()`
+
 const patchCallsSince = (from) => `window.__routesPatchCalls.slice(${from})`
 const patchCallsCount = `window.__routesPatchCalls.length`
 const saveStatusText = `document.querySelector('.listik-routes-settings__card .ui-save-status')?.textContent ?? ''`
@@ -231,6 +313,10 @@ let cardOriginal = null
 let hintRestoreNeeded = false
 let visibleRestoreNeeded = false
 let iconRestoreNeeded = false
+/* Команда прямого маршрута: тронули — возвращаем в finalize() и на успехе, и на падении. */
+let directKey = null
+let directOriginal = null
+let directRestoreNeeded = false
 let finalized = false
 
 /**
@@ -273,6 +359,19 @@ async function finalize() {
     } catch (restoreError) {
       report.cardRestoreFallbackOk = false
       report.cardRestoreError = String(restoreError?.stack ?? restoreError)
+    }
+  }
+  if (directRestoreNeeded && directKey && directOriginal?.command) {
+    try {
+      await withTimeout(
+        (async () => {
+          report.directRestoreOk = await evaluate(forcePatch(directKey, { command: directOriginal.command }))
+        })(),
+        10000,
+      )
+    } catch (restoreError) {
+      report.directRestoreOk = false
+      report.directRestoreError = String(restoreError?.stack ?? restoreError)
     }
   }
   try {
@@ -458,6 +557,126 @@ try {
   const levelAfterRestore = await evaluate(levelState)
   report.levelRestoredChecked = levelAfterRestore?.checked === report.levelInitialChecked
 
+  /*
+   * ── карточка прямой выдачи (порция `f`): редактор argv и явное сохранение.
+   * Берём `dsh`: исходная команда читается из `GET /api/routes` (а не из
+   * памяти), правится через UI и возвращается прямым PATCH в `finalize()` —
+   * и на успехе сценария, и на любом падении посреди него.
+   */
+  directKey = 'dsh'
+  const directRowsBefore = (await evaluate(groupRows('Прямая выдача'))) ?? []
+  const dshIndex = directRowsBefore.findIndex((row) => row.key === directKey)
+  if (dshIndex < 0) {
+    throw new Error(`в группе «Прямая выдача» нет маршрута ${directKey}: ${JSON.stringify(directRowsBefore)}`)
+  }
+  report.directRowClicked = await evaluate(clickRow('Прямая выдача', dshIndex))
+  await sleep(700)
+
+  directOriginal = await evaluate(fetchRoute(directKey))
+  if (!directOriginal?.command?.length) throw new Error(`у маршрута ${directKey} нет command — нечего править`)
+  const originalCommand = directOriginal.command
+  const originalArgs = originalCommand.slice(0, -1)
+  const originalPrompt = originalCommand[originalCommand.length - 1]
+
+  report.directArgsShown = await evaluate(directArgValues)
+  report.directArgsMatchServer = JSON.stringify(report.directArgsShown) === JSON.stringify(originalArgs)
+  report.directPromptMatchServer = (await evaluate(fieldValue(PROMPT_SELECTOR))) === originalPrompt
+  report.directHolderShown = await evaluate(
+    `document.querySelector('.listik-route-direct__holder')?.textContent.includes(${JSON.stringify(directOriginal.harness)}) ?? false`,
+  )
+  report.directHolderReadonly = await evaluate(
+    `document.querySelectorAll('.listik-route-direct__holder input, .listik-route-direct__holder select').length === 0`,
+  )
+
+  // без правок «Сохранить» выключена: пустой PATCH сервер отклоняет
+  const idleState = await evaluate(directSaveState)
+  report.directIdleDisabled = idleState.present === true && idleState.disabled === true
+  report.directIdleReason = idleState.reason
+
+  // 1) правка промпта — «Сохранить» доступна
+  const promptProbe = `${originalPrompt} Приписка автотеста ${Date.now()}.`
+  report.directPromptTyped = await evaluate(setFieldValue(PROMPT_SELECTOR, promptProbe))
+  await sleep(400)
+  const dirtyState = await evaluate(directSaveState)
+  report.directDirtyEnabled = dirtyState.disabled === false
+
+  // 2) `{foo}` в промпте — кнопка выключена, причина называет подстановку, поле помечено
+  await evaluate(setFieldValue(PROMPT_SELECTOR, `${promptProbe} {foo}`))
+  await sleep(400)
+  const badPromptState = await evaluate(directSaveState)
+  report.directBadPromptDisabled = badPromptState.disabled === true
+  report.directBadPromptReason = badPromptState.reason
+  report.directBadPromptNamed = badPromptState.reason.includes('{foo}')
+  report.directBadPromptInvalid = await evaluate(ariaInvalid(PROMPT_SELECTOR))
+
+  await evaluate(setFieldValue(PROMPT_SELECTOR, promptProbe))
+  await sleep(400)
+  report.directPromptFixedEnabled = (await evaluate(directSaveState)).disabled === false
+
+  // 3) то же самое в аргументе — правило одно на всю команду
+  const argProbeIndex = originalArgs.length > 1 ? 1 : 0
+  await evaluate(setDirectArg(argProbeIndex, `${originalArgs[argProbeIndex]}{foo}`))
+  await sleep(400)
+  const badArgState = await evaluate(directSaveState)
+  report.directBadArgDisabled = badArgState.disabled === true
+  report.directBadArgNamed = badArgState.reason.includes('{foo}')
+  report.directBadArgInvalid = await evaluate(argAriaInvalid(argProbeIndex))
+
+  await evaluate(setDirectArg(argProbeIndex, originalArgs[argProbeIndex]))
+  await sleep(400)
+  report.directArgFixedEnabled = (await evaluate(directSaveState)).disabled === false
+
+  // 4) уход с несохранённой карточки спрашивает подтверждение и «Остаться» держит правки
+  const otherIndex = dshIndex === 0 ? 1 : 0
+  await evaluate(clickRow('Прямая выдача', otherIndex))
+  await sleep(500)
+  report.directLeaveAsked = await evaluate(leaveDialogShown)
+  report.directStayClicked = await evaluate(clickByText('Остаться'))
+  await sleep(500)
+  report.directStillEditing = (await evaluate(fieldValue(PROMPT_SELECTOR))) === promptProbe
+
+  // 5) сохранение: один PATCH, в теле только command и только массивом
+  directRestoreNeeded = true
+  const callsBeforeDirectSave = (await evaluate(patchCallsCount)) ?? 0
+  report.directSaveClicked = await evaluate(clickDirectSave)
+  await sleep(1500)
+  const directCalls = ((await evaluate(patchCallsSince(callsBeforeDirectSave))) ?? []).filter(
+    (call) => call.key === directKey,
+  )
+  report.directPatchCount = directCalls.length
+  const directBody = directCalls[0]?.body ?? {}
+  report.directPatchKeys = Object.keys(directBody)
+  report.directPatchOnlyCommand =
+    report.directPatchKeys.length === 1 && report.directPatchKeys[0] === 'command'
+  report.directPatchIsArray = Array.isArray(directBody.command)
+  report.directPatchPromptMatches =
+    Array.isArray(directBody.command) && directBody.command[directBody.command.length - 1] === promptProbe
+
+  // 6) перезагрузка страницы — новый промпт на месте (он в базе, а не в памяти вкладки)
+  await send('Page.navigate', { url })
+  await sleep(4000)
+  await openTab()
+  const directRowsAfterReload = (await evaluate(groupRows('Прямая выдача'))) ?? []
+  await evaluate(clickRow('Прямая выдача', directRowsAfterReload.findIndex((row) => row.key === directKey)))
+  await sleep(700)
+  report.directPromptPersisted = (await evaluate(fieldValue(PROMPT_SELECTOR))) === promptProbe
+
+  // 7) порядок аргументов: ▼ на первой строке, сохранить, проверить запись в базе
+  const expectedArgs = originalArgs.length > 1
+    ? [originalArgs[1], originalArgs[0], ...originalArgs.slice(2)]
+    : originalArgs
+  report.directArgMoved = await evaluate(clickArgStep(0, 'down'))
+  await sleep(500)
+  report.directArgsAfterMove = await evaluate(directArgValues)
+  report.directArgOrderChanged =
+    JSON.stringify(report.directArgsAfterMove) === JSON.stringify(expectedArgs)
+  report.directOrderSaveClicked = await evaluate(clickDirectSave)
+  await sleep(1500)
+  const directAfterSave = await evaluate(fetchRoute(directKey))
+  report.directSavedCommand = directAfterSave?.command ?? null
+  report.directOrderPersisted =
+    JSON.stringify(report.directSavedCommand) === JSON.stringify([...expectedArgs, promptProbe])
+
   report.consoleErrors = consoleErrors
   report.ok =
     report.settingsOpen === true &&
@@ -487,6 +706,34 @@ try {
     report.iconCallSingleKey === true &&
     report.iconRestored === true &&
     report.levelRestoredChecked === true &&
+    report.directRowClicked === true &&
+    report.directArgsMatchServer === true &&
+    report.directPromptMatchServer === true &&
+    report.directHolderShown === true &&
+    report.directHolderReadonly === true &&
+    report.directIdleDisabled === true &&
+    report.directDirtyEnabled === true &&
+    report.directBadPromptDisabled === true &&
+    report.directBadPromptNamed === true &&
+    report.directBadPromptInvalid === true &&
+    report.directPromptFixedEnabled === true &&
+    report.directBadArgDisabled === true &&
+    report.directBadArgNamed === true &&
+    report.directBadArgInvalid === true &&
+    report.directArgFixedEnabled === true &&
+    report.directLeaveAsked === true &&
+    report.directStayClicked === true &&
+    report.directStillEditing === true &&
+    report.directSaveClicked === true &&
+    report.directPatchCount === 1 &&
+    report.directPatchOnlyCommand === true &&
+    report.directPatchIsArray === true &&
+    report.directPatchPromptMatches === true &&
+    report.directPromptPersisted === true &&
+    report.directArgMoved === true &&
+    report.directArgOrderChanged === true &&
+    report.directOrderSaveClicked === true &&
+    report.directOrderPersisted === true &&
     consoleErrors.length === 0
 } catch (error) {
   report.error = String(error?.stack ?? error)
@@ -494,10 +741,18 @@ try {
   await finalize()
 }
 
+/* Откат команды делает finalize() — уже после подсчёта report.ok, поэтому его
+ * исход проверяется здесь: маршрут, оставшийся с командой автотеста, — это
+ * провал сценария, а не мелочь. */
+if (directRestoreNeeded && report.directRestoreOk !== true) {
+  report.ok = false
+  report.error = report.error ?? `исходная команда маршрута ${directKey} не восстановлена`
+}
+
 console.log(JSON.stringify(report, null, 2))
 if (report.ok) {
   console.error(
-    'ок: вкладка «Маршруты» — список/выбор/перестановка и автосохранение карточки (hint/visible/icon) работают',
+    'ок: вкладка «Маршруты» — список/выбор/перестановка, автосохранение карточки конвейера и редактор argv прямой выдачи работают',
   )
 } else {
   console.error(`ошибка: ${report.error ?? 'сценарий не прошёл — см. отчёт выше'}`)

@@ -163,7 +163,6 @@ const STATE = `(() => {
       : [],
     warn: text(panel && panel.querySelector('.listik-voice__warn')),
     serverError: text(panel && panel.querySelector('.listik-voice__server-error')),
-    createdId: text(panel && panel.querySelector('.listik-voice__created-id')),
     alert: text(panel && panel.querySelector('.ui-alert')),
     buttons: panel
       ? [...panel.querySelectorAll('button')].map((el) => ({ text: buttonText(el), disabled: el.disabled }))
@@ -453,13 +452,14 @@ try {
     await resetRequests()
     await goToDraft()
     if (!(await clickPanelButton('Создать задачу'))) throw new Error('кнопка «Создать задачу» не найдена')
-    const created = await waitFor(async () => ((await state()).stage === 'created' ? true : null), 10000)
+    // После создания панель закрывается сама — отдельного экрана «Задача создана» нет.
+    const closed = await waitFor(async () => (!(await state()).panelOpen ? true : null), 10000)
     const data = await apiRequests()
     const body = data.last_create ?? {}
     const seen = await state()
     return {
       ok:
-        Boolean(created) &&
+        Boolean(closed) &&
         data.voice.create === 1 &&
         Boolean(body.title) &&
         Boolean(body.project) &&
@@ -467,8 +467,9 @@ try {
         !('holder' in body) &&
         !('stage' in body) &&
         !seen.modal,
-      expect: 'одна карточка, last_create с title/project, autostart:false, без holder/stage, форма закрыта',
-      got: { created: Boolean(created), counts: data.voice, last_create: body, modal: seen.modal },
+      expect:
+        'одна карточка, last_create с title/project, autostart:false, без holder/stage, панель закрылась сама, форма закрыта',
+      got: { closed: Boolean(closed), counts: data.voice, last_create: body, modal: seen.modal },
     }
   })
 
@@ -486,7 +487,7 @@ try {
       button.click();
       return true;
     })()`)
-    await waitFor(async () => ((await state()).stage === 'created' ? true : null), 10000)
+    await waitFor(async () => (!(await state()).panelOpen ? true : null), 10000)
     const afterDouble = (await apiRequests()).voice.create
     const extraClick = await clickPanelButton('Создать задачу')
     await sleep(400)
@@ -614,7 +615,7 @@ try {
     const releasedBeforeStream = (await state()).stage
     const finished = await waitFor(async () => {
       const current = await state()
-      return current.stage === 'draft' || current.stage === 'created' || current.stage === 'error' ? current : null
+      return current.stage === 'draft' || current.stage === 'error' || !current.panelOpen ? current : null
     }, 10000)
     await sleep(300)
     const after = await voiceStats()
@@ -905,23 +906,26 @@ try {
     const openForm = seen.buttons.find((item) => item.text === 'Открыть форму')
     if (!create || !openForm) throw new Error(`нет кнопок черновика: ${JSON.stringify(seen.buttons)}`)
     if (!(await clickPanelButton('Создать задачу'))) throw new Error('кнопка «Создать задачу» не найдена')
-    const created = await waitFor(async () => ((await state()).stage === 'created' ? true : null), 10000)
+    // Лист закрывается сам: экрана «Задача создана» с кнопкой «Закрыть» больше нет.
+    const closed = await waitFor(async () => (!(await state()).panelOpen ? true : null), 10000)
     const data = await apiRequests()
     const body = data.last_create ?? {}
     return {
       ok:
         Boolean(seen.draftTitle) &&
-        Boolean(created) &&
+        Boolean(closed) &&
         data.voice.create === 1 &&
+        Boolean(body.title) &&
+        Boolean(body.project) &&
         body.autostart === false &&
         !('holder' in body) &&
         !('stage' in body),
       expect:
-        'заголовок черновика, «Открыть форму» и «Создать задачу»; одна карточка, autostart:false, без holder/stage',
+        'заголовок черновика, «Открыть форму» и «Создать задачу»; одна карточка, last_create с title/project, autostart:false, без holder/stage, лист закрылся сам',
       got: {
         draftTitle: seen.draftTitle,
         buttons: seen.buttons,
-        created: Boolean(created),
+        closed: Boolean(closed),
         counts: data.voice,
         last_create: body,
       },
@@ -943,7 +947,7 @@ try {
       button.click();
       return true;
     })()`)
-    await waitFor(async () => ((await state()).stage === 'created' ? true : null), 10000)
+    await waitFor(async () => (!(await state()).panelOpen ? true : null), 10000)
     const afterDouble = (await apiRequests()).voice.create
     const extraClick = await clickPanelButton('Создать задачу')
     await sleep(400)

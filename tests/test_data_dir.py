@@ -331,10 +331,13 @@ class VersionTests(unittest.TestCase):
         self.addCleanup(self._tmpdir.cleanup)
 
     def test_version_file_and_cli_output(self) -> None:
-        self.assertEqual((REPO_DIR / "VERSION").read_text(encoding="utf-8").strip(), "0.7.0")
+        # Версию не хардкодим: иначе каждый релиз красит тест, а проверяется здесь
+        # не её значение, а то, что CLI печатает ровно содержимое файла VERSION.
+        version = (REPO_DIR / "VERSION").read_text(encoding="utf-8").strip()
+        self.assertRegex(version, r"^\d+\.\d+\.\d+$")
         result = run_cli(["--version"], env=clean_env(), cwd=self.tmp_path)
         self.assertEqual(result.returncode, 0, result.stderr)
-        self.assertEqual(result.stdout.strip(), "listik 0.7.0")
+        self.assertEqual(result.stdout.strip(), f"listik {version}")
 
     def test_copy_without_version_file(self) -> None:
         copy = self.tmp_path / "без-версии"

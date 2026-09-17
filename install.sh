@@ -40,8 +40,12 @@ etx=$(printf '\003')
 ui_enabled=0
 ui_anim=0
 ui_cols=80
+ui_rows=24
+ui_pad=
+tree_pad=
+tree_pad_n=0
 tty_saved=
-c_crown=; c_leaf=; c_ok=; c_err=; c_text=; c_dim=; c_off=; c_sel=
+c_crown=; c_leaf=; c_ok=; c_err=; c_text=; c_dim=; c_off=; c_sel=; c_bg=; c_end=
 
 ui_probe() {
     # 1 — интерактивный вид уместен, 0 — нет (причина не важна: везде один и тот же
@@ -62,23 +66,68 @@ ui_probe() {
     case $cols in
         *[!0-9]* | "") cols=80 ;;
     esac
+    case $cols in
+        *[!0-9]* | "" | 0)
+            cols=$(tput cols 2>/dev/null) || cols=
+            ;;
+    esac
+    case $cols in
+        *[!0-9]* | "" | 0) cols=80 ;;
+    esac
     # Ширину знаем — узкий терминал не мучаем; не знаем — считаем, что 80.
     [ "$cols" -ge 60 ] || return 1
+    rows=$(stty size </dev/tty 2>/dev/null | awk '{print $1}')
+    case $rows in
+        *[!0-9]* | "" | 0) rows=$(tput lines 2>/dev/null) || rows= ;;
+    esac
+    case $rows in
+        *[!0-9]* | "" | 0) rows=${LINES:-24} ;;
+    esac
+    case $rows in
+        *[!0-9]* | "" | 0) rows=24 ;;
+    esac
     ui_cols=$cols
+    ui_rows=$rows
     return 0
+}
+
+ui_spaces() {
+    # $1 пробелов в $spaces
+    spaces=
+    i=0
+    while [ "$i" -lt "$1" ]; do
+        spaces="$spaces "
+        i=$((i + 1))
+    done
 }
 
 ui_init() {
     if ui_probe; then
         ui_enabled=1
-        c_crown=$esc'[38;5;65m'
+        # Всё рисуем одним блоком шириной block_w и ставим его по центру настоящей
+        # ширины терминала; дерево центрируем внутри блока, чтобы заставка и
+        # вопросы стояли на одной оси.
+        n=$(((ui_cols - block_w) / 2))
+        [ "$n" -lt 0 ] && n=0
+        ui_spaces "$n"
+        ui_pad=$spaces
+        tree_pad_n=$((n + (block_w - tree_w) / 2))
+        ui_spaces "$tree_pad_n"
+        tree_pad=$spaces
+        # Свой фон под всем блоком: тема терминала может быть любой (на красном
+        # фоне приглушённый серый и тёмно-зелёный не читались), панель даёт один и
+        # тот же контраст везде. c_off — не полный сброс, а возврат к цветам
+        # панели, иначе хвост строки после каждого сегмента терял фон.
+        c_bg=$esc'[48;5;235m'
+        c_end=$esc'[0m'
+        c_off=$esc'[0m'$c_bg$esc'[38;5;252m'
+        c_crown=$esc'[38;5;71m'
         c_leaf=$esc'[38;5;179m'
-        c_ok=$esc'[38;5;107m'
-        c_err=$esc'[38;5;167m'
-        c_text=$esc'[38;5;247m'
-        c_dim=$esc'[38;5;240m'
-        c_sel=$esc'[1m'
-        c_off=$esc'[0m'
+        c_ok=$esc'[38;5;114m'
+        c_err=$esc'[38;5;203m'
+        c_text=$esc'[38;5;252m'
+        c_dim=$esc'[38;5;245m'
+        c_sel=$esc'[1;38;5;255m'
         # Дробная пауза есть и в GNU coreutils, и в BSD, но если её нет — просто
         # не анимируем: статичная заставка лучше шести одинаковых кадров подряд.
         if sleep 0.05 2>/dev/null; then
@@ -99,30 +148,84 @@ ui_tty_restore() {
 ui_cursor_hide() { [ "$ui_enabled" = 1 ] && printf '%s[?25l' "$esc" || true; }
 ui_cursor_show() { [ "$ui_enabled" = 1 ] && printf '%s[?25h' "$esc" || true; }
 
+ui_hold=0
+
+ui_clear_hold() {
+    # Стираем строки живого блока (прошлый шаг или отвеченный вопрос) и возвращаем
+    # курсор на его начало: следующий шаг встаёт на то же место, а не столбиком
+    # под предыдущим.
+    [ "$ui_enabled" = 1 ] || return 0
+    [ "$ui_hold" -gt 0 ] || return 0
+    printf '%s[%dA' "$esc" "$ui_hold"
+    j=0
+    while [ "$j" -lt "$ui_hold" ]; do
+        ui_line ""
+        j=$((j + 1))
+    done
+    printf '%s[%dA' "$esc" "$ui_hold"
+    ui_hold=0
+}
+
+ui_fit() {
+    # $1 — текст без раскраски; обрезаем по свободной ширине строки блока, иначе
+    # перенос добавит строку и перерисовка меню уедет. Результат в $fit
+    fit=$1
+    max=$((ui_cols - ${#ui_pad} - 6))
+    [ "$max" -lt 20 ] && max=20
+    # длина в символах, а не в байтах: кириллица иначе обрезается втрое раньше
+    len=$(printf '%s' "$fit" | wc -m | tr -d ' ')
+    if [ "$len" -gt "$max" ]; then
+        fit=$(printf '%s' "$fit" | cut -c1-$((max - 1)))…
+    fi
+}
+
+ui_row() {
+    # Строка панели: включаем фон, чистим строку (очистка красит её фоном — так
+    # панель тянется до края экрана), печатаем текст, сбрасываем цвет уже после
+    # перевода строки (иначе прокрутка оголяет низ экрана). \r перед \n нужен
+    # из-за raw-режима меню, где сам по себе \n каретку не возвращает.
+    # $1 — отступ, $2 — содержимое.
+    printf '%s%s[2K%s%s%s\r\n%s' "$c_bg" "$esc" "$1" "${c_off}" "$2" "$c_end"
+}
+
+ui_screen() {
+    # Красим весь экран фоном разом и уводим курсор наверх: иначе панель росла бы
+    # строка за строкой и высота блока прыгала по ходу установки.
+    [ "$ui_enabled" = 1 ] || return 0
+    printf '%s%s[2J%s[H' "$c_bg" "$esc" "$esc"
+}
+
 ui_line() {
-    # строка с очисткой до конца — иначе хвост прошлого кадра остаётся на экране
-    printf '%s[2K%s\n' "$esc" "$1"
+    # строка блока
+    ui_row "$ui_pad" "$1"
+}
+
+ui_tline() {
+    # строка дерева: свой отступ, дерево уже блока
+    ui_row "$tree_pad" "$1"
 }
 
 tree_h=10
+tree_w=38
+block_w=60
 
 ui_tree() {
-    ui_line "${c_crown}              ,@@@@@@@,${c_off}"
-    ui_line "${c_crown}      ,,,.   ,@@@@@@/@@,  .oo8888o.${c_off}"
-    ui_line "${c_crown}   ,&%%&%&&%,@@@@@/@@@@@@,8888\\88/8o${c_off}"
-    ui_line "${c_crown}  ,%&\\%&&%&&%,@@@\\@@@/@@@88\\88888/88'${c_off}"
-    ui_line "${c_crown}  %&&%&%&/%&&%@@\\@@/ /@@@88888\\88888'${c_off}"
-    ui_line "${c_crown}  %&&%/ %&%%&&@@\\ V /@@' \`88\\8 \`/88'${c_off}"
-    ui_line "${c_crown}  \`&%\\ \` /%&'    |.|        \\ '|8'${c_off}"
-    ui_line "${c_crown}      |o|        | |         | |${c_off}"
-    ui_line "${c_crown}      |.|        | |         | |${c_off}"
-    ui_line "${c_crown}   \\\\/ ._\\//_/__/  ,\\_//__\\\\/.  \\_//__${c_off}"
+    ui_tline "${c_crown}              ,@@@@@@@,${c_off}"
+    ui_tline "${c_crown}      ,,,.   ,@@@@@@/@@,  .oo8888o.${c_off}"
+    ui_tline "${c_crown}   ,&%%&%&&%,@@@@@/@@@@@@,8888\\88/8o${c_off}"
+    ui_tline "${c_crown}  ,%&\\%&&%&&%,@@@\\@@@/@@@88\\88888/88'${c_off}"
+    ui_tline "${c_crown}  %&&%&%&/%&&%@@\\@@/ /@@@88888\\88888'${c_off}"
+    ui_tline "${c_crown}  %&&%/ %&%%&&@@\\ V /@@' \`88\\8 \`/88'${c_off}"
+    ui_tline "${c_crown}  \`&%\\ \` /%&'    |.|        \\ '|8'${c_off}"
+    ui_tline "${c_crown}      |o|        | |         | |${c_off}"
+    ui_tline "${c_crown}      |.|        | |         | |${c_off}"
+    ui_tline "${c_crown}   \\\\/ ._\\//_/__/  ,\\_//__\\\\/.  \\_//__${c_off}"
 }
 
 ui_leaf_at() {
     # $1 — на сколько строк подняться от конца блока, $2 — колонка
     printf '%s[%dA%s[%dC%s&%s%s[%dB%s' \
-        "$esc" "$1" "$esc" "$2" "${c_leaf}" "${c_off}" "$esc" "$1" "$cr"
+        "$esc" "$1" "$esc" "$((tree_pad_n + $2))" "${c_bg}${c_leaf}" "${c_end}" "$esc" "$1" "$cr"
 }
 
 ui_splash() {
@@ -131,6 +234,10 @@ ui_splash() {
         return
     fi
     ui_cursor_hide
+    ui_screen
+    ui_line ""
+    ui_line ""
+    ui_line ""
     if [ "$ui_anim" = 1 ]; then
         # кадр: строка снизу вверх и колонка листка
         for frame in '9 41' '8 44' '7 20' '6 26' '5 22' '4 28' '2 24'; do
@@ -138,28 +245,33 @@ ui_splash() {
             col=${frame#* }
             ui_tree
             ui_leaf_at "$row" "$col"
-            sleep 0.12
+            sleep 0.24
             printf '%s[%dA' "$esc" "$tree_h"
         done
     fi
     ui_tree
     ui_leaf_at 1 40
-    printf '\n'
+    ui_line ""
     ui_line ""
     ui_line "  ${c_sel}Listik${c_off}  ${c_dim}—  задачи и память одним сервером${c_off}"
     ui_line "  ${c_dim}Установщик задаст несколько вопросов; выбор — стрелками.${c_off}"
+    ui_line ""
+    ui_line ""
     ui_line ""
     ui_cursor_show
 }
 
 ui_step() {
-    # $1 — ok|fail|run, $2 — текст
+    # $1 — ok|fail|run, $2 — текст. Шаг — одна живая строка: новый шаг заменяет
+    # предыдущий, экран по ходу установки не растёт.
     [ "$ui_enabled" = 1 ] || return 0
+    ui_clear_hold
     case $1 in
-        ok) printf '  %s✓%s %s\n' "${c_ok}" "${c_off}" "$2" ;;
-        fail) printf '  %s✗%s %s\n' "${c_err}" "${c_off}" "$2" ;;
-        *) printf '  %s·%s %s\n' "${c_dim}" "${c_off}" "$2" ;;
+        ok) ui_line "  ${c_ok}✓${c_off} $2" ;;
+        fail) ui_line "  ${c_err}✗${c_off} $2" ;;
+        *) ui_line "  ${c_dim}·${c_off} $2" ;;
     esac
+    ui_hold=1
 }
 
 ui_read_key() {
@@ -202,10 +314,17 @@ ui_menu_draw() {
         # Перенос строки пункта сбил бы перерисовку меню (курсор ходит по строкам),
         # поэтому на узком терминале пояснение не печатаем вовсе.
         [ "$ui_cols" -lt 80 ] && hint=
-        if [ "$i" = "$1" ]; then
-            ui_line "  ${c_ok}❯ ●${c_off} ${c_sel}$label${c_off}  ${c_dim}$hint${c_off}"
+        if [ -n "$hint" ]; then
+            ui_fit "$label  $hint"
+            hint=${fit#"$label"}
         else
-            ui_line "    ${c_dim}○${c_off} ${c_text}$label${c_off}  ${c_dim}$hint${c_off}"
+            ui_fit "$label"
+            label=$fit
+        fi
+        if [ "$i" = "$1" ]; then
+            ui_line "  ${c_ok}❯ ●${c_off} ${c_sel}$label${c_off}${c_dim}$hint${c_off}"
+        else
+            ui_line "    ${c_dim}○${c_off} ${c_text}$label${c_off}${c_dim}$hint${c_off}"
         fi
         i=$((i + 1))
     done
@@ -220,12 +339,17 @@ ui_menu2() {
     menu_2=$4
     menu_choice=$5
     ui_cursor_hide
-    printf '%s[2K  %s?%s %s%s%s\n' "$esc" "${c_ok}" "${c_off}" "${c_sel}" "$1" "${c_off}"
+    ui_clear_hold
+    menu_rows=4
+    [ -n "$2" ] && menu_rows=5
+    ui_fit "$1"
+    ui_line "  ${c_ok}?${c_off} ${c_sel}$fit${c_off}"
     if [ -n "$2" ]; then
-        printf '%s[2K    %s%s%s\n' "$esc" "${c_dim}" "$2" "${c_off}"
+        ui_fit "$2"
+        ui_line "    ${c_dim}$fit${c_off}"
     fi
     ui_menu_draw "$menu_choice"
-    printf '%s[2K  %s↑ ↓ выбор · Enter подтвердить · Ctrl+C отмена%s\n' "$esc" "${c_dim}" "${c_off}"
+    ui_line "  ${c_dim}↑ ↓ выбор · Enter подтвердить · Ctrl+C отмена${c_off}"
     while :; do
         ui_read_key
         case $key in
@@ -243,24 +367,53 @@ ui_menu2() {
         # перерисовываем два пункта и строку клавиш
         printf '%s[3A' "$esc"
         ui_menu_draw "$menu_choice"
-        printf '%s[2K  %s↑ ↓ выбор · Enter подтвердить · Ctrl+C отмена%s\n' "$esc" "${c_dim}" "${c_off}"
+        ui_line "  ${c_dim}↑ ↓ выбор · Enter подтвердить · Ctrl+C отмена${c_off}"
         case $key in
             enter) break ;;
         esac
     done
     ui_tty_restore
     ui_cursor_show
+    # Отвеченный вопрос убираем — его место займёт следующий шаг или вопрос.
+    ui_hold=$menu_rows
+    ui_clear_hold
     return 0
 }
 
+ui_mark() {
+    # значок по статусу: ok — галочка, «не удалось» — крест, остальное — точка
+    case $1 in
+        ok|включён|"уже включён") mark="${c_ok}✓${c_off}" ;;
+        "не удалось"*) mark="${c_err}✗${c_off}" ;;
+        *) mark="${c_dim}·${c_off}" ;;
+    esac
+}
+
+ui_report() {
+    # $1 — подпись, $2 — значение, $3 — статус для значка (пусто — галочка)
+    if [ -n "${3:-}" ]; then
+        ui_mark "$3"
+    else
+        mark="${c_ok}✓${c_off}"
+    fi
+    ui_fit "$2"
+    ui_line "  $mark ${c_text}$1${c_off} ${c_sel}$fit${c_off}"
+}
+
 ui_outro() {
-    # финальный экран: дерево с уже лежащим листком
+    # финальный экран: дерево с уже лежащим листком. Рисуем с чистого экрана —
+    # иначе второе дерево встаёт под заставкой и экран прокручивается.
     [ "$ui_enabled" = 1 ] || return 0
-    printf '\n'
+    ui_screen
+    ui_hold=0
+    ui_line ""
+    ui_line ""
+    ui_line ""
     ui_tree
     ui_leaf_at 1 40
-    printf '\n\n'
-    printf '  %s✓ Listik %s установлен%s\n' "${c_ok}" "$version" "${c_off}"
+    ui_line ""
+    ui_line ""
+    ui_line "  ${c_ok}✓ Listik $version установлен${c_off}"
 }
 
 usage() {
@@ -630,8 +783,7 @@ ui_step ok "обёртка: $wrapper"
 case ":${PATH:-}:" in
     *":$bin_dir:"*) ;;
     *)
-        note "$prog: каталога $bin_dir нет в PATH — добавьте в профиль:"
-        note "  export PATH=\"$bin_dir:\$PATH\""
+        path_hint="каталога $bin_dir нет в PATH: export PATH=\"$bin_dir:\$PATH\""""
         ;;
 esac
 
@@ -643,12 +795,16 @@ ui_step ok "current → $version"
 # ------------------------------------------------------------ шаг 7: listik init
 
 ui_step run "listik init: схема базы"
-if ! "$wrapper" init; then
+# Вывод listik init в панель не пускаем — он ломает раскладку заставки и меню;
+# показываем его только если init упал.
+if ! init_out=$("$wrapper" init 2>&1); then
     ui_step fail "listik init"
+    [ -n "$init_out" ] && note "$init_out" >&2
     note "$prog: код установлен: $code_dir, current переключён на $version, но listik init упал" >&2
     note "$prog: исправьте причину и выполните listik init" >&2
     exit 1
 fi
+ui_step ok "listik init: схема базы"
 
 # ------------------------------------ шаг 7.1: автозапуск, MCP и плагины Claude
 
@@ -1020,25 +1176,57 @@ if [ -f "$tmp/prev-protocol.md" ] && [ -f "$code_dir/docs/harness-protocol.md" ]
 fi
 
 ui_outro
-if [ "$ui_enabled" != 1 ]; then
-    note "Listik $version установлен."
-fi
-note "версия:  $version"
-note "код:     $app_dir/current"
-note "данные:  $home"
-note "обёртка: $wrapper"
-if [ "$protocol_changed" = 1 ]; then
-    note "протокол изменился: выполните listik init-projects (сначала можно с --dry-run)"
-fi
-note "автозапуск: $service_status"
-note "MCP: $mcp_status"
-note "плагины: $plugins_status"
-note "Codex: $codex_status"
-note "дальше:"
 if [ "$service_status" = ok ]; then
-    note "  listik service status"
-    note "  listik token"
+    next_1="listik service status"
 else
-    note "  listik serve --daemon"
-    note "  listik token"
+    next_1="listik serve --daemon"
+fi
+next_2="listik token"
+
+if [ "$ui_enabled" = 1 ]; then
+    # Отчёт — часть панели: тот же фон и та же ось, что у заставки и вопросов.
+    ui_line ""
+    ui_report "версия: " "$version"
+    ui_report "код:    " "$app_dir/current"
+    ui_report "данные: " "$home"
+    ui_report "обёртка:" "$wrapper"
+    ui_line ""
+    ui_report "автозапуск:" "$service_status" "$service_status"
+    ui_report "MCP:       " "$mcp_status" "$mcp_status"
+    ui_report "плагины:   " "$plugins_status" "$plugins_status"
+    ui_report "Codex:     " "$codex_status" "$codex_status"
+    if [ -n "${path_hint:-}" ]; then
+        ui_line ""
+        ui_fit "$path_hint"
+        ui_line "  ${c_leaf}!${c_off} ${c_text}$fit${c_off}"
+    fi
+    if [ "$protocol_changed" = 1 ]; then
+        ui_line ""
+        ui_line "  ${c_leaf}!${c_off} ${c_text}протокол изменился: выполните listik init-projects${c_off}"
+        ui_line "    ${c_dim}сначала можно с --dry-run${c_off}"
+    fi
+    ui_line ""
+    ui_line "  ${c_dim}дальше:${c_off}"
+    ui_line "    ${c_sel}$next_1${c_off}"
+    ui_line "    ${c_sel}$next_2${c_off}"
+    ui_line ""
+    ui_line ""
+    ui_line ""
+else
+    note "Listik $version установлен."
+    note "версия:  $version"
+    note "код:     $app_dir/current"
+    note "данные:  $home"
+    note "обёртка: $wrapper"
+    [ -n "${path_hint:-}" ] && note "$prog: $path_hint"
+    if [ "$protocol_changed" = 1 ]; then
+        note "протокол изменился: выполните listik init-projects (сначала можно с --dry-run)"
+    fi
+    note "автозапуск: $service_status"
+    note "MCP: $mcp_status"
+    note "плагины: $plugins_status"
+    note "Codex: $codex_status"
+    note "дальше:"
+    note "  $next_1"
+    note "  $next_2"
 fi

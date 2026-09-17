@@ -16,6 +16,7 @@ from __future__ import annotations
 import re
 import sqlite3
 
+from . import actors as actors_mod
 from . import errors as errors_mod
 from . import util
 
@@ -253,7 +254,10 @@ def worktree_conflict(conn: sqlite3.Connection, row: sqlite3.Row,
         (project, row["id"]),
     )
     for cand in candidates:
-        if holder is not None and cand["holder"] == holder:
+        # Исключение «тот же держатель» — по актору, а не по строке: судья
+        # `agent:grok` держит вторую пишущую задачу в дереве, где первую держит
+        # `grok`. Другой актор по-прежнему конфликтует, `holder=None` — тоже.
+        if holder is not None and actors_mod.same_actor(cand["holder"], holder, conn):
             continue
         if store.worktree_lock_key(cand["worktree"], project_path) == key:
             return cand

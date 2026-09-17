@@ -861,12 +861,16 @@ def claim(conn: sqlite3.Connection, task_id: str, *, holder: str, harness: str |
     # holder.  This also makes a repeated claim in the same worktree safe.
     current_holder = (row["holder"] or "").strip()
     if current_holder:
-        if current_holder == holder:
+        # Тот же держатель — это тот же актор, а не та же строка: `claim --holder
+        # agent:dsh` на карточке с `holder='dsh'` идемпотентен, а не «уже
+        # удерживается». Хранимое написание при этом не переписывается — колонка
+        # держит то, что дал первый claim/выдача.
+        if actors_mod.same_actor(current_holder, holder, conn):
             # Refresh holder_at only: this both answers the repeated claim and,
             # crucially, extends the red-verdict return window (see
             # deps.expire_return_handoffs) so an agent that resumes with `claim`
             # rather than `heartbeat` is not treated as having gone silent.
-            state = holder_claim_state(conn, task_id, holder)
+            state = holder_claim_state(conn, task_id, current_holder)
             ts = now_iso()
             conn.execute("UPDATE tasks SET holder_at = ?, updated_at = ? WHERE id = ?",
                         (ts, ts, task_id))
@@ -878,8 +882,8 @@ def claim(conn: sqlite3.Connection, task_id: str, *, holder: str, harness: str |
                 actor_key, a_kind = actors_mod.resolve(actor, conn)
                 if actor:
                     actors_mod.remember(conn, actor, actor_key, a_kind)
-                event(conn, task_id, "claim", from_value=holder, to_value=holder,
-                      actor=actor_key, harness=harness,
+                event(conn, task_id, "claim", from_value=current_holder,
+                      to_value=current_holder, actor=actor_key, harness=harness,
                       note=note or "взял задачу, которую выдали")
             conn.commit()
             return get_task(conn, task_id)
@@ -952,21 +956,26 @@ def heartbeat(conn: sqlite3.Connection, task_id: str, *, holder: str, note: str 
         actors_mod.remember(conn, actor, actor_key, a_kind)
     # «Что делает» принадлежит тому, кто её написал: heartbeat, сменивший держателя
     # без claim, не наследует чужую заметку — остаётся только переданная явно.
-    holder_changed = (row["holder"] or "").strip() != (holder or "").strip()
+    # Смена держателя — это смена актора, а не написания: heartbeat того же агента
+    # под другим именем (`claude` → `agent:claude`) держателя не меняет, заметку не
+    # сбрасывает и хранимое написание не переписывает.
+    current_holder = (row["holder"] or "").strip()
+    holder_changed = not actors_mod.same_actor(current_holder, holder, conn)
+    stored_holder = holder if holder_changed else current_holder
     holder_note = note or (row["holder_note"] if not holder_changed else None)
     conn.execute("UPDATE tasks SET holder = ?, holder_at = ?, holder_note = ?, updated_at = ? "
-                 "WHERE id = ?", (holder, ts, holder_note, ts, task_id))
+                 "WHERE id = ?", (stored_holder, ts, holder_note, ts, task_id))
     last = parse_ts(row["holder_at"])
     # Смену держателя пишем в историю всегда, даже если 10 минут ещё не прошли:
     # иначе перехват чужой задачи остался бы незаметным. Карточка «выдана, но не
     # взята» — тот же случай: heartbeat её держателя и есть доказательство, что
     # прогон запустился, поэтому первый удар не теряется в троттлинге. Уже взятая
     # карточка троттлится как раньше (listik-udop).
-    taken = True if holder_changed else holder_claim_state(conn, task_id, holder)["taken"]
+    taken = True if holder_changed else holder_claim_state(conn, task_id, stored_holder)["taken"]
     if (holder_changed or not taken or not last
             or (datetime.now(timezone.utc) - last) > timedelta(minutes=min_interval_min)):
         event(conn, task_id, "heartbeat", from_value=row["holder"] if holder_changed else None,
-              to_value=holder, actor=actor_key, note=note, harness=harness)
+              to_value=stored_holder, actor=actor_key, note=note, harness=harness)
     conn.commit()
     return get_task(conn, task_id)
 
@@ -1073,9 +1082,10 @@ def stage_unchanged(conn: sqlite3.Connection, task_id: str, *, stage: str | None
     if target:
         sets = ["holder = ?", "holder_at = ?", "updated_at = ?"]
         params: list = [target, ts, ts]
-        if target != old_holder:
+        if not actors_mod.same_actor(target, old_holder, conn):
             # «Что делает» принадлежит прежнему держателю: назначение нового её
-            # сбрасывает — ровно как смена держателя в `update_task`.
+            # сбрасывает — ровно как смена держателя в `update_task`. Тот же актор
+            # под другим написанием новым держателем не считается (`same_actor`).
             sets.append("holder_note = NULL")
         params.append(task_id)
         conn.execute(f"UPDATE tasks SET {', '.join(sets)} WHERE id = ?", params)
@@ -1190,28 +1200,48 @@ def holder_claim_state(conn: sqlite3.Connection, task_id: str, holder: str | Non
 
     Возраст считается от события-назначения, а не от `holder_at`: heartbeat за
     исполнителя (чужой рукой) его не сбрасывает. Держателя нет — состояние пустое.
+
+    Держатель события и держатель карточки сравниваются как акторы
+    (`actors.same_actor`), а не как строки: `claude`, `agent:claude` и
+    `sonnet-judge` — один и тот же держатель, поэтому claim под одним написанием
+    и heartbeat под другим больше не выглядят как два разных агента. Сравнить по
+    актору в SQL нельзя, поэтому события задачи выбираются по `kind` и
+    фильтруются в Python — их на карточке заведомо немного.
     """
     out = {"assigned_by": None, "assigned_at": None, "assigned_hours": None,
            "taken": False, "taken_at": None}
     h = (holder or "").strip()
     if not h:
         return out
-    assign = conn.execute(
-        "SELECT id, ts, actor, harness FROM events WHERE task_id = ? AND kind = 'claim' "
-        "AND to_value = ? ORDER BY ts DESC, id DESC LIMIT 1", (task_id, h)).fetchone()
+    rows = conn.execute(
+        "SELECT id, ts, kind, from_value, to_value, actor, harness FROM events "
+        "WHERE task_id = ? AND kind IN ('claim','heartbeat') ORDER BY ts DESC, id DESC",
+        (task_id,)).fetchall()
+    mine = [r for r in rows if actors_mod.same_actor(r["to_value"], h, conn)]
+
+    def _is_assignment(r: sqlite3.Row) -> bool:
+        if r["kind"] == "claim":
+            return True
+        # Heartbeat-перехват самим держателем — тоже назначение: держатель забрал
+        # карточку у другого актора своей рукой (`docs/API.md`: heartbeat от самого
+        # держателя подтверждает, что карточка взята). Обычный heartbeat держателя
+        # (пустой `from_value`) назначением не является — иначе он подменял бы
+        # «кто выдал» на самого держателя.
+        if not (r["from_value"] or "").strip():
+            return False
+        if actors_mod.same_actor(r["from_value"], r["to_value"], conn):
+            return False
+        return actors_mod.same_actor(r["actor"] or r["harness"], h, conn)
+
+    assign = next((r for r in mine if _is_assignment(r)), None)
     if assign is None:
         return out
     by = assign["actor"] or assign["harness"]
     out["assigned_by"] = actors_mod.resolve(by, conn)[0] if by else None
     out["assigned_at"] = assign["ts"]
     out["assigned_hours"] = hours_since(assign["ts"])
-    target = actors_mod.resolve(h, conn)[0] or h
-    for r in conn.execute(
-            "SELECT actor, harness, ts FROM events WHERE task_id = ? AND kind IN ('claim','heartbeat') "
-            "AND to_value = ? AND id >= ? ORDER BY id",
-            (task_id, h, assign["id"])).fetchall():
-        who = actors_mod.resolve(r["actor"] or r["harness"], conn)[0]
-        if who and who == target:
+    for r in sorted((r for r in mine if r["id"] >= assign["id"]), key=lambda r: r["id"]):
+        if actors_mod.same_actor(r["actor"] or r["harness"], h, conn):
             out["taken"] = True
             out["taken_at"] = r["ts"]
             break

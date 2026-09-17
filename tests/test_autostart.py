@@ -1,8 +1,8 @@
 """Тесты автостарта задач (шаг 09, порция b; чек-лист `step-09.check-b.md`).
 
 Настоящие харнессы не запускаются: команда маршрута — `[sys.executable, ...]`, а сам
-`routes.json` лежит во временном каталоге и кладётся в состояние через
-`routes.init_at_startup(source, target)`. Настоящий `~/.config/listik/` тесты не трогают.
+`routes.json` лежит во временном каталоге и ввозится во временную базу.
+Настоящий `~/.config/listik/` тесты не трогают.
 Логи автостарта уходят во временный каталог (`log_dir` для `launcher.start`, подмена
 `paths.ROOT_DIR` для запусков через сервер), поэтому в дереве репозитория после прогона
 ничего не остаётся.
@@ -30,7 +30,7 @@ from listik import client
 from listik import db as db_mod
 from listik import launcher as launcher_mod
 from listik import paths
-from listik import routes as routes_mod
+from listik import routes_store
 from listik import server
 from listik import store
 from tests.helpers import TempDbTestCase
@@ -72,13 +72,10 @@ def _load_cli():
 
 
 class AutostartTestCase(TempDbTestCase):
-    """Общая обвязка: временные маршруты, логи в tmp, чистое состояние модуля routes."""
+    """Общая обвязка: маршруты в базе, логи в tmp."""
 
     def setUp(self) -> None:
         super().setUp()
-        self._saved_state = routes_mod._state
-        routes_mod._state = None
-        self.addCleanup(lambda: setattr(routes_mod, "_state", self._saved_state))
         # Логи по умолчанию идут в paths.ROOT_DIR / "logs" — в тестах это tmp.
         self._root_patch = mock.patch.object(paths, "ROOT_DIR", self.tmp_path)
         self._root_patch.start()
@@ -102,16 +99,13 @@ class AutostartTestCase(TempDbTestCase):
         source = self.tmp_path / "routes-source.json"
         source.write_text(json.dumps({"version": 1, "routes": list(records)},
                                      ensure_ascii=False), encoding="utf-8")
-        target = self.tmp_path / "runtime" / "routes.json"
-        return routes_mod.init_at_startup(source=source, target=target)
+        return routes_store.import_file(self.conn, source, replace=True)
 
     def break_routes(self):
-        target = self.tmp_path / "broken" / "routes.json"
-        target.parent.mkdir(parents=True, exist_ok=True)
-        target.write_text("{ битый json", encoding="utf-8")
-        with contextlib.redirect_stderr(io.StringIO()):
-            return routes_mod.init_at_startup(source=self.tmp_path / "нет-такого.json",
-                                              target=target)
+        patch = mock.patch.object(routes_store, "list_routes",
+                                  side_effect=sqlite3.DatabaseError("база недоступна"))
+        patch.start()
+        self.addCleanup(patch.stop)
 
     def make_project(self, slug="proj", path=None) -> dict:
         return store.upsert_project(self.conn, slug, title=slug,
@@ -129,7 +123,7 @@ class AutostartTestCase(TempDbTestCase):
         script = self.tmp_path / "writer.py"
         script.write_text(WRITER_PY, encoding="utf-8")
         return [sys.executable, str(script), str(out_path),
-                "{task_id}", "{title}", "{cwd}", "{project}"]
+                "{task_id}", "{cwd}", "{project}", "{route}", "{worktree}", "{branch}"]
 
     def launch(self, task_id, *, notify=None, log_dir=None):
         return launcher_mod.start(self.conn, task_id, notify=notify,
@@ -244,7 +238,7 @@ class RefusalTests(AutostartTestCase):
         err = io.StringIO()
         with contextlib.redirect_stderr(err):
             reason = self.launch(task["id"], notify=self.notify_cb)
-        self.assertTrue(reason.startswith("routes.json с ошибкой"), reason)
+        self.assertTrue(reason.startswith("маршруты в базе недоступны"), reason)
         self.assertIn(f"autostart {task['id']}:", err.getvalue())
 
         row = self.row(task["id"])
@@ -265,11 +259,11 @@ class RefusalTests(AutostartTestCase):
         task = self.make_task(project=None, autostart=True, route="xhigh-pipeline")
         with contextlib.redirect_stderr(io.StringIO()):
             reason = self.launch(task["id"])
-        self.assertEqual(reason, "маршрута xhigh-pipeline нет в routes.json")
+        self.assertEqual(reason, "маршрута xhigh-pipeline нет в базе")
         self.assertEqual(self.row(task["id"])["launch_error"], reason)
         question = self.comments(task["id"], "question")
         self.assertEqual([c["text"] for c in question],
-                         ["автостарт не выполнен: маршрута xhigh-pipeline нет в routes.json — "
+                         ["автостарт не выполнен: маршрута xhigh-pipeline нет в базе — "
                           "нужен ты"])
 
     def test_route_without_command_refuses(self) -> None:
@@ -277,7 +271,7 @@ class RefusalTests(AutostartTestCase):
         task = self.make_task(project=None, autostart=True, route="low-pipeline")
         with contextlib.redirect_stderr(io.StringIO()):
             reason = self.launch(task["id"])
-        self.assertEqual(reason, "у маршрута low-pipeline нет command в routes.json")
+        self.assertEqual(reason, "у маршрута low-pipeline нет command в базе")
         self.assertEqual(self.row(task["id"])["launch_error"], reason)
         self.assertEqual(self.row(task["id"])["needs_owner"], 1)
 
@@ -405,7 +399,8 @@ class LaunchTests(AutostartTestCase):
 
         data = json.loads(out.read_text(encoding="utf-8"))
         self.assertEqual(data["argv"][0], task["id"])
-        self.assertEqual(data["argv"][1], "Задача")
+        self.assertEqual(data["argv"][1], str(proj_dir))
+        self.assertEqual(data["argv"][2:], ["proj", "low-pipeline", str(proj_dir), ""])
         self.assertEqual(data["task_id"], task["id"])
         self.assertEqual(data["route"], "low-pipeline")
         self.assertEqual(data["launched_by"], "listik")
@@ -467,7 +462,8 @@ class LaunchTests(AutostartTestCase):
         self.join_tracker(task["id"])
         data = json.loads(out.read_text(encoding="utf-8"))
         self.assertEqual(pathlib.Path(data["cwd"]).resolve(), worktree.resolve())
-        self.assertEqual(data["argv"][2], str(worktree))
+        self.assertEqual(data["argv"][1], str(worktree))
+        self.assertEqual(data["argv"][4], str(worktree))
         self.assertNotEqual(pathlib.Path(data["cwd"]).resolve(), proj_dir.resolve())
 
     def test_exit_code_three_is_recorded(self) -> None:
@@ -479,19 +475,39 @@ class LaunchTests(AutostartTestCase):
         texts = [c["text"] for c in self.comments(task["id"], "journal")]
         self.assertIn(f"автостарт: процесс {row['launch_pid']} завершился с кодом 3", texts)
 
-    def test_title_goes_literally_and_no_shell(self) -> None:
+    def test_worktree_and_branch_from_card_reach_argv(self) -> None:
         out = self.tmp_path / "out.json"
-        pwned = self.tmp_path / "pwned"
-        title = f"x; touch {pwned} {{task_id}}"
-        task, _ = self.prepare(self.writer_command(out), title=title)
+        worktree = self.tmp_path / "branch-tree"
+        worktree.mkdir()
+        task, _ = self.prepare(self.writer_command(out), worktree=worktree)
+        store.update_task(self.conn, task["id"], branch="feat/x")
         self.assertIsNone(self.launch(task["id"]))
         self.join_tracker(task["id"])
         data = json.loads(out.read_text(encoding="utf-8"))
-        self.assertEqual(data["argv"][1], title, "title не дошёл буквально")
-        self.assertEqual(data["argv"][0], task["id"])
-        self.assertFalse(pwned.exists(), "заголовок попал в shell")
-        # Подстановка однопроходная: {task_id} внутри значения остался как есть
-        self.assertIn("{task_id}", data["argv"][1])
+        self.assertEqual(data["argv"][4:], [str(worktree), "feat/x"])
+
+    def test_main_and_empty_worktree_use_cwd_and_empty_branch(self) -> None:
+        for worktree in (None, "main", "master"):
+            with self.subTest(worktree=worktree):
+                out = self.tmp_path / f"out-{worktree}.json"
+                task, proj_dir = self.prepare(self.writer_command(out), worktree=worktree)
+                self.assertIsNone(self.launch(task["id"]))
+                self.join_tracker(task["id"])
+                data = json.loads(out.read_text(encoding="utf-8"))
+                self.assertEqual(data["argv"][4:], [str(proj_dir), ""])
+
+    def test_substitution_does_not_rescan_project_or_branch_values(self) -> None:
+        out = self.tmp_path / "out.json"
+        pwned = self.tmp_path / "pwned"
+        project = f"{{cwd}}; touch {pwned}"
+        task, _ = self.prepare(self.writer_command(out), project=project)
+        store.update_task(self.conn, task["id"], branch="feat/{project}")
+        self.assertIsNone(self.launch(task["id"]))
+        self.join_tracker(task["id"])
+        data = json.loads(out.read_text(encoding="utf-8"))
+        self.assertEqual(data["argv"][2], project)
+        self.assertEqual(data["argv"][5], "feat/{project}")
+        self.assertFalse(pwned.exists(), "значение проекта попало в shell")
 
     def test_race_starts_exactly_one_process(self) -> None:
         task, _ = self.prepare([sys.executable, "-c", "pass"])
@@ -598,7 +614,7 @@ class ServerPostTests(AutostartTestCase):
         self.assertIs(task["needs_owner"], True)
         self.assertIsNone(task["launch_pid"])
         self.assertIsNone(task["launched_by"])
-        self.assertTrue(task["launch_error"].startswith("routes.json с ошибкой"),
+        self.assertTrue(task["launch_error"].startswith("маршруты в базе недоступны"),
                         task["launch_error"])
 
     def test_oserror_post_is_201_not_500(self) -> None:
@@ -622,7 +638,7 @@ class ServerPostTests(AutostartTestCase):
                                      command=["touch", str(evil)])
         self.assertEqual(status, 201)
         self.assertEqual(task["launch_error"],
-                         "у маршрута low-pipeline нет command в routes.json")
+                         "у маршрута low-pipeline нет command в базе")
         self.assertFalse(evil.exists())
         self.assertIsNone(task["launch_pid"])
 
@@ -778,7 +794,6 @@ class RecoverTests(AutostartTestCase):
         fake.serve_forever.side_effect = KeyboardInterrupt
         with mock.patch.object(paths, "CONFIG_PATH", cfg_path), \
              mock.patch.object(server, "get_conn", return_value=self.conn), \
-             mock.patch.object(server.routes_mod, "init_at_startup"), \
              mock.patch.object(server.launcher_mod, "recover") as recover, \
              mock.patch.object(server, "make_server", return_value=fake), \
              mock.patch.object(server, "start_embed_worker"), \
@@ -845,9 +860,9 @@ class CliTests(AutostartTestCase):
 
     def test_show_prints_error_line(self) -> None:
         task = self.make_task(autostart=True, route="low-pipeline")
-        self.seed(task["id"], launch_error="маршрута low-pipeline нет в routes.json")
+        self.seed(task["id"], launch_error="маршрута low-pipeline нет в базе")
         _, out, _ = self.run_cli(["--local", "show", task["id"]])
-        self.assertIn("автостарт: ОШИБКА маршрута low-pipeline нет в routes.json", out)
+        self.assertIn("автостарт: ОШИБКА маршрута low-pipeline нет в базе", out)
 
     def test_show_has_no_autostart_line_for_plain_task(self) -> None:
         task = self.make_task()

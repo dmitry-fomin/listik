@@ -276,7 +276,6 @@ class WatchThreadTests(SwapStateCase):
 
         with mock.patch.object(server, "bind_or_explain", side_effect=fake_httpd), \
                 mock.patch.object(server, "start_db_watch", side_effect=start), \
-                mock.patch.object(server.routes_mod, "init_at_startup"), \
                 mock.patch.object(server.launcher_mod, "recover"), \
                 mock.patch.object(server, "pid_file", return_value=self.tmp_path / "pid"), \
                 contextlib.redirect_stdout(io.StringIO()):

@@ -20,7 +20,7 @@ from unittest import mock
 from listik import assistant as assistant_mod
 from listik import errors as errors_mod
 from listik import paths
-from listik import routes as routes_mod
+from listik import routes_store
 from listik import server
 from tests.helpers import TempDbTestCase
 
@@ -346,12 +346,8 @@ class AssistantApiTests(TempDbTestCase):
         conn_patch.start()
         self.addCleanup(conn_patch.stop)
 
-        self._saved_state = routes_mod._state
-        routes_mod._state = routes_mod.RoutesState(
-            ok=True, error=None, path=str(self.tmp_path / "routes.json"),
-            routes=route_records(),
-            by_key={record["key"]: record for record in route_records()})
-        self.addCleanup(lambda: setattr(routes_mod, "_state", self._saved_state))
+        for record in route_records():
+            routes_store.upsert_route(self.conn, record)
 
     def _no_key_config(self) -> None:
         self.config_path.write_text(f'[auth]\ntoken = "{TOKEN}"\n', encoding="utf-8")

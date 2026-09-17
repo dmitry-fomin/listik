@@ -250,7 +250,8 @@ def _index_comment(conn: sqlite3.Connection, comment_id: str) -> None:
         )
 
 
-def labels_with_route(labels: list[str] | None, route_key: str | None) -> list[str]:
+def labels_with_route(conn: sqlite3.Connection, labels: list[str] | None,
+                      route_key: str | None) -> list[str]:
     """Метки карточки: явные плюс метки маршрута, без дублей (явные идут первыми).
 
     Одно правило для всех, кто создаёт задачу: CLI (`new --route`), `POST /api/tasks`
@@ -258,21 +259,22 @@ def labels_with_route(labels: list[str] | None, route_key: str | None) -> list[s
     заданную вручную метку (`--label harness:claude`) второй раз не добавляем.
     """
     out = [str(label) for label in (labels or [])]
-    for label in routes_mod.labels_for(route_key):
+    for label in routes_mod.labels_for(conn, route_key):
         if label not in out:
             out.append(label)
     return out
 
 
-def labels_after_route_change(labels: list[str], route_key: str | None) -> list[str] | None:
+def labels_after_route_change(conn: sqlite3.Connection, labels: list[str],
+                              route_key: str | None) -> list[str] | None:
     """Метки карточки при смене маршрута; `None` — оставить как есть.
 
     Старые метки маршрута (`harness:`/`process:`) заменяются метками нового, чужие
     метки задачи остаются. Не трогаем их, когда у нового непустого ключа меток нет:
-    маршрута нет в таблице (устаревший или битый `routes.json`) — стирать чужие
-    данные нельзя. Снятие маршрута (пустой ключ) метки маршрута убирает.
+    маршрута нет в таблице — стирать чужие данные нельзя. Снятие маршрута (пустой
+    ключ) метки маршрута убирает.
     """
-    fresh = routes_mod.labels_for(route_key)
+    fresh = routes_mod.labels_for(conn, route_key)
     if not fresh and (route_key or "").strip():
         return None
     keep = [str(label) for label in labels if not routes_mod.is_route_label(str(label))]
@@ -367,7 +369,7 @@ def create_task(
         project = parent_project
     # Маршрут помечает карточку теми же метками, что и форма «Новая задача» на доске:
     # их считает сервер (routes.labels_for), а не доска и не CLI по отдельности.
-    labels = labels_with_route(labels, route)
+    labels = labels_with_route(conn, labels, route)
     tid = task_id or gen_id(conn, project)
     if parent_id is not None and parent_id == tid:
         raise ValueError(f"задача не может быть родителем самой себе: {tid}")
@@ -623,7 +625,7 @@ def update_task(conn: sqlite3.Connection, task_id: str, *, actor: str | None = N
         if base is None:
             base = route_labels_from_row(row)
         if isinstance(base, list):
-            merged = labels_after_route_change(base, fields[ROUTE_FIELD])
+            merged = labels_after_route_change(conn, base, fields[ROUTE_FIELD])
             if merged is not None:
                 fields["labels"] = merged
     # Смену маршрута проверяем по карточке, какой она станет после этого вызова:

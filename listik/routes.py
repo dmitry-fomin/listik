@@ -1,12 +1,15 @@
-"""Маршруты запуска задач: `routes.json` в репозитории и его рабочая копия.
+"""Маршруты запуска задач: формат `routes.json` и чтение таблицы `routes`.
 
-Таблица маршрутов (пресеты конвейеров и ряд «просто исполнитель») раньше была зашита
-в доску (`web/src/lib/pipelines.ts`). Теперь её читает сервер: источник — `routes.json`
-в корне репозитория (`SOURCE_PATH`), при старте сервера он один раз копируется в
-`RUNTIME_PATH` (`$LISTIK_ROUTES`, иначе `~/.config/listik/routes.json`), если копии ещё
-нет. В образце у каждой записи есть `command`: конвейер запускает `claude -p` со скилом
-`/feature-pipeline:{route}`, прямой — dsh/grok/codex. Существующая рабочая копия
-при старте не перезаписывается.
+Таблица маршрутов (пресеты конвейеров и ряд «просто исполнитель») живёт в базе —
+таблице `routes` (см. :mod:`listik.routes_store`). `routes.json` в корне репозитория
+(`SOURCE_PATH`) остаётся форматом ввоза и вывоза: этот модуль читает, разбирает и
+проверяет файл (`load`/`validate`), а первичный ввоз в таблицу делает
+`listik.routes_store` (при `listik init` и старте сервера). В образце у каждой записи
+есть `command`: конвейер запускает `claude -p` со скилом `/feature-pipeline:{route}`,
+прямой — dsh/grok/codex.
+
+Читатели берут маршруты только из базы (`state(conn)`), файл в обход ввоза не читает
+никто. Кеша нет: правка записи в базе видна сразу, перезапуск сервера не нужен.
 
 Формат (версия 1)::
 
@@ -21,43 +24,31 @@
   * `roles` — обязателен для `pipeline` и запрещён для `direct`: ключи только из
     `spec`/`critic`/`impl`/`judge`, значение — `{provider, label, title}` из непустых
     строк (провайдер — `claude`/`glm`/`openai`/`grok`/`deepseek`);
-  * `strip` — необязательная одна иконка вместо таблицы ролей: `{label}` плюс ровно
-    одно из `provider`/`glyph`;
   * `icon` — необязательный уровень маршрута для иконки на доске, одно из
     `xhigh`/`high`/`medium`/`low`/`xlow`/`direct`. Если поля нет, уровень выводится из самой
     записи (`fallback_icon`): у `direct` это `direct`, у `pipeline` — часть ключа до
     первого `-`, если она из того же набора (`xhigh-pipeline` → `xhigh`); у записи без
-    выводимого уровня (`feature-pipeline`) иконки нет. Рабочая копия `routes.json`,
-    созданная до появления поля, поэтому продолжает работать без правок. Неизвестное
-    значение — не ошибка файла, а предупреждение (listik-itg8): запись получает
-    уровень по ключу, поле `icon_error` с причиной и текст в `warnings` ответа
-    `GET /api/routes`; строка уходит в stderr (у демона — в `listik.log`), а
-    остальные записи и автостарт работают как обычно;
+    выводимого уровня (`feature-pipeline`) иконки нет. Неизвестное значение — не ошибка
+    файла, а предупреждение (listik-itg8): запись получает уровень по ключу, поле
+    `icon_error` с причиной и текст в `warnings` ответа `GET /api/routes`; строка уходит
+    в stderr (у демона — в `listik.log`), а остальные записи и автостарт работают как обычно;
   * `harness` — обязателен для `direct` и запрещён для `pipeline` (`claude`, `dsh`,
     `codex`, `grok`, `gemini`);
   * `command` — необязательный непустой массив непустых строк, argv запуска.
 
-Лишние поля на любом уровне — ошибка (защита от опечаток вроде `visble`). В `command`
-допустимы только подстановки `{task_id}`, `{project}`, `{route}`, `{cwd}`, `{title}`;
-любая другая фигурная скобка (включая `{{`) — ошибка. Подставляет значения порция b:
-целиком в элемент массива, без shell и без повторной подстановки внутри значения.
+Лишние поля на любом уровне — ошибка (защита от опечаток вроде `visble`).
+В `command` допустимы только подстановки `{task_id}`, `{project}`, `{route}`, `{cwd}`,
+`{worktree}`, `{branch}`; любая другая фигурная скобка (включая `{{`) — ошибка.
+Подставляет значения `launcher`: целиком в элемент массива, без shell и без повторной
+подстановки внутри значения.
 
-Глиф `strip.glyph` — имя ключа верхнего уровня из `web/src/lib/icons.ts`. Если файла
-иконок нет или в нём не нашлось ни одного имени, проверка `glyph` сводится к формату
-`^[a-z][a-z0-9-]*$` — сервер не должен отказываться работать из-за отсутствующей доски.
-Имя в верном формате, которого нет в icons.ts, — предупреждение, а не ошибка файла
-(listik-uiza): `strip.glyph` становится `None`, у `strip` появляется `glyph_error`, текст
-уходит в `warnings`.
-
-Файл читается в `init_at_startup` (сервер) и в `load_local` (CLI без сервера и MCP по
-stdio); `current()` и обработчики API файл не читают, поэтому правка `routes.json` во время
-работы сервера ничего не меняет до перезапуска. Метки карточки для маршрута выводит
-`labels_for` — по ним сервер помечает задачу и переписывает метки при смене маршрута.
+Метки карточки для маршрута выводит `labels_for(conn, ...)` — по ним сервер помечает
+задачу и переписывает метки при смене маршрута.
 """
 from __future__ import annotations
 
 import re
-import shutil
+import sqlite3
 import sys
 from dataclasses import dataclass, field
 from pathlib import Path
@@ -75,21 +66,15 @@ HARNESSES = ("claude", "dsh", "codex", "grok", "gemini")
 # Уровни маршрута — значения поля `icon`; подписи и иконки для доски лежат в
 # `web/src/lib/dictionaries.ts` (`ROUTE_ICONS`).
 ROUTE_ICONS = ("xhigh", "high", "medium", "low", "xlow", "direct")
-PLACEHOLDERS = ("task_id", "project", "route", "cwd", "title")
+PLACEHOLDERS = ("task_id", "project", "route", "cwd", "worktree", "branch")
 
 ROOT_FIELDS = ("version", "routes")
 RECORD_FIELDS = ("key", "kind", "title", "hint", "visible", "icon", "roles", "strip", "harness",
                  "command")
 ROLE_FIELDS = ("provider", "label", "title")
-STRIP_FIELDS = ("label", "provider", "glyph")
 
 KEY_RE = re.compile(r"^[a-z0-9][a-z0-9-]*$")
-GLYPH_RE = re.compile(r"^[a-z][a-z0-9-]*$")
-# Имя иконки верхнего уровня в icons.ts: ровно два пробела отступа и `: {`.
-# Имя может быть в кавычках — так записываются имена с дефисом (`'route-xhigh': {`).
-ICON_LINE_RE = re.compile(r"""^  ['"]?([a-zA-Z][a-zA-Z0-9-]*)['"]?: \{""")
 PLACEHOLDER_RE = re.compile(r"\{([^{}]*)\}")
-ICONS_PATH = paths.WEB_DIR / "src" / "lib" / "icons.ts"
 
 #: Префиксы меток маршрута на карточке: их выводит сервер из `launch_route`
 #: (см. `labels_for`) и он же заменяет при смене маршрута. Доска их только показывает.
@@ -102,11 +87,10 @@ class RoutesError(ValueError):
 
 @dataclass
 class RoutesState:
-    """Результат загрузки файла: `ok=False` — автостарт выключен, `error` объясняет почему.
+    """Состояние маршрутов из файла при ввозе или из базы при работе.
 
-    `warnings` — замечания, которые файл не отменяют (сейчас это неизвестный `icon`
-    записи): автостарт работает, запись получает уровень по ключу и поле `icon_error`,
-    а тексты предупреждений уходят в `GET /api/routes` и в stderr.
+    `ok=False` выключает автостарт; `error` объясняет причину. Предупреждения
+    проверки файла относятся только к ввозу; у состояния базы `warnings=[]`.
     """
 
     ok: bool
@@ -115,9 +99,6 @@ class RoutesState:
     routes: list[dict] = field(default_factory=list)
     by_key: dict = field(default_factory=dict)
     warnings: list[str] = field(default_factory=list)
-
-
-_state: RoutesState | None = None
 
 
 # ------------------------------------------------------------------ проверка
@@ -147,35 +128,6 @@ def _extra_fields(obj: dict, allowed: tuple, where: str) -> None:
             raise _err(_at(where, name), "лишнее поле")
 
 
-def icon_names(path=ICONS_PATH) -> set[str]:
-    """Имена иконок верхнего уровня из `web/src/lib/icons.ts`.
-
-    Строки берутся между `export const icons` и первой строкой, равной `}`; из них
-    подходят только строки вида `^  ([a-zA-Z][a-zA-Z0-9-]*): \\{` — ровно два пробела
-    отступа, то есть верхний уровень объекта (имя может быть и в кавычках: имена с
-    дефисом в JS-объекте иначе не записать). Если файла нет или имён не нашлось,
-    возвращается пустое множество: тогда проверка `strip.glyph` смотрит только на
-    формат `^[a-z][a-z0-9-]*$` и не зависит от собранной доски.
-    """
-    try:
-        text = util.read_text(path)
-    except OSError:
-        return set()
-    names: set[str] = set()
-    started = False
-    for line in text.splitlines():
-        if not started:
-            if line.startswith("export const icons"):
-                started = True
-            continue
-        if line == "}":
-            break
-        found = ICON_LINE_RE.match(line)
-        if found:
-            names.add(found.group(1))
-    return names
-
-
 def _validate_role_cell(cell, where: str) -> dict:
     if not isinstance(cell, dict):
         raise _err(where, "должна быть объектом {provider, label, title}")
@@ -201,36 +153,6 @@ def _validate_roles(value, where: str) -> dict:
             raise _err(f"{where}.{role}", f"неизвестная роль, допустимы: {', '.join(ROLE_KEYS)}")
         roles[role] = _validate_role_cell(value[role], f"{where}.{role}")
     return roles
-
-
-def _validate_strip(value, where: str, warnings: list[str] | None = None) -> dict:
-    if not isinstance(value, dict):
-        raise _err(where, "должен быть объектом {label, provider|glyph}")
-    _extra_fields(value, STRIP_FIELDS, where)
-    label = _present(value, "label", where)
-    if not _text(label):
-        raise _err(f"{where}.label", "непустая строка")
-    has_provider = "provider" in value
-    has_glyph = "glyph" in value
-    if has_provider == has_glyph:
-        raise _err(where, "нужно ровно одно из provider или glyph")
-    if has_provider:
-        if value["provider"] not in PROVIDERS:
-            raise _err(f"{where}.provider",
-                       f"неизвестный провайдер {value['provider']!r}, допустимы: {', '.join(PROVIDERS)}")
-        return {"provider": value["provider"], "label": label}
-    glyph = value["glyph"]
-    if not isinstance(glyph, str) or not GLYPH_RE.match(glyph):
-        raise _err(f"{where}.glyph", "имя иконки должно подходить под ^[a-z][a-z0-9-]*$")
-    known = icon_names(ICONS_PATH)
-    if known and glyph not in known:
-        # Как с `icon` (listik-itg8): опечатка в имени глифа не отменяет файл
-        # (listik-uiza) — глиф не рисуется, причина в `glyph_error` и в `warnings`.
-        warning = f"{where}.glyph: иконки {glyph!r} нет в icons.ts; глиф не будет показан"
-        if warnings is not None:
-            warnings.append(warning)
-        return {"glyph": None, "label": label, "glyph_error": warning}
-    return {"glyph": glyph, "label": label}
 
 
 def validate_command(value, where: str) -> list[str]:
@@ -340,8 +262,6 @@ def _validate_route(item, where: str, warnings: list[str] | None = None) -> dict
                        f"неизвестный харнесс {harness!r}, допустимы: {', '.join(HARNESSES)}")
         record["harness"] = harness
 
-    if "strip" in item:
-        record["strip"] = _validate_strip(item["strip"], f"{where}.strip", warnings)
     record["command"] = (validate_command(item["command"], f"{where}.command")
                          if "command" in item else None)
     return record
@@ -402,29 +322,14 @@ def _warned(warning: str) -> None:
     print(f"routes.json: предупреждение: {warning}", file=sys.stderr, flush=True)
 
 
-def ensure_runtime_copy(source=SOURCE_PATH, target=RUNTIME_PATH) -> bool:
-    """Скопировать `source` в `target`, если копии ещё нет.
-
-    Существующий `target` не трогается: автор мог вписать туда команды. Возвращает
-    `True`, если файл скопирован, и `False`, если копия уже была. `FileNotFoundError`,
-    если копии нет и недоступен источник.
-    """
-    target = util.path(target)
-    if target.exists():
-        return False
-    target.parent.mkdir(parents=True, exist_ok=True)
-    shutil.copyfile(source, target)
-    return True
-
-
 def load(path=SOURCE_PATH) -> RoutesState:
     """Прочитать, разобрать и проверить файл. Никогда не бросает исключений.
 
     Любая ошибка (нет файла, нет прав, путь — каталог, битый JSON, `RoutesError`)
     даёт `ok=False`, текст ошибки и строку в stderr. Неизвестный `icon` — не ошибка:
     запись получает фолбэк, каждый такой случай идёт в `warnings` состояния и
-    отдельной строкой в stderr. Состояние модуля не меняет — его кладёт
-    `init_at_startup`.
+    отдельной строкой в stderr. Состояние модуля не меняет и в базу не пишет: ввоз
+    делает :mod:`listik.routes_store`.
     """
     file = util.path(path)
     warnings: list[str] = []
@@ -440,30 +345,23 @@ def load(path=SOURCE_PATH) -> RoutesState:
                        warnings=warnings)
 
 
-def current() -> RoutesState:
-    """Последнее загруженное состояние; до первой загрузки — «не загружен»."""
-    if _state is None:
-        return RoutesState(ok=False, error="routes.json не загружен",
-                           path=str(RUNTIME_PATH), routes=[], by_key={})
-    return _state
+def state(conn) -> RoutesState:
+    """Маршруты из базы в форме `RoutesState`.
 
-
-def load_local(path=None) -> RoutesState:
-    """Дочитать маршруты процессу без сервера: CLI в локальном режиме и MCP по stdio.
-
-    Сервер зовёт `init_at_startup` — копирует образец из репозитория в рабочую копию
-    и читает её. Здесь только чтение той же рабочей копии (`$LISTIK_ROUTES`, иначе
-    `~/.config/listik/routes.json`), а если её ещё нет — образца `routes.json` из
-    репозитория: заводить чужие файлы конфигов CLI не должен. Уже загруженное
-    состояние не перечитываем — как и `init_at_startup`.
+    Записи — `routes_store.list_routes(conn)` в порядке `position, key`; `ok=True`,
+    `path` — путь к базе (`paths.DB_PATH`), `warnings=[]`. Недоступная база
+    (`sqlite3.DatabaseError`) — `ok=False` и текст ошибки: сервер не должен падать
+    из-за неё, а `GET /api/routes` и `/api/health` отдают понятный отказ.
     """
-    global _state
-    if _state is not None:
-        return _state
-    source = util.path(path) if path is not None else (
-        RUNTIME_PATH if RUNTIME_PATH.exists() else SOURCE_PATH)
-    _state = load(source)
-    return _state
+    from . import routes_store  # цикл: routes_store импортирует routes
+    try:
+        records = routes_store.list_routes(conn)
+    except sqlite3.DatabaseError as exc:
+        return RoutesState(ok=False, error=_describe(exc), path=str(paths.DB_PATH),
+                           routes=[], by_key={})
+    return RoutesState(ok=True, error=None, path=str(paths.DB_PATH), routes=records,
+                       by_key={record["key"]: record for record in records},
+                       warnings=[])
 
 
 def is_route_label(label: str) -> bool:
@@ -471,37 +369,28 @@ def is_route_label(label: str) -> bool:
     return label.startswith(LABEL_PREFIXES)
 
 
-def labels_for(route_key: str | None) -> list[str]:
+def labels_for(conn, route_key: str | None) -> list[str]:
     """Метки карточки для маршрута — те же, что ставит форма «Новая задача» на доске.
 
     У `direct` — харнесс самой записи (`harness:<harness>`, `process:direct`), у
     `pipeline` — оркестратор `claude` и ключ записи (`harness:claude`,
     `process:<key>`): конвейер ведёт claude, а провайдеры ролей у записей разные.
-    Пустой или неизвестный ключ (маршрута нет в таблице, файл не загружен или битый) —
-    пустой список: метки не выдумываем.
+    Пустой или неизвестный ключ — пустой список: метки не выдумываем. Недоступная
+    база (`sqlite3.DatabaseError`) тоже даёт пустой список и строку в stderr: метки —
+    вспомогательные данные, из-за базы ни `claim`, ни создание задачи падать не должны,
+    а пустой список по правилу «чужие метки не трогаем» ничего не портит.
     """
+    from . import routes_store  # цикл: routes_store импортирует routes
     key = (route_key or "").strip()
     if not key:
         return []
-    record = current().by_key.get(key)
-    if not record:
+    try:
+        record = routes_store.get_route(conn, key)
+    except sqlite3.DatabaseError as exc:
+        print(f"routes: метки недоступны: {_describe(exc)}", file=sys.stderr, flush=True)
+        return []
+    except KeyError:  # errors.NotFound — маршрута нет: метки не выдумываем
         return []
     if record["kind"] == "direct":
         return [f"harness:{record['harness']}", "process:direct"]
     return ["harness:claude", f"process:{record['key']}"]
-
-
-def init_at_startup(source=SOURCE_PATH, target=RUNTIME_PATH) -> RoutesState:
-    """Один раз за процесс: копия в `target` (если её нет) и её загрузка в `current()`.
-
-    Ошибка копирования не роняет сервер: `current()` получает `ok=False` с текстом
-    `копирование routes.json: <ошибка>`, `load` при этом не вызывается.
-    """
-    global _state
-    try:
-        ensure_runtime_copy(source, target)
-    except Exception as exc:  # noqa: BLE001 — сервер должен подняться в любом случае
-        _state = _failed(f"копирование routes.json: {_describe(exc)}", target)
-        return _state
-    _state = load(target)
-    return _state

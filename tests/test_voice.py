@@ -23,7 +23,7 @@ from unittest import mock
 from listik import assistant as assistant_mod
 from listik import errors as errors_mod
 from listik import paths
-from listik import routes as routes_mod
+from listik import routes_store
 from listik import server
 from listik import store
 from listik import voice as voice_mod
@@ -531,12 +531,8 @@ class VoiceApiTests(ConfigMixin, TempDbTestCase):
         conn_patch = mock.patch.object(server, "get_conn", return_value=self.conn)
         conn_patch.start()
         self.addCleanup(conn_patch.stop)
-        self._saved_state = routes_mod._state
-        routes_mod._state = routes_mod.RoutesState(
-            ok=True, error=None, path=str(self.tmp_path / "routes.json"),
-            routes=route_records(),
-            by_key={record["key"]: record for record in route_records()})
-        self.addCleanup(lambda: setattr(routes_mod, "_state", self._saved_state))
+        for record in route_records():
+            routes_store.upsert_route(self.conn, record)
 
     def _transcribe(self, body: dict):
         return server.handle("POST", "/api/assistant/transcribe", {}, body, authed=True)

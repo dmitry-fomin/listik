@@ -1,7 +1,7 @@
 """Автостарт задач: запуск процесса по маршруту и слежение за ним.
 
 Задачу с `autostart=1` и ключом маршрута (`launch_route`) запускает сам сервер:
-маршрут даёт argv (`command` в `routes.json`), `listik/launcher.py` подставляет в него
+маршрут даёт argv (`command` в таблице `routes`), `listik/launcher.py` подставляет в него
 значения, стартует процесс без shell и записывает в карточку всё, что о нём знает
 (`launched_by`, `launch_pid`, `launched_at`, `launch_log`, `launch_exit_code`,
 `launch_finished_at`, `launch_error`).
@@ -32,7 +32,7 @@ from . import store
 
 # Подстановки в элементах команды: ровно те, что разрешает routes.py. Замена
 # однопроходная — re.sub с функцией не пересканирует то, что подставил, поэтому
-# `{task_id}` внутри title остаётся как есть.
+# `{task_id}` внутри значения остаётся как есть.
 _SUBST_RE = re.compile(r"\{(" + "|".join(routes_mod.PLACEHOLDERS) + r")\}")
 
 ALREADY_STARTED = "уже запущена Listik"
@@ -172,8 +172,8 @@ def start(conn, task_id: str, notify=None, *, log_dir=None) -> str | None:
 
     Возвращает None, если процесс запущен, или текст причины отказа. Проверки идут
     строго по порядку: захват задачи условным UPDATE (`launched_by IS NULL`) —
-    уже запущенная задача не трогается вовсе; проверка routes.json, наличия маршрута
-    и `command`; рабочий каталог; наконец `Popen`. Любой отказ снимает захват и
+    уже запущенная задача не трогается вовсе; проверка маршрутов в базе, наличия
+    маршрута и `command`; рабочий каталог; наконец `Popen`. Любой отказ снимает захват и
     уходит в `refuse` (launch_error + needs_owner), поэтому «уже запущена» —
     единственный отказ, который состояние задачи не меняет.
 
@@ -196,18 +196,18 @@ def start(conn, task_id: str, notify=None, *, log_dir=None) -> str | None:
         print(f"autostart {task_id}: задача не найдена", file=sys.stderr, flush=True)
         return "задача не найдена"
 
-    state = routes_mod.current()
+    state = routes_mod.state(conn)
     if not state.ok:
-        return _fail(conn, task_id, f"routes.json с ошибкой: {state.error}", notify)
+        return _fail(conn, task_id, f"маршруты в базе недоступны: {state.error}", notify)
 
     key = row["launch_route"] or ""
     record = state.by_key.get(key)
     if record is None:
-        return _fail(conn, task_id, f"маршрута {key} нет в routes.json", notify)
+        return _fail(conn, task_id, f"маршрута {key} нет в базе", notify)
 
     command = record.get("command")
     if not command:
-        return _fail(conn, task_id, f"у маршрута {key} нет command в routes.json", notify)
+        return _fail(conn, task_id, f"у маршрута {key} нет command в базе", notify)
 
     cwd = _workdir(conn, row)
     if cwd is None:
@@ -229,8 +229,15 @@ def start(conn, task_id: str, notify=None, *, log_dir=None) -> str | None:
                           note=f"автостарт: выдана {record['harness']}", **fields)
         issued = True
 
+    # `{worktree}` — колонка `tasks.worktree`, но пустое значение и маркер основной
+    # ветки (`main`/`master`) указывают не на дерево, а на каталог проекта: подставляем
+    # `cwd`, чтобы значение всегда указывало на реальное дерево. `{branch}` пуст — пустая
+    # строка. Замена однопроходная (см. `_SUBST_RE`).
+    worktree = (row["worktree"] or "").strip()
+    if not worktree or store.is_main_worktree(worktree):
+        worktree = str(cwd)
     values = {"task_id": task_id, "project": row["project"] or "", "route": key,
-              "cwd": str(cwd), "title": row["title"] or ""}
+              "cwd": str(cwd), "worktree": worktree, "branch": row["branch"] or ""}
     argv = [_substitute(element, values) for element in command]
 
     log_dir = Path(log_dir) if log_dir is not None else paths.LOGS_DIR

@@ -3,8 +3,7 @@
 Настоящий `~/.config/listik/` тесты не трогают: везде явные пути во временном каталоге
 или `LISTIK_ROUTES`. Файл `routes.json` из репозитория только читается: его структура
 проверяется по самому файлу, а зашитых таблиц маршрутов в `web/src` быть не должно —
-единственный источник данных для доски это `routes.json` через `GET /api/routes`
-(шаг 09, порция c).
+источник данных для доски после первичного ввоза — таблица `routes`.
 """
 from __future__ import annotations
 
@@ -17,6 +16,7 @@ import io
 import json
 import pathlib
 import re
+import sqlite3
 import subprocess
 import threading
 import unittest
@@ -25,6 +25,7 @@ from unittest import mock
 from listik import embed as embed_mod
 from listik import paths
 from listik import routes as routes_mod
+from listik import routes_store
 from listik import server
 from tests.helpers import TempDbTestCase
 
@@ -77,8 +78,8 @@ class RepoRoutesFileTests(unittest.TestCase):
     """Пункты 1–3 чек-листа: файл в репозитории, перенос данных, проверка.
 
     Сверки с `web/src` больше нет: зашитые таблицы маршрутов оттуда убраны
-    (шаг 09, порция c), единственный источник — сам `routes.json`. Здесь
-    проверяются его структура и отсутствие этих таблиц в исходниках доски.
+    (шаг 09, порция c). Здесь проверяются структура образца для ввоза и отсутствие
+    зашитых таблиц в исходниках доски.
     """
 
     def setUp(self) -> None:
@@ -348,38 +349,6 @@ class ValidateTests(unittest.TestCase):
     def test_harness_human(self) -> None:
         self.check_error(document({**direct_record(), "harness": "human"}), "routes[0].harness")
 
-    # -- strip -------------------------------------------------------------
-
-    def test_strip_both_provider_and_glyph(self) -> None:
-        strip = {"provider": "claude", "glyph": "gear", "label": "x"}
-        self.check_error(document({**pipeline_record(), "strip": strip}), "routes[0].strip")
-
-    def test_strip_neither_provider_nor_glyph(self) -> None:
-        self.check_error(document({**pipeline_record(), "strip": {"label": "x"}}),
-                         "routes[0].strip")
-
-    def test_strip_empty_object(self) -> None:
-        self.check_error(document({**pipeline_record(), "strip": {}}), "routes[0].strip.label")
-
-    def test_strip_glyph_not_in_icons_warns(self) -> None:
-        """Неизвестный глиф — предупреждение, а не ошибка файла (listik-uiza)."""
-        bad = {**pipeline_record(), "strip": {"glyph": "nosuchicon", "label": "x"}}
-        good = {**pipeline_record(), "key": "other",
-                "strip": {"glyph": "gear", "label": "y"}}
-        warnings: list[str] = []
-        normalized = routes_mod.validate(document(bad, good), warnings)
-        self.assertEqual(len(warnings), 1)
-        self.assertIn("routes[0].strip.glyph", warnings[0])
-        self.assertIn("'nosuchicon'", warnings[0])
-        self.assertEqual(normalized[0]["strip"],
-                         {"glyph": None, "label": "x", "glyph_error": warnings[0]})
-        self.assertEqual(normalized[1]["strip"], {"glyph": "gear", "label": "y"})
-
-    def test_strip_glyph_bad_format_still_error(self) -> None:
-        strip = {"glyph": "Bad Glyph", "label": "x"}
-        self.check_error(document({**pipeline_record(), "strip": strip}),
-                         "routes[0].strip.glyph")
-
     # -- лишние поля --------------------------------------------------------
 
     def test_extra_field_typo(self) -> None:
@@ -420,24 +389,30 @@ class ValidateTests(unittest.TestCase):
                                    "routes[0].command[0]")
         self.assertIn("{taskid}", message)
 
+    def test_title_is_unknown_and_lists_all_six_placeholders(self) -> None:
+        message = self.check_error(document({**pipeline_record(), "command": ["{title}"]}),
+                                   "routes[0].command[0]", "{title}")
+        self.assertIn("неизвестная подстановка", message)
+        self.assertEqual(routes_mod.PLACEHOLDERS,
+                         ("task_id", "project", "route", "cwd", "worktree", "branch"))
+        for name in routes_mod.PLACEHOLDERS:
+            self.assertIn("{" + name + "}", message)
+
     # -- положительные случаи -----------------------------------------------
 
     def test_valid_command_with_placeholders(self) -> None:
         record = {**pipeline_record(),
-                  "command": ["run", "{task_id}", "--p={project}", "{route}", "{cwd}", "{title}"]}
+                  "command": ["run", "{task_id}", "--p={project}", "{route}", "{cwd}",
+                              "{worktree}", "{branch}"]}
         normalized = routes_mod.validate(document(record))
-        self.assertEqual(normalized[0]["command"],
-                         ["run", "{task_id}", "--p={project}", "{route}", "{cwd}", "{title}"])
+        self.assertEqual(normalized[0]["command"], record["command"])
 
-    def test_valid_strip_with_known_glyph(self) -> None:
-        record = {**pipeline_record(), "strip": {"glyph": "gear", "label": "x"}}
-        normalized = routes_mod.validate(document(record))
-        self.assertEqual(normalized[0]["strip"], {"glyph": "gear", "label": "x"})
-
-    def test_valid_strip_with_provider(self) -> None:
-        record = {**pipeline_record(), "strip": {"provider": "claude", "label": "Opus"}}
-        normalized = routes_mod.validate(document(record))
-        self.assertEqual(normalized[0]["strip"], {"provider": "claude", "label": "Opus"})
+    def test_legacy_strip_is_ignored_without_validation(self) -> None:
+        record = {**pipeline_record(), "strip": {"glyph": "Invalid Glyph", "label": 123}}
+        warnings: list[str] = []
+        normalized = routes_mod.validate(document(record), warnings)
+        self.assertNotIn("strip", normalized[0])
+        self.assertEqual(warnings, [])
 
     def test_valid_direct_record(self) -> None:
         normalized = routes_mod.validate(document(direct_record()))
@@ -462,36 +437,18 @@ class ValidateTests(unittest.TestCase):
         self.assertEqual(list(normalized[0]["roles"]), ["spec", "critic", "impl", "judge"])
 
 
-class IconNamesTests(unittest.TestCase):
-    """Пункт 6 чек-листа: имена иконок и запасное правило для glyph."""
-
-    def test_real_icons_file(self) -> None:
-        names = routes_mod.icon_names(ICONS_TS)
-        self.assertTrue(names)
-        # `route-xhigh` — имя с дефисом: в icons.ts оно записано в кавычках,
-        # но верхним уровнем объекта, и тоже должно читаться.
-        for expected in ("gear", "warning", "check", "route-xhigh"):
-            self.assertIn(expected, names)
-
-    def test_missing_file_gives_empty_set(self) -> None:
-        self.assertEqual(routes_mod.icon_names(REPO_DIR / "нет-такого-файла.ts"), set())
-
-    def test_glyph_falls_back_to_format_without_icons_file(self) -> None:
-        record = {**pipeline_record(), "strip": {"glyph": "any-name-42", "label": "x"}}
-        with mock.patch.object(routes_mod, "ICONS_PATH", REPO_DIR / "нет-такого-файла.ts"):
-            normalized = routes_mod.validate(document(record))
-            self.assertEqual(normalized[0]["strip"]["glyph"], "any-name-42")
-            bad = {**pipeline_record(), "strip": {"glyph": "Not-A-Glyph", "label": "x"}}
-            with self.assertRaises(routes_mod.RoutesError) as ctx:
-                routes_mod.validate(document(bad))
-            self.assertIn("routes[0].strip.glyph", str(ctx.exception))
+def board_icon_names() -> set[str]:
+    """Ключи объекта icons.ts для проверки справочника доски, не валидатор бэкенда."""
+    text = ICONS_TS.read_text(encoding="utf-8")
+    return {quoted or bare for quoted, bare in
+            re.findall(r"^\s*(?:'([a-z0-9-]+)'|([a-z][a-z0-9-]*)):\s*\{", text, re.M)}
 
 
 class RouteIconDictionaryTests(unittest.TestCase):
     """Уровни `icon` и их иконки: сервер и справочник доски не разъезжаются.
 
-    Проверка читает `web/src/lib/dictionaries.ts` так же, как `icon_names` читает
-    `icons.ts`: без сборки доски. Уровень, который сервер разрешает в `routes.json`,
+    Проверка читает `web/src/lib/dictionaries.ts` и `icons.ts` без сборки доски.
+    Уровень, который сервер разрешает в `routes.json`,
     но которого нет в `ROUTE_ICONS`, доска молча показала бы без иконки.
     """
 
@@ -507,7 +464,7 @@ class RouteIconDictionaryTests(unittest.TestCase):
         glyphs = ROUTE_GLYPH_RE.findall(self.block)
         self.assertEqual(len(glyphs), len(routes_mod.ROUTE_ICONS))
         self.assertEqual(len(set(glyphs)), len(glyphs))
-        known = routes_mod.icon_names(ICONS_TS)
+        known = board_icon_names()
         self.assertTrue(known)
         for glyph in glyphs:
             self.assertIn(glyph, known)
@@ -537,7 +494,7 @@ class RouteIconUnknownBoardTests(unittest.TestCase):
     def test_marker_glyph_exists_in_icons_ts(self) -> None:
         glyphs = ROUTE_GLYPH_RE.findall(self.unknown_block)
         self.assertEqual(len(glyphs), 1, self.unknown_block)
-        self.assertIn(glyphs[0], routes_mod.icon_names(ICONS_TS))
+        self.assertIn(glyphs[0], board_icon_names())
 
     def test_marker_is_not_a_route_level(self) -> None:
         """Крестик не уровень маршрута: в `ROUTE_ICONS` его быть не должно."""
@@ -562,44 +519,13 @@ class RouteIconUnknownBoardTests(unittest.TestCase):
         self.assertIn("routesWarnings", self.modal)
 
 
-class CopyAndStateTests(TempDbTestCase):
-    """Пункты 7–11 чек-листа: копия, load, состояние модуля."""
+class FileLoadTests(TempDbTestCase):
+    """Проверка и разбор файла только для ввоза, без состояния процесса."""
 
     def setUp(self) -> None:
         super().setUp()
-        self._saved_state = routes_mod._state
-        routes_mod._state = None
-        self.addCleanup(lambda: setattr(routes_mod, "_state", self._saved_state))
         self.source = self.tmp_path / "source-routes.json"
-        self.target = self.tmp_path / "runtime" / "routes.json"
         self.source.write_text(ROUTES_JSON.read_text(encoding="utf-8"), encoding="utf-8")
-
-    # -- ensure_runtime_copy -------------------------------------------------
-
-    def test_copy_creates_target_when_missing(self) -> None:
-        self.assertTrue(routes_mod.ensure_runtime_copy(self.source, self.target))
-        self.assertEqual(self.target.read_text(encoding="utf-8"),
-                         self.source.read_text(encoding="utf-8"))
-
-    def test_copy_does_not_touch_existing_target(self) -> None:
-        self.target.parent.mkdir(parents=True)
-        self.target.write_text("не трогать", encoding="utf-8")
-        self.assertFalse(routes_mod.ensure_runtime_copy(self.source, self.target))
-        self.assertEqual(self.target.read_text(encoding="utf-8"), "не трогать")
-
-    def test_copy_missing_source_raises_file_not_found(self) -> None:
-        with self.assertRaises(FileNotFoundError):
-            routes_mod.ensure_runtime_copy(self.tmp_path / "нет.json", self.target)
-
-    # -- current() -----------------------------------------------------------
-
-    def test_current_before_any_load(self) -> None:
-        state = routes_mod.current()
-        self.assertFalse(state.ok)
-        self.assertEqual(state.error, "routes.json не загружен")
-        self.assertEqual(state.routes, [])
-        self.assertEqual(state.by_key, {})
-        self.assertEqual(state.warnings, [])
 
     # -- load ----------------------------------------------------------------
 
@@ -652,19 +578,6 @@ class CopyAndStateTests(TempDbTestCase):
                         encoding="utf-8")
         return path
 
-    def test_load_unknown_strip_glyph_warns_but_keeps_the_file(self) -> None:
-        """listik-uiza: опечатка в `strip.glyph` не выключает автостарт."""
-        bad = {**pipeline_record(), "strip": {"glyph": "nosuchicon", "label": "x"}}
-        path = self._write_routes([bad, direct_record()])
-        with contextlib.redirect_stderr(io.StringIO()) as err:
-            state = routes_mod.load(path)
-        self.assertTrue(state.ok)
-        self.assertEqual(len(state.routes), 2)
-        self.assertEqual(len(state.warnings), 1)
-        self.assertIn("routes[0].strip.glyph", state.warnings[0])
-        self.assertIsNone(state.routes[0]["strip"]["glyph"])
-        self.assertIn("routes[0].strip.glyph", err.getvalue())
-
     def test_load_unknown_icon_warns_but_keeps_the_file(self) -> None:
         """Опечатка в `icon` — предупреждение, а не ошибка файла (приёмка 1).
 
@@ -691,46 +604,32 @@ class CopyAndStateTests(TempDbTestCase):
         self.assertNotIn("нужен ты", text)
         self.assertNotIn("автостарт выключен", text)
 
-    def test_load_does_not_change_current(self) -> None:
-        routes_mod.init_at_startup(source=self.source, target=self.target)
-        before = routes_mod.current()
-        self.target.write_text("{", encoding="utf-8")
+    def test_file_change_after_import_does_not_change_state(self) -> None:
+        routes_store.import_file(self.conn, self.source)
+        self.source.write_text("{ битый", encoding="utf-8")
+        current = routes_mod.state(self.conn)
+        self.assertTrue(current.ok)
+        self.assertEqual(len(current.routes), 13)
+        self.assertEqual(current.path, str(paths.DB_PATH))
+        self.assertEqual(current.warnings, [])
         with contextlib.redirect_stderr(io.StringIO()):
-            state = routes_mod.load(self.target)
-        self.assertFalse(state.ok)
-        self.assertIs(routes_mod.current(), before)
-        self.assertTrue(routes_mod.current().ok)
+            self.assertTrue(routes_store.ensure_imported(self.conn).get("skipped"))
+        self.assertEqual(len(routes_mod.state(self.conn).routes), 13)
 
-    # -- init_at_startup -----------------------------------------------------
+    def test_database_update_is_visible_immediately(self) -> None:
+        routes_store.import_file(self.conn, self.source)
+        self.conn.execute("UPDATE routes SET title = ? WHERE key = 'dsh'", ("Проверка",))
+        self.conn.commit()
+        self.assertEqual(routes_mod.state(self.conn).by_key["dsh"]["title"], "Проверка")
 
-    def test_init_copies_and_loads(self) -> None:
-        state = routes_mod.init_at_startup(source=self.source, target=self.target)
-        self.assertTrue(state.ok)
-        self.assertTrue(self.target.exists())
-        self.assertIs(routes_mod.current(), state)
-        self.assertEqual(len(state.routes), 13)
-        self.assertEqual(state.path, str(self.target))
-
-    def test_init_copy_failure_is_not_raised(self) -> None:
-        blocker = self.tmp_path / "blocker"
-        blocker.write_text("я файл, а не каталог", encoding="utf-8")
-        target = blocker / "routes.json"
-        with contextlib.redirect_stderr(io.StringIO()) as err:
-            state = routes_mod.init_at_startup(source=self.source, target=target)
-        self.assertFalse(state.ok)
-        self.assertIn("копирование routes.json", state.error)
-        self.assertIn("нужен ты", err.getvalue())
-        self.assertIs(routes_mod.current(), state)
-        self.assertEqual(state.routes, [])
-
-    def test_file_change_after_init_is_ignored(self) -> None:
-        routes_mod.init_at_startup(source=self.source, target=self.target)
-        before = routes_mod.current()
-        keys_before = [r["key"] for r in before.routes]
-        self.target.write_text("{ битый", encoding="utf-8")
-        self.assertIs(routes_mod.current(), before)
-        self.assertEqual([r["key"] for r in routes_mod.current().routes], keys_before)
-        self.assertEqual(len(routes_mod.current().routes), 13)
+    def test_database_error_is_reported(self) -> None:
+        with mock.patch.object(routes_store, "list_routes",
+                               side_effect=sqlite3.DatabaseError("база недоступна")):
+            result = routes_mod.state(self.conn)
+        self.assertFalse(result.ok)
+        self.assertIn("база недоступна", result.error)
+        self.assertEqual(result.routes, [])
+        self.assertEqual(result.path, str(paths.DB_PATH))
 
 
 class RoutesApiTests(TempDbTestCase):
@@ -740,10 +639,6 @@ class RoutesApiTests(TempDbTestCase):
 
     def setUp(self) -> None:
         super().setUp()
-        self._saved_state = routes_mod._state
-        routes_mod._state = None
-        self.addCleanup(lambda: setattr(routes_mod, "_state", self._saved_state))
-
         self._config_path = self.tmp_path / "config.toml"
         self._config_path.write_text(f'[auth]\ntoken = "{self.TOKEN}"\n', encoding="utf-8")
         self._config_patch = mock.patch.object(paths, "CONFIG_PATH", self._config_path)
@@ -775,13 +670,7 @@ class RoutesApiTests(TempDbTestCase):
             conn.close()
 
     def _init_from_repo(self):
-        return routes_mod.init_at_startup(source=ROUTES_JSON, target=self.target)
-
-    def _blocked_target(self) -> pathlib.Path:
-        """Путь, родитель которого — файл: копирование обязано упасть."""
-        blocker = self.tmp_path / "blocker-file"
-        blocker.write_text("я файл, а не каталог", encoding="utf-8")
-        return blocker / "routes.json"
+        return routes_store.import_file(self.conn, ROUTES_JSON)
 
     # -- handle() ------------------------------------------------------------
 
@@ -791,10 +680,11 @@ class RoutesApiTests(TempDbTestCase):
         self.assertEqual(status, 200)
         self.assertTrue(data["ok"])
         self.assertIsNone(data["error"])
-        self.assertEqual(data["path"], str(self.target))
+        self.assertEqual(data["path"], str(paths.DB_PATH))
         self.assertEqual(len(data["routes"]), 13)
         for record in data["routes"]:
             self.assertNotIn("command", record)
+            self.assertNotIn("strip", record)
             self.assertIn("icon", record)
         icons = {record["key"]: record["icon"] for record in data["routes"]}
         self.assertEqual(icons["xhigh-pipeline"], "xhigh")
@@ -802,32 +692,27 @@ class RoutesApiTests(TempDbTestCase):
         self.assertEqual(icons["dsh"], "direct")
         self.assertIsNone(icons["feature-pipeline"])
 
-    def test_routes_with_bad_icon_warn_and_keep_all_records(self) -> None:
-        """Приёмка 1: неизвестный `icon` — предупреждение, фолбэк и живые остальные.
-
-        Проверяется полный путь: файл рабочей копии → `init_at_startup` → ответ
-        `GET /api/routes` (`warnings[]`, `icon_error` у записи, `icon` по ключу).
-        """
+    def test_routes_with_bad_icon_import_fallback_and_keep_all_records(self) -> None:
+        """Предупреждение при ввозе; база хранит фолбэк, без файловых предупреждений."""
         bad = {**pipeline_record(), "key": "xhigh-pipeline", "icon": "xhihg"}
         plain = {**pipeline_record(), "key": "feature-pipeline"}
         self.target.parent.mkdir(parents=True)
         self.target.write_text(json.dumps({"version": 1, "routes": [bad, plain, direct_record()]},
                                           ensure_ascii=False), encoding="utf-8")
         with contextlib.redirect_stderr(io.StringIO()) as err:
-            state = routes_mod.init_at_startup(source=ROUTES_JSON, target=self.target)
-        self.assertTrue(state.ok)
+            report = routes_store.import_file(self.conn, self.target)
+        self.assertEqual(report["imported"], 3)
         self.assertIn("предупреждение", err.getvalue())
         status, payload = self._get("/api/routes", token=self.TOKEN)
         self.assertEqual(status, 200)
         data = payload["data"]
         self.assertTrue(data["ok"])
         self.assertIsNone(data["error"])
-        self.assertEqual(len(data["warnings"]), 1)
-        self.assertIn("routes[0].icon", data["warnings"][0])
+        self.assertEqual(data["warnings"], [])
         records = {record["key"]: record for record in data["routes"]}
         self.assertEqual(sorted(records), ["dsh", "feature-pipeline", "xhigh-pipeline"])
         self.assertEqual(records["xhigh-pipeline"]["icon"], "xhigh")
-        self.assertEqual(records["xhigh-pipeline"]["icon_error"], data["warnings"][0])
+        self.assertNotIn("icon_error", records["xhigh-pipeline"])
         self.assertIsNone(records["feature-pipeline"]["icon"])
         self.assertNotIn("icon_error", records["feature-pipeline"])
         self.assertEqual(records["dsh"]["icon"], "direct")
@@ -850,20 +735,19 @@ class RoutesApiTests(TempDbTestCase):
         self.target.parent.mkdir(parents=True)
         self.target.write_text(json.dumps({"version": 1, "routes": records}, ensure_ascii=False),
                                encoding="utf-8")
-        state = routes_mod.init_at_startup(source=ROUTES_JSON, target=self.target)
-        self.assertTrue(state.ok)
+        routes_store.import_file(self.conn, self.target)
         status, payload = self._get("/api/routes", token=self.TOKEN)
         self.assertEqual(status, 200)
         icons = {record["key"]: record["icon"] for record in payload["data"]["routes"]}
         self.assertEqual(icons, {"low-pipeline": "low", "feature-pipeline": None, "dsh": "direct"})
 
-    def test_handle_routes_reports_error_state(self) -> None:
-        with contextlib.redirect_stderr(io.StringIO()):
-            routes_mod.init_at_startup(source=ROUTES_JSON, target=self._blocked_target())
-        status, data = server.handle("GET", "/api/routes", {}, {}, authed=True)
+    def test_handle_routes_reports_database_error(self) -> None:
+        with mock.patch.object(routes_store, "list_routes",
+                               side_effect=sqlite3.DatabaseError("ошибка чтения")):
+            status, data = server.handle("GET", "/api/routes", {}, {}, authed=True)
         self.assertEqual(status, 200)
         self.assertFalse(data["ok"])
-        self.assertTrue(data["error"])
+        self.assertIn("ошибка чтения", data["error"])
         self.assertEqual(data["routes"], [])
 
     # -- живой сервер --------------------------------------------------------
@@ -890,8 +774,7 @@ class RoutesApiTests(TempDbTestCase):
         self.target.parent.mkdir(parents=True)
         self.target.write_text(json.dumps({"version": 1, "routes": [hidden, direct_record()]},
                                           ensure_ascii=False), encoding="utf-8")
-        state = routes_mod.init_at_startup(source=ROUTES_JSON, target=self.target)
-        self.assertTrue(state.ok)
+        routes_store.import_file(self.conn, self.target)
         status, payload = self._get("/api/routes", token=self.TOKEN)
         self.assertEqual(status, 200)
         records = payload["data"]["routes"]
@@ -899,15 +782,24 @@ class RoutesApiTests(TempDbTestCase):
         self.assertFalse(records[0]["visible"])
         self.assertNotIn("command", records[0])
 
-    def test_file_change_after_startup_is_not_reflected(self) -> None:
+    def test_file_change_after_import_is_not_reflected(self) -> None:
         self._init_from_repo()
-        before = routes_mod.current()
-        self.target.write_text("{ битый", encoding="utf-8")
-        self.assertIs(routes_mod.current(), before)
-        status, payload = self._get("/api/routes", token=self.TOKEN)
+        self.target.parent.mkdir(parents=True, exist_ok=True)
+        with mock.patch.object(routes_mod, "RUNTIME_PATH", self.target):
+            self.target.write_text("{ битый", encoding="utf-8")
+            status, payload = self._get("/api/routes", token=self.TOKEN)
         self.assertEqual(status, 200)
         self.assertTrue(payload["data"]["ok"])
         self.assertEqual(len(payload["data"]["routes"]), 13)
+
+    def test_database_change_reaches_live_http_without_restart(self) -> None:
+        self._init_from_repo()
+        self.conn.execute("UPDATE routes SET title = ? WHERE key = ?", ("Проверка", "dsh"))
+        self.conn.commit()
+        status, payload = self._get("/api/routes", token=self.TOKEN)
+        self.assertEqual(status, 200)
+        self.assertEqual(next(r for r in payload["data"]["routes"] if r["key"] == "dsh")
+                         ["title"], "Проверка")
 
     def test_health_reports_routes(self) -> None:
         self._init_from_repo()
@@ -917,18 +809,18 @@ class RoutesApiTests(TempDbTestCase):
         state = payload["data"]["routes"]
         self.assertTrue(state["ok"])
         self.assertIsNone(state["error"])
-        self.assertEqual(state["path"], str(self.target))
+        self.assertEqual(state["path"], str(paths.DB_PATH))
         self.assertEqual(state["count"], 13)
 
-    def test_health_error_state_is_reported(self) -> None:
-        with contextlib.redirect_stderr(io.StringIO()):
-            routes_mod.init_at_startup(source=ROUTES_JSON, target=self._blocked_target())
-        with mock.patch.object(embed_mod, "health", return_value={"ok": False, "model": "тест"}):
+    def test_health_database_error_is_reported(self) -> None:
+        with mock.patch.object(routes_store, "list_routes",
+                               side_effect=sqlite3.DatabaseError("ошибка чтения")), \
+             mock.patch.object(embed_mod, "health", return_value={"ok": False, "model": "тест"}):
             status, payload = self._get("/api/health", token=self.TOKEN)
         self.assertEqual(status, 200)
         state = payload["data"]["routes"]
         self.assertFalse(state["ok"])
-        self.assertTrue(state["error"])
+        self.assertIn("ошибка чтения", state["error"])
         self.assertEqual(state["count"], 0)
 
     def test_health_without_token_has_no_routes(self) -> None:
@@ -973,10 +865,10 @@ class StatusCommandTests(TempDbTestCase):
             "status": "ok", "authed": True, "counts": {"tasks": 0, "comments": 0,
                                                        "events": 0, "embeddings": 0},
             "db": "/tmp/listik.db", "embed": {"model": "bge-m3", "ok": False},
-            "routes": {"ok": True, "error": None, "path": "/tmp/r.json", "count": 11},
+            "routes": {"ok": True, "error": None, "path": "/tmp/listik.db", "count": 11},
         })
         self.assertEqual(code, 0)
-        self.assertIn("маршруты: 11 из /tmp/r.json", text)
+        self.assertIn("маршруты: 11 из /tmp/listik.db", text)
 
     def test_error_line(self) -> None:
         code, text = self._run_status({

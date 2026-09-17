@@ -337,7 +337,7 @@ class ServeOrderTests(_TempDirTests):
         with mock.patch.object(server, "get_conn") as get_conn, \
              mock.patch.object(server.launcher_mod, "recover") as recover, \
              mock.patch.object(server, "start_embed_worker") as embed, \
-             mock.patch.object(server.routes_mod, "init_at_startup") as routes, \
+             mock.patch.object(server.routes_store, "ensure_imported") as routes, \
              mock.patch.object(server, "daemonize") as daemonize, \
              contextlib.redirect_stdout(io.StringIO()):
             with self.assertRaises(SystemExit):

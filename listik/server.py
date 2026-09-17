@@ -591,7 +591,7 @@ def handle(method: str, path: str, query: dict, body: dict, authed: bool = False
         # Проба живости отдаётся без токена (по ней CLI понимает, поднят ли сервер),
         # поэтому подробности о базе — только авторизованному.
         if authed:
-            routes_state = routes_mod.current()
+            routes_state = routes_mod.state(conn)
             data.update({
                 "db": str(paths.DB_PATH),
                 "runtime": runtime_info(),
@@ -607,11 +607,10 @@ def handle(method: str, path: str, query: dict, body: dict, authed: bool = False
         return 200, data
 
     if path == "/api/routes":
-        # Данные — из состояния, загруженного один раз при старте: правка файла на
-        # ходу сервер не перечитывает. `command` наружу не отдаём — это argv запуска.
-        # `warnings` — замечания, которые файл не отменяют (неизвестный `icon` записи):
-        # у такой записи посчитан фолбэк по ключу и есть поле `icon_error`.
-        state = routes_mod.current()
+        # Данные — из таблицы `routes`: правка записи в базе видна сразу, перезапуск
+        # сервера не нужен. `command` наружу не отдаём — это argv запуска.
+        # Предупреждения относятся к проверке файла при ввозе, у базы их нет.
+        state = routes_mod.state(conn)
         return 200, {
             "ok": state.ok,
             "error": state.error,
@@ -967,10 +966,11 @@ def handle(method: str, path: str, query: dict, body: dict, authed: bool = False
 
     if path == "/api/assistant/suggest" and method == "POST":
         # Помощник DeepSeek: ключ читается из config.toml на сервере и в браузер
-        # не уходит. Маршрут предлагается только из записей routes.json.
+        # не уходит. Маршрут предлагается только из записей таблицы `routes`.
         try:
             return 200, assistant_mod.suggest(
-                body.get("field"), body.get("text", ""), body.get("context"))
+                body.get("field"), body.get("text", ""), body.get("context"),
+                routes=routes_store.list_routes(conn))
         except assistant_mod.AssistantError as exc:
             raise ApiError(exc.status, exc.message, exc.code) from exc
 
@@ -992,12 +992,12 @@ def handle(method: str, path: str, query: dict, body: dict, authed: bool = False
             raise ApiError(exc.status, exc.message, exc.code) from exc
 
     if path == "/api/assistant/draft" and method == "POST":
-        # Черновик задачи из рассказа: проекты сервер берёт сам из базы
-        # (неархивные), маршруты — из routes.json. Ничего не создаётся:
-        # ответ — только черновик для формы.
+        # Черновик задачи из рассказа: проекты и маршруты сервер берёт сам из базы.
+        # Ничего не создаётся: ответ — только черновик для формы.
         try:
             return 200, voice_mod.draft(body.get("text", ""),
-                                        projects=store.list_projects(conn))
+                                        projects=store.list_projects(conn),
+                                        routes=routes_store.list_routes(conn))
         except assistant_mod.AssistantError as exc:
             raise ApiError(exc.status, exc.message, exc.code) from exc
 
@@ -1489,8 +1489,7 @@ def serve(host: str | None = None, port: int | None = None, quiet: bool = False,
         _exit_on_sigterm()
         write_pid()
         conn = get_conn()
-        # После daemonize: сообщение об ошибке routes.json должно попасть в listik.log.
-        routes_mod.init_at_startup()
+        # После daemonize: сообщение о неудачном ввозе маршрутов должно попасть в listik.log.
         routes_store.ensure_imported(conn)
         launcher_mod.recover(conn, notify=publish)
         # Надзор за файлами базы — до фоновой индексации: подмену нужно заметить,
@@ -1512,7 +1511,6 @@ def serve(host: str | None = None, port: int | None = None, quiet: bool = False,
     # Порт занимаем первым: при занятом порте не трогаем launcher и не заводим потоки.
     httpd = bind_or_explain(host, port, quiet=quiet)
     conn = get_conn()
-    routes_mod.init_at_startup()
     routes_store.ensure_imported(conn)
     launcher_mod.recover(conn, notify=publish)
     start_db_watch()

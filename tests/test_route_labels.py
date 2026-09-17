@@ -6,15 +6,17 @@
 (`labels_with_route` при создании, `labels_after_route_change` при смене маршрута);
 доска метки не считает — только показывает пришедшие с сервера.
 
-Тесты герметичны: маршруты — временный файл (`LISTIK_ROUTES` в подпроцессах, явный путь
-в остальных), база — временная (`TempDbTestCase`), рабочая копия `~/.config/listik/` не
-читается.
+Тесты герметичны: маршруты ввезены во временную базу (`TempDbTestCase`),
+рабочая копия `~/.config/listik/` не читается.
 """
 from __future__ import annotations
 
+import contextlib
+import io
 import json
 import os
 import pathlib
+import sqlite3
 import subprocess
 import sys
 import unittest
@@ -22,6 +24,7 @@ from unittest import mock
 
 from listik import mcp
 from listik import routes as routes_mod
+from listik import routes_store
 from listik import server, store
 from tests.helpers import TempDbTestCase
 
@@ -65,41 +68,35 @@ def write_routes(path: pathlib.Path) -> pathlib.Path:
 
 
 class RoutesStateMixin:
-    """Состояние маршрутов для теста: временный файл вместо рабочей копии.
-
-    Состояние кладём в `routes._state` — ровно так его видит сервер после
-    `init_at_startup`; подпроцессы CLI читают тот же файл через `LISTIK_ROUTES`.
-    """
+    """Временный файл ввозится в таблицу временной базы."""
 
     def setUp(self) -> None:
         super().setUp()
-        self._saved_state = routes_mod._state
-        self.addCleanup(lambda: setattr(routes_mod, "_state", self._saved_state))
         self.routes_path = write_routes(self.tmp_path / "routes.json")
-        state = routes_mod.load(self.routes_path)
-        self.assertTrue(state.ok, state.error)
-        routes_mod._state = state
+        report = routes_store.import_file(self.conn, self.routes_path)
+        self.assertEqual(report["imported"], 2)
 
 
 class LabelRuleTests(RoutesStateMixin, TempDbTestCase):
     """`routes.labels_for` — то самое одно место, где правило и живёт."""
 
     def test_pipeline_gets_claude_and_its_key(self) -> None:
-        self.assertEqual(routes_mod.labels_for(PIPELINE), PIPELINE_LABELS)
+        self.assertEqual(routes_mod.labels_for(self.conn, PIPELINE), PIPELINE_LABELS)
 
     def test_direct_gets_its_harness_and_direct_process(self) -> None:
-        self.assertEqual(routes_mod.labels_for(DIRECT), DIRECT_LABELS)
+        self.assertEqual(routes_mod.labels_for(self.conn, DIRECT), DIRECT_LABELS)
 
     def test_empty_unknown_or_whitespace_key_gets_nothing(self) -> None:
         for key in (None, "", "   ", "нет-такого"):
             with self.subTest(key=key):
-                self.assertEqual(routes_mod.labels_for(key), [])
+                self.assertEqual(routes_mod.labels_for(self.conn, key), [])
 
-    def test_unloaded_state_gets_nothing(self) -> None:
-        # У сервера состояние загружено при старте; если его нет (битый файл), метки
-        # не выдумываем — иначе карточка получила бы метки несуществующего маршрута.
-        routes_mod._state = None
-        self.assertEqual(routes_mod.labels_for(PIPELINE), [])
+    def test_database_error_gets_nothing_and_reports_reason(self) -> None:
+        with mock.patch.object(routes_store, "get_route",
+                               side_effect=sqlite3.DatabaseError("база недоступна")), \
+             contextlib.redirect_stderr(io.StringIO()) as err:
+            self.assertEqual(routes_mod.labels_for(self.conn, PIPELINE), [])
+        self.assertIn("база недоступна", err.getvalue())
 
 
 class StoreLabelTests(RoutesStateMixin, TempDbTestCase):
@@ -152,7 +149,7 @@ class StoreLabelTests(RoutesStateMixin, TempDbTestCase):
         self.assertEqual(updated["labels"], ["frontend"])
 
     def test_unknown_route_on_change_keeps_labels(self) -> None:
-        # Маршрута нет в таблице (устаревший или битый routes.json) — стирать метки
+        # Маршрута нет в таблице — стирать метки
         # нельзя: они единственное, что осталось от прежнего маршрута.
         task = self.task(route=PIPELINE, labels=["frontend"])
         updated = store.update_task(self.conn, task["id"], route="нет-такого")
@@ -168,12 +165,7 @@ class StoreLabelTests(RoutesStateMixin, TempDbTestCase):
         self.assertIs(out.get("unchanged"), True)
         self.assertEqual(out["labels"], ["frontend"])
 
-    def test_server_startup_state_labels_the_card(self) -> None:
-        # Путь сервера: `init_at_startup` читает рабочую копию, дальше метки те же.
-        routes_mod._state = None
-        state = routes_mod.init_at_startup(source=self.routes_path,
-                                           target=self.tmp_path / "runtime" / "routes.json")
-        self.assertTrue(state.ok, state.error)
+    def test_imported_route_labels_the_card(self) -> None:
         self.assertEqual(self.task(route=PIPELINE)["labels"], PIPELINE_LABELS)
 
     def test_labels_passed_in_the_same_call_are_the_base(self) -> None:
@@ -247,12 +239,11 @@ class McpLabelTests(RoutesStateMixin, TempDbTestCase):
 
 
 class StdioMcpLabelTests(RoutesStateMixin, TempDbTestCase):
-    """Тот же MCP, но настоящим stdio-процессом: маршруты он читает сам."""
+    """Тот же MCP, но настоящим stdio-процессом: маршруты берёт из базы."""
 
     def test_stdio_create_with_route_labels_the_card(self) -> None:
         env = {**os.environ, "LISTIK_DB": str(self.db_path),
-               "LISTIK_LOG": str(self.tmp_path / "mcp.log"),
-               "LISTIK_ROUTES": str(self.routes_path)}
+               "LISTIK_LOG": str(self.tmp_path / "mcp.log")}
         request = {"jsonrpc": "2.0", "id": 1, "method": "tools/call",
                    "params": {"name": "listik_create",
                               "arguments": {"title": "проба", "project": "demo",
@@ -273,8 +264,7 @@ class CliLabelTests(RoutesStateMixin, TempDbTestCase):
 
     def _run(self, *args) -> subprocess.CompletedProcess:
         env = {**os.environ, "LISTIK_DB": str(self.db_path),
-               "LISTIK_LOG": str(self.tmp_path / "cli.log"),
-               "LISTIK_ROUTES": str(self.routes_path)}
+               "LISTIK_LOG": str(self.tmp_path / "cli.log")}
         return subprocess.run([sys.executable, str(LISTIK_BIN), "--local", *args],
                               capture_output=True, text=True, env=env,
                               cwd=str(REPO_DIR), timeout=120)

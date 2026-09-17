@@ -23,7 +23,7 @@ PYTHON = sys.executable
 
 #: Пути, которые обязаны считаться от каталога данных, и пути, которые остаются от кода.
 DATA_KEYS = ("DB_PATH", "CONFIG_PATH", "LOG_PATH", "PID_PATH", "LOGS_DIR")
-CODE_KEYS = ("WEB_DIR", "SOURCE_PATH", "ICONS_PATH")
+CODE_KEYS = ("WEB_DIR", "SOURCE_PATH")
 
 PATHS_SCRIPT = """
 import json
@@ -40,7 +40,6 @@ print(json.dumps({
     "LOGS_DIR": str(paths.LOGS_DIR),
     "WEB_DIR": str(paths.WEB_DIR),
     "SOURCE_PATH": str(routes.SOURCE_PATH),
-    "ICONS_PATH": str(routes.ICONS_PATH),
     "RUNTIME_PATH": str(routes.RUNTIME_PATH),
     "pid_file": str(server.pid_file()),
     "code_dir": info["code_dir"],
@@ -56,7 +55,7 @@ LAUNCHER_SCRIPT = """
 import json
 import sys
 from pathlib import Path
-from listik import db, launcher, paths, routes, store
+from listik import db, launcher, paths, routes_store, store
 
 tmp = Path(sys.argv[1])
 captured = {}
@@ -74,10 +73,10 @@ source.write_text(json.dumps({"version": 1, "routes": [
     {"key": "probe", "kind": "direct", "harness": "dsh", "title": "проба",
      "hint": "", "visible": True, "command": ["/bin/true"]}]}, ensure_ascii=False),
     encoding="utf-8")
-routes.init_at_startup(source=source, target=tmp / "runtime" / "routes.json")
 work = tmp / "work"
 work.mkdir(exist_ok=True)
 conn = db.init(paths.DB_PATH)
+routes_store.import_file(conn, source)
 store.upsert_project(conn, "probe", title="probe", path=str(work))
 task = store.create_task(conn, title="проба", project="probe", route="probe")
 launcher.start(conn, task["id"])
@@ -204,7 +203,6 @@ class DataDirPathsTests(unittest.TestCase):
         self.assertEqual(data["ROOT_DIR"], self.repo)
         self.assertEqual(data["WEB_DIR"], str(REPO_DIR / "web"))
         self.assertEqual(data["SOURCE_PATH"], str(REPO_DIR / "routes.json"))
-        self.assertEqual(data["ICONS_PATH"], str(REPO_DIR / "web" / "src" / "lib" / "icons.ts"))
         self.assertEqual(data["code_dir"], self.repo)
         self.assertEqual(data["data_dir"], str(home))
         self.assertEqual(data["runtime_keys"],

@@ -36,7 +36,6 @@ import urllib.error
 import urllib.request
 
 from . import errors as errors_mod
-from . import routes as routes_mod
 from . import util
 
 DEFAULT_BASE_URL = "https://api.deepseek.com"
@@ -185,13 +184,12 @@ def _clean_context(context) -> dict:
 
 
 def route_candidates(routes: list[dict] | None = None) -> list[dict]:
-    """Видимые записи `routes.json` в виде, который уходит модели.
+    """Видимые записи маршрутов в виде, который уходит модели.
 
-    `routes=None` — текущее состояние, загруженное сервером при старте
-    (`routes.current()`); скрытые записи не предлагаются.
+    `routes` — записи из базы (`routes_store.list_routes`); их передаёт вызывающий
+    (сервер — из своего соединения). `routes=None` — пустой список: скрытые записи
+    не предлагаются.
     """
-    if routes is None:
-        routes = routes_mod.current().routes
     out: list[dict] = []
     for record in routes or []:
         if not isinstance(record, dict) or not record.get("visible", False):
@@ -376,8 +374,8 @@ def suggest(field, text: str = "", context: dict | None = None, *,
             opener=None, timeout: float = TIMEOUT) -> dict:
     """Спросить DeepSeek про одно поле формы. Возвращает нормализованное предложение.
 
-    `routes` — записи `routes.json` (по умолчанию текущее состояние сервера);
-    модель выбирает маршрут только из них, чужой ключ отбрасывается.
+    `routes` — записи маршрутов из базы (их передаёт вызывающий); модель выбирает
+    маршрут только из них, чужой ключ отбрасывается.
     """
     if field not in FIELDS:
         raise AssistantError(

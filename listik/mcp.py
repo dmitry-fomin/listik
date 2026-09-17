@@ -31,7 +31,6 @@ import urllib.request
 from . import config as config_mod
 from . import db as db_mod
 from . import errors as errors_mod
-from . import routes as routes_mod
 from . import search as search_mod
 from . import store
 
@@ -826,9 +825,8 @@ def wait_pending_notifies(timeout: float = NOTIFY_TIMEOUT + 0.5) -> None:
 def run() -> int:
     # Одно соединение на весь stdio-процесс: без него call_tool открывал бы
     # новое соединение на каждый вызов и не закрывал его (listik-sxcd).
-    # Маршруты читаем сами: сервера рядом нет, а `listik_create` с `route` должен
-    # поставить карточке те же метки, что форма на доске (см. routes.labels_for).
-    routes_mod.load_local()
+    # Маршруты `listik_create` берёт из таблицы `routes` через это же соединение —
+    # метки те же, что у формы на доске (см. routes.labels_for).
     conn = db_mod.init()
     for line in sys.stdin:
         line = line.strip()

@@ -20,7 +20,6 @@ from pathlib import Path
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
 from listik import __version__, client, cwd_project, db, errors, paths, store  # noqa: E402
-from listik import routes as routes_mod  # noqa: E402
 from listik import routes_store  # noqa: E402
 from listik import worktree as worktree_mod  # noqa: E402
 
@@ -245,8 +244,6 @@ def call(op: str, args, path: str, *, query: dict | None = None, body: dict | No
         local_kwargs["as_owner"] = owner
     if getattr(args, "local", False):
         warn_local_bypass(args, writing=op in WRITE_OPS)
-        if any(local_kwargs.get(key) for key in ("route", "launch_route")):
-            routes_mod.load_local()
         return client.local_call(op, **local_kwargs)
     if client.is_up(args.host, args.port):
         return client.request(method, path, query=query, body=body,
@@ -255,12 +252,9 @@ def call(op: str, args, path: str, *, query: dict | None = None, body: dict | No
     if not getattr(args, "local", False) and fallback_warning:
         print("! сервер Listik не отвечает — команда выполнена напрямую по базе "
               "(доска не получит событие; подними сервер: listik serve)", file=sys.stderr)
-    # Маршруты в локальном режиме никто не загружал — это делает сервер при старте.
-    # Дочитываем файл, только когда команда вообще трогает маршрут: метки
-    # `harness:`/`process:` считает серверная логика (store + routes.labels_for),
-    # и у `new --route`/`set route=` они должны быть те же, что у формы на доске.
-    if any(local_kwargs.get(key) for key in ("route", "launch_route")):
-        routes_mod.load_local()
+    # Метки `harness:`/`process:` считает серверная логика (store + routes.labels_for),
+    # и у `new --route`/`set route=` они те же, что у формы на доске: маршруты обе
+    # стороны берут из таблицы `routes`, файл в обход ввоза не читает никто.
     return client.local_call(op, **local_kwargs)
 
 
@@ -653,8 +647,8 @@ def cmd_status(args) -> int:
                   f"{replaced.get('detail')} — соединения переоткрыты, подробности в listik.log")
     else:
         print("(подробности недоступны: токен не принят)")
-    # Маршруты — только из ответа /api/health работающего сервера: сам status файл
-    # routes.json не читает и не копирует.
+    # Маршруты — только из ответа /api/health работающего сервера: там они из таблицы
+    # `routes`, а сам status ни файл, ни базу маршрутов не читает.
     routes = h.get("routes")
     if routes:
         if routes.get("ok"):

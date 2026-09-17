@@ -37,6 +37,12 @@
       "description": "Мост в opencode CLI: делегирование задач в GLM 5.3 Flash и DeepSeek v4.1 Flash с фоновыми задачами и продолжением сессии"
     },
     {
+      "name": "pi",
+      "source": "./plugins/pi",
+      "version": "0.1.0",
+      "description": "Мост в pi CLI: делегирование задач в GLM 5.3 Flash и DeepSeek v4.1 Flash через RPC-режим pi, с фоновыми задачами и продолжением сессии"
+    },
+    {
       "name": "second-opinion",
       "source": "./plugins/second-opinion",
       "version": "0.4.0",

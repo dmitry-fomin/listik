@@ -1,0 +1,21 @@
+{
+  "name": "pi",
+  "displayName": "pi bridge",
+  "version": "0.1.0",
+  "description": "Delegate tasks to pi (GLM 5.3 Flash by default, DeepSeek V4.1 Flash as a second channel) from Claude Code: it walks the codebase itself, read-only by default, and its sessions can be resumed by name.",
+  "author": {
+    "name": "Dmitry Fomin",
+    "url": "https://github.com/dmitry-fomin"
+  },
+  "homepage": "https://github.com/dmitry-fomin/listik",
+  "repository": "https://github.com/dmitry-fomin/listik",
+  "license": "MIT",
+  "keywords": [
+    "pi",
+    "glm",
+    "deepseek",
+    "delegation",
+    "subagent",
+    "second-opinion"
+  ]
+}

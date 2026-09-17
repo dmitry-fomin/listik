@@ -29,6 +29,240 @@ note() {
     printf '%s\n' "$1"
 }
 
+# ------------------------------------------------------------------ вид и ввод
+#
+# Весь интерактив — только при живом /dev/tty и stty; иначе скрипт печатает то же,
+# что и раньше, и ни одной escape-последовательности в выводе не появляется.
+
+esc=$(printf '\033')
+cr=$(printf '\r')
+etx=$(printf '\003')
+ui_enabled=0
+ui_anim=0
+ui_cols=80
+tty_saved=
+c_crown=; c_leaf=; c_ok=; c_err=; c_text=; c_dim=; c_off=; c_sel=
+
+ui_probe() {
+    # 1 — интерактивный вид уместен, 0 — нет (причина не важна: везде один и тот же
+    # запасной путь — прежние строчные вопросы и обычный вывод).
+    [ "$assume_yes" = 1 ] && return 1
+    [ -n "${NO_COLOR:-}" ] && return 1
+    [ -n "${CI:-}" ] && return 1
+    case ${LISTIK_PLAIN:-} in "" | 0) ;; *) return 1 ;; esac
+    [ -t 1 ] || return 1
+    command -v stty >/dev/null 2>&1 || return 1
+    { : >/dev/tty; } 2>/dev/null || return 1
+    tty_saved=$(stty -g </dev/tty 2>/dev/null) || return 1
+    [ -n "$tty_saved" ] || return 1
+    cols=$(stty size </dev/tty 2>/dev/null | awk '{print $2}')
+    case $cols in
+        *[!0-9]* | "" | 0) cols=${COLUMNS:-80} ;;
+    esac
+    case $cols in
+        *[!0-9]* | "") cols=80 ;;
+    esac
+    # Ширину знаем — узкий терминал не мучаем; не знаем — считаем, что 80.
+    [ "$cols" -ge 60 ] || return 1
+    ui_cols=$cols
+    return 0
+}
+
+ui_init() {
+    if ui_probe; then
+        ui_enabled=1
+        c_crown=$esc'[38;5;65m'
+        c_leaf=$esc'[38;5;179m'
+        c_ok=$esc'[38;5;107m'
+        c_err=$esc'[38;5;167m'
+        c_text=$esc'[38;5;247m'
+        c_dim=$esc'[38;5;240m'
+        c_sel=$esc'[1m'
+        c_off=$esc'[0m'
+        # Дробная пауза есть и в GNU coreutils, и в BSD, но если её нет — просто
+        # не анимируем: статичная заставка лучше шести одинаковых кадров подряд.
+        if sleep 0.05 2>/dev/null; then
+            ui_anim=1
+        fi
+    fi
+}
+
+ui_tty_raw() {
+    stty raw -echo min 1 time 0 </dev/tty 2>/dev/null || return 1
+}
+
+ui_tty_restore() {
+    [ -n "$tty_saved" ] || return 0
+    stty "$tty_saved" </dev/tty 2>/dev/null || true
+}
+
+ui_cursor_hide() { [ "$ui_enabled" = 1 ] && printf '%s[?25l' "$esc" || true; }
+ui_cursor_show() { [ "$ui_enabled" = 1 ] && printf '%s[?25h' "$esc" || true; }
+
+ui_line() {
+    # строка с очисткой до конца — иначе хвост прошлого кадра остаётся на экране
+    printf '%s[2K%s\n' "$esc" "$1"
+}
+
+tree_h=10
+
+ui_tree() {
+    ui_line "${c_crown}              ,@@@@@@@,${c_off}"
+    ui_line "${c_crown}      ,,,.   ,@@@@@@/@@,  .oo8888o.${c_off}"
+    ui_line "${c_crown}   ,&%%&%&&%,@@@@@/@@@@@@,8888\\88/8o${c_off}"
+    ui_line "${c_crown}  ,%&\\%&&%&&%,@@@\\@@@/@@@88\\88888/88'${c_off}"
+    ui_line "${c_crown}  %&&%&%&/%&&%@@\\@@/ /@@@88888\\88888'${c_off}"
+    ui_line "${c_crown}  %&&%/ %&%%&&@@\\ V /@@' \`88\\8 \`/88'${c_off}"
+    ui_line "${c_crown}  \`&%\\ \` /%&'    |.|        \\ '|8'${c_off}"
+    ui_line "${c_crown}      |o|        | |         | |${c_off}"
+    ui_line "${c_crown}      |.|        | |         | |${c_off}"
+    ui_line "${c_crown}   \\\\/ ._\\//_/__/  ,\\_//__\\\\/.  \\_//__${c_off}"
+}
+
+ui_leaf_at() {
+    # $1 — на сколько строк подняться от конца блока, $2 — колонка
+    printf '%s[%dA%s[%dC%s&%s%s[%dB%s' \
+        "$esc" "$1" "$esc" "$2" "${c_leaf}" "${c_off}" "$esc" "$1" "$cr"
+}
+
+ui_splash() {
+    if [ "$ui_enabled" != 1 ]; then
+        # Нет интерактива — нет и заставки: вывод остаётся ровно таким, как раньше.
+        return
+    fi
+    ui_cursor_hide
+    if [ "$ui_anim" = 1 ]; then
+        # кадр: строка снизу вверх и колонка листка
+        for frame in '9 41' '8 44' '7 20' '6 26' '5 22' '4 28' '2 24'; do
+            row=${frame% *}
+            col=${frame#* }
+            ui_tree
+            ui_leaf_at "$row" "$col"
+            sleep 0.12
+            printf '%s[%dA' "$esc" "$tree_h"
+        done
+    fi
+    ui_tree
+    ui_leaf_at 1 40
+    printf '\n'
+    ui_line ""
+    ui_line "  ${c_sel}Listik${c_off}  ${c_dim}—  задачи и память одним сервером${c_off}"
+    ui_line "  ${c_dim}Установщик задаст несколько вопросов; выбор — стрелками.${c_off}"
+    ui_line ""
+    ui_cursor_show
+}
+
+ui_step() {
+    # $1 — ok|fail|run, $2 — текст
+    [ "$ui_enabled" = 1 ] || return 0
+    case $1 in
+        ok) printf '  %s✓%s %s\n' "${c_ok}" "${c_off}" "$2" ;;
+        fail) printf '  %s✗%s %s\n' "${c_err}" "${c_off}" "$2" ;;
+        *) printf '  %s·%s %s\n' "${c_dim}" "${c_off}" "$2" ;;
+    esac
+}
+
+ui_read_key() {
+    # одна клавиша из /dev/tty в $key: up, down, enter, space, esc, yes, no, abort, other
+    key=other
+    ch=$(dd bs=1 count=1 2>/dev/null </dev/tty; printf x)
+    ch=${ch%x}
+    case $ch in
+        "$esc")
+            stty min 0 time 1 </dev/tty 2>/dev/null || true
+            rest=$(dd bs=1 count=2 2>/dev/null </dev/tty; printf x)
+            rest=${rest%x}
+            stty min 1 time 0 </dev/tty 2>/dev/null || true
+            case $rest in
+                '[A' | 'OA') key=up ;;
+                '[B' | 'OB') key=down ;;
+                '') key=other ;;
+                *) key=other ;;
+            esac
+            ;;
+        "$cr" | '
+') key=enter ;;
+        ' ') key=space ;;
+        k | K) key=up ;;
+        j | J) key=down ;;
+        y | Y) key=yes ;;
+        n | N) key=no ;;
+        "$etx" | '') key=abort ;;
+        *) key=other ;;
+    esac
+}
+
+ui_menu_draw() {
+    # $1 — номер выбранного пункта
+    i=1
+    for item in "$menu_1" "$menu_2"; do
+        label=${item%%|*}
+        hint=${item#*|}
+        [ "$hint" = "$item" ] && hint=
+        # Перенос строки пункта сбил бы перерисовку меню (курсор ходит по строкам),
+        # поэтому на узком терминале пояснение не печатаем вовсе.
+        [ "$ui_cols" -lt 80 ] && hint=
+        if [ "$i" = "$1" ]; then
+            ui_line "  ${c_ok}❯ ●${c_off} ${c_sel}$label${c_off}  ${c_dim}$hint${c_off}"
+        else
+            ui_line "    ${c_dim}○${c_off} ${c_text}$label${c_off}  ${c_dim}$hint${c_off}"
+        fi
+        i=$((i + 1))
+    done
+}
+
+ui_menu2() {
+    # $1 — вопрос, $2 — подсказка, $3 и $4 — пункты "текст|пояснение", $5 — выбранный
+    # по умолчанию (1 или 2). Ответ — в $menu_choice. Возврат 1 — меню не показано.
+    [ "$ui_enabled" = 1 ] || return 1
+    ui_tty_raw || return 1
+    menu_1=$3
+    menu_2=$4
+    menu_choice=$5
+    ui_cursor_hide
+    printf '%s[2K  %s?%s %s%s%s\n' "$esc" "${c_ok}" "${c_off}" "${c_sel}" "$1" "${c_off}"
+    if [ -n "$2" ]; then
+        printf '%s[2K    %s%s%s\n' "$esc" "${c_dim}" "$2" "${c_off}"
+    fi
+    ui_menu_draw "$menu_choice"
+    printf '%s[2K  %s↑ ↓ выбор · Enter подтвердить · Ctrl+C отмена%s\n' "$esc" "${c_dim}" "${c_off}"
+    while :; do
+        ui_read_key
+        case $key in
+            up) menu_choice=1 ;;
+            down) menu_choice=2 ;;
+            yes) menu_choice=1; key=enter ;;
+            no) menu_choice=2; key=enter ;;
+            abort)
+                ui_cursor_show
+                ui_tty_restore
+                printf '\n'
+                die "установка прервана"
+                ;;
+        esac
+        # перерисовываем два пункта и строку клавиш
+        printf '%s[3A' "$esc"
+        ui_menu_draw "$menu_choice"
+        printf '%s[2K  %s↑ ↓ выбор · Enter подтвердить · Ctrl+C отмена%s\n' "$esc" "${c_dim}" "${c_off}"
+        case $key in
+            enter) break ;;
+        esac
+    done
+    ui_tty_restore
+    ui_cursor_show
+    return 0
+}
+
+ui_outro() {
+    # финальный экран: дерево с уже лежащим листком
+    [ "$ui_enabled" = 1 ] || return 0
+    printf '\n'
+    ui_tree
+    ui_leaf_at 1 40
+    printf '\n\n'
+    printf '  %s✓ Listik %s установлен%s\n' "${c_ok}" "$version" "${c_off}"
+}
+
 usage() {
     cat <<'USAGE'
 Установка и обновление Listik.
@@ -72,6 +306,9 @@ usage() {
   LISTIK_CODEX_NETWORK — см. флаги
   CODEX_HOME            каталог настроек Codex (по умолчанию ~/.codex); в нём
                         установщик смотрит config.toml
+  LISTIK_PLAIN          1 — без заставки, анимации, цвета и меню: только прежние
+                        строчные вопросы (то же самое дают NO_COLOR, CI, --yes,
+                        отсутствие /dev/tty и терминал уже 60 колонок)
   LISTIK_ROUTES         рабочая копия routes.json
                         (по умолчанию ~/.config/listik/routes.json)
   LISTIK_RELEASES_API   откуда брать последнюю версию, по умолчанию
@@ -189,6 +426,13 @@ case $codex_network in
 esac
 [ -n "$home" ] || die "--home не может быть пустым"
 
+ui_init
+# Заставка начинается раньше, чем появляется временный каталог, а курсор к этому
+# моменту уже спрятан: до настоящего cleanup терминал возвращает этот трап.
+trap 'ui_cursor_show; ui_tty_restore; exit 130' HUP INT TERM QUIT
+trap 'ui_cursor_show; ui_tty_restore' EXIT
+ui_splash
+
 # `~` в значении флага оболочка раскрывает сама, а в кавычках и в переменной — нет.
 resolve_dir() {
     # shellcheck disable=SC2088  # тильда в кавычках не раскрывается — это и нужно: шаблон
@@ -256,12 +500,14 @@ tmp=$(mktemp -d "${TMPDIR:-/tmp}/listik-install.XXXXXX") ||
     die "не удалось создать временный каталог"
 staging=
 cleanup() {
+    ui_tty_restore
+    ui_cursor_show
     if [ -n "$staging" ] && [ -d "$staging" ]; then
         rm -rf "$staging"
     fi
     rm -rf "$tmp"
 }
-trap cleanup EXIT HUP INT TERM
+trap cleanup EXIT HUP INT TERM QUIT
 
 download() {
     if [ "$fetcher" = curl ]; then
@@ -326,6 +572,7 @@ if [ -n "$checksum_file" ]; then
     expected=$(printf '%s' "$expected" | tr 'A-F' 'a-f')
     [ "$actual" = "$expected" ] ||
         die "сумма не совпала: ожидалась $expected, получена $actual — установка отменена"
+    ui_step ok "сумма архива совпала"
 fi
 
 # ------------------------------------- шаг 3: распаковка во временный каталог
@@ -337,6 +584,7 @@ tar -xzf "$archive" -C "$staging" --strip-components=1 ||
     die "не удалось распаковать архив: $archive"
 [ -f "$staging/bin/listik" ] || die "в архиве нет bin/listik"
 [ -f "$staging/VERSION" ] || die "в архиве нет VERSION"
+ui_step ok "архив распакован: listik $version"
 
 # ------------------------------------------------------- шаг 4: поставить на место
 
@@ -377,6 +625,7 @@ export LISTIK_WRAPPER="$wrapper"
 exec "$python3_bin" "$home/app/current/bin/listik" "\$@"
 WRAPPER
 chmod +x "$wrapper" || die "не удалось сделать обёртку исполняемой: $wrapper"
+ui_step ok "обёртка: $wrapper"
 
 case ":${PATH:-}:" in
     *":$bin_dir:"*) ;;
@@ -389,10 +638,13 @@ esac
 # ------------------------------------------------- шаг 6: переключить current
 
 ln -sfn "$version" "$app_dir/current" || die "не удалось переключить current на $version"
+ui_step ok "current → $version"
 
 # ------------------------------------------------------------ шаг 7: listik init
 
+ui_step run "listik init: схема базы"
 if ! "$wrapper" init; then
+    ui_step fail "listik init"
     note "$prog: код установлен: $code_dir, current переключён на $version, но listik init упал" >&2
     note "$prog: исправьте причину и выполните listik init" >&2
     exit 1
@@ -401,9 +653,9 @@ fi
 # ------------------------------------ шаг 7.1: автозапуск, MCP и плагины Claude
 
 ask_yes_default_yes() {
-    # $1 — значение флага (может быть пустым), $2 — текст вопроса. Результат — $decision
-    # (yes/no), по умолчанию yes: без флага, без --yes и при открытом /dev/tty спрашиваем,
-    # иначе (нет /dev/tty или задан --yes) отвечаем по умолчанию.
+    # $1 — значение флага (может быть пустым), $2 — вопрос, $3 — подсказка под ним.
+    # Результат — $decision (yes/no), по умолчанию yes: без флага, без --yes и при
+    # открытом /dev/tty спрашиваем, иначе отвечаем по умолчанию.
     if [ -n "$1" ]; then
         decision=$1
         return
@@ -412,7 +664,15 @@ ask_yes_default_yes() {
         decision=yes
         return
     fi
-    if ! printf '%s' "$2" >/dev/tty 2>/dev/null; then
+    if ui_menu2 "$2" "$3" "Да|" "Нет|пропустить этот шаг" 1; then
+        if [ "$menu_choice" = 1 ]; then
+            decision=yes
+        else
+            decision=no
+        fi
+        return
+    fi
+    if ! printf '%s [Y/n] ' "$2" >/dev/tty 2>/dev/null; then
         decision=yes
         return
     fi
@@ -427,12 +687,17 @@ ask_yes_default_yes() {
     esac
 }
 
-ask_yes_default_yes "$service_answer" "Установить автозапуск сервера (launchd/systemd)? [Y/n] "
+ask_yes_default_yes "$service_answer" \
+    "Установить автозапуск сервера (launchd/systemd)?" \
+    "Сервер будет подниматься сам при входе в систему."
 service_answer=$decision
-ask_yes_default_yes "$mcp_answer" "Подключить MCP-сервер Claude (claude mcp add)? [Y/n] "
+ask_yes_default_yes "$mcp_answer" \
+    "Подключить MCP-сервер Claude (claude mcp add)?" \
+    "Даёт агентам инструменты listik_* без CLI."
 mcp_answer=$decision
 ask_yes_default_yes "$plugins_answer" \
-    "Установить плагины Claude (marketplace + listik/feature-pipeline)? [Y/n] "
+    "Установить плагины Claude (marketplace + listik/feature-pipeline)?" \
+    "Скилы работы с задачами и конвейеры реализации."
 plugins_answer=$decision
 
 service_status=пропущен
@@ -626,6 +891,16 @@ ask_codex_network() {
         codex_reason="--yes"
         return 1
     fi
+    if ui_menu2 "Codex: дописать network_access = true?" \
+            "В $codex_config нет [sandbox_workspace_write] network_access = true." \
+            "Дописать|копия конфига сохранится рядом" \
+            "Не трогать|Codex не достучится до сервера Listik" 1; then
+        if [ "$menu_choice" = 1 ]; then
+            return 0
+        fi
+        codex_reason="выбрано «не трогать»"
+        return 1
+    fi
     if ! printf 'Codex: в %s нет [sandbox_workspace_write] network_access = true. Дописать? [Y/n] ' \
             "$codex_config" >/dev/tty 2>/dev/null; then
         return 1
@@ -686,6 +961,16 @@ ask_routes() {
         ask_reason="--yes"
         return 1
     fi
+    if ui_menu2 "routes.json отличается от нового образца" \
+            "Рабочая копия: $runtime_routes" \
+            "Оставить мою копию|прежняя копия останется как есть" \
+            "Заменить новой|прежняя сохранится рядом как .bak-<время>" 1; then
+        if [ "$menu_choice" = 2 ]; then
+            return 0
+        fi
+        ask_reason="выбрано «оставить»"
+        return 1
+    fi
     if ! printf 'routes.json отличается от нового образца. Заменить рабочую копию? [y/N] ' \
             >/dev/tty 2>/dev/null; then
         return 1
@@ -734,7 +1019,10 @@ if [ -f "$tmp/prev-protocol.md" ] && [ -f "$code_dir/docs/harness-protocol.md" ]
     fi
 fi
 
-note "Listik $version установлен."
+ui_outro
+if [ "$ui_enabled" != 1 ]; then
+    note "Listik $version установлен."
+fi
 note "версия:  $version"
 note "код:     $app_dir/current"
 note "данные:  $home"

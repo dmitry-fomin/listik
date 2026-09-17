@@ -15,7 +15,9 @@ JSON-колонки (`command`, `roles`) разбираются здесь, би
 
 Правила полей живут в одном месте (`_check_*`): их одинаково применяют
 `update_route`, `upsert_route` и `create_route`.  Любое нарушение —
-`ValueError` с именем поля и причиной по-русски.
+`ValueError` с именем поля и причиной по-русски.  Расклад ролей (`roles`)
+проверяется той же функцией, что у файла (`routes._validate_roles`), поэтому
+правка по HTTP и ввоз файла принимают ровно одно и то же.
 """
 from __future__ import annotations
 
@@ -25,9 +27,10 @@ import sys
 
 from . import errors, routes, skills, store
 
-#: Поля, которые вообще разрешено менять точечно.  Всё остальное (`roles`,
-#: `kind`, `key`, `harness`, `position`) через `update_route` недоступно.
-UPDATE_FIELDS = ("title", "hint", "icon", "visible", "command")
+#: Поля, которые вообще разрешено менять точечно.  Всё остальное (`kind`, `key`,
+#: `harness`, `position`) через `update_route` недоступно.  `roles` правится
+#: (listik-syu8): расклад ролей задаётся из UI доски, а не только ввозом файла.
+UPDATE_FIELDS = ("title", "hint", "icon", "visible", "command", "roles")
 
 COLS = ("key", "kind", "title", "hint", "icon", "visible", "position", "harness",
         "command", "roles", "created_at", "updated_at")
@@ -104,6 +107,18 @@ def _check_command(value, kind: str, *, direct_only: bool = False):
     return checked
 
 
+def _check_roles(value, kind: str) -> dict:
+    """Проверить расклад ролей той же проверкой, что у файла маршрутов.
+
+    Роли есть только у `pipeline`: у `direct` поле запрещено самой формой записи.
+    `routes._validate_roles` бросает `RoutesError` — подкласс `ValueError`, поэтому
+    нарушение уходит наружу тем же путём, что и остальные поля (400 `bad_argument`).
+    """
+    if kind != "pipeline":
+        raise ValueError('roles: допустимо только у kind="pipeline"')
+    return routes._validate_roles(value, "roles")
+
+
 def _prepare(record: dict) -> dict:
     """Проверить запись и вернуть значения колонок (без `position`/`created_at`)."""
     if not isinstance(record, dict):
@@ -128,6 +143,11 @@ def _prepare(record: dict) -> dict:
             roles = {}
         if not isinstance(roles, dict):
             raise ValueError("roles: должен быть объектом с ролями spec/critic/impl/judge")
+        if roles:
+            # Непустой расклад проверяется целиком (ячейки, `skill`, `params`), а не
+            # только «это словарь»: иначе запись мимо файла могла бы положить в базу
+            # расклад, который ввоз того же файла отверг бы.
+            roles = _check_roles(roles, kind)
         harness = None
     else:
         if roles not in (None, {}):
@@ -245,11 +265,11 @@ def create_route(conn: sqlite3.Connection, *, key, kind, title, hint="", icon=No
 
 
 def update_route(conn: sqlite3.Connection, key: str, **fields) -> dict:
-    """Частичная правка полей `title`, `hint`, `icon`, `visible`, `command`.
+    """Частичная правка полей `title`, `hint`, `icon`, `visible`, `command`, `roles`.
 
-    Любое другое имя поля (в том числе `roles`, `kind`, `key`, `harness`,
-    `position`) — `ValueError` с именем поля.  `command` допустим только у
-    `kind="direct"`.  `updated_at` обновляется.
+    Любое другое имя поля (`kind`, `key`, `harness`, `position`) — `ValueError`
+    с именем поля.  `command` допустим только у `kind="direct"`, `roles` — только
+    у `kind="pipeline"`.  `updated_at` обновляется.
     """
     record = get_route(conn, key)
     for name in fields:
@@ -273,6 +293,9 @@ def update_route(conn: sqlite3.Connection, key: str, **fields) -> dict:
         sets.append("command = ?")
         params.append(_dumps(_check_command(fields["command"], record["kind"],
                                             direct_only=True)))
+    if "roles" in fields:
+        sets.append("roles = ?")
+        params.append(_dumps(_check_roles(fields["roles"], record["kind"])))
     if not sets:
         return record
     sets.append("updated_at = ?")

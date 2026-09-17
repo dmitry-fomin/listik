@@ -94,3 +94,108 @@ def skill_info(key: str) -> dict | None:
     hint = _first_sentence(front.get("description", ""))
     rel = md_path.relative_to(paths.ROOT_DIR)
     return {"key": key, "title": title, "hint": hint, "skill_path": str(rel)}
+
+
+# ------------------------------------------------- запускаторы (каталог ролей)
+
+PLUGINS_DIR = paths.ROOT_DIR / "plugins"
+
+#: Вендор по умолчанию для роли, запускаемой скилом этого плагина. Многоканальные
+#: запускаторы (`pi`, `opencode`) дают канал параметром `params.channel`, поэтому их
+#: вендор здесь — только значение по умолчанию: в маршруте `provider` ставит автор.
+LAUNCHER_PROVIDERS: dict[str, str] = {
+    "dsh": "deepseek",
+    "grok": "grok",
+    "codex": "openai",
+    "opencode": "glm",
+    "pi": "glm",
+}
+
+
+#: Запускаторы, живущие вне этого репозитория: плагин grok ставится отдельно
+#: (`~/.claude/plugins`), каталога в `plugins/` у него нет, но ссылаться на него из
+#: расклада ролей маршрута можно — поэтому он есть в каталоге с `skill_path: None`.
+EXTERNAL_LAUNCHERS: dict[str, dict] = {
+    "grok:delegate": {"title": "delegate", "hint": "Grok Build CLI: задача уходит в grok",
+                      "provider": "grok"},
+}
+
+
+def _is_launcher(name: str) -> bool:
+    """Каталог скила — запускатор: `delegate` или `*-delegate`."""
+    return name == "delegate" or name.endswith("-delegate")
+
+
+def _launcher_md(plugin: str, skill: str):
+    return PLUGINS_DIR / plugin / "skills" / skill / "SKILL.md"
+
+
+def launcher_keys() -> list[str]:
+    """Ключи `плагин:скил` всех скилов-запускаторов; нет каталога `plugins/` — пусто."""
+    out: list[str] = []
+    try:
+        plugins = sorted(p for p in PLUGINS_DIR.iterdir() if p.is_dir())
+    except OSError:
+        return []
+    for plugin in plugins:
+        try:
+            candidates = sorted(s for s in (plugin / "skills").iterdir() if s.is_dir())
+        except OSError:
+            continue
+        for skill in candidates:
+            if _is_launcher(skill.name) and (skill / "SKILL.md").is_file():
+                out.append(f"{plugin.name}:{skill.name}")
+    out.extend(key for key in EXTERNAL_LAUNCHERS if key not in out)
+    return sorted(out)
+
+
+def launchers_available() -> bool:
+    """Есть хотя бы один скил-запускатор."""
+    return bool(launcher_keys())
+
+
+def launcher_info(key: str) -> dict | None:
+    """`{"key","plugin","skill","title","hint","provider","skill_path"}` или `None`.
+
+    `None` — когда в ключе не ровно одно `":"` либо `SKILL.md` нет/не читается.
+    `title` — `name` из frontmatter (нет — имя каталога скила), `hint` — первое
+    предложение `description` (нет — пустая строка), `provider` — из
+    `LAUNCHER_PROVIDERS` (плагина нет в словаре — `None`).
+    """
+    if not isinstance(key, str) or key.count(":") != 1:
+        return None
+    plugin, skill = key.split(":", 1)
+    if not plugin or not skill:
+        return None
+    md_path = _launcher_md(plugin, skill)
+    if not md_path.is_file():
+        external = EXTERNAL_LAUNCHERS.get(key)
+        if external is None:
+            return None
+        return {"key": key, "plugin": plugin, "skill": skill, "title": external["title"],
+                "hint": external["hint"], "provider": external["provider"],
+                "skill_path": None}
+    try:
+        text = md_path.read_text(encoding="utf-8")
+    except OSError:
+        return None
+    front = _parse_frontmatter(text)
+    return {
+        "key": key,
+        "plugin": plugin,
+        "skill": skill,
+        "title": front.get("name") or skill,
+        "hint": _first_sentence(front.get("description", "")),
+        "provider": LAUNCHER_PROVIDERS.get(plugin),
+        "skill_path": str(md_path.relative_to(paths.ROOT_DIR)),
+    }
+
+
+def launchers() -> list[dict]:
+    """Каталог запускаторов в порядке ключей; пропавший на ходу скил пропускается."""
+    out: list[dict] = []
+    for key in launcher_keys():
+        info = launcher_info(key)
+        if info is not None:
+            out.append(info)
+    return out

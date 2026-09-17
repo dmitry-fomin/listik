@@ -30,7 +30,7 @@ DIRECT_KEYS = ["dsh", "grok", "codex"]
 EXPECTED_KEYS = [
     "xhigh-pipeline", "high-pipeline", "medium-pipeline", "low-pipeline", "xlow-pipeline",
     "nano-pipeline", "inherit-pipeline", "opus-single-pipeline", "opus-sonnet-pipeline",
-    "feature-pipeline", *DIRECT_KEYS,
+    "universal-pipeline", "feature-pipeline", *DIRECT_KEYS,
 ]
 
 

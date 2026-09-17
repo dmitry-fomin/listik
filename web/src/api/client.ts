@@ -19,6 +19,7 @@ import type {
   RouteDef,
   RoutePatch,
   RoutesResponse,
+  RouteLaunchersResponse,
   RoutesSyncResponse,
   SearchMode,
   SearchResponse,
@@ -145,6 +146,9 @@ export const api = {
 
   /** Переставить маршруты — общий сквозной порядок, ключи не из списка уезжают в конец. */
   reorderRoutes: (keys: string[]) => post<RouteDef[]>('/api/routes/reorder', { keys }),
+
+  /** Справочник скилов-запускаторов, вендоров и ролей — редактор расклада ролей. */
+  routeLaunchers: () => get<RouteLaunchersResponse>('/api/routes/launchers'),
 
   /** Сверка таблицы маршрутов со скилами `feature-pipeline` на диске. */
   routesSync: () => get<RoutesSyncResponse>('/api/routes/sync'),

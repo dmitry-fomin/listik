@@ -7,6 +7,9 @@
  * только у `kind=pipeline` (у `kind=direct` в этой порции показывается только
  * шапка — свою карточку с редактором `argv` делает порция `f`).
  *
+ * Состав ролей правится отдельным компонентом `RouteRolesEditor` со своей кнопкой
+ * сохранения (listik-syu8): расклад уходит целиком, автосейв по клавише тут не годится.
+ *
  * Автосохранение шапки: текстовые поля — debounce 600мс после последней
  * клавиши плюс сброс по потере фокуса, переключатель и уровень — сразу.
  * `flush()` шлёт диф (`draft` против `baseline`, обновлённого только по
@@ -34,12 +37,11 @@ import {
 } from '@zoloto585/facet'
 import IconToggle, { type IconToggleOption } from './IconToggle.vue'
 import ListikIcon from './ListikIcon.vue'
-import ProviderIcon from './marks/ProviderIcon.vue'
+import RouteRolesEditor from './RouteRolesEditor.vue'
 import RouteSubstitutions from './RouteSubstitutions.vue'
 import store from '@/store/listik'
 import type { RouteDef, RouteIconKey, RoutePatch } from '@/api/types'
 import { ROUTE_ICONS } from '@/lib/dictionaries'
-import { ROLE_KEYS, ROLE_TITLES } from '@/lib/pipelines'
 import { splitPlaceholders, unknownPlaceholders } from '@/lib/routes'
 
 const props = defineProps<{ route: RouteDef }>()
@@ -159,10 +161,6 @@ function onLevel(value: string): void {
   scheduleFlush(true)
 }
 
-/* ── состав конвейера: только чтение ── */
-
-const hasRoles = computed(() => props.route.kind === 'pipeline' && Object.keys(props.route.roles).length > 0)
-
 /* ── чем запускается + подстановки ── */
 
 const commandChunks = computed(() => {
@@ -223,24 +221,8 @@ function braced(name: string): string {
       </section>
 
       <section class="listik-route-card__section">
-        <h4 class="listik-route-card__section-title">
-          <ListikIcon name="lock" size="sm" />
-          Состав конвейера
-        </h4>
-        <template v-if="hasRoles">
-          <div v-for="role in ROLE_KEYS" :key="role" class="listik-route-card__role-row">
-            <span class="listik-route-card__role-label">{{ ROLE_TITLES[role] }}</span>
-            <template v-if="route.roles[role]">
-              <ProviderIcon :provider="route.roles[role]!.provider" size="sm" />
-              <span class="listik-route-card__role-title">{{ route.roles[role]!.title }}</span>
-            </template>
-            <span v-else class="listik-route-card__role-empty">этапа нет в этом пресете</span>
-          </div>
-        </template>
-        <p v-else class="listik-prose">
-          состав не заполнен: роли берутся из базы, их заполняет ввоз
-          <code class="listik-mono">listik routes import</code>
-        </p>
+        <h4 class="listik-route-card__section-title">Состав конвейера</h4>
+        <RouteRolesEditor :key="route.key" :route="route" />
         <p class="listik-route-card__skill-line">
           из скила <code class="listik-mono">/feature-pipeline:{{ route.key }}</code>
         </p>

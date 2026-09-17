@@ -2,7 +2,7 @@
  * Типы ответов API Listik. Источник правды — docs/API.md и listik/store.py.
  */
 import type { HarnessKey } from '@/lib/harness'
-import type { RoleCell, RoleKey } from '@/lib/pipelines'
+import type { ProviderKey, RoleCell, RoleKey } from '@/lib/pipelines'
 
 export type TaskStatus = 'open' | 'in_progress' | 'blocked' | 'review' | 'done' | 'cancelled'
 export type PipelineStage = 's1-spec' | 's2-review' | 's3-impl' | 's4-judge'
@@ -460,6 +460,29 @@ export interface RoutePatch {
   icon?: RouteIconKey | null
   visible?: boolean
   command?: string[] | null
+  /** Расклад ролей целиком: сервер принимает его только у `kind=pipeline` (listik-syu8). */
+  roles?: Partial<Record<RoleKey, RoleCell>>
+}
+
+/** Скил-запускатор роли — запись справочника `GET /api/routes/launchers`. */
+export interface RouteLauncherInfo {
+  key: string
+  plugin: string
+  skill: string
+  title: string
+  hint: string
+  /** вендор по умолчанию; плагина нет в словаре сервера — `null` */
+  provider: ProviderKey | null
+  /** путь к `SKILL.md`; плагин вне репозитория Listik — `null` */
+  skill_path: string | null
+}
+
+/** GET /api/routes/launchers — справочник для редактора состава ролей. */
+export interface RouteLaunchersResponse {
+  skills_available: boolean
+  launchers: RouteLauncherInfo[]
+  providers: ProviderKey[]
+  roles: RoleKey[]
 }
 
 /** Скил без записи в таблице — GET /api/routes/sync → missing_route[]. */

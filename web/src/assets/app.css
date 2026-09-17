@@ -2716,10 +2716,6 @@ body .ui-drawer-backdrop.ui-drawer-backdrop--right .ui-drawer.ui-drawer--right.u
   color: var(--danger-700);
 }
 
-.listik-voice__created-id {
-  color: var(--ink-2);
-}
-
 /* Телефон (порция c): круглая FAB над очередью. `position: fixed` у самой кнопки
    разрешён (лист/оверлей/блокировку прокрутки делает UiDrawer). Ширина, высота и
    радиус — `!important`: стили кита (`.ui-button--lg[data-v-…]`, 0,2,0) встают в
@@ -2740,4 +2736,20 @@ body .ui-drawer-backdrop.ui-drawer-backdrop--right .ui-drawer.ui-drawer--right.u
    оставаться 340px. */
 .listik-voice__panel--phone {
   width: 100%;
+}
+
+/* ── Уведомления (UiToast) ─────────────────────────────────────────────────
+   Вьюпорт тостов кита стоит внизу справа; здесь они нужны сверху (listik-adux).
+   Props у `UiToast` нет, стили компонента scoped (`.ui-toast-viewport[data-v-…]`,
+   0,2,0) и встают в бандл позже app.css — переопределить можно только
+   `!important` (тот же приём, что у `.listik-voice__fab` выше). Список у кита
+   `column-reverse` под рост вверх от нижнего края; сверху нужен рост вниз,
+   поэтому `column`: новый тост появляется под предыдущими, а не сдвигает их. */
+.ui-toast-viewport {
+  top: var(--space-5) !important;
+  bottom: auto !important;
+}
+
+.ui-toast-viewport__list {
+  flex-direction: column !important;
 }

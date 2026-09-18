@@ -33,28 +33,32 @@
  * состояние окон сбрасывается при уходе.
  *
  * Раскладка строки списка своя: в ките нет строки «репозиторий + переключатель»,
- * а UiEntityCard даёт ровно нужный размер `sm` (иконка, заголовок, мета, слот
- * действий) — из него и собрано. Кнопки/бейджи/поля — из кита.
+ * а UiEntityCard даёт ровно нужную форму (иконка, заголовок, мета, слот
+ * действий) — из него и собрана `RepoRow.vue`, одна на обе секции.
+ * Кнопки/бейджи/поля — из кита.
+ *
+ * Сводка над списком (три `UiStat` в `UiCard`) отвечает на вопрос «сколько
+ * всего и что сломано», который иначе пришлось бы считать глазами по строкам;
+ * `UiKpiCard` для неё не годится — это виджет с трендом, а тренда у настроек нет.
  */
 import { computed, onMounted, ref } from 'vue'
 import {
   UiAlert,
   UiBadge,
   UiButton,
+  UiCard,
   UiConfirmDialog,
   UiEmptyState,
-  UiEntityCard,
   UiField,
   UiFormModal,
   UiInput,
   UiSpinner,
-  UiSwitch,
-  UiTooltip,
+  UiStat,
 } from '@zoloto585/facet'
 import ListikIcon from '../ListikIcon.vue'
+import RepoRow from './RepoRow.vue'
 import store from '@/store/listik'
 import type { ProjectPatch, ProjectRow } from '@/api/types'
-import { projectGitHint, projectIsGit, projectMetaLabel, projectTitleLabel } from '@/lib/projects'
 
 const action = ref<string | null>(null)
 /** Ответ `POST /api/projects` последнего удачного добавления — показываем, куда лёг проект. */
@@ -80,6 +84,10 @@ const editResult = ref<ProjectRow | null>(null)
 
 const visible = computed(() => store.projects.value.filter((project) => !project.archived))
 const hidden = computed(() => store.projects.value.filter((project) => project.archived))
+/** Каталога нет — считаем по всем проектам: скрытый со сломанным путём тоже чинить. */
+const missing = computed(
+  () => store.projects.value.filter((project) => project.path_exists === false).length,
+)
 
 /** Подсказка про slug — только в режиме создания: в правке slug не меняется. */
 function slugHint(): string {
@@ -245,9 +253,8 @@ onMounted(() => {
 <template>
   <div class="listik-projects">
     <p class="listik-prose">
-      Доска собирается по проектам из Listik: её колонки и фильтры видят ровно те
-      репозитории, что не скрыты. Скрытие не удаляет задачи — они остаются в истории
-      и в поиске, доска просто перестаёт их показывать.
+      Доска показывает ровно те репозитории, что не скрыты; скрытие не удаляет задачи —
+      они остаются в истории и в поиске.
     </p>
 
     <UiAlert v-if="store.projectsError.value" tone="warning" closable>
@@ -308,6 +315,17 @@ onMounted(() => {
     </UiEmptyState>
 
     <template v-else>
+      <!-- Сводка отвечает на «сколько всего и что сломано» до того, как человек
+           пойдёт глазами по строкам. Рисуется только вместе со списком: во время
+           первой загрузки и у пустого списка считать нечего. -->
+      <UiCard>
+        <div class="listik-projects__summary">
+          <UiStat class="tnum" size="sm" label="На доске" :value="visible.length" />
+          <UiStat class="tnum" size="sm" label="Скрыты" :value="hidden.length" />
+          <UiStat class="tnum" size="sm" label="Нет каталога" :value="missing" />
+        </div>
+      </UiCard>
+
       <section class="listik-projects__list">
         <h3 class="listik-section__title">
           <ListikIcon name="columns" size="md" />
@@ -324,47 +342,14 @@ onMounted(() => {
 
         <ul v-else class="listik-projects__rows">
           <li v-for="project in visible" :key="project.slug">
-            <UiEntityCard
-              :title="projectTitleLabel(project)"
-              size="sm"
-              :meta="projectMetaLabel(project)"
-              :loading="action === `archive:${project.slug}` || action === `remove:${project.slug}`"
-            >
-              <template #avatar>
-                <ListikIcon name="columns" size="sm" />
-              </template>
-              <template #actions>
-                <UiBadge v-if="project.path_exists === false" tone="warning" size="sm">нет каталога</UiBadge>
-                <UiTooltip v-else-if="projectIsGit(project)" :text="projectGitHint(project)">
-                  <UiBadge tone="info" size="sm">git</UiBadge>
-                </UiTooltip>
-                <UiTooltip text="Убрать с доски: задачи останутся в истории и поиске">
-                  <UiSwitch
-                    :model-value="false"
-                    v-bind="{ 'aria-label': `Скрыть проект ${project.slug}` }"
-                    @update:model-value="(value: boolean) => toggleArchived(project, value)"
-                  />
-                </UiTooltip>
-                <UiTooltip text="Название и путь к каталогу">
-                  <UiButton
-                    size="sm"
-                    variant="ghost"
-                    v-bind="{ 'aria-label': `Изменить проект ${project.slug}` }"
-                    @click="askEdit(project)"
-                  >
-                    <template #icon><ListikIcon name="edit" size="xs" /></template>
-                  </UiButton>
-                </UiTooltip>
-                <UiButton
-                  size="sm"
-                  variant="ghost"
-                  v-bind="{ 'aria-label': `Удалить проект ${project.slug}` }"
-                  @click="askRemove(project)"
-                >
-                  <template #icon><ListikIcon name="close" size="xs" /></template>
-                </UiButton>
-              </template>
-            </UiEntityCard>
+            <RepoRow
+              :project="project"
+              :hidden="false"
+              :busy="action === `archive:${project.slug}` || action === `remove:${project.slug}`"
+              @toggle="(archived: boolean) => toggleArchived(project, archived)"
+              @edit="askEdit(project)"
+              @remove="askRemove(project)"
+            />
           </li>
         </ul>
       </section>
@@ -377,48 +362,14 @@ onMounted(() => {
         </h3>
         <ul class="listik-projects__rows">
           <li v-for="project in hidden" :key="project.slug">
-            <UiEntityCard
-              :title="projectTitleLabel(project)"
-              size="sm"
-              :meta="projectMetaLabel(project)"
-              :loading="action === `archive:${project.slug}` || action === `remove:${project.slug}`"
-            >
-              <template #avatar>
-                <ListikIcon name="columns" size="sm" />
-              </template>
-              <template #actions>
-                <UiBadge v-if="project.path_exists === false" tone="warning" size="sm">нет каталога</UiBadge>
-                <UiTooltip text="Вернуть на доску">
-                  <!-- UiSwitch отдаёт новое значение тумблера: здесь он включён,
-                       клик присылает `false` — это и есть целевое `archived`.
-                       Инвертировать его нельзя: вернуть проект было невозможно
-                       (listik-54be). -->
-                  <UiSwitch
-                    :model-value="true"
-                    v-bind="{ 'aria-label': `Вернуть проект ${project.slug}` }"
-                    @update:model-value="(value: boolean) => toggleArchived(project, value)"
-                  />
-                </UiTooltip>
-                <UiTooltip text="Название и путь к каталогу">
-                  <UiButton
-                    size="sm"
-                    variant="ghost"
-                    v-bind="{ 'aria-label': `Изменить проект ${project.slug}` }"
-                    @click="askEdit(project)"
-                  >
-                    <template #icon><ListikIcon name="edit" size="xs" /></template>
-                  </UiButton>
-                </UiTooltip>
-                <UiButton
-                  size="sm"
-                  variant="ghost"
-                  v-bind="{ 'aria-label': `Удалить проект ${project.slug}` }"
-                  @click="askRemove(project)"
-                >
-                  <template #icon><ListikIcon name="close" size="xs" /></template>
-                </UiButton>
-              </template>
-            </UiEntityCard>
+            <RepoRow
+              :project="project"
+              :hidden="true"
+              :busy="action === `archive:${project.slug}` || action === `remove:${project.slug}`"
+              @toggle="(archived: boolean) => toggleArchived(project, archived)"
+              @edit="askEdit(project)"
+              @remove="askRemove(project)"
+            />
           </li>
         </ul>
       </section>
@@ -550,6 +501,20 @@ onMounted(() => {
 .listik-projects__actions {
   display: flex;
   justify-content: flex-start;
+}
+
+/* Три показателя в ряд, на узком экране — в столбец; свою сетку строим потому,
+   что UiCard — просто поверхность, раскладка содержимого на вызывающем. */
+.listik-projects__summary {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: var(--space-4);
+}
+
+@media (max-width: 560px) {
+  .listik-projects__summary {
+    grid-template-columns: minmax(0, 1fr);
+  }
 }
 
 .listik-projects__list {

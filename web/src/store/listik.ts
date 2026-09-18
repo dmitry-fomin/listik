@@ -923,12 +923,18 @@ const heartbeatTask = (id: string, holder: string, note?: string): Promise<boole
 const nextStage = (id: string, holder?: string, note?: string): Promise<boolean> =>
   act('stage', () => api.nextStage(id, holder, note))
 
+/**
+ * Вопрос/ответ с доски пишет человек: `needs-owner` кладёт текст в историю
+ * комментарием, а без автора он достался бы не тому актору (listik-z0sd).
+ * Автор — «я» доски: имя `owner` (server.users) в серверном режиме, иначе
+ * человеческий ключ `me`. Явный `actor` (агентский `agent:<имя>`) сильнее.
+ */
 const setNeedsOwner = (id: string, value: boolean, note?: string, actor?: string): Promise<boolean> =>
-  act('needs-owner', () => api.needsOwner(id, value, note, actor))
+  act('needs-owner', () => api.needsOwner(id, value, note, actor || owner.value || 'me'))
 
 /** Ответ автора на вопрос: снимает флаг «нужен ты» и пишет комментарий kind=answer. */
 const answerQuestion = (id: string, text: string): Promise<boolean> =>
-  act('answer', () => api.needsOwner(id, false, text))
+  act('answer', () => api.needsOwner(id, false, text, owner.value || 'me'))
 
 const releaseTask = (id: string, note?: string): Promise<boolean> => act('release', () => api.release(id, note))
 

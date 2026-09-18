@@ -588,8 +588,9 @@ def handle(method: str, path: str, query: dict, body: dict, authed: bool = False
     """`owner` — идентичность запроса из заголовка `X-Listik-Owner` (None, если его нет).
 
     Она уходит в store как `as_owner`; в локальном режиме store её игнорирует.
-    У комментария без явного автора она становится автором-человеком: иначе
-    клиент без `author` оставлял бы запись без автора вовсе.
+    У комментария и у вопроса/ответа (`needs-owner`) без явного автора она
+    становится автором-человеком: иначе клиент без `author`/`actor` оставлял бы
+    запись без автора вовсе.
     """
     conn = get_conn()
     parts = [p for p in path.strip("/").split("/") if p]
@@ -1047,8 +1048,13 @@ def handle(method: str, path: str, query: dict, body: dict, authed: bool = False
                 elif action == "mentions":
                     out = deps_mod.mentioned(conn, tid, limit=as_int(body.get("limit"), 50) or 50)
                 elif action == "needs-owner":
+                    # Вопрос/ответ — такой же комментарий в истории, поэтому автор
+                    # берётся тем же правилом, что и у `comment` (listik-z0sd):
+                    # явный `actor` агента сильнее, а без него подписываем человека
+                    # из заголовка `X-Listik-Owner`, а не оставляем запись без автора.
                     out = store.set_needs_owner(conn, tid, value=as_bool(body.get("value", True)),
-                                                text=body.get("note"), actor=body.get("actor"),
+                                                text=body.get("note"),
+                                                actor=body.get("actor") or owner,
                                                 harness=body.get("harness"))
                 elif action == "release":
                     out = store.update_task(conn, tid, actor=body.get("actor"),

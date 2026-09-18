@@ -1277,6 +1277,20 @@ def _open_children_activity(conn: sqlite3.Connection, task_id: str) -> tuple[dat
     return latest_ts, latest_label
 
 
+def _last_release_ts(conn: sqlite3.Connection, task_id: str) -> str | None:
+    """Метка последнего события `release` задачи — начало льготного окна.
+
+    `release` пишут все штатные снятия держателя: handoff без `--holder`,
+    `listik release` и истечение окна возврата (`deps.expire_return_handoffs`).
+    Возвращается сырая строка `ts` (даже если её не разобрать) или `None`, если
+    держателя у карточки никогда не снимали (импорт, ручной `set status`).
+    """
+    r = conn.execute(
+        "SELECT ts FROM events WHERE task_id = ? AND kind = 'release' "
+        "ORDER BY ts DESC, id DESC LIMIT 1", (task_id,)).fetchone()
+    return r["ts"] if r else None
+
+
 def row_to_task(conn: sqlite3.Connection, row: sqlite3.Row) -> dict:
     cfg = config_mod.load()
     warn = float((cfg.get("board") or {}).get("wip_warn_hours", 8))
@@ -1311,7 +1325,16 @@ def row_to_task(conn: sqlite3.Connection, row: sqlite3.Row) -> dict:
             idle_hours = hours_since(child_label)
             idle_age = human_age(child_label)
     stale = bool(running and not orphan and idle_hours is not None and idle_hours > stale_h)
-    abandoned = orphan or missing_heartbeat
+    # Держателя снимают и штатно: handoff без `--holder`, `release`, истечение окна
+    # возврата. Такой карточке дают ту же фору `board.assign_warn_minutes`, что и
+    # выданной, но не взятой, — пока фора идёт, карточка не брошена. Событие ищем
+    # только у карточки без держателя: `row_to_task` зовут на каждую карточку доски.
+    released_at = _last_release_ts(conn, row["id"]) if orphan else None
+    released_hours = hours_since(released_at) if released_at else None
+    # Метку не разобрать — окно считается истёкшим, а не сравнивается None с числом.
+    in_release_grace = bool(released_at and released_hours is not None
+                            and released_hours <= assign_warn_min / 60.0)
+    abandoned = (orphan and not in_release_grace) or missing_heartbeat
     # «Выдана, но не взята»: держателя поставил оркестратор (`stage --holder`), а
     # сам агент ещё не записал ни claim, ни heartbeat от своего имени. Порог
     # `board.assign_warn_minutes` — когда его прошли, карточка идёт в «нужен ты»:
@@ -1401,6 +1424,9 @@ def row_to_task(conn: sqlite3.Connection, row: sqlite3.Row) -> dict:
         "archived": bool(row["archived"]),
         "stale": stale,
         "abandoned": abandoned,
+        # метка, от которой идёт льготное окно «в работе без держателя»;
+        # у карточки с держателем и у закрытой — null
+        "released_at": released_at,
     }
 
 

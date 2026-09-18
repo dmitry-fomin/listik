@@ -64,7 +64,8 @@ users = ["ann", "bob"]   # люди, которые работают с этим
 | `idle_hours` | float? | сколько часов карточка стоит без движения: от свежайшей активности — своей (`holder_at`, иначе `started_at`) или открытых прямых детей `parent-child` (у ребёнка — его `holder_at`, иначе `started_at`); детей учитывают, только если у самой карточки есть своя метка |
 | `idle_age` | str | тот же простой человеку: возраст метки, от которой посчитан `idle_hours` |
 | `stale` | bool | простой (`idle_hours`) дольше `board.stale_hours` (24 ч) |
-| `abandoned` | bool | задача в работе, но держателя нет |
+| `abandoned` | bool | задача в работе, но держателя нет и с последнего события `release` (handoff без `--holder`, `release`, истечение окна возврата) прошло больше `board.assign_warn_minutes` (15 мин); без единого `release` — сразу |
+| `released_at` | str? | метка последнего `release` у карточки в работе без держателя (от неё считается льготное окно); у карточки с держателем и у закрытой — `null` |
 | `holder_taken` | bool | держатель подтвердил работу сам: последнее событие `claim`/`heartbeat` по нему сделано от его имени (`--actor agent:<holder>` или `--harness <holder>`). Держатель события и автор события сравниваются с держателем карточки как **акторы** (`actors.resolve`), а не как строки: `claude`, `agent:claude` и `sonnet-judge` — один и тот же держатель |
 | `holder_assigned_by` | str? | кто поставил держателя (`agent:claude` у выдачи оркестратором, `null` у старых записей). Назначение ищется по актору держателя, а не по написанию; heartbeat, которым держатель сам перехватил карточку у другого актора, — тоже назначение (и сразу взятие), а обычный heartbeat держателя «кто выдал» не переставляет |
 | `holder_assigned_by_title` / `assigned_at` / `assigned_age` / `assigned_hours` | str?/str/str/float? | подпись выдавшего, время и возраст выдачи — от последнего события-назначения, а не от `holder_at` (heartbeat за исполнителя его не сбрасывает) |
@@ -717,7 +718,7 @@ WAL и исчезновение WAL при открытых соединения
   "not_taken": 1, "tasks": [ { ...задача... } ] }
 ```
 
-`needs_you` — задачи, требующие человека: `needs_owner`, `stale`, `abandoned` или `not_taken_warn`
+`needs_you` — задачи, требующие человека: `needs_owner`, `stale`, `abandoned` (в работе без держателя дольше `board.assign_warn_minutes` после `release`) или `not_taken_warn`
 (выдана, но не взята дольше `board.assign_warn_minutes`).
 
 `/api/search` — форма `results[]`: карточка задачи (обычные поля) плюс `snippet`, `score`,

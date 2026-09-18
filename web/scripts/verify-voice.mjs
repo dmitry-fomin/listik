@@ -133,8 +133,13 @@ const STATE = `(() => {
   const fabWidth = fabStyle ? parseFloat(fabStyle.width) || 0 : 0;
   const fabRadius = fabStyle ? parseFloat(fabStyle.borderTopLeftRadius) || 0 : 0;
   const buttonText = (el) => el.textContent.replace(/\\s+/g, ' ').trim();
-  const drawerNodes = [...document.querySelectorAll('.ui-drawer')].filter(
-    (el) => el.querySelector('.ui-drawer__title')?.textContent.includes('Новая задача'),
+  // Заголовок «Новой задачи» приходит слотом #header (listik-7fbi), поэтому
+  // собственного .ui-drawer__title у кита в этом дровере нет — ищем по шапке
+  // целиком, а .ui-drawer__title оставляем как запасной вариант.
+  const drawerHeading = (el) =>
+    (el.querySelector('.ui-drawer__header') ?? el.querySelector('.ui-drawer__title'))?.textContent ?? '';
+  const drawerNodes = [...document.querySelectorAll('.ui-drawer')].filter((el) =>
+    drawerHeading(el).includes('Новая задача'),
   );
   // Берём самый свежий узел: закрытые висят в DOM, а новый открывается поверх них.
   const drawerNode = drawerNodes[drawerNodes.length - 1] ?? null;
@@ -511,8 +516,10 @@ try {
     const filled = await state()
     // Смена типа в форме не должна сбрасывать маршрут из черновика.
     await evaluate(`(() => {
-      const drawers = [...document.querySelectorAll('.ui-drawer')].filter(
-        (el) => el.querySelector('.ui-drawer__title')?.textContent.includes('Новая задача'),
+      const heading = (el) =>
+        (el.querySelector('.ui-drawer__header') ?? el.querySelector('.ui-drawer__title'))?.textContent ?? '';
+      const drawers = [...document.querySelectorAll('.ui-drawer')].filter((el) =>
+        heading(el).includes('Новая задача'),
       );
       const drawer = drawers[drawers.length - 1];
       const radio = drawer.querySelector('.listik-icon-toggle[aria-label="Тип задачи"] [role="radio"][aria-label="баг"]');

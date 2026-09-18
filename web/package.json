@@ -14,7 +14,7 @@
   "dependencies": {
     "@fontsource-variable/geist": "^5.3.0",
     "@fontsource-variable/jetbrains-mono": "^5.3.0",
-    "@zoloto585/facet": "^0.4.1",
+    "@zoloto585/facet": "^1.1.0",
     "vue": "^3.5.42"
   },
   "devDependencies": {

@@ -369,6 +369,13 @@ def show_task(t: dict) -> None:
         if t.get("holder_note"):
             holder += f" — {t['holder_note']}"
     print(f"  исполнитель: {label_of(t, 'assignee_title', 'assignee')}   держатель: {holder}")
+    # Кто подтвердил работу своим claim/heartbeat: у закрытой карточки держателя
+    # может уже не быть, а `assignee` помнит только первый claim.
+    worked = t.get("worked_by") or []
+    if worked:
+        worked_title = t.get("worked_by_title") or ", ".join(worked)
+        print(f"  выполнял:    {worked_title}" if len(worked) == 1
+              else f"  выполняли:   {worked_title}")
     # Строка владельца — только в серверном режиме: в локальном владелец ничего не
     # значит (store его не пишет), и старое значение в базе не должно всплывать.
     if t.get("owner") and server_mode_enabled():

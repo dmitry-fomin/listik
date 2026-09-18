@@ -81,12 +81,27 @@ export interface DesktopHolderPresentation {
   stageStarted: string
   assignee: string | null
   note: string
+  /**
+   * «Кто выполнял» — у закрытой карточки (done/cancelled) с непустым `worked_by`:
+   * держателя у неё может уже не быть, а оставшийся ничего не держит. `null` —
+   * блок показывает держателя как раньше.
+   */
+  workedBy: { label: 'выполнял' | 'выполняли'; title: string; actor: string } | null
 }
 
 /** Значения блока «Кто держит» в настольной карточке. Разметка остаётся в TaskDrawer. */
 export function desktopHolderPresentation(task: TaskDetail): DesktopHolderPresentation {
   const hasTitle = hasHolderTitle(task.holder_title)
+  const isClosed = task.status === 'done' || task.status === 'cancelled'
+  const workedKeys = task.worked_by ?? []
   return {
+    workedBy: isClosed && workedKeys.length > 0
+      ? {
+          label: workedKeys.length > 1 ? 'выполняли' : 'выполнял',
+          title: task.worked_by_title,
+          actor: workedKeys[0],
+        }
+      : null,
     holder: hasTitle ? task.holder_title : 'никто',
     holderHasTitle: hasTitle,
     holderAge: hasTitle ? task.holder_age : null,

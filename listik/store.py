@@ -1248,6 +1248,41 @@ def holder_claim_state(conn: sqlite3.Connection, task_id: str, holder: str | Non
     return out
 
 
+def worked_by_actors(conn: sqlite3.Connection, task_id: str) -> list[str]:
+    """Кто подтвердил работу по карточке своим `claim`/`heartbeat`.
+
+    У закрытой карточки не видно, кто её вёл: `listik done` держателя не снимает,
+    а `stage --to done` — снимает, и `assignee` помнит только первый claim. Поле
+    считается по событиям: событие «своё», если его автор (`actor`, иначе
+    `harness`) тождествен держателю события (`to_value`) как актор
+    (`actors.same_actor`). Выдача оркестратором (`stage --holder кому`) и
+    heartbeat чужой рукой автору не тождественны и в список не идут; события
+    `stage`/`release`/`comment`/`status`/`note`, `assignee` и текущий держатель
+    без своего события — тоже.
+
+    Порядок — по первому своему событию каждого актора, написание — всегда
+    канонический ключ (`agent:claude`), даже если событие было от голого
+    `claude`. Один запрос без `LIMIT`: среза `events[]` из `get_task` (последние
+    100) длинной карточке не хватает — claim там может быть старше.
+    """
+    rows = conn.execute(
+        "SELECT to_value, actor, harness FROM events "
+        "WHERE task_id = ? AND kind IN ('claim','heartbeat') ORDER BY ts ASC, id ASC",
+        (task_id,)).fetchall()
+    out: list[str] = []
+    for r in rows:
+        author = (r["actor"] or r["harness"] or "").strip()
+        target = (r["to_value"] or "").strip()
+        if not author or not target:
+            continue
+        if not actors_mod.same_actor(author, target, conn):
+            continue
+        key = actors_mod.resolve(author, conn)[0]
+        if key and key not in out:
+            out.append(key)
+    return out
+
+
 def _open_children_activity(conn: sqlite3.Connection, task_id: str) -> tuple[datetime | None, str | None]:
     """Самая свежая метка простоя среди открытых прямых детей задачи.
 
@@ -1275,6 +1310,20 @@ def _open_children_activity(conn: sqlite3.Connection, task_id: str) -> tuple[dat
         if latest_ts is None or ts > latest_ts:
             latest_ts, latest_label = ts, label
     return latest_ts, latest_label
+
+
+def _last_release_ts(conn: sqlite3.Connection, task_id: str) -> str | None:
+    """Метка последнего события `release` задачи — начало льготного окна.
+
+    `release` пишут все штатные снятия держателя: handoff без `--holder`,
+    `listik release` и истечение окна возврата (`deps.expire_return_handoffs`).
+    Возвращается сырая строка `ts` (даже если её не разобрать) или `None`, если
+    держателя у карточки никогда не снимали (импорт, ручной `set status`).
+    """
+    r = conn.execute(
+        "SELECT ts FROM events WHERE task_id = ? AND kind = 'release' "
+        "ORDER BY ts DESC, id DESC LIMIT 1", (task_id,)).fetchone()
+    return r["ts"] if r else None
 
 
 def row_to_task(conn: sqlite3.Connection, row: sqlite3.Row) -> dict:
@@ -1311,7 +1360,16 @@ def row_to_task(conn: sqlite3.Connection, row: sqlite3.Row) -> dict:
             idle_hours = hours_since(child_label)
             idle_age = human_age(child_label)
     stale = bool(running and not orphan and idle_hours is not None and idle_hours > stale_h)
-    abandoned = orphan or missing_heartbeat
+    # Держателя снимают и штатно: handoff без `--holder`, `release`, истечение окна
+    # возврата. Такой карточке дают ту же фору `board.assign_warn_minutes`, что и
+    # выданной, но не взятой, — пока фора идёт, карточка не брошена. Событие ищем
+    # только у карточки без держателя: `row_to_task` зовут на каждую карточку доски.
+    released_at = _last_release_ts(conn, row["id"]) if orphan else None
+    released_hours = hours_since(released_at) if released_at else None
+    # Метку не разобрать — окно считается истёкшим, а не сравнивается None с числом.
+    in_release_grace = bool(released_at and released_hours is not None
+                            and released_hours <= assign_warn_min / 60.0)
+    abandoned = (orphan and not in_release_grace) or missing_heartbeat
     # «Выдана, но не взята»: держателя поставил оркестратор (`stage --holder`), а
     # сам агент ещё не записал ни claim, ни heartbeat от своего имени. Порог
     # `board.assign_warn_minutes` — когда его прошли, карточка идёт в «нужен ты»:
@@ -1319,6 +1377,10 @@ def row_to_task(conn: sqlite3.Connection, row: sqlite3.Row) -> dict:
     claim_state = holder_claim_state(conn, row["id"], row["holder"])
     assigned_hours = claim_state["assigned_hours"]
     not_taken = bool((row["holder"] or "").strip()) and not claim_state["taken"]
+    # «Кто выполнял»: акторы, подтвердившие работу своим claim/heartbeat. Считается
+    # у карточки любого статуса, но нужнее всего закрытой — у неё держателя может
+    # уже не быть (`stage --to done` его снимает).
+    worked_by = worked_by_actors(conn, row["id"])
     return {
         "id": row["id"],
         "project": row["project"],
@@ -1354,6 +1416,10 @@ def row_to_task(conn: sqlite3.Connection, row: sqlite3.Row) -> dict:
         "assigned_at": claim_state["assigned_at"],
         "assigned_age": human_age(claim_state["assigned_at"]),
         "assigned_hours": assigned_hours,
+        # Кто подтвердил работу сам (см. `worked_by_actors`): у закрытой карточки
+        # доска и `show` показывают это вместо «без держателя».
+        "worked_by": worked_by,
+        "worked_by_title": ", ".join(actors_mod.display(k) for k in worked_by),
         "not_taken": not_taken,
         "not_taken_warn": bool(not_taken and assigned_hours is not None
                                and assigned_hours > assign_warn_min / 60.0),
@@ -1401,6 +1467,9 @@ def row_to_task(conn: sqlite3.Connection, row: sqlite3.Row) -> dict:
         "archived": bool(row["archived"]),
         "stale": stale,
         "abandoned": abandoned,
+        # метка, от которой идёт льготное окно «в работе без держателя»;
+        # у карточки с держателем и у закрытой — null
+        "released_at": released_at,
     }
 
 

@@ -610,10 +610,27 @@ listik
 **Кто пишет в карточку.** Кто взял работу — тот и пишет. Этапы 1–2 (ТЗ и критика) ведёт сама сессия, поэтому
 их команды — её. Внешнему харнессу оркестратор только **выдаёт** карточку, и дальше не пишет за него ничего:
 `claim`, `heartbeat`, журнал и вердикт харнесс делает сам — это и есть доказательство, что прогон запустился.
-Карточка с чужим claim неотличима от брошенной, поэтому команды «за исполнителя» запрещены: вместо них в текст
+Карточка с чужим claim неотличима от брошенной, поэтому команды «за исполнителя» запрещены (за **внешнего**;
+за локального субагента берёт сама сессия — см. абзац ниже): вместо них в текст
 задачи харнессу идёт шаблон ниже. Локальные субагенты сессии (`pipeline-spec-writer-*`,
 `pipeline-implementer*`, `pipeline-judge`) своего актора не имеют: за них пишет сессия — это тот же
 `agent:claude`.
+
+**Локальный субагент на этапах 3–4: сессия выдаёт себе и берёт сама.** Запрет «команд за исполнителя»
+относится к **внешнему** харнессу — у локального субагента исполнитель и есть сессия, и писать за него
+некому. Поэтому если этап 3 делает `pipeline-implementer*`, а этап 4 — `pipeline-judge`, перед запуском
+субагента карточка выдаётся себе, сразу за выдачей идёт свой `claim`, а пока субагент работает — heartbeat
+по правилу раздела «Всегда»:
+
+```
+listik stage <карточка> --to s3-impl --holder claude --actor agent:claude --harness claude   # судье — --to s4-judge --holder claude
+listik claim <карточка> --holder claude --actor agent:claude --harness claude
+listik heartbeat <карточка> --holder claude --note "<id>, порция X, этап N: <что идёт>" --actor agent:claude --harness claude
+```
+
+Без такой выдачи handoff снимает держателя: карточка стоит «в работе без держателя», через
+`board.assign_warn_minutes` уезжает в «нужен ты», а после закрытия в «кто выполнял» (`worked_by`)
+остаётся один этап 1.
 
 **Выдана, но не взята.** `stage <карточка> --holder <кому>` только выдаёт: держатель есть, а своего claim от
 него ещё нет — в `show` это `holder_taken=false` и `not_taken=true`, на доске «выдана, но не взята». Пришёл
@@ -712,23 +729,29 @@ listik stage <P> --actor agent:claude --harness claude                        # 
 ```
 
 Дальше этап 3 — внешний исполнитель. Перед запуском карточка выдаётся, в текст задачи идёт шаблон из
-«Задание харнессу»; **своего `claim` за исполнителя оркестратор не пишет** — держателя ставит выдача
+«Задание харнессу»; **своего `claim` за исполнителя оркестратор не пишет** (внешнего; за локального
+субагента берёт сама сессия — см. «Кто пишет в карточку») — держателя ставит выдача
 (явный `--holder` пишет событие-назначение), а claim делает сам харнесс и тем самым переводит карточку
 из «выдана» в «взята»:
 
 ```
 listik stage <P> --to s3-impl --holder <харнесс> --actor agent:claude --harness claude   # выдача на этапе 3
+listik stage <P> --to s3-impl --holder claude --actor agent:claude --harness claude   # локальный субагент: сессия выдаёт себе
+listik claim <P> --holder claude --actor agent:claude --harness claude   # локальный субагент: сессия берёт сама
 ```
 
 Повторный запуск по той же порции (после красного) — та же выдача на том же этапе: `--to s3-impl`
 оставляет карточку на этапе и `stage_at` как были, но ставит держателя заново и пишет новое
 назначение, поэтому старый claim харнесса с прошлого круга не считается взятием — харнесс снова
-делает claim (или heartbeat) сам. Без `--holder` тот же вызов остаётся тихим no-op.
+делает claim (или heartbeat) сам. Для локального субагента это те же `--to s3-impl --holder claude`
+и снова свой `claim <P> --holder claude`. Без `--holder` тот же вызов остаётся тихим no-op.
 
 Перед этапом 4 карточка выдаётся судье — судью он тоже берёт сам:
 
 ```
 listik stage <P> --holder <судья> --actor agent:claude --harness claude       # → s4-judge, выдача судье
+listik stage <P> --to s4-judge --holder claude --actor agent:claude --harness claude   # локальный субагент: сессия выдаёт себе
+listik claim <P> --holder claude --actor agent:claude --harness claude   # локальный субагент: сессия берёт сама
 ```
 
 Вердикт пишет **судья**, не оркестратор: первая строка ровно `VERDICT: PASS` или `VERDICT: FAIL` (сервер
@@ -774,11 +797,16 @@ listik stage <id> --to s2-review --actor agent:claude --harness claude
 ```
 
 Перед этапом 3 карточка выдаётся исполнителю, перед этапом 4 — судье (оба берут её сами, шаблон «Задание
-харнессу»); своего claim за них оркестратор не пишет:
+харнессу»); своего claim за них оркестратор не пишет — за внешних; если этап делает локальный субагент
+сессии, карточку сессия выдаёт себе и берёт сама (см. «Кто пишет в карточку»):
 
 ```
 listik stage <id> --to s3-impl --holder <харнесс> --actor agent:claude --harness claude   # исполнителю
+listik stage <id> --to s3-impl --holder claude --actor agent:claude --harness claude   # локальный субагент: сессия выдаёт себе
+listik claim <id> --holder claude --actor agent:claude --harness claude   # локальный субагент: сессия берёт сама
 listik stage <id> --to s4-judge --holder <судья> --actor agent:claude --harness claude    # судье
+listik stage <id> --to s4-judge --holder claude --actor agent:claude --harness claude   # локальный субагент: сессия выдаёт себе
+listik claim <id> --holder claude --actor agent:claude --harness claude   # локальный субагент: сессия берёт сама
 ```
 
 Красный вердикт судья пишет в карточку сам и освобождает её (`release <id>`); оркестратор выдаёт карточку
@@ -791,11 +819,16 @@ listik stage <id> --to s4-judge --holder <судья> --actor agent:claude --har
 ```
 listik set <id> spec_path=<абс. путь adhoc-файла> checklist_path=<тот же adhoc-файл> decision_path=<абс. путь журнала> --actor agent:claude --harness claude
 listik stage <id> --to s3-impl --holder <харнесс> --actor agent:claude --harness claude   # выдача исполнителю
+listik stage <id> --to s3-impl --holder claude --actor agent:claude --harness claude   # локальный субагент: сессия выдаёт себе
+listik claim <id> --holder claude --actor agent:claude --harness claude   # локальный субагент: сессия берёт сама
 listik stage <id> --to s4-judge --holder <судья> --actor agent:claude --harness claude    # выдача судье
+listik stage <id> --to s4-judge --holder claude --actor agent:claude --harness claude   # локальный субагент: сессия выдаёт себе
+listik claim <id> --holder claude --actor agent:claude --harness claude   # локальный субагент: сессия берёт сама
 ```
 
-`claim` за исполнителя и судью не пишется: каждый берёт карточку сам (шаблон «Задание харнессу»),
-оркестратор только выдаёт и закрывает. `review_path` здесь не ставится: критики не было. Вердикт — как у
+`claim` за исполнителя и судью не пишется, пока они внешние: каждый берёт карточку сам (шаблон «Задание
+харнессу»), оркестратор только выдаёт и закрывает. За локального субагента сессии `claim --holder claude`
+делает сама сессия — см. «Кто пишет в карточку». `review_path` здесь не ставится: критики не было. Вердикт — как у
 эпика, но на `<id>`, и закрытие после зелёного единственной порции:
 
 ```
@@ -805,9 +838,10 @@ listik done <id> -r "<коммиты <hash7>, <hash7>>" --actor agent:claude --h
 
 ### Всегда
 
-Heartbeat — только пока карточку держит сама сессия (этапы 1–2, ожидание ответа автора): при каждой смене
-этапа или порции и не реже раза в 15 минут — с тем, что идёт сейчас. По выданной карточке ждёт харнесс, и
-heartbeat шлёт он сам; оркестратор вместо этого смотрит `not_taken`: не взяли за `board.assign_warn_minutes`
+Heartbeat — только пока карточку держит сама сессия (этапы 1–2, ожидание ответа автора, и этапы 3–4, когда
+их делает локальный субагент): при каждой смене
+этапа или порции и не реже раза в 15 минут — с тем, что идёт сейчас. По карточке, выданной **внешнему**
+харнессу, ждёт он, и heartbeat шлёт он сам; оркестратор вместо этого смотрит `not_taken`: не взяли за `board.assign_warn_minutes`
 — прогон не запустился, проверь job и перезапусти.
 
 ```

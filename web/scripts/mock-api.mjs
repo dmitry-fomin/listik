@@ -131,6 +131,10 @@ function task(overrides) {
     holder: 'agent:dsh',
     holder_title: 'dsh',
     holder_note: 'пишу панель задачи',
+    // «Кто выполнял» (claim/heartbeat своей рукой): у большинства задач заглушки
+    // никто ничего не подтверждал — поле пустое.
+    worked_by: [],
+    worked_by_title: '',
     // Владелец задачи: в локальном режиме его нет ни у кого (`null`).
     owner: null,
     holder_at: iso(0.3),
@@ -192,7 +196,9 @@ function routeEditableOf(item) {
 }
 
 const tasks = [
-  task({}),
+  // Открытая карточка с держателем, который взял её сам: `worked_by` непуст, но
+  // «кто выполнял» у открытой не показывается — в подвале и в панели «держит».
+  task({ worked_by: ['agent:dsh'], worked_by_title: 'DeepSeek Harness' }),
   task({
     id: 'listik-api-c3d4',
     title: 'Отдать needs_you одной лентой',
@@ -417,7 +423,16 @@ if (linksMode) {
       stage_title: null,
     }),
     task({ id: 'listik-links-soft', title: 'Мягкая связь', status: 'open', status_title: 'открыта' }),
-    task({ id: 'listik-links-done', title: 'Закрытый блокер', status: 'done', status_title: 'готова', closed_at: iso(4) }),
+    // Закрытая, держатель заглушки остался: в панели — «выполнял», не «держит».
+    task({
+      id: 'listik-links-done',
+      title: 'Закрытый блокер',
+      status: 'done',
+      status_title: 'готова',
+      closed_at: iso(4),
+      worked_by: ['agent:dsh'],
+      worked_by_title: 'DeepSeek Harness',
+    }),
     task({
       id: 'listik-links-child',
       title: 'Ребёнок карточки со связями',
@@ -479,6 +494,11 @@ if (hintMode) {
       status: 'done',
       status_title: 'готова',
       closed_at: iso(5),
+      // Закрытая без держателя, но с подтверждённой работой — «выполнял Claude».
+      holder: null,
+      holder_title: '',
+      worked_by: ['agent:claude'],
+      worked_by_title: 'Claude',
     }),
     task({
       id: 'listik-hint-closed-kids',
@@ -500,6 +520,9 @@ if (hintMode) {
       status: 'cancelled',
       status_title: 'отменена',
       closed_at: iso(7),
+      // Два актора — «выполняли …, …».
+      worked_by: ['agent:claude', 'agent:dsh'],
+      worked_by_title: 'Claude, DeepSeek Harness',
     }),
     task({
       id: 'listik-hint-kid-2',

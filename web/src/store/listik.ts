@@ -149,8 +149,7 @@ const detailError = ref<string | null>(null)
 const paletteOpen = ref(false)
 const pending = ref<string | null>(null)
 
-/** Настройки доски: репозитории (проекты) — что показывать, что скрыто с доски. */
-const projectsOpen = ref(false)
+/** Репозитории (проекты) раздела настроек: что показывать на доске, что скрыто. */
 const projects = ref<ProjectRow[]>([])
 const projectsRoot = ref('')
 const projectsLoading = ref(false)
@@ -1151,11 +1150,6 @@ async function loadProjects(): Promise<void> {
   })
 }
 
-async function openProjects(): Promise<void> {
-  projectsOpen.value = true
-  await loadProjects()
-}
-
 async function projectAction<T>(
   action: () => Promise<T>,
   refresh: () => Promise<void>,
@@ -1319,7 +1313,6 @@ export function useListikStore() {
     detailError,
     paletteOpen,
     pending,
-    projectsOpen,
     projects,
     projectsRoot,
     projectsLoading,
@@ -1406,7 +1399,6 @@ export function useListikStore() {
     transcribeVoice,
     draftVoice,
     loadProjects,
-    openProjects,
     addProject,
     updateProject,
     setProjectArchived,

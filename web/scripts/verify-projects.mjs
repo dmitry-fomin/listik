@@ -1,6 +1,8 @@
 /**
  * Проверка сценария «добавить / скрыть / вернуть / убрать репозиторий» через
- * интерфейс настроек: скрытый проект возвращается на доску тумблером в разделе
+ * страницу настроек (`/settings/repos` — раздел «Репозитории»; модалки настроек
+ * больше нет, поэтому скрипт заходит прямо по адресу, а не кликает кнопку в
+ * шапке): скрытый проект возвращается на доску тумблером в разделе
  * «Скрыты с доски» и остаётся возвращённым после перезагрузки страницы
  * (возврат — это запись в базе, а не только вид; listik-54be).
  * Добавление и правка живут в одном окне (listik-zmos): его открывают кнопкой
@@ -49,27 +51,28 @@ const typeInto = (index, value) => evaluate(`(() => {
   return true;
 })()`)
 
-/** Открыть настройки: кнопка в шапке подписана «Настройки» (тултип «Репозитории, …» —
- *  не текст кнопки, искать по нему нельзя). Вкладка «Репозитории» открыта по умолчанию. */
-const openSettings = `[...document.querySelectorAll('button')]
-  .find((b) => b.textContent.trim() === 'Настройки')?.click()`
+/** Адрес раздела «Репозитории» с тем же токеном, что передали скрипту: у страницы
+ *  настроек свой путь, открывать её кликом по шапке больше не нужно. */
+const settingsUrl = (() => {
+  const target = new URL(url)
+  target.pathname = '/settings/repos'
+  return target.toString()
+})()
 
 const report = {}
 await send('Runtime.enable')
 await send('Network.enable')
 await send('Page.enable')
-await send('Page.navigate', { url })
+await send('Page.navigate', { url: settingsUrl })
 await sleep(4000)
 
-// открыть настройки репозиториев
-await evaluate(openSettings)
-await sleep(2000)
-report.settingsOpen = await evaluate(`Boolean(document.querySelector('.ui-modal'))`)
+// раздел «Репозитории» открыт самим адресом
+report.settingsOpen = await evaluate(`Boolean(document.querySelector('.listik-settings'))`)
 report.rowsBefore = await evaluate(`document.querySelectorAll('.ui-entity-card').length`)
 
 // добавить каталог: кнопка открывает общее окно, поля — внутри него
 await evaluate(
-  `[...document.querySelectorAll('.ui-modal button')]
+  `[...document.querySelectorAll('button')]
     .find((b) => b.textContent.trim() === 'Добавить репозиторий')?.click()`,
 )
 await sleep(1200)
@@ -148,10 +151,8 @@ const boardState = `(() => {
 report.afterRestore = await evaluate(boardState)
 
 // состояние возврата должно пережить перезагрузку: возврат — не только вид, но и база
-await send('Page.navigate', { url })
+await send('Page.navigate', { url: settingsUrl })
 await sleep(4000)
-await evaluate(openSettings)
-await sleep(2000)
 report.afterReload = await evaluate(boardState)
 
 // удалить: подтверждение → убрать

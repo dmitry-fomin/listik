@@ -86,13 +86,16 @@ src/
   store/        единый стейт доски (модульный синглтон) и все действия
   lib/          форматтеры (возраст, длительности), иконки, тема, здоровье/харнесс/проект/этапы,
                 маршруты (`routes.ts` — правила выбора поверх записей `GET /api/routes`),
+                router.ts (свой минимальный роутер на History API: доска `/` и
+                настройки `/settings/<раздел>`, сторожа ухода),
                 viewport.ts (`useIsPhone` — порог 767px режима телефона)
-  components/   AppHeader, BoardToolbar, NeedsYouStrip, NewTaskModal, RoutePicker, AssistantField, ProjectSettings,
+  components/   AppHeader, BoardToolbar, NeedsYouStrip, NewTaskModal, RoutePicker, AssistantField,
                 TaskFilters, SearchPanel, TaskDrawer, MobileTaskList, MobileTaskRow,
-                PhoneQueue, PhoneTaskSheet, ListikIcon,
+                PhoneQueue, PhoneTaskSheet, ListikIcon, RoutesSettings,
+                settings/ReposSection — раздел «Репозитории» страницы настроек,
                 board/{BoardColumn,TaskCard},
                 marks/{ProjectMark,HarnessIcon,HealthDot,TaskGlyph,CountGlyph} — общие знаки прототипа
-  views/        BoardView, ListView, MetricsView
+  views/        BoardView, ListView, MetricsView, SettingsPage
   sheet/        dev-витрина кита и своих примитивов (`sheet.html`, `npm run dev` →
                 http://localhost:5173/sheet.html), в сборку (`dist/`) не попадает
 scripts/
@@ -210,8 +213,11 @@ node scripts/verify-voice.mjs
 ## Репозитории на доске
 
 Доска собирается по проектам из таблицы `projects`, поэтому «что показывает канбан»
-настраивается там же: кнопка **«Репозитории»** в шапке открывает `ProjectSettings`
-(`POST/GET/PATCH/DELETE /api/projects`).
+настраивается там же: кнопка **«Настройки»** в шапке ведёт на страницу
+`/settings/repos` — раздел «Репозитории» (`POST/GET/PATCH/DELETE /api/projects`);
+соседний раздел «Маршруты» живёт на `/settings/routes`. У разделов свои адреса:
+на них можно дать ссылку, открыть в новой вкладке (Cmd/Ctrl-клик) и вернуться
+«назад» браузера; «К доске» в шапке настроек возвращает на `/`.
 
 - **добавить** — путь к каталогу, slug подставляется из имени каталога (можно задать свой,
   чтобы проект лёг в категорию: `Zoloto585/my-repo`); git remote и ветка подтягиваются сами;
@@ -328,8 +334,8 @@ node scripts/verify-markdown.mjs
 ## Особенности
 
 - **Тёмная тема по умолчанию** (`data-theme="dark"` ставится до монтирования),
-  светлая переключается кнопкой в шапке. Цветовая гамма (`useColorScheme()` из кита) —
-  в «Настройках», вкладка «Оформление».
+  светлая переключается кнопкой в шапке. Цветовой гаммы в приложении нет: только
+  ось светлая/тёмная, гамма всегда `amber`.
 - **Доска только показывает** — этап меняется исключительно из панели задачи
   (кнопка «Следующий этап»); перетаскивания карточек между колонками нет.
   Раскладка одна — по этапам конвейера; все задачи в любых срезах — во вкладке «Список».

@@ -1,5 +1,7 @@
 /**
- * Проверка вкладки «Маршруты» настроек (`ProjectSettings.vue` → `RoutesSettings.vue`):
+ * Проверка раздела «Маршруты» страницы настроек (`/settings/routes` →
+ * `RoutesSettings.vue`; страница открывается прямым адресом, вкладок и модалки
+ * настроек больше нет):
  * список не пуст и в нём есть обе группы («Конвейеры»/«Прямая выдача»), клик по
  * строке выбирает маршрут, перестановка кнопкой ▲ (кит `UiRecordList`) пишется
  * в базу — порядок переживает перезагрузку страницы, а не живёт только в
@@ -97,11 +99,12 @@ const REORDER_PATCH = `(() => {
   };
 })()`
 
-const openSettings = `[...document.querySelectorAll('button')]
-  .find((b) => b.textContent.trim() === 'Настройки')?.click()`
-
-const openRoutesTab = `[...document.querySelectorAll('[role=tab]')]
-  .find((b) => b.textContent.trim() === 'Маршруты')?.click()`
+/** Адрес раздела «Маршруты» с тем же токеном, что передали скрипту. */
+const routesUrl = (() => {
+  const target = new URL(url)
+  target.pathname = '/settings/routes'
+  return target.toString()
+})()
 
 const groupRows = (title) => `(() => {
   const group = [...document.querySelectorAll('.listik-routes-settings__group')]
@@ -137,11 +140,10 @@ const clickStep = (title, index, dir) => `(() => {
 
 const detailTitle = `document.querySelector('.listik-routes-settings__card input')?.value ?? null`
 
+/** Открыть раздел «Маршруты»: у него свой адрес, кликать нечего. */
 const openTab = async () => {
-  await evaluate(openSettings)
-  await sleep(1500)
-  await evaluate(openRoutesTab)
-  await sleep(1500)
+  await send('Page.navigate', { url: routesUrl })
+  await sleep(4000)
 }
 
 /** Прямой POST в обход UI — страховка `finally`, когда сценарий упал раньше клика ▼. */
@@ -407,12 +409,11 @@ try {
   await send('Page.enable')
   await send('Page.addScriptToEvaluateOnNewDocument', { source: REORDER_PATCH })
 
-  await send('Page.navigate', { url })
+  await send('Page.navigate', { url: routesUrl })
   await sleep(4000)
   await evaluate(REORDER_PATCH) // сама страница уже загружена раньше add-script — патчим и напрямую
 
-  await openTab()
-  report.settingsOpen = await evaluate(`Boolean(document.querySelector('.ui-modal'))`)
+  report.settingsOpen = await evaluate(`Boolean(document.querySelector('.listik-settings'))`)
 
   const pipelineBefore = await evaluate(groupRows('Конвейеры'))
   const directBefore = await evaluate(groupRows('Прямая выдача'))
@@ -454,8 +455,6 @@ try {
     JSON.stringify(lastCall.keys.slice(0, pipelineBefore.length)) === JSON.stringify(expectedAfterMove)
 
   // перезагрузка страницы — порядок обязан пережить её (записан в базу, а не только в стор вкладки)
-  await send('Page.navigate', { url })
-  await sleep(4000)
   await openTab()
   const afterReload = await evaluate(groupRows('Конвейеры'))
   report.afterReload = afterReload?.map((row) => row.key) ?? null
@@ -653,8 +652,6 @@ try {
     Array.isArray(directBody.command) && directBody.command[directBody.command.length - 1] === promptProbe
 
   // 6) перезагрузка страницы — новый промпт на месте (он в базе, а не в памяти вкладки)
-  await send('Page.navigate', { url })
-  await sleep(4000)
   await openTab()
   const directRowsAfterReload = (await evaluate(groupRows('Прямая выдача'))) ?? []
   await evaluate(clickRow('Прямая выдача', directRowsAfterReload.findIndex((row) => row.key === directKey)))

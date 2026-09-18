@@ -1,6 +1,6 @@
 <script setup lang="ts">
 /**
- * Вкладка «Маршруты» настроек (`ProjectSettings.vue` → `#panel-routes`):
+ * Раздел «Маршруты» страницы настроек (`views/SettingsPage.vue`, `/settings/routes`):
  * список записей `routes` (конвейеры и прямая выдача), их порядок, скрытие,
  * заведение под скил и удаление. Правку самой записи ведут карточки справа:
  * `RouteCard.vue` (конвейер, автосохранение шапки) и `RouteDirectCard.vue`

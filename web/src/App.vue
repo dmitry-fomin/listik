@@ -1,5 +1,10 @@
 <script setup lang="ts">
 /**
+ * Корень приложения: по адресу (`lib/router.ts`) рисуется либо доска, либо
+ * страница настроек (`/settings/<раздел>` → `views/SettingsPage.vue`). Общее у
+ * обоих экранов — шапка, `store.init()`/`dispose()`, окно «Нужен токен», тосты
+ * и футер с версией; всё остальное здесь — доска.
+ *
  * Экран доски Listik: шапка, вкладки видов, инбокс «Ты нужен», тулбар с чипами
  * здоровья и компактными глобальными фильтрами, один из четырёх видов (доска /
  * список / метрики), панель задачи справа, поиск (Cmd/Ctrl+K) и
@@ -27,11 +32,11 @@ import AppHeader from '@/components/AppHeader.vue'
 import BoardToolbar from '@/components/BoardToolbar.vue'
 import NeedsYouStrip from '@/components/NeedsYouStrip.vue'
 import NewTaskModal from '@/components/NewTaskModal.vue'
-import ProjectSettings from '@/components/ProjectSettings.vue'
 import SearchPanel from '@/components/SearchPanel.vue'
 import TaskDrawer from '@/components/TaskDrawer.vue'
 import PhoneTaskSheet from '@/components/PhoneTaskSheet.vue'
 import BoardView from '@/views/BoardView.vue'
+import SettingsPage from '@/views/SettingsPage.vue'
 import ListView from '@/views/ListView.vue'
 import MetricsView from '@/views/MetricsView.vue'
 import MobileTaskList from '@/components/MobileTaskList.vue'
@@ -40,6 +45,7 @@ import store, { type ViewKey } from '@/store/listik'
 import type { CommentKind, Task, TaskPatch, VoiceDraft } from '@/api/types'
 import { formatTime, tasksCountLabel } from '@/lib/format'
 import { useIsPhone } from '@/lib/viewport'
+import { currentPath, settingsSectionOf } from '@/lib/router'
 
 const toast = useToast()
 
@@ -234,6 +240,15 @@ const isPhone = useIsPhone()
 store.phone.value = isPhone.value
 watch(isPhone, (value) => store.setPhone(value))
 
+/**
+ * Экран выбирается адресом: всё, что не `/settings/*`, — доска. Общие для обоих
+ * экранов только шапка, окно токена, тосты и футер; виды, карточка задачи и
+ * «Новая задача» живут лишь на доске.
+ */
+const mode = computed<'board' | 'settings'>(() =>
+  settingsSectionOf(currentPath.value) === null ? 'board' : 'settings',
+)
+
 /** Клик по марке в шапке: закрыть карточку и вернуться на доску. */
 function goHome(): void {
   store.closeTask()
@@ -257,117 +272,129 @@ onBeforeUnmount(() => {
       :loading="store.loading.value"
       :last-sync-at="store.lastSyncAt.value"
       :phone="store.phone.value"
+      :mode="mode"
       @refresh="refreshAll"
-      @projects="store.openProjects()"
       @home="goHome"
     />
 
-    <UiContainer>
-      <div class="listik-shell__top">
-        <UiAlert v-if="store.connectionLost.value" tone="danger">
-          <template #title>Сервер Listik недоступен</template>
-          Запустите сервер командой <code class="listik-mono">./bin/listik serve</code> из корня
-          <code class="listik-mono">Listik</code> и нажмите «Обновить».
-          <div class="listik-row" style="margin-top: var(--space-3)">
-            <UiButton size="sm" variant="secondary" @click="refreshAll">Повторить запрос</UiButton>
-          </div>
-        </UiAlert>
+    <SettingsPage v-if="mode === 'settings'" />
 
-        <UiAlert v-else-if="store.lastError.value" tone="warning" closable>
-          <template #title>Последняя операция завершилась ошибкой</template>
-          {{ store.lastError.value }}
-        </UiAlert>
-
-        <template v-if="store.phone.value">
-          <PhoneQueue
-            :voice-created-id="voiceCreatedId"
-            :voice-create-error="voiceCreateError"
-            @voice-create="createFromVoice"
-            @voice-open-form="openCreateForm"
-          />
-        </template>
-        <template v-else>
-          <UiAlert v-if="store.cycles.value.length > 0" tone="danger">
-            <template #title>Циклы в зависимостях</template>
-            Задачи ждут друг друга по кругу — сами они не разблокируются:
-            <span class="listik-mono">{{ store.cycles.value.map((cycle) => cycle.join(' → ')).join('; ') }}</span>
+    <template v-else>
+      <UiContainer>
+        <div class="listik-shell__top">
+          <UiAlert v-if="store.connectionLost.value" tone="danger">
+            <template #title>Сервер Listik недоступен</template>
+            Запустите сервер командой <code class="listik-mono">./bin/listik serve</code> из корня
+            <code class="listik-mono">Listik</code> и нажмите «Обновить».
+            <div class="listik-row" style="margin-top: var(--space-3)">
+              <UiButton size="sm" variant="secondary" @click="refreshAll">Повторить запрос</UiButton>
+            </div>
           </UiAlert>
 
-          <div class="listik-row" style="justify-content: space-between">
-            <UiTabs
-              :model-value="store.view.value"
-              :tabs="tabs"
-              @update:model-value="(value) => store.setView(value as ViewKey)"
+          <UiAlert v-else-if="store.lastError.value" tone="warning" closable>
+            <template #title>Последняя операция завершилась ошибкой</template>
+            {{ store.lastError.value }}
+          </UiAlert>
+
+          <template v-if="store.phone.value">
+            <PhoneQueue
+              :voice-created-id="voiceCreatedId"
+              :voice-create-error="voiceCreateError"
+              @voice-create="createFromVoice"
+              @voice-open-form="openCreateForm"
             />
-            <div class="listik-row">
-              <UiSaveStatus :status="saveStatus" :at="saveAt" />
-              <UiBadge tone="neutral" size="sm">{{ tasksCountLabel(store.counts.value.total) }}</UiBadge>
-            </div>
-          </div>
-
-          <div v-if="store.view.value === 'board'" class="listik-stack">
-            <NeedsYouStrip
-              :tasks="store.inbox.value"
-              @open="store.openTask"
-              @answer="(task) => openTaskWithComment(task, 'answer')"
-              @release="releaseFromInbox"
-            />
-
-            <BoardToolbar />
-          </div>
-
-          <template v-if="store.view.value === 'board'">
-            <MobileTaskList />
-            <div class="listik-board-only">
-              <BoardView
-                :projects="store.meta.value?.projects"
-                :voice-created-id="voiceCreatedId"
-                :voice-create-error="voiceCreateError"
-                @create="createOpen = true"
-                @voice-create="createFromVoice"
-                @voice-open-form="openCreateForm"
-              />
-            </div>
           </template>
-          <ListView v-else-if="store.view.value === 'list'" />
-          <MetricsView v-else />
-        </template>
+          <template v-else>
+            <UiAlert v-if="store.cycles.value.length > 0" tone="danger">
+              <template #title>Циклы в зависимостях</template>
+              Задачи ждут друг друга по кругу — сами они не разблокируются:
+              <span class="listik-mono">{{ store.cycles.value.map((cycle) => cycle.join(' → ')).join('; ') }}</span>
+            </UiAlert>
 
-        <SearchPanel />
-      </div>
-    </UiContainer>
+            <div class="listik-row" style="justify-content: space-between">
+              <UiTabs
+                :model-value="store.view.value"
+                :tabs="tabs"
+                @update:model-value="(value) => store.setView(value as ViewKey)"
+              />
+              <div class="listik-row">
+                <UiSaveStatus :status="saveStatus" :at="saveAt" />
+                <UiBadge tone="neutral" size="sm">{{ tasksCountLabel(store.counts.value.total) }}</UiBadge>
+              </div>
+            </div>
 
-    <TaskDrawer
-      v-if="!store.phone.value"
-      ref="drawerRef"
-      v-model="drawerOpen"
-      :task="store.detail.value"
-      :loading="store.detailLoading.value"
-      :error="store.detailError.value"
-      :pending="store.pending.value"
-      :projects="store.meta.value?.projects"
-      :load-tree="store.loadDepTree"
-      @reload="store.reloadDetail()"
-      @open-other="store.openTask"
-      @patch="onPatch"
-      @heartbeat="onHeartbeat"
-      @stage="onStage"
-      @needs-owner="onNeedsOwner"
-      @release="onRelease"
-      @done="onDone"
-      @remove="onRemove"
-      @comment="onComment"
-      @dep="onDep"
-    />
-    <PhoneTaskSheet
-      v-else
-      v-model="drawerOpen"
-      :task="store.detail.value"
-      :loading="store.detailLoading.value"
-      :error="store.detailError.value"
-      :projects="store.meta.value?.projects"
-      @reload="store.reloadDetail()"
-    />
+            <div v-if="store.view.value === 'board'" class="listik-stack">
+              <NeedsYouStrip
+                :tasks="store.inbox.value"
+                @open="store.openTask"
+                @answer="(task) => openTaskWithComment(task, 'answer')"
+                @release="releaseFromInbox"
+              />
+
+              <BoardToolbar />
+            </div>
+
+            <template v-if="store.view.value === 'board'">
+              <MobileTaskList />
+              <div class="listik-board-only">
+                <BoardView
+                  :projects="store.meta.value?.projects"
+                  :voice-created-id="voiceCreatedId"
+                  :voice-create-error="voiceCreateError"
+                  @create="createOpen = true"
+                  @voice-create="createFromVoice"
+                  @voice-open-form="openCreateForm"
+                />
+              </div>
+            </template>
+            <ListView v-else-if="store.view.value === 'list'" />
+            <MetricsView v-else />
+          </template>
+
+          <SearchPanel />
+        </div>
+      </UiContainer>
+
+      <TaskDrawer
+        v-if="!store.phone.value"
+        ref="drawerRef"
+        v-model="drawerOpen"
+        :task="store.detail.value"
+        :loading="store.detailLoading.value"
+        :error="store.detailError.value"
+        :pending="store.pending.value"
+        :projects="store.meta.value?.projects"
+        :load-tree="store.loadDepTree"
+        @reload="store.reloadDetail()"
+        @open-other="store.openTask"
+        @patch="onPatch"
+        @heartbeat="onHeartbeat"
+        @stage="onStage"
+        @needs-owner="onNeedsOwner"
+        @release="onRelease"
+        @done="onDone"
+        @remove="onRemove"
+        @comment="onComment"
+        @dep="onDep"
+      />
+      <PhoneTaskSheet
+        v-else
+        v-model="drawerOpen"
+        :task="store.detail.value"
+        :loading="store.detailLoading.value"
+        :error="store.detailError.value"
+        :projects="store.meta.value?.projects"
+        @reload="store.reloadDetail()"
+      />
+
+      <NewTaskModal
+        v-model="createOpen"
+        :projects="store.meta.value?.projects ?? []"
+        :pending="store.pending.value === 'create'"
+        :draft="voiceDraft"
+        @submit="createTask"
+      />
+    </template>
 
     <UiModal v-model="store.needsToken.value" title="Нужен токен Listik" size="sm" :closable="false">
       <div class="listik-token-form">
@@ -381,16 +408,6 @@ onBeforeUnmount(() => {
         <UiButton variant="primary" @click="submitToken">Сохранить токен</UiButton>
       </div>
     </UiModal>
-
-    <ProjectSettings />
-
-    <NewTaskModal
-      v-model="createOpen"
-      :projects="store.meta.value?.projects ?? []"
-      :pending="store.pending.value === 'create'"
-      :draft="voiceDraft"
-      @submit="createTask"
-    />
 
     <UiToast />
 

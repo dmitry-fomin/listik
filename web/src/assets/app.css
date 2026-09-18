@@ -45,19 +45,6 @@ body {
   --listik-harness-glm: #16a394;
 }
 
-/* Превью-цвета гаммы (переключатель IconToggle в AppHeader.vue): у гаммы,
-   которая сейчас НЕ активна, её --accent-* не подключены в DOM (в документе
-   живут только токены активной темы/гаммы), поэтому кружки-превью не могут
-   взять цвет из CSS-переменной кита — нужны фиксированные литералы. Значения —
-   --accent-500 каждой гаммы в светлой теме (node_modules/@zoloto585/facet/src/
-   tokens/themes/<scheme>.css), как и цвета харнессов выше. */
-:root {
-  --listik-scheme-amber: #d08a1b;
-  --listik-scheme-malachite: #2f9e6e;
-  --listik-scheme-garnet: #ca5875;
-  --listik-scheme-sapphire: #4981c8;
-}
-
 /* Раскладка доски (Main.dc.html): колонки резиновые — `--listik-col-min` лишь
    нижняя граница развёрнутой колонки (уже неё ряд прокручивается вбок), свёрнутая
    колонка и «Готово» — рельса `--listik-rail-w`; промежуток, толщина линии
@@ -2229,17 +2216,6 @@ body .ui-drawer-backdrop.ui-drawer-backdrop--right .ui-drawer.ui-drawer--right.u
   color: var(--ink-1);
   border-color: var(--hairline);
   box-shadow: var(--shadow-xs);
-}
-
-/* Кружок-превью гаммы внутри #icon у IconToggle гаммы в AppHeader.vue — цвет
-   берётся из --listik-scheme-* (см. блок токенов вверху файла). Тонкое кольцо
-   нужно, чтобы светлые гаммы не сливались с фоном на светлой теме. */
-.listik-scheme-swatch {
-  display: inline-block;
-  width: 14px;
-  height: 14px;
-  border-radius: var(--radius-pill);
-  box-shadow: inset 0 0 0 1px var(--hairline-strong);
 }
 
 /* ── Метрики (макет «Метрики Listik») ───────────────────────────────────── */

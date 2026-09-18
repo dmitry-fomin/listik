@@ -3,10 +3,23 @@
  * Шапка приложения (UiAppHeader): марка, индикатор живости сервера, фильтр по
  * проекту и поиск задач (глобальные — влияют на всю доску, поэтому в шапке, а
  * не в тулбаре конкретного вида; оба — кнопка «иконка + текст», поиск открывает
- * палитру SearchPanel), переключатель темы, кнопка настроек (репозитории,
- * оформление, ФИО) и кнопка обновления. Переключатель вида (Доска / Список /
+ * палитру SearchPanel), переключатель темы, ссылка на настройки (репозитории и
+ * маршруты) и кнопка обновления. Переключатель вида (Доска / Список /
  * Метрики) — в App.vue как UiSegmented: он ничего не переключает в
  * контенте сам, это radiogroup, а не tablist, и он же несёт счётчики.
+ *
+ * Два режима (`mode`): на доске — всё перечисленное, на странице настроек
+ * (`/settings/*`) из действий остаются только тема и «К доске». Фильтры, поиск и
+ * «Обновить» к настройкам отношения не имеют, а «К доске» — единственный путь
+ * назад, поэтому он виден и на телефоне (проп `phone` в этом режиме ничего не
+ * прячет: страница по прямому адресу иначе была бы тупиком).
+ *
+ * Настройки и «К доске» — настоящие ссылки (`<a href>`/`UiHeaderActionButton`
+ * с `href`): обычный клик ведёт роутер без перезагрузки, клик с модификатором
+ * отдаётся браузеру и открывает новую вкладку. Марка в режиме настроек ведёт
+ * туда же, что «К доске» (`/`), и делает это сама, без события `home`: `goHome`
+ * в App.vue переключает вид доски на «Доску», а возврат из настроек обязан
+ * оставить вид тем, каким он был.
  *
  * Марка — картинка /logo.svg (зелёный контурный лист с черешком и центральной жилкой), не UiBrandMark; многоточие названию ставит приложение: слот #brand в ките
  * сжимается и обрезает содержимое, а кит не знает, какой элемент слота текстовый.
@@ -23,10 +36,20 @@
  * задач (HealthDot) остаются нейтральными.
  */
 import { computed } from 'vue'
-import { UiAppHeader, UiButton, UiChip, UiSelect, UiStatusPill, UiTooltip, type UiSelectOption } from '@zoloto585/facet'
+import {
+  UiAppHeader,
+  UiButton,
+  UiChip,
+  UiHeaderActionButton,
+  UiSelect,
+  UiStatusPill,
+  UiTooltip,
+  type UiSelectOption,
+} from '@zoloto585/facet'
 import ListikIcon from './ListikIcon.vue'
 import ProjectPicker from './ProjectPicker.vue'
 import store from '@/store/listik'
+import { onLinkClick } from '@/lib/router'
 import { useTheme } from '@/lib/theme'
 import type { Health } from '@/api/types'
 import { formatTime } from '@/lib/format'
@@ -38,18 +61,27 @@ const props = withDefaults(
     loading: boolean
     lastSyncAt: string | null
     phone?: boolean
+    /** Где мы: на доске или на странице настроек. */
+    mode?: 'board' | 'settings'
   }>(),
-  { phone: false },
+  { phone: false, mode: 'board' },
 )
 
 const emit = defineEmits<{
   refresh: []
-  projects: []
   home: []
 }>()
 
-/** Клик по марке: обычный — событие `home` (доска), с модификатором — браузеру. */
+/**
+ * Клик по марке: на доске — событие `home` (закрыть карточку, вернуться на
+ * «Доску»), на настройках — обычный переход роутером на `/`, чтобы вид доски
+ * остался прежним. С модификатором в обоих случаях отдаём браузеру.
+ */
 function onBrandClick(event: MouseEvent): void {
+  if (props.mode === 'settings') {
+    onLinkClick(event, '/')
+    return
+  }
   if (event.button !== 0 || event.metaKey || event.ctrlKey || event.shiftKey || event.altKey) return
   event.preventDefault()
   emit('home')
@@ -116,7 +148,8 @@ const themeLabel = computed(() => (theme.value === 'dark' ? 'Включить с
     <template #brand>
       <!-- Знак Listik — зелёный контурный лист с черешком и прямой центральной жилкой. Не UiBrandMark:
            у марки кита свой градиентный фон и рамка, а знак — самостоятельная цветная иконка -->
-      <!-- Марка ведёт на доску: обычный клик переключает вид без перезагрузки, клик с
+      <!-- Марка ведёт на доску: обычный клик на доске переключает вид, на настройках —
+           возвращает на «/» роутером (вид доски при этом не трогается), клик с
            модификатором/средней кнопкой отдаётся браузеру (новая вкладка на «/»). -->
       <a class="listik-shell__brand-link" href="/" aria-label="Listik — на доску" @click="onBrandClick">
         <img class="listik-shell__brand-logo" src="/logo.svg" alt="" width="28" height="28" />
@@ -129,46 +162,62 @@ const themeLabel = computed(() => (theme.value === 'dark' ? 'Включить с
 
     <template #actions>
       <div class="listik-shell__actions">
-        <template v-if="!phone">
-          <ProjectPicker />
-          <template v-if="store.isServerMode.value">
-            <UiSelect
-              :model-value="store.owner.value"
-              :options="ownerOptions"
-              placeholder="Я — …"
-              ariaLabel="От чьего имени"
-              size="sm"
-              @update:model-value="store.setOwner($event ?? '')"
-            />
-            <UiChip v-if="!store.owner.value" label="Представьтесь, чтобы брать задачи" size="sm" />
+        <template v-if="mode === 'settings'">
+          <UiButton size="sm" variant="ghost" v-bind="{ 'aria-label': themeLabel }" @click="toggleTheme">
+            <template #icon><ListikIcon :name="theme === 'dark' ? 'sun' : 'moon'" size="sm" /></template>
+          </UiButton>
+          <!-- Ссылка, а не кнопка: Cmd/Ctrl-клик открывает доску в новой вкладке,
+               обычный клик ведёт роутер без перезагрузки. -->
+          <UiTooltip text="Вернуться на доску" placement="bottom">
+            <UiHeaderActionButton href="/" @click="onLinkClick($event, '/')">
+              <template #icon><ListikIcon name="columns" size="sm" /></template>
+              К доске
+            </UiHeaderActionButton>
+          </UiTooltip>
+        </template>
+
+        <template v-else>
+          <template v-if="!phone">
+            <ProjectPicker />
+            <template v-if="store.isServerMode.value">
+              <UiSelect
+                :model-value="store.owner.value"
+                :options="ownerOptions"
+                placeholder="Я — …"
+                ariaLabel="От чьего имени"
+                size="sm"
+                @update:model-value="store.setOwner($event ?? '')"
+              />
+              <UiChip v-if="!store.owner.value" label="Представьтесь, чтобы брать задачи" size="sm" />
+            </template>
+            <UiTooltip text="Поиск по задачам · Cmd K" placement="bottom">
+              <UiButton size="sm" variant="ghost" @click="store.openSearch('')">
+                <template #icon><ListikIcon name="search" size="sm" /></template>
+                Поиск
+              </UiButton>
+            </UiTooltip>
           </template>
-          <UiTooltip text="Поиск по задачам · Cmd K" placement="bottom">
-            <UiButton size="sm" variant="ghost" @click="store.openSearch('')">
-              <template #icon><ListikIcon name="search" size="sm" /></template>
-              Поиск
+          <UiButton size="sm" variant="ghost" v-bind="{ 'aria-label': themeLabel }" @click="toggleTheme">
+            <template #icon><ListikIcon :name="theme === 'dark' ? 'sun' : 'moon'" size="sm" /></template>
+          </UiButton>
+          <UiTooltip v-if="!phone" text="Репозитории и маршруты" placement="bottom">
+            <UiHeaderActionButton href="/settings/repos" @click="onLinkClick($event, '/settings/repos')">
+              <template #icon><ListikIcon name="gear" size="sm" /></template>
+              <span class="listik-shell__hide-compact">Настройки</span>
+            </UiHeaderActionButton>
+          </UiTooltip>
+          <UiTooltip text="Обновить" placement="bottom">
+            <UiButton
+              size="sm"
+              variant="secondary"
+              :loading="loading"
+              v-bind="{ 'aria-label': 'Обновить' }"
+              @click="emit('refresh')"
+            >
+              <template #icon><ListikIcon name="refresh" size="xs" /></template>
             </UiButton>
           </UiTooltip>
         </template>
-        <UiButton size="sm" variant="ghost" v-bind="{ 'aria-label': themeLabel }" @click="toggleTheme">
-          <template #icon><ListikIcon :name="theme === 'dark' ? 'sun' : 'moon'" size="sm" /></template>
-        </UiButton>
-        <UiTooltip v-if="!phone" text="Репозитории, оформление, ФИО" placement="bottom">
-          <UiButton size="sm" variant="ghost" @click="emit('projects')">
-            <template #icon><ListikIcon name="gear" size="sm" /></template>
-            <span class="listik-shell__hide-compact">Настройки</span>
-          </UiButton>
-        </UiTooltip>
-        <UiTooltip text="Обновить" placement="bottom">
-          <UiButton
-            size="sm"
-            variant="secondary"
-            :loading="loading"
-            v-bind="{ 'aria-label': 'Обновить' }"
-            @click="emit('refresh')"
-          >
-            <template #icon><ListikIcon name="refresh" size="xs" /></template>
-          </UiButton>
-        </UiTooltip>
       </div>
     </template>
   </UiAppHeader>

@@ -282,6 +282,32 @@
       ]
     },
     {
+      "key": "universal-pipeline",
+      "kind": "pipeline",
+      "title": "универсальный",
+      "hint": "состав ролей — из настроек маршрута, а не из скила",
+      "visible": true,
+      "icon": "medium",
+      "roles": {
+        "impl": {
+          "provider": "claude",
+          "label": "Opus",
+          "title": "Opus · medium"
+        },
+        "judge": {
+          "provider": "grok",
+          "label": "high",
+          "title": "Grok 4.6 · high"
+        }
+      },
+      "command": [
+        "claude",
+        "--dangerously-skip-permissions",
+        "-p",
+        "Задача {task_id} (проект {project}), маршрут {route}. Запусти скил /feature-pipeline:{route} и веди карточку по нему: ты оркестратор, кода не пишешь и порцию не коммитишь. Протокол — AGENTS.md. Первым действием, до чтения кода и show: claim {task_id} --holder claude. Дальше heartbeat каждые 10–15 мин, пока карточку держишь ты. Все команды с --actor agent:claude --harness claude."
+      ]
+    },
+    {
       "key": "feature-pipeline",
       "kind": "pipeline",
       "title": "По конфигу проекта",

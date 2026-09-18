@@ -99,13 +99,16 @@ Database migrations exist as two parallel mechanisms — don't confuse them:
   `routes.json` (root of the repo) / `~/.config/listik/routes.json` (`$LISTIK_ROUTES`) are the
   import/export file format only — the table is what both the server and CLI actually read and
   write (`GET/PATCH/POST/DELETE /api/routes`, `/api/routes/reorder`, `/api/routes/sync`,
-  `listik routes`). **Pipeline roles (`roles`) live in the db and are not editable from the UI
-  or any HTTP route** — no endpoint accepts `roles`/`kind`/`key`/`harness`/`position`; changed
-  the skill set under `plugins/feature-pipeline/skills/*`? Fix the matching route's `roles` in
-  the db yourself (`listik routes export`, edit the file, `listik routes import --replace`) —
-  otherwise the board keeps showing the old composition. `listik/skills.py` is a read-only
-  catalogue of `plugins/feature-pipeline/skills/*/SKILL.md` (title/hint/path) used to prefill new
-  pipeline routes and to flag routes whose skill directory disappeared — never a source of roles.
+  `/api/routes/launchers`, `listik routes`). Pipeline roles (`roles`) live in the db and are
+  edited from the board's route settings and over HTTP (`PATCH`/`POST /api/routes`, listik-syu8);
+  `kind`/`key`/`harness`/`position` stay unwritable. A role cell is `{provider, label, title}`
+  plus the optional `skill` (a launcher skill, `плагин:скил` — e.g. `pi:pi-delegate`) and its
+  flat `params`; the same validation (`routes._validate_roles`) serves the file and the HTTP
+  path, so `routes export`/`routes import --replace` still round-trips. `listik/skills.py` is a
+  read-only catalogue of two things — `plugins/feature-pipeline/skills/*/SKILL.md` (title/hint/
+  path) used to prefill new pipeline routes and flag routes whose skill directory disappeared,
+  and the launcher skills (`plugins/*/skills/*-delegate`) offered to role cells — never a source
+  of roles itself.
 - `listik/backup.py` — `listik backup` / `listik restore` via the sqlite backup API (a plain
   `cp` of a WAL database is inconsistent). `restore` refuses while the server is running unless
   `--stop`, keeps a `listik.db.bak-pre-restore-*` safety copy and removes stale `-wal`/`-shm`.

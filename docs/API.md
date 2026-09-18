@@ -255,12 +255,29 @@ Listik или рабочая копия `~/.config/listik/routes.json` (`$LISTIK
 записи в базе видна сразу, перезапуск сервера не нужен; CLI и MCP по stdio читают ту
 же таблицу при работе с маршрутом.
 
-Роли конвейера (`roles`) правятся только ввозом файла — ни одна HTTP-ручка не
-принимает и не записывает `roles` (как и `kind`/`key`/`harness`/`position`): состав
-ролей, если решение поменять его понадобится, меняют осознанно, а не случайным
-PATCH-запросом. Заголовок и подсказку маршрута `kind=pipeline` при этом можно взять
-прямо из скила (`plugins/feature-pipeline/skills/<key>/SKILL.md`, поля `name`/
+Роли конвейера (`roles`) правятся из UI доски и по HTTP — `PATCH /api/routes/{key}`
+и `POST /api/routes` принимают их наравне с прочими полями записи (listik-syu8);
+без записи остаются только `kind`, `key`, `harness` и `position`. Расклад ролей —
+данные маршрута, а не свойство скила: смена исполнителя роли на доске меняет то, кем
+задача реально делается. Заголовок и подсказку маршрута `kind=pipeline` при этом можно
+взять прямо из скила (`plugins/feature-pipeline/skills/<key>/SKILL.md`, поля `name`/
 `description`) — см. «Справочник маршрутов и скилов конвейеров» ниже.
+
+Ячейка роли: обязательные `provider` (`claude`/`glm`/`openai`/`grok`/`deepseek` — по нему
+доска рисует иконку вендора), `label` (короткая подпись) и `title` (расшифровка в тултип);
+необязательные `skill` — скил-запускатор роли в форме `плагин:скил`
+(`^[a-z0-9][a-z0-9-]*:[a-z0-9][a-z0-9-]*$`, например `pi:pi-delegate`) — и `params`,
+плоский объект его параметров: ключи `^[a-z][a-z0-9_]*$`, значения — строка, число или
+`true`/`false`, не больше 20 ключей. `params` без `skill` — ошибка: параметры некуда
+передать. Вложенные объекты, массивы и `null` в `params` отклоняются. Расклад из одной
+роли допустим, пустой (`{}`) — нет: у маршрута либо есть роли, либо он заводится без них
+ввозом файла. Проверка одна и та же у файла и у HTTP, поэтому
+`routes export` → `routes import --replace` после правки ролей по HTTP даёт ту же таблицу.
+
+```json
+{"impl": {"provider": "glm", "label": "GLM", "title": "GLM 5.3 Flash через pi",
+          "skill": "pi:pi-delegate", "params": {"channel": "glm", "thinking": "high"}}}
+```
 
 Формат (версия 1): `{"version": 1, "routes": [ {...}, ... ]}`. Лишние поля — ошибка.
 Запись: `key` (`^[a-z0-9][a-z0-9-]*$`, уникален), `kind` (`pipeline` или `direct`),
@@ -397,8 +414,8 @@ pid <N>, лог <path>`. Процесс не блокирует запрос: PO
 
 | Метод | Путь | Тело | Ответ и правила |
 |---|---|---|---|
-| PATCH | `/api/routes/{key}` | любые из `title, hint, icon, visible, command` | `200` с обновлённой записью. `roles, kind, key, harness, position` в теле — `400 bad_argument` с именем поля (роли меняются только ввозом файла — см. выше); `command` у `kind=pipeline` — `400`; неизвестная подстановка в `command` — `400` с именем подстановки; постороннее поле — `400` с его именем; пустое тело — `400` «нечего менять»; нет ключа — `404` |
-| POST | `/api/routes` | `{"key": "<ключ скила>"}` | `201` с новой записью: `kind="pipeline"`, `visible=false`, `title`/`hint` — из frontmatter `SKILL.md` (`name`/первое предложение `description`), `roles=null` (пусто, пока не будет переввезён файл с ролями), `command=null`, `icon` — уровень по ключу (`routes.fallback_icon`), `position` — в конец. Ключа нет среди скилов `plugins/feature-pipeline/skills/*` — `400`; поле кроме `key` — `400`; маршрут с таким ключом уже есть — `409 conflict` |
+| PATCH | `/api/routes/{key}` | любые из `title, hint, icon, visible, command, roles` | `200` с обновлённой записью. `kind, key, harness, position` в теле — `400 bad_argument` с именем поля; `roles` у `kind=direct`, пустой (`{}`), `null`, не-объект или негодная ячейка — `400 bad_argument` с путём до поля (`roles.impl.params.a`), запись при этом не меняется; `roles.<роль>.skill`, которого нет среди скилов-запускаторов этой установки, — `400` со списком доступных (каталога нет вовсе — проверка не делается); `command` у `kind=pipeline` — `400`; неизвестная подстановка в `command` — `400` с именем подстановки; постороннее поле — `400` с его именем; пустое тело — `400` «нечего менять»; нет ключа — `404` |
+| POST | `/api/routes` | `{"key": "<ключ скила>"}`, необязательно `roles` | `201` с новой записью: `kind="pipeline"`, `visible=false`, `title`/`hint` — из frontmatter `SKILL.md` (`name`/первое предложение `description`), `roles` — переданный расклад (ключа нет или `null` — `{}`; явный `{}` — `400`; негодный расклад или неизвестный `skill` — `400`, как у PATCH), `command=null`, `icon` — уровень по ключу (`routes.fallback_icon`), `position` — в конец. Ключа нет среди скилов `plugins/feature-pipeline/skills/*` — `400`; поле кроме `key` — `400`; маршрут с таким ключом уже есть — `409 conflict` |
 | DELETE | `/api/routes/{key}` | — | `200 {"removed": key, "tasks_cleared": N}`. У всех задач с этим `launch_route` — в любом статусе и на любом этапе — снимается `launch_route` и метки `harness:`/`process:`; статус, этап, держатель и прочие поля не меняются. Гард `route_change_denied` (см. «Смена маршрута») здесь не действует: это удаление справочной записи, а не решение автора о задаче, и он отказал бы половине задач в работе, оставив их ссылку на удалённый маршрут висеть. Ничего, кроме `launch_route`/меток, не удаляется и не закрывается — задачи целы. Повторный `DELETE` того же ключа — `404`, ничего не меняет |
 | POST | `/api/routes/reorder` | `{"keys": ["…", …]}` | `200` со списком записей в новом порядке (ключи, не попавшие в список, уезжают в конец в прежнем относительном порядке). Неизвестный ключ — `400`; поле кроме `keys` — `400` |
 
@@ -639,6 +656,7 @@ id внутри файлового пути (`docs/specs/<id>.md`, `/wt/<id>/lis
 |---|---|---|---|
 | GET | `/api/health` | — | `status, version, embed{model}, now, authed, installation{code_dir,data_dir,config_path}` (пути установки доступны и без токена для диагностики CLI, содержимое config не отдаётся), `mode` (`local`\|`server` — тоже без токена: по нему клиент понимает, надо ли представляться); авторизованному — ещё `users[]` (люди из `server.users`; в локальном режиме `[]`) и `owner` (как сервер понял заголовок `X-Listik-Owner` после `strip`; в локальном режиме всегда `null`), `db`, `counts`, `embed{ok,models}`, `routes{ok,error,path,count}`, `db_error{where,error,at}` — только если последний фоновый проход упал с `sqlite3.DatabaseError`, и `runtime{code_dir,data_dir,cwd,worktree,main_repo,warning}` — откуда запущен сервер (`data_dir` — каталог данных, `LISTIK_HOME`; `warning` — если из связанного git worktree, listik-i23u), `db_replaced{kind,at,detail,before,after}` — если сервер заметил подмену файла базы или WAL (см. ниже) |
 | GET | `/api/routes` | — | `ok, error, path, warnings[], routes[]` — записи таблицы `routes` (`command`, `roles`/`harness`, `position`, посчитанный `icon`; см. «Маршруты запуска»), у `kind=pipeline` ещё `skill_path` и, если скила нет, `skill_missing: true` (в ответе `visible: false`) — см. «Справочник маршрутов и скилов конвейеров»; `warnings` — замечания ввоза и сверки со скилами (неизвестный `icon` записи: фолбэк по ключу и поле `icon_error`; маршрут без скила: строка про скрытый маршрут); ошибка базы — `ok=false` и текст, а не HTTP-ошибка |
+| GET | `/api/routes/launchers` | — | `skills_available, launchers[], providers[], roles[]` — справочник для редактора состава ролей: `launchers` — скилы-запускаторы установки (`key` вида `плагин:скил`, `plugin`, `skill`, `title`, `hint`, `provider` по умолчанию, `skill_path` или `null` у плагина вне репозитория), `providers` — допустимые вендоры ячейки роли, `roles` — ключи ролей (`spec`/`critic`/`impl`/`judge`); метод не GET — `405` |
 | GET | `/api/routes/sync` | — | `skills_available, missing_skill[], missing_route[]` — сверка таблицы со скилами `plugins/feature-pipeline/skills/*` (см. «Справочник маршрутов и скилов конвейеров»); без каталога скилов — оба списка пустые |
 | GET | `/api/assistant/status` | — | `enabled, model, base_url, voice` — настроен ли помощник DeepSeek (`[assistant]` в `config.toml`) и голосовой ввод (`voice=true` — непусты оба ключа, `[assistant]` и `[deepgram]`); ключи наружу не отдаются (см. «Помощник DeepSeek») |
 | GET | `/api/meta` | `archived` | `projects[], actors[], facets{}, statuses{}, stages{}, priorities{}` |

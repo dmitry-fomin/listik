@@ -71,7 +71,17 @@ PLACEHOLDERS = ("task_id", "project", "route", "cwd", "worktree", "branch")
 ROOT_FIELDS = ("version", "routes")
 RECORD_FIELDS = ("key", "kind", "title", "hint", "visible", "icon", "roles", "strip", "harness",
                  "command")
-ROLE_FIELDS = ("provider", "label", "title")
+ROLE_FIELDS = ("provider", "label", "title", "skill", "params")
+#: Обязательные поля ячейки роли; `skill`/`params` необязательны и в результате
+#: проверки появляются только тогда, когда были во входе (иначе экспорт начал бы
+#: писать `"skill": null` во все старые записи).
+ROLE_REQUIRED = ("provider", "label", "title")
+#: Скил-запускатор роли — `плагин:скил` (`pi:pi-delegate`, `grok:delegate`).
+#: Существование скила на диске здесь не проверяется: файл маршрутов ввозится и на
+#: машине без каталога `plugins/`; наличие сверяет слой HTTP по `skills.launcher_info`.
+SKILL_RE = re.compile(r"^[a-z0-9][a-z0-9-]*:[a-z0-9][a-z0-9-]*$")
+PARAM_KEY_RE = re.compile(r"^[a-z][a-z0-9_]*$")
+PARAMS_MAX_KEYS = 20
 
 KEY_RE = re.compile(r"^[a-z0-9][a-z0-9-]*$")
 PLACEHOLDER_RE = re.compile(r"\{([^{}]*)\}")
@@ -128,18 +138,51 @@ def _extra_fields(obj: dict, allowed: tuple, where: str) -> None:
             raise _err(_at(where, name), "лишнее поле")
 
 
+def _validate_params(value, where: str) -> dict:
+    """Параметры запускатора: плоский объект скалярных значений.
+
+    `bool` проверяется до `int` намеренно — `isinstance(True, int)` истинно, и без
+    этого порядка `true` разбиралось бы как число.
+    """
+    if not isinstance(value, dict):
+        raise _err(where, "должен быть объектом с параметрами запускатора")
+    if len(value) > PARAMS_MAX_KEYS:
+        raise _err(where, f"не больше {PARAMS_MAX_KEYS} параметров")
+    params: dict = {}
+    for name, item in value.items():
+        if not isinstance(name, str) or not PARAM_KEY_RE.match(name):
+            raise _err(f"{where}.{name}",
+                       "имя параметра — строчные буквы, цифры и подчёркивание, начиная с буквы")
+        if isinstance(item, bool) or isinstance(item, (str, int, float)):
+            params[name] = item
+            continue
+        raise _err(f"{where}.{name}", "допустимы только строка, число и true/false")
+    return params
+
+
 def _validate_role_cell(cell, where: str) -> dict:
     if not isinstance(cell, dict):
         raise _err(where, "должна быть объектом {provider, label, title}")
     _extra_fields(cell, ROLE_FIELDS, where)
-    for name in ROLE_FIELDS:
+    for name in ROLE_REQUIRED:
         value = _present(cell, name, where)
         if not _text(value):
             raise _err(f"{where}.{name}", "непустая строка")
     if cell["provider"] not in PROVIDERS:
         raise _err(f"{where}.provider",
                    f"неизвестный провайдер {cell['provider']!r}, допустимы: {', '.join(PROVIDERS)}")
-    return {"provider": cell["provider"], "label": cell["label"], "title": cell["title"]}
+    out = {"provider": cell["provider"], "label": cell["label"], "title": cell["title"]}
+    if "skill" in cell:
+        skill = cell["skill"]
+        if not isinstance(skill, str) or not SKILL_RE.match(skill):
+            raise _err(f"{where}.skill",
+                       'ожидается "плагин:скил" из строчных букв, цифр и дефисов')
+        out["skill"] = skill
+    if "params" in cell:
+        if "skill" not in out:
+            raise _err(f"{where}.params", "без skill параметры некуда передать")
+        out["params"] = _validate_params(cell["params"], f"{where}.params")
+    return out
 
 
 def _validate_roles(value, where: str) -> dict:

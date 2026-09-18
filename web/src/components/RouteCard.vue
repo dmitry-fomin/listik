@@ -7,6 +7,9 @@
  * только у `kind=pipeline` (у `kind=direct` в этой порции показывается только
  * шапка — свою карточку с редактором `argv` делает порция `f`).
  *
+ * Состав ролей правится отдельным компонентом `RouteRolesEditor` со своей кнопкой
+ * сохранения (listik-syu8): расклад уходит целиком, автосейв по клавише тут не годится.
+ *
  * Автосохранение шапки: текстовые поля — debounce 600мс после последней
  * клавиши плюс сброс по потере фокуса, переключатель и уровень — сразу.
  * `flush()` шлёт диф (`draft` против `baseline`, обновлённого только по
@@ -35,13 +38,12 @@ import {
 } from '@zoloto585/facet'
 import IconToggle, { type IconToggleOption } from './IconToggle.vue'
 import ListikIcon from './ListikIcon.vue'
-import ProviderIcon from './marks/ProviderIcon.vue'
 import RouteIcon from './marks/RouteIcon.vue'
+import RouteRolesEditor from './RouteRolesEditor.vue'
 import RouteSubstitutions from './RouteSubstitutions.vue'
 import store from '@/store/listik'
 import type { RouteDef, RouteIconKey, RoutePatch } from '@/api/types'
-import { PIPELINE_STAGES, ROUTE_ICONS, type PipelineStep } from '@/lib/dictionaries'
-import { ROLE_KEYS, ROLE_STAGE, ROLE_TITLES, type RoleCell, type RoleKey } from '@/lib/pipelines'
+import { ROUTE_ICONS } from '@/lib/dictionaries'
 import { splitPlaceholders, unknownPlaceholders } from '@/lib/routes'
 
 const props = defineProps<{ route: RouteDef }>()
@@ -161,36 +163,6 @@ function onLevel(value: string): void {
   scheduleFlush(true)
 }
 
-/* ── состав конвейера: только чтение ── */
-
-const hasRoles = computed(() => props.route.kind === 'pipeline' && Object.keys(props.route.roles).length > 0)
-
-/** Этап роли — через `ROLE_STAGE`, подписи только из словаря (своих литералов этапов тут нет). */
-function stageOf(role: RoleKey): PipelineStep {
-  return PIPELINE_STAGES.find((item) => item.value === ROLE_STAGE[role]) ?? PIPELINE_STAGES[0]
-}
-
-interface RoleTile {
-  role: RoleKey
-  step: PipelineStep
-  title: string
-  cell: RoleCell | null
-}
-
-/**
- * Плитки состава — всегда четыре, по одной на этап конвейера: у роли, которой в
- * пресете нет (и у незаполненного состава целиком), плитка та же, только
- * приглушённая. Так видно, что этапов ровно четыре, а пресет закрывает не все.
- */
-const roleTiles = computed<RoleTile[]>(() =>
-  ROLE_KEYS.map((role) => ({
-    role,
-    step: stageOf(role),
-    title: ROLE_TITLES[role],
-    cell: props.route.kind === 'pipeline' ? (props.route.roles[role] ?? null) : null,
-  })),
-)
-
 /* ── чем запускается + подстановки ── */
 
 /** Команда построчно: элемент argv — строка блока, подсветка считается внутри элемента. */
@@ -254,33 +226,8 @@ function braced(name: string): string {
       </section>
 
       <section class="listik-route-card__section">
-        <h4 class="listik-route-card__section-title">
-          <ListikIcon name="lock" size="sm" />
-          Состав конвейера
-        </h4>
-        <div class="listik-route-card__roles">
-          <div
-            v-for="tile in roleTiles"
-            :key="tile.role"
-            class="listik-route-card__role"
-            :class="{ 'is-empty': !tile.cell }"
-          >
-            <span class="listik-route-card__role-stage">
-              <span class="listik-route-card__role-code">{{ tile.step.code }}</span>
-              <span class="listik-route-card__role-label">{{ tile.step.label }}</span>
-            </span>
-            <span v-if="tile.cell" class="listik-route-card__role-vendor">
-              <ProviderIcon :provider="tile.cell.provider" size="sm" />
-              <span class="listik-route-card__role-title">{{ tile.cell.title }}</span>
-            </span>
-            <span v-else class="listik-route-card__role-empty">этапа нет в этом пресете</span>
-            <span class="listik-route-card__role-role">{{ tile.title }}</span>
-          </div>
-        </div>
-        <p v-if="!hasRoles" class="listik-prose">
-          состав не заполнен: роли берутся из базы, их заполняет ввоз
-          <code class="listik-mono">listik routes import</code>
-        </p>
+        <h4 class="listik-route-card__section-title">Состав конвейера</h4>
+        <RouteRolesEditor :key="route.key" :route="route" />
         <p class="listik-route-card__skill-line">
           из скила <code class="listik-mono">/feature-pipeline:{{ route.key }}</code>
         </p>
@@ -362,83 +309,6 @@ function braced(name: string): string {
 .listik-route-card__level-none {
   font-size: var(--text-sm);
   color: var(--ink-3);
-}
-
-/* Четыре плитки по этапам конвейера: на всю ширину карточки — в строку, на узкой
-   панели — в две колонки (плитка с вендором и подписью в одну колонку не влезает). */
-.listik-route-card__roles {
-  display: grid;
-  grid-template-columns: repeat(4, minmax(0, 1fr));
-  gap: var(--space-2);
-}
-
-@media (max-width: 720px) {
-  .listik-route-card__roles {
-    grid-template-columns: repeat(2, minmax(0, 1fr));
-  }
-}
-
-.listik-route-card__role {
-  display: flex;
-  flex-direction: column;
-  gap: var(--space-1);
-  min-width: 0;
-  padding: var(--space-2);
-  border: 1px solid var(--hairline);
-  border-radius: var(--radius-md);
-  background: var(--surface-2);
-  font-size: var(--text-sm);
-}
-
-/* Этапа в пресете нет — плитка остаётся на месте, но гаснет: состав читается
-   как четыре этапа, из которых закрыты не все. */
-.listik-route-card__role.is-empty {
-  color: var(--ink-3);
-}
-
-.listik-route-card__role-stage {
-  display: flex;
-  align-items: baseline;
-  gap: var(--space-1);
-  min-width: 0;
-}
-
-.listik-route-card__role-code {
-  font-family: var(--font-mono);
-  font-weight: var(--weight-medium);
-}
-
-.listik-route-card__role-label {
-  min-width: 0;
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-  font-size: var(--text-xs);
-  color: var(--ink-3);
-}
-
-.listik-route-card__role-vendor {
-  display: flex;
-  align-items: center;
-  gap: var(--space-1);
-  min-width: 0;
-}
-
-.listik-route-card__role-title {
-  min-width: 0;
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-}
-
-.listik-route-card__role-role {
-  font-size: var(--text-xs);
-  color: var(--ink-3);
-}
-
-.listik-route-card__role-empty {
-  color: var(--ink-3);
-  font-style: italic;
 }
 
 .listik-route-card__skill-line {

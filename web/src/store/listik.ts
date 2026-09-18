@@ -26,6 +26,7 @@ import type {
   ProjectRow,
   RouteDef,
   RoutePatch,
+  RouteLaunchersResponse,
   RoutesSyncResponse,
   SearchMode,
   ReadyTask,
@@ -181,6 +182,12 @@ let routesRequested = false
 const routesSettingsLoading = ref(false)
 const routesSettingsError = ref<string | null>(null)
 const routesSync = ref<RoutesSyncResponse | null>(null)
+/**
+ * Справочник скилов-запускаторов для редактора расклада ролей: грузится один раз,
+ * `null` — ещё не загружен или загрузка не удалась (тогда текст в `routesSettingsError`,
+ * а следующая попытка будет при следующем монтировании редактора).
+ */
+const routeLaunchers = ref<RouteLaunchersResponse | null>(null)
 
 /**
  * Помощник DeepSeek (`GET /api/assistant/status`): ключ живёт в конфиге сервера,
@@ -1079,6 +1086,18 @@ async function reorderRoutes(keys: string[]): Promise<RouteDef[] | null> {
   return result
 }
 
+/**
+ * Справочник запускаторов для редактора ролей: один запрос на сессию доски.
+ * Уже загружен — ничего не делает; отказ оставляет `null` и текст в
+ * `routesSettingsError`, повтор — при следующем монтировании редактора.
+ */
+async function loadRouteLaunchers(): Promise<RouteLaunchersResponse | null> {
+  if (routeLaunchers.value) return routeLaunchers.value
+  const result = await routesSettingsAction(() => api.routeLaunchers())
+  if (result) routeLaunchers.value = result
+  return result
+}
+
 /** Сверка таблицы маршрутов со скилами `feature-pipeline` — модалка «Завести маршрут». */
 async function loadRoutesSync(): Promise<RoutesSyncResponse | null> {
   const result = await routesSettingsAction(() => api.routesSync())
@@ -1333,6 +1352,7 @@ export function useListikStore() {
     routesSettingsLoading,
     routesSettingsError,
     routesSync,
+    routeLaunchers,
     assistantEnabled,
     assistantModel,
     assistantLoading,
@@ -1400,6 +1420,7 @@ export function useListikStore() {
     deleteRoute,
     reorderRoutes,
     loadRoutesSync,
+    loadRouteLaunchers,
     loadAssistant,
     ensureAssistant,
     askAssistant,

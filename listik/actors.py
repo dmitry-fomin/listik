@@ -84,6 +84,23 @@ def resolve(raw: str | None, conn: sqlite3.Connection | None = None) -> tuple[st
     return n, "human"
 
 
+def same_actor(a: str | None, b: str | None, conn: sqlite3.Connection | None = None) -> bool:
+    """Один и тот же актор под разными написаниями?
+
+    Единственное правило тождества держателей в Listik: `claude`/`agent:claude`/
+    `sonnet-judge` — один актор, `dsh`/`agent:dsh`/`dsh/deepseek-flash` — один,
+    `alice` и `alicia` — разные. Ничего сверх того, что уже даёт `resolve`
+    (алиасы, подсказки агентов, `actor_aliases`, нормализация `norm`).
+
+    Пустая строка (и `None`) не тождественна ничему, включая другую пустую:
+    «держателя нет» — это отсутствие актора, иначе две карточки без держателя
+    выглядели бы как карточки одного и того же.
+    """
+    if not norm(a) or not norm(b):
+        return False
+    return resolve(a, conn)[0] == resolve(b, conn)[0]
+
+
 def remember(conn: sqlite3.Connection, raw: str | None, actor: str | None, kind: str, note: str = "") -> None:
     n = norm(raw)
     if not n or not actor:

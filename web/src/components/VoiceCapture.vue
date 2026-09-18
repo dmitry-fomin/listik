@@ -35,7 +35,10 @@ import store, { errorMessage } from '@/store/listik'
 
 const props = withDefaults(
   defineProps<{
-    /** id созданной голосом задачи для подтверждения панели (см. App.vue). */
+    /**
+     * id созданной голосом задачи (см. App.vue) — сигнал «создание прошло»: панель
+     * закрывается, об успехе говорит тост доски, своего окна подтверждения нет.
+     */
     createdId?: string | null
     /** Ошибка создания — текстом под черновиком, доска общим алертом её не показывает. */
     createError?: string | null
@@ -52,7 +55,7 @@ const emit = defineEmits<{
   openForm: [draft: VoiceDraft]
 }>()
 
-type Stage = 'idle' | 'recording' | 'transcribing' | 'drafting' | 'draft' | 'created' | 'error'
+type Stage = 'idle' | 'recording' | 'transcribing' | 'drafting' | 'draft' | 'error'
 type ErrorBranch = 'mic' | 'silence' | 'transcribe' | 'draft'
 
 /** Амплитудные множители столбиков волны — «живость» при общем уровне записи. */
@@ -70,7 +73,6 @@ const draft = ref<VoiceDraft | null>(null)
 const level = ref(0)
 const elapsed = ref(0)
 const creating = ref(false)
-const localCreatedId = ref<string>('')
 
 /** Запись-обёртка; null — ещё не получена или уже остановлена. */
 const recording = ref<VoiceRecording | null>(null)
@@ -224,7 +226,6 @@ function resetVoiceResult(): void {
   branch.value = null
   serverError.value = null
   creating.value = false
-  localCreatedId.value = ''
 }
 
 /** В покой: бросить запись и незавершённый результат, панель закрыть. */
@@ -234,10 +235,6 @@ function resetToIdle(): void {
   resetVoiceResult()
   stage.value = 'idle'
   open.value = false
-}
-
-function closePanel(): void {
-  resetToIdle()
 }
 
 async function beginRecording(): Promise<void> {
@@ -380,7 +377,7 @@ function buildCreateBody(): Record<string, unknown> {
 
 /** Отправка запрещена и атрибутом `disabled`, и обработчиком: пустой проект не додумываем. */
 function submitCreate(): void {
-  if (!canCreate.value || creating.value || stage.value === 'created') return
+  if (!canCreate.value || creating.value) return
   const body = buildCreateBody()
   if (!body.title || !body.project) return
   creating.value = true
@@ -468,14 +465,17 @@ const fabGestures = {
   onPointercancel: () => onPhonePointerCancel(),
 }
 
-// Результат создания из App.vue: id — подтверждение, ошибка — строкой в черновике.
+/*
+ * Результат создания из App.vue: id — задача создана, панель закрываем (об успехе
+ * говорит тост доски, второго уведомления с кнопкой «Закрыть» здесь нет);
+ * ошибка — строкой в черновике, панель остаётся открытой.
+ */
 watch(
   () => props.createdId,
   (id) => {
     if (id === null || id === undefined) return
     creating.value = false
-    localCreatedId.value = id
-    stage.value = 'created'
+    resetToIdle()
   },
 )
 
@@ -701,14 +701,8 @@ onBeforeUnmount(() => {
           </div>
         </template>
 
-        <!-- 4. Создана -->
-        <template v-else-if="stage === 'created'">
-          <span class="listik-voice__title">Задача создана</span>
-          <span v-if="localCreatedId" class="listik-voice__created-id listik-mono">{{ localCreatedId }}</span>
-          <div class="listik-row">
-            <UiButton :size="actionSize" :block="isPhone" variant="secondary" @click="closePanel">Закрыть</UiButton>
-          </div>
-        </template>
+        <!-- Задача создана — панель закрывается сама (watch на createdId), своего
+             подтверждения с кнопкой «Закрыть» нет: об успехе говорит тост доски. -->
 
         <!-- Ветки ошибок -->
         <template v-else-if="stage === 'error' && branchInfo && branchActions">

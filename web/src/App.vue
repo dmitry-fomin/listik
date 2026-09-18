@@ -132,17 +132,17 @@ function openCreateForm(draft: VoiceDraft): void {
 
 /**
  * «Создать задачу» одной кнопкой из панели записи: то же создание, что у формы,
- * и те же тосты. id созданной карточки — разницей доски до/после, чтобы панель
- * показала подтверждение; не нашли — `''` (задача всё равно создана).
+ * и те же тосты. `voiceCreatedId` — сигнал панели «создание прошло, закрывайся»
+ * (listik-adux: своего окна подтверждения у панели больше нет, об успехе говорит
+ * тост). Перед запросом сбрасываем в `null`, чтобы сигнал сработал и на второй
+ * задаче подряд: watch в панели смотрит на смену значения.
  */
 async function createFromVoice(body: Record<string, unknown>): Promise<void> {
-  const before = new Set(store.allBoardTasks.value.map((task) => task.id))
   voiceCreatedId.value = null
   voiceCreateError.value = null
   const ok = await store.createTask(body)
   if (ok) {
-    const fresh = store.allBoardTasks.value.find((task) => !before.has(task.id))
-    voiceCreatedId.value = fresh?.id ?? ''
+    voiceCreatedId.value = ''
     toast.success('Задача создана')
   } else {
     voiceCreateError.value = store.lastError.value ?? 'Не удалось создать задачу'

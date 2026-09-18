@@ -23,11 +23,12 @@
  * отказ запроса: пока `POST /api/routes/reorder` не ответил, список уже
  * показывает новый порядок (кит переставил модель сам).
  */
-import { computed, onMounted, ref, watch } from 'vue'
+import { computed, onBeforeUnmount, onMounted, ref, watch } from 'vue'
 import {
   UiAlert,
   UiBadge,
   UiButton,
+  UiCard,
   UiConfirmDialog,
   UiEmptyState,
   UiModal,
@@ -40,6 +41,7 @@ import RouteIcon from './marks/RouteIcon.vue'
 import store from '@/store/listik'
 import type { DirectRouteDef, PipelineRouteDef, RouteDef, RouteSkillInfo } from '@/api/types'
 import { directRoutesOf, pipelineRowsOf } from '@/lib/routes'
+import { registerLeaveGuard } from '@/lib/router'
 
 /** Порядок сервера — единый источник, локальные списки под `UiRecordList` синхронизируются от него. */
 const pipelineRoutes = computed<PipelineRouteDef[]>(() => pipelineRowsOf(store.routes.value))
@@ -87,34 +89,65 @@ const selectedDirect = computed<DirectRouteDef | null>(() =>
 )
 
 /*
- * Карточка прямой выдачи сохраняется явно (порция `f`), поэтому уход с неё —
- * потеря правок: пока `directDirty`, выбор другой строки не меняет
- * `selectedKey`, а откладывает его в `leaveTarget` и спрашивает подтверждение.
- * Флаг приходит от самой карточки (`update:dirty`) и сбрасывается ею же при
- * пересоздании под другой ключ.
+ * Карточка прямой выдачи сохраняется явно, поэтому уход с неё — потеря правок.
+ * Уходов два, и оба спрашивают одно и то же одним диалогом: выбор другой строки
+ * списка (`kind: 'route'`) и уход со всей страницы — пункт настроек, «К доске»,
+ * марка, «назад»/«вперёд» браузера (`kind: 'path'`, сторож роутера ждёт ответа
+ * через `resolve`). Отсюда одна цель `leaveTarget` и одна пара
+ * `confirmLeave`/`cancelLeave`: два независимых диалога разъехались бы текстами
+ * и могли бы открыться вдвоём. Флаг `directDirty` приходит от самой карточки
+ * (`update:dirty`) и сбрасывается ею же при пересоздании под другой ключ.
+ *
+ * `beforeunload` не ставим: перезагрузка и закрытие вкладки — не дело раздела.
  */
+type LeaveTarget =
+  | { kind: 'route'; route: RouteDef }
+  | { kind: 'path'; resolve: (allowed: boolean) => void }
+
 const directDirty = ref(false)
-const leaveTarget = ref<RouteDef | null>(null)
+const leaveTarget = ref<LeaveTarget | null>(null)
+
+/** Несохранённая правка есть только у карточки прямой выдачи — у конвейера автосохранение. */
+const hasUnsaved = computed(() => directDirty.value && Boolean(selectedDirect.value))
 
 function selectRoute(route: RouteDef): void {
   if (route.key === selectedKey.value) return
-  if (directDirty.value && selectedDirect.value) {
-    leaveTarget.value = route
+  if (hasUnsaved.value) {
+    leaveTarget.value = { kind: 'route', route }
     return
   }
   selectedKey.value = route.key
 }
 
 function confirmLeave(): void {
-  const route = leaveTarget.value
+  const target = leaveTarget.value
   leaveTarget.value = null
-  if (!route) return
+  if (!target) return
   directDirty.value = false
-  selectedKey.value = route.key
+  if (target.kind === 'route') selectedKey.value = target.route.key
+  else target.resolve(true)
 }
 
+/**
+ * «Остаться», крестик, Escape и клик по фону — один и тот же отказ. Диалог кита
+ * шлёт на закрытие и `cancel`, и `update:model-value(false)`, поэтому функция
+ * обязана быть идемпотентной: цель уже снята — второй вызов ничего не делает.
+ */
 function cancelLeave(): void {
+  const target = leaveTarget.value
   leaveTarget.value = null
+  if (target?.kind === 'path') target.resolve(false)
+}
+
+/**
+ * Сторож роутера: аргумент `to` не нужен — с несохранённой карточки спрашиваем
+ * одинаково, куда бы ни уходили.
+ */
+function leaveGuard(): boolean | Promise<boolean> {
+  if (!hasUnsaved.value) return true
+  return new Promise<boolean>((resolve) => {
+    leaveTarget.value = { kind: 'path', resolve }
+  })
 }
 
 /**
@@ -209,8 +242,16 @@ async function pickMissingRoute(item: RouteSkillInfo): Promise<void> {
   selectedKey.value = created.key
 }
 
+let unregisterLeaveGuard: (() => void) | null = null
+
 onMounted(() => {
+  unregisterLeaveGuard = registerLeaveGuard(leaveGuard)
   void store.reloadRoutes()
+})
+
+onBeforeUnmount(() => {
+  unregisterLeaveGuard?.()
+  unregisterLeaveGuard = null
 })
 </script>
 
@@ -260,7 +301,10 @@ onMounted(() => {
                 @click="selectRoute(row)"
               >
                 <RouteIcon :route="row" size="sm" />
-                <span class="listik-routes-row__title">{{ row.title }}</span>
+                <span class="listik-routes-row__main">
+                  <span class="listik-routes-row__title">{{ row.title }}</span>
+                  <span v-if="row.hint.trim()" class="listik-routes-row__hint">{{ row.hint }}</span>
+                </span>
                 <code class="listik-mono">{{ row.key }}</code>
                 <UiBadge v-if="!row.visible" tone="neutral" size="sm">скрыт</UiBadge>
                 <UiBadge
@@ -304,7 +348,10 @@ onMounted(() => {
                 @click="selectRoute(row)"
               >
                 <RouteIcon :route="row" size="sm" />
-                <span class="listik-routes-row__title">{{ row.title }}</span>
+                <span class="listik-routes-row__main">
+                  <span class="listik-routes-row__title">{{ row.title }}</span>
+                  <span v-if="row.hint.trim()" class="listik-routes-row__hint">{{ row.hint }}</span>
+                </span>
                 <code class="listik-mono">{{ row.key }}</code>
                 <UiBadge v-if="!row.visible" tone="neutral" size="sm">скрыт</UiBadge>
               </button>
@@ -313,8 +360,13 @@ onMounted(() => {
         </section>
       </div>
 
-      <div class="listik-routes-settings__detail">
-        <UiEmptyState v-if="!selected" compact title="Выбери маршрут слева" />
+      <UiCard class="listik-routes-settings__panel" padding="lg">
+        <UiEmptyState
+          v-if="!selected"
+          compact
+          title="Выбери маршрут слева"
+          description="Справа откроется карточка: подпись, уровень, состав и команда запуска."
+        />
         <div v-else class="listik-routes-settings__card">
           <RouteDirectCard
             v-if="selectedDirect"
@@ -324,7 +376,7 @@ onMounted(() => {
           />
           <RouteCard v-else-if="selectedPipeline" :key="selectedPipeline.key" :route="selectedPipeline" />
         </div>
-      </div>
+      </UiCard>
     </div>
 
     <UiConfirmDialog
@@ -347,7 +399,7 @@ onMounted(() => {
       description="Команда маршрута изменена, но не сохранена — уход с карточки вернёт её к тому, что в базе."
       confirm-label="Уйти"
       cancel-label="Остаться"
-      @update:model-value="(value: boolean) => { if (!value) leaveTarget = null }"
+      @update:model-value="(value: boolean) => { if (!value) cancelLeave() }"
       @confirm="confirmLeave"
       @cancel="cancelLeave"
     />
@@ -399,14 +451,13 @@ onMounted(() => {
   font-size: var(--text-md);
 }
 
-/* Половина на половину, а не 3:2, как было до карточки прямой выдачи: в её
-   правой колонке живёт редактор argv (поле аргумента, бейдж, разбор подстановок),
-   и на 2fr от ширины модалки поле аргумента уезжало под горизонтальный скролл.
-   Списку маршрутов лишняя ширина была не нужна — там строка из иконки, названия
-   и ключа. */
+/* 2:3 в пользу карточки: раздел живёт уже не в узкой модалке, а на целой
+   странице, и ширину стоит отдавать туда, где правят, — редактору argv, плиткам
+   состава и блоку команды. Списку хватает своего минимума (280px: иконка,
+   название с подписью и ключ), меньше — и ключ начинал бы теснить название. */
 .listik-routes-settings__layout {
   display: grid;
-  grid-template-columns: minmax(0, 1fr) minmax(0, 1fr);
+  grid-template-columns: minmax(280px, 2fr) minmax(0, 3fr);
   gap: var(--space-4);
   align-items: start;
 }
@@ -431,10 +482,11 @@ onMounted(() => {
   min-width: 0;
 }
 
-.listik-routes-settings__detail {
-  border: 1px solid var(--hairline);
-  border-radius: var(--radius-lg);
-  padding: var(--space-4);
+/* Карточка не уезжает с экрана вслед за длинным списком маршрутов: правая
+   колонка прилипает под шапкой страницы. */
+.listik-routes-settings__panel {
+  position: sticky;
+  top: calc(var(--header-h) + var(--space-4));
   min-width: 0;
 }
 
@@ -467,12 +519,32 @@ onMounted(() => {
   background: var(--accent-50);
 }
 
-.listik-routes-row__title {
+/* `width: 0` — не опечатка: колонку название+подпись растягивает `flex-grow`, а
+   нулевая базовая ширина не даёт длинной подписи считаться минимумом ячейки.
+   Без неё таблица `UiRecordList` вырастала шире своей колонки раздела и уезжала
+   под горизонтальный скролл (`min-width: 0` этого не давал: он снимает
+   автоминимум flex-элемента, но минимальную ширину содержимого не обнуляет). */
+.listik-routes-row__main {
+  display: flex;
   flex: 1 1 auto;
+  flex-direction: column;
+  width: 0;
+  min-width: 0;
+}
+
+.listik-routes-row__title,
+.listik-routes-row__hint {
   min-width: 0;
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
+}
+
+/* Подпись — вторая строка; пустой её не бывает вовсе (`v-if`), иначе строка
+   списка становилась бы двухэтажной без причины. */
+.listik-routes-row__hint {
+  color: var(--ink-3);
+  font-size: var(--text-sm);
 }
 
 /* Ключ маршрута не переносится: он короткий, а рвался бы по дефисам

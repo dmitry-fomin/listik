@@ -6,7 +6,8 @@
  * которую сервер потом сам запускает, поэтому карточка устроена не как
  * карточка конвейера (`RouteCard.vue`, там автосохранение):
  *
- *  * **сохранение явное** — «Отменить»/«Сохранить» в шапке, один `PATCH` со
+ *  * **сохранение явное** — «Отменить»/«Сохранить» нижней полосой карточки,
+ *    последним действием после всех правок, один `PATCH` со
  *    всеми изменёнными полями сразу. Пустого `PATCH` не бывает: без изменений
  *    кнопка выключена (сервер на `{}` отвечает 400 «нечего менять»);
  *  * **на сервер уходит массив** argv: аргументы — строки списка, промпт —
@@ -36,6 +37,7 @@ import {
   UiAlert,
   UiBadge,
   UiButton,
+  UiEntityHeader,
   UiField,
   UiInput,
   UiRecordList,
@@ -46,6 +48,7 @@ import {
 import IconToggle, { type IconToggleOption } from './IconToggle.vue'
 import ListikIcon from './ListikIcon.vue'
 import HarnessIcon from './marks/HarnessIcon.vue'
+import RouteIcon from './marks/RouteIcon.vue'
 import RouteCommandText from './RouteCommandText.vue'
 import RouteSubstitutions from './RouteSubstitutions.vue'
 import store from '@/store/listik'
@@ -264,6 +267,10 @@ const preview = computed(() => previewCommand(commandDraft.value, props.route.ke
 
 <template>
   <div class="listik-route-direct">
+    <UiEntityHeader :title="route.title" eyebrow="Прямая выдача" :subtitle="route.key">
+      <template #avatar><RouteIcon :route="route" size="md" /></template>
+    </UiEntityHeader>
+
     <div class="listik-route-direct__header">
       <UiField label="Название кнопки">
         <UiInput v-model="draft.title" />
@@ -283,25 +290,6 @@ const preview = computed(() => previewCommand(commandDraft.value, props.route.ke
           <ListikIcon name="lock" size="sm" />
           не правится
         </span>
-      </div>
-
-      <div class="listik-route-direct__actions">
-        <UiButton variant="ghost" :disabled="!dirty || saving" @click="cancel">Отменить</UiButton>
-        <UiButton
-          class="listik-route-direct__save"
-          :disabled="!canSave"
-          :loading="saving"
-          @click="save"
-        >
-          Сохранить
-        </UiButton>
-        <p
-          v-if="blockReason"
-          class="listik-route-direct__reason"
-          :class="{ 'is-problem': reasonIsProblem }"
-        >
-          {{ blockReason }}
-        </p>
       </div>
     </div>
 
@@ -389,6 +377,28 @@ const preview = computed(() => previewCommand(commandDraft.value, props.route.ke
         передаётся списком строк, и кавычки в него не попадают.
       </p>
     </section>
+
+    <!-- Нижняя полоса: «Сохранить» — последнее действие карточки, а не первое.
+         Правки идут сверху вниз (шапка → уровень → аргументы → промпт), кнопка
+         стоит там, где автор заканчивает, и причина отказа рядом с ней. -->
+    <div class="listik-route-direct__actions">
+      <UiButton variant="ghost" :disabled="!dirty || saving" @click="cancel">Отменить</UiButton>
+      <UiButton
+        class="listik-route-direct__save"
+        :disabled="!canSave"
+        :loading="saving"
+        @click="save"
+      >
+        Сохранить
+      </UiButton>
+      <p
+        v-if="blockReason"
+        class="listik-route-direct__reason"
+        :class="{ 'is-problem': reasonIsProblem }"
+      >
+        {{ blockReason }}
+      </p>
+    </div>
   </div>
 </template>
 
@@ -430,6 +440,8 @@ const preview = computed(() => previewCommand(commandDraft.value, props.route.ke
   flex-wrap: wrap;
   align-items: center;
   gap: var(--space-2);
+  padding-top: var(--space-3);
+  border-top: 1px solid var(--hairline);
 }
 
 .listik-route-direct__reason {

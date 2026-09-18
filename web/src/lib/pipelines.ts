@@ -4,6 +4,7 @@
  * `GET /api/routes`, файл `routes.json` (см. `RouteDef` в `api/types.ts`).
  * Здесь остаются только роли и вендоры, которыми размечены ячейки таблицы.
  */
+import type { PipelineStage } from '@/api/types'
 
 export type RoleKey = 'spec' | 'critic' | 'impl' | 'judge'
 
@@ -14,6 +15,19 @@ export const ROLE_TITLES: Record<RoleKey, string> = {
   critic: 'Критик',
   impl: 'Исполнитель',
   judge: 'Судья',
+}
+
+/**
+ * Роль конвейера ↔ этап задачи — единственное место этого соответствия.
+ * Подписи этапов (`s1` / «ТЗ и чек-лист» …) берутся уже из `PIPELINE_STAGES`
+ * (`lib/dictionaries.ts`) по этому значению, чтобы в шаблонах не заводились
+ * свои литералы этапов.
+ */
+export const ROLE_STAGE: Record<RoleKey, PipelineStage> = {
+  spec: 's1-spec',
+  critic: 's2-review',
+  impl: 's3-impl',
+  judge: 's4-judge',
 }
 
 /** Вендор роли — своя мини-таксономия, не `HarnessKey`: GLM никогда не держатель задачи на сервере. */

@@ -26,6 +26,7 @@ import { computed, reactive, ref } from 'vue'
 import {
   UiAlert,
   UiCopyButton,
+  UiEntityHeader,
   UiField,
   UiInput,
   UiSaveStatus,
@@ -35,11 +36,12 @@ import {
 import IconToggle, { type IconToggleOption } from './IconToggle.vue'
 import ListikIcon from './ListikIcon.vue'
 import ProviderIcon from './marks/ProviderIcon.vue'
+import RouteIcon from './marks/RouteIcon.vue'
 import RouteSubstitutions from './RouteSubstitutions.vue'
 import store from '@/store/listik'
 import type { RouteDef, RouteIconKey, RoutePatch } from '@/api/types'
-import { ROUTE_ICONS } from '@/lib/dictionaries'
-import { ROLE_KEYS, ROLE_TITLES } from '@/lib/pipelines'
+import { PIPELINE_STAGES, ROUTE_ICONS, type PipelineStep } from '@/lib/dictionaries'
+import { ROLE_KEYS, ROLE_STAGE, ROLE_TITLES, type RoleCell, type RoleKey } from '@/lib/pipelines'
 import { splitPlaceholders, unknownPlaceholders } from '@/lib/routes'
 
 const props = defineProps<{ route: RouteDef }>()
@@ -163,13 +165,38 @@ function onLevel(value: string): void {
 
 const hasRoles = computed(() => props.route.kind === 'pipeline' && Object.keys(props.route.roles).length > 0)
 
+/** Этап роли — через `ROLE_STAGE`, подписи только из словаря (своих литералов этапов тут нет). */
+function stageOf(role: RoleKey): PipelineStep {
+  return PIPELINE_STAGES.find((item) => item.value === ROLE_STAGE[role]) ?? PIPELINE_STAGES[0]
+}
+
+interface RoleTile {
+  role: RoleKey
+  step: PipelineStep
+  title: string
+  cell: RoleCell | null
+}
+
+/**
+ * Плитки состава — всегда четыре, по одной на этап конвейера: у роли, которой в
+ * пресете нет (и у незаполненного состава целиком), плитка та же, только
+ * приглушённая. Так видно, что этапов ровно четыре, а пресет закрывает не все.
+ */
+const roleTiles = computed<RoleTile[]>(() =>
+  ROLE_KEYS.map((role) => ({
+    role,
+    step: stageOf(role),
+    title: ROLE_TITLES[role],
+    cell: props.route.kind === 'pipeline' ? (props.route.roles[role] ?? null) : null,
+  })),
+)
+
 /* ── чем запускается + подстановки ── */
 
-const commandChunks = computed(() => {
-  const command = props.route.command
-  if (!command) return []
-  return splitPlaceholders(command.join(' '))
-})
+/** Команда построчно: элемент argv — строка блока, подсветка считается внутри элемента. */
+const commandLines = computed(() => (props.route.command ?? []).map((element) => splitPlaceholders(element)))
+/** Та же команда одной строкой — для кнопки копирования рядом с заголовком секции. */
+const commandText = computed(() => (props.route.command ?? []).join(' '))
 const unknownNames = computed(() => unknownPlaceholders(props.route.command))
 
 /** `{name}` — вынесено функцией: буквальные `{}` внутри `{{ }}` шаблона путают парсер Vue. */
@@ -180,6 +207,10 @@ function braced(name: string): string {
 
 <template>
   <div class="listik-route-card">
+    <UiEntityHeader :title="route.title" eyebrow="Конвейер" :subtitle="route.key">
+      <template #avatar><RouteIcon :route="route" size="md" /></template>
+    </UiEntityHeader>
+
     <div class="listik-route-card__header">
       <UiField label="Заголовок" :error="errorFor('title')">
         <UiInput
@@ -227,17 +258,26 @@ function braced(name: string): string {
           <ListikIcon name="lock" size="sm" />
           Состав конвейера
         </h4>
-        <template v-if="hasRoles">
-          <div v-for="role in ROLE_KEYS" :key="role" class="listik-route-card__role-row">
-            <span class="listik-route-card__role-label">{{ ROLE_TITLES[role] }}</span>
-            <template v-if="route.roles[role]">
-              <ProviderIcon :provider="route.roles[role]!.provider" size="sm" />
-              <span class="listik-route-card__role-title">{{ route.roles[role]!.title }}</span>
-            </template>
+        <div class="listik-route-card__roles">
+          <div
+            v-for="tile in roleTiles"
+            :key="tile.role"
+            class="listik-route-card__role"
+            :class="{ 'is-empty': !tile.cell }"
+          >
+            <span class="listik-route-card__role-stage">
+              <span class="listik-route-card__role-code">{{ tile.step.code }}</span>
+              <span class="listik-route-card__role-label">{{ tile.step.label }}</span>
+            </span>
+            <span v-if="tile.cell" class="listik-route-card__role-vendor">
+              <ProviderIcon :provider="tile.cell.provider" size="sm" />
+              <span class="listik-route-card__role-title">{{ tile.cell.title }}</span>
+            </span>
             <span v-else class="listik-route-card__role-empty">этапа нет в этом пресете</span>
+            <span class="listik-route-card__role-role">{{ tile.title }}</span>
           </div>
-        </template>
-        <p v-else class="listik-prose">
+        </div>
+        <p v-if="!hasRoles" class="listik-prose">
           состав не заполнен: роли берутся из базы, их заполняет ввоз
           <code class="listik-mono">listik routes import</code>
         </p>
@@ -253,23 +293,30 @@ function braced(name: string): string {
       </section>
 
       <section class="listik-route-card__section">
-        <h4 class="listik-route-card__section-title">Чем запускается</h4>
+        <h4 class="listik-route-card__section-title">
+          Чем запускается
+          <UiCopyButton v-if="route.command" :value="commandText" label="Команда запуска">
+            <template #icon="{ copied }"><ListikIcon :name="copied ? 'check' : 'copy'" size="sm" /></template>
+          </UiCopyButton>
+        </h4>
         <p v-if="!route.command" class="listik-prose">маршрут не запускается автоматически</p>
         <template v-else>
-          <p class="listik-mono listik-route-card__command">
-            <template v-for="(chunk, index) in commandChunks" :key="index">
-              <span v-if="chunk.type === 'text'">{{ chunk.value }}</span>
-              <span
-                v-else-if="chunk.type === 'placeholder'"
-                class="listik-route-card__placeholder"
-              >{{ braced(chunk.value) }}</span>
-              <span
-                v-else
-                class="listik-route-card__placeholder listik-route-card__placeholder--unknown"
-                :title="`неизвестная подстановка: ${chunk.value}`"
-              >{{ braced(chunk.value) }}</span>
-            </template>
-          </p>
+          <!-- Внутри `pre` компилятор Vue сохраняет пробелы как есть, поэтому тут нет
+               ни одного переноса строки между узлами: перенос даёт сама плитка строки
+               (`display: block`), а лишний отступ шаблона утёк бы в команду на экране. -->
+          <pre
+            class="listik-route-card__command"
+          ><span v-for="(line, index) in commandLines" :key="index" class="listik-route-card__command-line"><template
+            v-for="(chunk, at) in line"
+            :key="at"
+          ><span v-if="chunk.type === 'text'">{{ chunk.value }}</span><span
+            v-else-if="chunk.type === 'placeholder'"
+            class="listik-route-card__placeholder"
+          >{{ braced(chunk.value) }}</span><span
+            v-else
+            class="listik-route-card__placeholder listik-route-card__placeholder--unknown"
+            :title="`неизвестная подстановка: ${chunk.value}`"
+          >{{ braced(chunk.value) }}</span></template></span></pre>
           <p v-if="unknownNames.length > 0" class="listik-route-card__unknown">
             неизвестная подстановка: {{ unknownNames.join(', ') }}
           </p>
@@ -317,15 +364,75 @@ function braced(name: string): string {
   color: var(--ink-3);
 }
 
-.listik-route-card__role-row {
-  display: flex;
-  align-items: center;
+/* Четыре плитки по этапам конвейера: на всю ширину карточки — в строку, на узкой
+   панели — в две колонки (плитка с вендором и подписью в одну колонку не влезает). */
+.listik-route-card__roles {
+  display: grid;
+  grid-template-columns: repeat(4, minmax(0, 1fr));
   gap: var(--space-2);
+}
+
+@media (max-width: 720px) {
+  .listik-route-card__roles {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+}
+
+.listik-route-card__role {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-1);
+  min-width: 0;
+  padding: var(--space-2);
+  border: 1px solid var(--hairline);
+  border-radius: var(--radius-md);
+  background: var(--surface-2);
   font-size: var(--text-sm);
 }
 
+/* Этапа в пресете нет — плитка остаётся на месте, но гаснет: состав читается
+   как четыре этапа, из которых закрыты не все. */
+.listik-route-card__role.is-empty {
+  color: var(--ink-3);
+}
+
+.listik-route-card__role-stage {
+  display: flex;
+  align-items: baseline;
+  gap: var(--space-1);
+  min-width: 0;
+}
+
+.listik-route-card__role-code {
+  font-family: var(--font-mono);
+  font-weight: var(--weight-medium);
+}
+
 .listik-route-card__role-label {
-  flex: 0 0 8ch;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-size: var(--text-xs);
+  color: var(--ink-3);
+}
+
+.listik-route-card__role-vendor {
+  display: flex;
+  align-items: center;
+  gap: var(--space-1);
+  min-width: 0;
+}
+
+.listik-route-card__role-title {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.listik-route-card__role-role {
+  font-size: var(--text-xs);
   color: var(--ink-3);
 }
 
@@ -355,12 +462,22 @@ function braced(name: string): string {
   white-space: nowrap;
 }
 
+/* Команда — блок, а не строка: каждый элемент argv на своей строке, длинный
+   элемент переносится внутри себя, а не уезжает под горизонтальный скролл. */
 .listik-route-card__command {
   margin: 0;
   padding: var(--space-2) var(--space-3);
-  border-radius: var(--radius-sm);
+  border: 1px solid var(--hairline);
+  border-radius: var(--radius-md);
   background: var(--surface-2);
-  overflow-wrap: break-word;
+  font-family: var(--font-mono);
+  font-size: var(--text-sm);
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+}
+
+.listik-route-card__command-line {
+  display: block;
 }
 
 .listik-route-card__placeholder {

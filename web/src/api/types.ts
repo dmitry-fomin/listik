@@ -78,6 +78,14 @@ export interface Task {
   /** Кто поставил держателя: `agent:claude` у выдачи оркестратором, null у старых записей. */
   holder_assigned_by: string | null
   holder_assigned_by_title: string | null
+  /**
+   * Кто подтвердил работу сам: акторы событий `claim`/`heartbeat`, сделанных от
+   * их имени. Выдача оркестратором и heartbeat чужой рукой не считаются; у
+   * закрытой карточки это «кто выполнял». Никого — пустой массив.
+   */
+  worked_by: string[]
+  /** Подписи `worked_by` через запятую; `''` при пустом списке. */
+  worked_by_title: string
   assigned_at: string | null
   /** Сколько задача «выдана, но не взята» — от события выдачи, не от heartbeat. */
   assigned_age: string

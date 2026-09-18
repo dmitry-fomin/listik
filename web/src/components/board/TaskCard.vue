@@ -109,6 +109,24 @@ const blockedTooltip = computed(() => {
   return ''
 })
 
+/**
+ * «Кто выполнял» вместо держателя — только у закрытой карточки (done/cancelled),
+ * и только если кто-то подтвердил работу своим claim/heartbeat. У закрытой
+ * держателя может не быть вовсе (`stage --to done` его снимает), а оставшийся
+ * держатель у неё уже ничего не держит — поэтому «держит …», «выдана, не взята …»
+ * и «без держателя» в этой ветке не показываются.
+ */
+const workedBy = computed<{ label: string; title: string; actor: string } | null>(() => {
+  const isClosed = props.task.status === 'done' || props.task.status === 'cancelled'
+  const keys = props.task.worked_by ?? []
+  if (!isClosed || keys.length === 0) return null
+  return {
+    label: keys.length > 1 ? 'выполняли' : 'выполнял',
+    title: props.task.worked_by_title,
+    actor: keys[0],
+  }
+})
+
 const stageAgeClass = computed(() => {
   if (!props.task.stage_warn) return null
   return (props.task.stage_hours ?? 0) > 24 ? 'is-late' : 'is-warn'
@@ -171,7 +189,11 @@ function onKeydown(event: KeyboardEvent): void {
     <div class="listik-task-card__foot">
       <span class="listik-task-card__holder">
         <HealthDot :health="health" size="sm" :label="healthReason(task)" />
-        <template v-if="task.holder">
+        <template v-if="workedBy">
+          <HarnessIcon :actor="workedBy.actor" size="xs" />
+          {{ workedBy.label }} <strong>{{ workedBy.title }}</strong>
+        </template>
+        <template v-else-if="task.holder">
           <HarnessIcon :actor="task.holder" size="xs" />
           <strong>{{ task.holder_title }}</strong>
           <span v-if="task.not_taken" class="listik-task-card__assigned">

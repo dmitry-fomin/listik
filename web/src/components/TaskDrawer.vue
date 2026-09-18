@@ -1289,12 +1289,23 @@ async function loadTree(): Promise<void> {
           <section class="listik-section">
             <h4 class="listik-section__title">Кто держит</h4>
             <dl class="listik-dl">
-          <dt>держит</dt>
-          <dd>
-            <HarnessIcon :actor="task.holder" />
-            {{ holderBlock?.holder }}<template v-if="holderBlock?.holderHasTitle"> · {{ holderBlock.holderAge }}</template>
-          </dd>
-          <template v-if="holderBlock?.notTaken">
+          <!-- Закрытая карточка с подтверждённой работой: «кто выполнял» вместо
+               держателя — держателя у неё может уже не быть («никто»). -->
+          <template v-if="holderBlock?.workedBy">
+            <dt>{{ holderBlock.workedBy.label }}</dt>
+            <dd>
+              <HarnessIcon :actor="holderBlock.workedBy.actor" />
+              {{ holderBlock.workedBy.title }}
+            </dd>
+          </template>
+          <template v-else>
+            <dt>держит</dt>
+            <dd>
+              <HarnessIcon :actor="task.holder" />
+              {{ holderBlock?.holder }}<template v-if="holderBlock?.holderHasTitle"> · {{ holderBlock.holderAge }}</template>
+            </dd>
+          </template>
+          <template v-if="holderBlock?.notTaken && !holderBlock?.workedBy">
             <dt>взята</dt>
             <dd>
               <UiBadge tone="warning" size="sm">{{ holderBlock.assigned }}</UiBadge>

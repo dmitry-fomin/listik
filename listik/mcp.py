@@ -585,8 +585,16 @@ def call_tool(name: str, args: dict, conn=None, owner=FROM_ENV) -> object:
                                  author=args.get("author"), kind=args.get("kind", "comment"),
                                  harness=args.get("harness"))
     if name == "listik_needs_owner":
+        # Без явного actor вопрос/ответ не должен остаться без автора: MCP —
+        # транспорт агентов, поэтому имя берём у того, кто представился
+        # транспортом (owner: X-Listik-Owner у HTTP, LISTIK_OWNER у stdio), затем
+        # из LISTIK_ACTOR и, наконец, агентским фолбэком — как у listik_deps.
+        # `_norm_actor` приводит имя к каноническому ключу, чтобы комментарий и
+        # событие question/answer подписывались одним и тем же актором.
+        actor = _norm_actor(args.get("actor") or owner
+                            or os.environ.get("LISTIK_ACTOR") or "agent:mcp")
         return store.set_needs_owner(conn, args["id"], value=bool(args.get("value", True)),
-                                     text=args.get("text"), actor=args.get("actor"))
+                                     text=args.get("text"), actor=actor)
     if name == "listik_done":
         return store.update_task(conn, args["id"], actor=args.get("actor"), status="done",
                                  stage="done", result=args.get("result", ""),

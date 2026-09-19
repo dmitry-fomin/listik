@@ -38,6 +38,14 @@
  * аргумент — сохранение (порядок сверяется по ответу сервера). Исходная команда
  * возвращается прямым `PATCH` в `finalize()` и на успехе, и на падении.
  *
+ * Порция `e` (окно «Завести прямой маршрут») добавляет сценарий заведения:
+ * кнопка в шапке раздела открывает окно; черновой ключ выводится из названия, пока
+ * поле не тронули вручную; негодная форма не отправляется (на кнопке — атрибут
+ * `submit-disabled`, который кит 1.1.0 ещё не читает, uikit-6mtl); отправка — один
+ * `POST /api/routes` с `kind: "direct"` и `command`-массивом, после чего запись
+ * появляется в группе «Прямая выдача», выбрана и показана выключенной. Пробная
+ * запись убирается прямым `DELETE /api/routes/<ключ>` в `finalize()`.
+ *
  * Запуск: node scripts/verify-routes-settings.mjs "http://localhost:5173/?token=<токен>"
  * Печатает JSON-отчёт и «ок»/«ошибка: …» последней строкой; код выхода
  * ненулевой, если сценарий не прошёл (или прерван сигналом).
@@ -72,11 +80,13 @@ await client.ready
 const { send, evaluate, consoleErrors } = client
 
 /* ── перехват fetch на странице: копится в window.__routesPatchCalls (тела
- * PATCH /api/routes/<key> — автосохранение карточки, порция `e`), добавлен как
- * «скрипт на новый документ» — переживает Page.navigate сам, повторно вставлять
- * после перезагрузки не нужно. */
-const PATCH_INTERCEPT = `(() => {
+ * PATCH /api/routes/<key> — автосохранение карточки, порция `e`) и в
+ * window.__routesCreateCalls (тела POST /api/routes — заведение, порция `e`),
+ * добавлен как «скрипт на новый документ» — переживает Page.navigate сам,
+ * повторно вставлять после перезагрузки не нужно. */
+const ROUTES_INTERCEPT = `(() => {
   window.__routesPatchCalls = window.__routesPatchCalls ?? [];
+  window.__routesCreateCalls = window.__routesCreateCalls ?? [];
   if (window.__routesFetchPatched) return;
   window.__routesFetchPatched = true;
   const original = window.fetch.bind(window);
@@ -86,6 +96,9 @@ const PATCH_INTERCEPT = `(() => {
       const patchMatch = reqUrl.match(/\\/api\\/routes\\/([^/?]+)$/);
       if (patchMatch && init && init.method === 'PATCH' && typeof init.body === 'string') {
         window.__routesPatchCalls.push({ key: patchMatch[1], body: JSON.parse(init.body) });
+      }
+      if (/\\/api\\/routes(\\?|$)/.test(reqUrl) && init && init.method === 'POST' && typeof init.body === 'string') {
+        window.__routesCreateCalls.push({ body: JSON.parse(init.body) });
       }
     } catch (_e) { /* тело не JSON — не мешаем запросу */ }
     return original(input, init);
@@ -297,6 +310,140 @@ const patchCallsSince = (from) => `window.__routesPatchCalls.slice(${from})`
 const patchCallsCount = `window.__routesPatchCalls.length`
 const saveStatusText = `document.querySelector('.listik-routes-settings__card .ui-save-status')?.textContent ?? ''`
 
+/* ── окно заведения прямого маршрута (порция `e`) ── */
+
+/** Открытое окно заведения — по заголовку, а не по порядку в документе. */
+const CREATE_MODAL = `[...document.querySelectorAll('.ui-modal')].find((el) => el.querySelector('.ui-modal__title')?.textContent.trim() === 'Завести прямой маршрут')`
+
+const createModalOpen = `Boolean(${CREATE_MODAL})`
+const createModalTitle = `(${CREATE_MODAL})?.querySelector('.ui-modal__title')?.textContent.trim() ?? null`
+const createModalLead = `(${CREATE_MODAL})?.querySelector('.listik-new-direct__lead')?.textContent.trim() ?? null`
+
+/** Кнопка «Завести маршрут»: атрибут кита `submit-disabled` (uikit-6mtl) и спиннер. */
+const createSubmitState = `(() => {
+  const modal = ${CREATE_MODAL}
+  const button = modal ? [...modal.querySelectorAll('button')].find((b) => b.textContent.trim() === 'Завести маршрут') : null
+  if (!button) return null
+  return {
+    present: true,
+    submitDisabled: button.hasAttribute('submit-disabled'),
+    spinner: Boolean(button.querySelector('.ui-spinner')),
+  }
+})()`
+
+const clickCreateSubmit = `(() => {
+  const modal = ${CREATE_MODAL}
+  const button = modal ? [...modal.querySelectorAll('button')].find((b) => b.textContent.trim() === 'Завести маршрут') : null
+  if (!button) return false
+  button.click()
+  return true
+})()`
+
+/** Поле окна: нативный сеттер + `input` (v-model слушает именно его). */
+const setModalField = (selector, value) => `(() => {
+  const modal = ${CREATE_MODAL}
+  const el = modal ? modal.querySelector(${JSON.stringify(selector)}) : null
+  if (!el) return false
+  const proto = el.tagName === 'TEXTAREA' ? window.HTMLTextAreaElement.prototype : window.HTMLInputElement.prototype
+  Object.getOwnPropertyDescriptor(proto, 'value').set.call(el, ${JSON.stringify(value)})
+  el.dispatchEvent(new Event('input', { bubbles: true }))
+  return true
+})()`
+
+const modalFieldValue = (selector) => `(() => {
+  const modal = ${CREATE_MODAL}
+  const el = modal ? modal.querySelector(${JSON.stringify(selector)}) : null
+  return el ? el.value : null
+})()`
+
+const setCreateArg = (index, value) => `(() => {
+  const modal = ${CREATE_MODAL}
+  const el = modal ? [...modal.querySelectorAll('${CREATE_ARGS}')][${index}] : null
+  if (!el) return false
+  Object.getOwnPropertyDescriptor(window.HTMLInputElement.prototype, 'value').set.call(el, ${JSON.stringify(value)})
+  el.dispatchEvent(new Event('input', { bubbles: true }))
+  return true
+})()`
+
+/** Открыть UiSelect держателя и выбрать опцию по подписи (ключ харнесса). */
+const openHarnessSelect = `(() => {
+  const modal = ${CREATE_MODAL}
+  const trigger = modal ? modal.querySelector('.ui-select__trigger') : null
+  if (!trigger) return false
+  trigger.click()
+  return true
+})()`
+
+const clickSelectOption = (label) => `(() => {
+  const option = [...document.querySelectorAll('.ui-select__option')].find((el) => el.textContent.trim() === ${JSON.stringify(label)})
+  if (!option) return false
+  option.click()
+  return true
+})()`
+
+const clickAddArg = `(() => {
+  const modal = ${CREATE_MODAL}
+  const button = modal ? modal.querySelector('.ui-record-list__add') : null
+  if (!button) return false
+  button.click()
+  return true
+})()`
+
+const clickModalIconNone = `(() => {
+  const modal = ${CREATE_MODAL}
+  const button = modal ? [...modal.querySelectorAll('.listik-icon-toggle [role="radio"]')].find((b) => b.getAttribute('aria-label') === 'Без иконки') : null
+  if (!button) return false
+  button.click()
+  return true
+})()`
+
+const CREATE_TITLE = '.listik-new-direct__title input'
+const CREATE_KEY = '.listik-new-direct__key input'
+const CREATE_HINT = '.listik-new-direct__hint input'
+const CREATE_PROMPT = 'textarea.listik-new-direct__prompt'
+const CREATE_ARGS = '.listik-new-direct__arg-input input'
+
+/** Текст ошибки поля команды/промпта — тем же словами, что в карточке прямой выдачи. */
+const createFieldProblem = `(() => {
+  const modal = ${CREATE_MODAL}
+  const node = modal ? [...modal.querySelectorAll('.listik-new-direct__problem')].find((el) => el.textContent.trim()) : null
+  return node ? node.textContent.trim() : ''
+})()`
+
+/** Строка в группе «Прямая выдача»: заголовок, выбор, бейдж «выключен». */
+const directRowState = (key) => `(() => {
+  const group = [...document.querySelectorAll('.listik-routes-settings__group')]
+    .find((el) => el.querySelector('.listik-section__title')?.textContent.trim() === 'Прямая выдача')
+  if (!group) return null
+  const row = [...group.querySelectorAll('${ROW}')].find((r) => r.querySelector('.listik-routes-row')?.getAttribute('data-key') === ${JSON.stringify(key)})
+  if (!row) return null
+  const button = row.querySelector('.listik-routes-row')
+  return {
+    title: button.querySelector('.listik-routes-row__title')?.textContent.trim() ?? null,
+    selected: button.classList.contains('is-selected'),
+    off: [...button.querySelectorAll('.ui-badge')].some((b) => b.textContent.trim() === 'выключен'),
+  }
+})()`
+
+const selectedDirectCardTitle = `document.querySelector('.listik-routes-settings__card .listik-route-direct__name')?.textContent.trim() ?? null`
+
+const createCallsSince = (from) => `(window.__routesCreateCalls ?? []).slice(${from})`
+const createCallsCount = `(window.__routesCreateCalls ?? []).length`
+
+/** Прямой DELETE записи в обход UI — уборка пробного маршрута в `finalize()`. */
+const forceDelete = (key) => `(async () => {
+  try {
+    const token = localStorage.getItem('listik.token') ?? ''
+    const response = await fetch('/api/routes/' + ${JSON.stringify(key)}, {
+      method: 'DELETE',
+      headers: { Authorization: 'Bearer ' + token },
+    })
+    return response.ok
+  } catch (_e) {
+    return false
+  }
+})()`
+
 const report = { ok: false }
 let cardKey = null
 let cardOriginal = null
@@ -307,6 +454,9 @@ let iconRestoreNeeded = false
 let directKey = null
 let directOriginal = null
 let directRestoreNeeded = false
+/* Пробный прямой маршрут, заведённый сценарием: убираем прямым DELETE в finalize(). */
+let probeKey = null
+let probeCleanupNeeded = false
 let finalized = false
 
 /**
@@ -348,6 +498,19 @@ async function finalize() {
       report.directRestoreError = String(restoreError?.stack ?? restoreError)
     }
   }
+  if (probeCleanupNeeded && probeKey) {
+    try {
+      await withTimeout(
+        (async () => {
+          report.probeCleanupOk = await evaluate(forceDelete(probeKey))
+        })(),
+        10000,
+      )
+    } catch (cleanupError) {
+      report.probeCleanupOk = false
+      report.probeCleanupError = String(cleanupError?.stack ?? cleanupError)
+    }
+  }
   try {
     client.socket.close()
   } catch {
@@ -379,11 +542,11 @@ process.on('SIGTERM', () => { void handleSignal('SIGTERM') })
 try {
   await send('Runtime.enable')
   await send('Page.enable')
-  await send('Page.addScriptToEvaluateOnNewDocument', { source: PATCH_INTERCEPT })
+  await send('Page.addScriptToEvaluateOnNewDocument', { source: ROUTES_INTERCEPT })
 
   await send('Page.navigate', { url: routesUrl })
   await sleep(4000)
-  await evaluate(PATCH_INTERCEPT) // сама страница уже загружена раньше add-script — патчим и напрямую
+  await evaluate(ROUTES_INTERCEPT) // сама страница уже загружена раньше add-script — патчим и напрямую
 
   report.settingsOpen = await evaluate(`Boolean(document.querySelector('.listik-settings'))`)
 
@@ -624,6 +787,116 @@ try {
   report.directOrderPersisted =
     JSON.stringify(report.directSavedCommand) === JSON.stringify([...expectedArgs, promptProbe])
 
+  /*
+   * ── окно заведения прямого маршрута (порция `e`). Пробная запись
+   * `probe-direct` убирается прямым DELETE в finalize() — и на успехе, и на
+   * падении; перед началом тем же DELETE страхуемся от прошлого упавшего
+   * прогона, иначе ключ будет занят.
+   */
+  probeKey = 'probe-direct'
+  await evaluate(forceDelete(probeKey))
+  report.createHeaderButtonCount = await evaluate(
+    `[...document.querySelectorAll('button')].filter((b) => b.textContent.trim() === 'Завести прямой маршрут').length`,
+  )
+  report.createOpenClicked = await evaluate(clickByText('Завести прямой маршрут'))
+  await sleep(600)
+  report.createModalOpen = await evaluate(createModalOpen)
+  report.createModalTitle = await evaluate(createModalTitle)
+  report.createModalLead = await evaluate(createModalLead)
+  report.createLeadMentionsSkills = String(report.createModalLead ?? '').includes('Конвейеры так не заводятся')
+
+  const emptyState = await evaluate(createSubmitState)
+  report.createSubmitDisabledOnOpen = emptyState?.submitDisabled === true
+  report.createSubmitNoSpinnerOnOpen = emptyState?.spinner === false
+
+  // черновой ключ из названия, пока поле «Ключ» не тронули вручную
+  await evaluate(setModalField(CREATE_TITLE, 'opencode DeepSeek'))
+  await sleep(80)
+  report.createDraftKeyLatin = (await evaluate(modalFieldValue(CREATE_KEY))) === 'opencode-deepseek'
+  await evaluate(setModalField(CREATE_TITLE, 'pi · GLM 5.3 Flash'))
+  await sleep(80)
+  report.createDraftKeyPunct = (await evaluate(modalFieldValue(CREATE_KEY))) === 'pi-glm-5-3-flash'
+  await evaluate(setModalField(CREATE_TITLE, 'Мой маршрут'))
+  await sleep(80)
+  report.createDraftKeyCyrillicEmpty = (await evaluate(modalFieldValue(CREATE_KEY))) === ''
+
+  // ручная правка «Ключа» выключает подстановку из названия
+  await evaluate(setModalField(CREATE_KEY, probeKey))
+  await sleep(80)
+  await evaluate(setModalField(CREATE_TITLE, 'Проба'))
+  await sleep(80)
+  report.createDraftKeyFrozen = (await evaluate(modalFieldValue(CREATE_KEY))) === probeKey
+
+  // держатель — ключ харнесса из HARNESS_TITLES
+  report.createHarnessOpened = await evaluate(openHarnessSelect)
+  await sleep(250)
+  report.createHarnessPicked = await evaluate(clickSelectOption('codex'))
+  await sleep(150)
+
+  // команда: codex / пустая строка / exec / --full-auto (пустая в массив не попадёт)
+  await evaluate(setCreateArg(0, 'codex'))
+  await evaluate(clickAddArg)
+  await sleep(120)
+  await evaluate(clickAddArg)
+  await sleep(120)
+  await evaluate(setCreateArg(2, 'exec'))
+  await evaluate(clickAddArg)
+  await sleep(120)
+  await evaluate(setCreateArg(3, '--full-auto'))
+  await evaluate(setModalField(CREATE_PROMPT, 'Возьми задачу {task_id}'))
+  await evaluate(setModalField(CREATE_HINT, 'проба'))
+  report.createIconNoneClicked = await evaluate(clickModalIconNone)
+  await sleep(200)
+
+  const readyState = await evaluate(createSubmitState)
+  report.createSubmitEnabledWhenValid = readyState?.submitDisabled === false
+
+  // `{foo}` в промпте: отправка не уходит, ошибка у поля, на кнопке снова атрибут
+  await evaluate(setModalField(CREATE_PROMPT, 'Возьми задачу {task_id} {foo}'))
+  await sleep(200)
+  report.createBadPromptDisabled = (await evaluate(createSubmitState))?.submitDisabled === true
+  report.createBadPromptProblem = await evaluate(createFieldProblem)
+  report.createBadPromptNamed = String(report.createBadPromptProblem).includes('{foo}')
+  const createCountBeforeBad = (await evaluate(createCallsCount)) ?? 0
+  await evaluate(clickCreateSubmit)
+  await sleep(400)
+  report.createBadPromptNoPost = ((await evaluate(createCallsCount)) ?? 0) === createCountBeforeBad
+
+  await evaluate(setModalField(CREATE_PROMPT, 'Возьми задачу {task_id}'))
+  await sleep(200)
+  report.createSubmitEnabledAfterFix = (await evaluate(createSubmitState))?.submitDisabled === false
+
+  // отправка: ровно один POST с kind=direct и command-массивом
+  const createCountBefore = (await evaluate(createCallsCount)) ?? 0
+  report.createSubmitClicked = await evaluate(clickCreateSubmit)
+  await sleep(1500)
+  const createCalls = (await evaluate(createCallsSince(createCountBefore))) ?? []
+  report.createPostCount = createCalls.length
+  if (createCalls.length > 0) probeCleanupNeeded = true
+  const createBody = createCalls[0]?.body ?? {}
+  report.createBodyKeys = Object.keys(createBody)
+  report.createBodyKind = createBody.kind === 'direct'
+  report.createBodyKey = createBody.key === probeKey
+  report.createBodyTitle = createBody.title === 'Проба'
+  report.createBodyHint = createBody.hint === 'проба'
+  report.createBodyIconNull = createBody.icon === null
+  report.createBodyHarness = createBody.harness === 'codex'
+  report.createBodyCommand = createBody.command ?? null
+  report.createBodyCommandMatches =
+    JSON.stringify(createBody.command) === JSON.stringify(['codex', 'exec', '--full-auto', 'Возьми задачу {task_id}'])
+  report.createBodyNoVisible = !('visible' in createBody)
+
+  report.createModalClosed = !(await evaluate(createModalOpen))
+  const createdRow = await evaluate(directRowState(probeKey))
+  report.createRowTitle = createdRow?.title ?? null
+  report.createRowPresent = createdRow?.title === 'Проба'
+  report.createRowSelected = createdRow?.selected === true
+  report.createRowOff = createdRow?.off === true
+  report.createSelectedCardTitle = await evaluate(selectedDirectCardTitle)
+  const storedProbe = await evaluate(fetchRoute(probeKey))
+  report.createStoredVisible = storedProbe?.visible ?? null
+  report.createStoredCommand = storedProbe?.command ?? null
+
   report.consoleErrors = consoleErrors
   report.ok =
     report.settingsOpen === true &&
@@ -677,6 +950,41 @@ try {
     report.directArgOrderChanged === true &&
     report.directOrderSaveClicked === true &&
     report.directOrderPersisted === true &&
+    report.createOpenClicked === true &&
+    report.createHeaderButtonCount === 1 &&
+    report.createModalOpen === true &&
+    report.createModalTitle === 'Завести прямой маршрут' &&
+    report.createLeadMentionsSkills === true &&
+    report.createSubmitDisabledOnOpen === true &&
+    report.createSubmitNoSpinnerOnOpen === true &&
+    report.createDraftKeyLatin === true &&
+    report.createDraftKeyPunct === true &&
+    report.createDraftKeyCyrillicEmpty === true &&
+    report.createDraftKeyFrozen === true &&
+    report.createHarnessOpened === true &&
+    report.createHarnessPicked === true &&
+    report.createIconNoneClicked === true &&
+    report.createSubmitEnabledWhenValid === true &&
+    report.createBadPromptDisabled === true &&
+    report.createBadPromptNamed === true &&
+    report.createBadPromptNoPost === true &&
+    report.createSubmitEnabledAfterFix === true &&
+    report.createSubmitClicked === true &&
+    report.createPostCount === 1 &&
+    report.createBodyKind === true &&
+    report.createBodyKey === true &&
+    report.createBodyTitle === true &&
+    report.createBodyHint === true &&
+    report.createBodyIconNull === true &&
+    report.createBodyHarness === true &&
+    report.createBodyCommandMatches === true &&
+    report.createBodyNoVisible === true &&
+    report.createModalClosed === true &&
+    report.createRowPresent === true &&
+    report.createRowSelected === true &&
+    report.createRowOff === true &&
+    report.createSelectedCardTitle === 'Проба' &&
+    report.createStoredVisible === false &&
     consoleErrors.length === 0
 } catch (error) {
   report.error = String(error?.stack ?? error)
@@ -692,10 +1000,16 @@ if (directRestoreNeeded && report.directRestoreOk !== true) {
   report.error = report.error ?? `исходная команда маршрута ${directKey} не восстановлена`
 }
 
+/* Пробный маршрут убирает finalize(); если DELETE не прошёл — это провал. */
+if (probeCleanupNeeded && report.probeCleanupOk !== true) {
+  report.ok = false
+  report.error = report.error ?? `пробный маршрут ${probeKey} не убран`
+}
+
 console.log(JSON.stringify(report, null, 2))
 if (report.ok) {
   console.error(
-    'ок: вкладка «Маршруты» — две карточки-списка без органов управления, выбор строки, автосохранение карточки конвейера и редактор argv прямой выдачи работают',
+    'ок: раздел «Маршруты» — списки, выбор строки, автосохранение карточки, редактор argv и окно заведения прямого маршрута работают',
   )
 } else {
   console.error(`ошибка: ${report.error ?? 'сценарий не прошёл — см. отчёт выше'}`)

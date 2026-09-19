@@ -25,6 +25,7 @@ import {
 } from '@zoloto585/facet'
 import RouteCard from './RouteCard.vue'
 import RouteDirectCard from './RouteDirectCard.vue'
+import NewDirectRouteModal from './NewDirectRouteModal.vue'
 import RouteIcon from './marks/RouteIcon.vue'
 import store from '@/store/listik'
 import type { DirectRouteDef, PipelineRouteDef, RouteDef } from '@/api/types'
@@ -149,6 +150,28 @@ function leaveGuard(): boolean | Promise<boolean> {
 }
 
 let unregisterLeaveGuard: (() => void) | null = null
+
+/*
+ * Окно заведения прямого маршрута. Его открывает первичное действие раздела:
+ * кнопка в шапке страницы настроек зовёт `openPrimaryAction` (механизм порции
+ * `b`), а форма и запрос остаются здесь. Окно живёт под `v-if`, поэтому каждое
+ * открытие начинается с пустого черновика, а «Отмена»/крестик/Escape просто
+ * снимают его, ничего не отправляя.
+ */
+const createOpen = ref(false)
+
+function openPrimaryAction(): void {
+  createOpen.value = true
+}
+
+/** Успех: стор уже перечитал список — выбираем новую запись и открываем её карточку. */
+function onCreate(route: DirectRouteDef): void {
+  createOpen.value = false
+  directDirty.value = false
+  selectedKey.value = route.key
+}
+
+defineExpose({ openPrimaryAction })
 
 onMounted(() => {
   unregisterLeaveGuard = registerLeaveGuard(leaveGuard)
@@ -279,6 +302,12 @@ onBeforeUnmount(() => {
         </div>
       </UiCard>
     </div>
+
+    <NewDirectRouteModal
+      v-if="createOpen"
+      @created="onCreate"
+      @close="createOpen = false"
+    />
 
     <UiConfirmDialog
       :model-value="Boolean(leaveTarget)"

@@ -6,6 +6,8 @@ import type {
   BlockedResponse,
   Board,
   CommentKind,
+  DirectRouteCreate,
+  DirectRouteDef,
   GroupBy,
   Health,
   DepTree,
@@ -131,6 +133,13 @@ export const api = {
    */
   patchRoute: (key: string, body: RoutePatch) =>
     patch<RouteDef>(`/api/routes/${encodeURIComponent(key)}`, body),
+
+  /**
+   * Завести прямой маршрут (`POST /api/routes`, `kind="direct"`, listik-sjx3 порция `a`).
+   * Ключ приходит от клиента, дубль ключа — `409`; ответ — запись в том же виде, что
+   * в `GET /api/routes`, включая `key`/`kind`/`visible`. Конвейеры так не заводятся.
+   */
+  createRoute: (body: DirectRouteCreate) => post<DirectRouteDef>('/api/routes', body),
 
   /**
    * Настроен ли помощник DeepSeek (`[assistant]` в config.toml). Ключ наружу не

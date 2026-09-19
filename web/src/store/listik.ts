@@ -20,6 +20,8 @@ import type {
   BoardColumn,
   CommentKind,
   DepInfo,
+  DirectRouteCreate,
+  DirectRouteDef,
   Health,
   Meta,
   ProjectPatch,
@@ -179,6 +181,8 @@ let routesRequested = false
  */
 const routesSettingsLoading = ref(false)
 const routesSettingsError = ref<string | null>(null)
+/** Последнее заведение упало на `409`: ключ занят — окно добавляет подсказку про поле «Ключ». */
+const routeCreateConflict = ref(false)
 
 /**
  * Помощник DeepSeek (`GET /api/assistant/status`): ключ живёт в конфиге сервера,
@@ -1063,6 +1067,27 @@ async function patchRoute(key: string, body: RoutePatch): Promise<RouteDef | nul
 }
 
 /**
+ * Завести прямой маршрут (`POST /api/routes`, `kind="direct"`). Ответ — созданная
+ * запись: в ней есть `key`, по которому список выбирает и открывает новую карточку.
+ * Ошибка — `null`, текст в `routesSettingsError`; `409` дополнительно отмечается в
+ * `routeCreateConflict`, чтобы окно подсказало про поле «Ключ». Список перечитывается
+ * после успеха (как у `patchRoute`): в ответе нет `skill_path`/`skill_missing`.
+ */
+async function createRoute(body: DirectRouteCreate): Promise<DirectRouteDef | null> {
+  routeCreateConflict.value = false
+  return withLoading(routesSettingsLoading, async () => {
+    const created = await tryRequest(() => api.createRoute(body), (error) => {
+      routeCreateConflict.value = error instanceof ApiError && error.status === 409
+      routesSettingsError.value = errorMessage(error)
+    })
+    if (created === null) return null
+    routesSettingsError.value = null
+    await reloadRoutes()
+    return created
+  })
+}
+
+/**
  * Статус помощника — ровно один запрос за сессию (`ensureAssistant` из формы).
  * Ошибка запроса не всплывает на доску: кнопки просто не показываются, а сама
  * причина видна в консоли — помощник необязателен.
@@ -1308,6 +1333,7 @@ export function useListikStore() {
     routesLoading,
     routesSettingsLoading,
     routesSettingsError,
+    routeCreateConflict,
     assistantEnabled,
     assistantModel,
     assistantLoading,
@@ -1371,6 +1397,7 @@ export function useListikStore() {
     ensureRoutes,
     reloadRoutes,
     patchRoute,
+    createRoute,
     loadAssistant,
     ensureAssistant,
     askAssistant,

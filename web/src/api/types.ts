@@ -461,6 +461,22 @@ export interface RoutesResponse {
   routes: RouteDef[]
 }
 
+/**
+ * Тело `POST /api/routes` для прямого маршрута (`kind="direct"`, listik-sjx3 порция `a`).
+ * `key`, `title`, `harness`, `command` обязательны; `hint` по умолчанию `""`,
+ * `icon: null` — запись без иконки. `visible` не передаётся: новый маршрут заводится
+ * выключенным. Ключ собирает клиент — сервер его не выводит.
+ */
+export interface DirectRouteCreate {
+  kind: 'direct'
+  key: string
+  title: string
+  hint: string
+  icon: RouteIconKey | null
+  harness: HarnessKey
+  command: string[]
+}
+
 /** Правка записи — PATCH /api/routes/{key}; последнее поле только у `kind=direct`. */
 export interface RoutePatch {
   title?: string

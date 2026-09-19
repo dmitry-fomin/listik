@@ -27,7 +27,6 @@ import type {
   RouteDef,
   RoutePatch,
   RouteLaunchersResponse,
-  RoutesSyncResponse,
   SearchMode,
   ReadyTask,
   SearchResponse,
@@ -181,7 +180,6 @@ let routesRequested = false
  */
 const routesSettingsLoading = ref(false)
 const routesSettingsError = ref<string | null>(null)
-const routesSync = ref<RoutesSyncResponse | null>(null)
 /**
  * Справочник скилов-запускаторов для редактора расклада ролей: грузится один раз,
  * `null` — ещё не загружен или загрузка не удалась (тогда текст в `routesSettingsError`,
@@ -1071,27 +1069,6 @@ async function patchRoute(key: string, body: RoutePatch): Promise<RouteDef | nul
   return result
 }
 
-/** Завести маршрут `kind=pipeline` под существующий скил конвейера. */
-async function createRoute(key: string): Promise<RouteDef | null> {
-  const result = await routesSettingsAction(() => api.createRoute(key))
-  if (result) await reloadRoutes()
-  return result
-}
-
-/** Удалить маршрут: у задач с этим `launch_route` сервер снимает маршрут и метки. */
-async function deleteRoute(key: string): Promise<{ removed: string; tasks_cleared: number } | null> {
-  const result = await routesSettingsAction(() => api.deleteRoute(key))
-  if (result) await reloadRoutes()
-  return result
-}
-
-/** Переставить маршруты по общему сквозному порядку ключей. */
-async function reorderRoutes(keys: string[]): Promise<RouteDef[] | null> {
-  const result = await routesSettingsAction(() => api.reorderRoutes(keys))
-  if (result) await reloadRoutes()
-  return result
-}
-
 /**
  * Справочник запускаторов для редактора ролей: один запрос на сессию доски.
  * Уже загружен — ничего не делает; отказ оставляет `null` и текст в
@@ -1101,13 +1078,6 @@ async function loadRouteLaunchers(): Promise<RouteLaunchersResponse | null> {
   if (routeLaunchers.value) return routeLaunchers.value
   const result = await routesSettingsAction(() => api.routeLaunchers())
   if (result) routeLaunchers.value = result
-  return result
-}
-
-/** Сверка таблицы маршрутов со скилами `feature-pipeline` — модалка «Завести маршрут». */
-async function loadRoutesSync(): Promise<RoutesSyncResponse | null> {
-  const result = await routesSettingsAction(() => api.routesSync())
-  if (result) routesSync.value = result
   return result
 }
 
@@ -1357,7 +1327,6 @@ export function useListikStore() {
     routesLoading,
     routesSettingsLoading,
     routesSettingsError,
-    routesSync,
     routeLaunchers,
     assistantEnabled,
     assistantModel,
@@ -1422,10 +1391,6 @@ export function useListikStore() {
     ensureRoutes,
     reloadRoutes,
     patchRoute,
-    createRoute,
-    deleteRoute,
-    reorderRoutes,
-    loadRoutesSync,
     loadRouteLaunchers,
     loadAssistant,
     ensureAssistant,

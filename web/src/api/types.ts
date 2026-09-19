@@ -423,7 +423,7 @@ interface RouteBase {
    * вместе с ним значит «иконки нет» — доска рисует серый кружок с крестиком.
    */
   icon_error?: string | null
-  /** Порядок записи (сквозной по всей таблице `routes`) — `GET /api/routes/reorder`. */
+  /** Порядок записи (сквозной по всей таблице `routes`), серверный; из доски не меняется. */
   position: number
   /** Argv процесса автостарта; `null` — команды нет (роли ещё не переввезены и т.п.). */
   command: string[] | null
@@ -491,23 +491,6 @@ export interface RouteLaunchersResponse {
   launchers: RouteLauncherInfo[]
   providers: ProviderKey[]
   roles: RoleKey[]
-}
-
-/** Скил без записи в таблице — GET /api/routes/sync → missing_route[]. */
-export interface RouteSkillInfo {
-  key: string
-  title: string
-  hint: string
-  skill_path: string
-}
-
-/** GET /api/routes/sync: сверка таблицы `routes` со скилами `feature-pipeline`. */
-export interface RoutesSyncResponse {
-  skills_available: boolean
-  /** Записи `kind=pipeline` из базы, для которых нет каталога скила. */
-  missing_skill: RouteDef[]
-  /** Скилы, для которых нет записи в базе. */
-  missing_route: RouteSkillInfo[]
 }
 
 // ── помощник DeepSeek при создании задачи: GET /api/assistant/status,

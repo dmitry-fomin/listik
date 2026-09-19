@@ -2,12 +2,11 @@
  * Проверка раздела «Маршруты» страницы настроек (`/settings/routes` →
  * `RoutesSettings.vue`; страница открывается прямым адресом, вкладок и модалки
  * настроек больше нет):
- * список не пуст и в нём есть обе группы («Конвейеры»/«Прямая выдача»), клик по
- * строке выбирает маршрут, перестановка кнопкой ▲ (кит `UiRecordList`) пишется
- * в базу — порядок переживает перезагрузку страницы, а не живёт только в
- * памяти вкладки. Заодно проверяет тело запроса `POST /api/routes/reorder`
- * (перехват `window.fetch` на странице): в `keys` приходят ключи ВСЕХ
- * маршрутов, а не только той группы, где случилась перестановка.
+ * список не пуст и в нём есть обе группы («Конвейеры»/«Прямая выдача») — двумя
+ * карточками `UiCard` со счётчиком-бейджем у заголовка; клик по строке выбирает
+ * маршрут. Список лишён органов управления: внутри группы нет ни узла
+ * `UiRecordList`, ни кнопок «Переместить…»/«Убрать…»/«Удалить…», ни кнопки
+ * «Завести маршрут» — перестановки и удаления у модели данных нет.
  *
  * Порция `e` (карточка выбранного маршрута) добавляет проверку автосохранения
  * шапки: серия «нажатий» в поле «Подпись» без потери фокуса даёт ровно один
@@ -19,13 +18,12 @@
  * прямым PATCH — тем самым заодно проверяется round-trip.
  *
  * Работает с живой страницей (dev или прод) и настоящим API Listik, поэтому
- * трогает базу маршрутов: исходный порядок возвращается и при успехе сценария
- * (кнопкой ▼ по ходу проверки), и при падении посреди него (прямым
- * `POST /api/routes/reorder` на подобранный ранее исходный порядок) — этот
- * откат живёт в `finalize()`, общей для обычного `finally` и для `SIGINT`/
- * `SIGTERM`: голый `try/finally` не сработал бы на Ctrl-C (Node завершает
- * процесс по умолчанию раньше, чем размотался бы стек), поэтому оба сигнала
- * перехвачены отдельно и вызывают тот же откат перед выходом. Та же схема —
+ * трогает базу маршрутов: исходные значения полей возвращаются прямым `PATCH`
+ * в `finalize()` и при успехе сценария, и при падении посреди него. Этот откат
+ * живёт в `finalize()`, общей для обычного `finally` и для `SIGINT`/`SIGTERM`:
+ * голый `try/finally` не сработал бы на Ctrl-C (Node завершает процесс по
+ * умолчанию раньше, чем размотался бы стек), поэтому оба сигнала перехвачены
+ * отдельно и вызывают тот же откат перед выходом. Та же схема —
  * `hintRestoreNeeded`/`visibleRestoreNeeded`/`iconRestoreNeeded` и прямой
  * `PATCH` в `finalize()` — страхует карточку маршрута.
  *
@@ -73,13 +71,11 @@ const client = connect(await cdpTarget(port))
 await client.ready
 const { send, evaluate, consoleErrors } = client
 
-/* ── перехват fetch на странице: копится в window.__routesReorderCalls и
- * window.__routesPatchCalls (последний — тела PATCH /api/routes/<key>,
- * автосохранение карточки, порция `e`), добавлен как «скрипт на новый
- * документ» — переживает Page.navigate сам, повторно вставлять после
- * перезагрузки не нужно. */
-const REORDER_PATCH = `(() => {
-  window.__routesReorderCalls = window.__routesReorderCalls ?? [];
+/* ── перехват fetch на странице: копится в window.__routesPatchCalls (тела
+ * PATCH /api/routes/<key> — автосохранение карточки, порция `e`), добавлен как
+ * «скрипт на новый документ» — переживает Page.navigate сам, повторно вставлять
+ * после перезагрузки не нужно. */
+const PATCH_INTERCEPT = `(() => {
   window.__routesPatchCalls = window.__routesPatchCalls ?? [];
   if (window.__routesFetchPatched) return;
   window.__routesFetchPatched = true;
@@ -87,9 +83,6 @@ const REORDER_PATCH = `(() => {
   window.fetch = function (input, init) {
     try {
       const reqUrl = typeof input === 'string' ? input : (input && input.url) || '';
-      if (reqUrl.includes('/api/routes/reorder') && init && typeof init.body === 'string') {
-        window.__routesReorderCalls.push(JSON.parse(init.body));
-      }
       const patchMatch = reqUrl.match(/\\/api\\/routes\\/([^/?]+)$/);
       if (patchMatch && init && init.method === 'PATCH' && typeof init.body === 'string') {
         window.__routesPatchCalls.push({ key: patchMatch[1], body: JSON.parse(init.body) });
@@ -106,12 +99,15 @@ const routesUrl = (() => {
   return target.toString()
 })()
 
+/** Контейнер строки списка — своя разметка раздела (треб. 3), не DOM `UiRecordList`. */
+const ROW = '.listik-routes-settings__row'
+
 const groupRows = (title) => `(() => {
   const group = [...document.querySelectorAll('.listik-routes-settings__group')]
     .find((el) => el.querySelector('.listik-section__title')?.textContent.trim() === ${JSON.stringify(title)});
   if (!group) return null;
-  return [...group.querySelectorAll('.ui-record-list__row')].map((row) => ({
-    key: row.querySelector('.listik-routes-row .listik-mono')?.textContent.trim() ?? null,
+  return [...group.querySelectorAll('${ROW}')].map((row) => ({
+    key: row.querySelector('.listik-routes-row')?.getAttribute('data-key') ?? null,
     title: row.querySelector('.listik-routes-row__title')?.textContent.trim() ?? null,
   }));
 })()`
@@ -119,23 +115,32 @@ const groupRows = (title) => `(() => {
 const clickRow = (title, index) => `(() => {
   const group = [...document.querySelectorAll('.listik-routes-settings__group')]
     .find((el) => el.querySelector('.listik-section__title')?.textContent.trim() === ${JSON.stringify(title)});
-  const rows = group ? [...group.querySelectorAll('.ui-record-list__row')] : [];
+  const rows = group ? [...group.querySelectorAll('${ROW}')] : [];
   const btn = rows[${index}]?.querySelector('.listik-routes-row');
   if (!btn) return false;
   btn.click();
   return true;
 })()`
 
-const clickStep = (title, index, dir) => `(() => {
+/**
+ * Органы управления списком: `UiRecordList` (любым своим классом), кнопки
+ * перемещения/удаления строки и кнопка заведения маршрута. Проверка падает,
+ * даже если `UiRecordList` вернуть с `:reorderable="false"` — важен сам узел.
+ */
+const controlAudit = (title) => `(() => {
   const group = [...document.querySelectorAll('.listik-routes-settings__group')]
     .find((el) => el.querySelector('.listik-section__title')?.textContent.trim() === ${JSON.stringify(title)});
-  const rows = group ? [...group.querySelectorAll('.ui-record-list__row')] : [];
-  const row = rows[${index}];
-  const label = ${JSON.stringify(dir === 'up' ? 'Переместить выше' : 'Переместить ниже')};
-  const btn = row ? [...row.querySelectorAll('button')].find((b) => b.getAttribute('aria-label') === label) : null;
-  if (!btn || btn.disabled) return false;
-  btn.click();
-  return true;
+  if (!group) return null;
+  const badLabels = [...group.querySelectorAll('[aria-label]')]
+    .map((el) => el.getAttribute('aria-label') ?? '')
+    .filter((label) => /^(Переместить|Убрать|Удалить)/.test(label));
+  return {
+    hasRecordList: Boolean(group.querySelector('[class*="ui-record-list"]')),
+    badLabels,
+    addButton: [...group.querySelectorAll('button')].some((b) => b.textContent.trim() === 'Завести маршрут'),
+    rowCount: group.querySelectorAll('${ROW}').length,
+    badge: group.querySelector('.listik-routes-settings__group-head .ui-badge')?.textContent.trim() ?? null,
+  };
 })()`
 
 const detailTitle = `document.querySelector('.listik-routes-settings__card input')?.value ?? null`
@@ -146,22 +151,7 @@ const openTab = async () => {
   await sleep(4000)
 }
 
-/** Прямой POST в обход UI — страховка `finally`, когда сценарий упал раньше клика ▼. */
-const forceReorder = (keys) => `(async () => {
-  try {
-    const token = localStorage.getItem('listik.token') ?? ''
-    const response = await fetch('/api/routes/reorder', {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json', Authorization: 'Bearer ' + token },
-      body: JSON.stringify({ keys: ${JSON.stringify(keys)} }),
-    })
-    return response.ok
-  } catch (_e) {
-    return false
-  }
-})()`
-
-/** Прямой PATCH записи в обход UI — для той же цели у карточки автосохранения (порция `e`). */
+/** Прямой PATCH записи в обход UI — страховка `finally` для карточки (порция `e`). */
 const forcePatch = (key, body) => `(async () => {
   try {
     const token = localStorage.getItem('listik.token') ?? ''
@@ -308,8 +298,6 @@ const patchCallsCount = `window.__routesPatchCalls.length`
 const saveStatusText = `document.querySelector('.listik-routes-settings__card .ui-save-status')?.textContent ?? ''`
 
 const report = { ok: false }
-let originalPipelineKeys = null
-let restoreNeeded = false
 let cardKey = null
 let cardOriginal = null
 let hintRestoreNeeded = false
@@ -330,22 +318,6 @@ let finalized = false
 async function finalize() {
   if (finalized) return
   finalized = true
-  if (restoreNeeded && originalPipelineKeys) {
-    try {
-      await withTimeout(
-        (async () => {
-          await openTab()
-          const direct = (await evaluate(groupRows('Прямая выдача'))) ?? []
-          const keys = [...originalPipelineKeys, ...direct.map((row) => row.key)]
-          report.restoreFallbackOk = await evaluate(forceReorder(keys))
-        })(),
-        10000,
-      )
-    } catch (restoreError) {
-      report.restoreFallbackOk = false
-      report.restoreError = String(restoreError?.stack ?? restoreError)
-    }
-  }
   if ((hintRestoreNeeded || visibleRestoreNeeded || iconRestoreNeeded) && cardKey && cardOriginal) {
     try {
       await withTimeout(
@@ -398,7 +370,7 @@ async function handleSignal(signal) {
   report.interrupted = signal
   await finalize()
   console.log(JSON.stringify(report, null, 2))
-  console.error(`прервано сигналом ${signal} — база возвращена к исходному порядку, если он был тронут`)
+  console.error(`прервано сигналом ${signal} — база возвращена к исходным значениям, если они были тронуты`)
   process.exit(130)
 }
 process.on('SIGINT', () => { void handleSignal('SIGINT') })
@@ -407,11 +379,11 @@ process.on('SIGTERM', () => { void handleSignal('SIGTERM') })
 try {
   await send('Runtime.enable')
   await send('Page.enable')
-  await send('Page.addScriptToEvaluateOnNewDocument', { source: REORDER_PATCH })
+  await send('Page.addScriptToEvaluateOnNewDocument', { source: PATCH_INTERCEPT })
 
   await send('Page.navigate', { url: routesUrl })
   await sleep(4000)
-  await evaluate(REORDER_PATCH) // сама страница уже загружена раньше add-script — патчим и напрямую
+  await evaluate(PATCH_INTERCEPT) // сама страница уже загружена раньше add-script — патчим и напрямую
 
   report.settingsOpen = await evaluate(`Boolean(document.querySelector('.listik-settings'))`)
 
@@ -422,10 +394,27 @@ try {
     direct: Array.isArray(directBefore) && directBefore.length > 0,
   }
   if (!Array.isArray(pipelineBefore) || pipelineBefore.length < 2) {
-    throw new Error(`нужно хотя бы два маршрута-конвейера для перестановки: ${JSON.stringify(pipelineBefore)}`)
+    throw new Error(`нужно хотя бы два маршрута-конвейера, чтобы проверить выбор строки: ${JSON.stringify(pipelineBefore)}`)
   }
-  originalPipelineKeys = pipelineBefore.map((row) => row.key)
-  const directKeys = (directBefore ?? []).map((row) => row.key)
+
+  // список без органов управления: ни UiRecordList, ни перемещения/удаления/заведения
+  const pipelineAudit = await evaluate(controlAudit('Конвейеры'))
+  const directAudit = await evaluate(controlAudit('Прямая выдача'))
+  report.controlsAudit = { pipeline: pipelineAudit, direct: directAudit }
+  report.controlsAbsent =
+    Boolean(pipelineAudit) &&
+    Boolean(directAudit) &&
+    pipelineAudit.hasRecordList === false &&
+    directAudit.hasRecordList === false &&
+    pipelineAudit.badLabels.length === 0 &&
+    directAudit.badLabels.length === 0 &&
+    pipelineAudit.addButton === false &&
+    directAudit.addButton === false
+  report.countersMatch =
+    Boolean(pipelineAudit) &&
+    Boolean(directAudit) &&
+    pipelineAudit.badge === String(pipelineAudit.rowCount) &&
+    directAudit.badge === String(directAudit.rowCount)
 
   // выбрать вторую строку — карточка справа должна показать её заголовок
   report.selectClicked = await evaluate(clickRow('Конвейеры', 1))
@@ -433,54 +422,15 @@ try {
   report.selectedTitleShown = await evaluate(detailTitle)
   report.selectionMatches = report.selectedTitleShown === pipelineBefore[1].title
 
-  // переставить кнопкой ▲: с этого момента база тронута — при любом сбое ниже
-  // finally обязан вернуть исходный порядок.
-  restoreNeeded = true
-  report.stepClicked = await evaluate(clickStep('Конвейеры', 1, 'up'))
-  await sleep(1500)
-
-  const afterMove = await evaluate(groupRows('Конвейеры'))
-  const expectedAfterMove = [originalPipelineKeys[1], originalPipelineKeys[0], ...originalPipelineKeys.slice(2)]
-  report.afterMove = afterMove?.map((row) => row.key) ?? null
-  report.orderChangedCorrectly = JSON.stringify(report.afterMove) === JSON.stringify(expectedAfterMove)
-
-  const reorderCalls = await evaluate('window.__routesReorderCalls ?? []')
-  const lastCall = reorderCalls[reorderCalls.length - 1]
-  report.reorderBody = lastCall ?? null
-  report.reorderHasAllKeys =
-    Boolean(lastCall) &&
-    Array.isArray(lastCall.keys) &&
-    lastCall.keys.length === pipelineBefore.length + directKeys.length &&
-    directKeys.every((key) => lastCall.keys.includes(key)) &&
-    JSON.stringify(lastCall.keys.slice(0, pipelineBefore.length)) === JSON.stringify(expectedAfterMove)
-
-  // перезагрузка страницы — порядок обязан пережить её (записан в базу, а не только в стор вкладки)
-  await openTab()
-  const afterReload = await evaluate(groupRows('Конвейеры'))
-  report.afterReload = afterReload?.map((row) => row.key) ?? null
-  report.persistedAfterReload = JSON.stringify(report.afterReload) === JSON.stringify(expectedAfterMove)
-
-  // вернуть исходный порядок: ▼ на строке 0 — обратная перестановка той же пары
-  report.restoreClicked = await evaluate(clickStep('Конвейеры', 0, 'down'))
-  await sleep(1500)
-  const afterRestore = await evaluate(groupRows('Конвейеры'))
-  report.afterRestore = afterRestore?.map((row) => row.key) ?? null
-  report.restoredCorrectly = JSON.stringify(report.afterRestore) === JSON.stringify(originalPipelineKeys)
-  restoreNeeded = !report.restoredCorrectly
-
   /*
    * ── карточка выбранного маршрута (порция `e`): шапка сохраняется сама.
-   * `Page.navigate` выше перезагрузил страницу — выбор маршрута живёт только в
-   * памяти вкладки (`selectedKey` в `RoutesSettings.vue`), поэтому после
-   * перезагрузки справа снова «Выбери маршрут слева»: строку нужно выбрать
-   * заново. Порядок к этому моменту уже восстановлен (`afterRestore`), поэтому
-   * строка 1 — снова тот же маршрут, что и в начале сценария.
+   * Строка уже выбрана выше; повторный клик — тот же путь, что у человека.
    */
   report.cardRowReselected = await evaluate(clickRow('Конвейеры', 1))
   await sleep(500)
   report.cardTitleShown = await evaluate(detailTitle)
 
-  cardKey = originalPipelineKeys[1]
+  cardKey = pipelineBefore[1].key
   cardOriginal = await evaluate(fetchRoute(cardKey))
   if (!cardOriginal) throw new Error(`не нашли запись ${cardKey} для проверки карточки`)
 
@@ -679,14 +629,10 @@ try {
     report.settingsOpen === true &&
     report.groupsPresent.pipeline &&
     report.groupsPresent.direct &&
+    report.controlsAbsent === true &&
+    report.countersMatch === true &&
     report.selectClicked === true &&
     report.selectionMatches === true &&
-    report.stepClicked === true &&
-    report.orderChangedCorrectly === true &&
-    report.reorderHasAllKeys === true &&
-    report.persistedAfterReload === true &&
-    report.restoreClicked === true &&
-    report.restoredCorrectly === true &&
     report.cardRowReselected === true &&
     report.cardTitleShown === pipelineBefore[1].title &&
     report.hintCallsCount === 1 &&
@@ -749,7 +695,7 @@ if (directRestoreNeeded && report.directRestoreOk !== true) {
 console.log(JSON.stringify(report, null, 2))
 if (report.ok) {
   console.error(
-    'ок: вкладка «Маршруты» — список/выбор/перестановка, автосохранение карточки конвейера и редактор argv прямой выдачи работают',
+    'ок: вкладка «Маршруты» — две карточки-списка без органов управления, выбор строки, автосохранение карточки конвейера и редактор argv прямой выдачи работают',
   )
 } else {
   console.error(`ошибка: ${report.error ?? 'сценарий не прошёл — см. отчёт выше'}`)

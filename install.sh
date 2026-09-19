@@ -18,7 +18,6 @@ prog=install.sh
 
 DEFAULT_RELEASES_API=https://api.github.com/repos/dmitry-fomin/listik/releases/latest
 DEFAULT_DOWNLOAD_BASE=https://github.com/dmitry-fomin/listik/releases/download
-DEFAULT_ROUTES_POLICY=ask
 
 die() {
     printf '%s: ошибка: %s\n' "$prog" "$1" >&2
@@ -431,11 +430,6 @@ usage() {
   --home <каталог>      каталог установки и данных (LISTIK_HOME), по умолчанию ~/.listik
   --bin-dir <каталог>   куда положить обёртку listik (LISTIK_BIN_DIR),
                         по умолчанию ~/.local/bin
-  --routes keep|replace|ask
-                        что делать с рабочей копией routes.json, если она отличается
-                        от новой (LISTIK_ROUTES_POLICY), по умолчанию ask;
-                        keep — не трогать, replace — заменить, сохранив .bak-<время>,
-                        ask — спросить в /dev/tty
   --service yes|no      поставить и (пере)запустить автозапуск сервера
                         (launchd/systemd --user), по умолчанию yes
   --mcp yes|no          подключить MCP-сервер (claude mcp add), по умолчанию yes
@@ -448,22 +442,19 @@ usage() {
                         сохранив копию конфига рядом (.bak-<время>), no — только
                         предупредить, ask — спросить в /dev/tty
   --yes                 на вопросы без явного флага отвечать значением по умолчанию
-                        (для routes это keep, для service/mcp/plugins — yes; вопрос
-                        Codex он не закрывает — нужен --codex-network yes)
+                        (для service/mcp/plugins — yes; вопрос Codex он не закрывает
+                        — нужен --codex-network yes)
   --help                эта справка
 
 Переменные окружения:
   LISTIK_HOME           каталог данных (по умолчанию ~/.listik); обёртка ставит его
                         по умолчанию, но заданное пользователем значение важнее
-  LISTIK_VERSION, LISTIK_ARCHIVE, LISTIK_BIN_DIR, LISTIK_ROUTES_POLICY,
-  LISTIK_CODEX_NETWORK — см. флаги
+  LISTIK_VERSION, LISTIK_ARCHIVE, LISTIK_BIN_DIR, LISTIK_CODEX_NETWORK — см. флаги
   CODEX_HOME            каталог настроек Codex (по умолчанию ~/.codex); в нём
                         установщик смотрит config.toml
   LISTIK_PLAIN          1 — без заставки, анимации, цвета и меню: только прежние
                         строчные вопросы (то же самое дают NO_COLOR, CI, --yes,
                         отсутствие /dev/tty и терминал уже 60 колонок)
-  LISTIK_ROUTES         рабочая копия routes.json
-                        (по умолчанию ~/.config/listik/routes.json)
   LISTIK_RELEASES_API   откуда брать последнюю версию, по умолчанию
                         https://api.github.com/repos/dmitry-fomin/listik/releases/latest
   LISTIK_DOWNLOAD_BASE  откуда качать архивы, по умолчанию
@@ -480,7 +471,6 @@ version=${LISTIK_VERSION:-}
 archive=${LISTIK_ARCHIVE:-}
 home=${LISTIK_HOME:-}
 bin_dir=${LISTIK_BIN_DIR:-}
-routes_policy=${LISTIK_ROUTES_POLICY:-}
 service_answer=
 mcp_answer=
 plugins_answer=
@@ -513,12 +503,6 @@ while [ $# -gt 0 ]; do
             shift
             ;;
         --bin-dir=*) bin_dir=${1#--bin-dir=} ;;
-        --routes)
-            [ $# -ge 2 ] || die "--routes ждёт keep, replace или ask"
-            routes_policy=$2
-            shift
-            ;;
-        --routes=*) routes_policy=${1#--routes=} ;;
         --service)
             [ $# -ge 2 ] || die "--service ждёт yes или no"
             service_answer=$2
@@ -556,11 +540,6 @@ done
 [ -n "${HOME:-}" ] || die "HOME не задан — укажите каталог установки флагом --home"
 [ -n "$home" ] || home=$HOME/.listik
 [ -n "$bin_dir" ] || bin_dir=$HOME/.local/bin
-[ -n "$routes_policy" ] || routes_policy=$DEFAULT_ROUTES_POLICY
-case $routes_policy in
-    keep|replace|ask) ;;
-    *) die "--routes ждёт keep, replace или ask, а не '$routes_policy'" ;;
-esac
 case $service_answer in
     ""|yes|no) ;;
     *) die "--service ждёт yes или no, а не '$service_answer'" ;;
@@ -756,7 +735,7 @@ else
 fi
 staging=
 
-# Куда указывал current до переключения: понадобится для сверки протокола (шаг 9).
+# Куда указывал current до переключения: понадобится для сверки протокола (шаг 8).
 prev_code=
 if [ -e "$app_dir/current" ]; then
     prev_code=$(cd "$app_dir/current" 2>/dev/null && pwd -P) || prev_code=
@@ -1110,72 +1089,7 @@ if [ "$codex_warn" = 1 ]; then
     note "  network_access = true" >&2
 fi
 
-# ------------------------------------------------- шаг 8: routes.json
-
-replace_routes() {
-    bak=$runtime_routes.bak-$(date +%Y%m%d-%H%M%S)
-    mv "$runtime_routes" "$bak" || die "не удалось переименовать $runtime_routes"
-    cp "$sample_routes" "$runtime_routes" || die "не удалось записать $runtime_routes"
-    note "$prog: routes.json: рабочая копия заменена, прежняя — $bak"
-}
-
-ask_routes() {
-    # 0 — заменить, 1 — оставить (в ask_reason причина).
-    ask_reason="нет /dev/tty"
-    if [ "$assume_yes" = 1 ]; then
-        ask_reason="--yes"
-        return 1
-    fi
-    if ui_menu2 "routes.json отличается от нового образца" \
-            "Рабочая копия: $runtime_routes" \
-            "Оставить мою копию|прежняя копия останется как есть" \
-            "Заменить новой|прежняя сохранится рядом как .bak-<время>" 1; then
-        if [ "$menu_choice" = 2 ]; then
-            return 0
-        fi
-        ask_reason="выбрано «оставить»"
-        return 1
-    fi
-    if ! printf 'routes.json отличается от нового образца. Заменить рабочую копию? [y/N] ' \
-            >/dev/tty 2>/dev/null; then
-        return 1
-    fi
-    answer=
-    if ! read -r answer < /dev/tty 2>/dev/null; then
-        return 1
-    fi
-    case $answer in
-        [yY]*) return 0 ;;
-        *)
-            ask_reason="ответ '$answer'"
-            return 1
-            ;;
-    esac
-}
-
-runtime_routes=${LISTIK_ROUTES:-$HOME/.config/listik/routes.json}
-sample_routes=$app_dir/current/routes.json
-if [ ! -f "$runtime_routes" ]; then
-    : # копии нет — её создаст сервер при первом старте
-elif cmp -s "$sample_routes" "$runtime_routes"; then
-    : # копия совпадает с образцом
-else
-    case $routes_policy in
-        keep)
-            note "$prog: routes.json: рабочая копия оставлена без изменений, новый образец: $sample_routes"
-            ;;
-        replace) replace_routes ;;
-        ask)
-            if ask_routes; then
-                replace_routes
-            else
-                note "$prog: routes.json: рабочая копия оставлена без изменений ($ask_reason), новый образец: $sample_routes"
-            fi
-            ;;
-    esac
-fi
-
-# ------------------------------------------------- шаг 9: протокол и шаг 10: сводка
+# -------------------------------------------------- шаг 8: протокол и шаг 9: сводка
 
 protocol_changed=0
 if [ -f "$tmp/prev-protocol.md" ] && [ -f "$code_dir/docs/harness-protocol.md" ]; then

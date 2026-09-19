@@ -1,7 +1,7 @@
 """Шаг 12, порция c: `listik status --json` и `--local` (пункты 11–14).
 
-`status` гоняется подпроцессом `bin/listik` с временными `LISTIK_HOME`, `HOME` и
-`LISTIK_ROUTES`: ни настоящий каталог данных, ни `~/.config/listik` не трогаются.
+`status` гоняется подпроцессом `bin/listik` с временными `LISTIK_HOME` и `HOME`:
+настоящий каталог данных не трогается.
 Сервер для сценариев «up»/«unauthorized» поднимается в потоке теста так же, как в
 `tests/test_mcp_http.py`: его база и конфиг подменяются атрибутами `paths`, которые
 `db.connect`/`config.load` читают в момент вызова.
@@ -60,7 +60,6 @@ class StatusJsonCase(unittest.TestCase):
         env["HOME"] = str(self.tmp / "user-home")
         env["PYTHONPATH"] = str(REPO_DIR)
         env["LISTIK_HOME"] = str(self.home)
-        env["LISTIK_ROUTES"] = str(self.tmp / "routes.json")
         env.update(overrides)
         return env
 

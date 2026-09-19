@@ -3,7 +3,7 @@
 
 Сети наружу нет: архивы собираются во временном каталоге вручную (`tarfile`) в формате
 порции b, а «сеть» изображает `http.server` из stdlib на `127.0.0.1:0`. Установка идёт
-только во временные `HOME`, `LISTIK_BIN_DIR` и `LISTIK_ROUTES`; `LISTIK_HOME` не задан,
+только во временные `HOME` и `LISTIK_BIN_DIR`; `LISTIK_HOME` не задан,
 поэтому работает значение по умолчанию `$HOME/.listik`.
 
 Скрипт ставит обёртку, которая запускает установленный код тем `python3`, который нашёлся
@@ -137,7 +137,6 @@ class InstallScriptTests(unittest.TestCase):
         self.home = self.tmp / "user-home"
         self.home.mkdir()
         self.bin_dir = self.tmp / "bin"
-        self.routes_copy = self.tmp / "runtime-routes.json"
         self.archives = self.tmp / "archives"
         self.archives.mkdir()
         self.installed_home = self.home / ".listik"
@@ -155,7 +154,6 @@ class InstallScriptTests(unittest.TestCase):
         # иначе при заданном в окружении CODEX_HOME он смотрел бы в настоящий ~/.codex.
         env["CODEX_HOME"] = str(self.home / ".codex")
         env["LISTIK_BIN_DIR"] = str(self.bin_dir)
-        env["LISTIK_ROUTES"] = str(self.routes_copy)
         env.update(overrides)
         return env
 
@@ -324,59 +322,20 @@ class InstallScriptTests(unittest.TestCase):
         version_out = self.run_wrapper("--version")
         self.assertEqual(version_out.stdout.strip(), f"listik {NEXT_VERSION}")
 
-    # --- пункт 15: routes.json -------------------------------------------
+    # --- пункт 15: routes.json больше не трогается ------------------------
 
-    def _differing_routes(self) -> str:
-        self.routes_copy.write_text('{"version": 1, "routes": []}\n', encoding="utf-8")
-        return self.routes_copy.read_text(encoding="utf-8")
-
-    def test_routes_keep(self) -> None:
+    def test_routes_flag_is_gone(self) -> None:
+        """Маршруты живут только в таблице routes — установщик про них не знает."""
         archive = self.make_archive(VERSION)
-        self.install(archive)
-        old = self._differing_routes()
-        result = self.install(archive, "--routes", "keep")
-        self.assertEqual(self.routes_copy.read_text(encoding="utf-8"), old)
-        self.assertIn(str(self.app / "current" / "routes.json"), result.stdout)
-        self.assertEqual(list(self.routes_copy.parent.glob("runtime-routes.json.bak-*")), [])
+        result = self.run_install("--archive", str(archive), "--routes", "keep",
+                                  "--service", "no", "--mcp", "no", "--plugins", "no")
+        self.assertNotEqual(result.returncode, 0)
+        self.assertIn("неизвестный флаг: --routes", result.stderr)
 
-    def test_routes_replace_keeps_backup(self) -> None:
-        archive = self.make_archive(VERSION)
-        self.install(archive)
-        old = self._differing_routes()
-        self.install(archive, "--routes", "replace")
-        self.assertNotEqual(self.routes_copy.read_text(encoding="utf-8"), old)
-        backups = list(self.routes_copy.parent.glob("runtime-routes.json.bak-*"))
-        self.assertEqual(len(backups), 1, f"нет .bak рядом с копией: {backups}")
-        self.assertEqual(backups[0].read_text(encoding="utf-8"), old)
-
-    def test_routes_ask_without_tty_keeps(self) -> None:
-        archive = self.make_archive(VERSION)
-        self.install(archive)
-        old = self._differing_routes()
-        # stdin=/dev/null и своя сессия — управляющего терминала нет вовсе.
-        result = self.run_install("--archive", str(archive), "--routes", "ask",
-                                  "--service", "no", "--mcp", "no", "--plugins", "no",
-                                  stdin=subprocess.DEVNULL, session=True)
-        self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
-        self.assertEqual(self.routes_copy.read_text(encoding="utf-8"), old)
-        self.assertIn("оставлена", result.stdout)
-        self.assertEqual(list(self.routes_copy.parent.glob("runtime-routes.json.bak-*")), [])
-
-    def test_routes_ask_with_yes_keeps(self) -> None:
-        archive = self.make_archive(VERSION)
-        self.install(archive)
-        old = self._differing_routes()
-        result = self.install(archive, "--routes", "ask")
-        self.assertEqual(self.routes_copy.read_text(encoding="utf-8"), old)
-        self.assertIn("оставлена", result.stdout)
-
-    def test_routes_copy_is_not_created(self) -> None:
-        archive = self.make_archive(VERSION)
-        self.install(archive)
-        self.assertFalse(self.routes_copy.exists(), "установщик создал рабочую копию")
-        self.install(archive, "--routes", "replace")
-        self.assertFalse(self.routes_copy.exists(),
-                         "замена не должна создавать копию с нуля")
+    def test_install_does_not_write_routes_copy(self) -> None:
+        self.install(self.make_archive(VERSION))
+        self.assertFalse((self.home / ".config" / "listik" / "routes.json").exists(),
+                         "установщик создал ~/.config/listik/routes.json")
 
     # --- пункт 15: протокол ----------------------------------------------
 
@@ -484,9 +443,10 @@ class InstallScriptTests(unittest.TestCase):
     def test_help(self) -> None:
         result = self.run_install("--help")
         self.assertEqual(result.returncode, 0, result.stderr)
-        for text in ("--version", "--archive", "--routes", "LISTIK_DOWNLOAD_BASE",
-                     "LISTIK_HOME"):
+        for text in ("--version", "--archive", "LISTIK_DOWNLOAD_BASE", "LISTIK_HOME"):
             self.assertIn(text, result.stdout, f"в --help нет {text}")
+        self.assertNotIn("--routes", result.stdout)
+        self.assertNotIn("LISTIK_ROUTES", result.stdout)
 
     # --- шаг 12, порция d, пункт 14: --service/--mcp/--plugins -----------
 

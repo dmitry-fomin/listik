@@ -45,7 +45,6 @@ import { computed, onMounted, ref } from 'vue'
 import {
   UiAlert,
   UiBadge,
-  UiButton,
   UiCard,
   UiConfirmDialog,
   UiEmptyState,
@@ -248,26 +247,21 @@ async function confirmRemove(force: boolean): Promise<void> {
 onMounted(() => {
   void store.loadProjects()
 })
+
+/**
+ * Первичное действие раздела отдаётся странице (`SettingsPage.vue`) наружу:
+ * кнопка «Добавить репозиторий» стоит в шапке раздела, но форма и вся её логика
+ * остаются здесь — страница только зовёт этот метод.
+ */
+defineExpose({ openPrimaryAction: askAdd })
 </script>
 
 <template>
   <div class="listik-projects">
-    <p class="listik-prose">
-      Доска показывает ровно те репозитории, что не скрыты; скрытие не удаляет задачи —
-      они остаются в истории и в поиске.
-    </p>
-
     <UiAlert v-if="store.projectsError.value" tone="warning" closable>
       <template #title>Не получилось</template>
       {{ store.projectsError.value }}
     </UiAlert>
-
-    <div class="listik-projects__actions">
-      <UiButton variant="primary" @click="askAdd">
-        <template #icon><ListikIcon name="plus" size="xs" /></template>
-        Добавить репозиторий
-      </UiButton>
-    </div>
 
     <UiAlert v-if="addResult" tone="success" closable @close="addResult = null">
       <template #title>
@@ -495,12 +489,6 @@ onMounted(() => {
   flex-direction: column;
   gap: var(--space-5);
   min-width: 0;
-}
-
-/* Кнопка добавления не должна растягиваться на всю ширину колонки настроек. */
-.listik-projects__actions {
-  display: flex;
-  justify-content: flex-start;
 }
 
 /* Три показателя в ряд, на узком экране — в столбец; свою сетку строим потому,

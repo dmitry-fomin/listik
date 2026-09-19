@@ -257,12 +257,6 @@ onBeforeUnmount(() => {
 
 <template>
   <div class="listik-routes-settings">
-    <p class="listik-prose">
-      Порядок и видимость записей — что автор видит и в каком порядке при выборе маршрута
-      задачи. Заведение и удаление не трогают уже запущенные задачи: у них только снимается
-      ссылка на маршрут.
-    </p>
-
     <UiAlert
       v-if="store.routesSettingsError.value"
       tone="warning"

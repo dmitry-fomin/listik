@@ -159,7 +159,6 @@ const headerChanged = computed(
 )
 
 const dirty = computed(() => headerChanged.value || commandChanged.value)
-watch(dirty, (value) => emit('update:dirty', value), { immediate: true })
 
 /** Причина отказа по каждому аргументу (`null` — аргумент годится) — она же метит поле. */
 const argProblems = computed(() => argRows.value.map((row) => commandProblemText(row.value)))
@@ -184,6 +183,16 @@ const commandBlock = computed<string | null>(() => {
   if (firstProblem.value) return firstProblem.value
   return null
 })
+
+/**
+ * Что действительно потеряется при уходе с карточки — только команда с ошибкой:
+ * она на сервер не уходит вовсе, а всё остальное досохранит автосохранение (в
+ * том числе недоспавший дебаунс — `onBeforeUnmount` ниже). Именно этим, а не
+ * `dirty`, кормится сторож ухода в `RoutesSettings.vue`: иначе диалог «потеряешь
+ * правки» выскакивал бы на каждые 600мс дебаунса, когда терять нечего.
+ */
+const unsaved = computed(() => commandChanged.value && commandBlock.value !== null)
+watch(unsaved, (value) => emit('update:dirty', value), { immediate: true })
 
 /* ── автосохранение: тот же порядок, что у карточки конвейера ──
  *
@@ -290,8 +299,11 @@ onBeforeUnmount(() => {
   if (debounceTimer) {
     clearTimeout(debounceTimer)
     debounceTimer = null
-    void flush()
   }
+  // `flush()` без условия на таймер: правка могла прийти и пока летел
+  // предыдущий запрос (`queued`), и тогда таймера уже нет, а диф есть.
+  // Пустой диф `flush` отбрасывает сам.
+  void flush()
 })
 
 /* ── список аргументов ── */

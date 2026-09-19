@@ -269,6 +269,22 @@ class ServiceCliTestCase(unittest.TestCase):
         self.assertNotEqual(code, 0)
         self.assertEqual(out["error"]["code"], "conflict")
 
+    def test_stop_flag_kills_foreign_server_and_installs(self) -> None:
+        killed = []
+
+        def fake_kill(pid, sig):
+            killed.append((pid, sig))
+            raise ProcessLookupError  # после SIGTERM процесса уже нет
+
+        with mock.patch.object(server, "read_pid", return_value=4242), \
+             mock.patch.object(service.os, "kill", side_effect=fake_kill):
+            code, info = self.run_json("install", "--stop", "--no-load",
+                                       "--bin", str(self.make_bin()))
+        self.assertEqual(code, 0, info)
+        self.assertEqual(info["stopped_pid"], 4242)
+        self.assertEqual(killed[0], (4242, 15))
+        self.assertTrue(self.launchd_unit().exists())
+
     # --- uninstall -------------------------------------------------------------
 
     def test_uninstall_removes_unit_and_unloads(self) -> None:

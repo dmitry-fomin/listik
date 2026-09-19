@@ -175,6 +175,7 @@ listik stop
 
 ```sh
 listik service install     # launchd (macOS) или systemd --user (Linux)
+listik service install --stop   # сначала остановить сервер, запущенный вручную
 listik service status
 listik service uninstall   # данные не трогает
 ```
@@ -184,6 +185,9 @@ systemd-юнит — в `~/.config/systemd/user/listik.service`. Лог серв
 юнит сохраняет PATH установки и добавляет стандартные каталоги пользовательских CLI
 (`~/.local/bin`, `~/bin`, Homebrew/Linuxbrew), чтобы автостарт находил харнессы без shell-профиля;
 `uninstall --no-load` удаляет файл, но оставляет уже загруженный сервис работать до ручной выгрузки.
+Если сервер уже поднят вручную (`listik serve --daemon`), `install` откажет — чтобы не плодить
+второй процесс на том же порту; `--stop` снимает запущенный сервер и ставит сервис на его место
+(так делает `install.sh` при обновлении).
 
 ### Резервные копии
 

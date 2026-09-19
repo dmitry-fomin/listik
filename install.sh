@@ -858,7 +858,9 @@ plugins_answer=$decision
 
 service_status=пропущен
 if [ "$service_answer" = yes ]; then
-    if service_out=$("$wrapper" service install 2>&1); then
+    # --stop: при обновлении рабочей установки сервер почти всегда поднят вручную
+    # (`listik serve --daemon`) — это не конфликт, сервис встаёт на его место.
+    if service_out=$("$wrapper" service install --stop 2>&1); then
         service_status=ok
     else
         service_status="не удалось"

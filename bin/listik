@@ -1693,10 +1693,12 @@ def cmd_service(args) -> int:
     from listik import service
     json_mode = bool(getattr(args, "json", False))
     if args.action == "install":
-        info = service.install(args.bin, args.no_load)
+        info = service.install(args.bin, args.no_load, args.stop)
         if json_mode:
             emit(args, {"ok": True, **info}, "", force_json=True, indent=None)
         else:
+            if info.get("stopped_pid"):
+                print(f"запущенный вручную сервер остановлен (pid {info['stopped_pid']})")
             print(f"сервис установлен: {info['unit_path']}")
             print(f"бинарь: {info['bin']}")
             if args.no_load:
@@ -2060,6 +2062,8 @@ def build_parser() -> argparse.ArgumentParser:
                                   "LISTIK_WRAPPER, иначе ROOT_DIR/bin/listik)")
     sp.add_argument("--no-load", action="store_true",
                     help="только записать/удалить юнит, не (пере)загружать сервис")
+    sp.add_argument("--stop", action="store_true",
+                    help="install: остановить сервер, запущенный вручную, вместо отказа")
 
     return p
 

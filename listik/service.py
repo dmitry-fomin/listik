@@ -15,6 +15,7 @@ import os
 import plistlib
 import subprocess
 import sys
+import time
 from pathlib import Path
 
 from . import errors, paths
@@ -240,24 +241,60 @@ def _raise_runner_failed(step: str, code: int | None, out: str) -> None:
     )
 
 
-def install(bin_arg: str | None, no_load: bool) -> dict:
+def _stop_foreign_server(pid: int, timeout: float = 10.0) -> None:
+    """SIGTERM уже запущенному вручную `listik serve` и ожидание его смерти."""
+    try:
+        os.kill(pid, 15)
+    except ProcessLookupError:
+        return
+    except OSError as exc:
+        raise errors.ListikError(
+            f"не удалось остановить сервер Listik (pid {pid}): {exc}",
+            code=errors.CONFLICT,
+            hint="listik stop",
+        ) from exc
+    deadline = time.monotonic() + timeout
+    while time.monotonic() < deadline:
+        try:
+            os.kill(pid, 0)
+        except ProcessLookupError:
+            return
+        except OSError:
+            return
+        time.sleep(0.2)
+    raise errors.ListikError(
+        f"сервер Listik (pid {pid}) не остановился за {int(timeout)} с",
+        code=errors.CONFLICT,
+        hint="listik stop",
+    )
+
+
+def install(bin_arg: str | None, no_load: bool, stop: bool = False) -> dict:
     """`listik service install`: см. требования порции — пункты 1–2 перед записью юнита.
 
     С `--no-load` раннер (`launchctl`/`systemctl`) не вызывается вообще, поэтому проверка
     «юнит уже загружен» (которая сама требует раннера) пропускается — остаётся только
     проверка чужого процесса через `server.read_pid`/`server.port_holder`.
+
+    С `stop=True` (`--stop`, им пользуется `install.sh`) запущенный вручную сервер не повод
+    отказать: его останавливают и ставят сервис поверх — обновление рабочей установки идёт
+    при живом `listik serve --daemon`, и это обычный случай, а не конфликт.
     """
     plat = platform_kind()
     loaded = False if no_load else is_loaded(plat)
     if plat == "launchd":
         _remove_legacy_unit(unload=not no_load)
+    stopped_pid = None
     if not loaded:
         pid = _foreign_server_pid()
-        if pid:
+        if pid and stop:
+            _stop_foreign_server(pid)
+            stopped_pid = pid
+        elif pid:
             raise errors.ListikError(
                 f"сервер Listik уже запущен отдельно от сервиса (pid {pid})",
                 code=errors.CONFLICT,
-                hint="listik stop",
+                hint="listik service install --stop (или listik stop)",
             )
     bin_path = resolve_bin(bin_arg)
     paths.LOGS_DIR.mkdir(parents=True, exist_ok=True)
@@ -279,7 +316,7 @@ def install(bin_arg: str | None, no_load: bool) -> dict:
             if code != 0:
                 _raise_runner_failed("systemctl restart", code, out)
     return {"platform": plat, "unit_path": str(path), "bin": str(bin_path),
-            "loaded_before": bool(loaded)}
+            "loaded_before": bool(loaded), "stopped_pid": stopped_pid}
 
 
 def _manual_unload_hint(plat: str) -> str:

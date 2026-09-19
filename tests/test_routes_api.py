@@ -320,3 +320,161 @@ class ReorderRouteTests(RoutesApiBase):
             self.post("/api/routes/reorder", {"keys": ["нет-такого-ключа"]})
         self.assertEqual(ctx.exception.status, 400)
 
+
+class CreateDirectRouteTests(RoutesApiBase):
+    """`POST /api/routes` с `kind="direct"` заводит прямой маршрут (listik-sjx3, порция a)."""
+
+    def body(self, **overrides) -> dict:
+        payload = {"kind": "direct", "key": "probe-direct", "title": "Проба",
+                   "harness": "codex", "command": ["codex", "exec", "{task_id}"]}
+        payload.update(overrides)
+        return payload
+
+    def test_post_creates_direct_route_and_get_shows_it(self) -> None:
+        status, record = self.post("/api/routes", self.body())
+        self.assertEqual(status, 201)
+        self.assertEqual(set(record), {"key", "kind", "title", "hint", "visible",
+                                       "icon", "position", "command", "harness"})
+        self.assertEqual(record["key"], "probe-direct")
+        self.assertEqual(record["kind"], "direct")
+        self.assertEqual(record["title"], "Проба")
+        self.assertEqual(record["hint"], "")
+        self.assertFalse(record["visible"])
+        self.assertEqual(record["icon"], "direct")
+        self.assertEqual(record["command"], ["codex", "exec", "{task_id}"])
+        self.assertEqual(record["harness"], "codex")
+        status, data = self.get("/api/routes")
+        self.assertEqual(status, 200)
+        stored = next(r for r in data["routes"] if r["key"] == "probe-direct")
+        self.assertEqual(record, stored)
+
+    def test_post_direct_position_is_after_existing(self) -> None:
+        self.import_sample()
+        _, before = self.get("/api/routes")
+        top = max(r["position"] for r in before["routes"])
+        status, record = self.post("/api/routes", self.body())
+        self.assertEqual(status, 201)
+        self.assertGreater(record["position"], top)
+
+    def test_post_duplicate_direct_key_is_409(self) -> None:
+        self.post("/api/routes", self.body())
+        with self.assertRaises(server.ApiError) as ctx:
+            self.post("/api/routes", self.body(title="Другое"))
+        self.assertEqual(ctx.exception.status, 409)
+        self.assertEqual(ctx.exception.code, errors.CONFLICT)
+        self.assertIn("probe-direct", ctx.exception.message)
+        _, data = self.get("/api/routes")
+        matches = [r for r in data["routes"] if r["key"] == "probe-direct"]
+        self.assertEqual(len(matches), 1)
+        self.assertEqual(matches[0]["title"], "Проба")
+        self.assertEqual(matches[0]["command"], ["codex", "exec", "{task_id}"])
+
+    def test_hint_and_visible_defaults_and_overrides(self) -> None:
+        _, base = self.post("/api/routes", self.body(key="probe-a"))
+        self.assertEqual(base["hint"], "")
+        self.assertFalse(base["visible"])
+        _, custom = self.post("/api/routes",
+                              self.body(key="probe-b", hint="проба", visible=True))
+        self.assertEqual(custom["hint"], "проба")
+        self.assertTrue(custom["visible"])
+
+    def test_icon_default_null_and_override(self) -> None:
+        _, default = self.post("/api/routes", self.body(key="probe-a"))
+        self.assertEqual(default["icon"], "direct")
+        _, no_icon = self.post("/api/routes", self.body(key="probe-b", icon=None))
+        self.assertIsNone(no_icon["icon"])
+        _, xlow = self.post("/api/routes", self.body(key="probe-c", icon="xlow"))
+        self.assertEqual(xlow["icon"], "xlow")
+
+    def test_missing_required_fields_are_400_naming_field(self) -> None:
+        for field in ("key", "title", "harness", "command"):
+            with self.subTest(field=field):
+                payload = self.body()
+                del payload[field]
+                with self.assertRaises(server.ApiError) as ctx:
+                    self.post("/api/routes", payload)
+                self.assertEqual(ctx.exception.status, 400)
+                self.assertEqual(ctx.exception.code, errors.BAD_ARGUMENT)
+                self.assertIn(field, ctx.exception.message)
+        _, data = self.get("/api/routes")
+        self.assertFalse(any(r["key"] == "probe-direct" for r in data["routes"]))
+
+    def test_bad_command_is_400_and_not_created(self) -> None:
+        cases = [[], "codex exec", ["codex", ""], ["codex", "{foo}"]]
+        for i, command in enumerate(cases):
+            with self.subTest(command=command):
+                with self.assertRaises(server.ApiError) as ctx:
+                    self.post("/api/routes", self.body(key=f"probe-{i}", command=command))
+                self.assertEqual(ctx.exception.status, 400)
+                self.assertEqual(ctx.exception.code, errors.BAD_ARGUMENT)
+                if command == ["codex", "{foo}"]:
+                    self.assertIn("{foo}", ctx.exception.message)
+        _, data = self.get("/api/routes")
+        self.assertFalse(any(r["key"].startswith("probe-") for r in data["routes"]))
+
+    def test_bad_key_is_400(self) -> None:
+        for key in ("Прямой", "-abc"):
+            with self.subTest(key=key):
+                with self.assertRaises(server.ApiError) as ctx:
+                    self.post("/api/routes", self.body(key=key))
+                self.assertEqual(ctx.exception.status, 400)
+                self.assertEqual(ctx.exception.code, errors.BAD_ARGUMENT)
+                self.assertIn("key", ctx.exception.message)
+
+    def test_unknown_harness_and_icon_are_400_with_allowed(self) -> None:
+        with self.assertRaises(server.ApiError) as ctx:
+            self.post("/api/routes", self.body(harness="opencode"))
+        self.assertEqual(ctx.exception.status, 400)
+        self.assertEqual(ctx.exception.code, errors.BAD_ARGUMENT)
+        for name in ("claude", "dsh", "codex", "grok", "gemini"):
+            self.assertIn(name, ctx.exception.message)
+        with self.assertRaises(server.ApiError) as ctx:
+            self.post("/api/routes", self.body(icon="turbo"))
+        self.assertEqual(ctx.exception.status, 400)
+        self.assertEqual(ctx.exception.code, errors.BAD_ARGUMENT)
+        for name in ("xhigh", "high", "medium", "low", "xlow", "direct"):
+            self.assertIn(name, ctx.exception.message)
+
+    def test_extra_fields_are_400_with_field_name(self) -> None:
+        for field in ("roles", "position"):
+            with self.subTest(field=field):
+                with self.assertRaises(server.ApiError) as ctx:
+                    self.post("/api/routes", self.body(**{field: {}}))
+                self.assertEqual(ctx.exception.status, 400)
+                self.assertEqual(ctx.exception.code, errors.BAD_ARGUMENT)
+                self.assertIn(field, ctx.exception.message)
+
+    def test_bad_kind_is_400_naming_kind_and_allowed(self) -> None:
+        for kind in ("conveyor", 5, []):
+            with self.subTest(kind=kind):
+                with self.assertRaises(server.ApiError) as ctx:
+                    self.post("/api/routes", self.body(kind=kind))
+                self.assertEqual(ctx.exception.status, 400)
+                self.assertEqual(ctx.exception.code, errors.BAD_ARGUMENT)
+                self.assertIn("kind", ctx.exception.message)
+                self.assertIn("pipeline", ctx.exception.message)
+                self.assertIn("direct", ctx.exception.message)
+        payload = self.body()
+        payload["kind"] = None
+        with self.assertRaises(server.ApiError) as ctx:
+            self.post("/api/routes", payload)
+        self.assertEqual(ctx.exception.status, 400)
+        self.assertEqual(ctx.exception.code, errors.BAD_ARGUMENT)
+
+    def test_pipeline_without_kind_and_explicit_kind_are_same(self) -> None:
+        status_a, rec_a = self.post("/api/routes", {"key": "high-pipeline"})
+        self.assertEqual(status_a, 201)
+        status_b, rec_b = self.post("/api/routes", {"key": "low-pipeline", "kind": "pipeline"})
+        self.assertEqual(status_b, 201)
+        for record in (rec_a, rec_b):
+            self.assertEqual(record["kind"], "pipeline")
+            self.assertFalse(record["visible"])
+            self.assertIsNone(record["command"])
+            self.assertTrue(record["title"])
+
+    def test_pipeline_unknown_key_is_400(self) -> None:
+        with self.assertRaises(server.ApiError) as ctx:
+            self.post("/api/routes", {"key": "нет-такого-скила"})
+        self.assertEqual(ctx.exception.status, 400)
+        self.assertEqual(ctx.exception.code, errors.BAD_ARGUMENT)
+

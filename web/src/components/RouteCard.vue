@@ -7,13 +7,13 @@
  * Шапка — своя, а не `UiEntityHeader`: у кита в subtitle нет слота, а ключ
  * маршрута в строке «Конвейер из скила · ключ <key>» обязан быть моноширинным.
  * Остальное — из кита: `UiSwitch` (видимость), `UiField`/`UiInput`,
- * `IconToggle`, `UiBadge`, `UiEmptyState`, `UiCopyButton`, `UiSaveStatus`,
+ * `IconToggle`, `UiEmptyState`, `UiCopyButton`, `UiSaveStatus`,
  * `UiAlert`.
  *
- * Состав ролей и команда — только показ: расклад правится через API
+ * Состав ролей и команда пока только показываются: расклад правится через API
  * (`PATCH /api/routes/{key}`), а команду конвейера меняет его скил. Ни одного
  * поля ввода, селекта или кнопки в блоке «Состав конвейера» нет; плитки ролей —
- * обычные `div` (треб. 7).
+ * обычные `div`. Редактирование прямо отсюда — отдельная задача.
  *
  * Автосохранение шапки: текстовые поля — debounce 600мс после последней
  * клавиши плюс сброс по потере фокуса, переключатель и иконка — сразу.
@@ -32,7 +32,6 @@
 import { computed, reactive, ref } from 'vue'
 import {
   UiAlert,
-  UiBadge,
   UiCopyButton,
   UiEmptyState,
   UiField,
@@ -43,12 +42,13 @@ import {
 } from '@zoloto585/facet'
 import IconToggle, { type IconToggleOption } from './IconToggle.vue'
 import ListikIcon from './ListikIcon.vue'
+import ProviderIcon from './marks/ProviderIcon.vue'
 import RouteIcon from './marks/RouteIcon.vue'
 import RouteSubstitutions from './RouteSubstitutions.vue'
 import store from '@/store/listik'
 import type { PipelineRouteDef, RouteIconKey, RoutePatch } from '@/api/types'
 import { PIPELINE_STAGES, ROUTE_ICONS } from '@/lib/dictionaries'
-import { ROLE_KEYS, ROLE_STAGE, ROLE_TITLES, type RoleKey } from '@/lib/pipelines'
+import { ROLE_KEYS, ROLE_STAGE, ROLE_TITLES, type ProviderKey, type RoleKey } from '@/lib/pipelines'
 import { splitPlaceholders, unknownPlaceholders } from '@/lib/routes'
 
 const props = defineProps<{ route: PipelineRouteDef }>()
@@ -177,7 +177,12 @@ interface RoleTile {
   /** Подпись этапа — из `PIPELINE_STAGES`, руками не пишется. */
   stageLabel: string
   roleTitle: string
-  vendor: string
+  /** Вендор роли — глифом `ProviderIcon`, как в `RoutePicker`. */
+  provider: ProviderKey
+  /** Короткая подпись ячейки рядом с глифом; пусто — показываем ключ вендора. */
+  vendorLabel: string
+  /** Полная расшифровка ячейки — в тултип глифа. */
+  vendorTitle: string
 }
 
 const roleTiles = computed<RoleTile[]>(() =>
@@ -189,7 +194,9 @@ const roleTiles = computed<RoleTile[]>(() =>
       stageCode: stage?.code ?? '',
       stageLabel: stage?.label ?? '',
       roleTitle: ROLE_TITLES[role],
-      vendor: cell.provider,
+      provider: cell.provider,
+      vendorLabel: cell.label || cell.provider,
+      vendorTitle: cell.title || cell.label || cell.provider,
     }
   }),
 )
@@ -263,14 +270,15 @@ function braced(name: string): string {
     <section class="listik-route-card__section">
       <div class="listik-route-card__section-head">
         <h4 class="listik-route-card__section-title">Состав конвейера</h4>
-        <UiBadge tone="neutral" size="sm">только показ</UiBadge>
-        <span class="listik-route-card__section-note">правятся только через API, из настроек — нет</span>
       </div>
       <div v-if="roleTiles.length > 0" class="listik-route-card__roles">
         <div v-for="tile in roleTiles" :key="tile.role" class="listik-route-card__role">
           <span class="listik-route-card__role-stage">{{ tile.stageCode }} · {{ tile.stageLabel }}</span>
           <span class="listik-route-card__role-title">{{ tile.roleTitle }}</span>
-          <code class="listik-mono listik-route-card__role-vendor">{{ tile.vendor }}</code>
+          <span class="listik-route-card__role-vendor" :title="tile.vendorTitle">
+            <ProviderIcon :provider="tile.provider" size="sm" />
+            <span class="listik-route-card__role-vendor-label">{{ tile.vendorLabel }}</span>
+          </span>
         </div>
       </div>
       <UiEmptyState v-else compact title="ролей нет" />
@@ -279,7 +287,6 @@ function braced(name: string): string {
     <section class="listik-route-card__section">
       <div class="listik-route-card__section-head">
         <h4 class="listik-route-card__section-title">Чем запускается</h4>
-        <UiBadge tone="neutral" size="sm">только показ</UiBadge>
         <UiCopyButton v-if="route.command" :value="commandText" label="Команда запуска">
           <template #icon="{ copied }"><ListikIcon :name="copied ? 'check' : 'copy'" size="sm" /></template>
         </UiCopyButton>
@@ -429,11 +436,6 @@ function braced(name: string): string {
   color: var(--ink-2);
 }
 
-.listik-route-card__section-note {
-  font-size: var(--text-xs);
-  color: var(--ink-3);
-}
-
 /* ── плитки ролей (только показ) ── */
 
 .listik-route-card__roles {
@@ -469,8 +471,18 @@ function braced(name: string): string {
 }
 
 .listik-route-card__role-vendor {
+  display: flex;
+  align-items: center;
+  gap: var(--space-1);
+  min-width: 0;
   font-size: var(--text-xs);
   color: var(--ink-3);
+}
+
+.listik-route-card__role-vendor-label {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 
 /* ── команда ── */

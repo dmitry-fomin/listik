@@ -9,14 +9,16 @@
  * Держатель карточки — только показ: в `.listik-route-direct__holder` нет
  * ни `input`, ни `select` (треб. 11).
  *
- * Сохранение явное: «Отменить»/«Сохранить» нижней полосой, один `PATCH` со
- * всеми изменёнными полями сразу. Пустого `PATCH` не бывает: без изменений
- * кнопка выключена (сервер на `{}` отвечает 400 «нечего менять»). Исключение —
- * тумблер «В меню «Запустить»»: как и у конвейера, он шлёт свой единственный
- * `visible` сразу (чек-лист d, п. 17) и в черновик не входит.
+ * Сохранение автоматическое, как у карточки конвейера: текст — через 600мс
+ * после последней клавиши и сразу по потере фокуса, тумблер и иконка — сразу,
+ * состояние показывает `UiSaveStatus` нижней полосой. Пустого `PATCH` не
+ * бывает: шлётся диф черновика против `baseline` (сервер на `{}` отвечает 400
+ * «нечего менять»). Команда входит в диф только целой и валидной — пока в ней
+ * ошибка, уходит одна шапка, а причина стоит в нижней полосе.
  *
  * На сервер уходит массив argv: аргументы — строки списка `UiRecordList`,
- * промпт — последний элемент. Склейка в строку живёт только в предпросмотре.
+ * промпт — последний элемент. Склейка в строку никому не показывается — она
+ * только под кнопкой «Команда для выполнения» нижней полосы.
  * Незнакомая подстановка не уходит вовсе (`unknownPlaceholders` /
  * `commandProblemText`): кнопка выключена, поле помечено `invalid`, рядом —
  * причина словами сервера.
@@ -25,16 +27,18 @@
  * заново созданная карточка со свежим черновиком. Несохранённые правки
  * (`update:dirty`) сторожит вызывающая сторона.
  */
-import { computed, reactive, ref, watch } from 'vue'
+import { computed, onBeforeUnmount, reactive, ref, watch } from 'vue'
 import {
   UiAlert,
   UiBadge,
-  UiButton,
+  UiCopyButton,
   UiField,
   UiInput,
   UiRecordList,
+  UiSaveStatus,
   UiSwitch,
   UiTextarea,
+  type SaveStatusValue,
   type UiRecordListColumn,
 } from '@zoloto585/facet'
 import IconToggle, { type IconToggleOption } from './IconToggle.vue'
@@ -97,9 +101,7 @@ const baseline = reactive<HeaderDraft & { command: string[] | null }>({
   command: props.route.command ? [...props.route.command] : null,
 })
 
-const saving = ref(false)
-/** Отдельно от `saving`: тумблер шлёт свой `visible` сразу и не гасит кнопку «Сохранить». */
-const toggling = ref(false)
+const status = ref<SaveStatusValue>('idle')
 const saveError = ref<string | null>(null)
 
 function resetDraft(route: DirectRouteDef): void {
@@ -117,6 +119,7 @@ function resetDraft(route: DirectRouteDef): void {
   baseline.icon = header.icon
   baseline.command = route.command ? [...route.command] : null
   saveError.value = null
+  status.value = 'idle'
 }
 
 /**
@@ -169,77 +172,127 @@ const firstProblem = computed(
 const emptyArg = computed(() => argRows.value.some((row) => row.value.trim() === ''))
 
 /**
- * Почему «Сохранить» выключена — текст рядом с кнопкой. Сначала то, что сервер
- * отверг бы (пустая команда, пустой элемент, незнакомая подстановка), и только
- * потом «изменений нет»: у команды с ошибкой причина важнее, чем факт правки.
+ * Почему команда не уходит на сервер — текст под секцией промпта. Ровно то,
+ * что сервер отверг бы: пустая команда, пустой элемент, незнакомая подстановка.
+ * «Изменений нет» здесь больше не причина: сохранение автоматическое, а не по
+ * кнопке, и отсутствие правок объяснять автору незачем.
  */
-const blockReason = computed<string | null>(() => {
+const commandBlock = computed<string | null>(() => {
   if (commandEmpty.value) return 'команда пустая: нужен хотя бы промпт'
   if (prompt.value.trim() === '') return 'промпт пустой — так команда не сохранится'
   if (emptyArg.value) return 'пустой аргумент не сохранится: заполни строку или удали её'
   if (firstProblem.value) return firstProblem.value
-  if (!dirty.value) return 'изменений нет'
   return null
 })
 
-/** «изменений нет» — это не ошибка ввода, поэтому и выглядит иначе. */
-const reasonIsProblem = computed(() => blockReason.value !== null && dirty.value)
+/* ── автосохранение: тот же порядок, что у карточки конвейера ──
+ *
+ * Текст (название, подпись, аргументы, промпт) уходит через 600мс после
+ * последней клавиши и сразу по потере фокуса; тумблер и иконка — сразу.
+ * Команда попадает в `PATCH` только целой и валидной: пока `commandBlock` не
+ * пуст, шапка сохраняется, а `command` ждёт — иначе каждый промежуточный
+ * символ ловил бы 400 сервера.
+ */
 
-const canSave = computed(() => blockReason.value === null && !saving.value)
+let inFlight = false
+let queued = false
+let debounceTimer: ReturnType<typeof setTimeout> | null = null
 
-/* ── сохранение: один PATCH со всеми изменёнными полями ── */
-
-async function save(): Promise<void> {
-  if (!canSave.value) return
+function diffPatch(): RoutePatch {
   const patch: RoutePatch = {}
   if (draft.title !== baseline.title) patch.title = draft.title
   if (draft.hint !== baseline.hint) patch.hint = draft.hint
+  if (draft.visible !== baseline.visible) patch.visible = draft.visible
   if (draft.icon !== baseline.icon) patch.icon = draft.icon
-  const command = commandChanged.value ? commandDraft.value.slice() : null
-  if (command) patch.command = command
-  if (Object.keys(patch).length === 0) return
+  if (commandChanged.value && commandBlock.value === null) patch.command = commandDraft.value.slice()
+  return patch
+}
 
-  saving.value = true
+async function flush(): Promise<void> {
+  const patch = diffPatch()
+  if (Object.keys(patch).length === 0) return
+  if (inFlight) {
+    queued = true
+    return
+  }
+  inFlight = true
+  status.value = 'saving'
   const result = await store.patchRoute(props.route.key, patch)
-  saving.value = false
-  if (!result) {
+  inFlight = false
+  if (result) {
+    if (patch.title !== undefined) baseline.title = patch.title
+    if (patch.hint !== undefined) baseline.hint = patch.hint
+    if (patch.visible !== undefined) baseline.visible = patch.visible
+    if (patch.icon !== undefined) baseline.icon = patch.icon
+    if (patch.command !== undefined) baseline.command = patch.command ? patch.command.slice() : null
+    saveError.value = null
+    status.value = 'saved'
+  } else {
     // текст отказа (в том числе 400 сервера на команду) читаем сразу после await:
     // раньше другого действия вкладки его никто не перезапишет
     saveError.value = store.routesSettingsError.value
+    status.value = 'error'
+    // тумблер не сохранился — возвращаем его к серверному значению; текстовые
+    // поля остаются как есть, там автор ещё может поправить ввод
+    if (patch.visible !== undefined) draft.visible = baseline.visible
+  }
+  if (queued) {
+    queued = false
+    await flush()
+  }
+}
+
+function scheduleFlush(immediate: boolean): void {
+  if (debounceTimer) {
+    clearTimeout(debounceTimer)
+    debounceTimer = null
+  }
+  if (immediate) {
+    void flush()
     return
   }
-  saveError.value = null
-  baseline.title = draft.title
-  baseline.hint = draft.hint
-  baseline.visible = draft.visible
-  baseline.icon = draft.icon
-  if (command) baseline.command = command
+  debounceTimer = setTimeout(() => {
+    debounceTimer = null
+    void flush()
+  }, 600)
 }
 
-function cancel(): void {
-  resetDraft(props.route)
+function onTitle(value: string): void {
+  draft.title = value
+  scheduleFlush(false)
+}
+function onHint(value: string): void {
+  draft.hint = value
+  scheduleFlush(false)
+}
+function onBlurText(): void {
+  scheduleFlush(true)
 }
 
-/**
- * Тумблер «В меню «Запустить»» — единственное поле, которое уходит сразу
- * (`PATCH` с одним ключом `visible`): так же ведёт себя конвейер, и чек-лист d
- * (п. 17) требует ровно этого. Остальные поля ждут «Сохранить».
- */
-async function onVisible(value: boolean): Promise<void> {
-  if (toggling.value || value === baseline.visible) return
+/** Тумблер «В меню «Запустить»» — без задержки, как и иконка. */
+function onVisible(value: boolean): void {
+  if (value === draft.visible) return
   draft.visible = value
-  toggling.value = true
-  const result = await store.patchRoute(props.route.key, { visible: value })
-  toggling.value = false
-  if (result) {
-    baseline.visible = value
-    saveError.value = null
-  } else {
-    // не сохранилось — возвращаем тумблер к серверному значению
-    draft.visible = baseline.visible
-    saveError.value = store.routesSettingsError.value
-  }
+  scheduleFlush(true)
 }
+
+/*
+ * Аргументы и промпт правятся несколькими путями (ввод, добавление, удаление,
+ * перестановка строк), поэтому их ловит один watcher, а не обработчики полей.
+ */
+watch(commandDraft, () => scheduleFlush(false), { deep: true })
+
+/*
+ * Карточку сняли (выбрали другой маршрут, ушли со страницы) — досохраняем то,
+ * что ещё лежит в дебаунсе.
+ */
+onBeforeUnmount(() => {
+  if (debounceTimer) {
+    clearTimeout(debounceTimer)
+    debounceTimer = null
+    void flush()
+  }
+})
 
 /* ── список аргументов ── */
 
@@ -258,7 +311,7 @@ function hasBraces(value: string): boolean {
   return value.includes('{') || value.includes('}')
 }
 
-/* ── иконка: те же семь кнопок-глифов, что у конвейера, но без автосохранения ── */
+/* ── иконка: те же семь кнопок-глифов, что у конвейера, и так же сразу ── */
 
 const iconOptions = computed<IconToggleOption<string>[]>(() => [
   ...ROUTE_ICONS.map((item) => ({ value: item.value as string, label: item.hint })),
@@ -272,6 +325,7 @@ function glyphFor(value: string): string | null {
 
 function onIcon(value: string): void {
   draft.icon = value === '' ? null : (value as RouteIconKey)
+  scheduleFlush(true)
 }
 
 /* ── предпросмотр ── */
@@ -296,10 +350,18 @@ const preview = computed(() => previewCommand(commandDraft.value, props.route.ke
 
     <div class="listik-route-direct__fields">
       <UiField label="Название в меню">
-        <UiInput v-model="draft.title" />
+        <UiInput
+          :model-value="draft.title"
+          @update:model-value="onTitle"
+          v-bind="{ onBlur: onBlurText }"
+        />
       </UiField>
       <UiField label="Подпись под названием">
-        <UiInput v-model="draft.hint" />
+        <UiInput
+          :model-value="draft.hint"
+          @update:model-value="onHint"
+          v-bind="{ onBlur: onBlurText }"
+        />
       </UiField>
     </div>
 
@@ -384,48 +446,24 @@ const preview = computed(() => previewCommand(commandDraft.value, props.route.ke
         :rows="8"
         :invalid="Boolean(promptProblem)"
       />
-      <p class="listik-mono listik-route-direct__echo listik-route-direct__echo--prompt">
-        <RouteCommandText :text="prompt" />
-      </p>
       <p v-if="promptProblem" class="listik-route-direct__problem">{{ promptProblem }}</p>
       <RouteSubstitutions :route-key="route.key" :command="commandDraft" />
     </section>
 
-    <section class="listik-route-direct__section">
-      <h4 class="listik-route-direct__section-title">Что выполнится</h4>
-      <p class="listik-mono listik-route-direct__preview">{{ preview }}</p>
-      <p class="listik-prose">
-        Так команда выглядела бы строкой: подстановки заменены примерными значениями, аргумент
-        с пробелом внутри показан в кавычках. Запускается она не так — shell не участвует, argv
-        передаётся списком строк, и кавычки в него не попадают.
-      </p>
-    </section>
-
-    <!-- Нижняя полоса: «Сохранить» — последнее действие карточки, а не первое.
-         Правки идут сверху вниз (шапка → иконка → аргументы → промпт), кнопка
-         стоит там, где автор заканчивает, и причина отказа рядом с ней. -->
+    <!-- Нижняя полоса: команда для выполнения — кнопкой копирования, а не
+         простынёй текста: целиком её всё равно не читают, а скопировать в
+         терминал нужно. Рядом — состояние автосохранения и причина, по которой
+         команда пока не ушла на сервер. -->
     <div class="listik-route-direct__actions">
       <span class="listik-route-direct__actions-note">
         Правки применятся к следующему запуску. Уже запущенные задачи не трогаются.
       </span>
-      <div class="listik-route-direct__actions-buttons">
-        <UiButton variant="ghost" :disabled="!dirty || saving" @click="cancel">Отменить</UiButton>
-        <UiButton
-          class="listik-route-direct__save"
-          :disabled="!canSave"
-          :loading="saving"
-          @click="save"
-        >
-          Сохранить
-        </UiButton>
-      </div>
-      <p
-        v-if="blockReason"
-        class="listik-route-direct__reason"
-        :class="{ 'is-problem': reasonIsProblem }"
-      >
-        {{ blockReason }}
-      </p>
+      <UiCopyButton :value="preview" label="Команда для выполнения">
+        <template #icon="{ copied }"><ListikIcon :name="copied ? 'check' : 'copy'" size="sm" /></template>
+        Команда для выполнения
+      </UiCopyButton>
+      <UiSaveStatus :status="status" @retry="() => scheduleFlush(true)" />
+      <p v-if="commandBlock" class="listik-route-direct__reason is-problem">{{ commandBlock }}</p>
     </div>
   </div>
 </template>
@@ -603,29 +641,10 @@ const preview = computed(() => previewCommand(commandDraft.value, props.route.ke
   white-space: pre-wrap;
 }
 
-.listik-route-direct__echo--prompt {
-  max-height: 10em;
-  overflow-y: auto;
-  padding: var(--space-2) var(--space-3);
-  border-radius: var(--radius-sm);
-  background: var(--surface-2);
-}
-
 .listik-route-direct__problem {
   margin: 0;
   font-size: var(--text-sm);
   color: var(--danger-600);
-}
-
-.listik-route-direct__preview {
-  margin: 0;
-  padding: var(--space-2) var(--space-3);
-  border-radius: var(--radius-sm);
-  background: var(--surface-2);
-  max-height: 12em;
-  overflow-y: auto;
-  overflow-wrap: break-word;
-  white-space: pre-wrap;
 }
 
 /* ── нижняя полоса ── */
@@ -644,12 +663,6 @@ const preview = computed(() => previewCommand(commandDraft.value, props.route.ke
   min-width: 0;
   font-size: var(--text-xs);
   color: var(--ink-3);
-}
-
-.listik-route-direct__actions-buttons {
-  display: flex;
-  align-items: center;
-  gap: var(--space-2);
 }
 
 .listik-route-direct__reason {

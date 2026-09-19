@@ -26,7 +26,6 @@ import type {
   ProjectRow,
   RouteDef,
   RoutePatch,
-  RouteLaunchersResponse,
   SearchMode,
   ReadyTask,
   SearchResponse,
@@ -180,12 +179,6 @@ let routesRequested = false
  */
 const routesSettingsLoading = ref(false)
 const routesSettingsError = ref<string | null>(null)
-/**
- * Справочник скилов-запускаторов для редактора расклада ролей: грузится один раз,
- * `null` — ещё не загружен или загрузка не удалась (тогда текст в `routesSettingsError`,
- * а следующая попытка будет при следующем монтировании редактора).
- */
-const routeLaunchers = ref<RouteLaunchersResponse | null>(null)
 
 /**
  * Помощник DeepSeek (`GET /api/assistant/status`): ключ живёт в конфиге сервера,
@@ -1070,18 +1063,6 @@ async function patchRoute(key: string, body: RoutePatch): Promise<RouteDef | nul
 }
 
 /**
- * Справочник запускаторов для редактора ролей: один запрос на сессию доски.
- * Уже загружен — ничего не делает; отказ оставляет `null` и текст в
- * `routesSettingsError`, повтор — при следующем монтировании редактора.
- */
-async function loadRouteLaunchers(): Promise<RouteLaunchersResponse | null> {
-  if (routeLaunchers.value) return routeLaunchers.value
-  const result = await routesSettingsAction(() => api.routeLaunchers())
-  if (result) routeLaunchers.value = result
-  return result
-}
-
-/**
  * Статус помощника — ровно один запрос за сессию (`ensureAssistant` из формы).
  * Ошибка запроса не всплывает на доску: кнопки просто не показываются, а сама
  * причина видна в консоли — помощник необязателен.
@@ -1327,7 +1308,6 @@ export function useListikStore() {
     routesLoading,
     routesSettingsLoading,
     routesSettingsError,
-    routeLaunchers,
     assistantEnabled,
     assistantModel,
     assistantLoading,
@@ -1391,7 +1371,6 @@ export function useListikStore() {
     ensureRoutes,
     reloadRoutes,
     patchRoute,
-    loadRouteLaunchers,
     loadAssistant,
     ensureAssistant,
     askAssistant,

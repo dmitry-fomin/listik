@@ -1,43 +1,35 @@
 <script setup lang="ts">
 /**
  * RouteDirectCard — карточка маршрута `kind=direct` во вкладке «Маршруты»
- * настроек (`RoutesSettings.vue`, правая панель; артборд «Direct» из
- * `docs/specs/routes-settings-ui.md`). Здесь автор правит командную строку,
- * которую сервер потом сам запускает, поэтому карточка устроена не как
- * карточка конвейера (`RouteCard.vue`, там автосохранение):
+ * настроек (`RoutesSettings.vue`, правая панель). Раскладка — по макету
+ * `docs/design/settings/Настройки · Маршруты · прямая выдача-html/RoutesDirect.dc.html`.
  *
- *  * **сохранение явное** — «Отменить»/«Сохранить» нижней полосой карточки,
- *    последним действием после всех правок, один `PATCH` со
- *    всеми изменёнными полями сразу. Пустого `PATCH` не бывает: без изменений
- *    кнопка выключена (сервер на `{}` отвечает 400 «нечего менять»);
- *  * **на сервер уходит массив** argv: аргументы — строки списка, промпт —
- *    последний элемент. Склейка в строку живёт только в предпросмотре;
- *  * **незнакомая подстановка не уходит вовсе**: правило — `unknownPlaceholders`
- *    / `commandProblemText` из `lib/routes.ts`, повторяющие серверный
- *    `routes.validate_command` (сначала голая скобка, потом незнакомое имя).
- *    Кнопка выключена, поле помечено `invalid`, рядом — причина словами сервера.
- *    Ответ 400 всё равно показывается: правило могло разойтись с сервером;
- *  * пустой аргумент, пустой промпт и пустая команда не сохраняются — маршрут
- *    не должен оказаться с невыполнимой командой;
- *  * `harness` — только чтение (глиф `HarnessIcon`): сервер его и не примет,
- *    в теле `PATCH` только `title|hint|icon|visible|command`.
+ * Шапка — своя, а не `UiEntityHeader`: у кита в subtitle нет слота, а ключ
+ * маршрута в строке «Прямая выдача · ключ <key>» обязан быть моноширинным.
+ * Держатель карточки — только показ: в `.listik-route-direct__holder` нет
+ * ни `input`, ни `select` (треб. 11).
  *
- * Порядок аргументов, добавление и удаление — `UiRecordList` кита (ручка,
- * ▲/▼, ✕, кнопка добавления): своего списка и своего drag&drop тут нет.
- * В отличие от `RoutesSettings.vue`, мутацию модели китом откатывать не надо —
- * список аргументов до «Сохранить» и так живёт только в карточке.
+ * Сохранение явное: «Отменить»/«Сохранить» нижней полосой, один `PATCH` со
+ * всеми изменёнными полями сразу. Пустого `PATCH` не бывает: без изменений
+ * кнопка выключена (сервер на `{}` отвечает 400 «нечего менять»). Исключение —
+ * тумблер «В меню «Запустить»»: как и у конвейера, он шлёт свой единственный
+ * `visible` сразу (чек-лист d, п. 17) и в черновик не входит.
+ *
+ * На сервер уходит массив argv: аргументы — строки списка `UiRecordList`,
+ * промпт — последний элемент. Склейка в строку живёт только в предпросмотре.
+ * Незнакомая подстановка не уходит вовсе (`unknownPlaceholders` /
+ * `commandProblemText`): кнопка выключена, поле помечено `invalid`, рядом —
+ * причина словами сервера.
  *
  * `:key="route.key"` у вызывающей стороны — часть контракта: другой маршрут =
  * заново созданная карточка со свежим черновиком. Несохранённые правки
- * (`update:dirty`) сторожит вызывающая сторона: она спрашивает подтверждение
- * до того, как сменить выбор.
+ * (`update:dirty`) сторожит вызывающая сторона.
  */
 import { computed, reactive, ref, watch } from 'vue'
 import {
   UiAlert,
   UiBadge,
   UiButton,
-  UiEntityHeader,
   UiField,
   UiInput,
   UiRecordList,
@@ -106,6 +98,8 @@ const baseline = reactive<HeaderDraft & { command: string[] | null }>({
 })
 
 const saving = ref(false)
+/** Отдельно от `saving`: тумблер шлёт свой `visible` сразу и не гасит кнопку «Сохранить». */
+const toggling = ref(false)
 const saveError = ref<string | null>(null)
 
 function resetDraft(route: DirectRouteDef): void {
@@ -153,11 +147,11 @@ const commandChanged = computed(() => {
   return JSON.stringify(commandDraft.value) !== JSON.stringify(baseline.command)
 })
 
+/** `visible` сюда не входит: тумблер сохраняется сразу своим `PATCH` (чек-лист d, п. 17). */
 const headerChanged = computed(
   () =>
     draft.title !== baseline.title ||
     draft.hint !== baseline.hint ||
-    draft.visible !== baseline.visible ||
     draft.icon !== baseline.icon,
 )
 
@@ -200,7 +194,6 @@ async function save(): Promise<void> {
   const patch: RoutePatch = {}
   if (draft.title !== baseline.title) patch.title = draft.title
   if (draft.hint !== baseline.hint) patch.hint = draft.hint
-  if (draft.visible !== baseline.visible) patch.visible = draft.visible
   if (draft.icon !== baseline.icon) patch.icon = draft.icon
   const command = commandChanged.value ? commandDraft.value.slice() : null
   if (command) patch.command = command
@@ -227,6 +220,27 @@ function cancel(): void {
   resetDraft(props.route)
 }
 
+/**
+ * Тумблер «В меню «Запустить»» — единственное поле, которое уходит сразу
+ * (`PATCH` с одним ключом `visible`): так же ведёт себя конвейер, и чек-лист d
+ * (п. 17) требует ровно этого. Остальные поля ждут «Сохранить».
+ */
+async function onVisible(value: boolean): Promise<void> {
+  if (toggling.value || value === baseline.visible) return
+  draft.visible = value
+  toggling.value = true
+  const result = await store.patchRoute(props.route.key, { visible: value })
+  toggling.value = false
+  if (result) {
+    baseline.visible = value
+    saveError.value = null
+  } else {
+    // не сохранилось — возвращаем тумблер к серверному значению
+    draft.visible = baseline.visible
+    saveError.value = store.routesSettingsError.value
+  }
+}
+
 /* ── список аргументов ── */
 
 const argColumns: UiRecordListColumn[] = [{ key: 'value', label: 'Аргумент', type: 'custom' }]
@@ -244,19 +258,19 @@ function hasBraces(value: string): boolean {
   return value.includes('{') || value.includes('}')
 }
 
-/* ── уровень: те же семь кнопок-глифов, что у конвейера, но без автосохранения ── */
+/* ── иконка: те же семь кнопок-глифов, что у конвейера, но без автосохранения ── */
 
-const levelOptions = computed<IconToggleOption<string>[]>(() => [
+const iconOptions = computed<IconToggleOption<string>[]>(() => [
   ...ROUTE_ICONS.map((item) => ({ value: item.value as string, label: item.hint })),
-  { value: '', label: 'нет' },
+  { value: '', label: 'Без иконки' },
 ])
-const levelValue = computed(() => draft.icon ?? '')
+const iconValue = computed(() => draft.icon ?? '')
 
 function glyphFor(value: string): string | null {
   return ROUTE_ICONS.find((item) => item.value === value)?.icon ?? null
 }
 
-function onLevel(value: string): void {
+function onIcon(value: string): void {
   draft.icon = value === '' ? null : (value as RouteIconKey)
 }
 
@@ -267,30 +281,55 @@ const preview = computed(() => previewCommand(commandDraft.value, props.route.ke
 
 <template>
   <div class="listik-route-direct">
-    <UiEntityHeader :title="route.title" eyebrow="Прямая выдача" :subtitle="route.key">
-      <template #avatar><RouteIcon :route="route" size="md" /></template>
-    </UiEntityHeader>
+    <header class="listik-route-direct__head">
+      <span class="listik-route-direct__tile" aria-hidden="true">
+        <RouteIcon :route="route" size="md" />
+      </span>
+      <div class="listik-route-direct__head-main">
+        <h2 class="listik-route-direct__name">{{ route.title }}</h2>
+        <p class="listik-route-direct__keyline">
+          Прямая выдача · ключ <code class="listik-mono">{{ route.key }}</code>
+        </p>
+      </div>
+      <UiSwitch :model-value="draft.visible" @update:model-value="onVisible">В меню «Запустить»</UiSwitch>
+    </header>
 
-    <div class="listik-route-direct__header">
-      <UiField label="Название кнопки">
+    <div class="listik-route-direct__fields">
+      <UiField label="Название в меню">
         <UiInput v-model="draft.title" />
       </UiField>
-      <UiField label="Подпись">
+      <UiField label="Подпись под названием">
         <UiInput v-model="draft.hint" />
       </UiField>
-      <UiField label="Показывать автору">
-        <UiSwitch v-model="draft.visible" />
-      </UiField>
+    </div>
 
-      <div class="listik-route-direct__holder">
-        <span class="listik-route-direct__holder-label">Держатель карточки</span>
-        <HarnessIcon :harness="route.harness" size="sm" />
-        <span class="listik-mono">{{ HARNESS_TITLES[route.harness] }}</span>
-        <span class="listik-route-direct__holder-note">
-          <ListikIcon name="lock" size="sm" />
-          не правится
-        </span>
-      </div>
+    <div class="listik-route-direct__row">
+      <section class="listik-route-direct__icon">
+        <h4 class="listik-route-direct__label">Иконка в списках и на карточке</h4>
+        <IconToggle
+          :model-value="iconValue"
+          :options="iconOptions"
+          ariaLabel="Иконка маршрута"
+          @update:model-value="onIcon"
+        >
+          <template #icon="{ option }">
+            <span v-if="option.value === ''" class="listik-route-direct__icon-none">Без иконки</span>
+            <ListikIcon v-else :name="glyphFor(option.value) ?? ''" size="sm" />
+          </template>
+        </IconToggle>
+      </section>
+
+      <section class="listik-route-direct__holder-field">
+        <span class="listik-route-direct__label">Держатель карточки</span>
+        <div class="listik-route-direct__holder">
+          <HarnessIcon :harness="route.harness" size="sm" />
+          <code class="listik-mono">{{ HARNESS_TITLES[route.harness] }}</code>
+          <span class="listik-route-direct__holder-note">
+            <ListikIcon name="lock" size="sm" />
+            не правится
+          </span>
+        </div>
+      </section>
     </div>
 
     <UiAlert v-if="saveError" tone="danger" closable @close="saveError = null">
@@ -298,27 +337,14 @@ const preview = computed(() => previewCommand(commandDraft.value, props.route.ke
       {{ saveError }}
     </UiAlert>
 
-    <section class="listik-route-direct__section">
-      <h4 class="listik-route-direct__section-title">Уровень</h4>
-      <IconToggle
-        :model-value="levelValue"
-        :options="levelOptions"
-        ariaLabel="Уровень маршрута"
-        @update:model-value="onLevel"
-      >
-        <template #icon="{ option }">
-          <span v-if="option.value === ''" class="listik-route-direct__level-none" aria-hidden="true">—</span>
-          <ListikIcon v-else :name="glyphFor(option.value) ?? ''" size="sm" />
-        </template>
-      </IconToggle>
-    </section>
-
     <section class="listik-route-direct__section listik-route-direct__args">
-      <h4 class="listik-route-direct__section-title">Аргументы</h4>
-      <p class="listik-prose">
-        По одному аргументу в поле: кавычки не нужны, ничего экранировать не надо — argv
-        уходит списком строк. Промпт — последний аргумент, он ниже отдельным полем.
-      </p>
+      <div class="listik-route-direct__section-head">
+        <h4 class="listik-route-direct__section-title">Команда запуска</h4>
+        <UiBadge tone="accent" size="sm">правится</UiBadge>
+        <span class="listik-route-direct__section-note">
+          по одному аргументу в строке — кавычки не нужны
+        </span>
+      </div>
       <UiRecordList
         v-model="argRows"
         :columns="argColumns"
@@ -362,14 +388,11 @@ const preview = computed(() => previewCommand(commandDraft.value, props.route.ke
         <RouteCommandText :text="prompt" />
       </p>
       <p v-if="promptProblem" class="listik-route-direct__problem">{{ promptProblem }}</p>
-    </section>
-
-    <section class="listik-route-direct__section">
       <RouteSubstitutions :route-key="route.key" :command="commandDraft" />
     </section>
 
     <section class="listik-route-direct__section">
-      <h4 class="listik-route-direct__section-title">Предпросмотр</h4>
+      <h4 class="listik-route-direct__section-title">Что выполнится</h4>
       <p class="listik-mono listik-route-direct__preview">{{ preview }}</p>
       <p class="listik-prose">
         Так команда выглядела бы строкой: подстановки заменены примерными значениями, аргумент
@@ -379,18 +402,23 @@ const preview = computed(() => previewCommand(commandDraft.value, props.route.ke
     </section>
 
     <!-- Нижняя полоса: «Сохранить» — последнее действие карточки, а не первое.
-         Правки идут сверху вниз (шапка → уровень → аргументы → промпт), кнопка
+         Правки идут сверху вниз (шапка → иконка → аргументы → промпт), кнопка
          стоит там, где автор заканчивает, и причина отказа рядом с ней. -->
     <div class="listik-route-direct__actions">
-      <UiButton variant="ghost" :disabled="!dirty || saving" @click="cancel">Отменить</UiButton>
-      <UiButton
-        class="listik-route-direct__save"
-        :disabled="!canSave"
-        :loading="saving"
-        @click="save"
-      >
-        Сохранить
-      </UiButton>
+      <span class="listik-route-direct__actions-note">
+        Правки применятся к следующему запуску. Уже запущенные задачи не трогаются.
+      </span>
+      <div class="listik-route-direct__actions-buttons">
+        <UiButton variant="ghost" :disabled="!dirty || saving" @click="cancel">Отменить</UiButton>
+        <UiButton
+          class="listik-route-direct__save"
+          :disabled="!canSave"
+          :loading="saving"
+          @click="save"
+        >
+          Сохранить
+        </UiButton>
+      </div>
       <p
         v-if="blockReason"
         class="listik-route-direct__reason"
@@ -410,10 +438,81 @@ const preview = computed(() => previewCommand(commandDraft.value, props.route.ke
   min-width: 0;
 }
 
-.listik-route-direct__header {
+/* ── шапка: плитка с глифом, название с ключом, тумблер видимости ── */
+
+.listik-route-direct__head {
+  display: flex;
+  align-items: flex-start;
+  gap: var(--space-3);
+}
+
+.listik-route-direct__tile {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  flex-shrink: 0;
+  width: var(--space-8);
+  height: var(--space-8);
+  border-radius: var(--radius-md);
+  background: var(--accent-50);
+  color: var(--accent-600);
+}
+
+.listik-route-direct__head-main {
+  display: flex;
+  flex: 1 1 auto;
+  flex-direction: column;
+  gap: var(--space-1);
+  min-width: 0;
+}
+
+.listik-route-direct__name {
+  margin: 0;
+  font-size: var(--text-lg);
+  font-weight: var(--weight-semibold);
+  letter-spacing: var(--tracking-tight);
+  color: var(--ink-1);
+}
+
+.listik-route-direct__keyline {
+  margin: 0;
+  font-size: var(--text-sm);
+  color: var(--ink-3);
+}
+
+.listik-route-direct__fields {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: var(--space-4);
+}
+
+/* ── иконка и держатель в одной строке ── */
+
+.listik-route-direct__row {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) minmax(0, 14rem);
+  gap: var(--space-4);
+  align-items: end;
+}
+
+.listik-route-direct__icon,
+.listik-route-direct__holder-field {
   display: flex;
   flex-direction: column;
-  gap: var(--space-3);
+  gap: var(--space-2);
+  min-width: 0;
+}
+
+.listik-route-direct__label {
+  margin: 0;
+  font-size: var(--text-sm);
+  font-weight: var(--weight-medium);
+  color: var(--ink-2);
+}
+
+.listik-route-direct__icon-none {
+  font-size: var(--text-sm);
+  color: var(--ink-3);
 }
 
 .listik-route-direct__holder {
@@ -421,39 +520,24 @@ const preview = computed(() => previewCommand(commandDraft.value, props.route.ke
   flex-wrap: wrap;
   align-items: center;
   gap: var(--space-2);
+  min-height: var(--control-h-md);
+  padding: 0 var(--space-3);
+  border: 1px solid var(--hairline);
+  border-radius: var(--radius-md);
+  background: var(--surface-2);
   font-size: var(--text-sm);
-}
-
-.listik-route-direct__holder-label {
-  color: var(--ink-3);
 }
 
 .listik-route-direct__holder-note {
   display: inline-flex;
   align-items: center;
   gap: var(--space-1);
+  margin-left: auto;
+  font-size: var(--text-xs);
   color: var(--ink-3);
 }
 
-.listik-route-direct__actions {
-  display: flex;
-  flex-wrap: wrap;
-  align-items: center;
-  gap: var(--space-2);
-  padding-top: var(--space-3);
-  border-top: 1px solid var(--hairline);
-}
-
-.listik-route-direct__reason {
-  flex: 1 1 100%;
-  margin: 0;
-  font-size: var(--text-sm);
-  color: var(--ink-3);
-}
-
-.listik-route-direct__reason.is-problem {
-  color: var(--danger-600);
-}
+/* ── секции ── */
 
 .listik-route-direct__section {
   display: flex;
@@ -464,18 +548,23 @@ const preview = computed(() => previewCommand(commandDraft.value, props.route.ke
   min-width: 0;
 }
 
-.listik-route-direct__section-title {
+.listik-route-direct__section-head {
   display: flex;
   align-items: center;
-  gap: var(--space-1);
+  flex-wrap: wrap;
+  gap: var(--space-2);
+}
+
+.listik-route-direct__section-title {
   margin: 0;
   font-size: var(--text-sm);
   font-weight: var(--weight-medium);
   color: var(--ink-2);
 }
 
-.listik-route-direct__level-none {
-  font-size: var(--text-sm);
+.listik-route-direct__section-note {
+  margin-left: auto;
+  font-size: var(--text-xs);
   color: var(--ink-3);
 }
 
@@ -537,5 +626,40 @@ const preview = computed(() => previewCommand(commandDraft.value, props.route.ke
   overflow-y: auto;
   overflow-wrap: break-word;
   white-space: pre-wrap;
+}
+
+/* ── нижняя полоса ── */
+
+.listik-route-direct__actions {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: var(--space-2);
+  padding-top: var(--space-3);
+  border-top: 1px solid var(--hairline);
+}
+
+.listik-route-direct__actions-note {
+  flex: 1 1 auto;
+  min-width: 0;
+  font-size: var(--text-xs);
+  color: var(--ink-3);
+}
+
+.listik-route-direct__actions-buttons {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+}
+
+.listik-route-direct__reason {
+  flex: 1 1 100%;
+  margin: 0;
+  font-size: var(--text-sm);
+  color: var(--ink-3);
+}
+
+.listik-route-direct__reason.is-problem {
+  color: var(--danger-600);
 }
 </style>

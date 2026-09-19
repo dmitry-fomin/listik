@@ -19,7 +19,6 @@ import type {
   RouteDef,
   RoutePatch,
   RoutesResponse,
-  RouteLaunchersResponse,
   SearchMode,
   SearchResponse,
   Stats,
@@ -132,9 +131,6 @@ export const api = {
    */
   patchRoute: (key: string, body: RoutePatch) =>
     patch<RouteDef>(`/api/routes/${encodeURIComponent(key)}`, body),
-
-  /** Справочник скилов-запускаторов, вендоров и ролей — редактор расклада ролей. */
-  routeLaunchers: () => get<RouteLaunchersResponse>('/api/routes/launchers'),
 
   /**
    * Настроен ли помощник DeepSeek (`[assistant]` в config.toml). Ключ наружу не

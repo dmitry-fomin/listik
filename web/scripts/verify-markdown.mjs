@@ -52,6 +52,13 @@ const EXPECT = {
   linkText: 'текст',
   linkHref: 'https://example.com',
   escaped: '<script>alert(1)</script>',
+  table: {
+    head: ['Код', 'Файл', 'Итог'],
+    rows: [
+      ['31cc004', 'lexicon.jsonl', '40/41'],
+      ['92ac192', 'нет', '41/41'],
+    ],
+  },
   mdClass: 'listik-prose--markdown',
 }
 
@@ -81,6 +88,10 @@ const DESCRIPTION_STATE = `(() => {
     ol: [...scope.querySelectorAll('ol')].map(itemsOf),
     inlineCode: inlineCode.map(textOf),
     pre: [...scope.querySelectorAll('pre')].map((el) => ({ codeTag: el.querySelector('code')?.tagName.toLowerCase() ?? null, code: textOf(el.querySelector('code')) })),
+    tables: [...scope.querySelectorAll('table')].map((el) => ({
+      head: [...el.querySelectorAll('thead th')].map(textOf),
+      rows: [...el.querySelectorAll('tbody tr')].map((tr) => [...tr.querySelectorAll('td')].map(textOf)),
+    })),
     links: [...scope.querySelectorAll('a')].map((el) => ({ text: textOf(el), href: el.getAttribute('href') })),
     scripts: scope.querySelectorAll('script').length,
     innerText: scope.innerText,
@@ -214,6 +225,17 @@ try {
     }
   })
 
+  await record('таблица', async () => {
+    const seen = await state()
+    const match =
+      seen.tables.find((table) => JSON.stringify(table.head) === JSON.stringify(EXPECT.table.head)) ?? null
+    return {
+      ok: Boolean(match && JSON.stringify(match.rows) === JSON.stringify(EXPECT.table.rows)),
+      expect: `<table> с шапкой ${EXPECT.table.head.join(' | ')} и ${EXPECT.table.rows.length} строками`,
+      got: seen.tables,
+    }
+  })
+
   await record('ссылка', async () => {
     const seen = await state()
     const match = seen.links.find((link) => link.href === EXPECT.linkHref && link.text === EXPECT.linkText) ?? null
@@ -231,6 +253,7 @@ try {
       'нет ##': !seen.innerText.includes('##'),
       'нет строк с - в начале': bullets.length === 0,
       'нет тройных кавычек': !seen.innerText.includes('```'),
+      'нет строки-разделителя таблицы': !seen.innerText.includes('|---|'),
     }
     return {
       ok: Object.values(checks).every(Boolean),

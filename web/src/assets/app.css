@@ -1573,6 +1573,37 @@ body .ui-drawer-backdrop.ui-drawer-backdrop--right .ui-drawer.ui-drawer--right.u
   font-style: italic;
 }
 
+/* Таблица GFM. Широкая таблица прокручивается внутри своей обёртки и не
+   растягивает панель задачи — как блок кода выше. */
+.listik-prose__table {
+  display: block;
+  max-width: 100%;
+  margin: 0 0 var(--space-2);
+  border-collapse: collapse;
+  overflow-x: auto;
+  font-size: var(--text-sm);
+  white-space: normal;
+}
+
+.listik-prose__table th,
+.listik-prose__table td {
+  padding: var(--space-1) var(--space-2);
+  border: 1px solid var(--hairline-strong);
+  text-align: left;
+  vertical-align: top;
+}
+
+.listik-prose__table th {
+  background: var(--surface-2);
+  color: var(--ink-1);
+  font-weight: var(--weight-semibold);
+  white-space: nowrap;
+}
+
+.listik-prose__table td {
+  color: var(--ink-2);
+}
+
 .listik-token-form {
   display: flex;
   flex-direction: column;
@@ -1672,8 +1703,7 @@ body .ui-drawer-backdrop.ui-drawer-backdrop--right .ui-drawer.ui-drawer--right.u
 
   /* У этих элементов кит задаёт собственный display в scoped-правиле, поэтому
      спрятать их можно только через !important — :global-хуков у кита для них нет. */
-  .listik-shell__brand-name,
-  .listik-shell__hide-compact {
+  .listik-shell__brand-name {
     display: none !important;
   }
 

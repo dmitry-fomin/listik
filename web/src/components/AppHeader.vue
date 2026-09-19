@@ -2,9 +2,11 @@
 /**
  * Шапка приложения (UiAppHeader): марка, индикатор живости сервера, фильтр по
  * проекту и поиск задач (глобальные — влияют на всю доску, поэтому в шапке, а
- * не в тулбаре конкретного вида; оба — кнопка «иконка + текст», поиск открывает
- * палитру SearchPanel), переключатель темы, ссылка на настройки (репозитории и
- * маршруты) и кнопка обновления. Переключатель вида (Доска / Список /
+ * не в тулбаре конкретного вида; поиск открывает палитру SearchPanel),
+ * переключатель темы, ссылка на настройки (репозитории и маршруты) и кнопка
+ * обновления. Поиск, тема, настройки и «Обновить» — один ряд безрамочных
+ * (`ghost`) кнопок-иконок без подписи: подпись каждой несёт UiTooltip и
+ * `aria-label`, так ряд действий не спорит с фильтрами за ширину шапки. Переключатель вида (Доска / Список /
  * Метрики) — в App.vue как UiSegmented: он ничего не переключает в
  * контенте сам, это radiogroup, а не tablist, и он же несёт счётчики.
  *
@@ -14,8 +16,8 @@
  * назад, поэтому он виден и на телефоне (проп `phone` в этом режиме ничего не
  * прячет: страница по прямому адресу иначе была бы тупиком).
  *
- * Настройки и «К доске» — настоящие ссылки (`<a href>`/`UiHeaderActionButton`
- * с `href`): обычный клик ведёт роутер без перезагрузки, клик с модификатором
+ * Настройки и «К доске» — настоящие ссылки (`<a href>`: у «Настроек» это
+ * `UiButton` с `as="a"`, у «К доске» — `UiHeaderActionButton`): обычный клик ведёт роутер без перезагрузки, клик с модификатором
  * отдаётся браузеру и открывает новую вкладку. Марка в режиме настроек ведёт
  * туда же, что «К доске» (`/`), и делает это сама, без события `home`: `goHome`
  * в App.vue переключает вид доски на «Доску», а возврат из настроек обязан
@@ -163,9 +165,11 @@ const themeLabel = computed(() => (theme.value === 'dark' ? 'Включить с
     <template #actions>
       <div class="listik-shell__actions">
         <template v-if="mode === 'settings'">
-          <UiButton size="sm" variant="ghost" v-bind="{ 'aria-label': themeLabel }" @click="toggleTheme">
-            <template #icon><ListikIcon :name="theme === 'dark' ? 'sun' : 'moon'" size="sm" /></template>
-          </UiButton>
+          <UiTooltip :text="themeLabel" placement="bottom">
+            <UiButton size="sm" variant="ghost" v-bind="{ 'aria-label': themeLabel }" @click="toggleTheme">
+              <template #icon><ListikIcon :name="theme === 'dark' ? 'sun' : 'moon'" size="sm" /></template>
+            </UiButton>
+          </UiTooltip>
           <!-- Ссылка, а не кнопка: Cmd/Ctrl-клик открывает доску в новой вкладке,
                обычный клик ведёт роутер без перезагрузки. -->
           <UiTooltip text="Вернуться на доску" placement="bottom">
@@ -191,27 +195,39 @@ const themeLabel = computed(() => (theme.value === 'dark' ? 'Включить с
               <UiChip v-if="!store.owner.value" label="Представьтесь, чтобы брать задачи" size="sm" />
             </template>
             <UiTooltip text="Поиск по задачам · Cmd K" placement="bottom">
-              <UiButton size="sm" variant="ghost" @click="store.openSearch('')">
+              <UiButton
+                size="sm"
+                variant="ghost"
+                v-bind="{ 'aria-label': 'Поиск по задачам' }"
+                @click="store.openSearch('')"
+              >
                 <template #icon><ListikIcon name="search" size="sm" /></template>
-                Поиск
               </UiButton>
             </UiTooltip>
           </template>
-          <UiButton size="sm" variant="ghost" v-bind="{ 'aria-label': themeLabel }" @click="toggleTheme">
-            <template #icon><ListikIcon :name="theme === 'dark' ? 'sun' : 'moon'" size="sm" /></template>
-          </UiButton>
-          <UiTooltip v-if="!phone" text="Репозитории и маршруты" placement="bottom">
-            <UiHeaderActionButton href="/settings/repos" @click="onLinkClick($event, '/settings/repos')">
-              <template #icon><ListikIcon name="gear" size="sm" /></template>
-              <span class="listik-shell__hide-compact">Настройки</span>
-            </UiHeaderActionButton>
+          <UiTooltip :text="themeLabel" placement="bottom">
+            <UiButton size="sm" variant="ghost" v-bind="{ 'aria-label': themeLabel }" @click="toggleTheme">
+              <template #icon><ListikIcon :name="theme === 'dark' ? 'sun' : 'moon'" size="sm" /></template>
+            </UiButton>
           </UiTooltip>
-          <UiTooltip text="Обновить" placement="bottom">
+          <UiTooltip v-if="!phone" text="Настройки: репозитории и маршруты" placement="bottom">
+            <UiButton
+              as="a"
+              href="/settings/repos"
+              size="sm"
+              variant="ghost"
+              v-bind="{ 'aria-label': 'Настройки: репозитории и маршруты' }"
+              @click="onLinkClick($event, '/settings/repos')"
+            >
+              <template #icon><ListikIcon name="gear" size="sm" /></template>
+            </UiButton>
+          </UiTooltip>
+          <UiTooltip text="Обновить доску" placement="bottom">
             <UiButton
               size="sm"
-              variant="secondary"
+              variant="ghost"
               :loading="loading"
-              v-bind="{ 'aria-label': 'Обновить' }"
+              v-bind="{ 'aria-label': 'Обновить доску' }"
               @click="emit('refresh')"
             >
               <template #icon><ListikIcon name="refresh" size="xs" /></template>

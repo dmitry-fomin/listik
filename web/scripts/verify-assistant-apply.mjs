@@ -63,8 +63,13 @@ const STATE = `(() => {
     const field = trigger?.closest('.listik-assist')?.querySelector('textarea, input');
     return field ? field.value : null;
   };
+  // Заголовок «Новой задачи» приходит слотом #header (listik-7fbi), поэтому
+  // собственного .ui-drawer__title у кита в этом дровере нет — ищем по шапке
+  // целиком, а .ui-drawer__title оставляем как запасной вариант.
   const drawer = [...document.querySelectorAll('.ui-drawer')]
-    .find((el) => el.querySelector('.ui-drawer__title')?.textContent.includes('Новая задача')) ?? null;
+    .find((el) =>
+      (el.querySelector('.ui-drawer__header') ?? el.querySelector('.ui-drawer__title'))
+        ?.textContent.includes('Новая задача')) ?? null;
   const panel = document.querySelector('.ui-popover__panel .listik-assist__panel');
   const blocks = panel ? [...panel.querySelectorAll('.listik-assist__block')] : [];
   const blockOf = (title) => blocks

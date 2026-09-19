@@ -269,6 +269,38 @@ class ServiceCliTestCase(unittest.TestCase):
         self.assertNotEqual(code, 0)
         self.assertEqual(out["error"]["code"], "conflict")
 
+    def test_port_intruder_blocks_install_even_with_stop(self) -> None:
+        """Чужой процесс на порту — отказ, и `--stop` его не снимает."""
+        killed = []
+        with mock.patch.object(server, "read_pid", return_value=None), \
+             mock.patch.object(server, "port_holder",
+                               return_value=(777, "/usr/bin/python3 -m http.server 8787")), \
+             mock.patch.object(service.os, "kill", side_effect=lambda *a: killed.append(a)):
+            code, out = self.run_json("install", "--stop", "--no-load",
+                                      "--bin", str(self.make_bin()))
+        self.assertNotEqual(code, 0)
+        self.assertEqual(out["error"]["code"], "conflict")
+        self.assertIn("777", out["error"]["message"])
+        self.assertEqual(killed, [], "чужой процесс трогать нельзя")
+        self.assertFalse(self.launchd_unit().exists(), "юнит не должен быть записан")
+
+    def test_own_server_on_port_is_not_an_intruder(self) -> None:
+        """Свой `listik serve` из pid-файла, увиденный на порту, — не чужой процесс."""
+        killed = []
+
+        def fake_kill(pid, sig):
+            killed.append((pid, sig))
+            raise ProcessLookupError
+
+        with mock.patch.object(server, "read_pid", return_value=4242), \
+             mock.patch.object(server, "port_holder",
+                               return_value=(4242, "/opt/listik/bin/listik serve --daemon")), \
+             mock.patch.object(service.os, "kill", side_effect=fake_kill):
+            code, info = self.run_json("install", "--stop", "--no-load",
+                                       "--bin", str(self.make_bin()))
+        self.assertEqual(code, 0, info)
+        self.assertEqual(info["stopped_pid"], 4242)
+
     def test_stop_flag_kills_foreign_server_and_installs(self) -> None:
         killed = []
 

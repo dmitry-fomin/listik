@@ -857,11 +857,18 @@ ask_yes_default_yes "$plugins_answer" \
 plugins_answer=$decision
 
 service_status=пропущен
+service_note=
 if [ "$service_answer" = yes ]; then
     # --stop: при обновлении рабочей установки сервер почти всегда поднят вручную
     # (`listik serve --daemon`) — это не конфликт, сервис встаёт на его место.
     if service_out=$("$wrapper" service install --stop 2>&1); then
         service_status=ok
+        # Снятый вручную запущенный сервер — не тихая деталь: он был чужой работой,
+        # поэтому о перехвате говорим в отчёте.
+        case $service_out in
+            *"вручную сервер остановлен"*)
+                service_note="ручной сервер остановлен" ;;
+        esac
     else
         service_status="не удалось"
         note "$prog: автозапуск: 'listik service install' не выполнился:" >&2
@@ -1185,6 +1192,9 @@ else
 fi
 next_2="listik token"
 
+service_report="$service_status"
+[ -n "$service_note" ] && service_report="$service_status ($service_note)"
+
 if [ "$ui_enabled" = 1 ]; then
     # Отчёт — часть панели: тот же фон и та же ось, что у заставки и вопросов.
     ui_line ""
@@ -1193,7 +1203,7 @@ if [ "$ui_enabled" = 1 ]; then
     ui_report "данные: " "$home"
     ui_report "обёртка:" "$wrapper"
     ui_line ""
-    ui_report "автозапуск:" "$service_status" "$service_status"
+    ui_report "автозапуск:" "$service_report" "$service_status"
     ui_report "MCP:       " "$mcp_status" "$mcp_status"
     ui_report "плагины:   " "$plugins_status" "$plugins_status"
     ui_report "Codex:     " "$codex_status" "$codex_status"
@@ -1224,7 +1234,7 @@ else
     if [ "$protocol_changed" = 1 ]; then
         note "протокол изменился: выполните listik init-projects (сначала можно с --dry-run)"
     fi
-    note "автозапуск: $service_status"
+    note "автозапуск: $service_report"
     note "MCP: $mcp_status"
     note "плагины: $plugins_status"
     note "Codex: $codex_status"

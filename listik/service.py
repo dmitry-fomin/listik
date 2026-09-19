@@ -219,19 +219,43 @@ def bin_from_unit(path: Path, plat: str) -> str | None:
     return None
 
 
-def _foreign_server_pid() -> int | None:
-    """Живой `listik serve`, не поднятый этим сервисом: pid-файл или занятый порт."""
+def _port_state() -> tuple[int, int | None, tuple[int, str] | None]:
+    """(порт из конфига, pid живого сервера из pid-файла, кто слушает порт по lsof)."""
     from . import config as config_mod
     from . import server as server_mod
 
-    pid = server_mod.read_pid()
+    cfg = config_mod.load()
+    port = int(cfg["server"]["port"])
+    return port, server_mod.read_pid(), server_mod.port_holder(port)
+
+
+def _foreign_server_pid(state: tuple[int, int | None, tuple[int, str] | None]) -> int | None:
+    """Живой `listik serve`, не поднятый этим сервисом: pid-файл или занятый порт."""
+    from . import server as server_mod
+
+    _port, pid, holder = state
     if pid:
         return pid
-    cfg = config_mod.load()
-    holder = server_mod.port_holder(int(cfg["server"]["port"]))
     if holder and server_mod.is_listik_serve(holder[1]):
         return holder[0]
     return None
+
+
+def _port_intruder(state: tuple[int, int | None, tuple[int, str] | None]) \
+        -> tuple[int, int, str] | None:
+    """Порт Listik занят процессом, который не `listik serve`: (порт, pid, команда).
+
+    Это единственный случай, который остаётся отказом и при `--stop`: свой сервер
+    установщик вправе снять, чужой процесс — не вправе ни снять, ни занять его порт.
+    """
+    from . import server as server_mod
+
+    port, pid, holder = state
+    if not holder or server_mod.is_listik_serve(holder[1]):
+        return None
+    if pid and holder[0] == pid:
+        return None
+    return port, holder[0], holder[1]
 
 
 def _raise_runner_failed(step: str, code: int | None, out: str) -> None:
@@ -278,7 +302,9 @@ def install(bin_arg: str | None, no_load: bool, stop: bool = False) -> dict:
 
     С `stop=True` (`--stop`, им пользуется `install.sh`) запущенный вручную сервер не повод
     отказать: его останавливают и ставят сервис поверх — обновление рабочей установки идёт
-    при живом `listik serve --daemon`, и это обычный случай, а не конфликт.
+    при живом `listik serve --daemon`, и это обычный случай, а не конфликт. Отказ остаётся
+    только за действительно чужим процессом на порту (`_port_intruder`) — его не снимает
+    и `--stop`.
     """
     plat = platform_kind()
     loaded = False if no_load else is_loaded(plat)
@@ -286,7 +312,16 @@ def install(bin_arg: str | None, no_load: bool, stop: bool = False) -> dict:
         _remove_legacy_unit(unload=not no_load)
     stopped_pid = None
     if not loaded:
-        pid = _foreign_server_pid()
+        state = _port_state()
+        intruder = _port_intruder(state)
+        if intruder:
+            i_port, i_pid, i_cmd = intruder
+            raise errors.ListikError(
+                f"порт {i_port} занят чужим процессом (pid {i_pid}): {i_cmd}",
+                code=errors.CONFLICT,
+                hint=f"освободи порт {i_port} или смени его в config.toml ([server].port)",
+            )
+        pid = _foreign_server_pid(state)
         if pid and stop:
             _stop_foreign_server(pid)
             stopped_pid = pid

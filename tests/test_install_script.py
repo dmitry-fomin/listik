@@ -63,13 +63,22 @@ exit 0
 
 #: Поддельные launchctl/systemctl/claude (пункт 14): пишут argv в общий $FAKE_LOG,
 #: код выхода берут из своей переменной окружения (по умолчанию — успех).
+#: Проверка «юнит уже загружен» (`launchctl print` / `systemctl is-active`) получает свой
+#: код выхода: сценарий «сервис ещё не стоит, а сервер поднят вручную» отличается от
+#: остальных шагов именно ею, а один общий код завалил бы заодно bootstrap/restart.
 FAKE_LAUNCHCTL_SH = """#!/bin/sh
 printf 'launchctl %s\\n' "$*" >> "$FAKE_LOG"
+if [ "$1" = print ]; then
+    exit "${FAKE_LAUNCHCTL_LOADED_EXIT:-${FAKE_LAUNCHCTL_EXIT:-0}}"
+fi
 exit "${FAKE_LAUNCHCTL_EXIT:-0}"
 """
 
 FAKE_SYSTEMCTL_SH = """#!/bin/sh
 printf 'systemctl %s\\n' "$*" >> "$FAKE_LOG"
+if [ "$2" = is-active ]; then
+    exit "${FAKE_SYSTEMCTL_LOADED_EXIT:-${FAKE_SYSTEMCTL_EXIT:-0}}"
+fi
 exit "${FAKE_SYSTEMCTL_EXIT:-0}"
 """
 
@@ -575,6 +584,56 @@ class InstallScriptTests(unittest.TestCase):
         self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
         text = log.read_text(encoding="utf-8")
         self.assertTrue("bootstrap" in text or "restart" in text, text)
+
+    def test_reinstall_stops_manual_server_and_reports(self) -> None:
+        """Обновление при поднятом вручную сервере: автозапуск встаёт, отчёт говорит о снятии.
+
+        Сервер здесь настоящий (`listik serve --daemon` из установленной обёртки) — именно
+        он раньше ломал шаг автозапуска; `launchctl`/`systemctl` по-прежнему поддельные.
+        """
+        fake_dir, log = self.make_fake_tools()
+        env = self.env(PATH=f"{fake_dir}:{os.environ.get('PATH', '')}",
+                       FAKE_LOG=str(log), FAKE_LAUNCHCTL_EXIT="0", FAKE_SYSTEMCTL_EXIT="0",
+                       FAKE_LAUNCHCTL_LOADED_EXIT="1", FAKE_SYSTEMCTL_LOADED_EXIT="1",
+                       LISTIK_PORT=str(free_port()))
+        self.install(self.make_archive(VERSION), env=env)
+
+        started = self.run_wrapper("serve", "--daemon", env=env)
+        self.assertEqual(started.returncode, 0, started.stdout + started.stderr)
+        pid_path = self.installed_home / "listik.pid"
+        pid = 0
+        for _ in range(100):
+            try:
+                pid = int(pid_path.read_text(encoding="utf-8").strip())
+                break
+            except (OSError, ValueError):
+                time.sleep(0.1)
+        self.assertTrue(pid, "сервер не записал pid-файл")
+        self.addCleanup(self._kill, pid)
+
+        second = self.make_archive(NEXT_VERSION)
+        result = self.run_install("--archive", str(second), "--yes",
+                                  "--mcp", "no", "--plugins", "no", env=env)
+        self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+        self.assertIn("автозапуск: ok (ручной сервер остановлен)", result.stdout)
+        self.assertFalse(self._alive(pid), "ручной сервер должен быть остановлен")
+        self.assertTrue("bootstrap" in log.read_text(encoding="utf-8")
+                        or "restart" in log.read_text(encoding="utf-8"),
+                        log.read_text(encoding="utf-8"))
+
+    @staticmethod
+    def _alive(pid: int) -> bool:
+        try:
+            os.kill(pid, 0)
+        except OSError:
+            return False
+        return True
+
+    def _kill(self, pid: int) -> None:
+        try:
+            os.kill(pid, 15)
+        except OSError:
+            pass
 
     # --- порция a: Codex и network_access в песочнице --------------------
 

@@ -425,8 +425,8 @@ def publish(kind: str, payload: dict) -> None:
 
 #: Виды кадров, которые пускает POST /api/notify: «задача» — о записи в неё
 #: сообщает stdio-MCP, у которого своего publish нет (listik-hkdp); «маршрут» —
-#: `listik routes import` пишет таблицу `routes` в обход сервера и так же будит
-#: доску (шаг listik-8jgz, порция c).
+#: тот, кто пишет таблицу `routes` в обход сервера, так же будит доску
+#: (шаг listik-8jgz, порция c).
 NOTIFY_KINDS = frozenset({"task", "route"})
 
 
@@ -434,8 +434,8 @@ def notify_publish(conn: sqlite3.Connection, body: dict) -> dict:
     """Разослать доске «перечитай», ничего не меняя в базе.
 
     `publish` живёт в процессе сервера, а писать в ту же sqlite можно и мимо него
-    (`bin/listik mcp` по stdio, `listik routes import`): без такого вызова доска
-    показывала бы старое до перезагрузки. `kind="route"` — кадр по всей таблице
+    (`bin/listik mcp` по stdio): без такого вызова доска показывала бы старое до
+    перезагрузки. `kind="route"` — кадр по всей таблице
     маршрутов, задачи он не касается и не проверяет: `key` в нём необязателен
     (`None` — «перечитай список целиком»). `kind="task"` (по умолчанию) требует
     `task_id` и существующую задачу — иначе кадр будил бы доски ради записи,
@@ -928,8 +928,8 @@ def handle(method: str, path: str, query: dict, body: dict, authed: bool = False
         except ValueError as exc:
             raise api_error(400, exc) from exc
         if autostart:
-            # Процесс не ждём: start возвращается сразу после Popen, отказ (битый
-            # routes.json, нет маршрута/command/каталога) не отменяет создание задачи.
+            # Процесс не ждём: start возвращается сразу после Popen, отказ (нет
+            # маршрута/command/каталога) не отменяет создание задачи.
             launcher_mod.start(conn, task["id"], notify=publish)
             task = store.get_task(conn, task["id"])
         publish("task", {"id": task["id"], "action": "created"})

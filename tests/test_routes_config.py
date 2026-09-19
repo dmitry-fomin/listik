@@ -1,7 +1,7 @@
 """Тесты routes.json (шаг 09, порция a; чек-лист `step-09.check-a.md`).
 
-Настоящий `~/.config/listik/` тесты не трогают: везде явные пути во временном каталоге
-или `LISTIK_ROUTES`. Файл `routes.json` из репозитория только читается: его структура
+Настоящий `~/.config/listik/` тесты не трогают: везде явные пути во временном каталоге.
+Файл `routes.json` из репозитория только читается: его структура
 проверяется по самому файлу, а зашитых таблиц маршрутов в `web/src` быть не должно —
 источник данных для доски после первичного ввоза — таблица `routes`.
 """
@@ -788,9 +788,8 @@ class RoutesApiTests(TempDbTestCase):
     def test_file_change_after_import_is_not_reflected(self) -> None:
         self._init_from_repo()
         self.target.parent.mkdir(parents=True, exist_ok=True)
-        with mock.patch.object(routes_mod, "RUNTIME_PATH", self.target):
-            self.target.write_text("{ битый", encoding="utf-8")
-            status, payload = self._get("/api/routes", token=self.TOKEN)
+        self.target.write_text("{ битый", encoding="utf-8")
+        status, payload = self._get("/api/routes", token=self.TOKEN)
         self.assertEqual(status, 200)
         self.assertTrue(payload["data"]["ok"])
         self.assertEqual(len(payload["data"]["routes"]), 14)
@@ -871,7 +870,7 @@ class StatusCommandTests(TempDbTestCase):
             "routes": {"ok": True, "error": None, "path": "/tmp/listik.db", "count": 11},
         })
         self.assertEqual(code, 0)
-        self.assertIn("маршруты: 11 из /tmp/listik.db", text)
+        self.assertIn("маршруты: 11 (таблица routes)", text)
 
     def test_error_line(self) -> None:
         code, text = self._run_status({

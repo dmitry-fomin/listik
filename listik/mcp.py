@@ -107,7 +107,7 @@ TOOLS: list[dict] = [
                         "при работе над которой задачу нашли: связь discovered-from появляется сразу, "
                         "и исходная карточка видит находку в связях. Если в тексте упомянуты чужие "
                         "карточки без связи, в ответе будет link_hints — поставь dep link. route — ключ маршрута из "
-                        "routes.json: сохраняется в launch_route, а карточка получает метки "
+                        "таблицы routes: сохраняется в launch_route, а карточка получает метки "
                         "маршрута harness:/process: (как форма «Новая задача» на доске)."),
         "inputSchema": {
             "type": "object",
@@ -133,7 +133,7 @@ TOOLS: list[dict] = [
                                     "description": "ID карточки, при работе над которой найдена эта задача: "
                                                    "сразу ставит мягкую связь discovered-from"},
                 "route": {"type": "string",
-                          "description": "ключ маршрута из routes.json (low-pipeline, dsh, …)"},
+                          "description": "ключ маршрута из таблицы routes (low-pipeline, dsh, …)"},
                 "owner": {"type": "string",
                           "description": "владелец-человек, серверный режим; "
                                          "по умолчанию — представившийся"},

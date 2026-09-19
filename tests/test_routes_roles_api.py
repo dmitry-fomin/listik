@@ -128,15 +128,14 @@ class PatchRolesTests(RolesApiBase):
         self.assertEqual(status, 200)
         self.assertEqual(data["roles"]["impl"]["skill"], "any:launcher")
 
-    def test_export_import_roundtrip_after_patch(self) -> None:
+    def test_patched_roles_pass_file_validation(self) -> None:
+        """Роли, принятые HTTP-путём, принимает и проверка файла поставки."""
         self.patch("/api/routes/high-pipeline", {"roles": ROLES})
-        exported = routes_store.export_records(self.conn)
-        record = next(r for r in exported if r["key"] == "high-pipeline")
-        self.assertEqual(record["roles"], ROLES)
-        # повторный ввоз того же состава даёт ту же таблицу
-        before = routes_store.list_routes(self.conn)
-        self.write_and_import(exported, replace=True)
-        self.assertEqual(routes_store.list_routes(self.conn), before)
+        self.assertEqual(self.route("high-pipeline")["roles"], ROLES)
+        document = {"version": 1, "routes": [
+            {"key": "high-pipeline", "kind": "pipeline", "title": "Демо", "hint": "подсказка",
+             "visible": True, "roles": ROLES}]}
+        self.assertEqual(routes_mod.validate(document)[0]["roles"], ROLES)
 
 
 class PostRolesTests(RolesApiBase):

@@ -320,18 +320,3 @@ class ReorderRouteTests(RoutesApiBase):
             self.post("/api/routes/reorder", {"keys": ["нет-такого-ключа"]})
         self.assertEqual(ctx.exception.status, 400)
 
-
-class ExportImportRoundtripTests(RoutesApiBase):
-    def test_export_then_import_replace_gives_the_same_table(self) -> None:
-        self.import_sample()
-        before = routes_store.list_routes(self.conn)
-        exported = routes_store.export_records(self.conn)
-        self.assertTrue(all("position" not in record for record in exported))
-        path = self.tmp_path / "roundtrip.json"
-        path.write_text(json.dumps({"version": 1, "routes": exported}, ensure_ascii=False),
-                        encoding="utf-8")
-        with contextlib.redirect_stderr(io.StringIO()):
-            report = routes_store.import_file(self.conn, path, replace=True)
-        self.assertEqual(report["imported"], len(before))
-        after = routes_store.list_routes(self.conn)
-        self.assertEqual(after, before)

@@ -78,7 +78,7 @@ CREATE TABLE IF NOT EXISTS tasks (
     -- и слежение за ним. Пишут только create_task и listik/launcher.py, через
     -- PATCH/update_task эти поля не меняются.
     autostart          INTEGER NOT NULL DEFAULT 0,  -- 1 = задача стартует сама
-    launch_route       TEXT,                   -- ключ маршрута из routes.json
+    launch_route       TEXT,                   -- ключ маршрута из таблицы routes
     launched_by        TEXT,                   -- 'listik', если процесс запустил сервер
     launch_pid         INTEGER,                -- PID запущенного процесса
     launched_at        TEXT,                   -- ISO-время запуска
@@ -181,9 +181,9 @@ CREATE TABLE IF NOT EXISTS meta (
     value TEXT
 );
 
--- Маршруты запуска задач (шаг 09, порция b): таблица переезжает из routes.json.
--- Пока только хранилище: читатели (routes.current, API, launcher) ещё смотрят
--- в файл; первичный ввоз делает listik/routes_store.py.
+-- Маршруты запуска задач (шаг 09, порция b): таблица `routes` — источник правды,
+-- читатели (API, CLI, launcher) смотрят только сюда; `routes.json` — файл поставки,
+-- который один раз наполняет пустую таблицу (ввоз делает listik/routes_store.py).
 CREATE TABLE IF NOT EXISTS routes (
     key        TEXT PRIMARY KEY,
     kind       TEXT NOT NULL,              -- pipeline | direct

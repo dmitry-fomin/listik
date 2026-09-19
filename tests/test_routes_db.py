@@ -1,8 +1,8 @@
 """Тесты таблицы `routes` и ввоза `routes.json` (шаг 09, порция b).
 
 База — временная (`TempDbTestCase`), настоящий `~/.config/listik/` не трогается:
-у ввоза всегда явный путь, а `RUNTIME_PATH`/`SOURCE_PATH` подменяются на файлы
-во временном каталоге.  Файл `routes.json` из корня репозитория только читается.
+у ввоза всегда явный путь, а `SOURCE_PATH` подменяется на файл во временном каталоге.
+Файл `routes.json` из корня репозитория только читается.
 """
 from __future__ import annotations
 
@@ -58,11 +58,10 @@ class RoutesDbTestCase(TempDbTestCase):
         with contextlib.redirect_stderr(io.StringIO()):
             return routes_store.import_file(self.conn, ROUTES_JSON, replace=replace)
 
-    def patch_paths(self, *, source=None, runtime=None):
-        """Подменить пути ввоза на временные, чтобы не смотреть в ~/.config."""
+    def patch_paths(self, *, source=None):
+        """Подменить путь ввоза на временный, чтобы не смотреть в поставку."""
         source = source if source is not None else self.tmp_path / "нет-образца.json"
-        runtime = runtime if runtime is not None else self.tmp_path / "нет-копии.json"
-        return mock.patch.multiple(routes_mod, SOURCE_PATH=source, RUNTIME_PATH=runtime)
+        return mock.patch.object(routes_mod, "SOURCE_PATH", source)
 
     def write_routes(self, records, name: str = "routes.json"):
         path = self.tmp_path / name
@@ -153,18 +152,11 @@ class ReimportTests(RoutesDbTestCase):
         self.assertEqual(routes_store.count(self.conn), 0)
         self.assertIn("routes: ввоз не удался", err.getvalue())
 
-    def test_default_source_is_sample_when_no_runtime_copy(self) -> None:
+    def test_default_source_is_sample(self) -> None:
         with self.patch_paths(source=ROUTES_JSON):
             report = routes_store.ensure_imported(self.conn)
         self.assertEqual(report["imported"], 14)
         self.assertEqual(report["source"], str(ROUTES_JSON))
-
-    def test_runtime_copy_wins_over_sample(self) -> None:
-        runtime = self.write_routes([direct_record()], name="runtime.json")
-        with self.patch_paths(source=ROUTES_JSON, runtime=runtime):
-            report = routes_store.ensure_imported(self.conn)
-        self.assertEqual(report["source"], str(runtime))
-        self.assertEqual([r["key"] for r in routes_store.list_routes(self.conn)], ["dsh"])
 
     def test_strip_field_is_not_stored(self) -> None:
         source = self.write_routes([{**pipeline_record(),

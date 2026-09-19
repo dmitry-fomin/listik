@@ -46,5 +46,5 @@ def dict_rows(rows: Iterable[sqlite3.Row]) -> list[dict]:
 def normalize_route(value: Any) -> str:
     """Validate and normalize a route field exactly as the store historically did."""
     if not isinstance(value, str):
-        raise ValueError("маршрут должен быть строкой — ключом из routes.json")
+        raise ValueError("маршрут должен быть строкой — ключом из таблицы routes")
     return value.strip()

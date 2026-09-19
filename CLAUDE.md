@@ -96,15 +96,15 @@ Database migrations exist as two parallel mechanisms — don't confuse them:
   `listik status`).
 - `listik/routes_store.py` (+ `listik/skills.py`) — the `routes` table backing task launch
   presets: pipeline conveyor pipelines and direct harnesses, plus the command each launches.
-  `routes.json` (root of the repo) / `~/.config/listik/routes.json` (`$LISTIK_ROUTES`) are the
-  import/export file format only — the table is what both the server and CLI actually read and
-  write (`GET/PATCH/POST/DELETE /api/routes`, `/api/routes/reorder`, `/api/routes/sync`,
-  `/api/routes/launchers`, `listik routes`). Pipeline roles (`roles`) live in the db and are
-  edited from the board's route settings and over HTTP (`PATCH`/`POST /api/routes`, listik-syu8);
-  `kind`/`key`/`harness`/`position` stay unwritable. A role cell is `{provider, label, title}`
+  `routes.json` (root of the repo) is the install-time seed only — it fills an empty table once
+  at `init`/serve, and nothing re-reads or reconciles it; the table is what both the server and
+  CLI actually read and write (`GET/PATCH/POST/DELETE /api/routes`, `/api/routes/reorder`,
+  `/api/routes/sync`, `/api/routes/launchers`, `listik routes`). Pipeline roles (`roles`) live in
+  the db and are edited from the board's route settings and over HTTP (`PATCH`/`POST /api/routes`,
+  listik-syu8); `kind`/`key`/`harness`/`position` stay unwritable. A role cell is `{provider, label, title}`
   plus the optional `skill` (a launcher skill, `плагин:скил` — e.g. `pi:pi-delegate`) and its
-  flat `params`; the same validation (`routes._validate_roles`) serves the file and the HTTP
-  path, so `routes export`/`routes import --replace` still round-trips. `listik/skills.py` is a
+  flat `params`; the same validation (`routes._validate_roles`) serves the seed file and the HTTP
+  path. `listik/skills.py` is a
   read-only catalogue of two things — `plugins/feature-pipeline/skills/*/SKILL.md` (title/hint/
   path) used to prefill new pipeline routes and flag routes whose skill directory disappeared,
   and the launcher skills (`plugins/*/skills/*-delegate`) offered to role cells — never a source

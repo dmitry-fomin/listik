@@ -40,7 +40,6 @@ print(json.dumps({
     "LOGS_DIR": str(paths.LOGS_DIR),
     "WEB_DIR": str(paths.WEB_DIR),
     "SOURCE_PATH": str(routes.SOURCE_PATH),
-    "RUNTIME_PATH": str(routes.RUNTIME_PATH),
     "pid_file": str(server.pid_file()),
     "code_dir": info["code_dir"],
     "data_dir": info["data_dir"],

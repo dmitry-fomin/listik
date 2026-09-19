@@ -1,10 +1,11 @@
-"""Маршруты запуска задач: формат `routes.json` и чтение таблицы `routes`.
+"""Маршруты запуска задач: файл поставки `routes.json` и чтение таблицы `routes`.
 
 Таблица маршрутов (пресеты конвейеров и ряд «просто исполнитель») живёт в базе —
 таблице `routes` (см. :mod:`listik.routes_store`). `routes.json` в корне репозитория
-(`SOURCE_PATH`) остаётся форматом ввоза и вывоза: этот модуль читает, разбирает и
-проверяет файл (`load`/`validate`), а первичный ввоз в таблицу делает
-`listik.routes_store` (при `listik init` и старте сервера). В образце у каждой записи
+(`SOURCE_PATH`) — только затравка при установке: этот модуль читает, разбирает и
+проверяет файл (`load`/`validate`), а первичный ввоз в пустую таблицу делает
+`listik.routes_store` (при `listik init` и старте сервера). Больше файл не перечитывает
+никто и ни с чем не сверяет: записи в базе главнее. В образце у каждой записи
 есть `command`: конвейер запускает `claude -p` со скилом `/feature-pipeline:{route}`,
 прямой — dsh/grok/codex.
 
@@ -51,12 +52,10 @@ import re
 import sqlite3
 import sys
 from dataclasses import dataclass, field
-from pathlib import Path
 
 from . import paths, util
 
 SOURCE_PATH = paths.ROOT_DIR / "routes.json"
-RUNTIME_PATH = util.env_path("LISTIK_ROUTES", Path.home() / ".config" / "listik" / "routes.json")
 
 VERSION = 1
 KINDS = ("pipeline", "direct")

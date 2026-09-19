@@ -1,10 +1,10 @@
 """Доступ к таблице `routes` — хранилищу маршрутов запуска задач.
 
-`routes.json` (см. :mod:`listik.routes`) остаётся форматом файла: разбор,
-проверка и рабочая копия.  Этот модуль — слой базы: первичный ввоз файла
-(`import_file`/`ensure_imported`) и обычные операции над записями.  Зависимость
-односторонняя: `routes_store` импортирует `routes`, а не наоборот, поэтому
-циклов нет.
+`routes.json` (см. :mod:`listik.routes`) — только затравка при установке: файл
+поставки, который один раз наполняет пустую таблицу.  Этот модуль — слой базы:
+первичный ввоз файла (`import_file`/`ensure_imported`) и обычные операции над
+записями.  Зависимость односторонняя: `routes_store` импортирует `routes`, а не
+наоборот, поэтому циклов нет.
 
 Запись в базе и запись наружу — та же форма, что отдаёт `routes.validate`:
 `{"key", "kind", "title", "hint", "visible": bool, "icon": str|None,
@@ -349,18 +349,17 @@ def reorder(conn: sqlite3.Connection, keys) -> list[dict]:
 def _source_path(path=None):
     if path is not None:
         return path
-    return routes.RUNTIME_PATH if routes.RUNTIME_PATH.exists() else routes.SOURCE_PATH
+    return routes.SOURCE_PATH
 
 
 def import_file(conn: sqlite3.Connection, path=None, *, replace=False) -> dict:
-    """Первичный ввоз `routes.json` в таблицу.
+    """Первичный ввоз файла поставки `routes.json` в таблицу.
 
-    Источник по умолчанию — рабочая копия `routes.RUNTIME_PATH`, если она есть,
-    иначе образец `routes.SOURCE_PATH`.  Файл читает и проверяет `routes.load`;
-    ошибка файла — `routes.RoutesError`, база при этом не меняется (транзакция
-    целиком).  `replace=False`: непустая таблица не трогается.  `replace=True`:
-    старые записи удаляются, файл пишется заново.  Порядок файла становится
-    `position` 0,1,2,…
+    Источник по умолчанию — файл поставки `routes.SOURCE_PATH`.  Файл читает и
+    проверяет `routes.load`; ошибка файла — `routes.RoutesError`, база при этом
+    не меняется (транзакция целиком).  `replace=False`: непустая таблица не
+    трогается.  `replace=True`: старые записи удаляются, файл пишется заново.
+    Порядок файла становится `position` 0,1,2,…
     """
     source = _source_path(path)
     state = routes.load(source)
@@ -451,27 +450,3 @@ def sync_report(conn: sqlite3.Connection) -> dict:
     return {"skills_available": True, "missing_skill": missing_skill,
             "missing_route": missing_route}
 
-
-def export_records(conn: sqlite3.Connection) -> list[dict]:
-    """Таблица маршрутов в формате файла версии 1 (без `position`: порядок — сам массив).
-
-    Поля, которых в записи фактически нет (`icon`/`command` — `None`), в файл
-    не пишутся вовсе: файловая проверка (`routes.validate`) читает их как
-    необязательные и без ключа выводит тот же результат (фолбэк `icon`,
-    отсутствующий `command`) — так `routes export` → `routes import --replace`
-    даёт ту же таблицу.
-    """
-    out: list[dict] = []
-    for record in list_routes(conn):
-        item = {"key": record["key"], "kind": record["kind"], "title": record["title"],
-                "hint": record["hint"], "visible": record["visible"]}
-        if record.get("icon") is not None:
-            item["icon"] = record["icon"]
-        if record["kind"] == "pipeline":
-            item["roles"] = record.get("roles") or {}
-        else:
-            item["harness"] = record.get("harness")
-        if record.get("command") is not None:
-            item["command"] = record["command"]
-        out.append(item)
-    return out

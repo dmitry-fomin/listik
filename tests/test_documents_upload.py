@@ -451,10 +451,10 @@ class McpDocumentTests(TempDbTestCase):
         return {t["name"]: t for t in resp["result"]["tools"]}
 
     # ---- 18. MCP, схема
-    def test_tools_list_has_30_tools_with_document_schemas(self) -> None:
+    def test_tools_list_has_31_tools_with_document_schemas(self) -> None:
         tools = self._tools()
 
-        self.assertEqual(len(tools), 30)
+        self.assertEqual(len(tools), 31)
         self.assertIn("listik_put_document", tools)
         self.assertIn("listik_get_document", tools)
         put_schema = tools["listik_put_document"]["inputSchema"]

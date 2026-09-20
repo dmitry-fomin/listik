@@ -13,6 +13,8 @@
 ```sh
 # агент добавляет к каждой команде: --actor agent:<harness> --harness <harness>
 listik ready                                        # что можно брать
+listik waves --project X                            # волны запуска: что делать одновременно
+listik waves --project X --apply                    # записать ресурсные рёбра resource-blocks под этот расчёт
 listik show <id>                                    # вся карточка
 listik worktree <id>                                # дерево .worktrees/<id>, ветка task/<id>, от HEAD
 listik claim <id> --holder claude --note "беру"

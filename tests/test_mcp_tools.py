@@ -33,9 +33,11 @@ OLD_TOOLS = {
 NEW_TOOLS = {
     "listik_release", "listik_inbox", "listik_memory", "listik_remember", "listik_projects",
     "listik_actors", "listik_timeline", "listik_deps_suggested", "listik_cycles",
+    "listik_waves",
 }
 DOC_TOOLS = {"listik_put_document", "listik_get_document"}
-REQUIRED_BY_TOOL = {"listik_release": ["id"], "listik_remember": ["text"]}
+REQUIRED_BY_TOOL = {"listik_release": ["id"], "listik_remember": ["text"],
+                    "listik_waves": ["project"]}
 
 
 def _tools_list(conn) -> dict[str, dict]:
@@ -55,10 +57,10 @@ def _memory_keys(out) -> list[str]:
 
 class McpToolsTests(TempDbTestCase):
     # ---- 1. список инструментов
-    def test_tools_list_returns_exactly_30_names(self) -> None:
+    def test_tools_list_returns_exactly_31_names(self) -> None:
         names = set(_tools_list(self.conn))
         self.assertEqual(names, OLD_TOOLS | NEW_TOOLS | DOC_TOOLS)
-        self.assertEqual(len(names), 30)
+        self.assertEqual(len(names), 31)
 
     # ---- 2. схемы новых инструментов и новые параметры старых
     def test_new_tool_schemas_and_new_params(self) -> None:

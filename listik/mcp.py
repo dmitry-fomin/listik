@@ -467,6 +467,28 @@ TOOLS: list[dict] = [
         "description": "Циклы в графе зависимостей: задача ждёт саму себя по кругу — разрывать руками.",
         "inputSchema": {"type": "object", "properties": {}},
     },
+    {
+        "name": "listik_waves",
+        "description": ("Волны запуска проекта: какие задачи можно делать одновременно. "
+                        "Разложение по жёстким зависимостям (Кан) плюс разведение по волнам "
+                        "задач с пересекающимся write_scope или одним рабочим деревом. Без "
+                        "apply ничего не пишет. unroutable — без маршрута (нужен человек), "
+                        "unscoped — без write_scope (нужен rescope), blocked — стоят за "
+                        "задачей вне плана, cycles — цикл в графе: волны не считаются, "
+                        "разрывать руками."),
+        "inputSchema": {
+            "type": "object",
+            "properties": {
+                "project": {"type": "string"},
+                "stage": {"type": "string"},
+                "apply": {"type": "boolean", "default": False,
+                         "description": "записать ресурсные рёбра resource-blocks под этот "
+                         "расчёт (устаревшие снять, недостающие поставить, автор ребра всегда "
+                         "agent:listik-swarm); при цикле — отказ, ничего не пишется"},
+            },
+            "required": ["project"],
+        },
+    },
 ]
 
 
@@ -659,6 +681,12 @@ def call_tool(name: str, args: dict, conn=None, owner=FROM_ENV) -> object:
     if name == "listik_cycles":
         from . import deps as deps_mod
         return {"cycles": deps_mod.cycles(conn)}
+    if name == "listik_waves":
+        from . import deps as deps_mod
+        if args.get("apply"):
+            return deps_mod.apply_resource_blocks(
+                conn, project=args.get("project") or "", stage=args.get("stage"))
+        return deps_mod.waves(conn, project=args.get("project") or "", stage=args.get("stage"))
     raise ValueError(f"неизвестный инструмент: {name}")
 
 

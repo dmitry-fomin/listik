@@ -8,9 +8,9 @@
 
 Каталог в списке означает всё его поддерево: пересечение областей — это один
 путь, равный другому, или являющийся его префиксом по сегментам (например,
-`docs/` покрывает `docs/API.md`, но не `docs-old/x`). Само пересечение здесь
-не считается — это дело планировщика (swarm-2); этот модуль только проверяет
-и нормализует форму элементов.
+`docs/` покрывает `docs/API.md`, но не `docs-old/x`). Пересечение считается
+здесь (`covers`/`scopes_intersect`); планировщик роя (swarm-2) их зовёт, а
+не пересчитывает сам.
 """
 from __future__ import annotations
 
@@ -73,3 +73,30 @@ def normalize_scope(value, *, field: str) -> list[str]:
             normalized.append(norm)
 
     return normalized
+
+
+def covers(entry: str, path: str) -> bool:
+    """True, если `path` — сам `entry` либо лежит в его поддереве.
+
+    Хвостовой `/` у любого из аргументов не мешает; пустая строка ничего не
+    покрывает и ничем не покрывается.
+    """
+    entry = entry.rstrip("/")
+    path = path.rstrip("/")
+    if not entry or not path:
+        return False
+    return path == entry or path.startswith(entry + "/")
+
+
+def scopes_intersect(a: list[str], b: list[str]) -> bool:
+    """True, если есть пара `(x из a, y из b)`, где один покрывает другой.
+
+    Пустой список ни с чем не пересекается — решение о том, что делать с
+    пустой областью (`unscoped`), принимает вызывающий (`deps.waves`), не эта
+    функция.
+    """
+    for x in a:
+        for y in b:
+            if covers(x, y) or covers(y, x):
+                return True
+    return False

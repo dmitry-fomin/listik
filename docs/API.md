@@ -703,6 +703,7 @@ id внутри файлового пути (`docs/specs/<id>.md`, `/wt/<id>/lis
 | GET | `/api/search` | `q` (обязателен), `limit`, `project`, `status`, `stage`, `actor`, `needs_owner`, `mode=hybrid\|text\|vector` | `query, mode, took_ms, lexical_docs, vector_docs, count, results[]`; совпадения по id задачи идут первыми и помечены `hits[].kind="id"` — см. ниже |
 | GET | `/api/ready` | `project`, `stage`, `harness` (только задачи, чей этап разрешён этому harness в routing проекта; задача без этапа — всем), `include_occupied`, `limit` | `tasks[]` (можно брать: нет незакрытых блокеров и держателя), `cycles[]`. Фильтр по `X-Listik-Owner` — тот же, что у `/api/tasks` |
 | GET | `/api/blocked` | `project`, `limit` | `tasks[]` с разбором `blockers[]`, `blocked_by_stale`, `blocked_by_holder` |
+| GET | `/api/waves` | `project` (обязателен), `stage` | `project, stage, waves[], cycles[], unroutable[], unscoped[], blocked{}, resource_blocks[], tasks{}, generated_at` — волны запуска (`listik waves`), см. «Волны запуска: `listik waves`»; без `project` — 400 `bad_argument`; метод не GET — 405; фильтр `X-Listik-Owner` не применяется — план проекта считается по всем его задачам |
 | GET | `/api/deps/suggested` | `project`, `limit` | `items[]` (предложения агентов, ждущие подтверждения человеком: `issue_id, issue_title, issue_stage, project, depends_on, depends_on_title, depends_on_status, created_by, created_at`), `generated_at` |
 | GET | `/api/timeline` | `limit`, `project` (оставляет только события задач этого проекта) | `items[]`: `ts, kind, from_value, to_value, actor, actor_title, harness, note, duration_s, task_id, title, project, stage, status, age` |
 | GET | `/api/events` | `limit` | сырые события |
@@ -864,6 +865,7 @@ dropped_chunks, reason`), `reasons[]` (по одному пункту на ка�
 | DELETE | `/api/tasks/{id}/deps/{depends_on}` | `dep_type` строкой запроса | снять связь; без `dep_type` снимает разом `blocks` и `suggested-blocks` между той же парой задач, `resource-blocks` — только явным `dep_type=resource-blocks` (актор не ограничен). Ответ: `removed` (число снятых строк), `dep_types[]` |
 | POST | `/api/tasks/{id}/ready` | — | вердикт по задаче (`deps_state`, см. ниже) |
 | POST | `/api/tasks/{id}/mentions` | `limit` | задачи, упомянутые в тексте этой задачи, но не связанные с ней. Отдаёт все совпадения — тем же режимом пользуются `dep suggest`/`dep link`; подсказка `link_hints[]` при создании отсеивает id в путях и кавычках (см. «Найденная по ходу задача») |
+| POST | `/api/waves/apply` | `project` (обязателен), `stage` | записать в базу ресурсные рёбра `resource-blocks` под свежий расчёт `waves` — см. «Волны запуска: `listik waves`»; `actor` в теле и заголовок `X-Listik-Owner` на автора ребра не влияют — автор всегда `agent:listik-swarm`; ответ `added[], removed[], kept, waves{}, generated_at`; без `project`/с пустым `project` — 400 `bad_argument`; цикл в зависимостях — 409 `conflict`, ничего не записано; метод не POST — 405; событие доске (`{"id", "action": "deps"}`) — по каждой затронутой задаче |
 | POST | `/api/projects` | `path` (каталог репозитория) или `slug`, `title`, `kind=native` | добавить репозиторий на доску; slug по умолчанию — имя каталога, git remote/ветка подтягиваются сами. `path` — абсолютный, от `~` или относительный — от корня проектов (`root` из `GET /api/projects`, `LISTIK_PROJECTS_ROOT`, по умолчанию `~/Projects`), никогда от рабочего каталога сервера (listik-i23u); нет каталога — 400 `bad_argument` «каталога нет: <полный путь>». То же правило для `path` в `PATCH`. Если каталог лежит внутри git-репозитория, путь приводится к корню (`git rev-parse --show-toplevel`), а в ответе появляется `path_adjusted_from` — исходный путь, иначе `null`. Существующий slug не падает: проект возвращается на доску и обновляется. Сверка slug идёт **без учёта регистра** (`store.existing_slug`): если проект с таким slug уже есть в другом написании, возвращается он — с прежним регистром slug, `created=false`, — а не второй проект-дубль |
 | PATCH | `/api/projects/{slug}` | `title`, `path`, `color`, `kind`, `archived=0/1`, `routing` | правка проекта; `archived=1` — убрать с доски, не теряя задачи; `routing` — объект-переопределение маршрутизации проекта (`{}` сбрасывает его), проверяется `config.validate_routing`: допустимые ключи — `harnesses` (словарь этап → список имён, этапы и имена без дублей), `transitions` (словарь `"<этап>:<этап-или-done>"` → `sticky`\|`handoff`\|`sticky-return`), `return_window_hours` (число > 0); неизвестный ключ или неверная форма — 400 с текстом на русском; устаревший `default_process` (ни на что не влиял, убран) молча игнорируется, как и в старых `config.toml`/`routing` проекта |
 | DELETE | `/api/projects/{slug}` | `force=1` (или в теле) | убрать проект из Listik. Проект с задачами отвечает 409 — их сначала скрывают; `force` удаляет задачи вместе с проектом |
@@ -1008,6 +1010,7 @@ JSON-RPC-сообщение, ответ — обычный JSON (`Content-Type: 
 | `listik_timeline` | — | `GET /api/timeline` (`listik timeline`) |
 | `listik_deps_suggested` | — | `GET /api/deps/suggested` (`listik dep suggested`) |
 | `listik_cycles` | — | — (`listik cycles` — только локально; `cycles[]` есть и в `GET /api/ready`) |
+| `listik_waves` | `project`, `stage`, `apply` | `GET /api/waves` (`listik waves`); `apply: true` — `POST /api/waves/apply` (`listik waves --apply`) |
 
 **Событие доске.** После успешного `tools/call` пишущего инструмента (`listik_create`,
 `listik_update`, `listik_claim`, `listik_heartbeat`, `listik_stage`, `listik_comment`,
@@ -1047,8 +1050,10 @@ MCP по stdio (`listik mcp`) пишет в базу мимо сервера, п
 `resource-blocks`) — пока блокер не закрыт (`done`/`cancelled`), задачу брать нельзя.
 
 `resource-blocks` (`dep_title`: «ресурсный блокер») — жёсткий блокер машинного происхождения:
-его ставит планировщик роя при пересечении `write_scope` двух задач одной волны и пересчитывает
-заново на каждом проходе. Гейтит `claim`/`ready` точно как `blocks`, но через `dep add`/
+его ставит планировщик роя при пересечении `write_scope` двух задач одной волны; сами волны
+считает `listik waves`, в базу их записывает отдельное явное действие — `listik waves --apply`
+(`created_by` записанного ребра — всегда `agent:listik-swarm`), см. «Волны запуска:
+`listik waves`» ниже. Гейтит `claim`/`ready` точно как `blocks`, но через `dep add`/
 `POST .../deps`/MCP `listik_deps` его поставить нельзя ни под каким актором и ни с каким
 `confirm` — ответ 400 `bad_argument`. Смысловой `blocks` на той же паре записывается рядом, а
 не поглощается ресурсным. Снимается только явно, `dep rm … --dep-type resource-blocks` — любым
@@ -1057,6 +1062,7 @@ MCP по stdio (`listik mcp`) пишет в базу мимо сервера, п
 оставшееся ресурсное ребро. Проверка цикла при `dep add` ресурсные рёбра не учитывает: обратное
 смысловое ребро на пару с машинным поставить можно, обе задачи тогда стоят до пересчёта
 планировщика.
+
 **Мягкие связи** (`parent-child`, `relates-to`, `related`, `discovered-from`, `duplicates`,
 `supersedes`, `suggested-blocks`) — не запрет, но сигнал «сначала прочитай»; отдаются в
 `soft_links`. `suggested-blocks` — предложение агентом жёсткой связи, ещё не подтверждённое
@@ -1068,6 +1074,42 @@ MCP по stdio (`listik mcp`) пишет в базу мимо сервера, п
 Поэтому `can_finish` (можно ли закрывать) и `ready` (можно ли брать) — разные вопросы.
 Все дети карточки, включая закрытых, отдаются в `children[]` её `show`/`context`
 (см. «Карточка-порция»); `children_open[]` в `deps_state` — только незакрытые, для `can_finish`.
+
+### Волны запуска: `listik waves`
+
+`GET /api/waves` (`listik waves`, MCP `listik_waves`) — что из открытых задач проекта можно
+делать одновременно, чистый расчёт (ничего не пишет, существующие `resource-blocks` не
+читает). Рабочее множество — открытые неархивные задачи проекта (при `stage` — ещё и этого
+этапа), в порядке `priority, created_at, id`. Слои считаются алгоритмом Кана по смысловым
+жёстким рёбрам (`blocks`/`blocked-by`/`waits-for`/`conditional-blocks`); цикл в этом графе
+отменяет волны целиком — `waves: []`, `cycles` непуст, разрывать руками. Внутри каждого слоя
+идёт арбитраж: по `write_scope` (пересечение — `scope.covers`, каталог покрывает своё
+поддерево) и по ключу рабочего дерева (только явный `worktree` и только у пишущих этапов —
+`''`/`s3-impl`/`s4-judge`; пустой `worktree` читается как «дерево ещё не выдано», поэтому
+`claim` строже волн, и дерево агенту нужно выставить до `claim`, не полагаясь на волны).
+Задача без маршрута попадает в `unroutable` (нужен человек), без `write_scope` — в `unscoped`
+(нужен rescope); задача, которая ждёт что-то вне рабочего множества (другой этап при
+фильтре, чужой проект, отменённый статус вовне) — в `blocked` (`{id: id_причины}`, причина
+может быть вне `tasks`, если она не входит в рабочее множество). `resource_blocks` — пары
+`[раньше, позже]`: конфликтующие по ресурсу задачи одного слоя, «позже» ждёт «раньше».
+`tasks{}` — витрина по всем задачам рабочего множества (`title, priority, status, stage,
+holder, launch_route, write_scope, worktree`). Код возврата CLI — `1`, если есть цикл
+(в остальных случаях `0`, даже при `unroutable`/`unscoped`/`blocked` — это не ошибка вызова).
+
+Запись найденного плана в базу — отдельное явное действие, `listik waves --apply`
+(`POST /api/waves/apply`, MCP `listik_waves` с `apply: true`): пересчитывает план заново и
+переписывает `resource-blocks` только у задач рабочего множества (`tasks{}` того же расчёта) —
+устаревшие рёбра снимает, недостающие ставит; смысловые жёсткие связи, `suggested-blocks`,
+а также рёбра задач другого проекта или (при `stage`) другого этапа не трогает. Автор
+ресурсного ребра — всегда `agent:listik-swarm`, на любом входе: ни `--actor`/`--owner`, ни
+заголовок `X-Listik-Owner`, ни `actor`/`owner` в теле или аргументах MCP его не переопределяют
+(ребро машинное по построению — его ставит только планировщик, подпись человеком была бы
+ложью). Повторный вызов без изменений в плане — no-op (`added`/`removed` пустые, `deps` не
+меняется). Цикл в смысловых зависимостях — отказ (`409 conflict`/`errors.ListikError`),
+ничего не записывается. После записи `claim` задачи «позже» отказывает штатно, с перечнем
+блокеров (как у любого `resource-blocks`, см. выше); `dep rm <id> <блокер> --dep-type
+resource-blocks` снимает ребро до следующего `--apply` — планировщик его на следующем проходе,
+скорее всего, вернёт заново.
 
 `deps_state` (в `GET /api/tasks/{id}`, `POST /api/tasks/{id}/ready`, MCP `listik_can_take`):
 
@@ -1108,6 +1150,8 @@ listik new "Шаг 09, порция b" -p listik --parent <id шага> --spec �
 listik ready                        # что можно взять прямо сейчас
 listik ready --harness dsh          # только то, что этому harness разрешено на его этапе
 listik blocked                      # кто кого ждёт и почему
+listik waves --project X [--stage s3-impl] [--json]   # волны запуска: что можно делать одновременно
+listik waves --project X --apply                     # записать ресурсные рёбра resource-blocks под этот расчёт
 listik tree <id>                    # дерево зависимостей задачи
 listik dep confirm <id> <блокер>    # подтвердить предложение агента → жёсткая связь
 listik dep suggested [--project]    # предложения агентов, ждущие подтверждения человеком

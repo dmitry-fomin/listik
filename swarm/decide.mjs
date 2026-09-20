@@ -1,6 +1,6 @@
 // Решения роя — чистые функции, ни одного вызова наружу (spawn/fs/Date.now()):
 // время приходит аргументом `now`, вход/выход — обычные объекты.
-const OPEN_STATUSES = new Set(["open", "in_progress", "blocked", "review"]);
+export const OPEN_STATUSES = new Set(["open", "in_progress", "blocked", "review"]);
 
 const TEXT_UNROUTABLE = "рой: у задачи нет маршрута (launch_route) — каким маршрутом её делать? " +
   "Рой маршрут не выбирает никогда.";
@@ -33,7 +33,7 @@ export function allocatePort(tasks, task, base, count) {
   return null;
 }
 
-function isRunning(t) {
+export function isRunning(t) {
   return !!t.launched_by && !t.launch_finished_at;
 }
 
@@ -46,7 +46,176 @@ function runningInfo(task, routeByKey) {
   return {id: task.id, route: task.launch_route, worktree: task.worktree, port: portOf(task)};
 }
 
-export function decide({plan, tasks, routes, config, now}) {
+// Надзор (порция c): по одному и тому же актору «свой» и «чужой» revoke различаются
+// только нормализованным написанием — здесь достаточно нижнего регистра и схлопнутых
+// пробелов (полный alias-разбор — `listik/actors.py`, недоступен процессу роя).
+const REVOKE_RESTART_PREFIX = "рой: перезапуск —";
+
+function normActor(raw) {
+  return (raw || "").trim().toLowerCase().replace(/\s+/g, " ");
+}
+
+function tsMs(v) {
+  if (!v) return null;
+  const n = Date.parse(v);
+  return Number.isFinite(n) ? n : null;
+}
+
+function minutesSince(now, thenMs) {
+  return (now.getTime() - thenMs) / 60000;
+}
+
+function fmtMin(n) {
+  return String(Math.round(n * 10) / 10);
+}
+
+function lastActivityMs(task, taskEvents, actorNorm, launchedAtMs) {
+  const times = [];
+  if (launchedAtMs != null) times.push(launchedAtMs);
+  const holderAtMs = tsMs(task.holder_at);
+  if (holderAtMs != null) times.push(holderAtMs);
+  for (const ev of taskEvents || []) {
+    const evTs = tsMs(ev.ts);
+    if (evTs == null) continue;
+    if (launchedAtMs != null && !(evTs > launchedAtMs)) continue;
+    if (normActor(ev.actor) === actorNorm) continue;
+    times.push(evTs);
+  }
+  return times.length ? Math.max(...times) : null;
+}
+
+function restartCount(taskEvents, actorNorm) {
+  let n = 0;
+  for (const ev of taskEvents || []) {
+    if (ev.kind !== "revoke") continue;
+    if (normActor(ev.actor) !== actorNorm) continue;
+    if (typeof ev.note === "string" && ev.note.startsWith(REVOKE_RESTART_PREFIX)) n++;
+  }
+  return n;
+}
+
+function noPortText(id) {
+  return "рой: задача зависла, но перезапустить нечем — свободных портов в диапазоне нет; " +
+    "процесс снят. Освободи порты (закрой задачи или расширь --port-count), потом: " +
+    `listik release ${id}; listik needs-owner ${id} --clear "…"`;
+}
+
+function giveUpLimitText(id, reason, staleMinutes, timeoutMinutes, silenceMin, runMin, restarts, launchLog) {
+  const cause = reason === "timeout"
+    ? `бежит дольше ${fmtMin(runMin)} мин`
+    : `нет активности ${fmtMin(silenceMin)} мин`;
+  return `рой: задача зависла (${cause}) после ${restarts} перезапусков — процесс снят, больше ` +
+    `не перезапускаю. Разбери лог ${launchLog ?? ""}; чтобы рой взял её снова: ` +
+    `listik release ${id} (держатель остаётся после отзыва), затем listik needs-owner ${id} ` +
+    `--clear "…" — тогда она вернётся в партию.`;
+}
+
+function crashedText(id, exitCode, generation, launchLog) {
+  const code = exitCode == null ? "неизвестен" : exitCode;
+  return `рой: процесс задачи завершился (код ${code}, поколение ${generation}), а карточка не ` +
+    `закрыта — лог ${launchLog ?? ""}. Разбери и сними флаг (listik needs-owner ${id} --clear ` +
+    `"…"), тогда рой перезапустит её новым поколением.`;
+}
+
+function superviseRunning({running, open, openById, events, tasks, config, now}) {
+  const actorNorm = normActor(config.actor);
+  const staleMinutes = config.staleMinutes ?? 20;
+  const timeoutMinutes = config.timeoutMinutes ?? 0;
+  const maxRestarts = config.maxRestarts ?? 1;
+
+  const restart = [];
+  const giveUp = [];
+  const stopOnly = [];
+  const stale = [];
+  const skipped = [];
+  const silence = [];
+
+  for (const t of running) {
+    const taskEvents = (events || {})[t.id] || [];
+    const launchedAtMs = tsMs(t.launched_at);
+
+    if (!openById.has(t.id)) {
+      // Закрытая бегущая (п.4): только timeout, никогда stale, никогда restart/giveUp.
+      if (launchedAtMs == null) continue;
+      const runMin = minutesSince(now, launchedAtMs);
+      if (timeoutMinutes > 0 && runMin > timeoutMinutes) {
+        stopOnly.push({id: t.id, reason: "timeout"});
+      }
+      continue;
+    }
+
+    if (t.needs_owner) continue;
+    if (launchedAtMs == null) {
+      skipped.push({id: t.id, reason: "no_launched_at"});
+      continue;
+    }
+
+    const lastAct = lastActivityMs(t, taskEvents, actorNorm, launchedAtMs);
+    const silenceMin = minutesSince(now, lastAct);
+    const runMin = minutesSince(now, launchedAtMs);
+    if (silenceMin > staleMinutes * 3 / 4) {
+      silence.push({id: t.id, minutes: Math.round(silenceMin * 10) / 10});
+    }
+    const isStale = silenceMin > staleMinutes;
+    const isTimeout = timeoutMinutes > 0 && runMin > timeoutMinutes;
+    if (isStale) stale.push(t.id);
+    if (!isStale && !isTimeout) continue;
+
+    const reason = isTimeout ? "timeout" : "stale";
+    const restarts = restartCount(taskEvents, actorNorm);
+    const port = portOf(t) ?? allocatePort(tasks, t, config.portBase, config.portCount);
+    if (port == null) {
+      giveUp.push({id: t.id, reason: "no_port", restarts, text: noPortText(t.id)});
+      continue;
+    }
+    if (restarts < maxRestarts) {
+      restart.push({id: t.id, reason, restarts, generation: t.generation, port});
+    } else {
+      const text = giveUpLimitText(t.id, reason, staleMinutes, timeoutMinutes, silenceMin, runMin,
+        restarts, t.launch_log);
+      giveUp.push({id: t.id, reason, restarts, text});
+    }
+  }
+
+  return {restart, giveUp, stopOnly, stale, skipped, silence};
+}
+
+function superviseCrashed({open, events, tasks, config}) {
+  const actorNorm = normActor(config.actor);
+  const restart = [];
+  const giveUp = [];
+  const crashed = [];
+
+  for (const t of open) {
+    if (!t.launched_by || !t.launch_finished_at || t.needs_owner) continue;
+    const taskEvents = (events || {})[t.id] || [];
+    const finishedMs = tsMs(t.launch_finished_at);
+    const answered = taskEvents.some(ev => {
+      if (ev.kind !== "answer") return false;
+      const evTs = tsMs(ev.ts);
+      return evTs != null && finishedMs != null && evTs > finishedMs;
+    });
+
+    if (answered) {
+      const restarts = restartCount(taskEvents, actorNorm);
+      const port = portOf(t) ?? allocatePort(tasks, t, config.portBase, config.portCount);
+      if (port == null) {
+        giveUp.push({id: t.id, reason: "no_port", restarts, text: noPortText(t.id)});
+      } else {
+        restart.push({id: t.id, reason: "answered", restarts, generation: t.generation, port});
+      }
+    } else {
+      crashed.push({
+        id: t.id, exitCode: t.launch_exit_code ?? null, log: t.launch_log ?? null,
+        text: crashedText(t.id, t.launch_exit_code, t.generation, t.launch_log),
+      });
+    }
+  }
+
+  return {restart, giveUp, crashed};
+}
+
+export function decide({plan, tasks, routes, config, now, events}) {
   const open = tasks.filter(t => OPEN_STATUSES.has(t.status));
   const openById = new Map(open.map(t => [t.id, t]));
   const routeByKey = new Map((routes || []).map(r => [r.key, r]));
@@ -65,7 +234,10 @@ export function decide({plan, tasks, routes, config, now}) {
       unroutable: plan.unroutable || [], unscoped: plan.unscoped || [],
       reason: "cycle",
     };
-    return {cycles, needsOwner: [], launch: [], running, skipped: [], open, report};
+    return {
+      cycles, needsOwner: [], launch: [], running, skipped: [], open, report,
+      restart: [], giveUp: [], crashed: [], stopOnly: [],
+    };
   }
 
   const needsOwner = [];
@@ -127,6 +299,14 @@ export function decide({plan, tasks, routes, config, now}) {
     skipped.push(...capacitySkipped);
   }
 
+  const runningSup = superviseRunning({running, open, openById, events, tasks, config, now});
+  const crashedSup = superviseCrashed({open, events, tasks, config});
+  const restart = [...runningSup.restart, ...crashedSup.restart];
+  const giveUp = [...runningSup.giveUp, ...crashedSup.giveUp];
+  const crashed = crashedSup.crashed;
+  const stopOnly = runningSup.stopOnly;
+  skipped.push(...runningSup.skipped);
+
   const report = {
     project: config.project, waveSize, wavesLeft,
     running: running.map(t => runningInfo(t, routeByKey)),
@@ -136,7 +316,13 @@ export function decide({plan, tasks, routes, config, now}) {
     blocked: blockedCount,
     unroutable: plan.unroutable || [], unscoped: plan.unscoped || [],
     reason: reason ?? null,
+    restart: restart.map(r => r.id),
+    giveUp: giveUp.map(g => g.id),
+    crashed: crashed.map(c => c.id),
+    stopOnly: stopOnly.map(s => s.id),
+    stale: runningSup.stale,
+    silence: runningSup.silence,
   };
 
-  return {cycles: [], needsOwner, launch, running, skipped, open, report};
+  return {cycles: [], needsOwner, launch, running, skipped, open, report, restart, giveUp, crashed, stopOnly};
 }

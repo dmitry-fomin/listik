@@ -117,4 +117,8 @@ export class Listik {
     const envArgs = Object.entries(env || {}).flatMap(([k, v]) => ["--env", `${k}=${v}`]);
     return this._call(["launch", id, ...envArgs], {write: true});
   }
+
+  revoke(id, note) {
+    return this._call(["revoke", id, "--note", note], {write: true});
+  }
 }

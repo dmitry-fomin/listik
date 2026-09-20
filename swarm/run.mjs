@@ -1,11 +1,20 @@
 // Один тик: собрать вход из Listik (субпроцессами), решить (decide), выполнить
 // действия, свести итог. Без состояния между тиками — всё читается заново.
-import {decide, portOf, allocatePort} from "./decide.mjs";
+import {decide, portOf, allocatePort, isRunning, OPEN_STATUSES} from "./decide.mjs";
 
 const MAIN_WORKTREE_MARKERS = new Set(["main", "master"]);
 
 function errText(err) {
   return `${err.code ?? "error"}/${err.message ?? err}/${err.hint ?? ""}`;
+}
+
+// Карточки, за которыми тик обязан посмотреть `show` перед `decide` (п.6): бегущие
+// открытые и упавшие открытые, у которых `needs_owner` ложен. Закрытые и карточки
+// с поднятым флагом «нужен ты» — не смотрим (свежих событий для решения не нужно).
+function needsEventsFetch(t) {
+  if (!OPEN_STATUSES.has(t.status) || t.needs_owner) return false;
+  if (isRunning(t)) return true;
+  return !!t.launched_by && !!t.launch_finished_at;
 }
 
 export async function tick(listik, config, log) {
@@ -34,7 +43,18 @@ export async function tick(listik, config, log) {
   const routesRes = await listik.routes();
   const routes = routesRes.routes || [];
 
-  const decision = decide({plan, tasks, routes, config, now: new Date()});
+  const events = {};
+  for (const t of tasks) {
+    if (!needsEventsFetch(t)) continue;
+    try {
+      const shown = await listik.show(t.id);
+      events[t.id] = shown.events || [];
+    } catch (err) {
+      log.line(`show ${t.id} ошибка: ${errText(err)}`);
+    }
+  }
+
+  const decision = decide({plan, tasks, routes, config, now: new Date(), events});
 
   if (decision.cycles.length) {
     const desc = decision.cycles.map(c => [...c, c[0]].join(" → ")).join("; ");
@@ -58,6 +78,117 @@ export async function tick(listik, config, log) {
       if (t) t.needs_owner = true;
     } catch (err) {
       log.line(`needs-owner ${item.id} ошибка: ${errText(err)}`);
+    }
+  }
+
+  // п.6.2: упавшие открытые без разрешения человека — needs-owner, revoke/launch не зовутся.
+  for (const item of decision.crashed) {
+    if (config.dryRun) {
+      log.action(`[dry-run] needs-owner ${item.id}: ${item.text}`);
+      continue;
+    }
+    try {
+      await listik.needsOwner(item.id, item.text);
+      log.action(`needs-owner ${item.id}: crashed`);
+      needsOwnerDone.push(item.id);
+      const t = taskById.get(item.id);
+      if (t) t.needs_owner = true;
+    } catch (err) {
+      log.line(`needs-owner ${item.id} ошибка: ${errText(err)}`);
+    }
+  }
+
+  // п.6.3: закрытые бегущие дольше timeoutMinutes — только снять процесс.
+  const stoppedClosed = [];
+  for (const item of decision.stopOnly) {
+    const note = `рой: процесс закрытой задачи бежит дольше ${config.timeoutMinutes} мин — снят`;
+    if (config.dryRun) {
+      log.action(`[dry-run] revoke ${item.id}: ${note}`);
+      continue;
+    }
+    try {
+      await listik.revoke(item.id, note);
+      log.action(`revoke ${item.id}: закрытая, таймаут`);
+      stoppedClosed.push(item.id);
+    } catch (err) {
+      log.line(`revoke ${item.id} ошибка: ${errText(err)}`);
+    }
+  }
+
+  // п.6.4: предел перезапусков (или нет свободных портов) — снять процесс и поставить флаг.
+  for (const item of decision.giveUp) {
+    if (config.dryRun) {
+      log.action(`[dry-run] revoke ${item.id}: рой: ${item.reason}, предел перезапусков`);
+      log.action(`[dry-run] needs-owner ${item.id}: ${item.text}`);
+      continue;
+    }
+    try {
+      await listik.revoke(item.id, `рой: ${item.reason}, предел перезапусков`);
+      log.action(`revoke ${item.id}: предел перезапусков (${item.reason})`);
+    } catch (err) {
+      log.line(`revoke ${item.id} ошибка: ${errText(err)}`);
+    }
+    try {
+      await listik.needsOwner(item.id, item.text);
+      log.action(`needs-owner ${item.id}: give_up`);
+      needsOwnerDone.push(item.id);
+      const t = taskById.get(item.id);
+      if (t) t.needs_owner = true;
+    } catch (err) {
+      log.line(`needs-owner ${item.id} ошибка: ${errText(err)}`);
+    }
+  }
+
+  // п.6.5: зависшие/просроченные/разрешённые человеком — revoke, затем launch тем же
+  // маршрутом (тот же актор перехватывает claim предшественника), если процесс подтверждённо снят.
+  const restarted = [];
+  for (const item of decision.restart) {
+    const note = item.reason === "answered"
+      ? "рой: перезапуск разрешён человеком"
+      : `рой: перезапуск — ${item.reason}`;
+    if (config.dryRun) {
+      log.action(`[dry-run] revoke ${item.id}: ${note}`);
+      log.action(`[dry-run] launch ${item.id} → порт ${item.port}`);
+      restarted.push({id: item.id, reason: item.reason, generation: item.generation});
+      continue;
+    }
+    let revoked;
+    try {
+      revoked = await listik.revoke(item.id, note);
+      log.action(`revoke ${item.id}: ${item.reason}`);
+    } catch (err) {
+      log.line(`revoke ${item.id} ошибка: ${errText(err)}`);
+      continue;
+    }
+    if (!revoked.launch_finished_at) {
+      try {
+        await listik.needsOwner(item.id, `рой: полномочия отозваны, но процесс ` +
+          `${revoked.launch_pid ?? "—"} не снят — сними его сам (kill), затем ` +
+          `listik release ${item.id} и listik needs-owner ${item.id} --clear "…"`);
+        log.action(`needs-owner ${item.id}: process_not_stopped`);
+        needsOwnerDone.push(item.id);
+        const t = taskById.get(item.id);
+        if (t) t.needs_owner = true;
+      } catch (err) {
+        log.line(`needs-owner ${item.id} ошибка: ${errText(err)}`);
+      }
+      continue;
+    }
+    const task = taskById.get(item.id);
+    const port = item.port;
+    try {
+      if (task && portOf(task) == null) {
+        const fresh = await listik.show(item.id);
+        const labels = [...(fresh.labels || []), `port:${port}`];
+        await listik.setLabels(item.id, labels);
+        if (task) task.labels = labels;
+        log.action(`set ${item.id} labels += port:${port}`);
+      }
+      const result = await listik.launch(item.id, {LISTIK_DEV_PORT: String(port)});
+      log.action(`перезапуск ${item.id} → порт ${port}, поколение ${result.generation}`);
+      restarted.push({id: item.id, reason: item.reason, generation: result.generation});
+    } catch (err) {
+      log.line(`launch ${item.id} ошибка: ${errText(err)}`);
     }
   }
 
@@ -132,12 +263,21 @@ export async function tick(listik, config, log) {
     }
   }
 
+  const crashedDone = decision.crashed
+    .filter(c => needsOwnerDone.includes(c.id))
+    .map(c => ({id: c.id, exitCode: c.exitCode}));
+  const giveUpDone = decision.giveUp.filter(g => needsOwnerDone.includes(g.id)).map(g => g.id);
+
   const report = {
     ...decision.report,
     launch: launched,
     needsOwner: decision.report.needsOwner.filter(n => needsOwnerDone.includes(n.id)),
     skipped: decision.report.skipped.map(s =>
       s.reason === "held" ? {...s, holder: (taskById.get(s.id) || {}).holder} : s),
+    restart: restarted,
+    giveUp: giveUpDone,
+    crashed: crashedDone,
+    stopOnly: stoppedClosed,
   };
   log.summary(report);
 
@@ -147,8 +287,11 @@ export async function tick(listik, config, log) {
     cycles: [],
     launched,
     needsOwner: needsOwnerDone,
+    restarted: restarted.map(r => r.id),
     running: decision.running.map(t => t.id),
     open: decision.open.map(t => t.id),
+    needsOwnerOpen: decision.open.filter(t => t.needs_owner).map(t => t.id),
+    blocked: plan.blocked || {},
     report,
   };
 }

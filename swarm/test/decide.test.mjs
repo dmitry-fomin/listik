@@ -171,3 +171,235 @@ test("порты: метка port:abc игнорируется", () => {
   const t = task("a", {labels: ["port:abc"]});
   assert.equal(portOf(t), null);
 });
+
+// --- порция c: надзор за бегущими и упавшими ---
+
+const supConfig = {
+  ...config, actor: "agent:listik-swarm", staleMinutes: 20, timeoutMinutes: 0, maxRestarts: 1,
+  portBase: 5170, portCount: 100,
+};
+const minsAgo = (now, m) => new Date(now.getTime() - m * 60000).toISOString();
+
+function runningTask(id, over = {}) {
+  return task(id, {launched_by: "agent:listik-swarm", launch_finished_at: null, ...over});
+}
+
+function decideRunning(t, {plan, config: cfg = supConfig, now = new Date(), events} = {}) {
+  const p = plan ?? {waves: [[]], cycles: [], unroutable: [], unscoped: [], blocked: {}};
+  return decide({plan: p, tasks: [t], routes: [], config: cfg, now, events});
+}
+
+test("надзор: зависла (30 мин молчания > staleMinutes 20), port:5170, без revoke — restart stale", () => {
+  const now = new Date();
+  const t = runningTask("a", {
+    launched_at: minsAgo(now, 30), holder_at: minsAgo(now, 25), labels: ["port:5170"],
+  });
+  const res = decideRunning(t, {now});
+  assert.deepEqual(res.restart, [{id: "a", reason: "stale", restarts: 0, generation: undefined, port: 5170}]);
+  assert.deepEqual(res.report.stale, ["a"]);
+});
+
+test("надзор: та же, но holder_at 5 мин назад — не молчит, ничего", () => {
+  const now = new Date();
+  const t = runningTask("a", {
+    launched_at: minsAgo(now, 30), holder_at: minsAgo(now, 5), labels: ["port:5170"],
+  });
+  const res = decideRunning(t, {now});
+  assert.deepEqual(res.restart, []);
+  assert.deepEqual(res.giveUp, []);
+  assert.deepEqual(res.report.stale, []);
+});
+
+test("надзор: событие от чужого актора 2 мин назад — не stale; то же от роя (revoke) — stale", () => {
+  const now = new Date();
+  const base = {
+    launched_at: minsAgo(now, 30), holder_at: minsAgo(now, 30), labels: ["port:5170"],
+  };
+  const notStale = decideRunning(runningTask("a", base), {
+    now, events: {a: [{kind: "stage", actor: "agent:claude", ts: minsAgo(now, 2)}]},
+  });
+  assert.equal(notStale.report.stale.includes("a"), false);
+
+  const stillStale = decideRunning(runningTask("a", base), {
+    now, events: {a: [{kind: "revoke", actor: "agent:listik-swarm", ts: minsAgo(now, 2), note: "рой: x"}]},
+  });
+  assert.equal(stillStale.report.stale.includes("a"), true);
+});
+
+test("надзор: holder_at пуст, launched_at 25 мин назад — stale", () => {
+  const now = new Date();
+  const t = runningTask("a", {launched_at: minsAgo(now, 25), labels: ["port:5170"]});
+  const res = decideRunning(t, {now});
+  assert.deepEqual(res.report.stale, ["a"]);
+});
+
+test("надзор: timeoutMinutes 60, launched_at 61 мин назад, holder_at свежий — restart timeout", () => {
+  const now = new Date();
+  const t = runningTask("a", {
+    launched_at: minsAgo(now, 61), holder_at: minsAgo(now, 1), labels: ["port:5170"],
+  });
+  const res = decideRunning(t, {now, config: {...supConfig, timeoutMinutes: 60}});
+  assert.equal(res.restart.length, 1);
+  assert.equal(res.restart[0].reason, "timeout");
+
+  const resOff = decideRunning(t, {now, config: {...supConfig, timeoutMinutes: 0}});
+  assert.deepEqual(resOff.restart, []);
+});
+
+test("надзор: уже один revoke-перезапуск, maxRestarts 1 — giveUp с текстом освобождения", () => {
+  const now = new Date();
+  const t = runningTask("a", {
+    launched_at: minsAgo(now, 30), holder_at: minsAgo(now, 30), labels: ["port:5170"],
+  });
+  const events = {a: [{kind: "revoke", actor: "agent:listik-swarm", ts: minsAgo(now, 25),
+    note: "рой: перезапуск — stale; запуск …, pid 1, процесс снят"}]};
+  const res = decideRunning(t, {now, events});
+  assert.deepEqual(res.restart, []);
+  assert.equal(res.giveUp.length, 1);
+  assert.match(res.giveUp[0].text, /listik release a/);
+  assert.match(res.giveUp[0].text, /needs-owner a --clear/);
+});
+
+test("надзор: revoke с другой пометкой (предел/разрешение) в счёт не идёт — всё ещё restart", () => {
+  const now = new Date();
+  const t = runningTask("a", {
+    launched_at: minsAgo(now, 30), holder_at: minsAgo(now, 30), labels: ["port:5170"],
+  });
+  for (const note of ["рой: stale, предел перезапусков", "рой: перезапуск разрешён человеком"]) {
+    const res = decideRunning(t, {
+      now, events: {a: [{kind: "revoke", actor: "agent:listik-swarm", ts: minsAgo(now, 25), note}]},
+    });
+    assert.equal(res.restart.length, 1, note);
+    assert.equal(res.giveUp.length, 0, note);
+  }
+});
+
+test("надзор: revoke от agent:claude — не считается в restarts", () => {
+  const now = new Date();
+  const t = runningTask("a", {
+    launched_at: minsAgo(now, 30), holder_at: minsAgo(now, 30), labels: ["port:5170"],
+  });
+  const res = decideRunning(t, {
+    now, events: {a: [{kind: "revoke", actor: "agent:claude", ts: minsAgo(now, 25),
+      note: "рой: перезапуск — stale"}]},
+  });
+  assert.equal(res.restart[0].restarts, 0);
+});
+
+test("надзор: актор Agent:Listik-Swarm в конфиге сравнивается нормализованно", () => {
+  const now = new Date();
+  const t = runningTask("a", {
+    launched_at: minsAgo(now, 30), holder_at: minsAgo(now, 30), labels: ["port:5170"],
+  });
+  const res = decideRunning(t, {
+    now, config: {...supConfig, actor: "Agent:Listik-Swarm", maxRestarts: 1},
+    events: {a: [{kind: "revoke", actor: "agent:listik-swarm", ts: minsAgo(now, 25),
+      note: "рой: перезапуск — stale"}]},
+  });
+  assert.equal(res.restart.length, 0);
+  assert.equal(res.giveUp.length, 1);
+});
+
+test("надзор: зависшая без метки порта — свободный порт есть → restart; свободных нет → giveUp no_port", () => {
+  const now = new Date();
+  const t = runningTask("a", {launched_at: minsAgo(now, 30), holder_at: minsAgo(now, 30)});
+  const resFree = decideRunning(t, {now});
+  assert.equal(resFree.restart[0].port, 5170);
+
+  const full = [];
+  for (let p = 5170; p < 5270; p++) full.push(task(`o${p}`, {labels: [`port:${p}`]}));
+  const res = decide({
+    plan: {waves: [[]], cycles: [], unroutable: [], unscoped: [], blocked: {}},
+    tasks: [t, ...full], routes: [], config: supConfig, now,
+  });
+  assert.equal(res.restart.length, 0);
+  assert.equal(res.giveUp.length, 1);
+  assert.equal(res.giveUp[0].reason, "no_port");
+});
+
+test("надзор: needs_owner true у зависшей — ни restart, ни giveUp, report.stale тоже пуст", () => {
+  const now = new Date();
+  const t = runningTask("a", {
+    launched_at: minsAgo(now, 30), holder_at: minsAgo(now, 30), labels: ["port:5170"],
+    needs_owner: true,
+  });
+  const res = decideRunning(t, {now});
+  assert.deepEqual(res.restart, []);
+  assert.deepEqual(res.giveUp, []);
+  assert.deepEqual(res.report.stale, []);
+});
+
+test("надзор: закрытая бегущая молчит час — restart/giveUp/crashed пусты; с timeout — stopOnly", () => {
+  const now = new Date();
+  const t = runningTask("a", {status: "done", launched_at: minsAgo(now, 60), holder_at: minsAgo(now, 60)});
+  const res = decideRunning(t, {now});
+  assert.deepEqual(res.restart, []);
+  assert.deepEqual(res.giveUp, []);
+  assert.deepEqual(res.crashed, []);
+  assert.deepEqual(res.stopOnly, []);
+
+  const res2 = decideRunning(t, {now, config: {...supConfig, timeoutMinutes: 30}});
+  assert.deepEqual(res2.stopOnly, [{id: "a", reason: "timeout"}]);
+});
+
+test("надзор: упавшая открытая без answer — crashed с кодом, поколением, логом", () => {
+  const t = task("a", {
+    launched_by: "agent:listik-swarm", launch_finished_at: "2026-01-01T00:00:00Z",
+    launch_exit_code: 1, needs_owner: false, generation: 3, launch_log: "/logs/a.log",
+  });
+  const res = decideRunning(t, {plan: {waves: [[]], cycles: [], unroutable: [], unscoped: [], blocked: {}}});
+  assert.equal(res.crashed.length, 1);
+  assert.match(res.crashed[0].text, /код 1/);
+  assert.match(res.crashed[0].text, /поколение 3/);
+  assert.match(res.crashed[0].text, /\/logs\/a\.log/);
+  assert.deepEqual(res.restart, []);
+
+  const closed = {...t, status: "done"};
+  const resClosed = decideRunning(closed, {plan: {waves: [[]], cycles: [], unroutable: [], unscoped: [], blocked: {}}});
+  assert.deepEqual(resClosed.crashed, []);
+  assert.deepEqual(resClosed.restart, []);
+});
+
+test("надзор: упавшая с answer позже launch_finished_at — restart answered даже при restarts >= maxRestarts", () => {
+  const t = task("a", {
+    launched_by: "agent:listik-swarm", launch_finished_at: "2026-01-01T00:00:00Z",
+    launch_exit_code: 1, needs_owner: false, labels: ["port:5170"],
+  });
+  const events = {a: [
+    {kind: "revoke", actor: "agent:listik-swarm", ts: "2025-01-01T00:00:00Z", note: "рой: перезапуск — stale"},
+    {kind: "answer", actor: "dmitry", ts: "2026-01-01T01:00:00Z"},
+  ]};
+  const res = decideRunning(t, {
+    plan: {waves: [[]], cycles: [], unroutable: [], unscoped: [], blocked: {}},
+    config: {...supConfig, maxRestarts: 0}, events,
+  });
+  assert.equal(res.restart.length, 1);
+  assert.equal(res.restart[0].reason, "answered");
+  assert.deepEqual(res.crashed, []);
+});
+
+test("надзор: упавшая с answer раньше launch_finished_at — crashed, exit_code null — «код неизвестен»", () => {
+  const t = task("a", {
+    launched_by: "agent:listik-swarm", launch_finished_at: "2026-01-01T00:00:00Z",
+    launch_exit_code: null, needs_owner: false,
+  });
+  const events = {a: [{kind: "answer", actor: "dmitry", ts: "2025-01-01T00:00:00Z"}]};
+  const res = decideRunning(t, {
+    plan: {waves: [[]], cycles: [], unroutable: [], unscoped: [], blocked: {}}, events,
+  });
+  assert.equal(res.crashed.length, 1);
+  assert.match(res.crashed[0].text, /код неизвестен/);
+});
+
+test("надзор: упавшая с needs_owner true — ничего; упавшая не в running, партия запускается", () => {
+  const crashedFlagged = task("a", {
+    launched_by: "agent:listik-swarm", launch_finished_at: "2026-01-01T00:00:00Z", needs_owner: true,
+  });
+  const candidate = task("b");
+  const plan = {waves: [["b"]], cycles: [], unroutable: [], unscoped: [], blocked: {}};
+  const res = decide({plan, tasks: [crashedFlagged, candidate], routes: [], config: supConfig, now: new Date()});
+  assert.deepEqual(res.crashed, []);
+  assert.deepEqual(res.restart, []);
+  assert.deepEqual(res.running, []);
+  assert.deepEqual(res.launch.map(l => l.id), ["b"]);
+});

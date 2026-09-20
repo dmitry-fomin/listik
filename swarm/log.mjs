@@ -31,17 +31,31 @@ export function open(dir, project) {
   function summaryLine(report) {
     const now = new Date();
     const hhmmss = now.toISOString().slice(11, 19);
+    const silenceById = new Map((report.silence || []).map(s => [s.id, s.minutes]));
     const runningDesc = (report.running || [])
-      .map(r => `${r.id} ${r.route ?? "-"} ${r.worktree ?? "-"} :${r.port ?? "-"}`).join(", ");
+      .map(r => {
+        const base = `${r.id} ${r.route ?? "-"} ${r.worktree ?? "-"} :${r.port ?? "-"}`;
+        const mins = silenceById.get(r.id);
+        return mins != null ? `${base} молчит ${mins} мин` : base;
+      }).join(", ");
     const launchedDesc = (report.launch || []).join(", ");
     const needsOwnerDesc = (report.needsOwner || [])
       .map(n => `${n.id} ${n.reason === "unroutable" ? "без маршрута" : "без области"}`).join(", ");
     const skippedDesc = (report.skipped || [])
       .map(s => `${s.id} ${s.reason === "held" ? `держит ${s.holder ?? "другого"}` : "не влезла"}`)
       .join(", ");
+    const restartDesc = (report.restart || [])
+      .map(r => `${r.id} ${r.reason} → поколение ${r.generation}`).join(", ");
+    const crashedDesc = (report.crashed || [])
+      .map(c => `${c.id} код ${c.exitCode == null ? "неизвестен" : c.exitCode}`).join(", ");
+    const stopOnlyDesc = (report.stopOnly || []).join(", ");
     const text = `[${hhmmss}] ${report.project} · волна 0: ${report.waveSize} · ` +
       `бежит ${(report.running || []).length} (${runningDesc}) · ` +
       `запущено сейчас ${(report.launch || []).length} (${launchedDesc}) · ` +
+      `перезапущено ${(report.restart || []).length} (${restartDesc}) · ` +
+      `упали ${(report.crashed || []).length} (${crashedDesc}) · ` +
+      `оставлены человеку ${(report.giveUp || []).length} (${(report.giveUp || []).join(", ")}) · ` +
+      `сняты процессы закрытых ${(report.stopOnly || []).length} (${stopOnlyDesc}) · ` +
       `ждут человека ${(report.needsOwner || []).length} (${needsOwnerDesc}) · ` +
       `пропущено ${(report.skipped || []).length} (${skippedDesc}) · ` +
       `стоят ${report.blocked ?? 0} · дальше волн ${report.wavesLeft ?? 0}`;

@@ -21,6 +21,7 @@ from . import deps as deps_mod
 from . import errors as errors_mod
 from . import paths
 from . import routes as routes_mod
+from . import scope as scope_mod
 from . import store_helpers
 from . import textutil
 
@@ -455,6 +456,9 @@ UPDATABLE = {
     # только `create_task` и `launcher.py`, а маршрут можно сменить правкой
     # карточки — но лишь пока работа не началась (`route_change_denied`).
     "launch_route",
+    # Области роя, валидация — `scope.normalize_scope`; `dispatch_id`/`generation`
+    # сюда не входят.
+    "read_scope", "write_scope",
 }
 
 #: Поле карточки с «типом запуска» и его алиас: алиасом маршрут зовут создание
@@ -663,7 +667,10 @@ def update_task(conn: sqlite3.Connection, task_id: str, *, actor: str | None = N
     for key, value in fields.items():
         if key not in UPDATABLE or value is None:
             continue
-        if isinstance(value, list):
+        if key in scope_mod.FIELDS:
+            value = json.dumps(scope_mod.normalize_scope(value, field=key),
+                                ensure_ascii=False)
+        elif isinstance(value, list):
             value = json.dumps(value, ensure_ascii=False)
         if key == "needs_owner":
             value = 1 if value else 0

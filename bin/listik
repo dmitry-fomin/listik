@@ -432,6 +432,10 @@ def show_task(t: dict) -> None:
         # (docs/API.md, `listik set <id> worktree=main`), а не путь: показываем словами.
         tree = store.main_worktree_title(t.get("worktree")) or t.get("worktree") or '—'
         print(f"  дерево:      {tree}   ветка: {t.get('branch') or '—'}")
+    if t.get("write_scope"):
+        print(f"  правит:      {', '.join(t['write_scope'])}")
+    if t.get("read_scope"):
+        print(f"  читает:      {', '.join(t['read_scope'])}")
     if t.get("launch_error"):
         print(f"  автостарт: ОШИБКА {t['launch_error']}")
     elif t.get("autostart") or t.get("launched_by"):
@@ -965,7 +969,7 @@ def cmd_set(args) -> int:
                                      hint="например: listik set <id> status=in_progress priority=P2")
         key, value = pair.split("=", 1)
         key = key.strip()
-        if key == "labels":
+        if key in ("labels", "read_scope", "write_scope"):
             value = [x.strip() for x in value.split(",") if x.strip()]
         elif key == "priority":
             value = priority_value(value)
@@ -1892,9 +1896,12 @@ def build_parser() -> argparse.ArgumentParser:
     sp.add_argument("--max-chars", type=int, default=None)
     sp.add_argument("--format", choices=["text", "json"], default="text")
 
-    sp = add("set", cmd_set, help="изменить поля: set <id> status=in_progress priority=1, "
-                                  "worktree=main — работа в основной ветке без дерева, "
-                                  "route=low-pipeline — маршрут, пока задача не начата")
+    _set_help = ("изменить поля: set <id> status=in_progress priority=1, "
+                 "worktree=main — работа в основной ветке без дерева, "
+                 "route=low-pipeline — маршрут, пока задача не начата, "
+                 "write_scope=listik/store.py,docs/API.md — область правки "
+                 "(пути от корня проекта через запятую; пусто — очистить)")
+    sp = add("set", cmd_set, help=_set_help, description=_set_help)
     add_task_id(sp)
     sp.add_argument("field", nargs="+")
     add_note(sp)

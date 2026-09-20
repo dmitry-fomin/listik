@@ -147,7 +147,9 @@ TOOLS: list[dict] = [
         "description": ("Изменить поля задачи. Каждое изменение попадает в историю. "
                         "status, stage, priority, assignee, holder, labels, needs_owner, "
                         "spec_path, checklist_path, review_path, decision_path, journal_path, "
-                        "worktree, branch, result и т.д."),
+                        "worktree, branch, result, read_scope, write_scope (списки "
+                        "относительных путей от корня проекта, без .., абсолютных путей "
+                        "и шаблонов) и т.д."),
         "inputSchema": {
             "type": "object",
             "properties": {

@@ -125,8 +125,8 @@ EOF
 | Option | Default | Meaning |
 | --- | --- | --- |
 | `--session <name>` | none | name the session (`run`) or find it (`resume`) |
-| `--write` | off | full access: file edits and bash |
-| `--bash` | off | allow bash, keep edits denied |
+| `--permission <read\|bash\|write>` | `read` | permission mode in one flag |
+| `--write` / `--bash` | off | aliases for `--permission write` / `--permission bash` |
 | `--model <channel\|provider/model>` | `glm` = `b-ai-glm/glm-5.3-flash` | short channel name or a full model id |
 | `--channel <channel>` | `glm` | same as `--model`, short name only; not combined with `--model` |
 | `--thinking <level>` | model default | `off`, `minimal`, `low`, `medium`, `high`, `xhigh`, `max` |
@@ -179,31 +179,33 @@ you to `resume` instead.
 `pi` has no OS-level sandbox. The only genuine boundary is the `--tools` allowlist passed
 to the RPC client. Hence three modes:
 
-| Mode | Tools | What the agent can do |
+| `--permission` | Tools | What the agent can do |
 | --- | --- | --- |
-| default | `read,grep,find,ls` | read/grep/find/list only — genuinely read-only |
-| `--bash` | `read,grep,find,ls,bash` | plus shell commands: `git log`, tests, builds |
-| `--write` | unrestricted | everything |
+| `read` (default) | `read,grep,find,ls` | read/grep/find/list only — genuinely read-only |
+| `bash` | `read,grep,find,ls,bash` | plus shell commands: `git log`, tests, builds |
+| `write` | unrestricted | everything |
 
-**`--bash` is not read-only.** With bash allowed, a model asked to create a file will
-simply run `printf 'ok' > file` — observed, not hypothetical. That is why the default mode
-denies bash too, and why `--bash` is a separate, explicit flag rather than part of the
-default.
+`--write` and `--bash` remain as aliases, because Listik routes and pipeline presets
+already send them.
+
+**`--permission bash` is not read-only.** With bash allowed, a model asked to create a file
+will simply run `printf 'ok' > file` — observed, not hypothetical. That is why the default
+mode denies bash too, and why bash is an explicit step up rather than part of the default.
 
 ## What it looks like
 
 ```
 > /pi:pi-check
-готовность:   yes
-бинарь:       /Users/you/.local/bin/pi (ok)
-версия:       0.4.2
-rpc-клиент:   /Users/you/.claude/plugins/.../pi-rpc.py (ok) · python3: /usr/bin/python3
-канал по умолчанию: glm → b-ai-glm/glm-5.3-flash
-каналы:       glm → b-ai-glm/glm-5.3-flash (в каталоге: да; проба: таймаут 30с, по умолчанию)
-              deepseek → b-ai-deepseek/deepseek-v4.1-flash (в каталоге: да; проба: ответила за 4с)
-права по умолчанию: только чтение (правка и bash запрещены) (--tools read,grep,find,ls)
-фоновых задач в работе: 0
-именованных сессий: 2
+ready:            yes
+binary:           /Users/you/.local/bin/pi (ok)
+version:          0.85.1
+rpc client:       /Users/you/.claude/plugins/.../pi-rpc.py (ok) · python3: /usr/bin/python3
+default channel:  glm -> b-ai-glm/glm-5.3-flash
+channels:         glm -> b-ai-glm/glm-5.3-flash (in catalog: yes; probe: timeout 30s, default)
+                  deepseek -> b-ai-deepseek/deepseek-v4.1-flash (in catalog: yes; probe: answered in 4s)
+default permission: read-only (edits and bash blocked) (--tools read,grep,find,ls)
+background jobs running: 0
+named sessions:   2
 ```
 
 A collected task comes back as one final message — the model's own words, passed through
@@ -252,7 +254,7 @@ implementation:
 
 **No approval channel in a headless run.** There is nobody to approve an escalation in a
 background or scripted run; whatever tool the `--tools` allowlist denies is denied outright.
-Re-run with `--bash` or `--write` if the task genuinely needs it.
+Re-run with `--permission bash` or `--permission write` if the task genuinely needs it.
 
 **The secret guard cannot live in the prompt.** `pi` opens files by itself, so scanning the
 task text proves nothing. Scope every task to the files it actually needs and say plainly
@@ -270,7 +272,7 @@ writes, not reads — whoever writes the task owns this.
   to scope by session instead — Claude Code doesn't put `CLAUDE_SESSION_ID` in the Bash
   tool's environment, so the directory is the reliable boundary.
 - `cancel` sends `TERM` to the process tree and escalates to `KILL` after ten seconds — the
-  whole tree has to go, RPC client included. Work it already wrote to disk in `--write` mode
+  whole tree has to go, RPC client included. Work it already wrote to disk in `--permission write` mode
   stays written — cancelling stops the agent, it doesn't roll anything back.
 - `transcript` depends on the session file still existing on disk; a deleted session file is
   exit 2.

@@ -117,29 +117,29 @@ def parse_args(argv):
 def validate_args(args):
     modes = [bool(args.session_id), bool(args.session_file), bool(args.no_session)]
     if sum(1 for m in modes if m) != 1:
-        fail2("нужна ровно одна из опций --session-id, --session-file, --no-session")
+        fail2("exactly one of --session-id, --session-file, --no-session is required")
     if args.name is not None and not args.session_id:
-        fail2("--name допустим только вместе с --session-id")
+        fail2("--name is only allowed together with --session-id")
     if args.timeout < 0:
-        fail2("--timeout не может быть отрицательным")
+        fail2("--timeout cannot be negative")
 
     cwd = args.cwd if args.cwd is not None else os.getcwd()
     if not os.path.isdir(cwd):
-        fail2("каталог не найден: %s" % cwd)
+        fail2("directory not found: %s" % cwd)
     args.cwd = os.path.abspath(cwd)
 
     if args.session_file is not None and not os.path.isfile(args.session_file):
-        fail2("файл сессии не найден: %s" % args.session_file)
+        fail2("session file not found: %s" % args.session_file)
 
     pi_path = args.pi
     if os.sep in pi_path or ("/" in pi_path):
         if not (os.path.isfile(pi_path) and os.access(pi_path, os.X_OK)):
-            fail2("бинарь pi не найден или не исполняем: %s" % pi_path)
+            fail2("pi binary not found or not executable: %s" % pi_path)
         args.pi = os.path.abspath(pi_path)
     else:
         found = shutil.which(pi_path)
         if not found:
-            fail2("бинарь pi не найден в PATH: %s" % pi_path)
+            fail2("pi binary not found in PATH: %s" % pi_path)
         args.pi = found
 
     return args
@@ -149,7 +149,7 @@ def read_prompt():
     raw = sys.stdin.buffer.read()
     text = raw.decode("utf-8", errors="replace")
     if not text.strip():
-        fail2("пустой промпт")
+        fail2("empty prompt")
     return text
 
 
@@ -409,7 +409,7 @@ def main():
 
     def handle_pi_died():
         rc = proc.wait()
-        eprint("error: pi завершился до конца прогона (код %d)" % rc)
+        eprint("error: pi exited before the run finished (code %d)" % rc)
         buf = ring.dump()
         if buf:
             eprint(buf)
@@ -452,7 +452,7 @@ def main():
                     proc.wait(timeout=5)
                 except subprocess.TimeoutExpired:
                     pass
-            eprint("error: таймаут %sс — ответа от pi не дождались" % args.timeout)
+            eprint("error: timed out after %ss - no answer from pi" % args.timeout)
             # Что успело прийти: текст message_end этого прогона, иначе накопленные
             # дельты текущего сообщения, иначе ничего.
             partial = state.last_message_text if state.had_assistant_message else ""
@@ -506,7 +506,7 @@ def main():
                 state.thinking_level = data.get("thinkingLevel")
             elif rid == "prompt":
                 if ev.get("success") is False:
-                    eprint("error: pi отверг промпт: %s" % ev.get("error"))
+                    eprint("error: pi rejected the prompt: %s" % ev.get("error"))
                     finish(6, stop_reason="rejected", error_message=ev.get("error"))
                     return
             elif rid == "last":
@@ -528,12 +528,12 @@ def main():
                         pass
 
                 if not state.had_assistant_message:
-                    eprint("error: пустой ответ — pi не дал ни одного сообщения ассистента за этот прогон")
+                    eprint("error: empty answer - pi produced no assistant message in this run")
                     finish(6, stop_reason=None, error_message=None)
                     return
 
                 if state.last_stop_reason in ("error", "aborted"):
-                    eprint("error: pi: %s" % (state.last_error_message or "прогон прерван"))
+                    eprint("error: pi: %s" % (state.last_error_message or "run aborted"))
                     finish(
                         6,
                         stdout_text=(last_text or state.last_message_text or ""),
@@ -544,7 +544,7 @@ def main():
 
                 answer = last_text if last_text else state.last_message_text
                 if not answer:
-                    eprint("error: пустой ответ")
+                    eprint("error: empty answer")
                     finish(6, stop_reason=state.last_stop_reason, error_message=state.last_error_message)
                     return
 

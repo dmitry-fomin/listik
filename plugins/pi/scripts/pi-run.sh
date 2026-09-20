@@ -124,13 +124,13 @@ resolve_model() {
   case "$resolved" in
     */*) printf '%s' "$resolved"; return 0 ;;
   esac
-  die 2 "неизвестный канал '$want' — короткие имена: $(channel_list_str); либо полный идентификатор вида provider/model"
+  die 2 "unknown channel '$want' - short names: $(channel_list_str); or a full provider/model id"
 }
 
 # --channel: принимает ТОЛЬКО короткие имена каналов.
 resolve_channel_only() {
   local want="$1"
-  is_channel_name "$want" || die 2 "неизвестный канал '$want' — короткие имена: $(channel_list_str)"
+  is_channel_name "$want" || die 2 "unknown channel '$want' - short names: $(channel_list_str)"
   printf '%s' "$want"
 }
 
@@ -145,7 +145,7 @@ split_provider_model() {
 check_thinking() {
   local lvl="$1" t
   for t in "${THINKING_LEVELS[@]}"; do [[ "$t" == "$lvl" ]] && return 0; done
-  die 2 "неверный --thinking '$lvl' — допустимые значения: ${THINKING_LEVELS[*]}"
+  die 2 "invalid --thinking '$lvl' - allowed values: ${THINKING_LEVELS[*]}"
 }
 
 # Модель по умолчанию: канал или полный идентификатор из переменной среды,
@@ -244,7 +244,7 @@ sys.stdout.write(" ".join(padded) + "\n")
 
 need_value() {
   local opt="$1" val="${2:-}"
-  [[ -n "$val" && "$val" != -* ]] || die 2 "$opt требует значение"
+  [[ -n "$val" && "$val" != -* ]] || die 2 "$opt needs a value"
   printf '%s' "$val"
 }
 
@@ -257,24 +257,27 @@ die() {
 usage() {
   cat >&2 <<USAGE
 usage:
-  pi-run.sh check [--json] [--no-probe] [--probe-timeout <сек>]
-  pi-run.sh run [--session <имя>] [--write] [--bash]
-               [--model <канал|provider/model>] [--channel <канал>]
-               [--thinking <level>] [--cwd <dir>] [--timeout <сек>]
-               [--background] [--label <текст>]
+  pi-run.sh check [--json] [--no-probe] [--probe-timeout <sec>]
+  pi-run.sh run [--session <name>] [--permission read|bash|write]
+               [--channel <channel>] [--model <channel|provider/model>]
+               [--thinking <level>] [--cwd <dir>] [--timeout <sec>]
+               [--background] [--label <text>]
                < prompt.txt
-  pi-run.sh resume <имя-сессии|job-id> [те же опции, что у run] < prompt.txt
+  pi-run.sh resume <session-name|job-id> [same options as run] < prompt.txt
   pi-run.sh status [--json] [--all] [--running] [job-id]
-  pi-run.sh result <job-id> [--wait [сек]]
-  pi-run.sh logs <job-id> [--tail <строк>]
-  pi-run.sh cancel <job-id|--all>        (kill — синоним)
-  pi-run.sh clean [--older-than <дней>] [--all]
+  pi-run.sh result <job-id> [--wait [sec]]
+  pi-run.sh logs <job-id> [--tail <lines>]
+  pi-run.sh cancel <job-id|--all>        (kill is a synonym)
+  pi-run.sh clean [--older-than <days>] [--all]
   pi-run.sh sessions [--json]
-  pi-run.sh transcript <job-id> | transcript --session <имя>
+  pi-run.sh transcript <job-id> | transcript --session <name>
 
-каналы (значение --model/--channel): glm = b-ai-glm/glm-5.3-flash (по умолчанию),
-  deepseek = b-ai-deepseek/deepseek-v4.1-flash; --model принимает и полный
-  идентификатор provider/model, --channel — только короткое имя.
+--permission: read (default, read/grep/find/ls only), bash (plus commands, no
+  edit tools), write (everything). --write and --bash are kept as aliases for
+  --permission write / --permission bash.
+channels (value of --channel/--model): glm = b-ai-glm/glm-5.3-flash (default),
+  deepseek = b-ai-deepseek/deepseek-v4.1-flash; --model also takes a full
+  provider/model id, --channel takes the short name only.
 --thinking: off, minimal, low, medium, high, xhigh, max
 USAGE
   exit 2
@@ -286,12 +289,12 @@ USAGE
 resolve_pi() {
   local bin="${PI_CLAUDE_BIN:-}"
   if [[ -n "$bin" ]]; then
-    command -v "$bin" >/dev/null 2>&1 || die 2 "PI_CLAUDE_BIN указывает на '$bin', но такого исполняемого файла нет"
+    command -v "$bin" >/dev/null 2>&1 || die 2 "PI_CLAUDE_BIN points at '$bin', which is not an executable"
     command -v "$bin"
     return 0
   fi
   command -v pi >/dev/null 2>&1 \
-    || die 2 "pi не найден в PATH — установи pi или укажи путь через переменную PI_CLAUDE_BIN"
+    || die 2 "pi not found in PATH - install pi or set PI_CLAUDE_BIN"
   command -v pi
 }
 
@@ -350,11 +353,22 @@ tools_for_mode() {
   esac
 }
 
-mode_ru() {
+mode_label() {
   case "$1" in
-    write)     echo "полный доступ (правка и команды)" ;;
-    read-bash) echo "чтение и команды, правка запрещена" ;;
-    *)         echo "только чтение (правка и bash запрещены)" ;;
+    write)     echo "full access (edits and commands)" ;;
+    read-bash) echo "read and commands, edits blocked" ;;
+    *)         echo "read-only (edits and bash blocked)" ;;
+  esac
+}
+
+# --permission <read|bash|write> — единый флаг прав; --write/--bash остаются
+# синонимами ради маршрутов Listik и пресетов конвейера, которые их уже шлют.
+mode_from_permission() {
+  case "$1" in
+    read|read-only) printf 'read-only' ;;
+    bash|read-bash) printf 'read-bash' ;;
+    write)          printf 'write' ;;
+    *) die 2 "invalid --permission '$1' - allowed values: read, bash, write" ;;
   esac
 }
 
@@ -365,11 +379,11 @@ name_slug() {
 
 check_session_name() {
   local name="$1"
-  [[ -n "$name" ]] || die 2 "--session требует имя сессии"
+  [[ -n "$name" ]] || die 2 "--session needs a session name"
   case "$name" in
-    */*|*..*) die 2 "недопустимое имя сессии '$name' (без / и ..)" ;;
+    */*|*..*) die 2 "invalid session name '$name' (no / and no ..)" ;;
   esac
-  [[ ${#name} -le 120 ]] || die 2 "имя сессии длиннее 120 символов"
+  [[ ${#name} -le 120 ]] || die 2 "session name longer than 120 characters"
 }
 
 name_file() {
@@ -529,20 +543,20 @@ resolve_session_name() {
 }
 
 # --- check ---------------------------------------------------------------------
-catalog_ru() {
+catalog_label() {
   case "$1" in
-    yes) echo "да" ;;
-    no)  echo "нет" ;;
-    *)   echo "проверить не удалось" ;;
+    yes) echo "yes" ;;
+    no)  echo "no" ;;
+    *)   echo "could not check" ;;
   esac
 }
 
-probe_ru() {
+probe_label() {
   case "$1" in
-    ok)      echo "ответила за ${2}с" ;;
-    timeout) echo "таймаут ${2}с (канал завис до первого токена — повтори позже или возьми второй канал)" ;;
-    error)   echo "ошибка: $3" ;;
-    *)       echo "пропущена" ;;
+    ok)      echo "answered in ${2}s" ;;
+    timeout) echo "timeout ${2}s (channel stalled before the first token - retry later or use the other channel)" ;;
+    error)   echo "error: $3" ;;
+    *)       echo "skipped" ;;
   esac
 }
 
@@ -580,7 +594,7 @@ probe_one() {
   local cwd ev meta rc=0 start end
   cwd="$(mktemp -d)"; ev="$(mktemp)"; meta="$(mktemp)"
   start=$(date +%s)
-  printf 'Ответь одним словом: pong' | python3 "$RPC" --pi "$bin" --provider "$prov" --model "$mod" \
+  printf 'Reply with one word: pong' | python3 "$RPC" --pi "$bin" --provider "$prov" --model "$mod" \
     --no-session --pi-arg=--no-tools --pi-arg=--no-context-files --thinking low --timeout "$timeout_s" \
     --events "$ev" --meta "$meta" --cwd "$cwd" >"$dir/out" 2>"$dir/err_raw" || rc=$?
   end=$(date +%s)
@@ -597,10 +611,10 @@ cmd_check() {
       --json)           as_json=1; shift ;;
       --no-probe)        no_probe=1; shift ;;
       --probe-timeout)   probe_timeout="${2:-}"
-                         [[ "$probe_timeout" =~ ^[0-9]+$ ]] || die 2 "--probe-timeout принимает целое число секунд"
+                         [[ "$probe_timeout" =~ ^[0-9]+$ ]] || die 2 "--probe-timeout takes a whole number of seconds"
                          shift 2 ;;
       -h|--help)         usage ;;
-      *)                 die 2 "неизвестная опция '$1'" ;;
+      *)                 die 2 "unknown option '$1'" ;;
     esac
   done
 
@@ -677,7 +691,7 @@ cmd_check() {
       else
         pstatus="error"
         perror="$(printf '%s' "$errtxt" | head -c 120)"
-        [[ -z "$perror" ]] && perror="код возврата $rc"
+        [[ -z "$perror" ]] && perror="exit code $rc"
       fi
     fi
     rm -rf "$cdir" 2>/dev/null || true
@@ -688,14 +702,14 @@ cmd_check() {
     fi
 
     local mark="" mark_json=false
-    if [[ "$cname" == "$default_channel" ]]; then mark=", по умолчанию"; mark_json=true; fi
+    if [[ "$cname" == "$default_channel" ]]; then mark=", default"; mark_json=true; fi
 
     channels_json="${channels_json:+$channels_json,}$(printf '{"name":"%s","provider":"%s","model":"%s","catalog":"%s","probe":"%s","probe_seconds":%s,"probe_error":"%s","default":%s}' \
       "$(json_escape "$cname")" "$(json_escape "$prov")" "$(json_escape "$mod")" \
       "$(json_escape "$cat_status")" "$(json_escape "$pstatus")" \
       "${pseconds:-null}" "$(json_escape "$perror")" "$mark_json")"
 
-    channels_lines="${channels_lines}${channels_lines:+$'\n'}$cname → $cmodel (в каталоге: $(catalog_ru "$cat_status"); проба: $(probe_ru "$pstatus" "$pseconds" "$perror")$mark)"
+    channels_lines="${channels_lines}${channels_lines:+$'\n'}$cname -> $cmodel (in catalog: $(catalog_label "$cat_status"); probe: $(probe_label "$pstatus" "$pseconds" "$perror")$mark)"
     idx=$((idx+1))
   done
 
@@ -715,17 +729,17 @@ cmd_check() {
       "$(json_escape "${py3:-}")" "$(json_escape "$default_channel")" "$probe_timeout" \
       "$channels_json" "$running" "${named:-0}" "$(json_escape "$STATE_DIR")"
   else
-    echo "готовность:   $ready"
-    echo "бинарь:       ${bin:-не найден} ($bin_status)"
-    echo "версия:       ${version:-—}"
-    echo "rpc-клиент:   $RPC ($( [[ "$rpc_status" == "ok" ]] && echo ok || echo "нет файла" )) · python3: ${py3:-нет}"
-    echo "канал по умолчанию: $default_channel → $(expand_channel "$default_channel")"
-    printf 'каналы:       %s\n' "$(printf '%s' "$channels_lines" | sed '2,$s/^/              /')"
-    echo "примечание: «в каталоге» показывает модели с настроенной аутентификацией — «нет в каталоге» не значит «модели не существует», окончательный ответ даёт проба"
-    echo "права по умолчанию: $(mode_ru read-only) (--tools $(tools_for_mode read-only))"
-    echo "фоновых задач в работе: $running"
-    echo "именованных сессий: ${named:-0}"
-    echo "каталог состояния: $STATE_DIR"
+    echo "ready:            $ready"
+    echo "binary:           ${bin:-not found} ($bin_status)"
+    echo "version:          ${version:--}"
+    echo "rpc client:       $RPC ($( [[ "$rpc_status" == "ok" ]] && echo ok || echo "file missing" )) · python3: ${py3:-missing}"
+    echo "default channel:  $default_channel -> $(expand_channel "$default_channel")"
+    printf 'channels:         %s\n' "$(printf '%s' "$channels_lines" | sed '2,$s/^/                  /')"
+    echo "note: \"in catalog\" lists models with configured auth - \"no\" does not mean the model does not exist; the probe is the final word"
+    echo "default permission: $(mode_label read-only) (--tools $(tools_for_mode read-only))"
+    echo "background jobs running: $running"
+    echo "named sessions:   ${named:-0}"
+    echo "state directory:  $STATE_DIR"
   fi
   [[ "$ready" == "yes" ]] || exit 1
 }
@@ -747,20 +761,21 @@ cmd_run() {
   while [[ $# -gt 0 ]]; do
     case "$1" in
       --session)    name="$(need_value --session "${2:-}")"; shift 2 ;;
+      --permission) mode="$(mode_from_permission "$(need_value --permission "${2:-}")")"; shift 2 ;;
       --write)      mode="write"; shift ;;
       --bash)       [[ "$mode" == "write" ]] || mode="read-bash"; shift ;;
       --model)      model="$(need_value --model "${2:-}")"; model_given=1; shift 2 ;;
       --channel)    model="$(need_value --channel "${2:-}")"; channel_given=1; shift 2 ;;
       --thinking)   thinking="$(need_value --thinking "${2:-}")"; check_thinking "$thinking"; shift 2 ;;
       --cwd)        workdir="$(need_value --cwd "${2:-}")"; shift 2 ;;
-      --timeout)    timeout_s="${2:-}"; [[ -z "$timeout_s" ]] && die 2 "--timeout требует значение"; shift 2 ;;
-      --label)      label="${2:-}"; [[ -z "$label" ]] && die 2 "--label требует значение"; shift 2 ;;
+      --timeout)    timeout_s="${2:-}"; [[ -z "$timeout_s" ]] && die 2 "--timeout needs a value"; shift 2 ;;
+      --label)      label="${2:-}"; [[ -z "$label" ]] && die 2 "--label needs a value"; shift 2 ;;
       --background) background=1; shift ;;
       -h|--help)    usage ;;
-      *)            die 2 "неизвестная опция '$1' (промпт передаётся на stdin, не аргументом)" ;;
+      *)            die 2 "unknown option '$1' (the prompt goes on stdin, not as an argument)" ;;
     esac
   done
-  [[ $model_given -eq 1 && $channel_given -eq 1 ]] && die 2 "--model и --channel вместе не указываются"
+  [[ $model_given -eq 1 && $channel_given -eq 1 ]] && die 2 "--model and --channel are mutually exclusive"
 
   local full_model="" channel_name=""
   if [[ $channel_given -eq 1 ]]; then
@@ -775,13 +790,13 @@ cmd_run() {
   fi
 
   workdir="${workdir:-$PWD}"
-  [[ -d "$workdir" ]] || die 2 "каталог '$workdir' не существует"
+  [[ -d "$workdir" ]] || die 2 "directory '$workdir' does not exist"
   workdir="$(cd "$workdir" && pwd)"
 
   if [[ -n "$name" ]]; then
     check_session_name "$name"
     local existing; existing="$(resolve_session_name "$name" "$workdir" || true)"
-    [[ -n "$existing" ]] && die 2 "сессия с именем '$name' уже есть — продолжить её: pi-run.sh resume --session '$name'; новая сессия требует другого имени"
+    [[ -n "$existing" ]] && die 2 "session '$name' already exists - continue it with: pi-run.sh resume --session '$name'; a new session needs another name"
   fi
 
   start_run "$mode" "$full_model" "$channel_name" "$thinking" "$workdir" "$timeout_s" \
@@ -797,14 +812,14 @@ start_run() {
   if [[ -z "$timeout_s" ]]; then
     if [[ $background -eq 1 ]]; then timeout_s="$DEFAULT_BG_TIMEOUT"; else timeout_s="$DEFAULT_TIMEOUT"; fi
   fi
-  [[ "$timeout_s" =~ ^[0-9]+$ ]] || die 2 "--timeout принимает целое число секунд (0 — без ограничения)"
+  [[ "$timeout_s" =~ ^[0-9]+$ ]] || die 2 "--timeout takes a whole number of seconds (0 = no limit)"
 
-  [[ -f "$RPC" ]] || die 2 "не найден rpc-клиент '$RPC' — переустанови плагин pi"
-  command -v python3 >/dev/null 2>&1 || die 2 "нужен python3 — им работает rpc-клиент pi-rpc.py"
+  [[ -f "$RPC" ]] || die 2 "rpc client '$RPC' not found - reinstall the pi plugin"
+  command -v python3 >/dev/null 2>&1 || die 2 "python3 is required - it runs the pi-rpc.py client"
 
   local prompt
   prompt="$(cat)"
-  [[ -z "${prompt//[[:space:]]/}" ]] && die 2 "пустой промпт на stdin"
+  [[ -z "${prompt//[[:space:]]/}" ]] && die 2 "empty prompt on stdin"
 
   local bin; bin="$(resolve_pi)"
   local tools; tools="$(tools_for_mode "$mode")"
@@ -870,14 +885,14 @@ run_foreground() {
       ;;
     124)
       [[ -s "$out_file" ]] && cat "$out_file"
-      die 6 "pi: таймаут ${timeout_s}с — перезапусти с --background, тогда потолок снимается${err_text:+; stderr: $err_text}"
+      die 6 "pi: timed out after ${timeout_s}s - rerun with --background to lift the ceiling${err_text:+; stderr: $err_text}"
       ;;
     2)
-      die 2 "${err_text:-ошибка вызова pi-rpc.py (см. код возврата $rc)}"
+      die 2 "${err_text:-pi-rpc.py call failed (exit code $rc)}"
       ;;
     *)
       [[ -s "$out_file" ]] && cat "$out_file"
-      die 6 "pi: прогон завершился с кодом $rc${err_text:+ — $err_text}"
+      die 6 "pi: run exited with code $rc${err_text:+ - $err_text}"
       ;;
   esac
 }
@@ -893,7 +908,7 @@ claim_job_dir() {
     dir="$JOBS_DIR/$id"
     mkdir "$dir" 2>/dev/null && { printf '%s' "$id"; return 0; }
     i=$((i+1))
-    [[ $i -ge 100 ]] && die 5 "не удалось выделить идентификатор задачи в $JOBS_DIR"
+    [[ $i -ge 100 ]] && die 5 "could not allocate a job id in $JOBS_DIR"
   done
 }
 
@@ -992,12 +1007,12 @@ run_background() {
 # --- общее для работы с джобами --------------------------------------------
 job_dir_of() {
   local job_id="$1"
-  [[ -n "$job_id" ]] || die 2 "нужен job-id (список — pi-run.sh status)"
+  [[ -n "$job_id" ]] || die 2 "a job-id is required (list them with: pi-run.sh status)"
   case "$job_id" in
-    */*|*..*) die 2 "недопустимый job-id '$job_id'" ;;
+    */*|*..*) die 2 "invalid job-id '$job_id'" ;;
   esac
   local dir="$JOBS_DIR/$job_id"
-  [[ -d "$dir" ]] || die 2 "нет задачи с id '$job_id' (список — pi-run.sh status --all)"
+  [[ -d "$dir" ]] || die 2 "no job with id '$job_id' (list them with: pi-run.sh status --all)"
   echo "$dir"
 }
 
@@ -1051,7 +1066,7 @@ elapsed_of() {
   end="$(meta_get finished_epoch "$dir/meta")"
   now="${end:-$(date +%s)}"
   local s=$(( now - start ))
-  printf '%dм%02dс' $(( s / 60 )) $(( s % 60 ))
+  printf '%dm%02ds' $(( s / 60 )) $(( s % 60 ))
 }
 
 # --- status -----------------------------------------------------------------
@@ -1063,7 +1078,7 @@ cmd_status() {
       --all)     all=1; shift ;;
       --running) only_running=1; shift ;;
       -h|--help) usage ;;
-      -*)        die 2 "неизвестная опция '$1'" ;;
+      -*)        die 2 "unknown option '$1'" ;;
       *)         job_id="$1"; shift ;;
     esac
   done
@@ -1082,7 +1097,7 @@ cmd_status() {
     return 0
   fi
 
-  [[ -d "$JOBS_DIR" ]] || { echo "фоновых задач нет" >&2; [[ $as_json -eq 1 ]] && echo '[]'; exit 1; }
+  [[ -d "$JOBS_DIR" ]] || { echo "no background jobs" >&2; [[ $as_json -eq 1 ]] && echo '[]'; exit 1; }
 
   local ids=() dir name
   for dir in $(ls -1t "$JOBS_DIR" 2>/dev/null); do
@@ -1113,7 +1128,7 @@ cmd_status() {
         "$(meta_get label "$d/meta")" || exit 0
     fi
     if [[ $shown -ge 30 ]]; then
-      [[ $as_json -eq 1 ]] || echo "… показаны первые 30; остальные — status --all" >&2
+      [[ $as_json -eq 1 ]] || echo "... first 30 shown; the rest are in status --all" >&2
       break
     fi
   done
@@ -1124,9 +1139,9 @@ cmd_status() {
   fi
   if [[ $shown -eq 0 ]]; then
     if [[ $all -eq 0 ]]; then
-      echo "здесь фоновых задач нет (все задачи на машине — status --all)" >&2
+      echo "no background jobs here (every job on this machine: status --all)" >&2
     else
-      echo "фоновых задач нет" >&2
+      echo "no background jobs" >&2
     fi
     exit 1
   fi
@@ -1194,7 +1209,7 @@ cmd_result() {
       --wait)    wait_s="${2:-}"
                  if [[ "$wait_s" =~ ^[0-9]+$ ]]; then shift 2; else wait_s=300; shift; fi ;;
       -h|--help) usage ;;
-      -*)        die 2 "неизвестная опция '$1'" ;;
+      -*)        die 2 "unknown option '$1'" ;;
       *)         job_id="$1"; shift ;;
     esac
   done
@@ -1212,12 +1227,12 @@ cmd_result() {
 
   case "$st" in
     running)
-      die 5 "задача ещё выполняется ($(elapsed_of "$dir") с $(meta_get started "$dir/meta")); опроси позже: pi-run.sh status $job_id"
+      die 5 "job still running ($(elapsed_of "$dir") since $(meta_get started "$dir/meta")); poll later: pi-run.sh status $job_id"
       ;;
     orphaned)
       [[ -s "$dir/output.txt" ]] || fallback_answer_from_events "$dir/events.jsonl" > "$dir/output.txt" 2>/dev/null || true
       [[ -s "$dir/output.txt" ]] && cat "$dir/output.txt"
-      die 6 "воркер задачи исчез, не проставив итог (перезагрузка или kill -9); выше — то, что успело записаться"
+      die 6 "the job worker vanished without recording an outcome (reboot or kill -9); above is whatever got written"
       ;;
   esac
 
@@ -1225,24 +1240,24 @@ cmd_result() {
 
   case "$st" in
     timeout)
-      die 6 "задача оборвалась по таймауту ($(meta_get timeout "$dir/meta")с); выше — то, что успело прийти"
+      die 6 "job hit its timeout ($(meta_get timeout "$dir/meta")s); above is whatever arrived"
       ;;
     canceled)
-      die 6 "задача снята вручную ($(elapsed_of "$dir") работы); выше — то, что успело прийти"
+      die 6 "job was cancelled manually (after $(elapsed_of "$dir")); above is whatever arrived"
       ;;
     failed)
       local em; em="$(meta_get error "$dir/meta")"
       if [[ -n "$em" && "$em" != "—" ]]; then
-        die 6 "задача завершилась с ошибкой (код $(meta_get exit "$dir/meta")) — $em"
+        die 6 "job failed (exit $(meta_get exit "$dir/meta")) - $em"
       else
-        die 6 "задача завершилась с ошибкой (код $(meta_get exit "$dir/meta"))$( [[ -s "$dir/stderr.txt" ]] && printf ' — %s' "$(tail -c 500 "$dir/stderr.txt")" )"
+        die 6 "job failed (exit $(meta_get exit "$dir/meta"))$( [[ -s "$dir/stderr.txt" ]] && printf ' — %s' "$(tail -c 500 "$dir/stderr.txt")" )"
       fi
       ;;
   esac
 
   if [[ ! -s "$dir/output.txt" ]]; then
     [[ -s "$dir/stderr.txt" ]] && tail -c 2000 "$dir/stderr.txt" >&2
-    die 6 "пустой ответ"
+    die 6 "empty answer"
   fi
 }
 
@@ -1251,30 +1266,30 @@ cmd_logs() {
   local job_id="" tail_n=40
   while [[ $# -gt 0 ]]; do
     case "$1" in
-      --tail)    tail_n="${2:-}"; [[ "$tail_n" =~ ^[0-9]+$ ]] || die 2 "--tail принимает число строк"; shift 2 ;;
+      --tail)    tail_n="${2:-}"; [[ "$tail_n" =~ ^[0-9]+$ ]] || die 2 "--tail takes a number of lines"; shift 2 ;;
       -h|--help) usage ;;
-      -*)        die 2 "неизвестная опция '$1'" ;;
+      -*)        die 2 "unknown option '$1'" ;;
       *)         job_id="$1"; shift ;;
     esac
   done
   local dir; dir="$(job_dir_of "$job_id")"
   local st; st="$(job_status_of "$dir")"
 
-  echo "статус:  $st ($(elapsed_of "$dir"))"
-  echo "события: $(file_bytes "$dir/events.jsonl") байт накоплено"
-  echo "ответ:   $(file_bytes "$dir/output.txt") байт"
+  echo "status:  $st ($(elapsed_of "$dir"))"
+  echo "events:  $(file_bytes "$dir/events.jsonl") bytes accumulated"
+  echo "answer:  $(file_bytes "$dir/output.txt") bytes"
   if [[ -s "$dir/stderr.txt" ]]; then
-    echo "--- stderr клиента ---"
+    echo "--- client stderr ---"
     tail -n 10 "$dir/stderr.txt"
   fi
   if [[ -s "$dir/events.jsonl" ]]; then
-    echo "--- последние $tail_n событий ---"
+    echo "--- last $tail_n events ---"
     render_events "$dir/events.jsonl" "$tail_n"
   elif [[ "$st" == "running" ]]; then
-    echo "событий пока нет. Это может быть норма в первые секунды прогона —"
-    echo "признак работы — сам статус running и растущее время."
+    echo "no events yet. That is normal in the first seconds of a run -"
+    echo "the signs of life are the running status and a growing elapsed time."
   else
-    echo "событий нет"
+    echo "no events"
   fi
 }
 
@@ -1297,34 +1312,34 @@ for line in sys.stdin:
     if t == "tool_execution_start":
         args = ev.get("args") or {}
         brief = "; ".join("%s=%s" % (k, str(v)[:80]) for k, v in list(args.items())[:3])
-        print("[инструмент] %s %s" % (ev.get("toolName", "?"), brief))
+        print("[tool] %s %s" % (ev.get("toolName", "?"), brief))
     elif t == "tool_execution_end":
         status = "error" if ev.get("isError") else "ok"
-        print("[инструмент] %s -> %s" % (ev.get("toolName", "?"), status))
+        print("[tool] %s -> %s" % (ev.get("toolName", "?"), status))
     elif t == "message_end":
         msg = ev.get("message") or {}
         if msg.get("role") != "assistant":
             continue
         if msg.get("stopReason") == "error":
-            print("[ответ] ошибка: %s" % (msg.get("errorMessage") or "")[:200])
+            print("[answer] error: %s" % (msg.get("errorMessage") or "")[:200])
         else:
             content = msg.get("content") or []
             text = "".join(c.get("text", "") for c in content if isinstance(c, dict) and c.get("type") == "text")
-            print("[ответ] %s" % text.replace("\n", " ")[:200])
+            print("[answer] %s" % text.replace("\n", " ")[:200])
     elif t == "agent_start":
-        print("[агент] старт")
+        print("[agent] start")
     elif t == "agent_settled":
-        print("[агент] завершён")
+        print("[agent] done")
     elif t == "auto_retry_start":
-        print("[повтор] попытка %s из %s: %s" % (ev.get("attempt", "?"), ev.get("maxAttempts", "?"), (ev.get("errorMessage") or "")[:120]))
+        print("[retry] attempt %s of %s: %s" % (ev.get("attempt", "?"), ev.get("maxAttempts", "?"), (ev.get("errorMessage") or "")[:120]))
     elif t == "compaction_start":
-        print("[сжатие контекста] начато (%s)" % ev.get("reason", "?"))
+        print("[context compaction] started (%s)" % ev.get("reason", "?"))
     elif t == "compaction_end":
-        print("[сжатие контекста] завершено (%s)" % ev.get("reason", "?"))
+        print("[context compaction] finished (%s)" % ev.get("reason", "?"))
     elif t == "pi_rpc_start":
-        print("[клиент] старт %s/%s" % (ev.get("provider", "?"), ev.get("model", "?")))
+        print("[client] start %s/%s" % (ev.get("provider", "?"), ev.get("model", "?")))
     elif t == "pi_rpc_end":
-        print("[клиент] выход %s" % ev.get("exit", "?"))
+        print("[client] exit %s" % ev.get("exit", "?"))
     elif t in ("message_start", "turn_start", "turn_end", "agent_end", "entry_appended", "queue_update"):
         continue
     else:
@@ -1352,7 +1367,7 @@ cancel_one() {
   local job_id; job_id="$(meta_get id "$dir/meta")"
   local st; st="$(job_status_of "$dir")"
   if [[ "$st" != "running" ]]; then
-    echo "$job_id: уже $st, снимать нечего"
+    echo "$job_id: already $st, nothing to cancel"
     return 0
   fi
 
@@ -1384,19 +1399,19 @@ cancel_one() {
   rm -f "$dir/canceled"
   local final; final="$(job_status_of "$dir")"
   case "$final" in
-    canceled) echo "$job_id: снята ($(elapsed_of "$dir") работы)" ;;
-    running)  echo "$job_id: снять не удалось — процесс не отвечает; посмотри status $job_id" ;;
-    *)        echo "$job_id: успела завершиться сама до отмены ($final)" ;;
+    canceled) echo "$job_id: cancelled (after $(elapsed_of "$dir"))" ;;
+    running)  echo "$job_id: could not cancel - the process is not responding; see status $job_id" ;;
+    *)        echo "$job_id: finished on its own before the cancel ($final)" ;;
   esac
 }
 
 cmd_cancel() {
   local target="${1:-}"
   [[ "$target" == "-h" || "$target" == "--help" ]] && usage
-  [[ -n "$target" ]] || die 2 "нужен job-id или --all (список — pi-run.sh status)"
+  [[ -n "$target" ]] || die 2 "a job-id or --all is required (list them with: pi-run.sh status)"
   if [[ "$target" == "--all" ]]; then
     local any=0 dir
-    [[ -d "$JOBS_DIR" ]] || die 1 "фоновых задач нет"
+    [[ -d "$JOBS_DIR" ]] || die 1 "no background jobs"
     for dir in "$JOBS_DIR"/*/; do
       [[ -f "$dir/meta" ]] || continue
       job_is_mine "${dir%/}" || continue
@@ -1404,7 +1419,7 @@ cmd_cancel() {
       any=1
       cancel_one "${dir%/}"
     done
-    [[ $any -eq 1 ]] || { echo "работающих задач нет" >&2; exit 1; }
+    [[ $any -eq 1 ]] || { echo "no running jobs" >&2; exit 1; }
     return 0
   fi
   local dir; dir="$(job_dir_of "$target")"
@@ -1416,15 +1431,15 @@ cmd_clean() {
   local days=7 all=0
   while [[ $# -gt 0 ]]; do
     case "$1" in
-      --older-than) days="${2:-}"; [[ "$days" =~ ^[0-9]+$ ]] || die 2 "--older-than принимает число дней"
+      --older-than) days="${2:-}"; [[ "$days" =~ ^[0-9]+$ ]] || die 2 "--older-than takes a number of days"
                     [[ "$days" -eq 0 ]] && all=1
                     shift 2 ;;
       --all)        all=1; shift ;;
       -h|--help)    usage ;;
-      *)            die 2 "неизвестная опция '$1'" ;;
+      *)            die 2 "unknown option '$1'" ;;
     esac
   done
-  [[ -d "$JOBS_DIR" ]] || { echo "фоновых задач нет"; return 0; }
+  [[ -d "$JOBS_DIR" ]] || { echo "no background jobs"; return 0; }
 
   local now removed=0 skipped=0 dir
   now="$(date +%s)"
@@ -1441,8 +1456,8 @@ cmd_clean() {
     rm -rf "${dir%/}"
     removed=$((removed+1))
   done
-  echo "удалено задач: $removed (работающие не трогались${skipped:+; чужих пропущено: $skipped})"
-  echo "сессии pi не удалялись — их файлы лежат в ~/.pi/agent/sessions (удаление: pi -r, Ctrl+D)"
+  echo "jobs removed: $removed (running jobs untouched${skipped:+; other sessions skipped: $skipped})"
+  echo "pi sessions were not deleted - their files live in ~/.pi/agent/sessions (delete via: pi -r, Ctrl+D)"
 }
 
 # --- resume -----------------------------------------------------------------
@@ -1452,47 +1467,48 @@ cmd_resume() {
   while [[ $# -gt 0 ]]; do
     case "$1" in
       --session)    name="$(need_value --session "${2:-}")"; shift 2 ;;
+      --permission) mode="$(mode_from_permission "$(need_value --permission "${2:-}")")"; shift 2 ;;
       --write)      mode="write"; shift ;;
       --bash)       [[ "$mode" == "write" ]] || mode="read-bash"; shift ;;
       --model)      model="$(need_value --model "${2:-}")"; model_given=1; shift 2 ;;
       --channel)    model="$(need_value --channel "${2:-}")"; channel_given=1; shift 2 ;;
       --thinking)   thinking="$(need_value --thinking "${2:-}")"; check_thinking "$thinking"; shift 2 ;;
       --cwd)        workdir="$(need_value --cwd "${2:-}")"; shift 2 ;;
-      --timeout)    timeout_s="${2:-}"; [[ -z "$timeout_s" ]] && die 2 "--timeout требует значение"; shift 2 ;;
-      --label)      label="${2:-}"; [[ -z "$label" ]] && die 2 "--label требует значение"; shift 2 ;;
+      --timeout)    timeout_s="${2:-}"; [[ -z "$timeout_s" ]] && die 2 "--timeout needs a value"; shift 2 ;;
+      --label)      label="${2:-}"; [[ -z "$label" ]] && die 2 "--label needs a value"; shift 2 ;;
       --background) background=1; shift ;;
       -h|--help)    usage ;;
-      -*)           die 2 "неизвестная опция '$1' (промпт передаётся на stdin, не аргументом)" ;;
-      *)            [[ -n "$target" ]] && die 2 "лишний аргумент '$1'"
+      -*)           die 2 "unknown option '$1' (the prompt goes on stdin, not as an argument)" ;;
+      *)            [[ -n "$target" ]] && die 2 "unexpected argument '$1'"
                     target="$1"; shift ;;
     esac
   done
-  [[ $model_given -eq 1 && $channel_given -eq 1 ]] && die 2 "--model и --channel вместе не указываются"
+  [[ $model_given -eq 1 && $channel_given -eq 1 ]] && die 2 "--model and --channel are mutually exclusive"
 
   [[ -n "$target" || -n "$name" ]] \
-    || die 2 "нужно имя сессии или job-id: pi-run.sh resume --session <имя> (список — pi-run.sh sessions)"
+    || die 2 "a session name or job-id is required: pi-run.sh resume --session <name> (list them with: pi-run.sh sessions)"
 
   local job_dir=""
   if [[ -n "$target" ]]; then
     case "$target" in
-      */*|*..*) die 2 "недопустимый аргумент '$target'" ;;
+      */*|*..*) die 2 "invalid argument '$target'" ;;
     esac
     if [[ -d "$JOBS_DIR/$target" ]]; then
       job_dir="$JOBS_DIR/$target"
     elif [[ -z "$name" ]]; then
       name="$target"
     else
-      die 2 "указаны и job-id '$target', и --session '$name' — оставь что-то одно"
+      die 2 "both job-id '$target' and --session '$name' given - use one of them"
     fi
   fi
 
   local sess_file="" src_cwd="" src_mode="" src_model="" src_thinking="" src_name=""
   if [[ -n "$job_dir" ]]; then
     local st; st="$(job_status_of "$job_dir")"
-    [[ "$st" == "running" ]] && die 2 "задача '$target' ещё выполняется — resume после её окончания; иначе вызывающий откатывается на новый прогон"
+    [[ "$st" == "running" ]] && die 2 "job '$target' is still running - resume it after it finishes, or fall back to a fresh run"
     sess_file="$(meta_get pi_session_file "$job_dir/meta")"
     [[ -n "$sess_file" && "$sess_file" != "—" && -f "$sess_file" ]] \
-      || die 2 "у задачи '$target' нет файла сессии pi на диске — начни новый прогон: pi-run.sh run"
+      || die 2 "job '$target' has no pi session file on disk - start a fresh run: pi-run.sh run"
     src_cwd="$(meta_get cwd "$job_dir/meta")"
     src_mode="$(meta_get mode "$job_dir/meta")"
     src_model="$(meta_get model "$job_dir/meta")"
@@ -1507,7 +1523,7 @@ cmd_resume() {
     [[ -d "$probe_cwd" ]] && probe_cwd="$(cd "$probe_cwd" && pwd)"
     sess_file="$(resolve_session_name "$name" "$probe_cwd" || true)"
     [[ -n "$sess_file" && -f "$sess_file" ]] \
-      || die 2 "сессии с именем '$name' нет — начни новую: pi-run.sh run --session '$name'"
+      || die 2 "no session named '$name' - start one: pi-run.sh run --session '$name'"
     src_cwd="$(meta_get cwd "$(name_file "$name")")"
     src_model="$(meta_get model "$(name_file "$name")")"
     src_thinking="$(meta_get thinking "$(name_file "$name")")"
@@ -1540,7 +1556,7 @@ cmd_resume() {
       *)                         mode="read-only" ;;
     esac
   fi
-  [[ -n "$label" ]] || label="продолжение ${name:-$target}"
+  [[ -n "$label" ]] || label="resume of ${name:-$target}"
 
   RESUME_SESSION_FILE="$sess_file"
   start_run "$mode" "$full_model" "$channel_name" "$thinking" "$workdir" "$timeout_s" \
@@ -1554,12 +1570,12 @@ cmd_sessions() {
     --json)    as_json=1 ;;
     -h|--help) usage ;;
     "")        ;;
-    *)         die 2 "неизвестная опция '$1'" ;;
+    *)         die 2 "unknown option '$1'" ;;
   esac
 
   if [[ ! -d "$NAMES_DIR" ]] || [[ -z "$(ls -1 "$NAMES_DIR" 2>/dev/null)" ]]; then
     [[ $as_json -eq 1 ]] && { echo '[]'; return 0; }
-    echo "именованных сессий нет (имя задаётся при запуске: run --session <имя>)" >&2
+    echo "no named sessions (a name is given at launch: run --session <name>)" >&2
     exit 1
   fi
 
@@ -1594,8 +1610,8 @@ cmd_transcript() {
     case "$1" in
       --session) name="$(need_value --session "${2:-}")"; shift 2 ;;
       -h|--help) usage ;;
-      -*)        die 2 "неизвестная опция '$1'" ;;
-      *)         [[ -n "$job_id" ]] && die 2 "лишний аргумент '$1'"
+      -*)        die 2 "unknown option '$1'" ;;
+      *)         [[ -n "$job_id" ]] && die 2 "unexpected argument '$1'"
                  job_id="$1"; shift ;;
     esac
   done
@@ -1605,16 +1621,16 @@ cmd_transcript() {
     local dir; dir="$(job_dir_of "$job_id")"
     file="$(meta_get pi_session_file "$dir/meta")"
     [[ -n "$file" && "$file" != "—" ]] \
-      || die 2 "у задачи '$job_id' ещё нет файла сессии pi (прогон не начался, сессия не создавалась, или события ещё не записались)"
+      || die 2 "job '$job_id' has no pi session file yet (the run has not started, no session was created, or no events were written)"
   elif [[ -n "$name" ]]; then
     check_session_name "$name"
     file="$(resolve_session_name "$name" "$PWD" || true)"
-    [[ -n "$file" ]] || die 2 "сессии с именем '$name' нет — список: pi-run.sh sessions"
+    [[ -n "$file" ]] || die 2 "no session named '$name' - list them with: pi-run.sh sessions"
   else
-    die 2 "укажи job-id или --session <имя>"
+    die 2 "give a job-id or --session <name>"
   fi
 
-  [[ -f "$file" ]] || die 2 "файл сессии '$file' не найден на диске — сессию удалили"
+  [[ -f "$file" ]] || die 2 "session file '$file' is gone from disk - the session was deleted"
   cat "$file"
 }
 
@@ -1633,5 +1649,5 @@ case "$sub" in
   sessions)           cmd_sessions "$@" ;;
   transcript)         cmd_transcript "$@" ;;
   -h|--help)          usage ;;
-  *)                  die 2 "неизвестная подкоманда '$sub'" ;;
+  *)                  die 2 "unknown subcommand '$sub'" ;;
 esac

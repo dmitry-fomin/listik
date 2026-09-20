@@ -1,76 +1,46 @@
 ---
 name: pi-check
-description: Проверить, готов ли pi к работе — стоит ли бинарь, какая версия, есть ли rpc-клиент и python3, доступны ли оба канала (glm = b-ai-glm/glm-5.3-flash по умолчанию и deepseek = b-ai-deepseek/deepseek-v4.1-flash) и сколько фоновых задач уже идёт. Используй, когда pi отвечает ошибкой, пустотой или ведёт себя не так, как ожидалось, и перед первым делегированием в сессии, если есть сомнения в установке.
-when_to_use: Триггер-фразы — «работает ли pi», «проверь pi», «почему pi не отвечает», «какой канал у pi по умолчанию». Запускай и самостоятельно, если делегирование в pi упало с ошибкой запуска. Это скил про готовность харнесса, а не про ход работы — «pi молчит» после запущенной фоновой задачи это вопрос к /pi:pi-jobs, а сама постановка задачи к /pi:pi-delegate.
+description: Check whether pi is ready to work — binary, version, rpc client and python3, both channels (glm = b-ai-glm/glm-5.3-flash by default, deepseek = b-ai-deepseek/deepseek-v4.1-flash), and how many background jobs are already running.
+when_to_use: Triggers — "is pi working", "check pi", "why doesn't pi answer", "what channel does pi use". Run it on your own when a delegation failed at launch. This is about harness readiness, not about work in flight — "pi is silent" after a background job is /pi:pi-jobs, and posing a task is /pi:pi-delegate.
 allowed-tools: Bash(${CLAUDE_PLUGIN_ROOT}/scripts/pi-run.sh *)
 ---
 
-Быстрая проба (укороченный потолок ожидания, чтобы вставка не упёрлась в лимит исполнения):
+Quick probe (shortened ceiling so the injection doesn't hit the execution limit):
 
 ```
 !`${CLAUDE_PLUGIN_ROOT}/scripts/pi-run.sh check --probe-timeout 30 || true`
 ```
 
-Полная проба (до 120 секунд на канал) — отдельным вызовом
-`${CLAUDE_PLUGIN_ROOT}/scripts/pi-run.sh check` без `--probe-timeout`; предложи её
-человеку, если в быстрой пробе какой-то канал показал таймаут. Строка «таймаут 30с» у
-`glm` при ответившем `deepseek` **не** означает, что харнесс не готов: готовность `yes`
-ставится, когда ответил хотя бы один канал.
+Full probe is `check` without `--probe-timeout` (up to 120 s per channel) — offer it if a
+channel timed out above. `check --json` returns the same data with keys `ready`,
+`default_channel`, `probe_timeout`, `channels[].probe` (`ok|timeout|error|skipped`),
+`state_dir`.
 
-Разбери вывод и скажи человеку одним абзацем, готов харнесс или нет. Если готов — не
-пересказывай таблицу целиком, назови канал по умолчанию, статус проб обоих каналов и
-число задач в работе.
+Report readiness to the human in one paragraph — default channel, probe result per
+channel, jobs in flight. Don't retell the whole table.
 
-## Что означают поля
+## Reading the output
 
-| Поле | Норма | Если не так |
-| --- | --- | --- |
-| `готовность` | `yes` | ниже разобрано по строкам, что именно сломано |
-| `бинарь` | путь и `ok` | `не найден` — pi не установлен либо сессия стартовала до правки `PATH`; `broken` — бинарь есть, но проверка версии у него падает |
-| `версия` | номер версии | пусто — бинарь не отвечает на запрос версии, лечится переустановкой |
-| `rpc-клиент` (с python3) | путь к `pi-rpc.py` и `ok`, рядом `python3: <путь>` | `нет файла` — плагин повреждён, переустанови; `python3: нет` — прогон вообще не стартует |
-| `канал по умолчанию` | `glm → b-ai-glm/glm-5.3-flash` | другое значение — двинуто переменной `PI_CLAUDE_DEFAULT_MODEL` |
-| `каналы` | у каждого — «в каталоге» и «проба» | «в каталоге: нет» значит «нет среди моделей с настроенной аутентификацией», а не «модель не существует»; «в каталоге: проверить не удалось» — список моделей у бинаря не ответил. Проба: «ответила» / «таймаут» (канал завис до первого токена) / «ошибка» (текст ошибки рядом) / «пропущена» (без пробы спросить было нечем — нет бинаря, python3 или rpc-клиента, либо стоит `--no-probe`) |
-| `права по умолчанию` | только чтение (правка и bash запрещены) | режим по умолчанию для прогонов без `--write`/`--bash` |
-| `фоновых задач в работе` | сколько прогонов идёт прямо сейчас | ненулевое значение — pi уже чем-то занят; список даёт `/pi:pi-jobs` |
-| `именованных сессий` | сколько сессий обвязка знает по имени | их список — `sessions` |
-| `каталог состояния` | путь к каталогу задач и сессий | нестандартный — значит выставлен `PI_CLAUDE_STATE_DIR` |
+- **`ready: yes` needs only one channel to answer**, so a `glm` timeout next to a
+  responding `deepseek` does not mean the harness is down.
+- `binary: not found` — pi isn't installed, or the session started before `PATH` changed;
+  `broken` — the binary exists but its version check fails.
+- `rpc client: file missing` means a damaged plugin; `python3: missing` means runs won't
+  start at all (hard requirement of `pi-rpc.py`).
+- `in catalog: no` means "not among the models with configured auth", not "no such model":
+  the provider isn't wired up or was renamed. The `~/.pi/agent/extensions/b-ai.ts`
+  extension is the human's to set up.
+- Probe `timeout` — the channel stalled before the first token. Not a bridge failure: say
+  so and offer a retry or the other channel. **The human picks; never substitute the
+  channel yourself.**
+- Probe `error` — read the text next to it: 401 is usually a key problem, 404 a wrong
+  model name.
+- A non-standard `state directory` means `PI_CLAUDE_STATE_DIR` is set; a non-standard
+  default channel means `PI_CLAUDE_DEFAULT_MODEL` is.
+- **`pi auth check` lies for these providers** (`not_ready` / `provider_not_found`) even
+  when runs succeed, because they come from an extension rather than static config.
+  Readiness here is decided by the probe run, never by `auth check`.
 
-Одной строкой: `check --json` отдаёт те же данные объектом — ключи `ready`,
-`default_channel`, `probe_timeout`, `channels[].probe` со значениями
-`ok|timeout|error|skipped`, `state_dir`.
-
-## Что чинить
-
-- **Бинаря нет, а CLI ставился только что.** `PATH` в этой сессии старый. Попроси
-  человека открыть новый терминал или указать `PI_CLAUDE_BIN`; проверять установку самому
-  через `brew`/`npm`/`curl` не нужно.
-- **python3 нет.** rpc-клиент `pi-rpc.py` без него не работает вовсе — попроси человека
-  поставить python3, это жёсткое требование обвязки.
-- **Канала нет в каталоге.** Каналов два: `glm` (`b-ai-glm/glm-5.3-flash`, по умолчанию) и
-  `deepseek` (`b-ai-deepseek/deepseek-v4.1-flash`). «Нет в каталоге» значит, что провайдер
-  не подключён или модель переименована — расширение `~/.pi/agent/extensions/b-ai.ts`
-  заводит человек сам, за него этого не делай.
-- **Проба «таймаут».** Канал завис до первого токена — это не сбой обвязки. Скажи
-  человеку и предложи повторить `check` позже или взять второй канал. **Выбирает человек,
-  сам канал не подменяй.**
-- **Проба «ошибка».** Читай текст ошибки рядом с ней: 401 обычно значит проблему с
-  ключом, 404 — неверное имя модели; чинит человек.
-- **Прямо сказано: `pi auth check` для этих провайдеров врёт** (`not_ready` /
-  `provider_not_found`), хотя прогон на канале проходит — провайдер регистрируется
-  расширением, а не статичной конфигурацией, которую видит `auth check`. Поэтому
-  готовность здесь определяется пробным прогоном, а не `auth check`.
-
-Диагностика на этом заканчивается: чинить установку и авторизацию за человека не пытайся,
-это его действия. Когда `готовность: yes` — делегируй через `/pi:pi-delegate`.
-
-## Красные линии
-
-Действуют и здесь, и внутри любого прогона pi:
-
-- Ничего не коммитить, не пушить, не удалять рекурсивно.
-- `.env`, `*.key`, `*.pem`, `credentials.json` и прочие секреты не читать, не печатать в
-  ответ и не пересылать. Имя переменной окружения с ключом называть можно, значение — нет.
-- Установку и авторизацию за человека не выполнять.
-- Канал по умолчанию не подменять самостоятельно — таймаут `glm` обсуждается с человеком,
-  а не решается тихой сменой на `deepseek`.
+Diagnosis ends here: installing and authenticating are the human's actions, not yours.
+Don't go checking `brew`/`npm`/`curl` on your own. Once ready, delegate via
+`/pi:pi-delegate`. Red lines and the full script contract: `pi-runtime`.

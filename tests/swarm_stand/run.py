@@ -1,7 +1,8 @@
-"""Цикл волн стенда роя: план → диспетч волны → барьер → следующая волна от нового
-main, пока задачи не кончатся, план не зациклится, интеграция не покраснеет или не
-кончится лимит волн. Настоящий цикл (наблюдатель, лестница реакций) пишет swarm-6
-в `listik/`; этот модуль только модель для тестов, `config.ladder` здесь не читается.
+"""Цикл волн стенда роя: план → диспетч волны → (при `config.ladder`) наблюдатель и
+лестница реакций → барьер → следующая волна от нового main, пока задачи не кончатся,
+план не зациклится, интеграция не покраснеет или не кончится лимит волн. Настоящий
+цикл (наблюдатель, лестница реакций) пишет swarm-6 в `listik/`; этот модуль только
+модель для тестов.
 """
 
 from __future__ import annotations
@@ -15,6 +16,7 @@ from .dispatch import Dispatcher, RunConfig
 from .journal import Journal
 from .sandbox import Sandbox, build
 from .scenario import Scenario, validate
+from .watch import Watcher
 
 
 @dataclass
@@ -74,10 +76,16 @@ def run(
         base = sandbox.head("main")
         journal.add("wave_started", wave=wave, tasks=current, base=base)
         dispatcher.dispatch(current, base=base)
-        dispatcher.wait(deadline=120)
 
-        # место для наблюдателя и лестницы реакций (порция e); config.ladder здесь
-        # не читается.
+        held: list[str] = []
+        if config.ladder:
+            watcher = Watcher(sandbox, scenario, dispatcher, journal, wave=wave)
+            dispatcher.wait(deadline=120, on_tick=watcher.tick)
+            # все результаты закоммичены — итоговое пробное слияние.
+            watcher.tick()
+            held = watcher.held
+        else:
+            dispatcher.wait(deadline=120)
 
         result = run_barrier(
             sandbox,
@@ -87,6 +95,7 @@ def run(
             wave=wave,
             task_ids=current,
             integration_command=integration_command,
+            held=held,
         )
         merged.extend(result.merged)
         waves_run.append(current)

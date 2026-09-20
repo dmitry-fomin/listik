@@ -6,6 +6,7 @@
 from __future__ import annotations
 
 import subprocess
+from collections.abc import Sequence
 from dataclasses import dataclass
 from pathlib import Path
 
@@ -134,6 +135,7 @@ def run_barrier(
     wave: int,
     task_ids: list[str],
     integration_command: list[str] | None = None,
+    held: Sequence[str] = (),
 ) -> BarrierResult:
     order = merge_order(dispatcher, task_ids)
 
@@ -144,6 +146,34 @@ def run_barrier(
             merged.append(task_id)
         else:
             failed.append(task_id)
+
+    if held:
+        for task_id in held:
+            dispatcher.states[task_id].status = "pending"
+            base = sandbox.head("main")
+            dispatcher.dispatch([task_id], base=base)
+            generation = dispatcher.states[task_id].generation
+            journal.add("resumed", wave=wave, task=task_id, generation=generation, base=base)
+
+            if dispatcher.config.gates == "manual":
+                dispatcher.open_gate(task_id, "start")
+                dispatcher.open_gate(task_id, "finish")
+            elif dispatcher.config.gates == "sequential":
+                # затвор поколения ещё не создан — при исчерпанном курсоре очередь
+                # откроет его и сама; повторное создание файла безвредно.
+                dispatcher.open_gate(task_id, "start")
+            # "none" — затворов нет, ничего не открывать.
+
+        dispatcher.wait(deadline=120)
+
+        for task_id in held:
+            if dispatcher.states[task_id].status == "done":
+                if merge_task(sandbox, scenario, dispatcher, journal, task_id, wave=wave):
+                    merged.append(task_id)
+                else:
+                    failed.append(task_id)
+            else:
+                failed.append(task_id)
 
     integration: bool | None
     if not merged:

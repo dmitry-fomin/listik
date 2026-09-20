@@ -467,7 +467,7 @@ class Dispatcher:
     def running(self) -> list[str]:
         return [tid for tid, s in self.states.items() if s.status == "running"]
 
-    def wait(self, *, until=None, deadline: float = 30.0) -> None:
+    def wait(self, *, until=None, deadline: float = 30.0, on_tick=None) -> None:
         start = time.monotonic()
         while True:
             if until is not None:
@@ -484,4 +484,29 @@ class Dispatcher:
                 )
 
             self.tick()
+            if on_tick is not None:
+                on_tick()
             time.sleep(self.config.poll)
+
+    def withdraw(self, task_id: str, *, reason: str, kill: bool = True) -> None:
+        """Снять задачу лестницей реакций: `running` — как `revoke`; `done` —
+        поднять поколение и вернуть в `pending`, не трогая старое дерево (его
+        сносит вызывающий, `remove_tree`)."""
+        state = self.states[task_id]
+        if state.status == "running":
+            self.revoke(task_id, kill=kill, reason=reason)
+            return
+        if state.status != "done":
+            raise RuntimeError(
+                f"withdraw: задача {task_id!r} не running/done (status={state.status!r})"
+            )
+
+        old_generation = state.generation
+        state.generation += 1
+        state.dispatch_id = None
+        state.head = None
+        state.first_change_tick = None
+        state.status = "pending"
+        self.journal.add(
+            "revoked", task=task_id, generation=old_generation, reason=reason, killed=False
+        )

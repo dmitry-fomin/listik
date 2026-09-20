@@ -442,6 +442,13 @@ class Dispatcher:
         state.fail_reason = reason
         self.journal.add("failed", task=task_id, generation=state.generation, reason=reason, **extra)
 
+    def mark_merged(self, task_id: str, *, sha: str) -> None:
+        state = self.states[task_id]
+        if state.status != "done":
+            raise RuntimeError(f"mark_merged: задача {task_id!r} не done (status={state.status!r})")
+        state.status = "merged"
+        state.head = sha
+
     def touched_files(self, task_id: str) -> list[str]:
         state = self.states[task_id]
         out = self.sandbox.git_out(

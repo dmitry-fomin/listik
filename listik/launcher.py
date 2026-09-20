@@ -22,6 +22,7 @@ import re
 import subprocess
 import sys
 import threading
+import uuid
 from datetime import datetime, timezone
 from pathlib import Path
 
@@ -73,9 +74,14 @@ def _db_path(conn):
 
 
 def _release(conn, task_id: str) -> None:
-    """Снять захват задачи, поставленный в начале `start`."""
-    conn.execute("UPDATE tasks SET launched_by = NULL, launched_at = NULL WHERE id = ?",
-                 (task_id,))
+    """Снять захват задачи, поставленный в начале `start`.
+
+    `generation` остаётся поднятым: монотонность важнее «красивых» номеров, а
+    процесса с этим поколением не существует — токен с ним никто не получит.
+    `dispatch_id` снимается — это уже не действующий запуск.
+    """
+    conn.execute("UPDATE tasks SET launched_by = NULL, launched_at = NULL, "
+                 "dispatch_id = NULL WHERE id = ?", (task_id,))
     conn.commit()
 
 
@@ -133,10 +139,12 @@ def _substitute(element: str, values: dict) -> str:
     return _SUBST_RE.sub(lambda m: values[m.group(1)], element)
 
 
-def _start_tracker(conn, task_id: str, pid: int, proc: subprocess.Popen, notify):
+def _start_tracker(conn, task_id: str, pid: int, proc: subprocess.Popen, notify,
+                    *, dispatch_id: str | None, generation: int):
     """Поток-демон, который дождётся процесса и запишет его код выхода."""
     thread = threading.Thread(
-        target=_track, args=(conn, _db_path(conn), task_id, pid, proc, notify),
+        target=_track,
+        args=(conn, _db_path(conn), task_id, pid, proc, notify, dispatch_id, generation),
         name=f"listik-launch-{task_id}", daemon=True)
     with _trackers_lock:
         _trackers[task_id] = thread
@@ -144,19 +152,32 @@ def _start_tracker(conn, task_id: str, pid: int, proc: subprocess.Popen, notify)
     return thread
 
 
-def _track(conn, db_path, task_id: str, pid: int, proc: subprocess.Popen, notify) -> None:
+def _track(conn, db_path, task_id: str, pid: int, proc: subprocess.Popen, notify,
+           dispatch_id: str | None, generation: int) -> None:
     code = proc.wait()
     own = db_mod.connect(db_path) if db_path else None
     target = own or conn
     try:
         ts = store.now_iso()
-        target.execute("UPDATE tasks SET launch_exit_code = ?, launch_finished_at = ?, "
-                       "updated_at = ? WHERE id = ?", (code, ts, ts, task_id))
-        # add_comment коммитит и UPDATE выше — завершение пишется одной транзакцией.
-        # Этап, держателя и статус слежение не трогает: запуск не делает claim за агента.
-        store.add_comment(target, task_id,
-                          f"автостарт: процесс {pid} завершился с кодом {code}",
-                          author="agent:listik", kind="journal")
+        # `IS`, не `=`: сверяем со «своим» запуском, включая случай dispatch_id IS NULL
+        # (запуски до поколений). `rowcount == 0` — задачу отозвали/перезапустили, пока
+        # процесс жил (порция c): колонки чужого запуска не трогаем.
+        cur = target.execute(
+            "UPDATE tasks SET launch_exit_code = ?, launch_finished_at = ?, "
+            "updated_at = ? WHERE id = ? AND dispatch_id IS ?",
+            (code, ts, ts, task_id, dispatch_id))
+        if cur.rowcount == 0:
+            store.add_comment(
+                target, task_id,
+                f"автостарт: процесс {pid} поколения {generation} завершился с кодом "
+                f"{code} после отзыва — карточка не менялась",
+                author="agent:listik", kind="journal")
+        else:
+            # add_comment коммитит и UPDATE выше — завершение пишется одной транзакцией.
+            # Этап, держателя и статус слежение не трогает: не делает claim за агента.
+            store.add_comment(target, task_id,
+                              f"автостарт: процесс {pid} завершился с кодом {code}",
+                              author="agent:listik", kind="journal")
     except Exception as exc:  # noqa: BLE001 — падать в демоне нельзя, скажем в stderr
         print(f"autostart {task_id}: не записал завершение процесса {pid}: {exc}",
               file=sys.stderr, flush=True)
@@ -181,9 +202,11 @@ def start(conn, task_id: str, notify=None, *, log_dir=None) -> str | None:
     Поток слежения доступен через `tracker(task_id)`.
     """
     ts = store.now_iso()
+    dispatch_id = uuid.uuid4().hex
     captured = conn.execute(
-        "UPDATE tasks SET launched_by = 'listik', launched_at = ? "
-        "WHERE id = ? AND launched_by IS NULL", (ts, task_id))
+        "UPDATE tasks SET launched_by = 'listik', launched_at = ?, "
+        "generation = generation + 1, dispatch_id = ? "
+        "WHERE id = ? AND launched_by IS NULL", (ts, dispatch_id, task_id))
     conn.commit()
     if captured.rowcount == 0:
         # Задача уже запущена этим или параллельным вызовом: ни launch_error, ни
@@ -243,8 +266,11 @@ def start(conn, task_id: str, notify=None, *, log_dir=None) -> str | None:
     log_dir = Path(log_dir) if log_dir is not None else paths.LOGS_DIR
     stamp = datetime.now(timezone.utc).strftime("%Y%m%dT%H%M%SZ")
     log_path = log_dir / f"launch-{task_id}-{stamp}.log"
+    generation = int(row["generation"] or 0)
     env = os.environ | {"LISTIK_TASK_ID": task_id, "LISTIK_ROUTE": key,
-                        "LISTIK_LAUNCHED_BY": "listik"}
+                        "LISTIK_LAUNCHED_BY": "listik",
+                        "LISTIK_GENERATION": str(generation),
+                        "LISTIK_DISPATCH_ID": row["dispatch_id"] or ""}
     try:
         log_dir.mkdir(parents=True, exist_ok=True)
         with open(log_path, "wb") as log:
@@ -260,14 +286,18 @@ def start(conn, task_id: str, notify=None, *, log_dir=None) -> str | None:
 
     pid = proc.pid
     ts = store.now_iso()
+    dispatch_id = row["dispatch_id"]
     conn.execute("UPDATE tasks SET launch_pid = ?, launch_log = ?, launch_error = NULL, "
-                 "updated_at = ? WHERE id = ?", (pid, str(log_path), ts, task_id))
+                 "launch_exit_code = NULL, launch_finished_at = NULL, updated_at = ? "
+                 "WHERE id = ?", (pid, str(log_path), ts, task_id))
     # add_comment коммитит и UPDATE выше — запуск пишется одной транзакцией.
     store.add_comment(conn, task_id,
-                      f"автостарт: маршрут {key}, pid {pid}, лог {log_path}",
+                      f"автостарт: маршрут {key}, pid {pid}, лог {log_path}, "
+                      f"поколение {generation}, запуск {dispatch_id}",
                       author="agent:listik", kind="journal")
     _notify(notify, task_id)
-    _start_tracker(conn, task_id, pid, proc, notify)
+    _start_tracker(conn, task_id, pid, proc, notify,
+                   dispatch_id=dispatch_id, generation=generation)
     return None
 
 
@@ -286,7 +316,7 @@ def recover(conn, notify=None) -> list[str]:
     считается живым, это не лечим.
     """
     rows = conn.execute(
-        "SELECT id, launch_pid FROM tasks WHERE launched_by = 'listik' "
+        "SELECT id, launch_pid, dispatch_id FROM tasks WHERE launched_by = 'listik' "
         "AND launch_pid IS NOT NULL "
         "AND (launch_finished_at IS NULL OR launch_finished_at = '')").fetchall()
     lost: list[str] = []
@@ -304,20 +334,20 @@ def recover(conn, notify=None) -> list[str]:
             _notify(notify, row["id"])
             lost.append(row["id"])
         except PermissionError:
-            _start_poller(conn, row["id"], pid, notify)
+            _start_poller(conn, row["id"], pid, notify, dispatch_id=row["dispatch_id"])
         except OSError as exc:  # прочая ошибка проверки — считаем процесс живым
             print(f"autostart {row['id']}: проверка pid {pid}: {exc}",
                   file=sys.stderr, flush=True)
-            _start_poller(conn, row["id"], pid, notify)
+            _start_poller(conn, row["id"], pid, notify, dispatch_id=row["dispatch_id"])
         else:
-            _start_poller(conn, row["id"], pid, notify)
+            _start_poller(conn, row["id"], pid, notify, dispatch_id=row["dispatch_id"])
     return lost
 
 
-def _start_poller(conn, task_id: str, pid: int, notify):
+def _start_poller(conn, task_id: str, pid: int, notify, *, dispatch_id: str | None):
     """Поток-демон, опрашивающий живой pid, который сервер не запускал в этом процессе."""
     thread = threading.Thread(
-        target=_poll, args=(conn, _db_path(conn), task_id, pid, notify),
+        target=_poll, args=(conn, _db_path(conn), task_id, pid, notify, dispatch_id),
         name=f"listik-launch-poll-{task_id}", daemon=True)
     with _trackers_lock:
         _trackers[task_id] = thread
@@ -335,7 +365,7 @@ def _alive(pid: int) -> bool:
     return True
 
 
-def _poll(conn, db_path, task_id: str, pid: int, notify) -> None:
+def _poll(conn, db_path, task_id: str, pid: int, notify, dispatch_id: str | None) -> None:
     import time
     while _alive(pid):
         time.sleep(POLL_INTERVAL)
@@ -345,8 +375,9 @@ def _poll(conn, db_path, task_id: str, pid: int, notify) -> None:
         ts = store.now_iso()
         cur = target.execute(
             "UPDATE tasks SET launch_finished_at = ?, updated_at = ? WHERE id = ? "
-            "AND launch_pid = ? AND (launch_finished_at IS NULL OR launch_finished_at = '')",
-            (ts, ts, task_id, pid))
+            "AND launch_pid = ? AND dispatch_id IS ? "
+            "AND (launch_finished_at IS NULL OR launch_finished_at = '')",
+            (ts, ts, task_id, pid, dispatch_id))
         if cur.rowcount == 0:  # запись уже сделана или задачу перезапустили
             target.commit()
             return

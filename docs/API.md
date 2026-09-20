@@ -122,7 +122,7 @@ updated_at, status, error, chunk_count`, — и `children[]` — все доче
 | `listik/launcher.py: start` (сервер) | `launched_by`, `launched_at`, `launch_pid`, `launch_log`, `launch_error`, плюс `needs_owner` через `set_needs_owner` |
 | поток слежения за процессом и `recover` при старте сервера | `launch_exit_code`, `launch_finished_at` |
 | локальный фолбэк CLI (`client.local_call`, ветка `create`) | `launch_error`, плюс `needs_owner` |
-| `dispatch_id`, `generation` — лаунчер (карточка `listik-go61`) | через `PATCH`/`listik set`/`listik_update` не меняются |
+| `listik/launcher.py: start` (тем же условным UPDATE, что и захват) | `dispatch_id` (новый), `generation` (`generation + 1`) — через `PATCH`/`listik set`/`listik_update` не меняются |
 
 В белый список `PATCH /api/tasks/{id}` (`store.UPDATABLE`) входит только `launch_route`
 (и его алиас `route`, как в POST): правкой карточки маршрут меняют, пока работа не началась.
@@ -365,19 +365,23 @@ Listik — только файл поставки: `listik init`/старт се
 Ошибка запуска не отменяет создание задачи: POST отвечает `201`, а не `500`.
 
 Отдельный случай — повторный запуск: задача захватывается условным
-`UPDATE … SET launched_by='listik' WHERE id=? AND launched_by IS NULL`, поэтому `start`
+`UPDATE … SET launched_by='listik', launched_at=?, generation = generation + 1,
+dispatch_id=? WHERE id=? AND launched_by IS NULL`, поэтому `start`
 для уже запущенной задачи возвращает `уже запущена Listik` и **ничего** не меняет —
-ни `launch_error`, ни `needs_owner`, ни комментариев; в stderr только строка
-`autostart <id>: уже запущена Listik`. Так же ведёт себя гонка двух одновременных
-запусков: процесс и лог-файл ровно одни.
+ни `launch_error`, ни `needs_owner`, ни комментариев, ни `generation`/`dispatch_id`; в
+stderr только строка `autostart <id>: уже запущена Listik`. Так же ведёт себя гонка двух
+одновременных запусков: процесс и лог-файл ровно одни.
 
 Успешный запуск пишет `launched_by=listik`, `launch_pid`, `launched_at`, `launch_log`
 (файл `logs/launch-<id>-<ГГГГММДДТЧЧММССZ>.log` в корне Listik, каталог создаётся),
-`launch_error=NULL` и комментарий `journal` от `agent:listik`: `автостарт: маршрут <key>,
-pid <N>, лог <path>`. Процесс не блокирует запрос: POST возвращается сразу после `Popen`.
-Поток-демон дожидается процесса и пишет `launch_exit_code`, `launch_finished_at` и
-комментарий `автостарт: процесс <pid> завершился с кодом <code>`; этап, держатель и статус
-не меняются — запуск не делает claim за агента. Исключение — прямой маршрут
+`launch_error=NULL`, `launch_exit_code=NULL`, `launch_finished_at=NULL` (запись описывает
+текущее поколение — нужно для повторного запуска после отзыва, см. «Поколения запуска»)
+и комментарий `journal` от `agent:listik`: `автостарт: маршрут <key>, pid <N>, лог <path>,
+поколение <G>, запуск <dispatch_id>`. Процесс не блокирует запрос: POST возвращается сразу
+после `Popen`. Поток-демон дожидается процесса и пишет `launch_exit_code`,
+`launch_finished_at` и комментарий `автостарт: процесс <pid> завершился с кодом <code>`
+(своему запуску — см. «Поколения запуска»); этап, держатель и статус не меняются — запуск
+не делает claim за агента. Исключение — прямой маршрут
 (`kind: direct`): до `Popen` сервер выдаёт карточку харнессу записи (`update_task` от
 `agent:listik`: `holder=<harness>` и `stage=s1-spec`, если этапа не было; уже стоящий
 держатель не перезаписывается), и карточка «выдана, но не взята» до `claim` самого агента.
@@ -387,6 +391,32 @@ pid <N>, лог <path>`. Процесс не блокирует запрос: PO
 (`ProcessLookupError`) получает `launch_finished_at` и журнал «отслеживание потеряно при
 перезапуске сервера» (`launch_exit_code` остаётся `NULL`), живой (в том числе
 `PermissionError`) не трогается. Переиспользованный PID считается живым — принятый риск.
+
+#### Поколения запуска
+
+Каждый успешный захват (`start`) поднимает `generation` карточки на единицу и выдаёт
+новый `dispatch_id` (32-символьный hex, `uuid.uuid4().hex`) — они пишутся тем же условным
+`UPDATE`, что и сам захват. Первое поколение — `1`; `0` — задачу ещё не запускали.
+Поколение никогда не убывает: ни один код пути не пишет в `generation` ничего, кроме
+`generation + 1`. Отказ после захвата (`_fail`/`_release`) оставляет `generation`
+поднятым — процесса с этим номером не существует, второй раз его никто не получит — и
+снимает `dispatch_id` (ставит `NULL`). Окружение запущенного процесса получает, кроме
+`LISTIK_TASK_ID`, `LISTIK_ROUTE`, `LISTIK_LAUNCHED_BY=listik`, ещё две переменные:
+`LISTIK_GENERATION` (десятичная строка поколения этого захвата) и `LISTIK_DISPATCH_ID`
+(значение `dispatch_id`) — итого пять.
+
+Потоки слежения (поток-демон после `start` и поток-опросчик `_poll` после `recover`)
+пишут `launch_exit_code`/`launch_finished_at` условным `UPDATE … WHERE id = ? AND
+dispatch_id IS ?` — именно `IS`, чтобы обслуживать и запуски до появления поколений
+(`dispatch_id IS NULL`). Если задачу успели отозвать или перезапустить, пока старый
+процесс ещё жил (`rowcount == 0`), поток-демон колонки не трогает, но пишет журнал
+`автостарт: процесс <pid> поколения <G> завершился с кодом <code> после отзыва —
+карточка не менялась`; поток-опросчик в этом случае молчит, как и раньше. Отзыв и
+ограждение по токену — см. ниже (порции b/c).
+
+`recover` поколение и `dispatch_id` не переиздаёт: он лишь читает `dispatch_id` из
+строки (у запусков до поколений — `NULL`) и передаёт его потоку-опросчику, чтобы тот мог
+ограничить свой `UPDATE` тем же условием.
 
 ### Смена маршрута («типа запуска») у заведённой задачи
 

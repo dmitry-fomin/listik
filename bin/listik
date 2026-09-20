@@ -445,6 +445,9 @@ def show_task(t: dict) -> None:
             launched = f"запущена {t['launched_by']} pid {pid if pid is not None else '—'}"
             if t.get("launched_at"):
                 launched += f" {t['launched_at']}"
+            generation = t.get("generation") or 0
+            if generation > 0:
+                launched += f", поколение {generation}, запуск {t.get('dispatch_id')}"
             bits.append(launched)
             code = t.get("launch_exit_code")
             bits.append(f"код {code if code is not None else 'идёт'}")

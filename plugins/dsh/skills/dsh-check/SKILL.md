@@ -1,49 +1,50 @@
 ---
 name: dsh-check
-description: Проверить, готов ли DeepSeek Harness к работе — стоит ли dsh, поднимается ли headless-профиль, какая модель выбрана, есть ли авторизация. Используй, когда dsh отвечает ошибкой, пустотой или ведёт себя не так, как ожидалось, и перед первым делегированием в сессии, если есть сомнения в установке.
-when_to_use: Триггер-фразы — «работает ли dsh», «проверь дипсик харнес», «почему dsh не отвечает», «какая модель в dsh». Запускай и самостоятельно, если делегирование в dsh упало с ошибкой запуска. Это скил про готовность харнесса, а не про ход работы — «дипсик молчит» после запущенной фоновой задачи это вопрос к /dsh:dsh-jobs, а сама постановка задачи к /dsh:dsh-delegate.
+description: Check whether DeepSeek Harness is ready to work — binary, the headless profile, the active model and provider route, credentials, and how many background jobs are already running.
+when_to_use: Triggers — "is dsh working", "check the DeepSeek harness", "why doesn't dsh answer", "what model does dsh use". Run it on your own when a delegation failed at launch. This is about harness readiness, not about work in flight — "dsh is silent" after a background job is /dsh:dsh-jobs, and posing a task is /dsh:dsh-delegate.
 allowed-tools: Bash(${CLAUDE_PLUGIN_ROOT}/scripts/dsh-run.sh *)
 ---
 
-Текущее состояние DeepSeek Harness:
+Current state of DeepSeek Harness:
 
 ```
 !`${CLAUDE_PLUGIN_ROOT}/scripts/dsh-run.sh check`
 ```
 
-Разбери вывод и скажи человеку одним абзацем, готов харнесс или нет. Если готов — не
-пересказывай таблицу целиком, назови только модель и версию.
+Report readiness to the human in one paragraph — ready or not, and on which model. Don't
+retell the whole report. `check --json` returns the same data with keys `ready`, `binary`,
+`profiles`, `provider`, `model`, `credentials`, `pi_ai_routes`, `running_jobs`.
 
-## Что означают поля
+## Reading the output
 
-| Поле | Норма | Если не так |
-| --- | --- | --- |
-| `готовность` | `yes` | ниже разобрано по строкам, что именно сломано |
-| `бинарь` | путь и `ok` | `не найден` — dsh не установлен либо сессия стартовала до правки `PATH`; `broken` — бинарь есть, но `--version` падает |
-| `профили` | среди них `headless` | без `headless` делегирование невозможно: именно этот профиль отвечает за один прогон без интерфейса |
-| `модель` | `<провайдер> / <модель>` | пусто — файл настроек не создан, dsh возьмёт свой дефолт |
-| `маршруты pi-ai` | маршруты из секции `llm-pi-ai:` (`openrouter`, `zai`, свой шлюз) | `—` — секции нет; это норма для нативного `deepseek-official` и поломка, если провайдер в строке `модель` ожидался из неё |
-| `учётные данные` | `present` | это вход в веб-интерфейс. На API-ключе `absent` — норма: ключ живёт в переменной окружения по ссылке `apiKeyEnv`, а не в этом хранилище |
-| `фоновых задач в работе` | сколько прогонов идёт прямо сейчас | ненулевое значение — dsh уже чем-то занят; список даёт `/dsh:dsh-jobs` |
+- **`ready: yes` needs the binary plus the `headless` profile** — that profile is what runs
+  one task without a UI; without it delegation is impossible.
+- `binary: not found` — dsh isn't installed, or the session started before `PATH` changed;
+  `broken` — the binary exists but its version check fails.
+- An empty `model` means the settings file was never created and dsh will use its own
+  default.
+- `pi-ai routes` lists the routes raised by the `llm-pi-ai:` section. A `—` is normal for
+  the native `deepseek-official` provider and a breakage only if the provider in the `model`
+  line was supposed to come from that section.
+- **`credentials: absent` is not a failure by itself.** That field is the web-UI login; a
+  harness running on an API key keeps the key in an environment variable named by
+  `apiKeyEnv`, not in this store. Never read or print the contents of the credentials
+  directory.
 
-## Что чинить и как
+## What to fix and how
 
-- **Бинаря нет, а харнесс ставился только что.** `PATH` в этой сессии старый. Попроси
-  человека открыть новый терминал; проверять установку самому через `brew`/`npm` не нужно.
-- **Вход не выполнен.** Авторизация интерактивная, за человека её сделать нельзя.
-  Предложи ему выполнить `dsh --profile web` и войти в интерфейсе, а потом повторить
-  проверку. Содержимое каталога учётных данных не читай и наружу не отдавай. Если харнесс
-  работает по API-ключу, вход не нужен вовсе — `absent` тут ни при чём.
-- **`MISSING_CREDENTIAL` на прогоне.** Ключ задан ссылкой (`apiKeyEnv`) на переменную
-  окружения, а её нет в окружении, из которого стартовал Claude Code — чаще всего строку
-  `export` добавили уже после старта сессии. Лечится перезапуском Claude Code из нового
-  терминала. Значение переменной не выводи ни в ответ, ни в логи.
-- **Модель не та, что нужна.** Меняет её человек сам в настройках харнесса
-  (`~/.dsh/settings.yaml`). Ни этот скил, ни делегирование модель не переключают: прогоны
-  идут на том, что выбрано в настройках.
-- **Всё готово, но прогон возвращает пустоту.** Дело не в готовности: смотри
-  `${CLAUDE_PLUGIN_ROOT}/scripts/dsh-run.sh transcript` — он покажет, что харнесс
-  делал на самом деле.
+- **Binary missing right after an install** — this session's `PATH` is stale. Ask the human
+  for a fresh terminal; don't go checking `brew`/`npm` yourself.
+- **`MISSING_CREDENTIAL` on a run** — the variable named by `apiKeyEnv` is absent from the
+  environment Claude Code started in, usually because the `export` was added after the
+  session started. A restart from a fresh terminal fixes it. Never print the value.
+- **Login not done** — authentication is interactive: suggest `dsh --profile web` and a
+  re-check. On an API key no login is needed at all.
+- **Wrong model** — the human changes it in `~/.dsh/settings.yaml`. Neither this skill nor
+  delegation switches models.
+- **Ready but the run returns nothing** — not a readiness problem: `transcript` shows what
+  the harness actually did.
 
-Диагностика на этом заканчивается: чинить установку и авторизацию за человека не пытайся,
-это его действия. Когда `готовность: yes` — делегируй через `/dsh:dsh-delegate`.
+Diagnosis ends here: installing and authenticating are the human's actions, not yours. Once
+ready, delegate via `/dsh:dsh-delegate`. Red lines and the full script contract:
+`dsh-runtime`.

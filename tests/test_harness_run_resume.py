@@ -206,7 +206,9 @@ class HarnessRunResumeTests(unittest.TestCase):
         proc = self._run_dsh(["resume", "dsh-test-job"], stdin="continue")
         self.assertEqual(proc.returncode, 2, proc.stderr)
         self.assertIn("headless", proc.stderr)
-        self.assertIn("откат", proc.stderr.lower() + proc.stderr)
+        # Вывод скрипта переведён на английский (listik-h2cl); проверяем то же
+        # требование — подсказку откатиться на новый прогон.
+        self.assertIn("fall back to a fresh run", proc.stderr.lower())
 
 
 if __name__ == "__main__":

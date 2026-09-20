@@ -94,10 +94,14 @@ only appears in a fresh session.
 | `/dsh:dsh-second-opinion` | check your own hypothesis against `dsh`, which reads the relevant code itself |
 | `/dsh:dsh-jobs` | what `dsh` is running right now: status, progress, collect an answer, cancel a job |
 
+`/dsh:dsh-delegate` and `/dsh:dsh-second-opinion` run forked (`context: fork`): the skill
+is its own background context, so the launch, the wait and the collected answer never land
+in your main conversation — only the skill's final message does, with the job id in it.
+
 Two internal pieces you never call directly: the `dsh-runtime` skill (the calling contract,
 preloaded into the subagent) and the `dsh:dsh-runner` subagent (a thin forwarder whose only
-job is to run the script and return its stdout verbatim, so the harness output never floods
-your main context).
+job is to run the script and return its stdout verbatim — still available for callers that
+want a subagent rather than a forked skill).
 
 ## How it works
 
@@ -114,8 +118,8 @@ keeps working on your request, and polls the job the way it would poll any other
 
 The job outlives the tool call that started it, so a run that takes forty minutes is no
 longer a problem: the Bash tool's ten-minute ceiling applies to the launch, not to `dsh`.
-The `dsh:dsh-runner` subagent is still there for the synchronous route and for collecting a
-large answer without flooding the main context.
+The `dsh:dsh-runner` subagent is still there for callers that hand out work as subagents;
+the delegation skills use a forked context instead.
 
 The invariant everything rests on: **stdout of `dsh-run.sh run` is exactly the model's final
 answer, nothing else.** Diagnostics go to stderr. That is what makes "show the output
@@ -145,7 +149,8 @@ EOF
 
 | Option | Default | Meaning |
 | --- | --- | --- |
-| `--write` | off | allow writes to the working directory (`workspace-write`) |
+| `--permission <read\|bash\|write>` | `read` | permission mode in one flag |
+| `--write` | off | alias for `--permission write` |
 | `--model pro\|flash\|vision\|<name>` | user's setting | manual use only — the skills never pass it |
 | `--effort low\|medium\|high\|xhigh\|max` | user's setting | manual use only; works with or without `--model` |
 | `--provider <route>` | user's setting, else `deepseek-official` | manual use only — switch route for one run |
@@ -156,6 +161,18 @@ EOF
 
 Always use a **quoted** heredoc (`<<'EOF'`). Tasks nearly always contain code, and an
 unquoted marker lets the shell expand `$` and backticks before the text ever reaches `dsh`.
+
+Permission modes map onto the harness's own sandbox:
+
+| `--permission` | Sandbox mode | What the agent can do |
+| --- | --- | --- |
+| `read` (default) | `read-only` | read, grep, run commands — writes are refused by the OS sandbox |
+| `bash` | `read-only` | the same tier; dsh has no separate "commands but no edits" mode, so `bash` is accepted for one flag spelling across harnesses |
+| `write` | `workspace-write` | edits inside the working directory |
+
+`--write` remains as an alias, because Listik routes and pipeline presets already send it.
+**Read-only is enforced by the sandbox, not by a tool allowlist:** a run asked to write
+gets `file access denied under read-only mode` from the system and says so in its answer.
 
 Exit codes: `0` success · `1` `check` not ready / no jobs · `2` bad invocation · `5` job
 still running · `6` timeout, cancelled, non-zero exit, or empty answer.
@@ -169,22 +186,26 @@ process is actually alive. Trust the second one.
 
 ```
 > /dsh:dsh-check
-готовность:   yes
-бинарь:       /opt/homebrew/bin/dsh (ok)
-версия:       0.1.1-rc.2
-профили:      headless,web
-модель:       deepseek-official / deepseek-v4-pro (effort: max)
-фоновых задач в работе: 0
+ready:        yes
+binary:       /opt/homebrew/bin/dsh (ok)
+version:      0.1.5-rc.1
+profiles:     headless,tui,web
+model:        deepseek-official / deepseek-v4-pro (effort: max)
+pi-ai routes: —
+credentials:  present
+default permission: read-only (sandbox blocks writes)
+background jobs running: 0
+DSH_HOME:     /Users/you/.dsh
 ```
 
 Delegating looks like this — the launch returns immediately, the answer is collected later:
 
 ```
 > /dsh:dsh-delegate map the auth subsystem
-задача ушла в dsh: dsh-20260826-133830-17492 (карта подсистемы auth)
+handed to dsh: dsh-20260826-133830-17492 (auth subsystem map)
 
-> что там дипсик
-dsh-20260826-133830-17492    running    6м12с   deepseek-v4-pro   карта подсистемы auth
+> what's deepseek doing
+dsh-20260826-133830-17492    running    6m12s   —   auth subsystem map
 ```
 
 A collected task comes back as one final message — the harness's own words, passed through
@@ -232,17 +253,18 @@ writes, not reads — whoever writes the task owns this.
   to scope by session instead — Claude Code doesn't put `CLAUDE_SESSION_ID` in the Bash
   tool's environment, so the directory is the reliable boundary.
 - `cancel` sends `TERM` to the process tree and escalates to `KILL` after ten seconds. Work
-  `dsh` already wrote to disk in `--write` mode stays written — cancelling stops the agent,
+  `dsh` already wrote to disk in write mode stays written — cancelling stops the agent,
   it doesn't roll anything back.
 - In headless mode there is no approval channel, so a request to escalate permissions is
-  declined rather than queued. Re-run with `--write` if the task genuinely needs it.
+  declined rather than queued. Re-run with `--permission write` if the task genuinely needs
+  it.
 
 ## A note on language
 
-The skill bodies, the script's comments **and all of its runtime output** are written in
-Russian — `/dsh:dsh-check` and every error message will greet you in Russian, as the sample
-above shows. This README, the manifests, and every command, flag, and identifier are in
-English. The skills work the same regardless of the language you talk to Claude in.
+The skills, this README and all of the script's runtime output are in English. Only the
+comments inside `scripts/dsh-run.sh` are in Russian — they are addressed to whoever
+maintains the script. The skills work the same regardless of the language you talk to
+Claude in.
 
 ## Credits
 

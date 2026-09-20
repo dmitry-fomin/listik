@@ -2,7 +2,7 @@
 # dsh-run.sh — единая точка запуска DeepSeek Harness (dsh) из Claude Code.
 #
 #   dsh-run.sh check [--json]
-#   dsh-run.sh run [опции] < prompt.txt
+#   dsh-run.sh run [опции] < prompt.txt        (права: --permission read|bash|write)
 #   dsh-run.sh status [--json] [--all] [--running] [job-id]
 #   dsh-run.sh result <job-id> [--wait [сек]]
 #   dsh-run.sh logs <job-id> [--tail N]
@@ -102,7 +102,7 @@ file_bytes() {
 # `--model --write` иначе молча уедет в имя модели, а --write не применится.
 need_value() {
   local opt="$1" val="${2:-}"
-  [[ -n "$val" && "$val" != -* ]] || die 2 "$opt требует значение"
+  [[ -n "$val" && "$val" != -* ]] || die 2 "$opt needs a value"
   printf '%s' "$val"
 }
 
@@ -116,18 +116,23 @@ usage() {
   cat >&2 <<'USAGE'
 usage:
   dsh-run.sh check [--json]
-  dsh-run.sh run [--write] [--model pro|flash|vision|<id>] [--effort <level>]
-                 [--provider <маршрут>] [--cwd <dir>] [--timeout <сек>]
-                 [--background] [--label <текст>]
+  dsh-run.sh run [--permission read|bash|write] [--model pro|flash|vision|<id>]
+                 [--effort <level>] [--provider <route>] [--cwd <dir>]
+                 [--timeout <sec>] [--background] [--label <text>]
                  < prompt.txt
   dsh-run.sh status [--json] [--all] [--running] [job-id]
-  dsh-run.sh result <job-id> [--wait [сек]]
-  dsh-run.sh logs <job-id> [--tail <строк>]
+  dsh-run.sh result <job-id> [--wait [sec]]
+  dsh-run.sh logs <job-id> [--tail <lines>]
   dsh-run.sh cancel <job-id|--all>
-  dsh-run.sh clean [--older-than <дней>] [--all]
+  dsh-run.sh clean [--older-than <days>] [--all]
   dsh-run.sh transcript [job-id]
-  dsh-run.sh resume <job-id> [--background] [--timeout <сек>] [--label <текст>]
+  dsh-run.sh resume <job-id> [--background] [--timeout <sec>] [--label <text>]
                  < prompt.txt
+
+--permission: read (default) and bash both mean dsh's read-only sandbox - the
+  harness has no separate bash tier, commands run but the OS sandbox blocks
+  writes; write means workspace-write. --write is kept as an alias for
+  --permission write.
 USAGE
   exit 2
 }
@@ -138,12 +143,12 @@ USAGE
 resolve_dsh() {
   local bin="${DSH_BIN:-}"
   if [[ -n "$bin" ]]; then
-    command -v "$bin" >/dev/null 2>&1 || die 2 "DSH_BIN указывает на '$bin', но такого исполняемого файла нет"
+    command -v "$bin" >/dev/null 2>&1 || die 2 "DSH_BIN points at '$bin', which is not an executable"
     command -v "$bin"
     return 0
   fi
   command -v dsh >/dev/null 2>&1 \
-    || die 2 "dsh не найден в PATH — установи DeepSeek Harness или укажи путь через переменную DSH_BIN"
+    || die 2 "dsh not found in PATH - install DeepSeek Harness or set DSH_BIN"
   command -v dsh
 }
 
@@ -196,7 +201,7 @@ cmd_check() {
     --json)    as_json=1 ;;
     -h|--help) usage ;;
     "")        ;;
-    *)         die 2 "неизвестная опция '$1'" ;;
+    *)         die 2 "unknown option '$1'" ;;
   esac
 
   local bin="" bin_status="missing" version="" model="" provider="" effort="" auth="unknown"
@@ -254,14 +259,16 @@ cmd_check() {
       "$(json_escape "$routes")" \
       "$(json_escape "$DSH_HOME_DIR")" "$running"
   else
-    echo "готовность:   $ready"
-    echo "бинарь:       ${bin:-не найден} ($bin_status)"
-    echo "версия:       ${version:-—}"
-    echo "профили:      ${profiles:-—}"
-    echo "модель:       ${provider:-—} / ${model:-—} (effort: ${effort:-—})"
-    echo "маршруты pi-ai: ${routes:-—}"
-    echo "учётные данные: $auth"   # вход в веб-интерфейс; на API-ключе бывает absent — это не поломка
-    echo "фоновых задач в работе: $running"
+    echo "ready:        $ready"
+    echo "binary:       ${bin:-not found} ($bin_status)"
+    echo "version:      ${version:-—}"
+    echo "profiles:     ${profiles:-—}"
+    echo "model:        ${provider:-—} / ${model:-—} (effort: ${effort:-—})"
+    echo "pi-ai routes: ${routes:-—}"
+    # Речь о входе в веб-интерфейс; на API-ключе absent — норма, а не поломка.
+    echo "credentials:  $auth"
+    echo "default permission: read-only (sandbox blocks writes)"
+    echo "background jobs running: $running"
     echo "DSH_HOME:     $DSH_HOME_DIR"
   fi
   [[ "$ready" == "yes" ]] || exit 1
@@ -343,7 +350,20 @@ expand_model_alias() {
         vision) printf '%s' "deepseek-v4-flash-vision-exp" ;;
       esac ;;
     *)
-      die 2 "алиас '$alias' определён только для провайдера deepseek-official, а текущий — '$provider'. Назови модель полным id (--model <id>) или задай переменную DSH_MODEL_$(printf '%s' "$alias" | tr '[:lower:]' '[:upper:]')" ;;
+      die 2 "alias '$alias' is defined only for the deepseek-official provider, and the current one is '$provider'. Name the model by its full id (--model <id>) or set DSH_MODEL_$(printf '%s' "$alias" | tr '[:lower:]' '[:upper:]')" ;;
+  esac
+}
+
+# --permission <read|bash|write> — единый флаг прав. У dsh нет отдельного
+# уровня «можно команды, нельзя запись»: его read-only — это песочница ОС,
+# в которой команды выполняются, а запись отклоняется. Поэтому read и bash
+# ложатся на один режим. --write остаётся синонимом --permission write: его
+# уже шлют маршруты Listik и пресеты конвейера.
+write_from_permission() {
+  case "$1" in
+    read|read-only|bash) printf '0' ;;
+    write|workspace-write) printf '1' ;;
+    *) die 2 "invalid --permission '$1' - allowed values: read, bash, write" ;;
   esac
 }
 
@@ -352,18 +372,19 @@ cmd_run() {
   local write=0 model="" effort="" workdir="" timeout_s="" background=0 label="" provider_opt=""
   while [[ $# -gt 0 ]]; do
     case "$1" in
+      --permission) write="$(write_from_permission "$(need_value --permission "${2:-}")")"; shift 2 ;;
       --write)      write=1; shift ;;
       --model)      model="$(need_value --model "${2:-}")"; shift 2 ;;
       --provider)   provider_opt="$(need_value --provider "${2:-}")"; shift 2 ;;
-      --effort)     effort="${2:-}"; [[ -z "$effort" ]] && die 2 "--effort требует значение"
-                    case "$effort" in low|medium|high|xhigh|max) ;; *) die 2 "--effort принимает low, medium, high, xhigh или max" ;; esac
+      --effort)     effort="${2:-}"; [[ -z "$effort" ]] && die 2 "--effort needs a value"
+                    case "$effort" in low|medium|high|xhigh|max) ;; *) die 2 "--effort takes low, medium, high, xhigh or max" ;; esac
                     shift 2 ;;
       --cwd)        workdir="$(need_value --cwd "${2:-}")"; shift 2 ;;
-      --timeout)    timeout_s="${2:-}"; [[ -z "$timeout_s" ]] && die 2 "--timeout требует значение"; shift 2 ;;
-      --label)      label="${2:-}"; [[ -z "$label" ]] && die 2 "--label требует значение"; shift 2 ;;
+      --timeout)    timeout_s="${2:-}"; [[ -z "$timeout_s" ]] && die 2 "--timeout needs a value"; shift 2 ;;
+      --label)      label="${2:-}"; [[ -z "$label" ]] && die 2 "--label needs a value"; shift 2 ;;
       --background) background=1; shift ;;
       -h|--help)    usage ;;
-      *)            die 2 "неизвестная опция '$1' (промпт передаётся на stdin, не аргументом)" ;;
+      *)            die 2 "unknown option '$1' (the prompt goes on stdin, not as an argument)" ;;
     esac
   done
 
@@ -372,11 +393,11 @@ cmd_run() {
   if [[ -z "$timeout_s" ]]; then
     if [[ $background -eq 1 ]]; then timeout_s="$DEFAULT_BG_TIMEOUT"; else timeout_s="$DEFAULT_TIMEOUT"; fi
   fi
-  [[ "$timeout_s" =~ ^[0-9]+$ ]] || die 2 "--timeout принимает целое число секунд (0 — без ограничения)"
+  [[ "$timeout_s" =~ ^[0-9]+$ ]] || die 2 "--timeout takes a whole number of seconds (0 = no limit)"
 
   local prompt
   prompt="$(cat)"
-  [[ -z "${prompt//[[:space:]]/}" ]] && die 2 "пустой промпт на stdin"
+  [[ -z "${prompt//[[:space:]]/}" ]] && die 2 "empty prompt on stdin"
 
   # Задача уходит одним элементом argv (dsh читает только позиционный
   # аргумент, stdin он не смотрит). Лимит ARG_MAX — 1 МиБ на macOS;
@@ -384,11 +405,11 @@ cmd_run() {
   local prompt_bytes
   prompt_bytes=$(printf '%s' "$prompt" | wc -c | tr -d ' ')
   if [[ "$prompt_bytes" -gt 262144 ]]; then
-    die 2 "промпт $prompt_bytes байт — слишком длинный для argv. Положи материал в файл внутри рабочего каталога и сошлись на него из задачи."
+    die 2 "prompt is $prompt_bytes bytes - too long for argv. Put the material in a file inside the working directory and point the task at it."
   fi
 
   workdir="${workdir:-$PWD}"
-  [[ -d "$workdir" ]] || die 2 "каталог '$workdir' не существует"
+  [[ -d "$workdir" ]] || die 2 "directory '$workdir' does not exist"
   workdir="$(cd "$workdir" && pwd)"
 
   local bin; bin="$(resolve_dsh)"
@@ -412,7 +433,7 @@ cmd_run() {
       # Только --effort или только --provider: модель остаётся выбранной
       # человеком, её нужно перенести в overlay как есть.
       eff_model="$(settings_field model)"
-      [[ -n "$eff_model" ]] || die 2 "модель не выбрана ни флагом, ни в settings.yaml — добавь --model <id>"
+      [[ -n "$eff_model" ]] || die 2 "no model chosen by flag or in settings.yaml - add --model <id>"
     fi
 
     tmpdir="$(mktemp -d "${TMPDIR:-/tmp}/dsh-overlay.XXXXXX")"
@@ -456,15 +477,15 @@ run_foreground() {
 
   if [[ $rc -eq 124 ]]; then
     [[ -n "$out" ]] && printf '%s\n' "$out"
-    die 6 "dsh: таймаут ${timeout_s}с. Задача слишком большая для одного прогона — перезапусти её с --background, тогда потолок снимается."
+    die 6 "dsh: timed out after ${timeout_s}s - the task is too big for one foreground run; rerun it with --background to lift the ceiling."
   fi
   if [[ $rc -ne 0 ]]; then
     # Содержательный кусок ответа, если он успел появиться, всё равно отдаём:
     # он полезнее кода возврата. Причина отказа идёт в stderr, к die.
     [[ -n "$out" ]] && printf '%s\n' "$out"
-    die 6 "dsh: прогон завершился с кодом $rc${err_text:+ — $err_text}"
+    die 6 "dsh: run exited with code $rc${err_text:+ - $err_text}"
   fi
-  [[ -z "$out" ]] && die 6 "dsh: пустой ответ — проверь готовность командой check${err_text:+. stderr: $err_text}"
+  [[ -z "$out" ]] && die 6 "dsh: empty answer - check readiness with: dsh-run.sh check${err_text:+. stderr: $err_text}"
   printf '%s\n' "$out"
 }
 
@@ -483,7 +504,7 @@ claim_job_dir() {
     dir="$JOBS_DIR/$id"
     mkdir "$dir" 2>/dev/null && { printf '%s' "$id"; return 0; }
     i=$((i+1))
-    [[ $i -ge 100 ]] && die 5 "не удалось выделить идентификатор задачи в $JOBS_DIR"
+    [[ $i -ge 100 ]] && die 5 "could not allocate a job id in $JOBS_DIR"
   done
 }
 
@@ -512,7 +533,7 @@ run_background() {
     echo "label=${label:-—}"
     echo "session=${SESSION_ID:-—}"
     echo "dsh_session=—"
-    echo "timeout=$(if [[ -n "$(pick_timeout_bin)" ]]; then echo "$timeout_s"; else echo "none (нет coreutils timeout)"; fi)"
+    echo "timeout=$(if [[ -n "$(pick_timeout_bin)" ]]; then echo "$timeout_s"; else echo "none (no coreutils timeout)"; fi)"
     echo "started=$(date -u +%Y-%m-%dT%H:%M:%SZ)"
     echo "started_epoch=$(date +%s)"
     echo "overlay=${tmpdir:-—}"
@@ -571,14 +592,14 @@ run_background() {
 # --- общее для работы с джобами --------------------------------------------
 job_dir_of() {
   local job_id="$1"
-  [[ -n "$job_id" ]] || die 2 "нужен job-id (список — dsh-run.sh status)"
+  [[ -n "$job_id" ]] || die 2 "a job-id is required (list them with: dsh-run.sh status)"
   # Идентификатор идёт в путь, поэтому его форма проверяется строго: иначе
   # `result ../../что-то` читает и переписывает каталоги вне JOBS_DIR.
   case "$job_id" in
-    */*|*..*) die 2 "недопустимый job-id '$job_id'" ;;
+    */*|*..*) die 2 "invalid job-id '$job_id'" ;;
   esac
   local dir="$JOBS_DIR/$job_id"
-  [[ -d "$dir" ]] || die 2 "нет задачи с id '$job_id' (список — dsh-run.sh status --all)"
+  [[ -d "$dir" ]] || die 2 "no job with id '$job_id' (list them with: dsh-run.sh status --all)"
   echo "$dir"
 }
 
@@ -641,7 +662,7 @@ elapsed_of() {
   end="$(meta_get finished_epoch "$dir/meta")"
   now="${end:-$(date +%s)}"
   local s=$(( now - start ))
-  printf '%dм%02dс' $(( s / 60 )) $(( s % 60 ))
+  printf '%dm%02ds' $(( s / 60 )) $(( s % 60 ))
 }
 
 # --- status -----------------------------------------------------------------
@@ -653,7 +674,7 @@ cmd_status() {
       --all)     all=1; shift ;;
       --running) only_running=1; shift ;;
       -h|--help) usage ;;
-      -*)        die 2 "неизвестная опция '$1'" ;;
+      -*)        die 2 "unknown option '$1'" ;;
       *)         job_id="$1"; shift ;;
     esac
   done
@@ -672,7 +693,7 @@ cmd_status() {
     return 0
   fi
 
-  [[ -d "$JOBS_DIR" ]] || { echo "фоновых задач нет" >&2; [[ $as_json -eq 1 ]] && echo '[]'; exit 1; }
+  [[ -d "$JOBS_DIR" ]] || { echo "no background jobs" >&2; [[ $as_json -eq 1 ]] && echo '[]'; exit 1; }
 
   local ids=() dir name
   for dir in $(ls -1t "$JOBS_DIR" 2>/dev/null); do
@@ -704,7 +725,7 @@ cmd_status() {
         "$(meta_get label "$d/meta")" || exit 0
     fi
     if [[ $shown -ge 30 ]]; then
-      [[ $as_json -eq 1 ]] || echo "… показаны первые 30; остальные — status --all" >&2
+      [[ $as_json -eq 1 ]] || echo "... first 30 shown; the rest are in status --all" >&2
       break
     fi
   done
@@ -715,9 +736,9 @@ cmd_status() {
   fi
   if [[ $shown -eq 0 ]]; then
     if [[ $all -eq 0 ]]; then
-      echo "здесь фоновых задач нет (все задачи на машине — status --all)" >&2
+      echo "no background jobs here (every job on this machine: status --all)" >&2
     else
-      echo "фоновых задач нет" >&2
+      echo "no background jobs" >&2
     fi
     exit 1
   fi
@@ -752,7 +773,7 @@ cmd_result() {
       --wait)    wait_s="${2:-}"
                  if [[ "$wait_s" =~ ^[0-9]+$ ]]; then shift 2; else wait_s=300; shift; fi ;;
       -h|--help) usage ;;
-      -*)        die 2 "неизвестная опция '$1'" ;;
+      -*)        die 2 "unknown option '$1'" ;;
       *)         job_id="$1"; shift ;;
     esac
   done
@@ -772,11 +793,11 @@ cmd_result() {
 
   case "$st" in
     running)
-      die 5 "задача ещё выполняется ($(elapsed_of "$dir") с $(meta_get started "$dir/meta")); опроси позже: dsh-run.sh status $job_id"
+      die 5 "job still running ($(elapsed_of "$dir") since $(meta_get started "$dir/meta")); poll later: dsh-run.sh status $job_id"
       ;;
     orphaned)
       [[ -s "$dir/output.txt" ]] && cat "$dir/output.txt"
-      die 6 "воркер задачи исчез, не проставив итог (перезагрузка или kill -9); выше — то, что успело записаться"
+      die 6 "the job worker vanished without recording an outcome (reboot or kill -9); above is whatever got written"
       ;;
   esac
 
@@ -786,19 +807,19 @@ cmd_result() {
 
   case "$st" in
     timeout)
-      die 6 "задача оборвалась по таймауту ($(meta_get timeout "$dir/meta")с); выше — то, что успело прийти"
+      die 6 "job hit its timeout ($(meta_get timeout "$dir/meta")s); above is whatever arrived"
       ;;
     canceled)
-      die 6 "задача снята вручную ($(elapsed_of "$dir") работы); выше — то, что успело прийти"
+      die 6 "job was cancelled manually (after $(elapsed_of "$dir")); above is whatever arrived"
       ;;
     failed)
-      die 6 "задача завершилась с ошибкой (код $(meta_get exit "$dir/meta"))$( [[ -s "$dir/stderr.txt" ]] && printf ' — %s' "$(tail -c 500 "$dir/stderr.txt")" )"
+      die 6 "job failed (exit $(meta_get exit "$dir/meta"))$( [[ -s "$dir/stderr.txt" ]] && printf ' - %s' "$(tail -c 500 "$dir/stderr.txt")" )"
       ;;
   esac
 
   if [[ ! -s "$dir/output.txt" ]]; then
     [[ -s "$dir/stderr.txt" ]] && tail -c 2000 "$dir/stderr.txt" >&2
-    die 6 "пустой ответ"
+    die 6 "empty answer"
   fi
 }
 
@@ -810,25 +831,25 @@ cmd_logs() {
   local job_id="" tail_n=40
   while [[ $# -gt 0 ]]; do
     case "$1" in
-      --tail)    tail_n="${2:-}"; [[ "$tail_n" =~ ^[0-9]+$ ]] || die 2 "--tail принимает число строк"; shift 2 ;;
+      --tail)    tail_n="${2:-}"; [[ "$tail_n" =~ ^[0-9]+$ ]] || die 2 "--tail takes a number of lines"; shift 2 ;;
       -h|--help) usage ;;
-      -*)        die 2 "неизвестная опция '$1'" ;;
+      -*)        die 2 "unknown option '$1'" ;;
       *)         job_id="$1"; shift ;;
     esac
   done
   local dir; dir="$(job_dir_of "$job_id")"
   local st; st="$(job_status_of "$dir")"
 
-  echo "статус:  $st ($(elapsed_of "$dir"))"
-  echo "ответ:   $(file_bytes "$dir/output.txt") байт накоплено"
+  echo "status:  $st ($(elapsed_of "$dir"))"
+  echo "answer:  $(file_bytes "$dir/output.txt") bytes accumulated"
   if [[ -s "$dir/stderr.txt" ]]; then
-    echo "--- последние $tail_n строк stderr ---"
+    echo "--- last $tail_n lines of stderr ---"
     tail -n "$tail_n" "$dir/stderr.txt"
   elif [[ "$st" == "running" ]]; then
-    echo "stderr пуст. Для dsh это норма: прогресс он наружу не транслирует,"
-    echo "признак работы — сам статус running и растущее время."
+    echo "stderr is empty. That is normal for dsh: it does not stream progress,"
+    echo "the signs of life are the running status and a growing elapsed time."
   else
-    echo "stderr пуст"
+    echo "stderr is empty"
   fi
 }
 
@@ -854,7 +875,7 @@ cancel_one() {
   local job_id; job_id="$(meta_get id "$dir/meta")"
   local st; st="$(job_status_of "$dir")"
   if [[ "$st" != "running" ]]; then
-    echo "$job_id: уже $st, снимать нечего"
+    echo "$job_id: already $st, nothing to cancel"
     return 0
   fi
 
@@ -896,19 +917,19 @@ cancel_one() {
   rm -f "$dir/canceled"
   local final; final="$(job_status_of "$dir")"
   case "$final" in
-    canceled) echo "$job_id: снята ($(elapsed_of "$dir") работы)" ;;
-    running)  echo "$job_id: снять не удалось — процесс не отвечает; посмотри status $job_id" ;;
-    *)        echo "$job_id: успела завершиться сама до отмены ($final)" ;;
+    canceled) echo "$job_id: cancelled (after $(elapsed_of "$dir"))" ;;
+    running)  echo "$job_id: could not cancel - the process is not responding; see status $job_id" ;;
+    *)        echo "$job_id: finished on its own before the cancel ($final)" ;;
   esac
 }
 
 cmd_cancel() {
   local target="${1:-}"
   [[ "$target" == "-h" || "$target" == "--help" ]] && usage
-  [[ -n "$target" ]] || die 2 "нужен job-id или --all (список — dsh-run.sh status)"
+  [[ -n "$target" ]] || die 2 "a job-id or --all is required (list them with: dsh-run.sh status)"
   if [[ "$target" == "--all" ]]; then
     local any=0 dir
-    [[ -d "$JOBS_DIR" ]] || die 1 "фоновых задач нет"
+    [[ -d "$JOBS_DIR" ]] || die 1 "no background jobs"
     for dir in "$JOBS_DIR"/*/; do
       [[ -f "$dir/meta" ]] || continue
       # --all в пределах своих задач: чужие снимать молча нельзя.
@@ -917,7 +938,7 @@ cmd_cancel() {
       any=1
       cancel_one "${dir%/}"
     done
-    [[ $any -eq 1 ]] || { echo "работающих задач нет" >&2; exit 1; }
+    [[ $any -eq 1 ]] || { echo "no running jobs" >&2; exit 1; }
     return 0
   fi
   local dir; dir="$(job_dir_of "$target")"
@@ -931,15 +952,15 @@ cmd_clean() {
   local days=7 all=0
   while [[ $# -gt 0 ]]; do
     case "$1" in
-      --older-than) days="${2:-}"; [[ "$days" =~ ^[0-9]+$ ]] || die 2 "--older-than принимает число дней"
+      --older-than) days="${2:-}"; [[ "$days" =~ ^[0-9]+$ ]] || die 2 "--older-than takes a number of days"
                     [[ "$days" -eq 0 ]] && all=1
                     shift 2 ;;
       --all)        all=1; shift ;;
       -h|--help)    usage ;;
-      *)            die 2 "неизвестная опция '$1'" ;;
+      *)            die 2 "unknown option '$1'" ;;
     esac
   done
-  [[ -d "$JOBS_DIR" ]] || { echo "фоновых задач нет"; return 0; }
+  [[ -d "$JOBS_DIR" ]] || { echo "no background jobs"; return 0; }
 
   local now removed=0 skipped=0 dir
   now="$(date +%s)"
@@ -959,7 +980,7 @@ cmd_clean() {
     rm -rf "${dir%/}"
     removed=$((removed+1))
   done
-  echo "удалено задач: $removed (работающие не трогались${skipped:+; чужих пропущено: $skipped})"
+  echo "jobs removed: $removed (running jobs untouched${skipped:+; other directories skipped: $skipped})"
 }
 
 # --- transcript -------------------------------------------------------------
@@ -1001,7 +1022,7 @@ cmd_resume() {
       --background) shift ;;
       --timeout|--label) shift 2 ;;
       -h|--help)    usage ;;
-      -*)           die 2 "неизвестная опция '$1'" ;;
+      -*)           die 2 "unknown option '$1'" ;;
       *)            job_id="$1"; shift ;;
     esac
   done
@@ -1014,9 +1035,9 @@ cmd_resume() {
       sid="$(discover_dsh_session "$dir")"
       [[ -n "$sid" ]] && meta_set dsh_session "$sid" "$dir/meta"
     fi
-    [[ "$st" == "running" ]] && die 2 "задача '$job_id' ещё выполняется, а headless dsh сессию всё равно не продолжит — оркестратор должен откатиться на новый прогон"
+    [[ "$st" == "running" ]] && die 2 "job '$job_id' is still running, and headless dsh cannot continue a session anyway - fall back to a fresh run"
   fi
-  die 2 "headless-профиль dsh не умеет продолжать сессию: --resume есть только у профиля tui, у \`dsh --profile headless\` такого флага нет. Команда resume у обвязки есть, чтобы оркестратор отличил это от отсутствия скрипта. Откатись на новый прогон: dsh-run.sh run."
+  die 2 "the headless dsh profile cannot continue a session: --resume exists only on the tui profile, \`dsh --profile headless\` has no such flag. This subcommand exists so the caller can tell that apart from a missing script. Fall back to a fresh run: dsh-run.sh run."
 }
 
 cmd_transcript() {
@@ -1028,27 +1049,27 @@ cmd_transcript() {
   fi
 
   local sessions_root="$DSH_HOME_DIR/sessions"
-  [[ -d "$sessions_root" ]] || die 2 "нет каталога сессий: $sessions_root"
+  [[ -d "$sessions_root" ]] || die 2 "no sessions directory: $sessions_root"
 
   # Каталог сессий именуется по рабочему каталогу: разделители пути заменены
   # на дефисы, имя обрамлено двойными дефисами.
   local slug
   slug="--$(printf '%s' "$workdir" | sed 's|^/||; s|/|-|g')--"
   local dir2="$sessions_root/$slug"
-  [[ -d "$dir2" ]] || die 2 "для каталога '$workdir' сессий не найдено (искал $dir2)"
+  [[ -d "$dir2" ]] || die 2 "no sessions found for directory '$workdir' (looked in $dir2)"
 
   local latest
   latest="$(ls -1td "$dir2"/session-* 2>/dev/null | head -1 || true)"
-  [[ -n "$latest" ]] || die 2 "в '$dir2' нет сессий"
+  [[ -n "$latest" ]] || die 2 "no sessions in '$dir2'"
 
   local file="$latest/session.jsonl.zstd"
   if [[ -f "$file" ]]; then
-    command -v zstd >/dev/null 2>&1 || die 2 "нужен zstd, чтобы распаковать $file"
+    command -v zstd >/dev/null 2>&1 || die 2 "zstd is required to unpack $file"
     zstd -dc "$file"
   elif [[ -f "$latest/session.jsonl" ]]; then
     cat "$latest/session.jsonl"
   else
-    die 2 "в '$latest' нет ни session.jsonl.zstd, ни session.jsonl"
+    die 2 "'$latest' has neither session.jsonl.zstd nor session.jsonl"
   fi
 }
 
@@ -1068,5 +1089,5 @@ case "$sub" in
   clean)      cmd_clean "$@" ;;
   transcript) cmd_transcript "$@" ;;
   -h|--help)  usage ;;
-  *)          die 2 "неизвестная подкоманда '$sub'" ;;
+  *)          die 2 "unknown subcommand '$sub'" ;;
 esac

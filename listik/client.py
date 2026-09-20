@@ -16,6 +16,7 @@ import urllib.request
 from . import config as config_mod
 from . import db as db_mod
 from . import errors
+from . import fence as fence_mod
 from . import paths
 
 
@@ -111,7 +112,7 @@ def _query_string(query: dict) -> str:
 
 def request(method: str, path: str, *, query: dict | None = None, body: dict | None = None,
             host: str | None = None, port: int | None = None, timeout: float = 60.0,
-            owner: str | None = None) -> dict:
+            owner: str | None = None, fence: fence_mod.Token | None = None) -> dict:
     # Кириллица в пути (например, в ID задачи) кодируется здесь: иначе urllib падает
     # с UnicodeEncodeError ещё до запроса. Уже закодированные сегменты (%2F) целы —
     # «%» в safe.
@@ -127,6 +128,9 @@ def request(method: str, path: str, *, query: dict | None = None, body: dict | N
     who = _resolve_owner(owner)
     if who:
         req.add_header("X-Listik-Owner", who)
+    if fence is not None:
+        for key, value in fence_mod.to_headers(fence).items():
+            req.add_header(key, value)
     if data is not None:
         req.add_header("Content-Type", "application/json")
     try:
@@ -142,6 +146,10 @@ def request(method: str, path: str, *, query: dict | None = None, body: dict | N
             # Сервер отдаёт свой код (см. listik/errors.py): он точнее статуса —
             # «задача уже удерживается» это 400, но по смыслу conflict.
             code = payload.get("code") or code
+            # Подсказка по коду сильнее подсказки по статусу: 409 у `revoked` и у
+            # обычного `conflict` — один и тот же HTTP-статус с разным смыслом
+            # («посмотри состояние карточки…» зомби только сбило бы с толку).
+            hint = errors.HINT_BY_CODE.get(code) or hint
         except json.JSONDecodeError:
             message = raw
         raise errors.ListikError(str(message).strip(), code=code, hint=hint,
@@ -162,12 +170,31 @@ def request(method: str, path: str, *, query: dict | None = None, body: dict | N
 
 # ------------------------------------------------------------------ локальный фолбэк
 
-def local_call(op: str, **kwargs):
+#: Операции `local_call`, которые пишут в конкретную карточку: ключ её id в
+#: `kwargs` (обычно `task_id`, у зависимостей — `issue_id`) — по нему `fence.guard`
+#: сверяет токен с текущим поколением до вызова store.
+FENCED_LOCAL_OPS = {
+    "update": "task_id", "needs-owner": "task_id", "claim": "task_id",
+    "heartbeat": "task_id", "stage": "task_id", "comment": "task_id",
+    "dep_add": "issue_id", "dep_remove": "issue_id",
+}
+
+
+def local_call(op: str, *, fence: fence_mod.Token | dict | None = None, **kwargs):
     """Прямая работа с базой, когда сервер не поднят."""
     from . import search as search_mod
     from . import store
 
     conn = db_mod.init()
+    id_key = FENCED_LOCAL_OPS.get(op)
+    if id_key is not None:
+        token = fence_mod.from_mapping(fence) if not isinstance(fence, fence_mod.Token) else fence
+        if token is not None:
+            task_id = kwargs.get(id_key)
+            fence_mod.guard(conn, task_id, token, op=op, args=kwargs,
+                            actor=kwargs.get("actor") or kwargs.get("author")
+                            or kwargs.get("created_by"),
+                            harness=kwargs.get("harness"))
     if op not in OWNER_LOCAL_OPS:
         # `as_owner` — идентичность вызова, её понимают не все операции store.
         # Поле `owner` (данные карточки) остаётся: его пишут create/update.
@@ -192,7 +219,8 @@ def local_call(op: str, **kwargs):
     if op == "list":
         return store.list_tasks(conn, **kwargs)
     if op == "show":
-        return store.get_task(conn, kwargs["task_id"])
+        return store.get_task(conn, kwargs["task_id"],
+                              with_rejected=bool(kwargs.get("rejected", False)))
     if op == "context":
         from . import documents
         return documents.context(conn, kwargs["task_id"], kwargs.get("stage", "s1-spec"),

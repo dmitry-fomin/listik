@@ -508,6 +508,67 @@ dispatch_id IS ?` — именно `IS`, чтобы обслуживать и з
 поставки, его читает только первичный ввоз при установке, а дальше маршруты правятся
 через HTTP API.
 
+## Ограждение запуска: поколения и карантин
+
+Запись в карточку от процесса, чьё поколение запуска (см. «Поколения запуска» выше)
+уже не текущее, — зомби: Listik перезапустил задачу новым поколением, а старый процесс
+ещё жив и продолжает писать. Такую запись Listik **не применяет**, но **сохраняет в
+карантин**, чтобы человек видел, от кого и почему остаются зомби; сам агент карантин не
+видит нигде.
+
+**Токен.** Три значения — id задачи, поколение, id запуска — путешествуют вместе:
+переменные окружения процесса, выданные лаунчером (`LISTIK_TASK_ID`,
+`LISTIK_GENERATION`, `LISTIK_DISPATCH_ID`), три HTTP-заголовка (`X-Listik-Task`,
+`X-Listik-Generation`, `X-Listik-Dispatch`), то же окружение у stdio-MCP и словарь
+`{"task_id", "generation", "dispatch_id"}` у локального фолбэка (`client.local_call`).
+CLI (`bin/listik`) читает окружение один раз в `call()` и передаёт токен и в HTTP-запрос
+(заголовками), и в локальный фолбэк — всегда, а не только для пишущих команд: сравнивает
+сервер/store. Флага командной строки для токена нет и не будет — источник только
+окружение, выданное лаунчером; из `config.toml` токен тоже не читается. MCP по HTTP (с
+другой машины) окружения сервера не видит — это не наш воркер, токен там либо есть в
+заголовках запроса, либо ограждения нет вовсе.
+
+**Правило совпадения.** Токен ограждает только свою задачу (`token.task_id != task_id` —
+не проверяется вовсе, чужая карточка не ограждается; запрос без токена — тоже не
+ограждается). Поколение должно совпасть строго; поколение из токена больше текущего —
+тоже несовпадение (такого токена сервер не выдавал). `dispatch_id` допускает пустоту с
+любой стороны — иначе запуски до появления поколений (`dispatch_id IS NULL`) отвергались
+бы всегда.
+
+**Что ограждается.** Перед вызовом store — HTTP `PATCH`/`PUT /api/tasks/{id}`, `DELETE
+/api/tasks/{id}`, `PUT /api/tasks/{id}/documents/{kind}`, `DELETE /api/tasks/{id}/deps/{dep}`,
+`POST /api/tasks/{id}/{action}` для `claim`, `heartbeat`, `stage`, `comment`, `needs-owner`,
+`release`, `done` и `deps` с `depends_on`; MCP-инструменты `listik_update`, `listik_claim`,
+`listik_heartbeat`, `listik_stage`, `listik_comment`, `listik_needs_owner`, `listik_done`,
+`listik_release`, `listik_put_document` и `listik_deps` (только ветка добавления связи).
+Чтения (`GET`, `context`, `ready`, `mentions`, `deps` без `depends_on`, `listik_show`) не
+ограждаются; `POST /api/tasks` (создание) не ограждается — у него нет своей карточки.
+
+**Отказ.** Несовпадение — `409` с кодом `revoked` и текстом «полномочия на задачу
+`<id>` отозваны: запуск поколения `<G>` устарел, текущее поколение `<current>»` (или, если
+не совпал только `dispatch_id`, «запуск `<dispatch_id>` не текущий (текущий
+`<current_dispatch>`), поколение `<G>`»); подсказка — «остановись: ничего не коммить, не
+повторяй команду и не бери задачу заново — Listik перезапустил её новым поколением, твоя
+работа устарела». Событие доске (`publish`) при отказе не шлётся. У MCP — `isError: true`
+и текст `errors.mcp_error_text`: «полномочия отозваны: `<message>` — `<hint>`».
+
+**Карантин.** Отвергнутая запись не применяется никак — ни одна колонка `tasks`,
+`comments`, `deps`, `documents` не меняется, — а сохраняется единственным событием
+`rejected` (`fence.quarantine` — единственное место, где это происходит; отключить
+сохранение — один вызов убрать оттуда): `from_value`/`to_value` — старое и текущее
+поколение, `note` — JSON `{"op", "dispatch_id", "current_dispatch_id", "args"}`, где `args`
+— тело операции без `None`/служебных `as_owner`/`fence` (текстовые поля `text`/`result`/
+`note`/`content` сохраняются целиком — ради этого карантин и нужен).
+
+**Кто видит карантин.** Агент — никогда: `events[]` в `GET /api/tasks/{id}` без флага,
+`documents.context`, `listik_show`, `listik show` без `--rejected` и лента
+(`store.task_timeline`/`GET /api/timeline`/`GET /api/events`/`listik timeline`/
+`listik_timeline`) карантин не отдают. Человек — явным параметром: `GET
+/api/tasks/{id}?rejected=1` добавляет ключ `rejected` (иначе его в ответе нет вовсе), а
+`listik show <id> --rejected` печатает после «событий» раздел «отвергнутые записи —
+карантин (N):» по строке на запись. `web/` в этой порции карантин не показывает — доска
+его не отдаёт нигде.
+
 ## Помощник DeepSeek (создание задачи)
 
 Помощник помогает заполнять форму «Новая задача»: переписывает текст одного поля, дописывает
@@ -705,8 +766,9 @@ id внутри файлового пути (`docs/specs/<id>.md`, `/wt/<id>/lis
 Ошибка любого эндпоинта — HTTP-статус (400/401/403/404/405/409/5xx) и тело
 `{"ok": false, "error": "<текст по-русски>", "code": "<машинный код>"}`. `code` — из
 фиксированного словаря `bad_argument`, `not_found`, `conflict`, `unauthorized`, `forbidden`,
-`method_not_allowed`, `rate_limited`, `server_error`, `http_error`, `internal`
-(см. `listik/errors.py`). Он точнее статуса: «задача уже удерживается» отвечает 400 по
+`method_not_allowed`, `rate_limited`, `server_error`, `http_error`, `internal`, `revoked`
+(см. `listik/errors.py`). `revoked` — «полномочия на задачу отозваны: запуск устарел, у
+задачи новое поколение» (409, см. «Ограждение запуска: поколения и карантин»). Он точнее статуса: «задача уже удерживается» отвечает 400 по
 контракту `claim`, но `code` у неё `conflict`. 403 `forbidden` сервер отдаёт только за чужого
 владельца (непринятый токен — это 401), и CLI печатает к нему подсказку про владельца:
 «задачу держит другой владелец; смена владельца — listik set <id> owner=<кто>». CLI переносит эту пару в свой формат ошибок
@@ -727,15 +789,15 @@ id внутри файлового пути (`docs/specs/<id>.md`, `/wt/<id>/lis
 | GET | `/api/stats` | `project` | `by_status{}, by_stage{}, by_project[], by_holder[], by_actor[], stale, needs_owner, closed_7d, closed_prev_7d, closed_delta, closed_by_day[{date,count}] (14 дней), long_stage, running[], generated_at` |
 | GET | `/api/board` | `group_by=status\|stage\|project\|holder`, `project`, `include_closed`, `limit` | `group_by, columns[], total, needs_you[], generated_at`. В серверном режиме заголовок `X-Listik-Owner` фильтрует все колонки и блок `ready`: «свои + без владельца»; имя не из `server.users` — 400 `bad_argument` |
 | GET | `/api/tasks` | `project,status,stage,assignee,holder,needs_owner,type,label,text,include_closed,include_archived,limit,offset,order=updated\|created\|priority\|stage` | `total, limit, offset, tasks[]`. В серверном режиме заголовок `X-Listik-Owner` оставляет «свои + без владельца»; имя не из `server.users` — 400 `bad_argument` |
-| GET | `/api/tasks/{id}` | `details=0/1` | задача + `comments/dependencies/dependents/events/documents/children` |
+| GET | `/api/tasks/{id}` | `details=0/1`, `rejected` (`0/1`, по умолчанию нет — с `1` добавляет ключ `rejected[]`, карантин задачи; см. «Ограждение запуска») | задача + `comments/dependencies/dependents/events/documents/children` |
 | GET | `/api/tasks/{id}/context` | `stage`, `portion`, `max_chars` | компактный, побайтно стабильный контекст этапа для harness — см. ниже |
 | GET | `/api/tasks/{id}/documents/{kind}` | — (вид документа задан в пути: `spec`, `checklist`, `review`, `decision`) | документ задачи содержимым: `task_id, kind, path, source, revision, content_hash, status, error, content`. `source=upload` — текст из базы (`status=ok`); `source=file` — с диска: `status=ok` и текст, а если файл не читается — `status=missing`, `content=null` и текст ошибки (`revision`/`content_hash` = `null`, если документ ещё не индексировался). 404 — нет такой задачи или у задачи не задан путь к документу этого вида; 400 — неизвестный `kind`; 405 — любой метод по этому пути, кроме `GET` и `PUT` |
 | GET | `/api/search` | `q` (обязателен), `limit`, `project`, `status`, `stage`, `actor`, `needs_owner`, `mode=hybrid\|text\|vector` | `query, mode, took_ms, lexical_docs, vector_docs, count, results[]`; совпадения по id задачи идут первыми и помечены `hits[].kind="id"` — см. ниже |
 | GET | `/api/ready` | `project`, `stage`, `harness` (только задачи, чей этап разрешён этому harness в routing проекта; задача без этапа — всем), `include_occupied`, `limit` | `tasks[]` (можно брать: нет незакрытых блокеров и держателя), `cycles[]`. Фильтр по `X-Listik-Owner` — тот же, что у `/api/tasks` |
 | GET | `/api/blocked` | `project`, `limit` | `tasks[]` с разбором `blockers[]`, `blocked_by_stale`, `blocked_by_holder` |
 | GET | `/api/deps/suggested` | `project`, `limit` | `items[]` (предложения агентов, ждущие подтверждения человеком: `issue_id, issue_title, issue_stage, project, depends_on, depends_on_title, depends_on_status, created_by, created_at`), `generated_at` |
-| GET | `/api/timeline` | `limit`, `project` (оставляет только события задач этого проекта) | `items[]`: `ts, kind, from_value, to_value, actor, actor_title, harness, note, duration_s, task_id, title, project, stage, status, age` |
-| GET | `/api/events` | `limit` | сырые события |
+| GET | `/api/timeline` | `limit`, `project` (оставляет только события задач этого проекта) | `items[]`: `ts, kind, from_value, to_value, actor, actor_title, harness, note, duration_s, task_id, title, project, stage, status, age`. Событий карантина (`kind=rejected`) в ленте нет никогда — см. «Ограждение запуска» |
+| GET | `/api/events` | `limit` | сырые события; `kind=rejected` (карантин) отфильтрован, как у `/api/timeline` |
 | GET | `/api/stream` | `token` (обязателен) | SSE: `data: {"kind":"task","at":...,"payload":{"id":...,"action":"updated"}}`, плюс `: ping` каждые 15 с |
 
 `listik status --json` дополнительно отдаёт `bin_path` (реальный путь CLI) и

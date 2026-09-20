@@ -22,6 +22,7 @@
     http_error          ответ сервера, который не отнесли к известным
     unsupported         локальный режим не умеет эту операцию
     internal            непойманное исключение: трейсбек только в listik.log
+    revoked             полномочия на задачу отозваны: запуск устарел, у задачи новое поколение
 """
 from __future__ import annotations
 
@@ -38,6 +39,7 @@ SERVER_ERROR = "server_error"
 HTTP_ERROR = "http_error"
 UNSUPPORTED = "unsupported"
 INTERNAL = "internal"
+REVOKED = "revoked"
 
 #: HTTP-статус → код. Нужен, когда сервер ответил без поля `code` (старая версия,
 #: прокси, ошибка вне обработчика) — код всё равно должен быть машинным.
@@ -121,6 +123,31 @@ OWNER_HINT = "задачу держит другой владелец; смен�
 #: 403 сервер отдаёт только за чужого владельца: за непринятый токен `_authed`
 #: отвечает 401, поэтому прежняя подсказка про токен была мёртвой.
 HINT_BY_STATUS[403] = OWNER_HINT
+
+
+class Revoked(ListikError):
+    """«Зомби»: запись пришла от процесса, чьё поколение запуска уже не текущее.
+
+    Listik перезапустил задачу новым поколением — работа этого процесса устарела,
+    и он обязан остановиться (`fence.guard`), а не повторять команду или брать
+    задачу заново. Запись такого процесса не применяется, а сохраняется в карантин
+    (`fence.quarantine`) — событием `rejected`.
+    """
+
+    def __init__(self, message: str):
+        super().__init__(message, code=REVOKED, hint=REVOKED_HINT, exit_code=1, status=409)
+
+
+#: Подсказка `Revoked` — печатается CLI и уходит в тело MCP-ошибки.
+REVOKED_HINT = ("остановись: ничего не коммить, не повторяй команду и не бери задачу "
+               "заново — Listik перезапустил её новым поколением, твоя работа устарела")
+
+#: Подсказка по коду ответа, а не по статусу: 409 у `revoked` и у обычного
+#: `conflict` — один и тот же HTTP-статус с разным смыслом, и `hint_for_status(409)`
+#: («посмотри состояние карточки…») зомби только сбил бы с толку. `http_error_body`
+#: подсказки не несёт (её кладёт только CLI/`client.request`), поэтому словарь по
+#: коду — единственное место, где `revoked` получает верную подсказку и по HTTP.
+HINT_BY_CODE = {REVOKED: REVOKED_HINT}
 
 
 def message_of(exc: BaseException) -> str:
@@ -232,6 +259,8 @@ def http_error_body(status: int, message: str, code: str | None = None) -> dict:
 
 def mcp_error_text(exc: BaseException) -> str:
     """Текст ошибки инструмента MCP в совместимом с прежним API виде."""
+    if isinstance(exc, Revoked):
+        return f"полномочия отозваны: {exc.message} — {exc.hint}"
     if isinstance(exc, NotFound):
         return f"не найдено: {exc}"
     if isinstance(exc, Forbidden):

@@ -1,0 +1,21 @@
+{
+  "name": "devin",
+  "displayName": "devin bridge",
+  "version": "0.1.0",
+  "description": "Delegate tasks to devin, the terminal agent from Cognition (SWE-2, free): it walks the codebase itself, read-only by default, runs in the background and its sessions can be resumed by name.",
+  "author": {
+    "name": "Dmitry Fomin",
+    "url": "https://github.com/dmitry-fomin"
+  },
+  "homepage": "https://github.com/dmitry-fomin/listik",
+  "repository": "https://github.com/dmitry-fomin/listik",
+  "license": "MIT",
+  "keywords": [
+    "devin",
+    "swe-2",
+    "cognition",
+    "delegation",
+    "subagent",
+    "second-opinion"
+  ]
+}

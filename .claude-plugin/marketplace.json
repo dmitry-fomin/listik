@@ -43,6 +43,12 @@
       "description": "Мост в pi CLI: делегирование задач в GLM 5.3 Flash и DeepSeek v4.1 Flash через RPC-режим pi, с фоновыми задачами и продолжением сессии"
     },
     {
+      "name": "devin",
+      "source": "./plugins/devin",
+      "version": "0.1.0",
+      "description": "Мост в терминальный агент devin (Cognition): делегирование задач в SWE-2 с фоновыми задачами, уровнями усилия и продолжением сессии"
+    },
+    {
       "name": "second-opinion",
       "source": "./plugins/second-opinion",
       "version": "0.4.0",

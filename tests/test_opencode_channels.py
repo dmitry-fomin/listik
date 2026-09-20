@@ -144,7 +144,7 @@ class OpencodeChannelsTests(unittest.TestCase):
     def test_unknown_channel_name_exits_2(self) -> None:
         proc = self._run(["run", "--model", "gpt"], stdin="вопрос")
         self.assertEqual(proc.returncode, 2, proc.stdout)
-        self.assertIn("неизвестный канал", proc.stderr)
+        self.assertIn("unknown channel", proc.stderr)
         self.assertIn("deepseek", proc.stderr)
         self.assertEqual(self._run_lines(), [])
 
@@ -244,9 +244,9 @@ class OpencodeChannelsTests(unittest.TestCase):
         self.assertEqual(proc.returncode, 0, proc.stderr)
         self.assertIn(GLM, proc.stdout)
         self.assertIn(DEEPSEEK, proc.stdout)
-        self.assertIn("glm →", proc.stdout)
-        self.assertIn("deepseek →", proc.stdout)
-        self.assertIn("по умолчанию", proc.stdout)
+        self.assertIn("glm ->", proc.stdout)
+        self.assertIn("deepseek ->", proc.stdout)
+        self.assertIn("default", proc.stdout)
 
     def test_check_json_lists_both_channels(self) -> None:
         proc = self._run(["check", "--json"])

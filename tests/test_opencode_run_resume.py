@@ -168,7 +168,7 @@ class OpencodeRunResumeTests(unittest.TestCase):
     def test_usage_lists_resume(self) -> None:
         proc = self._run(["-h"])
         self.assertEqual(proc.returncode, 2)
-        self.assertIn("resume <имя-сессии|job-id>", proc.stderr)
+        self.assertIn("resume <session-name|job-id>", proc.stderr)
 
     def test_run_session_then_resume_session_same_session(self) -> None:
         job_id = self._launch(
@@ -222,13 +222,13 @@ class OpencodeRunResumeTests(unittest.TestCase):
         self._wait_job(job_id)
         proc = self._run(["run", "--session", "занято", "--background"], stdin="два")
         self.assertEqual(proc.returncode, 2, proc.stdout)
-        self.assertIn("уже есть", proc.stderr)
+        self.assertIn("already exists", proc.stderr)
         self.assertIn("resume", proc.stderr)
 
     def test_resume_unknown_session_exits_2(self) -> None:
         proc = self._run(["resume", "--session", "такой-нет"], stdin="ход")
         self.assertEqual(proc.returncode, 2, proc.stdout)
-        self.assertIn("нет ни в состоянии обвязки", proc.stderr)
+        self.assertIn("in the bridge state", proc.stderr)
         self.assertIn("run --session", proc.stderr)
 
     # --- гонка финализации --------------------------------------------------
@@ -290,14 +290,14 @@ class OpencodeRunResumeTests(unittest.TestCase):
 
         res = self._run(["result", job_id])
         self.assertEqual(res.returncode, 5, res.stderr)
-        self.assertIn("ещё выполняется", res.stderr)
+        self.assertIn("job still running", res.stderr)
 
         self._kill(worker)
         card = json.loads(self._run(["status", "--json", job_id]).stdout)
         self.assertEqual(card.get("status"), "orphaned", card)
         res = self._run(["result", job_id])
         self.assertEqual(res.returncode, 6, res.stderr)
-        self.assertIn("воркер задачи исчез", res.stderr)
+        self.assertIn("the job worker vanished", res.stderr)
 
     def test_finished_job_is_not_orphaned_after_worker_exit(self) -> None:
         """Воркер дописал итог и вышел — статус берётся из meta, не orphaned."""

@@ -102,7 +102,7 @@ resolve_model() {
     */*) printf '%s' "$resolved"; return 0 ;;
   esac
   for pair in "${CHANNELS[@]}"; do names="${names:+$names, }${pair%%:*}"; done
-  die 2 "неизвестный канал '$want' — короткие имена: $names; либо полный идентификатор вида provider/model"
+  die 2 "unknown channel '$want' - short names: $names; or a full provider/model id"
 }
 
 # Агент opencode по умолчанию: основной `build`. Режим чтения обеспечивает не
@@ -189,7 +189,7 @@ file_bytes() {
 # `--model --write` иначе молча уедет в имя модели, а --write не применится.
 need_value() {
   local opt="$1" val="${2:-}"
-  [[ -n "$val" && "$val" != -* ]] || die 2 "$opt требует значение"
+  [[ -n "$val" && "$val" != -* ]] || die 2 "$opt needs a value"
   printf '%s' "$val"
 }
 
@@ -203,24 +203,25 @@ usage() {
   cat >&2 <<'USAGE'
 usage:
   opencode-run.sh check [--json]
-  opencode-run.sh run [--session <имя>] [--write] [--bash] [--model <provider/model>]
-                      [--agent <имя>] [--variant <level>] [--cwd <dir>]
-                      [--timeout <сек>] [--background] [--label <текст>]
+  opencode-run.sh run [--session <name>] [--permission read|bash|write]
+                      [--model <channel|provider/model>] [--agent <name>]
+                      [--variant <level>] [--cwd <dir>] [--timeout <sec>]
+                      [--background] [--label <text>]
                       < prompt.txt
-  opencode-run.sh resume <имя-сессии|job-id> [--session <имя>] [--write] [--bash]
-                      [--model <provider/model>] [--agent <имя>] [--variant <level>]
-                      [--cwd <dir>] [--timeout <сек>] [--background] [--label <текст>]
-                      < prompt.txt
+  opencode-run.sh resume <session-name|job-id> [same options as run] < prompt.txt
   opencode-run.sh status [--json] [--all] [--running] [job-id]
-  opencode-run.sh result <job-id> [--wait [сек]]
-  opencode-run.sh logs <job-id> [--tail <строк>]
+  opencode-run.sh result <job-id> [--wait [sec]]
+  opencode-run.sh logs <job-id> [--tail <lines>]
   opencode-run.sh cancel <job-id|--all>
-  opencode-run.sh clean [--older-than <дней>] [--all]
+  opencode-run.sh clean [--older-than <days>] [--all]
   opencode-run.sh sessions [--json]
-  opencode-run.sh transcript [job-id] [--session <имя>]
+  opencode-run.sh transcript [job-id] [--session <name>]
 
-каналы (значение --model): glm = b.ai/glm-5.3-flash (по умолчанию),
-  deepseek = b.ai/deepseek-v4.1-flash; принимается и полный provider/model
+--permission: read (default, no edits and no bash), bash (plus commands, edit
+  tools still blocked), write (everything). --write and --bash are kept as
+  aliases for --permission write / --permission bash.
+channels (value of --model): glm = b.ai/glm-5.3-flash (default),
+  deepseek = b.ai/deepseek-v4.1-flash; a full provider/model id is accepted too
 USAGE
   exit 2
 }
@@ -232,12 +233,12 @@ USAGE
 resolve_opencode() {
   local bin="${OPENCODE_BIN:-}"
   if [[ -n "$bin" ]]; then
-    command -v "$bin" >/dev/null 2>&1 || die 2 "OPENCODE_BIN указывает на '$bin', но такого исполняемого файла нет"
+    command -v "$bin" >/dev/null 2>&1 || die 2 "OPENCODE_BIN points at '$bin', which is not an executable"
     command -v "$bin"
     return 0
   fi
   command -v opencode >/dev/null 2>&1 \
-    || die 2 "opencode не найден в PATH — установи opencode или укажи путь через переменную OPENCODE_BIN"
+    || die 2 "opencode not found in PATH - install opencode or set OPENCODE_BIN"
   command -v opencode
 }
 
@@ -289,11 +290,22 @@ permission_json() {
   esac
 }
 
-mode_ru() {
+mode_label() {
   case "$1" in
-    write)     echo "полный доступ (правка и команды)" ;;
-    read-bash) echo "чтение и команды, правка запрещена" ;;
-    *)         echo "только чтение (правка и bash запрещены)" ;;
+    write)     echo "full access (edits and commands)" ;;
+    read-bash) echo "read and commands, edits blocked" ;;
+    *)         echo "read-only (edits and bash blocked)" ;;
+  esac
+}
+
+# --permission <read|bash|write> — единый флаг прав; --write/--bash остаются
+# синонимами ради маршрутов Listik и пресетов конвейера, которые их уже шлют.
+mode_from_permission() {
+  case "$1" in
+    read|read-only) printf 'read-only' ;;
+    bash|read-bash) printf 'read-bash' ;;
+    write)          printf 'write' ;;
+    *) die 2 "invalid --permission '$1' - allowed values: read, bash, write" ;;
   esac
 }
 
@@ -367,11 +379,11 @@ name_slug() {
 
 check_session_name() {
   local name="$1"
-  [[ -n "$name" ]] || die 2 "--session требует имя сессии"
+  [[ -n "$name" ]] || die 2 "--session needs a session name"
   case "$name" in
-    */*|*..*) die 2 "недопустимое имя сессии '$name' (без / и ..)" ;;
+    */*|*..*) die 2 "invalid session name '$name' (no / and no ..)" ;;
   esac
-  [[ ${#name} -le 120 ]] || die 2 "имя сессии длиннее 120 символов"
+  [[ ${#name} -le 120 ]] || die 2 "session name longer than 120 characters"
 }
 
 name_file() {
@@ -464,7 +476,7 @@ cmd_check() {
     --json)    as_json=1 ;;
     -h|--help) usage ;;
     "")        ;;
-    *)         die 2 "неизвестная опция '$1'" ;;
+    *)         die 2 "unknown option '$1'" ;;
   esac
 
   local bin="" bin_status="missing" version=""
@@ -496,11 +508,11 @@ cmd_check() {
     cname="${pair%%:*}"; cmodel="${pair#*:}"
     cstatus="$(model_status_in "$cmodel" "$models_out")"
     cmark=""
-    [[ "$cmodel" == "$DEFAULT_MODEL" ]] && cmark=", по умолчанию"
+    [[ "$cmodel" == "$DEFAULT_MODEL" ]] && cmark=", default"
     chan_json="${chan_json:+$chan_json,}$(printf '{"name":"%s","model":"%s","status":"%s","default":"%s"}' \
       "$(json_escape "$cname")" "$(json_escape "$cmodel")" "$(json_escape "$cstatus")" \
       "$(if [[ -n "$cmark" ]]; then echo yes; else echo no; fi)")"
-    chan_lines="${chan_lines}${chan_lines:+$'\n'}$cname → $cmodel ($(model_status_ru "$cstatus")$cmark)"
+    chan_lines="${chan_lines}${chan_lines:+$'\n'}$cname -> $cmodel ($(model_status_label "$cstatus")$cmark)"
   done
 
   local auth_status="unknown"
@@ -531,20 +543,20 @@ cmd_check() {
       "$(json_escape "$ready")" "$(json_escape "$bin")" "$(json_escape "$bin_status")" \
       "$(json_escape "$version")" "$(json_escape "$model")" "$(json_escape "$model_status")" \
       "$chan_json" "$(json_escape "$provider")" "$(json_escape "$auth_status")" \
-      "$(json_escape "$DEFAULT_AGENT")" "$(json_escape "${parser:-нет}")" \
+      "$(json_escape "$DEFAULT_AGENT")" "$(json_escape "${parser:-none}")" \
       "$running" "${named:-0}" "$(json_escape "$STATE_DIR")"
   else
-    echo "готовность:   $ready"
-    echo "бинарь:       ${bin:-не найден} ($bin_status)"
-    echo "версия:       ${version:-—}"
-    echo "модель:       $model ($(model_status_ru "$model_status"))"
-    printf 'каналы:       %s\n' "$(printf '%s' "$chan_lines" | sed '2,$s/^/              /')"
-    echo "провайдер:    $provider (учётные данные: $(auth_status_ru "$auth_status"))"
-    echo "агент:        $DEFAULT_AGENT (по умолчанию $(mode_ru read-only))"
-    echo "разбор ответа: ${parser:-нет (нужен python3 или jq)}"
-    echo "фоновых задач в работе: $running"
-    echo "именованных сессий: ${named:-0}"
-    echo "каталог состояния: $STATE_DIR"
+    echo "ready:            $ready"
+    echo "binary:           ${bin:-not found} ($bin_status)"
+    echo "version:          ${version:--}"
+    echo "model:            $model ($(model_status_label "$model_status"))"
+    printf 'channels:         %s\n' "$(printf '%s' "$chan_lines" | sed '2,$s/^/                  /')"
+    echo "provider:         $provider (credentials: $(auth_status_label "$auth_status"))"
+    echo "agent:            $DEFAULT_AGENT (default permission: $(mode_label read-only))"
+    echo "answer parser:    ${parser:-none (python3 or jq is required)}"
+    echo "background jobs running: $running"
+    echo "named sessions:   ${named:-0}"
+    echo "state directory:  $STATE_DIR"
   fi
   [[ "$ready" == "yes" ]] || exit 1
 }
@@ -557,19 +569,19 @@ model_status_in() {
   if printf '%s\n' "$models_out" | grep -qxF "$model"; then echo ok; else echo missing; fi
 }
 
-model_status_ru() {
+model_status_label() {
   case "$1" in
-    ok)      echo "доступна" ;;
-    missing) echo "нет в каталоге моделей" ;;
-    *)       echo "проверить не удалось" ;;
+    ok)      echo "available" ;;
+    missing) echo "not in the model catalog" ;;
+    *)       echo "could not check" ;;
   esac
 }
 
-auth_status_ru() {
+auth_status_label() {
   case "$1" in
-    ok)      echo "есть" ;;
-    missing) echo "не найдены" ;;
-    *)       echo "проверить не удалось" ;;
+    ok)      echo "found" ;;
+    missing) echo "not found" ;;
+    *)       echo "could not check" ;;
   esac
 }
 
@@ -590,6 +602,8 @@ cmd_run() {
   while [[ $# -gt 0 ]]; do
     case "$1" in
       --session)    name="$(need_value --session "${2:-}")"; shift 2 ;;
+      --permission) mode="$(mode_from_permission "$(need_value --permission "${2:-}")")" || exit $?
+                    shift 2 ;;
       --write)      mode="write"; shift ;;
       --bash)       [[ "$mode" == "write" ]] || mode="read-bash"; shift ;;
       --model)      model="$(need_value --model "${2:-}")" || exit $?
@@ -598,24 +612,24 @@ cmd_run() {
       --agent)      agent="$(need_value --agent "${2:-}")"; shift 2 ;;
       --variant)    variant="$(need_value --variant "${2:-}")"; shift 2 ;;
       --cwd)        workdir="$(need_value --cwd "${2:-}")"; shift 2 ;;
-      --timeout)    timeout_s="${2:-}"; [[ -z "$timeout_s" ]] && die 2 "--timeout требует значение"; shift 2 ;;
-      --label)      label="${2:-}"; [[ -z "$label" ]] && die 2 "--label требует значение"; shift 2 ;;
+      --timeout)    timeout_s="${2:-}"; [[ -z "$timeout_s" ]] && die 2 "--timeout needs a value"; shift 2 ;;
+      --label)      label="${2:-}"; [[ -z "$label" ]] && die 2 "--label needs a value"; shift 2 ;;
       --background) background=1; shift ;;
       -h|--help)    usage ;;
-      *)            die 2 "неизвестная опция '$1' (промпт передаётся на stdin, не аргументом)" ;;
+      *)            die 2 "unknown option '$1' (the prompt goes on stdin, not as an argument)" ;;
     esac
   done
   # --variant не валидируется по фиксированному списку: допустимые значения
   # (high, max, minimal и т.п.) зависят от модели и провайдера.
 
   workdir="${workdir:-$PWD}"
-  [[ -d "$workdir" ]] || die 2 "каталог '$workdir' не существует"
+  [[ -d "$workdir" ]] || die 2 "directory '$workdir' does not exist"
   workdir="$(cd "$workdir" && pwd)"
 
   if [[ -n "$name" ]]; then
     check_session_name "$name"
     local existing; existing="$(resolve_session_name "$name" "$workdir" || true)"
-    [[ -n "$existing" ]] && die 2 "сессия с именем '$name' уже есть ($existing) — продолжить её: opencode-run.sh resume --session '$name'; новая сессия требует другого имени"
+    [[ -n "$existing" ]] && die 2 "session '$name' already exists ($existing) - continue it with: opencode-run.sh resume --session '$name'; a new session needs another name"
   fi
 
   start_run "$mode" "$model" "$agent" "$variant" "$workdir" "$timeout_s" \
@@ -633,13 +647,13 @@ start_run() {
   if [[ -z "$timeout_s" ]]; then
     if [[ $background -eq 1 ]]; then timeout_s="$DEFAULT_BG_TIMEOUT"; else timeout_s="$DEFAULT_TIMEOUT"; fi
   fi
-  [[ "$timeout_s" =~ ^[0-9]+$ ]] || die 2 "--timeout принимает целое число секунд (0 — без ограничения)"
+  [[ "$timeout_s" =~ ^[0-9]+$ ]] || die 2 "--timeout takes a whole number of seconds (0 = no limit)"
 
-  [[ -n "$(json_tool)" ]] || die 2 "нужен python3 или jq: ответ собирается из потока событий opencode (--format json)"
+  [[ -n "$(json_tool)" ]] || die 2 "python3 or jq is required: the answer is assembled from opencode's event stream (--format json)"
 
   local prompt
   prompt="$(cat)"
-  [[ -z "${prompt//[[:space:]]/}" ]] && die 2 "пустой промпт на stdin"
+  [[ -z "${prompt//[[:space:]]/}" ]] && die 2 "empty prompt on stdin"
 
   local bin; bin="$(resolve_opencode)"
   model="$(expand_channel "${model:-$DEFAULT_MODEL}")"
@@ -699,15 +713,15 @@ run_foreground() {
 
   if [[ $rc -eq 124 ]]; then
     [[ -s "$out_file" ]] && cat "$out_file"
-    die 6 "opencode: таймаут ${timeout_s}с. Задача слишком большая для одного прогона — перезапусти её с --background, тогда потолок снимается."
+    die 6 "opencode: timed out after ${timeout_s}s - rerun with --background to lift the ceiling"
   fi
   if [[ $rc -ne 0 ]]; then
     # Содержательный кусок ответа, если он успел появиться, всё равно отдаём:
     # он полезнее кода возврата. Причина отказа идёт в stderr, к die.
     [[ -s "$out_file" ]] && cat "$out_file"
-    die 6 "opencode: прогон завершился с кодом $rc${err_text:+ — $err_text}"
+    die 6 "opencode: run exited with code $rc${err_text:+ - $err_text}"
   fi
-  [[ -s "$out_file" ]] || die 6 "opencode: пустой ответ — проверь готовность командой check${err_text:+. stderr: $err_text}"
+  [[ -s "$out_file" ]] || die 6 "opencode: empty answer - run check${err_text:+. stderr: $err_text}"
   cat "$out_file"
 }
 
@@ -725,7 +739,7 @@ claim_job_dir() {
     dir="$JOBS_DIR/$id"
     mkdir "$dir" 2>/dev/null && { printf '%s' "$id"; return 0; }
     i=$((i+1))
-    [[ $i -ge 100 ]] && die 5 "не удалось выделить идентификатор задачи в $JOBS_DIR"
+    [[ $i -ge 100 ]] && die 5 "could not allocate a job id in $JOBS_DIR"
   done
 }
 
@@ -756,7 +770,7 @@ run_background() {
     echo "session_name=${name:-—}"
     echo "opencode_session=${RESUME_SID:-—}"
     echo "resumed_from=${RESUME_FROM:-—}"
-    echo "timeout=$(if [[ -n "$(pick_timeout_bin)" ]]; then echo "$timeout_s"; else echo "none (нет coreutils timeout)"; fi)"
+    echo "timeout=$(if [[ -n "$(pick_timeout_bin)" ]]; then echo "$timeout_s"; else echo "none (no coreutils timeout)"; fi)"
     echo "started=$(date -u +%Y-%m-%dT%H:%M:%SZ)"
     echo "started_epoch=$(date +%s)"
   } > "$job_dir/meta"
@@ -822,14 +836,14 @@ run_background() {
 # --- общее для работы с джобами --------------------------------------------
 job_dir_of() {
   local job_id="$1"
-  [[ -n "$job_id" ]] || die 2 "нужен job-id (список — opencode-run.sh status)"
+  [[ -n "$job_id" ]] || die 2 "a job-id is required (list them with: opencode-run.sh status)"
   # Идентификатор идёт в путь, поэтому его форма проверяется строго: иначе
   # `result ../../что-то` читает и переписывает каталоги вне JOBS_DIR.
   case "$job_id" in
-    */*|*..*) die 2 "недопустимый job-id '$job_id'" ;;
+    */*|*..*) die 2 "invalid job-id '$job_id'" ;;
   esac
   local dir="$JOBS_DIR/$job_id"
-  [[ -d "$dir" ]] || die 2 "нет задачи с id '$job_id' (список — opencode-run.sh status --all)"
+  [[ -d "$dir" ]] || die 2 "no job with id '$job_id' (list them with: opencode-run.sh status --all)"
   echo "$dir"
 }
 
@@ -910,7 +924,7 @@ elapsed_of() {
   end="$(meta_get finished_epoch "$dir/meta")"
   now="${end:-$(date +%s)}"
   local s=$(( now - start ))
-  printf '%dм%02dс' $(( s / 60 )) $(( s % 60 ))
+  printf '%dm%02ds' $(( s / 60 )) $(( s % 60 ))
 }
 
 # --- status -----------------------------------------------------------------
@@ -922,7 +936,7 @@ cmd_status() {
       --all)     all=1; shift ;;
       --running) only_running=1; shift ;;
       -h|--help) usage ;;
-      -*)        die 2 "неизвестная опция '$1'" ;;
+      -*)        die 2 "unknown option '$1'" ;;
       *)         job_id="$1"; shift ;;
     esac
   done
@@ -941,7 +955,7 @@ cmd_status() {
     return 0
   fi
 
-  [[ -d "$JOBS_DIR" ]] || { echo "фоновых задач нет" >&2; [[ $as_json -eq 1 ]] && echo '[]'; exit 1; }
+  [[ -d "$JOBS_DIR" ]] || { echo "no background jobs" >&2; [[ $as_json -eq 1 ]] && echo '[]'; exit 1; }
 
   local ids=() dir name
   for dir in $(ls -1t "$JOBS_DIR" 2>/dev/null); do
@@ -974,7 +988,7 @@ cmd_status() {
         "$(meta_get label "$d/meta")" || exit 0
     fi
     if [[ $shown -ge 30 ]]; then
-      [[ $as_json -eq 1 ]] || echo "… показаны первые 30; остальные — status --all" >&2
+      [[ $as_json -eq 1 ]] || echo "... first 30 shown; the rest are in status --all" >&2
       break
     fi
   done
@@ -985,9 +999,9 @@ cmd_status() {
   fi
   if [[ $shown -eq 0 ]]; then
     if [[ $all -eq 0 ]]; then
-      echo "здесь фоновых задач нет (все задачи на машине — status --all)" >&2
+      echo "no background jobs here (every job on this machine: status --all)" >&2
     else
-      echo "фоновых задач нет" >&2
+      echo "no background jobs" >&2
     fi
     exit 1
   fi
@@ -1024,7 +1038,7 @@ cmd_result() {
       --wait)    wait_s="${2:-}"
                  if [[ "$wait_s" =~ ^[0-9]+$ ]]; then shift 2; else wait_s=300; shift; fi ;;
       -h|--help) usage ;;
-      -*)        die 2 "неизвестная опция '$1'" ;;
+      -*)        die 2 "unknown option '$1'" ;;
       *)         job_id="$1"; shift ;;
     esac
   done
@@ -1044,14 +1058,14 @@ cmd_result() {
 
   case "$st" in
     running)
-      die 5 "задача ещё выполняется ($(elapsed_of "$dir") с $(meta_get started "$dir/meta")); опроси позже: opencode-run.sh status $job_id"
+      die 5 "job still running ($(elapsed_of "$dir") since $(meta_get started "$dir/meta")); poll later: opencode-run.sh status $job_id"
       ;;
     orphaned)
       # У осиротевшей задачи ответ мог не собраться: воркер не дошёл до разбора
       # событий. Собираем из того, что успело записаться.
       [[ -s "$dir/output.txt" ]] || extract_answer "$dir/events.jsonl" > "$dir/output.txt" 2>/dev/null || true
       [[ -s "$dir/output.txt" ]] && cat "$dir/output.txt"
-      die 6 "воркер задачи исчез, не проставив итог (перезагрузка или kill -9); выше — то, что успело записаться"
+      die 6 "the job worker vanished without recording an outcome (reboot or kill -9); above is whatever got written"
       ;;
   esac
 
@@ -1061,19 +1075,19 @@ cmd_result() {
 
   case "$st" in
     timeout)
-      die 6 "задача оборвалась по таймауту ($(meta_get timeout "$dir/meta")с); выше — то, что успело прийти"
+      die 6 "job hit its timeout ($(meta_get timeout "$dir/meta")s); above is whatever arrived"
       ;;
     canceled)
-      die 6 "задача снята вручную ($(elapsed_of "$dir") работы); выше — то, что успело прийти"
+      die 6 "job was canceled manually (after $(elapsed_of "$dir")); above is whatever arrived"
       ;;
     failed)
-      die 6 "задача завершилась с ошибкой (код $(meta_get exit "$dir/meta"))$( [[ -s "$dir/stderr.txt" ]] && printf ' — %s' "$(tail -c 500 "$dir/stderr.txt")" )"
+      die 6 "job failed (exit code $(meta_get exit "$dir/meta"))$( [[ -s "$dir/stderr.txt" ]] && printf ' - %s' "$(tail -c 500 "$dir/stderr.txt")" )"
       ;;
   esac
 
   if [[ ! -s "$dir/output.txt" ]]; then
     [[ -s "$dir/stderr.txt" ]] && tail -c 2000 "$dir/stderr.txt" >&2
-    die 6 "пустой ответ"
+    die 6 "empty answer"
   fi
 }
 
@@ -1086,30 +1100,30 @@ cmd_logs() {
   local job_id="" tail_n=40
   while [[ $# -gt 0 ]]; do
     case "$1" in
-      --tail)    tail_n="${2:-}"; [[ "$tail_n" =~ ^[0-9]+$ ]] || die 2 "--tail принимает число строк"; shift 2 ;;
+      --tail)    tail_n="${2:-}"; [[ "$tail_n" =~ ^[0-9]+$ ]] || die 2 "--tail takes a number of lines"; shift 2 ;;
       -h|--help) usage ;;
-      -*)        die 2 "неизвестная опция '$1'" ;;
+      -*)        die 2 "unknown option '$1'" ;;
       *)         job_id="$1"; shift ;;
     esac
   done
   local dir; dir="$(job_dir_of "$job_id")"
   local st; st="$(job_status_of "$dir")"
 
-  echo "статус:  $st ($(elapsed_of "$dir"))"
-  echo "события: $(file_bytes "$dir/events.jsonl") байт накоплено"
-  echo "ответ:   $(file_bytes "$dir/output.txt") байт"
+  echo "status:  $st ($(elapsed_of "$dir"))"
+  echo "events:  $(file_bytes "$dir/events.jsonl") bytes accumulated"
+  echo "answer:  $(file_bytes "$dir/output.txt") bytes"
   if [[ -s "$dir/stderr.txt" ]]; then
     echo "--- stderr opencode ---"
     tail -n 10 "$dir/stderr.txt"
   fi
   if [[ -s "$dir/events.jsonl" ]]; then
-    echo "--- последние $tail_n событий ---"
+    echo "--- last $tail_n events ---"
     render_events "$dir/events.jsonl" "$tail_n"
   elif [[ "$st" == "running" ]]; then
-    echo "событий пока нет. Это может быть норма в первые секунды прогона —"
-    echo "признак работы — сам статус running и растущее время."
+    echo "no events yet. That is normal in the first seconds of a run -"
+    echo "the signs of life are the running status and a growing elapsed time."
   else
-    echo "событий нет"
+    echo "no events"
   fi
 }
 
@@ -1137,23 +1151,23 @@ for line in sys.stdin:
         state = part.get("state") or {}
         args = state.get("input") or {}
         brief = "; ".join("%s=%s" % (k, str(v)[:80]) for k, v in list(args.items())[:3])
-        print("[инструмент] %s %s -> %s" % (part.get("tool", "?"), brief, state.get("status", "?")))
+        print("[tool] %s %s -> %s" % (part.get("tool", "?"), brief, state.get("status", "?")))
     elif kind == "text":
-        print("[текст] %s" % (part.get("text", "").replace("\n", " ")[:200]))
+        print("[text] %s" % (part.get("text", "").replace("\n", " ")[:200]))
     elif kind == "step_finish":
         tokens = part.get("tokens") or {}
-        print("[шаг] %s (вход %s, выход %s)" % (part.get("reason", "?"), tokens.get("input", "?"), tokens.get("output", "?")))
+        print("[step] %s (in %s, out %s)" % (part.get("reason", "?"), tokens.get("input", "?"), tokens.get("output", "?")))
     elif kind == "step_start":
-        print("[шаг] начат")
+        print("[step] started")
     else:
         print("[%s]" % kind)
 ' 2>/dev/null || tail -n "$tail_n" "$events"
   elif [[ "$tool" == "jq" ]]; then
     tail -n "$tail_n" "$events" | jq -r '
-      if .type == "tool_use" then "[инструмент] " + (.part.tool // "?") + " -> " + (.part.state.status // "?")
-      elif .type == "text" then "[текст] " + ((.part.text // "") | gsub("\n"; " ") | .[0:200])
-      elif .type == "step_finish" then "[шаг] " + (.part.reason // "?")
-      elif .type == "step_start" then "[шаг] начат"
+      if .type == "tool_use" then "[tool] " + (.part.tool // "?") + " -> " + (.part.state.status // "?")
+      elif .type == "text" then "[text] " + ((.part.text // "") | gsub("\n"; " ") | .[0:200])
+      elif .type == "step_finish" then "[step] " + (.part.reason // "?")
+      elif .type == "step_start" then "[step] started"
       else "[" + (.type // "?") + "]" end
     ' 2>/dev/null || tail -n "$tail_n" "$events"
   else
@@ -1184,7 +1198,7 @@ cancel_one() {
   local job_id; job_id="$(meta_get id "$dir/meta")"
   local st; st="$(job_status_of "$dir")"
   if [[ "$st" != "running" ]]; then
-    echo "$job_id: уже $st, снимать нечего"
+    echo "$job_id: already $st, nothing to cancel"
     return 0
   fi
 
@@ -1223,19 +1237,19 @@ cancel_one() {
   rm -f "$dir/canceled"
   local final; final="$(job_status_of "$dir")"
   case "$final" in
-    canceled) echo "$job_id: снята ($(elapsed_of "$dir") работы)" ;;
-    running)  echo "$job_id: снять не удалось — процесс не отвечает; посмотри status $job_id" ;;
-    *)        echo "$job_id: успела завершиться сама до отмены ($final)" ;;
+    canceled) echo "$job_id: canceled (after $(elapsed_of "$dir"))" ;;
+    running)  echo "$job_id: could not cancel - the process is not responding; see status $job_id" ;;
+    *)        echo "$job_id: finished on its own before the cancel ($final)" ;;
   esac
 }
 
 cmd_cancel() {
   local target="${1:-}"
   [[ "$target" == "-h" || "$target" == "--help" ]] && usage
-  [[ -n "$target" ]] || die 2 "нужен job-id или --all (список — opencode-run.sh status)"
+  [[ -n "$target" ]] || die 2 "a job-id or --all is required (list them with: opencode-run.sh status)"
   if [[ "$target" == "--all" ]]; then
     local any=0 dir
-    [[ -d "$JOBS_DIR" ]] || die 1 "фоновых задач нет"
+    [[ -d "$JOBS_DIR" ]] || die 1 "no background jobs"
     for dir in "$JOBS_DIR"/*/; do
       [[ -f "$dir/meta" ]] || continue
       # --all в пределах своих задач: чужие снимать молча нельзя.
@@ -1244,7 +1258,7 @@ cmd_cancel() {
       any=1
       cancel_one "${dir%/}"
     done
-    [[ $any -eq 1 ]] || { echo "работающих задач нет" >&2; exit 1; }
+    [[ $any -eq 1 ]] || { echo "no running jobs" >&2; exit 1; }
     return 0
   fi
   local dir; dir="$(job_dir_of "$target")"
@@ -1260,15 +1274,15 @@ cmd_clean() {
   local days=7 all=0
   while [[ $# -gt 0 ]]; do
     case "$1" in
-      --older-than) days="${2:-}"; [[ "$days" =~ ^[0-9]+$ ]] || die 2 "--older-than принимает число дней"
+      --older-than) days="${2:-}"; [[ "$days" =~ ^[0-9]+$ ]] || die 2 "--older-than takes a number of days"
                     [[ "$days" -eq 0 ]] && all=1
                     shift 2 ;;
       --all)        all=1; shift ;;
       -h|--help)    usage ;;
-      *)            die 2 "неизвестная опция '$1'" ;;
+      *)            die 2 "unknown option '$1'" ;;
     esac
   done
-  [[ -d "$JOBS_DIR" ]] || { echo "фоновых задач нет"; return 0; }
+  [[ -d "$JOBS_DIR" ]] || { echo "no background jobs"; return 0; }
 
   local now removed=0 skipped=0 dir
   now="$(date +%s)"
@@ -1288,8 +1302,8 @@ cmd_clean() {
     rm -rf "${dir%/}"
     removed=$((removed+1))
   done
-  echo "удалено задач: $removed (работающие не трогались${skipped:+; чужих пропущено: $skipped})"
-  echo "сессии opencode не удалялись — они живут в хранилище opencode (opencode session delete)"
+  echo "jobs removed: $removed (running jobs untouched${skipped:+; other directories skipped: $skipped})"
+  echo "opencode sessions were not deleted - they live in opencode's own storage (opencode session delete)"
 }
 
 # --- resume -----------------------------------------------------------------
@@ -1302,6 +1316,8 @@ cmd_resume() {
   while [[ $# -gt 0 ]]; do
     case "$1" in
       --session)    name="$(need_value --session "${2:-}")"; shift 2 ;;
+      --permission) mode="$(mode_from_permission "$(need_value --permission "${2:-}")")" || exit $?
+                    shift 2 ;;
       --write)      mode="write"; shift ;;
       --bash)       [[ "$mode" == "write" ]] || mode="read-bash"; shift ;;
       --model)      model="$(need_value --model "${2:-}")" || exit $?
@@ -1310,39 +1326,39 @@ cmd_resume() {
       --agent)      agent="$(need_value --agent "${2:-}")"; shift 2 ;;
       --variant)    variant="$(need_value --variant "${2:-}")"; shift 2 ;;
       --cwd)        workdir="$(need_value --cwd "${2:-}")"; shift 2 ;;
-      --timeout)    timeout_s="${2:-}"; [[ -z "$timeout_s" ]] && die 2 "--timeout требует значение"; shift 2 ;;
-      --label)      label="${2:-}"; [[ -z "$label" ]] && die 2 "--label требует значение"; shift 2 ;;
+      --timeout)    timeout_s="${2:-}"; [[ -z "$timeout_s" ]] && die 2 "--timeout needs a value"; shift 2 ;;
+      --label)      label="${2:-}"; [[ -z "$label" ]] && die 2 "--label needs a value"; shift 2 ;;
       --background) background=1; shift ;;
       -h|--help)    usage ;;
-      -*)           die 2 "неизвестная опция '$1' (промпт передаётся на stdin, не аргументом)" ;;
-      *)            [[ -n "$target" ]] && die 2 "лишний аргумент '$1'"
+      -*)           die 2 "unknown option '$1' (the prompt goes on stdin, not as an argument)" ;;
+      *)            [[ -n "$target" ]] && die 2 "extra argument '$1'"
                     target="$1"; shift ;;
     esac
   done
 
   [[ -n "$target" || -n "$name" ]] \
-    || die 2 "нужно имя сессии или job-id: opencode-run.sh resume --session <имя> (список — opencode-run.sh sessions)"
+    || die 2 "a session name or a job-id is required: opencode-run.sh resume --session <name> (list them with: opencode-run.sh sessions)"
 
   # Позиционный аргумент может быть и job-id, и именем сессии: job-id узнаётся
   # по существующему каталогу задачи, всё остальное — имя.
   local job_dir=""
   if [[ -n "$target" ]]; then
     case "$target" in
-      */*|*..*) die 2 "недопустимый аргумент '$target'" ;;
+      */*|*..*) die 2 "invalid argument '$target'" ;;
     esac
     if [[ -d "$JOBS_DIR/$target" ]]; then
       job_dir="$JOBS_DIR/$target"
     elif [[ -z "$name" ]]; then
       name="$target"
     else
-      die 2 "указаны и job-id '$target', и --session '$name' — оставь что-то одно"
+      die 2 "both job-id '$target' and --session '$name' given - use one of them"
     fi
   fi
 
   local sid="" src_cwd="" src_mode="" src_model="" src_agent="" src_variant="" src_name=""
   if [[ -n "$job_dir" ]]; then
     local st; st="$(job_status_of "$job_dir")"
-    [[ "$st" == "running" ]] && die 2 "задача '$target' ещё выполняется — resume после её окончания; иначе вызывающий откатывается на новый прогон"
+    [[ "$st" == "running" ]] && die 2 "job '$target' is still running - resume it after it finishes, or fall back to a fresh run"
     sid="$(meta_get opencode_session "$job_dir/meta")"
     if [[ -z "$sid" || "$sid" == "—" ]]; then
       sid="$(session_id_from_events "$job_dir/events.jsonl" || true)"
@@ -1356,7 +1372,7 @@ cmd_resume() {
     src_name="$(meta_get session_name "$job_dir/meta")"
     [[ "$src_name" == "—" ]] && src_name=""
     [[ -n "$sid" && "$sid" != "—" ]] \
-      || die 2 "у задачи '$target' нет id сессии opencode — вызывающий должен откатиться на новый прогон (opencode-run.sh run)"
+      || die 2 "job '$target' has no opencode session id - fall back to a fresh run: opencode-run.sh run"
     RESUME_FROM="$target"
     [[ -n "$name" ]] || name="$src_name"
   else
@@ -1365,7 +1381,7 @@ cmd_resume() {
     [[ -d "$probe_cwd" ]] && probe_cwd="$(cd "$probe_cwd" && pwd)"
     sid="$(resolve_session_name "$name" "$probe_cwd" || true)"
     [[ -n "$sid" ]] \
-      || die 2 "сессии с именем '$name' нет ни в состоянии обвязки, ни в списке opencode — начни новую: opencode-run.sh run --session '$name'"
+      || die 2 "no session named '$name' in the bridge state or in opencode's own list - start one: opencode-run.sh run --session '$name'"
     src_cwd="$(meta_get cwd "$(name_file "$name")")"
     src_model="$(meta_get model "$(name_file "$name")")"
   fi
@@ -1386,7 +1402,7 @@ cmd_resume() {
       *)                         mode="read-only" ;;
     esac
   fi
-  [[ -n "$label" ]] || label="продолжение ${name:-$target}"
+  [[ -n "$label" ]] || label="resume of ${name:-$target}"
 
   RESUME_SID="$sid"
   # Имя в meta нужно для карточки задачи, а перезаписывать файл имени незачем:
@@ -1408,12 +1424,12 @@ cmd_sessions() {
     --json)    as_json=1 ;;
     -h|--help) usage ;;
     "")        ;;
-    *)         die 2 "неизвестная опция '$1'" ;;
+    *)         die 2 "unknown option '$1'" ;;
   esac
 
   if [[ ! -d "$NAMES_DIR" ]] || [[ -z "$(ls -1 "$NAMES_DIR" 2>/dev/null)" ]]; then
     [[ $as_json -eq 1 ]] && { echo '[]'; return 0; }
-    echo "именованных сессий нет (имя задаётся при запуске: run --session <имя>)" >&2
+    echo "no named sessions (a name is given at launch: run --session <name>)" >&2
     exit 1
   fi
 
@@ -1454,8 +1470,8 @@ cmd_transcript() {
     case "$1" in
       --session) name="$(need_value --session "${2:-}")"; shift 2 ;;
       -h|--help) usage ;;
-      -*)        die 2 "неизвестная опция '$1'" ;;
-      *)         [[ -n "$job_id" ]] && die 2 "лишний аргумент '$1'"
+      -*)        die 2 "unknown option '$1'" ;;
+      *)         [[ -n "$job_id" ]] && die 2 "extra argument '$1'"
                  job_id="$1"; shift ;;
     esac
   done
@@ -1469,18 +1485,18 @@ cmd_transcript() {
       sid="$(session_id_from_events "$dir/events.jsonl" || true)"
     fi
     [[ -n "$sid" && "$sid" != "—" ]] \
-      || die 2 "у задачи '$job_id' ещё нет id сессии opencode (прогон не начался или события не записались)"
+      || die 2 "job '$job_id' has no opencode session id yet (the run has not started or no events were written)"
   elif [[ -n "$name" ]]; then
     check_session_name "$name"
     sid="$(resolve_session_name "$name" "$PWD" || true)"
-    [[ -n "$sid" ]] || die 2 "сессии с именем '$name' нет — список: opencode-run.sh sessions"
+    [[ -n "$sid" ]] || die 2 "no session named '$name' - list them with: opencode-run.sh sessions"
   else
     sid="$(latest_session_for_cwd "$PWD" || true)"
-    [[ -n "$sid" ]] || die 2 "для каталога '$PWD' сессий opencode не найдено — укажи job-id или --session <имя>"
-    echo "внимание: ни job-id, ни имя не даны — показана последняя сессия этого каталога ($sid), она может быть и твоей интерактивной сессией opencode" >&2
+    [[ -n "$sid" ]] || die 2 "no opencode session found for directory '$PWD' - give a job-id or --session <name>"
+    echo "warning: no job-id and no name given - showing the latest session of this directory ($sid), which may be your own interactive opencode session" >&2
   fi
 
-  "$bin" export "$sid" 2>/dev/null || die 2 "opencode export не смог отдать сессию '$sid' (её могли удалить)"
+  "$bin" export "$sid" 2>/dev/null || die 2 "opencode export could not return session '$sid' (it may have been deleted)"
 }
 
 latest_session_for_cwd() {
@@ -1529,5 +1545,5 @@ case "$sub" in
   sessions)   cmd_sessions "$@" ;;
   transcript) cmd_transcript "$@" ;;
   -h|--help)  usage ;;
-  *)          die 2 "неизвестная подкоманда '$sub'" ;;
+  *)          die 2 "unknown subcommand '$sub'" ;;
 esac

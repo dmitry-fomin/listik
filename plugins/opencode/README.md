@@ -59,7 +59,7 @@ allowed and keeps the same opencode session, so the new model sees the whole his
   ```
 - `bash`, and **`python3` or `jq`** — the answer is assembled from opencode's JSON event
   stream, and one of the two is required to parse it. This is a hard requirement, not a
-  nicety: without either, `check` reports `разбор ответа: нет` and `run` refuses to start.
+  nicety: without either, `check` reports `answer parser: none` and `run` refuses to start.
 
 Verify everything at once with `/opencode:opencode-check` after installing.
 
@@ -134,8 +134,8 @@ EOF
 | Option | Default | Meaning |
 | --- | --- | --- |
 | `--session <name>` | none | name the session (`run`) or find it (`resume`) |
-| `--write` | off | full access: file edits and bash |
-| `--bash` | off | allow bash, keep edits denied |
+| `--permission <read\|bash\|write>` | `read` | permission mode in one flag |
+| `--write` / `--bash` | off | aliases for `--permission write` / `--permission bash` |
 | `--model <channel\|provider/model>` | `glm` = `b.ai/glm-5.3-flash` | `glm` or `deepseek`, or a full model id; used manually and by `feature-pipeline` presets, which pin it on purpose |
 | `--variant <level>` | model default | provider-specific reasoning effort; not validated against a fixed list |
 | `--agent <name>` | `build` | another opencode agent (`opencode agent list`) |
@@ -167,9 +167,9 @@ This is what the bridge adds on top of the job machinery:
 
 ```
 > /opencode:opencode-delegate map the auth subsystem, call the session auth-map
-задача ушла в opencode: opencode-20260916-232750-33141-12253 (сессия auth-map)
+job sent to opencode: opencode-20260916-232750-33141-12253 (session auth-map)
 
-> уточни у opencode, где там проверяется срок токена
+> ask opencode where the token expiry is checked in there
 scripts/opencode-run.sh resume --session auth-map --background <<'TASK' …
 ```
 
@@ -193,15 +193,18 @@ opencode has no OS-level sandbox (this is the real difference from `codex -s rea
 The only genuine boundary is `OPENCODE_PERMISSION`: a denied tool is not in the model's
 toolset at all. Hence three modes:
 
-| Mode | `OPENCODE_PERMISSION` | What the agent can do |
+| `--permission` | `OPENCODE_PERMISSION` | What the agent can do |
 | --- | --- | --- |
-| default | `{"edit":"deny","bash":"deny"}` | read/grep/glob/list only — genuinely read-only |
-| `--bash` | `{"edit":"deny"}` | plus shell commands: `git log`, tests, builds |
-| `--write` | `{"edit":"allow","bash":"allow"}` | everything |
+| `read` (default) | `{"edit":"deny","bash":"deny"}` | read/grep/glob/list only — genuinely read-only |
+| `bash` | `{"edit":"deny"}` | plus shell commands: `git log`, tests, builds |
+| `write` | `{"edit":"allow","bash":"allow"}` | everything |
 
-**`--bash` is not read-only.** With bash allowed, a model asked to create a file will
-simply run `printf 'ok' > file` — observed, not hypothetical. That is why the default mode
-denies bash too, and why `--bash` is a separate, explicit flag rather than part of the
+`--write` and `--bash` remain as aliases, because Listik routes and pipeline presets
+already send them.
+
+**`--permission bash` is not read-only.** With bash allowed, a model asked to create a file
+will simply run `printf 'ok' > file` — observed, not hypothetical. That is why the default
+mode denies bash too, and why bash is an explicit step up rather than part of the
 default.
 
 Runs always pass `--auto` to opencode: a headless run has nobody to approve an escalation,
@@ -212,17 +215,18 @@ absence of `--auto`.
 
 ```
 > /opencode:opencode-check
-готовность:   yes
-бинарь:       /Users/you/.opencode/bin/opencode (ok)
-версия:       1.18.31
-модель:       b.ai/glm-5.3-flash (доступна)
-каналы:       glm → b.ai/glm-5.3-flash (доступна, по умолчанию)
-              deepseek → b.ai/deepseek-v4.1-flash (доступна)
-провайдер:    b.ai (учётные данные: есть)
-агент:        build (по умолчанию только чтение (правка и bash запрещены))
-разбор ответа: python3
-фоновых задач в работе: 0
-именованных сессий: 2
+ready:            yes
+binary:           /Users/you/.opencode/bin/opencode (ok)
+version:          1.18.31
+model:            b.ai/glm-5.3-flash (available)
+channels:         glm -> b.ai/glm-5.3-flash (available, default)
+                  deepseek -> b.ai/deepseek-v4.1-flash (available)
+provider:         b.ai (credentials: found)
+agent:            build (default permission: read-only (edits and bash blocked))
+answer parser:    python3
+background jobs running: 0
+named sessions:   2
+state directory:  /Users/you/.local/state/opencode-claude
 ```
 
 A collected task comes back as one final message — the model's own words, passed through
@@ -279,8 +283,8 @@ changed the implementation:
 
 **No approval channel in a headless run.** The bridge passes `--auto`, so nothing waits for
 a human; whatever is denied is denied outright. An attempt to exceed the current mode fails
-and the model says so rather than prompting. Re-run with `--bash` or `--write` if the task
-genuinely needs it.
+and the model says so rather than prompting. Re-run with `--permission bash` or
+`--permission write` if the task genuinely needs it.
 
 **The secret guard cannot live in the prompt.** `opencode` opens files by itself, so
 scanning the task text proves nothing. Scope every task to the files it actually needs and
@@ -300,8 +304,8 @@ mode stops writes, not reads — whoever writes the task owns this.
   boundary.
 - `cancel` sends `TERM` to the process tree and escalates to `KILL` after ten seconds
   (opencode starts a local server per run, so the whole tree has to go). Work it already
-  wrote to disk in `--write` mode stays written — cancelling stops the agent, it doesn't
-  roll anything back.
+  wrote to disk in `--permission write` mode stays written — cancelling stops the agent, it
+  doesn't roll anything back.
 - Session names are stored one file per name, under a slug of the name; two different names
   that slugify identically will not be confused (the original name is stored and compared),
   but the second one falls back to the session-list lookup.
@@ -310,10 +314,10 @@ mode stops writes, not reads — whoever writes the task owns this.
 
 ## A note on language
 
-The skill bodies, the script's comments **and all of its runtime output** are written in
-Russian — `/opencode:opencode-check` and every error message will greet you in Russian, as
-the sample above shows. This README, the manifests, and every command, flag, and identifier
-are in English. The skills work the same regardless of the language you talk to Claude in.
+Everything you can see — the skill bodies, this README, the manifests and all of the
+script's runtime output — is in English. Only the comments inside `opencode-run.sh` are in
+Russian; they are notes for whoever maintains the script. The skills work the same
+regardless of the language you talk to Claude in.
 
 ## Credits
 

@@ -1,63 +1,37 @@
 ---
 name: opencode-check
-description: Проверить, готов ли opencode к работе — стоит ли бинарь, какая версия, доступны ли оба канала (glm = b.ai/glm-5.3-flash по умолчанию и deepseek = b.ai/deepseek-v4.1-flash), есть ли учётные данные провайдера, чем разбирается поток событий и сколько фоновых задач уже идёт. Используй, когда opencode отвечает ошибкой, пустотой или ведёт себя не так, как ожидалось, и перед первым делегированием в сессии, если есть сомнения в установке.
-when_to_use: Триггер-фразы — «работает ли opencode», «проверь opencode», «почему opencode не отвечает», «какая модель в opencode». Запускай и самостоятельно, если делегирование в opencode упало с ошибкой запуска. Это скил про готовность харнесса, а не про ход работы — «opencode молчит» после запущенной фоновой задачи это вопрос к /opencode:opencode-jobs, а сама постановка задачи к /opencode:opencode-delegate.
+description: "Check whether opencode is ready to work — binary, version, both channels (glm = b.ai/glm-5.3-flash by default, deepseek = b.ai/deepseek-v4.1-flash), provider credentials, what parses the event stream, and how many background jobs are already running."
+when_to_use: "Triggers — \"is opencode working\", \"check opencode\", \"why doesn't opencode answer\", \"what model does opencode use\". Run it on your own when a delegation failed at launch. This is about harness readiness, not about work in flight — \"opencode is silent\" after a background job is /opencode:opencode-jobs, and posing a task is /opencode:opencode-delegate."
 allowed-tools: Bash(${CLAUDE_PLUGIN_ROOT}/scripts/opencode-run.sh *)
 ---
 
-Текущее состояние opencode:
+Current state of opencode:
 
 ```
-!`${CLAUDE_PLUGIN_ROOT}/scripts/opencode-run.sh check`
+!`${CLAUDE_PLUGIN_ROOT}/scripts/opencode-run.sh check || true`
 ```
 
-Разбери вывод и скажи человеку одним абзацем, готов харнесс или нет. Если готов — не
-пересказывай таблицу целиком, назови канал по умолчанию, доступность второго канала и
-число задач в работе.
+Report readiness to the human in one paragraph — default channel, the other channel,
+credentials, jobs in flight. Don't retell the whole report. `check --json` returns the same
+data with keys `ready`, `binary_status`, `model_status`, `channels[].status`, `auth_status`,
+`json_parser`, `running_jobs`, `state_dir`.
 
-## Что означают поля
+## Reading the output
 
-| Поле | Норма | Если не так |
-| --- | --- | --- |
-| `готовность` | `yes` | ниже разобрано по строкам, что именно сломано |
-| `бинарь` | путь и `ok` | `не найден` — opencode не установлен либо сессия стартовала до правки `PATH`; `broken` — бинарь есть, но `--version` падает |
-| `версия` | номер версии | пусто — бинарь не отвечает на `--version`, лечится переустановкой |
-| `модель` | `b.ai/glm-5.3-flash (доступна)` | модель, на которую уйдёт прогон без `--model`; статусы — как у строки `каналы` |
-| `каналы` | обе строки `доступна`, у `glm` пометка `по умолчанию` | `нет в каталоге моделей` — провайдер не подключён или модель переименована; `проверить не удалось` — `opencode models` не ответил (обычно нет сети). Недоступен только `deepseek` — общая готовность остаётся `yes`, но второй канал брать нельзя |
-| `провайдер` | `учётные данные: есть` | `не найдены` — ключ провайдера не заведён, нужен `opencode providers` (он же `opencode auth`) |
-| `агент` | `build` и режим по умолчанию | режим по умолчанию — только чтение: правка и bash запрещены |
-| `разбор ответа` | `python3` или `jq` | `нет` — ответ из потока событий собрать нечем, прогоны работать не будут |
-| `фоновых задач в работе` | сколько прогонов идёт прямо сейчас | ненулевое значение — opencode уже чем-то занят; список даёт `/opencode:opencode-jobs` |
-| `именованных сессий` | сколько сессий обвязка знает по имени | их список — `sessions` |
+- `binary: not found` — opencode isn't installed, or the session started before `PATH`
+  changed; `broken` — the binary exists but `--version` fails.
+- `not in the model catalog` means the provider isn't wired up or the model was renamed, not
+  that the model does not exist; `could not check` means `opencode models` did not answer
+  (usually no network). Only `deepseek` unavailable still leaves `ready: yes` — but don't
+  route a run to that channel.
+- `credentials: not found` — the provider key is missing; the human adds it with
+  `opencode providers` (aka `opencode auth`). Never print a key value.
+- `answer parser: none` is fatal: the answer is assembled from the `--format json` event
+  stream, so without `python3` or `jq` runs refuse to start. `brew install jq` is the only
+  external requirement of this bridge.
+- Ready but a run comes back empty — that is not a readiness problem: look at
+  `transcript <job-id>` to see what opencode actually did.
 
-## Что чинить и как
-
-- **Бинаря нет, а CLI ставился только что.** `PATH` в этой сессии старый. Попроси
-  человека открыть новый терминал; проверять установку самому через `brew`/`npm`/
-  `curl` не нужно.
-- **Модели нет в каталоге.** Каналов два: `glm` (`b.ai/glm-5.3-flash`, по умолчанию) и
-  `deepseek` (`b.ai/deepseek-v4.1-flash`). Обе модели видно в `opencode models`; если
-  какой-то там нет, у человека не подключён провайдер `b.ai` или модель переименована.
-  Подключает провайдера он сам (`opencode providers`), за него этого не делай. Другой
-  канал или модель на один прогон — флаг `--model <канал|provider/model>`, но выбирает
-  его человек, а не ты.
-- **Учётные данные не найдены.** Ключи заводит человек командой `opencode providers`
-  (алиас `opencode auth`). Значение ключа не выводи ни в ответ, ни в логи.
-- **Нет ни python3, ни jq.** Ответ opencode собирается из потока событий `--format json`,
-  и без одного из этих двух инструментов его не разобрать. Скажи человеку поставить `jq`
-  (`brew install jq`) — это единственное внешнее требование обвязки.
-- **Всё готово, но прогон возвращает пустоту.** Дело не в готовности: смотри
-  `${CLAUDE_PLUGIN_ROOT}/scripts/opencode-run.sh transcript <job-id>` — он покажет
-  сессию целиком, то есть что opencode делал на самом деле.
-
-Диагностика на этом заканчивается: чинить установку и авторизацию за человека не пытайся,
-это его действия. Когда `готовность: yes` — делегируй через `/opencode:opencode-delegate`.
-
-## Красные линии
-
-Действуют и здесь, и внутри любого прогона opencode:
-
-- Ничего не коммитить, не пушить, не удалять рекурсивно.
-- `.env`, `*.key`, `*.pem`, `credentials.json` и прочие секреты не читать, не печатать в
-  ответ и не пересылать. Имя переменной окружения с ключом называть можно, значение — нет.
-- Установку и авторизацию за человека не выполнять.
+Diagnosis ends here: installing and authenticating are the human's actions, not yours.
+Don't go checking `brew`/`npm`/`curl` on your own. Once ready, delegate via
+`/opencode:opencode-delegate`. Red lines and the full script contract: `opencode-runtime`.

@@ -45,10 +45,17 @@ def _git_message(proc: subprocess.CompletedProcess) -> str:
     return "; ".join(lines[:3])
 
 
-def git(repo: str | Path, *args: str, check: bool = True) -> subprocess.CompletedProcess:
-    """Запуск git в каталоге `repo`. Отказ — `conflict` со stderr git в message."""
+def git(repo: str | Path, *args: str, check: bool = True,
+        env: dict | None = None) -> subprocess.CompletedProcess:
+    """Запуск git в каталоге `repo`. Отказ — `conflict` со stderr git в message.
+
+    `env`, если задан, идёт в `subprocess.run` как `os.environ | env` — вызывающий
+    добавляет переменные (например `GIT_INDEX_FILE`), не теряя окружение процесса.
+    Без `env` поведение прежнее: окружение не передаётся явно.
+    """
+    run_kwargs = {} if env is None else {"env": os.environ | env}
     proc = subprocess.run(["git", "--no-optional-locks", "-C", str(repo), *args],
-                          capture_output=True, text=True)
+                          capture_output=True, text=True, **run_kwargs)
     if check and proc.returncode != 0:
         raise errors.ListikError(_git_message(proc), code=errors.CONFLICT)
     return proc

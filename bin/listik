@@ -204,7 +204,7 @@ OWNER_OPS = frozenset({"list", "board", "ready", "create", "claim", "heartbeat",
 WRITE_OPS = frozenset({
     "create", "update", "claim", "heartbeat", "stage", "comment",
     "needs-owner", "dep_add", "dep_remove", "project_add", "project_archive",
-    "project_remove", "project_routing",
+    "project_remove", "project_routing", "waves_apply",
 })
 
 #: `--local` при живом сервере обходит push доски так же молча, как фолбэк без
@@ -1233,14 +1233,22 @@ def cmd_waves(args) -> int:
         raise errors.ListikError(
             "нужен проект: волны считаются по одному проекту", code=errors.BAD_ARGUMENT,
             hint="listik waves --project <slug>")
-    res = call("waves", args, "/api/waves",
-               query={"project": project, "stage": args.stage},
-               local_kwargs={"project": project, "stage": args.stage})
+    apply_ = getattr(args, "apply", False)
+    if apply_:
+        res = call("waves_apply", args, "/api/waves/apply", method="POST",
+                   body={"project": project, "stage": args.stage},
+                   local_kwargs={"project": project, "stage": args.stage})
+    else:
+        res = call("waves", args, "/api/waves",
+                   query={"project": project, "stage": args.stage},
+                   local_kwargs={"project": project, "stage": args.stage})
+
+    waves_plan = res.get("waves") if apply_ else res
     if getattr(args, "json", False):
         emit(args, res, "")
-        return 1 if res.get("cycles") else 0
+        return 1 if waves_plan.get("cycles") else 0
 
-    tasks = res.get("tasks") or {}
+    tasks = waves_plan.get("tasks") or {}
 
     def _line(tid: str) -> str:
         info = tasks.get(tid)
@@ -1250,37 +1258,50 @@ def cmd_waves(args) -> int:
         return f"{tid}  P{info.get('priority')}  {title}"
 
     lines: list[str] = []
-    waves = res.get("waves") or []
-    for i, wave in enumerate(waves):
+    layers = waves_plan.get("waves") or []
+    for i, wave in enumerate(layers):
         prefix = f"волна {i}: "
         indent = " " * len(prefix)
         for j, tid in enumerate(wave):
             lines.append(f"{prefix if j == 0 else indent}{_line(tid)}")
 
-    unroutable = res.get("unroutable") or []
+    unroutable = waves_plan.get("unroutable") or []
     if unroutable:
         lines.append("без маршрута (нужен человек): " + ", ".join(unroutable))
 
-    unscoped = res.get("unscoped") or []
+    unscoped = waves_plan.get("unscoped") or []
     if unscoped:
         lines.append("без области записи (нужен rescope): " + ", ".join(unscoped))
 
-    blocked = res.get("blocked") or {}
+    blocked = waves_plan.get("blocked") or {}
     if blocked:
         lines.append("стоят: " + ", ".join(
             f"{tid} (ждёт {reason})" for tid, reason in blocked.items()))
 
-    resource_blocks = res.get("resource_blocks") or []
+    resource_blocks = waves_plan.get("resource_blocks") or []
     if resource_blocks:
         lines.append("ресурсные рёбра: " + ", ".join(
             f"{a} → {b}" for a, b in resource_blocks))
 
-    cycles = res.get("cycles") or []
+    cycles = waves_plan.get("cycles") or []
     for cycle in cycles:
         lines.append("циклы: " + " → ".join([*cycle, cycle[0]]))
 
     if not lines:
         lines.append("волн нет")
+
+    if apply_:
+        added = res.get("added") or []
+        removed = res.get("removed") or []
+        kept = res.get("kept") or 0
+        if added or removed:
+            lines.append("записано рёбер: %d (%s)" % (
+                len(added), ", ".join(f"{a} → {b}" for a, b in added)))
+            lines.append("снято: %d (%s)" % (
+                len(removed), ", ".join(f"{a} → {b}" for a, b in removed)))
+            lines.append("без изменений: %d" % kept)
+        else:
+            lines.append("рёбра без изменений")
 
     print("\n".join(lines))
     return 1 if cycles else 0
@@ -2063,6 +2084,9 @@ def build_parser() -> argparse.ArgumentParser:
     sp = add("waves", cmd_waves, help="волны запуска: что можно делать одновременно")
     sp.add_argument("-p", "--project")
     sp.add_argument("--stage")
+    sp.add_argument("--apply", action="store_true",
+                    help="записать ресурсные рёбра resource-blocks в базу под этот расчёт: "
+                    "устаревшие снять, недостающие поставить")
 
     sp = add("inbox", cmd_inbox, help="что требует человека: вопросы и брошенные задачи")
     sp.add_argument("--project")

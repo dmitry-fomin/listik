@@ -18,8 +18,12 @@
 отличается только происхождением: гейтит `claim`/`ready` точно так же, но смысловое ребро
 на той же паре пишется рядом, а не поглощается им, и проверка цикла в `add_dep` его не
 учитывает (см. `SEMANTIC_HARD`). Расчёт волн — чистая функция `waves` в этом модуле; запись
-ресурсных рёбер в базу — `apply_resource_blocks` (следующая порция). При расчёте уже
-существующие ресурсные рёбра во вход не берутся — на каждом проходе они выводятся заново.
+ресурсных рёбер в базу — `apply_resource_blocks`: пересчитывает план заново (`waves`) и
+переписывает ресурсные рёбра задач рабочего множества под него — устаревшие снимает,
+недостающие ставит, смысловые (`SEMANTIC_HARD`) и рёбра чужих задач не трогает. Автор
+ресурсного ребра — всегда `RESOURCE_BLOCK_AUTHOR` (машина), ни один вход не может его
+переопределить. При расчёте уже существующие ресурсные рёбра во вход не берутся — на каждом
+проходе они выводятся заново.
 """
 from __future__ import annotations
 
@@ -44,6 +48,12 @@ SOFT_LINKS = ("parent-child", "relates-to", "related", "discovered-from", "dupli
 RESOURCE_BLOCK = "resource-blocks"
 # Жёсткие типы, которые может поставить человек/агент по смыслу задачи (все, кроме ресурсного).
 SEMANTIC_HARD = tuple(t for t in HARD_BLOCKERS if t != RESOURCE_BLOCK)
+
+# Автор ресурсного ребра на всех путях записи (локальный фолбэк, HTTP, MCP): ребро машинное
+# по построению, его ставит только планировщик, подпись человеком была бы ложью; префикс
+# `agent:` нужен, чтобы `actors.resolve` считал автора машиной. Не переопределяется ни
+# `--actor`/`--owner`, ни `X-Listik-Owner`, ни `actor`/`owner` из тела/аргументов запроса.
+RESOURCE_BLOCK_AUTHOR = "agent:listik-swarm"
 
 DEP_TITLES = {
     "blocks": "блокирует",
@@ -922,4 +932,83 @@ def waves(conn: sqlite3.Connection, *, project: str, stage: str | None = None) -
         "blocked": blocked,
         "resource_blocks": resource_blocks,
         "tasks": tasks_view,
+    }
+
+
+def apply_resource_blocks(conn: sqlite3.Connection, *, project: str, stage: str | None = None) -> dict:
+    """Записывает в базу ресурсные рёбра под свежий расчёт `waves`.
+
+    Переписывает `resource-blocks` только у задач рабочего множества (`plan["tasks"]`):
+    снимает устаревшие, ставит недостающие, смысловые рёбра (`SEMANTIC_HARD`,
+    `suggested-blocks`) не трогает. Автор ребра — всегда `RESOURCE_BLOCK_AUTHOR`, у функции
+    нет параметра `actor`: подпись машиной нельзя переопределить ни с одного входа. Цикл в
+    смысловых рёбрах — отказ (`errors.ListikError`, `code=errors.CONFLICT`), в базу ничего не
+    пишется. Один `commit` в конце; исключение по дороге — `rollback`, база как до вызова.
+    """
+    plan = waves(conn, project=project, stage=stage)
+    if plan["cycles"]:
+        cycle = plan["cycles"][0]
+        raise errors_mod.ListikError(
+            "ресурсные рёбра не записаны: в зависимостях цикл "
+            + " → ".join(cycle) + " → " + cycle[0],
+            code=errors_mod.CONFLICT,
+            hint="разорви цикл: listik dep rm <id> <блокер>",
+        )
+
+    working = set(plan["tasks"].keys())
+    desired = {(later, earlier) for earlier, later in plan["resource_blocks"]}
+
+    existing: set[tuple[str, str]] = set()
+    if working:
+        marks = ",".join("?" * len(working))
+        rows = _fetch(
+            conn,
+            f"SELECT issue_id, depends_on FROM deps WHERE dep_type = 'resource-blocks' "
+            f"AND issue_id IN ({marks})",
+            tuple(working),
+        )
+        existing = {(r["issue_id"], r["depends_on"]) for r in rows}
+
+    to_remove = existing - desired
+    to_add = desired - existing
+    kept = len(existing & desired)
+
+    try:
+        for issue_id, depends_on in to_remove:
+            conn.execute(
+                "DELETE FROM deps WHERE issue_id=? AND depends_on=? AND dep_type='resource-blocks'",
+                (issue_id, depends_on),
+            )
+        for issue_id, depends_on in to_add:
+            conn.execute(
+                "INSERT INTO deps(issue_id, depends_on, dep_type, created_by) "
+                "VALUES(?,?,'resource-blocks',?)",
+                (issue_id, depends_on, RESOURCE_BLOCK_AUTHOR),
+            )
+        touched: set[str] = set()
+        for issue_id, depends_on in (*to_remove, *to_add):
+            touched.add(issue_id)
+            touched.add(depends_on)
+        for tid in touched:
+            refresh_task(conn, tid)
+    except Exception:
+        conn.rollback()
+        raise
+    conn.commit()
+
+    order_index = {tid: i for i, tid in enumerate(plan["tasks"].keys())}
+    added = [[earlier, later] for earlier, later in plan["resource_blocks"]
+             if (later, earlier) in to_add]
+    removed = sorted(
+        ([earlier, later] for later, earlier in to_remove),
+        key=lambda pair: (order_index.get(pair[1], len(order_index)), pair[0]),
+    )
+
+    return {
+        "project": project,
+        "stage": stage,
+        "added": added,
+        "removed": removed,
+        "kept": kept,
+        "waves": plan,
     }

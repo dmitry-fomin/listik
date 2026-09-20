@@ -884,6 +884,25 @@ def handle(method: str, path: str, query: dict, body: dict, authed: bool = False
             "generated_at": store.now_iso(),
         }
 
+    if path == "/api/waves/apply":
+        if method != "POST":
+            raise ApiError(405, "метод не поддерживается")
+        # `actor` в теле и `X-Listik-Owner` на автора ресурсного ребра не влияют:
+        # он всегда deps_mod.RESOURCE_BLOCK_AUTHOR — ребро машинное по построению.
+        project = body.get("project") or ""
+        stage = body.get("stage")
+        try:
+            out = deps_mod.apply_resource_blocks(conn, project=project, stage=stage)
+        except errors_mod.ListikError as exc:
+            raise ApiError(409 if exc.code == errors_mod.CONFLICT else 400, exc.message,
+                           code=exc.code) from exc
+        touched: set[str] = set()
+        for pair in (*out["added"], *out["removed"]):
+            touched.update(pair)
+        for tid in touched:
+            publish("task", {"id": tid, "action": "deps"})
+        return 200, {**out, "generated_at": store.now_iso()}
+
     if path == "/api/waves":
         if method != "GET":
             raise ApiError(405, "метод не поддерживается")

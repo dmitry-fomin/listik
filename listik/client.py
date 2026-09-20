@@ -243,6 +243,10 @@ def local_call(op: str, **kwargs):
     if op == "waves":
         from . import deps as deps_mod
         return deps_mod.waves(conn, project=kwargs.get("project"), stage=kwargs.get("stage"))
+    if op == "waves_apply":
+        from . import deps as deps_mod
+        return deps_mod.apply_resource_blocks(
+            conn, project=kwargs.get("project") or "", stage=kwargs.get("stage"))
     if op == "mentions":
         from . import deps as deps_mod
         return deps_mod.mentioned(conn, kwargs["task_id"], limit=kwargs.get("limit", 50))

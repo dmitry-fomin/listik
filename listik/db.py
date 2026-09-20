@@ -11,7 +11,7 @@ from pathlib import Path
 
 from . import paths
 
-SCHEMA_VERSION = 9
+SCHEMA_VERSION = 10
 
 SCHEMA = """
 PRAGMA journal_mode = WAL;
@@ -85,7 +85,15 @@ CREATE TABLE IF NOT EXISTS tasks (
     launch_log         TEXT,                   -- абсолютный путь к логу процесса
     launch_exit_code   INTEGER,                -- код выхода; NULL — идёт или неизвестен
     launch_finished_at TEXT,                   -- завершился или слежение потеряно
-    launch_error       TEXT                    -- почему не запустили; NULL — запуск был
+    launch_error       TEXT,                   -- почему не запустили; NULL — запуск был
+    -- Рой (listik-s520): области файлов и ограждение запуска. Первые две колонки ниже
+    -- (списки путей чтения/правки) через update_task правятся (после порции c этого
+    -- шага); последние две (id запуска и поколение) пишет только лаунчер (swarm-3) —
+    -- через update_task они не меняются никогда.
+    read_scope   TEXT NOT NULL DEFAULT '[]',   -- JSON-список относительных путей, которые задача читает
+    write_scope  TEXT NOT NULL DEFAULT '[]',   -- JSON-список относительных путей, которые задача правит
+    dispatch_id  TEXT,                         -- id запуска воркера; NULL, пока запуска не было
+    generation   INTEGER NOT NULL DEFAULT 0    -- поколение запуска, растёт при каждом старте
 );
 CREATE INDEX IF NOT EXISTS idx_tasks_status   ON tasks(status);
 CREATE INDEX IF NOT EXISTS idx_tasks_stage    ON tasks(stage);
@@ -302,6 +310,10 @@ MIGRATIONS: list[tuple[str, str, str]] = [
     ("tasks", "launch_exit_code", "INTEGER"),
     ("tasks", "launch_finished_at", "TEXT"),
     ("tasks", "launch_error", "TEXT"),
+    ("tasks", "read_scope", "TEXT NOT NULL DEFAULT '[]'"),
+    ("tasks", "write_scope", "TEXT NOT NULL DEFAULT '[]'"),
+    ("tasks", "dispatch_id", "TEXT"),
+    ("tasks", "generation", "INTEGER NOT NULL DEFAULT 0"),
     ("comments", "kind", "TEXT NOT NULL DEFAULT 'comment'"),
     ("deps", "created_by", "TEXT"),
     ("documents", "status", "TEXT NOT NULL DEFAULT 'ok'"),

@@ -21,6 +21,7 @@ from . import deps as deps_mod
 from . import errors as errors_mod
 from . import paths
 from . import routes as routes_mod
+from . import scope as scope_mod
 from . import store_helpers
 from . import textutil
 
@@ -455,6 +456,9 @@ UPDATABLE = {
     # только `create_task` и `launcher.py`, а маршрут можно сменить правкой
     # карточки — но лишь пока работа не началась (`route_change_denied`).
     "launch_route",
+    # Области роя, валидация — `scope.normalize_scope`; `dispatch_id`/`generation`
+    # сюда не входят.
+    "read_scope", "write_scope",
 }
 
 #: Поле карточки с «типом запуска» и его алиас: алиасом маршрут зовут создание
@@ -663,7 +667,10 @@ def update_task(conn: sqlite3.Connection, task_id: str, *, actor: str | None = N
     for key, value in fields.items():
         if key not in UPDATABLE or value is None:
             continue
-        if isinstance(value, list):
+        if key in scope_mod.FIELDS:
+            value = json.dumps(scope_mod.normalize_scope(value, field=key),
+                                ensure_ascii=False)
+        elif isinstance(value, list):
             value = json.dumps(value, ensure_ascii=False)
         if key == "needs_owner":
             value = 1 if value else 0
@@ -1454,6 +1461,11 @@ def row_to_task(conn: sqlite3.Connection, row: sqlite3.Row) -> dict:
         "launch_exit_code": row["launch_exit_code"],
         "launch_finished_at": row["launch_finished_at"],
         "launch_error": row["launch_error"],
+        # Рой (listik-s520): области файлов и ограждение запуска.
+        "read_scope": store_helpers.json_list(row["read_scope"]),
+        "write_scope": store_helpers.json_list(row["write_scope"]),
+        "dispatch_id": row["dispatch_id"],
+        "generation": int(row["generation"] or 0),
         "blocked_by": blockers,
         "source": row["source"],
         "external_ref": row["external_ref"],
@@ -2141,6 +2153,10 @@ def add_dep(conn: sqlite3.Connection, issue_id: str, depends_on: str, dep_type: 
             raise errors_mod.NotFound(f"задача не найдена: {tid}")
     if issue_id == depends_on:
         raise ValueError(f"связь задачи с самой собой: {issue_id}")
+    if dep_type == deps_mod.RESOURCE_BLOCK:
+        raise errors_mod.BadArgument(
+            "ресурсный блокер ставит только планировщик: тип resource-blocks через dep add не "
+            "ставится, смысловую зависимость ставь типом blocks")
     actor_key, actor_kind = actors_mod.resolve(created_by, conn)
     if created_by:
         actors_mod.remember(conn, created_by, actor_key, actor_kind)
@@ -2162,8 +2178,8 @@ def add_dep(conn: sqlite3.Connection, issue_id: str, depends_on: str, dep_type: 
             actual_type = "suggested-blocks"
             existing_hard = conn.execute(
                 "SELECT dep_type FROM deps WHERE issue_id=? AND depends_on=? AND dep_type IN (%s)"
-                % ",".join("?" * len(deps_mod.HARD_BLOCKERS)),
-                (issue_id, depends_on, *deps_mod.HARD_BLOCKERS),
+                % ",".join("?" * len(deps_mod.SEMANTIC_HARD)),
+                (issue_id, depends_on, *deps_mod.SEMANTIC_HARD),
             ).fetchone()
             if existing_hard:
                 # Жёсткая связь важнее предложения — уже подтверждено, ничего не пишем.
@@ -2192,8 +2208,8 @@ def add_dep(conn: sqlite3.Connection, issue_id: str, depends_on: str, dep_type: 
         # Жёсткая связь: человек, unknown, агент с --confirm.
         already_hard = conn.execute(
             "SELECT dep_type FROM deps WHERE issue_id=? AND depends_on=? AND dep_type IN (%s)"
-            % ",".join("?" * len(deps_mod.HARD_BLOCKERS)),
-            (issue_id, depends_on, *deps_mod.HARD_BLOCKERS),
+            % ",".join("?" * len(deps_mod.SEMANTIC_HARD)),
+            (issue_id, depends_on, *deps_mod.SEMANTIC_HARD),
         ).fetchone()
         had_suggestion = conn.execute(
             "SELECT 1 FROM deps WHERE issue_id=? AND depends_on=? AND dep_type='suggested-blocks'",
@@ -2204,12 +2220,12 @@ def add_dep(conn: sqlite3.Connection, issue_id: str, depends_on: str, dep_type: 
             parents: dict[str, str | None] = {depends_on: None}
             frontier = [depends_on]
             cycle_path: list[str] | None = None
-            marks = ",".join("?" * len(deps_mod.HARD_BLOCKERS))
+            marks = ",".join("?" * len(deps_mod.SEMANTIC_HARD))
             while frontier and cycle_path is None:
                 cur = frontier.pop()
                 for r in conn.execute(
                     f"SELECT depends_on FROM deps WHERE issue_id = ? AND dep_type IN ({marks})",
-                    (cur, *deps_mod.HARD_BLOCKERS),
+                    (cur, *deps_mod.SEMANTIC_HARD),
                 ):
                     nxt = r["depends_on"]
                     if nxt == issue_id:

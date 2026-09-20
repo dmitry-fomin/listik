@@ -2040,7 +2040,9 @@ def build_parser() -> argparse.ArgumentParser:
                     "link/suggest второй аргумент отвергают — используйте dep add --dep-type)")
     sp.add_argument("--dep-type", default=None,
                     help="тип связи: blocks (жёсткая блокировка, по умолчанию для add), "
-                         "relates-to (по умолчанию для link), parent-child, waits-for")
+                         "relates-to (по умолчанию для link), parent-child, waits-for; "
+                         "resource-blocks ставит только планировщик роя, через dep add не "
+                         "принимается")
     sp.add_argument("-d", "--depth", type=int, default=3)
     sp.add_argument("-n", "--limit", type=int, default=50)
     sp.add_argument("--only", help="связать только с этой задачей")

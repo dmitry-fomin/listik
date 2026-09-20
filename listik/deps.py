@@ -10,6 +10,14 @@
 Тип `parent-child` при этом несёт ещё один смысл: родитель-эпик закрывается,
 когда закрыты его дети. Поэтому «могу ли я закрыть эпик» — это отдельная проверка
 (`finishable`), не то же самое, что «могу ли я взять задачу» (`ready`).
+
+`resource-blocks` — тоже жёсткая блокировка, но машинного происхождения: её ставит
+планировщик роя (swarm-2), когда у двух задач одной волны пересекается `write_scope`, и
+пересчитывает заново на каждом проходе. Через `dep add` (CLI/HTTP/MCP) её поставить нельзя —
+`store.add_dep` отказывает `bad_argument` независимо от актора. От смыслового `blocks`
+отличается только происхождением: гейтит `claim`/`ready` точно так же, но смысловое ребро
+на той же паре пишется рядом, а не поглощается им, и проверка цикла в `add_dep` его не
+учитывает (см. `SEMANTIC_HARD`).
 """
 from __future__ import annotations
 
@@ -24,10 +32,16 @@ OPEN_STATUSES = ("open", "in_progress", "blocked", "review")
 FINAL_STATUSES = ("done", "cancelled")
 
 # Типы связей, которые физически запрещают начинать/закрывать задачу
-HARD_BLOCKERS = ("blocks", "blocked-by", "waits-for", "conditional-blocks")
+HARD_BLOCKERS = ("blocks", "blocked-by", "waits-for", "conditional-blocks", "resource-blocks")
 # Типы связей, которые стоит прочитать, но они не запрещают работу
 SOFT_LINKS = ("parent-child", "relates-to", "related", "discovered-from", "duplicates",
               "supersedes", "parent", "replies-to", "suggested-blocks")
+
+# Ресурсный блокер: жёсткий, но машинный — ставит только планировщик роя, через `dep add`
+# не принимается (см. `store.add_dep`).
+RESOURCE_BLOCK = "resource-blocks"
+# Жёсткие типы, которые может поставить человек/агент по смыслу задачи (все, кроме ресурсного).
+SEMANTIC_HARD = tuple(t for t in HARD_BLOCKERS if t != RESOURCE_BLOCK)
 
 DEP_TITLES = {
     "blocks": "блокирует",
@@ -43,6 +57,7 @@ DEP_TITLES = {
     "supersedes": "заменяет",
     "replies-to": "ответ на",
     "suggested-blocks": "предложенный блокер",
+    "resource-blocks": "ресурсный блокер",
 }
 
 

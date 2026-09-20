@@ -376,7 +376,9 @@ TOOLS: list[dict] = [
         "description": "Добавить или снять связь между задачами (blocks, related, parent-child). "
                         "Жёсткая связь от агента без confirm записывается как предложение "
                         "(suggested-blocks) до подтверждения человеком; без actor вызов считается "
-                        "агентским. confirm — только по решению человека.",
+                        "агентским. confirm — только по решению человека. resource-blocks — "
+                        "ресурсный блокер, ставит только планировщик; через этот инструмент не "
+                        "принимается.",
         "inputSchema": {
             "type": "object",
             "properties": {"id": TASK_ID, "depends_on": TASK_ID,

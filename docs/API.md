@@ -828,8 +828,8 @@ dropped_chunks, reason`), `reasons[]` (по одному пункту на ка�
 | POST | `/api/tasks/{id}/needs-owner` | `value=true\|false`, `note`, `actor`, `harness` | поднять/снять флаг «нужен человек»: при непустом `note` создаётся комментарий `kind=question` (`value=true`) или `kind=answer` (`value=false`); событие `question`/`answer` пишется при каждом вызове, даже если флаг уже стоит в нужном значении; ответ — полная карточка, как у `PATCH`. Автор комментария и события — `actor`; без него в серверном режиме подписывается человек из заголовка `X-Listik-Owner` (явный агентский `actor` сильнее), чтобы вопрос/ответ с доски не остался без автора. `PATCH /api/tasks/{id}` с `needs_owner` меняет только флаг и комментария не пишет |
 | POST | `/api/tasks/{id}/release` | `note`, `actor` | освободить задачу |
 | POST | `/api/tasks/{id}/done` | `result`, `reason`, `actor`, `note` | закрыть: `status=done`, `stage=done` |
-| POST | `/api/tasks/{id}/deps` | `depends_on`, `dep_type=blocks`, `confirm=false`, `actor` | с `depends_on` — добавить связь; без него — дерево зависимостей (`waits_for`/`waited_by`). Жёсткий `dep_type` (`blocks`/`blocked-by`/`waits-for`/`conditional-blocks`) от агентского `actor` без `confirm=true` не ставится сразу жёстким — пишется как `suggested-blocks` (мягкая, ждёт подтверждения человеком); `confirm=true` (или неагентский `actor`) ставит жёсткую связь сразу. Ответ: `dep_type` (фактически записанный тип), `requested_dep_type` (что просили), `suggested`, `confirmed`, `promoted` (предложение заменено на жёсткую связь этим вызовом), `created`, `created_by`. 400 на самосвязь и на цикл жёстких связей |
-| DELETE | `/api/tasks/{id}/deps/{depends_on}` | `dep_type` строкой запроса | снять связь; без `dep_type` снимает разом `blocks` и `suggested-blocks` между той же парой задач. Ответ: `removed` (число снятых строк), `dep_types[]` |
+| POST | `/api/tasks/{id}/deps` | `depends_on`, `dep_type=blocks`, `confirm=false`, `actor` | с `depends_on` — добавить связь; без него — дерево зависимостей (`waits_for`/`waited_by`). Жёсткий `dep_type` (`blocks`/`blocked-by`/`waits-for`/`conditional-blocks`) от агентского `actor` без `confirm=true` не ставится сразу жёстким — пишется как `suggested-blocks` (мягкая, ждёт подтверждения человеком); `confirm=true` (или неагентский `actor`) ставит жёсткую связь сразу. `dep_type=resource-blocks` — 400 `bad_argument` для любого `actor` и `confirm`: ставит только планировщик роя, через этот путь не принимается. Ответ: `dep_type` (фактически записанный тип), `requested_dep_type` (что просили), `suggested`, `confirmed`, `promoted` (предложение заменено на жёсткую связь этим вызовом), `created`, `created_by`. 400 на самосвязь и на цикл жёстких связей — «уже есть жёсткая связь на паре» и цикл считаются без учёта `resource-blocks` |
+| DELETE | `/api/tasks/{id}/deps/{depends_on}` | `dep_type` строкой запроса | снять связь; без `dep_type` снимает разом `blocks` и `suggested-blocks` между той же парой задач, `resource-blocks` — только явным `dep_type=resource-blocks` (актор не ограничен). Ответ: `removed` (число снятых строк), `dep_types[]` |
 | POST | `/api/tasks/{id}/ready` | — | вердикт по задаче (`deps_state`, см. ниже) |
 | POST | `/api/tasks/{id}/mentions` | `limit` | задачи, упомянутые в тексте этой задачи, но не связанные с ней. Отдаёт все совпадения — тем же режимом пользуются `dep suggest`/`dep link`; подсказка `link_hints[]` при создании отсеивает id в путях и кавычках (см. «Найденная по ходу задача») |
 | POST | `/api/projects` | `path` (каталог репозитория) или `slug`, `title`, `kind=native` | добавить репозиторий на доску; slug по умолчанию — имя каталога, git remote/ветка подтягиваются сами. `path` — абсолютный, от `~` или относительный — от корня проектов (`root` из `GET /api/projects`, `LISTIK_PROJECTS_ROOT`, по умолчанию `~/Projects`), никогда от рабочего каталога сервера (listik-i23u); нет каталога — 400 `bad_argument` «каталога нет: <полный путь>». То же правило для `path` в `PATCH`. Если каталог лежит внутри git-репозитория, путь приводится к корню (`git rev-parse --show-toplevel`), а в ответе появляется `path_adjusted_from` — исходный путь, иначе `null`. Существующий slug не падает: проект возвращается на доску и обновляется. Сверка slug идёт **без учёта регистра** (`store.existing_slug`): если проект с таким slug уже есть в другом написании, возвращается он — с прежним регистром slug, `created=false`, — а не второй проект-дубль |
@@ -1011,8 +1011,20 @@ MCP по stdio (`listik mcp`) пишет в базу мимо сервера, п
 Поэтому «заблокирована» — не статус, который кто-то проставил руками и забыл снять, а состояние,
 которое исчезает само, как только закрыт блокер.
 
-**Жёсткие блокеры** (`dep_type`: `blocks`, `blocked-by`, `waits-for`, `conditional-blocks`) —
-пока блокер не закрыт (`done`/`cancelled`), задачу брать нельзя.
+**Жёсткие блокеры** (`dep_type`: `blocks`, `blocked-by`, `waits-for`, `conditional-blocks`,
+`resource-blocks`) — пока блокер не закрыт (`done`/`cancelled`), задачу брать нельзя.
+
+`resource-blocks` (`dep_title`: «ресурсный блокер») — жёсткий блокер машинного происхождения:
+его ставит планировщик роя при пересечении `write_scope` двух задач одной волны и пересчитывает
+заново на каждом проходе. Гейтит `claim`/`ready` точно как `blocks`, но через `dep add`/
+`POST .../deps`/MCP `listik_deps` его поставить нельзя ни под каким актором и ни с каким
+`confirm` — ответ 400 `bad_argument`. Смысловой `blocks` на той же паре записывается рядом, а
+не поглощается ресурсным. Снимается только явно, `dep rm … --dep-type resource-blocks` — любым
+актором, включая агента (планировщик всё равно вернёт ребро на следующем проходе); `dep rm` без
+типа его не трогает, и тогда `show` продолжает печатать «заблокирована: …» — это не баг, а
+оставшееся ресурсное ребро. Проверка цикла при `dep add` ресурсные рёбра не учитывает: обратное
+смысловое ребро на пару с машинным поставить можно, обе задачи тогда стоят до пересчёта
+планировщика.
 **Мягкие связи** (`parent-child`, `relates-to`, `related`, `discovered-from`, `duplicates`,
 `supersedes`, `suggested-blocks`) — не запрет, но сигнал «сначала прочитай»; отдаются в
 `soft_links`. `suggested-blocks` — предложение агентом жёсткой связи, ещё не подтверждённое
@@ -1067,6 +1079,7 @@ listik blocked                      # кто кого ждёт и почему
 listik tree <id>                    # дерево зависимостей задачи
 listik dep confirm <id> <блокер>    # подтвердить предложение агента → жёсткая связь
 listik dep suggested [--project]    # предложения агентов, ждущие подтверждения человеком
+listik dep rm <id> <dep> --dep-type resource-blocks   # снять ресурсный блокер планировщика (dep add его не ставит)
 listik projects <slug> [--routing '<json>']   # показать/задать маршрутизацию проекта
 listik list --mine --json
 listik show <id> [--json]          # полная карточка задачи; у шага — порции с их документами

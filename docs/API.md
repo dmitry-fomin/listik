@@ -414,7 +414,8 @@ stderr только строка `autostart <id>: уже запущена Listik
 снимает `dispatch_id` (ставит `NULL`). Окружение запущенного процесса получает, кроме
 `LISTIK_TASK_ID`, `LISTIK_ROUTE`, `LISTIK_LAUNCHED_BY=listik`, ещё две переменные:
 `LISTIK_GENERATION` (десятичная строка поколения этого захвата) и `LISTIK_DISPATCH_ID`
-(значение `dispatch_id`) — итого пять.
+(значение `dispatch_id`) — итого пять штатных, плюс ключи из `env` запроса `launch` (см.
+«Отзыв и перезапуск»).
 
 Потоки слежения (поток-демон после `start` и поток-опросчик `_poll` после `recover`)
 пишут `launch_exit_code`/`launch_finished_at` условным `UPDATE … WHERE id = ? AND
@@ -624,6 +625,24 @@ generation + 1, dispatch_id = NULL, launched_by = NULL … WHERE id = ? AND gene
 `ALREADY_STARTED` не меняется вовсе, для прочих отказов — `launch_error`+`needs_owner`,
 как у автостарта). Успешный `launch` — `200` с карточкой и дополнительным ключом
 `"launched": true`.
+
+`POST /api/tasks/{id}/launch` (и `listik launch <id> --env K=V`) принимает необязательный
+`env{}` — дополнительное окружение запускаемого процесса поверх унаследованного окружения
+сервера (`listik/launcher.py: check_env`). Ключи — только `LISTIK_[A-Z0-9_]+`, не из
+`RESERVED_ENV` (переменные, которые сам Listik читает или выдаёт: `LISTIK_HOME`, `LISTIK_DB`,
+`LISTIK_CONFIG`, `LISTIK_LOG`, `LISTIK_PORT`, `LISTIK_PROJECTS_ROOT`, `LISTIK_OLLAMA_URL`,
+`LISTIK_EMBED_MODEL`, `LISTIK_EMBED_DIM`, `LISTIK_EMBED_BATCH`, `LISTIK_EMBED_MAX_CHARS`,
+`LISTIK_ACTOR`, `LISTIK_OWNER`, `LISTIK_PROJECT`, `LISTIK_WRAPPER`, `LISTIK_TASK_ID`,
+`LISTIK_ROUTE`, `LISTIK_LAUNCHED_BY`, `LISTIK_GENERATION`, `LISTIK_DISPATCH_ID` — 20 имён;
+переменные `install.sh`, такие как `LISTIK_VERSION`, туда не входят — их видит только
+установщик, не воркер); значения — строка или число, не длиннее 512 символов, не больше 20
+ключей. Нарушение любого правила — `400 bad_argument` до захвата: карточка не трогается.
+Пример: рою нужно отдать воркеру номер порта dev-сервера, чтобы несколько деревьев не дрались
+за один порт — `env: {"LISTIK_DEV_PORT": "5173"}`; не `LISTIK_PORT` — это порт **сервера
+Listik**, зарезервирован. `env` живёт только в этом вызове: он не пишется в карточку,
+повторный `launch` (в том числе с доски) и `recover` окружения не наследуют. Значения
+уходят в журнальный комментарий запуска дословно (хвост `, окружение K=V, …`, ключи по
+алфавиту) — он виден на доске и не редактируется, поэтому секреты через `env` не передавать.
 
 Кто и когда зовёт отзыв и перезапуск (таймаут ожидания, лестница реакций на зомби) — не
 это API: он даёт только примитивы и их внешние входы (HTTP и CLI), потому что процесс
@@ -1016,7 +1035,7 @@ dropped_chunks, reason`), `reasons[]` (по одному пункту на ка�
 | POST | `/api/tasks/{id}/release` | `note`, `actor` | освободить задачу |
 | POST | `/api/tasks/{id}/done` | `result`, `reason`, `actor`, `note` | закрыть: `status=done`, `stage=done` |
 | POST | `/api/tasks/{id}/revoke` | `actor`, `harness`, `note`, `kill=true` | отозвать полномочия текущего запуска (поднять поколение) и, если `kill`, снять его процесс — см. «Отзыв и перезапуск». `400` — задачу не запускали (`generation == 0`) или поколение изменилось параллельно. `200` — карточка после отзыва |
-| POST | `/api/tasks/{id}/launch` | `actor`, `harness`, `note` (пока не используется) | запустить задачу по маршруту следующим поколением (`launcher.start` без изменений логики) — см. «Отзыв и перезапуск». `200` — карточка с `"launched": true`; `409 conflict` — текст отказа `start` (уже запущена, нет маршрута и т. п.), состояние — как у автостарта |
+| POST | `/api/tasks/{id}/launch` | `actor`, `harness`, `note` (пока не используется), `env{}` (`LISTIK_*` → строка, необязательный) | запустить задачу по маршруту следующим поколением (`launcher.start` без изменений логики) — см. «Отзыв и перезапуск». `200` — карточка с `"launched": true`; `409 conflict` — текст отказа `start` (уже запущена, нет маршрута и т. п.), состояние — как у автостарта; `400 bad_argument` — `env` не прошёл `check_env` (карточка не трогается) |
 | POST | `/api/tasks/{id}/deps` | `depends_on`, `dep_type=blocks`, `confirm=false`, `actor` | с `depends_on` — добавить связь; без него — дерево зависимостей (`waits_for`/`waited_by`). Жёсткий `dep_type` (`blocks`/`blocked-by`/`waits-for`/`conditional-blocks`) от агентского `actor` без `confirm=true` не ставится сразу жёстким — пишется как `suggested-blocks` (мягкая, ждёт подтверждения человеком); `confirm=true` (или неагентский `actor`) ставит жёсткую связь сразу. `dep_type=resource-blocks` — 400 `bad_argument` для любого `actor` и `confirm`: ставит только планировщик роя, через этот путь не принимается. Ответ: `dep_type` (фактически записанный тип), `requested_dep_type` (что просили), `suggested`, `confirmed`, `promoted` (предложение заменено на жёсткую связь этим вызовом), `created`, `created_by`. 400 на самосвязь и на цикл жёстких связей — «уже есть жёсткая связь на паре» и цикл считаются без учёта `resource-blocks` |
 | DELETE | `/api/tasks/{id}/deps/{depends_on}` | `dep_type` строкой запроса | снять связь; без `dep_type` снимает разом `blocks` и `suggested-blocks` между той же парой задач, `resource-blocks` — только явным `dep_type=resource-blocks` (актор не ограничен). Ответ: `removed` (число снятых строк), `dep_types[]` |
 | POST | `/api/tasks/{id}/ready` | — | вердикт по задаче (`deps_state`, см. ниже) |
@@ -1327,6 +1346,8 @@ listik comment <id> "текст" --kind journal
 listik needs-owner <id> "вопрос автору"
 listik needs-owner <id> --clear "ответ"
 listik done <id> --result "чем кончилось"
+listik launch <id>                                    # перезапуск по маршруту следующим поколением
+listik launch <id> --env LISTIK_DEV_PORT=5173         # плюс окружение процесса (LISTIK_* незарезервированные)
 listik search "запрос" [--mode hybrid] [--json]
 listik board [--group-by stage]
 listik stats

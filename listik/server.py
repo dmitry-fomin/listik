@@ -1170,7 +1170,10 @@ def handle(method: str, path: str, query: dict, body: dict, authed: bool = False
                         notify=publish)
                 elif action == "launch":
                     # Как `revoke`: `start` публикует свои кадры сам (`notify=publish`).
-                    reason = launcher_mod.start(conn, tid, notify=publish)
+                    # `env` — только LISTIK_*, не зарезервированные (check_env в launcher);
+                    # BadArgument уходит в except ValueError ниже как 400 bad_argument.
+                    reason = launcher_mod.start(conn, tid, notify=publish,
+                                                env=body.get("env"))
                     if reason is not None:
                         raise ApiError(409, reason, code=errors_mod.CONFLICT)
                     out = store.get_task(conn, tid)

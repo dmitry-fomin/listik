@@ -41,6 +41,54 @@ _SUBST_RE = re.compile(r"\{(" + "|".join(routes_mod.PLACEHOLDERS) + r")\}")
 
 ALREADY_STARTED = "уже запущена Listik"
 
+# Переменные LISTIK_*, которые сам Listik читает или выдаёт (см. listik/paths.py,
+# bin/listik, listik/client.py, listik/cwd_project.py, listik/fence.py и штатные пять
+# ниже в `start`) — их нельзя переопределить через `env` запуска. Переменные, которые
+# читает только install.sh, сюда не входят (см. docs/API.md, «Отзыв и перезапуск»).
+RESERVED_ENV = frozenset({
+    "LISTIK_HOME", "LISTIK_DB", "LISTIK_CONFIG", "LISTIK_LOG", "LISTIK_PORT",
+    "LISTIK_PROJECTS_ROOT", "LISTIK_OLLAMA_URL", "LISTIK_EMBED_MODEL", "LISTIK_EMBED_DIM",
+    "LISTIK_EMBED_BATCH", "LISTIK_EMBED_MAX_CHARS",
+    "LISTIK_ACTOR", "LISTIK_OWNER", "LISTIK_PROJECT", "LISTIK_WRAPPER",
+    "LISTIK_TASK_ID", "LISTIK_ROUTE", "LISTIK_LAUNCHED_BY", "LISTIK_GENERATION",
+    "LISTIK_DISPATCH_ID",
+})
+
+_ENV_KEY_RE = re.compile(r"^LISTIK_[A-Z0-9_]+$")
+
+
+def check_env(env) -> dict[str, str]:
+    """Проверить и нормализовать окружение запроса `launch` (порция a листик-9hcc).
+
+    `None` → `{}`. Ключи — только `LISTIK_[A-Z0-9_]+`, не из `RESERVED_ENV`. Значения —
+    строка или число (приводится к строке); `None`/`bool`/список/словарь и строки
+    длиннее 512 символов — отказ. Не больше 20 ключей. Возвращает новый словарь
+    `{str: str}`; вход не меняется.
+    """
+    if env is None:
+        return {}
+    if not isinstance(env, dict):
+        raise errors_mod.BadArgument("env должен быть объектом ключ→значение")
+    if len(env) > 20:
+        raise errors_mod.BadArgument(f"env: не больше 20 ключей (получено {len(env)})")
+    result: dict[str, str] = {}
+    for key, value in env.items():
+        if not isinstance(key, str):
+            raise errors_mod.BadArgument(f"ключ окружения {key!r} должен быть строкой")
+        if not _ENV_KEY_RE.match(key):
+            raise errors_mod.BadArgument(
+                f"ключ окружения `{key}`: допустимы только LISTIK_… из заглавных букв, "
+                "цифр и подчёркиваний")
+        if key in RESERVED_ENV:
+            raise errors_mod.BadArgument(f"ключ окружения `{key}` зарезервирован Listik")
+        if isinstance(value, bool) or not isinstance(value, (str, int, float)):
+            raise errors_mod.BadArgument(f"значение окружения `{key}` должно быть строкой")
+        text = value if isinstance(value, str) else str(value)
+        if len(text) > 512:
+            raise errors_mod.BadArgument(f"значение окружения `{key}` длиннее 512 символов")
+        result[key] = text
+    return result
+
 # Реестр потоков слежения: {task_id: Thread}. Нужен тестам для join(timeout).
 _trackers: dict[str, threading.Thread] = {}
 _trackers_lock = threading.Lock()
@@ -204,19 +252,25 @@ def _track(conn, db_path, task_id: str, pid: int, proc: subprocess.Popen, notify
     _notify(notify, task_id)
 
 
-def start(conn, task_id: str, notify=None, *, log_dir=None) -> str | None:
+def start(conn, task_id: str, notify=None, *, log_dir=None, env=None) -> str | None:
     """Запустить процесс задачи по её маршруту.
 
     Возвращает None, если процесс запущен, или текст причины отказа. Проверки идут
-    строго по порядку: захват задачи условным UPDATE (`launched_by IS NULL`) —
-    уже запущенная задача не трогается вовсе; проверка маршрутов в базе, наличия
-    маршрута и `command`; рабочий каталог; наконец `Popen`. Любой отказ снимает захват и
-    уходит в `refuse` (launch_error + needs_owner), поэтому «уже запущена» —
-    единственный отказ, который состояние задачи не меняет.
+    строго по порядку: `check_env(env)` — первым действием, до захвата; захват задачи
+    условным UPDATE (`launched_by IS NULL`) — уже запущенная задача не трогается вовсе;
+    проверка маршрутов в базе, наличия маршрута и `command`; рабочий каталог; наконец
+    `Popen`. Любой отказ после захвата снимает его и уходит в `refuse` (launch_error +
+    needs_owner), поэтому «уже запущена» — единственный отказ, который состояние задачи
+    не меняет.
+
+    `env` — дополнительное окружение процесса (см. `check_env`): подмешивается поверх
+    унаследованного окружения сервера, но под штатными пятью переменными; в карточку не
+    пишется и следующим `launch`/`recover` не наследуется.
 
     `log_dir` — только для тестов, по умолчанию `logs/` в корне репозитория.
     Поток слежения доступен через `tracker(task_id)`.
     """
+    extra = check_env(env)
     ts = store.now_iso()
     dispatch_id = uuid.uuid4().hex
     captured = conn.execute(
@@ -283,7 +337,7 @@ def start(conn, task_id: str, notify=None, *, log_dir=None) -> str | None:
     stamp = datetime.now(timezone.utc).strftime("%Y%m%dT%H%M%SZ")
     log_path = log_dir / f"launch-{task_id}-{stamp}.log"
     generation = int(row["generation"] or 0)
-    env = os.environ | {"LISTIK_TASK_ID": task_id, "LISTIK_ROUTE": key,
+    proc_env = os.environ | extra | {"LISTIK_TASK_ID": task_id, "LISTIK_ROUTE": key,
                         "LISTIK_LAUNCHED_BY": "listik",
                         "LISTIK_GENERATION": str(generation),
                         "LISTIK_DISPATCH_ID": row["dispatch_id"] or ""}
@@ -293,7 +347,7 @@ def start(conn, task_id: str, notify=None, *, log_dir=None) -> str | None:
             # Без shell: argv уходит процессу как есть, ничего из задачи не расширяется.
             proc = subprocess.Popen(argv, cwd=str(cwd), stdin=subprocess.DEVNULL,
                                     stdout=log, stderr=subprocess.STDOUT,
-                                    start_new_session=True, env=env)
+                                    start_new_session=True, env=proc_env)
     except OSError as exc:
         if issued:  # процесса нет — выдача никому: держателя снимаем, этап остаётся
             store.update_task(conn, task_id, actor="agent:listik", holder="",
@@ -311,10 +365,16 @@ def start(conn, task_id: str, notify=None, *, log_dir=None) -> str | None:
     conn.execute("UPDATE tasks SET launch_pid = ?, launch_log = ?, launch_error = NULL, "
                  "launch_exit_code = NULL, launch_finished_at = NULL, updated_at = ? "
                  "WHERE id = ?", (pid, str(log_path), ts, task_id))
+    # Хвост с окружением — только если `extra` непуст (порция a листик-9hcc); ключи
+    # в алфавитном порядке, значения дословно (журнал виден на доске, не редактируется —
+    # секреты через `env` не передавать, см. docs/API.md).
+    env_tail = ""
+    if extra:
+        env_tail = ", окружение " + ", ".join(f"{k}={v}" for k, v in sorted(extra.items()))
     # add_comment коммитит и UPDATE выше — запуск пишется одной транзакцией.
     store.add_comment(conn, task_id,
                       f"автостарт: маршрут {key}, pid {pid}, лог {log_path}, "
-                      f"поколение {generation}, запуск {dispatch_id}",
+                      f"поколение {generation}, запуск {dispatch_id}{env_tail}",
                       author="agent:listik", kind="journal")
     _notify(notify, task_id)
     _start_tracker(conn, task_id, pid, proc, notify,

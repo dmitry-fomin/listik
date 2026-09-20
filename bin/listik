@@ -1191,11 +1191,24 @@ def cmd_revoke(args) -> int:
 
 def cmd_launch(args) -> int:
     actor = actor_default(args)
+    env = {}
+    for pair in args.env or []:
+        if "=" not in pair:
+            raise errors.ListikError(f"--env ожидало K=V, получено {pair!r}",
+                                     code=errors.BAD_ARGUMENT, exit_code=2,
+                                     hint="например: --env LISTIK_DEV_PORT=5173")
+        key, value = pair.split("=", 1)
+        env[key] = value
     body = {"actor": actor, "harness": args.harness}
+    if env:
+        body["env"] = env
     task = call("launch", args, f"/api/tasks/{args.task_id}/launch", method="POST", body=body,
                 local_kwargs={"task_id": args.task_id, "actor": actor, "harness": args.harness})
-    emit(args, task, f"запущена: {task['id']} — поколение {task.get('generation')}, "
-                     f"pid {task.get('launch_pid')}, лог {task.get('launch_log')}")
+    line = (f"запущена: {task['id']} — поколение {task.get('generation')}, "
+           f"pid {task.get('launch_pid')}, лог {task.get('launch_log')}")
+    if env:
+        line += "\n  окружение: " + ", ".join(f"{k}={v}" for k, v in env.items())
+    emit(args, task, line)
     return 0
 
 
@@ -2119,6 +2132,9 @@ def build_parser() -> argparse.ArgumentParser:
     sp = add("launch", cmd_launch,
              help="запуск стартует процесс по маршруту карточки следующим поколением")
     add_task_id(sp)
+    sp.add_argument("--env", action="append", metavar="K=V",
+                    help="дополнительное окружение процесса, LISTIK_* незарезервированные; "
+                         "повторяемый")
 
     sp = add("search", cmd_search, help="гибридный поиск по всем задачам")
     sp.add_argument("query")

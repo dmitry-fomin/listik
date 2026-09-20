@@ -204,7 +204,7 @@ OWNER_OPS = frozenset({"list", "board", "ready", "create", "claim", "heartbeat",
 WRITE_OPS = frozenset({
     "create", "update", "claim", "heartbeat", "stage", "comment",
     "needs-owner", "dep_add", "dep_remove", "project_add", "project_archive",
-    "project_remove", "project_routing",
+    "project_remove", "project_routing", "revoke", "launch",
 })
 
 #: `--local` при живом сервере обходит push доски так же молча, как фолбэк без
@@ -1171,6 +1171,33 @@ def cmd_done(args) -> int:
     return 0
 
 
+def cmd_revoke(args) -> int:
+    actor = actor_default(args)
+    kill = not args.no_kill
+    body = {"actor": actor, "harness": args.harness, "note": args.note, "kill": kill}
+    task = call("revoke", args, f"/api/tasks/{args.task_id}/revoke", method="POST", body=body,
+                local_kwargs={"task_id": args.task_id, "actor": actor, "harness": args.harness,
+                              "note": args.note, "kill": kill})
+    emit(args, task, f"полномочия отозваны: {task['id']} — поколение {task.get('generation')}")
+    if not getattr(args, "json", False):
+        journal = [c for c in (task.get("comments") or [])
+                  if c.get("author") == "agent:listik" and c.get("kind") == "journal"
+                  and "отозваны" in (c.get("text") or "")]
+        if journal:
+            print(f"  {journal[-1]['text']}")
+    return 0
+
+
+def cmd_launch(args) -> int:
+    actor = actor_default(args)
+    body = {"actor": actor, "harness": args.harness}
+    task = call("launch", args, f"/api/tasks/{args.task_id}/launch", method="POST", body=body,
+                local_kwargs={"task_id": args.task_id, "actor": actor, "harness": args.harness})
+    emit(args, task, f"запущена: {task['id']} — поколение {task.get('generation')}, "
+                     f"pid {task.get('launch_pid')}, лог {task.get('launch_log')}")
+    return 0
+
+
 def cmd_search(args) -> int:
     from listik import search as search_mod
     filt = {"project": args.project, "stage": args.stage, "status": args.status}
@@ -1999,6 +2026,16 @@ def build_parser() -> argparse.ArgumentParser:
     sp.add_argument("-r", "--result")
     sp.add_argument("--reason")
     add_note(sp)
+
+    sp = add("revoke", cmd_revoke,
+             help="отзыв поднимает поколение и по умолчанию снимает процесс")
+    add_task_note(sp)
+    sp.add_argument("--no-kill", action="store_true",
+                    help="оставить процесс жить (не убивать, только отозвать полномочия)")
+
+    sp = add("launch", cmd_launch,
+             help="запуск стартует процесс по маршруту карточки следующим поколением")
+    add_task_id(sp)
 
     sp = add("search", cmd_search, help="гибридный поиск по всем задачам")
     sp.add_argument("query")

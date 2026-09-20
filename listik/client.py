@@ -324,6 +324,11 @@ def local_call(op: str, *, fence: fence_mod.Token | dict | None = None, **kwargs
                                      hint="список проектов: listik projects") from exc
         except ValueError as exc:
             raise errors.ListikError(errors.message_of(exc), code=errors.CONFLICT) from exc
+    if op in ("revoke", "launch"):
+        # Процесс задачи держит сервер: локальному фолбэку некому его снять/запустить.
+        raise errors.ListikError(
+            f"{op} выполняет только сервер: процесс задачи держит он",
+            code=errors.UNSUPPORTED, hint="подними сервер: listik serve")
     if op == "project_routing":
         try:
             return store.update_project(conn, kwargs["slug"], routing=kwargs.get("routing") or {})

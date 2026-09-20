@@ -19,6 +19,7 @@ from __future__ import annotations
 
 import os
 import re
+import signal
 import subprocess
 import sys
 import threading
@@ -26,7 +27,9 @@ import uuid
 from datetime import datetime, timezone
 from pathlib import Path
 
+from . import actors as actors_mod
 from . import db as db_mod
+from . import errors as errors_mod
 from . import paths
 from . import routes as routes_mod
 from . import store
@@ -42,8 +45,21 @@ ALREADY_STARTED = "уже запущена Listik"
 _trackers: dict[str, threading.Thread] = {}
 _trackers_lock = threading.Lock()
 
+# Реестр процессов текущего запуска сервера: {task_id: Popen}. Заполняет `start`
+# под `_trackers_lock`; `revoke` использует его, чтобы дожидаться смерти через
+# `proc.poll()`, когда собственный дочерний процесс ещё виден. После `recover`
+# (другой процесс сервера) записи нет — `revoke` дожидается через `_alive`/`waitpid`.
+_procs: dict[str, subprocess.Popen] = {}
+
 # Период опроса живого pid, за которым слежение потеряно при перезапуске сервера.
 POLL_INTERVAL = 5.0
+
+# Сколько ждать смерти процесса после сигнала (revoke), прежде чем эскалировать
+# SIGTERM → SIGKILL. Тесты подменяют на меньшее значение.
+KILL_GRACE = 5.0
+
+#: Как часто опрашивать `_alive(pid)`/`proc.poll()` при ожидании смерти в `revoke`.
+_KILL_POLL_INTERVAL = 0.05
 
 
 def tracker(task_id: str) -> threading.Thread | None:
@@ -52,9 +68,9 @@ def tracker(task_id: str) -> threading.Thread | None:
         return _trackers.get(task_id)
 
 
-def _notify(notify, task_id: str) -> None:
+def _notify(notify, task_id: str, action: str = "launch") -> None:
     if notify is not None:
-        notify("task", {"id": task_id, "action": "launch"})
+        notify("task", {"id": task_id, "action": action})
 
 
 def _db_path(conn):
@@ -285,6 +301,11 @@ def start(conn, task_id: str, notify=None, *, log_dir=None) -> str | None:
         return _fail(conn, task_id, f"не удалось запустить: {exc}", notify)
 
     pid = proc.pid
+    # `revoke` (порция c) дожидается смерти через `proc.poll()`, пока сервер тот же
+    # процесс, что запустил Popen; ключ — task_id, повторный `start` затирает
+    # запись прежнего запуска (реестр не индексирован по dispatch_id).
+    with _trackers_lock:
+        _procs[task_id] = proc
     ts = store.now_iso()
     dispatch_id = row["dispatch_id"]
     conn.execute("UPDATE tasks SET launch_pid = ?, launch_log = ?, launch_error = NULL, "
@@ -393,3 +414,173 @@ def _poll(conn, db_path, task_id: str, pid: int, notify, dispatch_id: str | None
         if own is not None:
             own.close()
     _notify(notify, task_id)
+
+
+# ------------------------------------------------------------------ отзыв (revoke)
+
+def _signal(pid: int, sig: int) -> tuple[str, Exception | None]:
+    """Отправить сигнал группе `pid`, с откатом на одиночный pid.
+
+    `("ok", None)` — сигнал ушёл; `("dead", None)` — процесс уже мёртв (`killpg`
+    поймал `ProcessLookupError`, но лидер группы мог умереть раньше самого
+    процесса — проверяем `_alive` после `waitpid(WNOHANG)`, чтобы собрать
+    собственного зомби); `("denied", exc)` — сигнал не прошёл (`PermissionError`).
+    """
+    try:
+        os.killpg(pid, sig)
+        return "ok", None
+    except ProcessLookupError:
+        try:
+            os.waitpid(pid, os.WNOHANG)
+        except ChildProcessError:
+            pass
+        if not _alive(pid):
+            return "dead", None
+        try:
+            os.kill(pid, sig)
+            return "ok", None
+        except ProcessLookupError:
+            return "dead", None
+        except PermissionError as exc:
+            return "denied", exc
+    except PermissionError as exc:
+        return "denied", exc
+
+
+def _wait_dead(task_id: str, pid: int, grace: float) -> bool:
+    """Дождаться смерти `pid` до `grace` секунд, опрашивая раз в 0.05 с.
+
+    `_procs[task_id]` (свой `Popen`, если сервер тот же, что запускал процесс) даёт
+    `proc.poll()`; иначе (после `recover`) — `os.waitpid(pid, WNOHANG)` (собрать
+    своего зомби; на чужом процессе после `recover` вызов безвреден) и `_alive`.
+    """
+    import time
+    proc = _procs.get(task_id)
+
+    def dead() -> bool:
+        if proc is not None:
+            return proc.poll() is not None
+        try:
+            os.waitpid(pid, os.WNOHANG)
+        except ChildProcessError:
+            pass
+        return not _alive(pid)
+
+    deadline = time.monotonic() + grace
+    while True:
+        if dead():
+            return True
+        if time.monotonic() >= deadline:
+            return False
+        time.sleep(_KILL_POLL_INTERVAL)
+
+
+def _kill_process(task_id: str, pid: int, grace: float) -> str:
+    """Снять процесс: SIGTERM, ожидание `grace`, эскалация до SIGKILL.
+
+    Возвращает исход: `"снят"` (смерть подтверждена в этом вызове) или `"не
+    снят"` (сигнал не прошёл или процесс пережил SIGKILL за `grace`).
+    """
+    status, exc = _signal(pid, signal.SIGTERM)
+    if status == "denied":
+        print(f"autostart {task_id}: не удалось снять процесс {pid}: {exc}",
+              file=sys.stderr, flush=True)
+        return "не снят"
+    if status == "dead":
+        return "снят"
+    if _wait_dead(task_id, pid, grace):
+        return "снят"
+    status, exc = _signal(pid, signal.SIGKILL)
+    if status == "denied":
+        print(f"autostart {task_id}: не удалось снять процесс {pid}: {exc}",
+              file=sys.stderr, flush=True)
+        return "не снят"
+    if status == "dead":
+        return "снят"
+    if _wait_dead(task_id, pid, grace):
+        return "снят"
+    return "не снят"
+
+
+def revoke(conn, task_id: str, *, actor: str | None = None, harness: str | None = None,
+           note: str | None = None, kill: bool = True, notify=None) -> dict:
+    """Отозвать полномочия текущего запуска и (по умолчанию) снять его процесс.
+
+    Единственный способ снять полномочия у живого процесса до того, как он сам
+    умрёт: поколение поднимается **первым шагом**, одной транзакцией, — с этого
+    момента любая запись со старым токеном уходит в карантин (`fence.guard`), а
+    поток слежения старого запуска (`_track`/`_poll`, порция a) видит
+    `dispatch_id IS NULL` и пишет только строку журнала. Снятие процесса — второй
+    шаг, уже необязательный для итога отзыва: `kill=False` оставляет его жить
+    (сценарий зомби из стенда). `launch_pid`/`launched_at`/`launch_log`/
+    `launch_exit_code` не трогаются — это история прежнего запуска; поток
+    слежения того запуска и дальше пишет только журнал, `launch_exit_code`
+    остаётся `NULL`. Держатель, этап, статус, `launch_route`, `autostart` не
+    меняются.
+
+    `generation == 0` (задачу не запускали) — `ValueError`. Задачи нет —
+    `errors.NotFound`. Параллельный отзыв того же поколения — второй получает
+    `ValueError("поколение задачи изменилось параллельно, повтори отзыв")` и не
+    трогает базу вовсе.
+    """
+    row = conn.execute(
+        "SELECT generation, dispatch_id, launch_pid, launch_finished_at, launched_by "
+        "FROM tasks WHERE id = ?", (task_id,)).fetchone()
+    if row is None:
+        raise errors_mod.NotFound(f"задача не найдена: {task_id}")
+    old = int(row["generation"] or 0)
+    if old == 0:
+        raise ValueError(f"задача {task_id} не запускалась: отзывать нечего")
+    dispatch_id = row["dispatch_id"]
+    pid = row["launch_pid"]
+    finished_at = row["launch_finished_at"]
+    launched_by = row["launched_by"]
+
+    # Шаг 1 — отзыв поколения, первым и одной транзакцией: иначе поток слежения
+    # старого запуска мог бы проснуться на смерти процесса, пока dispatch_id ещё
+    # совпадает, и записать launch_exit_code/launch_finished_at, а умирающий
+    # процесс держал бы валидный токен до самого конца.
+    ts = store.now_iso()
+    cur = conn.execute(
+        "UPDATE tasks SET generation = generation + 1, dispatch_id = NULL, "
+        "launched_by = NULL, updated_at = ? WHERE id = ? AND generation = ?",
+        (ts, task_id, old))
+    if cur.rowcount == 0:
+        conn.rollback()
+        raise ValueError("поколение задачи изменилось параллельно, повтори отзыв")
+    conn.commit()
+
+    # Шаг 2 — снятие процесса: только «наш и незавершённый» запуск.
+    is_ours_alive = bool(launched_by == "listik" and pid and pid > 1
+                         and pid != os.getpid())
+    if not is_ours_alive:
+        outcome = "не наш запуск"
+    elif finished_at:
+        outcome = "уже завершён"
+    elif not kill:
+        outcome = "оставлен жить"
+    else:
+        outcome = _kill_process(task_id, pid, KILL_GRACE)
+
+    # Шаг 3 — запись исхода: launch_finished_at только при подтверждённой в этом
+    # вызове смерти, и только если ещё не было записано.
+    if outcome == "снят" and not finished_at:
+        conn.execute("UPDATE tasks SET launch_finished_at = ? WHERE id = ?",
+                     (store.now_iso(), task_id))
+
+    actor_key, actor_kind = actors_mod.resolve(actor, conn)
+    if actor:
+        actors_mod.remember(conn, actor, actor_key, actor_kind)
+    store.event(conn, task_id, "revoke", from_value=str(old), to_value=str(old + 1),
+               actor=actor_key, harness=harness,
+               note=f"{note or 'полномочия отозваны'}; запуск {dispatch_id or '—'}, "
+                    f"pid {pid or '—'}, процесс {outcome}")
+    # add_comment коммитит всё — UPDATE launch_finished_at и событие revoke выше
+    # уходят одной транзакцией с журналом.
+    store.add_comment(
+        conn, task_id,
+        f"автостарт: полномочия поколения {old} отозваны (запуск {dispatch_id or '—'}, "
+        f"pid {pid or '—'}, процесс {outcome}); новое поколение {old + 1}",
+        author="agent:listik", kind="journal")
+    _notify(notify, task_id, "revoke")
+    return store.get_task(conn, task_id)

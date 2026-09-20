@@ -1076,7 +1076,8 @@ def handle(method: str, path: str, query: dict, body: dict, authed: bool = False
                 # кроме чтений (`ready`, `mentions`, `deps` без `depends_on`).
                 _guard_op = {"claim": "claim", "heartbeat": "heartbeat", "stage": "stage",
                             "comment": "comment", "needs-owner": "needs-owner",
-                            "release": "release", "done": "done"}.get(action)
+                            "release": "release", "done": "done",
+                            "revoke": "revoke", "launch": "launch"}.get(action)
                 if _guard_op is None and action == "deps" and body.get("depends_on"):
                     _guard_op = "dep_add"
                 if _guard_op is not None:
@@ -1132,6 +1133,21 @@ def handle(method: str, path: str, query: dict, body: dict, authed: bool = False
                                             result=body.get("result", ""),
                                             close_reason=body.get("reason") or body.get("result"),
                                             note=body.get("note"))
+                elif action == "revoke":
+                    # `revoke` шлёт свой `publish("task", {..., "action": "revoke"})`
+                    # изнутри (`notify=publish`) — второй раз ниже не шлём (см. пропуск
+                    # в условии publish после этой ветки).
+                    out = launcher_mod.revoke(
+                        conn, tid, actor=body.get("actor"), harness=body.get("harness"),
+                        note=body.get("note"), kill=as_bool(body.get("kill", True)),
+                        notify=publish)
+                elif action == "launch":
+                    # Как `revoke`: `start` публикует свои кадры сам (`notify=publish`).
+                    reason = launcher_mod.start(conn, tid, notify=publish)
+                    if reason is not None:
+                        raise ApiError(409, reason, code=errors_mod.CONFLICT)
+                    out = store.get_task(conn, tid)
+                    out["launched"] = True
                 else:
                     raise ApiError(404, f"неизвестное действие: {action}")
             except errors_mod.NotFound as exc:
@@ -1141,7 +1157,9 @@ def handle(method: str, path: str, query: dict, body: dict, authed: bool = False
             # Читающие действия ходят тем же путём (граф зависимостей, ready,
             # упоминания), но доску не меняют: событие шлём только от записей,
             # иначе чтение карточки будило бы все открытые доски (listik-1p86).
-            if action not in ("ready", "mentions") and not (
+            # `revoke`/`launch` публикуют сами (`notify=publish` внутри launcher) —
+            # второй раз здесь не шлём.
+            if action not in ("ready", "mentions", "revoke", "launch") and not (
                     action == "deps" and not body.get("depends_on")):
                 publish("task", {"id": tid, "action": action})
             return 200, out

@@ -123,6 +123,7 @@ updated_at, status, error, chunk_count`, — и `children[]` — все доче
 | поток слежения за процессом и `recover` при старте сервера | `launch_exit_code`, `launch_finished_at` |
 | локальный фолбэк CLI (`client.local_call`, ветка `create`) | `launch_error`, плюс `needs_owner` |
 | `listik/launcher.py: start` (тем же условным UPDATE, что и захват) | `dispatch_id` (новый), `generation` (`generation + 1`) — через `PATCH`/`listik set`/`listik_update` не меняются |
+| `listik/launcher.py: revoke` | `generation` (`generation + 1`), `dispatch_id` (`NULL`), `launched_by` (`NULL`), плюс `launch_finished_at` — только при подтверждённой в этом же вызове смерти процесса (см. «Отзыв и перезапуск») |
 
 В белый список `PATCH /api/tasks/{id}` (`store.UPDATABLE`) входит только `launch_route`
 (и его алиас `route`, как в POST): правкой карточки маршрут меняют, пока работа не началась.
@@ -538,7 +539,7 @@ CLI (`bin/listik`) читает окружение один раз в `call()` �
 **Что ограждается.** Перед вызовом store — HTTP `PATCH`/`PUT /api/tasks/{id}`, `DELETE
 /api/tasks/{id}`, `PUT /api/tasks/{id}/documents/{kind}`, `DELETE /api/tasks/{id}/deps/{dep}`,
 `POST /api/tasks/{id}/{action}` для `claim`, `heartbeat`, `stage`, `comment`, `needs-owner`,
-`release`, `done` и `deps` с `depends_on`; MCP-инструменты `listik_update`, `listik_claim`,
+`release`, `done`, `revoke`, `launch` и `deps` с `depends_on`; MCP-инструменты `listik_update`, `listik_claim`,
 `listik_heartbeat`, `listik_stage`, `listik_comment`, `listik_needs_owner`, `listik_done`,
 `listik_release`, `listik_put_document` и `listik_deps` (только ветка добавления связи).
 Чтения (`GET`, `context`, `ready`, `mentions`, `deps` без `depends_on`, `listik_show`) не
@@ -568,6 +569,57 @@ CLI (`bin/listik`) читает окружение один раз в `call()` �
 `listik show <id> --rejected` печатает после «событий» раздел «отвергнутые записи —
 карантин (N):» по строке на запись. `web/` в этой порции карантин не показывает — доска
 его не отдаёт нигде.
+
+### Отзыв и перезапуск
+
+Отзыв (`listik/launcher.py: revoke`, `POST /api/tasks/{id}/revoke`, `listik revoke`) —
+единственный способ снять полномочия у живого процесса **до** того, как он сам умрёт:
+поколение поднимается первым и одной транзакцией — `UPDATE … SET generation =
+generation + 1, dispatch_id = NULL, launched_by = NULL … WHERE id = ? AND generation =
+?` (старое значение). Порядок необратим: с этого момента любая запись со старым токеном
+уходит в карантин (см. выше), а поток слежения старого запуска (`_track`/`_poll`) видит
+`dispatch_id IS NULL` и пишет только строку журнала «после отзыва — карточка не
+менялась», не трогая `launch_exit_code`. Параллельный отзыв того же поколения: ровно один
+проходит, второй получает `400` («поколение задачи изменилось параллельно, повтори
+отзыв»), не меняя ничего. Задачу, которую не запускали (`generation == 0`), отозвать
+нельзя — `400` («не запускалась: отзывать нечего»); задачи нет — `404`.
+
+Второй, необязательный шаг — снятие процесса: только если `kill` истинно (по умолчанию;
+`--no-kill`/`kill: false` его отключают) и запуск «наш и незавершённый» (`launched_by ==
+'listik'`, `launch_pid` непустой и не `<= 1`/не pid самого сервера, `launch_finished_at`
+пуст). Сигнал уходит группе процесса (`os.killpg`, лидер группы — сам процесс, запущенный
+с `start_new_session=True`), сначала `SIGTERM`; сервер ждёт до `KILL_GRACE` секунд (по
+умолчанию 5) и, если процесс жив, эскалирует до `SIGKILL` и ждёт ещё раз. Пять исходов
+(ровно один, попадает в `note` события и в журнал): «не наш запуск» (условие «наш и
+незавершённый» не выполнено — сюда же попадает повторный `revoke` после
+`revoke(kill=false)`: `launched_by` уже `NULL`, снять оставленного зомби Listik больше не
+может), «уже завершён» (`launch_finished_at` уже стоял, сигналов не было), «оставлен
+жить» (`kill=false` при «нашем незавершённом»), «снят» (смерть подтверждена в этом
+вызове), «не снят» (сигнал не прошёл или процесс пережил `SIGKILL`).
+
+`launch_finished_at` пишется отзывом только при исходе «снят» и только если было пусто —
+живому или непроверенному процессу «завершился тогда-то» не приписывается никогда.
+`launch_pid`, `launched_at`, `launch_log`, `launch_exit_code` не трогаются — это история
+прежнего запуска. Держатель, этап, статус, `launch_route`, `autostart` отзыв не меняет:
+это не `release`/`stage`/`done` за рой. Событие `revoke` (`from_value`/`to_value` — старое
+и новое поколение) и комментарий `journal` от `agent:listik` описывают исход и id запуска.
+
+После отзыва `launched_by IS NULL`, поэтому задачу можно запустить снова: `POST
+/api/tasks/{id}/launch`/`listik launch <id>` зовут `launcher.start` без изменений его
+логики — следующее поколение, новый `dispatch_id`, `launch_exit_code`/
+`launch_finished_at` обнуляются. Круг «запуск → отзыв → запуск» даёт поколения `1 → 2 →
+3`. `launch` не обходит защиту от двойного старта: на уже запущенной задаче — тот же
+отказ `ALREADY_STARTED`, второго процесса и второго лог-файла нет; ответ — `409 conflict`
+с текстом отказа `start`, а состояние задачи — ровно такое, каким его оставил `start` (для
+`ALREADY_STARTED` не меняется вовсе, для прочих отказов — `launch_error`+`needs_owner`,
+как у автостарта). Успешный `launch` — `200` с карточкой и дополнительным ключом
+`"launched": true`.
+
+Кто и когда зовёт отзыв и перезапуск (таймаут ожидания, лестница реакций на зомби) — не
+это API: он даёт только примитивы и их внешние входы (HTTP и CLI), потому что процесс
+задачи держит сервер, а решение — за роем (см. `tests/swarm_stand/`, swarm-4/5). Отзыв без
+снятия (`kill=false`) оставляет процесс Listik жить — повторный `revoke` его уже не
+снимет («не наш запуск»): снимать такой процесс вручную — забота того, кто зовёт отзыв.
 
 ## Помощник DeepSeek (создание задачи)
 
@@ -952,6 +1004,8 @@ dropped_chunks, reason`), `reasons[]` (по одному пункту на ка�
 | POST | `/api/tasks/{id}/needs-owner` | `value=true\|false`, `note`, `actor`, `harness` | поднять/снять флаг «нужен человек»: при непустом `note` создаётся комментарий `kind=question` (`value=true`) или `kind=answer` (`value=false`); событие `question`/`answer` пишется при каждом вызове, даже если флаг уже стоит в нужном значении; ответ — полная карточка, как у `PATCH`. Автор комментария и события — `actor`; без него в серверном режиме подписывается человек из заголовка `X-Listik-Owner` (явный агентский `actor` сильнее), чтобы вопрос/ответ с доски не остался без автора. `PATCH /api/tasks/{id}` с `needs_owner` меняет только флаг и комментария не пишет |
 | POST | `/api/tasks/{id}/release` | `note`, `actor` | освободить задачу |
 | POST | `/api/tasks/{id}/done` | `result`, `reason`, `actor`, `note` | закрыть: `status=done`, `stage=done` |
+| POST | `/api/tasks/{id}/revoke` | `actor`, `harness`, `note`, `kill=true` | отозвать полномочия текущего запуска (поднять поколение) и, если `kill`, снять его процесс — см. «Отзыв и перезапуск». `400` — задачу не запускали (`generation == 0`) или поколение изменилось параллельно. `200` — карточка после отзыва |
+| POST | `/api/tasks/{id}/launch` | `actor`, `harness`, `note` (пока не используется) | запустить задачу по маршруту следующим поколением (`launcher.start` без изменений логики) — см. «Отзыв и перезапуск». `200` — карточка с `"launched": true`; `409 conflict` — текст отказа `start` (уже запущена, нет маршрута и т. п.), состояние — как у автостарта |
 | POST | `/api/tasks/{id}/deps` | `depends_on`, `dep_type=blocks`, `confirm=false`, `actor` | с `depends_on` — добавить связь; без него — дерево зависимостей (`waits_for`/`waited_by`). Жёсткий `dep_type` (`blocks`/`blocked-by`/`waits-for`/`conditional-blocks`) от агентского `actor` без `confirm=true` не ставится сразу жёстким — пишется как `suggested-blocks` (мягкая, ждёт подтверждения человеком); `confirm=true` (или неагентский `actor`) ставит жёсткую связь сразу. `dep_type=resource-blocks` — 400 `bad_argument` для любого `actor` и `confirm`: ставит только планировщик роя, через этот путь не принимается. Ответ: `dep_type` (фактически записанный тип), `requested_dep_type` (что просили), `suggested`, `confirmed`, `promoted` (предложение заменено на жёсткую связь этим вызовом), `created`, `created_by`. 400 на самосвязь и на цикл жёстких связей — «уже есть жёсткая связь на паре» и цикл считаются без учёта `resource-blocks` |
 | DELETE | `/api/tasks/{id}/deps/{depends_on}` | `dep_type` строкой запроса | снять связь; без `dep_type` снимает разом `blocks` и `suggested-blocks` между той же парой задач, `resource-blocks` — только явным `dep_type=resource-blocks` (актор не ограничен). Ответ: `removed` (число снятых строк), `dep_types[]` |
 | POST | `/api/tasks/{id}/ready` | — | вердикт по задаче (`deps_state`, см. ниже) |

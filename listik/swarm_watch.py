@@ -32,6 +32,28 @@ FIRST_CHANGE_MARK = "рой: первая правка замечена:"
 #: Журнальная запись о файлах, тронутых задачей вне её write_scope.
 SCOPE_MARK = "рой: вне write_scope:"
 
+#: Журнальная запись о заморозке опоздавшего (лестница реакций, §2 порции c).
+FREEZE_MARK = "рой: заморожена:"
+
+#: Журнальная запись у владельца о том, чьи файлы за ним закреплены.
+OWN_MARK = "рой: владеет файлами:"
+
+#: Метка, которой опоздавший помечается заморожённым; полное значение — `<метка><id владельца>`.
+FROZEN_LABEL = "frozen-by:"
+
+#: Начало `note` отзыва при заморозке — по нему «добивка» узнаёт недоделанную
+#: заморозку прошлого прогона (revoke прошёл, метка — нет).
+FREEZE_NOTE = "рой: заморожена — пробное слияние с "
+
+#: Актор всех записей заморозки — решение машинное, не подписывается человеком:
+#: `--actor`/`LISTIK_OWNER` его не подменяют (см. `_SwarmCards` в `bin/listik`).
+SWARM_ACTOR = "agent:listik-swarm"
+
+#: Открытые статусы — своя копия `store.OPEN_STATUSES`: этот модуль `store` не
+#: импортирует (см. докстрингу модуля и `MAIN_MARKERS` выше). Наборы обязаны
+#: совпадать — правка одного требует правки другого.
+OPEN_STATUSES = ("open", "in_progress", "blocked", "review")
+
 #: Автор/дата снимка — фиксированные, чтобы `snapshot` неизменного грязного
 #: дерева был детерминированным (см. `snapshot`).
 _SNAPSHOT_COMMIT_ENV = {
@@ -196,6 +218,119 @@ def common_files(files_a: list[str], files_b: list[str]) -> list[str]:
     return sorted(set(files_a) & set(files_b))
 
 
+# ------------------------------------------------------------------ лестница реакций (§2, порция c)
+
+
+def _is_resumable(card: dict, launch_alive: bool) -> bool:
+    """Недоделанная заморозка прошлого прогона: `revoke` прошёл, метка — нет."""
+    labels = card.get("labels") or []
+    if any((lbl or "").startswith(FROZEN_LABEL) for lbl in labels):
+        return False
+    if launch_alive or (card.get("launched_by") or ""):
+        return False
+    for ev in card.get("events") or []:
+        if ev.get("kind") == "revoke" and (ev.get("note") or "").startswith(FREEZE_NOTE):
+            return True
+    return False
+
+
+def _freeze(cards, owner: str, late: str, conflicts: list[str], late_card: dict, *,
+           resumed: bool, dry_run: bool) -> dict:
+    """Шаги 1–5 заморозки опоздавшего (§2); `resumed` пропускает шаг 1 (`revoke`)."""
+    if dry_run:
+        return {"action": "freeze", "task": late, "owner": owner, "files": conflicts,
+               "ok": True, "generation": None, "dry_run": True}
+
+    done: list[str] = []
+    if resumed:
+        generation = late_card.get("generation")
+    else:
+        try:
+            note = f"{FREEZE_NOTE}{owner} конфликтует: {', '.join(conflicts)}"
+            result = cards.revoke(late, note)
+        except (errors.ListikError, ValueError, KeyError) as exc:
+            err = errors.as_error(exc)
+            return {"action": "freeze", "task": late, "owner": owner, "files": conflicts,
+                   "ok": False, "error": err.message, "done": []}
+        done.append("revoke")
+        generation = result.get("generation")
+
+    try:
+        cards.release(late, note="рой: держатель снят при заморозке")
+        done.append("release")
+
+        labels = list(late_card.get("labels") or [])
+        label = f"{FROZEN_LABEL}{owner}"
+        if label not in labels:
+            labels.append(label)
+        cards.set_labels(late, labels)
+        done.append("labels")
+
+        payload = {"owner": owner, "files": conflicts, "worktree": late_card.get("worktree"),
+                  "branch": late_card.get("branch"), "generation": generation,
+                  "next": "после слияния владельца — rebase дерева и продолжение (барьер роя)"}
+        cards.comment(late, f"{FREEZE_MARK} {json.dumps(payload, ensure_ascii=False)}")
+        done.append("comment_late")
+
+        own_payload = {"files": conflicts, "frozen": late}
+        cards.comment(owner, f"{OWN_MARK} {json.dumps(own_payload, ensure_ascii=False)}")
+    except (errors.ListikError, ValueError, KeyError) as exc:
+        err = errors.as_error(exc)
+        return {"action": "freeze", "task": late, "owner": owner, "files": conflicts,
+               "ok": False, "error": err.message, "done": done}
+
+    decision = {"action": "freeze", "task": late, "owner": owner, "files": conflicts,
+               "ok": True, "generation": generation}
+    if resumed:
+        decision["resumed"] = True
+    return decision
+
+
+def _decide_pair(cards, owner: str, late: str, conflicts: list[str], late_t: dict,
+                 late_card: dict, *, dry_run: bool) -> dict:
+    """Одно решение лестницы для пары `(owner, late)` с конфликтом (§2)."""
+    resumed = _is_resumable(late_card, late_t["launch_alive"])
+    if not resumed and (not late_t["launch_alive"] or late_t["status"] not in OPEN_STATUSES):
+        decision = {"action": "report", "task": late, "owner": owner, "files": conflicts,
+                   "reason": "late_not_running"}
+        if dry_run:
+            decision["dry_run"] = True
+        return decision
+    return _freeze(cards, owner, late, conflicts, late_card, resumed=resumed, dry_run=dry_run)
+
+
+def _decide_all(probes: list[dict], tasks_out: dict, card_map: dict, cards, *,
+                dry_run: bool) -> list[dict]:
+    """Решения лестницы по всем пробам этого прогона, в порядке `probes`."""
+    decisions: list[dict] = []
+    frozen_now: set[str] = set()
+    for p in probes:
+        if "error" in p or p.get("clean"):
+            continue
+        owner, late = p["a"], p["b"]
+        conflicts = p["conflicts"]
+        if late in frozen_now or owner in frozen_now:
+            continue
+        try:
+            decision = _decide_pair(cards, owner, late, conflicts, tasks_out[late],
+                                    card_map[late], dry_run=dry_run)
+        except (errors.ListikError, ValueError, KeyError) as exc:
+            # Ошибка одной заморозки никогда не роняет скан целиком (запасная
+            # сеть поверх той, что уже внутри `_freeze`).
+            err = errors.as_error(exc)
+            decision = {"action": "freeze", "task": late, "owner": owner, "files": conflicts,
+                       "ok": False, "error": err.message, "done": []}
+        decisions.append(decision)
+        # Только настоящая заморозка исключает задачу из дальнейших пар этого
+        # вызова: `report` ничего не замораживает (§2) — иначе опоздавшая, что
+        # просто не в работе, ложно считалась бы обработанной, и конфликт с
+        # третьей задачей остался бы без решения вовсе (не лечится следующими
+        # прогонами, пока опоздавшая не в работе).
+        if decision["action"] == "freeze" and decision.get("ok", True):
+            frozen_now.add(late)
+    return decisions
+
+
 # ------------------------------------------------------------------ scan
 
 
@@ -262,12 +397,13 @@ def _select_candidates(project_path, tasks: list[dict], registered: list[dict],
 
 def scan(project_path, tasks: list[dict], cards, *, dry_run: bool = False,
         now: str | None = None) -> dict:
-    """Один тик наблюдателя роя: тронутые файлы, первая правка, расхождения, пробы.
+    """Один тик наблюдателя роя: тронутые файлы, первая правка, расхождения, пробы,
+    лестница реакций (§2 порции c) — замораживает опоздавшего при конфликте.
 
     `tasks` — карточки проекта из `list` (открытые и закрытые), `cards` — порт с
-    методами `show(task_id) -> dict` и `comment(task_id, text) -> dict` (в порции c
-    добавятся ещё три). Только наблюдает и пишет журнал — реакций (заморозки) нет,
-    `decisions` в выводе всегда пуст.
+    методами `show(task_id) -> dict`, `comment(task_id, text) -> dict`,
+    `revoke(task_id, note) -> dict`, `release(task_id, note) -> dict` и
+    `set_labels(task_id, labels) -> dict`.
     """
     now_str = now or datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
     main_head = worktree.head_sha(project_path)
@@ -377,9 +513,11 @@ def scan(project_path, tasks: list[dict], cards, *, dry_run: bool = False,
         probes.append({"a": a, "b": b, "files": common,
                        "clean": result["clean"], "conflicts": result["files"]})
 
+    decisions = _decide_all(probes, tasks_out, card_map, cards, dry_run=dry_run)
+
     return {
         "project_path": project_path, "main_head": main_head, "dry_run": dry_run,
         "truncated": False,
         "tasks": tasks_out, "skipped": skipped, "order": order,
-        "probes": probes, "discrepancies": discrepancies, "decisions": [],
+        "probes": probes, "discrepancies": discrepancies, "decisions": decisions,
     }

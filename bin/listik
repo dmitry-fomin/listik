@@ -1377,10 +1377,28 @@ def cmd_waves(args) -> int:
 
 
 class _SwarmCards:
-    """Порт карточек для `swarm_watch.scan` поверх `call()` (CLI/HTTP/`--local`)."""
+    """Порт карточек для `swarm_watch.scan` поверх `call()` (CLI/HTTP/`--local`).
+
+    Актор записей лестницы (`revoke`/`release`/`set_labels`) фиксирован —
+    `agent:listik-swarm`: решение машинное, `--actor`/`LISTIK_OWNER` его не
+    подменяют (лестница swarm-5, порция c).
+    """
+
+    ACTOR = "agent:listik-swarm"
 
     def __init__(self, args) -> None:
         self._args = args
+
+    def _guard(self, fn, *args, **kwargs):
+        """`ValueError`/`KeyError` порта (`store`/`launcher`) — в `ListikError`;
+        `errors.ListikError` (в том числе `unsupported` локального фолбэка на
+        `revoke`) уже в нужном виде и проходит как есть."""
+        try:
+            return fn(*args, **kwargs)
+        except errors.ListikError:
+            raise
+        except (ValueError, KeyError) as exc:
+            raise errors.as_error(exc) from exc
 
     def show(self, task_id: str) -> dict:
         return call("show", self._args, f"/api/tasks/{task_id}",
@@ -1391,10 +1409,32 @@ class _SwarmCards:
         return call("comment", self._args, f"/api/tasks/{task_id}/comment", method="POST",
                    body=body, local_kwargs={**body, "task_id": task_id})
 
+    def revoke(self, task_id: str, note: str) -> dict:
+        body = {"actor": self.ACTOR, "harness": None, "note": note, "kill": True}
+        return self._guard(call, "revoke", self._args, f"/api/tasks/{task_id}/revoke",
+                           method="POST", body=body,
+                           local_kwargs={"task_id": task_id, "actor": self.ACTOR,
+                                         "harness": None, "note": note, "kill": True})
+
+    def release(self, task_id: str, note: str) -> dict:
+        body = {"actor": self.ACTOR, "note": note}
+        return self._guard(call, "update", self._args, f"/api/tasks/{task_id}/release",
+                           method="POST", body=body,
+                           local_kwargs={"task_id": task_id, "holder": "", "actor": self.ACTOR,
+                                         "note": note})
+
+    def set_labels(self, task_id: str, labels: list[str]) -> dict:
+        body = {"labels": labels, "actor": self.ACTOR}
+        return self._guard(call, "update", self._args, f"/api/tasks/{task_id}", method="PATCH",
+                           body=body,
+                           local_kwargs={"task_id": task_id, "labels": labels,
+                                         "actor": self.ACTOR})
+
 
 def cmd_watch(args) -> int:
     """Наблюдатель деревьев роя: тронутые файлы, пробное слияние по парам, расхождения
-    с write_scope. Только наблюдает и пишет журнал — реакций (заморозки) нет здесь."""
+    с write_scope, лестница реакций на конфликт (§2 порции c) — замораживает
+    опоздавшего либо только отчитывается, если он уже не в работе."""
     project = (getattr(args, "project", None) or "").strip()
     if not project:
         raise errors.ListikError(
@@ -1469,11 +1509,36 @@ def cmd_watch(args) -> int:
         if new:
             lines.append(f"вне write_scope {d['task']}: {', '.join(new)}")
 
+    # Лестница реакций (§2, порция c): решение ok:False не бросает исключение —
+    # результат печатается целиком, ошибка идёт отдельной строкой в stderr, и код
+    # возврата становится 1, чтобы рой заметил и результат, и провал.
+    rc = 0
+    for d in result["decisions"]:
+        files_text = ", ".join(d.get("files") or [])
+        if d["action"] == "report":
+            lines.append(f"только отчёт: {d['task']} не в работе, конфликт с {d['owner']}: "
+                         f"{files_text}")
+            continue
+        if not d.get("ok", True):
+            lines.append(f"ОШИБКА заморозки {d['task']}: {d.get('error')}")
+            err = errors.ListikError(d.get("error") or "", code=errors.CONFLICT)
+            for line in errors.text_lines(err):
+                print(line, file=sys.stderr)
+            rc = 1
+            continue
+        if d.get("dry_run"):
+            lines.append(f"заморозила бы {d['task']} (владелец {d['owner']}): {files_text}")
+        elif d.get("resumed"):
+            lines.append(f"заморозка доделана {d['task']} (владелец {d['owner']}): "
+                         f"{files_text}")
+        else:
+            lines.append(f"заморожена {d['task']} (владелец {d['owner']}): {files_text}")
+
     for tid, reason in result["skipped"].items():
         lines.append(f"пропущено: {tid} ({reason})")
 
     emit(args, result, "\n".join(lines) if lines else "нечего наблюдать")
-    return 0
+    return 0 if bool(getattr(args, "dry_run", False)) else rc
 
 
 def cmd_blocked(args) -> int:

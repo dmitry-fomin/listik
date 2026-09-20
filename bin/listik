@@ -22,6 +22,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 from listik import __version__, client, cwd_project, db, errors, paths, store  # noqa: E402
 from listik import fence as fence_mod  # noqa: E402
 from listik import routes_store  # noqa: E402
+from listik import swarm_watch  # noqa: E402
 from listik import worktree as worktree_mod  # noqa: E402
 
 STATUS_ICON = {"open": "○", "in_progress": "▶", "blocked": "■", "review": "◐",
@@ -1375,6 +1376,106 @@ def cmd_waves(args) -> int:
     return 1 if cycles else 0
 
 
+class _SwarmCards:
+    """Порт карточек для `swarm_watch.scan` поверх `call()` (CLI/HTTP/`--local`)."""
+
+    def __init__(self, args) -> None:
+        self._args = args
+
+    def show(self, task_id: str) -> dict:
+        return call("show", self._args, f"/api/tasks/{task_id}",
+                   local_kwargs={"task_id": task_id})
+
+    def comment(self, task_id: str, text: str) -> dict:
+        body = {"text": text, "kind": "journal", "author": "agent:listik-swarm"}
+        return call("comment", self._args, f"/api/tasks/{task_id}/comment", method="POST",
+                   body=body, local_kwargs={**body, "task_id": task_id})
+
+
+def cmd_watch(args) -> int:
+    """Наблюдатель деревьев роя: тронутые файлы, пробное слияние по парам, расхождения
+    с write_scope. Только наблюдает и пишет журнал — реакций (заморозки) нет здесь."""
+    project = (getattr(args, "project", None) or "").strip()
+    if not project:
+        raise errors.ListikError(
+            "нужен проект: наблюдение считается по одному проекту", code=errors.BAD_ARGUMENT,
+            hint="listik watch --project <slug>")
+
+    res = call("projects", args, "/api/projects", local_kwargs={}, fallback_warning=False)
+    proj = next((p for p in (res.get("projects") or []) if p.get("slug") == project), None)
+    project_path = ((proj or {}).get("path") or "").strip()
+    if not project_path:
+        raise errors.ListikError(f"у проекта {project} не указан путь",
+                                 code=errors.BAD_ARGUMENT, hint="listik projects --add <каталог>")
+    worktree_mod.check_repo(project_path)
+
+    list_res = call("list", args, "/api/tasks",
+                    query={"project": project, "include_closed": "true", "limit": 1000},
+                    local_kwargs={"project": project, "include_closed": True, "limit": 1000})
+    all_tasks = list_res.get("tasks") or []
+    truncated = bool(list_res.get("total", len(all_tasks)) > len(all_tasks))
+    if truncated:
+        print("! задач больше 1000, активное множество неполное", file=sys.stderr)
+
+    task_filter = list(getattr(args, "task", None) or [])
+    filter_skipped: dict[str, str] = {}
+    if task_filter:
+        by_id = {t.get("id"): t for t in all_tasks}
+        tasks = []
+        for tid in task_filter:
+            t = by_id.get(tid)
+            if t is None:
+                filter_skipped[tid] = "unknown"
+            else:
+                tasks.append(t)
+    else:
+        tasks = all_tasks
+
+    cards = _SwarmCards(args)
+    result = swarm_watch.scan(project_path, tasks, cards,
+                              dry_run=bool(getattr(args, "dry_run", False)))
+    result["skipped"] = {**filter_skipped, **result["skipped"]}
+    result["project"] = project
+    result["truncated"] = truncated
+
+    lines: list[str] = []
+    for tid, t in result["tasks"].items():
+        numstat = t.get("numstat") or {}
+        added = sum(v["added"] for v in numstat.values() if v.get("added") is not None)
+        deleted = sum(v["deleted"] for v in numstat.values() if v.get("deleted") is not None)
+        uncounted = sum(1 for v in numstat.values() if v.get("added") is None)
+        suffix = f" (+{uncounted} без счёта)" if uncounted else ""
+        if t.get("frozen_by"):
+            state = f"frozen:{t['frozen_by']}"
+        elif t.get("live"):
+            state = "live"
+        else:
+            state = "—"
+        outside = t.get("outside_scope") or []
+        outside_text = ", ".join(outside) if outside else "—"
+        lines.append(f"{tid} {t.get('branch') or '—'} {state} файлов {len(t.get('files') or [])} "
+                     f"+{added}/-{deleted}{suffix} вне области: {outside_text}")
+
+    for p in result["probes"]:
+        if "error" in p:
+            lines.append(f"{p['a']} × {p['b']}: ошибка: {p['error']}")
+        elif p.get("clean"):
+            lines.append(f"{p['a']} × {p['b']}: чисто")
+        else:
+            lines.append(f"{p['a']} × {p['b']}: конфликт: {', '.join(p.get('conflicts') or [])}")
+
+    for d in result["discrepancies"]:
+        new = d.get("new") or []
+        if new:
+            lines.append(f"вне write_scope {d['task']}: {', '.join(new)}")
+
+    for tid, reason in result["skipped"].items():
+        lines.append(f"пропущено: {tid} ({reason})")
+
+    emit(args, result, "\n".join(lines) if lines else "нечего наблюдать")
+    return 0
+
+
 def cmd_blocked(args) -> int:
     """Кто кого ждёт: незакрытые блокеры и что из-за них стоит."""
     res = call("blocked", args, "/api/blocked",
@@ -2170,6 +2271,15 @@ def build_parser() -> argparse.ArgumentParser:
     sp.add_argument("--apply", action="store_true",
                     help="записать ресурсные рёбра resource-blocks в базу под этот расчёт: "
                     "устаревшие снять, недостающие поставить")
+
+    sp = add("watch", cmd_watch,
+             help="наблюдатель деревьев роя: тронутые файлы, пробное слияние по парам, "
+                  "расхождения с write_scope")
+    sp.add_argument("--project", help="проект: слаг из listik projects")
+    sp.add_argument("--task", action="append", metavar="ID",
+                    help="ограничить карточками (повторяемый)")
+    sp.add_argument("--dry-run", action="store_true",
+                    help="не писать журнальные записи в карточки")
 
     sp = add("inbox", cmd_inbox, help="что требует человека: вопросы и брошенные задачи")
     sp.add_argument("--project")

@@ -1327,6 +1327,7 @@ listik ready --harness dsh          # только то, что этому harne
 listik blocked                      # кто кого ждёт и почему
 listik waves --project X [--stage s3-impl] [--json]   # волны запуска: что можно делать одновременно
 listik waves --project X --apply                     # записать ресурсные рёбра resource-blocks под этот расчёт
+listik watch --project X [--task id …] [--dry-run] [--json]   # наблюдатель роя: тронутые файлы, пробное слияние по парам, расхождения с write_scope
 listik tree <id>                    # дерево зависимостей задачи
 listik dep confirm <id> <блокер>    # подтвердить предложение агента → жёсткая связь
 listik dep suggested [--project]    # предложения агентов, ждущие подтверждения человеком

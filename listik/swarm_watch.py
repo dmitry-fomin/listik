@@ -10,13 +10,27 @@
 """
 from __future__ import annotations
 
+import json
 import os
 import shutil
 import tempfile
+from datetime import datetime, timezone
 
 from . import errors
 from . import scope as scope_mod
 from . import worktree
+
+#: Маркер «работа в основной ветке» — своя копия `store.MAIN_WORKTREE_MARKERS`:
+#: этот модуль не импортирует `store` (см. докстрингу модуля), поэтому набор
+#: значений держится здесь отдельно. Любая правка одного набора требует правки
+#: другого — их обязаны совпадать.
+MAIN_MARKERS = ("main", "master")
+
+#: Журнальная запись `listik watch` о первой замеченной правке дерева задачи.
+FIRST_CHANGE_MARK = "рой: первая правка замечена:"
+
+#: Журнальная запись о файлах, тронутых задачей вне её write_scope.
+SCOPE_MARK = "рой: вне write_scope:"
 
 #: Автор/дата снимка — фиксированные, чтобы `snapshot` неизменного грязного
 #: дерева был детерминированным (см. `snapshot`).
@@ -180,3 +194,192 @@ def outside_scope(files: list[str], write_scope: list[str]) -> list[str]:
 def common_files(files_a: list[str], files_b: list[str]) -> list[str]:
     """Отсортированное пересечение двух списков путей без дубликатов."""
     return sorted(set(files_a) & set(files_b))
+
+
+# ------------------------------------------------------------------ scan
+
+
+def _first_change_records(comments: list[dict]) -> list[dict]:
+    return sorted(
+        (c for c in comments
+         if c.get("author") == "agent:listik-swarm"
+         and (c.get("text") or "").startswith(FIRST_CHANGE_MARK)),
+        key=lambda c: c.get("created_at") or "")
+
+
+def _recorded_scope_files(comments: list[dict]) -> set[str]:
+    """Файлы, уже записанные предыдущими `SCOPE_MARK`-заметками; битый JSON — пропуск."""
+    recorded: set[str] = set()
+    for c in comments:
+        if c.get("author") != "agent:listik-swarm":
+            continue
+        text = c.get("text") or ""
+        if not text.startswith(SCOPE_MARK):
+            continue
+        try:
+            data = json.loads(text[len(SCOPE_MARK):].strip())
+        except (ValueError, TypeError):
+            continue
+        recorded.update(data.get("files") or [])
+    return recorded
+
+
+def _select_candidates(project_path, tasks: list[dict], registered: list[dict],
+                       skipped: dict) -> list[dict]:
+    """Шаг 2: отбор задач с рабочим деревом, годным для наблюдения."""
+    candidates = []
+    for task in tasks:
+        tid = task.get("id")
+        wt = (task.get("worktree") or "").strip()
+        if not wt:
+            skipped[tid] = "no_worktree"
+            continue
+        if wt.lower() in MAIN_MARKERS:
+            skipped[tid] = "main_worktree"
+            continue
+        if worktree.same_path(wt, project_path):
+            skipped[tid] = "main_tree"
+            continue
+        if not os.path.isdir(wt):
+            skipped[tid] = "missing_dir"
+            continue
+        entry = next((e for e in registered if worktree.same_path(e["path"], wt)), None)
+        if entry is None:
+            skipped[tid] = "unregistered"
+            continue
+        try:
+            top = worktree.git_out(wt, "rev-parse", "--show-toplevel")
+        except errors.ListikError as exc:
+            skipped[tid] = f"git_error: {exc.message}"
+            continue
+        if not worktree.same_path(top, wt):
+            skipped[tid] = "broken_tree"
+            continue
+        branch = entry["branch"] or (task.get("branch") or "")
+        candidates.append({"id": tid, "task": task, "worktree": wt, "branch": branch})
+    return candidates
+
+
+def scan(project_path, tasks: list[dict], cards, *, dry_run: bool = False,
+        now: str | None = None) -> dict:
+    """Один тик наблюдателя роя: тронутые файлы, первая правка, расхождения, пробы.
+
+    `tasks` — карточки проекта из `list` (открытые и закрытые), `cards` — порт с
+    методами `show(task_id) -> dict` и `comment(task_id, text) -> dict` (в порции c
+    добавятся ещё три). Только наблюдает и пишет журнал — реакций (заморозки) нет,
+    `decisions` в выводе всегда пуст.
+    """
+    now_str = now or datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
+    main_head = worktree.head_sha(project_path)
+    registered = worktree.worktree_list(project_path)
+
+    skipped: dict[str, str] = {}
+    candidates = _select_candidates(project_path, tasks, registered, skipped)
+
+    tasks_out: dict[str, dict] = {}
+    card_map: dict[str, dict] = {}
+
+    for cand in candidates:
+        tid = cand["id"]
+        card = cards.show(tid)  # ошибка порта не ловится — скан не продолжается
+        try:
+            ch = changes(cand["worktree"], main_head)
+        except errors.ListikError as exc:
+            skipped[tid] = f"git_error: {exc.message}"
+            continue
+
+        card_map[tid] = card
+        live = bool(ch["dirty"] or ch["ahead"] > 0)
+        labels = card.get("labels") or []
+        frozen_by = None
+        for lbl in labels:
+            if lbl.startswith("frozen-by:"):
+                frozen_by = lbl[len("frozen-by:"):]
+                break
+        launch_alive = bool(card.get("launched_by") == "listik" and card.get("launch_pid")
+                            and not card.get("launch_finished_at"))
+
+        records = _first_change_records(card.get("comments") or [])
+        if records:
+            first_change = records[0]["created_at"]
+        elif live and not dry_run:
+            payload = json.dumps({"ts": now_str, "files": ch["files"]}, ensure_ascii=False)
+            res = cards.comment(tid, f"{FIRST_CHANGE_MARK} {payload}")
+            first_change = res["created_at"]
+        else:
+            first_change = None
+
+        tasks_out[tid] = {
+            "worktree": cand["worktree"], "branch": cand["branch"], "status": card.get("status"),
+            "live": live, "frozen_by": frozen_by, "launch_alive": launch_alive,
+            "first_change": first_change, "files": ch["files"], "numstat": ch["numstat"],
+            "dirty": ch["dirty"], "ahead": ch["ahead"], "outside_scope": [],
+        }
+
+    # ------------------------------------------------------------ расхождения
+    discrepancies: list[dict] = []
+    for tid, t in tasks_out.items():
+        files = t["files"]
+        if not files:
+            continue
+        card = card_map[tid]
+        write_scope = card.get("write_scope") or []
+        outside = outside_scope(files, write_scope)
+        t["outside_scope"] = outside
+        if not outside:
+            continue
+        recorded = _recorded_scope_files(card.get("comments") or [])
+        new = [f for f in outside if f not in recorded]
+        if new and not dry_run:
+            payload = json.dumps({"files": new, "declared": write_scope}, ensure_ascii=False)
+            cards.comment(tid, f"{SCOPE_MARK} {payload}")
+        discrepancies.append({"task": tid, "files": outside, "declared": write_scope, "new": new})
+
+    # ------------------------------------------------------------ порядок владения
+    order = sorted(
+        (tid for tid, t in tasks_out.items() if t["live"] and t["frozen_by"] is None),
+        key=lambda tid: (tasks_out[tid]["first_change"] or "~",
+                         card_map[tid].get("launched_at") or "~", tid))
+
+    # ------------------------------------------------------------ пробы
+    pairs: list[tuple[str, str, list[str]]] = []
+    for i in range(len(order)):
+        for j in range(i + 1, len(order)):
+            a, b = order[i], order[j]
+            common = common_files(tasks_out[a]["files"], tasks_out[b]["files"])
+            if common:
+                pairs.append((a, b, common))
+
+    needed_trees = {tid for pair in pairs for tid in (pair[0], pair[1])}
+    snapshots: dict[str, str] = {}
+    failed_trees: dict[str, str] = {}
+    for tid in needed_trees:
+        try:
+            snapshots[tid] = snapshot(tasks_out[tid]["worktree"], dirty=tasks_out[tid]["dirty"])
+        except errors.ListikError as exc:
+            failed_trees[tid] = f"git_error: {exc.message}"
+
+    if failed_trees:
+        for tid, message in failed_trees.items():
+            skipped[tid] = message
+            tasks_out.pop(tid, None)
+        order = [tid for tid in order if tid not in failed_trees]
+        discrepancies = [d for d in discrepancies if d["task"] not in failed_trees]
+        pairs = [p for p in pairs if p[0] not in failed_trees and p[1] not in failed_trees]
+
+    probes: list[dict] = []
+    for a, b, common in pairs:
+        try:
+            result = probe(project_path, snapshots[a], snapshots[b])
+        except errors.ListikError as exc:
+            probes.append({"a": a, "b": b, "files": common, "error": exc.message})
+            continue
+        probes.append({"a": a, "b": b, "files": common,
+                       "clean": result["clean"], "conflicts": result["files"]})
+
+    return {
+        "project_path": project_path, "main_head": main_head, "dry_run": dry_run,
+        "truncated": False,
+        "tasks": tasks_out, "skipped": skipped, "order": order,
+        "probes": probes, "discrepancies": discrepancies, "decisions": [],
+    }

@@ -17,7 +17,9 @@
 `store.add_dep` отказывает `bad_argument` независимо от актора. От смыслового `blocks`
 отличается только происхождением: гейтит `claim`/`ready` точно так же, но смысловое ребро
 на той же паре пишется рядом, а не поглощается им, и проверка цикла в `add_dep` его не
-учитывает (см. `SEMANTIC_HARD`).
+учитывает (см. `SEMANTIC_HARD`). Расчёт волн — чистая функция `waves` в этом модуле; запись
+ресурсных рёбер в базу — `apply_resource_blocks` (следующая порция). При расчёте уже
+существующие ресурсные рёбра во вход не берутся — на каждом проходе они выводятся заново.
 """
 from __future__ import annotations
 
@@ -656,3 +658,268 @@ def cycles(conn: sqlite3.Connection) -> list[list[str]]:
         if state.get(node, 0) == 0:
             walk(node)
     return found
+
+
+def _waves_kahn_layers(
+    nodes: set[str],
+    ids: list[str],
+    base_incoming: dict[str, set[str]],
+    resource_incoming: dict[str, set[str]],
+) -> tuple[list[list[str]], set[str]]:
+    """Слои Кана над `nodes`: базовые рёбра плюс накопленные ресурсные."""
+    incoming = {tid: set(base_incoming.get(tid, ())) for tid in nodes}
+    for tid, preds in resource_incoming.items():
+        if tid in incoming:
+            incoming[tid].update(p for p in preds if p in nodes)
+
+    rem = set(nodes)
+    layers: list[list[str]] = []
+    while rem:
+        layer = [tid for tid in ids if tid in rem and not (incoming[tid] & rem)]
+        if not layer:
+            break
+        for tid in layer:
+            rem.discard(tid)
+        layers.append(layer)
+    return layers, rem
+
+
+def _waves_find_cycles(
+    rem: set[str],
+    ids: list[str],
+    base_incoming: dict[str, set[str]],
+    order_index: dict[str, int],
+) -> list[list[str]]:
+    """Простые циклы в остатке — как `tests/swarm_stand/planner._find_cycles`."""
+    adj: dict[str, list[str]] = {tid: [] for tid in rem}
+    for tid in ids:
+        if tid not in rem:
+            continue
+        for dep in base_incoming.get(tid, ()):
+            if dep in rem:
+                adj[dep].append(tid)
+
+    found: set[tuple[str, ...]] = set()
+
+    def canonicalize(cycle: list[str]) -> tuple[str, ...]:
+        start = min(range(len(cycle)), key=lambda i: order_index[cycle[i]])
+        return tuple(cycle[start:] + cycle[:start])
+
+    def dfs(start: str, node: str, path: list[str], on_path: set[str]) -> None:
+        for nxt in adj.get(node, ()):
+            if nxt == start:
+                found.add(canonicalize(list(path)))
+            elif nxt not in on_path:
+                path.append(nxt)
+                on_path.add(nxt)
+                dfs(start, nxt, path, on_path)
+                path.pop()
+                on_path.discard(nxt)
+
+    for start in ids:
+        if start in rem:
+            dfs(start, start, [start], {start})
+
+    return [list(c) for c in sorted(found, key=lambda c: tuple(order_index[x] for x in c))]
+
+
+def waves(conn: sqlite3.Connection, *, project: str, stage: str | None = None) -> dict:
+    """Волны планировщика роя: кто может бежать сейчас, кто ждёт, кто в конфликте.
+
+    Чистая функция расчёта (не пишет в базу — резервирование ресурсных рёбер
+    делает `apply_resource_blocks`, следующая порция). Модель алгоритма —
+    `tests/swarm_stand/planner.py`: Кан по входящим рёбрам, поиск циклов в
+    остатке до арбитража, попарный арбитраж внутри слоя с пересчётом слоёв
+    после каждого добавленного ресурсного ребра. Здесь, в отличие от модели:
+    вход — рабочее множество проекта из базы (порядок `priority ASC,
+    created_at ASC, id ASC`, не «порядок объявления»); уже накопленные
+    `resource-blocks` в расчёт не входят — считаются только смысловые жёсткие
+    рёбра (`SEMANTIC_HARD`); области — нормализованные пути с покрытием по
+    каталогу (`scope.covers`); ключ дерева — только у пишущих этапов
+    (`''`/`s3-impl`/`s4-judge`) с непустым `worktree`; пустой `write_scope`
+    уводит задачу в `unscoped`, а не в ошибку валидации; `failed` не
+    моделируется — задача с упавшим воркером просто остаётся открытой.
+    """
+    from . import scope as scope_mod
+    from . import store
+    from . import store_helpers
+
+    if not (project or "").strip():
+        raise errors_mod.BadArgument("нужен проект: волны считаются по одному проекту")
+
+    order_sql = "priority ASC, created_at ASC, id ASC"
+    where = ["archived = 0",
+             f"status IN ({','.join('?' * len(OPEN_STATUSES))})",
+             "project = ?"]
+    params: list = [*OPEN_STATUSES, project]
+    if stage is not None:
+        where.append("stage = ?")
+        params.append(stage)
+    rows = _fetch(
+        conn,
+        f"SELECT * FROM tasks WHERE {' AND '.join(where)} ORDER BY {order_sql}",
+        tuple(params),
+    )
+
+    ids = [r["id"] for r in rows]
+    by_id = {r["id"]: r for r in rows}
+    order_index = {tid: i for i, tid in enumerate(ids)}
+
+    unroutable: list[str] = []
+    unscoped: list[str] = []
+    p_ids: list[str] = []
+    write_scopes: dict[str, list[str]] = {}
+    for tid in ids:
+        row = by_id[tid]
+        route = (row["launch_route"] or "").strip()
+        if not route:
+            unroutable.append(tid)
+            continue
+        ws = store_helpers.json_list(row["write_scope"])
+        if not ws:
+            unscoped.append(tid)
+            continue
+        write_scopes[tid] = ws
+        p_ids.append(tid)
+
+    # Рёбра: смысловые жёсткие, issue_id из P, вместе со статусом depends_on —
+    # один запрос (LEFT JOIN, как `blockers()` считает отсутствующую задачу открытой).
+    edges: dict[str, list[str]] = {}
+    if p_ids:
+        marks = ",".join("?" * len(p_ids))
+        edge_rows = _fetch(
+            conn,
+            "SELECT d.issue_id AS issue_id, d.depends_on AS depends_on, "
+            "t.status AS dep_status FROM deps d LEFT JOIN tasks t ON t.id = d.depends_on "
+            f"WHERE d.dep_type IN ({','.join('?' * len(SEMANTIC_HARD))}) "
+            f"AND d.issue_id IN ({marks})",
+            (*SEMANTIC_HARD, *p_ids),
+        )
+        for r in edge_rows:
+            if (r["dep_status"] or "") in FINAL_STATUSES:
+                continue
+            edges.setdefault(r["issue_id"], []).append(r["depends_on"])
+
+    def reason_sort_key(dep: str):
+        if dep in order_index:
+            return (0, order_index[dep])
+        return (1, dep)
+
+    # `blocked`, до устойчивости: причина фиксируется на первом попадании и не
+    # пересчитывается; задача, ушедшая в blocked в этом же проходе, сразу видна
+    # следующим по O как кандидат (не снимок P на начало прохода).
+    working = set(p_ids)
+    blocked: dict[str, str] = {}
+    changed = True
+    while changed:
+        changed = False
+        for tid in ids:
+            if tid not in working:
+                continue
+            candidates = [dep for dep in edges.get(tid, []) if dep not in working]
+            if candidates:
+                blocked[tid] = min(candidates, key=reason_sort_key)
+                working.discard(tid)
+                changed = True
+
+    # Ключи наполняются в порядке проходов «до устойчивости», не по O (задача может
+    # заблокироваться на втором проходе, даже если она раньше по O, чем та, что
+    # заблокировалась на первом); ответ обязан отдавать ключи по O (см. таблицу
+    # ответа), поэтому пересобираем словарь в порядке `ids`.
+    blocked = {tid: blocked[tid] for tid in ids if tid in blocked}
+
+    # Базовые входящие рёбра Кана: только между задачами, оставшимися в working.
+    base_incoming: dict[str, set[str]] = {}
+    for tid in working:
+        base_incoming[tid] = {dep for dep in edges.get(tid, []) if dep in working}
+
+    tasks_view = {
+        tid: {
+            "title": by_id[tid]["title"],
+            "priority": by_id[tid]["priority"],
+            "status": by_id[tid]["status"],
+            "stage": by_id[tid]["stage"],
+            "holder": by_id[tid]["holder"],
+            "launch_route": by_id[tid]["launch_route"],
+            "write_scope": store_helpers.json_list(by_id[tid]["write_scope"]),
+            "worktree": by_id[tid]["worktree"],
+        }
+        for tid in ids
+    }
+
+    resource_incoming: dict[str, set[str]] = {}
+    layers, rem = _waves_kahn_layers(working, ids, base_incoming, resource_incoming)
+
+    if rem:
+        found_cycles = _waves_find_cycles(rem, ids, base_incoming, order_index)
+        return {
+            "project": project,
+            "stage": stage,
+            "waves": [],
+            "cycles": found_cycles,
+            "unroutable": unroutable,
+            "unscoped": unscoped,
+            "blocked": blocked,
+            "resource_blocks": [],
+            "tasks": tasks_view,
+        }
+
+    resource_blocks: list[list[str]] = []
+    resource_pairs: set[tuple[str, str]] = set()
+    project_path = store.project_path(conn, project)
+
+    def tree_of(tid: str) -> str | None:
+        row = by_id[tid]
+        stage_v = (row["stage"] or "").strip()
+        if stage_v not in ("", "s3-impl", "s4-judge"):
+            return None
+        wt = (row["worktree"] or "").strip()
+        if not wt:
+            return None
+        return store.worktree_lock_key(row["worktree"], project_path)
+
+    tree_cache: dict[str, str | None] = {}
+
+    def tree_cached(tid: str) -> str | None:
+        if tid not in tree_cache:
+            tree_cache[tid] = tree_of(tid)
+        return tree_cache[tid]
+
+    while True:
+        added = False
+        for layer in layers:
+            for i, a_id in enumerate(layer):
+                for b_id in layer[i + 1:]:
+                    conflict = scope_mod.scopes_intersect(
+                        write_scopes[a_id], write_scopes[b_id]
+                    ) or (tree_cached(a_id) is not None and tree_cached(a_id) == tree_cached(b_id))
+                    if conflict and (a_id, b_id) not in resource_pairs:
+                        resource_pairs.add((a_id, b_id))
+                        resource_blocks.append([a_id, b_id])
+                        resource_incoming.setdefault(b_id, set()).add(a_id)
+                        added = True
+                        break
+                if added:
+                    break
+            if added:
+                break
+        if not added:
+            break
+        layers, rem = _waves_kahn_layers(working, ids, base_incoming, resource_incoming)
+        if rem:
+            raise RuntimeError(
+                f"waves: Кан после ресурсного ребра оставил остаток {sorted(rem)} — "
+                "ошибка реализации, ресурсное ребро не должно создавать циклы"
+            )
+
+    return {
+        "project": project,
+        "stage": stage,
+        "waves": layers,
+        "cycles": [],
+        "unroutable": unroutable,
+        "unscoped": unscoped,
+        "blocked": blocked,
+        "resource_blocks": resource_blocks,
+        "tasks": tasks_view,
+    }

@@ -4,7 +4,7 @@
 `routes.json` лежит во временном каталоге и ввозится во временную базу.
 Настоящий `~/.config/listik/` тесты не трогают.
 Логи автостарта уходят во временный каталог (`log_dir` для `launcher.start`, подмена
-`paths.ROOT_DIR` для запусков через сервер), поэтому в дереве репозитория после прогона
+`paths.LOGS_DIR` для запусков через сервер), поэтому в дереве репозитория после прогона
 ничего не остаётся.
 """
 from __future__ import annotations
@@ -76,12 +76,19 @@ class AutostartTestCase(TempDbTestCase):
 
     def setUp(self) -> None:
         super().setUp()
-        # Логи по умолчанию идут в paths.ROOT_DIR / "logs" — в тестах это tmp.
         self._root_patch = mock.patch.object(paths, "ROOT_DIR", self.tmp_path)
         self._root_patch.start()
         self.addCleanup(self._root_patch.stop)
         launcher_mod._trackers.clear()
         self.log_dir = self.tmp_path / "logs"
+        # `launcher.start` без `log_dir` читает `paths.LOGS_DIR` напрямую, а он посчитан
+        # от `DATA_DIR` на импорте модуля — подмена `ROOT_DIR` выше на него не влияет.
+        # Без этой подмены запуски через сервер (POST /api/tasks с autostart,
+        # POST /api/tasks/{id}/launch) писали бы лог в настоящий `logs/` репозитория
+        # (listik-fcel). Страж — tests/test_zz_logs_dir_guard.py.
+        self._logs_patch = mock.patch.object(paths, "LOGS_DIR", self.log_dir)
+        self._logs_patch.start()
+        self.addCleanup(self._logs_patch.stop)
         self.notify: list[tuple[str, dict]] = []
 
     def tearDown(self) -> None:

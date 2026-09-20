@@ -484,13 +484,9 @@ class HttpTests(RevokeTestCase):
         self._conn_patch = mock.patch.object(server, "get_conn", return_value=self.conn)
         self._conn_patch.start()
         self.addCleanup(self._conn_patch.stop)
-        # HTTP-запуск (`POST …/launch`) зовёт `launcher_mod.start` без `log_dir` —
-        # он пишет в `paths.LOGS_DIR` по умолчанию; подмена `paths.ROOT_DIR` из
-        # `AutostartTestCase` на этот путь не влияет (`launcher.start` берёт
-        # `paths.LOGS_DIR` напрямую), иначе лог ушёл бы в настоящий `logs/` репозитория.
-        self._logs_patch = mock.patch.object(paths, "LOGS_DIR", self.log_dir)
-        self._logs_patch.start()
-        self.addCleanup(self._logs_patch.stop)
+        # HTTP-запуск (`POST …/launch`) зовёт `launcher_mod.start` без `log_dir` — он
+        # пишет в `paths.LOGS_DIR`; тот подменён на `self.log_dir` в `AutostartTestCase`
+        # (listik-fcel), иначе лог ушёл бы в настоящий `logs/` репозитория.
 
     def post(self, path, body=None, fence_token=None):
         return server.handle("POST", path, {}, body or {}, authed=True, fence=fence_token)

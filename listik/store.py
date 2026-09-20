@@ -1170,7 +1170,8 @@ def next_stage(conn: sqlite3.Connection, task_id: str, *, holder: str | None = N
 
 # ------------------------------------------------------------------ чтение
 
-def get_task(conn: sqlite3.Connection, task_id: str, *, with_details: bool = True) -> dict:
+def get_task(conn: sqlite3.Connection, task_id: str, *, with_details: bool = True,
+            with_rejected: bool = False) -> dict:
     row = store_helpers.task_row(conn, task_id)
     out = row_to_task(conn, row)
     try:
@@ -1178,6 +1179,8 @@ def get_task(conn: sqlite3.Connection, task_id: str, *, with_details: bool = Tru
         out["deps_state"] = deps_mod.ready(conn, task_id)
     except Exception:  # noqa: BLE001 — срез зависимостей не должен ломать карточку
         out["deps_state"] = None
+    if with_details or with_rejected:
+        from . import fence as fence_mod
     if with_details:
         out["documents"] = task_documents(conn, task_id)
         # Все порции шага, включая закрытые: холодный старт родителя должен видеть
@@ -1190,9 +1193,14 @@ def get_task(conn: sqlite3.Connection, task_id: str, *, with_details: bool = Tru
             "SELECT depends_on, dep_type, created_at FROM deps WHERE issue_id = ?", (task_id,)))
         out["dependents"] = store_helpers.dict_rows(conn.execute(
             "SELECT issue_id, dep_type FROM deps WHERE depends_on = ?", (task_id,)))
+        # Карантин (события `rejected`) сюда не попадает: агент не должен видеть
+        # отвергнутые записи зомби нигде, кроме явного `with_rejected`/`?rejected=1`.
         out["events"] = store_helpers.dict_rows(conn.execute(
             "SELECT ts, kind, from_value, to_value, actor, harness, note, duration_s "
-            "FROM events WHERE task_id = ? ORDER BY ts DESC LIMIT 100", (task_id,)))
+            "FROM events WHERE task_id = ? AND kind != ? ORDER BY ts DESC LIMIT 100",
+            (task_id, fence_mod.REJECTED_KIND)))
+    if with_rejected:
+        out["rejected"] = fence_mod.list_rejected(conn, task_id)
     return out
 
 
@@ -1618,14 +1626,16 @@ def list_tasks(conn: sqlite3.Connection, *, project: str | None = None, status: 
 
 def task_timeline(conn: sqlite3.Connection, limit: int = 100, *,
                   project: str | None = None) -> list[dict]:
+    from . import fence as fence_mod
     sql = """SELECT e.ts, e.kind, e.from_value, e.to_value, e.actor, e.harness, e.note,
                     e.duration_s, e.task_id, t.title, t.project, t.stage, t.status
-             FROM events e LEFT JOIN tasks t ON t.id = e.task_id"""
-    params: list = []
+             FROM events e LEFT JOIN tasks t ON t.id = e.task_id
+             WHERE e.kind != ?"""
+    params: list = [fence_mod.REJECTED_KIND]
     if project:
         # Фильтр по проекту задачи: события без задачи (LEFT JOIN → NULL) тоже
         # отсекаются. Срез по limit идёт после фильтра, а не до.
-        sql += " WHERE t.project = ?"
+        sql += " AND t.project = ?"
         params.append(project)
     sql += " ORDER BY e.ts DESC LIMIT ?"
     params.append(limit)
@@ -1957,8 +1967,8 @@ def norm_slug(value: str) -> str:
 def _git_value(path: Path, *args: str) -> str | None:
     """Значение из git, если каталог — репозиторий. Ошибки не пробрасываются."""
     try:
-        out = subprocess.run(["git", "-C", str(path), *args], capture_output=True,
-                             text=True, timeout=5)
+        out = subprocess.run(["git", "--no-optional-locks", "-C", str(path), *args],
+                             capture_output=True, text=True, timeout=5)
     except (OSError, subprocess.SubprocessError):
         return None
     value = (out.stdout or "").strip()

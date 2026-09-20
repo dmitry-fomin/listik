@@ -20,6 +20,7 @@ from pathlib import Path
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
 from listik import __version__, client, cwd_project, db, errors, paths, store  # noqa: E402
+from listik import fence as fence_mod  # noqa: E402
 from listik import routes_store  # noqa: E402
 from listik import worktree as worktree_mod  # noqa: E402
 
@@ -204,7 +205,7 @@ OWNER_OPS = frozenset({"list", "board", "ready", "create", "claim", "heartbeat",
 WRITE_OPS = frozenset({
     "create", "update", "claim", "heartbeat", "stage", "comment",
     "needs-owner", "dep_add", "dep_remove", "project_add", "project_archive",
-    "project_remove", "project_routing", "waves_apply",
+    "project_remove", "project_routing", "waves_apply", "revoke", "launch",
 })
 
 #: `--local` при живом сервере обходит push доски так же молча, как фолбэк без
@@ -243,20 +244,24 @@ def call(op: str, args, path: str, *, query: dict | None = None, body: dict | No
     local_kwargs = dict(local_kwargs or {})
     if owner and op in OWNER_OPS:
         local_kwargs["as_owner"] = owner
+    # Токен поколения запуска — из окружения, выданного лаунчером (никакого флага
+    # командной строки для него нет): сравнивает сервер/store, здесь только читаем
+    # и передаём в оба пути, всегда, а не только для пишущих операций.
+    token = fence_mod.from_env()
     if getattr(args, "local", False):
         warn_local_bypass(args, writing=op in WRITE_OPS)
-        return client.local_call(op, **local_kwargs)
+        return client.local_call(op, fence=token, **local_kwargs)
     if client.is_up(args.host, args.port):
         return client.request(method, path, query=query, body=body,
                               host=args.host, port=args.port, timeout=timeout,
-                              owner=owner or None)
+                              owner=owner or None, fence=token)
     if not getattr(args, "local", False) and fallback_warning:
         print("! сервер Listik не отвечает — команда выполнена напрямую по базе "
               "(доска не получит событие; подними сервер: listik serve)", file=sys.stderr)
     # Метки `harness:`/`process:` считает серверная логика (store + routes.labels_for),
     # и у `new --route`/`set route=` они те же, что у формы на доске: маршруты обе
     # стороны берут из таблицы `routes`, файл в обход ввоза не читает никто.
-    return client.local_call(op, **local_kwargs)
+    return client.local_call(op, fence=token, **local_kwargs)
 
 
 def emit(args, payload, human: str, *, force_json: bool = False, indent: int | None = 2) -> None:
@@ -446,6 +451,9 @@ def show_task(t: dict) -> None:
             launched = f"запущена {t['launched_by']} pid {pid if pid is not None else '—'}"
             if t.get("launched_at"):
                 launched += f" {t['launched_at']}"
+            generation = t.get("generation") or 0
+            if generation > 0:
+                launched += f", поколение {generation}, запуск {t.get('dispatch_id')}"
             bits.append(launched)
             code = t.get("launch_exit_code")
             bits.append(f"код {code if code is not None else 'идёт'}")
@@ -477,6 +485,20 @@ def show_task(t: dict) -> None:
             dur = f" ({_dur(e['duration_s'])})" if e.get("duration_s") else ""
             print(f"    [{e['ts']}] {e['kind']}{arrow}{dur}"
                   + (f" — {e['note']}" if e.get("note") else ""))
+    if "rejected" in t:
+        rejected = t.get("rejected") or []
+        print(f"\n  отвергнутые записи — карантин ({len(rejected)}):")
+        for r in rejected:
+            args = r.get("args") or {}
+            snippet = ""
+            for key in ("text", "result", "note", "content"):
+                value = args.get(key)
+                if isinstance(value, str) and value.strip():
+                    snippet = value.strip().splitlines()[0][:140]
+                    break
+            print(f"    [{r.get('ts')}] {r.get('op')} поколение {r.get('generation')} "
+                  f"(текущее {r.get('current_generation')}) {r.get('actor') or '?'}"
+                  + (f" — {snippet}" if snippet else ""))
     if t.get("dependencies"):
         print("\n  зависит от: " + ", ".join(d["depends_on"] for d in t["dependencies"]))
     if t.get("dependents"):
@@ -870,7 +892,13 @@ def cmd_list(args) -> int:
 
 
 def cmd_show(args) -> int:
-    task = call("show", args, f"/api/tasks/{args.task_id}", local_kwargs={"task_id": args.task_id})
+    rejected = bool(getattr(args, "rejected", False))
+    query = {"rejected": 1} if rejected else None
+    local_kwargs = {"task_id": args.task_id}
+    if rejected:
+        local_kwargs["rejected"] = True
+    task = call("show", args, f"/api/tasks/{args.task_id}", query=query,
+               local_kwargs=local_kwargs)
     emit(args, task, "") if getattr(args, "json", False) else show_task(task)
     return 0
 
@@ -1141,6 +1169,33 @@ def cmd_done(args) -> int:
                               "result": args.result or "", "actor": actor,
                               "close_reason": args.reason or args.result})
     emit(args, task, f"закрыта {task['id']}\n  результат: {args.result or '—'}")
+    return 0
+
+
+def cmd_revoke(args) -> int:
+    actor = actor_default(args)
+    kill = not args.no_kill
+    body = {"actor": actor, "harness": args.harness, "note": args.note, "kill": kill}
+    task = call("revoke", args, f"/api/tasks/{args.task_id}/revoke", method="POST", body=body,
+                local_kwargs={"task_id": args.task_id, "actor": actor, "harness": args.harness,
+                              "note": args.note, "kill": kill})
+    emit(args, task, f"полномочия отозваны: {task['id']} — поколение {task.get('generation')}")
+    if not getattr(args, "json", False):
+        journal = [c for c in (task.get("comments") or [])
+                  if c.get("author") == "agent:listik" and c.get("kind") == "journal"
+                  and "отозваны" in (c.get("text") or "")]
+        if journal:
+            print(f"  {journal[-1]['text']}")
+    return 0
+
+
+def cmd_launch(args) -> int:
+    actor = actor_default(args)
+    body = {"actor": actor, "harness": args.harness}
+    task = call("launch", args, f"/api/tasks/{args.task_id}/launch", method="POST", body=body,
+                local_kwargs={"task_id": args.task_id, "actor": actor, "harness": args.harness})
+    emit(args, task, f"запущена: {task['id']} — поколение {task.get('generation')}, "
+                     f"pid {task.get('launch_pid')}, лог {task.get('launch_log')}")
     return 0
 
 
@@ -1971,6 +2026,8 @@ def build_parser() -> argparse.ArgumentParser:
 
     sp = add("show", cmd_show, help="карточка задачи")
     add_task_id(sp)
+    sp.add_argument("--rejected", action="store_true",
+                    help="показать карантин: отвергнутые записи зомби-процессов")
 
     sp = add("context", cmd_context, help="компактный контекст задачи для этапа")
     add_task_id(sp)
@@ -2052,6 +2109,16 @@ def build_parser() -> argparse.ArgumentParser:
     sp.add_argument("-r", "--result")
     sp.add_argument("--reason")
     add_note(sp)
+
+    sp = add("revoke", cmd_revoke,
+             help="отзыв поднимает поколение и по умолчанию снимает процесс")
+    add_task_note(sp)
+    sp.add_argument("--no-kill", action="store_true",
+                    help="оставить процесс жить (не убивать, только отозвать полномочия)")
+
+    sp = add("launch", cmd_launch,
+             help="запуск стартует процесс по маршруту карточки следующим поколением")
+    add_task_id(sp)
 
     sp = add("search", cmd_search, help="гибридный поиск по всем задачам")
     sp.add_argument("query")

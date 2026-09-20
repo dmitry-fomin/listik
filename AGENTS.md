@@ -72,6 +72,10 @@ to you — stage `s1-spec`, holder = your harness. Your very first action is `cl
 before reading code. Right before the first code edit run `stage <id> --to s3-impl` yourself; finish with
 `done`.
 
+**Revoked authority.** If any command answers with code `revoked`, stop immediately: don't commit,
+don't retry the command, don't `claim` again — Listik relaunched the card with a new generation and
+this process's work is stale.
+
 ### Stages
 
 **s1-spec** — read `show`, `context <id> --stage s1-spec`, existing `spec_path`. Write the Markdown

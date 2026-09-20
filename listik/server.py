@@ -28,6 +28,7 @@ from . import db as db_mod
 from . import deps as deps_mod
 from . import embed as embed_mod
 from . import errors as errors_mod
+from . import fence as fence_mod
 from . import launcher as launcher_mod
 from . import mcp
 from . import paths
@@ -510,6 +511,9 @@ def error_response(exc: BaseException) -> tuple[int, str, str]:
     притворяется 404 («проверь идентификатор»), а честно отдаётся как 500/internal
     с текстом без кавычек (listik-xut1).
     """
+    if isinstance(exc, errors_mod.Revoked):
+        # Зомби: полномочия отозваны, событие доске (`publish`) не шлём.
+        return 409, exc.message, errors_mod.REVOKED
     if isinstance(exc, ApiError):
         return exc.status, exc.message, exc.code
     if isinstance(exc, errors_mod.BadArgument):
@@ -584,13 +588,18 @@ def runtime_info(root: Path | None = None) -> dict:
 
 
 def handle(method: str, path: str, query: dict, body: dict, authed: bool = False,
-           owner: str | None = None) -> tuple[int, object]:
+           owner: str | None = None, fence: fence_mod.Token | None = None) -> tuple[int, object]:
     """`owner` — идентичность запроса из заголовка `X-Listik-Owner` (None, если его нет).
 
     Она уходит в store как `as_owner`; в локальном режиме store её игнорирует.
     У комментария и у вопроса/ответа (`needs-owner`) без явного автора она
     становится автором-человеком: иначе клиент без `author`/`actor` оставлял бы
     запись без автора вовсе.
+
+    `fence` — токен поколения запуска из заголовков (`fence.from_headers`); перед
+    каждой записью в чужую карточку (не свою, `guard` сам это проверяет) он
+    сверяется с текущим поколением — устаревший запуск получает `errors.Revoked`,
+    а его запись уходит в карантин (см. `listik/fence.py`).
     """
     conn = get_conn()
     parts = [p for p in path.strip("/").split("/") if p]
@@ -1009,6 +1018,9 @@ def handle(method: str, path: str, query: dict, body: dict, authed: bool = False
                 content = body.get("content")
                 if not isinstance(content, str):
                     raise ApiError(400, "не передан обязательный параметр: content")
+                fence_mod.guard(conn, tid, fence, op="document",
+                                args={**body, "kind": kind},
+                                actor=body.get("actor") or owner, harness=body.get("harness"))
                 try:
                     out = documents.put_document(conn, tid, kind, content,
                                                  path=body.get("path"), actor=body.get("actor"))
@@ -1029,6 +1041,9 @@ def handle(method: str, path: str, query: dict, body: dict, authed: bool = False
             raise ApiError(405, "метод не поддерживается")
         if len(parts) == 5 and parts[3] == "deps" and method == "DELETE":
             tid, dep_id = parts[2], urllib.parse.unquote(parts[4])
+            fence_mod.guard(conn, tid, fence, op="dep_remove",
+                            args={"depends_on": dep_id, "dep_type": q1("dep_type")},
+                            actor=body.get("actor") or owner, harness=body.get("harness"))
             out = store.remove_dep(conn, tid, dep_id, dep_type=q1("dep_type"))
             publish("task", {"id": tid, "action": "deps"})
             return 200, out
@@ -1036,13 +1051,16 @@ def handle(method: str, path: str, query: dict, body: dict, authed: bool = False
             tid = parts[2]
             if method == "GET":
                 try:
-                    task = store.get_task(conn, tid, with_details=as_bool(q1("details", True)))
+                    task = store.get_task(conn, tid, with_details=as_bool(q1("details", True)),
+                                          with_rejected=as_bool(q1("rejected", False)))
                     if as_bool(q1("deps", True)):
                         task["deps_state"] = deps_mod.ready(conn, tid)
                     return 200, task
                 except errors_mod.NotFound as exc:
                     raise api_error(404, exc) from exc
             if method in ("PATCH", "PUT"):
+                fence_mod.guard(conn, tid, fence, op="update", args=body,
+                                actor=body.get("actor") or owner, harness=body.get("harness"))
                 # `route` — то же поле, что колонка `launch_route`: так маршрут
                 # называет создание задачи, доска шлёт его же. Смена разрешена
                 # только пока работа не началась — отказ даёт store (400).
@@ -1064,6 +1082,8 @@ def handle(method: str, path: str, query: dict, body: dict, authed: bool = False
                 publish("task", {"id": tid, "action": "updated"})
                 return 200, task
             if method == "DELETE":
+                fence_mod.guard(conn, tid, fence, op="delete", args=body,
+                                actor=body.get("actor") or owner, harness=body.get("harness"))
                 store.delete_task(conn, tid)
                 publish("task", {"id": tid, "action": "deleted"})
                 return 200, {"deleted": tid}
@@ -1079,6 +1099,17 @@ def handle(method: str, path: str, query: dict, body: dict, authed: bool = False
                     raise api_error(404, exc) from exc
                 return 200, out
             try:
+                # Ограждение по поколению — перед store, для всех пишущих действий
+                # кроме чтений (`ready`, `mentions`, `deps` без `depends_on`).
+                _guard_op = {"claim": "claim", "heartbeat": "heartbeat", "stage": "stage",
+                            "comment": "comment", "needs-owner": "needs-owner",
+                            "release": "release", "done": "done",
+                            "revoke": "revoke", "launch": "launch"}.get(action)
+                if _guard_op is None and action == "deps" and body.get("depends_on"):
+                    _guard_op = "dep_add"
+                if _guard_op is not None:
+                    fence_mod.guard(conn, tid, fence, op=_guard_op, args=body,
+                                    actor=body.get("actor") or owner, harness=body.get("harness"))
                 if action == "claim":
                     out = store.claim(conn, tid, holder=need(body, "holder"),
                                       harness=body.get("harness"), note=body.get("note"),
@@ -1129,6 +1160,21 @@ def handle(method: str, path: str, query: dict, body: dict, authed: bool = False
                                             result=body.get("result", ""),
                                             close_reason=body.get("reason") or body.get("result"),
                                             note=body.get("note"))
+                elif action == "revoke":
+                    # `revoke` шлёт свой `publish("task", {..., "action": "revoke"})`
+                    # изнутри (`notify=publish`) — второй раз ниже не шлём (см. пропуск
+                    # в условии publish после этой ветки).
+                    out = launcher_mod.revoke(
+                        conn, tid, actor=body.get("actor"), harness=body.get("harness"),
+                        note=body.get("note"), kill=as_bool(body.get("kill", True)),
+                        notify=publish)
+                elif action == "launch":
+                    # Как `revoke`: `start` публикует свои кадры сам (`notify=publish`).
+                    reason = launcher_mod.start(conn, tid, notify=publish)
+                    if reason is not None:
+                        raise ApiError(409, reason, code=errors_mod.CONFLICT)
+                    out = store.get_task(conn, tid)
+                    out["launched"] = True
                 else:
                     raise ApiError(404, f"неизвестное действие: {action}")
             except errors_mod.NotFound as exc:
@@ -1138,7 +1184,9 @@ def handle(method: str, path: str, query: dict, body: dict, authed: bool = False
             # Читающие действия ходят тем же путём (граф зависимостей, ready,
             # упоминания), но доску не меняют: событие шлём только от записей,
             # иначе чтение карточки будило бы все открытые доски (listik-1p86).
-            if action not in ("ready", "mentions") and not (
+            # `revoke`/`launch` публикуют сами (`notify=publish` внутри launcher) —
+            # второй раз здесь не шлём.
+            if action not in ("ready", "mentions", "revoke", "launch") and not (
                     action == "deps" and not body.get("depends_on")):
                 publish("task", {"id": tid, "action": action})
             return 200, out
@@ -1223,7 +1271,8 @@ def handle(method: str, path: str, query: dict, body: dict, authed: bool = False
     if path == "/api/events":
         limit = as_int(q1("limit"), 50) or 50
         rows = conn.execute(
-            "SELECT * FROM events ORDER BY id DESC LIMIT ?", (limit,)).fetchall()
+            "SELECT * FROM events WHERE kind != ? ORDER BY id DESC LIMIT ?",
+            (fence_mod.REJECTED_KIND, limit)).fetchall()
         return 200, {"items": [dict(r) for r in rows]}
 
     raise ApiError(404, f"нет такого эндпоинта: {method} {path}")
@@ -1269,7 +1318,8 @@ class Handler(BaseHTTPRequestHandler):
         self.send_header("Content-Length", str(len(payload)))
         self.send_header("Access-Control-Allow-Origin", "*")
         self.send_header("Access-Control-Allow-Headers",
-                         "Authorization,Content-Type,X-Listik-Token,X-Listik-Owner")
+                         "Authorization,Content-Type,X-Listik-Token,X-Listik-Owner,"
+                         "X-Listik-Task,X-Listik-Generation,X-Listik-Dispatch")
         self.send_header("Access-Control-Allow-Methods", "GET,POST,PATCH,PUT,DELETE,OPTIONS")
         for k, v in (extra or {}).items():
             self.send_header(k, v)
@@ -1327,7 +1377,8 @@ class Handler(BaseHTTPRequestHandler):
                 return self._error(401, "нужен токен: Authorization: Bearer <token>")
             try:
                 status, data = handle("GET", path, query, {}, authed=authed,
-                                      owner=self._owner())
+                                      owner=self._owner(),
+                                      fence=fence_mod.from_headers(self.headers))
             except Exception as exc:  # noqa: BLE001
                 status, message, code = error_response(exc)
                 return self._error(status, message, code)
@@ -1346,7 +1397,8 @@ class Handler(BaseHTTPRequestHandler):
         try:
             body = self._read_body()
             status, data = handle("POST", parsed.path, query, body, authed=True,
-                                  owner=self._owner())
+                                  owner=self._owner(),
+                                  fence=fence_mod.from_headers(self.headers))
         except Exception as exc:  # noqa: BLE001
             status, message, code = error_response(exc)
             return self._error(status, message, code)
@@ -1373,7 +1425,8 @@ class Handler(BaseHTTPRequestHandler):
         try:
             body = self._read_body()
             status, data = handle(method, parsed.path, query, body, authed=True,
-                                  owner=self._owner())
+                                  owner=self._owner(),
+                                  fence=fence_mod.from_headers(self.headers))
         except Exception as exc:  # noqa: BLE001
             status, message, code = error_response(exc)
             return self._error(status, message, code)
@@ -1434,7 +1487,8 @@ class Handler(BaseHTTPRequestHandler):
 
         # 6. Разбор сообщения — тот же, что у stdio.
         try:
-            response = mcp.handle(request, conn=get_conn(), owner=self._owner())
+            response = mcp.handle(request, conn=get_conn(), owner=self._owner(),
+                                  fence=fence_mod.from_headers(self.headers))
         except Exception as exc:  # noqa: BLE001
             status, message, _code = error_response(exc)
             return rpc_error(status, -32603, message, rid)

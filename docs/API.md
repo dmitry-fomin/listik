@@ -122,7 +122,8 @@ updated_at, status, error, chunk_count`, — и `children[]` — все доче
 | `listik/launcher.py: start` (сервер) | `launched_by`, `launched_at`, `launch_pid`, `launch_log`, `launch_error`, плюс `needs_owner` через `set_needs_owner` |
 | поток слежения за процессом и `recover` при старте сервера | `launch_exit_code`, `launch_finished_at` |
 | локальный фолбэк CLI (`client.local_call`, ветка `create`) | `launch_error`, плюс `needs_owner` |
-| `dispatch_id`, `generation` — лаунчер (карточка `listik-go61`) | через `PATCH`/`listik set`/`listik_update` не меняются |
+| `listik/launcher.py: start` (тем же условным UPDATE, что и захват) | `dispatch_id` (новый), `generation` (`generation + 1`) — через `PATCH`/`listik set`/`listik_update` не меняются |
+| `listik/launcher.py: revoke` | `generation` (`generation + 1`), `dispatch_id` (`NULL`), `launched_by` (`NULL`), плюс `launch_finished_at` — только при подтверждённой в этом же вызове смерти процесса (см. «Отзыв и перезапуск») |
 
 В белый список `PATCH /api/tasks/{id}` (`store.UPDATABLE`) входит только `launch_route`
 (и его алиас `route`, как в POST): правкой карточки маршрут меняют, пока работа не началась.
@@ -282,6 +283,16 @@ listik worktree <id> [--track <часть>] [--recreate] [--json]
 Код возврата — `0` при любом из трёх статусов. Любой неописанный отказ `git` — `conflict`
 со stderr git в `message` (общий формат ошибок, без трейсбека).
 
+**Опрос чужого дерева.** Любой код Listik и роя, который смотрит в рабочее дерево задачи, пока
+там может работать воркер — только через `worktree.git`/`store._git_value` (или напрямую с тем
+же флагом `--no-optional-locks`), никогда голым `subprocess.run(["git", …])`. `status`/`diff` без
+этого флага перезаписывают stat-данные индекса, даже когда только читают дерево; если в
+этот момент воркер в том же дереве делает `git add -A && git commit`, его коммит падает с «Unable
+to create index.lock: File exists». Пострадавший — воркер, не тот, кто опрашивает. Уже сегодня
+так вызывается `documents._worktree` (через `store._git_value`) из `listik context <id>` /
+`GET /api/tasks/{id}/context` на каждом старте этапа; следующие потребители — наблюдатель swarm-5
+и цикл волн swarm-4 (найдено на стенде роя, listik-8q6c).
+
 ## Маршруты запуска и автостарт
 
 Маршруты — это таблица пресетов конвейера и отдельных исполнителей; она же даёт команду
@@ -365,19 +376,23 @@ Listik — только файл поставки: `listik init`/старт се
 Ошибка запуска не отменяет создание задачи: POST отвечает `201`, а не `500`.
 
 Отдельный случай — повторный запуск: задача захватывается условным
-`UPDATE … SET launched_by='listik' WHERE id=? AND launched_by IS NULL`, поэтому `start`
+`UPDATE … SET launched_by='listik', launched_at=?, generation = generation + 1,
+dispatch_id=? WHERE id=? AND launched_by IS NULL`, поэтому `start`
 для уже запущенной задачи возвращает `уже запущена Listik` и **ничего** не меняет —
-ни `launch_error`, ни `needs_owner`, ни комментариев; в stderr только строка
-`autostart <id>: уже запущена Listik`. Так же ведёт себя гонка двух одновременных
-запусков: процесс и лог-файл ровно одни.
+ни `launch_error`, ни `needs_owner`, ни комментариев, ни `generation`/`dispatch_id`; в
+stderr только строка `autostart <id>: уже запущена Listik`. Так же ведёт себя гонка двух
+одновременных запусков: процесс и лог-файл ровно одни.
 
 Успешный запуск пишет `launched_by=listik`, `launch_pid`, `launched_at`, `launch_log`
 (файл `logs/launch-<id>-<ГГГГММДДТЧЧММССZ>.log` в корне Listik, каталог создаётся),
-`launch_error=NULL` и комментарий `journal` от `agent:listik`: `автостарт: маршрут <key>,
-pid <N>, лог <path>`. Процесс не блокирует запрос: POST возвращается сразу после `Popen`.
-Поток-демон дожидается процесса и пишет `launch_exit_code`, `launch_finished_at` и
-комментарий `автостарт: процесс <pid> завершился с кодом <code>`; этап, держатель и статус
-не меняются — запуск не делает claim за агента. Исключение — прямой маршрут
+`launch_error=NULL`, `launch_exit_code=NULL`, `launch_finished_at=NULL` (запись описывает
+текущее поколение — нужно для повторного запуска после отзыва, см. «Поколения запуска»)
+и комментарий `journal` от `agent:listik`: `автостарт: маршрут <key>, pid <N>, лог <path>,
+поколение <G>, запуск <dispatch_id>`. Процесс не блокирует запрос: POST возвращается сразу
+после `Popen`. Поток-демон дожидается процесса и пишет `launch_exit_code`,
+`launch_finished_at` и комментарий `автостарт: процесс <pid> завершился с кодом <code>`
+(своему запуску — см. «Поколения запуска»); этап, держатель и статус не меняются — запуск
+не делает claim за агента. Исключение — прямой маршрут
 (`kind: direct`): до `Popen` сервер выдаёт карточку харнессу записи (`update_task` от
 `agent:listik`: `holder=<harness>` и `stage=s1-spec`, если этапа не было; уже стоящий
 держатель не перезаписывается), и карточка «выдана, но не взята» до `claim` самого агента.
@@ -387,6 +402,32 @@ pid <N>, лог <path>`. Процесс не блокирует запрос: PO
 (`ProcessLookupError`) получает `launch_finished_at` и журнал «отслеживание потеряно при
 перезапуске сервера» (`launch_exit_code` остаётся `NULL`), живой (в том числе
 `PermissionError`) не трогается. Переиспользованный PID считается живым — принятый риск.
+
+#### Поколения запуска
+
+Каждый успешный захват (`start`) поднимает `generation` карточки на единицу и выдаёт
+новый `dispatch_id` (32-символьный hex, `uuid.uuid4().hex`) — они пишутся тем же условным
+`UPDATE`, что и сам захват. Первое поколение — `1`; `0` — задачу ещё не запускали.
+Поколение никогда не убывает: ни один код пути не пишет в `generation` ничего, кроме
+`generation + 1`. Отказ после захвата (`_fail`/`_release`) оставляет `generation`
+поднятым — процесса с этим номером не существует, второй раз его никто не получит — и
+снимает `dispatch_id` (ставит `NULL`). Окружение запущенного процесса получает, кроме
+`LISTIK_TASK_ID`, `LISTIK_ROUTE`, `LISTIK_LAUNCHED_BY=listik`, ещё две переменные:
+`LISTIK_GENERATION` (десятичная строка поколения этого захвата) и `LISTIK_DISPATCH_ID`
+(значение `dispatch_id`) — итого пять.
+
+Потоки слежения (поток-демон после `start` и поток-опросчик `_poll` после `recover`)
+пишут `launch_exit_code`/`launch_finished_at` условным `UPDATE … WHERE id = ? AND
+dispatch_id IS ?` — именно `IS`, чтобы обслуживать и запуски до появления поколений
+(`dispatch_id IS NULL`). Если задачу успели отозвать или перезапустить, пока старый
+процесс ещё жил (`rowcount == 0`), поток-демон колонки не трогает, но пишет журнал
+`автостарт: процесс <pid> поколения <G> завершился с кодом <code> после отзыва —
+карточка не менялась`; поток-опросчик в этом случае молчит, как и раньше. Отзыв и
+ограждение по токену — см. ниже (порции b/c).
+
+`recover` поколение и `dispatch_id` не переиздаёт: он лишь читает `dispatch_id` из
+строки (у запусков до поколений — `NULL`) и передаёт его потоку-опросчику, чтобы тот мог
+ограничить свой `UPDATE` тем же условием.
 
 ### Смена маршрута («типа запуска») у заведённой задачи
 
@@ -477,6 +518,118 @@ pid <N>, лог <path>`. Процесс не блокирует запрос: PO
 переключает принудительно). Ввоз и вывоз файла из CLI убраны: `routes.json` — файл
 поставки, его читает только первичный ввоз при установке, а дальше маршруты правятся
 через HTTP API.
+
+## Ограждение запуска: поколения и карантин
+
+Запись в карточку от процесса, чьё поколение запуска (см. «Поколения запуска» выше)
+уже не текущее, — зомби: Listik перезапустил задачу новым поколением, а старый процесс
+ещё жив и продолжает писать. Такую запись Listik **не применяет**, но **сохраняет в
+карантин**, чтобы человек видел, от кого и почему остаются зомби; сам агент карантин не
+видит нигде.
+
+**Токен.** Три значения — id задачи, поколение, id запуска — путешествуют вместе:
+переменные окружения процесса, выданные лаунчером (`LISTIK_TASK_ID`,
+`LISTIK_GENERATION`, `LISTIK_DISPATCH_ID`), три HTTP-заголовка (`X-Listik-Task`,
+`X-Listik-Generation`, `X-Listik-Dispatch`), то же окружение у stdio-MCP и словарь
+`{"task_id", "generation", "dispatch_id"}` у локального фолбэка (`client.local_call`).
+CLI (`bin/listik`) читает окружение один раз в `call()` и передаёт токен и в HTTP-запрос
+(заголовками), и в локальный фолбэк — всегда, а не только для пишущих команд: сравнивает
+сервер/store. Флага командной строки для токена нет и не будет — источник только
+окружение, выданное лаунчером; из `config.toml` токен тоже не читается. MCP по HTTP (с
+другой машины) окружения сервера не видит — это не наш воркер, токен там либо есть в
+заголовках запроса, либо ограждения нет вовсе.
+
+**Правило совпадения.** Токен ограждает только свою задачу (`token.task_id != task_id` —
+не проверяется вовсе, чужая карточка не ограждается; запрос без токена — тоже не
+ограждается). Поколение должно совпасть строго; поколение из токена больше текущего —
+тоже несовпадение (такого токена сервер не выдавал). `dispatch_id` допускает пустоту с
+любой стороны — иначе запуски до появления поколений (`dispatch_id IS NULL`) отвергались
+бы всегда.
+
+**Что ограждается.** Перед вызовом store — HTTP `PATCH`/`PUT /api/tasks/{id}`, `DELETE
+/api/tasks/{id}`, `PUT /api/tasks/{id}/documents/{kind}`, `DELETE /api/tasks/{id}/deps/{dep}`,
+`POST /api/tasks/{id}/{action}` для `claim`, `heartbeat`, `stage`, `comment`, `needs-owner`,
+`release`, `done`, `revoke`, `launch` и `deps` с `depends_on`; MCP-инструменты `listik_update`, `listik_claim`,
+`listik_heartbeat`, `listik_stage`, `listik_comment`, `listik_needs_owner`, `listik_done`,
+`listik_release`, `listik_put_document` и `listik_deps` (только ветка добавления связи).
+Чтения (`GET`, `context`, `ready`, `mentions`, `deps` без `depends_on`, `listik_show`) не
+ограждаются; `POST /api/tasks` (создание) не ограждается — у него нет своей карточки.
+
+**Отказ.** Несовпадение — `409` с кодом `revoked` и текстом «полномочия на задачу
+`<id>` отозваны: запуск поколения `<G>` устарел, текущее поколение `<current>»` (или, если
+не совпал только `dispatch_id`, «запуск `<dispatch_id>` не текущий (текущий
+`<current_dispatch>`), поколение `<G>`»); подсказка — «остановись: ничего не коммить, не
+повторяй команду и не бери задачу заново — Listik перезапустил её новым поколением, твоя
+работа устарела». Событие доске (`publish`) при отказе не шлётся. У MCP — `isError: true`
+и текст `errors.mcp_error_text`: «полномочия отозваны: `<message>` — `<hint>`».
+
+**Карантин.** Отвергнутая запись не применяется никак — ни одна колонка `tasks`,
+`comments`, `deps`, `documents` не меняется, — а сохраняется единственным событием
+`rejected` (`fence.quarantine` — единственное место, где это происходит; отключить
+сохранение — один вызов убрать оттуда): `from_value`/`to_value` — старое и текущее
+поколение, `note` — JSON `{"op", "dispatch_id", "current_dispatch_id", "args"}`, где `args`
+— тело операции без `None`/служебных `as_owner`/`fence` (текстовые поля `text`/`result`/
+`note`/`content` сохраняются целиком — ради этого карантин и нужен).
+
+**Кто видит карантин.** Агент — никогда: `events[]` в `GET /api/tasks/{id}` без флага,
+`documents.context`, `listik_show`, `listik show` без `--rejected` и лента
+(`store.task_timeline`/`GET /api/timeline`/`GET /api/events`/`listik timeline`/
+`listik_timeline`) карантин не отдают. Человек — явным параметром: `GET
+/api/tasks/{id}?rejected=1` добавляет ключ `rejected` (иначе его в ответе нет вовсе), а
+`listik show <id> --rejected` печатает после «событий» раздел «отвергнутые записи —
+карантин (N):» по строке на запись. `web/` в этой порции карантин не показывает — доска
+его не отдаёт нигде.
+
+### Отзыв и перезапуск
+
+Отзыв (`listik/launcher.py: revoke`, `POST /api/tasks/{id}/revoke`, `listik revoke`) —
+единственный способ снять полномочия у живого процесса **до** того, как он сам умрёт:
+поколение поднимается первым и одной транзакцией — `UPDATE … SET generation =
+generation + 1, dispatch_id = NULL, launched_by = NULL … WHERE id = ? AND generation =
+?` (старое значение). Порядок необратим: с этого момента любая запись со старым токеном
+уходит в карантин (см. выше), а поток слежения старого запуска (`_track`/`_poll`) видит
+`dispatch_id IS NULL` и пишет только строку журнала «после отзыва — карточка не
+менялась», не трогая `launch_exit_code`. Параллельный отзыв того же поколения: ровно один
+проходит, второй получает `400` («поколение задачи изменилось параллельно, повтори
+отзыв»), не меняя ничего. Задачу, которую не запускали (`generation == 0`), отозвать
+нельзя — `400` («не запускалась: отзывать нечего»); задачи нет — `404`.
+
+Второй, необязательный шаг — снятие процесса: только если `kill` истинно (по умолчанию;
+`--no-kill`/`kill: false` его отключают) и запуск «наш и незавершённый» (`launched_by ==
+'listik'`, `launch_pid` непустой и не `<= 1`/не pid самого сервера, `launch_finished_at`
+пуст). Сигнал уходит группе процесса (`os.killpg`, лидер группы — сам процесс, запущенный
+с `start_new_session=True`), сначала `SIGTERM`; сервер ждёт до `KILL_GRACE` секунд (по
+умолчанию 5) и, если процесс жив, эскалирует до `SIGKILL` и ждёт ещё раз. Пять исходов
+(ровно один, попадает в `note` события и в журнал): «не наш запуск» (условие «наш и
+незавершённый» не выполнено — сюда же попадает повторный `revoke` после
+`revoke(kill=false)`: `launched_by` уже `NULL`, снять оставленного зомби Listik больше не
+может), «уже завершён» (`launch_finished_at` уже стоял, сигналов не было), «оставлен
+жить» (`kill=false` при «нашем незавершённом»), «снят» (смерть подтверждена в этом
+вызове), «не снят» (сигнал не прошёл или процесс пережил `SIGKILL`).
+
+`launch_finished_at` пишется отзывом только при исходе «снят» и только если было пусто —
+живому или непроверенному процессу «завершился тогда-то» не приписывается никогда.
+`launch_pid`, `launched_at`, `launch_log`, `launch_exit_code` не трогаются — это история
+прежнего запуска. Держатель, этап, статус, `launch_route`, `autostart` отзыв не меняет:
+это не `release`/`stage`/`done` за рой. Событие `revoke` (`from_value`/`to_value` — старое
+и новое поколение) и комментарий `journal` от `agent:listik` описывают исход и id запуска.
+
+После отзыва `launched_by IS NULL`, поэтому задачу можно запустить снова: `POST
+/api/tasks/{id}/launch`/`listik launch <id>` зовут `launcher.start` без изменений его
+логики — следующее поколение, новый `dispatch_id`, `launch_exit_code`/
+`launch_finished_at` обнуляются. Круг «запуск → отзыв → запуск» даёт поколения `1 → 2 →
+3`. `launch` не обходит защиту от двойного старта: на уже запущенной задаче — тот же
+отказ `ALREADY_STARTED`, второго процесса и второго лог-файла нет; ответ — `409 conflict`
+с текстом отказа `start`, а состояние задачи — ровно такое, каким его оставил `start` (для
+`ALREADY_STARTED` не меняется вовсе, для прочих отказов — `launch_error`+`needs_owner`,
+как у автостарта). Успешный `launch` — `200` с карточкой и дополнительным ключом
+`"launched": true`.
+
+Кто и когда зовёт отзыв и перезапуск (таймаут ожидания, лестница реакций на зомби) — не
+это API: он даёт только примитивы и их внешние входы (HTTP и CLI), потому что процесс
+задачи держит сервер, а решение — за роем (см. `tests/swarm_stand/`, swarm-4/5). Отзыв без
+снятия (`kill=false`) оставляет процесс Listik жить — повторный `revoke` его уже не
+снимет («не наш запуск»): снимать такой процесс вручную — забота того, кто зовёт отзыв.
 
 ## Помощник DeepSeek (создание задачи)
 
@@ -675,8 +828,9 @@ id внутри файлового пути (`docs/specs/<id>.md`, `/wt/<id>/lis
 Ошибка любого эндпоинта — HTTP-статус (400/401/403/404/405/409/5xx) и тело
 `{"ok": false, "error": "<текст по-русски>", "code": "<машинный код>"}`. `code` — из
 фиксированного словаря `bad_argument`, `not_found`, `conflict`, `unauthorized`, `forbidden`,
-`method_not_allowed`, `rate_limited`, `server_error`, `http_error`, `internal`
-(см. `listik/errors.py`). Он точнее статуса: «задача уже удерживается» отвечает 400 по
+`method_not_allowed`, `rate_limited`, `server_error`, `http_error`, `internal`, `revoked`
+(см. `listik/errors.py`). `revoked` — «полномочия на задачу отозваны: запуск устарел, у
+задачи новое поколение» (409, см. «Ограждение запуска: поколения и карантин»). Он точнее статуса: «задача уже удерживается» отвечает 400 по
 контракту `claim`, но `code` у неё `conflict`. 403 `forbidden` сервер отдаёт только за чужого
 владельца (непринятый токен — это 401), и CLI печатает к нему подсказку про владельца:
 «задачу держит другой владелец; смена владельца — listik set <id> owner=<кто>». CLI переносит эту пару в свой формат ошибок
@@ -697,7 +851,7 @@ id внутри файлового пути (`docs/specs/<id>.md`, `/wt/<id>/lis
 | GET | `/api/stats` | `project` | `by_status{}, by_stage{}, by_project[], by_holder[], by_actor[], stale, needs_owner, closed_7d, closed_prev_7d, closed_delta, closed_by_day[{date,count}] (14 дней), long_stage, running[], generated_at` |
 | GET | `/api/board` | `group_by=status\|stage\|project\|holder`, `project`, `include_closed`, `limit` | `group_by, columns[], total, needs_you[], generated_at`. В серверном режиме заголовок `X-Listik-Owner` фильтрует все колонки и блок `ready`: «свои + без владельца»; имя не из `server.users` — 400 `bad_argument` |
 | GET | `/api/tasks` | `project,status,stage,assignee,holder,needs_owner,type,label,text,include_closed,include_archived,limit,offset,order=updated\|created\|priority\|stage` | `total, limit, offset, tasks[]`. В серверном режиме заголовок `X-Listik-Owner` оставляет «свои + без владельца»; имя не из `server.users` — 400 `bad_argument` |
-| GET | `/api/tasks/{id}` | `details=0/1` | задача + `comments/dependencies/dependents/events/documents/children` |
+| GET | `/api/tasks/{id}` | `details=0/1`, `rejected` (`0/1`, по умолчанию нет — с `1` добавляет ключ `rejected[]`, карантин задачи; см. «Ограждение запуска») | задача + `comments/dependencies/dependents/events/documents/children` |
 | GET | `/api/tasks/{id}/context` | `stage`, `portion`, `max_chars` | компактный, побайтно стабильный контекст этапа для harness — см. ниже |
 | GET | `/api/tasks/{id}/documents/{kind}` | — (вид документа задан в пути: `spec`, `checklist`, `review`, `decision`) | документ задачи содержимым: `task_id, kind, path, source, revision, content_hash, status, error, content`. `source=upload` — текст из базы (`status=ok`); `source=file` — с диска: `status=ok` и текст, а если файл не читается — `status=missing`, `content=null` и текст ошибки (`revision`/`content_hash` = `null`, если документ ещё не индексировался). 404 — нет такой задачи или у задачи не задан путь к документу этого вида; 400 — неизвестный `kind`; 405 — любой метод по этому пути, кроме `GET` и `PUT` |
 | GET | `/api/search` | `q` (обязателен), `limit`, `project`, `status`, `stage`, `actor`, `needs_owner`, `mode=hybrid\|text\|vector` | `query, mode, took_ms, lexical_docs, vector_docs, count, results[]`; совпадения по id задачи идут первыми и помечены `hits[].kind="id"` — см. ниже |
@@ -705,8 +859,8 @@ id внутри файлового пути (`docs/specs/<id>.md`, `/wt/<id>/lis
 | GET | `/api/blocked` | `project`, `limit` | `tasks[]` с разбором `blockers[]`, `blocked_by_stale`, `blocked_by_holder` |
 | GET | `/api/waves` | `project` (обязателен), `stage` | `project, stage, waves[], cycles[], unroutable[], unscoped[], blocked{}, resource_blocks[], tasks{}, generated_at` — волны запуска (`listik waves`), см. «Волны запуска: `listik waves`»; без `project` — 400 `bad_argument`; метод не GET — 405; фильтр `X-Listik-Owner` не применяется — план проекта считается по всем его задачам |
 | GET | `/api/deps/suggested` | `project`, `limit` | `items[]` (предложения агентов, ждущие подтверждения человеком: `issue_id, issue_title, issue_stage, project, depends_on, depends_on_title, depends_on_status, created_by, created_at`), `generated_at` |
-| GET | `/api/timeline` | `limit`, `project` (оставляет только события задач этого проекта) | `items[]`: `ts, kind, from_value, to_value, actor, actor_title, harness, note, duration_s, task_id, title, project, stage, status, age` |
-| GET | `/api/events` | `limit` | сырые события |
+| GET | `/api/timeline` | `limit`, `project` (оставляет только события задач этого проекта) | `items[]`: `ts, kind, from_value, to_value, actor, actor_title, harness, note, duration_s, task_id, title, project, stage, status, age`. Событий карантина (`kind=rejected`) в ленте нет никогда — см. «Ограждение запуска» |
+| GET | `/api/events` | `limit` | сырые события; `kind=rejected` (карантин) отфильтрован, как у `/api/timeline` |
 | GET | `/api/stream` | `token` (обязателен) | SSE: `data: {"kind":"task","at":...,"payload":{"id":...,"action":"updated"}}`, плюс `: ping` каждые 15 с |
 
 `listik status --json` дополнительно отдаёт `bin_path` (реальный путь CLI) и
@@ -861,6 +1015,8 @@ dropped_chunks, reason`), `reasons[]` (по одному пункту на ка�
 | POST | `/api/tasks/{id}/needs-owner` | `value=true\|false`, `note`, `actor`, `harness` | поднять/снять флаг «нужен человек»: при непустом `note` создаётся комментарий `kind=question` (`value=true`) или `kind=answer` (`value=false`); событие `question`/`answer` пишется при каждом вызове, даже если флаг уже стоит в нужном значении; ответ — полная карточка, как у `PATCH`. Автор комментария и события — `actor`; без него в серверном режиме подписывается человек из заголовка `X-Listik-Owner` (явный агентский `actor` сильнее), чтобы вопрос/ответ с доски не остался без автора. `PATCH /api/tasks/{id}` с `needs_owner` меняет только флаг и комментария не пишет |
 | POST | `/api/tasks/{id}/release` | `note`, `actor` | освободить задачу |
 | POST | `/api/tasks/{id}/done` | `result`, `reason`, `actor`, `note` | закрыть: `status=done`, `stage=done` |
+| POST | `/api/tasks/{id}/revoke` | `actor`, `harness`, `note`, `kill=true` | отозвать полномочия текущего запуска (поднять поколение) и, если `kill`, снять его процесс — см. «Отзыв и перезапуск». `400` — задачу не запускали (`generation == 0`) или поколение изменилось параллельно. `200` — карточка после отзыва |
+| POST | `/api/tasks/{id}/launch` | `actor`, `harness`, `note` (пока не используется) | запустить задачу по маршруту следующим поколением (`launcher.start` без изменений логики) — см. «Отзыв и перезапуск». `200` — карточка с `"launched": true`; `409 conflict` — текст отказа `start` (уже запущена, нет маршрута и т. п.), состояние — как у автостарта |
 | POST | `/api/tasks/{id}/deps` | `depends_on`, `dep_type=blocks`, `confirm=false`, `actor` | с `depends_on` — добавить связь; без него — дерево зависимостей (`waits_for`/`waited_by`). Жёсткий `dep_type` (`blocks`/`blocked-by`/`waits-for`/`conditional-blocks`) от агентского `actor` без `confirm=true` не ставится сразу жёстким — пишется как `suggested-blocks` (мягкая, ждёт подтверждения человеком); `confirm=true` (или неагентский `actor`) ставит жёсткую связь сразу. `dep_type=resource-blocks` — 400 `bad_argument` для любого `actor` и `confirm`: ставит только планировщик роя, через этот путь не принимается. Ответ: `dep_type` (фактически записанный тип), `requested_dep_type` (что просили), `suggested`, `confirmed`, `promoted` (предложение заменено на жёсткую связь этим вызовом), `created`, `created_by`. 400 на самосвязь и на цикл жёстких связей — «уже есть жёсткая связь на паре» и цикл считаются без учёта `resource-blocks` |
 | DELETE | `/api/tasks/{id}/deps/{depends_on}` | `dep_type` строкой запроса | снять связь; без `dep_type` снимает разом `blocks` и `suggested-blocks` между той же парой задач, `resource-blocks` — только явным `dep_type=resource-blocks` (актор не ограничен). Ответ: `removed` (число снятых строк), `dep_types[]` |
 | POST | `/api/tasks/{id}/ready` | — | вердикт по задаче (`deps_state`, см. ниже) |

@@ -31,6 +31,7 @@ import urllib.request
 from . import config as config_mod
 from . import db as db_mod
 from . import errors as errors_mod
+from . import fence as fence_mod
 from . import search as search_mod
 from . import store
 
@@ -506,7 +507,18 @@ def _conn():
     return db_mod.init()
 
 
-def call_tool(name: str, args: dict, conn=None, owner=FROM_ENV) -> object:
+#: Инструменты, ограждаемые по поколению запуска (см. `listik/fence.py`): `guard`
+#: зовётся до store, `op` — имя инструмента без префикса `listik_`. `listik_deps`
+#: ограждается только в ветке добавления связи (см. ниже, отдельно).
+FENCED_TOOLS = {
+    "listik_update": "update", "listik_claim": "claim", "listik_heartbeat": "heartbeat",
+    "listik_stage": "stage", "listik_comment": "comment",
+    "listik_needs_owner": "needs_owner", "listik_done": "done",
+    "listik_release": "release", "listik_put_document": "put_document",
+}
+
+
+def call_tool(name: str, args: dict, conn=None, owner=FROM_ENV, fence=FROM_ENV) -> object:
     """`owner` — владелец-человек, от чьего имени идёт вызов (серверный режим).
 
     Источник имени определяет транспорт, а не пустота значения. У HTTP владелец
@@ -514,11 +526,24 @@ def call_tool(name: str, args: dict, conn=None, owner=FROM_ENV) -> object:
     и `owner=None` там значит «клиент не представился» — окружение сервера в это
     место не подставляется. У stdio транспорт имени не несёт: вызов идёт без
     аргумента (`FROM_ENV`), и имя берётся из `LISTIK_OWNER` — там же, где `LISTIK_ACTOR`.
+
+    `fence` — тот же принцип для токена поколения запуска: stdio без аргумента
+    берёт его из окружения (`fence.from_env`), HTTP передаёт значение заголовков
+    (может быть `None`, если их нет). `listik_show` карантин не отдаёт никогда —
+    для него ограждение не нужно, у чтения нечего отвергать.
     """
     if conn is None:
         conn = _conn()
     if owner is FROM_ENV:
         owner = (os.environ.get("LISTIK_OWNER") or "").strip() or None
+    if fence is FROM_ENV:
+        fence = fence_mod.from_env()
+    guard_op = FENCED_TOOLS.get(name)
+    if guard_op is None and name == "listik_deps" and args.get("action") != "rm":
+        guard_op = "deps"
+    if guard_op is not None:
+        fence_mod.guard(conn, args.get("id"), fence, op=guard_op, args=args,
+                        actor=args.get("actor") or owner, harness=args.get("harness"))
     if name == "listik_search":
         return search_mod.search(conn, args["query"], limit=int(args.get("limit", 10)),
                                  project=args.get("project"), status=args.get("status"),
@@ -715,9 +740,9 @@ def rpc_error(rid, code: int, message: str) -> dict:
     return {"jsonrpc": "2.0", "id": rid, "error": {"code": code, "message": message}}
 
 
-def handle(request: dict, conn=None, owner=FROM_ENV) -> dict | None:
-    """`owner` — см. `call_tool`: HTTP всегда передаёт значение заголовка (в том
-    числе `None`, если заголовка нет), stdio вызывает без аргумента."""
+def handle(request: dict, conn=None, owner=FROM_ENV, fence=FROM_ENV) -> dict | None:
+    """`owner`/`fence` — см. `call_tool`: HTTP всегда передаёт значение заголовков
+    (в том числе `None`, если их нет), stdio вызывает без аргумента."""
     method, rid, params = request_parts(request)
 
     if method == "initialize":
@@ -738,7 +763,7 @@ def handle(request: dict, conn=None, owner=FROM_ENV) -> dict | None:
         name = params.get("name")
         args = params.get("arguments") or {}
         try:
-            payload = call_tool(name, args, conn, owner)
+            payload = call_tool(name, args, conn, owner, fence)
         except errors_mod.NotFound as exc:
             return {"jsonrpc": "2.0", "id": rid,
                     "result": {"content": [{"type": "text", "text": errors_mod.mcp_error_text(exc)}],

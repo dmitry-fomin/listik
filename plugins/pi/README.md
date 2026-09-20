@@ -203,6 +203,7 @@ rpc client:       /Users/you/.claude/plugins/.../pi-rpc.py (ok) · python3: /usr
 default channel:  glm -> b-ai-glm/glm-5.3-flash
 channels:         glm -> b-ai-glm/glm-5.3-flash (in catalog: yes; probe: timeout 30s, default)
                   deepseek -> b-ai-deepseek/deepseek-v4.1-flash (in catalog: yes; probe: answered in 4s)
+note: "in catalog" lists models with configured auth - "no" does not mean the model does not exist; the probe is the final word
 default permission: read-only (edits and bash blocked) (--tools read,grep,find,ls)
 background jobs running: 0
 named sessions:   2
@@ -279,10 +280,10 @@ writes, not reads — whoever writes the task owns this.
 
 ## A note on language
 
-The skill bodies, the script's comments **and all of its runtime output** are written in
-Russian — `/pi:pi-check` and every error message will greet you in Russian, as the sample
-above shows. This README, the manifests, and every command, flag, and identifier are in
-English. The skills work the same regardless of the language you talk to Claude in.
+The skill bodies, this README, the manifests and all of the script's runtime output are in
+English. Only the comments inside `scripts/pi-run.sh` and `scripts/pi-rpc.py` are in
+Russian — they are addressed to whoever maintains the bridge, not to its users. The skills
+work the same regardless of the language you talk to Claude in.
 
 ## Credits
 

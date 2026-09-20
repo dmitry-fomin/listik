@@ -185,8 +185,8 @@ class HarnessRunResumeTests(unittest.TestCase):
                 path.unlink()
         proc = self._run_codex(["resume", job_id], stdin="again")
         self.assertEqual(proc.returncode, 2, proc.stderr)
-        self.assertIn("нет id сессии", proc.stderr)
-        self.assertIn("откат", proc.stderr)
+        self.assertIn("has no Codex session id", proc.stderr)
+        self.assertIn("fall back to a fresh run", proc.stderr)
 
     def test_dsh_usage_lists_resume(self) -> None:
         proc = self._run_dsh(["-h"])

@@ -132,11 +132,12 @@ EOF
 | `cancel <job-id\|--all>` | kill a job and its whole process tree |
 | `clean [--older-than <days>] [--all]` | drop finished jobs; running ones are left alone |
 | `transcript [job-id]` | the codex session's JSONL for that working directory — what it actually did |
-| `resume <job-id>` | continue that job's Codex session (`codex exec resume`); prompt on stdin. Reuses the original `--write`/`--model`/`--effort`/`--cwd`. `--background` like `run`. Exit 2 if the session id is missing — the caller should start a fresh `run` |
+| `resume <job-id>` | continue that job's Codex session (`codex exec resume`); prompt on stdin. Reuses the original permission mode, `--model`, `--effort` and `--cwd`. `--background` like `run`. Exit 2 if the session id is missing — the caller should start a fresh `run` |
 
 | Option | Default | Meaning |
 | --- | --- | --- |
-| `--write` | off | allow writes to the working directory (`-s workspace-write`) |
+| `--permission <read\|bash\|write>` | `read` | permission mode in one flag (see below) |
+| `--write` | off | alias for `--permission write` — allow writes to the working directory (`-s workspace-write`) |
 | `--model <name>` | user's setting | manual use, and `feature-pipeline` presets, which pin it on purpose (`-m`) |
 | `--effort <level>` | user's setting | manual use and `feature-pipeline` presets; not validated against a fixed list — valid values are model-dependent (`-c model_reasoning_effort="<level>"`) |
 | `--provider <route>` | user's setting | manual use only — switch `[model_providers.<name>]` route for one run (`-c model_provider="<route>"`) |
@@ -157,28 +158,46 @@ worker died with the machine or a `kill -9`). A job card prints the state twice 
 `status=` is what the worker recorded, `actual_status=` corrects it against whether the
 process is actually alive. Trust the second one.
 
+## Permissions: one flag, three values
+
+`codex` has no per-tool allowlist — its boundary is the filesystem sandbox handed to
+`codex exec -s`. Hence:
+
+| `--permission` | Sandbox | What the agent can do |
+| --- | --- | --- |
+| `read` (default) | `read-only` | read, grep, and run commands; writes are denied by the sandbox |
+| `bash` | `read-only` | the same sandbox — accepted for parity with the other bridges in this repo, which do gate commands separately |
+| `write` | `workspace-write` | edit files inside `--cwd` |
+
+`--write` remains as an alias for `--permission write`, because Listik routes and
+`feature-pipeline` presets already send it.
+
 ## What it looks like
 
 ```
 > /codex:codex-check
-готовность:   yes
-бинарь:       /Users/you/.local/bin/codex (ok)
-версия:       codex-cli 0.154.0
-codex doctor: ok
-модель:       my-provider / my-model-id
-app-server:   ok
-учётные данные: ok (auth is provided by the active model provider)
-фоновых задач в работе: 0
+ready:            yes
+binary:           /Users/you/.local/bin/codex (ok)
+version:          codex-cli 0.154.0
+codex doctor:     ok
+model:            my-provider / my-model-id
+app-server:       ok
+credentials:      ok (auth is provided by the active model provider)
+key env var:      MY_PROVIDER_API_KEY (present)
+default permission: read-only (commands run, writes denied)
+background jobs running: 0
+CODEX_HOME:       /Users/you/.codex
+config.toml:      /Users/you/.codex/config.toml
 ```
 
 Delegating looks like this — the launch returns immediately, the answer is collected later:
 
 ```
 > /codex:codex-delegate map the auth subsystem
-задача ушла в codex: codex-20260912-133830-17492 (карта подсистемы auth)
+codex-20260912-133830-17492-4821
 
-> что там codex
-codex-20260912-133830-17492    running    6м12с   gpt-6-astra   карта подсистемы auth
+> /codex:codex-jobs
+codex-20260912-133830-17492-4821   running    6m12s   gpt-6-astra   auth subsystem map
 ```
 
 A collected task comes back as one final message — the CLI's own words, passed through
@@ -256,7 +275,8 @@ one-for-one in shape — same five skills, same subagent, same job-management co
 
 **No approval channel in `codex exec`.** Same as `dsh`'s headless profile: a non-interactive
 run has nobody to approve an escalation, so an attempt to exceed the sandbox (`read-only` by
-default) fails rather than prompting. Re-run with `--write` if the task genuinely needs it.
+default) fails rather than prompting. Re-run with `--permission write` if the task genuinely
+needs it.
 
 **The secret guard cannot live in the prompt.** `codex` opens files by itself, so scanning
 the task text proves nothing. Scope every task to the files it actually needs and say
@@ -278,7 +298,7 @@ stops writes, not reads — whoever writes the task owns this.
   `CLAUDE_SESSION_ID` in the Bash tool's environment, so the directory is the reliable
   boundary.
 - `cancel` sends `TERM` to the process tree and escalates to `KILL` after ten seconds. Work
-  `codex` already wrote to disk in `--write` mode stays written — cancelling stops the
+  `codex` already wrote to disk in `--permission write` mode stays written — cancelling stops the
   agent, it doesn't roll anything back.
 - `transcript` depends on codex having written a session file for that exact working
   directory under the active `CODEX_HOME` — a run against `--ephemeral` (not used by this
@@ -286,10 +306,10 @@ stops writes, not reads — whoever writes the task owns this.
 
 ## A note on language
 
-The skill bodies, the script's comments **and all of its runtime output** are written in
-Russian — `/codex:codex-check` and every error message will greet you in Russian, as the
-sample above shows. This README, the manifests, and every command, flag, and identifier are
-in English. The skills work the same regardless of the language you talk to Claude in.
+The skill bodies, this README and every line of the script's runtime output are in English.
+Only the script's inline comments are in Russian — they are addressed to whoever maintains
+the bridge, not to its users. The skills work the same regardless of the language you talk
+to Claude in.
 
 ## Credits
 

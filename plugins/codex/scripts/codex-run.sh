@@ -142,7 +142,7 @@ file_bytes() {
 # `--model --write` иначе молча уедет в имя модели, а --write не применится.
 need_value() {
   local opt="$1" val="${2:-}"
-  [[ -n "$val" && "$val" != -* ]] || die 2 "$opt требует значение"
+  [[ -n "$val" && "$val" != -* ]] || die 2 "$opt needs a value"
   printf '%s' "$val"
 }
 
@@ -156,18 +156,22 @@ usage() {
   cat >&2 <<'USAGE'
 usage:
   codex-run.sh check [--json]
-  codex-run.sh run [--write] [--model <id>] [--effort <level>]
-                    [--provider <route>] [--cwd <dir>] [--timeout <сек>]
-                    [--background] [--label <текст>]
+  codex-run.sh run [--permission read|bash|write] [--model <id>] [--effort <level>]
+                    [--provider <route>] [--cwd <dir>] [--timeout <sec>]
+                    [--background] [--label <text>]
                     < prompt.txt
   codex-run.sh status [--json] [--all] [--running] [job-id]
-  codex-run.sh result <job-id> [--wait [сек]]
-  codex-run.sh logs <job-id> [--tail <строк>]
+  codex-run.sh result <job-id> [--wait [sec]]
+  codex-run.sh logs <job-id> [--tail <lines>]
   codex-run.sh cancel <job-id|--all>
-  codex-run.sh clean [--older-than <дней>] [--all]
+  codex-run.sh clean [--older-than <days>] [--all]
   codex-run.sh transcript [job-id]
-  codex-run.sh resume <job-id> [--background] [--timeout <сек>] [--label <текст>]
+  codex-run.sh resume <job-id> [--background] [--timeout <sec>] [--label <text>]
                     < prompt.txt
+
+--permission: read (default) and bash both map to the codex sandbox -s read-only
+  (commands run, writes are denied); write maps to -s workspace-write. --write is
+  kept as an alias for --permission write.
 USAGE
   exit 2
 }
@@ -178,13 +182,34 @@ USAGE
 resolve_codex() {
   local bin="${CODEX_BIN:-}"
   if [[ -n "$bin" ]]; then
-    command -v "$bin" >/dev/null 2>&1 || die 2 "CODEX_BIN указывает на '$bin', но такого исполняемого файла нет"
+    command -v "$bin" >/dev/null 2>&1 || die 2 "CODEX_BIN points at '$bin', which is not an executable"
     command -v "$bin"
     return 0
   fi
   command -v codex >/dev/null 2>&1 \
-    || die 2 "codex не найден в PATH — установи OpenAI Codex CLI или укажи путь через переменную CODEX_BIN"
+    || die 2 "codex not found in PATH - install OpenAI Codex CLI or set CODEX_BIN"
   command -v codex
+}
+
+# --- режим прав -------------------------------------------------------------
+# --permission <read|bash|write> — единый флаг; --write остаётся синонимом
+# --permission write: его уже шлют маршруты Listik и пресеты конвейера.
+# read и bash дают одну и ту же песочницу: у codex она файловая, а не
+# по-инструментная — в read-only команды выполняются, но запись запрещена,
+# отдельного «запрета bash» у codex exec нет.
+mode_from_permission() {
+  case "$1" in
+    read|read-only|bash) printf 'read-only' ;;
+    write|workspace-write) printf 'workspace-write' ;;
+    *) die 2 "invalid --permission '$1' - allowed values: read, bash, write" ;;
+  esac
+}
+
+mode_label() {
+  case "$1" in
+    workspace-write) echo "workspace-write (edits inside --cwd allowed)" ;;
+    *)               echo "read-only (commands run, writes denied)" ;;
+  esac
 }
 
 pick_timeout_bin() {
@@ -252,7 +277,7 @@ cmd_check() {
     --json)    as_json=1 ;;
     -h|--help) usage ;;
     "")        ;;
-    *)         die 2 "неизвестная опция '$1'" ;;
+    *)         die 2 "unknown option '$1'" ;;
   esac
 
   local bin="" bin_status="missing" version=""
@@ -310,17 +335,18 @@ cmd_check() {
       "$(json_escape "$app_server_status")" \
       "$(json_escape "${codex_home:-$CODEX_HOME_DIR}")" "$(json_escape "$config_path")" "$running"
   else
-    echo "готовность:   $ready"
-    echo "бинарь:       ${bin:-не найден} ($bin_status)"
-    echo "версия:       ${version:-—}"
-    echo "codex doctor: $overall_status"
-    echo "модель:       ${config_provider:-—} / ${config_model:-—}"
-    echo "app-server:   $app_server_status"
-    echo "учётные данные: ${auth_status} (${auth_summary:-—})"
-    [[ -n "$auth_env_var" ]] && echo "переменная ключа: $auth_env_var"
-    echo "фоновых задач в работе: $running"
-    echo "CODEX_HOME:   ${codex_home:-$CODEX_HOME_DIR}"
-    [[ -n "$config_path" ]] && echo "config.toml:  $config_path"
+    echo "ready:            $ready"
+    echo "binary:           ${bin:-not found} ($bin_status)"
+    echo "version:          ${version:--}"
+    echo "codex doctor:     $overall_status"
+    echo "model:            ${config_provider:--} / ${config_model:--}"
+    echo "app-server:       $app_server_status"
+    echo "credentials:      ${auth_status} (${auth_summary:--})"
+    [[ -n "$auth_env_var" ]] && echo "key env var:      $auth_env_var"
+    echo "default permission: $(mode_label read-only)"
+    echo "background jobs running: $running"
+    echo "CODEX_HOME:       ${codex_home:-$CODEX_HOME_DIR}"
+    [[ -n "$config_path" ]] && echo "config.toml:      $config_path"
   fi
   [[ "$ready" == "yes" ]] || exit 1
 }
@@ -338,19 +364,20 @@ count_running_jobs() {
 
 # --- run --------------------------------------------------------------------
 cmd_run() {
-  local write=0 model="" effort="" provider_opt="" workdir="" timeout_s="" background=0 label=""
+  local mode="read-only" model="" effort="" provider_opt="" workdir="" timeout_s="" background=0 label=""
   while [[ $# -gt 0 ]]; do
     case "$1" in
-      --write)      write=1; shift ;;
+      --permission) mode="$(mode_from_permission "$(need_value --permission "${2:-}")")"; shift 2 ;;
+      --write)      mode="workspace-write"; shift ;;
       --model)      model="$(need_value --model "${2:-}")"; shift 2 ;;
       --provider)   provider_opt="$(need_value --provider "${2:-}")"; shift 2 ;;
       --effort)     effort="$(need_value --effort "${2:-}")"; shift 2 ;;
       --cwd)        workdir="$(need_value --cwd "${2:-}")"; shift 2 ;;
-      --timeout)    timeout_s="${2:-}"; [[ -z "$timeout_s" ]] && die 2 "--timeout требует значение"; shift 2 ;;
-      --label)      label="${2:-}"; [[ -z "$label" ]] && die 2 "--label требует значение"; shift 2 ;;
+      --timeout)    timeout_s="${2:-}"; [[ -z "$timeout_s" ]] && die 2 "--timeout needs a value"; shift 2 ;;
+      --label)      label="${2:-}"; [[ -z "$label" ]] && die 2 "--label needs a value"; shift 2 ;;
       --background) background=1; shift ;;
       -h|--help)    usage ;;
-      *)            die 2 "неизвестная опция '$1' (промпт передаётся на stdin, не аргументом)" ;;
+      *)            die 2 "unknown option '$1' (the prompt goes on stdin, not as an argument)" ;;
     esac
   done
   # --effort не валидируется по фиксированному списку: допустимые значения
@@ -363,20 +390,17 @@ cmd_run() {
   if [[ -z "$timeout_s" ]]; then
     if [[ $background -eq 1 ]]; then timeout_s="$DEFAULT_BG_TIMEOUT"; else timeout_s="$DEFAULT_TIMEOUT"; fi
   fi
-  [[ "$timeout_s" =~ ^[0-9]+$ ]] || die 2 "--timeout принимает целое число секунд (0 — без ограничения)"
+  [[ "$timeout_s" =~ ^[0-9]+$ ]] || die 2 "--timeout takes a whole number of seconds (0 = no limit)"
 
   local prompt
   prompt="$(cat)"
-  [[ -z "${prompt//[[:space:]]/}" ]] && die 2 "пустой промпт на stdin"
+  [[ -z "${prompt//[[:space:]]/}" ]] && die 2 "empty prompt on stdin"
 
   workdir="${workdir:-$PWD}"
-  [[ -d "$workdir" ]] || die 2 "каталог '$workdir' не существует"
+  [[ -d "$workdir" ]] || die 2 "directory '$workdir' does not exist"
   workdir="$(cd "$workdir" && pwd)"
 
   local bin; bin="$(resolve_codex)"
-
-  local mode="read-only"
-  [[ $write -eq 1 ]] && mode="workspace-write"
 
   # --skip-git-repo-check всегда: обвязка не требует, чтобы рабочий каталог
   # был git-репозиторием (dsh такого требования тоже не ставит).
@@ -428,15 +452,15 @@ run_foreground() {
 
   if [[ $rc -eq 124 ]]; then
     [[ -s "$out_file" ]] && cat "$out_file"
-    die 6 "codex: таймаут ${timeout_s}с. Задача слишком большая для одного прогона — перезапусти её с --background, тогда потолок снимается."
+    die 6 "codex: timed out after ${timeout_s}s - the task is too big for one foreground run; rerun with --background to lift the ceiling"
   fi
   if [[ $rc -ne 0 ]]; then
     # Содержательный кусок ответа, если он успел появиться, всё равно отдаём:
     # он полезнее кода возврата. Причина отказа идёт в stderr, к die.
     [[ -s "$out_file" ]] && cat "$out_file"
-    die 6 "codex: прогон завершился с кодом $rc${err_text:+ — $err_text}"
+    die 6 "codex: run exited with code $rc${err_text:+ - $err_text}"
   fi
-  [[ -s "$out_file" ]] || die 6 "codex: пустой ответ — проверь готовность командой check${err_text:+. stderr: $err_text}"
+  [[ -s "$out_file" ]] || die 6 "codex: empty answer - check readiness with: codex-run.sh check${err_text:+. stderr: $err_text}"
   cat "$out_file"
 }
 
@@ -455,7 +479,7 @@ claim_job_dir() {
     dir="$JOBS_DIR/$id"
     mkdir "$dir" 2>/dev/null && { printf '%s' "$id"; return 0; }
     i=$((i+1))
-    [[ $i -ge 100 ]] && die 5 "не удалось выделить идентификатор задачи в $JOBS_DIR"
+    [[ $i -ge 100 ]] && die 5 "could not allocate a job id in $JOBS_DIR"
   done
 }
 
@@ -484,7 +508,7 @@ run_background() {
     echo "session=${SESSION_ID:-—}"
     echo "codex_session=${RESUME_SID:-—}"
     echo "resumed_from=${RESUME_FROM:-—}"
-    echo "timeout=$(if [[ -n "$(pick_timeout_bin)" ]]; then echo "$timeout_s"; else echo "none (нет coreutils timeout)"; fi)"
+    echo "timeout=$(if [[ -n "$(pick_timeout_bin)" ]]; then echo "$timeout_s"; else echo "none (no coreutils timeout)"; fi)"
     echo "started=$(date -u +%Y-%m-%dT%H:%M:%SZ)"
     echo "started_epoch=$(date +%s)"
   } > "$job_dir/meta"
@@ -548,14 +572,14 @@ run_background() {
 # --- общее для работы с джобами --------------------------------------------
 job_dir_of() {
   local job_id="$1"
-  [[ -n "$job_id" ]] || die 2 "нужен job-id (список — codex-run.sh status)"
+  [[ -n "$job_id" ]] || die 2 "a job-id is required (list them with: codex-run.sh status)"
   # Идентификатор идёт в путь, поэтому его форма проверяется строго: иначе
   # `result ../../что-то` читает и переписывает каталоги вне JOBS_DIR.
   case "$job_id" in
-    */*|*..*) die 2 "недопустимый job-id '$job_id'" ;;
+    */*|*..*) die 2 "invalid job-id '$job_id'" ;;
   esac
   local dir="$JOBS_DIR/$job_id"
-  [[ -d "$dir" ]] || die 2 "нет задачи с id '$job_id' (список — codex-run.sh status --all)"
+  [[ -d "$dir" ]] || die 2 "no job with id '$job_id' (list them with: codex-run.sh status --all)"
   echo "$dir"
 }
 
@@ -618,7 +642,7 @@ elapsed_of() {
   end="$(meta_get finished_epoch "$dir/meta")"
   now="${end:-$(date +%s)}"
   local s=$(( now - start ))
-  printf '%dм%02dс' $(( s / 60 )) $(( s % 60 ))
+  printf '%dm%02ds' $(( s / 60 )) $(( s % 60 ))
 }
 
 # --- status -----------------------------------------------------------------
@@ -630,7 +654,7 @@ cmd_status() {
       --all)     all=1; shift ;;
       --running) only_running=1; shift ;;
       -h|--help) usage ;;
-      -*)        die 2 "неизвестная опция '$1'" ;;
+      -*)        die 2 "unknown option '$1'" ;;
       *)         job_id="$1"; shift ;;
     esac
   done
@@ -649,7 +673,7 @@ cmd_status() {
     return 0
   fi
 
-  [[ -d "$JOBS_DIR" ]] || { echo "фоновых задач нет" >&2; [[ $as_json -eq 1 ]] && echo '[]'; exit 1; }
+  [[ -d "$JOBS_DIR" ]] || { echo "no background jobs" >&2; [[ $as_json -eq 1 ]] && echo '[]'; exit 1; }
 
   local ids=() dir name
   for dir in $(ls -1t "$JOBS_DIR" 2>/dev/null); do
@@ -681,7 +705,7 @@ cmd_status() {
         "$(meta_get label "$d/meta")" || exit 0
     fi
     if [[ $shown -ge 30 ]]; then
-      [[ $as_json -eq 1 ]] || echo "… показаны первые 30; остальные — status --all" >&2
+      [[ $as_json -eq 1 ]] || echo "... first 30 shown; the rest are in status --all" >&2
       break
     fi
   done
@@ -692,9 +716,9 @@ cmd_status() {
   fi
   if [[ $shown -eq 0 ]]; then
     if [[ $all -eq 0 ]]; then
-      echo "здесь фоновых задач нет (все задачи на машине — status --all)" >&2
+      echo "no background jobs here (every job on this machine: status --all)" >&2
     else
-      echo "фоновых задач нет" >&2
+      echo "no background jobs" >&2
     fi
     exit 1
   fi
@@ -730,7 +754,7 @@ cmd_result() {
       --wait)    wait_s="${2:-}"
                  if [[ "$wait_s" =~ ^[0-9]+$ ]]; then shift 2; else wait_s=300; shift; fi ;;
       -h|--help) usage ;;
-      -*)        die 2 "неизвестная опция '$1'" ;;
+      -*)        die 2 "unknown option '$1'" ;;
       *)         job_id="$1"; shift ;;
     esac
   done
@@ -750,11 +774,11 @@ cmd_result() {
 
   case "$st" in
     running)
-      die 5 "задача ещё выполняется ($(elapsed_of "$dir") с $(meta_get started "$dir/meta")); опроси позже: codex-run.sh status $job_id"
+      die 5 "job still running ($(elapsed_of "$dir") since $(meta_get started "$dir/meta")); poll later: codex-run.sh status $job_id"
       ;;
     orphaned)
       [[ -s "$dir/output.txt" ]] && cat "$dir/output.txt"
-      die 6 "воркер задачи исчез, не проставив итог (перезагрузка или kill -9); выше — то, что успело записаться"
+      die 6 "the job worker vanished without recording an outcome (reboot or kill -9); above is whatever got written"
       ;;
   esac
 
@@ -764,19 +788,19 @@ cmd_result() {
 
   case "$st" in
     timeout)
-      die 6 "задача оборвалась по таймауту ($(meta_get timeout "$dir/meta")с); выше — то, что успело прийти"
+      die 6 "job hit its timeout ($(meta_get timeout "$dir/meta")s); above is whatever arrived before that"
       ;;
     canceled)
-      die 6 "задача снята вручную ($(elapsed_of "$dir") работы); выше — то, что успело прийти"
+      die 6 "job was cancelled ($(elapsed_of "$dir") of work); above is whatever arrived before that"
       ;;
     failed)
-      die 6 "задача завершилась с ошибкой (код $(meta_get exit "$dir/meta"))$( [[ -s "$dir/stderr.txt" ]] && printf ' — %s' "$(tail -c 500 "$dir/stderr.txt")" )"
+      die 6 "job failed (exit code $(meta_get exit "$dir/meta"))$( [[ -s "$dir/stderr.txt" ]] && printf ' - %s' "$(tail -c 500 "$dir/stderr.txt")" )"
       ;;
   esac
 
   if [[ ! -s "$dir/output.txt" ]]; then
     [[ -s "$dir/stderr.txt" ]] && tail -c 2000 "$dir/stderr.txt" >&2
-    die 6 "пустой ответ"
+    die 6 "empty answer"
   fi
 }
 
@@ -790,25 +814,25 @@ cmd_logs() {
   local job_id="" tail_n=40
   while [[ $# -gt 0 ]]; do
     case "$1" in
-      --tail)    tail_n="${2:-}"; [[ "$tail_n" =~ ^[0-9]+$ ]] || die 2 "--tail принимает число строк"; shift 2 ;;
+      --tail)    tail_n="${2:-}"; [[ "$tail_n" =~ ^[0-9]+$ ]] || die 2 "--tail takes a number of lines"; shift 2 ;;
       -h|--help) usage ;;
-      -*)        die 2 "неизвестная опция '$1'" ;;
+      -*)        die 2 "unknown option '$1'" ;;
       *)         job_id="$1"; shift ;;
     esac
   done
   local dir; dir="$(job_dir_of "$job_id")"
   local st; st="$(job_status_of "$dir")"
 
-  echo "статус:  $st ($(elapsed_of "$dir"))"
-  echo "ответ:   $(file_bytes "$dir/output.txt") байт накоплено"
+  echo "status:  $st ($(elapsed_of "$dir"))"
+  echo "answer:  $(file_bytes "$dir/output.txt") bytes accumulated"
   if [[ -s "$dir/stderr.txt" ]]; then
-    echo "--- последние $tail_n строк вывода codex ---"
+    echo "--- last $tail_n lines of codex output ---"
     tail -n "$tail_n" "$dir/stderr.txt"
   elif [[ "$st" == "running" ]]; then
-    echo "вывод codex пока пуст. Это может быть норма в первые секунды прогона —"
-    echo "признак работы — сам статус running и растущее время."
+    echo "codex output is still empty - normal in the first seconds of a run;"
+    echo "the signs of work are the running status and the growing elapsed time."
   else
-    echo "вывод codex пуст"
+    echo "codex output is empty"
   fi
 }
 
@@ -835,7 +859,7 @@ cancel_one() {
   local job_id; job_id="$(meta_get id "$dir/meta")"
   local st; st="$(job_status_of "$dir")"
   if [[ "$st" != "running" ]]; then
-    echo "$job_id: уже $st, снимать нечего"
+    echo "$job_id: already $st, nothing to cancel"
     return 0
   fi
 
@@ -874,19 +898,19 @@ cancel_one() {
   rm -f "$dir/canceled"
   local final; final="$(job_status_of "$dir")"
   case "$final" in
-    canceled) echo "$job_id: снята ($(elapsed_of "$dir") работы)" ;;
-    running)  echo "$job_id: снять не удалось — процесс не отвечает; посмотри status $job_id" ;;
-    *)        echo "$job_id: успела завершиться сама до отмены ($final)" ;;
+    canceled) echo "$job_id: cancelled ($(elapsed_of "$dir") of work)" ;;
+    running)  echo "$job_id: could not cancel - the process does not respond; see status $job_id" ;;
+    *)        echo "$job_id: finished on its own before the cancel landed ($final)" ;;
   esac
 }
 
 cmd_cancel() {
   local target="${1:-}"
   [[ "$target" == "-h" || "$target" == "--help" ]] && usage
-  [[ -n "$target" ]] || die 2 "нужен job-id или --all (список — codex-run.sh status)"
+  [[ -n "$target" ]] || die 2 "a job-id or --all is required (list them with: codex-run.sh status)"
   if [[ "$target" == "--all" ]]; then
     local any=0 dir
-    [[ -d "$JOBS_DIR" ]] || die 1 "фоновых задач нет"
+    [[ -d "$JOBS_DIR" ]] || die 1 "no background jobs"
     for dir in "$JOBS_DIR"/*/; do
       [[ -f "$dir/meta" ]] || continue
       # --all в пределах своих задач: чужие снимать молча нельзя.
@@ -895,7 +919,7 @@ cmd_cancel() {
       any=1
       cancel_one "${dir%/}"
     done
-    [[ $any -eq 1 ]] || { echo "работающих задач нет" >&2; exit 1; }
+    [[ $any -eq 1 ]] || { echo "no running jobs" >&2; exit 1; }
     return 0
   fi
   local dir; dir="$(job_dir_of "$target")"
@@ -909,15 +933,15 @@ cmd_clean() {
   local days=7 all=0
   while [[ $# -gt 0 ]]; do
     case "$1" in
-      --older-than) days="${2:-}"; [[ "$days" =~ ^[0-9]+$ ]] || die 2 "--older-than принимает число дней"
+      --older-than) days="${2:-}"; [[ "$days" =~ ^[0-9]+$ ]] || die 2 "--older-than takes a number of days"
                     [[ "$days" -eq 0 ]] && all=1
                     shift 2 ;;
       --all)        all=1; shift ;;
       -h|--help)    usage ;;
-      *)            die 2 "неизвестная опция '$1'" ;;
+      *)            die 2 "unknown option '$1'" ;;
     esac
   done
-  [[ -d "$JOBS_DIR" ]] || { echo "фоновых задач нет"; return 0; }
+  [[ -d "$JOBS_DIR" ]] || { echo "no background jobs"; return 0; }
 
   local now removed=0 skipped=0 dir
   now="$(date +%s)"
@@ -937,7 +961,7 @@ cmd_clean() {
     rm -rf "${dir%/}"
     removed=$((removed+1))
   done
-  echo "удалено задач: $removed (работающие не трогались${skipped:+; чужих пропущено: $skipped})"
+  echo "jobs removed: $removed (running jobs untouched${skipped:+; other owners skipped: $skipped})"
 }
 
 # --- transcript -------------------------------------------------------------
@@ -992,17 +1016,17 @@ cmd_resume() {
   while [[ $# -gt 0 ]]; do
     case "$1" in
       --background) background=1; shift ;;
-      --timeout)    timeout_s="${2:-}"; [[ -z "$timeout_s" ]] && die 2 "--timeout требует значение"; shift 2 ;;
-      --label)      label="${2:-}"; [[ -z "$label" ]] && die 2 "--label требует значение"; shift 2 ;;
+      --timeout)    timeout_s="${2:-}"; [[ -z "$timeout_s" ]] && die 2 "--timeout needs a value"; shift 2 ;;
+      --label)      label="${2:-}"; [[ -z "$label" ]] && die 2 "--label needs a value"; shift 2 ;;
       -h|--help)    usage ;;
-      -*)           die 2 "неизвестная опция '$1' (промпт передаётся на stdin, не аргументом)" ;;
-      *)            [[ -n "$job_id" ]] && die 2 "лишний аргумент '$1'"
+      -*)           die 2 "unknown option '$1' (the prompt goes on stdin, not as an argument)" ;;
+      *)            [[ -n "$job_id" ]] && die 2 "unexpected extra argument '$1'"
                     job_id="$1"; shift ;;
     esac
   done
   local dir; dir="$(job_dir_of "$job_id")"
   local st; st="$(job_status_of "$dir")"
-  [[ "$st" == "running" ]] && die 2 "задача '$job_id' ещё выполняется — resume после её окончания; иначе оркестратор откатывается на новый прогон"
+  [[ "$st" == "running" ]] && die 2 "job '$job_id' is still running - resume it after it finishes, otherwise fall back to a fresh run"
 
   local sid
   sid="$(meta_get codex_session "$dir/meta")"
@@ -1010,11 +1034,11 @@ cmd_resume() {
     sid="$(discover_codex_session "$dir")"
     [[ -n "$sid" ]] && meta_set codex_session "$sid" "$dir/meta"
   fi
-  [[ -n "$sid" && "$sid" != "—" ]] || die 2 "нет id сессии Codex у задачи '$job_id' — оркестратор должен откатиться на новый прогон (codex-run.sh run)"
+  [[ -n "$sid" && "$sid" != "—" ]] || die 2 "job '$job_id' has no Codex session id - fall back to a fresh run (codex-run.sh run)"
 
   local prompt
   prompt="$(cat)"
-  [[ -z "${prompt//[[:space:]]/}" ]] && die 2 "пустой промпт на stdin"
+  [[ -z "${prompt//[[:space:]]/}" ]] && die 2 "empty prompt on stdin"
 
   local workdir mode model effort provider
   workdir="$(meta_get cwd "$dir/meta")"
@@ -1022,12 +1046,12 @@ cmd_resume() {
   model="$(meta_get model "$dir/meta")"
   effort="$(meta_get effort "$dir/meta")"
   provider="$(meta_get provider "$dir/meta")"
-  [[ -d "$workdir" ]] || die 2 "каталог '$workdir' из задачи '$job_id' не существует"
+  [[ -d "$workdir" ]] || die 2 "directory '$workdir' recorded on job '$job_id' does not exist"
 
   if [[ -z "$timeout_s" ]]; then
     if [[ $background -eq 1 ]]; then timeout_s="$DEFAULT_BG_TIMEOUT"; else timeout_s="$DEFAULT_TIMEOUT"; fi
   fi
-  [[ "$timeout_s" =~ ^[0-9]+$ ]] || die 2 "--timeout принимает целое число секунд (0 — без ограничения)"
+  [[ "$timeout_s" =~ ^[0-9]+$ ]] || die 2 "--timeout takes a whole number of seconds (0 = no limit)"
 
   local bin; bin="$(resolve_codex)"
   [[ -n "$mode" && "$mode" != "—" ]] || mode="read-only"
@@ -1059,7 +1083,7 @@ cmd_transcript() {
   fi
 
   local sessions_root="$CODEX_HOME_DIR/sessions"
-  [[ -d "$sessions_root" ]] || die 2 "нет каталога сессий: $sessions_root (--ephemeral-прогоны сессию на диск не пишут, но эта обвязка --ephemeral не использует)"
+  [[ -d "$sessions_root" ]] || die 2 "no sessions directory: $sessions_root (--ephemeral runs write no session file, but this bridge never uses --ephemeral)"
 
   local matched="" matched_originator=""
   matched="$(find_codex_rollout "$workdir" "$since_epoch" "$until_epoch")"
@@ -1067,13 +1091,13 @@ cmd_transcript() {
 
   if [[ -z "$matched" ]]; then
     if [[ -n "$job_id" ]]; then
-      die 2 "для задачи '$job_id' (каталог '$workdir', окно $(meta_get started "$dir/meta")…$(meta_get finished "$dir/meta")) сессия codex не найдена — прогон мог не писать сессию (свой CODEX_HOME, гонка меньше 2с) или сессии этого CODEX_HOME недоступны"
+      die 2 "no codex session found for job '$job_id' (directory '$workdir', window $(meta_get started "$dir/meta")...$(meta_get finished "$dir/meta")) - the run may have written no session (its own CODEX_HOME, or a sub-2s race), or this CODEX_HOME is unreadable"
     fi
-    die 2 "для каталога '$workdir' сессия codex не найдена в $sessions_root (искали среди всех файлов rollout-*.jsonl по полю cwd в session_meta и не нашли совпадения)"
+    die 2 "no codex session found for directory '$workdir' in $sessions_root (searched every rollout-*.jsonl by the cwd field of session_meta, no match)"
   fi
 
   if [[ -z "$job_id" ]]; then
-    echo "внимание: job-id не дан — показана последняя сессия для каталога (originator=${matched_originator:-—}), это может быть твоя интерактивная сессия codex, а не прогон конкретной задачи" >&2
+    echo "warning: no job-id given - showing the newest session for this directory (originator=${matched_originator:--}); this may be your own interactive codex session rather than a job run" >&2
   fi
   cat "$matched"
 }
@@ -1123,5 +1147,5 @@ case "$sub" in
   clean)      cmd_clean "$@" ;;
   transcript) cmd_transcript "$@" ;;
   -h|--help)  usage ;;
-  *)          die 2 "неизвестная подкоманда '$sub'" ;;
+  *)          die 2 "unknown subcommand '$sub'" ;;
 esac

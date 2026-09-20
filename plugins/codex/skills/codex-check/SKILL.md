@@ -1,52 +1,40 @@
 ---
 name: codex-check
-description: Проверить, готов ли OpenAI Codex CLI к работе — стоит ли codex, отвечает ли `codex doctor`, какая модель и провайдер выбраны, есть ли авторизация. Используй, когда codex отвечает ошибкой, пустотой или ведёт себя не так, как ожидалось, и перед первым делегированием в сессии, если есть сомнения в установке.
-when_to_use: Триггер-фразы — «работает ли codex», «проверь codex cli», «почему codex не отвечает», «какая модель в codex». Запускай и самостоятельно, если делегирование в codex упало с ошибкой запуска. Это скил про готовность харнесса, а не про ход работы — «codex молчит» после запущенной фоновой задачи это вопрос к /codex:codex-jobs, а сама постановка задачи к /codex:codex-delegate.
+description: Check whether OpenAI Codex CLI is ready to work — binary, codex doctor, the active provider and model, credentials, and how many background jobs are already running.
+when_to_use: Triggers — "is codex working", "check codex cli", "why doesn't codex answer", "what model does codex use". Run it on your own when a delegation failed at launch. This is about harness readiness, not about work in flight — "codex is silent" after a background job is /codex:codex-jobs, and posing a task is /codex:codex-delegate.
 allowed-tools: Bash(${CLAUDE_PLUGIN_ROOT}/scripts/codex-run.sh *)
 ---
 
-Текущее состояние OpenAI Codex CLI:
+Current state of OpenAI Codex CLI:
 
 ```
 !`${CLAUDE_PLUGIN_ROOT}/scripts/codex-run.sh check`
 ```
 
-Разбери вывод и скажи человеку одним абзацем, готов харнесс или нет. Если готов — не
-пересказывай таблицу целиком, назови только модель и провайдера.
+Report readiness to the human in one paragraph — ready or not, and the active
+provider/model. Don't retell the whole table. `check --json` returns the same data with
+keys `ready`, `overall_status`, `auth_status`, `model`, `provider`, `app_server_status`,
+`running_jobs`.
 
-## Что означают поля
+## Reading the output
 
-| Поле | Норма | Если не так |
-| --- | --- | --- |
-| `готовность` | `yes` | ниже разобрано по строкам, что именно сломано |
-| `бинарь` | путь и `ok` | `не найден` — codex не установлен либо сессия стартовала до правки `PATH`; `broken` — бинарь есть, но `--version` падает |
-| `codex doctor` | `ok` | codex сам сводит эту диагностику в `overallStatus`; любое другое значение — смотри детальный `codex doctor` (без `--json`) вручную |
-| `модель` | `<провайдер> / <модель>` | пусто — `codex doctor` не смог прочитать `~/.codex/config.toml`, либо секция не заполнена |
-| `app-server` | `ok`/`running` | фоновый app-server codex не поднялся — обычно чинится перезапуском codex |
-| `учётные данные` | `ok` | смотри `auth_summary` рядом — там текст причины, если что-то не так |
-| `фоновых задач в работе` | сколько прогонов идёт прямо сейчас | ненулевое значение — codex уже чем-то занят; список даёт `/codex:codex-jobs` |
+- `ready` is `yes` only when the binary answers *and* `codex doctor` reports
+  `overallStatus: ok`; the lines below it say which part broke.
+- `binary: not found` — codex isn't installed, or the session started before `PATH`
+  changed; `broken` — the binary exists but `--version` fails.
+- `credentials` — the text in parentheses is `codex doctor`'s own summary. If `key env var`
+  names a variable and auth still fails, the variable was not exported in the environment
+  Claude Code itself started from (an `export` after session start does not reach it):
+  a restart from a new terminal fixes it. Never print the variable's value.
+- `model`/`app-server` come from `~/.codex/config.toml` and codex's background app-server.
+  Empty model means `codex doctor` could not read the config.
+- **`codex doctor` not `ok` with no clear reason** — run `codex doctor` directly (no
+  `--json`, no `--summary`) and read the human-readable report with its `remediation`
+  hints, which this one-line summary drops.
+- **Ready but a run comes back empty** — that is not a readiness problem: look at
+  `transcript` to see what codex actually did.
 
-## Что чинить и как
-
-- **Бинаря нет, а CLI ставился только что.** `PATH` в этой сессии старый. Попроси
-  человека открыть новый терминал; проверять установку самому через `brew`/`npm` не нужно.
-- **Вход не выполнен или ключ не виден.** Авторизация делается командой `codex login`
-  (или `codex login --with-api-key` из переменной окружения) — за человека её не выполняй.
-  Если `auth_env_var` в JSON-выводе показывает переменную окружения ключа, а `codex doctor`
-  всё равно ругается на авторизацию — переменная не экспортирована в окружении, из
-  которого стартовал Claude Code (`export` после старта сессии не долетает). Лечится
-  перезапуском Claude Code из нового терминала. Значение переменной не выводи ни в ответ,
-  ни в логи.
-- **Модель или провайдер не те, что нужны.** Меняет их человек сам в
-  `~/.codex/config.toml` (`model`, `model_provider`, `[model_providers.<имя>]`). Ни этот
-  скил, ни делегирование их не переключают: прогоны идут на том, что выбрано в настройках.
-- **`overallStatus` не `ok`, а причина неясна из краткого вывода.** Запусти
-  `codex doctor` (без `--json`, без `--summary`) напрямую и прочитай человекочитаемый
-  отчёт — там подробности по каждой проверке и `remediation`-подсказки, которые эта
-  команда сокращает до одной строки.
-- **Всё готово, но прогон возвращает пустоту.** Дело не в готовности: смотри
-  `${CLAUDE_PLUGIN_ROOT}/scripts/codex-run.sh transcript` — он покажет, что codex
-  делал на самом деле (при условии, что сессия для этого каталога есть).
-
-Диагностика на этом заканчивается: чинить установку и авторизацию за человека не пытайся,
-это его действия. Когда `готовность: yes` — делегируй через `/codex:codex-delegate`.
+The model and provider are the human's to change in `~/.codex/config.toml`; installing and
+authenticating (`codex login`) are the human's actions too. Diagnosis ends here — don't go
+checking `brew`/`npm` on your own. Once ready, delegate via `/codex:codex-delegate`. Red
+lines and the full script contract: `codex-runtime`.

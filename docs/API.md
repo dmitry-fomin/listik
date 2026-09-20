@@ -93,6 +93,10 @@ users = ["ann", "bob"]   # люди, которые работают с этим
 | `launch_exit_code` | int? | код выхода; `null` — процесс идёт или код неизвестен (слежение потеряно) |
 | `launch_finished_at` | str? | когда процесс завершился или когда слежение потеряно |
 | `launch_error` | str? | почему не запустили; `null` — запуск был или его не пытались |
+| `read_scope` | str[] | относительные пути, которые задача читает; пока только хранение — запись см. порцию c этого шага, до неё поле всегда `[]` |
+| `write_scope` | str[] | пути, которые задача правит; по ним планировщик роя разводит задачи по волнам |
+| `dispatch_id` | str? | id запуска воркера, пишет лаунчер |
+| `generation` | int | поколение запуска, растёт при каждом старте, пишет лаунчер |
 | `source` | str | `native` \| `beads` \| `writerllm` (импортированные задачи) |
 | `external_ref` | str? | старое ID во внешнем трекере |
 | `created_at`/`updated_at`/`started_at`/`closed_at` | str | ISO-8601 UTC |
@@ -118,6 +122,7 @@ updated_at, status, error, chunk_count`, — и `children[]` — все доче
 | `listik/launcher.py: start` (сервер) | `launched_by`, `launched_at`, `launch_pid`, `launch_log`, `launch_error`, плюс `needs_owner` через `set_needs_owner` |
 | поток слежения за процессом и `recover` при старте сервера | `launch_exit_code`, `launch_finished_at` |
 | локальный фолбэк CLI (`client.local_call`, ветка `create`) | `launch_error`, плюс `needs_owner` |
+| `dispatch_id`, `generation` — лаунчер (карточка `listik-go61`) | через `PATCH`/`listik set`/`listik_update` не меняются |
 
 В белый список `PATCH /api/tasks/{id}` (`store.UPDATABLE`) входит только `launch_route`
 (и его алиас `route`, как в POST): правкой карточки маршрут меняют, пока работа не началась.

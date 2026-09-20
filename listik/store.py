@@ -1454,6 +1454,11 @@ def row_to_task(conn: sqlite3.Connection, row: sqlite3.Row) -> dict:
         "launch_exit_code": row["launch_exit_code"],
         "launch_finished_at": row["launch_finished_at"],
         "launch_error": row["launch_error"],
+        # Рой (listik-s520): области файлов и ограждение запуска.
+        "read_scope": store_helpers.json_list(row["read_scope"]),
+        "write_scope": store_helpers.json_list(row["write_scope"]),
+        "dispatch_id": row["dispatch_id"],
+        "generation": int(row["generation"] or 0),
         "blocked_by": blockers,
         "source": row["source"],
         "external_ref": row["external_ref"],

@@ -1,0 +1,8 @@
+#!/usr/bin/env node
+import {fileURLToPath} from "node:url";
+import path from "node:path";
+
+const here = path.dirname(fileURLToPath(import.meta.url));
+const {main} = await import(path.join(here, "..", "swarm", "main.mjs"));
+
+process.exit(await main(process.argv.slice(2)));

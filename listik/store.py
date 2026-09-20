@@ -1967,8 +1967,8 @@ def norm_slug(value: str) -> str:
 def _git_value(path: Path, *args: str) -> str | None:
     """Значение из git, если каталог — репозиторий. Ошибки не пробрасываются."""
     try:
-        out = subprocess.run(["git", "-C", str(path), *args], capture_output=True,
-                             text=True, timeout=5)
+        out = subprocess.run(["git", "--no-optional-locks", "-C", str(path), *args],
+                             capture_output=True, text=True, timeout=5)
     except (OSError, subprocess.SubprocessError):
         return None
     value = (out.stdout or "").strip()

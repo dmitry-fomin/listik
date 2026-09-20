@@ -12,7 +12,10 @@
   отказывает, а протухшая запись пересоздаётся на существующей ветке без `-b`;
 * основное дерево проекта не трогается: из git зовутся только `rev-parse`,
   `rev-list`, `log`, `status`, `worktree list/add/prune/remove` и `branch -d`
-  (никаких `checkout`/`switch`/`reset`/`clean`/`stash`/`branch -D`).
+  (никаких `checkout`/`switch`/`reset`/`clean`/`stash`/`branch -D`);
+* любой вызов git идёт с `--no-optional-locks`: опрос чужого дерева (`status`) не
+  должен брать `index.lock` и срывать коммит воркера, который в этом дереве
+  работает (найдено на стенде роя, listik-8q6c).
 """
 from __future__ import annotations
 
@@ -44,7 +47,7 @@ def _git_message(proc: subprocess.CompletedProcess) -> str:
 
 def git(repo: str | Path, *args: str, check: bool = True) -> subprocess.CompletedProcess:
     """Запуск git в каталоге `repo`. Отказ — `conflict` со stderr git в message."""
-    proc = subprocess.run(["git", "-C", str(repo), *args],
+    proc = subprocess.run(["git", "--no-optional-locks", "-C", str(repo), *args],
                           capture_output=True, text=True)
     if check and proc.returncode != 0:
         raise errors.ListikError(_git_message(proc), code=errors.CONFLICT)

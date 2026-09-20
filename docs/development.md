@@ -19,9 +19,14 @@ AGENTS.md      правила работы агента с задачами
 
 ```sh
 python3 -m unittest discover tests      # тесты на временной базе, без сервера и Ollama
+node --test swarm/test/                 # чистые функции роя (config/decide/run/listik)
 cd web && npm run dev                   # доска с hot reload
 cd web && npm run typecheck && npm run build
 ```
+
+`tests/test_swarm_e2e.py` входит в `discover tests`: гоняет настоящий `bin/listik-swarm` против
+живого сервера Listik и настоящего git на временном проекте. Требует `node` и `git` в `PATH` —
+без них модуль пропускается (`skip`) с понятной причиной; при их наличии занимает до 3 минут.
 
 ## Миграции Alembic
 

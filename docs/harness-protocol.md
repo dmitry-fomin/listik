@@ -31,6 +31,8 @@ The board tells the two apart — `holder_taken=false` / `not_taken=true` means 
 8. Before handoff check `spec_path`, acceptance, worktree/branch, deps and journal.
 9. Finish with `done <id> -r "short verifiable result"`.
 10. Don't rewrite someone else's card — comment on it instead.
+11. If `LISTIK_DEV_PORT` is set, every dev server or listener you start in this tree uses that
+    port (it is unique per running tree); never hardcode a port.
 
 ### Holder on transitions
 

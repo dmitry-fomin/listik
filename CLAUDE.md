@@ -125,6 +125,15 @@ Database migrations exist as two parallel mechanisms — don't confuse them:
   The bodies differ per file (`migrate.body_for`): `AGENTS.md` gets the full protocol read from
   `docs/harness-protocol.md` (`migrate.body()`) — change the protocol there, not in `migrate.py`;
   `CLAUDE.md` gets only `CLAUDE_BODY`, a pointer to the `listik:listik` skill.
+- `bin/listik-swarm` + `swarm/` — the swarm: drives a project's wave of tasks to completion
+  without a human re-running `launch` for each one. Node, stdlib only, no model calls; talks to
+  Listik exclusively through the installed `listik` CLI (`bin/listik … --json`), never `listik/`
+  directly, and keeps no state between ticks — a crash is survived by restarting, a re-run sees
+  the real card state and never double-launches. `config.mjs` (flags/defaults), `decide.mjs`
+  (pure: input objects in, actions out — `node --test swarm/test/decide.test.mjs`), `run.mjs`
+  (one tick: fetch via `listik.mjs`, decide, execute, log), `main.mjs` (loop/exit codes),
+  `log.mjs` (file + stdout). End-to-end proof against a real server, real git and a fake worker
+  is `tests/test_swarm_e2e.py` (part of `discover tests`; skipped without `node`/`git`).
 - `listik/import_writerllm.py` (CLI: `listik import-from-bd`) — idempotent importer for the
   JSON/JSONL produced by `bd export` on WriterLLM's dolt-backed tracker; idempotency key is
   `(source, project, external_ref)`, `--update` writes a diff to the journal; tests in

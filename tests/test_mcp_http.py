@@ -260,7 +260,7 @@ class TestMcpMessages(McpHttpCase):
         self.assertEqual(status, 200)
         tools = json.loads(raw)["result"]["tools"]
         self.assertEqual(len(tools), len(mcp.TOOLS))
-        self.assertEqual(len(tools), 30)
+        self.assertEqual(len(tools), 31)
         names = {t["name"] for t in tools}
         for name in ("listik_create", "listik_claim", "listik_put_document"):
             self.assertIn(name, names)

@@ -884,6 +884,14 @@ def handle(method: str, path: str, query: dict, body: dict, authed: bool = False
             "generated_at": store.now_iso(),
         }
 
+    if path == "/api/waves":
+        if method != "GET":
+            raise ApiError(405, "метод не поддерживается")
+        # `q1` без значения по умолчанию вернул бы `None` — `deps.waves` ждёт
+        # строку, а на пустую/пробельную сама подымет `errors.BadArgument`.
+        return 200, {**deps_mod.waves(conn, project=q1("project", ""), stage=q1("stage")),
+                     "generated_at": store.now_iso()}
+
     if path == "/api/deps/suggested":
         return 200, {
             "items": deps_mod.suggested(conn, project=q1("project"),

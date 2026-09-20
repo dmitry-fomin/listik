@@ -141,6 +141,7 @@ def owner_default(args) -> str:
 #: значит другое (куда писать/что показать) — автоопределение им не подставляется.
 PROJECT_DEFAULT_COMMANDS = frozenset({
     "ready", "list", "board", "stats", "search", "blocked", "new", "inbox", "timeline",
+    "waves",
 })
 
 #: Зарезервированное значение `--project`/`LISTIK_PROJECT` — «все проекты».
@@ -1224,6 +1225,67 @@ def cmd_ready(args) -> int:
     return 0
 
 
+def cmd_waves(args) -> int:
+    """Волны запуска: разложение открытых задач проекта на слои, что можно делать
+    одновременно (Кан по жёстким зависимостям + арбитраж по write_scope/дереву)."""
+    project = args.project
+    if not project:
+        raise errors.ListikError(
+            "нужен проект: волны считаются по одному проекту", code=errors.BAD_ARGUMENT,
+            hint="listik waves --project <slug>")
+    res = call("waves", args, "/api/waves",
+               query={"project": project, "stage": args.stage},
+               local_kwargs={"project": project, "stage": args.stage})
+    if getattr(args, "json", False):
+        emit(args, res, "")
+        return 1 if res.get("cycles") else 0
+
+    tasks = res.get("tasks") or {}
+
+    def _line(tid: str) -> str:
+        info = tasks.get(tid)
+        if info is None:
+            return tid
+        title = (info.get("title") or "")[:80]
+        return f"{tid}  P{info.get('priority')}  {title}"
+
+    lines: list[str] = []
+    waves = res.get("waves") or []
+    for i, wave in enumerate(waves):
+        prefix = f"волна {i}: "
+        indent = " " * len(prefix)
+        for j, tid in enumerate(wave):
+            lines.append(f"{prefix if j == 0 else indent}{_line(tid)}")
+
+    unroutable = res.get("unroutable") or []
+    if unroutable:
+        lines.append("без маршрута (нужен человек): " + ", ".join(unroutable))
+
+    unscoped = res.get("unscoped") or []
+    if unscoped:
+        lines.append("без области записи (нужен rescope): " + ", ".join(unscoped))
+
+    blocked = res.get("blocked") or {}
+    if blocked:
+        lines.append("стоят: " + ", ".join(
+            f"{tid} (ждёт {reason})" for tid, reason in blocked.items()))
+
+    resource_blocks = res.get("resource_blocks") or []
+    if resource_blocks:
+        lines.append("ресурсные рёбра: " + ", ".join(
+            f"{a} → {b}" for a, b in resource_blocks))
+
+    cycles = res.get("cycles") or []
+    for cycle in cycles:
+        lines.append("циклы: " + " → ".join([*cycle, cycle[0]]))
+
+    if not lines:
+        lines.append("волн нет")
+
+    print("\n".join(lines))
+    return 1 if cycles else 0
+
+
 def cmd_blocked(args) -> int:
     """Кто кого ждёт: незакрытые блокеры и что из-за них стоит."""
     res = call("blocked", args, "/api/blocked",
@@ -1997,6 +2059,10 @@ def build_parser() -> argparse.ArgumentParser:
     sp = add("blocked", cmd_blocked, help="кто кого ждёт: незакрытые блокеры задач")
     sp.add_argument("-p", "--project")
     sp.add_argument("-n", "--limit", type=int, default=60)
+
+    sp = add("waves", cmd_waves, help="волны запуска: что можно делать одновременно")
+    sp.add_argument("-p", "--project")
+    sp.add_argument("--stage")
 
     sp = add("inbox", cmd_inbox, help="что требует человека: вопросы и брошенные задачи")
     sp.add_argument("--project")

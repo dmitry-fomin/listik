@@ -240,6 +240,9 @@ def local_call(op: str, **kwargs):
         from . import deps as deps_mod
         return {"tasks": deps_mod.blocked_tasks(conn, project=kwargs.get("project"),
                                                 limit=kwargs.get("limit", 100))}
+    if op == "waves":
+        from . import deps as deps_mod
+        return deps_mod.waves(conn, project=kwargs.get("project"), stage=kwargs.get("stage"))
     if op == "mentions":
         from . import deps as deps_mod
         return deps_mod.mentioned(conn, kwargs["task_id"], limit=kwargs.get("limit", 50))

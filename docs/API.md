@@ -703,6 +703,7 @@ id внутри файлового пути (`docs/specs/<id>.md`, `/wt/<id>/lis
 | GET | `/api/search` | `q` (обязателен), `limit`, `project`, `status`, `stage`, `actor`, `needs_owner`, `mode=hybrid\|text\|vector` | `query, mode, took_ms, lexical_docs, vector_docs, count, results[]`; совпадения по id задачи идут первыми и помечены `hits[].kind="id"` — см. ниже |
 | GET | `/api/ready` | `project`, `stage`, `harness` (только задачи, чей этап разрешён этому harness в routing проекта; задача без этапа — всем), `include_occupied`, `limit` | `tasks[]` (можно брать: нет незакрытых блокеров и держателя), `cycles[]`. Фильтр по `X-Listik-Owner` — тот же, что у `/api/tasks` |
 | GET | `/api/blocked` | `project`, `limit` | `tasks[]` с разбором `blockers[]`, `blocked_by_stale`, `blocked_by_holder` |
+| GET | `/api/waves` | `project` (обязателен), `stage` | `project, stage, waves[], cycles[], unroutable[], unscoped[], blocked{}, resource_blocks[], tasks{}, generated_at` — волны запуска (`listik waves`), см. «Волны запуска: `listik waves`»; без `project` — 400 `bad_argument`; метод не GET — 405; фильтр `X-Listik-Owner` не применяется — план проекта считается по всем его задачам |
 | GET | `/api/deps/suggested` | `project`, `limit` | `items[]` (предложения агентов, ждущие подтверждения человеком: `issue_id, issue_title, issue_stage, project, depends_on, depends_on_title, depends_on_status, created_by, created_at`), `generated_at` |
 | GET | `/api/timeline` | `limit`, `project` (оставляет только события задач этого проекта) | `items[]`: `ts, kind, from_value, to_value, actor, actor_title, harness, note, duration_s, task_id, title, project, stage, status, age` |
 | GET | `/api/events` | `limit` | сырые события |
@@ -1008,6 +1009,7 @@ JSON-RPC-сообщение, ответ — обычный JSON (`Content-Type: 
 | `listik_timeline` | — | `GET /api/timeline` (`listik timeline`) |
 | `listik_deps_suggested` | — | `GET /api/deps/suggested` (`listik dep suggested`) |
 | `listik_cycles` | — | — (`listik cycles` — только локально; `cycles[]` есть и в `GET /api/ready`) |
+| `listik_waves` | `project`, `stage` | `GET /api/waves` (`listik waves`) |
 
 **Событие доске.** После успешного `tools/call` пишущего инструмента (`listik_create`,
 `listik_update`, `listik_claim`, `listik_heartbeat`, `listik_stage`, `listik_comment`,
@@ -1047,8 +1049,9 @@ MCP по stdio (`listik mcp`) пишет в базу мимо сервера, п
 `resource-blocks`) — пока блокер не закрыт (`done`/`cancelled`), задачу брать нельзя.
 
 `resource-blocks` (`dep_title`: «ресурсный блокер») — жёсткий блокер машинного происхождения:
-его ставит планировщик роя при пересечении `write_scope` двух задач одной волны и пересчитывает
-заново на каждом проходе. Гейтит `claim`/`ready` точно как `blocks`, но через `dep add`/
+его ставит планировщик роя при пересечении `write_scope` двух задач одной волны; сами волны
+считает `listik waves`, ставит явное действие — см. «Волны запуска: `listik waves`» ниже.
+Гейтит `claim`/`ready` точно как `blocks`, но через `dep add`/
 `POST .../deps`/MCP `listik_deps` его поставить нельзя ни под каким актором и ни с каким
 `confirm` — ответ 400 `bad_argument`. Смысловой `blocks` на той же паре записывается рядом, а
 не поглощается ресурсным. Снимается только явно, `dep rm … --dep-type resource-blocks` — любым
@@ -1057,6 +1060,30 @@ MCP по stdio (`listik mcp`) пишет в базу мимо сервера, п
 оставшееся ресурсное ребро. Проверка цикла при `dep add` ресурсные рёбра не учитывает: обратное
 смысловое ребро на пару с машинным поставить можно, обе задачи тогда стоят до пересчёта
 планировщика.
+
+### Волны запуска: `listik waves`
+
+`GET /api/waves` (`listik waves`, MCP `listik_waves`) — что из открытых задач проекта можно
+делать одновременно, чистый расчёт (ничего не пишет, существующие `resource-blocks` не
+читает). Рабочее множество — открытые неархивные задачи проекта (при `stage` — ещё и этого
+этапа), в порядке `priority, created_at, id`. Слои считаются алгоритмом Кана по смысловым
+жёстким рёбрам (`blocks`/`blocked-by`/`waits-for`/`conditional-blocks`); цикл в этом графе
+отменяет волны целиком — `waves: []`, `cycles` непуст, разрывать руками. Внутри каждого слоя
+идёт арбитраж: по `write_scope` (пересечение — `scope.covers`, каталог покрывает своё
+поддерево) и по ключу рабочего дерева (только явный `worktree` и только у пишущих этапов —
+`''`/`s3-impl`/`s4-judge`; пустой `worktree` читается как «дерево ещё не выдано», поэтому
+`claim` строже волн, и дерево агенту нужно выставить до `claim`, не полагаясь на волны).
+Задача без маршрута попадает в `unroutable` (нужен человек), без `write_scope` — в `unscoped`
+(нужен rescope); задача, которая ждёт что-то вне рабочего множества (другой этап при
+фильтре, чужой проект, отменённый статус вовне) — в `blocked` (`{id: id_причины}`, причина
+может быть вне `tasks`, если она не входит в рабочее множество). `resource_blocks` — пары
+`[раньше, позже]`: конфликтующие по ресурсу задачи одного слоя, «позже» ждёт «раньше».
+`tasks{}` — витрина по всем задачам рабочего множества (`title, priority, status, stage,
+holder, launch_route, write_scope, worktree`). Запись найденных ресурсных рёбер в базу —
+следующей порцией (`POST /api/waves/apply`); сейчас `listik waves` только показывает план.
+Код возврата CLI — `1`, если есть цикл (в остальных случаях `0`, даже при `unroutable`/
+`unscoped`/`blocked` — это не ошибка вызова).
+
 **Мягкие связи** (`parent-child`, `relates-to`, `related`, `discovered-from`, `duplicates`,
 `supersedes`, `suggested-blocks`) — не запрет, но сигнал «сначала прочитай»; отдаются в
 `soft_links`. `suggested-blocks` — предложение агентом жёсткой связи, ещё не подтверждённое
@@ -1108,6 +1135,7 @@ listik new "Шаг 09, порция b" -p listik --parent <id шага> --spec �
 listik ready                        # что можно взять прямо сейчас
 listik ready --harness dsh          # только то, что этому harness разрешено на его этапе
 listik blocked                      # кто кого ждёт и почему
+listik waves --project X [--stage s3-impl] [--json]   # волны запуска: что можно делать одновременно
 listik tree <id>                    # дерево зависимостей задачи
 listik dep confirm <id> <блокер>    # подтвердить предложение агента → жёсткая связь
 listik dep suggested [--project]    # предложения агентов, ждущие подтверждения человеком

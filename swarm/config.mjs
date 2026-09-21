@@ -136,10 +136,14 @@ export function parseConfig(argv) {
 // --- swarm.json (барьер: тесты интеграции + арбитр слияния) ---
 // Читается в тике (порция c) — здесь только чистый разбор текста.
 
-const SWARM_TOP_KEYS = new Set(["integration", "arbiter", "integration_timeout", "arbiter_timeout", "projects"]);
-const SWARM_PROJECT_KEYS = new Set(["integration", "arbiter", "integration_timeout", "arbiter_timeout"]);
+const SWARM_TOP_KEYS = new Set(["integration", "arbiter", "integration_timeout", "arbiter_timeout",
+  "verify", "verify_timeout", "verify_retries", "projects"]);
+const SWARM_PROJECT_KEYS = new Set(["integration", "arbiter", "integration_timeout", "arbiter_timeout",
+  "verify", "verify_timeout", "verify_retries"]);
 const DEFAULT_INTEGRATION_TIMEOUT = 1800;
 const DEFAULT_ARBITER_TIMEOUT = 1200;
+const DEFAULT_VERIFY_TIMEOUT = 1800;
+const DEFAULT_VERIFY_RETRIES = 1;
 
 function isPlainObject(v) {
   return typeof v === "object" && v !== null && !Array.isArray(v);
@@ -149,9 +153,9 @@ function isNonEmptyStringArray(v) {
   return Array.isArray(v) && v.length > 0 && v.every(s => typeof s === "string" && s.length > 0);
 }
 
-function validateIntegration(value, where) {
+function validateIntegration(value, where, key = "integration") {
   if (!Array.isArray(value) || !value.every(isNonEmptyStringArray)) {
-    throw new ConfigError(`swarm.json: ${where}integration ожидал массив команд ` +
+    throw new ConfigError(`swarm.json: ${where}${key} ожидал массив команд ` +
       `(каждая — непустой массив непустых строк)`);
   }
 }
@@ -171,6 +175,12 @@ function validateTimeout(value, key, where) {
   }
 }
 
+function validateRetries(value, key, where) {
+  if (typeof value !== "number" || !Number.isInteger(value) || value < 0) {
+    throw new ConfigError(`swarm.json: ${where}${key} ожидал целое ≥ 0`);
+  }
+}
+
 function validateSettings(obj, allowedKeys, where) {
   for (const key of Object.keys(obj)) {
     if (!allowedKeys.has(key)) {
@@ -178,9 +188,12 @@ function validateSettings(obj, allowedKeys, where) {
     }
   }
   if ("integration" in obj) validateIntegration(obj.integration, where);
+  if ("verify" in obj) validateIntegration(obj.verify, where, "verify");
   if ("arbiter" in obj) validateArbiter(obj.arbiter, where);
   if ("integration_timeout" in obj) validateTimeout(obj.integration_timeout, "integration_timeout", where);
   if ("arbiter_timeout" in obj) validateTimeout(obj.arbiter_timeout, "arbiter_timeout", where);
+  if ("verify_timeout" in obj) validateTimeout(obj.verify_timeout, "verify_timeout", where);
+  if ("verify_retries" in obj) validateRetries(obj.verify_retries, "verify_retries", where);
 }
 
 export function parseSwarmConfig(text) {
@@ -228,5 +241,8 @@ export function swarmConfigFor(parsed, slug) {
     arbiter: pick("arbiter", null),
     integrationTimeout: pick("integration_timeout", DEFAULT_INTEGRATION_TIMEOUT),
     arbiterTimeout: pick("arbiter_timeout", DEFAULT_ARBITER_TIMEOUT),
+    verify: pick("verify", null),
+    verifyTimeout: pick("verify_timeout", DEFAULT_VERIFY_TIMEOUT),
+    verifyRetries: pick("verify_retries", DEFAULT_VERIFY_RETRIES),
   };
 }

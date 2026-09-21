@@ -102,3 +102,45 @@ test("swarm.json: невалидные варианты — ConfigError", () => 
   assert.throws(() => parseSwarmConfig(JSON.stringify({integration_timeout: 0})), ConfigError);
   assert.throws(() => parseSwarmConfig(JSON.stringify({integraton: ["x"]})), ConfigError);
 });
+
+test("verify разбирается и переопределяется по проекту; дефолты 1800/1", () => {
+  const cfg = parseSwarmConfig(JSON.stringify({
+    verify: [["echo", "top"]],
+    verify_timeout: 10,
+    verify_retries: 3,
+    projects: {
+      listik: {
+        verify: [["echo", "proj"]],
+        verify_timeout: 20,
+        verify_retries: 0,
+      },
+    },
+  }));
+  const listik = swarmConfigFor(cfg, "listik");
+  assert.deepEqual(listik.verify, [["echo", "proj"]]);
+  assert.equal(listik.verifyTimeout, 20);
+  assert.equal(listik.verifyRetries, 0);
+  const other = swarmConfigFor(cfg, "other");
+  assert.deepEqual(other.verify, [["echo", "top"]]);
+  assert.equal(other.verifyTimeout, 10);
+  assert.equal(other.verifyRetries, 3);
+
+  const empty = swarmConfigFor(parseSwarmConfig("{}"), "any");
+  assert.equal(empty.verify, null);
+  assert.equal(empty.verifyTimeout, 1800);
+  assert.equal(empty.verifyRetries, 1);
+});
+
+test('{"verify": []} — [] (не null)', () => {
+  const cfg = swarmConfigFor(parseSwarmConfig(JSON.stringify({verify: []})), "any");
+  assert.deepEqual(cfg.verify, []);
+});
+
+test("swarm.json: verify невалидные — ConfigError", () => {
+  assert.throws(() => parseSwarmConfig(JSON.stringify({verify: ["x"]})), ConfigError);
+  assert.throws(() => parseSwarmConfig(JSON.stringify({verify: null})), ConfigError);
+  assert.throws(() => parseSwarmConfig(JSON.stringify({verify_timeout: 0})), ConfigError);
+  assert.throws(() => parseSwarmConfig(JSON.stringify({verify_retries: -1})), ConfigError);
+  assert.throws(() => parseSwarmConfig(JSON.stringify({verify_retries: 1.5})), ConfigError);
+  assert.throws(() => parseSwarmConfig(JSON.stringify({verfy: [["x"]]})), ConfigError);
+});

@@ -41,6 +41,7 @@ export function questionReason(text) {
   if (text.includes("задача зависла")) return "зависла";
   if (text.includes("не снят")) return "процесс не снят";
   if (text.includes("интеграционные тесты")) return "стоп роя";
+  if (text.includes("отклонена")) return "не принята";
   if (text.includes("не влита")) return "не влита";
   return "вопрос воркера";
 }

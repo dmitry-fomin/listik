@@ -164,6 +164,23 @@ export async function tick(listik, config, log) {
           swarmJsonPath: cfgPath,
         });
         gate = barrierResult.gate;
+
+        if (!config.dryRun && barrierResult.rejected && barrierResult.rejected.length) {
+          try {
+            const relist = await listik.list(config.project);
+            tasks = relist.tasks || [];
+          } catch (err) {
+            log.line(`list после отклонения ошибка: ${errText(err)}`);
+          }
+          for (const id of barrierResult.rejected) {
+            try {
+              const shown = await listik.show(id);
+              events[id] = shown.events || [];
+            } catch (err) {
+              log.line(`show ${id} ошибка: ${errText(err)}`);
+            }
+          }
+        }
       }
     }
   }
@@ -259,7 +276,9 @@ export async function tick(listik, config, log) {
   for (const item of decision.restart) {
     const note = item.reason === "answered"
       ? "рой: перезапуск разрешён человеком"
-      : `рой: перезапуск — ${item.reason}`;
+      : item.reason === "rejected"
+        ? "рой: перезапуск — не принята (верификатор)"
+        : `рой: перезапуск — ${item.reason}`;
     if (config.dryRun) {
       log.action(`[dry-run] revoke ${item.id}: ${note}`);
       log.action(`[dry-run] launch ${item.id} → порт ${item.port}`);
@@ -390,6 +409,7 @@ export async function tick(listik, config, log) {
   const barrierUnfrozen = barrierResult ? barrierResult.unfrozen : [];
   const barrierIntegration = barrierResult ? barrierResult.integration : null;
   const barrierCleaned = barrierResult ? barrierResult.cleaned : [];
+  const barrierRejected = barrierResult ? (barrierResult.rejected || []) : [];
 
   const report = {
     ...decision.report,
@@ -403,6 +423,7 @@ export async function tick(listik, config, log) {
     stopOnly: stoppedClosed,
     merged: barrierMerged,
     unmerged: barrierUnmerged,
+    rejected: barrierRejected,
     unfrozen: barrierUnfrozen,
     integration: barrierIntegration,
     halt: barrierHalt.length ? barrierHalt[0] : null,
@@ -425,6 +446,7 @@ export async function tick(listik, config, log) {
       merged: barrierMerged,
       mergedNow: barrierResult ? barrierResult.mergedNow : [],
       unmerged: barrierUnmerged,
+      rejected: barrierRejected,
       unfrozen: barrierUnfrozen,
       integration: barrierIntegration,
       cleaned: barrierCleaned,

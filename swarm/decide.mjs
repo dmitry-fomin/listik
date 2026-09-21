@@ -1,6 +1,7 @@
 // Решения роя — чистые функции, ни одного вызова наружу (spawn/fs/Date.now()):
 // время приходит аргументом `now`, вход/выход — обычные объекты.
 export const OPEN_STATUSES = new Set(["open", "in_progress", "blocked", "review"]);
+export const REJECTED_MARK = "рой: не принята:";
 
 const TEXT_UNROUTABLE = "рой: у задачи нет маршрута (launch_route) — каким маршрутом её делать? " +
   "Рой маршрут не выбирает никогда.";
@@ -206,14 +207,22 @@ function superviseCrashed({open, events, tasks, config}) {
       const evTs = tsMs(ev.ts);
       return evTs != null && finishedMs != null && evTs > finishedMs;
     });
+    const rejected = taskEvents.some(ev => {
+      if (ev.kind !== "comment") return false;
+      if (normActor(ev.actor) !== actorNorm) return false;
+      if (typeof ev.note !== "string" || !ev.note.startsWith(REJECTED_MARK)) return false;
+      const evTs = tsMs(ev.ts);
+      return evTs != null && finishedMs != null && evTs > finishedMs;
+    });
 
-    if (answered) {
+    if (rejected || answered) {
       const restarts = restartCount(taskEvents, actorNorm);
       const port = portOf(t) ?? allocatePort(tasks, t, config.portBase, config.portCount);
+      const reason = rejected ? "rejected" : "answered";
       if (port == null) {
         giveUp.push({id: t.id, reason: "no_port", restarts, text: noPortText(t.id)});
       } else {
-        restart.push({id: t.id, reason: "answered", restarts, generation: t.generation, port});
+        restart.push({id: t.id, reason, restarts, generation: t.generation, port});
       }
     } else {
       crashed.push({

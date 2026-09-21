@@ -5,8 +5,10 @@
 // импорт (команды интеграции, порция d).
 import {spawn, execFileSync} from "node:child_process";
 import path from "node:path";
-import {OPEN_STATUSES, isFrozen, portOf} from "./decide.mjs";
+import {OPEN_STATUSES, isFrozen, portOf, REJECTED_MARK} from "./decide.mjs";
 import {resolveWithArbiter} from "./arbiter.mjs";
+
+export {REJECTED_MARK};
 
 export const MERGED_MARK = "рой: влито:";
 export const UNFROZEN_MARK = "рой: разморожена:";
@@ -168,7 +170,7 @@ async function abortQuiet(git, worktree) {
 export async function runBarrier({listik, git, fs, config, swarmConfig, log, tasks, projectPath, now,
   swarmJsonPath}) {
   const dryRun = !!(config && config.dryRun);
-  const EMPTY_TAIL = {unfrozen: [], integration: null, cleaned: []};
+  const EMPTY_TAIL = {unfrozen: [], integration: null, cleaned: [], rejected: []};
 
   const halt = haltCards(tasks);
   if (halt.length) {
@@ -293,7 +295,7 @@ export async function runBarrier({listik, git, fs, config, swarmConfig, log, tas
         `ветка ${entry.branch}: ${err.message ?? String(err)}.`);
       continue;
     }
-    if (ahead === 0) {
+    if (ahead === 0 && !fs.existsSync(entry.worktree)) {
       merged.push(entry.id);
       log.line(`${entry.id} уже влита`);
       if (!dryRun) {
@@ -327,7 +329,65 @@ export async function runBarrier({listik, git, fs, config, swarmConfig, log, tas
   const order = sorted.map(x => x.id);
   log.line(`барьер: кандидатов ${N}, уже влито ${alreadyMergedCount}, порядок: ${order.join(", ")}`);
 
-  // Шаг 5: rebase → merge --ff-only по одной, в порядке `order`.
+  const verifyCmds = swarmConfig && Array.isArray(swarmConfig.verify) ? swarmConfig.verify : null;
+  const verifyTimeout = (swarmConfig && swarmConfig.verifyTimeout) || 1800;
+  const verifyRetries = swarmConfig && swarmConfig.verifyRetries != null ? swarmConfig.verifyRetries : 1;
+  const rejected = [];
+  if (!verifyCmds || !verifyCmds.length) {
+    log.line("верификатор: команд нет");
+  }
+
+  async function rejectOne({entry, base, reason, argv = null, code = null, timedOut = false,
+    logPath = null, logText = ""}) {
+    const attempts = parseMarked(entry.comments, REJECTED_MARK).length;
+    const attempt = attempts + 1;
+    const sha7 = (base || "").slice(0, 7);
+    const toHuman = attempts >= verifyRetries;
+    const dest = toHuman ? "человеку" : "воркеру";
+    log.action(`не принята ${entry.id}: ${reason}, попытка ${attempt} из ${verifyRetries} → ${dest}`);
+
+    const next = reason === "red"
+      ? `почини тесты в дереве ${entry.worktree} (ветка ${entry.branch}, база ${sha7}), закоммить в ветку и снова listik done`
+      : `ветка не меняет ни одного файла относительно ${sha7} — сделай работу, закоммить в ветку ${entry.branch} и снова listik done; если задача и правда без правок — needs-owner человеку`;
+    const record = {
+      reason,
+      attempt,
+      sha: base,
+      command: argv,
+      code,
+      timed_out: !!timedOut,
+      log: logPath,
+      tail: reason === "red" ? tailLines(logText, 40) : "",
+      next,
+    };
+    try {
+      await listik.comment(entry.id, `${REJECTED_MARK} ${JSON.stringify(record)}`);
+    } catch (err) {
+      log.line(`comment ${entry.id} ошибка: ${listikErrText(err)}`);
+    }
+
+    if (toHuman) {
+      const argvDesc = Array.isArray(argv) ? argv.join(" ") : "";
+      const codeDesc = timedOut ? "таймаут" : String(code);
+      const body = reason === "red"
+        ? `отклонена ${attempt} раз: тесты красные — ${argvDesc}, код ${codeDesc}, лог ${logPath}`
+        : `отклонена ${attempt} раз: пустой дифф относительно ${sha7}`;
+      unmerged.push(entry.id);
+      log.action(`needs-owner ${entry.id}: rejected_${reason}`);
+      await needsOwnerSafe(listik, log, entry.id, withHint(entry.id, body));
+      return;
+    }
+
+    try {
+      await listik.set(entry.id, {status: "open", stage: "s3-impl"});
+      rejected.push(entry.id);
+    } catch (err) {
+      log.line(`set ${entry.id} ошибка: ${listikErrText(err)}`);
+      unmerged.push(entry.id);
+    }
+  }
+
+  // Шаг 5: rebase → пустой дифф → верификатор → merge --ff-only по одной, в порядке `order`.
   for (const entry of sorted) {
     if (dryRun) {
       let sha7 = "?";
@@ -335,6 +395,8 @@ export async function runBarrier({listik, git, fs, config, swarmConfig, log, tas
         sha7 = (await git.headSha(projectPath)).slice(0, 7);
       } catch { /* лог всё равно печатаем */ }
       log.action(`[dry-run] влить ${entry.id} (rebase на ${sha7}, затем merge --ff-only ${entry.branch})`);
+      const cmdCount = verifyCmds ? verifyCmds.length : 0;
+      log.action(`[dry-run] проверить ${entry.id}: ${cmdCount} команд`);
       continue;
     }
 
@@ -420,6 +482,52 @@ export async function runBarrier({listik, git, fs, config, swarmConfig, log, tas
       usedArbiter = true;
     }
 
+    let changed = [];
+    try {
+      changed = await git.changedFiles(projectPath, base, entry.branch);
+    } catch (err) {
+      log.line(`changedFiles ${entry.id} ошибка: ${listikErrText(err)}`);
+    }
+    if (!changed.length) {
+      await rejectOne({entry, base, reason: "empty"});
+      continue;
+    }
+
+    if (verifyCmds && verifyCmds.length) {
+      const stamp = stampFile(now instanceof Date ? now : new Date());
+      fs.mkdirSync(config.logDir, {recursive: true});
+      const logPath = path.join(config.logDir, `verify-${entry.id}-${stamp}.log`);
+      const logFd = fs.openSync(logPath, "a");
+      const env = envForVerify(entry);
+      let failed = null;
+      try {
+        for (const argv of verifyCmds) {
+          fs.writeSync(logFd, `$ ${argv.join(" ")}\n`);
+          const res = await runIntegrationCommand(argv, entry.worktree, logFd, verifyTimeout, env);
+          const codeDesc = res.timedOut ? "таймаут" : String(res.code);
+          log.action(`верификатор ${entry.id}: ${argv.join(" ")} → код ${codeDesc} (${(res.ms / 1000).toFixed(1)} с)`);
+          if (res.timedOut || res.code !== 0) {
+            failed = {argv, res};
+            break;
+          }
+        }
+      } finally {
+        fs.closeSync(logFd);
+      }
+      if (failed) {
+        const logText = fs.readFileSync(logPath, "utf8");
+        await rejectOne({
+          entry, base, reason: "red",
+          argv: failed.argv,
+          code: failed.res.code,
+          timedOut: failed.res.timedOut,
+          logPath,
+          logText,
+        });
+        continue;
+      }
+    }
+
     const ff = await git.mergeFfOnly(projectPath, entry.branch);
     if (!ff.ok) {
       const body = "`merge --ff-only`: " + ff.stderr;
@@ -458,7 +566,7 @@ export async function runBarrier({listik, git, fs, config, swarmConfig, log, tas
   let gate = unmerged.length ? {reason: "unmerged", ids: unmerged} : null;
 
   // ---------------------------------------------------------- шаг 7: разморозка ---
-  const toUnfreeze = collectFrozenCandidates(tasks, unmerged);
+  const toUnfreeze = collectFrozenCandidates(tasks, unmerged, rejected);
   const tasksById = new Map((tasks || []).map(t => [t.id, t]));
 
   if (dryRun) {
@@ -641,19 +749,20 @@ export async function runBarrier({listik, git, fs, config, swarmConfig, log, tas
   }
 
   const finalHalt = gate && gate.reason === "halt" ? gate.ids : haltCards(tasks);
-  return {merged, mergedNow, unmerged, halt: finalHalt, gate, order, unfrozen, integration, cleaned};
+  return {merged, mergedNow, unmerged, halt: finalHalt, gate, order, unfrozen, integration, cleaned,
+    rejected};
 }
 
 // Владелец → замороженные им открытые задачи, готовые к разморозке: владелец `done`
 // и не входит в `unmerged` этого прохода (влит сейчас/ранее либо закрыт без коммитов).
-function collectFrozenCandidates(tasks, unmerged) {
+function collectFrozenCandidates(tasks, unmerged, rejected) {
   const doneOwners = new Set((tasks || []).filter(t => t.status === "done").map(t => t.id));
-  const unmergedSet = new Set(unmerged);
+  const skip = new Set([...(unmerged || []), ...(rejected || [])]);
   const map = frozenBy(tasks);
   const out = [];
   for (const [owner, ids] of map) {
     if (!doneOwners.has(owner)) continue;
-    if (unmergedSet.has(owner)) continue;
+    if (skip.has(owner)) continue;
     for (const f of ids) out.push({f, owner});
   }
   return out;
@@ -673,11 +782,19 @@ function killGroup(pid, signal) {
   } catch { /* группы уже нет */ }
 }
 
-function runIntegrationCommand(argv, cwd, logFd, timeoutSec) {
+function envForVerify(task) {
+  const env = {...process.env};
+  const port = portOf(task);
+  if (port != null) env.LISTIK_DEV_PORT = String(port);
+  else delete env.LISTIK_DEV_PORT;
+  return env;
+}
+
+function runIntegrationCommand(argv, cwd, logFd, timeoutSec, env = process.env) {
   return new Promise((resolvePromise) => {
     const start = Date.now();
     const child = spawn(argv[0], argv.slice(1), {
-      cwd, env: process.env, detached: true, stdio: ["ignore", logFd, logFd],
+      cwd, env, detached: true, stdio: ["ignore", logFd, logFd],
     });
     let settled = false;
     let timedOut = false;

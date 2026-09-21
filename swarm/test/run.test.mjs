@@ -661,7 +661,12 @@ gitTest("watch+barrier (л): разморозка в тике — comment UNFROZ
   async () => {
     const repo = initRepo();
     const treeT1 = addWorktree(repo, "t1");
-    sh(repo, "merge", "-q", "--ff-only", "task/t1"); // t1 уже "влит" (ahead 0), без MERGED_MARK
+    fs.writeFileSync(path.join(treeT1, "a.txt"), "a\n");
+    sh(treeT1, "add", "a.txt");
+    sh(treeT1, "commit", "-q", "-m", "t1");
+    sh(repo, "merge", "-q", "--ff-only", "task/t1");
+    const sha = sh(repo, "rev-parse", "HEAD").trim();
+    const mergedRecord = {sha, branch: "task/t1", base: sha, files: ["a.txt"], declared: [], outside: []};
 
     const tasks = [
       task("t1", {status: "done", worktree: treeT1, branch: "task/t1", labels: ["port:5170"]}),
@@ -680,7 +685,11 @@ gitTest("watch+barrier (л): разморозка в тике — comment UNFROZ
       projects: {stdout: JSON.stringify([{slug: "proj", path: repo}])},
       watch: {stdout: JSON.stringify({tasks: {}, decisions: [], probes: []})},
       show: [
-        {stdout: JSON.stringify({id: "t1", comments: [], write_scope: []})}, // barrier: уже влита
+        {stdout: JSON.stringify({id: "t1", comments: [
+          {author: "agent:listik-swarm",
+            text: `рой: влито: ${JSON.stringify(mergedRecord)}`,
+            created_at: "2026-01-01T00:00:00Z"},
+        ], write_scope: []})},
         {stdout: JSON.stringify({id: "t2", comments: [], labels: ["frozen-by:t1"]})}, // разморозка
         {stdout: JSON.stringify({id: "t2", labels: []})}, // run.mjs: метка порта перед launch
       ],
@@ -1048,7 +1057,7 @@ function summaryOf(report) {
 
 test("сводка: без новых полей — нули и прочерки", () => {
   const text = summaryOf({});
-  assert.match(text, /влито 0 \(\) · не влиты 0 \(\) · разморожено 0 \(\) · интеграция — · стоп —$/);
+  assert.match(text, /влито 0 \(\) · не влиты 0 \(\) · не приняты 0 \(\) · разморожено 0 \(\) · интеграция — · стоп —$/);
 });
 
 test("сводка: merged/integration red/halt", () => {
@@ -1068,6 +1077,16 @@ test("questionReason: интеграционные тесты → стоп ро�
   assert.equal(questionReason("рой: не влита — конфликт слияния"), "не влита");
 });
 
+test("сводка: rejected — не приняты N (ids)", () => {
+  const text = summaryOf({rejected: ["a"]});
+  assert.match(text, /не приняты 1 \(a\)/);
+});
+
+test("questionReason: отклонена раньше не влита → не принята", () => {
+  assert.equal(questionReason("рой: не влита — отклонена 2 раз: тесты красные"), "не принята");
+  assert.equal(questionReason("рой: не влита — в дереве незакоммиченные правки"), "не влита");
+});
+
 test("waitingLine: frozen → заморожена, gated → гейт, held по-прежнему держит другой", () => {
   const result = {report: {skipped: [
     {id: "a", reason: "frozen"}, {id: "b", reason: "gated"}, {id: "c", reason: "held"},
@@ -1079,3 +1098,77 @@ test("waitingLine: frozen → заморожена, gated → гейт, held п�
   assert.match(line, /c держит другой/);
   assert.match(line, /d не влезла в партию/);
 });
+
+gitTest("тик: барьер отклоняет единственную закрытую — list+show после comment, revoke+launch в том же тике",
+  async () => {
+    const repo = initRepo();
+    const treeT1 = addWorktree(repo, "t1");
+    fs.writeFileSync(path.join(treeT1, "a.txt"), "a\n");
+    sh(treeT1, "add", "a.txt");
+    sh(treeT1, "commit", "-q", "-m", "t1");
+
+    const doneTask = task("t1", {
+      status: "done", worktree: treeT1, branch: "task/t1", labels: ["port:5170"],
+      launched_by: "agent:listik-swarm", launch_finished_at: "2026-01-01T00:00:00Z",
+    });
+    const openTask = task("t1", {
+      status: "open", worktree: treeT1, branch: "task/t1", labels: ["port:5170"],
+      launched_by: "agent:listik-swarm", launch_finished_at: "2026-01-01T00:00:00Z",
+    });
+    const plan = {project: "proj", waves: [[]], cycles: [], unroutable: [], unscoped: [], blocked: {}};
+    const dataDir = fs.mkdtempSync(path.join(os.tmpdir(), "listik-swarm-data-"));
+    fs.writeFileSync(path.join(dataDir, "swarm.json"), JSON.stringify({
+      integration: [],
+      verify: [[process.execPath, "-e", "process.exit(1)"]],
+    }));
+    const logDir = fs.mkdtempSync(path.join(os.tmpdir(), "listik-swarm-verify-log-"));
+    const responses = {
+      status: statusFor(dataDir),
+      waves: {stdout: JSON.stringify({waves: plan, added: [], removed: [], kept: 0})},
+      list: [
+        {stdout: JSON.stringify({total: 1, limit: 1000, offset: 0, tasks: [doneTask]})},
+        {stdout: JSON.stringify({total: 1, limit: 1000, offset: 0, tasks: [openTask]})},
+      ],
+      routes: {stdout: JSON.stringify({ok: true, routes: []})},
+      projects: {stdout: JSON.stringify([{slug: "proj", path: repo}])},
+      watch: {stdout: JSON.stringify({tasks: {}, decisions: [], probes: []})},
+      show: [
+        {stdout: JSON.stringify({id: "t1", comments: [], write_scope: [], labels: ["port:5170"]})},
+        {stdout: JSON.stringify({
+          id: "t1",
+          events: [{
+            kind: "comment", actor: "agent:listik-swarm", ts: "2026-01-01T01:00:00Z",
+            note: "рой: не принята: {\"reason\":\"red\"}",
+          }],
+        })},
+      ],
+      comment: {stdout: JSON.stringify({id: "t1"})},
+      set: {stdout: JSON.stringify({id: "t1"})},
+      revoke: {stdout: JSON.stringify({
+        id: "t1", launch_finished_at: "2026-01-01T02:00:00Z", launch_pid: 1, generation: 2,
+      })},
+      launch: {stdout: JSON.stringify({id: "t1", generation: 3})},
+    };
+    const {calls} = setupFake(responses);
+    const listik = new Listik({bin: FAKE_BIN, actor: "agent:listik-swarm", cliTimeout: 5});
+    const log = makeLog();
+    const result = await tick(listik, {...baseConfig, logDir}, log);
+
+    const recorded = calls();
+    const subs = recorded.map(c => c.sub);
+    assert.ok(subs.filter(s => s === "list").length >= 2, "ожидался второй list");
+    const commentIdx = recorded.findIndex(c => c.sub === "comment");
+    assert.ok(commentIdx >= 0, "ожидался comment отклонения");
+    const showAfter = recorded.findIndex((c, i) => i > commentIdx && c.sub === "show" && c.argv.includes("t1"));
+    assert.ok(showAfter > commentIdx, "show t1 после comment отклонения");
+    const revokeCall = recorded.find(c => c.sub === "revoke");
+    assert.ok(revokeCall);
+    assert.equal(
+      revokeCall.argv[revokeCall.argv.indexOf("--note") + 1],
+      "рой: перезапуск — не принята (верификатор)",
+    );
+    assert.ok(subs.includes("launch"));
+    assert.ok(!subs.includes("needs-owner"));
+    assert.deepEqual(result.restarted, ["t1"]);
+    assert.deepEqual(result.barrier.rejected, ["t1"]);
+  });

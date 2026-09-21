@@ -9,7 +9,7 @@ import {fileURLToPath} from "node:url";
 import {
   covers, outsideScope, parseMarked, mergedRecord, sortForMerge, mergeCandidates, haltCards,
   frozenBy, tailLines, runBarrier, MERGED_MARK, FIRST_CHANGE_MARK, HALT_LABEL, SWARM_AUTHOR,
-  UNFROZEN_MARK, ARBITER_MARK,
+  UNFROZEN_MARK, ARBITER_MARK, REJECTED_MARK,
 } from "../barrier.mjs";
 
 const ARBITER_FIXTURE = resolve(dirname(fileURLToPath(import.meta.url)), "fixtures/fake-arbiter.mjs");
@@ -1687,3 +1687,427 @@ suite("лог кандидатов N вычитает needs_owner, missing_branc
     log.lines.filter(l => l.startsWith("барьер:")).join(" | "));
   assert.ok(result.merged.includes("tok"));
 });
+
+// ------------------------------------------------- верификатор и пустой дифф ---
+
+function commitFile(tree, name, content, msg) {
+  writeFileSync(join(tree, name), content);
+  sh(tree, "add", name);
+  sh(tree, "commit", "-q", "-m", msg);
+}
+
+function verifyLogFiles(dir, id) {
+  return nodeFs.readdirSync(dir).filter(f => f.startsWith(`verify-${id}-`)).map(f => ({
+    name: f, path: join(dir, f), text: nodeFs.readFileSync(join(dir, f), "utf8"),
+  }));
+}
+
+function parseRejected(listik, id) {
+  const c = listik.calls.comment.find(x => x.id === id && x.text.startsWith(REJECTED_MARK));
+  assert.ok(c, `ожидался comment ${id} с REJECTED_MARK`);
+  return JSON.parse(c.text.slice(REJECTED_MARK.length).trim());
+}
+
+function doneTask(id, worktree, over = {}) {
+  return {id, status: "done", worktree, branch: `task/${id}`, labels: ["port:1"], ...over};
+}
+
+suite("верификатор: красный → rejected, HEAD прежний, set open/s3-impl", async () => {
+  const repo = initRepo();
+  const tree = addWorktree(repo, "t1");
+  commitFile(tree, "t1.txt", "a\n", "t1");
+  const tasks = [doneTask("t1", tree)];
+  const listik = fakeListik({t1: {id: "t1", comments: [], write_scope: [], labels: ["port:1"]}});
+  const logDir = tmpLogDir();
+  const log = makeLog();
+  const before = await git.headSha(repo);
+  const result = await runBarrier({
+    listik, git, fs: nodeFs, config: {dryRun: false, project: "demo", logDir},
+    swarmConfig: {integration: [], verify: [[process.execPath, "-e", "process.exit(1)"]]},
+    log, tasks, projectPath: repo, now: new Date(),
+  });
+
+  assert.equal(await git.headSha(repo), before);
+  assert.deepEqual(result.rejected, ["t1"]);
+  assert.deepEqual(result.unmerged, []);
+  assert.equal(result.gate, null);
+  const rejectedComments = listik.calls.comment.filter(c => c.text.startsWith(REJECTED_MARK));
+  assert.equal(rejectedComments.length, 1);
+  const rec = parseRejected(listik, "t1");
+  assert.equal(rec.reason, "red");
+  assert.equal(rec.attempt, 1);
+  assert.equal(typeof rec.tail, "string");
+  assert.equal(typeof rec.code, "number");
+  assert.ok(Array.isArray(rec.command));
+  assert.match(rec.next, /listik done/);
+  assert.equal(listik.calls.set.length, 1);
+  assert.deepEqual(listik.calls.set[0].fields, {status: "open", stage: "s3-impl"});
+  assert.equal(listik.calls.needsOwner.length, 0);
+  const logs = verifyLogFiles(logDir, "t1");
+  assert.equal(logs.length, 1);
+  assert.ok(logs[0].text.startsWith("$ "));
+  assert.match(rec.log, /verify-t1-/);
+});
+
+suite("верификатор: verifyRetries 0 → человеку, set не вызван, unmerged", async () => {
+  const repo = initRepo();
+  const tree = addWorktree(repo, "t1");
+  commitFile(tree, "t1.txt", "a\n", "t1");
+  const tasks = [doneTask("t1", tree)];
+  const listik = fakeListik({t1: {id: "t1", comments: [], write_scope: []}});
+  const log = makeLog();
+  const result = await runBarrier({
+    listik, git, fs: nodeFs, config: {dryRun: false, project: "demo", logDir: tmpLogDir()},
+    swarmConfig: {
+      integration: [], verifyRetries: 0,
+      verify: [[process.execPath, "-e", "process.exit(1)"]],
+    },
+    log, tasks, projectPath: repo, now: new Date(),
+  });
+
+  assert.equal(listik.calls.set.length, 0);
+  assert.deepEqual(result.unmerged, ["t1"]);
+  assert.deepEqual(result.rejected, []);
+  assert.equal(result.gate.reason, "unmerged");
+  assert.equal(listik.calls.needsOwner.length, 1);
+  const text = listik.calls.needsOwner[0].text;
+  assert.ok(text.startsWith("рой: не влита — "));
+  assert.match(text, /отклонена 1 раз/);
+  assert.match(text, /тесты красные/);
+  assert.match(text, /--clear/);
+  assert.ok(listik.calls.comment[0].text.startsWith(REJECTED_MARK));
+});
+
+suite("верификатор: уже один REJECTED_MARK роя и verifyRetries 1 → человеку", async () => {
+  const repo = initRepo();
+  const tree = addWorktree(repo, "t1");
+  commitFile(tree, "t1.txt", "a\n", "t1");
+  const tasks = [doneTask("t1", tree)];
+  const prior = {
+    author: SWARM_AUTHOR,
+    text: `${REJECTED_MARK} ${JSON.stringify({reason: "red"})}`,
+    created_at: "2026-01-01T00:00:00Z",
+  };
+  const listik = fakeListik({t1: {id: "t1", comments: [prior], write_scope: []}});
+  const log = makeLog();
+  const result = await runBarrier({
+    listik, git, fs: nodeFs, config: {dryRun: false, project: "demo", logDir: tmpLogDir()},
+    swarmConfig: {
+      integration: [], verifyRetries: 1,
+      verify: [[process.execPath, "-e", "process.exit(1)"]],
+    },
+    log, tasks, projectPath: repo, now: new Date(),
+  });
+  assert.equal(listik.calls.set.length, 0);
+  assert.deepEqual(result.unmerged, ["t1"]);
+  assert.deepEqual(result.rejected, []);
+  assert.match(listik.calls.needsOwner[0].text, /отклонена 2 раз/);
+});
+
+suite("верификатор: тот же маркер от другого автора не считается → воркеру", async () => {
+  const repo = initRepo();
+  const tree = addWorktree(repo, "t1");
+  commitFile(tree, "t1.txt", "a\n", "t1");
+  const tasks = [doneTask("t1", tree)];
+  const prior = {
+    author: "agent:other",
+    text: `${REJECTED_MARK} ${JSON.stringify({reason: "red"})}`,
+    created_at: "2026-01-01T00:00:00Z",
+  };
+  const listik = fakeListik({t1: {id: "t1", comments: [prior], write_scope: []}});
+  const log = makeLog();
+  const result = await runBarrier({
+    listik, git, fs: nodeFs, config: {dryRun: false, project: "demo", logDir: tmpLogDir()},
+    swarmConfig: {
+      integration: [], verifyRetries: 1,
+      verify: [[process.execPath, "-e", "process.exit(1)"]],
+    },
+    log, tasks, projectPath: repo, now: new Date(),
+  });
+  assert.deepEqual(result.rejected, ["t1"]);
+  assert.deepEqual(result.unmerged, []);
+  assert.equal(listik.calls.set.length, 1);
+  assert.equal(listik.calls.needsOwner.length, 0);
+});
+
+suite("пустой дифф: дерево есть, ветка = HEAD, без MERGED_MARK → rejected empty", async () => {
+  const repo = initRepo();
+  const tree = addWorktree(repo, "t1");
+  const tasks = [doneTask("t1", tree)];
+  const listik = fakeListik({t1: {id: "t1", comments: [], write_scope: []}});
+  const log = makeLog();
+  const before = await git.headSha(repo);
+  const result = await runBarrier({
+    listik, git, fs: nodeFs, config: {dryRun: false, project: "demo", logDir: tmpLogDir()},
+    swarmConfig: {integration: []}, log, tasks, projectPath: repo, now: new Date(),
+  });
+  assert.equal(await git.headSha(repo), before);
+  assert.deepEqual(result.rejected, ["t1"]);
+  assert.deepEqual(result.unmerged, []);
+  const rec = parseRejected(listik, "t1");
+  assert.equal(rec.reason, "empty");
+  assert.equal(listik.calls.set.length, 1);
+  assert.equal(listik.calls.comment.some(c => c.text.startsWith(MERGED_MARK)), false);
+});
+
+suite("верификатор: verify [] и красная integration → команд верификатора нет, задача влита", async () => {
+  const repo = initRepo();
+  const tree = addWorktree(repo, "t1");
+  commitFile(tree, "t1.txt", "a\n", "t1");
+  const tasks = [doneTask("t1", tree)];
+  const listik = fakeListik({t1: {id: "t1", comments: [], write_scope: []}});
+  const logDir = tmpLogDir();
+  const log = makeLog();
+  const result = await runBarrier({
+    listik, git, fs: nodeFs, config: {dryRun: false, project: "demo", logDir},
+    swarmConfig: {integration: [[process.execPath, "-e", "process.exit(1)"]], verify: []},
+    log, tasks, projectPath: repo, now: new Date(),
+  });
+  assert.ok(result.merged.includes("t1"));
+  assert.deepEqual(result.rejected, []);
+  assert.equal(result.integration, "red");
+  assert.equal(verifyLogFiles(logDir, "t1").length, 0);
+  assert.ok(log.lines.some(l => l === "верификатор: команд нет"));
+});
+
+suite("верификатор: команда в cwd дерева (t1.txt есть)", async () => {
+  const repo = initRepo();
+  const tree = addWorktree(repo, "t1");
+  commitFile(tree, "t1.txt", "a\n", "t1");
+  const tasks = [doneTask("t1", tree)];
+  const listik = fakeListik({t1: {id: "t1", comments: [], write_scope: []}});
+  const logDir = tmpLogDir();
+  const log = makeLog();
+  const result = await runBarrier({
+    listik, git, fs: nodeFs, config: {dryRun: false, project: "demo", logDir},
+    swarmConfig: {
+      integration: [],
+      verify: [[process.execPath, "-e",
+        "process.exit(require('fs').existsSync('t1.txt')?0:1)"]],
+    },
+    log, tasks, projectPath: repo, now: new Date(),
+  });
+  assert.ok(result.merged.includes("t1"));
+  const logs = verifyLogFiles(logDir, "t1");
+  assert.equal(logs.length, 1);
+  assert.ok(logs[0].text.includes("$ "));
+});
+
+suite("верификатор: LISTIK_DEV_PORT из метки; без метки на карточке — unset", async () => {
+  const repo = initRepo();
+  const treeA = addWorktree(repo, "ta");
+  const treeB = addWorktree(repo, "tb");
+  commitFile(treeA, "a.txt", "a\n", "ta");
+  commitFile(treeB, "b.txt", "b\n", "tb");
+  const printPort = [process.execPath, "-e",
+    "process.stdout.write((process.env.LISTIK_DEV_PORT ?? 'unset') + '\\n'); process.exit(0)"];
+  const prev = process.env.LISTIK_DEV_PORT;
+  process.env.LISTIK_DEV_PORT = "9999";
+  try {
+    const tasks = [
+      doneTask("ta", treeA, {labels: ["port:4242"]}),
+      doneTask("tb", treeB, {labels: ["port:2"]}),
+    ];
+    const listik = fakeListik({
+      ta: {id: "ta", comments: [], write_scope: [], labels: ["port:4242"]},
+      tb: {id: "tb", comments: [], write_scope: [], labels: []},
+    });
+    const logDir = tmpLogDir();
+    const log = makeLog();
+    const result = await runBarrier({
+      listik, git, fs: nodeFs, config: {dryRun: false, project: "demo", logDir},
+      swarmConfig: {integration: [], verify: [printPort]},
+      log, tasks, projectPath: repo, now: new Date(),
+    });
+    assert.deepEqual(result.mergedNow.sort(), ["ta", "tb"]);
+    const logA = verifyLogFiles(logDir, "ta")[0].text;
+    const logB = verifyLogFiles(logDir, "tb")[0].text;
+    assert.match(logA, /4242/);
+    assert.match(logB, /unset/);
+  } finally {
+    if (prev === undefined) delete process.env.LISTIK_DEV_PORT;
+    else process.env.LISTIK_DEV_PORT = prev;
+  }
+});
+
+suite("верификатор: dryRun — ни comment ни set, команда не запускалась, лог проверить", async () => {
+  const repo = initRepo();
+  const tree = addWorktree(repo, "t1");
+  commitFile(tree, "t1.txt", "a\n", "t1");
+  const marker = join(tree, "ran.txt");
+  const tasks = [doneTask("t1", tree)];
+  const listik = fakeListik({t1: {id: "t1", comments: [], write_scope: []}});
+  const log = makeLog();
+  await runBarrier({
+    listik, git, fs: nodeFs, config: {dryRun: true, project: "demo", logDir: tmpLogDir()},
+    swarmConfig: {verify: [[process.execPath, "-e",
+      `require('fs').writeFileSync(${JSON.stringify(marker)}, 'x')`]]},
+    log, tasks, projectPath: repo, now: new Date(),
+  });
+  assert.equal(listik.calls.comment.length, 0);
+  assert.equal(listik.calls.set.length, 0);
+  assert.equal(nodeFs.existsSync(marker), false);
+  assert.ok(log.lines.some(l => l.includes("[dry-run] проверить t1:")));
+});
+
+suite("верификатор: две задачи — первая отклонена, вторая влита", async () => {
+  const repo = initRepo();
+  const treeT1 = addWorktree(repo, "t1");
+  const treeT2 = addWorktree(repo, "t2");
+  commitFile(treeT1, "fail.txt", "x\n", "t1");
+  commitFile(treeT2, "ok.txt", "y\n", "t2");
+  const tasks = [doneTask("t1", treeT1), doneTask("t2", treeT2)];
+  const listik = fakeListik({
+    t1: {id: "t1", comments: [], write_scope: []},
+    t2: {id: "t2", comments: [], write_scope: []},
+  });
+  const log = makeLog();
+  const result = await runBarrier({
+    listik, git, fs: nodeFs, config: {dryRun: false, project: "demo", logDir: tmpLogDir()},
+    swarmConfig: {
+      integration: [],
+      verify: [[process.execPath, "-e",
+        "process.exit(require('fs').existsSync('fail.txt')?1:0)"]],
+    },
+    log, tasks, projectPath: repo, now: new Date(),
+  });
+  assert.deepEqual(result.merged, ["t2"]);
+  assert.deepEqual(result.rejected, ["t1"]);
+  assert.deepEqual(result.unmerged, []);
+  assert.equal(result.gate, null);
+  const subjects = sh(repo, "log", "--format=%s").trim().split("\n");
+  assert.ok(subjects.includes("t2"));
+  assert.equal(subjects.includes("t1"), false);
+});
+
+suite("пустой дифф: коммит + revert → empty", async () => {
+  const repo = initRepo();
+  const tree = addWorktree(repo, "t1");
+  commitFile(tree, "gone.txt", "x\n", "add");
+  sh(tree, "revert", "--no-edit", "HEAD");
+  const tasks = [doneTask("t1", tree)];
+  const listik = fakeListik({t1: {id: "t1", comments: [], write_scope: []}});
+  const log = makeLog();
+  const before = await git.headSha(repo);
+  const result = await runBarrier({
+    listik, git, fs: nodeFs, config: {dryRun: false, project: "demo", logDir: tmpLogDir()},
+    swarmConfig: {integration: []}, log, tasks, projectPath: repo, now: new Date(),
+  });
+  assert.equal(await git.headSha(repo), before);
+  assert.deepEqual(result.rejected, ["t1"]);
+  const rec = parseRejected(listik, "t1");
+  assert.equal(rec.reason, "empty");
+});
+
+suite("верификатор: первая красная — вторая не запускается, в логе одна строка $", async () => {
+  const repo = initRepo();
+  const tree = addWorktree(repo, "t1");
+  commitFile(tree, "t1.txt", "a\n", "t1");
+  const marker = join(tree, "second.txt");
+  const tasks = [doneTask("t1", tree)];
+  const listik = fakeListik({t1: {id: "t1", comments: [], write_scope: []}});
+  const logDir = tmpLogDir();
+  const log = makeLog();
+  await runBarrier({
+    listik, git, fs: nodeFs, config: {dryRun: false, project: "demo", logDir},
+    swarmConfig: {
+      integration: [],
+      verify: [
+        [process.execPath, "-e", "process.exit(1)"],
+        [process.execPath, "-e", `require('fs').writeFileSync(${JSON.stringify(marker)}, 'x')`],
+      ],
+    },
+    log, tasks, projectPath: repo, now: new Date(),
+  });
+  assert.equal(nodeFs.existsSync(marker), false);
+  const text = verifyLogFiles(logDir, "t1")[0].text;
+  const dollars = text.split("\n").filter(l => l.startsWith("$ "));
+  assert.equal(dollars.length, 1);
+});
+
+suite("верификатор: таймаут sleep 10 при verifyTimeout 1 → red timed_out, не ждёт 10с", async () => {
+  const repo = initRepo();
+  const tree = addWorktree(repo, "t1");
+  commitFile(tree, "t1.txt", "a\n", "t1");
+  const tasks = [doneTask("t1", tree)];
+  const listik = fakeListik({t1: {id: "t1", comments: [], write_scope: []}});
+  const log = makeLog();
+  const start = Date.now();
+  const result = await runBarrier({
+    listik, git, fs: nodeFs, config: {dryRun: false, project: "demo", logDir: tmpLogDir()},
+    swarmConfig: {integration: [], verify: [["sleep", "10"]], verifyTimeout: 1},
+    log, tasks, projectPath: repo, now: new Date(),
+  });
+  const elapsed = Date.now() - start;
+  assert.ok(elapsed < 8000, `барьер вернулся не рано: ${elapsed}мс`);
+  assert.deepEqual(result.rejected, ["t1"]);
+  const rec = parseRejected(listik, "t1");
+  assert.equal(rec.reason, "red");
+  assert.equal(rec.timed_out, true);
+});
+
+suite("верификатор: отклонённая t1 не размораживает frozen-by:t1", async () => {
+  const repo = initRepo();
+  const treeT1 = addWorktree(repo, "t1");
+  const treeT2 = addWorktree(repo, "t2");
+  commitFile(treeT1, "t1.txt", "a\n", "t1");
+  const tasks = [
+    doneTask("t1", treeT1),
+    {id: "t2", status: "open", worktree: treeT2, branch: "task/t2",
+      labels: ["port:5171", "frozen-by:t1"]},
+  ];
+  const listik = fakeListik({
+    t1: {id: "t1", comments: [], write_scope: []},
+    t2: {id: "t2", comments: [], labels: ["port:5171", "frozen-by:t1"]},
+  });
+  const log = makeLog();
+  const result = await runBarrier({
+    listik, git, fs: nodeFs, config: {dryRun: false, project: "demo", logDir: tmpLogDir()},
+    swarmConfig: {integration: [], verify: [[process.execPath, "-e", "process.exit(1)"]]},
+    log, tasks, projectPath: repo, now: new Date(),
+  });
+  assert.deepEqual(result.rejected, ["t1"]);
+  assert.deepEqual(result.unfrozen, []);
+  assert.ok(tasks.find(t => t.id === "t2").labels.includes("frozen-by:t1"));
+  assert.equal(listik.calls.comment.some(c => c.id === "t2" && c.text.startsWith(UNFROZEN_MARK)), false);
+});
+
+suite("верификатор: отказ set → без исключения, unmerged содержит id", async () => {
+  const repo = initRepo();
+  const tree = addWorktree(repo, "t1");
+  commitFile(tree, "t1.txt", "a\n", "t1");
+  const tasks = [doneTask("t1", tree)];
+  const listik = fakeListik(
+    {t1: {id: "t1", comments: [], write_scope: []}},
+    {setFail: () => true},
+  );
+  const log = makeLog();
+  const result = await runBarrier({
+    listik, git, fs: nodeFs, config: {dryRun: false, project: "demo", logDir: tmpLogDir()},
+    swarmConfig: {integration: [], verify: [[process.execPath, "-e", "process.exit(1)"]]},
+    log, tasks, projectPath: repo, now: new Date(),
+  });
+  assert.deepEqual(result.unmerged, ["t1"]);
+  assert.deepEqual(result.rejected, []);
+  assert.ok(log.lines.some(l => l.includes("set t1 ошибка")));
+});
+
+suite("верификатор не задан, integration красная → в дереве ничего не запускалось", async () => {
+  const repo = initRepo();
+  const tree = addWorktree(repo, "t1");
+  commitFile(tree, "t1.txt", "a\n", "t1");
+  const tasks = [doneTask("t1", tree)];
+  const listik = fakeListik({t1: {id: "t1", comments: [], write_scope: []}});
+  const logDir = tmpLogDir();
+  const log = makeLog();
+  const result = await runBarrier({
+    listik, git, fs: nodeFs, config: {dryRun: false, project: "demo", logDir},
+    swarmConfig: {integration: [[process.execPath, "-e", "process.exit(1)"]]},
+    log, tasks, projectPath: repo, now: new Date(),
+  });
+  assert.ok(result.merged.includes("t1"));
+  assert.equal(result.integration, "red");
+  assert.equal(nodeFs.readdirSync(logDir).filter(f => f.startsWith("verify-")).length, 0);
+  assert.ok(log.lines.some(l => l === "верификатор: команд нет"));
+});
+

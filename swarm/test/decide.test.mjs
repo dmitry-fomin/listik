@@ -1,6 +1,6 @@
 import {test} from "node:test";
 import assert from "node:assert/strict";
-import {decide, portOf, allocatePort, isFrozen} from "../decide.mjs";
+import {decide, portOf, allocatePort, isFrozen, REJECTED_MARK} from "../decide.mjs";
 
 const config = {parallel: 3, weights: {xhigh: 3, high: 2, medium: 1, low: 1, xlow: 1, direct: 1}};
 
@@ -464,4 +464,63 @@ test("надзор: упавшая с needs_owner true — ничего; упа�
   assert.deepEqual(res.restart, []);
   assert.deepEqual(res.running, []);
   assert.deepEqual(res.launch.map(l => l.id), ["b"]);
+});
+
+const emptyPlan = {waves: [[]], cycles: [], unroutable: [], unscoped: [], blocked: {}};
+
+test("надзор: comment роя REJECTED_MARK позже launch_finished_at — restart rejected, crashed пуст", () => {
+  const t = task("a", {
+    launched_by: "agent:listik-swarm", launch_finished_at: "2026-01-01T00:00:00Z",
+    needs_owner: false, labels: ["port:5170"],
+  });
+  const events = {a: [
+    {kind: "comment", actor: "agent:listik-swarm", ts: "2026-01-01T01:00:00Z",
+      note: `${REJECTED_MARK} {"reason":"red"}`},
+  ]};
+  const res = decideRunning(t, {plan: emptyPlan, events});
+  assert.equal(res.restart.length, 1);
+  assert.equal(res.restart[0].reason, "rejected");
+  assert.deepEqual(res.crashed, []);
+});
+
+test("надзор: REJECTED_MARK от другого актора — crashed, restart пуст", () => {
+  const t = task("a", {
+    launched_by: "agent:listik-swarm", launch_finished_at: "2026-01-01T00:00:00Z",
+    needs_owner: false, labels: ["port:5170"],
+  });
+  const events = {a: [
+    {kind: "comment", actor: "agent:claude", ts: "2026-01-01T01:00:00Z",
+      note: `${REJECTED_MARK} {"reason":"red"}`},
+  ]};
+  const res = decideRunning(t, {plan: emptyPlan, events});
+  assert.deepEqual(res.restart, []);
+  assert.equal(res.crashed.length, 1);
+});
+
+test("надзор: REJECTED_MARK раньше launch_finished_at — crashed", () => {
+  const t = task("a", {
+    launched_by: "agent:listik-swarm", launch_finished_at: "2026-01-01T00:00:00Z",
+    needs_owner: false, labels: ["port:5170"],
+  });
+  const events = {a: [
+    {kind: "comment", actor: "agent:listik-swarm", ts: "2025-01-01T00:00:00Z",
+      note: `${REJECTED_MARK} {"reason":"red"}`},
+  ]};
+  const res = decideRunning(t, {plan: emptyPlan, events});
+  assert.deepEqual(res.restart, []);
+  assert.equal(res.crashed.length, 1);
+});
+
+test("надзор: needs_owner true с REJECTED_MARK — ни restart, ни crashed", () => {
+  const t = task("a", {
+    launched_by: "agent:listik-swarm", launch_finished_at: "2026-01-01T00:00:00Z",
+    needs_owner: true, labels: ["port:5170"],
+  });
+  const events = {a: [
+    {kind: "comment", actor: "agent:listik-swarm", ts: "2026-01-01T01:00:00Z",
+      note: `${REJECTED_MARK} {"reason":"red"}`},
+  ]};
+  const res = decideRunning(t, {plan: emptyPlan, events});
+  assert.deepEqual(res.restart, []);
+  assert.deepEqual(res.crashed, []);
 });

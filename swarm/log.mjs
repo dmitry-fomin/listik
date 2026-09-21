@@ -56,6 +56,7 @@ export function open(dir, project) {
     const stopOnlyDesc = (report.stopOnly || []).join(", ");
     const mergedDesc = (report.merged || []).join(", ");
     const unmergedDesc = (report.unmerged || []).join(", ");
+    const rejectedDesc = (report.rejected || []).join(", ");
     const unfrozenDesc = (report.unfrozen || []).join(", ");
     const integrationDesc = report.integration === "green" ? "зелёная"
       : report.integration === "red" ? "красная" : "—";
@@ -71,6 +72,7 @@ export function open(dir, project) {
       `стоят ${report.blocked ?? 0} · дальше волн ${report.wavesLeft ?? 0} · ` +
       `влито ${(report.merged || []).length} (${mergedDesc}) · ` +
       `не влиты ${(report.unmerged || []).length} (${unmergedDesc}) · ` +
+      `не приняты ${(report.rejected || []).length} (${rejectedDesc}) · ` +
       `разморожено ${(report.unfrozen || []).length} (${unfrozenDesc}) · ` +
       `интеграция ${integrationDesc} · ` +
       `стоп ${report.halt ?? "—"}`;

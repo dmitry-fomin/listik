@@ -1116,6 +1116,9 @@ def handle(method: str, path: str, query: dict, body: dict, authed: bool = False
                                           with_rejected=as_bool(q1("rejected", False)))
                     if as_bool(q1("deps", True)):
                         task["deps_state"] = deps_mod.ready(conn, tid)
+                    # `?fields=a,b` — выбрать поля на своей стороне: агенту для маршрута
+                    # нужен только `launch_route`, полную карточку тащить незачем.
+                    task = store.select_task_fields(task, q1("fields"))
                     return 200, task
                 except errors_mod.NotFound as exc:
                     raise api_error(404, exc) from exc

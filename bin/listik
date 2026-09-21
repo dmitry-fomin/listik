@@ -895,19 +895,23 @@ def cmd_list(args) -> int:
 
 def cmd_show(args) -> int:
     rejected = bool(getattr(args, "rejected", False))
+    # `--fields a,b` (или повторяемый `--fields a --fields b`): фильтрует та сторона,
+    # которая собрала карточку — сервер (`?fields=`) или `local_call`; неизвестное
+    # поле даёт bad_argument с перечнем доступных ещё до вывода.
+    fields = [f for f in (getattr(args, "fields", None) or []) if f.strip()]
     query = {"rejected": 1} if rejected else None
+    if fields:
+        query = {**(query or {}), "fields": ",".join(fields)}
     local_kwargs = {"task_id": args.task_id}
     if rejected:
         local_kwargs["rejected"] = True
+    if fields:
+        local_kwargs["fields"] = fields
     task = call("show", args, f"/api/tasks/{args.task_id}", query=query,
                local_kwargs=local_kwargs)
-    if args.field:
-        picked = {f: task.get(f) for f in args.field}
-        if getattr(args, "json", False):
-            emit(args, picked, "")
-        else:
-            for v in picked.values():
-                print("" if v is None else v)
+    if fields and not getattr(args, "json", False):
+        for v in task.values():
+            print("" if v is None else v)
         return 0
     emit(args, task, "") if getattr(args, "json", False) else show_task(task)
     return 0
@@ -2399,8 +2403,9 @@ def build_parser() -> argparse.ArgumentParser:
     add_task_id(sp)
     sp.add_argument("--rejected", action="store_true",
                     help="показать карантин: отвергнутые записи зомби-процессов")
-    sp.add_argument("--field", action="append", metavar="ИМЯ",
-                    help="только это поле карточки (повторяемо), напр. --field launch_route")
+    sp.add_argument("--fields", action="append", metavar="ИМЯ[,ИМЯ…]",
+                    help="только эти поля карточки (повторяемо или через запятую), "
+                         "напр. --fields launch_route,labels; неизвестное поле — ошибка")
 
     sp = add("context", cmd_context, help="компактный контекст задачи для этапа")
     add_task_id(sp)

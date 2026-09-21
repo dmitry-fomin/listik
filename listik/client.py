@@ -219,8 +219,12 @@ def local_call(op: str, *, fence: fence_mod.Token | dict | None = None, **kwargs
     if op == "list":
         return store.list_tasks(conn, **kwargs)
     if op == "show":
-        return store.get_task(conn, kwargs["task_id"],
+        task = store.get_task(conn, kwargs["task_id"],
                               with_rejected=bool(kwargs.get("rejected", False)))
+        fields = kwargs.get("fields")
+        # Фильтр --fields здесь же, а не на клиенте: локальный режим — это "сервера
+        # нет", и неизвестное поле должно дать тот же bad_argument, что и по HTTP.
+        return store.select_task_fields(task, fields) if fields else task
     if op == "context":
         from . import documents
         return documents.context(conn, kwargs["task_id"], kwargs.get("stage", "s1-spec"),

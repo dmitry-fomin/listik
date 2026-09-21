@@ -1204,6 +1204,33 @@ def get_task(conn: sqlite3.Connection, task_id: str, *, with_details: bool = Tru
     return out
 
 
+def select_task_fields(task: dict, fields) -> dict:
+    """Оставить в карточке только запрошенные поля (`--fields a,b` / `?fields=a,b`).
+
+    `fields` — список токенов или одна строка через запятую: и CLI, и query-
+    параметр могут задавать поля и списком, и повторением флага. Фильтр делает
+    та сторона, которая собрала карточку (сервер, `local_call`, MCP), — агенту
+    не нужно тянуть полную карточку ради одного `launch_route`.
+
+    Неизвестное поле — `BadArgument` с перечнем доступных полей: молчаливый
+    `None` (как было в клиентском прототипе `--field`) агент не отличил бы от
+    пустого значения, а ошибка с кодом `bad_argument` ведёт к исправлению запроса.
+    Порядок ключей в ответе — как в запросе; без `fields` карточка возвращается
+    как есть.
+    """
+    names: list[str] = []
+    for chunk in ([fields] if isinstance(fields, str) else (fields or [])):
+        names.extend(t.strip() for t in str(chunk).split(",") if t.strip())
+    if not names:
+        return task
+    unknown = sorted({n for n in names if n not in task})
+    if unknown:
+        raise errors_mod.BadArgument(
+            "неизвестное поле карточки: " + ", ".join(unknown)
+            + " (доступные поля: " + ", ".join(sorted(task)) + ")")
+    return {n: task[n] for n in names}
+
+
 def holder_claim_state(conn: sqlite3.Connection, task_id: str, holder: str | None) -> dict:
     """Взял ли держатель задачу сам или её только выдали.
 

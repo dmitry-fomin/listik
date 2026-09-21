@@ -207,7 +207,7 @@ WRITE_OPS = frozenset({
     "create", "update", "claim", "heartbeat", "stage", "comment",
     "needs-owner", "dep_add", "dep_remove", "project_add", "project_archive",
     "project_remove", "project_routing", "waves_apply", "revoke", "launch",
-    "swarm_plan",
+    "swarm_plan", "swarm_rescope",
 })
 
 #: `--local` при живом сервере обходит push доски так же молча, как фолбэк без
@@ -1447,6 +1447,119 @@ def cmd_plan(args) -> int:
     return 1 if cycles else 0
 
 
+def cmd_rescope(args) -> int:
+    """LLM-проход роя: области read_scope/write_scope из готовых ТЗ и уточнение графа
+    по копилке расхождений."""
+    project = args.project
+    if not project:
+        raise errors.ListikError(
+            "нужен проект: rescope считается по одному проекту", code=errors.BAD_ARGUMENT,
+            hint="listik rescope --project <slug>")
+    apply_ = getattr(args, "apply", False)
+    tasks = getattr(args, "task", None)
+    drift = None
+    drift_path = getattr(args, "drift", None)
+    if drift_path:
+        try:
+            with open(drift_path, encoding="utf-8") as fh:
+                drift = json.load(fh)
+        except (OSError, json.JSONDecodeError) as exc:
+            raise errors.ListikError(
+                f"--drift {drift_path}: не удалось прочитать JSON ({exc})",
+                code=errors.BAD_ARGUMENT) from exc
+        if not isinstance(drift, list):
+            raise errors.ListikError(
+                f"--drift {drift_path}: ожидался список записей",
+                code=errors.BAD_ARGUMENT)
+
+    res = call("swarm_rescope", args, "/api/swarm/rescope", method="POST",
+              body={"project": project, "tasks": tasks, "drift": drift, "apply": apply_},
+              local_kwargs={"project": project, "tasks": tasks, "drift": drift,
+                            "apply": apply_},
+              timeout=3600)
+
+    cycles = res.get("cycles") or []
+    if getattr(args, "json", False):
+        emit(args, res, "")
+        return 1 if cycles else 0
+
+    tasks_out = res.get("tasks") or {}
+    lines = [f"rescope {project}: задач {len(tasks_out)}, ТЗ прочитано "
+            f"{res.get('extracted')}, модель {res.get('model')}, "
+            f"попыток {res.get('attempts')}"]
+
+    for tid, info in tasks_out.items():
+        if info.get("source") != "spec":
+            continue
+        write_scope = info.get("write_scope") or []
+        read_scope = info.get("read_scope") or []
+        suffix = " (изменено)" if info.get("changed") else ""
+        line = f"{tid}: правит {', '.join(write_scope)}"
+        if read_scope:
+            line += f"; читает {', '.join(read_scope)}"
+        lines.append(line + suffix)
+
+    unspecced = res.get("unspecced") or {}
+    if unspecced:
+        lines.append("без ТЗ: " + ", ".join(f"{tid} ({why})" for tid, why in unspecced.items()))
+
+    unscoped = res.get("unscoped") or []
+    if unscoped:
+        lines.append("без области: " + ", ".join(unscoped))
+
+    invalid = res.get("invalid") or {}
+    for tid, why in invalid.items():
+        lines.append(f"негодный ответ: {tid} — {why}")
+
+    for tid, info in tasks_out.items():
+        depends_on = info.get("depends_on") or []
+        if depends_on:
+            reason = info.get("reason") or ""
+            lines.append(f"{tid} ждёт {', '.join(depends_on)} — {reason}")
+
+    for item in res.get("dropped") or []:
+        why = item.get("why")
+        if "depends_on" in item:
+            lines.append(f"отброшено: {item.get('id')} → {item.get('depends_on')} ({why})")
+        else:
+            lines.append(f"отброшено: {item.get('id')} ({why})")
+
+    for cycle in cycles:
+        lines.append("цикл: " + " → ".join([*cycle, cycle[0]]))
+    if cycles and res.get("cycles_from") == "db":
+        lines.append("цикл уже в базе: разорви listik dep rm <id> <блокер>")
+
+    drift_info = res.get("drift") or {}
+    lines.append("качество ТЗ: расхождений у %d из %d задач (%d файлов вне области, "
+                "записей %d, отброшено %d)" % (
+                    drift_info.get("tasks_with_drift", 0), drift_info.get("tasks_total", 0),
+                    drift_info.get("outside_files", 0), drift_info.get("records", 0),
+                    drift_info.get("ignored", 0)))
+
+    if apply_:
+        applied = res.get("applied")
+        if applied:
+            scopes = applied.get("scopes") or []
+            lines.append("записано областей: %d (%s)" % (len(scopes), ", ".join(scopes)))
+            edges_applied = applied.get("edges")
+            if cycles or edges_applied is None:
+                lines.append("рёбра не записаны: цикл")
+            else:
+                added = edges_applied.get("added") or []
+                removed = edges_applied.get("removed") or []
+                kept = edges_applied.get("kept") or 0
+                covered = edges_applied.get("covered") or []
+                lines.append("записано рёбер: %d (%s)" % (
+                    len(added), ", ".join(f"{a} → {b}" for a, b in added)))
+                lines.append("снято: %d (%s)" % (
+                    len(removed), ", ".join(f"{a} → {b}" for a, b in removed)))
+                lines.append("без изменений: %d" % kept)
+                lines.append("уже есть смысловые: %d" % len(covered))
+
+    print("\n".join(lines))
+    return 1 if cycles else 0
+
+
 class _SwarmCards:
     """Порт карточек для `swarm_watch.scan` поверх `call()` (CLI/HTTP/`--local`).
 
@@ -2415,6 +2528,18 @@ def build_parser() -> argparse.ArgumentParser:
     sp.add_argument("--apply", action="store_true",
                     help="записать рёбра blocks от agent:listik-swarm: свои устаревшие "
                     "снять, новые поставить; человеческие не трогаются")
+
+    sp = add("rescope", cmd_rescope,
+             help="LLM-проход роя: области read_scope/write_scope из готовых ТЗ и "
+                  "уточнение графа по копилке расхождений")
+    sp.add_argument("-p", "--project")
+    sp.add_argument("--task", action="append", metavar="ID",
+                    help="ограничить чтение ТЗ этими карточками")
+    sp.add_argument("--drift", metavar="FILE",
+                    help="JSON-список записей копилки {task, declared, touched|files, "
+                    "outside} сверх записей из карточек")
+    sp.add_argument("--apply", action="store_true",
+                    help="записать области в карточки и рёбра blocks от agent:listik-swarm")
 
     sp = add("watch", cmd_watch,
              help="наблюдатель деревьев роя: тронутые файлы, пробное слияние по парам, "

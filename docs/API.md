@@ -729,7 +729,7 @@ sha дерева) — `clean: false`, `conflicts` — список путей к
 волн, `scope.covers`). Новые (ещё не записанные прежними заметками) файлы уходят в
 `discrepancies` вывода и — один раз на файл — в журнальную строку `рой: вне write_scope:
 {"files", "declared"}` от `agent:listik-swarm`. Назначение — не наказание, а вход для
-rescope (swarm-7, `listik-9hcc`/соседние): по этому журналу видно, что задача вышла за
+`listik rescope` (см. «LLM-проходы роя» ниже): по этому журналу видно, что задача вышла за
 заявленную область, и её `write_scope` стоит расширить или задачу — развести иначе.
 
 **Лестница реакций.** Одна и та же реакция для всех маршрутов, признака «дорогой/дешёвый»
@@ -1208,6 +1208,7 @@ dropped_chunks, reason`), `reasons[]` (по одному пункту на ка�
 | POST | `/api/tasks/{id}/mentions` | `limit` | задачи, упомянутые в тексте этой задачи, но не связанные с ней. Отдаёт все совпадения — тем же режимом пользуются `dep suggest`/`dep link`; подсказка `link_hints[]` при создании отсеивает id в путях и кавычках (см. «Найденная по ходу задача») |
 | POST | `/api/waves/apply` | `project` (обязателен), `stage` | записать в базу ресурсные рёбра `resource-blocks` под свежий расчёт `waves` — см. «Волны запуска: `listik waves`»; `actor` в теле и заголовок `X-Listik-Owner` на автора ребра не влияют — автор всегда `agent:listik-swarm`; ответ `added[], removed[], kept, waves{}, generated_at`; без `project`/с пустым `project` — 400 `bad_argument`; цикл в зависимостях — 409 `conflict`, ничего не записано; метод не POST — 405; событие доске (`{"id", "action": "deps"}`) — по каждой затронутой задаче |
 | POST | `/api/swarm/plan` | `project` (обязателен), `stage`, `apply` | LLM-проход роя: грубые зависимости `blocks` между открытыми задачами проекта — см. «LLM-проходы роя: модель и машинные рёбра»; `actor` в теле и заголовок `X-Listik-Owner` игнорируются — автор рёбер всегда `agent:listik-swarm`; ответ — `project, stage, model, attempts, tasks{}, edges[], fixed[], previous[], dropped[], cycles[], cycles_from, applied` + `generated_at`; без `project`/с пустым `project` — 400 `bad_argument`; слишком много текста для одного вызова модели — 400 `bad_argument`; цикл (в базе или у модели после исчерпанных попыток) — **200** с непустым `cycles` и `applied: null` (CLI отдаёт код `1`), не 409; 409 `conflict` только если сама запись рёбер отказала (защитный случай — штатный цикл до записи не доходит); 404 `not_found` — задача не найдена; 502/503/504 `server_error` — модель роя недоступна/не настроена/не ответила; метод не POST — 405; событие доске (`{"id", "action": "deps"}`) — по каждой затронутой задаче, только при `applied` |
+| POST | `/api/swarm/rescope` | `project` (обязателен), `tasks[]`, `drift[]`, `apply` | LLM-проход роя: `read_scope`/`write_scope` из ТЗ готовых задач плюс уточнение графа `blocks` по копилке расхождений — см. «LLM-проходы роя: модель и машинные рёбра»; `tasks` — список id (не список строк — 400 `bad_argument`), сверх копилки из карточек — `drift` (не список — 400 `bad_argument`); `actor` в теле и заголовок `X-Listik-Owner` игнорируются — автор записей всегда `agent:listik-swarm`; ответ — `project, model, extracted, attempts, tasks{}, unspecced{}, unscoped[], invalid{}, drift{}, edges[], fixed[], previous[], dropped[], cycles[], cycles_from, applied` + `generated_at`; без `project`/с пустым `project` — 400 `bad_argument`; цикл (в базе или у модели) — **200** с непустым `cycles`, области в `applied.scopes` пишутся, `applied.edges: null`; 404 `not_found` — задача не найдена; 502/503/504 `server_error` — модель роя недоступна/не настроена/не ответила; метод не POST — 405; события доске через `publish`, не таблицу `events` — `{"id", "action": "updated"}` по каждой записанной в `applied.scopes` задаче и `{"id", "action": "deps"}` по задачам из `applied.edges.added`/`removed` |
 | POST | `/api/projects` | `path` (каталог репозитория) или `slug`, `title`, `kind=native` | добавить репозиторий на доску; slug по умолчанию — имя каталога, git remote/ветка подтягиваются сами. `path` — абсолютный, от `~` или относительный — от корня проектов (`root` из `GET /api/projects`, `LISTIK_PROJECTS_ROOT`, по умолчанию `~/Projects`), никогда от рабочего каталога сервера (listik-i23u); нет каталога — 400 `bad_argument` «каталога нет: <полный путь>». То же правило для `path` в `PATCH`. Если каталог лежит внутри git-репозитория, путь приводится к корню (`git rev-parse --show-toplevel`), а в ответе появляется `path_adjusted_from` — исходный путь, иначе `null`. Существующий slug не падает: проект возвращается на доску и обновляется. Сверка slug идёт **без учёта регистра** (`store.existing_slug`): если проект с таким slug уже есть в другом написании, возвращается он — с прежним регистром slug, `created=false`, — а не второй проект-дубль |
 | PATCH | `/api/projects/{slug}` | `title`, `path`, `color`, `kind`, `archived=0/1`, `routing` | правка проекта; `archived=1` — убрать с доски, не теряя задачи; `routing` — объект-переопределение маршрутизации проекта (`{}` сбрасывает его), проверяется `config.validate_routing`: допустимые ключи — `harnesses` (словарь этап → список имён, этапы и имена без дублей), `transitions` (словарь `"<этап>:<этап-или-done>"` → `sticky`\|`handoff`\|`sticky-return`), `return_window_hours` (число > 0); неизвестный ключ или неверная форма — 400 с текстом на русском; устаревший `default_process` (ни на что не влиял, убран) молча игнорируется, как и в старых `config.toml`/`routing` проекта |
 | DELETE | `/api/projects/{slug}` | `force=1` (или в теле) | убрать проект из Listik. Проект с задачами отвечает 409 — их сначала скрывают; `force` удаляет задачи вместе с проектом |
@@ -1505,6 +1506,41 @@ resource-blocks` снимает ребро до следующего `--apply` �
 и `--actor`/`actor` в теле на автора рёбер не влияют — как и у `waves --apply`, автор машинный по
 построению.
 
+`listik rescope --project X [--task id …] [--drift file.json] [--apply] [--json]`
+(`POST /api/swarm/rescope`, локальный фолбэк `client.local_call("swarm_rescope", …)`) — второй
+проход роя: запускается после каждой волны, когда у задач рабочего множества уже есть ТЗ
+(`spec_path`). Работает в две фазы. Фаза 1 (извлечение) читает ТЗ **по одному** — один вызов
+модели на задачу (`documents.get_document(conn, id, "spec")`, файл по `spec_path` или загруженный
+документ) — и просит `read_scope`/`write_scope`/`summary`; задача без `spec_path` или с
+нечитаемым файлом (`status != "ok"`) попадает в `unspecced` с причиной, её области не трогаются,
+в граф она идёт с текстом карточки (`source: "card"`). Фаза 2 (граф) — один общий вызов по
+выжимкам, областям, чужим рёбрам рабочего множества и копилке расхождений — та же механика
+уточнения графа/циклов, что у `plan` (`cycles`/`cycles_from`/`attempts`/`MAX_ATTEMPTS`).
+
+Копилка расхождений «объявил X, тронул Y» — вход фазы 2 (и правило «факт сильнее мнения» для
+фазы 1): записи из карточек, две журнальные формы от `agent:listik-swarm` (`kind="journal"`) —
+`рой: вне write_scope: {"files", "declared"}` (`listik watch`, swarm-5) и `рой: влито: {"sha",
+"branch", "base", "files", "declared", "outside"?}` (барьер `swarm/barrier.mjs`, swarm-6) — плюс
+необязательный файл `--drift` (JSON-список `{task, declared, touched|files, outside?}`) сверх
+записей из карточек; чужой автор, другой проект или битый JSON — не запись, счётчик `ignored`
+растёт. Файл из `outside` записи копилки **самой задачи** всегда попадает в её новый
+`write_scope`, даже если модель его не вернула («факт сильнее мнения»); пустой `write_scope`
+после этого — `unscoped`, области не пишутся, но извлечённая выжимка всё равно идёт в граф.
+Негодный ответ модели (`write_scope`/`read_scope` не проходят `scope.normalize_scope`) —
+`invalid[id]`, задача не пишется и не в `unscoped`. Метрика качества ТЗ (`drift` в ответе) —
+`records`/`ignored`/`tasks_with_drift`/`tasks_total`/`outside_files`/`ratio`, считается по всем
+неархивным задачам проекта, включая закрытые (влитые задачи волны — источник копилки).
+
+С `--apply` сначала пишутся области (`store.update_task`, только у изменившихся задач,
+`read_scope`/`write_scope`) от `agent:listik-swarm`, затем, если циклов нет, — рёбра
+(`deps.apply_planned_blocks`, как у `plan`); цикл от модели → области пишутся, рёбра нет
+(`applied.edges: null`). Смена области **не** пишет строку в `events` (там только
+stage/status/holder/needs_owner/assignee/route) — доска узнаёт из `publish("task", {"id",
+"action": "updated"})` по каждой записанной задаче; рёбра публикуют `{"action": "deps"}`, как у
+`plan`. Повтор без изменений (идемпотентность, обязательное свойство — проход зовётся после
+каждой волны) ничего не пишет: `applied.scopes == []`, рёбра `added == removed == []`. Код
+возврата CLI — `1`, если `cycles` непуст, иначе `0`.
+
 Список `launcher.RESERVED_ENV` (зарезервированные имена `launch --env`) эти переменные не
 расширяют: `LISTIK_SWARM_*` читает только проход роя на сервере/CLI, воркеру они не нужны и не
 вредны, если случайно окажутся в его окружении.
@@ -1551,6 +1587,7 @@ listik blocked                      # кто кого ждёт и почему
 listik waves --project X [--stage s3-impl] [--json]   # волны запуска: что можно делать одновременно
 listik waves --project X --apply                     # записать ресурсные рёбра resource-blocks под этот расчёт
 listik plan --project X [--stage s] [--apply] [--json]   # LLM-проход роя: грубые blocks между открытыми задачами
+listik rescope --project X [--task id …] [--drift file.json] [--apply] [--json]   # LLM-проход роя: read_scope/write_scope из готовых ТЗ, уточнение графа по копилке расхождений
 listik watch --project X [--task id …] [--dry-run] [--json]   # наблюдатель роя: тронутые файлы, пробное слияние по парам, расхождения с write_scope, лестница заморозки опоздавшего при конфликте (код возврата 1, если решение упало)
 listik tree <id>                    # дерево зависимостей задачи
 listik dep confirm <id> <блокер>    # подтвердить предложение агента → жёсткая связь

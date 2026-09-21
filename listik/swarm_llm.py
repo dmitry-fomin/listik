@@ -30,8 +30,12 @@ import urllib.request
 
 from . import assistant
 from . import deps
+from . import documents
 from . import errors
+from . import scope as scope_mod
+from . import store
 from . import store_helpers as store_helpers_mod
+from . import swarm_watch
 from . import util
 
 DEFAULT_BASE_URL = "https://openrouter.ai/api/v1"
@@ -388,6 +392,36 @@ def _group_by_later(pairs: list[list[str]], ids: list[str]) -> list[dict]:
            for later in sorted(groups, key=lambda tid: order_index[tid])]
 
 
+def _graph_pass(messages: list[dict], schema: dict, *, name: str, ids: list[str],
+                fixed: list[list[str]], cfg_settings: dict, opener, runner,
+                timeout: float) -> tuple[dict, list[list[str]], list[dict], list[list[str]], int]:
+    """Общий цикл уточнения графа `blocks` от модели, используемый `plan` и `rescope`:
+    вызов модели, нормализация ответа, проверка цикла, до `MAX_ATTEMPTS` попыток с
+    `RETRY_PROMPT`. Возвращает `(tasks_view, edges, dropped, cycles, attempts)`."""
+    tasks_view: dict = {}
+    model_edges: list[list[str]] = []
+    dropped: list[dict] = []
+    cycles: list[list[str]] = []
+    attempts = 0
+    for attempts in range(1, MAX_ATTEMPTS + 1):
+        data = complete_json(messages, schema, name=name, cfg_settings=cfg_settings,
+                             opener=opener, runner=runner, timeout=timeout)
+        tasks_view, model_edges, dropped = normalize_graph(data, ids)
+        incoming: dict[str, set[str]] = {}
+        for earlier, later in (*fixed, *model_edges):
+            incoming.setdefault(later, set()).add(earlier)
+        cycles = deps.find_cycles(ids, incoming)
+        if not cycles:
+            break
+        if attempts < MAX_ATTEMPTS:
+            messages = messages + [
+                {"role": "assistant", "content": util.json_dumps(data)},
+                {"role": "user", "content": RETRY_PROMPT.format(
+                    cycles=_format_cycles(cycles))},
+            ]
+    return tasks_view, model_edges, dropped, cycles, attempts
+
+
 def plan(conn, *, project: str, stage: str | None = None, apply: bool = False,
          cfg: dict | None = None, opener=None, runner=None, timeout: float = TIMEOUT) -> dict:
     """Проход plan: грубый граф `blocks` между открытыми задачами проекта от модели.
@@ -447,28 +481,9 @@ def plan(conn, *, project: str, stage: str | None = None, apply: bool = False,
             f"слишком много текста для одного вызова модели: {total_chars} символов — "
             "ограничь --stage")
 
-    tasks_view: dict = {}
-    model_edges: list[list[str]] = []
-    dropped: list[dict] = []
-    cycles: list[list[str]] = []
-    attempts = 0
-    for attempts in range(1, MAX_ATTEMPTS + 1):
-        data = complete_json(messages, PLAN_SCHEMA, name="swarm_plan",
-                             cfg_settings=cfg_settings, opener=opener, runner=runner,
-                             timeout=timeout)
-        tasks_view, model_edges, dropped = normalize_graph(data, ids)
-        incoming: dict[str, set[str]] = {}
-        for earlier, later in (*fixed, *model_edges):
-            incoming.setdefault(later, set()).add(earlier)
-        cycles = deps.find_cycles(ids, incoming)
-        if not cycles:
-            break
-        if attempts < MAX_ATTEMPTS:
-            messages = messages + [
-                {"role": "assistant", "content": util.json_dumps(data)},
-                {"role": "user", "content": RETRY_PROMPT.format(
-                    cycles=_format_cycles(cycles))},
-            ]
+    tasks_view, model_edges, dropped, cycles, attempts = _graph_pass(
+        messages, PLAN_SCHEMA, name="swarm_plan", ids=ids, fixed=fixed,
+        cfg_settings=cfg_settings, opener=opener, runner=runner, timeout=timeout)
 
     tasks_out = {
         tid: {"title": by_id[tid]["title"],
@@ -491,3 +506,343 @@ def plan(conn, *, project: str, stage: str | None = None, apply: bool = False,
             "attempts": attempts, "tasks": tasks_out, "edges": model_edges, "fixed": fixed,
             "previous": previous, "dropped": dropped, "cycles": [], "cycles_from": None,
             "applied": applied}
+
+
+# --- проход `listik rescope`: области read_scope/write_scope из ТЗ + уточнение графа ------
+
+MERGED_MARK = "рой: влито:"     # маркер барьера swarm-6 (swarm/barrier.mjs, MERGED_MARK); дубль
+MAX_SPEC_CHARS = 60_000         # текст одного ТЗ в промпте
+MAX_SUMMARY_CHARS = 600
+MAX_DRIFT_RECORDS = 200         # последних записей копилки в промпт графа
+
+EXTRACT_SCHEMA = {
+    "type": "object", "additionalProperties": False,
+    "required": ["read_scope", "write_scope", "summary"],
+    "properties": {"read_scope": {"type": "array", "items": {"type": "string"}},
+                   "write_scope": {"type": "array", "items": {"type": "string"}},
+                   "summary": {"type": "string"}},
+}
+
+EXTRACT_PROMPT = (
+    "Тебе дают карточку задачи (id, заголовок, описание, приёмка), текст её ТЗ и "
+    "drift — факты о том, какие файлы эта задача уже трогала вне объявленной области. "
+    "Выпиши write_scope — файлы и каталоги (пути от корня проекта, как они названы в "
+    "ТЗ, включая новые файлы, которые ТЗ велит создать), которые исполнитель будет "
+    "менять; read_scope — что он будет читать, не меняя (полнота не обязательна); "
+    "summary — два-три предложения: что делает задача и на чей результат опирается.\n"
+    "Правила: только пути из ТЗ, не выдумывай; путь каталога означает всё его "
+    "поддерево — бери каталог, если ТЗ правит в нём много файлов; без шаблонов (*, ?) "
+    "и без абсолютных путей; тесты и документация, которые ТЗ велит править, — тоже "
+    "write_scope; файлы из drift включи в write_scope.\n"
+    "Ответь одним JSON-объектом по схеме {\"read_scope\", \"write_scope\", \"summary\"}."
+)
+
+GRAPH_PROMPT = (
+    "Ты — планировщик очереди задач в трекере Listik. Тебе дают открытые задачи "
+    "одного проекта: у каждой summary (о чём задача), read_scope и write_scope (какие "
+    "файлы она читает/правит по её ТЗ), уже известные жёсткие зависимости fixed (их "
+    "менять нельзя — это факт), previous — твой прошлый ответ, который можно уточнять, "
+    "и drift — записи о том, что объявленные области на деле оказались шире.\n"
+    "Расставь грубые зависимости: задача B ждёт задачу A (B.depends_on содержит A), "
+    "если по выжимкам B опирается на результат A: A вводит то, что B читает или "
+    "правит. Одинаковый write_scope сам по себе — не зависимость, конфликты по файлам "
+    "разводит планировщик волн, не ты; drift показывает, что объявленные области на "
+    "деле шире — учитывай это, решая, чей результат кому нужен.\n"
+    "Правила: только id из списка; сомневаешься — не ставь; общая тема, общий "
+    "родитель, соседние файлы — не зависимость; циклов быть не должно (если A ждёт B, "
+    "B не ждёт A ни напрямую, ни через другие); reason — одна короткая фраза, почему B "
+    "ждёт A (пустая строка, если depends_on пуст).\n"
+    "Ответь одним JSON-объектом по схеме {\"tasks\": [{\"id\", \"depends_on\", "
+    "\"reason\"}]} — по одной записи на каждую задачу списка."
+)
+
+
+def _clean_str_list(value) -> list[str]:
+    if not isinstance(value, list):
+        return []
+    out: list[str] = []
+    for item in value:
+        if isinstance(item, str):
+            s = item.strip()
+            if s:
+                out.append(s)
+    return out
+
+
+def _uncovered(touched: list[str], declared: list[str]) -> list[str]:
+    return [f for f in touched if not any(scope_mod.covers(d, f) for d in declared)]
+
+
+def drift_records(conn, *, project: str, extra: list | None = None) -> tuple[list[dict], int]:
+    """Копилка расхождений «объявил X, тронул Y»: из журнальных записей
+    (`SCOPE_MARK`/`MERGED_MARK`, автор `SWARM_AUTHOR`) карточек проекта плюс `extra`
+    (`--drift`). Возвращает `(records, ignored)` — записи в порядке времени."""
+    records: list[dict] = []
+    ignored = 0
+
+    rows = deps._fetch(
+        conn,
+        "SELECT c.task_id, c.text, c.created_at FROM comments c "
+        "JOIN tasks t ON t.id = c.task_id "
+        "WHERE t.project = ? AND t.archived = 0 AND c.author = ? "
+        "AND (c.text LIKE ? OR c.text LIKE ?) ORDER BY c.created_at, c.id",
+        (project, SWARM_AUTHOR, swarm_watch.SCOPE_MARK + "%", MERGED_MARK + "%"),
+    )
+    for row in rows:
+        text = row["text"] or ""
+        if text.startswith(swarm_watch.SCOPE_MARK):
+            mark, source = swarm_watch.SCOPE_MARK, "watch"
+        elif text.startswith(MERGED_MARK):
+            mark, source = MERGED_MARK, "merged"
+        else:
+            ignored += 1
+            continue
+        try:
+            data = util.json_loads(text[len(mark):].strip())
+        except util.JSONDecodeError:
+            ignored += 1
+            continue
+        if not isinstance(data, dict):
+            ignored += 1
+            continue
+        declared = _clean_str_list(data.get("declared"))
+        if source == "watch":
+            touched = _clean_str_list(data.get("files"))
+            outside = list(touched)
+        else:
+            touched = _clean_str_list(data.get("files"))
+            outside = (_clean_str_list(data.get("outside")) if "outside" in data
+                      else _uncovered(touched, declared))
+        records.append({"task": row["task_id"], "declared": declared, "touched": touched,
+                        "outside": outside, "source": source, "ts": row["created_at"]})
+
+    if extra is not None:
+        valid_ids = {r["id"] for r in deps._fetch(
+            conn, "SELECT id FROM tasks WHERE project = ? AND archived = 0", (project,))}
+        for item in extra:
+            if not isinstance(item, dict):
+                ignored += 1
+                continue
+            task = item.get("task")
+            if not isinstance(task, str) or not task or task not in valid_ids:
+                ignored += 1
+                continue
+            declared = _clean_str_list(item.get("declared"))
+            touched_raw = item.get("touched")
+            if touched_raw is None:
+                touched_raw = item.get("files")
+            touched = _clean_str_list(touched_raw)
+            outside = (_clean_str_list(item.get("outside")) if "outside" in item
+                      else _uncovered(touched, declared))
+            records.append({"task": task, "declared": declared, "touched": touched,
+                            "outside": outside, "source": "file", "ts": None})
+
+    return records, ignored
+
+
+def rescope(conn, *, project: str, tasks: list[str] | None = None, drift: list | None = None,
+           apply: bool = False, cfg: dict | None = None, opener=None, runner=None,
+           timeout: float = TIMEOUT) -> dict:
+    """Проход rescope: `read_scope`/`write_scope` из ТЗ готовых задач проекта плюс
+    уточнение графа `blocks` по выжимкам, областям, чужим рёбрам и копилке
+    расхождений «объявил X, тронул Y». Без `apply` — сухой прогон.
+    """
+    rows = working_set(conn, project=project)
+    ids = [r["id"] for r in rows]
+    by_id = {r["id"]: r for r in rows}
+    cfg_settings = settings(cfg)
+
+    if tasks:
+        id_set = set(ids)
+        for tid in tasks:
+            if tid not in id_set:
+                raise errors.BadArgument(f"задача {tid} не в рабочем множестве проекта")
+        wanted = set(tasks)
+        extract_ids = [tid for tid in ids if tid in wanted]
+    else:
+        extract_ids = list(ids)
+
+    if drift is not None and not isinstance(drift, list):
+        raise errors.BadArgument("drift: ожидался список записей")
+
+    records, ignored = drift_records(conn, project=project, extra=drift)
+    own: dict[str, list[dict]] = {}
+    for rec in records:
+        own.setdefault(rec["task"], []).append(rec)
+
+    fixed, previous = fixed_edges(conn, ids)
+    incoming_fixed: dict[str, set[str]] = {}
+    for earlier, later in fixed:
+        incoming_fixed.setdefault(later, set()).add(earlier)
+    db_cycles = deps.find_cycles(ids, incoming_fixed)
+
+    # --- фаза 1: извлечение областей из ТЗ, по одной задаче за вызов ---------------
+
+    new: dict[str, dict] = {}
+    changed: dict[str, bool] = {}
+    unspecced: dict[str, str] = {}
+    unscoped: list[str] = []
+    invalid: dict[str, str] = {}
+    unscoped_summary: dict[str, str] = {}
+    extracted = 0
+
+    for tid in extract_ids:
+        row = by_id[tid]
+        try:
+            doc = documents.get_document(conn, tid, "spec")
+        except errors.NotFound:
+            unspecced[tid] = "нет spec_path"
+            continue
+        if doc["status"] != "ok":
+            unspecced[tid] = doc.get("error") or "файл ТЗ не прочитан"
+            continue
+
+        own_records = own.get(tid, [])
+        user_payload = {
+            "task": {"id": tid, "title": row["title"],
+                     "description": _clip(row["description"] or "", MAX_FIELD_CHARS),
+                     "acceptance": _clip(row["acceptance"] or "", MAX_FIELD_CHARS),
+                     "spec_path": row["spec_path"]},
+            "spec": (doc.get("content") or "")[:MAX_SPEC_CHARS],
+            "drift": [{"touched": r["touched"], "declared": r["declared"],
+                      "outside": r["outside"], "source": r["source"]} for r in own_records],
+        }
+        messages = [{"role": "system", "content": EXTRACT_PROMPT},
+                   {"role": "user", "content": util.json_dumps(user_payload)}]
+        data = complete_json(messages, EXTRACT_SCHEMA, name="swarm_rescope_extract",
+                             cfg_settings=cfg_settings, opener=opener, runner=runner,
+                             timeout=timeout)
+        extracted += 1
+
+        read_scope_raw = data.get("read_scope") if isinstance(data, dict) else None
+        if not isinstance(read_scope_raw, list):
+            read_scope_raw = []
+        write_scope_raw = data.get("write_scope") if isinstance(data, dict) else None
+        if not isinstance(write_scope_raw, list):
+            write_scope_raw = []
+        outside_own: list[str] = []
+        for r in own_records:
+            for f in r["outside"]:
+                if f not in outside_own:
+                    outside_own.append(f)
+        write_scope_raw = list(write_scope_raw) + [f for f in outside_own
+                                                    if f not in write_scope_raw]
+
+        try:
+            read_scope_norm = scope_mod.normalize_scope(read_scope_raw, field="read_scope")
+            write_scope_norm = scope_mod.normalize_scope(write_scope_raw, field="write_scope")
+        except errors.BadArgument as exc:
+            invalid[tid] = str(exc)
+            continue
+
+        summary_raw = data.get("summary") if isinstance(data, dict) else None
+        summary = summary_raw[:MAX_SUMMARY_CHARS] if isinstance(summary_raw, str) else ""
+
+        if not write_scope_norm:
+            unscoped.append(tid)
+            unscoped_summary[tid] = summary
+            continue
+
+        current_read = store_helpers_mod.json_list(row["read_scope"])
+        current_write = store_helpers_mod.json_list(row["write_scope"])
+        new[tid] = {"read_scope": read_scope_norm, "write_scope": write_scope_norm,
+                   "summary": summary}
+        changed[tid] = (read_scope_norm != current_read or write_scope_norm != current_write)
+
+    # --- вид каждой задачи для графа и ответа: из `new`, иначе с карточки ----------
+
+    view: dict[str, dict] = {}
+    for tid in ids:
+        row = by_id[tid]
+        if tid in new:
+            view[tid] = {"read_scope": new[tid]["read_scope"],
+                        "write_scope": new[tid]["write_scope"],
+                        "summary": new[tid]["summary"], "source": "spec"}
+        else:
+            summary = unscoped_summary.get(tid) or _clip(row["description"] or "",
+                                                          MAX_SUMMARY_CHARS)
+            view[tid] = {"read_scope": store_helpers_mod.json_list(row["read_scope"]),
+                        "write_scope": store_helpers_mod.json_list(row["write_scope"]),
+                        "summary": summary, "source": "card"}
+
+    # --- фаза 2: граф ---------------------------------------------------------------
+
+    tasks_graph: dict = {tid: {"depends_on": [], "reason": ""} for tid in ids}
+    edges: list[list[str]] = []
+    dropped: list[dict] = []
+    cycles: list[list[str]] = []
+    attempts = 0
+
+    if db_cycles:
+        cycles, cycles_from = db_cycles, "db"
+    elif not ids:
+        cycles_from = None
+    else:
+        payload_tasks = [{"id": tid, "title": by_id[tid]["title"],
+                          "summary": view[tid]["summary"],
+                          "read_scope": view[tid]["read_scope"],
+                          "write_scope": view[tid]["write_scope"]} for tid in ids]
+        drift_payload = [{"task": r["task"], "declared": r["declared"],
+                          "outside": r["outside"], "source": r["source"]}
+                         for r in records[-MAX_DRIFT_RECORDS:]]
+        payload = {"project": project, "tasks": payload_tasks,
+                  "fixed": _group_by_later(fixed, ids),
+                  "previous": _group_by_later(previous, ids), "drift": drift_payload}
+        messages = [{"role": "system", "content": GRAPH_PROMPT},
+                   {"role": "user", "content": util.json_dumps(payload)}]
+        total_chars = sum(len(m["content"]) for m in messages)
+        if total_chars > MAX_TOTAL_CHARS:
+            raise errors.BadArgument(
+                f"слишком много текста для одного вызова модели: {total_chars} "
+                "символов — ограничь --task")
+        tasks_graph, edges, dropped, cycles, attempts = _graph_pass(
+            messages, PLAN_SCHEMA, name="swarm_rescope_graph", ids=ids, fixed=fixed,
+            cfg_settings=cfg_settings, opener=opener, runner=runner, timeout=timeout)
+        cycles_from = "model" if cycles else None
+
+    # --- запись (только с `apply`) ---------------------------------------------------
+
+    applied = None
+    if apply:
+        scopes_applied: list[str] = []
+        for tid in ids:
+            if tid in new and changed.get(tid):
+                store.update_task(conn, tid, actor=SWARM_AUTHOR,
+                                  note="rescope: области из ТЗ",
+                                  read_scope=new[tid]["read_scope"],
+                                  write_scope=new[tid]["write_scope"])
+                scopes_applied.append(tid)
+        edges_applied = None if cycles else deps.apply_planned_blocks(
+            conn, working=ids, edges=edges)
+        applied = {"scopes": scopes_applied, "edges": edges_applied}
+
+    # --- метрика качества ТЗ ---------------------------------------------------------
+
+    tasks_total = deps._fetch(
+        conn, "SELECT COUNT(*) AS n FROM tasks WHERE project = ? AND archived = 0",
+        (project,))[0]["n"]
+    tasks_with_drift = len({r["task"] for r in records})
+    outside_files = len({f for r in records for f in r["outside"]})
+    ratio = round(tasks_with_drift / tasks_total, 2) if tasks_total else 0.0
+    drift_out = {"records": len(records), "ignored": ignored,
+                "tasks_with_drift": tasks_with_drift, "tasks_total": tasks_total,
+                "outside_files": outside_files, "ratio": ratio}
+
+    # --- ответ -------------------------------------------------------------------
+
+    tasks_out = {}
+    for tid in ids:
+        graph_info = tasks_graph.get(tid, {})
+        tasks_out[tid] = {"title": by_id[tid]["title"],
+                          "read_scope": view[tid]["read_scope"],
+                          "write_scope": view[tid]["write_scope"],
+                          "summary": view[tid]["summary"], "source": view[tid]["source"],
+                          "changed": changed.get(tid, False),
+                          "depends_on": graph_info.get("depends_on", []),
+                          "reason": graph_info.get("reason", "")}
+
+    return {"project": project, "model": cfg_settings["model"], "extracted": extracted,
+            "attempts": attempts, "tasks": tasks_out, "unspecced": unspecced,
+            "unscoped": unscoped, "invalid": invalid, "drift": drift_out, "edges": edges,
+            "fixed": fixed, "previous": previous, "dropped": dropped, "cycles": cycles,
+            "cycles_from": cycles_from, "applied": applied}

@@ -16,6 +16,7 @@ listik ready                                        # что можно брат
 listik waves --project X                            # волны запуска: что делать одновременно
 listik waves --project X --apply                    # записать ресурсные рёбра resource-blocks под этот расчёт
 listik plan --project X --apply                      # LLM-проход роя: грубые blocks между открытыми задачами
+listik rescope --project X --apply                   # LLM-проход роя: области read_scope/write_scope из готовых ТЗ, уточнение графа
 listik show <id>                                    # вся карточка
 listik worktree <id>                                # дерево .worktrees/<id>, ветка task/<id>, от HEAD
 listik claim <id> --holder claude --note "беру"
@@ -155,6 +156,11 @@ slug `all` выбрать этим CLI нельзя. Автоопределен�
 Перед первой волной: `listik plan --project X --apply` расставляет грубые зависимости `blocks`
 между открытыми задачами проекта (модель — только для порядка написания ТЗ, не для точности) —
 проверить результат `listik waves`.
+
+После волны ТЗ и после каждой влитой волны: `listik rescope --project X --apply` — читает
+готовые ТЗ (`spec_path`), пишет `read_scope`/`write_scope` по ним и уточняет граф `blocks` по
+копилке расхождений («объявил X, тронул Y» из `listik watch` и барьера); метрика качества
+ТЗ — в выводе.
 
 Требования: `node` ≥ 22, поднятый сервер Listik (`listik serve --daemon`), установленный `listik`
 в `PATH` (или путь через `--listik`). Обёртки в `PATH` пока нет — ставится позже, вместе с

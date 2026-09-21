@@ -946,6 +946,41 @@ def handle(method: str, path: str, query: dict, body: dict, authed: bool = False
                 publish("task", {"id": tid, "action": "deps"})
         return 200, {**out, "generated_at": store.now_iso()}
 
+    if path == "/api/swarm/rescope":
+        if method != "POST":
+            raise ApiError(405, "метод не поддерживается")
+        # `actor`/`X-Listik-Owner` не влияют на автора записей: области и рёбра всегда
+        # от `swarm_llm.SWARM_AUTHOR` — запись машинная по построению.
+        project = body.get("project") or ""
+        tasks = body.get("tasks")
+        if tasks is not None and not (isinstance(tasks, list)
+                                      and all(isinstance(t, str) for t in tasks)):
+            raise ApiError(400, "tasks: ожидался список id")
+        drift = body.get("drift")
+        apply_ = bool(body.get("apply"))
+        try:
+            out = swarm_llm.rescope(conn, project=project, tasks=tasks, drift=drift,
+                                    apply=apply_)
+        except swarm_llm.SwarmLlmError as exc:
+            raise ApiError(exc.status, exc.message, code=exc.code) from exc
+        except errors_mod.NotFound as exc:
+            raise api_error(404, exc) from exc
+        except errors_mod.ListikError as exc:
+            raise ApiError(409 if exc.code == errors_mod.CONFLICT else 400, exc.message,
+                           code=exc.code) from exc
+        applied = out.get("applied")
+        if applied:
+            for tid in applied.get("scopes") or []:
+                publish("task", {"id": tid, "action": "updated"})
+            edges_applied = applied.get("edges")
+            if edges_applied:
+                touched: set[str] = set()
+                for pair in (*edges_applied["added"], *edges_applied["removed"]):
+                    touched.update(pair)
+                for tid in touched:
+                    publish("task", {"id": tid, "action": "deps"})
+        return 200, {**out, "generated_at": store.now_iso()}
+
     if path == "/api/deps/suggested":
         return 200, {
             "items": deps_mod.suggested(conn, project=q1("project"),

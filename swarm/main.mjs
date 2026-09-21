@@ -24,6 +24,7 @@ export function waitingLine(result) {
     const label = s.reason === "held" ? "держит другой"
       : s.reason === "frozen" ? "заморожена"
       : s.reason === "gated" ? "гейт"
+      : s.reason === "budget" ? "бюджет"
       : "не влезла в партию";
     parts.push(`${s.id} ${label}`);
   }
@@ -38,6 +39,7 @@ export function questionReason(text) {
   if (!text.startsWith("рой:")) {
     return isSoftQuestion(text) ? "вопрос воркера, есть дефолт" : "вопрос воркера";
   }
+  if (text.includes("бюджет прогона исчерпан")) return "бюджет";
   if (text.includes("нет маршрута")) return "без маршрута";
   if (text.includes("нет write_scope")) return "без области";
   if (text.includes("процесс задачи завершился")) return "упала";
@@ -69,13 +71,21 @@ async function reportWaiting(listik, config, log, result) {
   log.line(waitingLine(result));
 }
 
-async function runOneTick(listik, config, log) {
+async function runOneTick(listik, config, log, runState) {
   try {
-    return await tick(listik, config, log);
+    return await tick(listik, config, log, runState);
   } catch (err) {
     log.line(`ошибка тика: ${err.code ?? "error"}/${err.message ?? err}/${err.hint ?? ""}`);
     return {error: true};
   }
+}
+
+function budgetBound(n) {
+  return n > 0 ? String(n) : "∞";
+}
+
+function spentShown(n) {
+  return String(Math.round(n * 10) / 10);
 }
 
 export async function main(argv) {
@@ -114,8 +124,10 @@ export async function main(argv) {
   process.once("SIGINT", onSignal("SIGINT", 130));
   process.once("SIGTERM", onSignal("SIGTERM", 143));
 
+  const runState = {startedAt: new Date(), launches: 0};
+
   if (config.once || config.dryRun) {
-    const result = await runOneTick(listik, config, log);
+    const result = await runOneTick(listik, config, log, runState);
     if (signalExit != null) return signalExit;
     if (result.error) return 4;
     if (result.serverDown) return 3;
@@ -127,7 +139,7 @@ export async function main(argv) {
   let totalRestarts = 0;
 
   for (;;) {
-    const result = await runOneTick(listik, config, log);
+    const result = await runOneTick(listik, config, log, runState);
     if (signalExit != null) return signalExit;
 
     if (result.serverDown || result.error || (result.cycles && result.cycles.length)) {
@@ -138,10 +150,28 @@ export async function main(argv) {
 
     if (firstOpen == null) firstOpen = result.open || [];
     totalRestarts += (result.restarted || []).length;
+    runState.launches += (result.launched || []).length + (result.restarted || []).length;
 
     const launchedNone = !result.launched || result.launched.length === 0;
     const restartedNone = !result.restarted || result.restarted.length === 0;
     const runningEmpty = !result.running || result.running.length === 0;
+    const exhausted = result.budget && result.budget.exhausted;
+
+    if (exhausted && runningEmpty) {
+      const openList = result.open || [];
+      if (openList.length === 0) return 0;
+      await reportWaiting(listik, config, log, result);
+      const lastOpen = new Set(openList);
+      const closed = firstOpen.filter(id => !lastOpen.has(id));
+      const leftToHuman = (result.needsOwnerOpen || []).length;
+      const spent = result.budget.spentMinutes ?? 0;
+      const launches = result.budget.launches ?? runState.launches;
+      log.line(`итог: бюджет исчерпан — минут ${spentShown(spent)} из ${budgetBound(config.budgetMinutes)}, ` +
+        `запусков ${launches} из ${budgetBound(config.maxLaunches)}, ` +
+        `закрыто ${closed.length} (${closed.join(", ")}), оставлено человеку ${leftToHuman}`);
+      return 5;
+    }
+
     if (launchedNone && restartedNone && runningEmpty) {
       const openList = result.open || [];
       if (openList.length === 0) return 0;

@@ -46,6 +46,7 @@ export function open(dir, project) {
         s.reason === "held" ? `держит ${s.holder ?? "другого"}`
           : s.reason === "frozen" ? "заморожена"
           : s.reason === "gated" ? "гейт"
+          : s.reason === "budget" ? "бюджет"
           : "не влезла"
       }`)
       .join(", ");
@@ -77,7 +78,8 @@ export function open(dir, project) {
       `дефолт ${(report.defaults || []).length} (${defaultsDesc}) · ` +
       `разморожено ${(report.unfrozen || []).length} (${unfrozenDesc}) · ` +
       `интеграция ${integrationDesc} · ` +
-      `стоп ${report.halt ?? "—"}`;
+      `стоп ${report.halt ?? "—"} · ` +
+      `бюджет ${report.budget && report.budget.exhausted ? "исчерпан" : "есть"}`;
     fs.writeSync(fd, `[${stampLine(now)}] ${text}\n`);
     process.stdout.write(text + "\n");
     return text;

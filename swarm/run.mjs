@@ -2,7 +2,7 @@
 // действия, свести итог. Без состояния между тиками — всё читается заново.
 import path from "node:path";
 import fs from "node:fs";
-import {decide, portOf, allocatePort, isRunning, OPEN_STATUSES, dueDefaults} from "./decide.mjs";
+import {decide, portOf, allocatePort, isRunning, OPEN_STATUSES, dueDefaults, restartCauseRu} from "./decide.mjs";
 import {runBarrier, haltCards} from "./barrier.mjs";
 import {ConfigError, parseSwarmConfig, swarmConfigFor, DEFAULT_QUESTION_TIMEOUT} from "./config.mjs";
 import * as git from "./git.mjs";
@@ -26,7 +26,15 @@ function needsEventsFetch(t) {
   return !!t.launched_by && !!t.launch_finished_at;
 }
 
-export async function tick(listik, config, log) {
+function budgetBound(n) {
+  return n > 0 ? String(n) : "∞";
+}
+
+function spentShown(n) {
+  return String(Math.round(n * 10) / 10);
+}
+
+export async function tick(listik, config, log, runState = null) {
   const status = await listik.status();
   if (status.server !== "up") {
     if (status.server === "unauthorized") {
@@ -191,8 +199,20 @@ export async function tick(listik, config, log) {
     }
   }
 
-  const tickConfig = {...config, questionTimeout};
   const now = new Date();
+  const budgetMinutes = config.budgetMinutes || 0;
+  const maxLaunches = config.maxLaunches || 0;
+  const spentMinutes = runState
+    ? (now.getTime() - runState.startedAt.getTime()) / 60000
+    : 0;
+  const launchesSoFar = runState ? runState.launches : 0;
+  const exhausted = (budgetMinutes > 0 && spentMinutes >= budgetMinutes)
+    || (maxLaunches > 0 && launchesSoFar >= maxLaunches);
+  const launchesLeft = maxLaunches > 0 ? Math.max(maxLaunches - launchesSoFar, 0) : null;
+  log.line(`бюджет: минут ${spentShown(spentMinutes)}/${budgetBound(budgetMinutes)}, ` +
+    `запусков ${launchesSoFar}/${budgetBound(maxLaunches)}`);
+
+  const tickConfig = {...config, questionTimeout, budgetExhausted: exhausted, launchesLeft};
   const due = dueDefaults({tasks, events, config: tickConfig, now});
   const defaultsDone = [];
   for (const item of due) {
@@ -283,14 +303,22 @@ export async function tick(listik, config, log) {
 
   // п.6.4: предел перезапусков (или нет свободных портов) — снять процесс и поставить флаг.
   for (const item of decision.giveUp) {
+    const isBudget = item.reason === "budget";
+    const causeRu = restartCauseRu(item.cause);
+    const revokeNote = isBudget
+      ? `рой: бюджет прогона исчерпан — процесс снят (${causeRu})`
+      : `рой: ${item.reason}, предел перезапусков`;
+    const revokeLog = isBudget
+      ? `revoke ${item.id}: бюджет исчерпан (${causeRu})`
+      : `revoke ${item.id}: предел перезапусков (${item.reason})`;
     if (config.dryRun) {
-      log.action(`[dry-run] revoke ${item.id}: рой: ${item.reason}, предел перезапусков`);
+      log.action(`[dry-run] revoke ${item.id}: ${revokeNote}`);
       log.action(`[dry-run] needs-owner ${item.id}: ${item.text}`);
       continue;
     }
     try {
-      await listik.revoke(item.id, `рой: ${item.reason}, предел перезапусков`);
-      log.action(`revoke ${item.id}: предел перезапусков (${item.reason})`);
+      await listik.revoke(item.id, revokeNote);
+      log.action(revokeLog);
     } catch (err) {
       log.line(`revoke ${item.id} ошибка: ${errText(err)}`);
     }
@@ -493,5 +521,6 @@ export async function tick(listik, config, log) {
       gate,
     },
     watch: watchSummary,
+    budget: {exhausted, spentMinutes, launches: launchesSoFar},
   };
 }

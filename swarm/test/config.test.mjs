@@ -1,7 +1,7 @@
 import {test} from "node:test";
 import assert from "node:assert/strict";
 import {parseConfig, parseSwarmConfig, swarmConfigFor, ConfigError, HelpRequested,
-  DEFAULT_QUESTION_TIMEOUT} from "../config.mjs";
+  DEFAULT_QUESTION_TIMEOUT, HELP_TEXT} from "../config.mjs";
 
 test("дефолты", () => {
   const config = parseConfig(["--project", "listik"]);
@@ -26,6 +26,26 @@ test("--weights foo=1 — ошибка", () => {
 
 test("--parallel abc — ошибка", () => {
   assert.throws(() => parseConfig(["--project", "listik", "--parallel", "abc"]), ConfigError);
+});
+
+test("бюджет: дефолты 0, разбор флагов, ошибки валидации, HELP_TEXT", () => {
+  const d = parseConfig(["--project", "listik"]);
+  assert.equal(d.budgetMinutes, 0);
+  assert.equal(d.maxLaunches, 0);
+
+  assert.equal(parseConfig(["--project", "p", "--max-launches", "2"]).maxLaunches, 2);
+  assert.equal(parseConfig(["--project", "p", "--budget-minutes", "1.5"]).budgetMinutes, 1.5);
+  assert.equal(parseConfig(["--project", "p", "--budget-minutes", "90"]).budgetMinutes, 90);
+
+  assert.throws(() => parseConfig(["--project", "p", "--budget-minutes", "x"]), ConfigError);
+  assert.throws(() => parseConfig(["--project", "p", "--budget-minutes", "-1"]), ConfigError);
+  assert.throws(() => parseConfig(["--project", "p", "--max-launches", "-1"]), ConfigError);
+  assert.throws(() => parseConfig(["--project", "p", "--max-launches", "1.5"]), ConfigError);
+
+  assert.equal(parseConfig(["--project", "p", "--parallel=-1"]).parallel, -1);
+
+  assert.match(HELP_TEXT, /--budget-minutes/);
+  assert.match(HELP_TEXT, /--max-launches/);
 });
 
 test("без --project — ошибка", () => {

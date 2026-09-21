@@ -699,3 +699,142 @@ test("dueDefaults без questionTimeout использует DEFAULT_QUESTION_T
   assert.match(src, /from "\.\/config\.mjs"/);
   assert.doesNotMatch(src, /questionTimeout[^\n]*=[^\n]*30/);
 });
+
+// --- порция d: бюджет прогона ---
+
+test("бюджет: launchesLeft 1, три кандидата веса 1 — один launch, два skipped budget", () => {
+  const ids = ["a", "b", "c"];
+  const tasks = ids.map(id => task(id));
+  const plan = {waves: [ids], cycles: [], unroutable: [], unscoped: [], blocked: {}};
+  const routes = routesFor(ids, "low");
+  const res = decide({
+    plan, tasks, routes, config: {...config, launchesLeft: 1}, now: new Date(),
+  });
+  assert.deepEqual(res.launch.map(l => l.id), ["a"]);
+  assert.deepEqual(res.skipped, [{id: "b", reason: "budget"}, {id: "c", reason: "budget"}]);
+  assert.deepEqual(res.report.budget, {exhausted: false, launchesLeft: 1});
+});
+
+test("бюджет: launchesLeft 0 — launch пуст, все skipped budget, reason budget", () => {
+  const ids = ["a", "b", "c"];
+  const tasks = ids.map(id => task(id));
+  const plan = {waves: [ids], cycles: [], unroutable: [], unscoped: [], blocked: {}};
+  const routes = routesFor(ids, "low");
+  const res = decide({
+    plan, tasks, routes, config: {...config, launchesLeft: 0}, now: new Date(),
+  });
+  assert.deepEqual(res.launch, []);
+  assert.ok(res.skipped.every(s => s.reason === "budget"));
+  assert.deepEqual(res.skipped.map(s => s.id), ids);
+  assert.equal(res.report.reason, "budget");
+  assert.deepEqual(res.report.budget, {exhausted: false, launchesLeft: 0});
+});
+
+test("бюджет: launchesLeft null и без поля — все три в launch", () => {
+  const ids = ["a", "b", "c"];
+  const tasks = ids.map(id => task(id));
+  const plan = {waves: [ids], cycles: [], unroutable: [], unscoped: [], blocked: {}};
+  const routes = routesFor(ids, "low");
+  const resNull = decide({
+    plan, tasks, routes, config: {...config, launchesLeft: null}, now: new Date(),
+  });
+  const resMissing = decide({plan, tasks, routes, config, now: new Date()});
+  assert.deepEqual(resNull.launch.map(l => l.id), ids);
+  assert.deepEqual(resMissing.launch.map(l => l.id), ids);
+  assert.deepEqual(resMissing.report.budget, {exhausted: false, launchesLeft: null});
+});
+
+test("бюджет: budgetExhausted + зависшая — restart пуст, giveUp budget, порт не выделялся", () => {
+  const now = new Date();
+  const t = runningTask("a", {
+    launched_at: minsAgo(now, 30), holder_at: minsAgo(now, 30), labels: ["port:5170"],
+    launch_log: "/logs/a.log",
+  });
+  const res = decideRunning(t, {now, config: {...supConfig, budgetExhausted: true}});
+  assert.deepEqual(res.restart, []);
+  assert.equal(res.giveUp.length, 1);
+  assert.equal(res.giveUp[0].id, "a");
+  assert.equal(res.giveUp[0].reason, "budget");
+  assert.equal(res.giveUp[0].cause, "stale");
+  assert.equal(res.giveUp[0].port, undefined);
+  assert.match(res.giveUp[0].text, /бюджет прогона исчерпан/);
+  assert.match(res.giveUp[0].text, /зависла/);
+  assert.match(res.giveUp[0].text, /\/logs\/a\.log/);
+  assert.deepEqual(res.report.budget, {exhausted: true, launchesLeft: null});
+});
+
+test("бюджет: budgetExhausted + упавшая с answer — giveUp budget, restart пуст", () => {
+  const t = task("a", {
+    launched_by: "agent:listik-swarm", launch_finished_at: "2026-01-01T00:00:00Z",
+    launch_exit_code: 1, needs_owner: false, labels: ["port:5170"], launch_log: "/logs/a.log",
+  });
+  const events = {a: [{kind: "answer", actor: "dmitry", ts: "2026-01-01T01:00:00Z"}]};
+  const res = decideRunning(t, {
+    plan: emptyPlan, events, config: {...supConfig, budgetExhausted: true},
+  });
+  assert.deepEqual(res.restart, []);
+  assert.equal(res.giveUp.length, 1);
+  assert.equal(res.giveUp[0].reason, "budget");
+  assert.equal(res.giveUp[0].cause, "answered");
+  assert.match(res.giveUp[0].text, /бюджет прогона исчерпан/);
+  assert.match(res.giveUp[0].text, /ответ/);
+});
+
+test("бюджет: budgetExhausted + упавшая без ответа — crashed как раньше", () => {
+  const t = task("a", {
+    launched_by: "agent:listik-swarm", launch_finished_at: "2026-01-01T00:00:00Z",
+    launch_exit_code: 1, needs_owner: false, generation: 3, launch_log: "/logs/a.log",
+  });
+  const res = decideRunning(t, {
+    plan: emptyPlan, config: {...supConfig, budgetExhausted: true},
+  });
+  assert.equal(res.crashed.length, 1);
+  assert.deepEqual(res.restart, []);
+  assert.deepEqual(res.giveUp, []);
+});
+
+test("бюджет: budgetExhausted + закрытая бегущая дольше timeout — stopOnly", () => {
+  const now = new Date();
+  const t = runningTask("a", {
+    status: "done", launched_at: minsAgo(now, 60), holder_at: minsAgo(now, 60),
+  });
+  const res = decideRunning(t, {
+    now, config: {...supConfig, timeoutMinutes: 30, budgetExhausted: true},
+  });
+  assert.deepEqual(res.stopOnly, [{id: "a", reason: "timeout"}]);
+  assert.deepEqual(res.restart, []);
+  assert.deepEqual(res.giveUp, []);
+});
+
+test("бюджет: budgetExhausted не трогает dueDefaults", () => {
+  const now = new Date();
+  const t = crashedSoft();
+  const events = {a: [{kind: "question", actor: "agent:fake", ts: minsAgo(now, 40), note: SOFT_Q}]};
+  const cfg = {...supConfig, questionTimeout: 30, budgetExhausted: true};
+  assert.deepEqual(dueDefaults({tasks: [t], events, config: cfg, now}),
+    [{id: "a", line: "JSON", minutes: 30}]);
+  const res = decideRunning(t, {now, events, config: cfg, plan: emptyPlan});
+  assert.deepEqual(res.restart, []);
+  assert.deepEqual(res.crashed, []);
+});
+
+test("бюджет: gate unmerged + budgetExhausted — report.reason unmerged", () => {
+  const now = new Date();
+  const candidate = task("b");
+  const stale = runningTask("a", {
+    launched_at: minsAgo(now, 30), holder_at: minsAgo(now, 30), labels: ["port:5170"],
+  });
+  const tasks = [candidate, stale];
+  const plan = {waves: [["b"]], cycles: [], unroutable: [], unscoped: [], blocked: {}};
+  const gate = {reason: "unmerged", ids: []};
+  const res = decide({
+    plan, tasks, routes: [], config: {...supConfig, budgetExhausted: true}, now, gate,
+  });
+  assert.deepEqual(res.launch, []);
+  assert.ok(res.skipped.some(s => s.id === "b" && s.reason === "gated"));
+  assert.deepEqual(res.restart, []);
+  assert.equal(res.giveUp.length, 1);
+  assert.equal(res.giveUp[0].reason, "budget");
+  assert.equal(res.report.reason, "unmerged");
+  assert.deepEqual(res.report.budget, {exhausted: true, launchesLeft: null});
+});

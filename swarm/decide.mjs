@@ -194,6 +194,32 @@ function crashedText(id, exitCode, generation, launchLog) {
     `"…"), тогда рой перезапустит её новым поколением.`;
 }
 
+const RESTART_CAUSE_RU = {
+  stale: "зависла",
+  timeout: "таймаут",
+  answered: "ответ",
+  defaulted: "ответ",
+  rejected: "не принята",
+};
+
+export function restartCauseRu(reason) {
+  return RESTART_CAUSE_RU[reason] || reason;
+}
+
+function budgetGiveUpText(id, cause, launchLog) {
+  const causeRu = restartCauseRu(cause);
+  return `рой: бюджет прогона исчерпан — перезапуск не делаю (${causeRu}). ` +
+    `Разбери лог ${launchLog ?? ""}; чтобы рой взял её снова — новый прогон роя с бюджетом, затем ` +
+    `listik needs-owner ${id} --clear "…"`;
+}
+
+function budgetFields(config) {
+  return {
+    exhausted: !!config.budgetExhausted,
+    launchesLeft: config.launchesLeft == null ? null : config.launchesLeft,
+  };
+}
+
 function superviseRunning({running, open, openById, events, tasks, config, now}) {
   const actorNorm = normActor(config.actor);
   const staleMinutes = config.staleMinutes ?? 20;
@@ -324,6 +350,7 @@ export function decide({plan, tasks, routes, config, now, events, gate = null}) 
       blocked: blockedCount,
       unroutable: plan.unroutable || [], unscoped: plan.unscoped || [],
       reason: "cycle",
+      budget: budgetFields(config),
     };
     return {
       cycles, needsOwner: [], launch: [], running, skipped: [], open, report,
@@ -386,37 +413,63 @@ export function decide({plan, tasks, routes, config, now, events, gate = null}) 
       candidates.push(t);
     }
 
-    let capacity = config.parallel;
-    const capacitySkipped = [];
-    for (const t of candidates) {
-      const weight = config.weights[iconFor(t, routeByKey)] ?? 1;
-      if (weight <= capacity) {
-        launch.push({id: t.id, route: t.launch_route, weight});
-        capacity -= weight;
-      } else {
-        capacitySkipped.push({id: t.id, reason: "capacity"});
+    if (config.budgetExhausted || config.launchesLeft === 0) {
+      for (const t of candidates) skipped.push({id: t.id, reason: "budget"});
+      reason = "budget";
+    } else {
+      let capacity = config.parallel;
+      const capacitySkipped = [];
+      for (const t of candidates) {
+        const weight = config.weights[iconFor(t, routeByKey)] ?? 1;
+        if (weight <= capacity) {
+          launch.push({id: t.id, route: t.launch_route, weight});
+          capacity -= weight;
+        } else {
+          capacitySkipped.push({id: t.id, reason: "capacity"});
+        }
+      }
+      if (launch.length === 0 && candidates.length > 0) {
+        const first = candidates[0];
+        const weight = config.weights[iconFor(first, routeByKey)] ?? 1;
+        if (weight > config.parallel) {
+          launch = [{id: first.id, route: first.launch_route, weight}];
+          reason = "oversized";
+          const idx = capacitySkipped.findIndex(s => s.id === first.id);
+          if (idx >= 0) capacitySkipped.splice(idx, 1);
+        }
+      }
+      skipped.push(...capacitySkipped);
+      // ponytail: launchesLeft режет только launch партии; перезапуск может перешагнуть предел на один
+      if (config.launchesLeft != null && launch.length > config.launchesLeft) {
+        const extra = launch.slice(config.launchesLeft);
+        launch = launch.slice(0, config.launchesLeft);
+        for (const item of extra) skipped.push({id: item.id, reason: "budget"});
       }
     }
-    if (launch.length === 0 && candidates.length > 0) {
-      const first = candidates[0];
-      const weight = config.weights[iconFor(first, routeByKey)] ?? 1;
-      if (weight > config.parallel) {
-        launch = [{id: first.id, route: first.launch_route, weight}];
-        reason = "oversized";
-        const idx = capacitySkipped.findIndex(s => s.id === first.id);
-        if (idx >= 0) capacitySkipped.splice(idx, 1);
-      }
-    }
-    skipped.push(...capacitySkipped);
   }
 
   const runningSup = superviseRunning({running, open, openById, events, tasks, config, now});
   const crashedSup = superviseCrashed({open, events, tasks, config});
-  const restart = [...runningSup.restart, ...crashedSup.restart];
+  let restart = [...runningSup.restart, ...crashedSup.restart];
   const giveUp = [...runningSup.giveUp, ...crashedSup.giveUp];
   const crashed = crashedSup.crashed;
   const stopOnly = runningSup.stopOnly;
   skipped.push(...runningSup.skipped);
+
+  if (config.budgetExhausted) {
+    for (const item of restart) {
+      const t = openById.get(item.id);
+      giveUp.push({
+        id: item.id,
+        reason: "budget",
+        cause: item.reason,
+        restarts: item.restarts,
+        text: budgetGiveUpText(item.id, item.reason, t && t.launch_log),
+      });
+    }
+    restart = [];
+    if (reason == null && launch.length === 0) reason = "budget";
+  }
 
   const report = {
     project: config.project, waveSize, wavesLeft,
@@ -434,6 +487,7 @@ export function decide({plan, tasks, routes, config, now, events, gate = null}) 
     stopOnly: stopOnly.map(s => s.id),
     stale: runningSup.stale,
     silence: runningSup.silence,
+    budget: budgetFields(config),
   };
 
   return {cycles: [], needsOwner, launch, running, skipped, open, report, restart, giveUp, crashed, stopOnly};

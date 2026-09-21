@@ -31,6 +31,8 @@ const OPTIONS = {
   "stale-minutes": {type: "string"},
   "timeout-minutes": {type: "string"},
   "max-restarts": {type: "string"},
+  "budget-minutes": {type: "string"},
+  "max-launches": {type: "string"},
   config: {type: "string"},
   help: {type: "boolean"},
 };
@@ -55,6 +57,8 @@ export const HELP_TEXT = `listik-swarm — каркас роя: план, needs-
   --stale-minutes <N>         (порция c) по умолчанию 20
   --timeout-minutes <N>       (порция c) по умолчанию 0
   --max-restarts <N>          (порция c) по умолчанию 1
+  --budget-minutes <N>        стенное время прогона в минутах (по умолчанию 0 — без предела)
+  --max-launches <N>          запуски + перезапуски за прогон (по умолчанию 0 — без предела)
   --config <путь>              swarm.json (по умолчанию <data_dir>/swarm.json)
   --help                      эта справка
 `;
@@ -63,6 +67,22 @@ function parseNumber(name, raw) {
   const n = Number(raw);
   if (!Number.isFinite(n)) {
     throw new ConfigError(`--${name} ожидало число, получено ${JSON.stringify(raw)}`);
+  }
+  return n;
+}
+
+function parseBudgetMinutes(raw) {
+  const n = Number(raw);
+  if (!Number.isFinite(n) || n < 0) {
+    throw new ConfigError(`--budget-minutes ожидало число ≥ 0, получено ${JSON.stringify(raw)}`);
+  }
+  return n;
+}
+
+function parseMaxLaunches(raw) {
+  const n = Number(raw);
+  if (!Number.isInteger(n) || n < 0) {
+    throw new ConfigError(`--max-launches ожидало целое ≥ 0, получено ${JSON.stringify(raw)}`);
   }
   return n;
 }
@@ -127,6 +147,8 @@ export function parseConfig(argv) {
     staleMinutes: values["stale-minutes"] !== undefined ? parseNumber("stale-minutes", values["stale-minutes"]) : 20,
     timeoutMinutes: values["timeout-minutes"] !== undefined ? parseNumber("timeout-minutes", values["timeout-minutes"]) : 0,
     maxRestarts: values["max-restarts"] !== undefined ? parseNumber("max-restarts", values["max-restarts"]) : 1,
+    budgetMinutes: values["budget-minutes"] !== undefined ? parseBudgetMinutes(values["budget-minutes"]) : 0,
+    maxLaunches: values["max-launches"] !== undefined ? parseMaxLaunches(values["max-launches"]) : 0,
     configPath: values.config ?? null,
   };
 

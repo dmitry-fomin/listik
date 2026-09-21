@@ -1237,14 +1237,14 @@ function summaryOf(report) {
 
 test("сводка: без новых полей — нули и прочерки", () => {
   const text = summaryOf({});
-  assert.match(text, /влито 0 \(\) · не влиты 0 \(\) · не приняты 0 \(\) · дефолт 0 \(\) · разморожено 0 \(\) · интеграция — · стоп —$/);
+  assert.match(text, /влито 0 \(\) · не влиты 0 \(\) · не приняты 0 \(\) · дефолт 0 \(\) · разморожено 0 \(\) · интеграция — · стоп — · бюджет есть$/);
 });
 
 test("сводка: merged/integration red/halt", () => {
   const text = summaryOf({merged: ["a"], integration: "red", halt: "listik-x"});
   assert.match(text, /влито 1 \(a\)/);
   assert.match(text, /интеграция красная/);
-  assert.match(text, /стоп listik-x$/);
+  assert.match(text, /стоп listik-x · бюджет есть$/);
 });
 
 test("сводка: merged двух id через запятую", () => {
@@ -1396,4 +1396,332 @@ gitTest("надзор-тик: swarm.json question_timeout 5, вопрос 6 ми
   const answerCall = calls().find(c => c.sub === "needs-owner" && c.argv.includes("--clear"));
   assert.ok(answerCall);
   assert.equal(answerCall.argv[answerCall.argv.indexOf("--clear") + 1], answerText);
+});
+
+// --- порция d: бюджет прогона ---
+
+test("бюджет-тик: без runState — launch как раньше, budget.exhausted false", async () => {
+  const tasks = [task("t1")];
+  const plan = {project: "proj", waves: [["t1"]], cycles: [], unroutable: [], unscoped: [], blocked: {}};
+  const routes = [{key: "r-t1", icon: "low"}];
+  const responses = {
+    status: statusUp,
+    projects: {stdout: JSON.stringify([{slug: "proj", path: ""}])},
+    waves: {stdout: JSON.stringify({waves: plan, added: [], removed: [], kept: 0})},
+    list: {stdout: JSON.stringify({total: 1, limit: 1000, offset: 0, tasks})},
+    routes: {stdout: JSON.stringify({ok: true, routes})},
+    worktree: {stdout: JSON.stringify({path: "/wt/t1", branch: "b", status: "created"})},
+    show: {stdout: JSON.stringify({id: "t1", labels: []})},
+    set: {stdout: JSON.stringify({id: "t1", labels: []})},
+    launch: {stdout: JSON.stringify({id: "t1", generation: 1})},
+  };
+  const {calls} = setupFake(responses);
+  const listik = new Listik({bin: FAKE_BIN, actor: "agent:listik-swarm", cliTimeout: 5});
+  const log = makeLog();
+  const result = await tick(listik, baseConfig, log);
+  assert.equal(result.budget.exhausted, false);
+  assert.deepEqual(result.launched, ["t1"]);
+  assert.ok(calls().some(c => c.sub === "launch"));
+});
+
+test("бюджет-тик: runState 2 часа назад, budgetMinutes 60 — launch нет, exhausted", async () => {
+  const tasks = [task("t1")];
+  const plan = {project: "proj", waves: [["t1"]], cycles: [], unroutable: [], unscoped: [], blocked: {}};
+  const routes = [{key: "r-t1", icon: "low"}];
+  const responses = {
+    status: statusUp,
+    projects: {stdout: JSON.stringify([{slug: "proj", path: ""}])},
+    waves: {stdout: JSON.stringify({waves: plan, added: [], removed: [], kept: 0})},
+    list: {stdout: JSON.stringify({total: 1, limit: 1000, offset: 0, tasks})},
+    routes: {stdout: JSON.stringify({ok: true, routes})},
+    launch: {stdout: JSON.stringify({id: "t1", generation: 1})},
+  };
+  const {calls} = setupFake(responses);
+  const listik = new Listik({bin: FAKE_BIN, actor: "agent:listik-swarm", cliTimeout: 5});
+  const log = makeLog();
+  const runState = {startedAt: new Date(Date.now() - 2 * 60 * 60 * 1000), launches: 0};
+  const result = await tick(listik, {...baseConfig, budgetMinutes: 60}, log, runState);
+  assert.equal(result.budget.exhausted, true);
+  assert.equal(result.budget.launches, 0);
+  assert.deepEqual(result.launched, []);
+  assert.ok(result.report.skipped.some(s => s.id === "t1" && s.reason === "budget"));
+  assert.ok(log.lines.some(l => l.startsWith("бюджет: минут")));
+  assert.ok(!calls().some(c => c.sub === "launch"));
+});
+
+test("бюджет-тик: runState.launches 1, maxLaunches 1 — launch нет, exhausted", async () => {
+  const tasks = [task("t1")];
+  const plan = {project: "proj", waves: [["t1"]], cycles: [], unroutable: [], unscoped: [], blocked: {}};
+  const routes = [{key: "r-t1", icon: "low"}];
+  const responses = {
+    status: statusUp,
+    projects: {stdout: JSON.stringify([{slug: "proj", path: ""}])},
+    waves: {stdout: JSON.stringify({waves: plan, added: [], removed: [], kept: 0})},
+    list: {stdout: JSON.stringify({total: 1, limit: 1000, offset: 0, tasks})},
+    routes: {stdout: JSON.stringify({ok: true, routes})},
+    launch: {stdout: JSON.stringify({id: "t1", generation: 1})},
+  };
+  const {calls} = setupFake(responses);
+  const listik = new Listik({bin: FAKE_BIN, actor: "agent:listik-swarm", cliTimeout: 5});
+  const log = makeLog();
+  const runState = {startedAt: new Date(), launches: 1};
+  const result = await tick(listik, {...baseConfig, maxLaunches: 1}, log, runState);
+  assert.equal(result.budget.exhausted, true);
+  assert.deepEqual(result.launched, []);
+  assert.ok(!calls().some(c => c.sub === "launch"));
+});
+
+test("бюджет-тик: maxLaunches 2, launches 1, три кандидата — ровно один launch", async () => {
+  const tasks = [task("t1"), task("t2"), task("t3")];
+  const plan = {
+    project: "proj", waves: [["t1", "t2", "t3"]], cycles: [], unroutable: [], unscoped: [], blocked: {},
+  };
+  const routes = [
+    {key: "r-t1", icon: "low"}, {key: "r-t2", icon: "low"}, {key: "r-t3", icon: "low"},
+  ];
+  const responses = {
+    status: statusUp,
+    projects: {stdout: JSON.stringify([{slug: "proj", path: ""}])},
+    waves: {stdout: JSON.stringify({waves: plan, added: [], removed: [], kept: 0})},
+    list: {stdout: JSON.stringify({total: 3, limit: 1000, offset: 0, tasks})},
+    routes: {stdout: JSON.stringify({ok: true, routes})},
+    worktree: {stdout: JSON.stringify({path: "/wt/x", branch: "b", status: "created"})},
+    show: {stdout: JSON.stringify({id: "x", labels: []})},
+    set: {stdout: JSON.stringify({id: "x", labels: []})},
+    launch: {stdout: JSON.stringify({id: "x", generation: 1})},
+  };
+  const {calls} = setupFake(responses);
+  const listik = new Listik({bin: FAKE_BIN, actor: "agent:listik-swarm", cliTimeout: 5});
+  const log = makeLog();
+  const runState = {startedAt: new Date(), launches: 1};
+  const result = await tick(listik, {...baseConfig, maxLaunches: 2}, log, runState);
+  assert.equal(result.budget.exhausted, false);
+  assert.equal(result.launched.length, 1);
+  assert.equal(calls().filter(c => c.sub === "launch").length, 1);
+});
+
+test("бюджет-тик: exhausted + зависшая с портом — revoke бюджет, needs-owner, launch нет", async () => {
+  const tasks = [runningTask("a", {
+    launched_at: minsAgo(30), holder_at: minsAgo(30), labels: ["port:5170"],
+    launch_log: "/logs/a.log",
+  })];
+  const plan = {project: "proj", waves: [[]], cycles: [], unroutable: [], unscoped: [], blocked: {}};
+  const responses = {
+    status: statusUp,
+    projects: {stdout: JSON.stringify([{slug: "proj", path: ""}])},
+    waves: {stdout: JSON.stringify({waves: plan, added: [], removed: [], kept: 0})},
+    list: {stdout: JSON.stringify({total: 1, limit: 1000, offset: 0, tasks})},
+    routes: {stdout: JSON.stringify({ok: true, routes: []})},
+    show: {stdout: JSON.stringify({id: "a", events: []})},
+    revoke: {stdout: JSON.stringify({id: "a", launch_finished_at: "2026-01-01T00:00:00Z", generation: 5})},
+    "needs-owner": {stdout: JSON.stringify({id: "a"})},
+    launch: {stdout: JSON.stringify({id: "a", generation: 6})},
+  };
+  const {calls} = setupFake(responses);
+  const listik = new Listik({bin: FAKE_BIN, actor: "agent:listik-swarm", cliTimeout: 5});
+  const log = makeLog();
+  const runState = {startedAt: new Date(), launches: 1};
+  await tick(listik, {...supConfig, maxLaunches: 1}, log, runState);
+  const recorded = calls();
+  assert.ok(!recorded.some(c => c.sub === "launch"));
+  const revokeCall = recorded.find(c => c.sub === "revoke");
+  assert.ok(revokeCall);
+  assert.equal(
+    revokeCall.argv[revokeCall.argv.indexOf("--note") + 1],
+    "рой: бюджет прогона исчерпан — процесс снят (зависла)",
+  );
+  const noCall = recorded.find(c => c.sub === "needs-owner");
+  assert.ok(noCall);
+  const text = noCall.argv.find((a, i) => noCall.argv[i - 1] !== "--note" && typeof a === "string"
+    && a.includes("бюджет прогона исчерпан"))
+    || noCall.argv[noCall.argv.length - 2];
+  assert.match(String(text), /бюджет прогона исчерпан/);
+});
+
+gitTest("бюджет-тик: exhausted + закрытая с деревом — барьер вливает, launch нет", async () => {
+  const repo = initRepo();
+  const treeT1 = addWorktree(repo, "t1");
+  fs.writeFileSync(path.join(treeT1, "a.txt"), "a\n");
+  sh(treeT1, "add", "a.txt");
+  sh(treeT1, "commit", "-q", "-m", "t1");
+
+  const tasks = [
+    task("t1", {status: "done", worktree: treeT1, branch: "task/t1", labels: ["port:5170"]}),
+    task("t2", {}),
+  ];
+  const plan = {project: "proj", waves: [["t2"]], cycles: [], unroutable: [], unscoped: [], blocked: {}};
+  const routes = [{key: "r-t2", icon: "low"}];
+  const dataDir = fs.mkdtempSync(path.join(os.tmpdir(), "listik-swarm-data-"));
+  fs.writeFileSync(path.join(dataDir, "swarm.json"), JSON.stringify({integration: []}));
+  const logDir = fs.mkdtempSync(path.join(os.tmpdir(), "listik-swarm-budget-log-"));
+  const responses = {
+    status: statusFor(dataDir),
+    waves: {stdout: JSON.stringify({waves: plan, added: [], removed: [], kept: 0})},
+    list: {stdout: JSON.stringify({total: tasks.length, limit: 1000, offset: 0, tasks})},
+    routes: {stdout: JSON.stringify({ok: true, routes})},
+    projects: {stdout: JSON.stringify([{slug: "proj", path: repo}])},
+    watch: {stdout: JSON.stringify({tasks: {}, decisions: [], probes: []})},
+    show: {stdout: JSON.stringify({id: "t1", comments: [], write_scope: []})},
+    comment: {stdout: JSON.stringify({id: "t1"})},
+    worktree: {stdout: JSON.stringify({path: "/wt/t2", branch: "b", status: "created"})},
+    set: {stdout: JSON.stringify({id: "t2", labels: []})},
+    launch: {stdout: JSON.stringify({id: "t2", generation: 1})},
+  };
+  const {calls} = setupFake(responses);
+  const listik = new Listik({bin: FAKE_BIN, actor: "agent:listik-swarm", cliTimeout: 5});
+  const log = makeLog();
+  const runState = {startedAt: new Date(Date.now() - 2 * 60 * 60 * 1000), launches: 0};
+  const result = await tick(listik, {...baseConfig, logDir, budgetMinutes: 60}, log, runState);
+  assert.ok(result.barrier.merged.includes("t1"));
+  assert.deepEqual(result.launched, []);
+  assert.ok(!calls().some(c => c.sub === "launch"));
+  assert.equal(result.budget.exhausted, true);
+});
+
+test("waitingLine: skipped budget → id бюджет", () => {
+  const line = waitingLine({report: {skipped: [{id: "a", reason: "budget"}]}, open: []});
+  assert.match(line, /a бюджет/);
+});
+
+test("questionReason: бюджет прогона исчерпан → бюджет, даже если в скобках зависла", () => {
+  assert.equal(
+    questionReason("рой: бюджет прогона исчерпан — перезапуск не делаю (зависла). Разбери лог /x"),
+    "бюджет",
+  );
+});
+
+test("сводка: budget exhausted → бюджет исчерпан", () => {
+  const text = summaryOf({budget: {exhausted: true, launchesLeft: 0}});
+  assert.match(text, /бюджет исчерпан$/);
+});
+
+function mainArgv(logDir, extra) {
+  return ["--project", "proj", "--listik", FAKE_BIN, "--log-dir", logDir, "--interval", "0.05",
+    ...extra];
+}
+
+async function runMain(argv) {
+  const {main} = await import("../main.mjs");
+  const chunks = [];
+  const origWrite = process.stdout.write.bind(process.stdout);
+  process.stdout.write = (chunk, ...rest) => { chunks.push(String(chunk)); return true; };
+  let code;
+  try {
+    code = await main(argv);
+  } finally {
+    process.stdout.write = origWrite;
+  }
+  return {code, chunks};
+}
+
+test("main: --max-launches 1, два кандидата — код 5, launch один раз", {timeout: 15000}, async () => {
+  const plan = {
+    project: "proj", waves: [["t1", "t2"]], cycles: [], unroutable: [], unscoped: [], blocked: {},
+  };
+  const routes = [{key: "r-t1", icon: "low"}, {key: "r-t2", icon: "low"}];
+  const openBoth = [task("t1"), task("t2")];
+  const t1Done = [task("t1", {status: "done"}), task("t2")];
+  const responses = {
+    status: statusUp,
+    projects: {stdout: JSON.stringify([{slug: "proj", path: ""}])},
+    waves: {stdout: JSON.stringify({waves: plan, added: [], removed: [], kept: 0})},
+    list: [
+      {stdout: JSON.stringify({total: 2, limit: 1000, offset: 0, tasks: openBoth})},
+      {stdout: JSON.stringify({total: 2, limit: 1000, offset: 0, tasks: t1Done})},
+    ],
+    routes: {stdout: JSON.stringify({ok: true, routes})},
+    worktree: {stdout: JSON.stringify({path: "/wt/t1", branch: "b", status: "created"})},
+    show: {stdout: JSON.stringify({id: "t1", labels: [], events: [], comments: []})},
+    set: {stdout: JSON.stringify({id: "t1", labels: []})},
+    launch: {stdout: JSON.stringify({id: "t1", generation: 1})},
+  };
+  const {calls} = setupFake(responses);
+  const logDir = fs.mkdtempSync(path.join(os.tmpdir(), "listik-swarm-budget-main-"));
+  const {code, chunks} = await runMain(mainArgv(logDir, ["--max-launches", "1"]));
+  assert.equal(code, 5);
+  assert.equal(calls().filter(c => c.sub === "launch").length, 1);
+  const logPath = chunks[0].trim();
+  const logText = fs.readFileSync(logPath, "utf8");
+  assert.match(logText, /итог: бюджет исчерпан — минут .+ из ∞, запусков 1 из 1/);
+});
+
+test("main: --max-launches 1, во втором тике running — цикла продолжается, потом код 5",
+  {timeout: 15000}, async () => {
+    const plan = {
+      project: "proj", waves: [["t1", "t2"]], cycles: [], unroutable: [], unscoped: [], blocked: {},
+    };
+    const routes = [{key: "r-t1", icon: "low"}, {key: "r-t2", icon: "low"}];
+    const openBoth = [task("t1"), task("t2")];
+    const t1Running = [
+      task("t1", {launched_by: "agent:listik-swarm", launch_finished_at: null, labels: ["port:5170"]}),
+      task("t2"),
+    ];
+    const t1Done = [task("t1", {status: "done"}), task("t2")];
+    const responses = {
+      status: statusUp,
+      projects: {stdout: JSON.stringify([{slug: "proj", path: ""}])},
+      waves: {stdout: JSON.stringify({waves: plan, added: [], removed: [], kept: 0})},
+      list: [
+        {stdout: JSON.stringify({total: 2, limit: 1000, offset: 0, tasks: openBoth})},
+        {stdout: JSON.stringify({total: 2, limit: 1000, offset: 0, tasks: t1Running})},
+        {stdout: JSON.stringify({total: 2, limit: 1000, offset: 0, tasks: t1Done})},
+      ],
+      routes: {stdout: JSON.stringify({ok: true, routes})},
+      worktree: {stdout: JSON.stringify({path: "/wt/t1", branch: "b", status: "created"})},
+      show: {stdout: JSON.stringify({id: "t1", labels: ["port:5170"], events: [], comments: []})},
+      set: {stdout: JSON.stringify({id: "t1", labels: []})},
+      launch: {stdout: JSON.stringify({id: "t1", generation: 1})},
+    };
+    const {calls} = setupFake(responses);
+    const logDir = fs.mkdtempSync(path.join(os.tmpdir(), "listik-swarm-budget-run-"));
+    const {code} = await runMain(mainArgv(logDir, ["--max-launches", "1"]));
+    assert.equal(code, 5);
+    assert.equal(calls().filter(c => c.sub === "launch").length, 1);
+    assert.ok(calls().filter(c => c.sub === "list").length >= 3);
+  });
+
+test("main: --max-launches 1, один кандидат после done — код 0", {timeout: 15000}, async () => {
+  const plan = {project: "proj", waves: [["t1"]], cycles: [], unroutable: [], unscoped: [], blocked: {}};
+  const routes = [{key: "r-t1", icon: "low"}];
+  const responses = {
+    status: statusUp,
+    projects: {stdout: JSON.stringify([{slug: "proj", path: ""}])},
+    waves: {stdout: JSON.stringify({waves: plan, added: [], removed: [], kept: 0})},
+    list: [
+      {stdout: JSON.stringify({total: 1, limit: 1000, offset: 0, tasks: [task("t1")]})},
+      {stdout: JSON.stringify({total: 1, limit: 1000, offset: 0, tasks: [task("t1", {status: "done"})]})},
+    ],
+    routes: {stdout: JSON.stringify({ok: true, routes})},
+    worktree: {stdout: JSON.stringify({path: "/wt/t1", branch: "b", status: "created"})},
+    show: {stdout: JSON.stringify({id: "t1", labels: [], events: []})},
+    set: {stdout: JSON.stringify({id: "t1", labels: []})},
+    launch: {stdout: JSON.stringify({id: "t1", generation: 1})},
+  };
+  setupFake(responses);
+  const logDir = fs.mkdtempSync(path.join(os.tmpdir(), "listik-swarm-budget-zero-"));
+  const {code} = await runMain(mainArgv(logDir, ["--max-launches", "1"]));
+  assert.equal(code, 0);
+});
+
+test("main: --once --max-launches 1, два кандидата — один launch, код 0", {timeout: 10000}, async () => {
+  const plan = {
+    project: "proj", waves: [["t1", "t2"]], cycles: [], unroutable: [], unscoped: [], blocked: {},
+  };
+  const routes = [{key: "r-t1", icon: "low"}, {key: "r-t2", icon: "low"}];
+  const responses = {
+    status: statusUp,
+    projects: {stdout: JSON.stringify([{slug: "proj", path: ""}])},
+    waves: {stdout: JSON.stringify({waves: plan, added: [], removed: [], kept: 0})},
+    list: {stdout: JSON.stringify({total: 2, limit: 1000, offset: 0, tasks: [task("t1"), task("t2")]})},
+    routes: {stdout: JSON.stringify({ok: true, routes})},
+    worktree: {stdout: JSON.stringify({path: "/wt/t1", branch: "b", status: "created"})},
+    show: {stdout: JSON.stringify({id: "t1", labels: []})},
+    set: {stdout: JSON.stringify({id: "t1", labels: []})},
+    launch: {stdout: JSON.stringify({id: "t1", generation: 1})},
+  };
+  const {calls} = setupFake(responses);
+  const logDir = fs.mkdtempSync(path.join(os.tmpdir(), "listik-swarm-budget-once-"));
+  const {code} = await runMain(mainArgv(logDir, ["--max-launches", "1", "--once"]));
+  assert.equal(code, 0);
+  assert.equal(calls().filter(c => c.sub === "launch").length, 1);
 });

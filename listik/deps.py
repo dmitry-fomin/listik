@@ -24,6 +24,16 @@
 ресурсного ребра — всегда `RESOURCE_BLOCK_AUTHOR` (машина), ни один вход не может его
 переопределить. При расчёте уже существующие ресурсные рёбра во вход не берутся — на каждом
 проходе они выводятся заново.
+
+Ещё один машинный слой — обычные `blocks`, поставленные `agent:listik-swarm`
+(`PLANNED_BLOCK_AUTHOR`, тот же автор, что у ресурсных рёбер): их ставит проход роя
+`listik plan --apply`/`listik rescope --apply` (шаг swarm-6, порции b/c) по графу, который
+вернула модель. Запись — `apply_planned_blocks`: переписывает только свои строки `blocks`
+и только внутри переданного рабочего множества (оба конца пары должны в нём быть — иначе
+проход снял бы своё ребро на задачу другого этапа, отфильтрованную `--stage`), человеческие
+и любые другие жёсткие рёбра не трогает, цикл в множестве — отказ без записи. `listik dep rm
+<id> <блокер>` снимает такое ребро как обычное `blocks` — специального отката для машинных
+рёбер нет.
 """
 from __future__ import annotations
 
@@ -733,6 +743,21 @@ def _waves_find_cycles(
     return [list(c) for c in sorted(found, key=lambda c: tuple(order_index[x] for x in c))]
 
 
+def find_cycles(ids: list[str], incoming: dict[str, set[str]]) -> list[list[str]]:
+    """Простые циклы среди `ids`: чистая функция, форма — как `cycles` у `waves`.
+
+    `ids` — порядок узлов (он же порядок канонизации цикла: наименьший по порядку id
+    вперёд, без повтора первого элемента). `incoming[tid]` — множество id, которых
+    ждёт `tid`; рёбра на id вне `ids` игнорируются.
+    """
+    nodes = set(ids)
+    _layers, rem = _waves_kahn_layers(nodes, ids, incoming, {})
+    if not rem:
+        return []
+    order_index = {tid: i for i, tid in enumerate(ids)}
+    return _waves_find_cycles(rem, ids, incoming, order_index)
+
+
 def waves(conn: sqlite3.Connection, *, project: str, stage: str | None = None) -> dict:
     """Волны планировщика роя: кто может бежать сейчас, кто ждёт, кто в конфликте.
 
@@ -1011,4 +1036,153 @@ def apply_resource_blocks(conn: sqlite3.Connection, *, project: str, stage: str 
         "removed": removed,
         "kept": kept,
         "waves": plan,
+    }
+
+
+#: Автор машинных рёбер `blocks`, поставленных проходом роя (`plan`/`rescope --apply`) —
+#: тот же машинный автор, что у ресурсных рёбер: подпись не переопределяется ни с
+#: одного входа (у `apply_planned_blocks` нет параметра `actor`).
+PLANNED_BLOCK_AUTHOR = RESOURCE_BLOCK_AUTHOR
+
+
+def apply_planned_blocks(conn: sqlite3.Connection, *, working: list[str],
+                         edges: list[list[str]]) -> dict:
+    """Записывает граф `blocks`, который вернула модель роя (`plan`/`rescope --apply`).
+
+    `working` — id рабочего множества прохода, в порядке прохода. `edges` — пары
+    `[раньше, позже]` («позже ждёт раньше», форма — как `resource_blocks` у `waves`).
+    Переписывает только свои строки `blocks` (`dep_type='blocks'`,
+    `created_by=PLANNED_BLOCK_AUTHOR`) и только те, у которых **оба** конца в `working`:
+    ребро на задачу другого этапа (отфильтрованную `--stage`) не снимается. Смысловые
+    жёсткие рёбра любого другого автора (человеческие `blocks`, `waits-for`,
+    `conditional-blocks`) не трогает. Цикл в рабочем множестве — отказ до записи
+    (`errors.ListikError`, `code=errors.CONFLICT`). Один `commit` в конце; исключение по
+    дороге — `rollback`, база как до вызова. Событий в `events` не пишется (как у
+    `add_dep`/`apply_resource_blocks`).
+    """
+    from . import store_helpers  # deps импортируется store на уровне модуля — отложенный импорт
+
+    working_list = list(working)
+    working_set = set(working_list)
+
+    validated: list[tuple[str, str]] = []
+    for edge in edges:
+        if not (isinstance(edge, (list, tuple)) and len(edge) == 2
+                and isinstance(edge[0], str) and isinstance(edge[1], str)):
+            raise errors_mod.BadArgument(f"edges: элемент должен быть парой строк: {edge!r}")
+        earlier, later = edge
+        if earlier == later:
+            raise errors_mod.BadArgument(f"edges: задача не может ждать сама себя: {earlier}")
+        if earlier not in working_set or later not in working_set:
+            raise errors_mod.BadArgument(
+                f"edges: {earlier} → {later} — обе задачи должны быть в working")
+        validated.append((earlier, later))
+
+    for earlier, later in validated:
+        for tid in (earlier, later):
+            if not store_helpers.task_exists(conn, tid):
+                raise errors_mod.NotFound(f"задача не найдена: {tid}")
+
+    if not working_set:
+        return {"added": [], "removed": [], "kept": 0, "covered": [], "promoted": 0}
+
+    desired = {(later, earlier) for earlier, later in validated}
+
+    marks_w = ",".join("?" * len(working_list))
+    marks_semantic = ",".join("?" * len(SEMANTIC_HARD))
+    rows = _fetch(
+        conn,
+        "SELECT issue_id, depends_on, dep_type, created_by FROM deps "
+        f"WHERE dep_type IN ({marks_semantic}) AND issue_id IN ({marks_w}) "
+        f"AND depends_on IN ({marks_w})",
+        (*SEMANTIC_HARD, *working_list, *working_list),
+    )
+    own: set[tuple[str, str]] = set()
+    other: set[tuple[str, str]] = set()
+    for r in rows:
+        pair = (r["issue_id"], r["depends_on"])
+        if r["dep_type"] == "blocks" and r["created_by"] == PLANNED_BLOCK_AUTHOR:
+            own.add(pair)
+        else:
+            other.add(pair)
+
+    # ponytail: цикл ищется в рабочем множестве; путь через открытую задачу вне
+    # множества (фильтр --stage) не виден — расширить до проекта, если такое случится.
+    # Рёбра с концом вне множества не удаляем.
+    incoming: dict[str, set[str]] = {}
+    for issue_id, depends_on in (*other, *desired):
+        incoming.setdefault(issue_id, set()).add(depends_on)
+    found_cycles = find_cycles(working_list, incoming)
+    if found_cycles:
+        cycle = found_cycles[0]
+        raise errors_mod.ListikError(
+            "рёбра не записаны: граф содержит цикл " + " → ".join(cycle) + " → " + cycle[0],
+            code=errors_mod.CONFLICT,
+            hint="разорви цикл: listik dep rm <id> <блокер>",
+        )
+
+    to_add = desired - own - other
+    covered = desired & other
+    to_remove = own - desired
+    kept = len(own & desired)
+
+    suggested_rows = set()
+    if to_add:
+        marks_add = ",".join("(?,?)" for _ in to_add)
+        params: list[str] = []
+        for issue_id, depends_on in to_add:
+            params.extend((issue_id, depends_on))
+        suggested_rows = {
+            (r["issue_id"], r["depends_on"]) for r in _fetch(
+                conn,
+                "SELECT issue_id, depends_on FROM deps WHERE dep_type='suggested-blocks' "
+                f"AND (issue_id, depends_on) IN ({marks_add})",
+                tuple(params),
+            )
+        }
+
+    try:
+        for issue_id, depends_on in to_remove:
+            conn.execute(
+                "DELETE FROM deps WHERE issue_id=? AND depends_on=? AND dep_type='blocks' "
+                "AND created_by=?",
+                (issue_id, depends_on, PLANNED_BLOCK_AUTHOR),
+            )
+        for issue_id, depends_on in suggested_rows:
+            conn.execute(
+                "DELETE FROM deps WHERE issue_id=? AND depends_on=? AND dep_type='suggested-blocks'",
+                (issue_id, depends_on),
+            )
+        for issue_id, depends_on in to_add:
+            conn.execute(
+                "INSERT INTO deps(issue_id, depends_on, dep_type, created_by) "
+                "VALUES(?,?,'blocks',?)",
+                (issue_id, depends_on, PLANNED_BLOCK_AUTHOR),
+            )
+        touched: set[str] = set()
+        for issue_id, depends_on in (*to_remove, *to_add):
+            touched.add(issue_id)
+            touched.add(depends_on)
+        for tid in touched:
+            refresh_task(conn, tid)
+    except Exception:
+        conn.rollback()
+        raise
+    conn.commit()
+
+    order_index = {tid: i for i, tid in enumerate(working_list)}
+    added = [[earlier, later] for earlier, later in validated if (later, earlier) in to_add]
+    removed = sorted(
+        ([earlier, later] for later, earlier in to_remove),
+        key=lambda pair: (order_index.get(pair[1], len(order_index)), pair[0]),
+    )
+    covered_pairs = [[earlier, later] for earlier, later in validated
+                     if (later, earlier) in covered]
+
+    return {
+        "added": added,
+        "removed": removed,
+        "kept": kept,
+        "covered": covered_pairs,
+        "promoted": len(suggested_rows),
     }

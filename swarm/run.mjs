@@ -2,9 +2,9 @@
 // действия, свести итог. Без состояния между тиками — всё читается заново.
 import path from "node:path";
 import fs from "node:fs";
-import {decide, portOf, allocatePort, isRunning, OPEN_STATUSES} from "./decide.mjs";
+import {decide, portOf, allocatePort, isRunning, OPEN_STATUSES, dueDefaults} from "./decide.mjs";
 import {runBarrier, haltCards} from "./barrier.mjs";
-import {ConfigError, parseSwarmConfig, swarmConfigFor} from "./config.mjs";
+import {ConfigError, parseSwarmConfig, swarmConfigFor, DEFAULT_QUESTION_TIMEOUT} from "./config.mjs";
 import * as git from "./git.mjs";
 
 const MAIN_WORKTREE_MARKERS = new Set(["main", "master"]);
@@ -14,10 +14,14 @@ function errText(err) {
 }
 
 // Карточки, за которыми тик обязан посмотреть `show` перед `decide` (п.6): бегущие
-// открытые и упавшие открытые, у которых `needs_owner` ложен. Закрытые и карточки
-// с поднятым флагом «нужен ты» — не смотрим (свежих событий для решения не нужно).
+// открытые и упавшие открытые без флага; плюс задачи роя с `needs_owner` (открытые
+// или `done`) — чтобы классифицировать мягкий вопрос и автоответить по таймауту.
 function needsEventsFetch(t) {
-  if (!OPEN_STATUSES.has(t.status) || t.needs_owner) return false;
+  if (t.needs_owner) {
+    if (portOf(t) == null && !t.launched_by) return false;
+    return OPEN_STATUSES.has(t.status) || t.status === "done";
+  }
+  if (!OPEN_STATUSES.has(t.status)) return false;
   if (isRunning(t)) return true;
   return !!t.launched_by && !!t.launch_finished_at;
 }
@@ -62,6 +66,7 @@ export async function tick(listik, config, log) {
   let gate = null;
   let barrierResult = null;
   let watchSummary = null;
+  let questionTimeout = DEFAULT_QUESTION_TIMEOUT;
   const cyclesPending = !!(plan.cycles && plan.cycles.length);
 
   if (!cyclesPending) {
@@ -144,6 +149,7 @@ export async function tick(listik, config, log) {
         }
         const parsed = parseSwarmConfig(text);
         swarmConfig = swarmConfigFor(parsed, config.project);
+        questionTimeout = swarmConfig.questionTimeout;
       } catch (err) {
         if (err instanceof ConfigError) {
           log.line(err.message);
@@ -185,7 +191,36 @@ export async function tick(listik, config, log) {
     }
   }
 
-  const decision = decide({plan, tasks, routes, config, now: new Date(), events, gate});
+  const tickConfig = {...config, questionTimeout};
+  const now = new Date();
+  const due = dueDefaults({tasks, events, config: tickConfig, now});
+  const defaultsDone = [];
+  for (const item of due) {
+    const text = `рой: ответа не было ${item.minutes} мин — действует вариант по умолчанию: ${item.line}`;
+    if (config.dryRun) {
+      log.action(`[dry-run] answer ${item.id}: ${item.line}`);
+      defaultsDone.push(item.id);
+      continue;
+    }
+    try {
+      await listik.answer(item.id, text);
+      log.action(`ответ по умолчанию ${item.id}: ${item.line}`);
+      defaultsDone.push(item.id);
+    } catch (err) {
+      log.line(`answer ${item.id} ошибка: ${errText(err)}`);
+      continue;
+    }
+    try {
+      const shown = await listik.show(item.id);
+      events[item.id] = shown.events || [];
+    } catch (err) {
+      log.line(`show ${item.id} ошибка: ${errText(err)}`);
+    }
+    const answered = tasks.find(t => t.id === item.id);
+    if (answered) answered.needs_owner = false;
+  }
+
+  const decision = decide({plan, tasks, routes, config: tickConfig, now, events, gate});
 
   if (decision.cycles.length) {
     const desc = decision.cycles.map(c => [...c, c[0]].join(" → ")).join("; ");
@@ -278,7 +313,9 @@ export async function tick(listik, config, log) {
       ? "рой: перезапуск разрешён человеком"
       : item.reason === "rejected"
         ? "рой: перезапуск — не принята (верификатор)"
-        : `рой: перезапуск — ${item.reason}`;
+        : item.reason === "defaulted"
+          ? "рой: перезапуск — ответ по умолчанию"
+          : `рой: перезапуск — ${item.reason}`;
     if (config.dryRun) {
       log.action(`[dry-run] revoke ${item.id}: ${note}`);
       log.action(`[dry-run] launch ${item.id} → порт ${item.port}`);
@@ -424,6 +461,7 @@ export async function tick(listik, config, log) {
     merged: barrierMerged,
     unmerged: barrierUnmerged,
     rejected: barrierRejected,
+    defaults: defaultsDone,
     unfrozen: barrierUnfrozen,
     integration: barrierIntegration,
     halt: barrierHalt.length ? barrierHalt[0] : null,
@@ -436,6 +474,7 @@ export async function tick(listik, config, log) {
     cycles: [],
     launched,
     needsOwner: needsOwnerDone,
+    defaults: defaultsDone,
     restarted: restarted.map(r => r.id),
     running: decision.running.map(t => t.id),
     open: decision.open.map(t => t.id),

@@ -3,6 +3,7 @@
 // (`decide.mjs`), поэтому не хранит состояния между запусками — падение
 // переживается перезапуском, повторный тик ничего не задваивает.
 import {parseConfig, ConfigError, HelpRequested} from "./config.mjs";
+import {isSoftQuestion} from "./decide.mjs";
 import {Listik} from "./listik.mjs";
 import {tick} from "./run.mjs";
 import {open as openLog} from "./log.mjs";
@@ -33,7 +34,10 @@ export function waitingLine(result) {
 // п.8: причина вопроса — по последнему комментарию kind=="question". «рой: …» — своя
 // короткая причина; иначе воркер сам о чём-то спросил.
 export function questionReason(text) {
-  if (typeof text !== "string" || !text.startsWith("рой:")) return "вопрос воркера";
+  if (typeof text !== "string") return "вопрос воркера";
+  if (!text.startsWith("рой:")) {
+    return isSoftQuestion(text) ? "вопрос воркера, есть дефолт" : "вопрос воркера";
+  }
   if (text.includes("нет маршрута")) return "без маршрута";
   if (text.includes("нет write_scope")) return "без области";
   if (text.includes("процесс задачи завершился")) return "упала";

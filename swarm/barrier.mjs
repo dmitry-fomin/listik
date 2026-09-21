@@ -5,7 +5,8 @@
 // импорт (команды интеграции, порция d).
 import {spawn, execFileSync} from "node:child_process";
 import path from "node:path";
-import {OPEN_STATUSES, isFrozen, portOf, REJECTED_MARK} from "./decide.mjs";
+import {OPEN_STATUSES, isFrozen, portOf, REJECTED_MARK, isSoftQuestion, openQuestion,
+  fromComments} from "./decide.mjs";
 import {resolveWithArbiter} from "./arbiter.mjs";
 
 export {REJECTED_MARK};
@@ -209,14 +210,26 @@ export async function runBarrier({listik, git, fs, config, swarmConfig, log, tas
     await needsOwnerSafe(listik, log, id, withHint(id, body));
   }
 
-  // Шаг 3: живость кандидата (каталог/ветка), needs_owner и missing_tree — без show.
+  // Шаг 3: живость кандидата (каталог/ветка), needs_owner (мягкий — show один раз) и missing_tree.
   for (const c of candidates) {
     const cbranch = (c.branch || "").trim() || `task/${c.id}`;
+    let shown = null;
     if (c.needs_owner) {
-      skippedOut++;
-      unmerged.push(c.id);
-      log.line(`${c.id} не влита: ждёт человека`);
-      continue;
+      try {
+        shown = await listik.show(c.id);
+      } catch (err) {
+        skippedOut++;
+        unmerged.push(c.id);
+        log.line(`${c.id} не влита: ждёт человека`);
+        continue;
+      }
+      const q = openQuestion(fromComments(shown.comments));
+      if (!q || !isSoftQuestion(q.text)) {
+        skippedOut++;
+        unmerged.push(c.id);
+        log.line(`${c.id} не влита: ждёт человека`);
+        continue;
+      }
     }
     const dirExists = fs.existsSync(c.worktree || "");
     let branchOk;
@@ -236,7 +249,7 @@ export async function runBarrier({listik, git, fs, config, swarmConfig, log, tas
           `или убери дерево.`);
         continue;
       }
-      live.push({id: c.id, worktree: c.worktree, branch: cbranch});
+      live.push({id: c.id, worktree: c.worktree, branch: cbranch, shown});
       continue;
     }
     if (!branchOk) {
@@ -253,7 +266,7 @@ export async function runBarrier({listik, git, fs, config, swarmConfig, log, tas
       continue;
     }
     if (ahead === 0) {
-      live.push({id: c.id, worktree: c.worktree, branch: cbranch});
+      live.push({id: c.id, worktree: c.worktree, branch: cbranch, shown});
       continue;
     }
     skippedMissing++;
@@ -262,21 +275,23 @@ export async function runBarrier({listik, git, fs, config, swarmConfig, log, tas
       `верни дерево (listik worktree ${c.id}) или убери ветку.`);
   }
 
-  // Шаг 4: show() для живых, классификация «уже влита» (запись факта, если её нет).
+  // Шаг 4: show() для живых (повторно не зовём, если шаг 3 уже прочитал карточку).
   const toSort = [];
   for (const entry of live) {
-    let card;
-    try {
-      card = await listik.show(entry.id);
-    } catch (err) {
-      log.line(`show ${entry.id} ошибка: ${listikErrText(err)}`);
-      if (!dryRun) {
-        unmerged.push(entry.id);
-        log.action(`needs-owner ${entry.id}: show_error`);
-        await needsOwnerSafe(listik, log, entry.id,
-          withHint(entry.id, `рой не смог прочитать карточку: ${listikErrText(err)}.`));
+    let card = entry.shown || null;
+    if (!card) {
+      try {
+        card = await listik.show(entry.id);
+      } catch (err) {
+        log.line(`show ${entry.id} ошибка: ${listikErrText(err)}`);
+        if (!dryRun) {
+          unmerged.push(entry.id);
+          log.action(`needs-owner ${entry.id}: show_error`);
+          await needsOwnerSafe(listik, log, entry.id,
+            withHint(entry.id, `рой не смог прочитать карточку: ${listikErrText(err)}.`));
+        }
+        continue;
       }
-      continue;
     }
 
     const rec = mergedRecord(card);

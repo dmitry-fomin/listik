@@ -171,6 +171,14 @@ test("watch: ненулевой код с JSON скана без error (буду
   assert.equal(res.decisions[0].ok, false);
 });
 
+test("answer: needs-owner --clear, --json, --actor", async () => {
+  const {calls} = setupFake({"needs-owner": {stdout: JSON.stringify({id: "a"})}});
+  const listik = new Listik({bin: FAKE_BIN, actor: "agent:listik-swarm", cliTimeout: 5});
+  await listik.answer("a", "t");
+  const [argv] = calls();
+  assert.deepEqual(argv, ["needs-owner", "a", "--clear", "t", "--json", "--actor", "agent:listik-swarm"]);
+});
+
 test("таймаут — ListikError c code timeout", async () => {
   setupFake({status: {sleepMs: 2000, stdout: JSON.stringify({server: "up"})}});
   const listik = new Listik({bin: FAKE_BIN, cliTimeout: 1});

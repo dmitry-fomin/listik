@@ -57,6 +57,7 @@ export function open(dir, project) {
     const mergedDesc = (report.merged || []).join(", ");
     const unmergedDesc = (report.unmerged || []).join(", ");
     const rejectedDesc = (report.rejected || []).join(", ");
+    const defaultsDesc = (report.defaults || []).join(", ");
     const unfrozenDesc = (report.unfrozen || []).join(", ");
     const integrationDesc = report.integration === "green" ? "зелёная"
       : report.integration === "red" ? "красная" : "—";
@@ -73,6 +74,7 @@ export function open(dir, project) {
       `влито ${(report.merged || []).length} (${mergedDesc}) · ` +
       `не влиты ${(report.unmerged || []).length} (${unmergedDesc}) · ` +
       `не приняты ${(report.rejected || []).length} (${rejectedDesc}) · ` +
+      `дефолт ${(report.defaults || []).length} (${defaultsDesc}) · ` +
       `разморожено ${(report.unfrozen || []).length} (${unfrozenDesc}) · ` +
       `интеграция ${integrationDesc} · ` +
       `стоп ${report.halt ?? "—"}`;

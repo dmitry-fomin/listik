@@ -1,7 +1,11 @@
+import {DEFAULT_QUESTION_TIMEOUT} from "./config.mjs";
+
 // Решения роя — чистые функции, ни одного вызова наружу (spawn/fs/Date.now()):
 // время приходит аргументом `now`, вход/выход — обычные объекты.
+
 export const OPEN_STATUSES = new Set(["open", "in_progress", "blocked", "review"]);
 export const REJECTED_MARK = "рой: не принята:";
+export const SOFT_DEFAULT_RE = /^по умолчанию:\s*(\S.*)$/mu;
 
 const TEXT_UNROUTABLE = "рой: у задачи нет маршрута (launch_route) — каким маршрутом её делать? " +
   "Рой маршрут не выбирает никогда.";
@@ -36,6 +40,67 @@ export function allocatePort(tasks, task, base, count) {
 
 export function isRunning(t) {
   return !!t.launched_by && !t.launch_finished_at;
+}
+
+export function defaultLine(text) {
+  if (typeof text !== "string") return null;
+  const m = text.match(SOFT_DEFAULT_RE);
+  return m ? m[1].trim() : null;
+}
+
+export function isSoftQuestion(text) {
+  if (typeof text !== "string") return false;
+  if (text.trimStart().startsWith("рой:")) return false;
+  return defaultLine(text) !== null;
+}
+
+export function fromEvents(events) {
+  return (events || []).map(ev => ({kind: ev.kind, ts: ev.ts, text: ev.note}));
+}
+
+export function fromComments(comments) {
+  return (comments || []).map(c => ({kind: c.kind, ts: c.created_at, text: c.text}));
+}
+
+export function openQuestion(items) {
+  const qa = (items || []).filter(it => it && (it.kind === "question" || it.kind === "answer"));
+  const questions = qa.filter(it => it.kind === "question");
+  if (!questions.length) return null;
+  questions.sort((a, b) => (tsMs(a.ts) ?? 0) - (tsMs(b.ts) ?? 0));
+  const last = questions[questions.length - 1];
+  const lastTs = tsMs(last.ts);
+  const answered = qa.some(it => {
+    if (it.kind !== "answer") return false;
+    const at = tsMs(it.ts);
+    return at != null && lastTs != null && at >= lastTs;
+  });
+  if (answered) return null;
+  return {ts: last.ts, text: last.text};
+}
+
+function isSoftTask(t, events) {
+  const q = openQuestion(fromEvents((events || {})[t.id] || []));
+  return !!(q && isSoftQuestion(q.text));
+}
+
+export function dueDefaults({tasks, events, config, now}) {
+  const minutes = config && config.questionTimeout != null
+    ? config.questionTimeout
+    : DEFAULT_QUESTION_TIMEOUT;
+  if (!(minutes > 0)) return [];
+  const out = [];
+  for (const t of tasks || []) {
+    if (!t.needs_owner) continue;
+    if (!OPEN_STATUSES.has(t.status) && t.status !== "done") continue;
+    const q = openQuestion(fromEvents((events || {})[t.id] || []));
+    if (!q || !isSoftQuestion(q.text)) continue;
+    const qTs = tsMs(q.ts);
+    if (qTs == null) continue;
+    if (minutesSince(now, qTs) > minutes) {
+      out.push({id: t.id, line: defaultLine(q.text), minutes});
+    }
+  }
+  return out;
 }
 
 // Заморозка барьера (порции b–d): метка `frozen-by:<x>` на задаче. Первая найденная.
@@ -156,7 +221,7 @@ function superviseRunning({running, open, openById, events, tasks, config, now})
       continue;
     }
 
-    if (t.needs_owner) continue;
+    if (t.needs_owner && !isSoftTask(t, events)) continue;
     if (launchedAtMs == null) {
       skipped.push({id: t.id, reason: "no_launched_at"});
       continue;
@@ -207,6 +272,12 @@ function superviseCrashed({open, events, tasks, config}) {
       const evTs = tsMs(ev.ts);
       return evTs != null && finishedMs != null && evTs > finishedMs;
     });
+    const defaulted = taskEvents.some(ev => {
+      if (ev.kind !== "answer") return false;
+      if (normActor(ev.actor) !== actorNorm) return false;
+      const evTs = tsMs(ev.ts);
+      return evTs != null && finishedMs != null && evTs > finishedMs;
+    });
     const rejected = taskEvents.some(ev => {
       if (ev.kind !== "comment") return false;
       if (normActor(ev.actor) !== actorNorm) return false;
@@ -215,10 +286,10 @@ function superviseCrashed({open, events, tasks, config}) {
       return evTs != null && finishedMs != null && evTs > finishedMs;
     });
 
-    if (rejected || answered) {
+    if (rejected || defaulted || answered) {
       const restarts = restartCount(taskEvents, actorNorm);
       const port = portOf(t) ?? allocatePort(tasks, t, config.portBase, config.portCount);
-      const reason = rejected ? "rejected" : "answered";
+      const reason = rejected ? "rejected" : defaulted ? "defaulted" : "answered";
       if (port == null) {
         giveUp.push({id: t.id, reason: "no_port", restarts, text: noPortText(t.id)});
       } else {

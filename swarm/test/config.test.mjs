@@ -1,6 +1,7 @@
 import {test} from "node:test";
 import assert from "node:assert/strict";
-import {parseConfig, parseSwarmConfig, swarmConfigFor, ConfigError, HelpRequested} from "../config.mjs";
+import {parseConfig, parseSwarmConfig, swarmConfigFor, ConfigError, HelpRequested,
+  DEFAULT_QUESTION_TIMEOUT} from "../config.mjs";
 
 test("дефолты", () => {
   const config = parseConfig(["--project", "listik"]);
@@ -143,4 +144,23 @@ test("swarm.json: verify невалидные — ConfigError", () => {
   assert.throws(() => parseSwarmConfig(JSON.stringify({verify_retries: -1})), ConfigError);
   assert.throws(() => parseSwarmConfig(JSON.stringify({verify_retries: 1.5})), ConfigError);
   assert.throws(() => parseSwarmConfig(JSON.stringify({verfy: [["x"]]})), ConfigError);
+});
+
+test("question_timeout: дефолт 30, проектное переопределение, 0 и 0.05 ок, -1 и строка — ConfigError", () => {
+  assert.equal(DEFAULT_QUESTION_TIMEOUT, 30);
+  const empty = swarmConfigFor(parseSwarmConfig("{}"), "any");
+  assert.equal(empty.questionTimeout, 30);
+
+  const cfg = parseSwarmConfig(JSON.stringify({
+    question_timeout: 10,
+    projects: {listik: {question_timeout: 5}},
+  }));
+  assert.equal(swarmConfigFor(cfg, "listik").questionTimeout, 5);
+  assert.equal(swarmConfigFor(cfg, "other").questionTimeout, 10);
+
+  assert.equal(swarmConfigFor(parseSwarmConfig(JSON.stringify({question_timeout: 0})), "any").questionTimeout, 0);
+  assert.equal(swarmConfigFor(parseSwarmConfig(JSON.stringify({question_timeout: 0.05})), "any").questionTimeout, 0.05);
+
+  assert.throws(() => parseSwarmConfig(JSON.stringify({question_timeout: -1})), ConfigError);
+  assert.throws(() => parseSwarmConfig(JSON.stringify({question_timeout: "30"})), ConfigError);
 });

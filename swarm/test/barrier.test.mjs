@@ -196,7 +196,7 @@ function makeLog() {
 // Подставной клиент listik: show() по очереди/ошибке из showQueue, остальные методы пишут
 // в журнал вызовов и, если задан соответствующий `opts.<name>Fail`, бросают ошибку.
 function fakeListik(showQueue = {}, opts = {}) {
-  const calls = {show: [], comment: [], needsOwner: [], setLabels: [], set: [], create: []};
+  const calls = {show: [], comment: [], needsOwner: [], setLabels: [], set: [], create: [], answer: []};
   const shownCount = {};
   let createSeq = 0;
   return {
@@ -222,6 +222,10 @@ function fakeListik(showQueue = {}, opts = {}) {
       if (opts.needsOwnerFail && opts.needsOwnerFail(id, calls.needsOwner.length)) {
         throw new Error("needs-owner: подставной отказ");
       }
+      return {id};
+    },
+    async answer(id, text) {
+      calls.answer.push({id, text});
       return {id};
     },
     async setLabels(id, labels) {
@@ -377,18 +381,82 @@ suite("barrier 3: конфликт — первая по порядку влит
   assert.match(noteText, /конфликтует: f\.txt/);
 });
 
-suite("barrier 4: needs_owner:true — show не вызывается, needs-owner повторно не ставится", async () => {
+suite("barrier 4: needs_owner:true и жёсткий вопрос — show один раз, unmerged, needs-owner пуст", async () => {
   const repo = initRepo();
   const tree = addWorktree(repo, "t1");
   const tasks = [{id: "t1", status: "done", worktree: tree, branch: "task/t1", labels: ["port:1"], needs_owner: true}];
-  const listik = fakeListik({});
+  const listik = fakeListik({
+    t1: {id: "t1", comments: [
+      {kind: "question", text: "Какой формат?", created_at: "2026-01-01T00:00:00Z"},
+    ]},
+  });
   const log = makeLog();
   const result = await runBarrier({
     listik, git, fs: nodeFs, config: {dryRun: false}, swarmConfig: null, log, tasks,
     projectPath: repo, now: new Date(),
   });
   assert.deepEqual(result.unmerged, ["t1"]);
-  assert.equal(listik.calls.show.length, 0);
+  assert.equal(listik.calls.show.length, 1);
+  assert.equal(listik.calls.needsOwner.length, 0);
+  assert.ok(log.lines.some(l => l.includes("ждёт человека")));
+});
+
+suite("barrier: закрытая с мягким вопросом и коммитом — влита, show один раз, answer не вызывался", async () => {
+  const repo = initRepo();
+  const tree = addWorktree(repo, "t1");
+  writeFileSync(join(tree, "a.txt"), "a\n");
+  sh(tree, "add", "a.txt");
+  sh(tree, "commit", "-q", "-m", "t1");
+  const tasks = [{id: "t1", status: "done", worktree: tree, branch: "task/t1", labels: ["port:1"], needs_owner: true}];
+  const listik = fakeListik({
+    t1: {id: "t1", comments: [
+      {kind: "question", text: "Какой формат?\nпо умолчанию: JSON", created_at: "2026-01-01T00:00:00Z"},
+    ], write_scope: []},
+  });
+  const log = makeLog();
+  const result = await runBarrier({
+    listik, git, fs: nodeFs, config: {dryRun: false, project: "demo", logDir: tmpLogDir()},
+    swarmConfig: {integration: []}, log, tasks, projectPath: repo, now: new Date(),
+  });
+  assert.deepEqual(result.merged, ["t1"]);
+  assert.equal(listik.calls.show.length, 1);
+  assert.equal(listik.calls.needsOwner.length, 0);
+  assert.equal(listik.calls.answer.length, 0);
+  assert.ok(listik.calls.comment.some(c => c.id === "t1" && c.text.startsWith(MERGED_MARK)));
+});
+
+suite("barrier: закрытая с needs_owner, вопрос уже отвечен — unmerged как жёсткий", async () => {
+  const repo = initRepo();
+  const tree = addWorktree(repo, "t1");
+  const tasks = [{id: "t1", status: "done", worktree: tree, branch: "task/t1", labels: ["port:1"], needs_owner: true}];
+  const listik = fakeListik({
+    t1: {id: "t1", comments: [
+      {kind: "question", text: "Какой формат?\nпо умолчанию: JSON", created_at: "2026-01-01T00:00:00Z"},
+      {kind: "answer", text: "XML", created_at: "2026-01-01T00:10:00Z"},
+    ]},
+  });
+  const log = makeLog();
+  const result = await runBarrier({
+    listik, git, fs: nodeFs, config: {dryRun: false}, swarmConfig: null, log, tasks,
+    projectPath: repo, now: new Date(),
+  });
+  assert.deepEqual(result.unmerged, ["t1"]);
+  assert.equal(listik.calls.show.length, 1);
+  assert.equal(listik.calls.needsOwner.length, 0);
+});
+
+suite("barrier: ошибка show у кандидата с needs_owner — unmerged, без needs-owner", async () => {
+  const repo = initRepo();
+  const tree = addWorktree(repo, "t1");
+  const tasks = [{id: "t1", status: "done", worktree: tree, branch: "task/t1", labels: ["port:1"], needs_owner: true}];
+  const listik = fakeListik({t1: new Error("show fail")});
+  const log = makeLog();
+  const result = await runBarrier({
+    listik, git, fs: nodeFs, config: {dryRun: false}, swarmConfig: null, log, tasks,
+    projectPath: repo, now: new Date(),
+  });
+  assert.deepEqual(result.unmerged, ["t1"]);
+  assert.equal(listik.calls.show.length, 1);
   assert.equal(listik.calls.needsOwner.length, 0);
 });
 

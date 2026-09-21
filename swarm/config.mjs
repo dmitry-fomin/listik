@@ -137,13 +137,14 @@ export function parseConfig(argv) {
 // Читается в тике (порция c) — здесь только чистый разбор текста.
 
 const SWARM_TOP_KEYS = new Set(["integration", "arbiter", "integration_timeout", "arbiter_timeout",
-  "verify", "verify_timeout", "verify_retries", "projects"]);
+  "verify", "verify_timeout", "verify_retries", "question_timeout", "projects"]);
 const SWARM_PROJECT_KEYS = new Set(["integration", "arbiter", "integration_timeout", "arbiter_timeout",
-  "verify", "verify_timeout", "verify_retries"]);
+  "verify", "verify_timeout", "verify_retries", "question_timeout"]);
 const DEFAULT_INTEGRATION_TIMEOUT = 1800;
 const DEFAULT_ARBITER_TIMEOUT = 1200;
 const DEFAULT_VERIFY_TIMEOUT = 1800;
 const DEFAULT_VERIFY_RETRIES = 1;
+export const DEFAULT_QUESTION_TIMEOUT = 30;
 
 function isPlainObject(v) {
   return typeof v === "object" && v !== null && !Array.isArray(v);
@@ -181,6 +182,12 @@ function validateRetries(value, key, where) {
   }
 }
 
+function validateQuestionTimeout(value, where) {
+  if (typeof value !== "number" || !(value >= 0)) {
+    throw new ConfigError(`swarm.json: ${where}question_timeout ожидал число ≥ 0`);
+  }
+}
+
 function validateSettings(obj, allowedKeys, where) {
   for (const key of Object.keys(obj)) {
     if (!allowedKeys.has(key)) {
@@ -194,6 +201,7 @@ function validateSettings(obj, allowedKeys, where) {
   if ("arbiter_timeout" in obj) validateTimeout(obj.arbiter_timeout, "arbiter_timeout", where);
   if ("verify_timeout" in obj) validateTimeout(obj.verify_timeout, "verify_timeout", where);
   if ("verify_retries" in obj) validateRetries(obj.verify_retries, "verify_retries", where);
+  if ("question_timeout" in obj) validateQuestionTimeout(obj.question_timeout, where);
 }
 
 export function parseSwarmConfig(text) {
@@ -244,5 +252,6 @@ export function swarmConfigFor(parsed, slug) {
     verify: pick("verify", null),
     verifyTimeout: pick("verify_timeout", DEFAULT_VERIFY_TIMEOUT),
     verifyRetries: pick("verify_retries", DEFAULT_VERIFY_RETRIES),
+    questionTimeout: pick("question_timeout", DEFAULT_QUESTION_TIMEOUT),
   };
 }

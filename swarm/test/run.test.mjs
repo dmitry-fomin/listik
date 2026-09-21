@@ -508,7 +508,7 @@ test("надзор-тик: закрытая бежит дольше timeout — 
   assert.match(revokeCall.argv[noteIdx + 1], /процесс закрытой задачи/);
 });
 
-test("надзор-тик: бежит одна с needs_owner: true, молчит час — ни show, ни revoke, ни launch, ни needs-owner", async () => {
+test("надзор-тик: бежит одна с needs_owner: true без событий вопроса, молчит час — show один раз, без revoke/launch/needs-owner", async () => {
   const tasks = [runningTask("a", {
     launched_at: minsAgo(60), holder_at: minsAgo(60), needs_owner: true,
   })];
@@ -519,13 +519,193 @@ test("надзор-тик: бежит одна с needs_owner: true, молчи�
     waves: {stdout: JSON.stringify({waves: plan, added: [], removed: [], kept: 0})},
     list: {stdout: JSON.stringify({total: 1, limit: 1000, offset: 0, tasks})},
     routes: {stdout: JSON.stringify({ok: true, routes: []})},
+    show: {stdout: JSON.stringify({id: "a", events: []})},
   };
   const {calls} = setupFake(responses);
   const listik = new Listik({bin: FAKE_BIN, actor: "agent:listik-swarm", cliTimeout: 5});
   const log = makeLog();
   await tick(listik, supConfig, log);
 
-  assert.deepEqual(calls().map(c => c.sub), ["status", "waves", "list", "routes", "projects"]);
+  assert.deepEqual(calls().map(c => c.sub), ["status", "waves", "list", "routes", "show", "projects"]);
+});
+
+const SOFT_Q = "Какой формат?\nпо умолчанию: JSON";
+const DEFAULT_ANSWER = "рой: ответа не было 30 мин — действует вариант по умолчанию: JSON";
+
+function crashedFlagged(over = {}) {
+  return task("a", {
+    launched_by: "agent:listik-swarm", launch_finished_at: minsAgo(50),
+    launch_exit_code: 1, needs_owner: true, labels: ["port:5170"], ...over,
+  });
+}
+
+test("надзор-тик: упавшая мягкая 40 мин — answer, повторный show, revoke ответ по умолчанию, launch", async () => {
+  const qEvent = {kind: "question", actor: "agent:fake", ts: minsAgo(40), note: SOFT_Q};
+  const aEvent = {kind: "answer", actor: "agent:listik-swarm", ts: minsAgo(0), note: DEFAULT_ANSWER};
+  const tasks = [crashedFlagged()];
+  const plan = {project: "proj", waves: [[]], cycles: [], unroutable: [], unscoped: [], blocked: {}};
+  const responses = {
+    status: statusUp,
+    projects: {stdout: JSON.stringify([{slug: "proj", path: ""}])},
+    waves: {stdout: JSON.stringify({waves: plan, added: [], removed: [], kept: 0})},
+    list: {stdout: JSON.stringify({total: 1, limit: 1000, offset: 0, tasks})},
+    routes: {stdout: JSON.stringify({ok: true, routes: []})},
+    show: [
+      {stdout: JSON.stringify({id: "a", events: [qEvent]})},
+      {stdout: JSON.stringify({id: "a", events: [qEvent, aEvent]})},
+    ],
+    "needs-owner": {stdout: JSON.stringify({id: "a"})},
+    revoke: {stdout: JSON.stringify({id: "a", launch_finished_at: "2026-01-01T02:00:00Z", generation: 6})},
+    launch: {stdout: JSON.stringify({id: "a", generation: 7})},
+  };
+  const {calls} = setupFake(responses);
+  const listik = new Listik({bin: FAKE_BIN, actor: "agent:listik-swarm", cliTimeout: 5});
+  const log = makeLog();
+  const result = await tick(listik, supConfig, log);
+
+  const recorded = calls();
+  const subs = recorded.map(c => c.sub);
+  const show1 = subs.indexOf("show");
+  const answerIdx = subs.indexOf("needs-owner");
+  const show2 = subs.indexOf("show", answerIdx);
+  const revokeIdx = subs.indexOf("revoke");
+  const launchIdx = subs.indexOf("launch");
+  assert.ok(show1 >= 0 && show1 < answerIdx && answerIdx < show2 && show2 < revokeIdx && revokeIdx < launchIdx);
+  assert.deepEqual(recorded[answerIdx].argv, [
+    "needs-owner", "a", "--clear", DEFAULT_ANSWER, "--json", "--actor", "agent:listik-swarm",
+  ]);
+  assert.equal(recorded[revokeIdx].argv[recorded[revokeIdx].argv.indexOf("--note") + 1],
+    "рой: перезапуск — ответ по умолчанию");
+  assert.ok(!subs.includes("set"));
+  assert.ok(!subs.includes("stage"));
+  assert.deepEqual(result.defaults, ["a"]);
+  assert.deepEqual(result.restarted, ["a"]);
+  assert.ok(log.stdout.some(l => l === "ответ по умолчанию a: JSON"));
+
+  const summaryText = summaryOf(result.report);
+  assert.match(summaryText, /дефолт 1 \(a\)/);
+});
+
+test("надзор-тик: упавшая мягкая 40 мин, второй show без answer роя — revoke/launch нет", async () => {
+  const qEvent = {kind: "question", actor: "agent:fake", ts: minsAgo(40), note: SOFT_Q};
+  const tasks = [crashedFlagged()];
+  const plan = {project: "proj", waves: [[]], cycles: [], unroutable: [], unscoped: [], blocked: {}};
+  const responses = {
+    status: statusUp,
+    projects: {stdout: JSON.stringify([{slug: "proj", path: ""}])},
+    waves: {stdout: JSON.stringify({waves: plan, added: [], removed: [], kept: 0})},
+    list: {stdout: JSON.stringify({total: 1, limit: 1000, offset: 0, tasks})},
+    routes: {stdout: JSON.stringify({ok: true, routes: []})},
+    show: [
+      {stdout: JSON.stringify({id: "a", events: [qEvent]})},
+      {stdout: JSON.stringify({id: "a", events: [qEvent]})},
+    ],
+    "needs-owner": {stdout: JSON.stringify({id: "a"})},
+  };
+  const {calls} = setupFake(responses);
+  const listik = new Listik({bin: FAKE_BIN, actor: "agent:listik-swarm", cliTimeout: 5});
+  const log = makeLog();
+  const result = await tick(listik, supConfig, log);
+  const subs = calls().map(c => c.sub);
+  assert.ok(subs.includes("needs-owner"));
+  assert.ok(!subs.includes("revoke"));
+  assert.ok(!subs.includes("launch"));
+  assert.deepEqual(result.defaults, ["a"]);
+  assert.deepEqual(result.restarted, []);
+});
+
+test("надзор-тик: вопрос 6 мин при дефолтном timeout 30 — автоответа нет", async () => {
+  const qEvent = {kind: "question", actor: "agent:fake", ts: minsAgo(6), note: SOFT_Q};
+  const tasks = [crashedFlagged()];
+  const plan = {project: "proj", waves: [[]], cycles: [], unroutable: [], unscoped: [], blocked: {}};
+  const responses = {
+    status: statusUp,
+    projects: {stdout: JSON.stringify([{slug: "proj", path: ""}])},
+    waves: {stdout: JSON.stringify({waves: plan, added: [], removed: [], kept: 0})},
+    list: {stdout: JSON.stringify({total: 1, limit: 1000, offset: 0, tasks})},
+    routes: {stdout: JSON.stringify({ok: true, routes: []})},
+    show: {stdout: JSON.stringify({id: "a", events: [qEvent]})},
+  };
+  const {calls} = setupFake(responses);
+  const listik = new Listik({bin: FAKE_BIN, actor: "agent:listik-swarm", cliTimeout: 5});
+  const log = makeLog();
+  await tick(listik, supConfig, log);
+  assert.ok(!calls().some(c => c.sub === "needs-owner" && c.argv.includes("--clear")));
+});
+
+test("надзор-тик: --dry-run автоответ — нет needs-owner, строка [dry-run] answer", async () => {
+  const qEvent = {kind: "question", actor: "agent:fake", ts: minsAgo(40), note: SOFT_Q};
+  const tasks = [crashedFlagged()];
+  const plan = {project: "proj", waves: [[]], cycles: [], unroutable: [], unscoped: [], blocked: {}};
+  const responses = {
+    status: statusUp,
+    projects: {stdout: JSON.stringify([{slug: "proj", path: ""}])},
+    waves: {stdout: JSON.stringify(plan)},
+    list: {stdout: JSON.stringify({total: 1, limit: 1000, offset: 0, tasks})},
+    routes: {stdout: JSON.stringify({ok: true, routes: []})},
+    show: {stdout: JSON.stringify({id: "a", events: [qEvent]})},
+  };
+  const {calls} = setupFake(responses);
+  const listik = new Listik({bin: FAKE_BIN, actor: "agent:listik-swarm", cliTimeout: 5});
+  const log = makeLog();
+  await tick(listik, {...supConfig, dryRun: true}, log);
+  assert.ok(!calls().some(c => c.sub === "needs-owner"));
+  assert.ok(log.stdout.some(l => l.startsWith("[dry-run] answer a:")));
+});
+
+test("надзор-тик: done с needs_owner и port — show; без порта и launched_by — нет; cancelled — нет", async () => {
+  const tasks = [
+    task("done-port", {status: "done", needs_owner: true, labels: ["port:5170"]}),
+    task("done-plain", {status: "done", needs_owner: true}),
+    task("canc", {status: "cancelled", needs_owner: true, labels: ["port:5170"], launched_by: "x"}),
+  ];
+  const plan = {project: "proj", waves: [[]], cycles: [], unroutable: [], unscoped: [], blocked: {}};
+  const responses = {
+    status: statusUp,
+    projects: {stdout: JSON.stringify([{slug: "proj", path: ""}])},
+    waves: {stdout: JSON.stringify({waves: plan, added: [], removed: [], kept: 0})},
+    list: {stdout: JSON.stringify({total: tasks.length, limit: 1000, offset: 0, tasks})},
+    routes: {stdout: JSON.stringify({ok: true, routes: []})},
+    show: {stdout: JSON.stringify({id: "done-port", events: []})},
+  };
+  const {calls} = setupFake(responses);
+  const listik = new Listik({bin: FAKE_BIN, actor: "agent:listik-swarm", cliTimeout: 5});
+  const log = makeLog();
+  await tick(listik, supConfig, log);
+  const shows = calls().filter(c => c.sub === "show");
+  assert.equal(shows.length, 1);
+  assert.ok(shows[0].argv.includes("done-port"));
+});
+
+test("надзор-тик: упавшая, answer роя позже завершения — revoke ответ по умолчанию, launch", async () => {
+  const tasks = [task("a", {
+    launched_by: "agent:listik-swarm", launch_finished_at: "2026-01-01T00:00:00Z",
+    launch_exit_code: 1, labels: ["port:5170"],
+  })];
+  const plan = {project: "proj", waves: [[]], cycles: [], unroutable: [], unscoped: [], blocked: {}};
+  const responses = {
+    status: statusUp,
+    projects: {stdout: JSON.stringify([{slug: "proj", path: ""}])},
+    waves: {stdout: JSON.stringify({waves: plan, added: [], removed: [], kept: 0})},
+    list: {stdout: JSON.stringify({total: 1, limit: 1000, offset: 0, tasks})},
+    routes: {stdout: JSON.stringify({ok: true, routes: []})},
+    show: {stdout: JSON.stringify({id: "a", events: [
+      {kind: "answer", actor: "agent:listik-swarm", ts: "2026-01-01T01:00:00Z"},
+    ]})},
+    revoke: {stdout: JSON.stringify({id: "a", launch_finished_at: "2026-01-01T02:00:00Z", generation: 6})},
+    launch: {stdout: JSON.stringify({id: "a", generation: 7})},
+  };
+  const {calls} = setupFake(responses);
+  const listik = new Listik({bin: FAKE_BIN, actor: "agent:listik-swarm", cliTimeout: 5});
+  const log = makeLog();
+  await tick(listik, supConfig, log);
+  const recorded = calls();
+  const revokeCall = recorded.find(c => c.sub === "revoke");
+  assert.equal(revokeCall.argv[revokeCall.argv.indexOf("--note") + 1],
+    "рой: перезапуск — ответ по умолчанию");
+  const revokeIdx = recorded.findIndex(c => c.sub === "revoke");
+  const launchIdx = recorded.findIndex(c => c.sub === "launch");
+  assert.ok(revokeIdx >= 0 && launchIdx > revokeIdx);
 });
 
 test("надзор-тик: --dry-run на зависла — ни revoke, ни launch (событие всё же читаем show)", async () => {
@@ -1057,7 +1237,7 @@ function summaryOf(report) {
 
 test("сводка: без новых полей — нули и прочерки", () => {
   const text = summaryOf({});
-  assert.match(text, /влито 0 \(\) · не влиты 0 \(\) · не приняты 0 \(\) · разморожено 0 \(\) · интеграция — · стоп —$/);
+  assert.match(text, /влито 0 \(\) · не влиты 0 \(\) · не приняты 0 \(\) · дефолт 0 \(\) · разморожено 0 \(\) · интеграция — · стоп —$/);
 });
 
 test("сводка: merged/integration red/halt", () => {
@@ -1077,9 +1257,19 @@ test("questionReason: интеграционные тесты → стоп ро�
   assert.equal(questionReason("рой: не влита — конфликт слияния"), "не влита");
 });
 
+test("questionReason: мягкий вопрос — есть дефолт; жёсткий воркерский — вопрос воркера", () => {
+  assert.equal(questionReason("Какой формат?\nпо умолчанию: JSON"), "вопрос воркера, есть дефолт");
+  assert.equal(questionReason("Какой формат?"), "вопрос воркера");
+});
+
 test("сводка: rejected — не приняты N (ids)", () => {
   const text = summaryOf({rejected: ["a"]});
   assert.match(text, /не приняты 1 \(a\)/);
+});
+
+test("сводка: дефолт 1 (a)", () => {
+  const text = summaryOf({defaults: ["a"]});
+  assert.match(text, /дефолт 1 \(a\)/);
 });
 
 test("questionReason: отклонена раньше не влита → не принята", () => {
@@ -1172,3 +1362,38 @@ gitTest("тик: барьер отклоняет единственную зак
     assert.deepEqual(result.restarted, ["t1"]);
     assert.deepEqual(result.barrier.rejected, ["t1"]);
   });
+
+gitTest("надзор-тик: swarm.json question_timeout 5, вопрос 6 мин — текст 5 мин", async () => {
+  const repo = initRepo();
+  const qEvent = {kind: "question", actor: "agent:fake", ts: minsAgo(6), note: SOFT_Q};
+  const answerText = "рой: ответа не было 5 мин — действует вариант по умолчанию: JSON";
+  const aEvent = {kind: "answer", actor: "agent:listik-swarm", ts: minsAgo(0), note: answerText};
+  const tasks = [crashedFlagged()];
+  const plan = {project: "proj", waves: [[]], cycles: [], unroutable: [], unscoped: [], blocked: {}};
+  const dataDir = fs.mkdtempSync(path.join(os.tmpdir(), "listik-swarm-data-"));
+  fs.writeFileSync(path.join(dataDir, "swarm.json"), JSON.stringify({
+    integration: [], question_timeout: 5,
+  }));
+  const responses = {
+    status: statusFor(dataDir),
+    waves: {stdout: JSON.stringify({waves: plan, added: [], removed: [], kept: 0})},
+    list: {stdout: JSON.stringify({total: 1, limit: 1000, offset: 0, tasks})},
+    routes: {stdout: JSON.stringify({ok: true, routes: []})},
+    projects: {stdout: JSON.stringify([{slug: "proj", path: repo}])},
+    watch: {stdout: JSON.stringify({tasks: {}, decisions: [], probes: []})},
+    show: [
+      {stdout: JSON.stringify({id: "a", events: [qEvent]})},
+      {stdout: JSON.stringify({id: "a", events: [qEvent, aEvent]})},
+    ],
+    "needs-owner": {stdout: JSON.stringify({id: "a"})},
+    revoke: {stdout: JSON.stringify({id: "a", launch_finished_at: "2026-01-01T02:00:00Z", generation: 6})},
+    launch: {stdout: JSON.stringify({id: "a", generation: 7})},
+  };
+  const {calls} = setupFake(responses);
+  const listik = new Listik({bin: FAKE_BIN, actor: "agent:listik-swarm", cliTimeout: 5});
+  const log = makeLog();
+  await tick(listik, {...supConfig, logDir: fs.mkdtempSync(path.join(os.tmpdir(), "listik-swarm-qto-"))}, log);
+  const answerCall = calls().find(c => c.sub === "needs-owner" && c.argv.includes("--clear"));
+  assert.ok(answerCall);
+  assert.equal(answerCall.argv[answerCall.argv.indexOf("--clear") + 1], answerText);
+});

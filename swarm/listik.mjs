@@ -130,6 +130,10 @@ export class Listik {
     return this._call(["needs-owner", id, text], {write: true});
   }
 
+  answer(id, text) {
+    return this._call(["needs-owner", id, "--clear", text], {write: true});
+  }
+
   worktree(id) {
     return this._call(["worktree", id], {write: true});
   }

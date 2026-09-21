@@ -1,6 +1,10 @@
 import {test} from "node:test";
 import assert from "node:assert/strict";
-import {decide, portOf, allocatePort, isFrozen, REJECTED_MARK} from "../decide.mjs";
+import fs from "node:fs";
+import {fileURLToPath} from "node:url";
+import {decide, portOf, allocatePort, isFrozen, REJECTED_MARK, isSoftQuestion, defaultLine,
+  openQuestion, fromEvents, fromComments, dueDefaults} from "../decide.mjs";
+import {DEFAULT_QUESTION_TIMEOUT} from "../config.mjs";
 
 const config = {parallel: 3, weights: {xhigh: 3, high: 2, medium: 1, low: 1, xlow: 1, direct: 1}};
 
@@ -523,4 +527,175 @@ test("надзор: needs_owner true с REJECTED_MARK — ни restart, ни cra
   const res = decideRunning(t, {plan: emptyPlan, events});
   assert.deepEqual(res.restart, []);
   assert.deepEqual(res.crashed, []);
+});
+
+// --- порция b: мягкий вопрос ---
+
+const SOFT_Q = "Какой формат?\nпо умолчанию: JSON";
+
+test("isSoftQuestion/defaultLine: таблица", () => {
+  const rows = [
+    [SOFT_Q, true, "JSON"],
+    ["по умолчанию: да", true, "да"],
+    ["По умолчанию: да", false, null],
+    ["вопрос по умолчанию: да", false, null],
+    ["рой: у задачи нет маршрута … по умолчанию: high", false, null],
+    ["  рой:\nпо умолчанию: x", false, "x"],
+    ["", false, null],
+    [null, false, null],
+    [42, false, null],
+  ];
+  for (const [text, soft, line] of rows) {
+    assert.equal(isSoftQuestion(text), soft, String(text));
+    assert.equal(defaultLine(text), line, String(text));
+  }
+});
+
+test("openQuestion: вопрос; ответ закрывает; новый вопрос после ответа; порядок не важен; comment/revoke игнор", () => {
+  const q1 = {kind: "question", ts: "2026-01-01T00:00:00Z", text: SOFT_Q};
+  const a1 = {kind: "answer", ts: "2026-01-01T00:10:00Z", text: "XML"};
+  const q2 = {kind: "question", ts: "2026-01-01T00:20:00Z", text: "ещё?\nпо умолчанию: YAML"};
+  const noise = [
+    {kind: "comment", ts: "2026-01-01T00:05:00Z", text: `${REJECTED_MARK} {}`},
+    {kind: "revoke", ts: "2026-01-01T00:06:00Z", text: "рой: перезапуск — stale"},
+  ];
+  assert.deepEqual(openQuestion([q1]), {ts: q1.ts, text: q1.text});
+  assert.equal(openQuestion([q1, a1]), null);
+  assert.deepEqual(openQuestion([q1, a1, q2]), {ts: q2.ts, text: q2.text});
+  assert.deepEqual(openQuestion([q2, a1, q1]), {ts: q2.ts, text: q2.text});
+  assert.deepEqual(openQuestion([...noise, q1]), {ts: q1.ts, text: q1.text});
+  assert.equal(openQuestion(fromEvents([
+    {kind: "comment", ts: "2026-01-01T00:00:00Z", note: `${REJECTED_MARK} {}`},
+    {kind: "question", ts: "2026-01-01T00:01:00Z", note: SOFT_Q},
+    {kind: "revoke", ts: "2026-01-01T00:02:00Z", note: "рой: x"},
+  ])).text, SOFT_Q);
+  assert.equal(openQuestion(fromComments([
+    {kind: "journal", created_at: "2026-01-01T00:00:00Z", text: "x"},
+    {kind: "question", created_at: "2026-01-01T00:01:00Z", text: SOFT_Q},
+  ])).text, SOFT_Q);
+});
+
+test("надзор: бегущая с мягким вопросом, молчит 30 мин при staleMinutes 20 — restart stale", () => {
+  const now = new Date();
+  const t = runningTask("a", {
+    launched_at: minsAgo(now, 30), holder_at: minsAgo(now, 30), labels: ["port:5170"],
+    needs_owner: true,
+  });
+  const events = {a: [{kind: "question", actor: "agent:fake", ts: minsAgo(now, 30), note: SOFT_Q}]};
+  const res = decideRunning(t, {now, events});
+  assert.equal(res.restart.length, 1);
+  assert.equal(res.restart[0].reason, "stale");
+  assert.deepEqual(res.report.stale, ["a"]);
+});
+
+function crashedSoft(over = {}) {
+  return task("a", {
+    launched_by: "agent:listik-swarm", launch_finished_at: "2026-01-01T00:00:00Z",
+    needs_owner: true, labels: ["port:5170"], ...over,
+  });
+}
+
+test("надзор: упавшая с мягким вопросом 5 мин назад — crashed/restart пусты, dueDefaults пуст", () => {
+  const now = new Date();
+  const t = crashedSoft();
+  const events = {a: [{kind: "question", actor: "agent:fake", ts: minsAgo(now, 5), note: SOFT_Q}]};
+  const cfg = {...supConfig, questionTimeout: 30};
+  const res = decideRunning(t, {now, events, config: cfg, plan: emptyPlan});
+  assert.deepEqual(res.crashed, []);
+  assert.deepEqual(res.restart, []);
+  assert.deepEqual(dueDefaults({tasks: [t], events, config: cfg, now}), []);
+});
+
+test("dueDefaults: мягкий 40 мин → {id, line, minutes}; decide без поля defaults", () => {
+  const now = new Date();
+  const t = crashedSoft();
+  const events = {a: [{kind: "question", actor: "agent:fake", ts: minsAgo(now, 40), note: SOFT_Q}]};
+  const cfg = {...supConfig, questionTimeout: 30};
+  const due = dueDefaults({tasks: [t], events, config: cfg, now});
+  assert.deepEqual(due, [{id: "a", line: "JSON", minutes: 30}]);
+  const res = decideRunning(t, {now, events, config: cfg, plan: emptyPlan});
+  assert.equal("defaults" in res, false);
+  assert.deepEqual(dueDefaults({tasks: [t], events, config: cfg, now}), due);
+});
+
+test("dueDefaults: done с мягким 40 мин — да; cancelled — нет; жёсткий — нет; timeout 0 — нет; рой: — нет", () => {
+  const now = new Date();
+  const events = {a: [{kind: "question", actor: "agent:fake", ts: minsAgo(now, 40), note: SOFT_Q}]};
+  const cfg = {...supConfig, questionTimeout: 30};
+  const done = crashedSoft({status: "done"});
+  assert.deepEqual(dueDefaults({tasks: [done], events, config: cfg, now}),
+    [{id: "a", line: "JSON", minutes: 30}]);
+  const cancelled = crashedSoft({status: "cancelled"});
+  assert.deepEqual(dueDefaults({tasks: [cancelled], events, config: cfg, now}), []);
+  const hard = crashedSoft();
+  const hardEvents = {a: [{kind: "question", actor: "agent:fake", ts: minsAgo(now, 40),
+    note: "Какой формат?"}]};
+  assert.deepEqual(dueDefaults({tasks: [hard], events: hardEvents, config: cfg, now}), []);
+  assert.deepEqual(dueDefaults({tasks: [hard], events, config: {...cfg, questionTimeout: 0}, now}), []);
+  const swarmQ = {a: [{kind: "question", actor: "agent:listik-swarm", ts: minsAgo(now, 40),
+    note: "рой: у задачи нет маршрута (launch_route) — каким маршрутом её делать? по умолчанию: high-pipeline"}]};
+  assert.deepEqual(dueDefaults({tasks: [hard], events: swarmQ, config: cfg, now}), []);
+});
+
+test("dueDefaults: вопрос 40 мин, ответ человека 10 мин, потом жёсткий вопрос — пусто", () => {
+  const now = new Date();
+  const t = crashedSoft();
+  const events = {a: [
+    {kind: "question", actor: "agent:fake", ts: minsAgo(now, 40), note: SOFT_Q},
+    {kind: "answer", actor: "dmitry", ts: minsAgo(now, 10), note: "XML"},
+    {kind: "question", actor: "agent:fake", ts: minsAgo(now, 5), note: "Какой формат?"},
+  ]};
+  assert.deepEqual(dueDefaults({tasks: [t], events, config: {...supConfig, questionTimeout: 30}, now}), []);
+});
+
+test("надзор: упавшая, needs_owner false, answer роя позже завершения — restart defaulted", () => {
+  const t = task("a", {
+    launched_by: "agent:listik-swarm", launch_finished_at: "2026-01-01T00:00:00Z",
+    needs_owner: false, labels: ["port:5170"],
+  });
+  const events = {a: [
+    {kind: "answer", actor: "agent:listik-swarm", ts: "2026-01-01T01:00:00Z", note: "рой: ответа не было"},
+  ]};
+  const res = decideRunning(t, {plan: emptyPlan, events});
+  assert.equal(res.restart.length, 1);
+  assert.equal(res.restart[0].reason, "defaulted");
+});
+
+test("надзор: упавшая, answer человека позже завершения — restart answered", () => {
+  const t = task("a", {
+    launched_by: "agent:listik-swarm", launch_finished_at: "2026-01-01T00:00:00Z",
+    needs_owner: false, labels: ["port:5170"],
+  });
+  const events = {a: [
+    {kind: "answer", actor: "dmitry", ts: "2026-01-01T01:00:00Z"},
+  ]};
+  const res = decideRunning(t, {plan: emptyPlan, events});
+  assert.equal(res.restart[0].reason, "answered");
+});
+
+test("надзор: answer роя и comment REJECTED_MARK позже завершения — restart rejected", () => {
+  const t = task("a", {
+    launched_by: "agent:listik-swarm", launch_finished_at: "2026-01-01T00:00:00Z",
+    needs_owner: false, labels: ["port:5170"],
+  });
+  const events = {a: [
+    {kind: "answer", actor: "agent:listik-swarm", ts: "2026-01-01T01:00:00Z", note: "рой: x"},
+    {kind: "comment", actor: "agent:listik-swarm", ts: "2026-01-01T01:01:00Z",
+      note: `${REJECTED_MARK} {"reason":"red"}`},
+  ]};
+  const res = decideRunning(t, {plan: emptyPlan, events});
+  assert.equal(res.restart[0].reason, "rejected");
+});
+
+test("dueDefaults без questionTimeout использует DEFAULT_QUESTION_TIMEOUT; литерала 30 в decide нет", () => {
+  const now = new Date();
+  const t = crashedSoft();
+  const events = {a: [{kind: "question", actor: "agent:fake", ts: minsAgo(now, 40), note: SOFT_Q}]};
+  const due = dueDefaults({tasks: [t], events, config: {}, now});
+  assert.deepEqual(due, [{id: "a", line: "JSON", minutes: DEFAULT_QUESTION_TIMEOUT}]);
+  assert.equal(DEFAULT_QUESTION_TIMEOUT, 30);
+  const src = fs.readFileSync(fileURLToPath(new URL("../decide.mjs", import.meta.url)), "utf8");
+  assert.match(src, /DEFAULT_QUESTION_TIMEOUT/);
+  assert.match(src, /from "\.\/config\.mjs"/);
+  assert.doesNotMatch(src, /questionTimeout[^\n]*=[^\n]*30/);
 });

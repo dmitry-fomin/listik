@@ -95,8 +95,15 @@ TOOLS: list[dict] = [
         "name": "listik_show",
         "description": ("Полная карточка задачи: описание, критерии приёмки, этап и сколько на нём, "
                         "кто держит и как давно, комментарии/журнал, события, зависимости, "
-                        "documents[] — статус индексируемых документов (spec/checklist/review/decision)."),
-        "inputSchema": {"type": "object", "properties": {"id": TASK_ID}, "required": ["id"]},
+                        "documents[] — статус индексируемых документов (spec/checklist/review/decision). "
+                        "fields — оставить только эти поля (список или строки с запятыми); "
+                        "неизвестное поле — ошибка bad_argument с перечнем доступных."),
+        "inputSchema": {"type": "object",
+                        "properties": {"id": TASK_ID,
+                                       "fields": {"type": "array", "items": {"type": "string"},
+                                                  "description": ("только эти поля карточки, "
+                                                                  "напр. [\"launch_route\", \"labels\"]")}},
+                        "required": ["id"]},
     },
     {
         "name": "listik_create",
@@ -560,7 +567,7 @@ def call_tool(name: str, args: dict, conn=None, owner=FROM_ENV, fence=FROM_ENV) 
         from . import deps as deps_mod
         task = store.get_task(conn, args["id"])
         task["deps_state"] = deps_mod.ready(conn, args["id"])
-        return task
+        return store.select_task_fields(task, args.get("fields"))
     if name == "listik_create":
         return store.create_task(
             conn, title=args["title"], project=args.get("project"),

@@ -1,15 +1,18 @@
 import {test} from "node:test";
 import assert from "node:assert/strict";
 import {execFileSync} from "node:child_process";
-import {mkdtempSync, writeFileSync, mkdirSync} from "node:fs";
+import {mkdtempSync, writeFileSync, mkdirSync, readdirSync, readFileSync} from "node:fs";
 import nodeFs from "node:fs";
 import {tmpdir} from "node:os";
-import {join} from "node:path";
+import {join, resolve, dirname} from "node:path";
+import {fileURLToPath} from "node:url";
 import {
   covers, outsideScope, parseMarked, mergedRecord, sortForMerge, mergeCandidates, haltCards,
   frozenBy, tailLines, runBarrier, MERGED_MARK, FIRST_CHANGE_MARK, HALT_LABEL, SWARM_AUTHOR,
-  UNFROZEN_MARK,
+  UNFROZEN_MARK, ARBITER_MARK,
 } from "../barrier.mjs";
+
+const ARBITER_FIXTURE = resolve(dirname(fileURLToPath(import.meta.url)), "fixtures/fake-arbiter.mjs");
 
 test("covers — таблица", () => {
   assert.equal(covers("docs", "docs/API.md"), true);
@@ -1228,4 +1231,140 @@ suite("барьер: create отвечает ошибкой — деревья �
   assert.deepEqual(result.gate, {reason: "halt", ids: []});
   assert.deepEqual(result.halt, []);
   assert.equal(listik.calls.needsOwner.length, 0);
+});
+
+// --------------------------------------------------------- порция e: арбитр ---
+
+// Тот же конфликт одного файла, что в сценарии "barrier 3": t1 вливается первой, t2
+// конфликтует на rebase.
+function conflictSetup() {
+  const repo = initRepo();
+  writeFileSync(join(repo, "f.txt"), "base\n");
+  sh(repo, "add", "f.txt");
+  sh(repo, "commit", "-q", "-m", "f base");
+  const treeT1 = addWorktree(repo, "t1");
+  writeFileSync(join(treeT1, "f.txt"), "t1-side\n");
+  sh(treeT1, "add", "f.txt");
+  sh(treeT1, "commit", "-q", "-m", "t1 edits f");
+  const treeT2 = addWorktree(repo, "t2");
+  writeFileSync(join(treeT2, "f.txt"), "t2-side\n");
+  sh(treeT2, "add", "f.txt");
+  sh(treeT2, "commit", "-q", "-m", "t2 edits f");
+  const tasks = [
+    {id: "t1", status: "done", worktree: treeT1, branch: "task/t1", labels: ["port:1"]},
+    {id: "t2", status: "done", worktree: treeT2, branch: "task/t2", labels: ["port:1"]},
+  ];
+  return {repo, treeT1, treeT2, tasks};
+}
+
+suite("барьер + арбитр ok: обе влиты, MERGED_MARK второй с arbiter:true, обе строки в дереве", async () => {
+  const {repo, tasks} = conflictSetup();
+  const listik = fakeListik({
+    t1: {id: "t1", comments: [], write_scope: []},
+    t2: {id: "t2", comments: [], write_scope: []},
+  });
+  const log = makeLog();
+  const logDir = tmpLogDir();
+  const result = await runBarrier({
+    listik, git, fs: nodeFs, config: {dryRun: false, project: "demo", logDir},
+    swarmConfig: {integration: [], arbiter: ["node", ARBITER_FIXTURE, "{prompt}", "{files}"], arbiterTimeout: 30},
+    log, tasks, projectPath: repo, now: new Date(),
+  });
+
+  assert.deepEqual(result.mergedNow, ["t1", "t2"]);
+  assert.deepEqual(result.unmerged, []);
+  const c2 = listik.calls.comment.find(c => c.id === "t2" && c.text.startsWith(MERGED_MARK));
+  assert.ok(c2);
+  const rec2 = JSON.parse(c2.text.slice(MERGED_MARK.length).trim());
+  assert.equal(rec2.arbiter, true);
+  const arbiterComment = listik.calls.comment.find(c => c.id === "t2" && c.text.startsWith(ARBITER_MARK));
+  assert.ok(arbiterComment);
+  const content = readFileSync(join(repo, "f.txt"), "utf8");
+  assert.match(content, /t1-side/);
+  assert.match(content, /t2-side/);
+});
+
+suite("барьер без арбитра: needs-owner содержит «арбитр не настроен»", async () => {
+  const {repo, tasks} = conflictSetup();
+  const listik = fakeListik({
+    t1: {id: "t1", comments: [], write_scope: []},
+    t2: {id: "t2", comments: [], write_scope: []},
+  });
+  const log = makeLog();
+  const result = await runBarrier({
+    listik, git, fs: nodeFs, config: {dryRun: false}, swarmConfig: null, log, tasks,
+    projectPath: repo, now: new Date(),
+  });
+  assert.deepEqual(result.unmerged, ["t2"]);
+  assert.match(listik.calls.needsOwner[0].text, /арбитр не настроен \(ключ arbiter в swarm\.json\)/);
+});
+
+suite("барьер + арбитр fail: needs-owner содержит «арбитр не справился», «код 1», путь лога", async () => {
+  const {repo, tasks} = conflictSetup();
+  const listik = fakeListik({
+    t1: {id: "t1", comments: [], write_scope: []},
+    t2: {id: "t2", comments: [], write_scope: []},
+  });
+  const log = makeLog();
+  const logDir = tmpLogDir();
+  process.env.FAKE_ARBITER_MODE = "fail";
+  const result = await runBarrier({
+    listik, git, fs: nodeFs, config: {dryRun: false, project: "demo", logDir},
+    swarmConfig: {integration: [], arbiter: ["node", ARBITER_FIXTURE, "{prompt}", "{files}"], arbiterTimeout: 30},
+    log, tasks, projectPath: repo, now: new Date(),
+  });
+  delete process.env.FAKE_ARBITER_MODE;
+
+  assert.deepEqual(result.unmerged, ["t2"]);
+  const noteText = listik.calls.needsOwner[0].text;
+  assert.match(noteText, /арбитр не справился: код 1/);
+  assert.match(noteText, /лог .*arbiter-t2-.*\.log/);
+});
+
+suite("барьер dryRun с настроенным арбитром: промпт-файлов нет", async () => {
+  const {repo, tasks} = conflictSetup();
+  const listik = fakeListik({
+    t1: {id: "t1", comments: [], write_scope: []},
+    t2: {id: "t2", comments: [], write_scope: []},
+  });
+  const log = makeLog();
+  const logDir = tmpLogDir();
+  await runBarrier({
+    listik, git, fs: nodeFs, config: {dryRun: true, project: "demo", logDir},
+    swarmConfig: {integration: [], arbiter: ["node", ARBITER_FIXTURE, "{prompt}", "{files}"], arbiterTimeout: 30},
+    log, tasks, projectPath: repo, now: new Date(),
+  });
+  assert.deepEqual(readdirSync(logDir).filter(f => f.endsWith(".prompt.md")), []);
+});
+
+suite("барьер: разморозка с конфликтом + арбитр настроен — арбитр не зовётся (только для закрытых)", async () => {
+  const repo = initRepo();
+  writeFileSync(join(repo, "f.txt"), "base\n");
+  sh(repo, "add", "f.txt");
+  sh(repo, "commit", "-q", "-m", "f base");
+  const treeT1 = addWorktree(repo, "t1");
+  writeFileSync(join(treeT1, "f.txt"), "t1-side\n");
+  sh(treeT1, "add", "f.txt");
+  sh(treeT1, "commit", "-q", "-m", "t1 edits f");
+  const treeT2 = addWorktree(repo, "t2");
+  writeFileSync(join(treeT2, "f.txt"), "t2-side\n"); // незакоммичено, тот же файл/строка
+
+  const tasks = [
+    {id: "t1", status: "done", worktree: treeT1, branch: "task/t1", labels: ["port:1"]},
+    {id: "t2", status: "open", worktree: treeT2, branch: "task/t2", labels: ["frozen-by:t1"]},
+  ];
+  const listik = fakeListik({
+    t1: {id: "t1", comments: [], write_scope: []},
+    t2: {id: "t2", comments: [], labels: ["frozen-by:t1"]},
+  });
+  const log = makeLog();
+  const logDir = tmpLogDir();
+  const result = await runBarrier({
+    listik, git, fs: nodeFs, config: {dryRun: false, project: "demo", logDir},
+    swarmConfig: {integration: [], arbiter: ["node", ARBITER_FIXTURE, "{prompt}", "{files}"], arbiterTimeout: 30},
+    log, tasks, projectPath: repo, now: new Date(),
+  });
+
+  assert.deepEqual(result.unfrozen, ["t2"]);
+  assert.deepEqual(readdirSync(logDir).filter(f => f.endsWith(".prompt.md")), []);
 });

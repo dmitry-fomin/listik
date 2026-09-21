@@ -142,6 +142,13 @@ export async function mergeBase(repo, a, b) {
   return (await mustOk(repo, ["merge-base", a, b])).trim();
 }
 
+// Темы коммитов (`git log --format=%s`) для произвольного `rev` (диапазон, ref, ...);
+// пустой вывод → [] (порция e: арбитр).
+export async function logSubjects(repo, rev) {
+  const out = await mustOk(repo, ["log", "--format=%s", rev]);
+  return out.split("\n").map(l => l.trim()).filter(Boolean);
+}
+
 // ------------------------------------------------------------------ запись
 
 async function rebaseResult(tree, res, args) {

@@ -6,12 +6,14 @@
 import {spawn} from "node:child_process";
 import path from "node:path";
 import {OPEN_STATUSES, isFrozen, portOf} from "./decide.mjs";
+import {resolveWithArbiter} from "./arbiter.mjs";
 
 export const MERGED_MARK = "рой: влито:";
 export const UNFROZEN_MARK = "рой: разморожена:";
 export const FIRST_CHANGE_MARK = "рой: первая правка замечена:";
 export const HALT_LABEL = "swarm:halt";
 export const SWARM_AUTHOR = "agent:listik-swarm";
+export const ARBITER_MARK = "рой: арбитр:";
 
 const MAIN_WORKTREE_MARKERS = new Set(["main", "master"]);
 
@@ -313,16 +315,35 @@ export async function runBarrier({listik, git, fs, config, swarmConfig, log, tas
       await needsOwnerSafe(listik, log, entry.id, withHint(entry.id, "`rebase`: " + (err.message ?? String(err))));
       continue;
     }
+    let usedArbiter = false;
     if (!rebaseRes.ok) {
-      await git.rebaseAbort(entry.worktree);
       const sha7 = base.slice(0, 7);
       const files = (rebaseRes.conflicts || []).join(", ");
-      const body = `rebase на ${sha7} конфликтует: ${files}; ребейз откачен, разреши сам в дереве ` +
-        `${entry.worktree} (git rebase ${base}).`;
-      unmerged.push(entry.id);
-      log.action(`needs-owner ${entry.id}: rebase_conflict`);
-      await needsOwnerSafe(listik, log, entry.id, withHint(entry.id, body));
-      continue;
+
+      if (!(swarmConfig && swarmConfig.arbiter)) {
+        await git.rebaseAbort(entry.worktree);
+        const body = `rebase на ${sha7} конфликтует: ${files}; арбитр не настроен (ключ arbiter в ` +
+          `swarm.json); ребейз откачен, разреши сам в дереве ${entry.worktree} (git rebase ${base}).`;
+        unmerged.push(entry.id);
+        log.action(`needs-owner ${entry.id}: rebase_conflict`);
+        await needsOwnerSafe(listik, log, entry.id, withHint(entry.id, body));
+        continue;
+      }
+
+      const arbRes = await resolveWithArbiter({
+        git, listik, fs, config, swarmConfig, log, projectPath, task: entry, card: entry,
+        worktree: entry.worktree, base, tasks, now,
+      });
+      if (!arbRes.ok) {
+        const logPart = arbRes.logPath ? `, лог ${arbRes.logPath}` : "";
+        const body = `rebase на ${sha7} конфликтует: ${files}; арбитр не справился: ${arbRes.reason}` +
+          `${logPart}; ребейз откачен, разреши сам в дереве ${entry.worktree} (git rebase ${base}).`;
+        unmerged.push(entry.id);
+        log.action(`needs-owner ${entry.id}: rebase_conflict`);
+        await needsOwnerSafe(listik, log, entry.id, withHint(entry.id, body));
+        continue;
+      }
+      usedArbiter = true;
     }
 
     const ff = await git.mergeFfOnly(projectPath, entry.branch);
@@ -339,6 +360,7 @@ export async function runBarrier({listik, git, fs, config, swarmConfig, log, tas
     const declared = entry.write_scope || [];
     const outside = outsideScope(files, declared);
     const record = {sha, branch: entry.branch, base, files, declared, outside};
+    if (usedArbiter) record.arbiter = true;
     try {
       await listik.comment(entry.id, `${MERGED_MARK} ${JSON.stringify(record)}`);
     } catch (err) {

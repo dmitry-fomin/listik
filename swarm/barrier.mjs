@@ -1,6 +1,10 @@
-// Чистая часть барьера волны роя: ни `spawn`, ни `fs`, ни `Date.now()` — только
-// обычные объекты внутрь и наружу. Порции c–e зовут эти функции по имени и не
-// имеют права их менять.
+// Барьер волны роя. Хелперы ниже (`covers`…`tailLines`) — чистая часть: ни `spawn`,
+// ни `fs`, ни `Date.now()`, только обычные объекты внутрь и наружу; порции c–e зовут
+// их по имени и не имеют права менять. `runBarrier` и его частные хелперы (шаги 7–9,
+// интеграция) — оркестрация: git/listik/fs приходят параметрами, `spawn` — прямой
+// импорт (команды интеграции, порция d).
+import {spawn} from "node:child_process";
+import path from "node:path";
 import {OPEN_STATUSES, isFrozen, portOf} from "./decide.mjs";
 
 export const MERGED_MARK = "рой: влито:";
@@ -147,25 +151,29 @@ async function needsOwnerSafe(listik, log, id, text) {
 
 // Оркестрация барьера волны: rebase → ff-merge по одной, запись факта, гейт.
 // Порция c — конфликт ребейза здесь всегда отказ (`rebaseAbort`), без арбитра.
-export async function runBarrier({listik, git, fs, config, swarmConfig, log, tasks, projectPath, now}) {
-  void swarmConfig;
-  void now;
+export async function runBarrier({listik, git, fs, config, swarmConfig, log, tasks, projectPath, now,
+  swarmJsonPath}) {
   const dryRun = !!(config && config.dryRun);
+  const EMPTY_TAIL = {unfrozen: [], integration: null, cleaned: []};
 
   const halt = haltCards(tasks);
   if (halt.length) {
     log.line(`стоп: открыта карточка ${halt[0]} — слияния и запуски остановлены`);
-    return {merged: [], mergedNow: [], unmerged: [], halt, gate: {reason: "halt", ids: halt}, order: []};
+    return {
+      merged: [], mergedNow: [], unmerged: [], halt, gate: {reason: "halt", ids: halt}, order: [],
+      ...EMPTY_TAIL,
+    };
   }
 
   const candidates = mergeCandidates(tasks);
+  const candidateMap = new Map(candidates.map(c => [c.id, c]));
   const branch = await git.currentBranch(projectPath);
   if (branch == null) {
     log.line("основное дерево не на ветке — слияния не делаются");
     const ids = candidates.map(c => c.id);
     return {
       merged: [], mergedNow: [], unmerged: ids, halt: [],
-      gate: ids.length ? {reason: "unmerged", ids} : null, order: [],
+      gate: ids.length ? {reason: "unmerged", ids} : null, order: [], ...EMPTY_TAIL,
     };
   }
 
@@ -343,6 +351,336 @@ export async function runBarrier({listik, git, fs, config, swarmConfig, log, tas
     mergedNow.push(entry.id);
   }
 
-  const gate = unmerged.length ? {reason: "unmerged", ids: unmerged} : null;
-  return {merged, mergedNow, unmerged, halt: [], gate, order};
+  let gate = unmerged.length ? {reason: "unmerged", ids: unmerged} : null;
+
+  // ---------------------------------------------------------- шаг 7: разморозка ---
+  const toUnfreeze = collectFrozenCandidates(tasks, unmerged);
+  const tasksById = new Map((tasks || []).map(t => [t.id, t]));
+
+  if (dryRun) {
+    for (const {f, owner} of toUnfreeze) {
+      log.action(`[dry-run] разморозить ${f} (владелец ${owner})`);
+    }
+    const pending = merged;
+    if (!pending.length) {
+      log.line("интеграция: нечего проверять");
+    } else {
+      const cmdCount = swarmConfig && Array.isArray(swarmConfig.integration) ? swarmConfig.integration.length : 0;
+      log.action(`[dry-run] интеграция: ${cmdCount} команд`);
+      log.action(`[dry-run] убрать деревья: ${pending.join(", ")}`);
+    }
+    return {merged, mergedNow, unmerged, halt: haltCards(tasks), gate, order, ...EMPTY_TAIL};
+  }
+
+  const unfrozen = [];
+  for (const {f, owner} of toUnfreeze) {
+    let card;
+    try {
+      card = await listik.show(f);
+    } catch (err) {
+      log.line(`show ${f} ошибка: ${listikErrText(err)}`);
+      continue;
+    }
+    const marked = parseMarked(card.comments, UNFROZEN_MARK).filter(m => m.data && m.data.owner === owner);
+    const hasMark = marked.length > 0;
+    const cardLabels = card.labels || [];
+    const hasFrozenLabel = cardLabels.some(l => typeof l === "string" && l.startsWith("frozen-by:"));
+
+    if (hasMark && !hasFrozenLabel) continue; // уже разморожена целиком — повтор молча
+
+    const newLabels = cardLabels.filter(l => !(typeof l === "string" && l.startsWith("frozen-by:")));
+
+    if (hasMark && hasFrozenLabel) {
+      try {
+        await listik.setLabels(f, newLabels);
+      } catch (err) {
+        log.line(`setLabels ${f} ошибка: ${listikErrText(err)}`);
+        continue;
+      }
+      const t = tasksById.get(f);
+      if (t) t.labels = newLabels;
+      log.action(`разморожена ${f} (владелец ${owner}): метка снята повторно`);
+      unfrozen.push(f);
+      continue;
+    }
+
+    const task = tasksById.get(f);
+    const worktree = (task && task.worktree) || "";
+    const treeMissing = !worktree || !fs.existsSync(worktree);
+    let base;
+    try {
+      base = await git.headSha(projectPath);
+    } catch (err) {
+      log.line(`headSha ${projectPath} ошибка: ${listikErrText(err)}`);
+      continue;
+    }
+
+    let snapshot = null;
+    let rebased = false;
+    let conflicts = [];
+    let error;
+    let treeStatus;
+    let next;
+
+    if (treeMissing) {
+      treeStatus = "missing";
+      next = `дерево ${worktree || "(неизвестно)"} отсутствует — восстанови его сам, затем продолжай задачу`;
+    } else {
+      try {
+        snapshot = await git.snapshotCommit(worktree, "рой: снимок незакоммиченных правок перед rebase");
+      } catch (err) {
+        log.line(`snapshot ${f} ошибка: ${listikErrText(err)}`);
+        continue;
+      }
+      let r;
+      try {
+        r = await git.rebase(worktree, base);
+      } catch (err) {
+        if (await git.rebaseInProgress(worktree)) await git.rebaseAbort(worktree);
+        error = err.message ?? String(err);
+      }
+      if (error !== undefined) {
+        next = `перебазируй сам: git rebase ${base} в ${worktree}; ошибка: ${error}; потом продолжай задачу`;
+      } else if (r.ok) {
+        rebased = true;
+        next = `дерево перебазировано на ${base.slice(0, 7)}, продолжай задачу`;
+      } else {
+        await git.rebaseAbort(worktree);
+        conflicts = r.conflicts || [];
+        const files = conflicts.join(", ");
+        next = `перебазируй сам: git rebase ${base} в ${worktree}; конфликтуют: ${files}; потом продолжай задачу`;
+      }
+    }
+
+    const record = {owner, sha: base, rebased, snapshot, conflicts, next};
+    if (error !== undefined) record.error = error;
+    if (treeStatus) record.tree = treeStatus;
+    try {
+      await listik.comment(f, `${UNFROZEN_MARK} ${JSON.stringify(record)}`);
+    } catch (err) {
+      log.line(`comment ${f} ошибка: ${listikErrText(err)}`);
+      continue;
+    }
+    try {
+      await listik.setLabels(f, newLabels);
+    } catch (err) {
+      log.line(`setLabels ${f} ошибка: ${listikErrText(err)}`);
+      continue;
+    }
+    if (task) task.labels = newLabels;
+    const desc = treeMissing ? "дерева нет" : rebased ? "rebase чистый" : `конфликт: ${conflicts.join(", ")}`;
+    log.action(`разморожена ${f} (владелец ${owner}): ${desc}`);
+    unfrozen.push(f);
+  }
+
+  // ------------------------------------------------------- шаг 8: интеграция ---
+  const pending = merged;
+  let integration = null;
+  const cleaned = [];
+
+  if (pending.length) {
+    const integrationCmds = swarmConfig && Array.isArray(swarmConfig.integration) ? swarmConfig.integration : null;
+
+    if (integrationCmds === null) {
+      log.line("интеграция: не настроены");
+      integration = null;
+      gate = await createHaltCard({
+        listik, log, tasks, config, mergedNow, pending, kind: "not-configured", swarmJsonPath,
+      }) ?? gate;
+    } else if (!integrationCmds.length) {
+      log.line("интеграция: команды не заданы (пустой список) — считаю зелёными");
+      integration = "green";
+    } else {
+      const stamp = stampFile(now instanceof Date ? now : new Date());
+      fs.mkdirSync(config.logDir, {recursive: true});
+      const logPath = path.join(config.logDir, `integration-${config.project}-${stamp}.log`);
+      const logFd = fs.openSync(logPath, "a");
+      const timeoutSec = (swarmConfig && swarmConfig.integrationTimeout) || 1800;
+
+      integration = "green";
+      let failed = null;
+      for (const argv of integrationCmds) {
+        fs.writeSync(logFd, `$ ${argv.join(" ")}\n`);
+        const res = await runIntegrationCommand(argv, projectPath, logFd, timeoutSec);
+        const codeDesc = res.timedOut ? "таймаут" : String(res.code);
+        log.action(`интеграция: ${argv.join(" ")} → код ${codeDesc} (${(res.ms / 1000).toFixed(1)} с)`);
+        if (res.timedOut || res.code !== 0) {
+          integration = "red";
+          failed = {argv, res, timeoutSec};
+          break;
+        }
+      }
+      fs.closeSync(logFd);
+
+      if (integration === "red") {
+        const logText = fs.readFileSync(logPath, "utf8");
+        gate = await createHaltCard({
+          listik, log, tasks, config, mergedNow, pending, kind: "red", failed, logPath, logText,
+          git: git, projectPath,
+        }) ?? gate;
+      }
+    }
+
+    if (integration === "green") {
+      for (const id of pending) {
+        const cleanedId = await cleanupOne({listik, git, fs, log, id, candidateMap, projectPath});
+        if (cleanedId) cleaned.push(cleanedId);
+      }
+    }
+  } else {
+    log.line("интеграция: нечего проверять");
+  }
+
+  const finalHalt = gate && gate.reason === "halt" ? gate.ids : haltCards(tasks);
+  return {merged, mergedNow, unmerged, halt: finalHalt, gate, order, unfrozen, integration, cleaned};
+}
+
+// Владелец → замороженные им открытые задачи, готовые к разморозке: владелец `done`
+// и не входит в `unmerged` этого прохода (влит сейчас/ранее либо закрыт без коммитов).
+function collectFrozenCandidates(tasks, unmerged) {
+  const doneOwners = new Set((tasks || []).filter(t => t.status === "done").map(t => t.id));
+  const unmergedSet = new Set(unmerged);
+  const map = frozenBy(tasks);
+  const out = [];
+  for (const [owner, ids] of map) {
+    if (!doneOwners.has(owner)) continue;
+    if (unmergedSet.has(owner)) continue;
+    for (const f of ids) out.push({f, owner});
+  }
+  return out;
+}
+
+function stampFile(d) {
+  return d.toISOString().replace(/[-:]/g, "").replace(/\.\d{3}Z$/, "Z");
+}
+
+// Одна команда интеграции: группа процессов, SIGTERM по таймауту, SIGKILL через 5с.
+function runIntegrationCommand(argv, cwd, logFd, timeoutSec) {
+  return new Promise((resolvePromise) => {
+    const start = Date.now();
+    const child = spawn(argv[0], argv.slice(1), {
+      cwd, env: process.env, detached: true, stdio: ["ignore", logFd, logFd],
+    });
+    let timedOut = false;
+    let killTimer = null;
+    const termTimer = setTimeout(() => {
+      timedOut = true;
+      try { process.kill(-child.pid, "SIGTERM"); } catch { /* уже нет */ }
+      killTimer = setTimeout(() => {
+        try { process.kill(-child.pid, "SIGKILL"); } catch { /* уже нет */ }
+      }, 5000);
+    }, timeoutSec * 1000);
+    child.on("exit", (code) => {
+      clearTimeout(termTimer);
+      if (killTimer) clearTimeout(killTimer);
+      resolvePromise({code: timedOut ? null : code, timedOut, ms: Date.now() - start});
+    });
+    child.on("error", () => {
+      clearTimeout(termTimer);
+      if (killTimer) clearTimeout(killTimer);
+      resolvePromise({code: 1, timedOut: false, ms: Date.now() - start});
+    });
+  });
+}
+
+// Карточка-стоп (красная интеграция или «не настроена»): `create` → текст → `needsOwner`.
+// Возвращает новый `gate`, либо `null`, если `create` отказал (вызывающий держит старый gate).
+async function createHaltCard({listik, log, tasks, config, mergedNow, pending, kind, swarmJsonPath,
+  failed, logPath, logText, git, projectPath}) {
+  const title = kind === "red"
+    ? `рой: интеграционные тесты красные — ${config.project}`
+    : `рой: интеграционные тесты не настроены — ${config.project}`;
+  let haltCard;
+  try {
+    haltCard = await listik.create({
+      title, project: config.project, type: "question", labels: [HALT_LABEL],
+      discoveredFrom: mergedNow[0] ?? pending[0],
+    });
+  } catch (err) {
+    log.line(`создание карточки-стоп ошибка: ${listikErrText(err)}`);
+    return {reason: "halt", ids: []};
+  }
+
+  let text;
+  if (kind === "red") {
+    const codeDesc = failed.res.timedOut ? `таймаут ${failed.timeoutSec} с` : String(failed.res.code);
+    let sha7 = "?";
+    try {
+      sha7 = (await git.headSha(projectPath)).slice(0, 7);
+    } catch { /* лучшее из доступного */ }
+    text = `рой: интеграционные тесты красные после слияния ${pending.join(", ")}.\n` +
+      `команда: ${failed.argv.join(" ")}\n` +
+      `код: ${codeDesc}\n` +
+      `лог: ${logPath}\n` +
+      `хвост:\n${tailLines(logText, 40)}\n\n` +
+      `что делать: почини основную ветку (HEAD ${sha7}), затем закрой эту карточку ` +
+      `(listik done ${haltCard.id} -r "…") — рой снова прогонит тесты и продолжит; деревья влитых ` +
+      `задач сохранены до зелёных тестов.`;
+  } else {
+    text = `рой: интеграционные тесты для проекта ${config.project} не настроены — в ${swarmJsonPath} ` +
+      `добавь ключ integration (список команд argv) в projects.${config.project} или на верхнем ` +
+      `уровне; пустой список [] значит «тестов нет».\nПотом закрой эту карточку (listik done ${haltCard.id} ` +
+      `-r "…") — рой прогонит тесты и продолжит.`;
+  }
+
+  try {
+    await listik.needsOwner(haltCard.id, text);
+  } catch (err) {
+    log.line(`needs-owner ${haltCard.id} ошибка: ${listikErrText(err)}`);
+    return {reason: "halt", ids: []};
+  }
+  log.action(`стоп: карточка ${haltCard.id} (${kind === "red" ? "интеграция красная" : "не настроена"})`);
+  const openHalts = haltCards(tasks);
+  return {reason: "halt", ids: [...openHalts, haltCard.id]};
+}
+
+// Дерево/ветка убранной задачи. `id` без записи в `candidateMap` не бывает — он пришёл из
+// `mergeCandidates(tasks)`, откуда и построен `candidateMap`. Возвращает `id`, если дерево
+// убрано (успех вызывает `listik.set`), иначе `null`.
+async function cleanupOne({listik, git, fs, log, id, candidateMap, projectPath}) {
+  const cand = candidateMap.get(id);
+  if (!cand) return null;
+  const branchName = cand.branch || `task/${id}`;
+
+  const isAnc = await git.isAncestor(projectPath, branchName, "HEAD");
+  if (!isAnc) {
+    log.line(`дерево ${id} не убрано: ветка не влита`);
+    return null;
+  }
+
+  // `git worktree remove --force` зовётся независимо от того, жив ли каталог на диске: даже
+  // после ручного `rm -rf` дерево остаётся зарегистрированным в git (prunable), и без этого
+  // вызова `branch -d` откажет «used by worktree at …». Каталога физически нет — и это не
+  // ошибка remove, а штатный повод убрать ветку следом.
+  const dirPath = cand.worktree || "";
+  const dirExists = dirPath && fs.existsSync(dirPath);
+  const rm = await git.removeWorktree(projectPath, dirPath);
+  if (!rm.ok) {
+    const stderrText = rm.stderr || "";
+    if (!/not a working tree/i.test(stderrText)) {
+      log.line(`${id}: remove не удался, ветку не трогаю`);
+      return null;
+    }
+    log.line(`${id}: дерева нет, ветку убираю`);
+  } else if (!dirExists) {
+    log.line(`${id}: дерева нет, ветку убираю`);
+  }
+
+  const del = await git.deleteBranch(projectPath, branchName);
+  if (!del.ok) {
+    const exists = await git.branchExists(projectPath, branchName);
+    if (exists) {
+      log.line(`${id}: удаление ветки не удалось, оставляю`);
+      return null;
+    }
+  }
+
+  try {
+    await listik.set(id, {worktree: "", branch: ""});
+  } catch (err) {
+    log.line(`set ${id} ошибка: ${listikErrText(err)}`);
+    return null;
+  }
+  log.action(`убрано дерево ${id}`);
+  return id;
 }

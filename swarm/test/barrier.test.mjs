@@ -8,6 +8,7 @@ import {join} from "node:path";
 import {
   covers, outsideScope, parseMarked, mergedRecord, sortForMerge, mergeCandidates, haltCards,
   frozenBy, tailLines, runBarrier, MERGED_MARK, FIRST_CHANGE_MARK, HALT_LABEL, SWARM_AUTHOR,
+  UNFROZEN_MARK,
 } from "../barrier.mjs";
 
 test("covers — таблица", () => {
@@ -189,11 +190,12 @@ function makeLog() {
   };
 }
 
-// Подставной клиент listik: show() по очереди/ошибке из showQueue, comment()/needsOwner()
-// просто пишут в журнал вызовов.
-function fakeListik(showQueue = {}) {
-  const calls = {show: [], comment: [], needsOwner: []};
+// Подставной клиент listik: show() по очереди/ошибке из showQueue, остальные методы пишут
+// в журнал вызовов и, если задан соответствующий `opts.<name>Fail`, бросают ошибку.
+function fakeListik(showQueue = {}, opts = {}) {
+  const calls = {show: [], comment: [], needsOwner: [], setLabels: [], set: [], create: []};
   const shownCount = {};
+  let createSeq = 0;
   return {
     calls,
     async show(id) {
@@ -207,16 +209,48 @@ function fakeListik(showQueue = {}) {
     },
     async comment(id, text) {
       calls.comment.push({id, text});
+      if (opts.commentFail && opts.commentFail(id, calls.comment.length)) {
+        throw new Error("comment: подставной отказ");
+      }
       return {id};
     },
     async needsOwner(id, text) {
       calls.needsOwner.push({id, text});
+      if (opts.needsOwnerFail && opts.needsOwnerFail(id, calls.needsOwner.length)) {
+        throw new Error("needs-owner: подставной отказ");
+      }
+      return {id};
+    },
+    async setLabels(id, labels) {
+      calls.setLabels.push({id, labels});
+      if (opts.setLabelsFail && opts.setLabelsFail(id, calls.setLabels.length)) {
+        throw new Error("setLabels: подставной отказ");
+      }
+      return {id, labels};
+    },
+    async set(id, fields) {
+      calls.set.push({id, fields});
+      if (opts.setFail && opts.setFail(id)) {
+        throw new Error("set: подставной отказ");
+      }
+      return {id, ...fields};
+    },
+    async create(args) {
+      calls.create.push(args);
+      if (opts.createFail) throw new Error("create: подставной отказ");
+      createSeq++;
+      const id = opts.createId ? opts.createId(createSeq) : `halt${createSeq}`;
       return {id};
     },
   };
 }
 
 const suite = gitAvailable ? test : test.skip;
+
+// Каталог лога интеграции для тестов, где `swarmConfig.integration` непуст.
+function tmpLogDir() {
+  return mkdtempSync(join(tmpdir(), "swarm-barrier-log-"));
+}
 
 suite("barrier 1: порядок по первой правке, HEAD линейный, MERGED_MARK у обеих", async () => {
   const repo = initRepo();
@@ -243,8 +277,8 @@ suite("barrier 1: порядок по первой правке, HEAD линей
   });
   const log = makeLog();
   const result = await runBarrier({
-    listik, git, fs: nodeFs, config: {dryRun: false}, swarmConfig: null, log, tasks,
-    projectPath: repo, now: new Date(),
+    listik, git, fs: nodeFs, config: {dryRun: false, project: "demo", logDir: tmpLogDir()},
+    swarmConfig: {integration: []}, log, tasks, projectPath: repo, now: new Date(),
   });
 
   assert.deepEqual(result.order, ["t2", "t1"]);
@@ -288,16 +322,17 @@ suite("barrier 2: грязное дерево не вливается, чист�
   });
   const log = makeLog();
   const statusBefore = sh(treeT1, "status", "--porcelain");
+  const t2HeadBefore = await git.headSha(treeT2); // до сноса дерева t2 барьером (зелёная интеграция)
   const result = await runBarrier({
-    listik, git, fs: nodeFs, config: {dryRun: false}, swarmConfig: null, log, tasks,
-    projectPath: repo, now: new Date(),
+    listik, git, fs: nodeFs, config: {dryRun: false, project: "demo", logDir: tmpLogDir()},
+    swarmConfig: {integration: []}, log, tasks, projectPath: repo, now: new Date(),
   });
 
   assert.deepEqual(result.unmerged, ["t1"]);
   assert.deepEqual(result.merged, ["t2"]);
   assert.deepEqual(result.gate, {reason: "unmerged", ids: ["t1"]});
   assert.equal(sh(treeT1, "status", "--porcelain"), statusBefore);
-  assert.equal(await git.headSha(repo), await git.headSha(treeT2));
+  assert.equal(await git.headSha(repo), t2HeadBefore);
   assert.ok(listik.calls.needsOwner[0].text.startsWith("рой: не влита — в дереве"));
 });
 
@@ -581,10 +616,616 @@ suite("barrier 15: show бросает для одного — needs-owner, сл
   });
   const log = makeLog();
   const result = await runBarrier({
-    listik, git, fs: nodeFs, config: {dryRun: false}, swarmConfig: null, log, tasks,
-    projectPath: repo, now: new Date(),
+    listik, git, fs: nodeFs, config: {dryRun: false, project: "demo", logDir: tmpLogDir()},
+    swarmConfig: {integration: []}, log, tasks, projectPath: repo, now: new Date(),
   });
   assert.deepEqual(result.unmerged, ["t1"]);
   assert.deepEqual(result.mergedNow, ["t2"]);
   assert.equal(listik.calls.needsOwner.length, 1);
+});
+
+// ------------------------------------------------- шаги 7–9 (порция d) ---
+
+function readLog(dir) {
+  const files = nodeFs.readdirSync(dir).filter(f => f.startsWith("integration-"));
+  assert.equal(files.length, 1, `ожидался один файл integration-*.log, нашлось: ${files.join(", ")}`);
+  return {path: join(dir, files[0]), text: nodeFs.readFileSync(join(dir, files[0]), "utf8")};
+}
+
+// Репо с двумя влитыми не конфликтующими кандидатами (как barrier 1) — общая заготовка
+// для тестов шагов 8–9.
+function twoMergedSetup() {
+  const repo = initRepo();
+  const treeT1 = addWorktree(repo, "t1");
+  const treeT2 = addWorktree(repo, "t2");
+  writeFileSync(join(treeT1, "a.txt"), "a\n");
+  sh(treeT1, "add", "a.txt");
+  sh(treeT1, "commit", "-q", "-m", "t1");
+  writeFileSync(join(treeT2, "b.txt"), "b\n");
+  sh(treeT2, "add", "b.txt");
+  sh(treeT2, "commit", "-q", "-m", "t2");
+  const tasks = [
+    {id: "t1", status: "done", worktree: treeT1, branch: "task/t1", labels: ["port:1"]},
+    {id: "t2", status: "done", worktree: treeT2, branch: "task/t2", labels: ["port:1"]},
+  ];
+  const listik = fakeListik({
+    t1: {id: "t1", comments: [
+      {author: SWARM_AUTHOR, text: `${FIRST_CHANGE_MARK} {}`, created_at: "2026-01-01T00:00:20Z"},
+    ], write_scope: []},
+    t2: {id: "t2", comments: [
+      {author: SWARM_AUTHOR, text: `${FIRST_CHANGE_MARK} {}`, created_at: "2026-01-01T00:00:10Z"},
+    ], write_scope: []},
+  });
+  return {repo, treeT1, treeT2, tasks, listik};
+}
+
+suite("барьер шаг 9: зелёные → снос обоих деревьев", async () => {
+  const {repo, treeT1, treeT2, tasks, listik} = twoMergedSetup();
+  const logDir = tmpLogDir();
+  const log = makeLog();
+  const result = await runBarrier({
+    listik, git, fs: nodeFs, config: {dryRun: false, project: "demo", logDir},
+    swarmConfig: {integration: [[process.execPath, "-e", "process.exit(0)"]]},
+    log, tasks, projectPath: repo, now: new Date(),
+  });
+
+  assert.equal(result.integration, "green");
+  assert.equal(nodeFs.existsSync(treeT1), false);
+  assert.equal(nodeFs.existsSync(treeT2), false);
+  assert.equal(await git.branchExists(repo, "task/t1"), false);
+  assert.equal(await git.branchExists(repo, "task/t2"), false);
+  assert.deepEqual(result.cleaned, ["t2", "t1"]);
+  const setT1 = listik.calls.set.find(c => c.id === "t1");
+  const setT2 = listik.calls.set.find(c => c.id === "t2");
+  assert.deepEqual(setT1.fields, {worktree: "", branch: ""});
+  assert.deepEqual(setT2.fields, {worktree: "", branch: ""});
+  const {text} = readLog(logDir);
+  assert.match(text, /process\.exit\(0\)/);
+
+  // HEAD основного дерева — тот же, что после слияний (снос не переписывает main).
+  const c1 = listik.calls.comment.find(c => c.id === "t1");
+  const mergedSha = JSON.parse(c1.text.slice(MERGED_MARK.length).trim()).sha;
+  assert.equal(await git.headSha(repo), mergedSha);
+});
+
+suite("барьер шаг 9: красная интеграция → карточка-стоп, деревья на месте", async () => {
+  const {repo, treeT1, treeT2, tasks} = twoMergedSetup();
+  const listik = fakeListik({
+    t1: {id: "t1", comments: [
+      {author: SWARM_AUTHOR, text: `${FIRST_CHANGE_MARK} {}`, created_at: "2026-01-01T00:00:20Z"},
+    ], write_scope: []},
+    t2: {id: "t2", comments: [
+      {author: SWARM_AUTHOR, text: `${FIRST_CHANGE_MARK} {}`, created_at: "2026-01-01T00:00:10Z"},
+    ], write_scope: []},
+  });
+  const logDir = tmpLogDir();
+  const log = makeLog();
+  const result = await runBarrier({
+    listik, git, fs: nodeFs, config: {dryRun: false, project: "demo", logDir},
+    swarmConfig: {integration: [[process.execPath, "-e", "process.stderr.write('boom'); process.exit(1)"]]},
+    log, tasks, projectPath: repo, now: new Date(),
+  });
+
+  assert.equal(result.integration, "red");
+  const created = listik.calls.create[0];
+  assert.equal(created.type, "question");
+  assert.deepEqual(created.labels, [HALT_LABEL]);
+  assert.equal(created.discoveredFrom, "t2");
+  const note = listik.calls.needsOwner[0];
+  assert.equal(note.id, "halt1");
+  assert.match(note.text, /код: 1/);
+  assert.match(note.text, /boom/);
+  assert.match(note.text, /listik done/);
+  assert.match(note.text, new RegExp(`${logDir.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")}`));
+  assert.match(note.text, new RegExp(process.execPath.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")));
+  assert.equal(nodeFs.existsSync(treeT1), true);
+  assert.equal(nodeFs.existsSync(treeT2), true);
+  assert.equal(await git.branchExists(repo, "task/t1"), true);
+  assert.equal(await git.branchExists(repo, "task/t2"), true);
+  assert.equal(listik.calls.set.length, 0);
+  assert.deepEqual(result.gate, {reason: "halt", ids: ["halt1"]});
+  assert.ok(Array.isArray(result.halt) && result.halt.includes("halt1"));
+  assert.ok(log.lines.some(l => l === "стоп: карточка halt1 (интеграция красная)"));
+});
+
+suite("барьер шаг 9: интеграция не настроена → карточка-стоп с путём swarm.json", async () => {
+  const {repo, treeT1, treeT2, tasks} = twoMergedSetup();
+  const listik = fakeListik({
+    t1: {id: "t1", comments: [], write_scope: []},
+    t2: {id: "t2", comments: [], write_scope: []},
+  });
+  const log = makeLog();
+  const result = await runBarrier({
+    listik, git, fs: nodeFs, config: {dryRun: false, project: "demo", logDir: tmpLogDir()},
+    swarmConfig: {integration: null}, swarmJsonPath: "/tmp/swarm.json",
+    log, tasks, projectPath: repo, now: new Date(),
+  });
+
+  assert.equal(result.integration, null);
+  const note = listik.calls.needsOwner[0];
+  assert.match(note.text, /\/tmp\/swarm\.json/);
+  assert.match(note.text, /не настроены/);
+  assert.deepEqual(result.gate, {reason: "halt", ids: ["halt1"]});
+  assert.equal(nodeFs.existsSync(treeT1), true);
+  assert.equal(nodeFs.existsSync(treeT2), true);
+  assert.equal(await git.branchExists(repo, "task/t1"), true);
+  assert.equal(await git.branchExists(repo, "task/t2"), true);
+  assert.equal(listik.calls.set.length, 0);
+});
+
+suite("барьер шаг 9: пустой список команд — зелёная, снос выполнен", async () => {
+  const {repo, treeT1, treeT2, tasks, listik} = twoMergedSetup();
+  const log = makeLog();
+  const result = await runBarrier({
+    listik, git, fs: nodeFs, config: {dryRun: false, project: "demo", logDir: tmpLogDir()},
+    swarmConfig: {integration: []}, log, tasks, projectPath: repo, now: new Date(),
+  });
+  assert.equal(result.integration, "green");
+  assert.equal(nodeFs.existsSync(treeT1), false);
+  assert.equal(nodeFs.existsSync(treeT2), false);
+  assert.ok(log.lines.some(l => l.includes("пустой список")));
+});
+
+suite("барьер шаг 9: таймаут команды — красная, группа убита, барьер не ждёт 10с", async () => {
+  const {repo, tasks} = twoMergedSetup();
+  const listik = fakeListik({
+    t1: {id: "t1", comments: [], write_scope: []},
+    t2: {id: "t2", comments: [], write_scope: []},
+  });
+  const pidFile = join(repo, "pid.txt");
+  const log = makeLog();
+  const start = Date.now();
+  const result = await runBarrier({
+    listik, git, fs: nodeFs, config: {dryRun: false, project: "demo", logDir: tmpLogDir()},
+    swarmConfig: {
+      integration: [[process.execPath, "-e",
+        "require('fs').writeFileSync(process.argv[1], String(process.pid)); setTimeout(()=>{}, 10000);",
+        pidFile]],
+      integrationTimeout: 1,
+    },
+    log, tasks, projectPath: repo, now: new Date(),
+  });
+  const elapsed = Date.now() - start;
+
+  assert.equal(result.integration, "red");
+  assert.ok(elapsed < 8000, `барьер вернулся не рано: ${elapsed}мс`);
+  assert.match(listik.calls.needsOwner[0].text, /таймаут/);
+  const pid = Number(nodeFs.readFileSync(pidFile, "utf8"));
+  assert.throws(() => process.kill(pid, 0));
+});
+
+suite("барьер шаг 8: нечего проверять — merged пуст, маркер не выполнялся, new не вызывался", async () => {
+  const repo = initRepo();
+  const marker = join(repo, "marker.txt");
+  const listik = fakeListik({});
+  const log = makeLog();
+  const result = await runBarrier({
+    listik, git, fs: nodeFs, config: {dryRun: false, project: "demo", logDir: tmpLogDir()},
+    swarmConfig: {integration: [[process.execPath, "-e", `require('fs').writeFileSync(${JSON.stringify(marker)}, "x")`]]},
+    log, tasks: [], projectPath: repo, now: new Date(),
+  });
+  assert.equal(result.integration, null);
+  assert.equal(nodeFs.existsSync(marker), false);
+  assert.equal(listik.calls.create.length, 0);
+  assert.ok(log.lines.some(l => l.includes("нечего проверять")));
+});
+
+suite("барьер шаг 8: вторая команда после красной не запускается", async () => {
+  const {repo, tasks} = twoMergedSetup();
+  const listik = fakeListik({
+    t1: {id: "t1", comments: [], write_scope: []},
+    t2: {id: "t2", comments: [], write_scope: []},
+  });
+  const marker = join(repo, "marker.txt");
+  const log = makeLog();
+  const result = await runBarrier({
+    listik, git, fs: nodeFs, config: {dryRun: false, project: "demo", logDir: tmpLogDir()},
+    swarmConfig: {integration: [
+      [process.execPath, "-e", "process.exit(1)"],
+      [process.execPath, "-e", `require('fs').writeFileSync(${JSON.stringify(marker)}, "x")`],
+    ]},
+    log, tasks, projectPath: repo, now: new Date(),
+  });
+  assert.equal(result.integration, "red");
+  assert.equal(nodeFs.existsSync(marker), false);
+});
+
+// ------------------------------------------------------ шаг 7 (разморозка) ---
+
+// Репо с влитым t1 (единственный кандидат) — заготовка для тестов разморозки.
+function frozenSetup() {
+  const repo = initRepo();
+  const treeT1 = addWorktree(repo, "t1");
+  writeFileSync(join(treeT1, "a.txt"), "a\n");
+  sh(treeT1, "add", "a.txt");
+  sh(treeT1, "commit", "-q", "-m", "t1");
+  const treeT2 = addWorktree(repo, "t2");
+  return {repo, treeT1, treeT2};
+}
+
+suite("барьер шаг 7: разморозка чистая — снимок, rebase, метка снята, владелец не тронут", async () => {
+  const {repo, treeT1, treeT2} = frozenSetup();
+  writeFileSync(join(treeT2, "other.txt"), "x\n"); // незакоммиченная правка другого файла
+
+  const tasks = [
+    {id: "t1", status: "done", worktree: treeT1, branch: "task/t1", labels: ["port:1"]},
+    {id: "t2", status: "open", worktree: treeT2, branch: "task/t2",
+      labels: ["port:5171", "frozen-by:t1"]},
+  ];
+  const listik = fakeListik({
+    t1: {id: "t1", comments: [], write_scope: []},
+    t2: {id: "t2", comments: [], labels: ["port:5171", "frozen-by:t1"]},
+  });
+  const log = makeLog();
+  const t1BranchTreeBefore = nodeFs.existsSync(treeT1);
+  const result = await runBarrier({
+    listik, git, fs: nodeFs, config: {dryRun: false, project: "demo", logDir: tmpLogDir()},
+    swarmConfig: null, log, tasks, projectPath: repo, now: new Date(),
+  });
+
+  assert.deepEqual(result.unfrozen, ["t2"]);
+  assert.equal((await git.isDirty(treeT2)), false);
+  assert.equal(sh(treeT2, "log", "-1", "--format=%an").trim(), "listik-swarm");
+  assert.equal(await git.isAncestor(repo, "task/t1", "task/t2"), true);
+
+  const c = listik.calls.comment.find(c => c.id === "t2");
+  assert.ok(c, "ожидался comment t2");
+  const rec = JSON.parse(c.text.slice(UNFROZEN_MARK.length).trim());
+  assert.equal(rec.owner, "t1");
+  assert.equal(rec.rebased, true);
+  assert.equal(typeof rec.snapshot, "string");
+  assert.deepEqual(rec.conflicts, []);
+
+  const setLabelsT2 = listik.calls.setLabels.find(c => c.id === "t2");
+  assert.ok(setLabelsT2 && !setLabelsT2.labels.some(l => l.startsWith("frozen-by:")));
+  assert.ok(setLabelsT2.labels.includes("port:5171"), "port: сохранён при снятии frozen-by:");
+
+  const t2Task = tasks.find(t => t.id === "t2");
+  assert.ok(!t2Task.labels.some(l => l.startsWith("frozen-by:")));
+  assert.deepEqual(t2Task.labels, ["port:5171"]);
+
+  // владелец не тронут разморозкой (комментарий t1 — только штатный MERGED_MARK слияния,
+  // не unfreeze-запись), дерево/ветка t1 целы до сноса (интеграция не настроена в этом тесте).
+  const ownerComments = listik.calls.comment.filter(c => c.id === "t1");
+  assert.ok(ownerComments.every(c => c.text.startsWith(MERGED_MARK)));
+  assert.equal(listik.calls.setLabels.some(c => c.id === "t1"), false);
+  assert.equal(nodeFs.existsSync(treeT1), t1BranchTreeBefore);
+});
+
+suite("барьер шаг 7: разморозка с конфликтом — откат, метка снята, next с git rebase", async () => {
+  const repo = initRepo();
+  writeFileSync(join(repo, "f.txt"), "base\n");
+  sh(repo, "add", "f.txt");
+  sh(repo, "commit", "-q", "-m", "f base");
+  const treeT1 = addWorktree(repo, "t1");
+  writeFileSync(join(treeT1, "f.txt"), "t1-side\n");
+  sh(treeT1, "add", "f.txt");
+  sh(treeT1, "commit", "-q", "-m", "t1 edits f");
+  const treeT2 = addWorktree(repo, "t2");
+  writeFileSync(join(treeT2, "f.txt"), "t2-side\n"); // незакоммичено, тот же файл/строка
+
+  const tasks = [
+    {id: "t1", status: "done", worktree: treeT1, branch: "task/t1", labels: ["port:1"]},
+    {id: "t2", status: "open", worktree: treeT2, branch: "task/t2", labels: ["frozen-by:t1"]},
+  ];
+  const listik = fakeListik({
+    t1: {id: "t1", comments: [], write_scope: []},
+    t2: {id: "t2", comments: [], labels: ["frozen-by:t1"]},
+  });
+  const log = makeLog();
+  const result = await runBarrier({
+    listik, git, fs: nodeFs, config: {dryRun: false, project: "demo", logDir: tmpLogDir()},
+    swarmConfig: null, log, tasks, projectPath: repo, now: new Date(),
+  });
+
+  assert.deepEqual(result.unfrozen, ["t2"]);
+  assert.equal(await git.rebaseInProgress(treeT2), false);
+  const snapshotSha = await git.headSha(treeT2);
+
+  const c = listik.calls.comment.find(c => c.id === "t2");
+  const rec = JSON.parse(c.text.slice(UNFROZEN_MARK.length).trim());
+  assert.equal(rec.rebased, false);
+  assert.deepEqual(rec.conflicts, ["f.txt"]);
+  assert.equal(rec.snapshot, snapshotSha);
+  assert.match(rec.next, /git rebase/);
+
+  const t2Task = tasks.find(t => t.id === "t2");
+  assert.ok(!t2Task.labels.some(l => l.startsWith("frozen-by:")));
+});
+
+suite("барьер шаг 7: владелец не влит (грязное дерево) — замороженная не тронута", async () => {
+  const repo = initRepo();
+  const treeT1 = addWorktree(repo, "t1");
+  writeFileSync(join(treeT1, "a.txt"), "a\n");
+  sh(treeT1, "add", "a.txt");
+  sh(treeT1, "commit", "-q", "-m", "t1");
+  writeFileSync(join(treeT1, "untracked.txt"), "x\n"); // грязное дерево — t1 не вольётся
+  const treeT2 = addWorktree(repo, "t2");
+
+  const tasks = [
+    {id: "t1", status: "done", worktree: treeT1, branch: "task/t1", labels: ["port:1"]},
+    {id: "t2", status: "open", worktree: treeT2, branch: "task/t2", labels: ["frozen-by:t1"]},
+  ];
+  const listik = fakeListik({
+    t1: {id: "t1", comments: [], write_scope: []},
+  });
+  const log = makeLog();
+  const result = await runBarrier({
+    listik, git, fs: nodeFs, config: {dryRun: false, project: "demo", logDir: tmpLogDir()},
+    swarmConfig: null, log, tasks, projectPath: repo, now: new Date(),
+  });
+
+  assert.deepEqual(result.unfrozen, []);
+  assert.equal(listik.calls.show.some(id => id === "t2"), false);
+  assert.equal(listik.calls.comment.some(c => c.id === "t2"), false);
+  assert.equal(listik.calls.setLabels.some(c => c.id === "t2"), false);
+});
+
+suite("барьер шаг 7: владелец ещё открыт — замороженная не тронута", async () => {
+  const {repo, treeT1, treeT2} = frozenSetup();
+  const tasks = [
+    {id: "t1", status: "open", worktree: treeT1, branch: "task/t1", labels: ["port:1"]},
+    {id: "t2", status: "open", worktree: treeT2, branch: "task/t2", labels: ["frozen-by:t1"]},
+  ];
+  const listik = fakeListik({});
+  const log = makeLog();
+  const result = await runBarrier({
+    listik, git, fs: nodeFs, config: {dryRun: false, project: "demo", logDir: tmpLogDir()},
+    swarmConfig: null, log, tasks, projectPath: repo, now: new Date(),
+  });
+  assert.deepEqual(result.unfrozen, []);
+  assert.equal(listik.calls.show.length, 0);
+});
+
+suite("барьер шаг 7: владелец cancelled — замороженная не тронута", async () => {
+  const {repo, treeT1, treeT2} = frozenSetup();
+  const tasks = [
+    {id: "t1", status: "cancelled", worktree: treeT1, branch: "task/t1", labels: ["port:1"]},
+    {id: "t2", status: "open", worktree: treeT2, branch: "task/t2", labels: ["frozen-by:t1"]},
+  ];
+  const listik = fakeListik({});
+  const log = makeLog();
+  const result = await runBarrier({
+    listik, git, fs: nodeFs, config: {dryRun: false, project: "demo", logDir: tmpLogDir()},
+    swarmConfig: null, log, tasks, projectPath: repo, now: new Date(),
+  });
+  assert.deepEqual(result.unfrozen, []);
+  assert.equal(listik.calls.show.length, 0);
+});
+
+suite("барьер шаг 7: повтор разморозки — марка есть, метки нет — ничего не пишется", async () => {
+  // Метка frozen-by ещё стоит на самой задаче (иначе frozenBy(tasks) её даже не рассмотрит),
+  // но свежий show() уже не находит frozen-by в карточке (прошлый тик снял её на сервере,
+  // а UNFROZEN_MARK уже записан) — повторная разморозка должна пройти молча.
+  const {repo, treeT1, treeT2} = frozenSetup();
+  const tasks = [
+    {id: "t1", status: "done", worktree: treeT1, branch: "task/t1", labels: ["port:1"]},
+    {id: "t2", status: "open", worktree: treeT2, branch: "task/t2", labels: ["frozen-by:t1"]},
+  ];
+  const listik = fakeListik({
+    t1: {id: "t1", comments: [], write_scope: []},
+    t2: {
+      id: "t2",
+      comments: [{author: SWARM_AUTHOR, text: `${UNFROZEN_MARK} ${JSON.stringify({owner: "t1"})}`,
+        created_at: "2026-01-01T00:00:00Z"}],
+      labels: [],
+    },
+  });
+  const log = makeLog();
+  const result = await runBarrier({
+    listik, git, fs: nodeFs, config: {dryRun: false, project: "demo", logDir: tmpLogDir()},
+    swarmConfig: null, log, tasks, projectPath: repo, now: new Date(),
+  });
+  assert.deepEqual(result.unfrozen, []);
+  assert.equal(listik.calls.show.some(id => id === "t2"), true, "show вызывается — марка проверяется");
+  assert.equal(listik.calls.comment.some(c => c.id === "t2"), false);
+  assert.equal(listik.calls.setLabels.some(c => c.id === "t2"), false);
+});
+
+suite("барьер шаг 7: ошибка журнала — метка на месте, set не вызван, без исключения", async () => {
+  const {repo, treeT1, treeT2} = frozenSetup();
+  writeFileSync(join(treeT2, "other.txt"), "x\n");
+  const tasks = [
+    {id: "t1", status: "done", worktree: treeT1, branch: "task/t1", labels: ["port:1"]},
+    {id: "t2", status: "open", worktree: treeT2, branch: "task/t2", labels: ["frozen-by:t1"]},
+  ];
+  const listik = fakeListik({
+    t1: {id: "t1", comments: [], write_scope: []},
+    t2: {id: "t2", comments: [], labels: ["frozen-by:t1"]},
+  }, {commentFail: (id) => id === "t2"});
+  const log = makeLog();
+  const result = await runBarrier({
+    listik, git, fs: nodeFs, config: {dryRun: false, project: "demo", logDir: tmpLogDir()},
+    swarmConfig: null, log, tasks, projectPath: repo, now: new Date(),
+  });
+  assert.deepEqual(result.unfrozen, []);
+  assert.equal(listik.calls.setLabels.some(c => c.id === "t2"), false);
+  const t2Task = tasks.find(t => t.id === "t2");
+  assert.ok(t2Task.labels.includes("frozen-by:t1"));
+});
+
+suite("барьер шаг 7: повтор — журнал есть, метка на месте — только setLabels, git не звался", async () => {
+  const {repo, treeT1, treeT2} = frozenSetup();
+  const tasks = [
+    {id: "t1", status: "done", worktree: treeT1, branch: "task/t1", labels: ["port:1"]},
+    {id: "t2", status: "open", worktree: treeT2, branch: "task/t2", labels: ["frozen-by:t1", "port:5171"]},
+  ];
+  const listik = fakeListik({
+    t1: {id: "t1", comments: [], write_scope: []},
+    t2: {
+      id: "t2",
+      comments: [{author: SWARM_AUTHOR, text: `${UNFROZEN_MARK} ${JSON.stringify({owner: "t1"})}`,
+        created_at: "2026-01-01T00:00:00Z"}],
+      labels: ["frozen-by:t1", "port:5171"],
+    },
+  });
+  const headBefore = await git.headSha(treeT2);
+  const log = makeLog();
+  const result = await runBarrier({
+    listik, git, fs: nodeFs, config: {dryRun: false, project: "demo", logDir: tmpLogDir()},
+    swarmConfig: null, log, tasks, projectPath: repo, now: new Date(),
+  });
+  assert.deepEqual(result.unfrozen, ["t2"]);
+  assert.equal(listik.calls.comment.some(c => c.id === "t2"), false);
+  const setLabelsT2 = listik.calls.setLabels.find(c => c.id === "t2");
+  assert.ok(setLabelsT2);
+  assert.deepEqual(setLabelsT2.labels, ["port:5171"]);
+  const t2Task = tasks.find(t => t.id === "t2");
+  assert.deepEqual(t2Task.labels, ["port:5171"]);
+  assert.equal(await git.headSha(treeT2), headBefore); // git не звался
+});
+
+suite("барьер: каталог замороженной снесён вручную — tree: missing, метка снята", async () => {
+  const {repo, treeT1} = frozenSetup();
+  const tasks = [
+    {id: "t1", status: "done", worktree: treeT1, branch: "task/t1", labels: ["port:1"]},
+    {id: "t2", status: "open", worktree: join(repo, ".worktrees", "gone-t2"), branch: "task/t2",
+      labels: ["frozen-by:t1"]},
+  ];
+  const listik = fakeListik({
+    t1: {id: "t1", comments: [], write_scope: []},
+    t2: {id: "t2", comments: [], labels: ["frozen-by:t1"]},
+  });
+  const log = makeLog();
+  const result = await runBarrier({
+    listik, git, fs: nodeFs, config: {dryRun: false, project: "demo", logDir: tmpLogDir()},
+    swarmConfig: null, log, tasks, projectPath: repo, now: new Date(),
+  });
+  assert.deepEqual(result.unfrozen, ["t2"]);
+  const c = listik.calls.comment.find(c => c.id === "t2");
+  const rec = JSON.parse(c.text.slice(UNFROZEN_MARK.length).trim());
+  assert.equal(rec.tree, "missing");
+  assert.equal(rec.rebased, false);
+  assert.equal(rec.snapshot, null);
+  assert.match(rec.next, /отсутств/);
+  const t2Task = tasks.find(t => t.id === "t2");
+  assert.ok(!t2Task.labels.some(l => l.startsWith("frozen-by:")));
+});
+
+suite("барьер: dryRun — разморозка и снос только логируются, ничего не пишется", async () => {
+  const {repo, treeT1, treeT2} = frozenSetup();
+  await git.rebase(treeT1, "main");
+  await git.mergeFfOnly(repo, "task/t1"); // t1 уже влит в прошлом проходе
+  const sha = await git.headSha(repo);
+  const record = {sha, branch: "task/t1", base: sha, files: ["a.txt"], declared: [], outside: []};
+  writeFileSync(join(treeT2, "other.txt"), "x\n"); // грязная t2, как в кейсе 8 — не трогается
+
+  const tasks = [
+    {id: "t1", status: "done", worktree: treeT1, branch: "task/t1", labels: ["port:1"]},
+    {id: "t2", status: "open", worktree: treeT2, branch: "task/t2", labels: ["frozen-by:t1", "port:5171"]},
+  ];
+  const listik = fakeListik({
+    t1: {id: "t1", comments: [
+      {author: SWARM_AUTHOR, text: `${MERGED_MARK} ${JSON.stringify(record)}`, created_at: "2026-01-01T00:00:00Z"},
+    ], write_scope: []},
+  });
+  const marker = join(repo, "marker.txt");
+  const log = makeLog();
+  const headBefore = await git.headSha(repo);
+  const t2HeadBefore = await git.headSha(treeT2);
+  const t2StatusBefore = sh(treeT2, "status", "--porcelain");
+  const result = await runBarrier({
+    listik, git, fs: nodeFs, config: {dryRun: true, project: "demo", logDir: tmpLogDir()},
+    swarmConfig: {integration: [[process.execPath, "-e", `require('fs').writeFileSync(${JSON.stringify(marker)}, "x")`]]},
+    log, tasks, projectPath: repo, now: new Date(),
+  });
+
+  assert.equal(await git.headSha(repo), headBefore);
+  assert.equal(nodeFs.existsSync(treeT1), true);
+  assert.equal(await git.branchExists(repo, "task/t1"), true);
+  // t2 (замороженная) — дерево и метки нетронуты, маркер интеграции не выполнялся.
+  assert.equal(nodeFs.existsSync(treeT2), true);
+  assert.equal(await git.headSha(treeT2), t2HeadBefore);
+  assert.equal(sh(treeT2, "status", "--porcelain"), t2StatusBefore);
+  assert.deepEqual(tasks.find(t => t.id === "t2").labels, ["frozen-by:t1", "port:5171"]);
+  assert.equal(nodeFs.existsSync(marker), false);
+  assert.equal(listik.calls.create.length, 0);
+  assert.equal(listik.calls.comment.length, 0);
+  assert.equal(listik.calls.setLabels.length, 0);
+  assert.equal(listik.calls.set.length, 0);
+  assert.ok(log.lines.some(l => l.includes("[dry-run] интеграция")));
+  assert.ok(log.lines.some(l => l.includes("[dry-run] разморозить t2")));
+  assert.deepEqual(result.merged, ["t1"]);
+});
+
+suite("барьер: ветка не предок HEAD — не удалять (подложенный MERGED_MARK без слияния)", async () => {
+  const repo = initRepo();
+  const treeT3 = addWorktree(repo, "t3"); // ветка на HEAD, ни разу не вливалась по-настоящему
+  const tasks = [{id: "t3", status: "done", worktree: treeT3, branch: "task/t3", labels: ["port:1"]}];
+  const record = {sha: "deadbeef", branch: "task/t3", base: "deadbeef", files: [], declared: [], outside: []};
+  const listik = fakeListik({
+    t3: {id: "t3", comments: [
+      {author: SWARM_AUTHOR, text: `${MERGED_MARK} ${JSON.stringify(record)}`, created_at: "2026-01-01T00:00:00Z"},
+    ], write_scope: []},
+  });
+  // Отвязываем t3 от HEAD, чтобы ветка реально не была влита.
+  writeFileSync(join(treeT3, "c.txt"), "c\n");
+  sh(treeT3, "add", "c.txt");
+  sh(treeT3, "commit", "-q", "-m", "t3");
+  const log = makeLog();
+  const result = await runBarrier({
+    listik, git, fs: nodeFs, config: {dryRun: false, project: "demo", logDir: tmpLogDir()},
+    swarmConfig: {integration: []}, log, tasks, projectPath: repo, now: new Date(),
+  });
+  assert.equal(result.integration, "green");
+  assert.deepEqual(result.cleaned, []);
+  assert.ok(log.lines.some(l => l.includes("не убрано")));
+  assert.equal(nodeFs.existsSync(treeT3), true);
+  assert.equal(await git.branchExists(repo, "task/t3"), true);
+});
+
+suite("барьер: каталог влитой убран вручную (rm -rf) — ветку всё равно убирают (r1 S2)", async () => {
+  // Регрессия судьи r1: после ручного удаления каталога git продолжает считать дерево
+  // зарегистрированным (prunable) — `branch -d` без предварительного `worktree remove
+  // --force` отказывает «used by worktree at …». cleanupOne обязан звать remove всегда,
+  // не только когда каталог физически существует.
+  const repo = initRepo();
+  const treeT1 = addWorktree(repo, "t1");
+  writeFileSync(join(treeT1, "a.txt"), "a\n");
+  sh(treeT1, "add", "a.txt");
+  sh(treeT1, "commit", "-q", "-m", "t1");
+  sh(repo, "merge", "-q", "--ff-only", "task/t1"); // влито (ahead 0)
+  nodeFs.rmSync(treeT1, {recursive: true, force: true}); // каталог снесён вручную, git не в курсе
+
+  const tasks = [{id: "t1", status: "done", worktree: treeT1, branch: "task/t1", labels: ["port:1"]}];
+  const listik = fakeListik({
+    t1: {id: "t1", comments: [], write_scope: []},
+  });
+  const log = makeLog();
+  const result = await runBarrier({
+    listik, git, fs: nodeFs, config: {dryRun: false, project: "demo", logDir: tmpLogDir()},
+    swarmConfig: {integration: []}, log, tasks, projectPath: repo, now: new Date(),
+  });
+
+  assert.equal(result.integration, "green");
+  assert.deepEqual(result.cleaned, ["t1"]);
+  assert.equal(await git.branchExists(repo, "task/t1"), false);
+  const setT1 = listik.calls.set.find(c => c.id === "t1");
+  assert.deepEqual(setT1.fields, {worktree: "", branch: ""});
+  assert.ok(log.lines.some(l => l === "t1: дерева нет, ветку убираю"));
+  assert.equal(log.lines.some(l => l.includes("удаление ветки не удалось")), false);
+});
+
+suite("барьер: create отвечает ошибкой — деревья на месте, gate halt, без исключения", async () => {
+  const {repo, treeT1, treeT2, tasks} = twoMergedSetup();
+  const listik = fakeListik({
+    t1: {id: "t1", comments: [
+      {author: SWARM_AUTHOR, text: `${FIRST_CHANGE_MARK} {}`, created_at: "2026-01-01T00:00:20Z"},
+    ], write_scope: []},
+    t2: {id: "t2", comments: [
+      {author: SWARM_AUTHOR, text: `${FIRST_CHANGE_MARK} {}`, created_at: "2026-01-01T00:00:10Z"},
+    ], write_scope: []},
+  }, {createFail: true});
+  const log = makeLog();
+  const result = await runBarrier({
+    listik, git, fs: nodeFs, config: {dryRun: false, project: "demo", logDir: tmpLogDir()},
+    swarmConfig: {integration: [[process.execPath, "-e", "process.exit(1)"]]},
+    log, tasks, projectPath: repo, now: new Date(),
+  });
+  assert.equal(result.integration, "red");
+  assert.equal(nodeFs.existsSync(treeT1), true);
+  assert.equal(nodeFs.existsSync(treeT2), true);
+  assert.deepEqual(result.gate, {reason: "halt", ids: []});
+  assert.deepEqual(result.halt, []);
+  assert.equal(listik.calls.needsOwner.length, 0);
 });

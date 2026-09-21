@@ -129,8 +129,8 @@ export async function tick(listik, config, log) {
 
       let swarmConfig = null;
       let configErrored = false;
+      const cfgPath = config.configPath ?? path.join(status.data_dir, "swarm.json");
       try {
-        const cfgPath = config.configPath ?? path.join(status.data_dir, "swarm.json");
         let text = null;
         try {
           text = fs.readFileSync(cfgPath, "utf8");
@@ -157,6 +157,7 @@ export async function tick(listik, config, log) {
       } else if (!configErrored) {
         barrierResult = await runBarrier({
           listik, git, fs, config, swarmConfig, log, tasks, projectPath, now: new Date(),
+          swarmJsonPath: cfgPath,
         });
         gate = barrierResult.gate;
       }
@@ -380,6 +381,9 @@ export async function tick(listik, config, log) {
   const barrierMerged = barrierResult ? barrierResult.merged : [];
   const barrierUnmerged = barrierResult ? barrierResult.unmerged : [];
   const barrierHalt = barrierResult ? barrierResult.halt : [];
+  const barrierUnfrozen = barrierResult ? barrierResult.unfrozen : [];
+  const barrierIntegration = barrierResult ? barrierResult.integration : null;
+  const barrierCleaned = barrierResult ? barrierResult.cleaned : [];
 
   const report = {
     ...decision.report,
@@ -393,6 +397,8 @@ export async function tick(listik, config, log) {
     stopOnly: stoppedClosed,
     merged: barrierMerged,
     unmerged: barrierUnmerged,
+    unfrozen: barrierUnfrozen,
+    integration: barrierIntegration,
     halt: barrierHalt.length ? barrierHalt[0] : null,
   };
   log.summary(report);
@@ -413,6 +419,9 @@ export async function tick(listik, config, log) {
       merged: barrierMerged,
       mergedNow: barrierResult ? barrierResult.mergedNow : [],
       unmerged: barrierUnmerged,
+      unfrozen: barrierUnfrozen,
+      integration: barrierIntegration,
+      cleaned: barrierCleaned,
       halt: barrierHalt,
       gate,
     },

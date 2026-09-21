@@ -625,6 +625,8 @@ gitTest("watch+barrier (а): running пуст — watch раньше comment MER
   const plan = {project: "proj", waves: [["t2"]], cycles: [], unroutable: [], unscoped: [], blocked: {}};
   const routes = [{key: "r-t2", icon: "low"}];
   const dataDir = fs.mkdtempSync(path.join(os.tmpdir(), "listik-swarm-data-"));
+  fs.writeFileSync(path.join(dataDir, "swarm.json"), JSON.stringify({integration: []}));
+  const logDir = fs.mkdtempSync(path.join(os.tmpdir(), "listik-swarm-integration-log-"));
   const responses = {
     status: statusFor(dataDir),
     waves: {stdout: JSON.stringify({waves: plan, added: [], removed: [], kept: 0})},
@@ -641,7 +643,7 @@ gitTest("watch+barrier (а): running пуст — watch раньше comment MER
   const {calls} = setupFake(responses);
   const listik = new Listik({bin: FAKE_BIN, actor: "agent:listik-swarm", cliTimeout: 5});
   const log = makeLog();
-  await tick(listik, baseConfig, log);
+  await tick(listik, {...baseConfig, logDir}, log);
 
   const subs = calls().map(c => c.sub);
   assert.ok(subs.includes("watch"));
@@ -654,6 +656,62 @@ gitTest("watch+barrier (а): running пуст — watch раньше comment MER
   assert.ok(watchLine < mergedLine, "watch раньше влито");
   assert.ok(mergedLine < launchLine, "влито раньше запуск");
 });
+
+gitTest("watch+barrier (л): разморозка в тике — comment UNFROZEN_MARK, worktree, launch по порядку",
+  async () => {
+    const repo = initRepo();
+    const treeT1 = addWorktree(repo, "t1");
+    sh(repo, "merge", "-q", "--ff-only", "task/t1"); // t1 уже "влит" (ahead 0), без MERGED_MARK
+
+    const tasks = [
+      task("t1", {status: "done", worktree: treeT1, branch: "task/t1", labels: ["port:5170"]}),
+      task("t2", {status: "open", launch_route: "r-t2", labels: ["frozen-by:t1"]}),
+    ];
+    const plan = {project: "proj", waves: [["t2"]], cycles: [], unroutable: [], unscoped: [], blocked: {}};
+    const routes = [{key: "r-t2", icon: "low"}];
+    const dataDir = fs.mkdtempSync(path.join(os.tmpdir(), "listik-swarm-data-"));
+    fs.writeFileSync(path.join(dataDir, "swarm.json"), JSON.stringify({integration: []}));
+    const logDir = fs.mkdtempSync(path.join(os.tmpdir(), "listik-swarm-integration-log-"));
+    const responses = {
+      status: statusFor(dataDir),
+      waves: {stdout: JSON.stringify({waves: plan, added: [], removed: [], kept: 0})},
+      list: {stdout: JSON.stringify({total: tasks.length, limit: 1000, offset: 0, tasks})},
+      routes: {stdout: JSON.stringify({ok: true, routes})},
+      projects: {stdout: JSON.stringify([{slug: "proj", path: repo}])},
+      watch: {stdout: JSON.stringify({tasks: {}, decisions: [], probes: []})},
+      show: [
+        {stdout: JSON.stringify({id: "t1", comments: [], write_scope: []})}, // barrier: уже влита
+        {stdout: JSON.stringify({id: "t2", comments: [], labels: ["frozen-by:t1"]})}, // разморозка
+        {stdout: JSON.stringify({id: "t2", labels: []})}, // run.mjs: метка порта перед launch
+      ],
+      comment: {stdout: JSON.stringify({id: "x"})},
+      set: {stdout: JSON.stringify({id: "t2", labels: []})},
+      worktree: {stdout: JSON.stringify({path: "/wt/t2", branch: "b", status: "created"})},
+      launch: {stdout: JSON.stringify({id: "t2", generation: 1})},
+    };
+    const {calls} = setupFake(responses);
+    const listik = new Listik({bin: FAKE_BIN, actor: "agent:listik-swarm", cliTimeout: 5});
+    const logDirReal = fs.mkdtempSync(path.join(os.tmpdir(), "listik-swarm-run-log-"));
+    const realLog = openLog(logDirReal, "proj");
+    await tick(listik, {...baseConfig, logDir}, realLog);
+    realLog.close();
+    const logText = fs.readFileSync(realLog.path, "utf8");
+
+    const subArgs = calls().map(c => ({sub: c.sub, argv: c.argv}));
+    const commentT2 = subArgs.findIndex(c => c.sub === "comment" && c.argv.includes("t2") &&
+      c.argv.some(a => typeof a === "string" && a.startsWith("рой: разморожена:")));
+    const worktreeT2 = subArgs.findIndex(c => c.sub === "worktree" && c.argv.includes("t2"));
+    const launchT2 = subArgs.findIndex(c => c.sub === "launch" && c.argv.includes("t2"));
+
+    assert.ok(commentT2 >= 0, "ожидался comment t2 c UNFROZEN_MARK");
+    assert.ok(worktreeT2 >= 0, "ожидался worktree t2");
+    assert.ok(launchT2 >= 0, "ожидался launch t2");
+    assert.ok(commentT2 < worktreeT2, "comment t2 раньше worktree t2");
+    assert.ok(worktreeT2 < launchT2, "worktree t2 раньше launch t2");
+
+    assert.match(logText, /разморожено 1 \(t2\)/);
+    assert.match(logText, /интеграция зелёная/);
+  });
 
 gitTest("watch+barrier (б): running непуст — барьер не зовётся, comment нет, HEAD не менялся", async () => {
   const repo = initRepo();

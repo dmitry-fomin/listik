@@ -1725,3 +1725,27 @@ test("main: --once --max-launches 1, два кандидата — один laun
   assert.equal(code, 0);
   assert.equal(calls().filter(c => c.sub === "launch").length, 1);
 });
+
+test("сводка: откаты без новых полей — нули перед влито", () => {
+  const text = summaryOf({});
+  const frag = "откаты 0 () · на откаты 0 мин · по пределу 0 ()";
+  assert.ok(text.includes(frag));
+  assert.ok(text.indexOf(frag) < text.indexOf("влито"));
+  assert.equal(
+    text.slice(text.indexOf("влито")),
+    "влито 0 () · не влиты 0 () · не приняты 0 () · дефолт 0 () · разморожено 0 () · " +
+      "интеграция — · стоп — · бюджет есть",
+  );
+});
+
+test("сводка: откаты, минуты и парковка по пределу", () => {
+  const text = summaryOf({rollbacks: ["a", "b"], rollbackMinutes: 17, parked: ["b"]});
+  assert.ok(text.includes("откаты 2 (a, b) · на откаты 17 мин · по пределу 1 (b)"));
+});
+
+test("questionReason: предел откатов", () => {
+  assert.equal(
+    questionReason("рой: предел откатов — задача заморожена 3 раз …"),
+    "предел откатов",
+  );
+});

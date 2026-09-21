@@ -162,11 +162,14 @@ const SWARM_TOP_KEYS = new Set(["integration", "arbiter", "integration_timeout",
   "verify", "verify_timeout", "verify_retries", "question_timeout", "projects"]);
 const SWARM_PROJECT_KEYS = new Set(["integration", "arbiter", "integration_timeout", "arbiter_timeout",
   "verify", "verify_timeout", "verify_retries", "question_timeout"]);
+SWARM_TOP_KEYS.add("max_freezes");
+SWARM_PROJECT_KEYS.add("max_freezes");
 const DEFAULT_INTEGRATION_TIMEOUT = 1800;
 const DEFAULT_ARBITER_TIMEOUT = 1200;
 const DEFAULT_VERIFY_TIMEOUT = 1800;
 const DEFAULT_VERIFY_RETRIES = 1;
 export const DEFAULT_QUESTION_TIMEOUT = 30;
+const DEFAULT_MAX_FREEZES = 2;
 
 function isPlainObject(v) {
   return typeof v === "object" && v !== null && !Array.isArray(v);
@@ -210,6 +213,12 @@ function validateQuestionTimeout(value, where) {
   }
 }
 
+function validateMaxFreezes(value, where) {
+  if (!Number.isInteger(value) || value < 0) {
+    throw new ConfigError(`swarm.json: ${where}max_freezes ожидал целое число >= 0`);
+  }
+}
+
 function validateSettings(obj, allowedKeys, where) {
   for (const key of Object.keys(obj)) {
     if (!allowedKeys.has(key)) {
@@ -224,6 +233,7 @@ function validateSettings(obj, allowedKeys, where) {
   if ("verify_timeout" in obj) validateTimeout(obj.verify_timeout, "verify_timeout", where);
   if ("verify_retries" in obj) validateRetries(obj.verify_retries, "verify_retries", where);
   if ("question_timeout" in obj) validateQuestionTimeout(obj.question_timeout, where);
+  if ("max_freezes" in obj) validateMaxFreezes(obj.max_freezes, where);
 }
 
 export function parseSwarmConfig(text) {
@@ -275,5 +285,6 @@ export function swarmConfigFor(parsed, slug) {
     verifyTimeout: pick("verify_timeout", DEFAULT_VERIFY_TIMEOUT),
     verifyRetries: pick("verify_retries", DEFAULT_VERIFY_RETRIES),
     questionTimeout: pick("question_timeout", DEFAULT_QUESTION_TIMEOUT),
+    maxFreezes: pick("max_freezes", DEFAULT_MAX_FREEZES),
   };
 }

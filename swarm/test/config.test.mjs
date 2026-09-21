@@ -184,3 +184,35 @@ test("question_timeout: дефолт 30, проектное переопреде
   assert.throws(() => parseSwarmConfig(JSON.stringify({question_timeout: -1})), ConfigError);
   assert.throws(() => parseSwarmConfig(JSON.stringify({question_timeout: "30"})), ConfigError);
 });
+
+test("max_freezes: дефолт 2, ноль не дефолт, проект бьёт верхний уровень", () => {
+  assert.equal(swarmConfigFor(parseSwarmConfig(null), "p").maxFreezes, 2);
+  assert.equal(
+    swarmConfigFor(parseSwarmConfig(JSON.stringify({max_freezes: 0})), "p").maxFreezes,
+    0,
+  );
+  const cfg = parseSwarmConfig(JSON.stringify({
+    max_freezes: 5,
+    projects: {p: {max_freezes: 1}},
+  }));
+  assert.equal(swarmConfigFor(cfg, "p").maxFreezes, 1);
+  assert.equal(swarmConfigFor(cfg, "other").maxFreezes, 5);
+
+  const full = swarmConfigFor(parseSwarmConfig(FULL_EXAMPLE), "listik");
+  assert.equal(full.maxFreezes, 2);
+  assert.equal(full.integrationTimeout, 99);
+  assert.equal(full.arbiterTimeout, 42);
+  assert.equal(full.verify, null);
+  assert.equal(full.questionTimeout, 30);
+});
+
+test("max_freezes: -1, дробь, строка и null — ConfigError", () => {
+  for (const bad of [-1, 1.5, "2", null]) {
+    assert.throws(
+      () => parseSwarmConfig(JSON.stringify({max_freezes: bad})),
+      err => err instanceof ConfigError &&
+        err.message === "swarm.json: max_freezes ожидал целое число >= 0",
+      `max_freezes ${JSON.stringify(bad)}`,
+    );
+  }
+});

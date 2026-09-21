@@ -62,6 +62,9 @@ export function open(dir, project) {
     const unfrozenDesc = (report.unfrozen || []).join(", ");
     const integrationDesc = report.integration === "green" ? "зелёная"
       : report.integration === "red" ? "красная" : "—";
+    const rollbackDesc = (report.rollbacks || []).join(", ");
+    const parkedDesc = (report.parked || []).join(", ");
+    const rollbackMinutes = report.rollbackMinutes ?? 0;
     const text = `[${hhmmss}] ${report.project} · волна 0: ${report.waveSize} · ` +
       `бежит ${(report.running || []).length} (${runningDesc}) · ` +
       `запущено сейчас ${(report.launch || []).length} (${launchedDesc}) · ` +
@@ -72,6 +75,9 @@ export function open(dir, project) {
       `ждут человека ${(report.needsOwner || []).length} (${needsOwnerDesc}) · ` +
       `пропущено ${(report.skipped || []).length} (${skippedDesc}) · ` +
       `стоят ${report.blocked ?? 0} · дальше волн ${report.wavesLeft ?? 0} · ` +
+      `откаты ${(report.rollbacks || []).length} (${rollbackDesc}) · ` +
+      `на откаты ${rollbackMinutes} мин · ` +
+      `по пределу ${(report.parked || []).length} (${parkedDesc}) · ` +
       `влито ${(report.merged || []).length} (${mergedDesc}) · ` +
       `не влиты ${(report.unmerged || []).length} (${unmergedDesc}) · ` +
       `не приняты ${(report.rejected || []).length} (${rejectedDesc}) · ` +

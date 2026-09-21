@@ -49,6 +49,7 @@ export function questionReason(text) {
   if (text.includes("интеграционные тесты")) return "стоп роя";
   if (text.includes("отклонена")) return "не принята";
   if (text.includes("не влита")) return "не влита";
+  if (text.includes("предел откатов")) return "предел откатов";
   return "вопрос воркера";
 }
 

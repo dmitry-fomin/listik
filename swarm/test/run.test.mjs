@@ -1749,3 +1749,370 @@ test("questionReason: предел откатов", () => {
     "предел откатов",
   );
 });
+
+// --- порция b: предел откатов в тике ---
+
+const FREEZE_AT = "2026-01-01T00:10:00.000Z";
+const LAUNCH_AT = "2026-01-01T00:00:00.000Z";
+
+function rollbackPlan(wave) {
+  return {project: "proj", waves: [wave], cycles: [], unroutable: [], unscoped: [], blocked: {}};
+}
+
+function frozenT2(over = {}) {
+  return task("t2", {
+    launched_by: "", launch_finished_at: "", needs_owner: false,
+    labels: ["frozen-by:t1"], ...over,
+  });
+}
+
+function freezeMark(at, generation, files = ["a.txt"]) {
+  return {
+    author: "agent:listik-swarm",
+    kind: "journal",
+    text: "рой: заморожена: " + JSON.stringify({
+      owner: "t1", files, worktree: "/wt/t2", branch: "task/t2", generation, next: "wait",
+    }),
+    created_at: at,
+  };
+}
+
+function launchMark(at, generation) {
+  return {
+    author: "agent:listik",
+    kind: "journal",
+    text: `автостарт: маршрут r-t2, pid 1, лог /tmp/t2.log, поколение ${generation}, запуск d1`,
+    created_at: at,
+  };
+}
+
+// Последняя заморозка — в FREEZE_AT, журнал запуска поколения lastGen−1 ровно за 10 минут.
+function freezeCard(count, {needs_owner = false, lastGen = count, withLaunch = true} = {}) {
+  const comments = [];
+  if (withLaunch) comments.push(launchMark(LAUNCH_AT, lastGen - 1));
+  for (let i = 0; i < count; i++) {
+    const gen = lastGen - (count - 1 - i);
+    const at = new Date(Date.parse(FREEZE_AT) - (count - 1 - i) * 60000).toISOString();
+    comments.push(freezeMark(at, gen));
+  }
+  return {id: "t2", needs_owner, comments, labels: ["frozen-by:t1"], write_scope: [], events: []};
+}
+
+function freezeDecision(over = {}) {
+  return {action: "freeze", task: "t2", owner: "t1", files: ["a.txt"], ok: true, generation: 4, ...over};
+}
+
+function watchOf(decisions) {
+  return {stdout: JSON.stringify({tasks: {}, decisions, probes: []})};
+}
+
+function showOut(card) {
+  return {stdout: JSON.stringify(card)};
+}
+
+function prepareRollback({json, tasks, plan, routes = [], watch, show, list, dryRun = false, extra = {}}) {
+  const repo = initRepo();
+  const dataDir = fs.mkdtempSync(path.join(os.tmpdir(), "listik-swarm-data-"));
+  fs.writeFileSync(path.join(dataDir, "swarm.json"), typeof json === "string" ? json : JSON.stringify(json));
+  const wavesBody = dryRun ? plan : {waves: plan, added: [], removed: [], kept: 0};
+  const responses = {
+    status: statusFor(dataDir),
+    projects: {stdout: JSON.stringify([{slug: "proj", path: repo}])},
+    waves: {stdout: JSON.stringify(wavesBody)},
+    list: list || {stdout: JSON.stringify({total: tasks.length, limit: 1000, offset: 0, tasks})},
+    routes: {stdout: JSON.stringify({ok: true, routes})},
+    watch,
+    ...extra,
+  };
+  if (show) responses.show = show;
+  return {repo, dataDir, responses};
+}
+
+async function tickPrepared(responses, configExtra = {}) {
+  const {calls} = setupFake(responses);
+  const listik = new Listik({bin: FAKE_BIN, actor: "agent:listik-swarm", cliTimeout: 5});
+  const log = makeLog();
+  const result = await tick(listik, {...baseConfig, ...configExtra}, log);
+  return {calls, log, result};
+}
+
+function needsOwnerText(calls, id) {
+  const call = calls().find(c => c.sub === "needs-owner" && c.argv.includes(id));
+  if (!call) return null;
+  return call.argv[call.argv.indexOf(id) + 1];
+}
+
+gitTest("предел (а): три заморозки при max_freezes 2 — парковка, повтор тика без заморозки молчит",
+  async () => {
+    const tasks = [frozenT2()];
+    const plan = rollbackPlan(["t2"]);
+    const {responses} = prepareRollback({
+      json: {integration: [], max_freezes: 2},
+      tasks, plan,
+      watch: [
+        watchOf([freezeDecision()]),
+        watchOf([]),
+      ],
+      show: showOut(freezeCard(3, {lastGen: 4})),
+      extra: {"needs-owner": {stdout: JSON.stringify({id: "t2"})}},
+    });
+    const {calls, log, result} = await tickPrepared(responses);
+
+    const text = needsOwnerText(calls, "t2");
+    assert.ok(text, "ожидался needs-owner t2");
+    assert.ok(text.startsWith("рой: предел откатов"));
+    assert.ok(text.includes("t1"));
+    assert.ok(text.includes("a.txt"));
+    assert.ok(text.includes("max_freezes = 2"));
+    assert.ok(text.includes("listik needs-owner t2 --clear"));
+
+    const recorded = calls();
+    const watchIdx = recorded.findIndex(c => c.sub === "watch");
+    const showIdx = recorded.findIndex(c => c.sub === "show" && c.argv.includes("t2"));
+    const parkIdx = recorded.findIndex(c => c.sub === "needs-owner" && c.argv.includes("t2"));
+    assert.ok(watchIdx >= 0 && showIdx > watchIdx && parkIdx > showIdx, "show t2 после watch и до needs-owner");
+    assert.ok(log.lines.some(l => l.includes(
+      "откат t2 (владелец t1): заморозка 3 из 2 в окне, всего 3, ~10 мин")));
+    assert.ok(log.lines.some(l => l.includes("needs-owner t2: freeze_limit")));
+    assert.deepEqual(result.rollbacks, [
+      {id: "t2", owner: "t1", minutes: 10, count: 3, total: 3, parked: true},
+    ]);
+    assert.deepEqual(result.report.parked, ["t2"]);
+    assert.equal(result.report.rollbackMinutes, 10);
+    assert.ok(result.needsOwner.includes("t2"));
+    assert.ok(!recorded.some(c => ["revoke", "launch", "set"].includes(c.sub) && c.argv.includes("t2")));
+    const summaryText = summaryOf(result.report);
+    assert.ok(summaryText.includes("откаты 1 (t2) · на откаты 10 мин · по пределу 1 (t2)"));
+
+    const again = await tick(new Listik({bin: FAKE_BIN, actor: "agent:listik-swarm", cliTimeout: 5}),
+      baseConfig, log);
+    assert.equal(calls().filter(c => c.sub === "needs-owner").length, 1);
+    assert.equal(calls().filter(c => c.sub === "show").length, 1);
+    assert.deepEqual(again.rollbacks, []);
+  });
+
+gitTest("предел (б): две заморозки при пороге 2 — needs-owner не вызывается", async () => {
+  const tasks = [frozenT2()];
+  const {responses} = prepareRollback({
+    json: {integration: [], max_freezes: 2},
+    tasks, plan: rollbackPlan(["t2"]),
+    watch: watchOf([freezeDecision()]),
+    show: showOut(freezeCard(2)),
+    extra: {"needs-owner": {stdout: JSON.stringify({id: "t2"})}},
+  });
+  const {calls, log, result} = await tickPrepared(responses);
+  assert.equal(calls().filter(c => c.sub === "needs-owner").length, 0);
+  assert.equal(result.rollbacks[0].parked, false);
+  assert.equal(result.rollbacks[0].count, 2);
+  assert.deepEqual(result.report.parked, []);
+  assert.ok(log.lines.some(l => l.includes("откат t2 (владелец t1): заморозка 2 из 2")));
+});
+
+gitTest("предел (в): после парковки t2 запускается t3, gate как без парковки", async () => {
+  const tasks = [frozenT2(), task("t3")];
+  const {responses} = prepareRollback({
+    json: {integration: [], max_freezes: 2},
+    tasks, plan: rollbackPlan(["t2", "t3"]),
+    routes: [{key: "r-t3", icon: "low"}],
+    watch: watchOf([freezeDecision()]),
+    show: [showOut(freezeCard(3, {lastGen: 4})), showOut({id: "t3", labels: []})],
+    extra: {
+      "needs-owner": {stdout: JSON.stringify({id: "t2"})},
+      worktree: {stdout: JSON.stringify({path: "/wt/t3", branch: "b", status: "created"})},
+      set: {stdout: JSON.stringify({id: "t3", labels: []})},
+      launch: {stdout: JSON.stringify({id: "t3", generation: 1})},
+    },
+  });
+  const {calls, result} = await tickPrepared(responses);
+  assert.ok(calls().some(c => c.sub === "launch" && c.argv.includes("t3")));
+  assert.ok(!calls().some(c => ["launch", "revoke", "set"].includes(c.sub) && c.argv.includes("t2")));
+  assert.equal(result.report.gate, null);
+  assert.deepEqual(result.report.parked, ["t2"]);
+});
+
+gitTest("предел (г): ok false и report — ни show, ни needs-owner, rollbacks пуст", async () => {
+  const tasks = [frozenT2()];
+  const {responses} = prepareRollback({
+    json: {integration: [], max_freezes: 2},
+    tasks, plan: rollbackPlan([]),
+    watch: watchOf([
+      {action: "freeze", task: "t2", owner: "t1", files: ["a.txt"], ok: false, error: "x"},
+      {action: "report", task: "t3", owner: "t1", files: ["b.txt"]},
+    ]),
+  });
+  const {calls, result} = await tickPrepared(responses);
+  assert.equal(calls().filter(c => c.sub === "show").length, 0);
+  assert.equal(calls().filter(c => c.sub === "needs-owner").length, 0);
+  assert.deepEqual(result.rollbacks, []);
+});
+
+gitTest("предел (д): max_freezes 0 паркует; needs_owner уже стоит — второй вопрос не пишется", async () => {
+  const parked = prepareRollback({
+    json: {integration: [], max_freezes: 0},
+    tasks: [frozenT2()], plan: rollbackPlan(["t2"]),
+    watch: watchOf([freezeDecision({generation: 1})]),
+    show: showOut(freezeCard(1, {lastGen: 1})),
+    extra: {"needs-owner": {stdout: JSON.stringify({id: "t2"})}},
+  });
+  const first = await tickPrepared(parked.responses);
+  assert.equal(first.calls().filter(c => c.sub === "needs-owner").length, 1);
+  assert.equal(first.result.rollbacks[0].parked, true);
+  assert.equal(first.result.rollbacks[0].count, 1);
+
+  const standing = prepareRollback({
+    json: {integration: [], max_freezes: 2},
+    tasks: [frozenT2()], plan: rollbackPlan(["t2"]),
+    watch: watchOf([freezeDecision()]),
+    show: showOut(freezeCard(3, {lastGen: 4, needs_owner: true})),
+    extra: {"needs-owner": {stdout: JSON.stringify({id: "t2"})}},
+  });
+  const second = await tickPrepared(standing.responses);
+  assert.equal(second.calls().filter(c => c.sub === "needs-owner").length, 0);
+  assert.ok(second.log.lines.some(l => l.includes("по пределу t2: needs_owner уже стоит")));
+  assert.equal(second.result.rollbacks[0].parked, false);
+});
+
+gitTest("предел (е): сломанный swarm.json — порог неизвестен, needs-owner нет, gate config", async () => {
+  const tasks = [frozenT2()];
+  const {responses} = prepareRollback({
+    json: {max_freezes: -1},
+    tasks, plan: rollbackPlan(["t2"]),
+    watch: watchOf([freezeDecision({generation: 1})]),
+    show: showOut(freezeCard(1, {lastGen: 1, withLaunch: false})),
+    extra: {"needs-owner": {stdout: JSON.stringify({id: "t2"})}},
+  });
+  const {calls, log, result} = await tickPrepared(responses);
+  assert.equal(calls().filter(c => c.sub === "needs-owner").length, 0);
+  assert.ok(log.lines.some(l => l.includes("предел откатов не проверен")));
+  assert.ok(log.lines.some(l => l.includes("заморозка 1 из ? в окне")));
+  assert.equal(result.rollbacks.length, 1);
+  assert.equal(result.rollbacks[0].parked, false);
+  assert.equal(result.barrier.gate.reason, "config");
+  assert.equal(result.report.gate.reason, "config");
+});
+
+gitTest("предел (ж): dry-run печатает порог и не пишет; ошибка show не роняет тик", async () => {
+  const tasks = [frozenT2()];
+  const plan = rollbackPlan(["t2"]);
+  const decision = freezeDecision({dry_run: true});
+  const {responses} = prepareRollback({
+    json: {integration: [], max_freezes: 2},
+    tasks, plan, dryRun: true,
+    watch: watchOf([decision]),
+    show: showOut(freezeCard(2)),
+    extra: {"needs-owner": {stdout: JSON.stringify({id: "t2"})}},
+  });
+  const {calls, log, result} = await tickPrepared(responses, {dryRun: true});
+  assert.ok(log.stdout.some(l => l ===
+    "[dry-run] по пределу t2: заморозок в окне 2, стало бы 3 (порог 2)"));
+  assert.equal(calls().filter(c => c.sub === "needs-owner").length, 0);
+  assert.ok(calls().every(c => !c.argv.includes("--actor")));
+  assert.deepEqual(result.rollbacks, []);
+
+  const broken = prepareRollback({
+    json: {integration: [], max_freezes: 2},
+    tasks, plan, dryRun: true,
+    watch: watchOf([decision]),
+    show: {exitCode: 1, stdout: JSON.stringify({error: {code: "cli", message: "boom"}})},
+  });
+  const failed = await tickPrepared(broken.responses, {dryRun: true});
+  assert.notEqual(failed.result.error, true);
+  assert.ok(failed.log.lines.some(l => l.startsWith("show t2 ошибка:")));
+  assert.deepEqual(failed.result.rollbacks, []);
+  assert.equal(failed.calls().filter(c => c.sub === "needs-owner").length, 0);
+});
+
+gitTest("предел (з): ошибка show — тик не падает, партия запущена, rollbacks пуст", async () => {
+  const tasks = [task("t1", {labels: ["port:5170"]}), frozenT2()];
+  const {responses} = prepareRollback({
+    json: {integration: [], max_freezes: 2},
+    tasks, plan: rollbackPlan(["t1", "t2"]),
+    routes: [{key: "r-t1", icon: "low"}],
+    watch: watchOf([freezeDecision()]),
+    show: {exitCode: 1, stdout: JSON.stringify({error: {code: "cli", message: "boom"}})},
+    extra: {
+      worktree: {stdout: JSON.stringify({path: "/wt/t1", branch: "b", status: "created"})},
+      launch: {stdout: JSON.stringify({id: "t1", generation: 1})},
+    },
+  });
+  const {calls, log, result} = await tickPrepared(responses);
+  assert.notEqual(result.error, true);
+  assert.ok(log.lines.some(l => l.startsWith("show t2 ошибка:")));
+  assert.deepEqual(result.rollbacks, []);
+  assert.deepEqual(result.launched, ["t1"]);
+  assert.ok(calls().some(c => c.sub === "launch" && c.argv.includes("t1")));
+});
+
+gitTest("предел (и): main на двух тиках — код 2, один needs-owner, итог с откатами",
+  {timeout: 20000}, async () => {
+    const repo = initRepo();
+    const dataDir = fs.mkdtempSync(path.join(os.tmpdir(), "listik-swarm-data-"));
+    fs.writeFileSync(path.join(dataDir, "swarm.json"),
+      JSON.stringify({integration: [], max_freezes: 2}));
+    const t1Running = task("t1", {
+      launched_by: "listik", launch_finished_at: null, needs_owner: false,
+      labels: ["port:5170"], launched_at: new Date().toISOString(),
+    });
+    const t2Frozen = frozenT2();
+    const t1Waiting = task("t1", {
+      launched_by: "listik", launch_finished_at: "2026-01-01T00:20:00Z", launch_exit_code: 1,
+      needs_owner: true, labels: ["port:5170"],
+    });
+    const t2Parked = task("t2", {
+      launched_by: "", needs_owner: true, labels: ["frozen-by:t1"],
+    });
+    const plan1 = rollbackPlan(["t2"]);
+    const plan2 = rollbackPlan([]);
+    const card = freezeCard(3, {lastGen: 4});
+    const responses = {
+      status: statusFor(dataDir),
+      projects: {stdout: JSON.stringify([{slug: "proj", path: repo}])},
+      waves: [
+        {stdout: JSON.stringify({waves: plan1, added: [], removed: [], kept: 0})},
+        {stdout: JSON.stringify({waves: plan2, added: [], removed: [], kept: 0})},
+      ],
+      list: [
+        {stdout: JSON.stringify({total: 2, limit: 1000, offset: 0, tasks: [t1Running, t2Frozen]})},
+        {stdout: JSON.stringify({total: 2, limit: 1000, offset: 0, tasks: [t1Running, t2Frozen]})},
+        {stdout: JSON.stringify({total: 2, limit: 1000, offset: 0, tasks: [t1Waiting, t2Parked]})},
+      ],
+      routes: {stdout: JSON.stringify({ok: true, routes: []})},
+      watch: [
+        watchOf([freezeDecision()]),
+        watchOf([]),
+      ],
+      show: [
+        showOut({id: "t1", events: [], comments: []}),
+        showOut(card),
+        showOut({id: "t1", events: [], comments: []}),
+        showOut({id: "t1", comments: [{
+          author: "agent:listik-swarm", kind: "question",
+          text: "рой: процесс задачи завершился (код 1, поколение 2), а карточка не закрыта.",
+          created_at: "2026-01-01T00:20:00Z",
+        }]}),
+        showOut({id: "t2", comments: [{
+          author: "agent:listik-swarm", kind: "question",
+          text: "рой: предел откатов — задача заморожена 3 раз подряд",
+          created_at: "2026-01-01T00:11:00Z",
+        }]}),
+      ],
+      "needs-owner": {stdout: JSON.stringify({id: "t2"})},
+    };
+    const {calls} = setupFake(responses);
+    const logDir = fs.mkdtempSync(path.join(os.tmpdir(), "listik-swarm-rollback-main-"));
+    const {code, chunks} = await runMain(
+      ["--project", "proj", "--listik", FAKE_BIN, "--log-dir", logDir, "--interval", "1"]);
+    assert.equal(code, 2);
+    const parks = calls().filter(c => c.sub === "needs-owner");
+    assert.equal(parks.length, 1);
+    assert.ok(parks[0].argv.includes("t2"));
+    for (const sub of ["comment", "revoke", "launch", "set", "worktree"]) {
+      assert.equal(calls().filter(c => c.sub === sub).length, 0, sub);
+    }
+    const logText = fs.readFileSync(chunks[0].trim(), "utf8");
+    assert.ok(logText.includes("t2 — предел откатов"));
+    assert.ok(logText.includes("t1 — упала"));
+    assert.ok(logText.includes(
+      "итог: закрыто 0 (), перезапусков 0, откатов 1 (на откаты 10 мин), " +
+      "по пределу 1 (t2), оставлено человеку 2"));
+  });

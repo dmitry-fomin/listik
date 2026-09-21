@@ -5,6 +5,7 @@ import fs from "node:fs";
 import {decide, portOf, allocatePort, isRunning, OPEN_STATUSES, dueDefaults, restartCauseRu} from "./decide.mjs";
 import {runBarrier, haltCards} from "./barrier.mjs";
 import {ConfigError, parseSwarmConfig, swarmConfigFor, DEFAULT_QUESTION_TIMEOUT} from "./config.mjs";
+import {limitText, rollbackVerdict} from "./rollback.mjs";
 import * as git from "./git.mjs";
 
 const MAIN_WORKTREE_MARKERS = new Set(["main", "master"]);
@@ -75,6 +76,7 @@ export async function tick(listik, config, log, runState = null) {
   let barrierResult = null;
   let watchSummary = null;
   let questionTimeout = DEFAULT_QUESTION_TIMEOUT;
+  const rollbacks = [];
   const cyclesPending = !!(plan.cycles && plan.cycles.length);
 
   if (!cyclesPending) {
@@ -168,6 +170,59 @@ export async function tick(listik, config, log, runState = null) {
         }
       }
 
+      // Предел откатов — сразу после swarm.json, до барьера. Гейт не ставим.
+      // ponytail: парковка не повторяется до следующей заморозки; проверка кандидатов перед launch — если дыра проявится
+      const watched = (watchRes && watchRes.decisions) || [];
+      const maxFreezes = swarmConfig ? swarmConfig.maxFreezes : null;
+      let limitUncheckedLogged = false;
+      for (const d of watched) {
+        if (d.action !== "freeze" || d.ok === false) continue;
+        let card;
+        try {
+          card = await listik.show(d.task);
+        } catch (err) {
+          log.line(`show ${d.task} ошибка: ${errText(err)}`);
+          continue;
+        }
+        const v = rollbackVerdict(card, maxFreezes);
+        if (config.dryRun || d.dry_run) {
+          if (maxFreezes != null && v.count + 1 > maxFreezes) {
+            log.action(`[dry-run] по пределу ${d.task}: заморозок в окне ${v.count}, ` +
+              `стало бы ${v.count + 1} (порог ${maxFreezes})`);
+          } else {
+            const shownMax = maxFreezes == null ? "?" : maxFreezes;
+            log.line(`[dry-run] откат ${d.task} (владелец ${d.owner}): заморозок в окне ${v.count}, ` +
+              `стало бы ${v.count + 1} из ${shownMax}`);
+          }
+          continue;
+        }
+        const mins = v.last && v.last.minutes != null ? v.last.minutes : 0;
+        const shownMax = maxFreezes == null ? "?" : maxFreezes;
+        log.line(`откат ${d.task} (владелец ${d.owner}): заморозка ${v.count} из ${shownMax} в окне, ` +
+          `всего ${v.total}, ~${mins} мин снятого поколения`);
+        if (maxFreezes == null && !limitUncheckedLogged) {
+          log.line("предел откатов не проверен: swarm.json с ошибкой");
+          limitUncheckedLogged = true;
+        }
+        const entry = {
+          id: d.task, owner: d.owner, minutes: mins, count: v.count, total: v.total, parked: false,
+        };
+        if (v.exceeded && card.needs_owner) {
+          log.line(`по пределу ${d.task}: needs_owner уже стоит`);
+        } else if (v.exceeded) {
+          try {
+            await listik.needsOwner(d.task, limitText(d.task, v, maxFreezes));
+            log.action(`needs-owner ${d.task}: freeze_limit`);
+            entry.parked = true;
+            const parkedTask = tasks.find(t => t.id === d.task);
+            if (parkedTask) parkedTask.needs_owner = true;
+          } catch (err) {
+            log.line(`needs-owner ${d.task} ошибка: ${errText(err)}`);
+          }
+        }
+        rollbacks.push(entry);
+      }
+
       const runningNow = tasks.filter(isRunning);
       if (runningNow.length) {
         const haltIds = haltCards(tasks);
@@ -250,7 +305,7 @@ export async function tick(listik, config, log, runState = null) {
 
   const taskById = new Map(tasks.map(t => [t.id, t]));
 
-  const needsOwnerDone = [];
+  const needsOwnerDone = rollbacks.filter(r => r.parked).map(r => r.id);
   for (const item of decision.needsOwner) {
     if (config.dryRun) {
       log.action(`[dry-run] needs-owner ${item.id}: ${item.text}`);
@@ -493,6 +548,9 @@ export async function tick(listik, config, log, runState = null) {
     unfrozen: barrierUnfrozen,
     integration: barrierIntegration,
     halt: barrierHalt.length ? barrierHalt[0] : null,
+    rollbacks: rollbacks.map(r => r.id),
+    rollbackMinutes: rollbacks.reduce((sum, r) => sum + r.minutes, 0),
+    parked: rollbacks.filter(r => r.parked).map(r => r.id),
   };
   log.summary(report);
 
@@ -521,6 +579,7 @@ export async function tick(listik, config, log, runState = null) {
       gate,
     },
     watch: watchSummary,
+    rollbacks,
     budget: {exhausted, spentMinutes, launches: launchesSoFar},
   };
 }

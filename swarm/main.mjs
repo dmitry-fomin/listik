@@ -138,6 +138,9 @@ export async function main(argv) {
 
   let firstOpen = null;
   let totalRestarts = 0;
+  let totalRollbacks = 0;
+  let totalRollbackMinutes = 0;
+  const parkedIds = new Set();
 
   for (;;) {
     const result = await runOneTick(listik, config, log, runState);
@@ -151,6 +154,12 @@ export async function main(argv) {
 
     if (firstOpen == null) firstOpen = result.open || [];
     totalRestarts += (result.restarted || []).length;
+    const tickRollbacks = result.rollbacks || [];
+    totalRollbacks += tickRollbacks.length;
+    totalRollbackMinutes += tickRollbacks.reduce((sum, r) => sum + (r.minutes || 0), 0);
+    for (const r of tickRollbacks) {
+      if (r.parked) parkedIds.add(r.id);
+    }
     runState.launches += (result.launched || []).length + (result.restarted || []).length;
 
     const launchedNone = !result.launched || result.launched.length === 0;
@@ -181,7 +190,9 @@ export async function main(argv) {
       const closed = firstOpen.filter(id => !lastOpen.has(id));
       const leftToHuman = (result.needsOwnerOpen || []).length;
       log.line(`итог: закрыто ${closed.length} (${closed.join(", ")}), ` +
-        `перезапусков ${totalRestarts}, оставлено человеку ${leftToHuman}`);
+        `перезапусков ${totalRestarts}, откатов ${totalRollbacks} ` +
+        `(на откаты ${totalRollbackMinutes} мин), по пределу ${parkedIds.size} ` +
+        `(${[...parkedIds].join(", ")}), оставлено человеку ${leftToHuman}`);
       return 2;
     }
 

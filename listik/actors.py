@@ -16,6 +16,8 @@ CANONICAL = {
     "agent:grok": "Grok",
     "agent:codex": "Codex",
     "agent:gemini": "Gemini",
+    "agent:pi-glm": "pi · GLM",
+    "agent:pi-deepseek": "pi · DeepSeek",
     "agent:local": "локальный субагент",
 }
 
@@ -34,6 +36,9 @@ ALIASES = {
 }
 
 AGENT_HINTS = (
+    # pi-* раньше "deepseek": иначе pi-deepseek уйдёт в agent:dsh
+    ("pi-glm", "agent:pi-glm"),
+    ("pi-deepseek", "agent:pi-deepseek"),
     ("claude", "agent:claude"),
     ("opus", "agent:claude"),
     ("sonnet", "agent:claude"),

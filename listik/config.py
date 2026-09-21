@@ -47,10 +47,10 @@ DEFAULTS: dict[str, Any] = {
     },
     "routing": {
         "harnesses": {
-            "s1-spec": ["claude", "dsh", "codex", "grok"],
-            "s2-review": ["claude", "dsh", "codex", "grok"],
-            "s3-impl": ["codex", "dsh", "claude", "grok"],
-            "s4-judge": ["claude", "dsh", "codex", "grok"],
+            "s1-spec": ["claude", "dsh", "codex", "grok", "pi-glm", "pi-deepseek"],
+            "s2-review": ["claude", "dsh", "codex", "grok", "pi-glm", "pi-deepseek"],
+            "s3-impl": ["codex", "dsh", "claude", "grok", "pi-glm", "pi-deepseek"],
+            "s4-judge": ["claude", "dsh", "codex", "grok", "pi-glm", "pi-deepseek"],
         },
         "transitions": {
             # После подготовки ТЗ следующий harness забирает этап ревью сам.

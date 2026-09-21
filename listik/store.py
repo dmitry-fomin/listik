@@ -1013,12 +1013,20 @@ def add_comment(conn: sqlite3.Connection, task_id: str, text: str, *, author: st
     failed = parse_verdict(text) if kind == "verdict" else False
     if author:
         actors_mod.remember(conn, author, actor_key, actor_kind)
-    cid = f"{task_id}:{int(datetime.now().timestamp() * 1000)}:{random.randint(100, 999)}"
     ts = created_at or now_iso()
-    conn.execute(
-        "INSERT INTO comments(id, task_id, author, kind, text, created_at) VALUES(?,?,?,?,?,?)",
-        (cid, task_id, author, kind, text, ts),
-    )
+    # Two comments in the same millisecond collide on the 3-digit suffix: retry with a new one.
+    for attempt in range(10):
+        cid = f"{task_id}:{int(datetime.now().timestamp() * 1000)}:{random.randint(100, 999)}"
+        try:
+            conn.execute(
+                "INSERT INTO comments(id, task_id, author, kind, text, created_at) "
+                "VALUES(?,?,?,?,?,?)",
+                (cid, task_id, author, kind, text, ts),
+            )
+            break
+        except sqlite3.IntegrityError as exc:
+            if "comments.id" not in str(exc) or attempt == 9:
+                raise
     conn.execute("UPDATE tasks SET updated_at = ? WHERE id = ?", (ts, task_id))
     event(conn, task_id, "comment", to_value=kind, actor=actor_key, harness=harness,
           note=text[:200], ts=ts)

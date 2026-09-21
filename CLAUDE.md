@@ -126,14 +126,25 @@ Database migrations exist as two parallel mechanisms — don't confuse them:
   `docs/harness-protocol.md` (`migrate.body()`) — change the protocol there, not in `migrate.py`;
   `CLAUDE.md` gets only `CLAUDE_BODY`, a pointer to the `listik:listik` skill.
 - `bin/listik-swarm` + `swarm/` — the swarm: drives a project's wave of tasks to completion
-  without a human re-running `launch` for each one. Node, stdlib only, no model calls; talks to
-  Listik exclusively through the installed `listik` CLI (`bin/listik … --json`), never `listik/`
-  directly, and keeps no state between ticks — a crash is survived by restarting, a re-run sees
-  the real card state and never double-launches. `config.mjs` (flags/defaults), `decide.mjs`
-  (pure: input objects in, actions out — `node --test swarm/test/decide.test.mjs`), `run.mjs`
-  (one tick: fetch via `listik.mjs`, decide, execute, log), `main.mjs` (loop/exit codes),
-  `log.mjs` (file + stdout). End-to-end proof against a real server, real git and a fake worker
-  is `tests/test_swarm_e2e.py` (part of `discover tests`; skipped without `node`/`git`).
+  without a human re-running `launch` for each one. Node, stdlib only, no model calls of its own
+  (the one exception is the merge-conflict arbiter below); talks to Listik exclusively through
+  the installed `listik` CLI (`bin/listik … --json`), never `listik/` directly, and keeps no
+  state between ticks — a crash is survived by restarting, a re-run sees the real card state and
+  never double-launches. `config.mjs` (flags/defaults), `decide.mjs` (pure: input objects in,
+  actions out — `node --test swarm/test/decide.test.mjs`), `run.mjs` (one tick: fetch via
+  `listik.mjs`, decide, execute, log), `main.mjs` (loop/exit codes), `log.mjs` (file + stdout).
+  `barrier.mjs` — the wave barrier: once nobody is running, it rebases and `merge --ff-only`s
+  each done task's branch into the project's main tree one at a time, records the merge as a
+  `рой: влито:` journal comment, unfreezes `frozen-by:` tasks whose owner just merged, runs the
+  configured integration commands and removes merged trees, or opens a `swarm:halt` stop card
+  when integration is unset/red; `git.mjs` is its git layer (`rebase`, `merge --ff-only`,
+  worktree/branch removal, `--no-optional-locks` throughout); `arbiter.mjs` is the one place in
+  the whole swarm that calls a model — only for a closed task's merge-time rebase conflict, via
+  the `arbiter` command configured in `swarm.json` (`<data dir>/swarm.json`, path from `listik
+  status`, re-read every tick: `integration`/`arbiter` commands, their timeouts, per-project
+  overrides under `projects.<slug>`). End-to-end proof against a real server, real git and a fake
+  worker is `tests/test_swarm_e2e.py`, plus `tests/test_swarm_barrier_e2e.py` for the barrier
+  itself (both part of `discover tests`; skipped without `node`/`git`).
 - `listik/import_writerllm.py` (CLI: `listik import-from-bd`) — idempotent importer for the
   JSON/JSONL produced by `bd export` on WriterLLM's dolt-backed tracker; idempotency key is
   `(source, project, external_ref)`, `--update` writes a diff to the journal; tests in

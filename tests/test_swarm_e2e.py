@@ -343,6 +343,10 @@ class WaveToCompletionTests(SwarmE2ECase):
         d = self.make_scenario_task("D", route=None, write_scope=["d/"])
         e = self.make_scenario_task("E", route="fake-low", write_scope=None)
         store.add_dep(self.conn, c["id"], a["id"], dep_type="blocks", created_by="dmitry")
+        # Без явного `integration` барьер (listik-dzf0) после первого же слияния ставит
+        # карточку-стоп и останавливает волну -- явный зелёный список делает интеграцию
+        # тривиальной и не мешает волне дойти до конца.
+        (self.tmp_path / "swarm.json").write_text(json.dumps({"integration": []}), encoding="utf-8")
 
         proc = self.start_swarm(parallel=2, interval=1)
         code = self.wait_swarm(proc, deadline=60)
@@ -352,15 +356,16 @@ class WaveToCompletionTests(SwarmE2ECase):
             row = self.row(tid)
             self.assertEqual(row["status"], "done", tid)
             self.assertEqual(row["generation"], 1, tid)
-            worktree = self.project_dir / ".worktrees" / tid
-            self.assertEqual(row["worktree"], str(worktree), tid)
-            self.assertEqual(row["branch"], f"task/{tid}", tid)
+            # Барьер (listik-dzf0) вливает закрытую задачу в `main` и убирает её дерево/ветку
+            # зелёной интеграцией -- на живом сервере это происходит раньше, чем рой выходит.
+            self.assertFalse(row["worktree"], tid)
+            self.assertFalse(row["branch"], tid)
             log = subprocess.run(["git", "-C", str(self.project_dir), "log",
-                                 f"task/{tid}", "--format=%s"],
+                                 "main", "--format=%s"],
                                  capture_output=True, text=True, check=True)
             self.assertIn(tid, log.stdout.splitlines(), tid)
             content = subprocess.run(
-                ["git", "-C", str(self.project_dir), "show", f"task/{tid}:{tid}.txt"],
+                ["git", "-C", str(self.project_dir), "show", f"main:{tid}.txt"],
                 capture_output=True, text=True, check=True).stdout.strip()
             port = next(lbl.split(":", 1)[1] for lbl in json.loads(row["labels"] or "[]")
                        if lbl.startswith("port:"))
@@ -401,8 +406,9 @@ class WaveToCompletionTests(SwarmE2ECase):
         self.assertIn("маршрут", self.question_texts(d["id"])[0])
         self.assertIn("write_scope", self.question_texts(e["id"])[0])
 
+        # Барьер убирает деревья закрытых задач после зелёной интеграции.
         worktrees = list((self.project_dir / ".worktrees").iterdir())
-        self.assertEqual(len(worktrees), 3, worktrees)
+        self.assertEqual(len(worktrees), 0, worktrees)
 
         stdout = self.swarm_stdout(proc)
         for tid in (a["id"], b["id"], c["id"]):

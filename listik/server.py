@@ -37,6 +37,7 @@ from . import routes_store
 from . import search as search_mod
 from . import skills as skills_mod
 from . import store
+from . import swarm_llm
 from . import voice as voice_mod
 
 # Соединение с базой — своё на каждый поток.
@@ -919,6 +920,31 @@ def handle(method: str, path: str, query: dict, body: dict, authed: bool = False
         # строку, а на пустую/пробельную сама подымет `errors.BadArgument`.
         return 200, {**deps_mod.waves(conn, project=q1("project", ""), stage=q1("stage")),
                      "generated_at": store.now_iso()}
+
+    if path == "/api/swarm/plan":
+        if method != "POST":
+            raise ApiError(405, "метод не поддерживается")
+        # `actor` в теле и `X-Listik-Owner` не влияют на автора рёбер: он всегда
+        # `swarm_llm.SWARM_AUTHOR` — ребро машинное по построению.
+        project = body.get("project") or ""
+        stage = (body.get("stage") or "").strip() or None
+        apply_ = bool(body.get("apply"))
+        try:
+            out = swarm_llm.plan(conn, project=project, stage=stage, apply=apply_)
+        except swarm_llm.SwarmLlmError as exc:
+            raise ApiError(exc.status, exc.message, code=exc.code) from exc
+        except errors_mod.NotFound as exc:
+            raise api_error(404, exc) from exc
+        except errors_mod.ListikError as exc:
+            raise ApiError(409 if exc.code == errors_mod.CONFLICT else 400, exc.message,
+                           code=exc.code) from exc
+        if out.get("applied"):
+            touched: set[str] = set()
+            for pair in (*out["applied"]["added"], *out["applied"]["removed"]):
+                touched.update(pair)
+            for tid in touched:
+                publish("task", {"id": tid, "action": "deps"})
+        return 200, {**out, "generated_at": store.now_iso()}
 
     if path == "/api/deps/suggested":
         return 200, {

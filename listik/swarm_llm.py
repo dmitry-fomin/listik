@@ -31,6 +31,7 @@ import urllib.request
 from . import assistant
 from . import deps
 from . import errors
+from . import store_helpers as store_helpers_mod
 from . import util
 
 DEFAULT_BASE_URL = "https://openrouter.ai/api/v1"
@@ -228,3 +229,265 @@ def complete_json(messages: list[dict], schema: dict, *, name: str, cfg_settings
                            model=cfg_settings["model"], runner=runner, timeout=timeout)
     return _via_http(messages, schema, name=name, cfg_settings=cfg_settings, opener=opener,
                     timeout=timeout)
+
+
+# --- проход `listik plan`: грубые зависимости между открытыми задачами проекта -----------
+
+MAX_FIELD_CHARS = 4000          # описание/приёмка одной карточки в промпте
+MAX_TOTAL_CHARS = 400_000       # весь текст сообщений одного вызова (≈100k токенов)
+MAX_ATTEMPTS = 2                # вызовов модели на проход: первый + один повтор после цикла
+MAX_REASON_CHARS = 300
+
+PLAN_SCHEMA = {
+    "type": "object", "additionalProperties": False, "required": ["tasks"],
+    "properties": {"tasks": {"type": "array", "items": {
+        "type": "object", "additionalProperties": False,
+        "required": ["id", "depends_on", "reason"],
+        "properties": {"id": {"type": "string"},
+                       "depends_on": {"type": "array", "items": {"type": "string"}},
+                       "reason": {"type": "string"}}}}}}
+
+PLAN_PROMPT = (
+    "Ты — планировщик очереди задач в трекере Listik. Тебе дают открытые задачи одного "
+    "проекта (id, заголовок, описание, приёмка), уже известные жёсткие зависимости fixed "
+    "(их менять нельзя — это факт) и previous — твой прошлый ответ, который можно "
+    "уточнять.\n"
+    "Расставь грубые зависимости: задача B ждёт задачу A (B.depends_on содержит A), если "
+    "ТЗ или реализацию B нельзя написать, не зная результата A: A вводит схему, API, "
+    "модуль, команду или формат, на который B опирается. Цель — понять, какие ТЗ можно "
+    "писать параллельно; точность не нужна, нужен порядок.\n"
+    "Правила: только id из списка; зависимость «на всякий случай» не ставь — "
+    "сомневаешься, не ставь; общая тема, общий родитель, соседние файлы — не зависимость; "
+    "циклов быть не должно (если A ждёт B, B не ждёт A ни напрямую, ни через другие); "
+    "reason — одна короткая фраза, почему B ждёт A (пустая строка, если depends_on пуст).\n"
+    "Ответь одним JSON-объектом по схеме {\"tasks\": [{\"id\", \"depends_on\", \"reason\"}]} "
+    "— по одной записи на каждую задачу списка."
+)
+
+RETRY_PROMPT = (
+    "В твоём ответе цикл: {cycles}; Убери хотя бы одно ребро в каждом цикле (оставь то, "
+    "что важнее для порядка написания ТЗ) и верни исправленный полный ответ по той же "
+    "схеме."
+)
+
+
+def _format_cycles(cycles: list[list[str]]) -> str:
+    return "; ".join(" → ".join([*cycle, cycle[0]]) for cycle in cycles)
+
+
+def working_set(conn, *, project: str, stage: str | None = None) -> list:
+    """Рабочее множество прохода plan: открытые задачи проекта, порядок как у `deps.waves`."""
+    if not (project or "").strip():
+        raise errors.BadArgument("нужен проект: план считается по одному проекту")
+    stage = (stage or "").strip() or None
+    where = ["archived = 0",
+             f"status IN ({','.join('?' * len(deps.OPEN_STATUSES))})",
+             "project = ?"]
+    params: list = [*deps.OPEN_STATUSES, project]
+    if stage is not None:
+        where.append("stage = ?")
+        params.append(stage)
+    return deps._fetch(
+        conn,
+        f"SELECT * FROM tasks WHERE {' AND '.join(where)} "
+        "ORDER BY priority ASC, created_at ASC, id ASC",
+        tuple(params),
+    )
+
+
+def fixed_edges(conn, working: list[str]) -> tuple[list[list[str]], list[list[str]]]:
+    """Смысловые жёсткие рёбра (`fixed`) и свои прошлые машинные `blocks` (`previous`)
+    внутри рабочего множества, в порядке `working` (по позже, затем по раньше)."""
+    if not working:
+        return [], []
+    order_index = {tid: i for i, tid in enumerate(working)}
+    marks = ",".join("?" * len(working))
+    rows = deps._fetch(
+        conn,
+        "SELECT issue_id, depends_on, dep_type, created_by FROM deps "
+        f"WHERE dep_type IN ({','.join('?' * len(deps.SEMANTIC_HARD))}) "
+        f"AND issue_id IN ({marks}) AND depends_on IN ({marks})",
+        (*deps.SEMANTIC_HARD, *working, *working),
+    )
+
+    def sort_key(pair):
+        earlier, later = pair
+        return (order_index[later], order_index[earlier])
+
+    fixed_pairs: list[tuple[str, str]] = []
+    previous_pairs: list[tuple[str, str]] = []
+    for r in rows:
+        pair = (r["depends_on"], r["issue_id"])  # (раньше, позже)
+        if r["dep_type"] == "blocks" and r["created_by"] == SWARM_AUTHOR:
+            previous_pairs.append(pair)
+        else:
+            fixed_pairs.append(pair)
+    fixed = [list(p) for p in sorted(set(fixed_pairs), key=sort_key)]
+    previous = [list(p) for p in sorted(set(previous_pairs), key=sort_key)]
+    return fixed, previous
+
+
+def normalize_graph(data: dict, ids: list[str]) -> tuple[dict, list[list[str]], list[dict]]:
+    """Нормализует сырой ответ модели: `tasks_view` (по всем `ids`), `edges` (позже по
+    порядку `ids`, затем раньше), `dropped` (отброшенные записи/ссылки)."""
+    id_set = set(ids)
+    order_index = {tid: i for i, tid in enumerate(ids)}
+    raw_tasks = data.get("tasks") if isinstance(data, dict) else None
+    if not isinstance(raw_tasks, list):
+        raw_tasks = []
+
+    dropped: list[dict] = []
+    depends_by_id: dict[str, list[str]] = {}
+    reason_by_id: dict[str, str] = {}
+
+    for entry in raw_tasks:
+        if not isinstance(entry, dict):
+            continue
+        tid = entry.get("id")
+        if not isinstance(tid, str) or tid not in id_set:
+            dropped.append({"id": tid, "why": "unknown_task"})
+            continue
+        raw_depends = entry.get("depends_on")
+        if not isinstance(raw_depends, list):
+            raw_depends = []
+        deps_list = depends_by_id.setdefault(tid, [])
+        for dep in raw_depends:
+            if not isinstance(dep, str) or dep not in id_set:
+                dropped.append({"id": tid, "depends_on": dep, "why": "unknown_id"})
+                continue
+            if dep == tid:
+                dropped.append({"id": tid, "depends_on": dep, "why": "self"})
+                continue
+            if dep not in deps_list:
+                deps_list.append(dep)
+        reason = entry.get("reason")
+        reason = reason if isinstance(reason, str) else ""
+        reason_by_id[tid] = reason[:MAX_REASON_CHARS]
+
+    tasks_view: dict[str, dict] = {}
+    edges_pairs: list[tuple[str, str]] = []
+    for tid in ids:
+        depends_on = depends_by_id.get(tid, [])
+        tasks_view[tid] = {"depends_on": list(depends_on),
+                           "reason": reason_by_id.get(tid, "")}
+        for dep in depends_on:
+            edges_pairs.append((dep, tid))
+
+    edges_pairs.sort(key=lambda pair: (order_index[pair[1]], order_index[pair[0]]))
+    edges = [list(p) for p in edges_pairs]
+    return tasks_view, edges, dropped
+
+
+def _group_by_later(pairs: list[list[str]], ids: list[str]) -> list[dict]:
+    """`[раньше, позже]` → `[{"id": позже, "depends_on": [раньше, …]}]`, в порядке `ids`."""
+    order_index = {tid: i for i, tid in enumerate(ids)}
+    groups: dict[str, list[str]] = {}
+    for earlier, later in pairs:
+        groups.setdefault(later, []).append(earlier)
+    return [{"id": later, "depends_on": groups[later]}
+           for later in sorted(groups, key=lambda tid: order_index[tid])]
+
+
+def plan(conn, *, project: str, stage: str | None = None, apply: bool = False,
+         cfg: dict | None = None, opener=None, runner=None, timeout: float = TIMEOUT) -> dict:
+    """Проход plan: грубый граф `blocks` между открытыми задачами проекта от модели.
+
+    Без `apply` — сухой прогон (ничего не пишет). С `apply` — при отсутствии циклов
+    пишет граф модели жёсткими `blocks` от `SWARM_AUTHOR` через
+    `deps.apply_planned_blocks`. Цикл (в базе или у модели после `MAX_ATTEMPTS`
+    попыток) — рёбра не записываются, ответ отдаёт `cycles`.
+    """
+    stage = (stage or "").strip() or None
+    rows = working_set(conn, project=project, stage=stage)
+    ids = [r["id"] for r in rows]
+    by_id = {r["id"]: r for r in rows}
+    cfg_settings = settings(cfg)
+
+    if not ids:
+        return {"project": project, "stage": stage, "model": cfg_settings["model"],
+                "attempts": 0, "tasks": {}, "edges": [], "fixed": [], "previous": [],
+                "dropped": [], "cycles": [], "cycles_from": None, "applied": None}
+
+    fixed, previous = fixed_edges(conn, ids)
+    incoming_fixed: dict[str, set[str]] = {}
+    for earlier, later in fixed:
+        incoming_fixed.setdefault(later, set()).add(earlier)
+    db_cycles = deps.find_cycles(ids, incoming_fixed)
+    if db_cycles:
+        return {"project": project, "stage": stage, "model": cfg_settings["model"],
+                "attempts": 0,
+                "tasks": {tid: {"title": by_id[tid]["title"], "depends_on": [], "reason": ""}
+                         for tid in ids},
+                "edges": [], "fixed": fixed, "previous": previous, "dropped": [],
+                "cycles": db_cycles, "cycles_from": "db", "applied": None}
+
+    payload_tasks = []
+    for tid in ids:
+        row = by_id[tid]
+        payload_tasks.append({
+            "id": tid,
+            "title": row["title"],
+            "description": _clip(row["description"] or "", MAX_FIELD_CHARS),
+            "acceptance": _clip(row["acceptance"] or "", MAX_FIELD_CHARS),
+            "stage": row["stage"],
+            "labels": store_helpers_mod.json_list(row["labels"]),
+        })
+    payload = {
+        "project": project,
+        "tasks": payload_tasks,
+        "fixed": _group_by_later(fixed, ids),
+        "previous": _group_by_later(previous, ids),
+    }
+
+    messages = [{"role": "system", "content": PLAN_PROMPT},
+               {"role": "user", "content": util.json_dumps(payload)}]
+    total_chars = sum(len(m["content"]) for m in messages)
+    if total_chars > MAX_TOTAL_CHARS:
+        raise errors.BadArgument(
+            f"слишком много текста для одного вызова модели: {total_chars} символов — "
+            "ограничь --stage")
+
+    tasks_view: dict = {}
+    model_edges: list[list[str]] = []
+    dropped: list[dict] = []
+    cycles: list[list[str]] = []
+    attempts = 0
+    for attempts in range(1, MAX_ATTEMPTS + 1):
+        data = complete_json(messages, PLAN_SCHEMA, name="swarm_plan",
+                             cfg_settings=cfg_settings, opener=opener, runner=runner,
+                             timeout=timeout)
+        tasks_view, model_edges, dropped = normalize_graph(data, ids)
+        incoming: dict[str, set[str]] = {}
+        for earlier, later in (*fixed, *model_edges):
+            incoming.setdefault(later, set()).add(earlier)
+        cycles = deps.find_cycles(ids, incoming)
+        if not cycles:
+            break
+        if attempts < MAX_ATTEMPTS:
+            messages = messages + [
+                {"role": "assistant", "content": util.json_dumps(data)},
+                {"role": "user", "content": RETRY_PROMPT.format(
+                    cycles=_format_cycles(cycles))},
+            ]
+
+    tasks_out = {
+        tid: {"title": by_id[tid]["title"],
+             "depends_on": tasks_view.get(tid, {}).get("depends_on", []),
+             "reason": tasks_view.get(tid, {}).get("reason", "")}
+        for tid in ids
+    }
+
+    if cycles:
+        return {"project": project, "stage": stage, "model": cfg_settings["model"],
+                "attempts": attempts, "tasks": tasks_out, "edges": [], "fixed": fixed,
+                "previous": previous, "dropped": dropped, "cycles": cycles,
+                "cycles_from": "model", "applied": None}
+
+    applied = None
+    if apply:
+        applied = deps.apply_planned_blocks(conn, working=ids, edges=model_edges)
+
+    return {"project": project, "stage": stage, "model": cfg_settings["model"],
+            "attempts": attempts, "tasks": tasks_out, "edges": model_edges, "fixed": fixed,
+            "previous": previous, "dropped": dropped, "cycles": [], "cycles_from": None,
+            "applied": applied}

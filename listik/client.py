@@ -275,6 +275,11 @@ def local_call(op: str, *, fence: fence_mod.Token | dict | None = None, **kwargs
         from . import deps as deps_mod
         return deps_mod.apply_resource_blocks(
             conn, project=kwargs.get("project") or "", stage=kwargs.get("stage"))
+    if op == "swarm_plan":
+        from . import swarm_llm
+        return swarm_llm.plan(
+            conn, project=kwargs.get("project") or "",
+            stage=(kwargs.get("stage") or "").strip() or None, apply=bool(kwargs.get("apply")))
     if op == "mentions":
         from . import deps as deps_mod
         return deps_mod.mentioned(conn, kwargs["task_id"], limit=kwargs.get("limit", 50))

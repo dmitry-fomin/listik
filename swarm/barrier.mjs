@@ -3,7 +3,7 @@
 // их по имени и не имеют права менять. `runBarrier` и его частные хелперы (шаги 7–9,
 // интеграция) — оркестрация: git/listik/fs приходят параметрами, `spawn` — прямой
 // импорт (команды интеграции, порция d).
-import {spawn} from "node:child_process";
+import {spawn, execFileSync} from "node:child_process";
 import path from "node:path";
 import {OPEN_STATUSES, isFrozen, portOf} from "./decide.mjs";
 import {resolveWithArbiter} from "./arbiter.mjs";
@@ -151,6 +151,18 @@ async function needsOwnerSafe(listik, log, id, text) {
   }
 }
 
+// Откат ребейза в дереве кандидата: ошибка git здесь не значит, что сломано
+// основное дерево, и из `runBarrier` не вылетает.
+async function abortQuiet(git, worktree) {
+  try {
+    if (await git.rebaseInProgress(worktree)) await git.rebaseAbort(worktree);
+  } catch {
+    /* дерево задачи, не projectPath */
+  }
+}
+
+
+
 // Оркестрация барьера волны: rebase → ff-merge по одной, запись факта, гейт.
 // Порция c — конфликт ребейза здесь всегда отказ (`rebaseAbort`), без арбитра.
 export async function runBarrier({listik, git, fs, config, swarmConfig, log, tasks, projectPath, now,
@@ -182,41 +194,70 @@ export async function runBarrier({listik, git, fs, config, swarmConfig, log, tas
   const merged = [];
   const mergedNow = [];
   const unmerged = [];
+  const pending = [];
   const live = [];
   let skippedSilently = 0;
   let skippedMissing = 0;
+  let skippedOut = 0;
+
+  async function markUnmerged(id, reason, body) {
+    if (dryRun) return;
+    unmerged.push(id);
+    log.action(`needs-owner ${id}: ${reason}`);
+    await needsOwnerSafe(listik, log, id, withHint(id, body));
+  }
 
   // Шаг 3: живость кандидата (каталог/ветка), needs_owner и missing_tree — без show.
   for (const c of candidates) {
     const cbranch = (c.branch || "").trim() || `task/${c.id}`;
     if (c.needs_owner) {
+      skippedOut++;
       unmerged.push(c.id);
       log.line(`${c.id} не влита: ждёт человека`);
       continue;
     }
     const dirExists = fs.existsSync(c.worktree || "");
+    let branchOk;
+    try {
+      branchOk = await git.branchExists(projectPath, cbranch);
+    } catch (err) {
+      skippedOut++;
+      await markUnmerged(c.id, "branch_error",
+        `ветка ${cbranch}: ${err.message ?? String(err)}.`);
+      continue;
+    }
     if (dirExists) {
+      if (!branchOk) {
+        skippedOut++;
+        await markUnmerged(c.id, "missing_branch",
+          `каталог дерева ${c.worktree} есть, а ветки ${cbranch} нет — верни ветку ` +
+          `или убери дерево.`);
+        continue;
+      }
       live.push({id: c.id, worktree: c.worktree, branch: cbranch});
       continue;
     }
-    const branchOk = await git.branchExists(projectPath, cbranch);
     if (!branchOk) {
       skippedSilently++;
       continue;
     }
-    const ahead = await git.aheadCount(projectPath, "HEAD", cbranch);
+    let ahead;
+    try {
+      ahead = await git.aheadCount(projectPath, "HEAD", cbranch);
+    } catch (err) {
+      skippedOut++;
+      await markUnmerged(c.id, "ahead_error",
+        `ветка ${cbranch}: ${err.message ?? String(err)}.`);
+      continue;
+    }
     if (ahead === 0) {
       live.push({id: c.id, worktree: c.worktree, branch: cbranch});
       continue;
     }
     skippedMissing++;
-    if (!dryRun) {
-      unmerged.push(c.id);
-      const body = `каталога дерева ${c.worktree} нет, а ветка ${cbranch} ещё впереди HEAD — ` +
-        `верни дерево (listik worktree ${c.id}) или убери ветку.`;
-      log.action(`needs-owner ${c.id}: missing_tree`);
-      await needsOwnerSafe(listik, log, c.id, withHint(c.id, body));
-    }
+    await markUnmerged(c.id, "missing_tree",
+      `каталога дерева ${c.worktree} нет, а ветка ${cbranch} ещё впереди HEAD — ` +
+      `верни дерево (listik worktree ${c.id}) или убери ветку.`);
   }
 
   // Шаг 4: show() для живых, классификация «уже влита» (запись факта, если её нет).
@@ -239,22 +280,37 @@ export async function runBarrier({listik, git, fs, config, swarmConfig, log, tas
     const rec = mergedRecord(card);
     if (rec) {
       merged.push(entry.id);
+      pending.push(entry.id);
       log.line(`${entry.id} уже влита`);
       continue;
     }
 
-    const ahead = await git.aheadCount(projectPath, "HEAD", entry.branch);
+    let ahead;
+    try {
+      ahead = await git.aheadCount(projectPath, "HEAD", entry.branch);
+    } catch (err) {
+      await markUnmerged(entry.id, "ahead_error",
+        `ветка ${entry.branch}: ${err.message ?? String(err)}.`);
+      continue;
+    }
     if (ahead === 0) {
       merged.push(entry.id);
       log.line(`${entry.id} уже влита`);
       if (!dryRun) {
-        const sha = await git.mergeBase(projectPath, "HEAD", entry.branch);
+        let sha;
+        try {
+          sha = await git.mergeBase(projectPath, "HEAD", entry.branch);
+        } catch (err) {
+          log.line(`mergeBase ${entry.id} ошибка: ${listikErrText(err)}`);
+          continue;
+        }
         const record = {
           sha, branch: entry.branch, base: sha, files: [],
           declared: card.write_scope || [], outside: [],
         };
         try {
           await listik.comment(entry.id, `${MERGED_MARK} ${JSON.stringify(record)}`);
+          pending.push(entry.id);
         } catch (err) {
           log.line(`comment ${entry.id} ошибка: ${listikErrText(err)}`);
         }
@@ -266,7 +322,7 @@ export async function runBarrier({listik, git, fs, config, swarmConfig, log, tas
   }
 
   const alreadyMergedCount = merged.length;
-  const N = candidates.length - skippedSilently - skippedMissing;
+  const N = candidates.length - skippedSilently - skippedMissing - skippedOut;
   const sorted = sortForMerge(toSort);
   const order = sorted.map(x => x.id);
   log.line(`барьер: кандидатов ${N}, уже влито ${alreadyMergedCount}, порядок: ${order.join(", ")}`);
@@ -279,6 +335,16 @@ export async function runBarrier({listik, git, fs, config, swarmConfig, log, tas
         sha7 = (await git.headSha(projectPath)).slice(0, 7);
       } catch { /* лог всё равно печатаем */ }
       log.action(`[dry-run] влить ${entry.id} (rebase на ${sha7}, затем merge --ff-only ${entry.branch})`);
+      continue;
+    }
+
+    try {
+      if (await git.rebaseInProgress(entry.worktree)) await git.rebaseAbort(entry.worktree);
+    } catch (err) {
+      unmerged.push(entry.id);
+      log.action(`needs-owner ${entry.id}: rebase_abort_error`);
+      await needsOwnerSafe(listik, log, entry.id,
+        withHint(entry.id, "`rebase --abort`: " + (err.message ?? String(err))));
       continue;
     }
 
@@ -310,6 +376,7 @@ export async function runBarrier({listik, git, fs, config, swarmConfig, log, tas
     try {
       rebaseRes = await git.rebase(entry.worktree, base);
     } catch (err) {
+      await abortQuiet(git, entry.worktree);
       unmerged.push(entry.id);
       log.action(`needs-owner ${entry.id}: rebase_error`);
       await needsOwnerSafe(listik, log, entry.id, withHint(entry.id, "`rebase`: " + (err.message ?? String(err))));
@@ -321,7 +388,7 @@ export async function runBarrier({listik, git, fs, config, swarmConfig, log, tas
       const files = (rebaseRes.conflicts || []).join(", ");
 
       if (!(swarmConfig && swarmConfig.arbiter)) {
-        await git.rebaseAbort(entry.worktree);
+        await abortQuiet(git, entry.worktree);
         const body = `rebase на ${sha7} конфликтует: ${files}; арбитр не настроен (ключ arbiter в ` +
           `swarm.json); ребейз откачен, разреши сам в дереве ${entry.worktree} (git rebase ${base}).`;
         unmerged.push(entry.id);
@@ -330,11 +397,18 @@ export async function runBarrier({listik, git, fs, config, swarmConfig, log, tas
         continue;
       }
 
-      const arbRes = await resolveWithArbiter({
-        git, listik, fs, config, swarmConfig, log, projectPath, task: entry, card: entry,
-        worktree: entry.worktree, base, tasks, now,
-      });
+      let arbRes;
+      try {
+        arbRes = await resolveWithArbiter({
+          git, listik, fs, config, swarmConfig, log, projectPath, task: entry, card: entry,
+          worktree: entry.worktree, base, tasks, now,
+        });
+      } catch (err) {
+        await abortQuiet(git, entry.worktree);
+        arbRes = {ok: false, reason: err.message ?? String(err)};
+      }
       if (!arbRes.ok) {
+        await abortQuiet(git, entry.worktree);
         const logPart = arbRes.logPath ? `, лог ${arbRes.logPath}` : "";
         const body = `rebase на ${sha7} конфликтует: ${files}; арбитр не справился: ${arbRes.reason}` +
           `${logPart}; ребейз откачен, разреши сам в дереве ${entry.worktree} (git rebase ${base}).`;
@@ -356,13 +430,20 @@ export async function runBarrier({listik, git, fs, config, swarmConfig, log, tas
     }
 
     const sha = await git.headSha(projectPath);
-    const files = await git.changedFiles(projectPath, base, sha);
+    let files = [];
+    try {
+      files = await git.changedFiles(projectPath, base, sha);
+    } catch (err) {
+      log.line(`changedFiles ${entry.id} ошибка: ${listikErrText(err)}`);
+    }
     const declared = entry.write_scope || [];
     const outside = outsideScope(files, declared);
     const record = {sha, branch: entry.branch, base, files, declared, outside};
     if (usedArbiter) record.arbiter = true;
+    let marked = false;
     try {
       await listik.comment(entry.id, `${MERGED_MARK} ${JSON.stringify(record)}`);
+      marked = true;
     } catch (err) {
       log.line(`comment ${entry.id} ошибка: ${listikErrText(err)}`);
     }
@@ -371,6 +452,7 @@ export async function runBarrier({listik, git, fs, config, swarmConfig, log, tas
     log.action(`влито ${entry.id} → ${sha7} (файлов ${files.length}, вне области: ${outsideDesc})`);
     merged.push(entry.id);
     mergedNow.push(entry.id);
+    if (marked) pending.push(entry.id);
   }
 
   let gate = unmerged.length ? {reason: "unmerged", ids: unmerged} : null;
@@ -449,6 +531,12 @@ export async function runBarrier({listik, git, fs, config, swarmConfig, log, tas
       next = `дерево ${worktree || "(неизвестно)"} отсутствует — восстанови его сам, затем продолжай задачу`;
     } else {
       try {
+        if (await git.rebaseInProgress(worktree)) await git.rebaseAbort(worktree);
+      } catch (err) {
+        log.line(`rebaseAbort ${f} ошибка: ${listikErrText(err)}`);
+        continue;
+      }
+      try {
         snapshot = await git.snapshotCommit(worktree, "рой: снимок незакоммиченных правок перед rebase");
       } catch (err) {
         log.line(`snapshot ${f} ошибка: ${listikErrText(err)}`);
@@ -458,7 +546,7 @@ export async function runBarrier({listik, git, fs, config, swarmConfig, log, tas
       try {
         r = await git.rebase(worktree, base);
       } catch (err) {
-        if (await git.rebaseInProgress(worktree)) await git.rebaseAbort(worktree);
+        await abortQuiet(git, worktree);
         error = err.message ?? String(err);
       }
       if (error !== undefined) {
@@ -467,7 +555,7 @@ export async function runBarrier({listik, git, fs, config, swarmConfig, log, tas
         rebased = true;
         next = `дерево перебазировано на ${base.slice(0, 7)}, продолжай задачу`;
       } else {
-        await git.rebaseAbort(worktree);
+        await abortQuiet(git, worktree);
         conflicts = r.conflicts || [];
         const files = conflicts.join(", ");
         next = `перебазируй сам: git rebase ${base} в ${worktree}; конфликтуют: ${files}; потом продолжай задачу`;
@@ -496,7 +584,6 @@ export async function runBarrier({listik, git, fs, config, swarmConfig, log, tas
   }
 
   // ------------------------------------------------------- шаг 8: интеграция ---
-  const pending = merged;
   let integration = null;
   const cleaned = [];
 
@@ -577,30 +664,46 @@ function stampFile(d) {
 }
 
 // Одна команда интеграции: группа процессов, SIGTERM по таймауту, SIGKILL через 5с.
+function killGroup(pid, signal) {
+  if (!pid) return;
+  try { process.kill(-pid, signal); } catch { /* лидер мог уже выйти */ }
+  try {
+    execFileSync("kill", ["-s", signal === "SIGKILL" ? "KILL" : "TERM", `-${pid}`],
+      {stdio: "ignore", timeout: 2000});
+  } catch { /* группы уже нет */ }
+}
+
 function runIntegrationCommand(argv, cwd, logFd, timeoutSec) {
   return new Promise((resolvePromise) => {
     const start = Date.now();
     const child = spawn(argv[0], argv.slice(1), {
       cwd, env: process.env, detached: true, stdio: ["ignore", logFd, logFd],
     });
+    let settled = false;
     let timedOut = false;
     let killTimer = null;
+    const finish = (result) => {
+      if (settled) return;
+      settled = true;
+      clearTimeout(termTimer);
+      if (killTimer) clearTimeout(killTimer);
+      resolvePromise({...result, ms: Date.now() - start});
+    };
     const termTimer = setTimeout(() => {
       timedOut = true;
-      try { process.kill(-child.pid, "SIGTERM"); } catch { /* уже нет */ }
+      killGroup(child.pid, "SIGTERM");
       killTimer = setTimeout(() => {
-        try { process.kill(-child.pid, "SIGKILL"); } catch { /* уже нет */ }
+        killGroup(child.pid, "SIGKILL");
+        finish({code: null, timedOut: true});
       }, 5000);
     }, timeoutSec * 1000);
     child.on("exit", (code) => {
-      clearTimeout(termTimer);
-      if (killTimer) clearTimeout(killTimer);
-      resolvePromise({code: timedOut ? null : code, timedOut, ms: Date.now() - start});
+      if (timedOut) return;
+      finish({code, timedOut: false});
     });
     child.on("error", () => {
-      clearTimeout(termTimer);
-      if (killTimer) clearTimeout(killTimer);
-      resolvePromise({code: 1, timedOut: false, ms: Date.now() - start});
+      if (timedOut) return;
+      finish({code: 1, timedOut: false});
     });
   });
 }
@@ -662,11 +765,21 @@ async function createHaltCard({listik, log, tasks, config, mergedNow, pending, k
 async function cleanupOne({listik, git, fs, log, id, candidateMap, projectPath}) {
   const cand = candidateMap.get(id);
   if (!cand) return null;
-  const branchName = cand.branch || `task/${id}`;
+  const branchName = (cand.branch || "").trim() || `task/${id}`;
 
-  const isAnc = await git.isAncestor(projectPath, branchName, "HEAD");
-  if (!isAnc) {
-    log.line(`дерево ${id} не убрано: ветка не влита`);
+  try {
+    const exists = await git.branchExists(projectPath, branchName);
+    if (!exists) {
+      log.line(`дерево ${id} не убрано: ветки нет`);
+      return null;
+    }
+    const isAnc = await git.isAncestor(projectPath, branchName, "HEAD");
+    if (!isAnc) {
+      log.line(`дерево ${id} не убрано: ветка не влита`);
+      return null;
+    }
+  } catch (err) {
+    log.line(`дерево ${id} не убрано: ${err.message ?? err}`);
     return null;
   }
 

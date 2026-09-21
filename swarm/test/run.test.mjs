@@ -968,6 +968,70 @@ gitTest("watch+barrier (к): decisions ok:false без top-level error — не 
   assert.deepEqual(result.launched, ["t1"]);
 });
 
+gitTest("watch+barrier: второй list после freeze бросает — тик не падает", async () => {
+  const repo = initRepo();
+  const tasksInitial = [task("t1", {}), task("t2", {})];
+  const plan = {project: "proj", waves: [["t1", "t2"]], cycles: [], unroutable: [], unscoped: [], blocked: {}};
+  const routes = [{key: "r-t1", icon: "low"}, {key: "r-t2", icon: "low"}];
+  const dataDir = fs.mkdtempSync(path.join(os.tmpdir(), "listik-swarm-data-"));
+  const responses = {
+    status: statusFor(dataDir),
+    waves: {stdout: JSON.stringify({waves: plan, added: [], removed: [], kept: 0})},
+    list: [
+      {stdout: JSON.stringify({total: tasksInitial.length, limit: 1000, offset: 0, tasks: tasksInitial})},
+      {exitCode: 1, stdout: JSON.stringify({error: {code: "cli", message: "boom"}})},
+    ],
+    routes: {stdout: JSON.stringify({ok: true, routes})},
+    projects: {stdout: JSON.stringify([{slug: "proj", path: repo}])},
+    watch: {stdout: JSON.stringify({tasks: {}, decisions: [
+      {action: "freeze", task: "t2", owner: "t1", files: ["f.txt"], ok: true, generation: 1},
+    ], probes: []})},
+    worktree: {stdout: JSON.stringify({path: "/wt/x", branch: "b", status: "created"})},
+    show: {stdout: JSON.stringify({id: "t1", labels: []})},
+    set: {stdout: JSON.stringify({id: "t1", labels: []})},
+    launch: {stdout: JSON.stringify({id: "t1", generation: 1})},
+  };
+  setupFake(responses);
+  const listik = new Listik({bin: FAKE_BIN, actor: "agent:listik-swarm", cliTimeout: 5});
+  const log = makeLog();
+  const result = await tick(listik, baseConfig, log);
+  assert.notEqual(result.error, true);
+  assert.ok(log.lines.some(l => l.startsWith("list после watch ошибка:")));
+});
+
+gitTest("watch+barrier: running + swarm:halt — report.halt id, launch нет", async () => {
+  const repo = initRepo();
+  const dataDir = fs.mkdtempSync(path.join(os.tmpdir(), "listik-swarm-data-"));
+  fs.writeFileSync(path.join(dataDir, "swarm.json"), JSON.stringify({integration: []}));
+  const tasks = [
+    runningTask("running1", {
+      labels: ["port:5170"], launched_at: new Date().toISOString(),
+      holder_at: new Date().toISOString(),
+    }),
+    task("halt1", {labels: ["swarm:halt"]}),
+    task("n1", {}),
+  ];
+  const plan = {project: "proj", waves: [["n1"]], cycles: [], unroutable: [], unscoped: [], blocked: {}};
+  const routes = [{key: "r-n1", icon: "low"}];
+  const responses = {
+    status: statusFor(dataDir),
+    waves: {stdout: JSON.stringify({waves: plan, added: [], removed: [], kept: 0})},
+    list: {stdout: JSON.stringify({total: tasks.length, limit: 1000, offset: 0, tasks})},
+    routes: {stdout: JSON.stringify({ok: true, routes})},
+    projects: {stdout: JSON.stringify([{slug: "proj", path: repo}])},
+    watch: {stdout: JSON.stringify({tasks: {}, decisions: [], probes: []})},
+    show: {stdout: JSON.stringify({id: "running1", events: []})},
+  };
+  setupFake(responses);
+  const listik = new Listik({bin: FAKE_BIN, actor: "agent:listik-swarm", cliTimeout: 5});
+  const log = makeLog();
+  const result = await tick(listik, baseConfig, log);
+  assert.equal(result.report.halt, "halt1");
+  assert.equal(result.report.reason, "halt");
+  assert.deepEqual(result.launched, []);
+  assert.deepEqual(result.barrier.halt, ["halt1"]);
+});
+
 // --- порция a: сводка барьера, questionReason, waitingLine ---
 
 function summaryOf(report) {

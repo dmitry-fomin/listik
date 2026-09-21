@@ -362,3 +362,76 @@ suite("resolveWithArbiter: окружение арбитра без LISTIK_TASK_
   const env = JSON.parse(readFileSync(envFile, "utf8"));
   assert.equal(env.LISTIK_TASK_ID, undefined);
 });
+
+suite("runArbiter: лидер выходит по SIGTERM, потомок игнорирует — потомок убит ~5 с", async () => {
+  const cwd = mkdtempSync(join(tmpdir(), "swarm-arbiter-sigkill-"));
+  const childPidFile = join(cwd, "child.pid");
+  const logPath = join(cwd, "arbiter.log");
+  const outer = `const {spawn}=require("child_process");` +
+    `const fs=require("fs");` +
+    `const c=spawn(process.execPath,["-e",` +
+    `"process.on('SIGTERM',()=>{});setTimeout(()=>{},30000);"],{stdio:"ignore"});` +
+    `fs.writeFileSync(process.argv[process.argv.length-1], String(c.pid));` +
+    `process.on("SIGTERM",()=>process.exit(0));` +
+    `setTimeout(()=>{}, 30000);`;
+  const start = Date.now();
+  const res = await runArbiter({
+    argv: [process.execPath, "-e", outer, childPidFile],
+    cwd, timeoutSec: 1, logPath,
+  });
+  const elapsed = Date.now() - start;
+  assert.equal(res.timedOut, true);
+  assert.ok(elapsed >= 5000, `SIGKILL слишком рано: ${elapsed}мс`);
+  assert.ok(elapsed < 9000, `вернулся слишком поздно: ${elapsed}мс`);
+  const childPid = Number(readFileSync(childPidFile, "utf8"));
+  assert.throws(() => process.kill(childPid, 0));
+});
+
+suite("resolveWithArbiter: предел 10 остановок — отказ, rebaseAbort", async () => {
+  const {repo, worktree} = setupSingleConflict();
+  const base = await git.headSha(repo);
+  const treeHeadBefore = await git.headSha(worktree);
+  const rebaseRes = await git.rebase(worktree, base);
+  assert.equal(rebaseRes.ok, false);
+
+  let continues = 0;
+  let afterAdd = false;
+  const stub = {
+    ...git,
+    async add(tree, files) {
+      afterAdd = true;
+      return git.add(tree, files);
+    },
+    async conflictedFiles(tree) {
+      if (afterAdd) {
+        afterAdd = false;
+        return [];
+      }
+      return ["f.txt"];
+    },
+    async rebaseContinue() {
+      continues++;
+      afterAdd = false;
+      return {ok: false, conflicts: ["f.txt"]};
+    },
+  };
+  const {card, tasks} = baseCardAndTasks();
+  const listik = fakeListik({
+    other1: {id: "other1", title: "", description: "", acceptance: "", spec_path: null},
+  });
+  process.env.FAKE_ARBITER_MODE = "ok";
+  const result = await resolveWithArbiter({
+    git: stub, listik, fs: nodeFs, config: {logDir: tmpLogDir()},
+    swarmConfig: {arbiter: ["node", FIXTURE, "{prompt}", "{files}"], arbiterTimeout: 30},
+    log: makeLog(), projectPath: repo, task: {id: "task1", branch: "task/task1"}, card,
+    worktree, base, tasks, now: new Date(),
+  });
+  delete process.env.FAKE_ARBITER_MODE;
+
+  assert.equal(result.ok, false);
+  assert.match(result.reason, /10 остановок/);
+  assert.equal(continues, 10);
+  assert.equal(await git.rebaseInProgress(worktree), false);
+  assert.equal(await git.headSha(worktree), treeHeadBefore);
+  assert.equal(listik.calls.comment.length, 0);
+});

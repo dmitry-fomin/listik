@@ -289,6 +289,28 @@ class DispatcherTests(unittest.TestCase):
         self.assertLess(t1b, t2b)
         self.assertLess(t2b, t3b)
 
+    def test_sequential_gate_wait_is_not_timeout(self):
+        tasks = [
+            Task(id="t1", profile="append", write_scope=["pkg/alpha.py"]),
+            Task(id="t2", profile="append", write_scope=["pkg/beta.py"]),
+            Task(id="t3", profile="append", write_scope=["pkg/gamma.py"]),
+        ]
+        _sandbox, journal, dispatcher, _procs = self._make_stand(
+            tasks, RunConfig(gates="sequential", timeout=0.5, poll=0.05)
+        )
+        dispatcher.dispatch(["t1", "t2", "t3"])
+        # без tick(): затвор открыт только у t1, t2/t3 ждут свой — дольше timeout
+        time.sleep(0.8)
+        dispatcher.tick()
+        dispatcher.wait(deadline=10)
+
+        self.assertEqual(journal.of("revoked", reason="timeout"), [])
+        for task_id in ("t1", "t2", "t3"):
+            self.assertEqual(dispatcher.states[task_id].status, "done", task_id)
+        ticks = [dispatcher.states[t].first_change_tick for t in ("t1", "t2", "t3")]
+        self.assertLess(ticks[0], ticks[1])
+        self.assertLess(ticks[1], ticks[2])
+
     def test_external_revoke(self):
         task_id = "t-manual"
         tasks = [Task(id=task_id, profile="append", write_scope=["pkg/alpha.py"])]

@@ -180,7 +180,7 @@ class CycleRetryTests(TempDbTestCase):
         second_call_messages = mocked.call_args_list[1][0][0]
         self.assertEqual(len(second_call_messages), 4)
         self.assertEqual(second_call_messages[2]["role"], "assistant")
-        self.assertIn("a → b → a".replace("a", a).replace("b", b),
+        self.assertIn(f"{a} → {b} → {a}",
                       second_call_messages[3]["content"])
 
 

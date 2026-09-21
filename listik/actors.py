@@ -62,7 +62,10 @@ def norm(raw: str | None) -> str:
 
 
 def resolve(raw: str | None, conn: sqlite3.Connection | None = None) -> tuple[str | None, str]:
-    """Возвращает (actor_key, kind). kind: human|agent|unknown."""
+    """Возвращает (actor_key, kind). kind: human|agent|unknown.
+
+    Неизвестный `agent:<имя>` (нет в подсказках и в actor_aliases) — агент.
+    """
     n = norm(raw)
     if not n:
         return None, "unknown"
@@ -83,6 +86,9 @@ def resolve(raw: str | None, conn: sqlite3.Connection | None = None) -> tuple[st
             actor = row["actor"]
             kind = "agent" if actor.startswith("agent:") else "human"
             return actor, kind
+
+    if n.startswith("agent:") and len(n) > len("agent:"):
+        return n, "agent"
 
     # Неизвестный: оставляем как есть, ключ помечаем человеком —
     # автор добавит алиас, если это тот же человек под другим именем.

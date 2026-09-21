@@ -855,7 +855,7 @@ def _line_forbids_amend(line: str) -> bool:
     return any(marker in lowered for marker in AMEND_FORBID_MARKERS)
 
 
-#: Шесть `SKILL.md`, где задание судье лежит inline (listik-4n4y, порция b). Список закрытый
+#: Семь `SKILL.md`, где задание судье лежит inline (listik-4n4y, порция b). Список закрытый
 #: и явный: именно он — основа выбора файлов, страховочный скан ниже лишь ловит расширение.
 INLINE_JUDGE_SKILLS = (
     pathlib.Path(SKILLS_SUBDIR) / "high-pipeline" / SKILL_FILE,
@@ -864,6 +864,7 @@ INLINE_JUDGE_SKILLS = (
     pathlib.Path(SKILLS_SUBDIR) / "low-pipeline" / SKILL_FILE,
     pathlib.Path(SKILLS_SUBDIR) / "xlow-pipeline" / SKILL_FILE,
     pathlib.Path(SKILLS_SUBDIR) / "nano-pipeline" / SKILL_FILE,
+    pathlib.Path(SKILLS_SUBDIR) / "devin-pipeline" / SKILL_FILE,
 )
 
 #: Начало блока inline-задания судье: строка про зелёный вердикт и коммит порции. В пяти

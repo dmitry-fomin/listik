@@ -109,6 +109,7 @@ LAUNCHER_PROVIDERS: dict[str, str] = {
     "codex": "openai",
     "opencode": "glm",
     "pi": "glm",
+    "devin": "devin",
 }
 
 

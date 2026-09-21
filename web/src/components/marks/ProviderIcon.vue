@@ -4,7 +4,8 @@
  * в `RoutePicker`). Четыре вендора уже есть как `HarnessIcon`
  * (claude/codex/grok/dsh) — переиспользуем их глифы и цвета. GLM (Z.AI) в
  * `HarnessKey` не входит нарочно: это внешний критик по HTTP, который никогда
- * не становится держателем задачи на сервере, — ему свой маленький глиф.
+ * не становится держателем задачи на сервере, — ему свой маленький глиф;
+ * devin — тоже свой: три шестиугольника его лого, монохромно, как grok.
  */
 import HarnessIcon from './HarnessIcon.vue'
 import type { HarnessKey } from '@/lib/harness'
@@ -22,6 +23,19 @@ const HARNESS_OF: Partial<Record<ProviderKey, HarnessKey>> = {
 
 <template>
   <HarnessIcon v-if="HARNESS_OF[props.provider]" :harness="HARNESS_OF[props.provider]!" :size="size" />
+  <span
+    v-else-if="props.provider === 'devin'"
+    class="listik-harness-icon"
+    :class="`listik-harness-icon--${size}`"
+    style="color: var(--listik-harness-devin)"
+    title="devin"
+  >
+    <svg viewBox="0 0 16 16" fill="currentColor" aria-hidden="true">
+      <path d="M5 1.4 7.6 2.9v3L5 7.4 2.4 5.9v-3Z" />
+      <path d="M5 8.6 7.6 10.1v3L5 14.6 2.4 13.1v-3Z" />
+      <path d="M10.8 5 13.4 6.5v3L10.8 11 8.2 9.5v-3Z" />
+    </svg>
+  </span>
   <span
     v-else
     class="listik-harness-icon"

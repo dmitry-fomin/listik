@@ -43,6 +43,7 @@ body {
   --listik-harness-grok: currentColor;
   --listik-harness-gemini: #8e7cf2;
   --listik-harness-glm: #16a394;
+  --listik-harness-devin: currentColor;
 }
 
 /* Раскладка доски (Main.dc.html): колонки резиновые — `--listik-col-min` лишь

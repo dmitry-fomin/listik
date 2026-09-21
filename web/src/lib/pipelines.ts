@@ -31,10 +31,10 @@ export const ROLE_STAGE: Record<RoleKey, PipelineStage> = {
 }
 
 /** Вендор роли — своя мини-таксономия, не `HarnessKey`: GLM никогда не держатель задачи на сервере. */
-export type ProviderKey = 'claude' | 'glm' | 'openai' | 'grok' | 'deepseek'
+export type ProviderKey = 'claude' | 'glm' | 'openai' | 'grok' | 'deepseek' | 'devin'
 
 /** Тот же набор списком — фолбэк селекта вендора, пока справочник сервера не загружен. */
-export const PROVIDER_KEYS: ProviderKey[] = ['claude', 'glm', 'openai', 'grok', 'deepseek']
+export const PROVIDER_KEYS: ProviderKey[] = ['claude', 'glm', 'openai', 'grok', 'deepseek', 'devin']
 
 /** Значение параметра запускатора: плоский скаляр, как и на сервере. */
 export type RoleParamValue = string | number | boolean

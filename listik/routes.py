@@ -60,7 +60,7 @@ SOURCE_PATH = paths.ROOT_DIR / "routes.json"
 VERSION = 1
 KINDS = ("pipeline", "direct")
 ROLE_KEYS = ("spec", "critic", "impl", "judge")
-PROVIDERS = ("claude", "glm", "openai", "grok", "deepseek")
+PROVIDERS = ("claude", "glm", "openai", "grok", "deepseek", "devin")
 HARNESSES = ("claude", "dsh", "codex", "grok", "gemini")
 # Уровни маршрута — значения поля `icon`; подписи и иконки для доски лежат в
 # `web/src/lib/dictionaries.ts` (`ROUTE_ICONS`).

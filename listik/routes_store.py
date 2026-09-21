@@ -387,11 +387,49 @@ def ensure_imported(conn: sqlite3.Connection) -> dict:
     демона stderr уходит в `listik.log`) и возвращается как `{"error": ...}`.
     """
     try:
-        return import_file(conn)
+        result = import_file(conn)
+        result["added"] = add_shipped(conn, fresh=not result["skipped"])
+        return result
     except Exception as exc:  # noqa: BLE001 — ввоз не должен ронять init/старт
         message = errors.message_of(exc)
         print(f"routes: ввоз не удался: {message}", file=sys.stderr, flush=True)
         return {"error": message}
+
+
+#: Маршруты, появившиеся в `routes.json` после первичного ввоза: номер миграции →
+#: ключи. Уже установленная база получает их один раз (номер — в `meta`
+#: `routes_additions`); удалённый потом человеком маршрут не возвращается.
+ROUTE_ADDITIONS: list[tuple[int, tuple[str, ...]]] = [
+    (1, ("devin-pipeline",)),
+]
+
+
+def add_shipped(conn: sqlite3.Connection, *, fresh: bool = False) -> list[str]:
+    """Дописать в таблицу маршруты из `ROUTE_ADDITIONS`, которых база ещё не видела.
+
+    `fresh=True` — таблицу только что наполнил весь файл: дописывать нечего,
+    только отметить номер. Позиция новой записи — в конец списка.
+    """
+    row = conn.execute("SELECT value FROM meta WHERE key = 'routes_additions'").fetchone()
+    done = int(row[0]) if row else 0
+    latest = max((n for n, _ in ROUTE_ADDITIONS), default=0)
+    if done >= latest:
+        return []
+    added: list[str] = []
+    if not fresh:
+        shipped = {r["key"]: r for r in routes.load(_source_path(None)).routes}
+        for number, keys in ROUTE_ADDITIONS:
+            if number <= done:
+                continue
+            for key in keys:
+                exists = conn.execute("SELECT 1 FROM routes WHERE key = ?", (key,)).fetchone()
+                if key in shipped and not exists:
+                    _upsert_raw(conn, shipped[key])
+                    added.append(key)
+    conn.execute("INSERT INTO meta(key, value) VALUES('routes_additions', ?) "
+                 "ON CONFLICT(key) DO UPDATE SET value = excluded.value", (str(latest),))
+    conn.commit()
+    return added
 
 
 # ------------------------------------------------------------------ скилы (справочник)

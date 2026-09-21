@@ -146,4 +146,13 @@ export class Listik {
   revoke(id, note) {
     return this._call(["revoke", id, "--note", note], {write: true});
   }
+
+  // Наблюдатель роя (swarm-5): заморозка опоздавшего идёт revoke/release/PATCH labels от
+  // `agent:listik-swarm`, поэтому `--actor` нужен всегда, кроме `dryRun` (команда не пишет).
+  // `--task` не передаём — наблюдатель смотрит весь проект.
+  watch(project, {dryRun = false} = {}) {
+    const argv = ["watch", "--project", project];
+    if (dryRun) argv.push("--dry-run");
+    return this._call(argv, {write: !dryRun});
+  }
 }

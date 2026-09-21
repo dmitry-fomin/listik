@@ -4,10 +4,54 @@ import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import {fileURLToPath} from "node:url";
+import {execFileSync} from "node:child_process";
 import {Listik} from "../listik.mjs";
 import {tick} from "../run.mjs";
 import {open as openLog} from "../log.mjs";
 import {questionReason, waitingLine} from "../main.mjs";
+
+// `git` может отсутствовать на машине судьи — тогда блок watch+barrier пропускается целиком.
+let gitAvailable = true;
+try {
+  execFileSync("git", ["--version"], {stdio: "ignore"});
+} catch {
+  gitAvailable = false;
+}
+const gitConfigDir = gitAvailable ? fs.mkdtempSync(path.join(os.tmpdir(), "swarm-run-gitcfg-")) : null;
+if (gitAvailable) {
+  const gitConfigFile = path.join(gitConfigDir, "gitconfig");
+  fs.writeFileSync(gitConfigFile, "");
+  Object.assign(process.env, {
+    GIT_CONFIG_GLOBAL: gitConfigFile,
+    GIT_CONFIG_NOSYSTEM: "1",
+    GIT_EDITOR: "true",
+    GIT_TERMINAL_PROMPT: "0",
+  });
+}
+
+function sh(cwd, ...args) {
+  return execFileSync("git", args, {cwd, encoding: "utf8"});
+}
+
+function initRepo() {
+  const repo = fs.mkdtempSync(path.join(os.tmpdir(), "swarm-run-repo-"));
+  sh(repo, "init", "-q", "-b", "main");
+  sh(repo, "config", "user.name", "Test");
+  sh(repo, "config", "user.email", "test@example.com");
+  fs.writeFileSync(path.join(repo, "README.md"), "start\n");
+  sh(repo, "add", "README.md");
+  sh(repo, "commit", "-q", "-m", "start");
+  return repo;
+}
+
+function addWorktree(repo, id) {
+  const wtPath = path.join(repo, ".worktrees", id);
+  fs.mkdirSync(path.join(repo, ".worktrees"), {recursive: true});
+  sh(repo, "worktree", "add", "-q", "-b", `task/${id}`, wtPath, "HEAD");
+  return wtPath;
+}
+
+const gitTest = gitAvailable ? test : test.skip;
 
 const here = path.dirname(fileURLToPath(import.meta.url));
 const FAKE_BIN = path.join(here, "fixtures", "fake-listik.mjs");
@@ -64,6 +108,7 @@ test("тик: план из трёх + без маршрута + без обла
   const routes = [{key: "r-t1", icon: "low"}, {key: "r-t2", icon: "low"}, {key: "r-t3", icon: "low"}];
   const responses = {
     status: statusUp,
+    projects: {stdout: JSON.stringify([{slug: "proj", path: ""}])},
     waves: {stdout: JSON.stringify({waves: plan, added: [["t1", "t2"]], removed: [], kept: 1})},
     list: {stdout: JSON.stringify({total: tasks.length, limit: 1000, offset: 0, tasks})},
     routes: {stdout: JSON.stringify({ok: true, routes})},
@@ -94,7 +139,7 @@ test("тик: план из трёх + без маршрута + без обла
   assert.equal(subs[2], "list");
   assert.equal(subs[3], "routes");
   assert.equal(subs.filter(s => s === "needs-owner").length, 2);
-  const perTaskOrder = subs.slice(4).filter(s => s !== "needs-owner");
+  const perTaskOrder = subs.slice(4).filter(s => s !== "needs-owner" && s !== "projects");
   assert.deepEqual(perTaskOrder, [
     "worktree", "show", "set", "launch",
     "worktree", "show", "set", "launch",
@@ -120,6 +165,7 @@ test("повторный тик: те же три бегут, needs_owner уже
   };
   const responses = {
     status: statusUp,
+    projects: {stdout: JSON.stringify([{slug: "proj", path: ""}])},
     waves: {stdout: JSON.stringify({waves: plan, added: [], removed: [], kept: 0})},
     list: {stdout: JSON.stringify({total: tasks.length, limit: 1000, offset: 0, tasks})},
     routes: {stdout: JSON.stringify({ok: true, routes: []})},
@@ -143,6 +189,7 @@ test("одна закрыта (done), но launch_finished_at пуст, втор
   const plan = {project: "proj", waves: [["cand"]], cycles: [], unroutable: [], unscoped: [], blocked: {}};
   const responses = {
     status: statusUp,
+    projects: {stdout: JSON.stringify([{slug: "proj", path: ""}])},
     waves: {stdout: JSON.stringify({waves: plan, added: [], removed: [], kept: 0})},
     list: {stdout: JSON.stringify({total: tasks.length, limit: 1000, offset: 0, tasks})},
     routes: {stdout: JSON.stringify({ok: true, routes: []})},
@@ -165,6 +212,7 @@ test("замороженная в waves[0] — ни worktree, ни set, ни lau
   const routes = [{key: "r-frozen", icon: "low"}, {key: "r-t1", icon: "low"}];
   const responses = {
     status: statusUp,
+    projects: {stdout: JSON.stringify([{slug: "proj", path: ""}])},
     waves: {stdout: JSON.stringify({waves: plan, added: [], removed: [], kept: 0})},
     list: {stdout: JSON.stringify({total: tasks.length, limit: 1000, offset: 0, tasks})},
     routes: {stdout: JSON.stringify({ok: true, routes})},
@@ -197,6 +245,7 @@ test("--dry-run: ни одного пишущего вызова, waves без -
   const routes = [{key: "r-t1", icon: "low"}];
   const responses = {
     status: statusUp,
+    projects: {stdout: JSON.stringify([{slug: "proj", path: ""}])},
     waves: {stdout: JSON.stringify(plan)},
     list: {stdout: JSON.stringify({total: tasks.length, limit: 1000, offset: 0, tasks})},
     routes: {stdout: JSON.stringify({ok: true, routes})},
@@ -242,6 +291,7 @@ test("status unauthorized — ни одного вызова после status, 
 test("waves --apply конфликт цикла — cycles, пишущих вызовов нет", async () => {
   const responses = {
     status: statusUp,
+    projects: {stdout: JSON.stringify([{slug: "proj", path: ""}])},
     waves: [
       {exitCode: 1, stdout: JSON.stringify({error: {
         code: "conflict",
@@ -277,6 +327,7 @@ test("надзор-тик: зависла с меткой port:5170 — show, re
   const plan = {project: "proj", waves: [[]], cycles: [], unroutable: [], unscoped: [], blocked: {}};
   const responses = {
     status: statusUp,
+    projects: {stdout: JSON.stringify([{slug: "proj", path: ""}])},
     waves: {stdout: JSON.stringify({waves: plan, added: [], removed: [], kept: 0})},
     list: {stdout: JSON.stringify({total: 1, limit: 1000, offset: 0, tasks})},
     routes: {stdout: JSON.stringify({ok: true, routes: []})},
@@ -289,7 +340,7 @@ test("надзор-тик: зависла с меткой port:5170 — show, re
   const log = makeLog();
   const result = await tick(listik, supConfig, log);
 
-  assert.deepEqual(calls().map(c => c.sub), ["status", "waves", "list", "routes", "show", "revoke", "launch"]);
+  assert.deepEqual(calls().map(c => c.sub), ["status", "waves", "list", "routes", "show", "projects", "revoke", "launch"]);
   const revokeCall = calls().find(c => c.sub === "revoke");
   const noteIdx = revokeCall.argv.indexOf("--note");
   assert.equal(revokeCall.argv[noteIdx + 1], "рой: перезапуск — stale");
@@ -304,6 +355,7 @@ test("надзор-тик: зависла без метки — show, revoke, sh
   const plan = {project: "proj", waves: [[]], cycles: [], unroutable: [], unscoped: [], blocked: {}};
   const responses = {
     status: statusUp,
+    projects: {stdout: JSON.stringify([{slug: "proj", path: ""}])},
     waves: {stdout: JSON.stringify({waves: plan, added: [], removed: [], kept: 0})},
     list: {stdout: JSON.stringify({total: 1, limit: 1000, offset: 0, tasks})},
     routes: {stdout: JSON.stringify({ok: true, routes: []})},
@@ -321,7 +373,7 @@ test("надзор-тик: зависла без метки — show, revoke, sh
   await tick(listik, supConfig, log);
 
   assert.deepEqual(calls().map(c => c.sub),
-    ["status", "waves", "list", "routes", "show", "revoke", "show", "set", "launch"]);
+    ["status", "waves", "list", "routes", "show", "projects", "revoke", "show", "set", "launch"]);
   const launchCall = calls().find(c => c.sub === "launch");
   const envIdx = launchCall.argv.indexOf("--env");
   assert.equal(launchCall.argv[envIdx + 1], "LISTIK_DEV_PORT=5170");
@@ -334,6 +386,7 @@ test("надзор-тик: revoke отвечает пустым launch_finished_
   const plan = {project: "proj", waves: [[]], cycles: [], unroutable: [], unscoped: [], blocked: {}};
   const responses = {
     status: statusUp,
+    projects: {stdout: JSON.stringify([{slug: "proj", path: ""}])},
     waves: {stdout: JSON.stringify({waves: plan, added: [], removed: [], kept: 0})},
     list: {stdout: JSON.stringify({total: 1, limit: 1000, offset: 0, tasks})},
     routes: {stdout: JSON.stringify({ok: true, routes: []})},
@@ -346,7 +399,7 @@ test("надзор-тик: revoke отвечает пустым launch_finished_
   const log = makeLog();
   await tick(listik, supConfig, log);
 
-  assert.deepEqual(calls().map(c => c.sub), ["status", "waves", "list", "routes", "show", "revoke", "needs-owner"]);
+  assert.deepEqual(calls().map(c => c.sub), ["status", "waves", "list", "routes", "show", "projects", "revoke", "needs-owner"]);
   const noCall = calls().find(c => c.sub === "launch");
   assert.equal(noCall, undefined);
   assert.ok(log.stdout.some(l => l.startsWith("needs-owner a:")));
@@ -359,6 +412,7 @@ test("надзор-тик: revoke-перезапуск уже есть — revok
   const plan = {project: "proj", waves: [[]], cycles: [], unroutable: [], unscoped: [], blocked: {}};
   const responses = {
     status: statusUp,
+    projects: {stdout: JSON.stringify([{slug: "proj", path: ""}])},
     waves: {stdout: JSON.stringify({waves: plan, added: [], removed: [], kept: 0})},
     list: {stdout: JSON.stringify({total: 1, limit: 1000, offset: 0, tasks})},
     routes: {stdout: JSON.stringify({ok: true, routes: []})},
@@ -374,7 +428,7 @@ test("надзор-тик: revoke-перезапуск уже есть — revok
   const log = makeLog();
   await tick(listik, supConfig, log);
 
-  assert.deepEqual(calls().map(c => c.sub), ["status", "waves", "list", "routes", "show", "revoke", "needs-owner"]);
+  assert.deepEqual(calls().map(c => c.sub), ["status", "waves", "list", "routes", "show", "projects", "revoke", "needs-owner"]);
   const revokeCall = calls().find(c => c.sub === "revoke");
   const noteIdx = revokeCall.argv.indexOf("--note");
   assert.equal(revokeCall.argv[noteIdx + 1], "рой: stale, предел перезапусков");
@@ -388,6 +442,7 @@ test("надзор-тик: упала — needs-owner «процесс зада�
   const plan = {project: "proj", waves: [[]], cycles: [], unroutable: [], unscoped: [], blocked: {}};
   const responses = {
     status: statusUp,
+    projects: {stdout: JSON.stringify([{slug: "proj", path: ""}])},
     waves: {stdout: JSON.stringify({waves: plan, added: [], removed: [], kept: 0})},
     list: {stdout: JSON.stringify({total: 1, limit: 1000, offset: 0, tasks})},
     routes: {stdout: JSON.stringify({ok: true, routes: []})},
@@ -399,7 +454,7 @@ test("надзор-тик: упала — needs-owner «процесс зада�
   const log = makeLog();
   await tick(listik, supConfig, log);
 
-  assert.deepEqual(calls().map(c => c.sub), ["status", "waves", "list", "routes", "show", "needs-owner"]);
+  assert.deepEqual(calls().map(c => c.sub), ["status", "waves", "list", "routes", "show", "projects", "needs-owner"]);
 });
 
 test("надзор-тик: упала с answer позже — revoke «перезапуск разрешён человеком», launch", async () => {
@@ -410,6 +465,7 @@ test("надзор-тик: упала с answer позже — revoke «пере
   const plan = {project: "proj", waves: [[]], cycles: [], unroutable: [], unscoped: [], blocked: {}};
   const responses = {
     status: statusUp,
+    projects: {stdout: JSON.stringify([{slug: "proj", path: ""}])},
     waves: {stdout: JSON.stringify({waves: plan, added: [], removed: [], kept: 0})},
     list: {stdout: JSON.stringify({total: 1, limit: 1000, offset: 0, tasks})},
     routes: {stdout: JSON.stringify({ok: true, routes: []})},
@@ -424,7 +480,7 @@ test("надзор-тик: упала с answer позже — revoke «пере
   const log = makeLog();
   await tick(listik, supConfig, log);
 
-  assert.deepEqual(calls().map(c => c.sub), ["status", "waves", "list", "routes", "show", "revoke", "launch"]);
+  assert.deepEqual(calls().map(c => c.sub), ["status", "waves", "list", "routes", "show", "projects", "revoke", "launch"]);
   const revokeCall = calls().find(c => c.sub === "revoke");
   const noteIdx = revokeCall.argv.indexOf("--note");
   assert.equal(revokeCall.argv[noteIdx + 1], "рой: перезапуск разрешён человеком");
@@ -435,6 +491,7 @@ test("надзор-тик: закрытая бежит дольше timeout — 
   const plan = {project: "proj", waves: [[]], cycles: [], unroutable: [], unscoped: [], blocked: {}};
   const responses = {
     status: statusUp,
+    projects: {stdout: JSON.stringify([{slug: "proj", path: ""}])},
     waves: {stdout: JSON.stringify({waves: plan, added: [], removed: [], kept: 0})},
     list: {stdout: JSON.stringify({total: 1, limit: 1000, offset: 0, tasks})},
     routes: {stdout: JSON.stringify({ok: true, routes: []})},
@@ -445,7 +502,7 @@ test("надзор-тик: закрытая бежит дольше timeout — 
   const log = makeLog();
   await tick(listik, {...supConfig, timeoutMinutes: 30}, log);
 
-  assert.deepEqual(calls().map(c => c.sub), ["status", "waves", "list", "routes", "revoke"]);
+  assert.deepEqual(calls().map(c => c.sub), ["status", "waves", "list", "routes", "projects", "revoke"]);
   const revokeCall = calls().find(c => c.sub === "revoke");
   const noteIdx = revokeCall.argv.indexOf("--note");
   assert.match(revokeCall.argv[noteIdx + 1], /процесс закрытой задачи/);
@@ -458,6 +515,7 @@ test("надзор-тик: бежит одна с needs_owner: true, молчи�
   const plan = {project: "proj", waves: [[]], cycles: [], unroutable: [], unscoped: [], blocked: {}};
   const responses = {
     status: statusUp,
+    projects: {stdout: JSON.stringify([{slug: "proj", path: ""}])},
     waves: {stdout: JSON.stringify({waves: plan, added: [], removed: [], kept: 0})},
     list: {stdout: JSON.stringify({total: 1, limit: 1000, offset: 0, tasks})},
     routes: {stdout: JSON.stringify({ok: true, routes: []})},
@@ -467,7 +525,7 @@ test("надзор-тик: бежит одна с needs_owner: true, молчи�
   const log = makeLog();
   await tick(listik, supConfig, log);
 
-  assert.deepEqual(calls().map(c => c.sub), ["status", "waves", "list", "routes"]);
+  assert.deepEqual(calls().map(c => c.sub), ["status", "waves", "list", "routes", "projects"]);
 });
 
 test("надзор-тик: --dry-run на зависла — ни revoke, ни launch (событие всё же читаем show)", async () => {
@@ -477,6 +535,7 @@ test("надзор-тик: --dry-run на зависла — ни revoke, ни l
   const plan = {project: "proj", waves: [[]], cycles: [], unroutable: [], unscoped: [], blocked: {}};
   const responses = {
     status: statusUp,
+    projects: {stdout: JSON.stringify([{slug: "proj", path: ""}])},
     waves: {stdout: JSON.stringify(plan)},
     list: {stdout: JSON.stringify({total: 1, limit: 1000, offset: 0, tasks})},
     routes: {stdout: JSON.stringify({ok: true, routes: []})},
@@ -514,6 +573,7 @@ test("main: карточка needs_owner true с «рой: процесс зад
   const plan = {project: "proj", waves: [[]], cycles: [], unroutable: [], unscoped: [], blocked: {}};
   const responses = {
     status: statusUp,
+    projects: {stdout: JSON.stringify([{slug: "proj", path: ""}])},
     waves: {stdout: JSON.stringify({waves: plan, added: [], removed: [], kept: 0})},
     list: {stdout: JSON.stringify({total: 1, limit: 1000, offset: 0, tasks})},
     routes: {stdout: JSON.stringify({ok: true, routes: []})},
@@ -540,6 +600,314 @@ test("main: карточка needs_owner true с «рой: процесс зад
   const logPath = chunks[0].trim();
   const logText = fs.readFileSync(logPath, "utf8");
   assert.match(logText, /a — упала/);
+});
+
+// --- порция c: наблюдатель (watch) + барьер (runBarrier) внутри тика ---
+
+function statusFor(dataDir) {
+  return {stdout: JSON.stringify({
+    server: "up", bin_path: "/bin/listik", data_dir: dataDir, db_path: `${dataDir}/listik.db`,
+    url: "http://x",
+  })};
+}
+
+gitTest("watch+barrier (а): running пуст — watch раньше comment MERGED_MARK, партия после слияния", async () => {
+  const repo = initRepo();
+  const treeT1 = addWorktree(repo, "t1");
+  fs.writeFileSync(path.join(treeT1, "a.txt"), "a\n");
+  sh(treeT1, "add", "a.txt");
+  sh(treeT1, "commit", "-q", "-m", "t1");
+
+  const tasks = [
+    task("t1", {status: "done", worktree: treeT1, branch: "task/t1", labels: ["port:5170"]}),
+    task("t2", {}),
+  ];
+  const plan = {project: "proj", waves: [["t2"]], cycles: [], unroutable: [], unscoped: [], blocked: {}};
+  const routes = [{key: "r-t2", icon: "low"}];
+  const dataDir = fs.mkdtempSync(path.join(os.tmpdir(), "listik-swarm-data-"));
+  const responses = {
+    status: statusFor(dataDir),
+    waves: {stdout: JSON.stringify({waves: plan, added: [], removed: [], kept: 0})},
+    list: {stdout: JSON.stringify({total: tasks.length, limit: 1000, offset: 0, tasks})},
+    routes: {stdout: JSON.stringify({ok: true, routes})},
+    projects: {stdout: JSON.stringify([{slug: "proj", path: repo}])},
+    watch: {stdout: JSON.stringify({tasks: {}, decisions: [], probes: []})},
+    show: {stdout: JSON.stringify({id: "t1", comments: [], write_scope: []})},
+    comment: {stdout: JSON.stringify({id: "t1"})},
+    worktree: {stdout: JSON.stringify({path: "/wt/t2", branch: "b", status: "created"})},
+    set: {stdout: JSON.stringify({id: "t2", labels: []})},
+    launch: {stdout: JSON.stringify({id: "t2", generation: 1})},
+  };
+  const {calls} = setupFake(responses);
+  const listik = new Listik({bin: FAKE_BIN, actor: "agent:listik-swarm", cliTimeout: 5});
+  const log = makeLog();
+  await tick(listik, baseConfig, log);
+
+  const subs = calls().map(c => c.sub);
+  assert.ok(subs.includes("watch"));
+  assert.ok(subs.includes("comment"));
+
+  const watchLine = log.lines.findIndex(l => l.startsWith("watch:"));
+  const mergedLine = log.lines.findIndex(l => l.startsWith("влито "));
+  const launchLine = log.lines.findIndex(l => l.startsWith("запуск "));
+  assert.ok(watchLine >= 0 && mergedLine >= 0 && launchLine >= 0);
+  assert.ok(watchLine < mergedLine, "watch раньше влито");
+  assert.ok(mergedLine < launchLine, "влито раньше запуск");
+});
+
+gitTest("watch+barrier (б): running непуст — барьер не зовётся, comment нет, HEAD не менялся", async () => {
+  const repo = initRepo();
+  const before = sh(repo, "rev-parse", "HEAD").trim();
+
+  const tasks = [runningTask("running1", {
+    labels: ["port:5170"], launched_at: new Date().toISOString(), holder_at: new Date().toISOString(),
+  })];
+  const plan = {project: "proj", waves: [[]], cycles: [], unroutable: [], unscoped: [], blocked: {}};
+  const dataDir = fs.mkdtempSync(path.join(os.tmpdir(), "listik-swarm-data-"));
+  const responses = {
+    status: statusFor(dataDir),
+    waves: {stdout: JSON.stringify({waves: plan, added: [], removed: [], kept: 0})},
+    list: {stdout: JSON.stringify({total: tasks.length, limit: 1000, offset: 0, tasks})},
+    routes: {stdout: JSON.stringify({ok: true, routes: []})},
+    projects: {stdout: JSON.stringify([{slug: "proj", path: repo}])},
+    watch: {stdout: JSON.stringify({tasks: {}, decisions: [], probes: []})},
+    show: {stdout: JSON.stringify({id: "running1", events: []})},
+  };
+  const {calls} = setupFake(responses);
+  const listik = new Listik({bin: FAKE_BIN, actor: "agent:listik-swarm", cliTimeout: 5});
+  const log = makeLog();
+  await tick(listik, baseConfig, log);
+
+  const subs = calls().map(c => c.sub);
+  assert.ok(subs.includes("watch"));
+  assert.ok(!subs.includes("comment"));
+  assert.equal(sh(repo, "rev-parse", "HEAD").trim(), before);
+});
+
+gitTest("watch+barrier (в): swarm.json с ошибкой — лог = err.message, launch не вызван, reason config", async () => {
+  const repo = initRepo();
+  const dataDir = fs.mkdtempSync(path.join(os.tmpdir(), "listik-swarm-data-"));
+  fs.writeFileSync(path.join(dataDir, "swarm.json"), "{не json");
+
+  const tasks = [task("t1")];
+  const plan = {project: "proj", waves: [["t1"]], cycles: [], unroutable: [], unscoped: [], blocked: {}};
+  const routes = [{key: "r-t1", icon: "low"}];
+  const responses = {
+    status: statusFor(dataDir),
+    waves: {stdout: JSON.stringify({waves: plan, added: [], removed: [], kept: 0})},
+    list: {stdout: JSON.stringify({total: tasks.length, limit: 1000, offset: 0, tasks})},
+    routes: {stdout: JSON.stringify({ok: true, routes})},
+    projects: {stdout: JSON.stringify([{slug: "proj", path: repo}])},
+    watch: {stdout: JSON.stringify({tasks: {}, decisions: [], probes: []})},
+  };
+  const {calls} = setupFake(responses);
+  const listik = new Listik({bin: FAKE_BIN, actor: "agent:listik-swarm", cliTimeout: 5});
+  const log = makeLog();
+  const result = await tick(listik, baseConfig, log);
+
+  assert.ok(log.lines.some(l => l.startsWith("swarm.json:")));
+  assert.equal(log.lines.filter(l => l.includes("swarm.json:")).length, 1);
+  assert.deepEqual(result.launched, []);
+  assert.equal(result.report.reason, "config");
+  assert.ok(calls().map(c => c.sub).includes("watch"));
+});
+
+gitTest("watch+barrier (г): gate unmerged — launch не вызван, report.unmerged длины 1", async () => {
+  const repo = initRepo();
+  const tree = addWorktree(repo, "t1");
+  fs.writeFileSync(path.join(tree, "a.txt"), "a\n");
+  sh(tree, "add", "a.txt");
+  sh(tree, "commit", "-q", "-m", "t1");
+  fs.writeFileSync(path.join(tree, "untracked.txt"), "x\n");
+
+  const tasks = [
+    task("t1", {status: "done", worktree: tree, branch: "task/t1", labels: ["port:5170"]}),
+    task("t2", {}),
+  ];
+  const plan = {project: "proj", waves: [["t2"]], cycles: [], unroutable: [], unscoped: [], blocked: {}};
+  const routes = [{key: "r-t2", icon: "low"}];
+  const dataDir = fs.mkdtempSync(path.join(os.tmpdir(), "listik-swarm-data-"));
+  const responses = {
+    status: statusFor(dataDir),
+    waves: {stdout: JSON.stringify({waves: plan, added: [], removed: [], kept: 0})},
+    list: {stdout: JSON.stringify({total: tasks.length, limit: 1000, offset: 0, tasks})},
+    routes: {stdout: JSON.stringify({ok: true, routes})},
+    projects: {stdout: JSON.stringify([{slug: "proj", path: repo}])},
+    watch: {stdout: JSON.stringify({tasks: {}, decisions: [], probes: []})},
+    show: {stdout: JSON.stringify({id: "t1", comments: [], write_scope: []})},
+    "needs-owner": {stdout: JSON.stringify({id: "t1"})},
+  };
+  const {calls} = setupFake(responses);
+  const listik = new Listik({bin: FAKE_BIN, actor: "agent:listik-swarm", cliTimeout: 5});
+  const log = makeLog();
+  const result = await tick(listik, baseConfig, log);
+
+  assert.deepEqual(result.launched, []);
+  assert.equal(result.report.unmerged.length, 1);
+  assert.ok(!calls().map(c => c.sub).includes("launch"));
+});
+
+test("watch+barrier (д): plan.cycles непуст — watch/comment/merge не вызывались", async () => {
+  const responses = {
+    status: statusUp,
+    waves: {stdout: JSON.stringify({
+      waves: {project: "proj", waves: [], cycles: [["a", "b"]], unroutable: [], unscoped: [], blocked: {}},
+      added: [], removed: [], kept: 0,
+    })},
+    list: {stdout: JSON.stringify({total: 0, limit: 1000, offset: 0, tasks: []})},
+    routes: {stdout: JSON.stringify({ok: true, routes: []})},
+  };
+  const {calls} = setupFake(responses);
+  const listik = new Listik({bin: FAKE_BIN, actor: "agent:listik-swarm", cliTimeout: 5});
+  const log = makeLog();
+  const result = await tick(listik, baseConfig, log);
+  assert.deepEqual(result.cycles, [["a", "b"]]);
+  const subs = calls().map(c => c.sub);
+  assert.ok(!subs.includes("watch"));
+  assert.ok(!subs.includes("comment"));
+  assert.ok(!subs.includes("projects"));
+});
+
+test("watch+barrier (е): пустой path проекта — в argv нет watch", async () => {
+  const tasks = [task("t1")];
+  const plan = {project: "proj", waves: [["t1"]], cycles: [], unroutable: [], unscoped: [], blocked: {}};
+  const routes = [{key: "r-t1", icon: "low"}];
+  const responses = {
+    status: statusUp,
+    waves: {stdout: JSON.stringify({waves: plan, added: [], removed: [], kept: 0})},
+    list: {stdout: JSON.stringify({total: tasks.length, limit: 1000, offset: 0, tasks})},
+    routes: {stdout: JSON.stringify({ok: true, routes})},
+    projects: {stdout: JSON.stringify([{slug: "proj", path: ""}])},
+    worktree: {stdout: JSON.stringify({path: "/wt/t1", branch: "b", status: "created"})},
+    show: {stdout: JSON.stringify({id: "t1", labels: []})},
+    set: {stdout: JSON.stringify({id: "t1", labels: []})},
+    launch: {stdout: JSON.stringify({id: "t1", generation: 1})},
+  };
+  const {calls} = setupFake(responses);
+  const listik = new Listik({bin: FAKE_BIN, actor: "agent:listik-swarm", cliTimeout: 5});
+  const log = makeLog();
+  await tick(listik, baseConfig, log);
+
+  const subs = calls().map(c => c.sub);
+  assert.ok(!subs.includes("watch"));
+  assert.ok(log.lines.some(l => l.includes("у проекта нет каталога")));
+});
+
+gitTest("watch+barrier (ж): dryRun непустой path — watch с --dry-run, лог watch:", async () => {
+  const repo = initRepo();
+  const tasks = [task("t1")];
+  const plan = {project: "proj", waves: [[]], cycles: [], unroutable: [], unscoped: [], blocked: {}};
+  const dataDir = fs.mkdtempSync(path.join(os.tmpdir(), "listik-swarm-data-"));
+  const responses = {
+    status: statusFor(dataDir),
+    waves: {stdout: JSON.stringify(plan)},
+    list: {stdout: JSON.stringify({total: tasks.length, limit: 1000, offset: 0, tasks})},
+    routes: {stdout: JSON.stringify({ok: true, routes: []})},
+    projects: {stdout: JSON.stringify([{slug: "proj", path: repo}])},
+    watch: {stdout: JSON.stringify({tasks: {}, decisions: [], probes: []})},
+  };
+  const {calls} = setupFake(responses);
+  const listik = new Listik({bin: FAKE_BIN, actor: "agent:listik-swarm", cliTimeout: 5});
+  const log = makeLog();
+  await tick(listik, {...baseConfig, dryRun: true}, log);
+
+  const watchCall = calls().find(c => c.sub === "watch");
+  assert.ok(watchCall.argv.includes("--dry-run"));
+  assert.ok(log.lines.some(l => l.startsWith("watch:")));
+});
+
+gitTest("watch+barrier (з): watch бросает ListikError — лог watch ошибка:, тик не падает, партия всё ещё запускается", async () => {
+  const repo = initRepo();
+  const tasks = [task("t1")];
+  const plan = {project: "proj", waves: [["t1"]], cycles: [], unroutable: [], unscoped: [], blocked: {}};
+  const routes = [{key: "r-t1", icon: "low"}];
+  const dataDir = fs.mkdtempSync(path.join(os.tmpdir(), "listik-swarm-data-"));
+  const responses = {
+    status: statusFor(dataDir),
+    waves: {stdout: JSON.stringify({waves: plan, added: [], removed: [], kept: 0})},
+    list: {stdout: JSON.stringify({total: tasks.length, limit: 1000, offset: 0, tasks})},
+    routes: {stdout: JSON.stringify({ok: true, routes})},
+    projects: {stdout: JSON.stringify([{slug: "proj", path: repo}])},
+    watch: {exitCode: 1, stdout: JSON.stringify({error: {code: "cli", message: "boom"}})},
+    worktree: {stdout: JSON.stringify({path: "/wt/t1", branch: "b", status: "created"})},
+    show: {stdout: JSON.stringify({id: "t1", labels: []})},
+    set: {stdout: JSON.stringify({id: "t1", labels: []})},
+    launch: {stdout: JSON.stringify({id: "t1", generation: 1})},
+  };
+  const {calls} = setupFake(responses);
+  const listik = new Listik({bin: FAKE_BIN, actor: "agent:listik-swarm", cliTimeout: 5});
+  const log = makeLog();
+  const result = await tick(listik, baseConfig, log);
+
+  assert.ok(log.lines.some(l => l.startsWith("watch ошибка:")));
+  assert.notEqual(result.error, true);
+  assert.deepEqual(result.launched, ["t1"]);
+});
+
+gitTest("watch+barrier (и): freeze ok:true — повторный list, t2 не в launch, в skipped frozen", async () => {
+  const repo = initRepo();
+  const tasksInitial = [task("t1", {}), task("t2", {})];
+  const tasksAfter = [task("t1", {}), task("t2", {labels: ["frozen-by:t1"], launched_by: ""})];
+  const plan = {project: "proj", waves: [["t1", "t2"]], cycles: [], unroutable: [], unscoped: [], blocked: {}};
+  const routes = [{key: "r-t1", icon: "low"}, {key: "r-t2", icon: "low"}];
+  const dataDir = fs.mkdtempSync(path.join(os.tmpdir(), "listik-swarm-data-"));
+  const responses = {
+    status: statusFor(dataDir),
+    waves: {stdout: JSON.stringify({waves: plan, added: [], removed: [], kept: 0})},
+    list: [
+      {stdout: JSON.stringify({total: tasksInitial.length, limit: 1000, offset: 0, tasks: tasksInitial})},
+      {stdout: JSON.stringify({total: tasksAfter.length, limit: 1000, offset: 0, tasks: tasksAfter})},
+    ],
+    routes: {stdout: JSON.stringify({ok: true, routes})},
+    projects: {stdout: JSON.stringify([{slug: "proj", path: repo}])},
+    watch: {stdout: JSON.stringify({tasks: {}, decisions: [
+      {action: "freeze", task: "t2", owner: "t1", files: ["f.txt"], ok: true, generation: 1},
+    ], probes: []})},
+    "needs-owner": {stdout: JSON.stringify({id: "x"})},
+    worktree: {stdout: JSON.stringify({path: "/wt/t1", branch: "b", status: "created"})},
+    show: {stdout: JSON.stringify({id: "t1", labels: []})},
+    set: {stdout: JSON.stringify({id: "t1", labels: []})},
+    launch: {stdout: JSON.stringify({id: "t1", generation: 1})},
+  };
+  const {calls} = setupFake(responses);
+  const listik = new Listik({bin: FAKE_BIN, actor: "agent:listik-swarm", cliTimeout: 5});
+  const log = makeLog();
+  const result = await tick(listik, baseConfig, log);
+
+  const listCalls = calls().filter(c => c.sub === "list");
+  assert.equal(listCalls.length, 2);
+  assert.ok(!result.launched.includes("t2"));
+  assert.ok(result.report.skipped.some(s => s.id === "t2" && s.reason === "frozen"));
+  assert.ok(log.lines.some(l => l.startsWith("watch: заморожена t2")));
+});
+
+gitTest("watch+barrier (к): decisions ok:false без top-level error — не бросает, launch не гейтится", async () => {
+  const repo = initRepo();
+  const tasks = [task("t1")];
+  const plan = {project: "proj", waves: [["t1"]], cycles: [], unroutable: [], unscoped: [], blocked: {}};
+  const routes = [{key: "r-t1", icon: "low"}];
+  const dataDir = fs.mkdtempSync(path.join(os.tmpdir(), "listik-swarm-data-"));
+  const responses = {
+    status: statusFor(dataDir),
+    waves: {stdout: JSON.stringify({waves: plan, added: [], removed: [], kept: 0})},
+    list: {stdout: JSON.stringify({total: tasks.length, limit: 1000, offset: 0, tasks})},
+    routes: {stdout: JSON.stringify({ok: true, routes})},
+    projects: {stdout: JSON.stringify([{slug: "proj", path: repo}])},
+    watch: {exitCode: 1, stdout: JSON.stringify({tasks: {}, decisions: [
+      {action: "freeze", task: "t1", ok: false, error: "unsupported"},
+    ], probes: []})},
+    worktree: {stdout: JSON.stringify({path: "/wt/t1", branch: "b", status: "created"})},
+    show: {stdout: JSON.stringify({id: "t1", labels: []})},
+    set: {stdout: JSON.stringify({id: "t1", labels: []})},
+    launch: {stdout: JSON.stringify({id: "t1", generation: 1})},
+  };
+  const {calls} = setupFake(responses);
+  const listik = new Listik({bin: FAKE_BIN, actor: "agent:listik-swarm", cliTimeout: 5});
+  const log = makeLog();
+  const result = await tick(listik, baseConfig, log);
+
+  assert.ok(log.lines.some(l => l.startsWith("watch: ошибка заморозки")));
+  assert.deepEqual(result.launched, ["t1"]);
 });
 
 // --- порция a: сводка барьера, questionReason, waitingLine ---

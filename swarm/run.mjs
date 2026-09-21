@@ -1,6 +1,11 @@
 // Один тик: собрать вход из Listik (субпроцессами), решить (decide), выполнить
 // действия, свести итог. Без состояния между тиками — всё читается заново.
+import path from "node:path";
+import fs from "node:fs";
 import {decide, portOf, allocatePort, isRunning, OPEN_STATUSES} from "./decide.mjs";
+import {runBarrier, haltCards} from "./barrier.mjs";
+import {ConfigError, parseSwarmConfig, swarmConfigFor} from "./config.mjs";
+import * as git from "./git.mjs";
 
 const MAIN_WORKTREE_MARKERS = new Set(["main", "master"]);
 
@@ -39,7 +44,7 @@ export async function tick(listik, config, log) {
       `(${removed.map(([a, b]) => `${a} → ${b}`).join(", ")}), без изменений ${kept}`);
   }
   const listRes = await listik.list(config.project);
-  const tasks = listRes.tasks || [];
+  let tasks = listRes.tasks || [];
   const routesRes = await listik.routes();
   const routes = routesRes.routes || [];
 
@@ -54,7 +59,111 @@ export async function tick(listik, config, log) {
     }
   }
 
-  const decision = decide({plan, tasks, routes, config, now: new Date(), events});
+  let gate = null;
+  let barrierResult = null;
+  let watchSummary = null;
+  const cyclesPending = !!(plan.cycles && plan.cycles.length);
+
+  if (!cyclesPending) {
+    const projectsRes = await listik.projects();
+    const projectEntry = (projectsRes || []).find(p => p.slug === config.project);
+    const projectPath = projectEntry && projectEntry.path ? projectEntry.path : null;
+
+    if (!projectPath) {
+      log.line("у проекта нет каталога — барьер не работает");
+    } else {
+      // Наблюдатель — всегда, независимо от running/halt/конфига барьера.
+      let watchRes = null;
+      try {
+        watchRes = config.dryRun
+          ? await listik.watch(config.project, {dryRun: true})
+          : await listik.watch(config.project);
+      } catch (err) {
+        log.line(`watch ошибка: ${errText(err)}`);
+        watchSummary = {ok: false, frozen: [], errors: [], probes: 0, truncated: false};
+      }
+
+      if (watchRes) {
+        const tasksObj = watchRes.tasks || {};
+        const decisions = watchRes.decisions || [];
+        const probes = watchRes.probes || [];
+        const N = Object.keys(tasksObj).length;
+        const M = Object.values(tasksObj).filter(t => t && t.live).length;
+        const P = probes.length;
+        const K = decisions.filter(d => d.action === "freeze" && d.ok !== false).length;
+        const E = decisions.filter(d => d.ok === false).length;
+        log.line(`watch: задач ${N}, живых ${M}, проб ${P}, заморожено ${K}, ошибок ${E}`);
+        for (const d of decisions) {
+          if (d.action === "report") {
+            log.line(`watch: только отчёт: ${d.task} не в работе, конфликт с ${d.owner}`);
+            continue;
+          }
+          if (d.action === "freeze") {
+            if (d.ok === false) {
+              log.line(`watch: ошибка заморозки ${d.task}: ${d.error}`);
+              continue;
+            }
+            const files = (d.files || []).join(", ");
+            if (d.dry_run) log.line(`watch: заморозила бы ${d.task} (владелец ${d.owner}): ${files}`);
+            else if (d.resumed) log.line(`watch: заморозка доделана ${d.task} (владелец ${d.owner}): ${files}`);
+            else log.line(`watch: заморожена ${d.task} (владелец ${d.owner}): ${files}`);
+          }
+        }
+        if (watchRes.truncated) {
+          log.line("watch: задач больше 1000, активное множество неполное");
+        }
+
+        watchSummary = {
+          ok: true,
+          frozen: decisions.filter(d => d.action === "freeze").map(d => d.task),
+          errors: decisions.filter(d => d.ok === false).map(d => d.task),
+          probes: P,
+          truncated: !!watchRes.truncated,
+        };
+
+        if (!config.dryRun && decisions.some(d => d.action === "freeze" && d.ok !== false)) {
+          const relist = await listik.list(config.project);
+          tasks = relist.tasks || [];
+        }
+      }
+
+      let swarmConfig = null;
+      let configErrored = false;
+      try {
+        const cfgPath = config.configPath ?? path.join(status.data_dir, "swarm.json");
+        let text = null;
+        try {
+          text = fs.readFileSync(cfgPath, "utf8");
+        } catch (err) {
+          if (err.code !== "ENOENT") throw err;
+          text = null;
+        }
+        const parsed = parseSwarmConfig(text);
+        swarmConfig = swarmConfigFor(parsed, config.project);
+      } catch (err) {
+        if (err instanceof ConfigError) {
+          log.line(err.message);
+          gate = {reason: "config", ids: []};
+          configErrored = true;
+        } else {
+          throw err;
+        }
+      }
+
+      const runningNow = tasks.filter(isRunning);
+      if (runningNow.length) {
+        const haltIds = haltCards(tasks);
+        if (haltIds.length) gate = {reason: "halt", ids: haltIds};
+      } else if (!configErrored) {
+        barrierResult = await runBarrier({
+          listik, git, fs, config, swarmConfig, log, tasks, projectPath, now: new Date(),
+        });
+        gate = barrierResult.gate;
+      }
+    }
+  }
+
+  const decision = decide({plan, tasks, routes, config, now: new Date(), events, gate});
 
   if (decision.cycles.length) {
     const desc = decision.cycles.map(c => [...c, c[0]].join(" → ")).join("; ");
@@ -268,6 +377,10 @@ export async function tick(listik, config, log) {
     .map(c => ({id: c.id, exitCode: c.exitCode}));
   const giveUpDone = decision.giveUp.filter(g => needsOwnerDone.includes(g.id)).map(g => g.id);
 
+  const barrierMerged = barrierResult ? barrierResult.merged : [];
+  const barrierUnmerged = barrierResult ? barrierResult.unmerged : [];
+  const barrierHalt = barrierResult ? barrierResult.halt : [];
+
   const report = {
     ...decision.report,
     launch: launched,
@@ -278,6 +391,9 @@ export async function tick(listik, config, log) {
     giveUp: giveUpDone,
     crashed: crashedDone,
     stopOnly: stoppedClosed,
+    merged: barrierMerged,
+    unmerged: barrierUnmerged,
+    halt: barrierHalt.length ? barrierHalt[0] : null,
   };
   log.summary(report);
 
@@ -293,5 +409,13 @@ export async function tick(listik, config, log) {
     needsOwnerOpen: decision.open.filter(t => t.needs_owner).map(t => t.id),
     blocked: plan.blocked || {},
     report,
+    barrier: {
+      merged: barrierMerged,
+      mergedNow: barrierResult ? barrierResult.mergedNow : [],
+      unmerged: barrierUnmerged,
+      halt: barrierHalt,
+      gate,
+    },
+    watch: watchSummary,
   };
 }

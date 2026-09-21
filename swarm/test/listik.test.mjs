@@ -144,6 +144,33 @@ test("set: worktree= (пустое) и labels=a,b", async () => {
   assert.deepEqual(argv, ["set", "a", "worktree=", "labels=a,b", "--json", "--actor", "agent:listik-swarm"]);
 });
 
+test("watch: --project, --json, --actor, нет --task", async () => {
+  const {calls} = setupFake({watch: {stdout: JSON.stringify({tasks: {}, decisions: [], probes: []})}});
+  const listik = new Listik({bin: FAKE_BIN, actor: "agent:listik-swarm", cliTimeout: 5});
+  await listik.watch("proj");
+  const [argv] = calls();
+  assert.deepEqual(argv, ["watch", "--project", "proj", "--json", "--actor", "agent:listik-swarm"]);
+  assert.ok(!argv.includes("--task"));
+});
+
+test("watch: dryRun — есть --dry-run, нет --actor", async () => {
+  const {calls} = setupFake({watch: {stdout: JSON.stringify({tasks: {}, decisions: [], probes: []})}});
+  const listik = new Listik({bin: FAKE_BIN, actor: "agent:listik-swarm", cliTimeout: 5});
+  await listik.watch("proj", {dryRun: true});
+  const [argv] = calls();
+  assert.deepEqual(argv, ["watch", "--project", "proj", "--dry-run", "--json"]);
+  assert.ok(!argv.includes("--actor"));
+});
+
+test("watch: ненулевой код с JSON скана без error (будущий код 1) — метод возвращает объект", async () => {
+  setupFake({watch: {exitCode: 1, stdout: JSON.stringify({
+    tasks: {}, decisions: [{action: "freeze", task: "t1", ok: false, error: "unsupported"}], probes: [],
+  })}});
+  const listik = new Listik({bin: FAKE_BIN, actor: "agent:listik-swarm", cliTimeout: 5});
+  const res = await listik.watch("proj");
+  assert.equal(res.decisions[0].ok, false);
+});
+
 test("таймаут — ListikError c code timeout", async () => {
   setupFake({status: {sleepMs: 2000, stdout: JSON.stringify({server: "up"})}});
   const listik = new Listik({bin: FAKE_BIN, cliTimeout: 1});

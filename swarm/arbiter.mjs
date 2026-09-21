@@ -134,24 +134,34 @@ export function runArbiter({argv, cwd, timeoutSec, logPath}) {
     const child = spawn(argv[0], argv.slice(1), {
       cwd, env: process.env, detached: true, stdio: ["ignore", logFd, logFd],
     });
+    let settled = false;
     let timedOut = false;
     let killTimer = null;
+    const finish = (code) => {
+      if (settled) return;
+      settled = true;
+      clearTimeout(termTimer);
+      if (killTimer) clearTimeout(killTimer);
+      try { closeSync(logFd); } catch { /* уже закрыт */ }
+      resolvePromise({code: timedOut ? null : code, timedOut, output: tailOutput(logPath), pid: child.pid});
+    };
     const termTimer = setTimeout(() => {
       timedOut = true;
       try { process.kill(-child.pid, "SIGTERM"); } catch { /* уже нет */ }
       killTimer = setTimeout(() => {
         try { process.kill(-child.pid, "SIGKILL"); } catch { /* уже нет */ }
+        finish(null);
       }, 5000);
     }, timeoutSec * 1000);
 
-    function finish(code) {
-      clearTimeout(termTimer);
-      if (killTimer) clearTimeout(killTimer);
-      try { closeSync(logFd); } catch { /* уже закрыт */ }
-      resolvePromise({code: timedOut ? null : code, timedOut, output: tailOutput(logPath), pid: child.pid});
-    }
-    child.on("exit", (code) => finish(code));
-    child.on("error", () => finish(1));
+    child.on("exit", (code) => {
+      if (timedOut) return;
+      finish(code);
+    });
+    child.on("error", () => {
+      if (timedOut) return;
+      finish(1);
+    });
   });
 }
 
@@ -172,7 +182,11 @@ function loadSpec(fs, projectPath, specPath) {
 }
 
 async function abortIfInProgress(git, worktree) {
-  if (await git.rebaseInProgress(worktree)) await git.rebaseAbort(worktree);
+  try {
+    if (await git.rebaseInProgress(worktree)) await git.rebaseAbort(worktree);
+  } catch {
+    /* дерево задачи, не основное */
+  }
 }
 
 // Вызывается только из шага 5 `runBarrier`, когда `rebase` вернул `{ok: false}` и
@@ -250,22 +264,29 @@ export async function resolveWithArbiter({git, listik, fs, config, swarmConfig, 
     const codeDesc = res.timedOut ? "таймаут" : String(res.code);
     log.action(`арбитр ${task.id} (${n}): ${argv[0]} → код ${codeDesc} (${seconds} с), лог ${logPath}`);
 
-    if (!(await git.rebaseInProgress(worktree))) {
+    let stillRebasing;
+    try {
+      stillRebasing = await git.rebaseInProgress(worktree);
+    } catch (err) {
+      await abortIfInProgress(git, worktree);
+      return {ok: false, reason: `git: ${err.message ?? err}`, logPath};
+    }
+    if (!stillRebasing) {
       // арбитр сам завершил ребейз (`--continue`/`--abort`) — не трогаем git дальше.
       return {ok: false, reason: "арбитр тронул git", logPath};
     }
 
     if (res.timedOut) {
-      await git.rebaseAbort(worktree);
+      await abortIfInProgress(git, worktree);
       return {ok: false, reason: `таймаут ${swarmConfig.arbiterTimeout} с`, logPath};
     }
     if (res.code !== 0) {
-      await git.rebaseAbort(worktree);
+      await abortIfInProgress(git, worktree);
       return {ok: false, reason: `код ${res.code}`, logPath};
     }
     const remainingMarkers = git.hasConflictMarkers(worktree, conflicts);
     if (remainingMarkers.length) {
-      await git.rebaseAbort(worktree);
+      await abortIfInProgress(git, worktree);
       return {ok: false, reason: `маркеры остались: ${remainingMarkers.join(", ")}`, logPath};
     }
     try {
@@ -274,9 +295,15 @@ export async function resolveWithArbiter({git, listik, fs, config, swarmConfig, 
       await abortIfInProgress(git, worktree);
       return {ok: false, reason: `git add: ${err.message ?? err}`, logPath};
     }
-    const stillConflicted = await git.conflictedFiles(worktree);
+    let stillConflicted;
+    try {
+      stillConflicted = await git.conflictedFiles(worktree);
+    } catch (err) {
+      await abortIfInProgress(git, worktree);
+      return {ok: false, reason: `git: ${err.message ?? err}`, logPath};
+    }
     if (stillConflicted.length) {
-      await git.rebaseAbort(worktree);
+      await abortIfInProgress(git, worktree);
       return {ok: false, reason: "не все файлы разрешены", logPath};
     }
 
@@ -301,6 +328,6 @@ export async function resolveWithArbiter({git, listik, fs, config, swarmConfig, 
     // {ok: false, conflicts} — следующая остановка, цикл продолжается.
   }
 
-  await git.rebaseAbort(worktree);
+  await abortIfInProgress(git, worktree);
   return {ok: false, reason: `больше ${MAX_STOPS} остановок ребейза`};
 }

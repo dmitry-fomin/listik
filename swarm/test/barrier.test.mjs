@@ -1368,3 +1368,209 @@ suite("барьер: разморозка с конфликтом + арбитр
   assert.deepEqual(result.unfrozen, ["t2"]);
   assert.deepEqual(readdirSync(logDir).filter(f => f.endsWith(".prompt.md")), []);
 });
+
+suite("каталог есть, ветки нет — GitError не вылетает, needs-owner, сосед влит", async () => {
+  const repo = initRepo();
+  const treeT1 = addWorktree(repo, "t1");
+  const treeT2 = addWorktree(repo, "t2");
+  writeFileSync(join(treeT1, "a.txt"), "a\n");
+  sh(treeT1, "add", "a.txt");
+  sh(treeT1, "commit", "-q", "-m", "t1");
+  writeFileSync(join(treeT2, "b.txt"), "b\n");
+  sh(treeT2, "add", "b.txt");
+  sh(treeT2, "commit", "-q", "-m", "t2");
+  sh(repo, "update-ref", "-d", "refs/heads/task/t1");
+
+  const tasks = [
+    {id: "t1", status: "done", worktree: treeT1, branch: "task/t1", labels: ["port:1"]},
+    {id: "t2", status: "done", worktree: treeT2, branch: "task/t2", labels: ["port:1"]},
+  ];
+  const listik = fakeListik({
+    t1: {id: "t1", comments: [], write_scope: []},
+    t2: {id: "t2", comments: [], write_scope: []},
+  });
+  const log = makeLog();
+  const result = await runBarrier({
+    listik, git, fs: nodeFs, config: {dryRun: false, project: "demo", logDir: tmpLogDir()},
+    swarmConfig: {integration: []}, log, tasks, projectPath: repo, now: new Date(),
+  });
+  assert.ok(result.unmerged.includes("t1"));
+  assert.ok(result.merged.includes("t2"));
+  assert.ok(listik.calls.needsOwner.some(c => c.id === "t1"));
+  assert.equal(nodeFs.existsSync(treeT1), true);
+});
+
+suite("разморозка при rebase in progress — abort до снимка, untracked не теряется", async () => {
+  const repo = initRepo();
+  writeFileSync(join(repo, "f.txt"), "base\n");
+  sh(repo, "add", "f.txt");
+  sh(repo, "commit", "-q", "-m", "f base");
+  const treeT1 = addWorktree(repo, "t1");
+  writeFileSync(join(treeT1, "f.txt"), "t1-side\n");
+  sh(treeT1, "add", "f.txt");
+  sh(treeT1, "commit", "-q", "-m", "t1 edits f");
+  const treeT2 = addWorktree(repo, "t2");
+  writeFileSync(join(treeT2, "f.txt"), "t2-side\n");
+  sh(treeT2, "add", "f.txt");
+  sh(treeT2, "commit", "-q", "-m", "t2 edits f");
+  try {
+    execFileSync("git", ["-c", "core.editor=true", "-c", "merge.conflictStyle=diff3",
+      "rebase", "task/t1"], {cwd: treeT2, stdio: "ignore"});
+  } catch { /* конфликт ожидаем */ }
+  assert.equal(await git.rebaseInProgress(treeT2), true);
+  writeFileSync(join(treeT2, "extra.txt"), "keep me\n");
+
+  const tasks = [
+    {id: "t1", status: "done", worktree: treeT1, branch: "task/t1", labels: ["port:1"]},
+    {id: "t2", status: "open", worktree: treeT2, branch: "task/t2",
+      labels: ["port:5171", "frozen-by:t1"]},
+  ];
+  const listik = fakeListik({
+    t1: {id: "t1", comments: [], write_scope: []},
+    t2: {id: "t2", comments: [], labels: ["port:5171", "frozen-by:t1"]},
+  });
+  const log = makeLog();
+  const result = await runBarrier({
+    listik, git, fs: nodeFs, config: {dryRun: false, project: "demo", logDir: tmpLogDir()},
+    swarmConfig: null, log, tasks, projectPath: repo, now: new Date(),
+  });
+  assert.deepEqual(result.unfrozen, ["t2"]);
+  assert.equal(await git.rebaseInProgress(treeT2), false);
+  assert.equal(nodeFs.existsSync(join(treeT2, "extra.txt")), true);
+  const rec = JSON.parse(listik.calls.comment.find(c => c.id === "t2" &&
+    c.text.startsWith(UNFROZEN_MARK)).text.slice(UNFROZEN_MARK.length).trim());
+  assert.equal(typeof rec.snapshot, "string");
+  assert.equal(await git.isAncestor(treeT2, rec.snapshot, "HEAD"), true);
+});
+
+suite("comment после ff падает — дерево не сносят, целитель может повторить", async () => {
+  const {repo, treeT1, treeT2, tasks} = twoMergedSetup();
+  const listik = fakeListik({
+    t1: {id: "t1", comments: [
+      {author: SWARM_AUTHOR, text: `${FIRST_CHANGE_MARK} {}`, created_at: "2026-01-01T00:00:20Z"},
+    ], write_scope: []},
+    t2: {id: "t2", comments: [
+      {author: SWARM_AUTHOR, text: `${FIRST_CHANGE_MARK} {}`, created_at: "2026-01-01T00:00:10Z"},
+    ], write_scope: []},
+  }, {commentFail: (id) => id === "t2"});
+  const log = makeLog();
+  const result = await runBarrier({
+    listik, git, fs: nodeFs, config: {dryRun: false, project: "demo", logDir: tmpLogDir()},
+    swarmConfig: {integration: []}, log, tasks, projectPath: repo, now: new Date(),
+  });
+  assert.ok(result.merged.includes("t2"));
+  assert.ok(result.cleaned.includes("t1"));
+  assert.ok(!result.cleaned.includes("t2"));
+  assert.equal(nodeFs.existsSync(treeT2), true);
+  assert.equal(await git.branchExists(repo, "task/t2"), true);
+  assert.ok(!listik.calls.set.some(c => c.id === "t2"));
+});
+
+suite("rebaseAbort бросает — runBarrier не вылетает, кандидат в unmerged", async () => {
+  const {repo, tasks} = conflictSetup();
+  const listik = fakeListik({
+    t1: {id: "t1", comments: [], write_scope: []},
+    t2: {id: "t2", comments: [], write_scope: []},
+  });
+  const wrapped = {
+    ...git,
+    async rebaseAbort() {
+      throw new GitError("boom abort", ["rebase", "--abort"], 128);
+    },
+  };
+  const log = makeLog();
+  const result = await runBarrier({
+    listik, git: wrapped, fs: nodeFs, config: {dryRun: false}, swarmConfig: null, log, tasks,
+    projectPath: repo, now: new Date(),
+  });
+  assert.ok(result.unmerged.includes("t2"));
+  assert.ok(result.merged.includes("t1"));
+});
+
+suite("resolveWithArbiter бросает — тик барьера не падает, rebase откачен", async () => {
+  const {repo, treeT2, tasks} = conflictSetup();
+  const listik = fakeListik({
+    t1: {id: "t1", comments: [], write_scope: []},
+    t2: {id: "t2", comments: [], write_scope: []},
+  });
+  const log = makeLog();
+  const logDir = tmpLogDir();
+  const fsStub = {
+    existsSync: (p) => nodeFs.existsSync(p),
+    mkdirSync() { throw new Error("mkdir boom"); },
+  };
+  const t2Head = await git.headSha(treeT2);
+  const result = await runBarrier({
+    listik, git, fs: fsStub, config: {dryRun: false, project: "demo", logDir},
+    swarmConfig: {integration: [], arbiter: ["node", ARBITER_FIXTURE, "{prompt}", "{files}"],
+      arbiterTimeout: 30},
+    log, tasks, projectPath: repo, now: new Date(),
+  });
+  assert.ok(result.unmerged.includes("t2"));
+  assert.equal(await git.rebaseInProgress(treeT2), false);
+  assert.equal(await git.headSha(treeT2), t2Head);
+});
+
+suite("rebase in progress у закрытой — abort до isDirty, не dirty_tree", async () => {
+  const repo = initRepo();
+  writeFileSync(join(repo, "f.txt"), "base\n");
+  sh(repo, "add", "f.txt");
+  sh(repo, "commit", "-q", "-m", "f base");
+  const treeT1 = addWorktree(repo, "t1");
+  writeFileSync(join(treeT1, "f.txt"), "t1-side\n");
+  sh(treeT1, "add", "f.txt");
+  sh(treeT1, "commit", "-q", "-m", "t1 edits f");
+  writeFileSync(join(repo, "f.txt"), "main-side\n");
+  sh(repo, "add", "f.txt");
+  sh(repo, "commit", "-q", "-m", "main edits f");
+  try {
+    execFileSync("git", ["-c", "core.editor=true", "-c", "merge.conflictStyle=diff3",
+      "rebase", "main"], {cwd: treeT1, stdio: "ignore"});
+  } catch { /* конфликт ожидаем */ }
+  assert.equal(await git.rebaseInProgress(treeT1), true);
+
+  const tasks = [
+    {id: "t1", status: "done", worktree: treeT1, branch: "task/t1", labels: ["port:1"]},
+  ];
+  const listik = fakeListik({t1: {id: "t1", comments: [], write_scope: []}});
+  const log = makeLog();
+  const result = await runBarrier({
+    listik, git, fs: nodeFs, config: {dryRun: false}, swarmConfig: null, log, tasks,
+    projectPath: repo, now: new Date(),
+  });
+  assert.deepEqual(result.unmerged, ["t1"]);
+  assert.match(listik.calls.needsOwner[0].text, /конфликтует/);
+  assert.ok(!listik.calls.needsOwner[0].text.includes("незакоммиченные"));
+  assert.equal(await git.rebaseInProgress(treeT1), false);
+});
+
+suite("таймаут: лидер умер от SIGTERM, потомок игнорирует — SIGKILL группе", async () => {
+  const {repo, tasks} = twoMergedSetup();
+  const listik = fakeListik({
+    t1: {id: "t1", comments: [], write_scope: []},
+    t2: {id: "t2", comments: [], write_scope: []},
+  });
+  const childPidFile = join(repo, "child.pid");
+  const inner = `process.on("SIGTERM",()=>{});` +
+    `require("fs").writeFileSync(process.argv[1], String(process.pid));` +
+    `setTimeout(()=>{}, 30000);`;
+  const outer = `const {spawn}=require("child_process");` +
+    `spawn(process.execPath,["-e",${JSON.stringify(inner)},process.argv[1]],{stdio:"ignore"});` +
+    `process.on("SIGTERM",()=>process.exit(0));` +
+    `setTimeout(()=>{}, 30000);`;
+  const log = makeLog();
+  const start = Date.now();
+  const result = await runBarrier({
+    listik, git, fs: nodeFs, config: {dryRun: false, project: "demo", logDir: tmpLogDir()},
+    swarmConfig: {
+      integration: [[process.execPath, "-e", outer, childPidFile]],
+      integrationTimeout: 1,
+    },
+    log, tasks, projectPath: repo, now: new Date(),
+  });
+  const elapsed = Date.now() - start;
+  assert.equal(result.integration, "red");
+  assert.ok(elapsed < 9000, `вернулся слишком поздно: ${elapsed}мс`);
+  const childPid = Number(readFileSync(childPidFile, "utf8"));
+  assert.throws(() => process.kill(childPid, 0));
+});

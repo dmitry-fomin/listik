@@ -122,8 +122,12 @@ export async function tick(listik, config, log) {
         };
 
         if (!config.dryRun && decisions.some(d => d.action === "freeze" && d.ok !== false)) {
-          const relist = await listik.list(config.project);
-          tasks = relist.tasks || [];
+          try {
+            const relist = await listik.list(config.project);
+            tasks = relist.tasks || [];
+          } catch (err) {
+            log.line(`list после watch ошибка: ${errText(err)}`);
+          }
         }
       }
 
@@ -380,7 +384,9 @@ export async function tick(listik, config, log) {
 
   const barrierMerged = barrierResult ? barrierResult.merged : [];
   const barrierUnmerged = barrierResult ? barrierResult.unmerged : [];
-  const barrierHalt = barrierResult ? barrierResult.halt : [];
+  const barrierHalt = barrierResult
+    ? barrierResult.halt
+    : (gate && gate.reason === "halt" ? (gate.ids || []) : []);
   const barrierUnfrozen = barrierResult ? barrierResult.unfrozen : [];
   const barrierIntegration = barrierResult ? barrierResult.integration : null;
   const barrierCleaned = barrierResult ? barrierResult.cleaned : [];

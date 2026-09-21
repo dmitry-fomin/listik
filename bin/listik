@@ -901,6 +901,14 @@ def cmd_show(args) -> int:
         local_kwargs["rejected"] = True
     task = call("show", args, f"/api/tasks/{args.task_id}", query=query,
                local_kwargs=local_kwargs)
+    if args.field:
+        picked = {f: task.get(f) for f in args.field}
+        if getattr(args, "json", False):
+            emit(args, picked, "")
+        else:
+            for v in picked.values():
+                print("" if v is None else v)
+        return 0
     emit(args, task, "") if getattr(args, "json", False) else show_task(task)
     return 0
 
@@ -2391,6 +2399,8 @@ def build_parser() -> argparse.ArgumentParser:
     add_task_id(sp)
     sp.add_argument("--rejected", action="store_true",
                     help="показать карантин: отвергнутые записи зомби-процессов")
+    sp.add_argument("--field", action="append", metavar="ИМЯ",
+                    help="только это поле карточки (повторяемо), напр. --field launch_route")
 
     sp = add("context", cmd_context, help="компактный контекст задачи для этапа")
     add_task_id(sp)

@@ -192,7 +192,7 @@ class SwarmE2ECase(AutostartTestCase, FencingHttpCase):
     # ------------------------------------------------------------ рой: запуск/ожидание
 
     def start_swarm(self, *, parallel=2, interval=1, stale_minutes=None, max_restarts=None,
-                    extra_env=None) -> subprocess.Popen:
+                    extra_env=None, extra_args: list[str] | None = None) -> subprocess.Popen:
         args = ["node", str(SWARM_BIN), "--project", "p", "--listik", str(LISTIK_BIN),
                 "--listik-host", "127.0.0.1", "--listik-port", str(self.port),
                 "--parallel", str(parallel), "--interval", str(interval),
@@ -202,6 +202,8 @@ class SwarmE2ECase(AutostartTestCase, FencingHttpCase):
             args += ["--stale-minutes", str(stale_minutes)]
         if max_restarts is not None:
             args += ["--max-restarts", str(max_restarts)]
+        if extra_args:
+            args += list(extra_args)
         if extra_env:
             # Воркер -- дитя сервера, который живёт в потоке этого же процесса
             # (`launcher.start`: `proc_env = os.environ | extra | ...`); FAKE_*

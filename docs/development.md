@@ -28,7 +28,10 @@ cd web && npm run typecheck && npm run build
 процесс роя) входят в `discover tests`: гоняют настоящий `bin/listik-swarm` против живого
 сервера Listik и настоящего git на временном проекте. Требуют `node` и `git` в `PATH` — без них
 модуль пропускается (`skip`) с понятной причиной; при их наличии `test_swarm_e2e.py` занимает
-до 3 минут, `test_swarm_barrier_e2e.py` — до 5. `swarm/test/git.test.mjs` и
+до 3 минут, `test_swarm_barrier_e2e.py` — до 5.
+`tests/test_swarm_rollback_e2e.py` — живой сервер, реальный `listik watch`, до 5 минут;
+пропускается без `node`/`git`.
+`swarm/test/git.test.mjs` и
 `swarm/test/arbiter.test.mjs` (в `node --test swarm/test/`) заводят собственные временные git-
 репозитории на каждый тест.
 

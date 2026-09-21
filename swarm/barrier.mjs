@@ -3,7 +3,7 @@
 // их по имени и не имеют права менять. `runBarrier` и его частные хелперы (шаги 7–9,
 // интеграция) — оркестрация: git/listik/fs приходят параметрами, `spawn` — прямой
 // импорт (команды интеграции, порция d).
-import {spawn} from "node:child_process";
+import {spawn, execFileSync} from "node:child_process";
 import path from "node:path";
 import {OPEN_STATUSES, isFrozen, portOf} from "./decide.mjs";
 import {resolveWithArbiter} from "./arbiter.mjs";
@@ -198,6 +198,7 @@ export async function runBarrier({listik, git, fs, config, swarmConfig, log, tas
   const live = [];
   let skippedSilently = 0;
   let skippedMissing = 0;
+  let skippedOut = 0;
 
   async function markUnmerged(id, reason, body) {
     if (dryRun) return;
@@ -210,6 +211,7 @@ export async function runBarrier({listik, git, fs, config, swarmConfig, log, tas
   for (const c of candidates) {
     const cbranch = (c.branch || "").trim() || `task/${c.id}`;
     if (c.needs_owner) {
+      skippedOut++;
       unmerged.push(c.id);
       log.line(`${c.id} не влита: ждёт человека`);
       continue;
@@ -219,12 +221,14 @@ export async function runBarrier({listik, git, fs, config, swarmConfig, log, tas
     try {
       branchOk = await git.branchExists(projectPath, cbranch);
     } catch (err) {
+      skippedOut++;
       await markUnmerged(c.id, "branch_error",
         `ветка ${cbranch}: ${err.message ?? String(err)}.`);
       continue;
     }
     if (dirExists) {
       if (!branchOk) {
+        skippedOut++;
         await markUnmerged(c.id, "missing_branch",
           `каталог дерева ${c.worktree} есть, а ветки ${cbranch} нет — верни ветку ` +
           `или убери дерево.`);
@@ -241,6 +245,7 @@ export async function runBarrier({listik, git, fs, config, swarmConfig, log, tas
     try {
       ahead = await git.aheadCount(projectPath, "HEAD", cbranch);
     } catch (err) {
+      skippedOut++;
       await markUnmerged(c.id, "ahead_error",
         `ветка ${cbranch}: ${err.message ?? String(err)}.`);
       continue;
@@ -317,7 +322,7 @@ export async function runBarrier({listik, git, fs, config, swarmConfig, log, tas
   }
 
   const alreadyMergedCount = merged.length;
-  const N = candidates.length - skippedSilently - skippedMissing;
+  const N = candidates.length - skippedSilently - skippedMissing - skippedOut;
   const sorted = sortForMerge(toSort);
   const order = sorted.map(x => x.id);
   log.line(`барьер: кандидатов ${N}, уже влито ${alreadyMergedCount}, порядок: ${order.join(", ")}`);
@@ -659,6 +664,15 @@ function stampFile(d) {
 }
 
 // Одна команда интеграции: группа процессов, SIGTERM по таймауту, SIGKILL через 5с.
+function killGroup(pid, signal) {
+  if (!pid) return;
+  try { process.kill(-pid, signal); } catch { /* лидер мог уже выйти */ }
+  try {
+    execFileSync("kill", ["-s", signal === "SIGKILL" ? "KILL" : "TERM", `-${pid}`],
+      {stdio: "ignore", timeout: 2000});
+  } catch { /* группы уже нет */ }
+}
+
 function runIntegrationCommand(argv, cwd, logFd, timeoutSec) {
   return new Promise((resolvePromise) => {
     const start = Date.now();
@@ -677,9 +691,9 @@ function runIntegrationCommand(argv, cwd, logFd, timeoutSec) {
     };
     const termTimer = setTimeout(() => {
       timedOut = true;
-      try { process.kill(-child.pid, "SIGTERM"); } catch { /* уже нет */ }
+      killGroup(child.pid, "SIGTERM");
       killTimer = setTimeout(() => {
-        try { process.kill(-child.pid, "SIGKILL"); } catch { /* уже нет */ }
+        killGroup(child.pid, "SIGKILL");
         finish({code: null, timedOut: true});
       }, 5000);
     }, timeoutSec * 1000);

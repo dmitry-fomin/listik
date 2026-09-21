@@ -1551,11 +1551,11 @@ suite("таймаут: лидер умер от SIGTERM, потомок игно
     t2: {id: "t2", comments: [], write_scope: []},
   });
   const childPidFile = join(repo, "child.pid");
-  const inner = `process.on("SIGTERM",()=>{});` +
-    `require("fs").writeFileSync(process.argv[1], String(process.pid));` +
-    `setTimeout(()=>{}, 30000);`;
   const outer = `const {spawn}=require("child_process");` +
-    `spawn(process.execPath,["-e",${JSON.stringify(inner)},process.argv[1]],{stdio:"ignore"});` +
+    `const fs=require("fs");` +
+    `const c=spawn(process.execPath,["-e",` +
+    `"process.on('SIGTERM',()=>{});setTimeout(()=>{},30000);"],{stdio:"ignore"});` +
+    `fs.writeFileSync(process.argv[process.argv.length-1], String(c.pid));` +
     `process.on("SIGTERM",()=>process.exit(0));` +
     `setTimeout(()=>{}, 30000);`;
   const log = makeLog();
@@ -1573,4 +1573,117 @@ suite("таймаут: лидер умер от SIGTERM, потомок игно
   assert.ok(elapsed < 9000, `вернулся слишком поздно: ${elapsed}мс`);
   const childPid = Number(readFileSync(childPidFile, "utf8"));
   assert.throws(() => process.kill(childPid, 0));
+});
+
+suite("rebase бросает при начатом конфликтном ребейзе — abort, HEAD дерева прежний", async () => {
+  const repo = initRepo();
+  writeFileSync(join(repo, "f.txt"), "base\n");
+  sh(repo, "add", "f.txt");
+  sh(repo, "commit", "-q", "-m", "f base");
+  const tree = addWorktree(repo, "t1");
+  writeFileSync(join(tree, "f.txt"), "t1-side\n");
+  sh(tree, "add", "f.txt");
+  sh(tree, "commit", "-q", "-m", "t1 edits f");
+  writeFileSync(join(repo, "f.txt"), "main-side\n");
+  sh(repo, "add", "f.txt");
+  sh(repo, "commit", "-q", "-m", "main edits f");
+  const treeHeadBefore = await git.headSha(tree);
+  const mainBefore = await git.headSha(repo);
+
+  const wrapped = {
+    ...git,
+    rebase: async (t, onto) => {
+      const res = await git.rebase(t, onto);
+      if (!res.ok) throw new GitError("boom mid-conflict", ["rebase"], 1);
+      return res;
+    },
+  };
+  const tasks = [{id: "t1", status: "done", worktree: tree, branch: "task/t1", labels: ["port:1"]}];
+  const listik = fakeListik({t1: {id: "t1", comments: [], write_scope: []}});
+  const log = makeLog();
+  const result = await runBarrier({
+    listik, git: wrapped, fs: nodeFs, config: {dryRun: false}, swarmConfig: null, log, tasks,
+    projectPath: repo, now: new Date(),
+  });
+  assert.deepEqual(result.unmerged, ["t1"]);
+  assert.match(listik.calls.needsOwner[0].text, /`rebase`:/);
+  assert.equal(await git.rebaseInProgress(tree), false);
+  assert.equal(await git.headSha(tree), treeHeadBefore);
+  assert.equal(await git.headSha(repo), mainBefore);
+});
+
+suite("cleanupOne: branch с пробелами — trim, дерево убирают", async () => {
+  const repo = initRepo();
+  const tree = addWorktree(repo, "t1");
+  writeFileSync(join(tree, "a.txt"), "a\n");
+  sh(tree, "add", "a.txt");
+  sh(tree, "commit", "-q", "-m", "t1");
+  await git.rebase(tree, "main");
+  await git.mergeFfOnly(repo, "task/t1");
+  const sha = await git.headSha(repo);
+  const tasks = [{id: "t1", status: "done", worktree: tree, branch: "  task/t1  ", labels: ["port:1"]}];
+  const record = {sha, branch: "task/t1", base: sha, files: ["a.txt"], declared: [], outside: []};
+  const listik = fakeListik({
+    t1: {id: "t1", comments: [
+      {author: SWARM_AUTHOR, text: `${MERGED_MARK} ${JSON.stringify(record)}`, created_at: "2026-01-01T00:00:00Z"},
+    ], write_scope: []},
+  });
+  const log = makeLog();
+  const result = await runBarrier({
+    listik, git, fs: nodeFs, config: {dryRun: false, project: "demo", logDir: tmpLogDir()},
+    swarmConfig: {integration: []}, log, tasks, projectPath: repo, now: new Date(),
+  });
+  assert.deepEqual(result.cleaned, ["t1"]);
+  assert.equal(nodeFs.existsSync(tree), false);
+  assert.equal(await git.branchExists(repo, "task/t1"), false);
+});
+
+suite("лог кандидатов N вычитает needs_owner, missing_branch, ahead_error", async () => {
+  const repo = initRepo();
+  const treeOk = addWorktree(repo, "tok");
+  writeFileSync(join(treeOk, "ok.txt"), "ok\n");
+  sh(treeOk, "add", "ok.txt");
+  sh(treeOk, "commit", "-q", "-m", "tok");
+  const treeNeed = addWorktree(repo, "tneed");
+  const treeMiss = addWorktree(repo, "tmiss");
+  writeFileSync(join(treeMiss, "m.txt"), "m\n");
+  sh(treeMiss, "add", "m.txt");
+  sh(treeMiss, "commit", "-q", "-m", "tmiss");
+  sh(repo, "update-ref", "-d", "refs/heads/task/tmiss");
+  addWorktree(repo, "terr");
+  const treeAhead = addWorktree(repo, "tahead");
+  writeFileSync(join(treeAhead, "h.txt"), "h\n");
+  sh(treeAhead, "add", "h.txt");
+  sh(treeAhead, "commit", "-q", "-m", "tahead");
+  const fakeAhead = join(repo, ".worktrees", "missing-tahead");
+  const fakeErr = join(repo, ".worktrees", "missing-terr");
+  const fakeSilent = join(repo, ".worktrees", "gone");
+
+  const tasks = [
+    {id: "tok", status: "done", worktree: treeOk, branch: "task/tok", labels: ["port:1"]},
+    {id: "tneed", status: "done", worktree: treeNeed, branch: "task/tneed", labels: ["port:1"],
+      needs_owner: true},
+    {id: "tmiss", status: "done", worktree: treeMiss, branch: "task/tmiss", labels: ["port:1"]},
+    {id: "terr", status: "done", worktree: fakeErr, branch: "task/terr", labels: ["port:1"]},
+    {id: "tahead", status: "done", worktree: fakeAhead, branch: "task/tahead", labels: ["port:1"]},
+    {id: "tsilent", status: "done", worktree: fakeSilent, branch: "task/gone", labels: ["port:1"]},
+  ];
+  const wrapped = {
+    ...git,
+    aheadCount: async (r, base, branch) => {
+      if (branch === "task/terr") throw new GitError("ahead boom", ["rev-list"], 128);
+      return git.aheadCount(r, base, branch);
+    },
+  };
+  const listik = fakeListik({
+    tok: {id: "tok", comments: [], write_scope: []},
+  });
+  const log = makeLog();
+  const result = await runBarrier({
+    listik, git: wrapped, fs: nodeFs, config: {dryRun: false, project: "demo", logDir: tmpLogDir()},
+    swarmConfig: {integration: []}, log, tasks, projectPath: repo, now: new Date(),
+  });
+  assert.ok(log.lines.some(l => l === "барьер: кандидатов 1, уже влито 0, порядок: tok"),
+    log.lines.filter(l => l.startsWith("барьер:")).join(" | "));
+  assert.ok(result.merged.includes("tok"));
 });

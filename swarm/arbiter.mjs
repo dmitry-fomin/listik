@@ -4,7 +4,7 @@
 // не здесь). Чистое (`renderArgv`…`buildPrompt`) — только обычные объекты внутрь и
 // наружу; `runArbiter`/`resolveWithArbiter` — оркестрация: `spawn` прямой импорт (как
 // `runIntegrationCommand` в `barrier.mjs`), git/listik/fs приходят параметрами.
-import {spawn} from "node:child_process";
+import {spawn, execFileSync} from "node:child_process";
 import {openSync, closeSync, readFileSync as readFileSyncNode} from "node:fs";
 import path from "node:path";
 import {ARBITER_MARK} from "./barrier.mjs";
@@ -128,6 +128,15 @@ function tailOutput(logPath) {
 // `spawn` группы, stdout+stderr сразу в fd `logPath` (не pipe — длинный вывод иначе
 // дедлочит). Таймаут: `SIGTERM` группе, через 5 с `SIGKILL` группе. Окружение —
 // `process.env` без изменений (арбитр не воркер этой карточки, никаких `LISTIK_*`).
+function killGroup(pid, signal) {
+  if (!pid) return;
+  try { process.kill(-pid, signal); } catch { /* лидер мог уже выйти */ }
+  try {
+    execFileSync("kill", ["-s", signal === "SIGKILL" ? "KILL" : "TERM", `-${pid}`],
+      {stdio: "ignore", timeout: 2000});
+  } catch { /* группы уже нет */ }
+}
+
 export function runArbiter({argv, cwd, timeoutSec, logPath}) {
   return new Promise((resolvePromise) => {
     const logFd = openSync(logPath, "a");
@@ -147,9 +156,9 @@ export function runArbiter({argv, cwd, timeoutSec, logPath}) {
     };
     const termTimer = setTimeout(() => {
       timedOut = true;
-      try { process.kill(-child.pid, "SIGTERM"); } catch { /* уже нет */ }
+      killGroup(child.pid, "SIGTERM");
       killTimer = setTimeout(() => {
-        try { process.kill(-child.pid, "SIGKILL"); } catch { /* уже нет */ }
+        killGroup(child.pid, "SIGKILL");
         finish(null);
       }, 5000);
     }, timeoutSec * 1000);

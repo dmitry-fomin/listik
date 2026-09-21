@@ -37,6 +37,15 @@ The board tells the two apart — `holder_taken=false` / `not_taken=true` means 
    launched the work through your session (you orchestrate other harnesses or subagents), also put the full question
    text in the chat — both places, never a one-line summary; relay executors' questions verbatim. Questions
    never stall the pipeline: keep working other tasks, apply the answer (`needs-owner --clear`) when it comes.
+   A question must name the default: the last line of the question text is `по умолчанию: <option>`
+   (this exact Russian prefix, own line) — the option you take if nobody answers; you keep working with it,
+   write `решение: … основание: …` as a `journal` comment, and only then continue. No default is allowed
+   only where the default is irreversible: deleting or overwriting someone else's work, a merge conflict
+   you cannot resolve, money you cannot return; such a question stops your work on this card, and you
+   `release` it. Never choose or change `launch_route` yourself; it is not a question with a default.
+   When the swarm runs the card, an unanswered default question is closed by the swarm after its timeout
+   with «действует вариант по умолчанию» and your work continues (or is relaunched) as if the human had
+   answered with the default.
 8. Before handoff check `spec_path`, acceptance, worktree/branch, deps and journal.
 9. Finish with `done <id> -r "short verifiable result"`.
 10. Don't rewrite someone else's card — comment on it instead.

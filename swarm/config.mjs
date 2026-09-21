@@ -31,6 +31,7 @@ const OPTIONS = {
   "stale-minutes": {type: "string"},
   "timeout-minutes": {type: "string"},
   "max-restarts": {type: "string"},
+  config: {type: "string"},
   help: {type: "boolean"},
 };
 
@@ -54,6 +55,7 @@ export const HELP_TEXT = `listik-swarm — каркас роя: план, needs-
   --stale-minutes <N>         (порция c) по умолчанию 20
   --timeout-minutes <N>       (порция c) по умолчанию 0
   --max-restarts <N>          (порция c) по умолчанию 1
+  --config <путь>              swarm.json (по умолчанию <data_dir>/swarm.json)
   --help                      эта справка
 `;
 
@@ -125,7 +127,106 @@ export function parseConfig(argv) {
     staleMinutes: values["stale-minutes"] !== undefined ? parseNumber("stale-minutes", values["stale-minutes"]) : 20,
     timeoutMinutes: values["timeout-minutes"] !== undefined ? parseNumber("timeout-minutes", values["timeout-minutes"]) : 0,
     maxRestarts: values["max-restarts"] !== undefined ? parseNumber("max-restarts", values["max-restarts"]) : 1,
+    configPath: values.config ?? null,
   };
 
   return config;
+}
+
+// --- swarm.json (барьер: тесты интеграции + арбитр слияния) ---
+// Читается в тике (порция c) — здесь только чистый разбор текста.
+
+const SWARM_TOP_KEYS = new Set(["integration", "arbiter", "integration_timeout", "arbiter_timeout", "projects"]);
+const SWARM_PROJECT_KEYS = new Set(["integration", "arbiter", "integration_timeout", "arbiter_timeout"]);
+const DEFAULT_INTEGRATION_TIMEOUT = 1800;
+const DEFAULT_ARBITER_TIMEOUT = 1200;
+
+function isPlainObject(v) {
+  return typeof v === "object" && v !== null && !Array.isArray(v);
+}
+
+function isNonEmptyStringArray(v) {
+  return Array.isArray(v) && v.length > 0 && v.every(s => typeof s === "string" && s.length > 0);
+}
+
+function validateIntegration(value, where) {
+  if (!Array.isArray(value) || !value.every(isNonEmptyStringArray)) {
+    throw new ConfigError(`swarm.json: ${where}integration ожидал массив команд ` +
+      `(каждая — непустой массив непустых строк)`);
+  }
+}
+
+function validateArbiter(value, where) {
+  if (!isNonEmptyStringArray(value)) {
+    throw new ConfigError(`swarm.json: ${where}arbiter ожидал непустой массив непустых строк`);
+  }
+  if (!value.some(s => s.includes("{prompt}"))) {
+    throw new ConfigError(`swarm.json: ${where}arbiter — ни один элемент не содержит {prompt}`);
+  }
+}
+
+function validateTimeout(value, key, where) {
+  if (typeof value !== "number" || !(value > 0)) {
+    throw new ConfigError(`swarm.json: ${where}${key} ожидал число > 0`);
+  }
+}
+
+function validateSettings(obj, allowedKeys, where) {
+  for (const key of Object.keys(obj)) {
+    if (!allowedKeys.has(key)) {
+      throw new ConfigError(`swarm.json: неизвестный ключ ${where}${key}`);
+    }
+  }
+  if ("integration" in obj) validateIntegration(obj.integration, where);
+  if ("arbiter" in obj) validateArbiter(obj.arbiter, where);
+  if ("integration_timeout" in obj) validateTimeout(obj.integration_timeout, "integration_timeout", where);
+  if ("arbiter_timeout" in obj) validateTimeout(obj.arbiter_timeout, "arbiter_timeout", where);
+}
+
+export function parseSwarmConfig(text) {
+  if (text === null) return {};
+
+  let raw;
+  try {
+    raw = JSON.parse(text);
+  } catch (err) {
+    throw new ConfigError(`swarm.json: невалидный JSON — ${err.message}`);
+  }
+  if (!isPlainObject(raw)) {
+    throw new ConfigError("swarm.json: ожидал объект верхнего уровня");
+  }
+
+  validateSettings(raw, SWARM_TOP_KEYS, "");
+
+  if ("projects" in raw) {
+    if (!isPlainObject(raw.projects)) {
+      throw new ConfigError("swarm.json: projects ожидал объект (slug → настройки)");
+    }
+    for (const [slug, proj] of Object.entries(raw.projects)) {
+      if (!isPlainObject(proj)) {
+        throw new ConfigError(`swarm.json: projects.${slug} ожидал объект`);
+      }
+      validateSettings(proj, SWARM_PROJECT_KEYS, `projects.${slug}.`);
+    }
+  }
+
+  return raw;
+}
+
+export function swarmConfigFor(parsed, slug) {
+  const top = parsed || {};
+  const proj = (top.projects && top.projects[slug]) || {};
+
+  function pick(key, fallback) {
+    if (key in proj) return proj[key];
+    if (key in top) return top[key];
+    return fallback;
+  }
+
+  return {
+    integration: pick("integration", null),
+    arbiter: pick("arbiter", null),
+    integrationTimeout: pick("integration_timeout", DEFAULT_INTEGRATION_TIMEOUT),
+    arbiterTimeout: pick("arbiter_timeout", DEFAULT_ARBITER_TIMEOUT),
+  };
 }

@@ -7,6 +7,7 @@ import {fileURLToPath} from "node:url";
 import {Listik} from "../listik.mjs";
 import {tick} from "../run.mjs";
 import {open as openLog} from "../log.mjs";
+import {questionReason, waitingLine} from "../main.mjs";
 
 const here = path.dirname(fileURLToPath(import.meta.url));
 const FAKE_BIN = path.join(here, "fixtures", "fake-listik.mjs");
@@ -154,6 +155,38 @@ test("одна закрыта (done), но launch_finished_at пуст, втор
   assert.deepEqual(result.running, ["done1"]);
   const writeSubs = calls().map(c => c.sub).filter(s => ["needs-owner", "worktree", "set", "launch"].includes(s));
   assert.deepEqual(writeSubs, []);
+});
+
+test("замороженная в waves[0] — ни worktree, ни set, ни launch для неё", async () => {
+  const tasks = [task("frozen", {labels: ["frozen-by:t1"]}), task("t1")];
+  const plan = {
+    project: "proj", waves: [["frozen", "t1"]], cycles: [], unroutable: [], unscoped: [], blocked: {},
+  };
+  const routes = [{key: "r-frozen", icon: "low"}, {key: "r-t1", icon: "low"}];
+  const responses = {
+    status: statusUp,
+    waves: {stdout: JSON.stringify({waves: plan, added: [], removed: [], kept: 0})},
+    list: {stdout: JSON.stringify({total: tasks.length, limit: 1000, offset: 0, tasks})},
+    routes: {stdout: JSON.stringify({ok: true, routes})},
+    worktree: {stdout: JSON.stringify({path: "/wt/t1", branch: "b", status: "created"})},
+    show: {stdout: JSON.stringify({id: "t1", labels: []})},
+    set: {stdout: JSON.stringify({id: "t1", labels: []})},
+    launch: {stdout: JSON.stringify({id: "t1", generation: 1})},
+  };
+  const {calls} = setupFake(responses);
+  const listik = new Listik({bin: FAKE_BIN, actor: "agent:listik-swarm", cliTimeout: 5});
+  const log = makeLog();
+  const result = await tick(listik, baseConfig, log);
+
+  assert.deepEqual(result.launched, ["t1"]);
+  const frozenArgv = calls().filter(c => c.argv.includes("frozen"));
+  assert.deepEqual(frozenArgv, []);
+
+  const logDir = fs.mkdtempSync(path.join(os.tmpdir(), "listik-swarm-frozen-summary-"));
+  const realLog = openLog(logDir, "proj");
+  const summaryText = realLog.summary(result.report);
+  realLog.close();
+  assert.match(summaryText, /frozen заморожена/);
 });
 
 test("--dry-run: ни одного пишущего вызова, waves без --apply, [dry-run] строки в stdout", async () => {
@@ -507,4 +540,52 @@ test("main: карточка needs_owner true с «рой: процесс зад
   const logPath = chunks[0].trim();
   const logText = fs.readFileSync(logPath, "utf8");
   assert.match(logText, /a — упала/);
+});
+
+// --- порция a: сводка барьера, questionReason, waitingLine ---
+
+function summaryOf(report) {
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), "listik-swarm-summary-only-"));
+  const realLog = openLog(dir, "proj");
+  const text = realLog.summary({
+    project: "proj", waveSize: 0, running: [], launch: [], restart: [], crashed: [],
+    giveUp: [], stopOnly: [], needsOwner: [], skipped: [], blocked: 0, wavesLeft: 0,
+    ...report,
+  });
+  realLog.close();
+  return text;
+}
+
+test("сводка: без новых полей — нули и прочерки", () => {
+  const text = summaryOf({});
+  assert.match(text, /влито 0 \(\) · не влиты 0 \(\) · разморожено 0 \(\) · интеграция — · стоп —$/);
+});
+
+test("сводка: merged/integration red/halt", () => {
+  const text = summaryOf({merged: ["a"], integration: "red", halt: "listik-x"});
+  assert.match(text, /влито 1 \(a\)/);
+  assert.match(text, /интеграция красная/);
+  assert.match(text, /стоп listik-x$/);
+});
+
+test("сводка: merged двух id через запятую", () => {
+  const text = summaryOf({merged: ["a", "b"]});
+  assert.match(text, /влито 2 \(a, b\)/);
+});
+
+test("questionReason: интеграционные тесты → стоп роя; не влита → не влита", () => {
+  assert.equal(questionReason("рой: интеграционные тесты красные — разберись"), "стоп роя");
+  assert.equal(questionReason("рой: не влита — конфликт слияния"), "не влита");
+});
+
+test("waitingLine: frozen → заморожена, gated → гейт, held по-прежнему держит другой", () => {
+  const result = {report: {skipped: [
+    {id: "a", reason: "frozen"}, {id: "b", reason: "gated"}, {id: "c", reason: "held"},
+    {id: "d", reason: "capacity"},
+  ]}, open: []};
+  const line = waitingLine(result);
+  assert.match(line, /a заморожена/);
+  assert.match(line, /b гейт/);
+  assert.match(line, /c держит другой/);
+  assert.match(line, /d не влезла в партию/);
 });

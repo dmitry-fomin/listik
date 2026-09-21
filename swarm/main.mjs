@@ -16,11 +16,15 @@ function configLine(config) {
   return `конфиг: ${JSON.stringify({...rest, listikHost, listikPort})}`;
 }
 
-function waitingLine(result) {
+export function waitingLine(result) {
   const parts = [];
   const report = result.report || {};
   for (const s of report.skipped || []) {
-    parts.push(s.reason === "held" ? `${s.id} держит другой` : `${s.id} не влезла в партию`);
+    const label = s.reason === "held" ? "держит другой"
+      : s.reason === "frozen" ? "заморожена"
+      : s.reason === "gated" ? "гейт"
+      : "не влезла в партию";
+    parts.push(`${s.id} ${label}`);
   }
   if (report.blocked) parts.push(`${report.blocked} стоят за блокерами`);
   return `ждут: ${parts.length ? parts.join(", ") : (result.open || []).join(", ")}`;
@@ -28,7 +32,7 @@ function waitingLine(result) {
 
 // п.8: причина вопроса — по последнему комментарию kind=="question". «рой: …» — своя
 // короткая причина; иначе воркер сам о чём-то спросил.
-function questionReason(text) {
+export function questionReason(text) {
   if (typeof text !== "string" || !text.startsWith("рой:")) return "вопрос воркера";
   if (text.includes("нет маршрута")) return "без маршрута";
   if (text.includes("нет write_scope")) return "без области";
@@ -36,6 +40,8 @@ function questionReason(text) {
   if (text.includes("свободных портов")) return "нет портов";
   if (text.includes("задача зависла")) return "зависла";
   if (text.includes("не снят")) return "процесс не снят";
+  if (text.includes("интеграционные тесты")) return "стоп роя";
+  if (text.includes("не влита")) return "не влита";
   return "вопрос воркера";
 }
 

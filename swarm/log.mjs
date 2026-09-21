@@ -42,13 +42,23 @@ export function open(dir, project) {
     const needsOwnerDesc = (report.needsOwner || [])
       .map(n => `${n.id} ${n.reason === "unroutable" ? "без маршрута" : "без области"}`).join(", ");
     const skippedDesc = (report.skipped || [])
-      .map(s => `${s.id} ${s.reason === "held" ? `держит ${s.holder ?? "другого"}` : "не влезла"}`)
+      .map(s => `${s.id} ${
+        s.reason === "held" ? `держит ${s.holder ?? "другого"}`
+          : s.reason === "frozen" ? "заморожена"
+          : s.reason === "gated" ? "гейт"
+          : "не влезла"
+      }`)
       .join(", ");
     const restartDesc = (report.restart || [])
       .map(r => `${r.id} ${r.reason} → поколение ${r.generation}`).join(", ");
     const crashedDesc = (report.crashed || [])
       .map(c => `${c.id} код ${c.exitCode == null ? "неизвестен" : c.exitCode}`).join(", ");
     const stopOnlyDesc = (report.stopOnly || []).join(", ");
+    const mergedDesc = (report.merged || []).join(", ");
+    const unmergedDesc = (report.unmerged || []).join(", ");
+    const unfrozenDesc = (report.unfrozen || []).join(", ");
+    const integrationDesc = report.integration === "green" ? "зелёная"
+      : report.integration === "red" ? "красная" : "—";
     const text = `[${hhmmss}] ${report.project} · волна 0: ${report.waveSize} · ` +
       `бежит ${(report.running || []).length} (${runningDesc}) · ` +
       `запущено сейчас ${(report.launch || []).length} (${launchedDesc}) · ` +
@@ -58,7 +68,12 @@ export function open(dir, project) {
       `сняты процессы закрытых ${(report.stopOnly || []).length} (${stopOnlyDesc}) · ` +
       `ждут человека ${(report.needsOwner || []).length} (${needsOwnerDesc}) · ` +
       `пропущено ${(report.skipped || []).length} (${skippedDesc}) · ` +
-      `стоят ${report.blocked ?? 0} · дальше волн ${report.wavesLeft ?? 0}`;
+      `стоят ${report.blocked ?? 0} · дальше волн ${report.wavesLeft ?? 0} · ` +
+      `влито ${(report.merged || []).length} (${mergedDesc}) · ` +
+      `не влиты ${(report.unmerged || []).length} (${unmergedDesc}) · ` +
+      `разморожено ${(report.unfrozen || []).length} (${unfrozenDesc}) · ` +
+      `интеграция ${integrationDesc} · ` +
+      `стоп ${report.halt ?? "—"}`;
     fs.writeSync(fd, `[${stampLine(now)}] ${text}\n`);
     process.stdout.write(text + "\n");
     return text;

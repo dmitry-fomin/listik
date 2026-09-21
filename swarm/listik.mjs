@@ -97,6 +97,31 @@ export class Listik {
     return this._call(["routes"]);
   }
 
+  projects() {
+    return this._call(["projects"]);
+  }
+
+  comment(id, text, kind = "journal") {
+    return this._call(["comment", id, text, "-k", kind], {write: true});
+  }
+
+  create({title, project, type, labels, discoveredFrom, description} = {}) {
+    const argv = ["new", title, "-p", project, "-t", type];
+    for (const label of labels || []) argv.push("-l", label);
+    if (discoveredFrom) argv.push("--discovered-from", discoveredFrom);
+    if (description) argv.push("-d", description);
+    return this._call(argv, {write: true});
+  }
+
+  set(id, fields) {
+    const argv = ["set", id];
+    for (const [k, v] of Object.entries(fields || {})) {
+      const value = Array.isArray(v) ? v.join(",") : (v == null ? "" : v);
+      argv.push(`${k}=${value}`);
+    }
+    return this._call(argv, {write: true});
+  }
+
   show(id) {
     return this._call(["show", id]);
   }

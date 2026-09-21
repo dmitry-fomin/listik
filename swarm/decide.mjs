@@ -37,6 +37,17 @@ export function isRunning(t) {
   return !!t.launched_by && !t.launch_finished_at;
 }
 
+// Заморозка барьера (порции b–d): метка `frozen-by:<x>` на задаче. Первая найденная.
+export function isFrozen(task) {
+  const labels = task.labels || [];
+  for (const label of labels) {
+    if (typeof label === "string" && label.startsWith("frozen-by:")) {
+      return label.slice("frozen-by:".length);
+    }
+  }
+  return null;
+}
+
 function iconFor(task, routeByKey) {
   const route = routeByKey.get(task.launch_route);
   return route ? (route.icon ?? null) : null;
@@ -215,7 +226,7 @@ function superviseCrashed({open, events, tasks, config}) {
   return {restart, giveUp, crashed};
 }
 
-export function decide({plan, tasks, routes, config, now, events}) {
+export function decide({plan, tasks, routes, config, now, events, gate = null}) {
   const open = tasks.filter(t => OPEN_STATUSES.has(t.status));
   const openById = new Map(open.map(t => [t.id, t]));
   const routeByKey = new Map((routes || []).map(r => [r.key, r]));
@@ -258,7 +269,22 @@ export function decide({plan, tasks, routes, config, now, events}) {
   let launch = [];
   let reason;
 
-  if (running.length) {
+  if (gate != null) {
+    const wave0 = (plan.waves && plan.waves[0]) || [];
+    for (const id of wave0) {
+      const t = openById.get(id);
+      if (!t) continue;
+      if (t.launched_by) continue;
+      if (t.needs_owner) continue;
+      const frozenBy = isFrozen(t);
+      if (frozenBy) {
+        skipped.push({id, reason: "frozen"});
+        continue;
+      }
+      skipped.push({id, reason: "gated"});
+    }
+    reason = gate.reason;
+  } else if (running.length) {
     reason = "batch_running";
   } else {
     const wave0 = (plan.waves && plan.waves[0]) || [];
@@ -268,6 +294,11 @@ export function decide({plan, tasks, routes, config, now, events}) {
       if (!t) continue;
       if (t.launched_by) continue;
       if (t.needs_owner) continue;
+      const frozenBy = isFrozen(t);
+      if (frozenBy) {
+        skipped.push({id, reason: "frozen"});
+        continue;
+      }
       if (t.holder) {
         skipped.push({id, reason: "held"});
         continue;
@@ -316,6 +347,7 @@ export function decide({plan, tasks, routes, config, now, events}) {
     blocked: blockedCount,
     unroutable: plan.unroutable || [], unscoped: plan.unscoped || [],
     reason: reason ?? null,
+    gate: gate ?? null,
     restart: restart.map(r => r.id),
     giveUp: giveUp.map(g => g.id),
     crashed: crashed.map(c => c.id),

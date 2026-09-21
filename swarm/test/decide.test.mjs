@@ -1,6 +1,6 @@
 import {test} from "node:test";
 import assert from "node:assert/strict";
-import {decide, portOf, allocatePort} from "../decide.mjs";
+import {decide, portOf, allocatePort, isFrozen} from "../decide.mjs";
 
 const config = {parallel: 3, weights: {xhigh: 3, high: 2, medium: 1, low: 1, xlow: 1, direct: 1}};
 
@@ -389,6 +389,68 @@ test("надзор: упавшая с answer раньше launch_finished_at —
   });
   assert.equal(res.crashed.length, 1);
   assert.match(res.crashed[0].text, /код неизвестен/);
+});
+
+// --- порция a: заморозка (frozen-by:) и гейт ---
+
+test("isFrozen: первая метка frozen-by: → значение, иначе null", () => {
+  assert.equal(isFrozen(task("a", {labels: ["frozen-by:t1"]})), "t1");
+  assert.equal(isFrozen(task("a", {labels: []})), null);
+});
+
+test("заморозка: задача с frozen-by: отсекается до расчёта ёмкости, ёмкость не съедена", () => {
+  const frozen = task("a", {labels: ["frozen-by:t1"]});
+  const normal = task("b");
+  const tasks = [frozen, normal];
+  const plan = {waves: [["a", "b"]], cycles: [], unroutable: [], unscoped: [], blocked: {}};
+  const routes = routesFor(["a", "b"], "low");
+  const res = decide({plan, tasks, routes, config: {...config, parallel: 1}, now: new Date()});
+  assert.deepEqual(res.launch.map(l => l.id), ["b"]);
+  assert.ok(res.skipped.some(s => s.id === "a" && s.reason === "frozen"));
+});
+
+test("гейт: launch пуст, кандидаты в skipped gated, report.reason и report.gate", () => {
+  const t9 = task("t9");
+  const tasks = [t9];
+  const plan = {waves: [["t9"]], cycles: [], unroutable: [], unscoped: [], blocked: {}};
+  const gate = {reason: "unmerged", ids: ["t9"]};
+  const res = decide({plan, tasks, routes: [], config, now: new Date(), gate});
+  assert.deepEqual(res.launch, []);
+  assert.deepEqual(res.skipped, [{id: "t9", reason: "gated"}]);
+  assert.equal(res.report.reason, "unmerged");
+  assert.deepEqual(res.report.gate, gate);
+});
+
+test("гейт с ids: [] — то же поведение, report.reason = config", () => {
+  const t = task("a");
+  const tasks = [t];
+  const plan = {waves: [["a"]], cycles: [], unroutable: [], unscoped: [], blocked: {}};
+  const gate = {reason: "config", ids: []};
+  const res = decide({plan, tasks, routes: [], config, now: new Date(), gate});
+  assert.deepEqual(res.launch, []);
+  assert.deepEqual(res.skipped, [{id: "a", reason: "gated"}]);
+  assert.equal(res.report.reason, "config");
+});
+
+test("гейт вместе с надзором: кандидат волны gated, stale running restart, crashed отдельно", () => {
+  const now = new Date();
+  const candidate = task("b");
+  const stale = runningTask("a", {
+    launched_at: minsAgo(now, 30), holder_at: minsAgo(now, 30), labels: ["port:5170"],
+  });
+  const crashedTask = task("c", {
+    launched_by: "agent:listik-swarm", launch_finished_at: "2026-01-01T00:00:00Z",
+    launch_exit_code: 1, needs_owner: false, generation: 3, launch_log: "/logs/c.log",
+  });
+  const tasks = [candidate, stale, crashedTask];
+  const plan = {waves: [["b"]], cycles: [], unroutable: [], unscoped: [], blocked: {}};
+  const gate = {reason: "unmerged", ids: []};
+  const res = decide({plan, tasks, routes: [], config: supConfig, now, gate});
+  assert.deepEqual(res.launch, []);
+  assert.ok(res.skipped.some(s => s.id === "b" && s.reason === "gated"));
+  assert.ok(res.restart.some(r => r.id === "a"));
+  assert.ok(res.crashed.some(c => c.id === "c"));
+  assert.equal(res.report.reason, "unmerged");
 });
 
 test("надзор: упавшая с needs_owner true — ничего; упавшая не в running, партия запускается", () => {

@@ -92,6 +92,58 @@ test("waves --apply конфликт цикла — второй вызов бе
   assert.ok(!argvs[1].includes("--apply"));
 });
 
+test("projects: без --actor, возвращает массив с slug/path", async () => {
+  const {calls} = setupFake({
+    projects: {stdout: JSON.stringify([{slug: "listik", path: "/repo"}, {slug: "other", path: "/o"}])},
+  });
+  const listik = new Listik({bin: FAKE_BIN, actor: "agent:listik-swarm", cliTimeout: 5});
+  const res = await listik.projects();
+  const [argv] = calls();
+  assert.deepEqual(argv, ["projects", "--json"]);
+  assert.ok(Array.isArray(res));
+  assert.equal(res[0].slug, "listik");
+  assert.equal(res[0].path, "/repo");
+});
+
+test("comment: -k journal и --actor", async () => {
+  const {calls} = setupFake({comment: {stdout: JSON.stringify({id: "a"})}});
+  const listik = new Listik({bin: FAKE_BIN, actor: "agent:listik-swarm", cliTimeout: 5});
+  await listik.comment("a", "текст");
+  const [argv] = calls();
+  assert.deepEqual(argv, ["comment", "a", "текст", "-k", "journal", "--json", "--actor", "agent:listik-swarm"]);
+});
+
+test("create: -t question, -l swarm:halt, --discovered-from, возвращает id", async () => {
+  const {calls} = setupFake({new: {stdout: JSON.stringify({id: "listik-xyz"})}});
+  const listik = new Listik({bin: FAKE_BIN, actor: "agent:listik-swarm", cliTimeout: 5});
+  const res = await listik.create({
+    title: "халт", project: "listik", type: "question",
+    labels: ["swarm:halt"], discoveredFrom: "listik-abc",
+  });
+  const [argv] = calls();
+  assert.deepEqual(argv, [
+    "new", "халт", "-p", "listik", "-t", "question", "-l", "swarm:halt",
+    "--discovered-from", "listik-abc", "--json", "--actor", "agent:listik-swarm",
+  ]);
+  assert.equal(res.id, "listik-xyz");
+});
+
+test("create: без labels/discoveredFrom/description — в argv нет этих флагов", async () => {
+  const {calls} = setupFake({new: {stdout: JSON.stringify({id: "listik-xyz"})}});
+  const listik = new Listik({bin: FAKE_BIN, actor: "agent:listik-swarm", cliTimeout: 5});
+  await listik.create({title: "халт", project: "listik", type: "question"});
+  const [argv] = calls();
+  assert.deepEqual(argv, ["new", "халт", "-p", "listik", "-t", "question", "--json", "--actor", "agent:listik-swarm"]);
+});
+
+test("set: worktree= (пустое) и labels=a,b", async () => {
+  const {calls} = setupFake({set: {stdout: JSON.stringify({id: "a"})}});
+  const listik = new Listik({bin: FAKE_BIN, actor: "agent:listik-swarm", cliTimeout: 5});
+  await listik.set("a", {worktree: null, labels: ["a", "b"]});
+  const [argv] = calls();
+  assert.deepEqual(argv, ["set", "a", "worktree=", "labels=a,b", "--json", "--actor", "agent:listik-swarm"]);
+});
+
 test("таймаут — ListikError c code timeout", async () => {
   setupFake({status: {sleepMs: 2000, stdout: JSON.stringify({server: "up"})}});
   const listik = new Listik({bin: FAKE_BIN, cliTimeout: 1});

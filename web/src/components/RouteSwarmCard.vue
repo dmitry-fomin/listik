@@ -393,21 +393,44 @@ interface RoleTile {
   roleTitle: string
   /** Харнесс исполнителя; `null` — этап пропускается. */
   harness: string | null
-  /** Команда одной строкой под плиткой; пусто у пропуска и у «как у харнесса». */
+  /** Команда одной строкой под плиткой: свой argv, а без него — команда харнесса. */
   commandLine: string
+  /** Подпись пропущенной роли: между какими этапами проскочит карточка. */
+  skipNote: string
+}
+
+function stageCodeOf(role: RoleKey): string {
+  return PIPELINE_STAGES.find((item) => item.value === ROLE_STAGE[role])?.code ?? ''
 }
 
 const roleTiles = computed<RoleTile[]>(() =>
-  ROLE_KEYS.map((role) => {
+  ROLE_KEYS.map((role, index) => {
     const cell = roles[role]
     const stage = PIPELINE_STAGES.find((item) => item.value === ROLE_STAGE[role])
+    const harness = cell
+      ? store.harnesses.value.find((item) => item.key === cell.harness)
+      : undefined
+    const argv = cell?.argv ?? harness?.argv
+    let skipNote = 'этап пропускается — карточка идёт дальше'
+    if (!cell) {
+      const prev = [...ROLE_KEYS.slice(0, index)].reverse().find((item) => roles[item])
+      const next = ROLE_KEYS.slice(index + 1).find((item) => roles[item])
+      if (prev && next) {
+        skipNote = `этап пропускается — из ${stageCodeOf(prev)} карточка сразу идёт на ${stageCodeOf(next)}`
+      } else if (next) {
+        skipNote = `этап пропускается — карточка сразу идёт на ${stageCodeOf(next)}`
+      } else if (prev) {
+        skipNote = `этап пропускается — после ${stageCodeOf(prev)} карточка закрывается`
+      }
+    }
     return {
       role,
       stageCode: stage?.code ?? '',
       stageLabel: stage?.label ?? '',
       roleTitle: ROLE_TITLES[role],
       harness: cell?.harness ?? null,
-      commandLine: cell?.argv ? previewCommand(cell.argv, props.route.key) : '',
+      commandLine: argv && argv.length > 0 ? previewCommand(argv, props.route.key) : '',
+      skipNote,
     }
   }),
 )
@@ -539,10 +562,10 @@ const roleInherits = computed(() => {
             />
           </div>
           <p v-if="!tile.harness" class="listik-route-swarm__role-skip">
-            этап пропускается — карточка идёт дальше
+            {{ tile.skipNote }}
           </p>
           <p v-else class="listik-mono listik-route-swarm__role-cmd">
-            {{ tile.commandLine || 'команда харнесса по умолчанию' }}
+            {{ tile.commandLine || '—' }}
           </p>
         </li>
       </ol>
@@ -742,8 +765,8 @@ const roleInherits = computed(() => {
 /* ── плитки ролей (макет `.roles`/`.role`): выбор исполнителя + пропуск ── */
 
 .listik-route-swarm__roles {
-  display: flex;
-  flex-direction: column;
+  display: grid;
+  grid-template-columns: repeat(4, minmax(0, 1fr));
   gap: var(--space-2);
   margin: 0;
   padding: 0;
@@ -753,7 +776,8 @@ const roleInherits = computed(() => {
 .listik-route-swarm__role {
   display: flex;
   flex-direction: column;
-  gap: var(--space-2);
+  gap: 6px;
+  min-width: 0;
   padding: var(--space-3);
   border: 1px solid var(--hairline);
   border-radius: var(--radius-lg);
@@ -761,19 +785,21 @@ const roleInherits = computed(() => {
 }
 
 .listik-route-swarm__role.is-open {
-  border-color: var(--accent-200);
-  background: var(--accent-50);
+  border-color: var(--accent-500);
+  box-shadow: var(--focus-ring);
 }
 
-/* Пропущенная роль — пунктирной плиткой, как `.role--skip` в макете. */
+/* Пропущенная роль — пунктирной плиткой без фона, как `.role--skip` в макете. */
 .listik-route-swarm__role.is-skip {
   border-style: dashed;
+  background: transparent;
 }
 
 .listik-route-swarm__role-head {
   display: flex;
-  align-items: baseline;
-  gap: var(--space-2);
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 6px;
   padding: 0;
   border: none;
   background: transparent;
@@ -801,15 +827,20 @@ const roleInherits = computed(() => {
 }
 
 .listik-route-swarm__role-title {
-  font-size: var(--text-sm);
+  font-size: var(--text-base);
   font-weight: var(--weight-medium);
   color: var(--ink-1);
+}
+
+.listik-route-swarm__role.is-skip .listik-route-swarm__role-title {
+  color: var(--ink-3);
 }
 
 .listik-route-swarm__role-pick {
   display: flex;
   align-items: center;
   gap: var(--space-2);
+  margin-top: 2px;
 }
 
 .listik-route-swarm__role-select {
@@ -825,7 +856,7 @@ const roleInherits = computed(() => {
 
 .listik-route-swarm__role-cmd {
   margin: 0;
-  font-size: var(--text-xs);
+  font-size: 11px;
   color: var(--ink-3);
   white-space: nowrap;
   overflow: hidden;

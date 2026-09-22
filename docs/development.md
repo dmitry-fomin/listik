@@ -31,6 +31,7 @@ cd web && npm run typecheck && npm run build
 до 3 минут, `test_swarm_barrier_e2e.py` — до 5.
 `tests/test_swarm_rollback_e2e.py` — живой сервер, реальный `listik watch`, до 5 минут;
 пропускается без `node`/`git`.
+`tests/test_swarm_rescope_e2e.py` — rescope в тике роя после влитой волны, подставная модель через `[swarm].command`, до 2 минут; пропускается без `node`/`git`.
 `swarm/test/git.test.mjs` и
 `swarm/test/arbiter.test.mjs` (в `node --test swarm/test/`) заводят собственные временные git-
 репозитории на каждый тест.

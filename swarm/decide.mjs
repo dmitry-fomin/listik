@@ -292,24 +292,25 @@ function superviseCrashed({open, events, tasks, config}) {
   for (const t of open) {
     if (!t.launched_by || !t.launch_finished_at || t.needs_owner) continue;
     const taskEvents = (events || {})[t.id] || [];
+    // метки секундные: ответ в ту же секунду, что финиш запуска, считается ответом после него
     const finishedMs = tsMs(t.launch_finished_at);
     const answered = taskEvents.some(ev => {
       if (ev.kind !== "answer") return false;
       const evTs = tsMs(ev.ts);
-      return evTs != null && finishedMs != null && evTs > finishedMs;
+      return evTs != null && finishedMs != null && evTs >= finishedMs;
     });
     const defaulted = taskEvents.some(ev => {
       if (ev.kind !== "answer") return false;
       if (normActor(ev.actor) !== actorNorm) return false;
       const evTs = tsMs(ev.ts);
-      return evTs != null && finishedMs != null && evTs > finishedMs;
+      return evTs != null && finishedMs != null && evTs >= finishedMs;
     });
     const rejected = taskEvents.some(ev => {
       if (ev.kind !== "comment") return false;
       if (normActor(ev.actor) !== actorNorm) return false;
       if (typeof ev.note !== "string" || !ev.note.startsWith(REJECTED_MARK)) return false;
       const evTs = tsMs(ev.ts);
-      return evTs != null && finishedMs != null && evTs > finishedMs;
+      return evTs != null && finishedMs != null && evTs >= finishedMs;
     });
 
     if (rejected || defaulted || answered) {

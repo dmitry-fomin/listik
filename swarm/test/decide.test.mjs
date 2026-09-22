@@ -382,6 +382,20 @@ test("надзор: упавшая с answer позже launch_finished_at — r
   assert.deepEqual(res.crashed, []);
 });
 
+test("надзор: упавшая с answer в ту же секунду, что launch_finished_at — restart answered", () => {
+  const t = task("a", {
+    launched_by: "agent:listik-swarm", launch_finished_at: "2026-01-01T00:00:00Z",
+    launch_exit_code: 1, needs_owner: false, labels: ["port:5170"],
+  });
+  const events = {a: [{kind: "answer", actor: "dmitry", ts: "2026-01-01T00:00:00Z"}]};
+  const res = decideRunning(t, {
+    plan: {waves: [[]], cycles: [], unroutable: [], unscoped: [], blocked: {}}, events,
+  });
+  assert.equal(res.restart.length, 1);
+  assert.equal(res.restart[0].reason, "answered");
+  assert.deepEqual(res.crashed, []);
+});
+
 test("надзор: упавшая с answer раньше launch_finished_at — crashed, exit_code null — «код неизвестен»", () => {
   const t = task("a", {
     launched_by: "agent:listik-swarm", launch_finished_at: "2026-01-01T00:00:00Z",

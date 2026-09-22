@@ -17,7 +17,10 @@
  *
  * Помощники проверки команды — из `lib/routes.ts` (`commandProblemText`,
  * `previewCommand`, `ROUTE_PLACEHOLDERS`), уровни — из `ROUTE_ICONS`,
- * держатели — из `HARNESS_TITLES`; списком в шаблоне ничего не дублируется.
+ * держатели — из каталога `store.harnesses` (`GET /api/harnesses`). Пункт
+ * «Новый харнесс…» в конце списка разворачивает поле ключа нового исполнителя:
+ * перед маршрутом уходит `POST /api/harnesses` (команда — та же, что набрана
+ * для маршрута), и маршрут заводится уже на него (listik-2gry).
  */
 import { computed, onMounted, ref, watch } from 'vue'
 import {
@@ -36,7 +39,6 @@ import ListikIcon from './ListikIcon.vue'
 import store from '@/store/listik'
 import type { DirectRouteCreate, DirectRouteDef, RouteIconKey } from '@/api/types'
 import { ROUTE_ICONS } from '@/lib/dictionaries'
-import { HARNESS_TITLES, type HarnessKey } from '@/lib/harness'
 import { ROUTE_PLACEHOLDERS, braced, commandProblemText, previewCommand } from '@/lib/routes'
 
 const emit = defineEmits<{ created: [route: DirectRouteDef]; close: [] }>()
@@ -53,7 +55,9 @@ const title = ref('')
 const key = ref('')
 /** Автор тронул «Ключ» — подстановка из названия больше не действует. */
 const keyTouched = ref(false)
-const harness = ref<HarnessKey | null>(null)
+const harness = ref<string | null>(null)
+/** Ключ нового харнесса — при выборе пункта «Новый харнесс…» в списке держателей. */
+const newHarnessKey = ref('')
 const hint = ref('')
 const icon = ref<RouteIconKey | null>('direct')
 const prompt = ref('')
@@ -108,6 +112,21 @@ const keyError = computed(() => {
 
 const harnessError = computed(() => (harness.value === null ? 'держатель не выбран' : null))
 
+/** Служебное значение пункта «Новый харнесс…» — ключом харнесса не бывает (символы вне KEY_RE). */
+const NEW_HARNESS = '__new__'
+
+const creatingHarness = computed(() => harness.value === NEW_HARNESS)
+
+const newHarnessKeyError = computed(() => {
+  if (!creatingHarness.value) return null
+  const value = newHarnessKey.value
+  if (!value) return 'ключ нового харнесса не заполнен'
+  if (!KEY_RE.test(value)) {
+    return 'ключ: строчные латинские буквы, цифры и дефис, начинается с буквы или цифры'
+  }
+  return null
+})
+
 const argProblems = computed(() => argRows.value.map((row) => commandProblemText(row.value)))
 const promptProblem = computed(() => commandProblemText(prompt.value))
 const firstProblem = computed(
@@ -134,6 +153,7 @@ const canSubmit = computed(
     !titleError.value &&
     !keyError.value &&
     !harnessError.value &&
+    !newHarnessKeyError.value &&
     !commandError.value,
 )
 
@@ -156,17 +176,42 @@ function syncSubmitDisabled(): void {
   else button.removeAttribute('submit-disabled')
 }
 
-onMounted(syncSubmitDisabled)
+onMounted(() => {
+  syncSubmitDisabled()
+  store.ensureHarnesses()
+})
 watch(submitDisabled, syncSubmitDisabled, { flush: 'post' })
 
 /* ── выборы: держатель и иконка ── */
 
-/** Держатели — ключи `HARNESS_TITLES` без `human` (сервер принимает пять харнессов). */
-const harnessOptions = computed<UiSelectOption<HarnessKey>[]>(() =>
-  (Object.keys(HARNESS_TITLES) as HarnessKey[])
-    .filter((value) => value !== 'human')
-    .map((value) => ({ value, label: HARNESS_TITLES[value] })),
-)
+/**
+ * Держатели — включённые записи каталога харнессов плюс пункт «Новый
+ * харнесс…» в конце (макет «Завести прямой маршрут · новый харнесс»). Ручные
+ * (`manual`) записи в списке есть: держателем прямой выдачи может быть и
+ * человек.
+ */
+const harnessOptions = computed<UiSelectOption<string>[]>(() => {
+  const options: UiSelectOption<string>[] = store.harnesses.value
+    .filter((item) => item.enabled)
+    .map((item) => ({
+      value: item.key,
+      label: item.label || item.key,
+    }))
+  options.push({ value: NEW_HARNESS, label: 'Новый харнесс…' })
+  return options
+})
+
+/**
+ * Ключ нового харнесса по умолчанию — из названия маршрута: «devin» у
+ * «Devin». Подстановка прекращается, когда автор тронул само поле ключа
+ * харнесса или ключ маршрута (там своя производная).
+ */
+const newHarnessTouched = ref(false)
+watch(title, (value) => {
+  if (newHarnessTouched.value) return
+  const draft = draftKeyFromTitle(value)
+  newHarnessKey.value = KEY_RE.test(draft) ? draft : ''
+})
 
 const iconOptions = computed<IconToggleOption<string>[]>(() => [
   ...ROUTE_ICONS.map((item) => ({ value: item.value as string, label: item.hint })),
@@ -201,21 +246,42 @@ const preview = computed(() => previewCommand(command.value, key.value))
 /* ── отправка ── */
 
 async function submit(): Promise<void> {
-  if (!canSubmit.value) return
+  if (!canSubmit.value || harness.value === null) return
   submitting.value = true
   serverError.value = null
+  let holder = harness.value
+  if (creatingHarness.value) {
+    // «Новый харнесс…»: сначала запись каталога — командой по умолчанию ему
+    // становятся те же аргументы и промпт, что набраны для маршрута.
+    const created = await store.createHarness({
+      key: newHarnessKey.value,
+      label: newHarnessKey.value,
+      argv: argRows.value.map((row) => row.value).filter((value) => value.trim() !== ''),
+      prompt: prompt.value.trim() === '' ? null : prompt.value,
+    })
+    if (!created) {
+      submitting.value = false
+      const message = store.harnessesError.value ?? 'Не получилось завести харнесс'
+      store.harnessesError.value = null
+      serverError.value = store.harnessCreateConflict.value
+        ? `${message}\nКлюч харнесса занят — измените поле «Ключ нового харнесса»`
+        : message
+      return
+    }
+    holder = created.key
+  }
   const payload: DirectRouteCreate = {
     kind: 'direct',
     key: key.value,
     title: title.value.trim(),
     hint: hint.value,
     icon: icon.value,
-    harness: harness.value as HarnessKey,
+    harness: holder,
     command: command.value,
   }
   const created = await store.createRoute(payload)
   submitting.value = false
-  if (!created) {
+  if (!created || created.kind !== 'direct') {
     const message = store.routesSettingsError.value ?? 'Не получилось завести маршрут'
     store.routesSettingsError.value = null
     serverError.value = store.routeCreateConflict.value
@@ -238,7 +304,7 @@ async function submit(): Promise<void> {
   >
     <p class="listik-new-direct__lead listik-new-direct__anchor">
       Прямой маршрут — одна команда, которую Listik запускает сам. Конвейеры так не заводятся:
-      они приходят из скилов.
+      они приходят из поставки сами.
     </p>
 
     <UiAlert v-if="serverError" tone="danger">
@@ -271,6 +337,8 @@ async function submit(): Promise<void> {
         <UiSelect
           v-model="harness"
           :options="harnessOptions"
+          filter
+          filterPlaceholder="Харнесс…"
           placeholder="Выбрать…"
           ariaLabel="Держатель карточки"
         />
@@ -280,6 +348,23 @@ async function submit(): Promise<void> {
         <UiInput class="listik-new-direct__hint" v-model="hint" placeholder="необязательно" />
       </UiField>
     </div>
+
+    <!-- Пункт «Новый харнесс…» в держателе разворачивает ключ нового
+         исполнителя: он уйдёт в `POST /api/harnesses` до маршрута. -->
+    <UiField
+      v-if="creatingHarness"
+      label="Ключ нового харнесса"
+      required
+      :hint="`держателем станет agent:${newHarnessKey || '…'}`"
+      :error="newHarnessKeyError"
+    >
+      <UiInput
+        class="listik-mono"
+        :model-value="newHarnessKey"
+        placeholder="devin"
+        @update:model-value="(value: string) => { newHarnessTouched = true; newHarnessKey = value }"
+      />
+    </UiField>
 
     <UiField label="Иконка">
       <IconToggle

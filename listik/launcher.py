@@ -30,6 +30,7 @@ from pathlib import Path
 from . import actors as actors_mod
 from . import db as db_mod
 from . import errors as errors_mod
+from . import harnesses_store
 from . import paths
 from . import routes as routes_mod
 from . import store
@@ -40,8 +41,6 @@ from . import store
 _SUBST_RE = re.compile(r"\{(" + "|".join(routes_mod.PLACEHOLDERS) + r")\}")
 
 ALREADY_STARTED = "уже запущена Listik"
-#: Не отказ: процесс не поднимали, этап уже сдвинут или родителя запускать не нужно.
-STAGE_SKIPPED = "stage-skipped"
 
 # Переменные LISTIK_*, которые сам Listik читает или выдаёт (см. listik/paths.py,
 # bin/listik, listik/client.py, listik/cwd_project.py, listik/fence.py и штатные пять
@@ -202,15 +201,17 @@ def _workdir(conn, row) -> Path | None:
 
 
 def _substitute(element: str, values: dict) -> str:
-    return _SUBST_RE.sub(lambda m: values[m.group(1)], element)
+    # Незнакомые этому запуску подстановки (например, `{stage}` у прямого
+    # маршрута) — пустая строка, а не KeyError (docs/specs/swarm-stage-launch.md).
+    return _SUBST_RE.sub(lambda m: values.get(m.group(1), ""), element)
 
 
 def _start_tracker(conn, task_id: str, pid: int, proc: subprocess.Popen, notify,
-                    *, dispatch_id: str | None, generation: int, swarm: bool = False):
+                    *, dispatch_id: str | None, generation: int):
     """Поток-демон, который дождётся процесса и запишет его код выхода."""
     thread = threading.Thread(
         target=_track,
-        args=(conn, _db_path(conn), task_id, pid, proc, notify, dispatch_id, generation, swarm),
+        args=(conn, _db_path(conn), task_id, pid, proc, notify, dispatch_id, generation),
         name=f"listik-launch-{task_id}", daemon=True)
     with _trackers_lock:
         _trackers[task_id] = thread
@@ -219,36 +220,37 @@ def _start_tracker(conn, task_id: str, pid: int, proc: subprocess.Popen, notify,
 
 
 def _track(conn, db_path, task_id: str, pid: int, proc: subprocess.Popen, notify,
-           dispatch_id: str | None, generation: int, swarm: bool = False) -> None:
+           dispatch_id: str | None, generation: int) -> None:
     code = proc.wait()
     own = db_mod.connect(db_path) if db_path else None
     target = own or conn
     try:
-        if swarm:
-            from . import stage_launch
-            log_row = target.execute(
-                "SELECT launch_log FROM tasks WHERE id = ?", (task_id,)).fetchone()
-            stage_launch.finish_swarm(
-                target, task_id, exit_code=code, dispatch_id=dispatch_id, pid=pid,
-                log_path=log_row["launch_log"] if log_row else None, generation=generation)
+        ts = store.now_iso()
+        # `IS`, не `=`: сверяем со «своим» запуском, включая случай dispatch_id IS NULL
+        # (запуски до поколений). `rowcount == 0` — задачу отозвали/перезапустили, пока
+        # процесс жил (порция c): колонки чужого запуска не трогаем.
+        cur = target.execute(
+            "UPDATE tasks SET launch_exit_code = ?, launch_finished_at = ?, "
+            "updated_at = ? WHERE id = ? AND dispatch_id IS ?",
+            (code, ts, ts, task_id, dispatch_id))
+        if cur.rowcount == 0:
+            store.add_comment(
+                target, task_id,
+                f"автостарт: процесс {pid} поколения {generation} завершился с кодом "
+                f"{code} после отзыва — карточка не менялась",
+                author="agent:listik", kind="journal")
         else:
-            ts = store.now_iso()
-            # `IS`, не `=`: сверяем со «своим» запуском, включая случай dispatch_id IS NULL
-            # (запуски до поколений). `rowcount == 0` — задачу отозвали/перезапустили, пока
-            # процесс жил (порция c): колонки чужого запуска не трогаем.
-            cur = target.execute(
-                "UPDATE tasks SET launch_exit_code = ?, launch_finished_at = ?, "
-                "updated_at = ? WHERE id = ? AND dispatch_id IS ?",
-                (code, ts, ts, task_id, dispatch_id))
-            if cur.rowcount == 0:
-                store.add_comment(
-                    target, task_id,
-                    f"автостарт: процесс {pid} поколения {generation} завершился с кодом "
-                    f"{code} после отзыва — карточка не менялась",
-                    author="agent:listik", kind="journal")
+            # У режима роя stdout идёт в `.out` рядом с launch_log, а исход
+            # карточки разбирает `stage_launch.apply_outcome` — общую строку
+            # «процесс завершился» там не пишем (docs/specs/swarm-stage-launch.md).
+            drv = target.execute(
+                "SELECT launch_driver FROM tasks WHERE id = ?", (task_id,)).fetchone()
+            if drv is not None and (drv["launch_driver"] or "") == "swarm":
+                from . import stage_launch
+                stage_launch.apply_outcome(target, task_id, notify=notify)
             else:
-                # add_comment коммитит и UPDATE выше — завершение пишется одной транзакцией.
-                # Этап, держателя и статус слежение не трогает: не делает claim за агента.
+                # add_comment коммитит и UPDATE выше — завершение пишется одной
+                # транзакцией. Этап, держателя и статус слежение не трогает.
                 store.add_comment(target, task_id,
                                   f"автостарт: процесс {pid} завершился с кодом {code}",
                                   author="agent:listik", kind="journal")
@@ -281,17 +283,28 @@ def start(conn, task_id: str, notify=None, *, log_dir=None, env=None) -> str | N
     Поток слежения доступен через `tracker(task_id)`.
     """
     extra = check_env(env)
+    row = conn.execute("SELECT * FROM tasks WHERE id = ?", (task_id,)).fetchone()
+    if row is None:
+        print(f"autostart {task_id}: задача не найдена", file=sys.stderr, flush=True)
+        return "задача не найдена"
+
+    state = routes_mod.state(conn)
+    key = row["launch_route"] or ""
+    record = state.by_key.get(key) if state.ok else None
+    # Снимок способа исполнения (listik-2gry): `launch_driver` пишет только
+    # лаунчер и только в первый захват (снимок ещё пуст). У прямого маршрута
+    # снимка нет — `driver` там всегда `skill`.
+    driver = None
+    if record is not None and record.get("kind") in ("pipeline", "swarm"):
+        driver = record.get("driver") or "skill"
+
     ts = store.now_iso()
     dispatch_id = uuid.uuid4().hex
     captured = conn.execute(
         "UPDATE tasks SET launched_by = 'listik', launched_at = ?, "
         "generation = generation + 1, dispatch_id = ?, "
-        "launch_driver = CASE "
-        "WHEN launch_driver IS NOT NULL AND trim(launch_driver) != '' THEN launch_driver "
-        "ELSE (SELECT CASE WHEN r.kind = 'pipeline' "
-        "THEN COALESCE(NULLIF(trim(r.driver), ''), 'skill') ELSE NULL END "
-        "FROM routes r WHERE r.key = tasks.launch_route) END "
-        "WHERE id = ? AND launched_by IS NULL", (ts, dispatch_id, task_id))
+        "launch_driver = COALESCE(launch_driver, ?) "
+        "WHERE id = ? AND launched_by IS NULL", (ts, dispatch_id, driver, task_id))
     conn.commit()
     if captured.rowcount == 0:
         # Задача уже запущена этим или параллельным вызовом: ни launch_error, ни
@@ -299,26 +312,28 @@ def start(conn, task_id: str, notify=None, *, log_dir=None, env=None) -> str | N
         print(f"autostart {task_id}: {ALREADY_STARTED}", file=sys.stderr, flush=True)
         return ALREADY_STARTED
 
-    row = conn.execute("SELECT * FROM tasks WHERE id = ?", (task_id,)).fetchone()
-    if row is None:  # задачу удалили между захватом и чтением
-        print(f"autostart {task_id}: задача не найдена", file=sys.stderr, flush=True)
-        return "задача не найдена"
-
-    state = routes_mod.state(conn)
     if not state.ok:
         return _fail(conn, task_id, f"маршруты в базе недоступны: {state.error}", notify)
 
-    key = row["launch_route"] or ""
-    record = state.by_key.get(key)
     if record is None:
         return _fail(conn, task_id, f"маршрута {key} нет в базе", notify)
 
-    from . import stage_launch
-    swarm_mode = stage_launch.card_driver(row, record) == "swarm"
-    if not swarm_mode:
-        command = record.get("command")
-        if not command:
-            return _fail(conn, task_id, f"у маршрута {key} нет command в базе", notify)
+    # Перечитываем карточку после захвата: `generation`/`dispatch_id`/снимок
+    # `launch_driver` в `row` уже этого запуска.
+    row = conn.execute("SELECT * FROM tasks WHERE id = ?", (task_id,)).fetchone()
+    if row is None:  # задачу удалили между захватом и чтением
+        _release(conn, task_id)
+        return "задача не найдена"
+
+    # После снимка способ читается с карточки: правка `routes.driver` начатый
+    # прогон не переводит в другой способ.
+    if (row["launch_driver"] or driver or "skill") == "swarm":
+        return _start_swarm(conn, task_id, row, record, notify=notify,
+                            log_dir=log_dir, extra=extra, dispatch_id=dispatch_id)
+
+    command = record.get("command")
+    if not command:
+        return _fail(conn, task_id, f"у маршрута {key} нет command в базе", notify)
 
     cwd = _workdir(conn, row)
     if cwd is None:
@@ -326,41 +341,33 @@ def start(conn, task_id: str, notify=None, *, log_dir=None, env=None) -> str | N
         return _fail(conn, task_id,
                      f"нет рабочего каталога (worktree или path проекта {project})", notify)
 
-    swarm = None
+    # Прямой маршрут: харнесс работает сам, оркестратора нет. Карточку выдаём ему до
+    # Popen — этап «ТЗ» (s1-spec, если этапа ещё нет) и держатель-харнесс, — чтобы её
+    # не взял никто другой, пока агент читает код. Это выдача, а не claim за агента:
+    # «взята» карточка станет только после его собственного claim. «Разработку»
+    # (s3-impl) агент ставит сам перед первой правкой кода (listik-tyxn).
     issued = False
-    if swarm_mode:
-        plan = stage_launch.plan_start(conn, task_id, row, record)
-        if plan["action"] == "skip":
-            return STAGE_SKIPPED
-        if plan["action"] != "run":
-            return plan.get("message") or "рой: запуск не выполнен"
-        command = plan["command"]
-        swarm = plan
-        row = conn.execute("SELECT * FROM tasks WHERE id = ?", (task_id,)).fetchone()
-    else:
-        # Прямой маршрут: харнесс работает сам, оркестратора нет. Карточку выдаём ему до
-        # Popen — этап «ТЗ» (s1-spec, если этапа ещё нет) и держатель-харнесс, — чтобы её
-        # не взял никто другой, пока агент читает код. Это выдача, а не claim за агента:
-        # «взята» карточка станет только после его собственного claim.
-        if record.get("kind") == "direct" and not (row["holder"] or "").strip():
-            fields = {"holder": record["harness"]}
-            if not (row["stage"] or "").strip():
-                fields["stage"] = "s1-spec"
-            store.update_task(conn, task_id, actor="agent:listik",
-                              note=f"автостарт: выдана {record['harness']}", **fields)
-            issued = True
+    if record.get("kind") == "direct" and not (row["holder"] or "").strip():
+        # Держатель — ключ харнесса маршрута (devin, любой свой из каталога):
+        # регистрируем синоним `agent:<key>`, иначе `claim` ответит
+        # «неизвестный держатель» и «выдана, но не взята» никогда не снимется.
+        harnesses_store.register_holder(conn, record["harness"])
+        fields = {"holder": record["harness"]}
+        if not (row["stage"] or "").strip():
+            fields["stage"] = "s1-spec"
+        store.update_task(conn, task_id, actor="agent:listik",
+                          note=f"автостарт: выдана {record['harness']}", **fields)
+        issued = True
 
     # `{worktree}` — колонка `tasks.worktree`, но пустое значение и маркер основной
     # ветки (`main`/`master`) указывают не на дерево, а на каталог проекта: подставляем
     # `cwd`, чтобы значение всегда указывало на реальное дерево. `{branch}` пуст — пустая
-    # строка. `{stage}` и `{role}` у скила и прямого маршрута пустые. Замена однопроходная.
+    # строка. Замена однопроходная (см. `_SUBST_RE`).
     worktree = (row["worktree"] or "").strip()
     if not worktree or store.is_main_worktree(worktree):
         worktree = str(cwd)
     values = {"task_id": task_id, "project": row["project"] or "", "route": key,
-              "cwd": str(cwd), "worktree": worktree, "branch": row["branch"] or "",
-              "stage": swarm["stage"] if swarm else "",
-              "role": swarm["role"] if swarm else ""}
+              "cwd": str(cwd), "worktree": worktree, "branch": row["branch"] or ""}
     argv = [_substitute(element, values) for element in command]
 
     log_dir = Path(log_dir) if log_dir is not None else paths.LOGS_DIR
@@ -371,27 +378,15 @@ def start(conn, task_id: str, notify=None, *, log_dir=None, env=None) -> str | N
                         "LISTIK_LAUNCHED_BY": "listik",
                         "LISTIK_GENERATION": str(generation),
                         "LISTIK_DISPATCH_ID": row["dispatch_id"] or ""}
-    if swarm:
-        proc_env["LISTIK_STAGE"] = swarm["stage"]
-        proc_env["LISTIK_ROLE"] = swarm["role"]
-        proc_env["LISTIK_HARNESS"] = swarm["harness"]
     try:
         log_dir.mkdir(parents=True, exist_ok=True)
-        if swarm:
-            from . import stage_launch as _stage_launch
-            out_path = _stage_launch.stdout_path(str(log_path))
-            with open(log_path, "wb") as err, open(out_path, "wb") as out:
-                proc = subprocess.Popen(argv, cwd=str(cwd), stdin=subprocess.DEVNULL,
-                                        stdout=out, stderr=err,
-                                        start_new_session=True, env=proc_env)
-        else:
-            with open(log_path, "wb") as log:
-                # Без shell: argv уходит процессу как есть, ничего из задачи не расширяется.
-                proc = subprocess.Popen(argv, cwd=str(cwd), stdin=subprocess.DEVNULL,
-                                        stdout=log, stderr=subprocess.STDOUT,
-                                        start_new_session=True, env=proc_env)
+        with open(log_path, "wb") as log:
+            # Без shell: argv уходит процессу как есть, ничего из задачи не расширяется.
+            proc = subprocess.Popen(argv, cwd=str(cwd), stdin=subprocess.DEVNULL,
+                                    stdout=log, stderr=subprocess.STDOUT,
+                                    start_new_session=True, env=proc_env)
     except OSError as exc:
-        if issued or swarm:  # процесса нет — держателя снимаем, этап остаётся
+        if issued:  # процесса нет — выдача никому: держателя снимаем, этап остаётся
             store.update_task(conn, task_id, actor="agent:listik", holder="",
                               note="автостарт не выполнен: выдача снята")
         return _fail(conn, task_id, f"не удалось запустить: {exc}", notify)
@@ -414,17 +409,189 @@ def start(conn, task_id: str, notify=None, *, log_dir=None, env=None) -> str | N
     if extra:
         env_tail = ", окружение " + ", ".join(f"{k}={v}" for k, v in sorted(extra.items()))
     # add_comment коммитит и UPDATE выше — запуск пишется одной транзакцией.
-    if swarm:
-        started = (f"рой: этап {swarm['stage']}, роль {swarm['role']}, "
-                   f"держатель {swarm['harness']}, pid {pid}, лог {log_path}, "
-                   f"поколение {generation}, запуск {dispatch_id} — карточку взял Listik")
-    else:
-        started = (f"автостарт: маршрут {key}, pid {pid}, лог {log_path}, "
-                   f"поколение {generation}, запуск {dispatch_id}{env_tail}")
-    store.add_comment(conn, task_id, started, author="agent:listik", kind="journal")
+    store.add_comment(conn, task_id,
+                      f"автостарт: маршрут {key}, pid {pid}, лог {log_path}, "
+                      f"поколение {generation}, запуск {dispatch_id}{env_tail}",
+                      author="agent:listik", kind="journal")
     _notify(notify, task_id)
     _start_tracker(conn, task_id, pid, proc, notify,
-                   dispatch_id=dispatch_id, generation=generation, swarm=bool(swarm))
+                   dispatch_id=dispatch_id, generation=generation)
+    return None
+
+
+def _swarm_refuse(conn, task_id: str, text: str, notify) -> dict:
+    """Отказ режима роя: захват снять, вопрос человеку, HTTP 200 `launched: false`.
+
+    От `refuse` отличается двумя вещами: `launch_error` и префикс
+    `автостарт не выполнен` не ставятся — этим префиксом пользуется сброс
+    маршрута (`store.autostart_reset`), а исход роя — не отказ автостарта.
+    """
+    _release(conn, task_id)
+    store.set_needs_owner(conn, task_id, value=True, text=text,
+                          actor="agent:listik")
+    print(f"swarm {task_id}: {text}", file=sys.stderr, flush=True)
+    _notify(notify, task_id)
+    return {"launched": False, "needs_owner": True}
+
+
+def _start_swarm(conn, task_id: str, row, record: dict, *, notify, log_dir,
+                 extra: dict, dispatch_id: str):
+    """Запуск режима роя: `claim` за харнесс роли, процесс этой роли.
+
+    Команду маршрута (`routes.command`) рой не исполняет — поднимается argv
+    роли текущего этапа (свой, иначе команда харнесса по умолчанию; промпт идёт
+    последним аргументом). Карточку ведёт Listik: `claim`, `release` и `stage`
+    харнесс не вызывает. Любой выход без процесса возвращает dict
+    `{"launched": False, ...}` — это не отказ (409): HTTP отдаёт 200
+    (docs/specs/swarm-stage-launch.md).
+    """
+    from . import stage_launch
+
+    key = record["key"]
+    # Родитель с живыми порциями сам по ролям не идёт: бегут его дети.
+    if stage_launch.has_portions(conn, task_id):
+        store.add_comment(conn, task_id,
+                          "рой: родитель нарезан, запускаются порции",
+                          author="agent:listik", kind="journal")
+        _release(conn, task_id)
+        _notify(notify, task_id)
+        return {"launched": False, "reason": "sliced"}
+
+    # Все порции отменены: `s1-spec` заново не запускаем. Вопрос ставит сервер
+    # при отмене последнего ребёнка; здесь — только если его почему-то нет.
+    if stage_launch.portions_cancelled_only(conn, row):
+        if not row["needs_owner"]:
+            store.set_needs_owner(
+                conn, task_id, value=True, actor="agent:listik",
+                text="рой: все порции отменены, родитель не закрыт")
+        _release(conn, task_id)
+        _notify(notify, task_id)
+        return {"launched": False, "reason": "sliced"}
+
+    if not stage_launch.has_roles(conn, record):
+        return _swarm_refuse(conn, task_id,
+                             f"рой: у маршрута {key} нет роли с командой — "
+                             "маршрут не выбираю", notify)
+
+    stage = (row["stage"] or "").strip() or "s1-spec"
+    role = stage_launch.role_of_stage(stage)
+    resolved = stage_launch.resolve_role(conn, record, role)
+    if resolved is None:
+        # У текущего этапа роли нет — это не сбой: ближайший следующий этап
+        # с ролью. Процесс не поднимаем, `needs_owner` не ставим.
+        nxt = stage_launch.next_stage_with_role(conn, record, stage)
+        if nxt is None:
+            return _swarm_refuse(
+                conn, task_id,
+                f"рой: после {stage} роли нет, карточку не закрываю. "
+                "Сними флаг — запущу тот же этап снова.", notify)
+        store.update_task(conn, task_id, actor="agent:listik", stage=nxt,
+                          holder="", note=f"рой: роли {role or '—'} нет")
+        store.add_comment(conn, task_id,
+                          f"рой: роли {role or '—'} нет, этап {stage} → {nxt}",
+                          author="agent:listik", kind="journal")
+        _release(conn, task_id)
+        _notify(notify, task_id)
+        return {"launched": False, "stage_skipped": nxt}
+
+    harness = resolved["harness"]
+
+    # Каталог запуска ищется до `claim`: без рабочего каталога держателя не
+    # ставим и процесс не поднимаем (порядок шагов спеки).
+    cwd = _workdir(conn, row)
+    if cwd is None:
+        project = row["project"] or "—"
+        return _swarm_refuse(conn, task_id,
+                             f"рой: нет рабочего каталога (worktree или path "
+                             f"проекта {project})", notify)
+
+    # Пустой этап незапущенной карточки — `s1-spec`; записываем его до `claim`,
+    # чтобы разрешённость харнесса проверялась по этапу.
+    if not (row["stage"] or "").strip():
+        store.update_task(conn, task_id, actor="agent:listik", stage="s1-spec",
+                          note="рой: начало — этап s1-spec")
+        row = conn.execute("SELECT * FROM tasks WHERE id = ?", (task_id,)).fetchone()
+
+    # `claim` подписан харнессом роли: «взята» считается по автору события,
+    # поэтому автор — `agent:<harness>`, а карточку взял Listik видно по журналу
+    # старта ниже. Алиас `foo` → `agent:foo` нужен `holder_claim_state`.
+    harnesses_store.register_holder(conn, harness)
+    try:
+        store.claim(conn, task_id, holder=harness, harness=harness,
+                    actor=f"agent:{harness}", note=f"рой: взял за {harness}")
+    except Exception as exc:  # noqa: BLE001 — любой отказ claim → вопрос человеку
+        _release(conn, task_id)
+        store.set_needs_owner(conn, task_id, value=True, actor="agent:listik",
+                              text=f"рой: не взял карточку за {harness} "
+                                   f"(этап {stage}, роль {role}): "
+                                   f"{errors_mod.message_of(exc)}")
+        print(f"swarm {task_id}: claim за {harness} не прошёл: {exc}",
+              file=sys.stderr, flush=True)
+        _notify(notify, task_id)
+        return {"launched": False, "needs_owner": True}
+
+    # Подстановки те же, что у команды маршрута, плюс `{stage}`/`{role}`/`{harness}`.
+    worktree = (row["worktree"] or "").strip()
+    if not worktree or store.is_main_worktree(worktree):
+        worktree = str(cwd)
+    values = {"task_id": task_id, "project": row["project"] or "", "route": key,
+              "cwd": str(cwd), "worktree": worktree, "branch": row["branch"] or "",
+              "stage": stage, "role": role or "", "harness": harness}
+    argv = [_substitute(element, values) for element in resolved["argv"]]
+    if resolved.get("prompt"):
+        argv.append(_substitute(resolved["prompt"], values))
+
+    log_dir = Path(log_dir) if log_dir is not None else paths.LOGS_DIR
+    stamp = datetime.now(timezone.utc).strftime("%Y%m%dT%H%M%SZ")
+    log_path = log_dir / f"launch-{task_id}-{stamp}.log"
+    # У роя потоки разделены: stdout (ответ на первой строке) — в `.out`,
+    # stderr — в `launch_log` (docs/specs/swarm-stage-launch.md).
+    out_path = stage_launch.out_path_of(str(log_path))
+    generation = int(row["generation"] or 0)
+    proc_env = os.environ | extra | {"LISTIK_TASK_ID": task_id, "LISTIK_ROUTE": key,
+                        "LISTIK_LAUNCHED_BY": "listik",
+                        "LISTIK_GENERATION": str(generation),
+                        "LISTIK_DISPATCH_ID": row["dispatch_id"] or "",
+                        "LISTIK_STAGE": stage, "LISTIK_ROLE": role or "",
+                        "LISTIK_HARNESS": harness}
+    try:
+        log_dir.mkdir(parents=True, exist_ok=True)
+        out_file = open(out_path, "wb")
+        log_file = open(log_path, "wb")
+        try:
+            proc = subprocess.Popen(argv, cwd=str(cwd), stdin=subprocess.DEVNULL,
+                                    stdout=out_file, stderr=log_file,
+                                    start_new_session=True, env=proc_env)
+        finally:
+            out_file.close()
+            log_file.close()
+    except OSError as exc:
+        # Процесса нет — держателя и захват снять, вопрос человеку.
+        store.update_task(conn, task_id, actor="agent:listik", holder="",
+                          note="рой: запуск не удался, держатель снят")
+        return _swarm_refuse(conn, task_id,
+                             f"рой: этап {stage} ({role}) не запустился: {exc}",
+                             notify)
+
+    pid = proc.pid
+    with _trackers_lock:
+        _procs[task_id] = proc
+    ts = store.now_iso()
+    dispatch_id = row["dispatch_id"]
+    conn.execute("UPDATE tasks SET launch_pid = ?, launch_log = ?, launch_error = NULL, "
+                 "launch_exit_code = NULL, launch_finished_at = NULL, updated_at = ? "
+                 "WHERE id = ?", (pid, str(log_path), ts, task_id))
+    env_tail = ""
+    if extra:
+        env_tail = ", окружение " + ", ".join(f"{k}={v}" for k, v in sorted(extra.items()))
+    store.add_comment(conn, task_id,
+                      f"рой: этап {stage}, роль {role}, держатель {harness}, "
+                      f"pid {pid}, лог {log_path}, поколение {generation}, "
+                      f"запуск {dispatch_id}{env_tail} — карточку взял Listik",
+                      author="agent:listik", kind="journal")
+    _notify(notify, task_id)
+    _start_tracker(conn, task_id, pid, proc, notify,
+                   dispatch_id=dispatch_id, generation=generation)
     return None
 
 
@@ -443,9 +610,8 @@ def recover(conn, notify=None) -> list[str]:
     считается живым, это не лечим.
     """
     rows = conn.execute(
-        "SELECT id, launch_pid, dispatch_id, launch_log, launch_driver FROM tasks "
-        "WHERE launched_by = 'listik' "
-        "AND launch_pid IS NOT NULL "
+        "SELECT id, launch_pid, dispatch_id, launch_driver FROM tasks "
+        "WHERE launched_by = 'listik' AND launch_pid IS NOT NULL "
         "AND (launch_finished_at IS NULL OR launch_finished_at = '')").fetchall()
     lost: list[str] = []
     for row in rows:
@@ -453,19 +619,26 @@ def recover(conn, notify=None) -> list[str]:
         try:
             os.kill(pid, 0)
         except ProcessLookupError:
+            ts = store.now_iso()
+            # Тот же забор, что у `_track`/`_poll`: задачу могли перезапустить
+            # между запросом и записью — чужой прогон не помечаем.
+            cur = conn.execute(
+                "UPDATE tasks SET launch_finished_at = ?, updated_at = ? "
+                "WHERE id = ? AND launch_pid = ? AND dispatch_id IS ? "
+                "AND (launch_finished_at IS NULL OR launch_finished_at = '')",
+                (ts, ts, row["id"], pid, row["dispatch_id"]))
+            if cur.rowcount == 0:
+                continue
             if (row["launch_driver"] or "") == "swarm":
+                # Завершение без кода разбирает рой по `.out` — как завершение
+                # со слежением (пустой вывод → вопрос человеку).
                 from . import stage_launch
-                stage_launch.finish_swarm(
-                    conn, row["id"], exit_code=None, dispatch_id=row["dispatch_id"],
-                    pid=pid, log_path=row["launch_log"],
-                    generation=None)
+                stage_launch.apply_outcome(conn, row["id"], notify=notify)
             else:
-                ts = store.now_iso()
-                conn.execute("UPDATE tasks SET launch_finished_at = ?, updated_at = ? "
-                             "WHERE id = ?", (ts, ts, row["id"]))
-                store.add_comment(conn, row["id"],
-                                  "автостарт: отслеживание потеряно при перезапуске сервера",
-                                  author="agent:listik", kind="journal")
+                store.add_comment(
+                    conn, row["id"],
+                    "автостарт: отслеживание потеряно при перезапуске сервера",
+                    author="agent:listik", kind="journal")
             _notify(notify, row["id"])
             lost.append(row["id"])
         except PermissionError:
@@ -507,15 +680,6 @@ def _poll(conn, db_path, task_id: str, pid: int, notify, dispatch_id: str | None
     own = db_mod.connect(db_path) if db_path else None
     target = own or conn
     try:
-        task = target.execute(
-            "SELECT launch_driver, launch_log FROM tasks WHERE id = ?", (task_id,)).fetchone()
-        if task and (task["launch_driver"] or "") == "swarm":
-            from . import stage_launch
-            stage_launch.finish_swarm(
-                target, task_id, exit_code=None, dispatch_id=dispatch_id, pid=pid,
-                log_path=task["launch_log"], generation=None)
-            _notify(notify, task_id)
-            return
         ts = store.now_iso()
         cur = target.execute(
             "UPDATE tasks SET launch_finished_at = ?, updated_at = ? WHERE id = ? "
@@ -525,10 +689,16 @@ def _poll(conn, db_path, task_id: str, pid: int, notify, dispatch_id: str | None
         if cur.rowcount == 0:  # запись уже сделана или задачу перезапустили
             target.commit()
             return
-        store.add_comment(target, task_id,
-                          f"автостарт: процесс {pid} завершился; слежение было потеряно "
-                          "при перезапуске сервера — код выхода неизвестен",
-                          author="agent:listik", kind="journal")
+        drv = target.execute(
+            "SELECT launch_driver FROM tasks WHERE id = ?", (task_id,)).fetchone()
+        if drv is not None and (drv["launch_driver"] or "") == "swarm":
+            from . import stage_launch
+            stage_launch.apply_outcome(target, task_id, notify=notify)
+        else:
+            store.add_comment(target, task_id,
+                              f"автостарт: процесс {pid} завершился; слежение было "
+                              "потеряно при перезапуске сервера — код выхода неизвестен",
+                              author="agent:listik", kind="journal")
     except Exception as exc:  # noqa: BLE001 — падать в демоне нельзя
         print(f"autostart {task_id}: не записал завершение процесса {pid}: {exc}",
               file=sys.stderr, flush=True)

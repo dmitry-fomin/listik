@@ -21,7 +21,9 @@ import type {
   CommentKind,
   DepInfo,
   DirectRouteCreate,
-  DirectRouteDef,
+  Harness,
+  HarnessCreate,
+  HarnessPatch,
   Health,
   Meta,
   ProjectPatch,
@@ -33,6 +35,7 @@ import type {
   SearchResponse,
   Stats,
   StreamEvent,
+  SwarmRouteCreate,
   Task,
   TaskDetail,
   TaskPatch,
@@ -183,6 +186,21 @@ const routesSettingsLoading = ref(false)
 const routesSettingsError = ref<string | null>(null)
 /** Последнее заведение упало на `409`: ключ занят — окно добавляет подсказку про поле «Ключ». */
 const routeCreateConflict = ref(false)
+
+/**
+ * Каталог харнессов (`GET /api/harnesses`, listik-2gry): держатели прямых
+ * маршрутов и исполнители ролей роя. Грузится лениво (вкладка «Харнессы» в
+ * настройках и пикер маршрутов в «Новой задаче»), своё состояние ошибки —
+ * алерт вкладки не смешивается с `routesError`.
+ */
+const harnesses = ref<Harness[]>([])
+/** Протокол роли роя из ответа `GET /api/harnesses` — для предпросмотра команды роли. */
+const swarmPrompt = ref('')
+const harnessesError = ref<string | null>(null)
+const harnessesLoading = ref(false)
+let harnessesRequested = false
+/** Последнее заведение харнесса упало на `409`: ключ занят. */
+const harnessCreateConflict = ref(false)
 
 /**
  * Помощник DeepSeek (`GET /api/assistant/status`): ключ живёт в конфиге сервера,
@@ -1067,13 +1085,14 @@ async function patchRoute(key: string, body: RoutePatch): Promise<RouteDef | nul
 }
 
 /**
- * Завести прямой маршрут (`POST /api/routes`, `kind="direct"`). Ответ — созданная
- * запись: в ней есть `key`, по которому список выбирает и открывает новую карточку.
- * Ошибка — `null`, текст в `routesSettingsError`; `409` дополнительно отмечается в
- * `routeCreateConflict`, чтобы окно подсказало про поле «Ключ». Список перечитывается
- * после успеха (как у `patchRoute`): в ответе нет `skill_path`/`skill_missing`.
+ * Завести маршрут (`POST /api/routes`, `kind="direct"` или `kind="swarm"` —
+ * listik-2gry). Ответ — созданная запись: в ней есть `key`, по которому список
+ * выбирает и открывает новую карточку. Ошибка — `null`, текст в
+ * `routesSettingsError`; `409` дополнительно отмечается в `routeCreateConflict`,
+ * чтобы окно подсказало про поле «Ключ». Список перечитывается после успеха
+ * (как у `patchRoute`): в ответе нет `skill_path`/`skill_missing`.
  */
-async function createRoute(body: DirectRouteCreate): Promise<DirectRouteDef | null> {
+async function createRoute(body: DirectRouteCreate | SwarmRouteCreate): Promise<RouteDef | null> {
   routeCreateConflict.value = false
   return withLoading(routesSettingsLoading, async () => {
     const created = await tryRequest(() => api.createRoute(body), (error) => {
@@ -1085,6 +1104,69 @@ async function createRoute(body: DirectRouteCreate): Promise<DirectRouteDef | nu
     await reloadRoutes()
     return created
   })
+}
+
+/**
+ * Каталог харнессов — один запрос на сессию (`ensureHarnesses`), кнопка
+ * «повторить» на вкладке — `loadHarnesses`. `used_by` приходит в каждой записи,
+ * поэтому карточка «где используется» дополнительных запросов не делает.
+ */
+async function loadHarnesses(): Promise<void> {
+  if (harnessesLoading.value) return
+  harnessesRequested = true
+  await withLoading(harnessesLoading, async () => {
+    try {
+      const data = await api.harnesses()
+      harnesses.value = data.harnesses ?? []
+      swarmPrompt.value = data.swarm_prompt ?? ''
+      harnessesError.value = null
+    } catch (error) {
+      harnessesError.value = errorMessage(error)
+    }
+  })
+}
+
+/** Ленивая загрузка каталога: вкладка «Харнессы» и комбобоксы держателя. */
+function ensureHarnesses(): void {
+  if (harnessesRequested) return
+  void loadHarnesses()
+}
+
+/**
+ * Завести харнесс (`POST /api/harnesses`). Ответ — созданная запись, по её `key`
+ * комбобокс выбирает нового держателя. `409` — ключ занят (`harnessCreateConflict`).
+ */
+async function createHarness(body: HarnessCreate): Promise<Harness | null> {
+  harnessCreateConflict.value = false
+  const created = await withLoading(harnessesLoading, async () => {
+    const result = await tryRequest(() => api.createHarness(body), (error) => {
+      harnessCreateConflict.value = error instanceof ApiError && error.status === 409
+      harnessesError.value = errorMessage(error)
+    })
+    if (result === null) return null
+    harnessesError.value = null
+    return result
+  })
+  // Перечитывание после снятия флага: `loadHarnesses` отказывается работать под ним.
+  if (created) await loadHarnesses()
+  return created
+}
+
+/**
+ * Поправить харнесс (`PATCH /api/harnesses/{key}` — `label|hint|argv|prompt|
+ * enabled`). `used_by` в ответе не приходит свежим — список перечитывается.
+ */
+async function patchHarness(key: string, body: HarnessPatch): Promise<Harness | null> {
+  const result = await withLoading(harnessesLoading, async () => {
+    const updated = await tryRequest(() => api.patchHarness(key, body), (error) => {
+      harnessesError.value = errorMessage(error)
+    })
+    if (updated === null) return null
+    harnessesError.value = null
+    return updated
+  })
+  if (result) await loadHarnesses()
+  return result
 }
 
 /**
@@ -1334,6 +1416,11 @@ export function useListikStore() {
     routesSettingsLoading,
     routesSettingsError,
     routeCreateConflict,
+    harnesses,
+    swarmPrompt,
+    harnessesError,
+    harnessesLoading,
+    harnessCreateConflict,
     assistantEnabled,
     assistantModel,
     assistantLoading,
@@ -1398,6 +1485,10 @@ export function useListikStore() {
     reloadRoutes,
     patchRoute,
     createRoute,
+    loadHarnesses,
+    ensureHarnesses,
+    createHarness,
+    patchHarness,
     loadAssistant,
     ensureAssistant,
     askAssistant,

@@ -1,346 +1,332 @@
-"""Режим роя: команда роли, первая строка, claim до процесса (listik-09c5)."""
+"""Режим роя (`driver=swarm`): claim за роль, первая строка `.out`, нарезка,
+закрытие родителя, `launched:false` (listik-2gry, docs/specs/swarm-stage-launch.md).
+
+Процессы — настоящие `python3 -c` короткоживущие скрипты (харнесс `probe`),
+слежение — штатный поток `launcher.tracker`.
+"""
 from __future__ import annotations
 
-import pathlib
+import json
 import sys
-import tempfile
-import textwrap
 import unittest
 
-from unittest import mock
-
-from listik import errors as errors_mod
-from listik import launcher as launcher_mod
-from listik import routes as routes_mod
-from listik import routes_store
-from listik import stage_launch
-from listik import store
+from listik import harnesses_store, launcher, routes_store, stage_launch, store
 from tests.helpers import TempDbTestCase
-from tests.test_autostart import AutostartTestCase
 
 
-def role(command, harness="codex", provider="openai"):
-    return {"provider": provider, "label": harness, "title": harness,
-            "command": command, "harness": harness}
+def script(line: str) -> list[str]:
+    return [sys.executable, "-c", f"print({line!r})"]
 
 
-class ParseAnswerTests(unittest.TestCase):
-    def test_exact_first_line(self) -> None:
-        self.assertEqual(stage_launch.parse_answer("готово\nхвост\n".encode()), ("готово", "хвост"))
+# Все четыре этапа отдаём харнессу-пробнику: умолчание config.py («codex, dsh,
+# claude…») чужие ключи на этапах не пропускает.
+_STAGES = ("s1-spec", "s2-review", "s3-impl", "s4-judge")
 
-    def test_blank_first_line_is_empty(self) -> None:
-        self.assertEqual(stage_launch.parse_answer("\nготово\n".encode()), ("", "готово"))
 
-    def test_unfinished_line_over_cap_is_empty(self) -> None:
-        data = b"x" * (stage_launch.ANSWER_CAP + 10)
-        self.assertEqual(stage_launch.parse_answer(data), ("", ""))
+class SwarmCase(TempDbTestCase):
+    def setUp(self) -> None:
+        super().setUp()
+        store.add_project(self.conn, path=str(self.tmp_path), slug="proj",
+                          title="Проект")
+        self.conn.execute(
+            "UPDATE projects SET routing = ? WHERE slug = 'proj'",
+            (json.dumps({"harnesses": {s: ["probe"] for s in _STAGES}}),))
+        self.conn.commit()
+        harnesses_store.create(self.conn, {
+            "key": "probe", "label": "probe",
+            "argv": [sys.executable, "-c", "print('готово')"]})
 
-    def test_read_answer_stops_at_cap(self) -> None:
-        handle = tempfile.NamedTemporaryFile(delete=False)
-        path = pathlib.Path(handle.name)
+    def add_route(self, roles: dict, key: str = "roy") -> dict:
+        return routes_store.create_route(self.conn, key=key, kind="swarm",
+                                         title="Рой", roles=roles)
+
+    def add_task(self, *, route: str = "roy", stage: str | None = None,
+                 parent: str | None = None) -> str:
+        return store.create_task(self.conn, title="Задача", project="proj",
+                                 route=route, stage=stage, parent=parent)["id"]
+
+    def start_and_wait(self, task_id: str):
+        result = launcher.start(self.conn, task_id, log_dir=str(self.tmp_path))
+        if result is None:  # процесс пошёл — ждём слежение
+            thread = launcher.tracker(task_id)
+            if thread is not None:
+                thread.join(timeout=30)
+        return result
+
+    def task(self, task_id: str) -> dict:
+        return store.get_task(self.conn, task_id)
+
+    def comments(self, task_id: str, kind: str | None = None) -> list[str]:
+        rows = self.conn.execute(
+            "SELECT kind, text FROM comments WHERE task_id = ? ORDER BY created_at, id",
+            (task_id,)).fetchall()
+        return [r["text"] for r in rows if kind is None or r["kind"] == kind]
+
+
+class LaunchTests(SwarmCase):
+    def test_missing_role_skips_stage(self) -> None:
+        # Ролей spec/critic нет — с пустого этапа прыжок на s3-impl без процесса.
+        self.add_route({"impl": {"harness": "probe"},
+                        "judge": {"harness": "probe"}})
+        task_id = self.add_task()
+        result = self.start_and_wait(task_id)
+        self.assertEqual(result, {"launched": False, "stage_skipped": "s3-impl"})
+        task = self.task(task_id)
+        self.assertEqual(task["stage"], "s3-impl")
+        self.assertFalse(task["needs_owner"])
+        self.assertIsNone(task["launched_by"])
+        self.assertEqual(task["launch_driver"], "swarm")
+        self.assertTrue(any("пропуск" in t or "нет" in t for t in
+                            self.comments(task_id, "journal")))
+
+    def test_role_run_and_gotovo_advances(self) -> None:
+        self.add_route({"impl": {"harness": "probe"},
+                        "judge": {"harness": "probe"}})
+        task_id = self.add_task(stage="s3-impl")
+        result = self.start_and_wait(task_id)
+        self.assertIsNone(result)
+        task = self.task(task_id)
+        self.assertEqual(task["stage"], "s4-judge")
+        self.assertEqual(task["holder"], "")  # держатель-харнесс снят роем
+        self.assertIsNone(task["launched_by"])
+        self.assertEqual(task["launch_exit_code"], 0)
+        self.assertTrue(any("готово" in t for t in self.comments(task_id)))
+
+    def test_judge_green_closes_card(self) -> None:
+        harnesses_store.update(self.conn, "probe", {"argv": script("зелёный")})
+        self.add_route({"judge": {"harness": "probe"}})
+        task_id = self.add_task(stage="s4-judge")
+        self.assertIsNone(self.start_and_wait(task_id))
+        task = self.task(task_id)
+        self.assertEqual(task["status"], "done")
+        self.assertEqual(task["stage"], "done")
+        self.assertIn("VERDICT: PASS", self.comments(task_id, "verdict"))
+
+    def test_judge_red_returns_to_impl(self) -> None:
+        harnesses_store.update(self.conn, "probe", {
+            "argv": [sys.executable, "-c",
+                     "print('красный')\nprint('1. поправь foo')"]})
+        self.add_route({"impl": {"harness": "probe"},
+                        "judge": {"harness": "probe"}})
+        task_id = self.add_task(stage="s4-judge")
+        self.assertIsNone(self.start_and_wait(task_id))
+        task = self.task(task_id)
+        self.assertEqual(task["stage"], "s3-impl")
+        self.assertNotEqual(task["status"], "done")
+        self.assertEqual(task["holder"], "")
+        verdicts = self.comments(task_id, "verdict")
+        self.assertTrue(any(v.startswith("VERDICT: FAIL") and "поправь foo" in v
+                            for v in verdicts))
+
+    def test_question_and_garbage_open_question(self) -> None:
+        for line, marker, key in (("вопрос\nкак проверять?", "как проверять?", "roy-q"),
+                                  ("сюр", "не сдал работу", "roy-x")):
+            with self.subTest(line=line):
+                harnesses_store.update(self.conn, "probe", {"argv": script(line)})
+                self.add_route({"impl": {"harness": "probe"}}, key=key)
+                task_id = self.add_task(stage="s3-impl", route=key)
+                self.assertIsNone(self.start_and_wait(task_id))
+                task = self.task(task_id)
+                self.assertTrue(task["needs_owner"])
+                self.assertEqual(task["stage"], "s3-impl")
+                self.assertEqual(task["holder"], "")
+                self.assertIsNone(task["launched_by"])
+                self.assertTrue(any(marker in t for t in self.comments(task_id)))
+
+    def test_empty_output_is_not_delivered(self) -> None:
+        harnesses_store.update(self.conn, "probe",
+                               {"argv": [sys.executable, "-c", "pass"]})
+        self.add_route({"impl": {"harness": "probe"}})
+        task_id = self.add_task(stage="s3-impl")
+        self.assertIsNone(self.start_and_wait(task_id))
+        task = self.task(task_id)
+        self.assertTrue(task["needs_owner"])
+        self.assertIn("не сдал работу",
+                      "\n".join(self.comments(task_id, "question")))
+
+    def test_no_roles_is_refusal(self) -> None:
+        # Все роли без команды (харнесс manual): маршрут завести нельзя через
+        # проверку, поэтому сначала exec-харнесс, потом argv снимаем правкой.
+        self.add_route({"impl": {"harness": "probe"}})
+        self.conn.execute("UPDATE harnesses SET argv = NULL WHERE key = 'probe'")
+        self.conn.commit()
+        task_id = self.add_task(stage="s3-impl")
+        result = self.start_and_wait(task_id)
+        self.assertEqual(result["launched"], False)
+        self.assertTrue(result["needs_owner"])
+        self.assertTrue(self.task(task_id)["needs_owner"])
+        self.assertIsNone(self.task(task_id)["launch_error"])
+
+    def test_role_argv_overrides_harness(self) -> None:
+        self.add_route({"impl": {"harness": "probe", "argv": script("вопрос\nпочему?")}})
+        task_id = self.add_task(stage="s3-impl")
+        self.assertIsNone(self.start_and_wait(task_id))
+        self.assertTrue(self.task(task_id)["needs_owner"])
+        self.assertTrue(any("почему?" in t for t in self.comments(task_id)))
+
+    def test_second_launch_while_running_is_conflict(self) -> None:
+        harnesses_store.update(self.conn, "probe", {
+            "argv": [sys.executable, "-c",
+                     "import time; time.sleep(30); print('готово')"]})
+        self.add_route({"impl": {"harness": "probe"}})
+        task_id = self.add_task(stage="s3-impl")
         try:
-            handle.write("готово\n".encode() + b"x" * (stage_launch.ANSWER_CAP + 50))
-            handle.close()
-            first, rest = stage_launch.read_answer(str(path))
+            self.assertIsNone(launcher.start(self.conn, task_id,
+                                             log_dir=str(self.tmp_path)))
+            self.assertEqual(launcher.start(self.conn, task_id,
+                                            log_dir=str(self.tmp_path)),
+                             launcher.ALREADY_STARTED)
+            self.assertEqual(self.task(task_id)["holder"], "probe")
         finally:
-            path.unlink(missing_ok=True)
+            launcher.revoke(self.conn, task_id, note="тест кончился")
+            thread = launcher.tracker(task_id)
+            if thread is not None:
+                thread.join(timeout=30)
+
+
+class SlicingTests(SwarmCase):
+    def add_route(self, roles: dict | None = None, key: str = "roy") -> dict:
+        return super().add_route(roles or {"spec": {"harness": "probe"},
+                                           "impl": {"harness": "probe"},
+                                           "judge": {"harness": "probe"}}, key=key)
+
+    def fake_finish(self, task_id: str, stage: str, first_line: str) -> None:
+        """Имитация завершившегося запуска роя: захват + `.out` + apply_outcome.
+
+        Порции рождаются, пока родитель на `s1-spec` работает, — настоящий
+        `launcher.start` карточки с живыми порциями уже не запускает процесс,
+        поэтому слепок запуска ставим руками.
+        """
+        log = self.tmp_path / f"launch-{task_id}.log"
+        log.write_text("", encoding="utf-8")
+        out = stage_launch.out_path_of(str(log))
+        out.write_text(first_line + "\n", encoding="utf-8")
+        self.conn.execute(
+            "UPDATE tasks SET stage = ?, launched_by = 'listik', "
+            "dispatch_id = 'd1', launch_log = ?, launch_pid = 424242 "
+            "WHERE id = ?", (stage, str(log), task_id))
+        self.conn.commit()
+        stage_launch.apply_outcome(self.conn, task_id)
+
+    def test_gotovo_with_children_slices_parent(self) -> None:
+        self.add_route()
+        parent = self.add_task()
+        child = self.add_task(parent=parent, route="")  # без своего маршрута
+        self.fake_finish(parent, "s1-spec", "готово")
+        task = self.task(parent)
+        self.assertEqual(task["stage"], "s1-spec")  # родитель дальше не идёт
+        self.assertFalse(task["holder"])
+        self.assertIsNone(task["launched_by"])
+        self.assertTrue(task["has_portions"])
+        kid = self.task(child)
+        self.assertEqual(kid["stage"], "s3-impl")  # ближайший этап с ролью
+        self.assertEqual(kid["launch_route"], "roy")
+        self.assertEqual(kid["launch_driver"], "swarm")
+        self.assertTrue(any("нарезано" in t for t in self.comments(parent)))
+
+    def test_sliced_parent_launch_is_noop(self) -> None:
+        self.add_route()
+        parent = self.add_task()
+        self.add_task(parent=parent, route="")
+        self.fake_finish(parent, "s1-spec", "готово")
+        result = self.start_and_wait(parent)
+        self.assertEqual(result, {"launched": False, "reason": "sliced"})
+        self.assertIsNone(self.task(parent)["launched_by"])
+        self.assertFalse(self.task(parent)["needs_owner"])
+        self.assertTrue(any("родитель нарезан" in t
+                            for t in self.comments(parent, "journal")))
+
+    def test_suggested_blockers_become_hard(self) -> None:
+        self.add_route()
+        parent = self.add_task()
+        child_a = self.add_task(parent=parent, route="")
+        child_b = self.add_task(parent=parent, route="")
+        store.add_dep(self.conn, child_b, child_a, "suggested-blocks",
+                      created_by="agent:probe")
+        self.fake_finish(parent, "s1-spec", "готово")
+        hard = self.conn.execute(
+            "SELECT 1 FROM deps WHERE issue_id = ? AND depends_on = ? "
+            "AND dep_type = 'blocks'", (child_b, child_a)).fetchone()
+        self.assertIsNotNone(hard)
+
+    def test_parent_closes_when_all_portions_done(self) -> None:
+        self.add_route()
+        parent = self.add_task()
+        child_a = self.add_task(parent=parent, route="")
+        child_b = self.add_task(parent=parent, route="")
+        self.fake_finish(parent, "s1-spec", "готово")
+        store.update_task(self.conn, child_a, status="done", stage="done",
+                          actor="agent:listik")
+        self.assertEqual(self.task(parent)["status"], "open")  # ждём вторую
+        store.update_task(self.conn, child_b, status="done", stage="done",
+                          actor="agent:listik")
+        task = self.task(parent)
+        self.assertEqual(task["status"], "done")
+        self.assertEqual(task["close_reason"], "порции закрыты")
+
+    def test_parent_stays_open_without_done_portion(self) -> None:
+        self.add_route()
+        parent = self.add_task()
+        child_a = self.add_task(parent=parent, route="")
+        child_b = self.add_task(parent=parent, route="")
+        self.fake_finish(parent, "s1-spec", "готово")
+        store.update_task(self.conn, child_a, status="cancelled", stage="done",
+                          actor="agent:listik")
+        # Пока живая порция есть — вопроса ещё нет.
+        self.assertFalse(self.task(parent)["needs_owner"])
+        store.update_task(self.conn, child_b, status="cancelled", stage="done",
+                          actor="agent:listik")
+        # Ни одной done-порции — родитель не закрывается сам, на нём вопрос
+        # человеку, и рой его не запускает (portions_cancelled_only).
+        task = self.task(parent)
+        self.assertEqual(task["status"], "open")
+        self.assertTrue(task["needs_owner"])
+        self.assertTrue(task["portions_cancelled_only"])
+        self.assertFalse(task["has_portions"])
+        result = self.start_and_wait(parent)
+        self.assertEqual(result, {"launched": False, "reason": "sliced"})
+        self.assertIsNone(self.task(parent)["launched_by"])
+
+
+class HelpersTests(SwarmCase):
+    def test_out_path_and_first_line(self) -> None:
+        out = stage_launch.out_path_of("/tmp/launch-x.log")
+        self.assertEqual(str(out), "/tmp/launch-x.out")
+        out.write_text("﻿готово\nхвост\n", encoding="utf-8")
+        self.assertEqual(stage_launch.read_first_line(out), ("готово", "хвост"))
+        self.assertEqual(stage_launch.read_first_line(
+            self.tmp_path / "нет-файла.out"), ("", ""))
+
+    def test_unfinished_line_over_limit_is_empty(self) -> None:
+        # Первая строка не кончается в окне 64 КиБ — обрезанный префикс
+        # ответом не считается (docs/specs/swarm-stage-launch.md).
+        out = stage_launch.out_path_of("/tmp/launch-y.log")
+        out.write_bytes(b"x" * (stage_launch.OUT_READ_LIMIT + 10))
+        self.assertEqual(stage_launch.read_first_line(out), ("", ""))
+
+    def test_first_line_within_limit_is_read(self) -> None:
+        out = stage_launch.out_path_of("/tmp/launch-z.log")
+        out.write_bytes("готово\n".encode()
+                        + b"x" * stage_launch.OUT_READ_LIMIT)
+        first, _rest = stage_launch.read_first_line(out)
         self.assertEqual(first, "готово")
-        self.assertLessEqual(len(rest.encode()), stage_launch.ANSWER_CAP)
 
-    def test_stderr_is_not_the_channel(self) -> None:
-        self.assertEqual(stage_launch.classify("impl", "зелёный"), "bad")
-        self.assertEqual(stage_launch.classify("judge", "готово"), "bad")
-        self.assertEqual(stage_launch.classify("judge", "зелёный"), "зелёный")
-
-
-class SwarmLaunchTests(AutostartTestCase):
-    def script(self, body: str) -> pathlib.Path:
-        path = self.tmp_path / f"say-{len(list(self.tmp_path.glob('say-*.py')))}.py"
-        path.write_text(textwrap.dedent(body), encoding="utf-8")
-        return path
-
-    def say(self, line: str, *extra: str) -> list[str]:
-        path = self.script(
-            "import sys\n"
-            "sys.stdout.write(sys.argv[1] + '\\n')\n"
-            "for arg in sys.argv[2:]:\n"
-            "    sys.stdout.write(arg + '\\n')\n")
-        return [sys.executable, str(path), line, *extra]
-
-    def swarm(self, command, *, roles=None, key="swarm-route"):
-        roles = roles or {"spec": role(command), "impl": role(command)}
-        record = {"key": key, "kind": "pipeline", "title": "Рой", "hint": "",
-                  "visible": True, "driver": "swarm", "roles": roles}
-        routes_mod.validate({"version": 1, "routes": [record]})
-        routes_store.create_route(self.conn, key=key, kind="pipeline", title="Рой",
-                                  hint="", visible=True, roles=roles, driver="swarm")
-        return key
-
-    def task(self, route, *, project_path=None):
-        path = project_path or self.tmp_path
-        self.make_project("proj", path)
-        return self.make_task(project="proj", route=route, worktree=str(path))
-
-    def test_ready_advances_skips_missing_critic_and_clears_holder(self) -> None:
-        command = self.say("готово")
-        route = self.swarm(command, roles={"spec": role(command), "impl": role(command, "grok")})
-        task = self.task(route)
-        self.assertIsNone(self.launch(task["id"]))
-        self.join_tracker(task["id"])
-        done = store.get_task(self.conn, task["id"])
-        self.assertEqual(done["launch_driver"], "swarm")
-        self.assertEqual(done["stage"], "s3-impl")
-        self.assertFalse(done["holder"])
-        self.assertIsNone(done["launched_by"])
-        claims = [e for e in done["events"] if e.get("kind") == "claim"
-                  and e.get("actor") == "agent:codex"]
-        self.assertTrue(claims, done["events"])
-        journal = " ".join(c["text"] for c in self.comments(task["id"], "journal"))
-        self.assertIn("карточку взял Listik", journal)
-        self.assertIn("этап s1-spec → s3-impl", journal)
-        self.assertNotIn("автостарт: процесс", journal)
-
-    def test_blank_first_line_asks_and_does_not_advance(self) -> None:
-        path = self.script("import sys\nsys.stdout.write('\\nготово\\n')\n")
-        route = self.swarm([sys.executable, str(path)])
-        task = self.task(route)
-        self.launch(task["id"])
-        self.join_tracker(task["id"])
-        done = store.get_task(self.conn, task["id"])
-        self.assertEqual(done["stage"], "s1-spec")
-        self.assertTrue(done["needs_owner"])
-        self.assertIsNone(done["launched_by"])
-        question = [c for c in self.comments(task["id"]) if c["kind"] == "question"]
-        self.assertTrue(question)
-        self.assertIn("«пусто»", question[-1]["text"])
-
-    def test_stderr_does_not_hide_stdout_answer(self) -> None:
-        path = self.script(
-            "import sys\nsys.stderr.write('noise\\n')\nsys.stdout.write('готово\\n')\n")
-        route = self.swarm([sys.executable, str(path)],
-                           roles={"spec": role([sys.executable, str(path)]),
-                                  "impl": role([sys.executable, str(path)])})
-        task = self.task(route)
-        self.launch(task["id"])
-        self.join_tracker(task["id"])
-        self.assertEqual(store.get_task(self.conn, task["id"])["stage"], "s3-impl")
-
-    def test_green_closes_and_red_returns_without_holder(self) -> None:
-        green = self.say("зелёный")
-        red = self.say("красный", "1. поправь проверку")
-        route = self.swarm(green, roles={"judge": role(green)})
-        task = self.task(route)
-        self.seed(task["id"], stage="s4-judge")
-        self.launch(task["id"])
-        self.join_tracker(task["id"])
-        closed = store.get_task(self.conn, task["id"])
-        self.assertEqual(closed["status"], "done")
-        verdicts = [c["text"] for c in self.comments(task["id"], "verdict")]
-        self.assertIn("VERDICT: PASS", verdicts)
-
-        route2 = self.swarm(red, roles={"judge": role(red), "impl": role(red)}, key="swarm-red")
-        task2 = self.task(route2)
-        self.seed(task2["id"], stage="s4-judge")
-        self.launch(task2["id"])
-        self.join_tracker(task2["id"])
-        back = store.get_task(self.conn, task2["id"])
-        self.assertEqual(back["stage"], "s3-impl")
-        self.assertNotEqual(back["status"], "done")
-        self.assertFalse(back["holder"])
-        self.assertIsNone(back["launched_by"])
-        self.assertTrue(any(c["text"].startswith("VERDICT: FAIL")
-                            for c in self.comments(task2["id"], "verdict")))
-
-    def test_slice_keeps_parent_and_promotes_blocks(self) -> None:
-        flag = self.tmp_path / "sliced"
-        path = self.script(
-            "import sys, time\n"
-            "from pathlib import Path\n"
-            "flag = Path(sys.argv[1])\n"
-            "for _ in range(200):\n"
-            "    if flag.exists():\n"
-            "        break\n"
-            "    time.sleep(0.02)\n"
-            "sys.stdout.write('готово\\n')\n")
-        command = [sys.executable, str(path), str(flag)]
-        route = self.swarm(command, roles={"spec": role(command), "impl": role(command)})
-        parent = self.task(route)
-        self.launch(parent["id"])
-        child = store.create_task(self.conn, title="порция", project="proj", parent=parent["id"])
-        self.conn.execute(
-            "UPDATE tasks SET launch_driver = 'skill' WHERE id = ?", (child["id"],))
-        self.conn.commit()
-        other = store.create_task(self.conn, title="чужая", project="proj")
-        store.add_dep(self.conn, child["id"], other["id"], "blocks", created_by="agent:codex")
-        sib = store.create_task(self.conn, title="вторая", project="proj", parent=parent["id"])
-        store.add_dep(self.conn, sib["id"], child["id"], "blocks", created_by="agent:codex")
-        flag.write_text("1", encoding="utf-8")
-        self.join_tracker(parent["id"])
-        parent_done = store.get_task(self.conn, parent["id"])
-        self.assertEqual(parent_done["stage"], "s1-spec")
-        self.assertNotEqual(parent_done["status"], "done")
-        self.assertIsNone(parent_done["launched_by"])
-        self.assertTrue(parent_done["has_portions"])
-        moved = store.get_task(self.conn, child["id"])
-        self.assertEqual(moved["stage"], "s3-impl")
-        self.assertEqual(moved["launch_route"], route)
-        self.assertEqual(moved["launch_driver"], "swarm")
-        edge = self.conn.execute(
-            "SELECT dep_type FROM deps WHERE issue_id = ? AND depends_on = ?",
-            (sib["id"], child["id"])).fetchone()
-        self.assertEqual(edge["dep_type"], "blocks")
-        outside = self.conn.execute(
-            "SELECT dep_type FROM deps WHERE issue_id = ? AND depends_on = ?",
-            (child["id"], other["id"])).fetchone()
-        self.assertEqual(outside["dep_type"], "suggested-blocks")
-
-    def test_skill_and_direct_do_not_read_the_first_line(self) -> None:
-        command = self.say("готово")
-        self.set_routes(
-            {"key": "skill-route", "kind": "pipeline", "title": "Скил", "hint": "",
-             "visible": True,
-             "roles": {"impl": {"provider": "claude", "label": "C", "title": "C"}},
-             "command": command},
-            {"key": "direct-route", "kind": "direct", "title": "Прямой", "hint": "",
-             "visible": True, "harness": "codex", "command": command},
-        )
-        skill = self.task("skill-route")
-        self.launch(skill["id"])
-        fresh = store.get_task(self.conn, skill["id"])
-        self.assertNotEqual(fresh["holder"], "codex")
-        self.assertFalse(fresh["holder_taken"])
-        self.join_tracker(skill["id"])
-        after = store.get_task(self.conn, skill["id"])
-        self.assertEqual(after["launched_by"], "listik")
-        self.assertNotEqual(after["status"], "done")
-        self.assertIsNone(after["stage"])
-
-        direct = self.make_task(project="proj", route="direct-route", worktree=str(self.tmp_path))
-        self.launch(direct["id"])
-        issued = store.get_task(self.conn, direct["id"])
-        self.assertEqual(issued["holder"], "codex")
-        self.assertFalse(issued["holder_taken"])
-        self.join_tracker(direct["id"])
-        finished = store.get_task(self.conn, direct["id"])
-        self.assertEqual(finished["launched_by"], "listik")
-        self.assertEqual(finished["stage"], "s1-spec")
-        self.assertNotEqual(finished["status"], "done")
-
-    def test_sliced_parent_on_later_stage_does_not_start(self) -> None:
-        command = self.say("готово")
-        route = self.swarm(command)
-        parent = self.task(route)
-        store.update_task(self.conn, parent["id"], stage="s3-impl")
-        self.conn.execute(
-            "UPDATE tasks SET launch_driver = 'swarm' WHERE id = ?", (parent["id"],))
-        self.conn.commit()
-        store.create_task(self.conn, title="порция", project="proj", parent=parent["id"])
-        reason = self.launch(parent["id"])
-        self.assertEqual(reason, launcher_mod.STAGE_SKIPPED)
-        stayed = store.get_task(self.conn, parent["id"])
-        self.assertEqual(stayed["stage"], "s3-impl")
-        self.assertIsNone(stayed["launched_by"])
-        self.assertIsNone(stayed["launch_pid"])
-
-    def test_skill_stage_placeholder_is_empty(self) -> None:
-        marker = self.tmp_path / "argv.txt"
-        path = self.script(
-            "import sys\n"
-            "from pathlib import Path\n"
-            "Path(sys.argv[1]).write_text('|'.join(sys.argv[2:]), encoding='utf-8')\n")
-        command = [sys.executable, str(path), str(marker), "stage={stage}", "role={role}"]
-        self.set_routes(
-            {"key": "skill-route", "kind": "pipeline", "title": "Скил", "hint": "",
-             "visible": True,
-             "roles": {"impl": {"provider": "claude", "label": "C", "title": "C"}},
-             "command": command},
-        )
-        task = self.task("skill-route")
-        store.update_task(self.conn, task["id"], stage="s3-impl")
-        self.launch(task["id"])
-        self.join_tracker(task["id"])
-        self.assertEqual(marker.read_text(encoding="utf-8"), "stage=|role=")
-
-    def test_claim_not_found_clears_capture(self) -> None:
-        command = self.say("готово")
-        route = self.swarm(command)
-        task = self.task(route)
-        with mock.patch("listik.stage_launch.store.claim",
-                        side_effect=errors_mod.NotFound("задача не найдена: x")):
-            reason = self.launch(task["id"])
-        self.assertIsNotNone(reason)
-        asked = store.get_task(self.conn, task["id"])
-        self.assertTrue(asked["needs_owner"])
-        self.assertIsNone(asked["launched_by"])
-        self.assertIsNone(asked["launch_pid"])
-        self.assertIsNone(asked["launch_error"])
-
-    def test_devin_harness_is_stored_and_claim_asks(self) -> None:
-        command = self.say("готово")
-        route = self.swarm(command, roles={"spec": role(command, "devin", "devin")})
-        saved = routes_store.get_route(self.conn, route)
-        self.assertEqual(saved["roles"]["spec"]["harness"], "devin")
-        task = self.task(route)
-        reason = self.launch(task["id"])
-        self.assertIsNotNone(reason)
-        asked = store.get_task(self.conn, task["id"])
-        self.assertTrue(asked["needs_owner"])
-        self.assertIsNone(asked["launched_by"])
-        self.assertIsNone(asked["launch_pid"])
-
-    def test_direct_driver_is_rejected(self) -> None:
-        with self.assertRaises(routes_mod.RoutesError):
-            routes_mod.validate({"version": 1, "routes": [{
-                "key": "d", "kind": "direct", "title": "D", "hint": "", "visible": True,
-                "harness": "codex", "command": ["echo"], "driver": "swarm"}]})
-
-    def test_old_launch_does_not_move_the_card(self) -> None:
-        flag = self.tmp_path / "go"
-        path = self.script(
-            "import sys, time\n"
-            "from pathlib import Path\n"
-            "flag = Path(sys.argv[1])\n"
-            "for _ in range(200):\n"
-            "    if flag.exists():\n"
-            "        break\n"
-            "    time.sleep(0.02)\n"
-            "sys.stdout.write('готово\\n')\n")
-        command = [sys.executable, str(path), str(flag)]
-        route = self.swarm(command, roles={"spec": role(command), "impl": role(command)})
-        task = self.task(route)
-        self.launch(task["id"])
-        self.seed(task["id"], dispatch_id="other")
-        flag.write_text("1", encoding="utf-8")
-        self.join_tracker(task["id"])
-        stayed = store.get_task(self.conn, task["id"])
-        self.assertEqual(stayed["stage"], "s1-spec")
-        self.assertEqual(stayed["holder"], "codex")
+    def test_resolve_role_and_next_stage(self) -> None:
+        record = self.add_route({"impl": {"harness": "probe"},
+                                 "judge": {"harness": "probe"},
+                                 "spec": None})
+        self.assertIsNone(stage_launch.resolve_role(self.conn, record, "spec"))
+        impl = stage_launch.resolve_role(self.conn, record, "impl")
+        self.assertEqual(impl["argv"], [sys.executable, "-c", "print('готово')"])
+        # Роль без своего промпта получает протокол первой строки — `prompt`
+        # харнесса (текст прямой выдачи) не наследуется.
+        self.assertEqual(impl["prompt"], harnesses_store.SWARM_PROMPT)
+        self.assertIn("{role}", impl["prompt"])
+        self.assertEqual(stage_launch.next_stage_with_role(self.conn, record,
+                                                         "s1-spec"), "s3-impl")
+        self.assertIsNone(stage_launch.next_stage_with_role(self.conn, record,
+                                                          "s4-judge"))
 
 
-class PortionCloseTests(TempDbTestCase):
-    def test_parent_closes_when_last_portion_is_done(self) -> None:
-        parent = store.create_task(self.conn, title="шаг", project="p")
-        self.conn.execute("UPDATE tasks SET launch_driver = 'swarm', stage = 's1-spec' WHERE id = ?",
-                          (parent["id"],))
-        self.conn.commit()
-        first = store.create_task(self.conn, title="a", project="p", parent=parent["id"])
-        second = store.create_task(self.conn, title="b", project="p", parent=parent["id"])
-        store.update_task(self.conn, first["id"], status="done")
-        self.assertEqual(store.get_task(self.conn, parent["id"])["status"], "open")
-        store.update_task(self.conn, second["id"], status="cancelled")
-        closed = store.get_task(self.conn, parent["id"])
-        self.assertEqual(closed["status"], "done")
-        self.assertEqual(closed["close_reason"], "порции закрыты")
-
-    def test_all_cancelled_asks_and_does_not_close(self) -> None:
-        parent = store.create_task(self.conn, title="шаг", project="p")
-        self.conn.execute(
-            "UPDATE tasks SET launch_driver = 'swarm', stage = 's1-spec' WHERE id = ?",
-            (parent["id"],))
-        self.conn.commit()
-        child = store.create_task(self.conn, title="a", project="p", parent=parent["id"])
-        store.update_task(self.conn, child["id"], status="cancelled")
-        stayed = store.get_task(self.conn, parent["id"])
-        self.assertEqual(stayed["status"], "open")
-        self.assertTrue(stayed["needs_owner"])
-        self.assertTrue(stayed["portions_cancelled_only"])
+if __name__ == "__main__":
+    unittest.main()

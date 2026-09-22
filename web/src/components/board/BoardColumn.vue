@@ -4,7 +4,7 @@
  * в ките нет. Без drag&drop: этап меняется только из панели задачи (`stage`),
  * доска только показывает.
  */
-import { computed, ref, watch } from 'vue'
+import { computed, onMounted, ref, watch } from 'vue'
 import { UiBadge, UiButton, UiEmptyState, UiSkeleton } from '@zoloto585/facet'
 import TaskCard from './TaskCard.vue'
 import HarnessIcon from '../marks/HarnessIcon.vue'
@@ -12,8 +12,9 @@ import HealthDot from '../marks/HealthDot.vue'
 import ListikIcon from '../ListikIcon.vue'
 import type { BoardColumn, ProjectRow, TaskStage } from '@/api/types'
 import type { DepsSummary } from '@/store/listik'
+import store from '@/store/listik'
 import { taskHealth, healthReason } from '@/lib/health'
-import { harnessOf, HARNESS_TITLES, type HarnessKey } from '@/lib/harness'
+import { harnessOf, harnessTitle } from '@/lib/harness'
 import { stageCode, stageTitle } from '@/lib/stages'
 import { projectOf } from '@/lib/task-presentation'
 
@@ -67,16 +68,20 @@ function onHeadKeydown(event: KeyboardEvent): void {
   }
 }
 
+/** Ключи каталога харнессов — голый держатель `devin`/`pi-glm` и есть ключ. */
+const catalogKeys = computed(() => new Set(store.harnesses.value.map((item) => item.key)))
+onMounted(() => store.ensureHarnesses())
+
 /** Уникальные харнессы держателей задач колонки, без `human` и без пустых. */
 const harnesses = computed(() => {
   if (props.column.key === 'none') return []
   const seen = new Set<string>()
-  const list: { key: HarnessKey; title: string }[] = []
+  const list: { key: string; title: string }[] = []
   for (const task of props.column.tasks) {
-    const harness = harnessOf(task.holder)
+    const harness = harnessOf(task.holder, catalogKeys.value)
     if (!harness || harness === 'human' || seen.has(harness)) continue
     seen.add(harness)
-    list.push({ key: harness, title: HARNESS_TITLES[harness] })
+    list.push({ key: harness, title: harnessTitle(harness) })
   }
   return list
 })

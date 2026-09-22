@@ -58,20 +58,27 @@ from . import paths, util
 SOURCE_PATH = paths.ROOT_DIR / "routes.json"
 
 VERSION = 1
-KINDS = ("pipeline", "direct")
+KINDS = ("pipeline", "direct", "swarm")
 ROLE_KEYS = ("spec", "critic", "impl", "judge")
 PROVIDERS = ("claude", "glm", "openai", "grok", "deepseek", "devin")
 HARNESSES = ("claude", "dsh", "codex", "grok", "gemini")
+# Способ исполнения маршрута (listik-2gry): `skill` — конвейер-скил/прямая выдача,
+# `swarm` — рой: Listik поднимает по процессу на этап и сам ведёт этапы.
+DRIVERS = ("skill", "swarm")
 # Уровни маршрута — значения поля `icon`; подписи и иконки для доски лежат в
 # `web/src/lib/dictionaries.ts` (`ROUTE_ICONS`).
 ROUTE_ICONS = ("xhigh", "high", "medium", "low", "xlow", "direct")
-PLACEHOLDERS = ("task_id", "project", "route", "cwd", "worktree", "branch", "stage", "role")
-DRIVERS = ("skill", "swarm")
+PLACEHOLDERS = ("task_id", "project", "route", "cwd", "worktree", "branch",
+                "stage", "role", "harness")
 
 ROOT_FIELDS = ("version", "routes")
 RECORD_FIELDS = ("key", "kind", "title", "hint", "visible", "icon", "roles", "strip", "harness",
                  "command", "driver")
-ROLE_FIELDS = ("provider", "label", "title", "skill", "params", "command", "harness")
+ROLE_FIELDS = ("provider", "label", "title", "skill", "params")
+#: Поля ячейки роли маршрута `kind=swarm`: харнесс из каталога (`harnesses`),
+#: свой argv и свой промпт — последним аргументом. Пустая ячейка (роль не задана)
+#: — этап пропускается.
+SWARM_ROLE_FIELDS = ("harness", "argv", "prompt")
 #: Обязательные поля ячейки роли; `skill`/`params` необязательны и в результате
 #: проверки появляются только тогда, когда были во входе (иначе экспорт начал бы
 #: писать `"skill": null` во все старые записи).
@@ -80,7 +87,6 @@ ROLE_REQUIRED = ("provider", "label", "title")
 #: Существование скила на диске здесь не проверяется: файл маршрутов ввозится и на
 #: машине без каталога `plugins/`; наличие сверяет слой HTTP по `skills.launcher_info`.
 SKILL_RE = re.compile(r"^[a-z0-9][a-z0-9-]*:[a-z0-9][a-z0-9-]*$")
-HARNESS_SLUG_RE = re.compile(r"^[a-z][a-z0-9_-]*$")
 PARAM_KEY_RE = re.compile(r"^[a-z][a-z0-9_]*$")
 PARAMS_MAX_KEYS = 20
 
@@ -161,7 +167,7 @@ def _validate_params(value, where: str) -> dict:
     return params
 
 
-def _validate_role_cell(cell, where: str, *, require_launch: bool = False) -> dict:
+def _validate_role_cell(cell, where: str) -> dict:
     if not isinstance(cell, dict):
         raise _err(where, "должна быть объектом {provider, label, title}")
     _extra_fields(cell, ROLE_FIELDS, where)
@@ -183,23 +189,10 @@ def _validate_role_cell(cell, where: str, *, require_launch: bool = False) -> di
         if "skill" not in out:
             raise _err(f"{where}.params", "без skill параметры некуда передать")
         out["params"] = _validate_params(cell["params"], f"{where}.params")
-    if "command" in cell:
-        out["command"] = validate_command(cell["command"], f"{where}.command")
-    if "harness" in cell:
-        harness = cell["harness"]
-        if not isinstance(harness, str) or not HARNESS_SLUG_RE.match(harness):
-            raise _err(f"{where}.harness",
-                       "непустая строка: строчные буквы, цифры, дефис и подчёркивание")
-        out["harness"] = harness
-    if require_launch:
-        if "command" not in out:
-            raise _err(f"{where}.command", "непустой массив строк")
-        if "harness" not in out:
-            raise _err(f"{where}.harness", "непустая строка харнесса")
     return out
 
 
-def _validate_roles(value, where: str, *, driver: str = "skill") -> dict:
+def _validate_roles(value, where: str) -> dict:
     if not isinstance(value, dict):
         raise _err(where, "должен быть объектом с ролями spec/critic/impl/judge")
     if not value:
@@ -208,8 +201,81 @@ def _validate_roles(value, where: str, *, driver: str = "skill") -> dict:
     for role in value:
         if role not in ROLE_KEYS:
             raise _err(f"{where}.{role}", f"неизвестная роль, допустимы: {', '.join(ROLE_KEYS)}")
-        roles[role] = _validate_role_cell(value[role], f"{where}.{role}",
-                                          require_launch=driver == "swarm")
+        roles[role] = _validate_role_cell(value[role], f"{where}.{role}")
+    return roles
+
+
+def check_placeholders(text: str, where: str) -> str:
+    """Те же подстановки, что у `command`, но для одной строки (промпт, hint)."""
+    rest = PLACEHOLDER_RE.sub("", text)
+    if "{" in rest or "}" in rest:
+        raise _err(where, "фигурные скобки допустимы только в подстановках "
+                          + ", ".join("{" + name + "}" for name in PLACEHOLDERS))
+    for name in PLACEHOLDER_RE.findall(text):
+        if name not in PLACEHOLDERS:
+            raise _err(where, f"неизвестная подстановка {{{name}}}, допустимы: "
+                              + ", ".join("{" + n + "}" for n in PLACEHOLDERS))
+    return text
+
+
+def _validate_swarm_role_cell(cell, where: str, harnesses) -> dict:
+    """Ячейка роли роя: `{harness, argv?, prompt?}`.
+
+    `harness` — ключ из каталога `harnesses` (словарь `key → запись` или None —
+    тогда только форма ключа). Команда роли: свой `argv`, иначе argv харнесса
+    по умолчанию; ни того ни другого — роль не годится («нет роли с командой»).
+    `prompt` — строка с теми же подстановками, что у argv; идёт последним
+    аргументом argv при запуске.
+    """
+    if not isinstance(cell, dict):
+        raise _err(where, "должна быть объектом {harness, argv?, prompt?} или null")
+    _extra_fields(cell, SWARM_ROLE_FIELDS, where)
+    harness = _present(cell, "harness", where)
+    if not isinstance(harness, str) or not KEY_RE.match(harness):
+        raise _err(f"{where}.harness", "ключ харнесса под ^[a-z0-9][a-z0-9-]*$")
+    record = harnesses.get(harness) if isinstance(harnesses, dict) else None
+    if harnesses is not None and record is None:
+        raise _err(f"{where}.harness", f"харнесса {harness!r} нет в каталоге")
+    argv = cell.get("argv")
+    if argv is not None:
+        argv = validate_command(argv, f"{where}.argv")
+    default_argv = record.get("argv") if record else None
+    if not argv and not default_argv:
+        raise _err(f"{where}.argv",
+                   "нет команды: задайте argv у роли или по умолчанию у харнесса")
+    prompt = cell.get("prompt")
+    if prompt is not None:
+        if not isinstance(prompt, str):
+            raise _err(f"{where}.prompt", "ожидается строка")
+        prompt = check_placeholders(prompt, f"{where}.prompt")
+        if not prompt.strip():
+            prompt = None
+    out = {"harness": harness}
+    if argv:
+        out["argv"] = argv
+    if prompt is not None:
+        out["prompt"] = prompt
+    return out
+
+
+def validate_swarm_roles(value, where: str, harnesses=None) -> dict:
+    """Расклад ролей `kind=swarm`: те же ключи spec/critic/impl/judge, ячейка —
+    `{harness, argv?, prompt?}` или `null`/пропуск — этап пропускается.
+
+    Хотя бы одна роль обязана быть задана: маршрут роя без единой роли с
+    командой сохранять нельзя.
+    """
+    if not isinstance(value, dict):
+        raise _err(where, "должен быть объектом с ролями spec/critic/impl/judge")
+    roles: dict = {}
+    for role, cell in value.items():
+        if role not in ROLE_KEYS:
+            raise _err(f"{where}.{role}", f"неизвестная роль, допустимы: {', '.join(ROLE_KEYS)}")
+        if cell is None:
+            continue
+        roles[role] = _validate_swarm_role_cell(cell, f"{where}.{role}", harnesses)
+    if not roles:
+        raise _err(where, "нужна хотя бы одна роль с харнессом и командой")
     return roles
 
 
@@ -283,7 +349,14 @@ def _validate_route(item, where: str, warnings: list[str] | None = None) -> dict
 
     kind = _present(item, "kind", where)
     if kind not in KINDS:
-        raise _err(f"{where}.kind", 'должен быть "pipeline" или "direct"')
+        raise _err(f"{where}.kind", 'должен быть "pipeline", "direct" или "swarm"')
+
+    driver = item.get("driver")
+    if kind == "direct":
+        if "driver" in item:
+            raise _err(f"{where}.driver", "у direct-записи driver быть не должно")
+    elif driver is not None and driver not in DRIVERS:
+        raise _err(f"{where}.driver", f"допустимы: {', '.join(DRIVERS)}")
 
     title = _present(item, "title", where)
     if not _text(title):
@@ -308,22 +381,26 @@ def _validate_route(item, where: str, warnings: list[str] | None = None) -> dict
     if kind == "pipeline":
         if "roles" not in item:
             raise _err(f"{where}.roles", "обязательно для pipeline")
-        driver = item.get("driver", "skill")
-        if driver not in DRIVERS:
-            raise _err(f"{where}.driver", 'должен быть "skill" или "swarm"')
-        record["driver"] = driver
-        record["roles"] = _validate_roles(item["roles"], f"{where}.roles", driver=driver)
+        record["roles"] = _validate_roles(item["roles"], f"{where}.roles")
         if "harness" in item:
             raise _err(f"{where}.harness", "у pipeline-записи harness быть не должно")
+        record["driver"] = driver or "skill"
+    elif kind == "swarm":
+        if "harness" in item:
+            raise _err(f"{where}.harness", "у swarm-записи harness быть не должно")
+        if "roles" not in item:
+            raise _err(f"{where}.roles", "обязательно для swarm")
+        # Каталог харнессов файлу недоступен: проверяется только форма ячеек
+        # и наличие команды у самой роли (argv) — слой базы проверит строже.
+        record["roles"] = validate_swarm_roles(item["roles"], f"{where}.roles")
+        record["driver"] = "swarm"
     else:
-        if "driver" in item:
-            raise _err(f"{where}.driver", "у direct-записи driver быть не должно")
         if "roles" in item:
             raise _err(f"{where}.roles", "у direct-записи ролей быть не должно")
         harness = _present(item, "harness", where)
-        if harness not in HARNESSES:
+        if not isinstance(harness, str) or not KEY_RE.match(harness):
             raise _err(f"{where}.harness",
-                       f"неизвестный харнесс {harness!r}, допустимы: {', '.join(HARNESSES)}")
+                       "ключ харнесса под ^[a-z0-9][a-z0-9-]*$ — имя держателя agent:<key>")
         record["harness"] = harness
 
     record["command"] = (validate_command(item["command"], f"{where}.command")
@@ -457,4 +534,8 @@ def labels_for(conn, route_key: str | None) -> list[str]:
         return []
     if record["kind"] == "direct":
         return [f"harness:{record['harness']}", "process:direct"]
+    if record["kind"] == "swarm":
+        # Рой ведёт сам Listik, харнесс меняется по этапам — общего исполнителя
+        # в метке нет, только ключ маршрута.
+        return [f"process:{record['key']}"]
     return ["harness:claude", f"process:{record['key']}"]

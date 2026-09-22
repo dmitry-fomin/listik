@@ -7,7 +7,12 @@
  * (`routes.labels_for`) и он же переписывает при смене — они для человека и
  * поиска, а кто реально допущен до этапа, решает routing проекта.
  */
-import type { DirectRouteDef, PipelineRouteDef, RouteDef } from '@/api/types'
+import type {
+  DirectRouteDef,
+  PipelineRouteDef,
+  RouteDef,
+  SwarmLikeRoute,
+} from '@/api/types'
 
 /**
  * Пустая строка — снять маршрут на сервере (`set launch_route=` / PATCH
@@ -26,11 +31,22 @@ export function directAllowed(type: string): boolean {
 }
 
 /**
+ * Рой (`kind = swarm`, listik-2gry): как у конвейера — эпику нужен этап ТЗ,
+ * то есть заполненная ячейка `roles.spec`; остальным типам рой разрешён всегда.
+ */
+export function swarmAllowed(route: SwarmLikeRoute, type: string): boolean {
+  if (type !== 'epic') return true
+  return Boolean(route.roles.spec)
+}
+
+/**
  * Разрешён ли маршрут типу задачи — одни и те же правила у «Новой задачи» и у
  * смены маршрута в карточке: эпику нужен этап ТЗ, прямой маршрут ему закрыт.
  */
 export function routeAllowedForType(route: RouteDef, type: string): boolean {
-  return route.kind === 'direct' ? directAllowed(type) : pipelineAllowed(route, type)
+  if (route.kind === 'direct') return directAllowed(type)
+  if (route.kind === 'swarm' || route.driver === 'swarm') return swarmAllowed(route, type)
+  return pipelineAllowed(route, type)
 }
 
 /**
@@ -90,9 +106,28 @@ export function pickerRoutesOf(
   return visible
 }
 
-/** Строки таблицы ролей — все пресеты конвейера. */
+/**
+ * Строки таблицы ролей — пресеты конвейера режима скила. Конвейер с
+ * `driver='swarm'` исполняется роем — в таблицу конвейеров не входит, а в
+ * группу «Рой» (`swarmRoutesOf`); иначе запись оказывалась бы в обеих группах.
+ */
 export function pipelineRowsOf(routes: RouteDef[]): PipelineRouteDef[] {
-  return routes.filter((route): route is PipelineRouteDef => route.kind === 'pipeline')
+  return routes.filter(
+    (route): route is PipelineRouteDef =>
+      route.kind === 'pipeline' && route.driver !== 'swarm',
+  )
+}
+
+/**
+ * Роевые маршруты: `kind = swarm` и конвейеры с `driver='swarm'` (ячейки у
+ * них — `SwarmRoleCell`). Секция «Рой» в пикере «как делать» и группа «Рой»
+ * в настройках маршрутов.
+ */
+export function swarmRoutesOf(routes: RouteDef[]): SwarmLikeRoute[] {
+  return routes.filter(
+    (route): route is SwarmLikeRoute =>
+      route.kind === 'swarm' || (route.kind === 'pipeline' && route.driver === 'swarm'),
+  )
 }
 
 export function directRoutesOf(routes: RouteDef[]): DirectRouteDef[] {
@@ -101,13 +136,23 @@ export function directRoutesOf(routes: RouteDef[]): DirectRouteDef[] {
 
 // ── подстановки команды (`command`, argv записи маршрута) ───────────────────
 // Правила и сам набор — `listik/routes.py` (`PLACEHOLDERS`, `PLACEHOLDER_RE`):
-// в argv допустимы только эти шесть имён в фигурных скобках, любое другое —
+// в argv допустимы только эти девять имён в фигурных скобках, любое другое —
 // «незнакомая подстановка». Здесь — то же самое для карточки маршрута:
 // разбор строки на куски для подсветки (`splitPlaceholders`), подсчёт
 // вхождений для панели «Подстановки» (`countPlaceholders`) и список
 // незнакомых имён для блока «Чем запускается» и порции `f` (`unknownPlaceholders`).
 
-export const ROUTE_PLACEHOLDERS = ['task_id', 'project', 'route', 'cwd', 'worktree', 'branch'] as const
+export const ROUTE_PLACEHOLDERS = [
+  'task_id',
+  'project',
+  'route',
+  'cwd',
+  'worktree',
+  'branch',
+  'stage',
+  'role',
+  'harness',
+] as const
 export type RoutePlaceholder = (typeof ROUTE_PLACEHOLDERS)[number]
 
 const PLACEHOLDER_RE = /\{([^{}]*)\}/g
@@ -141,7 +186,7 @@ function isKnownPlaceholder(name: string): name is RoutePlaceholder {
 /** Кусок разобранной команды — для подсветки в шаблоне без выражений там. */
 export interface PlaceholderChunk {
   /**
-   * `text` — обычный текст, `placeholder` — одна из шести допустимых,
+   * `text` — обычный текст, `placeholder` — одна из девяти допустимых,
    * `unknown` — `{имя}` не из набора, `brace` — голая скобка вне подстановки
    * (`{{`, одиночная `{`, `{foo`): сервер такую команду тоже не принимает.
    * `brace` выдаёт только `splitCommandChunks`; `splitPlaceholders` его не
@@ -278,6 +323,9 @@ const PLACEHOLDER_EXAMPLES: Record<string, string> = {
   cwd: '/Users/dmitry.fomin/Projects/Listik',
   worktree: '/Users/dmitry.fomin/Projects/Listik/.worktrees/listik-8jgz',
   branch: 'listik-8jgz',
+  stage: 's3-impl',
+  role: 'impl',
+  harness: 'claude',
 }
 
 export function placeholderExample(name: string, routeKey: string): string {

@@ -25,11 +25,11 @@
 import { ref, type Ref } from 'vue'
 
 export type LeaveGuard = (to: string) => boolean | Promise<boolean>
-export type SettingsSection = 'repos' | 'routes'
+export type SettingsSection = 'repos' | 'routes' | 'harnesses'
 
 /** Раздел настроек по умолчанию: `/settings` без хвоста — это «Репозитории». */
 const DEFAULT_SECTION: SettingsSection = 'repos'
-const SECTIONS: readonly SettingsSection[] = ['repos', 'routes']
+const SECTIONS: readonly SettingsSection[] = ['repos', 'routes', 'harnesses']
 
 interface RouterHistoryState {
   listikIdx?: number

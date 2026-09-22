@@ -93,6 +93,8 @@ users = ["ann", "bob"]   # люди, которые работают с этим
 | `launch_exit_code` | int? | код выхода; `null` — процесс идёт или код неизвестен (слежение потеряно) |
 | `launch_finished_at` | str? | когда процесс завершился или когда слежение потеряно |
 | `launch_error` | str? | почему не запустили; `null` — запуск был или его не пытались |
+| `launch_driver` | str? | снимок способа исполнения маршрута: `skill` \| `swarm`; пишет лаунчер в первый захват, `null` — запуска не было или маршрут прямой (см. «Способ исполнения и рой») |
+| `has_portions` | bool | есть ли живая нарезка: ребёнок `parent-child` не в финале; у родителя-роя `true` — он сам по ролям не идёт |
 | `read_scope` | str[] | относительные пути, которые задача читает; формат и запись — см. «Области чтения и записи» ниже |
 | `write_scope` | str[] | пути, которые задача правит; по ним планировщик роя разводит задачи по волнам — см. «Области чтения и записи» ниже |
 | `dispatch_id` | str? | id запуска воркера, пишет лаунчер |
@@ -122,7 +124,7 @@ updated_at, status, error, chunk_count`, — и `children[]` — все доче
 | `listik/launcher.py: start` (сервер) | `launched_by`, `launched_at`, `launch_pid`, `launch_log`, `launch_error`, плюс `needs_owner` через `set_needs_owner` |
 | поток слежения за процессом и `recover` при старте сервера | `launch_exit_code`, `launch_finished_at` |
 | локальный фолбэк CLI (`client.local_call`, ветка `create`) | `launch_error`, плюс `needs_owner` |
-| `listik/launcher.py: start` (тем же условным UPDATE, что и захват) | `dispatch_id` (новый), `generation` (`generation + 1`) — через `PATCH`/`listik set`/`listik_update` не меняются |
+| `listik/launcher.py: start` (тем же условным UPDATE, что и захват) | `dispatch_id` (новый), `generation` (`generation + 1`), `launch_driver` (снимок `routes.driver`, только если ещё `NULL`) — через `PATCH`/`listik set`/`listik_update` не меняются |
 | `listik/launcher.py: revoke` | `generation` (`generation + 1`), `dispatch_id` (`NULL`), `launched_by` (`NULL`), плюс `launch_finished_at` — только при подтверждённой в этом же вызове смерти процесса (см. «Отзыв и перезапуск») |
 
 В белый список `PATCH /api/tasks/{id}` (`store.UPDATABLE`) входит только `launch_route`
@@ -365,11 +367,13 @@ Listik — только файл поставки: `listik init`/старт се
 прогона (`timeoutMinutes`) по-прежнему снимает слишком долгий процесс.
 
 Формат (версия 1): `{"version": 1, "routes": [ {...}, ... ]}`. Лишние поля — ошибка.
-Запись: `key` (`^[a-z0-9][a-z0-9-]*$`, уникален), `kind` (`pipeline` или `direct`),
-`title`, `hint`, `visible` (именно JSON `true`/`false`); у `pipeline` обязателен `roles`
-(`spec`/`critic`/`impl`/`judge`), у `direct` — `harness`; необязательные `icon` и
-`command` — непустой массив непустых строк, argv процесса. Старое поле `strip`
-при ввозе игнорируется.
+Запись: `key` (`^[a-z0-9][a-z0-9-]*$`, уникален), `kind` (`pipeline`, `direct` или
+`swarm`), `title`, `hint`, `visible` (именно JSON `true`/`false`); у `pipeline`
+обязателен `roles` (`spec`/`critic`/`impl`/`judge`), у `swarm` — тоже (формат ячейки
+другой — см. «Способ исполнения и рой»), у `direct` — `harness`; необязательные `icon`,
+`command` — непустой массив непустых строк, argv процесса — и `driver`
+(`skill`/`swarm`, по умолчанию `skill`; у `kind=swarm` всегда `swarm`, у `direct`
+поля нет). Старое поле `strip` при ввозе игнорируется.
 
 `icon` — уровень маршрута для иконки на доске: `xhigh`, `high`, `medium`, `low`, `xlow` или
 `direct`; неизвестное значение при ввозе файл не отменяет: запись получает уровень
@@ -436,6 +440,71 @@ stderr только строка `autostart <id>: уже запущена Listik
 (`ProcessLookupError`) получает `launch_finished_at` и журнал «отслеживание потеряно при
 перезапуске сервера» (`launch_exit_code` остаётся `NULL`), живой (в том числе
 `PermissionError`) не трогается. Переиспользованный PID считается живым — принятый риск.
+
+#### Способ исполнения и рой (`driver`, `kind=swarm`, харнессы)
+
+У маршрута два независимых поля (listik-2gry): `kind` — тип записи
+(`pipeline`/`direct`/`swarm`), `driver` — способ исполнения (`skill`/`swarm`).
+Режим скила (`driver=skill`, по умолчанию) — прежнее поведение: один процесс,
+запущенный командой маршрута, сам ведёт карточку до `done`. Режим роя
+(`driver=swarm` — всегда у `kind=swarm`, опционально у `pipeline`) — другой
+контракт (`docs/specs/swarm-stage-launch.md`): каждый запуск исполняет ровно одну
+роль текущего этапа, а карточку по ролям ведёт сам Listik (`listik/stage_launch.py`,
+вызывается из лаунчера): до `Popen` он делает `claim` за харнесс роли (событие
+подписано `agent:<harness>` — «взята» засчитывается по автору), поднимает argv
+роли (свой `argv` ячейки, иначе `argv` харнесса по умолчанию; `prompt` идёт
+последним аргументом) и разбирает **первую строку stdout** процесса: stdout идёт в
+`*.out` рядом с `launch_log` (`stderr` — в сам `launch_log`). Харнесс `claim`,
+`release` и `stage` не вызывает.
+
+Соответствие этап↔роль: `s1-spec→spec`, `s2-review→critic`, `s3-impl→impl`,
+`s4-judge→judge`. Пустой этап незапущенной карточки — `s1-spec`. Ответы этапа:
+
+| первая строка | этапы | действие Listik |
+|---|---|---|
+| `готово` | не `s4-judge` | следующий этап с ролью; если у `spec` уже есть порции `parent-child` — нарезка (см. ниже) |
+| `вопрос` | любой | тот же этап, `needs_owner` с хвостом вывода |
+| `не смог` | любой | тот же этап, `needs_owner` «не сдал работу» |
+| `зелёный` | `s4-judge` | `VERDICT: PASS`, `stage=done`, `status=done` |
+| `красный` | `s4-judge` | `VERDICT: FAIL` + список правок (хвост stdout), возврат на `s3-impl`, держатель снят |
+| пусто/чужая строка | любой | как «не смог» |
+
+Роль без команды (нет ячейки, нет `harness`, ни у ячейки ни у харнесса нет argv) —
+это «нет роли», не сбой: этап пропускается до ближайшего следующего с ролью, а
+после `s4-judge` без роли — `needs_owner` («рой после роли карточку не закрывает»).
+Запуск без процесса — не ошибка: `POST /api/tasks/{id}/launch` отвечает `200` с
+карточкой и `launched:false` (плюс `needs_owner:true`, `stage_skipped:<этап>` или
+`reason:"sliced"`), а не `409`. Ошибкой (`409 conflict`) остаются только «уже
+запущена» и отказы режима скила. `launch_error` и префикс «автостарт не выполнен»
+исходы роя не ставят — по ним смена маршрута узнаёт отказ автостарта
+(`store.autostart_reset`).
+
+Нарезка: если `spec` ответил «готово» и у карточки уже есть дети `parent-child`
+(не `cancelled`), родитель дальше по ролям не идёт: остаётся на `s1-spec` без
+держателя и не запускается (`has_portions`, исход `launched:false, reason:
+"sliced"`). Каждая ещё не начатая порция получает маршрут родителя (если своего
+нет), снимок `launch_driver=swarm` и первый этап после `s1-spec`, у которого есть
+роль; `suggested-blocks` между порциями этого родителя подтверждаются в жёсткие
+`blocks` — порядок нарезки становится правилом. Когда все порции родителя `done`
+или `cancelled` и хотя бы одна `done`, родитель закрывается сам (`status=done`,
+`close_reason` «порции закрыты», вердикт ему не пишется); порция без `done` —
+родитель остаётся открытым. Отмена порции из нарезки её не убирает.
+
+Исход разбирается только у «своего» запуска: условие `dispatch_id` в `_track`,
+`recover` и опросчике pid то же, что у режима скила, — после `revoke`/перезапуска
+старый процесс не двигает карточку. Запись «процесс кончился» + разбор `.out` —
+одна транзакция с остальными изменениями исхода. Окружение процесса роя — те же
+пять штатных `LISTIK_*` плюс `LISTIK_STAGE`, `LISTIK_ROLE`, `LISTIK_HARNESS`
+(зарезервированы в `launcher.RESERVED_ENV`).
+
+`tasks.launch_driver` — снимок способа на первый запуск (`NULL` → живое поле
+маршрута): правка `routes.driver` начатый прогон в другой способ не переводит,
+у прямого маршрута снимка нет. `start`/`refuse` режима скила карточку роя не
+подхватывают.
+
+Прямой маршрут (`kind=direct`) принимает любой `harness` по форме ключа —
+`agent:<key>` с харнессом из каталога; списком `routes.HARNESSES` он больше не
+ограничен.
 
 #### Поколения запуска
 
@@ -530,8 +599,8 @@ dispatch_id IS ?` — именно `IS`, чтобы обслуживать и з
 
 | Метод | Путь | Тело | Ответ и правила |
 |---|---|---|---|
-| PATCH | `/api/routes/{key}` | любые из `title, hint, icon, visible, command, roles` | `200` с обновлённой записью. `kind, key, harness, position` в теле — `400 bad_argument` с именем поля; `roles` у `kind=direct`, пустой (`{}`), `null`, не-объект или негодная ячейка — `400 bad_argument` с путём до поля (`roles.impl.params.a`), запись при этом не меняется; `roles.<роль>.skill`, которого нет среди скилов-запускаторов этой установки, — `400` со списком доступных (каталога нет вовсе — проверка не делается); `command` у `kind=pipeline` — `400`; неизвестная подстановка в `command` — `400` с именем подстановки; постороннее поле — `400` с его именем; пустое тело — `400` «нечего менять»; нет ключа — `404` |
-| POST | `/api/routes` | вид задаёт `kind`: нет поля или `"pipeline"` — конвейер (`key`, необязательно `roles`); `"direct"` — прямой маршрут (`key`, `title`, `harness`, `command`, необязательно `hint`, `icon`, `visible`) | `kind` другого значения или не строка — `400 bad_argument` с именем `kind` и допустимыми `pipeline`/`direct`. Конвейер: `201` с новой записью `kind="pipeline"`, `visible=false`, `title`/`hint` — из frontmatter `SKILL.md` (`name`/первое предложение `description`), `roles` — переданный расклад (ключа нет или `null` — `{}`; явный `{}` — `400`; негодный расклад или неизвестный `skill` — `400`, как у PATCH), `command=null`, `icon` — уровень по ключу (`routes.fallback_icon`), `position` — в конец; ключа нет среди скилов `plugins/feature-pipeline/skills/*` — `400`; поле кроме `key`/`roles` — `400`. Прямой: обязательные `key`, `title`, `harness`, `command`; `hint` по умолчанию `""`, `visible` — `false` (явный `true` уважается), `icon` — нет поля → `"direct"`, явный `null` → запись без иконки, иначе значение из `routes.ROUTE_ICONS`; `harness` — ключ из `routes.HARNESSES` (`claude`/`dsh`/`codex`/`grok`/`gemini`), `command` — непустой массив непустых строк с известными подстановками (`{task_id}`, `{project}`, `{route}`, `{cwd}`, `{worktree}`, `{branch}`), а не строка с пробелами; `key` приходит от клиента, негодный ключ — `400 bad_argument`; любой `ValueError` проверок записи — `400 bad_argument` с её текстом; поле кроме перечисленных (в том числе `roles`, `position`) — `400` с именем поля; `201` — запись как у `GET` (`key`, `kind`, `title`, `hint`, `visible`, `icon`, `position`, `command`, `harness`), `position` — в конец. Маршрут с таким ключом уже есть (любого вида) — `409 conflict` |
+| PATCH | `/api/routes/{key}` | любые из `title, hint, icon, visible, command, roles, driver` | `200` с обновлённой записью. `kind, key, harness, position` в теле — `400 bad_argument` с именем поля; `roles` у `kind=direct`, пустой (`{}`), `null`, не-объект или негодная ячейка — `400 bad_argument` с путём до поля (`roles.impl.params.a`), запись при этом не меняется; у `driver=swarm` ячейка роли — `{harness, argv?, prompt?}` (харнесс обязан быть в каталоге `harnesses`, `argv`/`prompt` с теми же подстановками, `null`-ячейка — пропуск роли, хотя бы одна роль обязана остаться); `roles.<роль>.skill`, которого нет среди скилов-запускаторов этой установки, — `400` со списком доступных (каталога нет вовсе — проверка не делается); `command` у `kind=pipeline`/`swarm` — `400`; `driver` у `kind=direct` — `400`, у `kind=swarm` принимается только `swarm`; неизвестная подстановка в `command` — `400` с именем подстановки; постороннее поле — `400` с его именем; пустое тело — `400` «нечего менять»; нет ключа — `404` |
+| POST | `/api/routes` | вид задаёт `kind`: нет поля или `"pipeline"` — конвейер (`key`, необязательно `roles`); `"direct"` — прямой маршрут (`key`, `title`, `harness`, `command`, необязательно `hint`, `icon`, `visible`); `"swarm"` — маршрут роя (`key`, `title`, обязательный `roles` с ячейками `{harness, argv?, prompt?}` или `null`, необязательно `hint`, `icon`, `visible`) | `kind` другого значения или не строка — `400 bad_argument` с именем `kind` и допустимыми `pipeline`/`direct`/`swarm`. Рой: `201` с записью `kind="swarm"`, `driver="swarm"`, `command=null`; `roles` без поля — `400`, расклад без единой роли с командой, ячейка с лишним полем или с харнессом, которого нет в каталоге `harnesses`, — `400` с путём до поля; поле кроме перечисленных (`command`, `harness`, `driver`) — `400`. Конвейер: `201` с новой записью `kind="pipeline"`, `visible=false`, `title`/`hint` — из frontmatter `SKILL.md` (`name`/первое предложение `description`), `roles` — переданный расклад (ключа нет или `null` — `{}`; явный `{}` — `400`; негодный расклад или неизвестный `skill` — `400`, как у PATCH), `command=null`, `icon` — уровень по ключу (`routes.fallback_icon`), `position` — в конец; ключа нет среди скилов `plugins/feature-pipeline/skills/*` — `400`; поле кроме `key`/`roles` — `400`. Прямой: обязательные `key`, `title`, `harness`, `command`; `hint` по умолчанию `""`, `visible` — `false` (явный `true` уважается), `icon` — нет поля → `"direct"`, явный `null` → запись без иконки, иначе значение из `routes.ROUTE_ICONS`; `harness` — любой ключ по форме `^[a-z0-9][a-z0-9-]*$` (держатель `agent:<key>`; заводится в каталоге `harnesses`), `command` — непустой массив непустых строк с известными подстановками (`{task_id}`, `{project}`, `{route}`, `{cwd}`, `{worktree}`, `{branch}`), а не строка с пробелами; `key` приходит от клиента, негодный ключ — `400 bad_argument`; любой `ValueError` проверок записи — `400 bad_argument` с её текстом; поле кроме перечисленных (в том числе `roles`, `position`) — `400` с именем поля; `201` — запись как у `GET` (`key`, `kind`, `title`, `hint`, `visible`, `icon`, `position`, `command`, `harness`), `position` — в конец. Маршрут с таким ключом уже есть (любого вида) — `409 conflict` |
 | DELETE | `/api/routes/{key}` | — | `200 {"removed": key, "tasks_cleared": N}`. У всех задач с этим `launch_route` — в любом статусе и на любом этапе — снимается `launch_route` и метки `harness:`/`process:`; статус, этап, держатель и прочие поля не меняются. Гард `route_change_denied` (см. «Смена маршрута») здесь не действует: это удаление справочной записи, а не решение автора о задаче, и он отказал бы половине задач в работе, оставив их ссылку на удалённый маршрут висеть. Ничего, кроме `launch_route`/меток, не удаляется и не закрывается — задачи целы. Повторный `DELETE` того же ключа — `404`, ничего не меняет |
 | POST | `/api/routes/reorder` | `{"keys": ["…", …]}` | `200` со списком записей в новом порядке (ключи, не попавшие в список, уезжают в конец в прежнем относительном порядке). Неизвестный ключ — `400`; поле кроме `keys` — `400` |
 
@@ -545,6 +614,37 @@ dispatch_id IS ?` — именно `IS`, чтобы обслуживать и з
 `{worktree}`, `{branch}`) — строка вместо массива, пустой массив, пустой элемент или
 неизвестная подстановка не сохраняются никогда, ни через эти ручки, ни через ввоз файла;
 ни одна из ручок этого раздела не запускает никаких процессов.
+
+### Каталог харнессов (`/api/harnesses`)
+
+Харнесс — исполнитель, которого Listik умеет поднимать процессом (listik-2gry,
+`listik/harnesses_store.py`, таблица `harnesses`). Запись: `key` (имя держателя —
+хвост `agent:<key>`, `^[a-z0-9][a-z0-9-]*$`, уникален, неизменен), `label`, `hint`,
+`icon` (ключ глифа: `claude`/`dsh`/`codex`/`grok`/`gemini`/`devin`/`pi`/`user` или
+`null` — доска покажет «свою букву»), `kind` (`exec` — Listik поднимает процесс;
+`manual` — ручная выдача человеку, команды нет, `argv`/`prompt` запрещены),
+`argv`/`prompt` — команда по умолчанию (`prompt` — последний аргумент, те же
+подстановки, что у `command` маршрута), `enabled` (выключенный не предлагается в
+селекторах, но действующие ссылки не ломает), `builtin`, `position`,
+`created_at`/`updated_at`.
+
+Сиды поставки ввозятся один раз при `db.init` (`INSERT … ON CONFLICT DO NOTHING` —
+правки не затираются); источник правды — только таблица. На харнесс ссылаются
+`harness` прямого маршрута и ячейки ролей `driver=swarm`; слой базы проверяет
+существование ключа при записи маршрута. Имя харнесса привязано к актору
+`agent:<key>` — без этого `claim` с автором `agent:foo` не засчитывал бы карточку
+«взятой» держателем `foo`; у ручной выдачи `me` алиаса нет (`me` — канонический
+человек).
+
+| Метод | Путь | Тело | Ответ и правила |
+|---|---|---|---|
+| GET | `/api/harnesses` | — | `200 {"harnesses": […], "swarm_prompt": "…"}` — записи в порядке `position, key`, у каждой `used_by[]` — где задействован (`{route, kind:"direct"}` \| `{route, kind:"swarm", role}`); `swarm_prompt` — протокол роли роя, который лаунчер ставит последним аргументом при пустом `prompt` ячейки роли |
+| GET | `/api/harnesses/{key}` | — | `200` с записью и `used_by[]`; нет ключа — `404` |
+| POST | `/api/harnesses` | `key` + любые из `label, hint, icon, argv, prompt, kind, enabled, position` | `201` с записью. `builtin`/`created_at`/`updated_at` в теле — `400`; ключ занят — `409 conflict`; `kind` не из `exec`/`manual` — `400`; `kind=manual` с `argv`/`prompt` — `400`; негодный `argv`/`prompt`/подстановка — `400` с путём до поля |
+| PATCH | `/api/harnesses/{key}` | любые из `label, hint, icon, argv, prompt, enabled, position` | `200` с обновлённой записью. `key`, `kind`, `builtin` в теле — `400 bad_argument` с именем поля; пустое тело — `400`; нет ключа — `404` |
+
+Удаления нет: на ключ могут ссылаться маршруты и держатели карточек — выключение
+(`enabled:false`) делает то же самое, не ломая историю.
 
 ### CLI: `listik routes`
 
@@ -1054,6 +1154,7 @@ id внутри файлового пути (`docs/specs/<id>.md`, `/wt/<id>/lis
 | GET | `/api/health` | — | `status, version, embed{model}, now, authed, installation{code_dir,data_dir,config_path}` (пути установки доступны и без токена для диагностики CLI, содержимое config не отдаётся), `mode` (`local`\|`server` — тоже без токена: по нему клиент понимает, надо ли представляться); авторизованному — ещё `users[]` (люди из `server.users`; в локальном режиме `[]`) и `owner` (как сервер понял заголовок `X-Listik-Owner` после `strip`; в локальном режиме всегда `null`), `db`, `counts`, `embed{ok,models}`, `routes{ok,error,path,count}`, `db_error{where,error,at}` — только если последний фоновый проход упал с `sqlite3.DatabaseError`, и `runtime{code_dir,data_dir,cwd,worktree,main_repo,warning}` — откуда запущен сервер (`data_dir` — каталог данных, `LISTIK_HOME`; `warning` — если из связанного git worktree, listik-i23u), `db_replaced{kind,at,detail,before,after}` — если сервер заметил подмену файла базы или WAL (см. ниже) |
 | GET | `/api/routes` | — | `ok, error, path, warnings[], routes[]` — записи таблицы `routes` (`command`, `roles`/`harness`, `position`, посчитанный `icon`; см. «Маршруты запуска»), у `kind=pipeline` ещё `skill_path` и, если скила нет, `skill_missing: true` (в ответе `visible: false`) — см. «Справочник маршрутов и скилов конвейеров»; `warnings` — замечания ввоза и сверки со скилами (неизвестный `icon` записи: фолбэк по ключу и поле `icon_error`; маршрут без скила: строка про скрытый маршрут); ошибка базы — `ok=false` и текст, а не HTTP-ошибка |
 | GET | `/api/routes/launchers` | — | `skills_available, launchers[], providers[], roles[]` — справочник для редактора состава ролей: `launchers` — скилы-запускаторы установки (`key` вида `плагин:скил`, `plugin`, `skill`, `title`, `hint`, `provider` по умолчанию, `skill_path` или `null` у плагина вне репозитория), `providers` — допустимые вендоры ячейки роли, `roles` — ключи ролей (`spec`/`critic`/`impl`/`judge`); метод не GET — `405` |
+| GET/POST | `/api/harnesses`, GET/PATCH `/api/harnesses/{key}` | см. «Каталог харнессов» | каталог исполнителей: список с `used_by[]`, заведение и правка; удаления нет |
 | GET | `/api/routes/sync` | — | `skills_available, missing_skill[], missing_route[]` — сверка таблицы со скилами `plugins/feature-pipeline/skills/*` (см. «Справочник маршрутов и скилов конвейеров»); без каталога скилов — оба списка пустые |
 | GET | `/api/assistant/status` | — | `enabled, model, base_url, voice` — настроен ли помощник DeepSeek (`[assistant]` в `config.toml`) и голосовой ввод (`voice=true` — непусты оба ключа, `[assistant]` и `[deepgram]`); ключи наружу не отдаются (см. «Помощник DeepSeek») |
 | GET | `/api/meta` | `archived` | `projects[], actors[], facets{}, statuses{}, stages{}, priorities{}` |
@@ -1238,7 +1339,7 @@ dropped_chunks, reason`), `reasons[]` (по одному пункту на ка�
 | PATCH | `/api/projects/{slug}` | `title`, `path`, `color`, `kind`, `archived=0/1`, `routing` | правка проекта; `archived=1` — убрать с доски, не теряя задачи; `routing` — объект-переопределение маршрутизации проекта (`{}` сбрасывает его), проверяется `config.validate_routing`: допустимые ключи — `harnesses` (словарь этап → список имён, этапы и имена без дублей), `transitions` (словарь `"<этап>:<этап-или-done>"` → `sticky`\|`handoff`\|`sticky-return`), `return_window_hours` (число > 0); неизвестный ключ или неверная форма — 400 с текстом на русском; устаревший `default_process` (ни на что не влиял, убран) молча игнорируется, как и в старых `config.toml`/`routing` проекта |
 | DELETE | `/api/projects/{slug}` | `force=1` (или в теле) | убрать проект из Listik. Проект с задачами отвечает 409 — их сначала скрывают; `force` удаляет задачи вместе с проектом |
 | PATCH | `/api/routes/{key}` | `title, hint, icon, visible, command` (любые) | правка маршрута — см. «Правка, заведение, удаление и порядок маршрутов» |
-| POST | `/api/routes` | конвейер: `key` (ключ скила), необязательно `roles`; прямой: `kind="direct"`, `key`, `title`, `harness`, `command` | завести маршрут `kind=pipeline` под существующий скил или прямой маршрут `kind=direct` — см. там же |
+| POST | `/api/routes` | конвейер: `key` (ключ скила), необязательно `roles`; прямой: `kind="direct"`, `key`, `title`, `harness`, `command`; рой: `kind="swarm"`, `key`, `title`, `roles` | завести маршрут `kind=pipeline` под существующий скил, прямой маршрут `kind=direct` или маршрут роя `kind=swarm` — см. там же |
 | DELETE | `/api/routes/{key}` | — | удалить маршрут, очистив `launch_route`/метки у задач, которые на него ссылались — см. там же |
 | POST | `/api/routes/reorder` | `keys[]` | переставить маршруты по этому порядку — см. там же |
 | POST | `/api/embed` | `limit`, `kinds=task,comment,chunk` (по умолчанию все три) | досчитать векторы (ollama bge-m3) |

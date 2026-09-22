@@ -1,6 +1,6 @@
 import type { DepInfo, ProjectRow, RouteDef, Task, TaskComment, TaskDetail } from '@/api/types'
 import { formatDateTime, humanAge } from './format'
-import { HARNESS_TITLES, harnessOf } from './harness'
+import { harnessOf, harnessTitle } from './harness'
 import { HEALTH_TITLES, healthReason, taskHealth } from './health'
 import { worktreeState, worktreeValue } from './dictionaries'
 import { stageExecutor } from './executors'
@@ -26,7 +26,7 @@ export function actorShort(key: string | null | undefined): string {
   const trimmed = key.trim()
   if (!trimmed) return '—'
   const harness = harnessOf(trimmed)
-  if (harness && harness !== 'human') return HARNESS_TITLES[harness]
+  if (harness && harness !== 'human') return harnessTitle(harness)
   return trimmed === 'me' ? 'я' : trimmed
 }
 

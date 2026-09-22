@@ -42,6 +42,7 @@ import {
 import ListikIcon from '@/components/ListikIcon.vue'
 import ReposSection from '@/components/settings/ReposSection.vue'
 import RoutesSettings from '@/components/RoutesSettings.vue'
+import HarnessesSettings from '@/components/HarnessesSettings.vue'
 import { currentPath, navigate, settingsSectionOf } from '@/lib/router'
 
 /** Что раздел отдаёт странице наружу: сейчас — только своё первичное действие. */
@@ -52,12 +53,14 @@ interface SectionExpose {
 const items: UiAppNavItem[] = [
   { id: 'repos', label: 'Репозитории', href: '/settings/repos' },
   { id: 'routes', label: 'Маршруты', href: '/settings/routes' },
+  { id: 'harnesses', label: 'Харнессы', href: '/settings/harnesses' },
 ]
 
 /** Иконка пункта навигации: кит icon-agnostic, глиф приходит слотом `#icon`. */
 const navIcons: Record<string, string> = {
   repos: 'columns',
   routes: 'route-direct',
+  harnesses: 'bolt',
 }
 
 function navIcon(id: string): string {
@@ -82,8 +85,14 @@ const sections: Record<string, { title: string; description: string; actionLabel
   routes: {
     title: 'Маршруты',
     description:
-      'Маршрут — заготовка запуска задачи. Конвейер приходит из скила: у него правятся только название, подпись и иконка. Прямой маршрут Listik запускает сам, поэтому у него правится команда — и завести можно только такой.',
-    actionLabel: 'Завести прямой маршрут',
+      'Маршрут — заготовка запуска задачи. Конвейер приходит из поставки: этапы ведёт claude внутри одного процесса, меняются только название, подпись и иконка. Рой Listik водит сам — отдельный харнесс на каждый этап, состав выбирается здесь. Прямая выдача — одна команда на всю задачу.',
+    actionLabel: 'Завести маршрут',
+  },
+  harnesses: {
+    title: 'Харнессы',
+    description:
+      'Харнесс — исполнитель: CLI-процесс, который берёт карточку. Его ставят держателем прямого маршрута или исполнителем роли роя. Конвейеры харнессы не используют — там этапы ведёт claude.',
+    actionLabel: 'Завести харнесс',
   },
 }
 
@@ -92,8 +101,13 @@ const meta = computed(() => sections[section.value] ?? sections.repos)
 /** Ссылки на разделы: каждый отдаёт своё действие через `defineExpose`. */
 const reposRef = ref<SectionExpose | null>(null)
 const routesRef = ref<SectionExpose | null>(null)
+const harnessesRef = ref<SectionExpose | null>(null)
 const activeSection = computed(() =>
-  section.value === 'repos' ? reposRef.value : routesRef.value,
+  section.value === 'repos'
+    ? reposRef.value
+    : section.value === 'routes'
+      ? routesRef.value
+      : harnessesRef.value,
 )
 
 function openSectionAction(): void {
@@ -145,15 +159,20 @@ function onNavClick(event: MouseEvent): void {
             Репозитории и маршруты лежат в <code class="listik-mono">listik.db</code>.
             Перенести на другую машину — <code class="listik-mono">listik backup</code>.
           </UiAlert>
-          <UiAlert v-else tone="info">
+          <UiAlert v-else-if="section === 'routes'" tone="info">
             Маршрут нельзя удалить и нельзя переставить в списке. Ненужный — выключи:
             он останется в базе, а из меню «Запустить» пропадёт.
+          </UiAlert>
+          <UiAlert v-else tone="info">
+            Харнесс нельзя удалить, пока он держатель маршрута или исполнитель роли роя.
+            Ненужный — выключи: из списков выбора пропадёт.
           </UiAlert>
         </div>
 
         <div class="listik-settings__content">
           <ReposSection v-if="section === 'repos'" ref="reposRef" />
-          <RoutesSettings v-else ref="routesRef" />
+          <RoutesSettings v-else-if="section === 'routes'" ref="routesRef" />
+          <HarnessesSettings v-else ref="harnessesRef" />
         </div>
       </div>
     </div>

@@ -28,15 +28,17 @@
  * `PATCH` в `finalize()` — страхует карточку маршрута.
  *
  * Порция `f` (карточка прямой выдачи, `RouteDirectCard.vue`) добавляет проверку
- * редактора argv на маршруте `dsh`: аргументы и промпт на экране совпадают с
- * `GET /api/routes`, держатель показан только на чтение, без правок «Сохранить»
- * выключена; правка промпта включает её, `{foo}` в промпте и отдельно в
- * аргументе — снова выключает, называет подстановку рядом с кнопкой и метит
- * поле `aria-invalid`; уход с несохранённой карточки спрашивает подтверждение;
- * сохранение шлёт ровно один `PATCH` с единственным ключом `command` — массивом,
- * новый промпт переживает перезагрузку страницы, а переставленный кнопкой ▼
- * аргумент — сохранение (порядок сверяется по ответу сервера). Исходная команда
- * возвращается прямым `PATCH` в `finalize()` и на успехе, и на падении.
+ * редактора argv на маршруте `dsh`. Карточка сохраняет сама (автосохранение,
+ * fad9c9c): кнопки «Сохранить» нет вовсе, правка промпта через 600мс дебаунса
+ * шлёт ровно один `PATCH` с единственным ключом `command` — массивом; `{foo}` в
+ * промпте и отдельно в аргументе PATCH не пускает — подстановка названа в
+ * нижней полосе и поле помечено `aria-invalid`; уход с командой, которую сервер
+ * не примет, спрашивает подтверждение и «Остаться» держит правки; починка
+ * поля уходит сама. Аргументы и промпт на экране совпадают с `GET /api/routes`,
+ * держатель показан только на чтение, новый промпт переживает перезагрузку
+ * страницы, а переставленный кнопкой ▼ аргумент доезжает до базы (порядок
+ * сверяется по ответу сервера). Исходная команда возвращается прямым `PATCH`
+ * в `finalize()` и на успехе, и на падении.
  *
  * Порция `e` (окно «Завести прямой маршрут») добавляет сценарий заведения:
  * кнопка в шапке раздела открывает окно; черновой ключ выводится из названия, пока
@@ -235,9 +237,13 @@ const clickLevel = (index) => `(() => {
   return true
 })()`
 
-/* ── карточка прямой выдачи (порция `f`): argv, промпт, явное «Сохранить» ── */
+/* ── карточка прямой выдачи (порция `f`): argv, промпт, автосохранение ── */
 
-/** Состояние кнопки «Сохранить» и текста причины рядом с ней. */
+/**
+ * Кнопки «Сохранить» у карточки больше нет (автосохранение, fad9c9c):
+ * `present` ждут `false`, а `reason` — текст причины, по которой команда пока
+ * не ушла на сервер (пустая строка, когда всё валидно).
+ */
 const directSaveState = `(() => {
   const button = document.querySelector('.listik-route-direct__save')
   const reason = document.querySelector('.listik-route-direct__reason')
@@ -246,13 +252,6 @@ const directSaveState = `(() => {
     disabled: button ? button.disabled : null,
     reason: reason ? reason.textContent.trim() : '',
   }
-})()`
-
-const clickDirectSave = `(() => {
-  const button = document.querySelector('.listik-route-direct__save')
-  if (!button || button.disabled) return false
-  button.click()
-  return true
 })()`
 
 /** Значение поля целиком через нативный сеттер: v-model слушает событие `input`. */
@@ -670,7 +669,7 @@ try {
   report.levelRestoredChecked = levelAfterRestore?.checked === report.levelInitialChecked
 
   /*
-   * ── карточка прямой выдачи (порция `f`): редактор argv и явное сохранение.
+   * ── карточка прямой выдачи (порция `f`): редактор argv и автосохранение.
    * Берём `dsh`: исходная команда читается из `GET /api/routes` (а не из
    * памяти), правится через UI и возвращается прямым PATCH в `finalize()` —
    * и на успехе сценария, и на любом падении посреди него.
@@ -700,59 +699,19 @@ try {
     `document.querySelectorAll('.listik-route-direct__holder input, .listik-route-direct__holder select').length === 0`,
   )
 
-  // без правок «Сохранить» выключена: пустой PATCH сервер отклоняет
+  // автосохранение: кнопки «Сохранить» на карточке нет вовсе, причина отказа
+  // команды (`.listik-route-direct__reason`) пуста, пока команда валидна
   const idleState = await evaluate(directSaveState)
-  report.directIdleDisabled = idleState.present === true && idleState.disabled === true
+  report.directNoSaveButton = idleState.present === false
   report.directIdleReason = idleState.reason
 
-  // 1) правка промпта — «Сохранить» доступна
-  const promptProbe = `${originalPrompt} Приписка автотеста ${Date.now()}.`
-  report.directPromptTyped = await evaluate(setFieldValue(PROMPT_SELECTOR, promptProbe))
-  await sleep(400)
-  const dirtyState = await evaluate(directSaveState)
-  report.directDirtyEnabled = dirtyState.disabled === false
-
-  // 2) `{foo}` в промпте — кнопка выключена, причина называет подстановку, поле помечено
-  await evaluate(setFieldValue(PROMPT_SELECTOR, `${promptProbe} {foo}`))
-  await sleep(400)
-  const badPromptState = await evaluate(directSaveState)
-  report.directBadPromptDisabled = badPromptState.disabled === true
-  report.directBadPromptReason = badPromptState.reason
-  report.directBadPromptNamed = badPromptState.reason.includes('{foo}')
-  report.directBadPromptInvalid = await evaluate(ariaInvalid(PROMPT_SELECTOR))
-
-  await evaluate(setFieldValue(PROMPT_SELECTOR, promptProbe))
-  await sleep(400)
-  report.directPromptFixedEnabled = (await evaluate(directSaveState)).disabled === false
-
-  // 3) то же самое в аргументе — правило одно на всю команду
-  const argProbeIndex = originalArgs.length > 1 ? 1 : 0
-  await evaluate(setDirectArg(argProbeIndex, `${originalArgs[argProbeIndex]}{foo}`))
-  await sleep(400)
-  const badArgState = await evaluate(directSaveState)
-  report.directBadArgDisabled = badArgState.disabled === true
-  report.directBadArgNamed = badArgState.reason.includes('{foo}')
-  report.directBadArgInvalid = await evaluate(argAriaInvalid(argProbeIndex))
-
-  await evaluate(setDirectArg(argProbeIndex, originalArgs[argProbeIndex]))
-  await sleep(400)
-  report.directArgFixedEnabled = (await evaluate(directSaveState)).disabled === false
-
-  // 4) уход с несохранённой карточки спрашивает подтверждение и «Остаться» держит правки
-  const otherIndex = dshIndex === 0 ? 1 : 0
-  await evaluate(clickRow('Прямая выдача', otherIndex))
-  await sleep(500)
-  report.directLeaveAsked = await evaluate(leaveDialogShown)
-  report.directStayClicked = await evaluate(clickByText('Остаться'))
-  await sleep(500)
-  report.directStillEditing = (await evaluate(fieldValue(PROMPT_SELECTOR))) === promptProbe
-
-  // 5) сохранение: один PATCH, в теле только command и только массивом
+  // 1) правка промпта уходит сама: один PATCH, в теле только command-массив
   directRestoreNeeded = true
-  const callsBeforeDirectSave = (await evaluate(patchCallsCount)) ?? 0
-  report.directSaveClicked = await evaluate(clickDirectSave)
+  const promptProbe = `${originalPrompt} Приписка автотеста ${Date.now()}.`
+  const callsBeforePrompt = (await evaluate(patchCallsCount)) ?? 0
+  report.directPromptTyped = await evaluate(setFieldValue(PROMPT_SELECTOR, promptProbe))
   await sleep(1500)
-  const directCalls = ((await evaluate(patchCallsSince(callsBeforeDirectSave))) ?? []).filter(
+  const directCalls = ((await evaluate(patchCallsSince(callsBeforePrompt))) ?? []).filter(
     (call) => call.key === directKey,
   )
   report.directPatchCount = directCalls.length
@@ -764,28 +723,90 @@ try {
   report.directPatchPromptMatches =
     Array.isArray(directBody.command) && directBody.command[directBody.command.length - 1] === promptProbe
 
+  // 2) `{foo}` в промпте — PATCH не уходит, причина называет подстановку, поле помечено
+  const callsBeforeBadPrompt = (await evaluate(patchCallsCount)) ?? 0
+  await evaluate(setFieldValue(PROMPT_SELECTOR, `${promptProbe} {foo}`))
+  await sleep(1500)
+  report.directBadPromptNoPatch =
+    ((await evaluate(patchCallsSince(callsBeforeBadPrompt))) ?? []).filter(
+      (call) => call.key === directKey,
+    ).length === 0
+  const badPromptReason = await evaluate(
+    `document.querySelector('.listik-route-direct__reason')?.textContent.trim() ?? ''`,
+  )
+  report.directBadPromptReason = badPromptReason
+  report.directBadPromptNamed = badPromptReason.includes('{foo}')
+  report.directBadPromptInvalid = await evaluate(ariaInvalid(PROMPT_SELECTOR))
+
+  // 3) уход с командой, которую сервер не примет, спрашивает подтверждение;
+  //    «Остаться» держит правки
+  const otherIndex = dshIndex === 0 ? 1 : 0
+  await evaluate(clickRow('Прямая выдача', otherIndex))
+  await sleep(500)
+  report.directLeaveAsked = await evaluate(leaveDialogShown)
+  report.directStayClicked = await evaluate(clickByText('Остаться'))
+  await sleep(500)
+  report.directStillEditing =
+    (await evaluate(fieldValue(PROMPT_SELECTOR))) === `${promptProbe} {foo}`
+
+  // 4) промпт чинится — правка уходит сама, без кнопки
+  const promptProbe2 = `${promptProbe} Ещё приписка.`
+  const callsBeforePromptFix = (await evaluate(patchCallsCount)) ?? 0
+  await evaluate(setFieldValue(PROMPT_SELECTOR, promptProbe2))
+  await sleep(1500)
+  report.directPromptFixSaved = ((await evaluate(patchCallsSince(callsBeforePromptFix))) ?? []).some(
+    (call) =>
+      call.key === directKey &&
+      Array.isArray(call.body.command) &&
+      call.body.command[call.body.command.length - 1] === promptProbe2,
+  )
+
+  // 5) `{foo}` в аргументе — то же правило на всю команду; починка тоже уходит сама
+  const argProbeIndex = originalArgs.length > 1 ? 1 : 0
+  const callsBeforeBadArg = (await evaluate(patchCallsCount)) ?? 0
+  await evaluate(setDirectArg(argProbeIndex, `${originalArgs[argProbeIndex]}{foo}`))
+  await sleep(1500)
+  report.directBadArgNoPatch =
+    ((await evaluate(patchCallsSince(callsBeforeBadArg))) ?? []).filter(
+      (call) => call.key === directKey,
+    ).length === 0
+  const badArgReason = await evaluate(
+    `document.querySelector('.listik-route-direct__reason')?.textContent.trim() ?? ''`,
+  )
+  report.directBadArgNamed = badArgReason.includes('{foo}')
+  report.directBadArgInvalid = await evaluate(argAriaInvalid(argProbeIndex))
+
+  /* Починка возвращает аргумент к исходному — черновик снова равен базе,
+   * PATCH не нужен: проверяем, что причина и `aria-invalid` сняты. */
+  await evaluate(setDirectArg(argProbeIndex, originalArgs[argProbeIndex]))
+  await sleep(500)
+  const fixedReason = await evaluate(
+    `document.querySelector('.listik-route-direct__reason')?.textContent.trim() ?? ''`,
+  )
+  report.directArgFixCleared =
+    fixedReason === '' && !(await evaluate(argAriaInvalid(argProbeIndex)))
+
   // 6) перезагрузка страницы — новый промпт на месте (он в базе, а не в памяти вкладки)
   await openTab()
   const directRowsAfterReload = (await evaluate(groupRows('Прямая выдача'))) ?? []
   await evaluate(clickRow('Прямая выдача', directRowsAfterReload.findIndex((row) => row.key === directKey)))
   await sleep(700)
-  report.directPromptPersisted = (await evaluate(fieldValue(PROMPT_SELECTOR))) === promptProbe
+  report.directPromptPersisted = (await evaluate(fieldValue(PROMPT_SELECTOR))) === promptProbe2
 
-  // 7) порядок аргументов: ▼ на первой строке, сохранить, проверить запись в базе
+  // 7) порядок аргументов: ▼ на первой строке — PATCH уходит сам, проверяем запись в базе
   const expectedArgs = originalArgs.length > 1
     ? [originalArgs[1], originalArgs[0], ...originalArgs.slice(2)]
     : originalArgs
   report.directArgMoved = await evaluate(clickArgStep(0, 'down'))
-  await sleep(500)
+  await sleep(300)
   report.directArgsAfterMove = await evaluate(directArgValues)
   report.directArgOrderChanged =
     JSON.stringify(report.directArgsAfterMove) === JSON.stringify(expectedArgs)
-  report.directOrderSaveClicked = await evaluate(clickDirectSave)
   await sleep(1500)
   const directAfterSave = await evaluate(fetchRoute(directKey))
   report.directSavedCommand = directAfterSave?.command ?? null
   report.directOrderPersisted =
-    JSON.stringify(report.directSavedCommand) === JSON.stringify([...expectedArgs, promptProbe])
+    JSON.stringify(report.directSavedCommand) === JSON.stringify([...expectedArgs, promptProbe2])
 
   /*
    * ── окно заведения прямого маршрута (порция `e`). Пробная запись
@@ -796,14 +817,24 @@ try {
   probeKey = 'probe-direct'
   await evaluate(forceDelete(probeKey))
   report.createHeaderButtonCount = await evaluate(
-    `[...document.querySelectorAll('button')].filter((b) => b.textContent.trim() === 'Завести прямой маршрут').length`,
+    `[...document.querySelectorAll('button')].filter((b) => b.textContent.trim() === 'Завести маршрут').length`,
   )
-  report.createOpenClicked = await evaluate(clickByText('Завести прямой маршрут'))
+  report.createOpenClicked = await evaluate(clickByText('Завести маршрут'))
+  await sleep(300)
+  // Выбор вида: в панели под кнопкой — строка «Прямая выдача».
+  report.createChooserDirectClicked = await evaluate(`(() => {
+    const chooser = document.querySelector('.listik-routes-settings__chooser')
+    const row = chooser ? [...chooser.querySelectorAll('.listik-routes-row')]
+      .find((el) => el.querySelector('.listik-routes-row__title')?.textContent.trim() === 'Прямая выдача') : null
+    if (!row) return false
+    row.click()
+    return true
+  })()`)
   await sleep(600)
   report.createModalOpen = await evaluate(createModalOpen)
   report.createModalTitle = await evaluate(createModalTitle)
   report.createModalLead = await evaluate(createModalLead)
-  report.createLeadMentionsSkills = String(report.createModalLead ?? '').includes('Конвейеры так не заводятся')
+  report.createLeadMentionsPipelines = String(report.createModalLead ?? '').includes('Конвейеры так не заводятся')
 
   const emptyState = await evaluate(createSubmitState)
   report.createSubmitDisabledOnOpen = emptyState?.submitDisabled === true
@@ -927,34 +958,32 @@ try {
     report.directPromptMatchServer === true &&
     report.directHolderShown === true &&
     report.directHolderReadonly === true &&
-    report.directIdleDisabled === true &&
-    report.directDirtyEnabled === true &&
-    report.directBadPromptDisabled === true &&
-    report.directBadPromptNamed === true &&
-    report.directBadPromptInvalid === true &&
-    report.directPromptFixedEnabled === true &&
-    report.directBadArgDisabled === true &&
-    report.directBadArgNamed === true &&
-    report.directBadArgInvalid === true &&
-    report.directArgFixedEnabled === true &&
-    report.directLeaveAsked === true &&
-    report.directStayClicked === true &&
-    report.directStillEditing === true &&
-    report.directSaveClicked === true &&
+    report.directNoSaveButton === true &&
     report.directPatchCount === 1 &&
     report.directPatchOnlyCommand === true &&
     report.directPatchIsArray === true &&
     report.directPatchPromptMatches === true &&
+    report.directBadPromptNoPatch === true &&
+    report.directBadPromptNamed === true &&
+    report.directBadPromptInvalid === true &&
+    report.directLeaveAsked === true &&
+    report.directStayClicked === true &&
+    report.directStillEditing === true &&
+    report.directPromptFixSaved === true &&
+    report.directBadArgNoPatch === true &&
+    report.directBadArgNamed === true &&
+    report.directBadArgInvalid === true &&
+    report.directArgFixCleared === true &&
     report.directPromptPersisted === true &&
     report.directArgMoved === true &&
     report.directArgOrderChanged === true &&
-    report.directOrderSaveClicked === true &&
     report.directOrderPersisted === true &&
     report.createOpenClicked === true &&
+    report.createChooserDirectClicked === true &&
     report.createHeaderButtonCount === 1 &&
     report.createModalOpen === true &&
     report.createModalTitle === 'Завести прямой маршрут' &&
-    report.createLeadMentionsSkills === true &&
+    report.createLeadMentionsPipelines === true &&
     report.createSubmitDisabledOnOpen === true &&
     report.createSubmitNoSpinnerOnOpen === true &&
     report.createDraftKeyLatin === true &&

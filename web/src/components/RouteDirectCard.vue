@@ -50,7 +50,7 @@ import RouteSubstitutions from './RouteSubstitutions.vue'
 import store from '@/store/listik'
 import type { DirectRouteDef, RouteIconKey, RoutePatch } from '@/api/types'
 import { ROUTE_ICONS } from '@/lib/dictionaries'
-import { HARNESS_TITLES } from '@/lib/harness'
+import { harnessTitle } from '@/lib/harness'
 import { commandProblemText, isDangerousArg, previewCommand } from '@/lib/routes'
 
 const props = defineProps<{ route: DirectRouteDef }>()
@@ -397,10 +397,10 @@ const preview = computed(() => previewCommand(commandDraft.value, props.route.ke
         <span class="listik-route-direct__label">Держатель карточки</span>
         <div class="listik-route-direct__holder">
           <HarnessIcon :harness="route.harness" size="sm" />
-          <code class="listik-mono">{{ HARNESS_TITLES[route.harness] }}</code>
+          <code class="listik-mono">{{ harnessTitle(route.harness) }}</code>
           <span class="listik-route-direct__holder-note">
             <ListikIcon name="lock" size="sm" />
-            не правится
+            держателя не сменить
           </span>
         </div>
       </section>
@@ -414,7 +414,6 @@ const preview = computed(() => previewCommand(commandDraft.value, props.route.ke
     <section class="listik-route-direct__section listik-route-direct__args">
       <div class="listik-route-direct__section-head">
         <h4 class="listik-route-direct__section-title">Команда запуска</h4>
-        <UiBadge tone="accent" size="sm">правится</UiBadge>
         <span class="listik-route-direct__section-note">
           по одному аргументу в строке — кавычки не нужны
         </span>

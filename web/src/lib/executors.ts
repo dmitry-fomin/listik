@@ -8,14 +8,15 @@
  * берёт отсюда, а фактический держатель остаётся muted-подписью «держит …».
  */
 import type { RouteDef, Task } from '@/api/types'
-import { HARNESS_TITLES, type HarnessKey } from './harness'
-import { STAGE_ROLE, type ProviderKey } from './pipelines'
+import { harnessTitle, type HarnessKey } from './harness'
+import { isSwarmCell, STAGE_ROLE, type ProviderKey } from './pipelines'
 import { routeByKey } from './routes'
 
 export interface StageExecutor {
-  kind: 'role' | 'direct'
+  kind: 'role' | 'direct' | 'swarm'
   provider?: ProviderKey
-  harness?: HarnessKey
+  /** Ключ харнесса — любой из каталога `harnesses`, не только встроенный. */
+  harness?: HarnessKey | string
   /** короткая подпись (label ячейки роли / имя харнесса) */
   label: string
   /** полная (title ячейки роли / title записи маршрута) */
@@ -26,7 +27,8 @@ export interface StageExecutor {
  * Плановый исполнитель текущего этапа задачи. `null` — маршрута нет или запись
  * убрали из `routes.json`, у прямого маршрута исполнитель есть всегда; у
  * конвейера этапа без роли (`null`, `done`, неизвестный) или ячейки в `roles`
- * нет — тоже `null`, и карточка показывает держателя как раньше.
+ * нет — тоже `null`, и карточка показывает держателя как раньше. У роя
+ * исполнитель — харнесс ячейки роли этапа (listik-2gry).
  */
 export function stageExecutor(
   task: Pick<Task, 'launch_route' | 'stage'>,
@@ -38,12 +40,16 @@ export function stageExecutor(
     return {
       kind: 'direct',
       harness: route.harness,
-      label: HARNESS_TITLES[route.harness],
-      title: route.title || HARNESS_TITLES[route.harness],
+      label: harnessTitle(route.harness),
+      title: route.title || harnessTitle(route.harness),
     }
   }
   if (!task.stage || task.stage === 'done') return null
   const cell = route.roles[STAGE_ROLE[task.stage]]
   if (!cell) return null
+  if (isSwarmCell(cell)) {
+    const name = harnessTitle(cell.harness)
+    return { kind: 'swarm', harness: cell.harness, label: name, title: name }
+  }
   return { kind: 'role', provider: cell.provider, label: cell.label, title: cell.title || cell.label }
 }

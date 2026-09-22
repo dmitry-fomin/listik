@@ -34,6 +34,8 @@ import ListikIcon from '@/components/ListikIcon.vue'
 import AssistantField from '@/components/AssistantField.vue'
 import ProjectMark from '@/components/marks/ProjectMark.vue'
 import RoutePicker from '@/components/RoutePicker.vue'
+import NewDirectRouteModal from '@/components/NewDirectRouteModal.vue'
+import NewSwarmRouteModal from '@/components/NewSwarmRouteModal.vue'
 import TaskGlyph from '@/components/marks/TaskGlyph.vue'
 import { TASK_TYPES, priority } from '@/lib/dictionaries'
 import type {
@@ -302,6 +304,21 @@ function onPickRoute(key: string): void {
   if (route) selectRoute(route)
 }
 
+/*
+ * Кнопки «＋» в заголовках групп пикера («Рой», «Прямая выдача») открывают
+ * заведение маршрута прямо из «Новой задачи» (макет NewTaskRoutes). Созданная
+ * запись уже в `store.routes` (стор перечитал список) — выбираем её сразу.
+ */
+const createRouteKind = ref<'swarm' | 'direct' | null>(null)
+
+function onRouteCreated(route: RouteDef): void {
+  createRouteKind.value = null
+  if (routeAllowedForType(route, form.type)) {
+    routeTouched.value = true
+    form.routeKey = route.key
+  }
+}
+
 /** Галочка доступна, только когда маршрут выбран и данные маршрутов живые. */
 const autostartAvailable = computed(() => Boolean(selectedRoute.value) && !routesFailed.value)
 
@@ -475,9 +492,10 @@ function cancel(): void {
       </UiField>
 
       <section class="listik-stack" style="gap: var(--space-2)">
-        <h4 class="listik-section__title">
+        <h4 class="listik-section__title">Как делать</h4>
+        <p class="listik-newtask__route-caption">
           Маршрут · кто исполняет и по какому процессу
-        </h4>
+        </p>
 
         <template v-if="routesFailed">
           <UiAlert tone="warning">
@@ -502,7 +520,9 @@ function cancel(): void {
             :routes="store.routes.value"
             :selected-key="form.routeKey"
             :issue-type="form.type"
+            allow-create
             @select="onPickRoute"
+            @create="(kind) => (createRouteKind = kind)"
           />
         </template>
 
@@ -511,6 +531,19 @@ function cancel(): void {
         </UiTooltip>
       </section>
     </div>
+
+    <!-- Заведение маршрута прямо из «Новой задачи» (кнопки «＋» в группах
+         пикера): новый маршрут появляется в своей группе сразу и выбирается. -->
+    <NewSwarmRouteModal
+      v-if="createRouteKind === 'swarm'"
+      @created="onRouteCreated"
+      @close="createRouteKind = null"
+    />
+    <NewDirectRouteModal
+      v-else-if="createRouteKind === 'direct'"
+      @created="onRouteCreated"
+      @close="createRouteKind = null"
+    />
 
     <template #footer>
       <UiButton variant="ghost" size="md" @click="cancel">Отмена</UiButton>
@@ -521,3 +554,15 @@ function cancel(): void {
     </template>
   </UiDrawer>
 </template>
+
+<style scoped>
+/* Подпись блока маршрутов под «Как делать» — мелкий капс, как в макете. */
+.listik-newtask__route-caption {
+  margin: 0;
+  font-size: var(--text-xs);
+  font-weight: var(--weight-semibold);
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+  color: var(--ink-3);
+}
+</style>

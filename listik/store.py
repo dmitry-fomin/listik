@@ -796,14 +796,20 @@ def update_task(conn: sqlite3.Connection, task_id: str, *, actor: str | None = N
             documents.index_task_documents(conn, task_id)
         except Exception as exc:
             event(conn, task_id, "document_error", note=str(exc))
-    new_status = next((new for key, _old, new in changes if key == "status"), None)
-    if new_status in ("done", "cancelled"):
-        from . import stage_launch
-        if new_status == "done":
-            stage_launch.on_task_done(conn, task_id)
-        else:
-            stage_launch.on_task_cancelled(conn, task_id)
     conn.commit()
+    if any(key == "status" and new in FINAL_STATUSES for key, _old, new in changes):
+        # Порция нарезки закрылась — возможно, это была последняя: родитель-рой
+        # закрывается сам (`stage_launch.close_swarm_parent`, listik-2gry), а при
+        # отмене последней живой порции на родителе ставится вопрос человеку
+        # (`stage_launch.note_portions_cancelled`). Ленивый импорт: `stage_launch`
+        # уже импортирует `store`, цикл наверху нельзя.
+        try:
+            from . import stage_launch
+            stage_launch.close_swarm_parent(conn, task_id)
+            stage_launch.note_portions_cancelled(conn, task_id)
+        except Exception as exc:  # noqa: BLE001 — закрытие порции не роняем
+            event(conn, task_id, "swarm_parent_error", note=str(exc))
+            conn.commit()
     return get_task(conn, task_id)
 
 
@@ -1383,15 +1389,30 @@ def _last_release_ts(conn: sqlite3.Connection, task_id: str) -> str | None:
     return r["ts"] if r else None
 
 
-def _rows_to_tasks(conn: sqlite3.Connection, rows) -> list[dict]:
-    """Выдача пачки карточек: флаги порций одним запросом, ошибка запроса не глотается."""
-    from . import stage_launch
-    flags = stage_launch.portion_flags_many(conn, rows)
-    return [row_to_task(conn, row, portions=flags[row["id"]]) for row in rows]
+def _portion_flags(conn: sqlite3.Connection, task_id: str,
+                   stage: str | None) -> tuple[bool, bool]:
+    """`(has_portions, portions_cancelled_only)` — вычисляемые поля нарезки.
+
+    `has_portions` — есть хотя бы один не отменённый ребёнок `parent-child`
+    (закрытые `done` тоже считаются: до закрытия родителя они ещё часть
+    нарезки). `portions_cancelled_only` — дети есть, каждый `cancelled`, и
+    этап родителя ещё пустой или `s1-spec` (docs/specs/swarm-stage-launch.md).
+    """
+    try:
+        statuses = [r["status"] for r in conn.execute(
+            "SELECT t.status FROM deps d JOIN tasks t ON t.id = d.issue_id "
+            "WHERE d.depends_on = ? AND d.dep_type IN ('parent-child','parent')",
+            (task_id,)).fetchall()]
+    except sqlite3.OperationalError:
+        return False, False
+    has = any(status != "cancelled" for status in statuses)
+    cancelled_only = (bool(statuses)
+                      and all(status == "cancelled" for status in statuses)
+                      and (stage or "").strip() in ("", "s1-spec"))
+    return has, cancelled_only
 
 
-def row_to_task(conn: sqlite3.Connection, row: sqlite3.Row, *,
-                portions: tuple[bool, bool] | None = None) -> dict:
+def row_to_task(conn: sqlite3.Connection, row: sqlite3.Row) -> dict:
     cfg = config_mod.load()
     warn = float((cfg.get("board") or {}).get("wip_warn_hours", 8))
     stale_h = float((cfg.get("board") or {}).get("stale_hours", 24))
@@ -1435,6 +1456,8 @@ def row_to_task(conn: sqlite3.Connection, row: sqlite3.Row, *,
     in_release_grace = bool(released_at and released_hours is not None
                             and released_hours <= assign_warn_min / 60.0)
     abandoned = (orphan and not in_release_grace) or missing_heartbeat
+    has_portions, portions_cancelled_only = _portion_flags(
+        conn, row["id"], row["stage"])
     # «Выдана, но не взята»: держателя поставил оркестратор (`stage --holder`), а
     # сам агент ещё не записал ни claim, ни heartbeat от своего имени. Порог
     # `board.assign_warn_minutes` — когда его прошли, карточка идёт в «нужен ты»:
@@ -1446,11 +1469,6 @@ def row_to_task(conn: sqlite3.Connection, row: sqlite3.Row, *,
     # у карточки любого статуса, но нужнее всего закрытой — у неё держателя может
     # уже не быть (`stage --to done` его снимает).
     worked_by = worked_by_actors(conn, row["id"])
-    if portions is None:
-        from . import stage_launch
-        portion_has, portion_cancelled = stage_launch.portion_flags(conn, row)
-    else:
-        portion_has, portion_cancelled = portions
     return {
         "id": row["id"],
         "project": row["project"],
@@ -1516,8 +1534,6 @@ def row_to_task(conn: sqlite3.Connection, row: sqlite3.Row, *,
         # работа не началась, и это видно доске по `route_editable`.
         "autostart": bool(row["autostart"]),
         "launch_route": row["launch_route"],
-        "launch_driver": ((row["launch_driver"] or "").strip() or None)
-                         if "launch_driver" in row.keys() else None,
         "route_editable": route_change_denied(row) is None,
         "launched_by": row["launched_by"],
         "launch_pid": row["launch_pid"],
@@ -1526,6 +1542,10 @@ def row_to_task(conn: sqlite3.Connection, row: sqlite3.Row, *,
         "launch_exit_code": row["launch_exit_code"],
         "launch_finished_at": row["launch_finished_at"],
         "launch_error": row["launch_error"],
+        "launch_driver": (row["launch_driver"]
+                          if "launch_driver" in row.keys() else None),
+        "has_portions": has_portions,
+        "portions_cancelled_only": portions_cancelled_only,
         # Рой (listik-s520): области файлов и ограждение запуска.
         "read_scope": store_helpers.json_list(row["read_scope"]),
         "write_scope": store_helpers.json_list(row["write_scope"]),
@@ -1542,8 +1562,6 @@ def row_to_task(conn: sqlite3.Connection, row: sqlite3.Row, *,
         "closed_at": row["closed_at"],
         "close_reason": row["close_reason"],
         "archived": bool(row["archived"]),
-        "has_portions": portion_has,
-        "portions_cancelled_only": portion_cancelled,
         "stale": stale,
         "abandoned": abandoned,
         # метка, от которой идёт льготное окно «в работе без держателя»;
@@ -1680,7 +1698,7 @@ def list_tasks(conn: sqlite3.Connection, *, project: str | None = None, status: 
         [*params, limit, offset],
     ).fetchall()
     return {"total": total, "limit": limit, "offset": offset,
-            "tasks": _rows_to_tasks(conn, rows)}
+            "tasks": [row_to_task(conn, r) for r in rows]}
 
 
 def task_timeline(conn: sqlite3.Connection, limit: int = 100, *,
@@ -1729,7 +1747,7 @@ def board(conn: sqlite3.Connection, *, group_by: str = "status", project: str | 
     rows = conn.execute(
         f"SELECT * FROM tasks {sql_where} ORDER BY priority ASC, updated_at DESC", params
     ).fetchall()
-    tasks = _rows_to_tasks(conn, rows)
+    tasks = [row_to_task(conn, r) for r in rows]
 
     columns: dict[str, dict] = {}
     if group_by == "stage":
@@ -1894,7 +1912,7 @@ def stats(conn: sqlite3.Connection, project: str | None = None) -> dict:
         "closed_delta": closed_7d - closed_prev_7d,
         "closed_by_day": closed_by_day,
         "long_stage": long_stage,
-        "running": _rows_to_tasks(conn, running),
+        "running": [row_to_task(conn, r) for r in running],
         "generated_at": now_iso(),
     }
 

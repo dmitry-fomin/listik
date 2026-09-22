@@ -188,3 +188,48 @@ test("таймаут — ListikError c code timeout", async () => {
     return true;
   });
 });
+
+test("rescope: argv — rescope --project proj --apply --json --actor", async () => {
+  const {calls} = setupFake({rescope: {stdout: JSON.stringify({
+    project: "proj", applied: {scopes: [], edges: null}, cycles: []})}});
+  const listik = new Listik({bin: FAKE_BIN, actor: "agent:listik-swarm", cliTimeout: 5});
+  const res = await listik.rescope("proj");
+  const [argv] = calls();
+  assert.deepEqual(argv, ["rescope", "--project", "proj", "--apply", "--json", "--actor", "agent:listik-swarm"]);
+  for (const flag of ["--task", "--drift", "--dry-run"]) assert.ok(!argv.includes(flag), flag);
+  assert.equal(res.project, "proj");
+});
+
+test("rescope: ненулевой код с JSON без error (цикл) — объект с cycles", async () => {
+  setupFake({rescope: {exitCode: 1, stdout: JSON.stringify({
+    cycles: [["a", "b"]], applied: {scopes: ["a"], edges: null}})}});
+  const listik = new Listik({bin: FAKE_BIN, actor: "agent:listik-swarm", cliTimeout: 5});
+  const res = await listik.rescope("proj");
+  assert.equal(res.cycles.length, 1);
+});
+
+test("rescope: ненулевой код с {error} — ListikError server_error", async () => {
+  setupFake({rescope: {exitCode: 1, stdout: JSON.stringify({error: {
+    code: "server_error", message: "модель роя не настроена", hint: ""}})}});
+  const listik = new Listik({bin: FAKE_BIN, actor: "agent:listik-swarm", cliTimeout: 5});
+  await assert.rejects(() => listik.rescope("proj"), (err) => {
+    assert.ok(err instanceof ListikError);
+    assert.equal(err.code, "server_error");
+    return true;
+  });
+});
+
+test("rescope: timeoutSec перекрывает cliTimeout", async () => {
+  setupFake({rescope: {sleepMs: 1500, stdout: "{}"}});
+  const slowOk = new Listik({bin: FAKE_BIN, actor: "agent:listik-swarm", cliTimeout: 1});
+  await slowOk.rescope("proj", {timeoutSec: 5});
+
+  setupFake({rescope: {sleepMs: 2500, stdout: "{}"}});
+  const tight = new Listik({bin: FAKE_BIN, actor: "agent:listik-swarm", cliTimeout: 60});
+  await assert.rejects(() => tight.rescope("proj", {timeoutSec: 1}), (err) => {
+    assert.ok(err instanceof ListikError);
+    assert.equal(err.code, "timeout");
+    assert.ok(err.message.includes("1s"), err.message);
+    return true;
+  });
+});

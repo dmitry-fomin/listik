@@ -216,3 +216,39 @@ test("max_freezes: -1, дробь, строка и null — ConfigError", () => 
     );
   }
 });
+
+test("rescope: дефолт true, false с верхнего уровня и из проекта", () => {
+  assert.equal(swarmConfigFor(parseSwarmConfig("{}"), "p").rescope, true);
+  assert.equal(swarmConfigFor(parseSwarmConfig(JSON.stringify({rescope: false})), "p").rescope, false);
+  const parsed = parseSwarmConfig(JSON.stringify({projects: {p: {rescope: false}}}));
+  assert.equal(swarmConfigFor(parsed, "p").rescope, false);
+  assert.equal(swarmConfigFor(parsed, "q").rescope, true);
+});
+
+test("rescope: строка, null, число — ConfigError, в том числе в projects.p", () => {
+  for (const bad of ["no", null, 1]) {
+    assert.throws(
+      () => parseSwarmConfig(JSON.stringify({rescope: bad})),
+      (err) => err instanceof ConfigError &&
+        err.message.startsWith("swarm.json: rescope ожидал true или false"),
+      `rescope ${JSON.stringify(bad)}`,
+    );
+    assert.throws(
+      () => parseSwarmConfig(JSON.stringify({projects: {p: {rescope: bad}}})),
+      (err) => err instanceof ConfigError && err.message.includes("projects.p.rescope"),
+      `projects.p.rescope ${JSON.stringify(bad)}`,
+    );
+  }
+});
+
+test("rescope_timeout: число, дефолт 3600, 0 и строка — ConfigError", () => {
+  assert.equal(swarmConfigFor(parseSwarmConfig(JSON.stringify({rescope_timeout: 42})), "p").rescopeTimeout, 42);
+  assert.equal(swarmConfigFor(parseSwarmConfig("{}"), "p").rescopeTimeout, 3600);
+  for (const bad of [0, "x"]) {
+    assert.throws(
+      () => parseSwarmConfig(JSON.stringify({rescope_timeout: bad})),
+      (err) => err instanceof ConfigError && err.message.includes("rescope_timeout ожидал число > 0"),
+      `rescope_timeout ${JSON.stringify(bad)}`,
+    );
+  }
+});

@@ -35,6 +35,7 @@ import {
   sortedCommentsDesc,
   stageStartedText,
 } from '@/lib/task-presentation'
+import store from '@/store/listik'
 
 const props = defineProps<{
   modelValue: boolean
@@ -125,7 +126,9 @@ const journalItems = computed<UiTimelineItem[]>(() => {
           <dl class="listik-dl">
             <dt>держит</dt>
             <dd>
-              {{ holderStatusText(task) }}
+              <!-- Исполнитель этапа из ролей маршрута (`stageExecutor` внутри
+                   `holderStatusText`) важнее держателя-оркестратора. -->
+              {{ holderStatusText(task, store.routes.value) }}
             </dd>
             <dt>heartbeat</dt>
             <dd>{{ heartbeatText(task) }}</dd>

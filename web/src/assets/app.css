@@ -786,6 +786,21 @@ body {
   white-space: nowrap;
 }
 
+/* «Делает …» — плановый исполнитель этапа из ролей маршрута (lib/executors.ts):
+   длинный title режется эллипсисом внутри flex-подвала. */
+.listik-task-card__executor {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+/* Держатель рядом с исполнителем — muted: он лишь управляет карточкой. */
+.listik-task-card__executor-holds {
+  color: var(--ink-3);
+  white-space: nowrap;
+}
+
 @media (max-width: 900px) {
   .listik-shell { --listik-page-w: min(100% - 32px, 1440px); }
 }

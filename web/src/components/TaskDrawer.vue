@@ -63,6 +63,7 @@ import {
   type FeedFilterValue,
 } from '@/lib/dictionaries'
 import HarnessIcon from './marks/HarnessIcon.vue'
+import ProviderIcon from './marks/ProviderIcon.vue'
 import type {
   CommentKind,
   DepInfo,
@@ -98,6 +99,7 @@ import {
   type ColdRow,
 } from '@/lib/task-presentation'
 import { NO_ROUTE, routeByKey, routesAlertText } from '@/lib/routes'
+import { stageExecutor } from '@/lib/executors'
 import store from '@/store/listik'
 
 const props = defineProps<{
@@ -360,6 +362,15 @@ function pickRoute(key: string): void {
  */
 const launchRoute = computed(() => routeByKey(props.task?.launch_route, store.routes.value))
 
+/**
+ * Плановый исполнитель текущего этапа из ролей маршрута (`lib/executors.ts`):
+ * держатель у конвейера — оркестратор, а этап делает роль (GLM-критик и т.п.).
+ * Хелпер зовётся здесь, а не в `desktopHolderPresentation`, потому что зависит
+ * от `store.routes` — как `launchRoute` выше. У закрытой карточки (ветка
+ * `workedBy`) строки «делает» нет — там уже «выполнял …».
+ */
+const executor = computed(() => (props.task ? stageExecutor(props.task, store.routes.value) : null))
+
 /** Блок нужен, если маршрут можно менять или о запуске уже есть что сказать. */
 const showLaunch = computed(() => {
   const task = props.task
@@ -563,8 +574,10 @@ function describeStep(index: number, status: UiStepStatus): string | undefined {
   const step = PIPELINE[index]
   if (status === 'done') return pastDescription(step.key, index)
   if (status === 'current') {
-    const holder = hasHolderTitle(task.holder_title) ? task.holder_title : 'без держателя'
-    return `${holder} · ${task.stage_age} · сейчас`
+    // Известен исполнитель этапа — он и есть «кто делает»; держатель при этом
+    // остаётся в блоке «Кто держит» ниже.
+    const who = executor.value?.title ?? (hasHolderTitle(task.holder_title) ? task.holder_title : 'без держателя')
+    return `${who} · ${task.stage_age} · сейчас`
   }
   const prevKey = index === 0 ? null : PIPELINE[index - 1].key
   const key = prevKey ? (`${prevKey}:${step.key}` as TransitionKey) : null
@@ -1299,6 +1312,19 @@ async function loadTree(): Promise<void> {
             </dd>
           </template>
           <template v-else>
+            <!-- Плановый исполнитель этапа по ролям маршрута — перед «держит»,
+                 потому что отвечает на вопрос «кто делает». -->
+            <template v-if="executor">
+              <dt>делает</dt>
+              <dd>
+                <ProviderIcon v-if="executor.provider" :provider="executor.provider" />
+                <HarnessIcon v-else-if="executor.harness" :harness="executor.harness" />
+                {{ executor.title }}<span
+                  v-if="executor.label && executor.label !== executor.title"
+                  style="color: var(--ink-3)"
+                > · {{ executor.label }}</span>
+              </dd>
+            </template>
             <dt>держит</dt>
             <dd>
               <HarnessIcon :actor="task.holder" />

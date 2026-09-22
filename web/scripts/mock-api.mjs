@@ -12,7 +12,10 @@
  * `--routes` добавляет `GET /api/routes` и карточку `listik-routes-error` с
  * отказавшим автостартом (`launch_error`, флаг «нужен человек», метки маршрута) —
  * так проверяется пункт «без маршрута» в панели задачи
- * (scripts/verify-route-clear.mjs).
+ * (scripts/verify-route-clear.mjs). В том же режиме живёт карточка
+ * `listik-executor`: держит её `claude`, а этап s3-impl по маршруту делает
+ * роль `impl` — по ней проверяется подпись «делает …»
+ * (scripts/verify-card-executor.mjs).
  * `--assistant` добавляет `GET /api/assistant/status` (`enabled`) и
  * `POST /api/assistant/suggest`; формы — `AssistantStatus` и
  * `AssistantSuggestResponse` из `web/src/api/types.ts`. Ответ подбирается по
@@ -638,7 +641,10 @@ const ROUTES = [
     icon: 'low',
     roles: {
       spec: { provider: 'claude', label: 'ТЗ', title: 'ТЗ и чек-лист' },
-      impl: { provider: 'dsh', label: 'Код', title: 'Реализация' },
+      critic: { provider: 'glm', label: 'GLM', title: 'GLM — критик' },
+      // provider — валидный ProviderKey ('deepseek', не 'dsh'); title отличен
+      // от названия этапа, чтобы подпись «делает …» проверялась однозначно.
+      impl: { provider: 'deepseek', label: 'DeepSeek', title: 'DeepSeek — код' },
       judge: { provider: 'grok', label: 'Судья', title: 'Проверка' },
     },
   },
@@ -882,6 +888,28 @@ if (routesMode) {
       assignee: null,
       assignee_title: '',
       labels: ['frontend'],
+      stale: false,
+      abandoned: false,
+    }),
+    // Карточка на s3-impl конвейера `low-pipeline`: держит оркестратор
+    // (`claude`), а этап делает роль `impl` (DeepSeek) — по ней проверяется
+    // подпись «делает …» в подвале и в панели (scripts/verify-card-executor.mjs).
+    task({
+      id: 'listik-executor',
+      title: 'Этап делает роль маршрута',
+      status: 'in_progress',
+      status_title: 'в работе',
+      stage: 's3-impl',
+      stage_title: '3. Реализация',
+      holder: 'claude',
+      holder_title: 'Claude',
+      holder_at: iso(0.1),
+      holder_age: '6 мин',
+      holder_hours: 0.1,
+      idle_hours: 0.1,
+      idle_age: '6 мин',
+      launch_route: 'low-pipeline',
+      labels: ['harness:claude', 'process:low-pipeline', 'frontend'],
       stale: false,
       abandoned: false,
     }),

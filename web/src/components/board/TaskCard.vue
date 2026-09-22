@@ -11,6 +11,7 @@ import ProjectMark from '../marks/ProjectMark.vue'
 import CountGlyph from '../marks/CountGlyph.vue'
 import HealthDot from '../marks/HealthDot.vue'
 import HarnessIcon from '../marks/HarnessIcon.vue'
+import ProviderIcon from '../marks/ProviderIcon.vue'
 import RouteIcon from '../marks/RouteIcon.vue'
 import ListikIcon from '../ListikIcon.vue'
 import type { ProjectRow, Task } from '@/api/types'
@@ -18,6 +19,8 @@ import store, { type DepsSummary } from '@/store/listik'
 import { AT_RISK_IDLE_HOURS, taskHealth, healthReason, healthTone } from '@/lib/health'
 import { statusTitle } from '@/lib/dictionaries'
 import { routeByKey } from '@/lib/routes'
+import { stageExecutor } from '@/lib/executors'
+import { hasHolderTitle } from '@/lib/task-presentation'
 
 const props = defineProps<{
   task: Task
@@ -127,6 +130,25 @@ const workedBy = computed<{ label: string; title: string; actor: string } | null
   }
 })
 
+/**
+ * Плановый исполнитель текущего этапа из ролей маршрута (`lib/executors.ts`):
+ * у конвейера держатель — оркестратор, а работу делает роль (GLM-критик и т.п.),
+ * поэтому в подвале вместо «кто держит» показывается «делает …». У закрытой
+ * карточки и у «выдана, не взята» он не показывается: там важнее «выполнял»
+ * и то, что прогон ещё не подтвердился.
+ */
+const executor = computed(() => stageExecutor(props.task, store.routes.value))
+
+const executorTooltip = computed(() => {
+  const exec = executor.value
+  if (!exec) return ''
+  const label = exec.label && exec.label !== exec.title ? ` (${exec.label})` : ''
+  return `исполнитель этапа: ${exec.title}${label}`
+})
+
+/** Держатель рядом с исполнителем — muted-хвост «· держит …». */
+const holderTail = computed(() => Boolean(props.task.holder) && hasHolderTitle(props.task.holder_title))
+
 const stageAgeClass = computed(() => {
   if (!props.task.stage_warn) return null
   return (props.task.stage_hours ?? 0) > 24 ? 'is-late' : 'is-warn'
@@ -193,12 +215,24 @@ function onKeydown(event: KeyboardEvent): void {
           <HarnessIcon :actor="workedBy.actor" size="xs" />
           {{ workedBy.label }} <strong>{{ workedBy.title }}</strong>
         </template>
+        <template v-else-if="task.not_taken">
+          <HarnessIcon :actor="task.holder" size="xs" />
+          <strong>{{ task.holder_title }}</strong>
+          <span class="listik-task-card__assigned">
+            выдана, не взята {{ task.assigned_age }}
+          </span>
+        </template>
+        <template v-else-if="executor">
+          <ProviderIcon v-if="executor.provider" :provider="executor.provider" size="xs" />
+          <HarnessIcon v-else-if="executor.harness" :harness="executor.harness" size="xs" />
+          <span class="listik-task-card__executor" :title="executorTooltip">
+            делает <strong>{{ executor.title }}</strong>
+          </span>
+          <span v-if="holderTail" class="listik-task-card__executor-holds">· держит {{ task.holder_title }}</span>
+        </template>
         <template v-else-if="task.holder">
           <HarnessIcon :actor="task.holder" size="xs" />
           <strong>{{ task.holder_title }}</strong>
-          <span v-if="task.not_taken" class="listik-task-card__assigned">
-            выдана, не взята {{ task.assigned_age }}
-          </span>
         </template>
         <template v-else>без держателя</template>
       </span>

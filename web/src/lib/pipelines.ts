@@ -30,6 +30,15 @@ export const ROLE_STAGE: Record<RoleKey, PipelineStage> = {
   judge: 's4-judge',
 }
 
+/**
+ * Обратное соответствие этап → роль — собрано из `ROLE_STAGE`, чтобы литералы
+ * этапов и ролей не дублировались в двух местах. По нему `lib/executors.ts`
+ * находит ячейку `roles` записи маршрута для текущего этапа задачи.
+ */
+export const STAGE_ROLE: Record<PipelineStage, RoleKey> = Object.fromEntries(
+  (Object.entries(ROLE_STAGE) as [RoleKey, PipelineStage][]).map(([role, stage]) => [stage, role]),
+) as Record<PipelineStage, RoleKey>
+
 /** Вендор роли — своя мини-таксономия, не `HarnessKey`: GLM никогда не держатель задачи на сервере. */
 export type ProviderKey = 'claude' | 'glm' | 'openai' | 'grok' | 'deepseek' | 'devin'
 

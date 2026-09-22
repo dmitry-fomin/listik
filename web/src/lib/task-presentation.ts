@@ -1,8 +1,9 @@
-import type { DepInfo, ProjectRow, Task, TaskComment, TaskDetail } from '@/api/types'
+import type { DepInfo, ProjectRow, RouteDef, Task, TaskComment, TaskDetail } from '@/api/types'
 import { formatDateTime, humanAge } from './format'
 import { HARNESS_TITLES, harnessOf } from './harness'
 import { HEALTH_TITLES, healthReason, taskHealth } from './health'
 import { worktreeState, worktreeValue } from './dictionaries'
+import { stageExecutor } from './executors'
 
 /** Общие представления задачи для настольной и телефонной карточек. */
 
@@ -53,12 +54,24 @@ export function depHolderHint(dep: DepInfo): string {
   return dep.holder ? `держит ${dep.holder_title}` : 'без держателя'
 }
 
-/** Текст статуса держателя для компактного списка телефона. */
-export function holderStatusText(task: TaskDetail): string {
-  if (!task.holder) return 'никто'
-  if (task.not_taken) {
+/**
+ * Текст статуса держателя для компактного списка телефона. «Выдана, не взята»
+ * важнее исполнителя (прогон ещё не подтвердился); иначе при известном
+ * исполнителе этапа (`lib/executors.ts`) показываем его, а держатель уходит
+ * в хвост «держит …» — держателя может и не быть вовсе.
+ */
+export function holderStatusText(task: TaskDetail, routes: RouteDef[] = []): string {
+  if (task.not_taken && task.holder) {
     return `выдана ${task.holder_title}, не взята ${task.assigned_age}${task.holder_assigned_by_title ? ` · выдал ${task.holder_assigned_by_title}` : ''}`
   }
+  const executor = stageExecutor(task, routes)
+  if (executor) {
+    const parts = [executor.title]
+    if (hasHolderTitle(task.holder_title)) parts.push(`держит ${task.holder_title}`)
+    if (task.holder_age) parts.push(task.holder_age)
+    return parts.join(' · ')
+  }
+  if (!task.holder) return 'никто'
   return `${task.holder_title} · ${task.holder_age}`
 }
 

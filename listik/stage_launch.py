@@ -7,6 +7,7 @@ from __future__ import annotations
 import sqlite3
 from pathlib import Path
 
+from . import errors as errors_mod
 from . import harnesses_store
 from . import store
 
@@ -178,8 +179,11 @@ def _slice_parent(conn: sqlite3.Connection, task_id: str, record: dict,
         return
     portion_ids = {row["id"] for row in children}
     for row in children:
-        # Уже начатую порцию (этап, держатель или запуск) не переписываем.
-        if row["status"] != "open" or (row["stage"] or "").strip() \
+        # Уже начатую порцию не переписываем. Неначатая — статус open без
+        # держателя и запуска; этап пустой или ровно `s1-spec` (такую тоже
+        # переводим — спека её уже прошла, docs/specs/swarm-stage-launch.md).
+        child_stage = (row["stage"] or "").strip()
+        if row["status"] != "open" or child_stage not in ("", "s1-spec") \
                 or (row["holder"] or "").strip() or (row["launched_by"] or "").strip():
             continue
         # Маршрут меняется, только пока карточка «просто заведена» (без этапа,
@@ -382,9 +386,12 @@ def apply_outcome(conn: sqlite3.Connection, task_id: str, *, notify=None) -> Non
                 return
             nxt = next_stage_with_role(conn, record or {}, stage) if record else None
             if nxt is not None:
-                store.update_task(conn, task_id, actor=SWARM_ACTOR,
-                                  stage=nxt, holder="",
-                                  note=f"рой: ответ «готово», этап {stage} → {nxt}")
+                # Одним next_stage: handoff снимает держателя сам, а sticky
+                # (s3-impl→s4-judge) оставит — тогда снимаем отдельно.
+                store.next_stage(conn, task_id, to_stage=nxt, actor=SWARM_ACTOR,
+                                 note=f"рой: ответ «готово», этап {stage} → {nxt}")
+                _clear_holder(conn, task_id,
+                              "рой: ответ «готово», держатель снят")
                 store.add_comment(
                     conn, task_id,
                     f"рой: ответ «готово», этап {stage} → {nxt}, держатель снят",
@@ -432,6 +439,13 @@ def apply_outcome(conn: sqlite3.Connection, task_id: str, *, notify=None) -> Non
             _clear_holder(conn, task_id, "рой: работа не сдана, держатель снят")
             store.set_needs_owner(conn, task_id, value=True, text=text,
                                   actor=SWARM_ACTOR)
+    except Exception as exc:  # noqa: BLE001 — исход не потерять: вопрос человеку
+        try:
+            store.set_needs_owner(
+                conn, task_id, value=True, actor=SWARM_ACTOR,
+                text=f"рой: не разобрал исход этапа: {errors_mod.message_of(exc)}")
+        except Exception:  # noqa: BLE001 — соединение могло умереть вместе с исходом
+            pass
     finally:
         _release_capture(conn, task_id, dispatch_id)
         conn.commit()

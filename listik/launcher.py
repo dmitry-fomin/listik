@@ -485,8 +485,10 @@ def _start_swarm(conn, task_id: str, row, record: dict, *, notify, log_dir,
                 conn, task_id,
                 f"рой: после {stage} роли нет, карточку не закрываю. "
                 "Сними флаг — запущу тот же этап снова.", notify)
-        store.update_task(conn, task_id, actor="agent:listik", stage=nxt,
-                          holder="", note=f"рой: роли {role or '—'} нет")
+        store.next_stage(conn, task_id, to_stage=nxt, actor="agent:listik",
+                         note=f"рой: роли {role or '—'} нет, этап {stage} → {nxt}")
+        # Пропуск без держателя: если липкий переход держателя оставил — снять.
+        stage_launch._clear_holder(conn, task_id, "рой: пропуск роли, держатель снят")
         store.add_comment(conn, task_id,
                           f"рой: роли {role or '—'} нет, этап {stage} → {nxt}",
                           author="agent:listik", kind="journal")

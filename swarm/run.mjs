@@ -49,13 +49,15 @@ export async function tick(listik, config, log, runState = null) {
   log.line(`сервер: bin_path=${status.bin_path} data_dir=${status.data_dir} ` +
     `db_path=${status.db_path} url=${status.url}`);
 
-  const plan = await listik.waves(config.project, {apply: !config.dryRun});
-  if (plan.applyResult) {
-    const {added, removed, kept} = plan.applyResult;
+  const logWavesApply = (p) => {
+    if (!p.applyResult) return;
+    const {added, removed, kept} = p.applyResult;
     log.action(`waves --apply: записано ${added.length} рёбер ` +
       `(${added.map(([a, b]) => `${a} → ${b}`).join(", ")}), снято ${removed.length} ` +
       `(${removed.map(([a, b]) => `${a} → ${b}`).join(", ")}), без изменений ${kept}`);
-  }
+  };
+  let plan = await listik.waves(config.project, {apply: !config.dryRun});
+  logWavesApply(plan);
   const listRes = await listik.list(config.project);
   let tasks = listRes.tasks || [];
   const routesRes = await listik.routes();
@@ -75,6 +77,7 @@ export async function tick(listik, config, log, runState = null) {
   let gate = null;
   let barrierResult = null;
   let watchSummary = null;
+  let rescopeResult = null;
   let questionTimeout = DEFAULT_QUESTION_TIMEOUT;
   const rollbacks = [];
   const cyclesPending = !!(plan.cycles && plan.cycles.length);
@@ -248,6 +251,62 @@ export async function tick(listik, config, log, runState = null) {
             } catch (err) {
               log.line(`show ${id} ошибка: ${errText(err)}`);
             }
+          }
+        }
+
+        // После влитой волны — уточнить области и граф; ошибка тик не роняет.
+        const mergedNow = barrierResult.mergedNow || [];
+        if (mergedNow.length && config.dryRun) {
+          log.action(`[dry-run] rescope ${config.project}: влито ${mergedNow.join(", ")}`);
+        } else if (mergedNow.length && swarmConfig.rescope === false) {
+          log.line("rescope: выключен в swarm.json");
+          rescopeResult = {ok: false, skipped: "disabled"};
+        } else if (mergedNow.length) {
+          let res = null;
+          try {
+            res = await listik.rescope(config.project, {timeoutSec: swarmConfig.rescopeTimeout});
+          } catch (err) {
+            log.line(`rescope ошибка: ${errText(err)}`);
+            rescopeResult = {ok: false, error: err.code ?? "error"};
+          }
+          if (res) {
+            const scopes = res.applied?.scopes ?? [];
+            const added = res.applied?.edges?.added ?? [];
+            const removed = res.applied?.edges?.removed ?? [];
+            const cycles = res.cycles ?? [];
+            const drift = res.drift ?? {};
+            const unspecced = Object.keys(res.unspecced ?? {});
+            log.action(`rescope ${config.project}: ТЗ прочитано ${res.extracted ?? 0}, ` +
+              `областей записано ${scopes.length} (${scopes.join(", ")}), ` +
+              `рёбер +${added.length} −${removed.length}, качество ТЗ: расхождений у ` +
+              `${drift.tasks_with_drift ?? 0} из ${drift.tasks_total ?? 0} задач ` +
+              `(${drift.outside_files ?? 0} файлов вне области)`);
+            if (cycles.length) {
+              const desc = cycles.map(c => [...c, c[0]].join(" → ")).join("; ");
+              log.line(`rescope: цикл ${desc} — рёбра не записаны`);
+            }
+            if (unspecced.length) log.line(`rescope: без ТЗ: ${unspecced.join(", ")}`);
+            if (res.unscoped && res.unscoped.length) {
+              log.line(`rescope: без области: ${res.unscoped.join(", ")}`);
+            }
+            const refreshed = !!(scopes.length || added.length || removed.length);
+            if (refreshed) {
+              try {
+                plan = await listik.waves(config.project, {apply: true});
+                logWavesApply(plan);
+              } catch (err) {
+                log.line(`waves после rescope ошибка: ${errText(err)}`);
+              }
+              try {
+                tasks = (await listik.list(config.project)).tasks || [];
+              } catch (err) {
+                log.line(`list после rescope ошибка: ${errText(err)}`);
+              }
+            }
+            rescopeResult = {
+              ok: true, extracted: res.extracted ?? 0, scopes, edgesAdded: added.length,
+              edgesRemoved: removed.length, cycles, unspecced, refreshed,
+            };
           }
         }
       }
@@ -579,6 +638,7 @@ export async function tick(listik, config, log, runState = null) {
       gate,
     },
     watch: watchSummary,
+    rescope: rescopeResult,
     rollbacks,
     budget: {exhausted, spentMinutes, launches: launchesSoFar},
   };

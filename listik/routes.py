@@ -65,12 +65,13 @@ HARNESSES = ("claude", "dsh", "codex", "grok", "gemini")
 # Уровни маршрута — значения поля `icon`; подписи и иконки для доски лежат в
 # `web/src/lib/dictionaries.ts` (`ROUTE_ICONS`).
 ROUTE_ICONS = ("xhigh", "high", "medium", "low", "xlow", "direct")
-PLACEHOLDERS = ("task_id", "project", "route", "cwd", "worktree", "branch")
+PLACEHOLDERS = ("task_id", "project", "route", "cwd", "worktree", "branch", "stage", "role")
+DRIVERS = ("skill", "swarm")
 
 ROOT_FIELDS = ("version", "routes")
 RECORD_FIELDS = ("key", "kind", "title", "hint", "visible", "icon", "roles", "strip", "harness",
-                 "command")
-ROLE_FIELDS = ("provider", "label", "title", "skill", "params")
+                 "command", "driver")
+ROLE_FIELDS = ("provider", "label", "title", "skill", "params", "command", "harness")
 #: Обязательные поля ячейки роли; `skill`/`params` необязательны и в результате
 #: проверки появляются только тогда, когда были во входе (иначе экспорт начал бы
 #: писать `"skill": null` во все старые записи).
@@ -79,6 +80,7 @@ ROLE_REQUIRED = ("provider", "label", "title")
 #: Существование скила на диске здесь не проверяется: файл маршрутов ввозится и на
 #: машине без каталога `plugins/`; наличие сверяет слой HTTP по `skills.launcher_info`.
 SKILL_RE = re.compile(r"^[a-z0-9][a-z0-9-]*:[a-z0-9][a-z0-9-]*$")
+HARNESS_SLUG_RE = re.compile(r"^[a-z][a-z0-9_-]*$")
 PARAM_KEY_RE = re.compile(r"^[a-z][a-z0-9_]*$")
 PARAMS_MAX_KEYS = 20
 
@@ -159,7 +161,7 @@ def _validate_params(value, where: str) -> dict:
     return params
 
 
-def _validate_role_cell(cell, where: str) -> dict:
+def _validate_role_cell(cell, where: str, *, require_launch: bool = False) -> dict:
     if not isinstance(cell, dict):
         raise _err(where, "должна быть объектом {provider, label, title}")
     _extra_fields(cell, ROLE_FIELDS, where)
@@ -181,10 +183,23 @@ def _validate_role_cell(cell, where: str) -> dict:
         if "skill" not in out:
             raise _err(f"{where}.params", "без skill параметры некуда передать")
         out["params"] = _validate_params(cell["params"], f"{where}.params")
+    if "command" in cell:
+        out["command"] = validate_command(cell["command"], f"{where}.command")
+    if "harness" in cell:
+        harness = cell["harness"]
+        if not isinstance(harness, str) or not HARNESS_SLUG_RE.match(harness):
+            raise _err(f"{where}.harness",
+                       "непустая строка: строчные буквы, цифры, дефис и подчёркивание")
+        out["harness"] = harness
+    if require_launch:
+        if "command" not in out:
+            raise _err(f"{where}.command", "непустой массив строк")
+        if "harness" not in out:
+            raise _err(f"{where}.harness", "непустая строка харнесса")
     return out
 
 
-def _validate_roles(value, where: str) -> dict:
+def _validate_roles(value, where: str, *, driver: str = "skill") -> dict:
     if not isinstance(value, dict):
         raise _err(where, "должен быть объектом с ролями spec/critic/impl/judge")
     if not value:
@@ -193,7 +208,8 @@ def _validate_roles(value, where: str) -> dict:
     for role in value:
         if role not in ROLE_KEYS:
             raise _err(f"{where}.{role}", f"неизвестная роль, допустимы: {', '.join(ROLE_KEYS)}")
-        roles[role] = _validate_role_cell(value[role], f"{where}.{role}")
+        roles[role] = _validate_role_cell(value[role], f"{where}.{role}",
+                                          require_launch=driver == "swarm")
     return roles
 
 
@@ -292,10 +308,16 @@ def _validate_route(item, where: str, warnings: list[str] | None = None) -> dict
     if kind == "pipeline":
         if "roles" not in item:
             raise _err(f"{where}.roles", "обязательно для pipeline")
-        record["roles"] = _validate_roles(item["roles"], f"{where}.roles")
+        driver = item.get("driver", "skill")
+        if driver not in DRIVERS:
+            raise _err(f"{where}.driver", 'должен быть "skill" или "swarm"')
+        record["driver"] = driver
+        record["roles"] = _validate_roles(item["roles"], f"{where}.roles", driver=driver)
         if "harness" in item:
             raise _err(f"{where}.harness", "у pipeline-записи harness быть не должно")
     else:
+        if "driver" in item:
+            raise _err(f"{where}.driver", "у direct-записи driver быть не должно")
         if "roles" in item:
             raise _err(f"{where}.roles", "у direct-записи ролей быть не должно")
         harness = _present(item, "harness", where)

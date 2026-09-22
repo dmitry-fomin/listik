@@ -390,12 +390,13 @@ class ValidateTests(unittest.TestCase):
                                    "routes[0].command[0]")
         self.assertIn("{taskid}", message)
 
-    def test_title_is_unknown_and_lists_all_six_placeholders(self) -> None:
+    def test_title_is_unknown_and_lists_all_placeholders(self) -> None:
         message = self.check_error(document({**pipeline_record(), "command": ["{title}"]}),
                                    "routes[0].command[0]", "{title}")
         self.assertIn("неизвестная подстановка", message)
         self.assertEqual(routes_mod.PLACEHOLDERS,
-                         ("task_id", "project", "route", "cwd", "worktree", "branch"))
+                         ("task_id", "project", "route", "cwd", "worktree", "branch",
+                          "stage", "role"))
         for name in routes_mod.PLACEHOLDERS:
             self.assertIn("{" + name + "}", message)
 

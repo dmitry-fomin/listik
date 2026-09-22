@@ -705,7 +705,42 @@ def handle(method: str, path: str, query: dict, body: dict, authed: bool = False
                                    code=errors_mod.BAD_ARGUMENT) from exc
                 publish("route", {"key": key, "action": "created"})
                 return 201, record
-            unknown = [k for k in body if k not in ("key", "roles", "kind")]
+            driver = body.get("driver", "skill")
+            if driver not in routes_mod.DRIVERS:
+                raise ApiError(400, 'driver: должен быть "skill" или "swarm"',
+                               code=errors_mod.BAD_ARGUMENT)
+            if driver == "swarm":
+                unknown = [k for k in body
+                           if k not in ("key", "roles", "kind", "driver", "title",
+                                        "hint", "visible", "icon")]
+                if unknown:
+                    raise ApiError(400, f"поле нельзя передать: {unknown[0]}",
+                                   code=errors_mod.BAD_ARGUMENT)
+                key = str(need(body, "key")).strip()
+                title = need(body, "title")
+                roles = body.get("roles")
+                if not roles:
+                    raise ApiError(400, "roles: нужна хотя бы одна роль",
+                                   code=errors_mod.BAD_ARGUMENT)
+                try:
+                    routes_store.get_route(conn, key)
+                except errors_mod.NotFound:
+                    pass
+                else:
+                    raise ApiError(409, f"маршрут {key!r} уже есть", code=errors_mod.CONFLICT)
+                _check_role_launchers(roles)
+                try:
+                    record = routes_store.create_route(
+                        conn, key=key, kind="pipeline", title=title,
+                        hint=body.get("hint", ""), icon=body.get("icon"),
+                        visible=body.get("visible", False), harness=None, command=None,
+                        roles=roles, driver="swarm")
+                except ValueError as exc:
+                    raise ApiError(400, errors_mod.message_of(exc),
+                                   code=errors_mod.BAD_ARGUMENT) from exc
+                publish("route", {"key": key, "action": "created"})
+                return 201, record
+            unknown = [k for k in body if k not in ("key", "roles", "kind", "driver")]
             if unknown:
                 raise ApiError(400, f"поле нельзя передать: {unknown[0]}",
                                code=errors_mod.BAD_ARGUMENT)
@@ -1238,6 +1273,11 @@ def handle(method: str, path: str, query: dict, body: dict, authed: bool = False
                     # BadArgument уходит в except ValueError ниже как 400 bad_argument.
                     reason = launcher_mod.start(conn, tid, notify=publish,
                                                 env=body.get("env"))
+                    if reason == launcher_mod.STAGE_SKIPPED:
+                        out = store.get_task(conn, tid)
+                        out["launched"] = False
+                        out["stage_skipped"] = out.get("stage")
+                        return 200, out
                     if reason is not None:
                         raise ApiError(409, reason, code=errors_mod.CONFLICT)
                     out = store.get_task(conn, tid)

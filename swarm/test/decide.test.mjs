@@ -19,6 +19,22 @@ function routesFor(ids, icon) {
   return ids.map(id => ({key: "route-" + id, icon}));
 }
 
+test("нарезанный родитель режима роя не запускается, режим скила с детьми запускается", () => {
+  const sliced = task("p", {launch_driver: "swarm", has_portions: true, launch_route: "swarm"});
+  const skill = task("s", {launch_driver: "skill", has_portions: true, launch_route: "skill"});
+  const cancelled = task("c", {
+    launch_driver: "swarm", portions_cancelled_only: true, launch_route: "swarm",
+  });
+  const plan = {waves: [["p", "s", "c"]], cycles: [], unroutable: [], unscoped: [], blocked: {}};
+  const routes = [
+    {key: "swarm", icon: "low", driver: "swarm"},
+    {key: "skill", icon: "low", driver: "skill"},
+  ];
+  const res = decide({plan, tasks: [sliced, skill, cancelled], routes, config, now: new Date()});
+  assert.deepEqual(res.launch.map(l => l.id), ["s"]);
+  assert.deepEqual(res.skipped.filter(s => s.reason === "sliced").map(s => s.id), ["p", "c"]);
+});
+
 test("1: три независимые задачи, parallel 3, вес 1 — все три в launch", () => {
   const ids = ["a", "b", "c"];
   const tasks = ids.map(id => task(id));
@@ -192,6 +208,23 @@ function decideRunning(t, {plan, config: cfg = supConfig, now = new Date(), even
   const p = plan ?? {waves: [[]], cycles: [], unroutable: [], unscoped: [], blocked: {}};
   return decide({plan: p, tasks: [t], routes: [], config: cfg, now, events});
 }
+
+test("надзор: режим роя молчит 30 мин — не stale; timeoutMinutes его всё же снимает", () => {
+  const now = new Date();
+  const swarm = runningTask("a", {
+    launch_driver: "swarm",
+    launched_at: minsAgo(now, 30), holder_at: minsAgo(now, 30), labels: ["port:5170"],
+  });
+  const quiet = decideRunning(swarm, {now});
+  assert.deepEqual(quiet.restart, []);
+  assert.deepEqual(quiet.giveUp, []);
+  assert.deepEqual(quiet.report.stale, []);
+
+  const timed = decideRunning(swarm, {
+    now, config: {...supConfig, timeoutMinutes: 20},
+  });
+  assert.equal(timed.restart[0].reason, "timeout");
+});
 
 test("надзор: зависла (30 мин молчания > staleMinutes 20), port:5170, без revoke — restart stale", () => {
   const now = new Date();

@@ -11,7 +11,7 @@ from pathlib import Path
 
 from . import paths
 
-SCHEMA_VERSION = 10
+SCHEMA_VERSION = 11
 
 SCHEMA = """
 PRAGMA journal_mode = WAL;
@@ -79,6 +79,7 @@ CREATE TABLE IF NOT EXISTS tasks (
     -- PATCH/update_task эти поля не меняются.
     autostart          INTEGER NOT NULL DEFAULT 0,  -- 1 = задача стартует сама
     launch_route       TEXT,                   -- ключ маршрута из таблицы routes
+    launch_driver      TEXT,                   -- снимок driver маршрута на первом захвате: skill|swarm
     launched_by        TEXT,                   -- 'listik', если процесс запустил сервер
     launch_pid         INTEGER,                -- PID запущенного процесса
     launched_at        TEXT,                   -- ISO-время запуска
@@ -203,6 +204,7 @@ CREATE TABLE IF NOT EXISTS routes (
     harness    TEXT,                       -- только у kind=direct, иначе NULL
     command    TEXT,                       -- JSON-массив argv, либо NULL
     roles      TEXT,                       -- JSON {"spec":{provider,label,title},…}, либо NULL
+    driver     TEXT NOT NULL DEFAULT 'skill', -- pipeline: skill|swarm; у direct не читается
     created_at TEXT,
     updated_at TEXT
 );
@@ -303,6 +305,8 @@ MIGRATIONS: list[tuple[str, str, str]] = [
     ("tasks", "blocked_by", "TEXT NOT NULL DEFAULT '[]'"),
     ("tasks", "autostart", "INTEGER NOT NULL DEFAULT 0"),
     ("tasks", "launch_route", "TEXT"),
+    ("tasks", "launch_driver", "TEXT"),
+    ("routes", "driver", "TEXT NOT NULL DEFAULT 'skill'"),
     ("tasks", "launched_by", "TEXT"),
     ("tasks", "launch_pid", "INTEGER"),
     ("tasks", "launched_at", "TEXT"),

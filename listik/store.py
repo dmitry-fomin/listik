@@ -796,6 +796,13 @@ def update_task(conn: sqlite3.Connection, task_id: str, *, actor: str | None = N
             documents.index_task_documents(conn, task_id)
         except Exception as exc:
             event(conn, task_id, "document_error", note=str(exc))
+    new_status = next((new for key, _old, new in changes if key == "status"), None)
+    if new_status in ("done", "cancelled"):
+        from . import stage_launch
+        if new_status == "done":
+            stage_launch.on_task_done(conn, task_id)
+        else:
+            stage_launch.on_task_cancelled(conn, task_id)
     conn.commit()
     return get_task(conn, task_id)
 
@@ -1376,7 +1383,15 @@ def _last_release_ts(conn: sqlite3.Connection, task_id: str) -> str | None:
     return r["ts"] if r else None
 
 
-def row_to_task(conn: sqlite3.Connection, row: sqlite3.Row) -> dict:
+def _rows_to_tasks(conn: sqlite3.Connection, rows) -> list[dict]:
+    """Выдача пачки карточек: флаги порций одним запросом, ошибка запроса не глотается."""
+    from . import stage_launch
+    flags = stage_launch.portion_flags_many(conn, rows)
+    return [row_to_task(conn, row, portions=flags[row["id"]]) for row in rows]
+
+
+def row_to_task(conn: sqlite3.Connection, row: sqlite3.Row, *,
+                portions: tuple[bool, bool] | None = None) -> dict:
     cfg = config_mod.load()
     warn = float((cfg.get("board") or {}).get("wip_warn_hours", 8))
     stale_h = float((cfg.get("board") or {}).get("stale_hours", 24))
@@ -1431,6 +1446,11 @@ def row_to_task(conn: sqlite3.Connection, row: sqlite3.Row) -> dict:
     # у карточки любого статуса, но нужнее всего закрытой — у неё держателя может
     # уже не быть (`stage --to done` его снимает).
     worked_by = worked_by_actors(conn, row["id"])
+    if portions is None:
+        from . import stage_launch
+        portion_has, portion_cancelled = stage_launch.portion_flags(conn, row)
+    else:
+        portion_has, portion_cancelled = portions
     return {
         "id": row["id"],
         "project": row["project"],
@@ -1496,6 +1516,8 @@ def row_to_task(conn: sqlite3.Connection, row: sqlite3.Row) -> dict:
         # работа не началась, и это видно доске по `route_editable`.
         "autostart": bool(row["autostart"]),
         "launch_route": row["launch_route"],
+        "launch_driver": ((row["launch_driver"] or "").strip() or None)
+                         if "launch_driver" in row.keys() else None,
         "route_editable": route_change_denied(row) is None,
         "launched_by": row["launched_by"],
         "launch_pid": row["launch_pid"],
@@ -1520,6 +1542,8 @@ def row_to_task(conn: sqlite3.Connection, row: sqlite3.Row) -> dict:
         "closed_at": row["closed_at"],
         "close_reason": row["close_reason"],
         "archived": bool(row["archived"]),
+        "has_portions": portion_has,
+        "portions_cancelled_only": portion_cancelled,
         "stale": stale,
         "abandoned": abandoned,
         # метка, от которой идёт льготное окно «в работе без держателя»;
@@ -1656,7 +1680,7 @@ def list_tasks(conn: sqlite3.Connection, *, project: str | None = None, status: 
         [*params, limit, offset],
     ).fetchall()
     return {"total": total, "limit": limit, "offset": offset,
-            "tasks": [row_to_task(conn, r) for r in rows]}
+            "tasks": _rows_to_tasks(conn, rows)}
 
 
 def task_timeline(conn: sqlite3.Connection, limit: int = 100, *,
@@ -1705,7 +1729,7 @@ def board(conn: sqlite3.Connection, *, group_by: str = "status", project: str | 
     rows = conn.execute(
         f"SELECT * FROM tasks {sql_where} ORDER BY priority ASC, updated_at DESC", params
     ).fetchall()
-    tasks = [row_to_task(conn, r) for r in rows]
+    tasks = _rows_to_tasks(conn, rows)
 
     columns: dict[str, dict] = {}
     if group_by == "stage":
@@ -1870,7 +1894,7 @@ def stats(conn: sqlite3.Connection, project: str | None = None) -> dict:
         "closed_delta": closed_7d - closed_prev_7d,
         "closed_by_day": closed_by_day,
         "long_stage": long_stage,
-        "running": [row_to_task(conn, r) for r in running],
+        "running": _rows_to_tasks(conn, running),
         "generated_at": now_iso(),
     }
 

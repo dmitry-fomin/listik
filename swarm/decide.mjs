@@ -256,10 +256,13 @@ function superviseRunning({running, open, openById, events, tasks, config, now})
     const lastAct = lastActivityMs(t, taskEvents, actorNorm, launchedAtMs);
     const silenceMin = minutesSince(now, lastAct);
     const runMin = minutesSince(now, launchedAtMs);
-    if (silenceMin > staleMinutes * 3 / 4) {
+    // Режим роя: харнесс heartbeat не пишет, жизнь этапа — сам процесс.
+    // Молчание карточки его не снимает. Заданный timeoutMinutes остаётся.
+    const swarmStage = t.launch_driver === "swarm";
+    if (!swarmStage && silenceMin > staleMinutes * 3 / 4) {
       silence.push({id: t.id, minutes: Math.round(silenceMin * 10) / 10});
     }
-    const isStale = silenceMin > staleMinutes;
+    const isStale = !swarmStage && silenceMin > staleMinutes;
     const isTimeout = timeoutMinutes > 0 && runMin > timeoutMinutes;
     if (isStale) stale.push(t.id);
     if (!isStale && !isTimeout) continue;
@@ -409,6 +412,12 @@ export function decide({plan, tasks, routes, config, now, events, gate = null}) 
       }
       if (t.holder) {
         skipped.push({id, reason: "held"});
+        continue;
+      }
+      const route = routeByKey.get(t.launch_route);
+      const driver = t.launch_driver || (route && route.driver) || "skill";
+      if (driver === "swarm" && (t.has_portions || t.portions_cancelled_only)) {
+        skipped.push({id, reason: "sliced"});
         continue;
       }
       candidates.push(t);

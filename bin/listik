@@ -1218,8 +1218,12 @@ def cmd_launch(args) -> int:
         body["env"] = env
     task = call("launch", args, f"/api/tasks/{args.task_id}/launch", method="POST", body=body,
                 local_kwargs={"task_id": args.task_id, "actor": actor, "harness": args.harness})
-    line = (f"запущена: {task['id']} — поколение {task.get('generation')}, "
-           f"pid {task.get('launch_pid')}, лог {task.get('launch_log')}")
+    if task.get("launched") is False:
+        skipped = task.get("stage_skipped") or task.get("stage") or "—"
+        line = (f"не запущена: {task['id']} — этап {skipped}, процесс не поднимался")
+    else:
+        line = (f"запущена: {task['id']} — поколение {task.get('generation')}, "
+               f"pid {task.get('launch_pid')}, лог {task.get('launch_log')}")
     if env:
         line += "\n  окружение: " + ", ".join(f"{k}={v}" for k, v in env.items())
     emit(args, task, line)

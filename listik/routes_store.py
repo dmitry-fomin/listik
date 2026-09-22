@@ -30,10 +30,10 @@ from . import errors, routes, skills, store
 #: Поля, которые вообще разрешено менять точечно.  Всё остальное (`kind`, `key`,
 #: `harness`, `position`) через `update_route` недоступно.  `roles` правится
 #: (listik-syu8): расклад ролей задаётся из UI доски, а не только ввозом файла.
-UPDATE_FIELDS = ("title", "hint", "icon", "visible", "command", "roles")
+UPDATE_FIELDS = ("title", "hint", "icon", "visible", "command", "roles", "driver")
 
 COLS = ("key", "kind", "title", "hint", "icon", "visible", "position", "harness",
-        "command", "roles", "created_at", "updated_at")
+        "command", "roles", "driver", "created_at", "updated_at")
 
 
 # ------------------------------------------------------------------ значения
@@ -107,16 +107,19 @@ def _check_command(value, kind: str, *, direct_only: bool = False):
     return checked
 
 
-def _check_roles(value, kind: str) -> dict:
+def _check_roles(value, kind: str, driver: str = "skill") -> dict:
     """Проверить расклад ролей той же проверкой, что у файла маршрутов.
 
     Роли есть только у `pipeline`: у `direct` поле запрещено самой формой записи.
     `routes._validate_roles` бросает `RoutesError` — подкласс `ValueError`, поэтому
     нарушение уходит наружу тем же путём, что и остальные поля (400 `bad_argument`).
+    При `driver=swarm` у каждой роли обязательны `command` и `harness`.
     """
     if kind != "pipeline":
         raise ValueError('roles: допустимо только у kind="pipeline"')
-    return routes._validate_roles(value, "roles")
+    if driver not in routes.DRIVERS:
+        raise ValueError('driver: должен быть "skill" или "swarm"')
+    return routes._validate_roles(value, "roles", driver=driver)
 
 
 def _prepare(record: dict) -> dict:
@@ -143,13 +146,21 @@ def _prepare(record: dict) -> dict:
             roles = {}
         if not isinstance(roles, dict):
             raise ValueError("roles: должен быть объектом с ролями spec/critic/impl/judge")
+        driver = record.get("driver") or "skill"
+        if driver not in routes.DRIVERS:
+            raise ValueError('driver: должен быть "skill" или "swarm"')
+        if driver == "swarm" and not roles:
+            raise ValueError("roles: нужна хотя бы одна роль")
         if roles:
             # Непустой расклад проверяется целиком (ячейки, `skill`, `params`), а не
             # только «это словарь»: иначе запись мимо файла могла бы положить в базу
             # расклад, который ввоз того же файла отверг бы.
-            roles = _check_roles(roles, kind)
+            roles = _check_roles(roles, kind, driver)
         harness = None
     else:
+        if record.get("driver") not in (None, "", "skill"):
+            raise ValueError("driver: у direct-записи driver быть не должно")
+        driver = "skill"
         if roles not in (None, {}):
             raise ValueError("roles: у direct-записи ролей быть не должно")
         roles = None
@@ -158,7 +169,7 @@ def _prepare(record: dict) -> dict:
                              + ", ".join(routes.HARNESSES))
     return {"key": key, "kind": kind, "title": title, "hint": hint, "icon": icon,
             "visible": 1 if visible else 0, "harness": harness,
-            "command": _dumps(command), "roles": _dumps(roles)}
+            "command": _dumps(command), "roles": _dumps(roles), "driver": driver}
 
 
 # --------------------------------------------------------------- строки/записи
@@ -176,6 +187,8 @@ def _row_to_record(row: sqlite3.Row) -> dict:
     }
     if row["kind"] == "pipeline":
         record["roles"] = _loads_dict(row["roles"])
+        driver = row["driver"] if "driver" in row.keys() else "skill"
+        record["driver"] = driver or "skill"
     else:
         record["harness"] = row["harness"]
     return record
@@ -211,10 +224,10 @@ def _insert(conn: sqlite3.Connection, values: dict, position: int) -> None:
     now = store.now_iso()
     conn.execute(
         "INSERT INTO routes(key, kind, title, hint, icon, visible, position, harness, "
-        "command, roles, created_at, updated_at) VALUES(?,?,?,?,?,?,?,?,?,?,?,?)",
+        "command, roles, driver, created_at, updated_at) VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?)",
         (values["key"], values["kind"], values["title"], values["hint"], values["icon"],
          values["visible"], int(position), values["harness"], values["command"],
-         values["roles"], now, now),
+         values["roles"], values["driver"], now, now),
     )
 
 
@@ -230,10 +243,10 @@ def _upsert_raw(conn: sqlite3.Connection, record: dict, *, position=None) -> Non
         position = existing["position"]
     conn.execute(
         "UPDATE routes SET kind=?, title=?, hint=?, icon=?, visible=?, position=?, "
-        "harness=?, command=?, roles=?, updated_at=? WHERE key=?",
+        "harness=?, command=?, roles=?, driver=?, updated_at=? WHERE key=?",
         (values["kind"], values["title"], values["hint"], values["icon"], values["visible"],
          int(position), values["harness"], values["command"], values["roles"],
-         store.now_iso(), key),
+         values["driver"], store.now_iso(), key),
     )
 
 
@@ -251,10 +264,12 @@ def upsert_route(conn: sqlite3.Connection, record: dict, *, position=None) -> di
 
 
 def create_route(conn: sqlite3.Connection, *, key, kind, title, hint="", icon=None,
-                 visible=False, harness=None, command=None, roles=None) -> dict:
+                 visible=False, harness=None, command=None, roles=None,
+                 driver=None) -> dict:
     """Новая запись, `position = max(position)+1`; дубликат ключа — `ValueError`."""
     record = {"key": key, "kind": kind, "title": title, "hint": hint, "icon": icon,
-              "visible": visible, "harness": harness, "command": command, "roles": roles}
+              "visible": visible, "harness": harness, "command": command, "roles": roles,
+              "driver": driver}
     _prepare(record)  # проверяем до обращения к базе: ключ и остальные поля
     if conn.execute("SELECT 1 FROM routes WHERE key = ?", (key,)).fetchone():
         raise ValueError(f"key: маршрут {key!r} уже есть")
@@ -293,9 +308,20 @@ def update_route(conn: sqlite3.Connection, key: str, **fields) -> dict:
         sets.append("command = ?")
         params.append(_dumps(_check_command(fields["command"], record["kind"],
                                             direct_only=True)))
-    if "roles" in fields:
-        sets.append("roles = ?")
-        params.append(_dumps(_check_roles(fields["roles"], record["kind"])))
+    if "roles" in fields or "driver" in fields:
+        if record["kind"] != "pipeline":
+            if "roles" in fields:
+                raise ValueError('roles: допустимо только у kind="pipeline"')
+            raise ValueError("driver: у direct-записи driver быть не должно")
+        driver = fields.get("driver", record.get("driver") or "skill")
+        roles_value = fields["roles"] if "roles" in fields else (record.get("roles") or {})
+        checked = _check_roles(roles_value, record["kind"], driver)
+        if "roles" in fields:
+            sets.append("roles = ?")
+            params.append(_dumps(checked))
+        if "driver" in fields:
+            sets.append("driver = ?")
+            params.append(driver)
     if not sets:
         return record
     sets.append("updated_at = ?")
@@ -457,7 +483,10 @@ def routes_response(conn: sqlite3.Connection) -> dict:
     out_routes: list[dict] = []
     for record in state.routes:
         record = dict(record)
-        if record["kind"] == "pipeline":
+        if record["kind"] == "pipeline" and record.get("driver") == "swarm":
+            info = skills.skill_info(record["key"]) if available else None
+            record["skill_path"] = info["skill_path"] if info else None
+        elif record["kind"] == "pipeline":
             if available and record["key"] not in keys:
                 record["skill_missing"] = True
                 record["visible"] = False
@@ -481,7 +510,8 @@ def sync_report(conn: sqlite3.Connection) -> dict:
     if not skills.skills_available():
         return {"skills_available": False, "missing_skill": [], "missing_route": []}
     keys = set(skills.skill_keys())
-    pipelines = [r for r in list_routes(conn) if r["kind"] == "pipeline"]
+    pipelines = [r for r in list_routes(conn)
+                 if r["kind"] == "pipeline" and r.get("driver") != "swarm"]
     route_keys = {r["key"] for r in pipelines}
     missing_skill = [r for r in pipelines if r["key"] not in keys]
     missing_route = [skills.skill_info(key) for key in sorted(keys) if key not in route_keys]

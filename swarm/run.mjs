@@ -497,6 +497,10 @@ export async function tick(listik, config, log, runState = null) {
         log.action(`set ${item.id} labels += port:${port}`);
       }
       const result = await listik.launch(item.id, {LISTIK_DEV_PORT: String(port)});
+      if (result && result.launched === false) {
+        log.action(`пропуск ${item.id}: этап ${result.stage_skipped ?? result.stage ?? "-"}`);
+        continue;
+      }
       log.action(`перезапуск ${item.id} → порт ${port}, поколение ${result.generation}`);
       restarted.push({id: item.id, reason: item.reason, generation: result.generation});
     } catch (err) {
@@ -562,6 +566,10 @@ export async function tick(listik, config, log, runState = null) {
 
     try {
       const result = await listik.launch(item.id, {LISTIK_DEV_PORT: String(port)});
+      if (result && result.launched === false) {
+        log.action(`пропуск ${item.id}: этап ${result.stage_skipped ?? result.stage ?? "-"}`);
+        continue;
+      }
       log.action(`запуск ${item.id} → дерево ${task.worktree ?? "-"}, порт ${port}, ` +
         `поколение ${result.generation}`);
       launched.push(item.id);

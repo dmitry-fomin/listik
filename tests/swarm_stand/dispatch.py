@@ -157,7 +157,11 @@ class Dispatcher:
             state.first_change_tick = None
             state.head = None
             state.proc = proc
-            state.deadline = time.monotonic() + self.config.timeout
+            # sequential: дедлайн ставит open_gate(..., "start") — ожидание в очереди
+            # затворов не работа воркера и таймаутом не считается.
+            state.deadline = (
+                None if self.config.gates == "sequential" else time.monotonic() + self.config.timeout
+            )
             state.report_path = report_path
             state.gate_start = gate_start
             state.gate_finish = gate_finish
@@ -199,7 +203,7 @@ class Dispatcher:
                 self._finalize(task_id)
                 continue
 
-            if time.monotonic() >= state.deadline:
+            if state.deadline is not None and time.monotonic() >= state.deadline:
                 base = state.base
                 self.revoke(task_id, kill=self.config.kill_on_timeout, reason="timeout")
                 state.timeouts += 1
@@ -432,7 +436,16 @@ class Dispatcher:
         path.parent.mkdir(parents=True, exist_ok=True)
         path.touch()
         if which == "start":
-            self._gate_opened_at[(task_id, generation)] = time.monotonic()
+            now = time.monotonic()
+            self._gate_opened_at[(task_id, generation)] = now
+            state = self.states[task_id]
+            if (
+                self.config.gates == "sequential"
+                and state.status == "running"
+                and state.generation == generation
+                and state.deadline is None
+            ):
+                state.deadline = now + self.config.timeout
 
     def mark_failed(self, task_id: str, reason: str, **extra) -> None:
         state = self.states[task_id]

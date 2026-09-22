@@ -35,16 +35,6 @@ export const HARNESS_GLYPHS: readonly string[] = [
   'pi-deepseek',
 ]
 
-/**
- * Варианты пикера иконки харнесса: все фирменные глифы, `user` («человек»)
- * и пустое значение — общий `bolt`. Порядок — порядок кнопок пикера.
- */
-export const HARNESS_ICON_OPTIONS: { value: string; label: string }[] = [
-  ...HARNESS_GLYPHS.map((key) => ({ value: key, label: harnessTitle(key) })),
-  { value: 'user', label: 'человек' },
-  { value: '', label: 'общий глиф' },
-]
-
 const HINTS: [string, HarnessKey][] = [
   // Порядок — как в `actors.AGENT_HINTS`: pi-* раньше «deepseek», иначе
   // pi-deepseek уйдёт в dsh.
@@ -74,6 +64,18 @@ export const HARNESS_TITLES: Record<HarnessKey, string> = {
   me: 'человек',
   human: 'человек',
 }
+
+/**
+ * Варианты пикера иконки харнесса: все фирменные глифы, `user` («человек»)
+ * и пустое значение — общий `bolt`. Порядок — порядок кнопок пикера.
+ * Объявление обязано стоять ниже `HARNESS_TITLES`: метки считаются через
+ * `harnessTitle` при инициализации модуля, выше — TDZ.
+ */
+export const HARNESS_ICON_OPTIONS: { value: string; label: string }[] = [
+  ...HARNESS_GLYPHS.map((key) => ({ value: key, label: harnessTitle(key) })),
+  { value: 'user', label: 'человек' },
+  { value: '', label: 'общий глиф' },
+]
 
 const KEY_RE = /^[a-z0-9][a-z0-9-]*$/
 

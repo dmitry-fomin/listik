@@ -164,12 +164,17 @@ const SWARM_PROJECT_KEYS = new Set(["integration", "arbiter", "integration_timeo
   "verify", "verify_timeout", "verify_retries", "question_timeout"]);
 SWARM_TOP_KEYS.add("max_freezes");
 SWARM_PROJECT_KEYS.add("max_freezes");
+SWARM_TOP_KEYS.add("rescope");
+SWARM_PROJECT_KEYS.add("rescope");
+SWARM_TOP_KEYS.add("rescope_timeout");
+SWARM_PROJECT_KEYS.add("rescope_timeout");
 const DEFAULT_INTEGRATION_TIMEOUT = 1800;
 const DEFAULT_ARBITER_TIMEOUT = 1200;
 const DEFAULT_VERIFY_TIMEOUT = 1800;
 const DEFAULT_VERIFY_RETRIES = 1;
 export const DEFAULT_QUESTION_TIMEOUT = 30;
 const DEFAULT_MAX_FREEZES = 2;
+const DEFAULT_RESCOPE_TIMEOUT = 3600; // = HTTP-таймаут cmd_rescope в bin/listik
 
 function isPlainObject(v) {
   return typeof v === "object" && v !== null && !Array.isArray(v);
@@ -234,6 +239,10 @@ function validateSettings(obj, allowedKeys, where) {
   if ("verify_retries" in obj) validateRetries(obj.verify_retries, "verify_retries", where);
   if ("question_timeout" in obj) validateQuestionTimeout(obj.question_timeout, where);
   if ("max_freezes" in obj) validateMaxFreezes(obj.max_freezes, where);
+  if ("rescope" in obj && typeof obj.rescope !== "boolean") {
+    throw new ConfigError(`swarm.json: ${where}rescope ожидал true или false`);
+  }
+  if ("rescope_timeout" in obj) validateTimeout(obj.rescope_timeout, "rescope_timeout", where);
 }
 
 export function parseSwarmConfig(text) {
@@ -286,5 +295,7 @@ export function swarmConfigFor(parsed, slug) {
     verifyRetries: pick("verify_retries", DEFAULT_VERIFY_RETRIES),
     questionTimeout: pick("question_timeout", DEFAULT_QUESTION_TIMEOUT),
     maxFreezes: pick("max_freezes", DEFAULT_MAX_FREEZES),
+    rescope: pick("rescope", true),
+    rescopeTimeout: pick("rescope_timeout", DEFAULT_RESCOPE_TIMEOUT),
   };
 }

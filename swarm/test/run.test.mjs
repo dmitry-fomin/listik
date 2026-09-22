@@ -2116,3 +2116,215 @@ gitTest("предел (и): main на двух тиках — код 2, один
       "итог: закрыто 0 (), перезапусков 0, откатов 1 (на откаты 10 мин), " +
       "по пределу 1 (t2), оставлено человеку 2"));
   });
+
+// --- listik-3wul, порция b: rescope --apply после влитой волны ---
+
+const RESCOPE_OK = {project: "proj", extracted: 1, tasks: {}, unspecced: {},
+  unscoped: [], invalid: {}, drift: {records: 1, ignored: 0, tasks_with_drift: 1, tasks_total: 2,
+    outside_files: 0, ratio: 0.5}, edges: [], cycles: [], cycles_from: null,
+  applied: {scopes: ["t2"], edges: {added: [["t1", "t2"]], removed: [], kept: 0}}};
+
+// Кейс watch+barrier (а) с реальным слиянием t1; `merge: false` — t1 открыта без дерева.
+function rescopeScenario({swarmJson = {integration: []}, rescope, merge = true, extraTasks = [],
+  waves = null} = {}) {
+  const repo = initRepo();
+  let t1 = task("t1", {});
+  if (merge) {
+    const treeT1 = addWorktree(repo, "t1");
+    fs.writeFileSync(path.join(treeT1, "a.txt"), "a\n");
+    sh(treeT1, "add", "a.txt");
+    sh(treeT1, "commit", "-q", "-m", "t1");
+    t1 = task("t1", {status: "done", worktree: treeT1, branch: "task/t1", labels: ["port:5170"]});
+  }
+  const tasks = [t1, task("t2", {}), ...extraTasks];
+  const wavesOut = (w) => ({stdout: JSON.stringify({
+    waves: {project: "proj", waves: w, cycles: [], unroutable: [], unscoped: [], blocked: {}},
+    added: [], removed: [], kept: 0})});
+  const routes = tasks.map(t => ({key: "r-" + t.id, icon: "low"}));
+  const dataDir = fs.mkdtempSync(path.join(os.tmpdir(), "listik-swarm-data-"));
+  fs.writeFileSync(path.join(dataDir, "swarm.json"), JSON.stringify(swarmJson));
+  const logDir = fs.mkdtempSync(path.join(os.tmpdir(), "listik-swarm-integration-log-"));
+  const responses = {
+    status: statusFor(dataDir),
+    waves: waves ? waves.map(wavesOut) : wavesOut([["t2"]]),
+    list: {stdout: JSON.stringify({total: tasks.length, limit: 1000, offset: 0, tasks})},
+    routes: {stdout: JSON.stringify({ok: true, routes})},
+    projects: {stdout: JSON.stringify([{slug: "proj", path: repo}])},
+    watch: {stdout: JSON.stringify({tasks: {}, decisions: [], probes: []})},
+    show: {stdout: JSON.stringify({id: "t1", comments: [], write_scope: []})},
+    comment: {stdout: JSON.stringify({id: "t1"})},
+    worktree: {stdout: JSON.stringify({path: "/wt/t2", branch: "b", status: "created"})},
+    set: {stdout: JSON.stringify({id: "t2", labels: []})},
+    launch: {stdout: JSON.stringify({id: "t2", generation: 1})},
+  };
+  if (rescope !== undefined) responses.rescope = rescope;
+  return {responses, logDir};
+}
+
+function launchedIds(calls) {
+  return calls.filter(c => c.sub === "launch").map(c => c.argv[1]);
+}
+
+const NO_RESCOPE_SIDE = ["needs-owner", "revoke"];
+
+gitTest("rescope (а): влито → rescope → перечитано → запуск", async () => {
+  const {responses, logDir} = rescopeScenario({rescope: {stdout: JSON.stringify(RESCOPE_OK)}});
+  const {calls} = setupFake(responses);
+  const listik = new Listik({bin: FAKE_BIN, actor: "agent:listik-swarm", cliTimeout: 5});
+  const log = makeLog();
+  const result = await tick(listik, {...baseConfig, logDir}, log);
+
+  const all = calls();
+  const rescopes = all.filter(c => c.sub === "rescope");
+  assert.equal(rescopes.length, 1);
+  const argv = rescopes[0].argv;
+  const at = argv.indexOf("--project");
+  assert.equal(argv[at + 1], "proj");
+  assert.ok(argv.includes("--apply"));
+  const actorAt = argv.indexOf("--actor");
+  assert.equal(argv[actorAt + 1], "agent:listik-swarm");
+  assert.ok(!argv.includes("--task") && !argv.includes("--drift"));
+
+  const idx = (pred) => all.findIndex(pred);
+  const lastIdx = (sub) => all.map(c => c.sub).lastIndexOf(sub);
+  const iComment = idx(c => c.sub === "comment" && c.argv.some(a => a.startsWith("рой: влито:")));
+  const iRescope = idx(c => c.sub === "rescope");
+  const wavesIdx = all.map((c, i) => c.sub === "waves" ? i : -1).filter(i => i >= 0);
+  const iLaunch = idx(c => c.sub === "launch" && c.argv.includes("t2"));
+  assert.equal(wavesIdx.length, 2);
+  for (const i of wavesIdx) assert.ok(all[i].argv.includes("--apply"));
+  assert.ok(all.filter(c => c.sub === "list").length >= 2);
+  assert.ok(iComment >= 0 && iComment < iRescope, "comment влито раньше rescope");
+  assert.ok(iRescope < wavesIdx[1], "rescope раньше второго waves");
+  assert.ok(wavesIdx[1] < lastIdx("list"), "второй waves раньше второго list");
+  assert.ok(iRescope < lastIdx("list"));
+  assert.ok(lastIdx("list") < iLaunch, "list раньше launch t2");
+
+  const want = "rescope proj: ТЗ прочитано 1, областей записано 1 (t2), рёбер +1 −0, " +
+    "качество ТЗ: расхождений у 1 из 2 задач (0 файлов вне области)";
+  assert.ok(log.lines.some(l => l.startsWith(want)));
+  assert.ok(log.stdout.some(l => l.startsWith(want)));
+  assert.deepEqual(result.rescope, {ok: true, extracted: 1, scopes: ["t2"], edgesAdded: 1,
+    edgesRemoved: 0, cycles: [], unspecced: [], refreshed: true});
+  assert.ok(result.launched.includes("t2"));
+  for (const sub of NO_RESCOPE_SIDE) assert.equal(all.filter(c => c.sub === sub).length, 0, sub);
+});
+
+gitTest("rescope (б): ничего не записано — волны не перечитываются", async () => {
+  const res = {...RESCOPE_OK, applied: {scopes: [], edges: {added: [], removed: [], kept: 1}}};
+  const {responses, logDir} = rescopeScenario({rescope: {stdout: JSON.stringify(res)}});
+  const {calls} = setupFake(responses);
+  const listik = new Listik({bin: FAKE_BIN, actor: "agent:listik-swarm", cliTimeout: 5});
+  const log = makeLog();
+  const result = await tick(listik, {...baseConfig, logDir}, log);
+  assert.equal(calls().filter(c => c.sub === "waves").length, 1);
+  assert.equal(result.rescope.refreshed, false);
+  assert.ok(log.lines.some(l => l.includes("областей записано 0 (), рёбер +0 −0")));
+});
+
+gitTest("rescope (в): выключен в swarm.json — не зовётся, launch есть", async () => {
+  const {responses, logDir} = rescopeScenario({swarmJson: {integration: [], rescope: false},
+    rescope: {stdout: JSON.stringify(RESCOPE_OK)}});
+  const {calls} = setupFake(responses);
+  const listik = new Listik({bin: FAKE_BIN, actor: "agent:listik-swarm", cliTimeout: 5});
+  const log = makeLog();
+  const result = await tick(listik, {...baseConfig, logDir}, log);
+  assert.equal(calls().filter(c => c.sub === "rescope").length, 0);
+  assert.ok(log.lines.includes("rescope: выключен в swarm.json"));
+  assert.deepEqual(result.rescope, {ok: false, skipped: "disabled"});
+  assert.ok(launchedIds(calls()).includes("t2"));
+});
+
+gitTest("rescope (г): нечего вливать — не зовётся", async () => {
+  const {responses, logDir} = rescopeScenario({merge: false,
+    rescope: {stdout: JSON.stringify(RESCOPE_OK)}});
+  responses.waves = {stdout: JSON.stringify({waves: {project: "proj", waves: [["t1", "t2"]],
+    cycles: [], unroutable: [], unscoped: [], blocked: {}}, added: [], removed: [], kept: 0})};
+  const {calls} = setupFake(responses);
+  const listik = new Listik({bin: FAKE_BIN, actor: "agent:listik-swarm", cliTimeout: 5});
+  const log = makeLog();
+  const result = await tick(listik, {...baseConfig, logDir}, log);
+  assert.equal(calls().filter(c => c.sub === "rescope").length, 0);
+  assert.equal(result.rescope, null);
+  assert.ok(!log.lines.some(l => l.includes("rescope")));
+});
+
+gitTest("rescope (д): ошибка прохода не роняет тик", async () => {
+  const {responses, logDir} = rescopeScenario({rescope: {exitCode: 1, stdout: JSON.stringify({
+    error: {code: "server_error", message: "модель роя не настроена: нет [swarm].api_key", hint: ""},
+  })}});
+  const {calls} = setupFake(responses);
+  const listik = new Listik({bin: FAKE_BIN, actor: "agent:listik-swarm", cliTimeout: 5});
+  const log = makeLog();
+  const result = await tick(listik, {...baseConfig, logDir}, log);
+  assert.ok(log.lines.some(l => l.startsWith("rescope ошибка: server_error/")));
+  assert.equal(calls().filter(c => c.sub === "waves").length, 1);
+  assert.ok(launchedIds(calls()).includes("t2"));
+  assert.deepEqual(result.rescope, {ok: false, error: "server_error"});
+  assert.equal(result.barrier.gate, null);
+  for (const sub of NO_RESCOPE_SIDE) assert.equal(calls().filter(c => c.sub === sub).length, 0, sub);
+});
+
+gitTest("rescope (е): цикл от модели — области записаны, рёбра нет, волны перечитаны", async () => {
+  const res = {...RESCOPE_OK, cycles: [["t1", "t2"]], cycles_from: "model",
+    applied: {scopes: ["t2"], edges: null}};
+  const {responses, logDir} = rescopeScenario({rescope: {exitCode: 1, stdout: JSON.stringify(res)}});
+  const {calls} = setupFake(responses);
+  const listik = new Listik({bin: FAKE_BIN, actor: "agent:listik-swarm", cliTimeout: 5});
+  const log = makeLog();
+  const result = await tick(listik, {...baseConfig, logDir}, log);
+  assert.ok(log.lines.includes("rescope: цикл t1 → t2 → t1 — рёбра не записаны"));
+  assert.ok(log.lines.some(l => l.includes("областей записано 1 (t2), рёбер +0 −0")));
+  assert.equal(calls().filter(c => c.sub === "waves").length, 2);
+  assert.deepEqual(result.rescope.cycles, [["t1", "t2"]]);
+  assert.ok(launchedIds(calls()).includes("t2"));
+  assert.equal(result.barrier.gate, null);
+  for (const sub of NO_RESCOPE_SIDE) assert.equal(calls().filter(c => c.sub === sub).length, 0, sub);
+});
+
+gitTest("rescope (ж): перечитанный план меняет партию", async () => {
+  const {responses, logDir} = rescopeScenario({rescope: {stdout: JSON.stringify(RESCOPE_OK)},
+    extraTasks: [task("t3", {})], waves: [[["t2", "t3"]], [["t3"], ["t2"]]]});
+  const {calls} = setupFake(responses);
+  const listik = new Listik({bin: FAKE_BIN, actor: "agent:listik-swarm", cliTimeout: 5});
+  const log = makeLog();
+  await tick(listik, {...baseConfig, logDir}, log);
+  const launched = launchedIds(calls());
+  assert.ok(launched.includes("t3"));
+  assert.ok(!launched.includes("t2"));
+});
+
+gitTest("rescope (з): таймаут из swarm.json, а не cliTimeout", async () => {
+  {
+    const {responses, logDir} = rescopeScenario({swarmJson: {integration: [], rescope_timeout: 5},
+      rescope: {sleepMs: 1500, stdout: JSON.stringify(RESCOPE_OK)}});
+    setupFake(responses);
+    const listik = new Listik({bin: FAKE_BIN, actor: "agent:listik-swarm", cliTimeout: 1});
+    const log = makeLog();
+    const result = await tick(listik, {...baseConfig, logDir}, log);
+    assert.ok(log.lines.some(l => l.startsWith("rescope proj:")));
+    assert.equal(result.rescope.ok, true);
+  }
+  {
+    const {responses, logDir} = rescopeScenario({swarmJson: {integration: [], rescope_timeout: 1},
+      rescope: {sleepMs: 2500, stdout: JSON.stringify(RESCOPE_OK)}});
+    const {calls} = setupFake(responses);
+    const listik = new Listik({bin: FAKE_BIN, actor: "agent:listik-swarm", cliTimeout: 1});
+    const log = makeLog();
+    const result = await tick(listik, {...baseConfig, logDir}, log);
+    assert.ok(log.lines.some(l => l.startsWith("rescope ошибка: timeout/")));
+    assert.ok(launchedIds(calls()).includes("t2"));
+    assert.equal(result.barrier.gate, null);
+    for (const sub of NO_RESCOPE_SIDE) assert.equal(calls().filter(c => c.sub === sub).length, 0, sub);
+  }
+});
+
+gitTest("rescope (и): dry-run — не зовётся", async () => {
+  const {responses, logDir} = rescopeScenario({rescope: {stdout: JSON.stringify(RESCOPE_OK)}});
+  const {calls} = setupFake(responses);
+  const listik = new Listik({bin: FAKE_BIN, actor: "agent:listik-swarm", cliTimeout: 5});
+  const log = makeLog();
+  const result = await tick(listik, {...baseConfig, logDir, dryRun: true}, log);
+  assert.equal(calls().filter(c => c.sub === "rescope").length, 0);
+  assert.equal(result.rescope, null);
+});

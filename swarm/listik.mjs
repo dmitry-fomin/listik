@@ -28,7 +28,8 @@ export class Listik {
     this.cliTimeout = cliTimeout;
   }
 
-  async _call(subArgs, {write = false} = {}) {
+  async _call(subArgs, {write = false, timeoutSec = null} = {}) {
+    const limit = typeof timeoutSec === "number" && timeoutSec > 0 ? timeoutSec : this.cliTimeout;
     const argv = [];
     if (this.host) argv.push("--host", String(this.host));
     if (this.port) argv.push("--port", String(this.port));
@@ -36,10 +37,10 @@ export class Listik {
     argv.push("--json");
     if (write) argv.push("--actor", this.actor);
 
-    const {err, stdout, stderr} = await run(this.bin, argv, this.cliTimeout * 1000);
+    const {err, stdout, stderr} = await run(this.bin, argv, limit * 1000);
 
     if (err && (err.killed || err.signal)) {
-      throw new ListikError("timeout", `таймаут ${this.cliTimeout}s: listik ${subArgs.join(" ")}`);
+      throw new ListikError("timeout", `таймаут ${limit}s: listik ${subArgs.join(" ")}`);
     }
 
     let parsed = null;
@@ -158,5 +159,12 @@ export class Listik {
     const argv = ["watch", "--project", project];
     if (dryRun) argv.push("--dry-run");
     return this._call(argv, {write: !dryRun});
+  }
+
+  // Пересчёт скоупов и ресурсных рёбер проекта: зовётся барьером после влитой волны
+  // (порция b), таймаут — из `swarm.json: rescope_timeout`. Всегда `--apply`: без записи
+  // рой проход не зовёт (модель платная). Цикл (код 1, JSON без error) — объект от _call.
+  rescope(project, {timeoutSec = null} = {}) {
+    return this._call(["rescope", "--project", project, "--apply"], {write: true, timeoutSec});
   }
 }

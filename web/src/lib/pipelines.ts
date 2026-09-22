@@ -4,7 +4,7 @@
  * `GET /api/routes`, файл `routes.json` (см. `RouteDef` в `api/types.ts`).
  * Здесь остаются только роли и вендоры, которыми размечены ячейки таблицы.
  */
-import type { PipelineStage } from '@/api/types'
+import type { PipelineStage, SwarmRoleCell } from '@/api/types'
 
 export type RoleKey = 'spec' | 'critic' | 'impl' | 'judge'
 
@@ -28,6 +28,20 @@ export const ROLE_STAGE: Record<RoleKey, PipelineStage> = {
   critic: 's2-review',
   impl: 's3-impl',
   judge: 's4-judge',
+}
+
+/**
+ * Харнессы, разрешённые этапу по умолчанию, — зеркало
+ * `config.DEFAULTS["routing"]["harnesses"]` (`listik/config.py`): `claim` за
+ * роль откажет харнессу вне списка этапа, поэтому исполнитель роли по
+ * умолчанию берётся по этому порядку, а не всегда `claude`. Переопределения
+ * `[routing.projects.<slug>]` доске не видны — это только дефолт формы.
+ */
+export const STAGE_HARNESSES: Record<PipelineStage, readonly string[]> = {
+  's1-spec': ['claude', 'dsh', 'codex', 'grok', 'pi-glm', 'pi-deepseek'],
+  's2-review': ['claude', 'dsh', 'codex', 'grok', 'pi-glm', 'pi-deepseek'],
+  's3-impl': ['codex', 'dsh', 'claude', 'grok', 'pi-glm', 'pi-deepseek'],
+  's4-judge': ['claude', 'dsh', 'codex', 'grok', 'pi-glm', 'pi-deepseek'],
 }
 
 /**
@@ -62,3 +76,25 @@ export interface RoleCell {
 
 /** Имя параметра — то же правило, что у сервера (`listik/routes.py`). */
 export const PARAM_KEY_RE = /^[a-z][a-z0-9_]*$/
+
+/**
+ * Ячейка роли роевого исполнения (`driver='swarm'` у `kind=swarm` или
+ * `kind=pipeline`, listik-2gry): исполнитель — харнесс из каталога, а не
+ * вендор с подписью. Тип объявлен в `api/types.ts` (`SwarmRoleCell`),
+ * предикат здесь — рядом с `RoleCell`, которому он альтернатива.
+ */
+
+/** Ячейка роевой формы: есть `harness`, нет `provider`. */
+export function isSwarmCell(cell: unknown): cell is SwarmRoleCell {
+  return (
+    typeof cell === 'object' &&
+    cell !== null &&
+    'harness' in cell &&
+    typeof (cell as { harness?: unknown }).harness === 'string'
+  )
+}
+
+/** Ячейка скиловой формы (`{provider,label,title}`) — обратный предикат. */
+export function isProviderCell(cell: unknown): cell is RoleCell {
+  return typeof cell === 'object' && cell !== null && 'provider' in cell
+}

@@ -7,8 +7,11 @@ import type {
   Board,
   CommentKind,
   DirectRouteCreate,
-  DirectRouteDef,
   GroupBy,
+  Harness,
+  HarnessCreate,
+  HarnessesResponse,
+  HarnessPatch,
   Health,
   DepTree,
   DepsState,
@@ -24,6 +27,7 @@ import type {
   SearchMode,
   SearchResponse,
   Stats,
+  SwarmRouteCreate,
   StreamEvent,
   Task,
   TaskDetail,
@@ -135,11 +139,23 @@ export const api = {
     patch<RouteDef>(`/api/routes/${encodeURIComponent(key)}`, body),
 
   /**
-   * Завести прямой маршрут (`POST /api/routes`, `kind="direct"`, listik-sjx3 порция `a`).
-   * Ключ приходит от клиента, дубль ключа — `409`; ответ — запись в том же виде, что
-   * в `GET /api/routes`, включая `key`/`kind`/`visible`. Конвейеры так не заводятся.
+   * Завести маршрут (`POST /api/routes`): прямой (`kind="direct"`, listik-sjx3
+   * порция `a`) или роя (`kind="swarm"`, listik-2gry). Ключ приходит от клиента,
+   * дубль ключа — `409`; ответ — запись в том же виде, что в `GET /api/routes`.
+   * Конвейеры так не заводятся — они приходят из каталога плагинов.
    */
-  createRoute: (body: DirectRouteCreate) => post<DirectRouteDef>('/api/routes', body),
+  createRoute: (body: DirectRouteCreate | SwarmRouteCreate) =>
+    post<RouteDef>('/api/routes', body),
+
+  /** Каталог харнесов (`GET /api/harnesses`, listik-2gry): исполнители прямых маршрутов и ролей роя. */
+  harnesses: () => get<HarnessesResponse>('/api/harnesses'),
+
+  /** Завести харнесс (`POST /api/harnesses`); дубль ключа — `409`. */
+  createHarness: (body: HarnessCreate) => post<Harness>('/api/harnesses', body),
+
+  /** Правка харнесса (`PATCH /api/harnesses/{key}`): label/hint/icon/argv/prompt/enabled/position. */
+  patchHarness: (key: string, body: HarnessPatch) =>
+    patch<Harness>(`/api/harnesses/${encodeURIComponent(key)}`, body),
 
   /**
    * Настроен ли помощник DeepSeek (`[assistant]` в config.toml). Ключ наружу не

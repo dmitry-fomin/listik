@@ -17,6 +17,7 @@ import pathlib
 from unittest import mock
 
 from listik import errors
+from listik import harnesses_store
 from listik import routes_store
 from listik import server
 from listik import skills as skills_mod
@@ -334,7 +335,8 @@ class CreateDirectRouteTests(RoutesApiBase):
         status, record = self.post("/api/routes", self.body())
         self.assertEqual(status, 201)
         self.assertEqual(set(record), {"key", "kind", "title", "hint", "visible",
-                                       "icon", "position", "command", "harness"})
+                                       "icon", "position", "command", "harness",
+                                       "driver"})
         self.assertEqual(record["key"], "probe-direct")
         self.assertEqual(record["kind"], "direct")
         self.assertEqual(record["title"], "Проба")
@@ -421,15 +423,21 @@ class CreateDirectRouteTests(RoutesApiBase):
                 self.assertEqual(ctx.exception.code, errors.BAD_ARGUMENT)
                 self.assertIn("key", ctx.exception.message)
 
-    def test_unknown_harness_and_icon_are_400_with_allowed(self) -> None:
+    def test_any_harness_key_and_bad_harness_key(self) -> None:
+        # listik-2gry: прямой маршрут принимает любой ключ харнесса по форме
+        # (держатель `agent:<key>` из каталога harnesses) — негодная форма ключа
+        # по-прежнему 400.
+        status, record = self.post("/api/routes", self.body(harness="opencode"))
+        self.assertEqual(status, 201)
+        self.assertEqual(record["harness"], "opencode")
         with self.assertRaises(server.ApiError) as ctx:
-            self.post("/api/routes", self.body(harness="opencode"))
+            self.post("/api/routes", self.body(key="probe-direct-2",
+                                             harness="Open Code"))
         self.assertEqual(ctx.exception.status, 400)
         self.assertEqual(ctx.exception.code, errors.BAD_ARGUMENT)
-        for name in ("claude", "dsh", "codex", "grok", "gemini"):
-            self.assertIn(name, ctx.exception.message)
+        self.assertIn("harness", ctx.exception.message)
         with self.assertRaises(server.ApiError) as ctx:
-            self.post("/api/routes", self.body(icon="turbo"))
+            self.post("/api/routes", self.body(key="probe-direct-3", icon="turbo"))
         self.assertEqual(ctx.exception.status, 400)
         self.assertEqual(ctx.exception.code, errors.BAD_ARGUMENT)
         for name in ("xhigh", "high", "medium", "low", "xlow", "direct"):
@@ -477,4 +485,200 @@ class CreateDirectRouteTests(RoutesApiBase):
             self.post("/api/routes", {"key": "нет-такого-скила"})
         self.assertEqual(ctx.exception.status, 400)
         self.assertEqual(ctx.exception.code, errors.BAD_ARGUMENT)
+
+
+class HarnessesApiTests(RoutesApiBase):
+    """`GET/POST /api/harnesses`, `GET/PATCH /api/harnesses/{key}` (listik-2gry)."""
+
+    def test_list_returns_seeds_with_used_by(self) -> None:
+        status, data = self.get("/api/harnesses")
+        self.assertEqual(status, 200)
+        keys = {h["key"] for h in data["harnesses"]}
+        for key in ("claude", "codex", "me"):
+            self.assertIn(key, keys)
+        for record in data["harnesses"]:
+            self.assertIn("used_by", record)
+            self.assertIsInstance(record["used_by"], list)
+        me = next(h for h in data["harnesses"] if h["key"] == "me")
+        self.assertEqual(me["kind"], "manual")
+        # Протокол роя приходит с каталогом — доска показывает его в
+        # предпросмотре команды роли при пустом `prompt` ячейки.
+        self.assertEqual(data["swarm_prompt"], harnesses_store.SWARM_PROMPT)
+
+    def test_create_get_patch(self) -> None:
+        status, record = self.post("/api/harnesses", {
+            "key": "mini", "label": "mini", "hint": "локальный",
+            "argv": ["mini", "run"], "prompt": "задача {task_id}"})
+        self.assertEqual(status, 201)
+        self.assertEqual(record["key"], "mini")
+        self.assertFalse(record["builtin"])
+
+        status, detail = self.get("/api/harnesses/mini")
+        self.assertEqual(status, 200)
+        self.assertEqual(detail["argv"], ["mini", "run"])
+        self.assertEqual(detail["used_by"], [])
+
+        status, patched = self.patch("/api/harnesses/mini",
+                                     {"hint": "новая", "enabled": False})
+        self.assertEqual(status, 200)
+        self.assertEqual(patched["hint"], "новая")
+        self.assertFalse(patched["enabled"])
+
+    def test_create_bad_key_and_duplicate(self) -> None:
+        with self.assertRaises(server.ApiError) as ctx:
+            self.post("/api/harnesses", {"key": "Bad Key"})
+        self.assertEqual(ctx.exception.status, 400)
+        with self.assertRaises(server.ApiError) as ctx:
+            self.post("/api/harnesses", {"key": "claude"})
+        self.assertEqual(ctx.exception.status, 409)
+
+    def test_patch_unknown_key_is_404_and_guards(self) -> None:
+        with self.assertRaises(server.ApiError) as ctx:
+            self.patch("/api/harnesses/nope", {"hint": "x"})
+        self.assertEqual(ctx.exception.status, 404)
+        with self.assertRaises(server.ApiError) as ctx:
+            self.patch("/api/harnesses/claude", {"key": "other"})
+        self.assertEqual(ctx.exception.status, 400)
+
+    def test_get_detail_lists_used_by(self) -> None:
+        self.post("/api/harnesses", {"key": "mini", "argv": ["mini", "run"]})
+        self.post("/api/routes", {"kind": "direct", "key": "d-mini",
+                                  "title": "d", "harness": "mini",
+                                  "command": ["mini", "run"]})
+        self.post("/api/routes", {"kind": "swarm", "key": "roy", "title": "рой",
+                                  "roles": {"impl": {"harness": "mini"}}})
+        status, detail = self.get("/api/harnesses/mini")
+        self.assertEqual(status, 200)
+        self.assertIn({"route": "d-mini", "kind": "direct", "role": None},
+                      detail["used_by"])
+        self.assertIn({"route": "roy", "kind": "swarm", "role": "impl"},
+                      detail["used_by"])
+
+    def test_get_unknown_key_is_404(self) -> None:
+        with self.assertRaises(server.ApiError) as ctx:
+            self.get("/api/harnesses/nope")
+        self.assertEqual(ctx.exception.status, 404)
+
+
+class CreateSwarmRouteTests(RoutesApiBase):
+    """`POST /api/routes` с `kind="swarm"` — маршрут роя с ролями (listik-2gry)."""
+
+    def body(self, **overrides) -> dict:
+        payload = {"kind": "swarm", "key": "roy", "title": "Рой",
+                   "roles": {"impl": {"harness": "codex"},
+                             "judge": {"harness": "claude"}}}
+        payload.update(overrides)
+        return payload
+
+    def test_post_creates_swarm_route(self) -> None:
+        status, record = self.post("/api/routes", self.body())
+        self.assertEqual(status, 201)
+        self.assertEqual(record["kind"], "swarm")
+        self.assertEqual(record["driver"], "swarm")
+        self.assertEqual(record["roles"]["impl"]["harness"], "codex")
+        self.assertIsNone(record["command"])
+        self.assertNotIn("harness", record)
+        stored = routes_store.get_route(self.conn, "roy")
+        self.assertEqual(stored["driver"], "swarm")
+
+    def test_post_swarm_requires_roles(self) -> None:
+        for bad in (None, {}, "x"):
+            with self.subTest(roles=bad):
+                with self.assertRaises(server.ApiError) as ctx:
+                    self.post("/api/routes", self.body(roles=bad))
+                self.assertEqual(ctx.exception.status, 400)
+                self.assertIn("roles", ctx.exception.message)
+
+    def test_post_swarm_rejects_command_and_harness(self) -> None:
+        for field, value in (("command", ["x"]), ("harness", "codex")):
+            with self.subTest(field=field):
+                with self.assertRaises(server.ApiError) as ctx:
+                    self.post("/api/routes", self.body(**{field: value}))
+                self.assertEqual(ctx.exception.status, 400)
+                self.assertIn(field, ctx.exception.message)
+
+    def test_post_swarm_unknown_harness_is_400(self) -> None:
+        with self.assertRaises(server.ApiError) as ctx:
+            self.post("/api/routes",
+                      self.body(roles={"impl": {"harness": "nope"}}))
+        self.assertEqual(ctx.exception.status, 400)
+        self.assertIn("nope", ctx.exception.message)
+
+    def test_post_swarm_role_without_command_is_400(self) -> None:
+        # `me` — manual-харнесс без команды; у роли своего argv тоже нет.
+        with self.assertRaises(server.ApiError) as ctx:
+            self.post("/api/routes", self.body(roles={"impl": {"harness": "me"}}))
+        self.assertEqual(ctx.exception.status, 400)
+
+    def test_post_swarm_role_argv_and_prompt(self) -> None:
+        status, record = self.post("/api/routes", self.body(roles={
+            "spec": None,
+            "impl": {"harness": "codex", "argv": ["codex", "exec", "{task_id}"],
+                     "prompt": "сделай {task_id}"}}))
+        self.assertEqual(status, 201)
+        # `null`-ячейки в расклад не пишутся — пропуск хранится отсутствием ключа.
+        self.assertNotIn("spec", record["roles"])
+        self.assertEqual(record["roles"]["impl"]["argv"],
+                         ["codex", "exec", "{task_id}"])
+        self.assertEqual(record["roles"]["impl"]["prompt"], "сделай {task_id}")
+
+    def test_patch_swarm_roles(self) -> None:
+        self.post("/api/routes", self.body())
+        status, record = self.patch("/api/routes/roy",
+                                    {"roles": {"judge": {"harness": "codex"}}})
+        self.assertEqual(status, 200)
+        self.assertEqual(record["roles"]["judge"]["harness"], "codex")
+
+    def test_patch_driver_flip_revalidates_existing_roles(self) -> None:
+        """`driver` нельзя переключить под старым раскладом: скиловые ячейки
+        `{provider,…}` роем не исполняются — PATCH отклоняется до записи."""
+        self.write_and_import([pipeline_record()])
+        with self.assertRaises(server.ApiError) as ctx:
+            self.patch("/api/routes/demo-pipeline", {"driver": "swarm"})
+        self.assertEqual(ctx.exception.status, 400)
+        self.assertEqual(
+            routes_store.get_route(self.conn, "demo-pipeline")["driver"], "skill")
+
+    def test_patch_driver_and_roles_in_one_request(self) -> None:
+        """`driver` вместе с новым раскладом в одном PATCH — итог проверяется
+        по новому способу исполнения; обратный перевод — так же."""
+        self.write_and_import([pipeline_record()])
+        status, record = self.patch(
+            "/api/routes/demo-pipeline",
+            {"driver": "swarm", "roles": {"impl": {"harness": "codex"}}})
+        self.assertEqual(status, 200)
+        self.assertEqual(record["driver"], "swarm")
+        self.assertEqual(record["roles"]["impl"]["harness"], "codex")
+        status, record = self.patch(
+            "/api/routes/demo-pipeline",
+            {"driver": "skill",
+             "roles": {"impl": {"provider": "claude", "label": "Opus",
+                                "title": "Opus · medium"}}})
+        self.assertEqual(status, 200)
+        self.assertEqual(record["driver"], "skill")
+
+    def test_used_by_counts_swarm_driven_pipeline(self) -> None:
+        """`used_by` харнесса видит роли и в конвейере с `driver=swarm`."""
+        self.post("/api/harnesses", {"key": "mini", "argv": ["mini", "run"]})
+        self.write_and_import([pipeline_record()])
+        self.patch("/api/routes/demo-pipeline",
+                   {"driver": "swarm", "roles": {"impl": {"harness": "mini"}}})
+        status, detail = self.get("/api/harnesses/mini")
+        self.assertEqual(status, 200)
+        self.assertIn({"route": "demo-pipeline", "kind": "swarm", "role": "impl"},
+                      detail["used_by"])
+
+    def test_post_direct_registers_holder_alias(self) -> None:
+        """Ключ держателя прямого маршрута становится синонимом `agent:<key>` —
+        иначе `claim` ответил бы «неизвестный держатель»."""
+        from listik import actors
+        self.post("/api/routes",
+                  {"kind": "direct", "key": "d-mini", "title": "d",
+                   "harness": "mini", "command": ["mini", "run"]})
+        self.assertEqual(actors.resolve("mini", self.conn), ("agent:mini", "agent"))
+
+
+if __name__ == "__main__":
+    import unittest
+    unittest.main()
 

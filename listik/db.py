@@ -11,7 +11,7 @@ from pathlib import Path
 
 from . import paths
 
-SCHEMA_VERSION = 10
+SCHEMA_VERSION = 11
 
 SCHEMA = """
 PRAGMA journal_mode = WAL;
@@ -93,7 +93,11 @@ CREATE TABLE IF NOT EXISTS tasks (
     read_scope   TEXT NOT NULL DEFAULT '[]',   -- JSON-список относительных путей, которые задача читает
     write_scope  TEXT NOT NULL DEFAULT '[]',   -- JSON-список относительных путей, которые задача правит
     dispatch_id  TEXT,                         -- id запуска воркера; NULL, пока запуска не было
-    generation   INTEGER NOT NULL DEFAULT 0    -- поколение запуска, растёт при каждом старте
+    generation   INTEGER NOT NULL DEFAULT 0,   -- поколение запуска, растёт при каждом старте
+    -- Способ исполнения маршрута — снимок `routes.driver` на момент первого
+    -- запуска (listik-2gry). Пишет только лаунчер; NULL — запуска не было,
+    -- читается живое поле маршрута.
+    launch_driver TEXT                         -- skill | swarm | NULL
 );
 CREATE INDEX IF NOT EXISTS idx_tasks_status   ON tasks(status);
 CREATE INDEX IF NOT EXISTS idx_tasks_stage    ON tasks(stage);
@@ -194,7 +198,7 @@ CREATE TABLE IF NOT EXISTS meta (
 -- который один раз наполняет пустую таблицу (ввоз делает listik/routes_store.py).
 CREATE TABLE IF NOT EXISTS routes (
     key        TEXT PRIMARY KEY,
-    kind       TEXT NOT NULL,              -- pipeline | direct
+    kind       TEXT NOT NULL,              -- pipeline | direct | swarm
     title      TEXT NOT NULL,
     hint       TEXT NOT NULL DEFAULT '',
     icon       TEXT,                       -- xhigh|high|medium|low|xlow|direct, NULL — уровня нет
@@ -202,11 +206,31 @@ CREATE TABLE IF NOT EXISTS routes (
     position   INTEGER NOT NULL DEFAULT 0, -- порядок в списке и в «Новой задаче»
     harness    TEXT,                       -- только у kind=direct, иначе NULL
     command    TEXT,                       -- JSON-массив argv, либо NULL
-    roles      TEXT,                       -- JSON {"spec":{provider,label,title},…}, либо NULL
+    roles      TEXT,                       -- pipeline: {"spec":{provider,label,title},…}; swarm: {"spec":{harness,argv,prompt},…}
+    driver     TEXT NOT NULL DEFAULT 'skill',  -- skill | swarm (swarm — у kind=swarm)
     created_at TEXT,
     updated_at TEXT
 );
 CREATE INDEX IF NOT EXISTS idx_routes_position ON routes(position);
+
+-- Каталог харнессов (listik-2gry): кто может исполнять задачу/этап и какой
+-- командой его поднимать. `key` — имя держателя (`agent:<key>`), у прямых
+-- маршрутов и у ролей роя ссылка именно на него.
+CREATE TABLE IF NOT EXISTS harnesses (
+    key        TEXT PRIMARY KEY,           -- ^[a-z0-9][a-z0-9-]*$ — хвост agent:<key>
+    label      TEXT NOT NULL,              -- имя в списках
+    hint       TEXT NOT NULL DEFAULT '',   -- подпись под именем
+    icon       TEXT,                       -- ключ глифа (claude|dsh|codex|grok|gemini|devin|pi|user) или NULL — своя буква
+    argv       TEXT,                       -- JSON-массив argv по умолчанию, NULL — команды нет
+    prompt     TEXT,                       -- промпт по умолчанию (последний аргумент), NULL — нет
+    kind       TEXT NOT NULL DEFAULT 'exec',   -- exec — процесс | manual — ручная выдача, без команды
+    builtin    INTEGER NOT NULL DEFAULT 0,     -- 1 — из поставки, 0 — заведён руками
+    enabled    INTEGER NOT NULL DEFAULT 1,     -- 0 — в селекторах не предлагать
+    position   INTEGER NOT NULL DEFAULT 0,
+    created_at TEXT,
+    updated_at TEXT
+);
+CREATE INDEX IF NOT EXISTS idx_harnesses_position ON harnesses(position);
 
 -- Долговременная память: заметки, не привязанные к задаче (аналог bd remember)
 CREATE TABLE IF NOT EXISTS memories (
@@ -314,6 +338,8 @@ MIGRATIONS: list[tuple[str, str, str]] = [
     ("tasks", "write_scope", "TEXT NOT NULL DEFAULT '[]'"),
     ("tasks", "dispatch_id", "TEXT"),
     ("tasks", "generation", "INTEGER NOT NULL DEFAULT 0"),
+    ("tasks", "launch_driver", "TEXT"),
+    ("routes", "driver", "TEXT NOT NULL DEFAULT 'skill'"),
     ("comments", "kind", "TEXT NOT NULL DEFAULT 'comment'"),
     ("deps", "created_by", "TEXT"),
     ("documents", "status", "TEXT NOT NULL DEFAULT 'ok'"),
@@ -368,6 +394,8 @@ def init(db_path: Path | None = None, *, verbose: bool = False) -> sqlite3.Conne
         (str(SCHEMA_VERSION),),
     )
     seed_actors(conn)
+    from . import harnesses_store
+    harnesses_store.seed(conn)
     conn.commit()
     return conn
 

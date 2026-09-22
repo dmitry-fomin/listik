@@ -797,6 +797,16 @@ def update_task(conn: sqlite3.Connection, task_id: str, *, actor: str | None = N
         except Exception as exc:
             event(conn, task_id, "document_error", note=str(exc))
     conn.commit()
+    if any(key == "status" and new in FINAL_STATUSES for key, _old, new in changes):
+        # Порция нарезки закрылась — возможно, это была последняя: родитель-рой
+        # закрывается сам (`stage_launch.close_swarm_parent`, listik-2gry). Ленивый
+        # импорт: `stage_launch` уже импортирует `store`, цикл наверху нельзя.
+        try:
+            from . import stage_launch
+            stage_launch.close_swarm_parent(conn, task_id)
+        except Exception as exc:  # noqa: BLE001 — закрытие порции не роняем
+            event(conn, task_id, "swarm_parent_error", note=str(exc))
+            conn.commit()
     return get_task(conn, task_id)
 
 
@@ -1376,6 +1386,19 @@ def _last_release_ts(conn: sqlite3.Connection, task_id: str) -> str | None:
     return r["ts"] if r else None
 
 
+def _has_portions(conn: sqlite3.Connection, task_id: str) -> bool:
+    """Есть ли у карточки живая нарезка: ребёнок `parent-child` не в финале."""
+    marks = ", ".join("?" for _ in FINAL_STATUSES)
+    try:
+        return conn.execute(
+            "SELECT 1 FROM deps d JOIN tasks t ON t.id = d.issue_id "
+            "WHERE d.depends_on = ? AND d.dep_type IN ('parent-child','parent') "
+            f"AND t.status NOT IN ({marks}) LIMIT 1",
+            (task_id, *FINAL_STATUSES)).fetchone() is not None
+    except sqlite3.OperationalError:
+        return False
+
+
 def row_to_task(conn: sqlite3.Connection, row: sqlite3.Row) -> dict:
     cfg = config_mod.load()
     warn = float((cfg.get("board") or {}).get("wip_warn_hours", 8))
@@ -1504,6 +1527,9 @@ def row_to_task(conn: sqlite3.Connection, row: sqlite3.Row) -> dict:
         "launch_exit_code": row["launch_exit_code"],
         "launch_finished_at": row["launch_finished_at"],
         "launch_error": row["launch_error"],
+        "launch_driver": (row["launch_driver"]
+                          if "launch_driver" in row.keys() else None),
+        "has_portions": _has_portions(conn, row["id"]),
         # Рой (listik-s520): области файлов и ограждение запуска.
         "read_scope": store_helpers.json_list(row["read_scope"]),
         "write_scope": store_helpers.json_list(row["write_scope"]),

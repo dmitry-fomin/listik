@@ -291,6 +291,11 @@ function superviseCrashed({open, events, tasks, config}) {
 
   for (const t of open) {
     if (!t.launched_by || !t.launch_finished_at || t.needs_owner) continue;
+    // У режима роя завершившийся, но не done запуск — не сбой: исход разбирает
+    // stage_launch по `.out` (следующий этап, вопрос, возврат на s3-impl).
+    // Запись ещё не разобрана (launched_by ещё на месте) — пропускаем тик,
+    // «завершённый, но не done» здесь не значит «сбой режима скила».
+    if (t.launch_driver === "swarm") continue;
     const taskEvents = (events || {})[t.id] || [];
     // метки секундные: ответ в ту же секунду, что финиш запуска, считается ответом после него
     const finishedMs = tsMs(t.launch_finished_at);
@@ -410,6 +415,19 @@ export function decide({plan, tasks, routes, config, now, events, gate = null}) 
       if (t.holder) {
         skipped.push({id, reason: "held"});
         continue;
+      }
+      // Родитель нарезки сам по ролям не идёт — бегут его порции. Пропуск
+      // только у режима роя: снимок launch_driver, а до первого запуска —
+      // driver/kind маршрута; карточку режима скила дети не прячут
+      // (docs/specs/swarm-stage-launch.md).
+      if (t.has_portions) {
+        const route = routeByKey.get(t.launch_route);
+        const swarm = t.launch_driver === "swarm" ||
+          (!t.launch_driver && !!route && (route.kind === "swarm" || route.driver === "swarm"));
+        if (swarm) {
+          skipped.push({id, reason: "sliced"});
+          continue;
+        }
       }
       candidates.push(t);
     }

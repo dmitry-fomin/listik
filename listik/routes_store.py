@@ -25,15 +25,15 @@ import json
 import sqlite3
 import sys
 
-from . import errors, routes, skills, store
+from . import errors, harnesses_store, routes, skills, store
 
 #: Поля, которые вообще разрешено менять точечно.  Всё остальное (`kind`, `key`,
 #: `harness`, `position`) через `update_route` недоступно.  `roles` правится
 #: (listik-syu8): расклад ролей задаётся из UI доски, а не только ввозом файла.
-UPDATE_FIELDS = ("title", "hint", "icon", "visible", "command", "roles")
+UPDATE_FIELDS = ("title", "hint", "icon", "visible", "command", "roles", "driver")
 
 COLS = ("key", "kind", "title", "hint", "icon", "visible", "position", "harness",
-        "command", "roles", "created_at", "updated_at")
+        "command", "roles", "driver", "created_at", "updated_at")
 
 
 # ------------------------------------------------------------------ значения
@@ -107,19 +107,43 @@ def _check_command(value, kind: str, *, direct_only: bool = False):
     return checked
 
 
-def _check_roles(value, kind: str) -> dict:
+def _check_roles(conn, value, kind: str, driver: str = "skill") -> dict:
     """Проверить расклад ролей той же проверкой, что у файла маршрутов.
 
-    Роли есть только у `pipeline`: у `direct` поле запрещено самой формой записи.
-    `routes._validate_roles` бросает `RoutesError` — подкласс `ValueError`, поэтому
-    нарушение уходит наружу тем же путём, что и остальные поля (400 `bad_argument`).
+    Роли есть у `pipeline` и у `swarm`; у `direct` поле запрещено самой формой
+    записи. Форма ячейки — по способу исполнения: `driver=swarm` (всегда у
+    `kind=swarm`, опционально у `pipeline`) — `{harness,argv?,prompt?}`, харнесс
+    из каталога; режим скила — `{provider,label,title}`. Проверки бросают
+    `RoutesError` — подкласс `ValueError`, поэтому нарушение уходит наружу тем же
+    путём, что и остальные поля (400 `bad_argument`).
     """
-    if kind != "pipeline":
-        raise ValueError('roles: допустимо только у kind="pipeline"')
+    if kind not in ("pipeline", "swarm"):
+        raise ValueError('roles: допустимо только у kind="pipeline" и kind="swarm"')
+    if kind == "swarm" or driver == "swarm":
+        harnesses = {h["key"]: h for h in harnesses_store.list_harnesses(conn)}
+        return routes.validate_swarm_roles(value, "roles", harnesses)
     return routes._validate_roles(value, "roles")
 
 
-def _prepare(record: dict) -> dict:
+def _check_driver(value, kind: str) -> str:
+    """`driver`: у `direct` поля нет, у `swarm` всегда `swarm`, у `pipeline` —
+    `skill` (по умолчанию) или `swarm`."""
+    if kind == "direct":
+        if value not in (None, "skill"):
+            raise ValueError('driver: у kind="direct" поля нет')
+        return "skill"
+    if kind == "swarm":
+        if value not in (None, "swarm"):
+            raise ValueError('driver: у kind="swarm" всегда "swarm"')
+        return "swarm"
+    if value is None:
+        return "skill"
+    if value not in routes.DRIVERS:
+        raise ValueError(f"driver: допустимы {', '.join(routes.DRIVERS)}")
+    return value
+
+
+def _prepare(conn, record: dict) -> dict:
     """Проверить запись и вернуть значения колонок (без `position`/`created_at`)."""
     if not isinstance(record, dict):
         raise ValueError("record: должна быть запись-словарь")
@@ -128,7 +152,8 @@ def _prepare(record: dict) -> dict:
         raise ValueError("key: ключ должен подходить под ^[a-z0-9][a-z0-9-]*$")
     kind = record.get("kind")
     if kind not in routes.KINDS:
-        raise ValueError('kind: должен быть "pipeline" или "direct"')
+        raise ValueError('kind: должен быть "pipeline", "direct" или "swarm"')
+    driver = _check_driver(record.get("driver"), kind)
     title = _check_title(record.get("title"))
     hint = _check_hint(record.get("hint", ""))
     icon = _check_icon(record.get("icon"))
@@ -144,20 +169,29 @@ def _prepare(record: dict) -> dict:
         if not isinstance(roles, dict):
             raise ValueError("roles: должен быть объектом с ролями spec/critic/impl/judge")
         if roles:
-            # Непустой расклад проверяется целиком (ячейки, `skill`, `params`), а не
-            # только «это словарь»: иначе запись мимо файла могла бы положить в базу
-            # расклад, который ввоз того же файла отверг бы.
-            roles = _check_roles(roles, kind)
+            # Непустой расклад проверяется целиком (ячейки по способу исполнения:
+            # `driver=swarm` — ячейки `{harness,argv?,prompt?}`), а не только «это
+            # словарь»: иначе запись мимо файла могла бы положить в базу расклад,
+            # который ввоз того же файла отверг бы.
+            roles = _check_roles(conn, roles, kind, driver)
+        harness = None
+    elif kind == "swarm":
+        if harness is not None:
+            raise ValueError("harness: у swarm-записи harness быть не должно")
+        if not isinstance(roles, dict) or not roles:
+            raise ValueError("roles: у swarm-записи нужна хотя бы одна роль "
+                             "spec/critic/impl/judge с харнессом и командой")
+        roles = _check_roles(conn, roles, kind)
         harness = None
     else:
         if roles not in (None, {}):
             raise ValueError("roles: у direct-записи ролей быть не должно")
         roles = None
-        if harness not in routes.HARNESSES:
-            raise ValueError(f"harness: неизвестный харнесс {harness!r}, допустимы: "
-                             + ", ".join(routes.HARNESSES))
+        if not isinstance(harness, str) or not routes.KEY_RE.match(harness):
+            raise ValueError("harness: ключ харнесса под ^[a-z0-9][a-z0-9-]*$ — "
+                             "имя держателя agent:<key>")
     return {"key": key, "kind": kind, "title": title, "hint": hint, "icon": icon,
-            "visible": 1 if visible else 0, "harness": harness,
+            "visible": 1 if visible else 0, "harness": harness, "driver": driver,
             "command": _dumps(command), "roles": _dumps(roles)}
 
 
@@ -173,8 +207,9 @@ def _row_to_record(row: sqlite3.Row) -> dict:
         "icon": row["icon"],
         "position": int(row["position"]),
         "command": _loads_list(row["command"]),
+        "driver": row["driver"] if "driver" in row.keys() and row["driver"] else "skill",
     }
-    if row["kind"] == "pipeline":
+    if row["kind"] in ("pipeline", "swarm"):
         record["roles"] = _loads_dict(row["roles"])
     else:
         record["harness"] = row["harness"]
@@ -211,16 +246,20 @@ def _insert(conn: sqlite3.Connection, values: dict, position: int) -> None:
     now = store.now_iso()
     conn.execute(
         "INSERT INTO routes(key, kind, title, hint, icon, visible, position, harness, "
-        "command, roles, created_at, updated_at) VALUES(?,?,?,?,?,?,?,?,?,?,?,?)",
+        "command, roles, driver, created_at, updated_at) VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?)",
         (values["key"], values["kind"], values["title"], values["hint"], values["icon"],
          values["visible"], int(position), values["harness"], values["command"],
-         values["roles"], now, now),
+         values["roles"], values["driver"], now, now),
     )
 
 
 def _upsert_raw(conn: sqlite3.Connection, record: dict, *, position=None) -> None:
     """Вставка/перезапись без `commit` — для `import_file` (одна транзакция)."""
-    values = _prepare(record)
+    values = _prepare(conn, record)
+    if values["kind"] == "direct" and values["harness"]:
+        # Держатель прямого маршрута — держатель его харнесса: ключ каталога
+        # регистрируем синонимом `agent:<key>` (той же транзакцией).
+        harnesses_store.register_holder(conn, values["harness"])
     key = values["key"]
     existing = conn.execute("SELECT position FROM routes WHERE key = ?", (key,)).fetchone()
     if existing is None:
@@ -230,10 +269,10 @@ def _upsert_raw(conn: sqlite3.Connection, record: dict, *, position=None) -> Non
         position = existing["position"]
     conn.execute(
         "UPDATE routes SET kind=?, title=?, hint=?, icon=?, visible=?, position=?, "
-        "harness=?, command=?, roles=?, updated_at=? WHERE key=?",
+        "harness=?, command=?, roles=?, driver=?, updated_at=? WHERE key=?",
         (values["kind"], values["title"], values["hint"], values["icon"], values["visible"],
          int(position), values["harness"], values["command"], values["roles"],
-         store.now_iso(), key),
+         values["driver"], store.now_iso(), key),
     )
 
 
@@ -251,11 +290,13 @@ def upsert_route(conn: sqlite3.Connection, record: dict, *, position=None) -> di
 
 
 def create_route(conn: sqlite3.Connection, *, key, kind, title, hint="", icon=None,
-                 visible=False, harness=None, command=None, roles=None) -> dict:
+                 visible=False, harness=None, command=None, roles=None,
+                 driver=None) -> dict:
     """Новая запись, `position = max(position)+1`; дубликат ключа — `ValueError`."""
     record = {"key": key, "kind": kind, "title": title, "hint": hint, "icon": icon,
-              "visible": visible, "harness": harness, "command": command, "roles": roles}
-    _prepare(record)  # проверяем до обращения к базе: ключ и остальные поля
+              "visible": visible, "harness": harness, "command": command,
+              "roles": roles, "driver": driver}
+    _prepare(conn, record)  # проверяем до обращения к базе: ключ и остальные поля
     if conn.execute("SELECT 1 FROM routes WHERE key = ?", (key,)).fetchone():
         raise ValueError(f"key: маршрут {key!r} уже есть")
     position = _next_position(conn)
@@ -295,7 +336,23 @@ def update_route(conn: sqlite3.Connection, key: str, **fields) -> dict:
                                             direct_only=True)))
     if "roles" in fields:
         sets.append("roles = ?")
-        params.append(_dumps(_check_roles(fields["roles"], record["kind"])))
+        # Способ исполнения для проверки ячеек — тот, что будет у записи: из
+        # этого же PATCH, либо текущий в базе.
+        driver = _check_driver(fields["driver"], record["kind"]) \
+            if "driver" in fields else record["driver"]
+        params.append(_dumps(_check_roles(conn, fields["roles"], record["kind"],
+                                          driver)))
+    if "driver" in fields:
+        driver = _check_driver(fields["driver"], record["kind"])
+        if driver != record["driver"]:
+            # Смена способа исполнения переводит расклад на другой формат
+            # ячеек: итоговый состав (уже в базе либо из этого же PATCH)
+            # проверяем до записи — чужие ячейки лаунчер не исполнит.
+            resulting = fields["roles"] if "roles" in fields \
+                else record.get("roles") or {}
+            _check_roles(conn, resulting, record["kind"], driver)
+        sets.append("driver = ?")
+        params.append(driver)
     if not sets:
         return record
     sets.append("updated_at = ?")

@@ -5,13 +5,14 @@
  * `docs/design/settings/Настройки · Маршруты · конвейер-html/Routes.dc.html`.
  *
  * Шапка — своя, а не `UiEntityHeader`: у кита в subtitle нет слота, а ключ
- * маршрута в строке «Конвейер из скила · ключ <key>» обязан быть моноширинным.
+ * маршрута в строке «Конвейер · ключ <key>» обязан быть моноширинным.
  * Остальное — из кита: `UiSwitch` (видимость), `UiField`/`UiInput`,
  * `IconToggle`, `UiEmptyState`, `UiCopyButton`, `UiSaveStatus`,
  * `UiAlert`.
  *
  * Состав ролей и команда пока только показываются: расклад правится через API
- * (`PATCH /api/routes/{key}`), а команду конвейера меняет его скил. Ни одного
+ * (`PATCH /api/routes/{key}`), а команда конвейера приходит вместе с его
+ * поставкой. Ни одного
  * поля ввода, селекта или кнопки в блоке «Состав конвейера» нет; плитки ролей —
  * обычные `div`. Редактирование прямо отсюда — отдельная задача.
  *
@@ -48,7 +49,15 @@ import RouteSubstitutions from './RouteSubstitutions.vue'
 import store from '@/store/listik'
 import type { PipelineRouteDef, RouteIconKey, RoutePatch } from '@/api/types'
 import { PIPELINE_STAGES, ROUTE_ICONS } from '@/lib/dictionaries'
-import { ROLE_KEYS, ROLE_STAGE, ROLE_TITLES, type ProviderKey, type RoleKey } from '@/lib/pipelines'
+import {
+  isProviderCell,
+  ROLE_KEYS,
+  ROLE_STAGE,
+  ROLE_TITLES,
+  type ProviderKey,
+  type RoleCell,
+  type RoleKey,
+} from '@/lib/pipelines'
 import { splitPlaceholders, unknownPlaceholders } from '@/lib/routes'
 
 const props = defineProps<{ route: PipelineRouteDef }>()
@@ -186,8 +195,8 @@ interface RoleTile {
 }
 
 const roleTiles = computed<RoleTile[]>(() =>
-  ROLE_KEYS.filter((role) => Boolean(props.route.roles[role])).map((role) => {
-    const cell = props.route.roles[role]!
+  ROLE_KEYS.filter((role) => isProviderCell(props.route.roles[role])).map((role) => {
+    const cell = props.route.roles[role] as RoleCell
     const stage = PIPELINE_STAGES.find((item) => item.value === ROLE_STAGE[role])
     return {
       role,
@@ -224,7 +233,7 @@ function braced(name: string): string {
       <div class="listik-route-card__head-main">
         <h2 class="listik-route-card__name">{{ route.title }}</h2>
         <p class="listik-route-card__keyline">
-          Конвейер из скила · ключ <code class="listik-mono">{{ route.key }}</code>
+          Конвейер · ключ <code class="listik-mono">{{ route.key }}</code>
         </p>
       </div>
       <UiSwitch
@@ -314,19 +323,19 @@ function braced(name: string): string {
         </p>
       </template>
       <RouteSubstitutions :route-key="route.key" :command="route.command" />
-      <p class="listik-route-card__note">Команду конвейера меняет его скил, а не настройки</p>
+      <p class="listik-route-card__note">Команда конвейера здесь не меняется — она приходит вместе с маршрутом</p>
     </section>
 
     <footer class="listik-route-card__footer">
       <div class="listik-route-card__skill">
         <UiAlert v-if="route.skill_missing" tone="warning">
-          <template #title>Расхождение со скилом</template>
-          скила <code class="listik-mono">/feature-pipeline:{{ route.key }}</code> нет, маршрут скрыт от автора.
+          <template #title>Расхождение с поставкой</template>
+          каталога <code class="listik-mono">/feature-pipeline:{{ route.key }}</code> нет, маршрут скрыт от автора.
         </UiAlert>
         <template v-else-if="route.skill_path">
-          <span class="listik-route-card__skill-label">Каталог скила на месте:</span>
+          <span class="listik-route-card__skill-label">Каталог поставки на месте:</span>
           <code class="listik-mono listik-route-card__skill-path-text">{{ route.skill_path }}</code>
-          <UiCopyButton :value="route.skill_path" label="Путь к скилу">
+          <UiCopyButton :value="route.skill_path" label="Путь к каталогу">
             <template #icon="{ copied }"><ListikIcon :name="copied ? 'check' : 'copy'" size="sm" /></template>
           </UiCopyButton>
         </template>

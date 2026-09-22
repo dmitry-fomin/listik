@@ -497,6 +497,13 @@ export async function tick(listik, config, log, runState = null) {
         log.action(`set ${item.id} labels += port:${port}`);
       }
       const result = await listik.launch(item.id, {LISTIK_DEV_PORT: String(port)});
+      if (result && result.launched === false) {
+        // Режим роя: процесс не поднялся, но это не сбой запуска — исход
+        // (пропуск этапа, нарезка, вопрос) уже записан в карточку сервером.
+        log.action(`рой ${item.id}: перезапуск без процесса ` +
+          `(${result.reason || (result.needs_owner ? "needs_owner" : "—")})`);
+        continue;
+      }
       log.action(`перезапуск ${item.id} → порт ${port}, поколение ${result.generation}`);
       restarted.push({id: item.id, reason: item.reason, generation: result.generation});
     } catch (err) {
@@ -562,6 +569,13 @@ export async function tick(listik, config, log, runState = null) {
 
     try {
       const result = await listik.launch(item.id, {LISTIK_DEV_PORT: String(port)});
+      if (result && result.launched === false) {
+        // Режим роя без процесса (пропуск роли, нарезка, отказ в «нужен человек»):
+        // не «запущено» и не ошибка — состояние уже в карточке.
+        log.action(`рой ${item.id}: запуск без процесса ` +
+          `(${result.reason || (result.needs_owner ? "needs_owner" : result.stage_skipped || "—")})`);
+        continue;
+      }
       log.action(`запуск ${item.id} → дерево ${task.worktree ?? "-"}, порт ${port}, ` +
         `поколение ${result.generation}`);
       launched.push(item.id);

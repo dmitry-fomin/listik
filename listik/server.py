@@ -29,6 +29,7 @@ from . import deps as deps_mod
 from . import embed as embed_mod
 from . import errors as errors_mod
 from . import fence as fence_mod
+from . import harnesses_store
 from . import launcher as launcher_mod
 from . import mcp
 from . import paths
@@ -662,18 +663,101 @@ def handle(method: str, path: str, query: dict, body: dict, authed: bool = False
                      "providers": list(routes_mod.PROVIDERS),
                      "roles": list(routes_mod.ROLE_KEYS)}
 
+    if path == "/api/harnesses":
+        # Каталог харнессов (listik-2gry): список, у каждого — «где используется»
+        # (прямые маршруты и роли маршрутов роя). Заведение — POST.
+        if method == "GET":
+            harnesses = harnesses_store.list_harnesses(conn)
+            for record in harnesses:
+                record["used_by"] = harnesses_store.used_by(conn, record["key"])
+            # `swarm_prompt` — протокол роли роя: лаунчер подставляет его
+            # последним аргументом при пустом `prompt` ячейки, доска показывает
+            # его в предпросмотре команды роли.
+            return 200, {"harnesses": harnesses,
+                         "swarm_prompt": harnesses_store.SWARM_PROMPT}
+        if method == "POST":
+            try:
+                record = harnesses_store.create(conn, body)
+            except errors_mod.ListikError as exc:
+                raise ApiError(exc.status or 400, exc.message,
+                               code=exc.code) from exc
+            except ValueError as exc:
+                raise ApiError(400, errors_mod.message_of(exc),
+                               code=errors_mod.BAD_ARGUMENT) from exc
+            publish("route", {"key": None, "action": "harnesses"})
+            return 201, record
+        raise ApiError(405, "метод не поддерживается")
+
+    if len(parts) == 3 and parts[0] == "api" and parts[1] == "harnesses":
+        key = urllib.parse.unquote(parts[2])
+        if method == "GET":
+            try:
+                record = harnesses_store.get(conn, key)
+            except errors_mod.NotFound as exc:
+                raise api_error(404, exc) from exc
+            record["used_by"] = harnesses_store.used_by(conn, key)
+            return 200, record
+        if method == "PATCH":
+            try:
+                record = harnesses_store.update(conn, key, body)
+            except errors_mod.NotFound as exc:
+                raise api_error(404, exc) from exc
+            except errors_mod.ListikError as exc:
+                raise ApiError(exc.status or 400, exc.message,
+                               code=exc.code) from exc
+            except ValueError as exc:
+                raise ApiError(400, errors_mod.message_of(exc),
+                               code=errors_mod.BAD_ARGUMENT) from exc
+            publish("route", {"key": None, "action": "harnesses"})
+            return 200, record
+        raise ApiError(405, "метод не поддерживается")
+
     if path == "/api/routes":
         # Данные — из таблицы `routes`: правка записи в базе видна сразу, перезапуск
         # сервера не нужен. `command` отдаётся, как и всё в /api/*, — только по токену.
         if method == "GET":
             return 200, routes_store.routes_response(conn)
         if method == "POST":
-            # Два случая по полю `kind`: конвейер (нет поля или `"pipeline"`) и
-            # прямой маршрут (`"direct"`). Всё остальное — довод запроса.
+            # Три случая по полю `kind`: конвейер (нет поля или `"pipeline"`),
+            # прямой маршрут (`"direct"`) и рой (`"swarm"`). Всё остальное —
+            # довод запроса.
             kind = "pipeline" if "kind" not in body else body["kind"]
-            if not isinstance(kind, str) or kind not in ("pipeline", "direct"):
-                raise ApiError(400, 'kind: допустимы "pipeline" или "direct"',
+            if not isinstance(kind, str) or kind not in ("pipeline", "direct", "swarm"):
+                raise ApiError(400, 'kind: допустимы "pipeline", "direct" или "swarm"',
                                code=errors_mod.BAD_ARGUMENT)
+            if kind == "swarm":
+                # Маршрут роя: без `command` (роет `stage_launch` по ролям), без
+                # `harness` (исполнитель — в ячейках ролей). Расклад обязателен —
+                # хотя бы одна роль с харнессом и командой.
+                unknown = [k for k in body
+                           if k not in ("kind", "key", "title", "hint", "icon",
+                                        "roles", "visible")]
+                if unknown:
+                    raise ApiError(400, f"поле нельзя передать: {unknown[0]}",
+                                   code=errors_mod.BAD_ARGUMENT)
+                key = str(need(body, "key")).strip()
+                title = need(body, "title")
+                if "roles" not in body:
+                    raise ApiError(400, "roles: у маршрута роя обязателен расклад "
+                                   "spec/critic/impl/judge", code=errors_mod.BAD_ARGUMENT)
+                try:
+                    routes_store.get_route(conn, key)
+                except errors_mod.NotFound:
+                    pass
+                else:
+                    raise ApiError(409, f"маршрут {key!r} уже есть",
+                                   code=errors_mod.CONFLICT)
+                try:
+                    record = routes_store.create_route(
+                        conn, key=key, kind="swarm", title=title,
+                        hint=body.get("hint", ""), icon=body.get("icon"),
+                        visible=body.get("visible", False),
+                        roles=body.get("roles"))
+                except ValueError as exc:
+                    raise ApiError(400, errors_mod.message_of(exc),
+                                   code=errors_mod.BAD_ARGUMENT) from exc
+                publish("route", {"key": key, "action": "created"})
+                return 201, record
             if kind == "direct":
                 unknown = [k for k in body
                            if k not in ("kind", "key", "title", "hint", "icon",
@@ -1236,12 +1320,19 @@ def handle(method: str, path: str, query: dict, body: dict, authed: bool = False
                     # Как `revoke`: `start` публикует свои кадры сам (`notify=publish`).
                     # `env` — только LISTIK_*, не зарезервированные (check_env в launcher);
                     # BadArgument уходит в except ValueError ниже как 400 bad_argument.
-                    reason = launcher_mod.start(conn, tid, notify=publish,
+                    # Режим роя может ответить без процесса (пропуск роли, нарезка,
+                    # «роль не взяла»): это dict {"launched": False, ...} — не отказ,
+                    # HTTP 200 с карточкой и исходом (docs/specs/swarm-stage-launch.md).
+                    result = launcher_mod.start(conn, tid, notify=publish,
                                                 env=body.get("env"))
-                    if reason is not None:
-                        raise ApiError(409, reason, code=errors_mod.CONFLICT)
-                    out = store.get_task(conn, tid)
-                    out["launched"] = True
+                    if isinstance(result, dict):
+                        out = store.get_task(conn, tid)
+                        out.update(result)
+                    elif result is not None:
+                        raise ApiError(409, result, code=errors_mod.CONFLICT)
+                    else:
+                        out = store.get_task(conn, tid)
+                        out["launched"] = True
                 else:
                     raise ApiError(404, f"неизвестное действие: {action}")
             except errors_mod.NotFound as exc:

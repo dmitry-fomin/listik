@@ -1,19 +1,21 @@
 <script setup lang="ts">
 /**
  * Раздел «Маршруты» страницы настроек (`views/SettingsPage.vue`, `/settings/routes`):
- * список записей `routes` (конвейеры и прямая выдача). Правку самой записи ведут
- * карточки справа: `RouteCard.vue` (конвейер, автосохранение шапки) и
- * `RouteDirectCard.vue` (прямая выдача, автосохранение и редактор argv).
- * Автосохранение не спасает команду с ошибкой — такая правка на сервер не
- * уходит, поэтому этот файл по-прежнему сторожит уход с несохранённой карточки.
+ * список записей `routes` тремя группами — «Конвейеры» (`kind=pipeline`),
+ * «Рой» (`kind=swarm` и конвейеры на `driver=swarm`) и «Прямая выдача»
+ * (`kind=direct`). Правку самой записи ведут карточки справа: `RouteCard.vue`
+ * (конвейер, автосохранение шапки), `RouteSwarmCard.vue` (рой: выбор
+ * исполнителя роли, пропуск, команда роли) и `RouteDirectCard.vue` (прямая
+ * выдача, автосохранение и редактор argv).
  *
- * Список — две карточки `UiCard`: «Конвейеры» (`kind=pipeline`) и «Прямая
- * выдача» (`kind=direct`); рядом с заголовком группы — счётчик записей
- * (`UiBadge`); у строки конвейера состав показан такой же пилюлей у правого
- * края — в моноширинной подписи остаётся только ключ. Порядок и удаление
- * маршрута модели данных не принадлежат: перестановки нет, а ненужный маршрут
- * выключают, а не удаляют, — поэтому органов управления списком не осталось. Строка-кнопка — единственная
- * своя разметка: в ките нет выбираемой двухстрочной строки.
+ * Автосохранение не спасает правку, которую сервер не примет (команда с
+ * ошибкой, все роли сняты), — такая правка на сервер не уходит, поэтому этот
+ * файл по-прежнему сторожит уход с несохранённой карточки (`update:dirty`).
+ *
+ * Заведение — первичное действие раздела «Завести маршрут»: открывает выбор
+ * вида (рой или прямая выдача; конвейер приходит из поставки сам), выбор ведёт
+ * в `NewSwarmRouteModal`/`NewDirectRouteModal`. В заголовках групп кнопок
+ * заведения нет — по правке заказчика (listik-2gry).
  */
 import { computed, onBeforeUnmount, onMounted, ref } from 'vue'
 import {
@@ -25,16 +27,27 @@ import {
   UiSpinner,
 } from '@zoloto585/facet'
 import RouteCard from './RouteCard.vue'
+import RouteSwarmCard from './RouteSwarmCard.vue'
 import RouteDirectCard from './RouteDirectCard.vue'
 import NewDirectRouteModal from './NewDirectRouteModal.vue'
+import NewSwarmRouteModal from './NewSwarmRouteModal.vue'
+import ListikIcon from './ListikIcon.vue'
 import RouteIcon from './marks/RouteIcon.vue'
 import store from '@/store/listik'
-import type { DirectRouteDef, PipelineRouteDef, RouteDef } from '@/api/types'
-import { directRoutesOf, pipelineRowsOf, previewCommand } from '@/lib/routes'
+import type {
+  DirectRouteDef,
+  PipelineRouteDef,
+  RouteDef,
+  SwarmLikeRoute,
+} from '@/api/types'
+import { directRoutesOf, pipelineRowsOf, previewCommand, swarmRoutesOf } from '@/lib/routes'
+import { ROLE_KEYS, ROLE_STAGE } from '@/lib/pipelines'
+import { PIPELINE_STAGES } from '@/lib/dictionaries'
 import { registerLeaveGuard } from '@/lib/router'
 
 /** Источник списка — сам `store.routes`, без местных копий. */
 const pipelineRoutes = computed<PipelineRouteDef[]>(() => pipelineRowsOf(store.routes.value))
+const swarmRoutes = computed<SwarmLikeRoute[]>(() => swarmRoutesOf(store.routes.value))
 const directRoutes = computed<DirectRouteDef[]>(() => directRoutesOf(store.routes.value))
 
 /**
@@ -51,7 +64,7 @@ function rolesWord(count: number): string {
 }
 
 /** Непустые ячейки `route.roles`: ключ со значением `null`/`undefined` не считается. */
-function filledRoles(route: PipelineRouteDef): number {
+function filledRoles(route: SwarmLikeRoute): number {
   return Object.values(route.roles).filter((cell) => cell !== null && cell !== undefined).length
 }
 
@@ -61,9 +74,23 @@ function pipelineMeta(route: PipelineRouteDef): string {
 }
 
 /** Текст пилюли состава — `N ролей` со склонением. */
-function rolesBadge(route: PipelineRouteDef): string {
+function rolesBadge(route: SwarmLikeRoute): string {
   const count = filledRoles(route)
   return `${count} ${rolesWord(count)}`
+}
+
+/**
+ * Подпись маршрута роя: ключ плюс пропущенные этапы кодами (`s2 пропущен`),
+ * как у строки в «Новой задаче». Цепочка исполнителей в узкой колонке не
+ * помещается — она видна в карточке справа.
+ */
+function swarmMeta(route: SwarmLikeRoute): string {
+  const skipped = ROLE_KEYS.filter((role) => !route.roles[role]).map((role) => {
+    const stage = PIPELINE_STAGES.find((item) => item.value === ROLE_STAGE[role])
+    return stage?.code ?? role
+  })
+  const tail = skipped.length > 0 ? ` · ${skipped.join(', ')} пропущен` : ''
+  return `${route.key}${tail}`
 }
 
 /** Моноширинная подпись прямой выдачи — команда одной строкой. */
@@ -71,9 +98,9 @@ function directMeta(route: DirectRouteDef): string {
   return route.command && route.command.length > 0 ? previewCommand(route.command, route.key) : ''
 }
 
-/** Подсказка бейджа «нет скила» — та же, что была у строки. */
+/** Подсказка бейджа расхождения — та же, что была у строки. */
 function skillMissingHint(route: PipelineRouteDef): string {
-  return `скила /feature-pipeline:${route.key} нет, маршрут скрыт от автора`
+  return `каталога /feature-pipeline:${route.key} нет, маршрут скрыт от автора`
 }
 
 const selectedKey = ref<string | null>(null)
@@ -84,26 +111,32 @@ const selected = computed<RouteDef | null>(
 /**
  * Разновидность выбранной записи отдельными computed, а не `v-if` по
  * `selected.kind` в шаблоне: так карточка получает уже сузившийся тип
- * (`PipelineRouteDef`/`DirectRouteDef`), а не `RouteDef` с приведением.
+ * (`PipelineRouteDef`/`SwarmRouteDef`/`DirectRouteDef`), а не `RouteDef` с
+ * приведением. Конвейер с `driver=swarm` правится карточкой роя — у него те
+ * же ячейки `{harness, argv, prompt}`.
  */
 const selectedPipeline = computed<PipelineRouteDef | null>(() =>
-  selected.value?.kind === 'pipeline' ? selected.value : null,
+  selected.value?.kind === 'pipeline' && selected.value.driver !== 'swarm'
+    ? selected.value
+    : null,
+)
+const selectedSwarm = computed<SwarmLikeRoute | null>(() =>
+  selected.value?.kind === 'swarm' ||
+  (selected.value?.kind === 'pipeline' && selected.value.driver === 'swarm')
+    ? (selected.value as SwarmLikeRoute)
+    : null,
 )
 const selectedDirect = computed<DirectRouteDef | null>(() =>
   selected.value?.kind === 'direct' ? selected.value : null,
 )
 
 /*
- * Карточка прямой выдачи сохраняется сама, но команду с ошибкой на сервер не
- * пускает — такая правка при уходе с карточки и теряется, о ней и спрашиваем
- * (`update:dirty` карточки поднимается только в этом случае).
- * Уходов два, и оба спрашивают одно и то же одним диалогом: выбор другой строки
- * списка (`kind: 'route'`) и уход со всей страницы — пункт настроек, «К доске»,
- * марка, «назад»/«вперёд» браузера (`kind: 'path'`, сторож роутера ждёт ответа
- * через `resolve`). Отсюда одна цель `leaveTarget` и одна пара
- * `confirmLeave`/`cancelLeave`: два независимых диалога разъехались бы текстами
- * и могли бы открыться вдвоём. Флаг `directDirty` приходит от самой карточки
- * (`update:dirty`) и снимается ею же, как только команда становится годной.
+ * Карточки роя и прямой выдачи сохраняются сами, но правку, которую сервер не
+ * примет (команда с ошибкой, все роли сняты), на сервер не пускают — она при
+ * уходе теряется, о ней и спрашиваем (`update:dirty` поднимается только в
+ * этом случае). Уходов два, и оба спрашивают одно и то же одним диалогом:
+ * выбор другой строки списка (`kind: 'route'`) и уход со всей страницы
+ * (`kind: 'path'`, сторож роутера ждёт ответа через `resolve`).
  *
  * `beforeunload` не ставим: перезагрузка и закрытие вкладки — не дело раздела.
  */
@@ -111,11 +144,13 @@ type LeaveTarget =
   | { kind: 'route'; route: RouteDef }
   | { kind: 'path'; resolve: (allowed: boolean) => void }
 
-const directDirty = ref(false)
+const cardDirty = ref(false)
 const leaveTarget = ref<LeaveTarget | null>(null)
 
-/** Несохранённая правка есть только у карточки прямой выдачи — у конвейера автосохранение. */
-const hasUnsaved = computed(() => directDirty.value && Boolean(selectedDirect.value))
+/** Несохранённая правка есть у карточек с редактируемым составом — не у конвейера. */
+const hasUnsaved = computed(
+  () => cardDirty.value && Boolean(selectedDirect.value || selectedSwarm.value),
+)
 
 function selectRoute(route: RouteDef): void {
   if (route.key === selectedKey.value) return
@@ -130,7 +165,7 @@ function confirmLeave(): void {
   const target = leaveTarget.value
   leaveTarget.value = null
   if (!target) return
-  directDirty.value = false
+  cardDirty.value = false
   if (target.kind === 'route') selectedKey.value = target.route.key
   else target.resolve(true)
 }
@@ -146,10 +181,7 @@ function cancelLeave(): void {
   if (target?.kind === 'path') target.resolve(false)
 }
 
-/**
- * Сторож роутера: аргумент `to` не нужен — с несохранённой карточки спрашиваем
- * одинаково, куда бы ни уходили.
- */
+/** Сторож роутера: с несохранённой карточки спрашиваем одинаково, куда бы ни уходили. */
 function leaveGuard(): boolean | Promise<boolean> {
   if (!hasUnsaved.value) return true
   return new Promise<boolean>((resolve) => {
@@ -160,22 +192,27 @@ function leaveGuard(): boolean | Promise<boolean> {
 let unregisterLeaveGuard: (() => void) | null = null
 
 /*
- * Окно заведения прямого маршрута. Его открывает первичное действие раздела:
- * кнопка в шапке страницы настроек зовёт `openPrimaryAction` (механизм порции
- * `b`), а форма и запрос остаются здесь. Окно живёт под `v-if`, поэтому каждое
- * открытие начинается с пустого черновика, а «Отмена»/крестик/Escape просто
- * снимают его, ничего не отправляя.
+ * Заведение маршрута. Первичное действие раздела («Завести маршрут» в шапке
+ * страницы) открывает выбор вида — небольшую панель над списком; конвейер там
+ * отсутствует как заводимый: он появляется сам из поставки. Выбор ведёт в
+ * своё окно (`v-if` — каждый раз пустой черновик).
  */
-const createOpen = ref(false)
+const chooserOpen = ref(false)
+const createKind = ref<'swarm' | 'direct' | null>(null)
 
 function openPrimaryAction(): void {
-  createOpen.value = true
+  chooserOpen.value = !chooserOpen.value
+}
+
+function openCreate(kind: 'swarm' | 'direct'): void {
+  chooserOpen.value = false
+  createKind.value = kind
 }
 
 /** Успех: стор уже перечитал список — выбираем новую запись и открываем её карточку. */
-function onCreate(route: DirectRouteDef): void {
-  createOpen.value = false
-  directDirty.value = false
+function onCreate(route: RouteDef): void {
+  createKind.value = null
+  cardDirty.value = false
   selectedKey.value = route.key
 }
 
@@ -184,6 +221,7 @@ defineExpose({ openPrimaryAction })
 onMounted(() => {
   unregisterLeaveGuard = registerLeaveGuard(leaveGuard)
   void store.reloadRoutes()
+  void store.ensureHarnesses()
 })
 
 onBeforeUnmount(() => {
@@ -203,6 +241,41 @@ onBeforeUnmount(() => {
       <template #title>Не получилось</template>
       {{ store.routesSettingsError.value }}
     </UiAlert>
+
+    <!-- Выбор вида заводимого маршрута (макет: панель под кнопкой «Завести
+         маршрут»). Конвейера как пункта нет — он приходит из поставки сам. -->
+    <UiCard v-if="chooserOpen" padding="sm" class="listik-routes-settings__chooser">
+      <button
+        type="button"
+        class="listik-routes-row"
+        @click="openCreate('swarm')"
+      >
+        <ListikIcon name="branch" size="sm" />
+        <span class="listik-routes-row__main">
+          <span class="listik-routes-row__title">Маршрут роя</span>
+          <span class="listik-routes-settings__chooser-hint">
+            Listik водит карточку по этапам, на каждый — свой харнесс; роли выбираются и пропускаются
+          </span>
+        </span>
+      </button>
+      <button
+        type="button"
+        class="listik-routes-row"
+        @click="openCreate('direct')"
+      >
+        <ListikIcon name="route-direct" size="sm" />
+        <span class="listik-routes-row__main">
+          <span class="listik-routes-row__title">Прямая выдача</span>
+          <span class="listik-routes-settings__chooser-hint">
+            одна команда на всю задачу; держатель — любой харнесс из раздела «Харнессы»
+          </span>
+        </span>
+      </button>
+      <p class="listik-routes-settings__chooser-note">
+        Конвейер из поставки появится сам, когда в <code class="listik-mono">plugins/feature-pipeline/skills/</code>
+        ляжет новый SKILL.md
+      </p>
+    </UiCard>
 
     <div class="listik-routes-settings__layout">
       <div class="listik-routes-settings__list">
@@ -248,9 +321,44 @@ onBeforeUnmount(() => {
                       size="sm"
                       v-bind="{ title: skillMissingHint(route) }"
                     >
-                      нет скила
+                      нет каталога
                     </UiBadge>
                     <!-- Состав конвейера — счётчиком у самого правого края строки. -->
+                    <UiBadge tone="neutral" size="sm">{{ rolesBadge(route) }}</UiBadge>
+                  </button>
+                </li>
+              </ul>
+            </UiCard>
+          </section>
+
+          <section class="listik-routes-settings__group">
+            <UiCard padding="sm">
+              <div class="listik-routes-settings__group-head">
+                <h3 class="listik-section__title">Рой</h3>
+                <UiBadge tone="neutral" size="sm">{{ swarmRoutes.length }}</UiBadge>
+              </div>
+
+              <UiEmptyState v-if="swarmRoutes.length === 0" compact title="Маршрутов роя нет" />
+
+              <ul v-else class="listik-routes-settings__rows">
+                <li
+                  v-for="route in swarmRoutes"
+                  :key="route.key"
+                  class="listik-routes-settings__row"
+                >
+                  <button
+                    type="button"
+                    class="listik-routes-row"
+                    :class="{ 'is-selected': selectedKey === route.key, 'is-off': !route.visible }"
+                    :data-key="route.key"
+                    @click="selectRoute(route)"
+                  >
+                    <RouteIcon :route="route" size="sm" />
+                    <span class="listik-routes-row__main">
+                      <span class="listik-routes-row__title">{{ route.title }}</span>
+                      <code class="listik-mono">{{ swarmMeta(route) }}</code>
+                    </span>
+                    <UiBadge v-if="!route.visible" tone="neutral" size="sm">выключен</UiBadge>
                     <UiBadge tone="neutral" size="sm">{{ rolesBadge(route) }}</UiBadge>
                   </button>
                 </li>
@@ -306,24 +414,35 @@ onBeforeUnmount(() => {
             v-if="selectedDirect"
             :key="selectedDirect.key"
             :route="selectedDirect"
-            @update:dirty="(value: boolean) => (directDirty = value)"
+            @update:dirty="(value: boolean) => (cardDirty = value)"
+          />
+          <RouteSwarmCard
+            v-else-if="selectedSwarm"
+            :key="selectedSwarm.key"
+            :route="selectedSwarm"
+            @update:dirty="(value: boolean) => (cardDirty = value)"
           />
           <RouteCard v-else-if="selectedPipeline" :key="selectedPipeline.key" :route="selectedPipeline" />
         </div>
       </UiCard>
     </div>
 
-    <NewDirectRouteModal
-      v-if="createOpen"
+    <NewSwarmRouteModal
+      v-if="createKind === 'swarm'"
       @created="onCreate"
-      @close="createOpen = false"
+      @close="createKind = null"
+    />
+    <NewDirectRouteModal
+      v-else-if="createKind === 'direct'"
+      @created="onCreate"
+      @close="createKind = null"
     />
 
     <UiConfirmDialog
       :model-value="Boolean(leaveTarget)"
       tone="danger"
       title="Уйти и потерять правки?"
-      description="Команда маршрута изменена, но не сохранена — уход с карточки вернёт её к тому, что в базе."
+      description="Правка маршрута изменена, но не сохранена — уход с карточки вернёт её к тому, что в базе."
       confirm-label="Уйти"
       cancel-label="Остаться"
       @update:model-value="(value: boolean) => { if (!value) cancelLeave() }"
@@ -342,7 +461,7 @@ onBeforeUnmount(() => {
 }
 
 /* Заголовок группы — мелкий прописной надзаголовок карточки, как в макете;
-   счётчик-бейдж стоит рядом с ним, но вне этого элемента (треб. 3). */
+   счётчик-бейдж стоит рядом с ним. */
 .listik-routes-settings .listik-section__title {
   font-size: var(--text-xs);
   font-weight: var(--weight-semibold);
@@ -351,11 +470,32 @@ onBeforeUnmount(() => {
   color: var(--ink-3);
 }
 
-/* 2:3 в пользу карточки: раздел живёт уже не в узкой модалке, а на целой
-   странице, и ширину стоит отдавать туда, где правят, — редактору argv, плиткам
-   состава и блоку команды. Списку хватает 240px: в строке только иконка,
-   название, ключ и пилюли — состав конвейера уехал в пилюлю и длинных подписей
-   там больше нет. */
+/* Выбор вида заводимого маршрута: две строки-варианта и приглушённая сноска
+   про конвейер (макет «Завести маршрут»). */
+.listik-routes-settings__chooser {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-1);
+}
+
+.listik-routes-settings__chooser-hint {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-size: var(--text-xs);
+  color: var(--ink-3);
+}
+
+.listik-routes-settings__chooser-note {
+  margin: var(--space-1) 0 0;
+  padding: 0 var(--space-3);
+  font-size: var(--text-xs);
+  color: var(--ink-3);
+}
+
+/* 2:3 в пользу карточки: ширину стоит отдавать редактору argv, плиткам
+   состава и блоку команды. Списку хватает 240px. */
 .listik-routes-settings__layout {
   display: grid;
   grid-template-columns: minmax(0, 240px) minmax(0, 1fr);
@@ -418,67 +558,5 @@ onBeforeUnmount(() => {
   display: flex;
   flex-direction: column;
   gap: var(--space-3);
-}
-
-.listik-routes-row {
-  display: flex;
-  align-items: center;
-  gap: var(--space-2);
-  width: 100%;
-  padding: var(--space-2) var(--space-3);
-  border: 1px solid transparent;
-  border-radius: var(--radius-lg);
-  background: transparent;
-  color: inherit;
-  font: inherit;
-  text-align: left;
-  cursor: pointer;
-}
-
-.listik-routes-row:hover {
-  background: var(--surface-2);
-}
-
-/* Выбранная строка — акцентная заливка и рамка по макету (accent-50/accent-200). */
-.listik-routes-row.is-selected {
-  background: var(--accent-50);
-  border-color: var(--accent-200);
-}
-
-/* Выключенный маршрут приглушён целиком (иконка наследует currentColor). */
-.listik-routes-row.is-off {
-  color: var(--ink-3);
-}
-
-/* `width: 0` — не опечатка: колонку название+подпись растягивает `flex-grow`, а
-   нулевая базовая ширина не даёт длинной команде считаться минимумом ячейки.
-   Без неё строка вырастала шире своей колонки раздела и уезжала под
-   горизонтальный скролл. */
-.listik-routes-row__main {
-  display: flex;
-  flex: 1 1 auto;
-  flex-direction: column;
-  width: 0;
-  min-width: 0;
-}
-
-.listik-routes-row__title {
-  min-width: 0;
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-  font-weight: var(--weight-medium);
-}
-
-/* Моноширинная подпись — вторая строка: ключ конвейера или команда прямой
-   выдачи одной строкой с многоточием, без переноса. */
-.listik-routes-row .listik-mono {
-  display: block;
-  min-width: 0;
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-  color: var(--ink-3);
-  font-size: var(--text-xs);
 }
 </style>

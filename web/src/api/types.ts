@@ -1,7 +1,6 @@
 /**
  * Типы ответов API Listik. Источник правды — docs/API.md и listik/store.py.
  */
-import type { HarnessKey } from '@/lib/harness'
 import type { RoleCell, RoleKey } from '@/lib/pipelines'
 
 export type TaskStatus = 'open' | 'in_progress' | 'blocked' | 'review' | 'done' | 'cancelled'
@@ -405,6 +404,9 @@ export interface ProjectRemoved {
  */
 export type RouteIconKey = 'xhigh' | 'high' | 'medium' | 'low' | 'xlow' | 'direct'
 
+/** Способ исполнения маршрута (`routes.driver`): `skill` — один процесс на карточку, `swarm` — этапы отдельными процессами (listik-2gry). */
+export type RouteDriver = 'skill' | 'swarm'
+
 interface RouteBase {
   key: string
   title: string
@@ -427,12 +429,18 @@ interface RouteBase {
   position: number
   /** Argv процесса автостарта; `null` — команды нет (роли ещё не переввезены и т.п.). */
   command: string[] | null
+  /** Способ исполнения; у `direct` всегда `skill` (роя без ролей нет). */
+  driver?: RouteDriver
 }
 
-/** Пресет конвейера: роли ТЗ/критик/исполнитель/судья. */
+/**
+ * Пресет конвейера: роли ТЗ/критик/исполнитель/судья. При `driver='swarm'`
+ * (роевой конвейер, listik-2gry) ячейки — `SwarmRoleCell`, а не `RoleCell`:
+ * различают их `isSwarmCell`/`isProviderCell` из `lib/pipelines.ts`.
+ */
 export interface PipelineRouteDef extends RouteBase {
   kind: 'pipeline'
-  roles: Partial<Record<RoleKey, RoleCell>>
+  roles: Partial<Record<RoleKey, RoleCell | SwarmRoleCell | null>>
   /** Путь к `SKILL.md` относительно корня Listik; каталога скила нет — `null`. */
   skill_path?: string | null
   /** Каталог скила пропал (переименовали/удалили) — запись отдаётся скрытой (`visible:false`). */
@@ -442,10 +450,37 @@ export interface PipelineRouteDef extends RouteBase {
 /** Прямой маршрут: харнесс делает задачу целиком, без ролей. */
 export interface DirectRouteDef extends RouteBase {
   kind: 'direct'
-  harness: HarnessKey
+  /** Ключ харнесса из каталога (`agent:<key>`) — любой, не только встроенный. */
+  harness: string
 }
 
-export type RouteDef = PipelineRouteDef | DirectRouteDef
+/**
+ * Ячейка роли маршрута роя: исполнитель (`harness` — ключ каталога `harnesses`)
+ * и его команда. Без `argv` этап запускается командой харнесса по умолчанию;
+ * `null` у ключа роли — этап пропускается (listik-2gry).
+ */
+export interface SwarmRoleCell {
+  harness: string
+  argv?: string[]
+  prompt?: string
+}
+
+export type SwarmRoles = Partial<Record<RoleKey, SwarmRoleCell | null>>
+
+/** Маршрут роя: Listik водит карточку по этапам, на каждый — свой харнесс. */
+export interface SwarmRouteDef extends RouteBase {
+  kind: 'swarm'
+  driver: 'swarm'
+  roles: SwarmRoles
+}
+
+export type RouteDef = PipelineRouteDef | DirectRouteDef | SwarmRouteDef
+
+/**
+ * Маршрут, исполняемый роем: `kind='swarm'` или конвейер с `driver='swarm'`
+ * (в группу «Рой» попадают оба — `swarmRoutesOf` в `lib/routes.ts`).
+ */
+export type SwarmLikeRoute = SwarmRouteDef | PipelineRouteDef
 
 /** GET /api/routes: ошибка файла — `ok:false` с текстом, а не HTTP-ошибкой. */
 export interface RoutesResponse {
@@ -473,19 +508,99 @@ export interface DirectRouteCreate {
   title: string
   hint: string
   icon: RouteIconKey | null
-  harness: HarnessKey
+  harness: string
   command: string[]
 }
 
-/** Правка записи — PATCH /api/routes/{key}; последнее поле только у `kind=direct`. */
+/**
+ * Тело `POST /api/routes` для маршрута роя (`kind="swarm"`, listik-2gry):
+ * `key`, `title`, `roles` обязательны (хотя бы одна роль с харнессом и
+ * командой); `command` и `harness` сервер не примет — исполнитель живёт в
+ * ячейках ролей.
+ */
+export interface SwarmRouteCreate {
+  kind: 'swarm'
+  key: string
+  title: string
+  hint: string
+  icon: RouteIconKey | null
+  roles: SwarmRoles
+  visible?: boolean
+}
+
+/** Правка записи — PATCH /api/routes/{key}; `command` только у `kind=direct`. */
 export interface RoutePatch {
   title?: string
   hint?: string
   icon?: RouteIconKey | null
   visible?: boolean
   command?: string[] | null
-  /** Расклад ролей целиком: сервер принимает его только у `kind=pipeline` (listik-syu8). */
-  roles?: Partial<Record<RoleKey, RoleCell>>
+  /**
+   * Расклад ролей целиком: у `kind=pipeline` ячейки скилового вида
+   * (`{provider,label,title}`), у `kind=swarm` — `{harness,argv?,prompt?}`
+   * или `null` (пропуск этапа).
+   */
+  roles?: Partial<Record<RoleKey, RoleCell | SwarmRoleCell | null>>
+  /** Способ исполнения конвейера: `skill` (умолчание) или `swarm`. */
+  driver?: RouteDriver
+}
+
+// ── каталог харнессов: GET/POST /api/harnesses, GET/PATCH /api/harnesses/{key} ──
+// (см. docs/API.md «Харнессы», listik-2gry)
+
+/** Вид харнесса: `exec` — процесс с командой, `manual` — ручная выдача без команды. */
+export type HarnessKind = 'exec' | 'manual'
+
+/** Харнесс каталога: исполнитель прямого маршрута или роли роя. */
+export interface Harness {
+  /** Ключ `^[a-z0-9][a-z0-9-]*$`; держатель на сервере — `agent:<key>`. */
+  key: string
+  label: string
+  hint: string
+  icon: string | null
+  /** Команда по умолчанию (argv); `null` — команды нет (manual). */
+  argv: string[] | null
+  /** Промпт по умолчанию — последний аргумент команды; `null` — не задан. */
+  prompt: string | null
+  kind: HarnessKind
+  /** Встроенный сид — не пользовательский. */
+  builtin: boolean
+  /** Показывать в списках выбора; выключенный остаётся в базе. */
+  enabled: boolean
+  position: number
+  /** Где задействован: прямые маршруты и роли маршрутов роя (есть у GET). */
+  used_by?: { route: string; kind: 'direct' | 'swarm'; role: string | null }[]
+  created_at?: string | null
+  updated_at?: string | null
+}
+
+export interface HarnessesResponse {
+  harnesses: Harness[]
+  /** Протокол роли роя — лаунчер ставит его последним аргументом при пустом `prompt` ячейки. */
+  swarm_prompt?: string
+}
+
+/** Тело `POST /api/harnesses`. `key` обязателен; у `kind="manual"` команды нет. */
+export interface HarnessCreate {
+  key: string
+  label?: string
+  hint?: string
+  icon?: string | null
+  argv?: string[] | null
+  prompt?: string | null
+  kind?: HarnessKind
+  enabled?: boolean
+}
+
+/** Правка харнесса — `PATCH /api/harnesses/{key}`; `key`/`kind`/`builtin` не правятся. */
+export interface HarnessPatch {
+  label?: string
+  hint?: string
+  icon?: string | null
+  argv?: string[] | null
+  prompt?: string | null
+  enabled?: boolean
+  position?: number
 }
 
 // ── помощник DeepSeek при создании задачи: GET /api/assistant/status,

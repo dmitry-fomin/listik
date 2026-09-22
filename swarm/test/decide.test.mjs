@@ -97,6 +97,24 @@ test("7: кандидат с holder — в skipped held, не в launch", () => 
   assert.deepEqual(res.skipped, [{id: "a", reason: "held"}]);
 });
 
+test("7б: has_portions прячет родителя только у роя; карточка скила с порциями — кандидат", () => {
+  const snapSwarm = task("a", {has_portions: true, launch_driver: "swarm"});
+  const snapSkill = task("b", {has_portions: true, launch_driver: "skill"});
+  // Снимка нет — смотрим маршрут: конвейер с driver=swarm тоже рой.
+  const routeSwarm = task("c", {has_portions: true});
+  const tasks = [snapSwarm, snapSkill, routeSwarm];
+  const plan = {waves: [["a", "b", "c"]], cycles: [], unroutable: [], unscoped: [], blocked: {}};
+  const routes = [
+    {key: "route-a", icon: "low"},
+    {key: "route-b", icon: "low"},
+    {key: "route-c", icon: "low", kind: "pipeline", driver: "swarm"},
+  ];
+  const res = decide({plan, tasks, routes, config, now: new Date()});
+  assert.deepEqual(res.launch.map(l => l.id), ["b"]);
+  assert.deepEqual(res.skipped.map(s => s.id), ["a", "c"]);
+  assert.ok(res.skipped.every(s => s.reason === "sliced"));
+});
+
 test("8: needsOwner для unroutable/unscoped с needs_owner ложным, не для true, не для закрытых", () => {
   const openUnroutable = task("a");
   const flaggedUnroutable = task("b", {needs_owner: true});

@@ -194,8 +194,8 @@ class SchemaAndFieldsTests(AutostartTestCase):
                 self.assertIn(name, columns, name)
             version = conn.execute(
                 "SELECT value FROM meta WHERE key = 'schema_version'").fetchone()
-            self.assertEqual(version["value"], "10")
-            self.assertEqual(db_mod.SCHEMA_VERSION, 10)
+            self.assertEqual(version["value"], "11")
+            self.assertEqual(db_mod.SCHEMA_VERSION, 11)
         finally:
             conn.close()
 

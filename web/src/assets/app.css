@@ -44,6 +44,7 @@ body {
   --listik-harness-gemini: #8e7cf2;
   --listik-harness-glm: #16a394;
   --listik-harness-devin: currentColor;
+  --listik-harness-pi: currentColor;
 }
 
 /* Раскладка доски (Main.dc.html): колонки резиновые — `--listik-col-min` лишь
@@ -2060,6 +2061,68 @@ body .ui-drawer-backdrop.ui-drawer-backdrop--right .ui-drawer.ui-drawer--right.u
   border-style: dashed;
   cursor: not-allowed;
   opacity: 0.55;
+}
+
+/* Строка выбираемой записи в списках настроек (маршруты, харнессы): общая для
+   разделов, поэтому живёт здесь, а не в scoped-стилях компонента. */
+.listik-routes-row {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+  width: 100%;
+  padding: var(--space-2) var(--space-3);
+  border: 1px solid transparent;
+  border-radius: var(--radius-lg);
+  background: transparent;
+  color: inherit;
+  font: inherit;
+  text-align: left;
+  cursor: pointer;
+}
+
+.listik-routes-row:hover {
+  background: var(--surface-2);
+}
+
+/* Выбранная строка — акцентная заливка и рамка по макету (accent-50/accent-200). */
+.listik-routes-row.is-selected {
+  background: var(--accent-50);
+  border-color: var(--accent-200);
+}
+
+/* Выключенная запись приглушена целиком (иконка наследует currentColor). */
+.listik-routes-row.is-off {
+  color: var(--ink-3);
+}
+
+/* `width: 0` — не опечатка: колонку название+подпись растягивает `flex-grow`, а
+   нулевая базовая ширина не даёт длинной команде считаться минимумом ячейки. */
+.listik-routes-row__main {
+  display: flex;
+  flex: 1 1 auto;
+  flex-direction: column;
+  width: 0;
+  min-width: 0;
+}
+
+.listik-routes-row__title {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-weight: var(--weight-medium);
+}
+
+/* Моноширинная подпись — вторая строка: ключ или команда одной строкой с
+   многоточием, без переноса. */
+.listik-routes-row .listik-mono {
+  display: block;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  color: var(--ink-3);
+  font-size: var(--text-xs);
 }
 
 @media (max-width: 640px) {

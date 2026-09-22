@@ -26,7 +26,7 @@ import type {
   AssistantSuggestion,
 } from '@/api/types'
 import { complexity as complexityItem } from '@/lib/dictionaries'
-import { directAllowed, pipelineAllowed } from '@/lib/routes'
+import { routeAllowedForType } from '@/lib/routes'
 import store, { errorMessage } from '@/store/listik'
 
 const props = defineProps<{
@@ -103,7 +103,7 @@ const routeBlockedReason = computed(() => {
   const record = suggestedRoute.value
   if (!record) return 'этого маршрута нет среди видимых записей routes.json'
   const type = props.context.type ?? 'task'
-  const allowed = record.kind === 'direct' ? directAllowed(type) : pipelineAllowed(record, type)
+  const allowed = routeAllowedForType(record, type)
   if (!allowed) return 'эпик идёт только через пресеты с этапом ТЗ — этот маршрут ему недоступен'
   return null
 })

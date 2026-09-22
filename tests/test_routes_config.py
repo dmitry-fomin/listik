@@ -347,8 +347,13 @@ class ValidateTests(unittest.TestCase):
         del record["harness"]
         self.check_error(document(record), "routes[0].harness")
 
-    def test_harness_human(self) -> None:
-        self.check_error(document({**direct_record(), "harness": "human"}), "routes[0].harness")
+    def test_harness_any_key(self) -> None:
+        # listik-2gry: harness — любой ключ по форме (держатель agent:<key>),
+        # списком HARNESSES прямой маршрут больше не ограничен.
+        record = routes_mod.validate(document({**direct_record(), "harness": "human"}))[0]
+        self.assertEqual(record["harness"], "human")
+        self.check_error(document({**direct_record(), "harness": "Not A Key"}),
+                         "routes[0].harness")
 
     # -- лишние поля --------------------------------------------------------
 
@@ -390,12 +395,13 @@ class ValidateTests(unittest.TestCase):
                                    "routes[0].command[0]")
         self.assertIn("{taskid}", message)
 
-    def test_title_is_unknown_and_lists_all_six_placeholders(self) -> None:
+    def test_title_is_unknown_and_lists_all_placeholders(self) -> None:
         message = self.check_error(document({**pipeline_record(), "command": ["{title}"]}),
                                    "routes[0].command[0]", "{title}")
         self.assertIn("неизвестная подстановка", message)
         self.assertEqual(routes_mod.PLACEHOLDERS,
-                         ("task_id", "project", "route", "cwd", "worktree", "branch"))
+                         ("task_id", "project", "route", "cwd", "worktree", "branch",
+                          "stage", "role", "harness"))
         for name in routes_mod.PLACEHOLDERS:
             self.assertIn("{" + name + "}", message)
 

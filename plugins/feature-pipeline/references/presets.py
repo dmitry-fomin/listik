@@ -16,17 +16,18 @@ R = {r["slug"]: r for r in csv.DictReader(open(os.path.join(HERE, "models.csv"))
 VENDORS = {"OpenAI", "Anthropic", "DeepSeek", "SpaceXAI", "Z AI"}
 # Всё от Anthropic идёт по подписке Claude Max x20 → внешняя цена 0, расходуется квота
 SUBSCRIPTION = "Anthropic"
+EFFORTS = {"low", "medium", "high", "xhigh", "max"}
 
 PRESETS = {
-    "2. Максимум": dict(spec="claude-fable-5-1-xhigh", critic="glm-5-3-flash",
-                        dev="gpt-6-astra-xhigh", judge="grok-4-6-xhigh"),
-    "1. Баланс":   dict(spec="claude-fable-5-1-medium", critic="glm-5-3-flash",
-                        dev="claude-opus-5-medium", judge="grok-4-6-xhigh"),
-    "3. Лошадь":   dict(spec="claude-fable-5-1-low", critic="glm-5-3-flash",
-                        dev="claude-opus-5-medium", judge="grok-4-6-medium"),
-    "4. Дёшево":   dict(spec="claude-opus-5-low", critic="glm-5-3-flash",
-                        dev="deepseek-v4-1-flash", judge="grok-4-6-medium"),
-    "5. Один прогон": dict(dev="claude-opus-5-medium"),
+    "2. Максимум": dict(spec="claude-opus-5-5-xhigh", critic="glm-5-3-flash",
+                        dev="claude-opus-5-5-high", judge="grok-4-7"),
+    "1. Баланс":   dict(spec="claude-opus-5-5-high", critic="glm-5-3-flash",
+                        dev="claude-opus-5-5-medium", judge="grok-4-7"),
+    "3. Лошадь":   dict(spec="claude-opus-5-5-medium", critic="glm-5-3-flash",
+                        dev="claude-opus-5-5-medium", judge="grok-4-7-high"),
+    "4. Дёшево":   dict(spec="claude-opus-5-5-low", critic="glm-5-3-flash",
+                        dev="deepseek-v4-1-flash", judge="grok-4-7-high"),
+    "5. Один прогон": dict(dev="claude-opus-5-5-medium"),
 }
 ROLES = [("spec", "Писатель ТЗ"), ("critic", "Критик"), ("dev", "Разработчик"), ("judge", "Судья")]
 
@@ -43,6 +44,44 @@ def deep(m, *path):
 def vendor(slug):
     return (D[slug].get("creator") or {}).get("name")
 
+def tb4(m):
+    v = m.get("terminalBench40")
+    if v is None:
+        v = m.get("terminalbenchV40")
+    return v
+
+def hal(m):
+    v = m.get("omniscienceHallucinationRate")
+    if isinstance(v, (int, float)):
+        return v
+    return deep(m, "omniscienceBreakdown", "hallucinationRate")
+
+def acc(m):
+    v = m.get("omniscienceAccuracy")
+    if isinstance(v, (int, float)):
+        return v
+    return deep(m, "omniscienceBreakdown", "accuracy")
+
+def rub(m):
+    return deep(m, "briefcaseBreakdown", "rubricPassRate")
+
+def elo(m):
+    return deep(m, "briefcaseBreakdown", "analyticalQuality", "elo")
+
+def family(slug):
+    """Семейство без суффикса effort. `grok-4-7` само по себе xhigh, хвост `7` — не effort."""
+    base, _, tail = slug.rpartition("-")
+    if tail in EFFORTS and base:
+        return base
+    return slug
+
+def same_family(slug, fam):
+    if slug == fam:
+        return True
+    if not slug.startswith(fam + "-"):
+        return False
+    return slug[len(fam) + 1:] in EFFORTS
+
 def paid(slug):
     """Внешние деньги за задачу: 0 для того, что покрыто подпиской."""
     return 0.0 if vendor(slug) == SUBSCRIPTION else (num(slug, "cost_per_task_$") or 0.0)
@@ -50,16 +89,22 @@ def paid(slug):
 def quota(slug):
     """Расход квоты подписки в условных единицах = cost_per_task_$ по прайсу вендора.
 
-    Точная формула лимитов Max x20 неизвестна и здесь НЕ воспроизводится. Известно,
-    что вес модели в лимите связан с её ценой: Fable стоит $10/$50 за 1M против
-    $5/$25 у Opus, то есть тот же токен съедает вдвое больше. Поэтому считать квоту
-    в чистых токенах нельзя — берём стоимостный эквивалент как консервативный прокси.
-    Чистые токены остаются в снимке отдельной колонкой out_tok_task (справочно).
+    Точная формула лимитов Max x20 неизвестна и здесь НЕ воспроизводится. Вес модели
+    в лимите связан с ценой токена: Opus 5.5 стоит $4/$20 за 1M, Opus 5 — $5/$25,
+    Fable — $10/$50. Считать квоту в чистых токенах нельзя: дешёвый по токенам
+    Fable оказался бы «экономнее» более дешёвого по деньгам Opus 5.5. Чистые токены
+    остаются в снимке колонкой out_tok_task (справочно).
     """
     return (num(slug, "cost_per_task_$") or 0.0) if vendor(slug) == SUBSCRIPTION else 0.0
 
 def f(v, d=2):
     return f"%.{d}f" % v if isinstance(v, (int, float)) else "-"
+
+def _row(slug):
+    m = D[slug]
+    return (f"| `{slug}` | {vendor(slug)} | {f(m.get('intelligenceIndex'),1)} | {f(tb4(m))} | "
+            f"{f(rub(m))} | {f(elo(m),0)} | {f(hal(m))} | {f(num(slug,'cost_per_task_$'))} | "
+            f"{f(num(slug,'out_tok_task'),0)} | {f(num(slug,'sec_per_task'),0)} |")
 
 def metrics_table():
     print("\n### Метрики кандидатов\n")
@@ -68,13 +113,10 @@ def metrics_table():
     seen = []
     for p in PRESETS.values():
         for s in p.values():
-            if s not in seen: seen.append(s)
+            if s not in seen:
+                seen.append(s)
     for s in sorted(seen, key=lambda x: -(D[x].get("intelligenceIndex") or 0)):
-        m = D[s]
-        print(f"| `{s}` | {vendor(s)} | {f(m.get('intelligenceIndex'),1)} | {f(m.get('terminalbenchV40'))} | "
-              f"{f(deep(m,'briefcaseBreakdown','rubricPassRate'))} | {f(deep(m,'briefcaseBreakdown','analyticalQuality','elo'),0)} | "
-              f"{f(deep(m,'omniscienceBreakdown','hallucinationRate'))} | {f(num(s,'cost_per_task_$'))} | "
-              f"{f(num(s,'out_tok_task'),0)} | {f(num(s,'sec_per_task'),0)} |")
+        print(_row(s))
 
 def presets_table():
     print("\n### Пресеты: внешние деньги и расход квоты\n")
@@ -87,62 +129,126 @@ def presets_table():
         secs = sum(num(s, "sec_per_task") or 0 for s in p.values())
         print(f"| **{name}** | {' | '.join(cells)} | {f(cash)} | {f(q)} | {f(secs,0)} |")
 
+def anthropic_pool():
+    pool = []
+    for m in SNAP["models"]:
+        if (m.get("creator") or {}).get("name") != SUBSCRIPTION or m.get("deprecated"):
+            continue
+        if not num(m["slug"], "cost_per_task_$"):
+            continue
+        if not isinstance(m.get("intelligenceIndex"), (int, float)):
+            continue
+        if not isinstance(tb4(m), (int, float)):
+            continue
+        pool.append(m)
+    return pool
+
+def dominated_by(slug, pool):
+    base = D[slug]
+    return [m["slug"] for m in pool if m["slug"] != slug
+            and num(m["slug"], "cost_per_task_$") <= num(slug, "cost_per_task_$")
+            and m["intelligenceIndex"] >= base["intelligenceIndex"]
+            and tb4(m) >= tb4(base)
+            and (num(m["slug"], "cost_per_task_$") < num(slug, "cost_per_task_$")
+                 or m["intelligenceIndex"] > base["intelligenceIndex"])]
+
+def frontier_table():
+    """Недоминированные модели Anthropic с II >= 40. Хвост дешевле этого порога
+    (Sonnet low, Haiku) формально тоже на фронте — только потому, что дешевле, —
+    и в таблицу не входит."""
+    print("\n### Фронт Парето Anthropic\n")
+    print("| модель | квота, усл.ед | вых.ток | II | tb4.0 | analElo |")
+    print("| --- | --- | --- | --- | --- | --- |")
+    pool = anthropic_pool()
+    front = [m for m in pool if not dominated_by(m["slug"], pool) and m["intelligenceIndex"] >= 40]
+    for m in sorted(front, key=lambda m: num(m["slug"], "cost_per_task_$")):
+        s = m["slug"]
+        print(f"| `{s}` | {f(num(s,'cost_per_task_$'))} | {f(num(s,'out_tok_task'),0)} | "
+              f"{f(m['intelligenceIndex'],1)} | {f(tb4(m))} | {f(elo(m),0)} |")
+
 def checks():
     """Утверждения из ROLES.md, проверяемые прямо по снимку."""
     out = []
     def claim(text, ok, detail=""):
         out.append((ok, text, detail))
 
-    # 1. Sonnet под подпиской бессмыслен: opus-5-medium дешевле по квоте и сильнее
-    om, sx = D["claude-opus-5-medium"], D["claude-sonnet-5-xhigh"]
-    claim("opus-5-medium тратит меньше квоты, чем sonnet-5-xhigh (и по $, и по токенам)",
-          num("claude-opus-5-medium","out_tok_task") < num("claude-sonnet-5-xhigh","out_tok_task")
-          and num("claude-opus-5-medium","cost_per_task_$") < num("claude-sonnet-5-xhigh","cost_per_task_$"),
-          f"ток {num('claude-opus-5-medium','out_tok_task'):.0f}<{num('claude-sonnet-5-xhigh','out_tok_task'):.0f}, "
-          f"$ {num('claude-opus-5-medium','cost_per_task_$'):.2f}<{num('claude-sonnet-5-xhigh','cost_per_task_$'):.2f}")
+    # 1. Sonnet под подпиской бессмыслен: даже low у Opus 5.5 сильнее и дешевле xhigh у Sonnet
+    om, sx = D["claude-opus-5-5-medium"], D["claude-sonnet-5-xhigh"]
+    lo = D["claude-opus-5-5-low"]
+    claim("opus-5-5-medium тратит меньше квоты, чем sonnet-5-xhigh (и по $, и по токенам)",
+          num("claude-opus-5-5-medium","out_tok_task") < num("claude-sonnet-5-xhigh","out_tok_task")
+          and num("claude-opus-5-5-medium","cost_per_task_$") < num("claude-sonnet-5-xhigh","cost_per_task_$"),
+          f"ток {num('claude-opus-5-5-medium','out_tok_task'):.0f}<{num('claude-sonnet-5-xhigh','out_tok_task'):.0f}, "
+          f"$ {num('claude-opus-5-5-medium','cost_per_task_$'):.2f}<{num('claude-sonnet-5-xhigh','cost_per_task_$'):.2f}")
     claim("...и при этом умнее по II и tb4.0",
-          om["intelligenceIndex"] > sx["intelligenceIndex"] and om["terminalbenchV40"] > sx["terminalbenchV40"],
-          f"II {om['intelligenceIndex']:.1f}>{sx['intelligenceIndex']:.1f}, tb4 {om['terminalbenchV40']:.2f}>{sx['terminalbenchV40']:.2f}")
+          om["intelligenceIndex"] > sx["intelligenceIndex"] and tb4(om) > tb4(sx),
+          f"II {om['intelligenceIndex']:.1f}>{sx['intelligenceIndex']:.1f}, tb4 {tb4(om):.2f}>{tb4(sx):.2f}")
+    claim("opus-5-5-low тоже обгоняет sonnet-5-xhigh по II, tb4 и квоте",
+          lo["intelligenceIndex"] > sx["intelligenceIndex"] and tb4(lo) > tb4(sx)
+          and num("claude-opus-5-5-low","cost_per_task_$") < num("claude-sonnet-5-xhigh","cost_per_task_$"),
+          f"II {lo['intelligenceIndex']:.1f}>{sx['intelligenceIndex']:.1f}, "
+          f"$ {num('claude-opus-5-5-low','cost_per_task_$'):.2f}<{num('claude-sonnet-5-xhigh','cost_per_task_$'):.2f}")
 
     # 2. Вся линейка DeepSeek непригодна для ролей проверки
     ds = [m for m in SNAP["models"] if (m.get("creator") or {}).get("name") == "DeepSeek"
-          and not m.get("deprecated")
-          and deep(m, "omniscienceBreakdown", "hallucinationRate") is not None]
-    worst = min(deep(m, "omniscienceBreakdown", "hallucinationRate") for m in ds)
-    claim("у всех не-deprecated DeepSeek hallucinationRate >= 0.87", worst >= 0.87, f"минимум по линейке {worst:.4f} на {len(ds)} моделях")
+          and not m.get("deprecated") and isinstance(hal(m), (int, float))]
+    worst = min(ds, key=hal)
+    claim("у всех не-deprecated DeepSeek hallucinationRate >= 0.87",
+          hal(worst) >= 0.87, f"минимум {hal(worst):.4f} на {worst['slug']} ({len(ds)} моделей)")
 
-    # 3. Grok в судьи — он лучше по рубрике, чем взятый в критики glm-5-3-flash
-    claim("grok-4-6 выше glm-5-3-flash по rubricPassRate (потому судья — Grok)",
-          deep(D["grok-4-6"],"briefcaseBreakdown","rubricPassRate") > deep(D["glm-5-3-flash"],"briefcaseBreakdown","rubricPassRate"),
-          f"{deep(D['grok-4-6'],'briefcaseBreakdown','rubricPassRate'):.2f} > {deep(D['glm-5-3-flash'],'briefcaseBreakdown','rubricPassRate'):.2f}")
-    # 3б. glm-5-3-flash в критики держится на цене и hal, а НЕ на аналитике:
-    #     по analElo он уступает Grok — это сознательный размен, фиксируем его явно
-    claim("glm-5-3-flash уступает grok-4-6 по analyticalQuality Elo (размен признан)",
-          deep(D["glm-5-3-flash"],"briefcaseBreakdown","analyticalQuality","elo") < deep(D["grok-4-6"],"briefcaseBreakdown","analyticalQuality","elo"),
-          f"{deep(D['glm-5-3-flash'],'briefcaseBreakdown','analyticalQuality','elo'):.0f} < {deep(D['grok-4-6'],'briefcaseBreakdown','analyticalQuality','elo'):.0f}")
-    claim("glm-5-3-flash лучше grok-4-6 по hallucinationRate и дешевле",
-          deep(D["glm-5-3-flash"],"omniscienceBreakdown","hallucinationRate") < deep(D["grok-4-6"],"omniscienceBreakdown","hallucinationRate")
-          and num("glm-5-3-flash","cost_per_task_$") < num("grok-4-6","cost_per_task_$"),
-          f"hal {deep(D['glm-5-3-flash'],'omniscienceBreakdown','hallucinationRate'):.2f} < {deep(D['grok-4-6'],'omniscienceBreakdown','hallucinationRate'):.2f}, "
-          f"${num('glm-5-3-flash','cost_per_task_$'):.2f} < ${num('grok-4-6','cost_per_task_$'):.2f}")
-    # 3в. среди доступных нет критика дешевле glm-5-3, который был бы аналитичнее
+    # 3. Судья — Grok 4.7: рубрика выше, чем у критика, и это старший Grok.
+    #    Размен против 4.6 xhigh признан: рубрика лучше, hal хуже, цена выше.
+    claim("grok-4-7 выше glm-5-3-flash по rubricPassRate (потому судья — Grok)",
+          rub(D["grok-4-7"]) > rub(D["glm-5-3-flash"]),
+          f"{rub(D['grok-4-7']):.3f} > {rub(D['glm-5-3-flash']):.3f}")
+    claim("grok-4-7 выше grok-4-6-xhigh по рубрике, но хуже по hal и дороже (размен признан)",
+          rub(D["grok-4-7"]) > rub(D["grok-4-6-xhigh"])
+          and hal(D["grok-4-7"]) > hal(D["grok-4-6-xhigh"])
+          and num("grok-4-7","cost_per_task_$") > num("grok-4-6-xhigh","cost_per_task_$"),
+          f"rub {rub(D['grok-4-7']):.3f}>{rub(D['grok-4-6-xhigh']):.3f}, "
+          f"hal {hal(D['grok-4-7']):.3f}>{hal(D['grok-4-6-xhigh']):.3f}, "
+          f"${num('grok-4-7','cost_per_task_$'):.2f}>{num('grok-4-6-xhigh','cost_per_task_$'):.2f}")
+    claim("grok-4-7 лучше grok-4-7-high по рубрике и по hal (за это платят xhigh)",
+          rub(D["grok-4-7"]) >= rub(D["grok-4-7-high"]) and hal(D["grok-4-7"]) < hal(D["grok-4-7-high"]),
+          f"rub {rub(D['grok-4-7']):.3f}>={rub(D['grok-4-7-high']):.3f}, "
+          f"hal {hal(D['grok-4-7']):.3f}<{hal(D['grok-4-7-high']):.3f}")
+
+    # 3б. Критик — flash: проигрывает судье по аналитике, выигрывает ценой и hal.
+    claim("glm-5-3-flash уступает grok-4-7 по analyticalQuality Elo (размен признан)",
+          elo(D["glm-5-3-flash"]) < elo(D["grok-4-7"]),
+          f"{elo(D['glm-5-3-flash']):.0f} < {elo(D['grok-4-7']):.0f}")
+    claim("glm-5-3-flash осторожнее grok-4-7 и дешевле",
+          hal(D["glm-5-3-flash"]) < hal(D["grok-4-7"])
+          and num("glm-5-3-flash","cost_per_task_$") < num("grok-4-7","cost_per_task_$"),
+          f"hal {hal(D['glm-5-3-flash']):.3f}<{hal(D['grok-4-7']):.3f}, "
+          f"${num('glm-5-3-flash','cost_per_task_$'):.2f}<${num('grok-4-7','cost_per_task_$'):.2f}")
     cheaper = [m for m in SNAP["models"]
                if (m.get("creator") or {}).get("name") in VENDORS and not m.get("deprecated")
-               and deep(m, "briefcaseBreakdown", "analyticalQuality", "elo") is not None
+               and isinstance(elo(m), (int, float))
                and (num(m["slug"], "cost_per_task_$") or 99) <= num("glm-5-3-flash", "cost_per_task_$")]
-    best = max(cheaper, key=lambda m: deep(m, "briefcaseBreakdown", "analyticalQuality", "elo"))
+    best = max(cheaper, key=elo)
     claim("glm-5-3-flash — самый аналитичный критик в своей ценовой категории",
           best["slug"] == "glm-5-3-flash", f"лучший за <= ${num('glm-5-3-flash','cost_per_task_$'):.2f}: {best['slug']}")
+
+    # 3в. Предыдущие линейки автора доминируются Opus 5.5 — поэтому их больше нет в пресетах.
+    pool = anthropic_pool()
+    for loser, winner in (("claude-fable-5-1-xhigh", "claude-opus-5-5-high"),
+                          ("claude-opus-5-medium", "claude-opus-5-5-medium"),
+                          ("claude-opus-5-low", "claude-opus-5-5-low")):
+        dom = dominated_by(loser, pool)
+        claim(f"{loser} доминируется {winner}", winner in dom, ", ".join(dom) or "никем")
 
     # 4. Формула Omniscience (подтверждает трактовку hallucinationRate «меньше — лучше»)
     bad = 0; tot = 0
     for m in SNAP["models"]:
-        b = m.get("omniscienceBreakdown") or {}
-        a, h, o = b.get("accuracy"), b.get("hallucinationRate"), m.get("omniscience")
-        if not all(isinstance(x, (int, float)) for x in (a, h, o)): continue
+        a, h, o = acc(m), hal(m), m.get("omniscience")
+        if not all(isinstance(x, (int, float)) for x in (a, h, o)):
+            continue
         tot += 1
-        if abs(100 * (a - (1 - a) * h) - o) > 0.5: bad += 1
-    claim("omniscience == 100*(accuracy - (1-accuracy)*hallucinationRate)", bad == 0, f"сошлось на {tot} моделях, расхождений {bad}")
+        if abs(100 * (a - (1 - a) * h) - o) > 0.5:
+            bad += 1
+    claim("omniscience == 100*(accuracy - (1-accuracy)*hallucinationRate)", bad == 0,
+          f"сошлось на {tot} моделях, расхождений {bad}")
 
     # 5. Пресет 5 не дороже пресета 4 ни по деньгам, ни по времени
     p4, p5 = PRESETS["4. Дёшево"], PRESETS["5. Один прогон"]
@@ -159,54 +265,53 @@ def checks():
 
     # 7. Независимость: проверяющие не от того же вендора, что автор
     for name, p in PRESETS.items():
-        if "critic" not in p: continue
+        if "critic" not in p:
+            continue
         authors = {vendor(p["spec"]), vendor(p["dev"])}
         reviewers = {vendor(p["critic"]), vendor(p["judge"])}
         claim(f"[{name}] критик и судья не от вендора автора", not (authors & reviewers),
               f"автор: {'/'.join(sorted(authors))} — проверка: {'/'.join(sorted(reviewers))}")
 
-    # 8. Судья в каждом пресете не доминируется другим вариантом того же семейства
+    # 8. Судья не доминируется родственником, который лучше по rubric и hal и не дороже.
     for name, p in PRESETS.items():
-        if "judge" not in p: continue
-        j = p["judge"]; fam = j.rsplit("-", 1)[0]
-        rival = [m for m in SNAP["models"] if m["slug"].startswith(fam) and m["slug"] != j
+        if "judge" not in p:
+            continue
+        j = p["judge"]
+        fam = family(j)
+        rival = [m for m in SNAP["models"] if same_family(m["slug"], fam) and m["slug"] != j
                  and not m.get("deprecated")
-                 and deep(m, "briefcaseBreakdown", "rubricPassRate") is not None
-                 and deep(m, "briefcaseBreakdown", "rubricPassRate") > deep(D[j], "briefcaseBreakdown", "rubricPassRate")
-                 and deep(m, "omniscienceBreakdown", "hallucinationRate") < deep(D[j], "omniscienceBreakdown", "hallucinationRate")
-                 # доминирование только при НЕ большей цене: в дешёвых пресетах слабый
-                 # судья взят ради экономии, и это не ошибка выбора
+                 and isinstance(rub(m), (int, float)) and isinstance(hal(m), (int, float))
+                 and rub(m) > rub(D[j]) and hal(m) < hal(D[j])
                  and (num(m["slug"], "cost_per_task_$") or 99) <= (num(j, "cost_per_task_$") or 0)]
         claim(f"[{name}] судья {j} не доминируется роднёй по rubric+hal при той же цене", not rival,
               ", ".join(m["slug"] for m in rival) or "нет доминирующих")
 
-    # 9. Ни одна роль на подписке не доминируется другой моделью Anthropic:
-    #    меньше выходных токенов И не ниже по II И не ниже по terminal-bench 4.0.
-    #    Эта проверка ловит ровно ту ошибку, из-за которой Opus стоял разработчиком,
-    #    пока «квота» считалась по долларовому полю.
-    pool = [m for m in SNAP["models"]
-            if (m.get("creator") or {}).get("name") == SUBSCRIPTION and not m.get("deprecated")
-            and num(m["slug"], "cost_per_task_$") and isinstance(m.get("terminalbenchV40"), (int, float))]
+    # 9. Роль на подписке лежит на фронте Парето квота / II / tb4.
     for name, p in PRESETS.items():
         for key, label in ROLES:
             s_ = p.get(key)
-            if not s_ or vendor(s_) != SUBSCRIPTION or not num(s_, "cost_per_task_$"): continue
-            base = D[s_]
-            dom = [m["slug"] for m in pool if m["slug"] != s_
-                   and num(m["slug"], "cost_per_task_$") <= num(s_, "cost_per_task_$")
-                   and m["intelligenceIndex"] >= base["intelligenceIndex"]
-                   and m["terminalbenchV40"] >= base["terminalbenchV40"]
-                   and (num(m["slug"], "cost_per_task_$") < num(s_, "cost_per_task_$")
-                        or m["intelligenceIndex"] > base["intelligenceIndex"])]
-            claim(f"[{name}] {label} {s_} на фронте Парето (квота-$/II/tb4)", not dom, ", ".join(dom) or "не доминируется")
+            if not s_ or vendor(s_) != SUBSCRIPTION or not num(s_, "cost_per_task_$"):
+                continue
+            dom = dominated_by(s_, pool)
+            claim(f"[{name}] {label} {s_} на фронте Парето (квота-$/II/tb4)", not dom,
+                  ", ".join(dom) or "не доминируется")
 
-    # 10. Исполнитель с высоким hallucinationRate не может работать без приёмки:
-    #     при hal >= 0.85 модель практически никогда не говорит «не смог», её
-    #     самоотчёт «готово» ничего не значит — судья обязателен.
+    # 10. Где писатель и разработчик — разные модели, писатель сильнее по индексу.
+    #     «Лошадь» сознательно ставит одну и ту же: скачок low→medium слишком большой.
+    for name in ("2. Максимум", "1. Баланс", "4. Дёшево"):
+        p = PRESETS[name]
+        si, di = D[p["spec"]]["intelligenceIndex"], D[p["dev"]]["intelligenceIndex"]
+        claim(f"[{name}] писатель сильнее разработчика по II", si > di, f"{si:.1f} > {di:.1f}")
+    horse = PRESETS["3. Лошадь"]
+    claim("[3. Лошадь] писатель и разработчик — одна модель",
+          horse["spec"] == horse["dev"], f"{horse['spec']}")
+
+    # 11. Исполнитель с высоким hallucinationRate не может работать без приёмки.
     for name, p in PRESETS.items():
         dv = p.get("dev")
-        h = deep(D.get(dv, {}), "omniscienceBreakdown", "hallucinationRate")
-        if h is None or h < 0.85: continue
+        h = hal(D.get(dv, {}))
+        if h is None or h < 0.85:
+            continue
         claim(f"[{name}] разработчик {dv} (hal {h:.2f}) прикрыт судьёй", bool(p.get("judge")),
               p.get("judge") or "СУДЬИ НЕТ — самоотчёт такой модели недостоверен")
 
@@ -225,3 +330,4 @@ if __name__ == "__main__":
     print(f"Снимок от {SNAP['fetched']}, моделей {SNAP['count']}")
     metrics_table()
     presets_table()
+    frontier_table()

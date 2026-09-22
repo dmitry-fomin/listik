@@ -21,16 +21,28 @@ export type HarnessKey =
 
 /**
  * Ключи с фирменным глифом — совпадают с ветками шаблона `HarnessIcon`.
- * `pi-glm`/`pi-deepseek` глифа не имеют: до них дойдёт голова `pi`.
+ * У `pi-glm`/`pi-deepseek` — свои глифы (π с точкой цвета модели); прочие
+ * `pi-*` ключи по-прежнему складываются в голову `pi`.
  */
 export const HARNESS_GLYPHS: readonly string[] = [
   'claude',
   'dsh',
   'codex',
   'grok',
-  'gemini',
   'devin',
   'pi',
+  'pi-glm',
+  'pi-deepseek',
+]
+
+/**
+ * Варианты пикера иконки харнесса: все фирменные глифы, `user` («человек»)
+ * и пустое значение — общий `bolt`. Порядок — порядок кнопок пикера.
+ */
+export const HARNESS_ICON_OPTIONS: { value: string; label: string }[] = [
+  ...HARNESS_GLYPHS.map((key) => ({ value: key, label: harnessTitle(key) })),
+  { value: 'user', label: 'человек' },
+  { value: '', label: 'общий глиф' },
 ]
 
 const HINTS: [string, HarnessKey][] = [

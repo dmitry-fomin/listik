@@ -97,7 +97,7 @@ async function request<T>(method: string, path: string, body?: unknown): Promise
       body: body === undefined ? undefined : JSON.stringify(body),
     })
   } catch {
-    throw new ApiError(0, 'Сервер Listik недоступен: проверьте, что запущен ./bin/listik serve')
+    throw new ApiError(0, 'Сервер Listik недоступен: проверьте, что запущен listik serve')
   }
 
   const raw = await response.text()

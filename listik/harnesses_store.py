@@ -30,7 +30,8 @@ KINDS = ("exec", "manual")
 
 #: Ключи глифов, которые доска умеет рисовать своей иконкой; прочие ключи тоже
 #: допустимы — доска покажет «свою букву».
-KNOWN_ICONS = ("claude", "dsh", "codex", "grok", "gemini", "devin", "pi", "user")
+KNOWN_ICONS = ("claude", "dsh", "codex", "grok", "devin",
+               "pi", "pi-glm", "pi-deepseek", "user")
 
 #: Промпт роли роя по умолчанию: этап и роль подставляет лаунчер, держателя
 #: карточки ставит сам Listik (см. docs/specs/swarm-stage-launch.md).
@@ -84,20 +85,19 @@ SEEDS: list[dict] = [
      "icon": "grok",
      "argv": ["grok", "--cwd", "{cwd}", "--always-approve", "-p"],
      "prompt": _prompt(DIRECT_PROMPT, "grok"), "kind": "exec", "builtin": 1},
-    {"key": "gemini", "label": "gemini", "hint": "Gemini CLI · gemini -p",
-     "icon": "gemini", "argv": ["gemini", "-p"],
-     "prompt": _prompt(DIRECT_PROMPT, "gemini"), "kind": "exec", "builtin": 1},
-    {"key": "pi-glm", "label": "pi · GLM", "hint": "pi --mode rpc · GLM 5.3 Flash",
-     "icon": "pi",
-     "argv": ["pi", "--mode", "rpc", "--model", "glm-5.3-flash"],
+    {"key": "pi-glm", "label": "pi · GLM", "hint": "pi --print · GLM 5.3 Flash",
+     "icon": "pi-glm",
+     "argv": ["pi", "--print", "--no-session", "--model", "b-ai-glm/glm-5.3-flash"],
      "prompt": _prompt(DIRECT_PROMPT, "pi-glm"), "kind": "exec", "builtin": 1},
     {"key": "pi-deepseek", "label": "pi · DeepSeek",
-     "hint": "pi --mode rpc · DeepSeek v4.1 Flash", "icon": "pi",
-     "argv": ["pi", "--mode", "rpc", "--model", "deepseek-v4.1-flash"],
+     "hint": "pi --print · DeepSeek v4.1 Flash", "icon": "pi-deepseek",
+     "argv": ["pi", "--print", "--no-session", "--model", "b-ai-deepseek/deepseek-v4.1-flash"],
      "prompt": _prompt(DIRECT_PROMPT, "pi-deepseek"), "kind": "exec", "builtin": 1},
-    {"key": "devin", "label": "devin", "hint": "Devin · devin exec",
-     "icon": "devin", "argv": ["devin", "exec", "--task", "{task_id}"],
-     "prompt": None, "kind": "exec", "builtin": 1},
+    {"key": "devin", "label": "devin", "hint": "Devin · devin -p",
+     "icon": "devin",
+     "argv": ["devin", "--permission-mode", "dangerous",
+              "--respect-workspace-trust", "false", "-p"],
+     "prompt": _prompt(DIRECT_PROMPT, "devin"), "kind": "exec", "builtin": 1},
     {"key": "me", "label": "Человек", "hint": "ручная выдача, без команды",
      "icon": "user", "argv": None, "prompt": None, "kind": "manual", "builtin": 1},
 ]
@@ -318,6 +318,71 @@ def seed(conn: sqlite3.Connection) -> None:
              json.dumps(item["argv"], ensure_ascii=False) if item["argv"] else None,
              item["prompt"], item["kind"], item["builtin"], position, ts, ts))
         register_holder(conn, item["key"])
+    # У pi-glm/pi-deepseek поставочной иконкой был общий «pi»: записи, до сих
+    # пор стоящие на нём, поднимаем до собственных глифов — разово (meta-флаг),
+    # чтобы не откатывать осознанный выбор «pi» в пикере.
+    if conn.execute(
+            "SELECT value FROM meta WHERE key = 'seed_pi_variant_icons'").fetchone() is None:
+        conn.execute(
+            "UPDATE harnesses SET icon = key WHERE builtin = 1 AND icon = 'pi' "
+            "AND key IN ('pi-glm', 'pi-deepseek')")
+        conn.execute(
+            "INSERT INTO meta(key, value) VALUES('seed_pi_variant_icons', '1')")
+    # gemini убран из поставки: поставочную запись чистим разово (meta-флаг)
+    # вместе с её актор-строками; харнесс, заведённый руками (builtin=0), и его
+    # актор/алиас не трогаем. Актор `agent:gemini` в `actors.CANONICAL`
+    # отсутствует — иначе `seed_actors` на каждом init создавал бы строку
+    # заново (подпись в истории даёт `AGENT_HINTS`/сырой ключ).
+    if conn.execute(
+            "SELECT value FROM meta WHERE key = 'seed_drop_gemini'").fetchone() is None:
+        row = conn.execute(
+            "SELECT builtin FROM harnesses WHERE key = 'gemini'").fetchone()
+        if row is not None and row["builtin"]:
+            conn.execute("DELETE FROM harnesses WHERE key = 'gemini'")
+            conn.execute("DELETE FROM actors WHERE key = 'agent:gemini'")
+            conn.execute(
+                "DELETE FROM actor_aliases "
+                "WHERE raw = 'gemini' AND actor = 'agent:gemini'")
+        conn.execute(
+            "INSERT INTO meta(key, value) VALUES('seed_drop_gemini', '1')")
+    # Поставочные argv первых редакций не умели headless: `devin exec --task`
+    # и `pi --mode rpc` (RPC по stdio, без клиента выходит с пустым stdout).
+    # Поднимаем до рабочих одноразово (meta-флаг) и только там, где argv ещё
+    # стоит старый сид — осознанно переписанную команду не откатываем.
+    if conn.execute(
+            "SELECT value FROM meta WHERE key = 'seed_headless_argv'").fetchone() is None:
+        upgrades = {
+            "devin": (["devin", "exec", "--task", "{task_id}"],
+                      ["devin", "--permission-mode", "dangerous",
+                       "--respect-workspace-trust", "false", "-p"],
+                      "Devin · devin -p"),
+            "pi-glm": (["pi", "--mode", "rpc", "--model", "glm-5.3-flash"],
+                       ["pi", "--print", "--no-session", "--model",
+                        "b-ai-glm/glm-5.3-flash"],
+                       "pi --print · GLM 5.3 Flash"),
+            "pi-deepseek": (["pi", "--mode", "rpc", "--model", "deepseek-v4.1-flash"],
+                            ["pi", "--print", "--no-session", "--model",
+                             "b-ai-deepseek/deepseek-v4.1-flash"],
+                            "pi --print · DeepSeek v4.1 Flash"),
+        }
+        for item in SEEDS:
+            entry = upgrades.get(item["key"])
+            if entry is None:
+                continue
+            old_argv, new_argv, new_hint = entry
+            conn.execute(
+                "UPDATE harnesses SET argv = ?, hint = ?, updated_at = ? "
+                "WHERE key = ? AND builtin = 1 AND argv = ?",
+                (json.dumps(new_argv, ensure_ascii=False), new_hint, ts,
+                 item["key"], json.dumps(old_argv, ensure_ascii=False)))
+            # У devin промпта в старом сиде не было — докидываем его вместе с
+            # argv, но только если поле так и стоит пустым.
+            conn.execute(
+                "UPDATE harnesses SET prompt = ?, updated_at = ? "
+                "WHERE key = ? AND builtin = 1 AND prompt IS NULL AND ? IS NOT NULL",
+                (item["prompt"], ts, item["key"], item["prompt"]))
+        conn.execute(
+            "INSERT INTO meta(key, value) VALUES('seed_headless_argv', '1')")
 
 
 def default_role_prompt() -> str:

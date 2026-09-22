@@ -34,7 +34,7 @@
     `icon_error` с причиной и текст в `warnings` ответа `GET /api/routes`; строка уходит
     в stderr (у демона — в `listik.log`), а остальные записи и автостарт работают как обычно;
   * `harness` — обязателен для `direct` и запрещён для `pipeline` (`claude`, `dsh`,
-    `codex`, `grok`, `gemini`);
+    `codex`, `grok`);
   * `command` — необязательный непустой массив непустых строк, argv запуска.
 
 Лишние поля на любом уровне — ошибка (защита от опечаток вроде `visble`).
@@ -61,7 +61,7 @@ VERSION = 1
 KINDS = ("pipeline", "direct", "swarm")
 ROLE_KEYS = ("spec", "critic", "impl", "judge")
 PROVIDERS = ("claude", "glm", "openai", "grok", "deepseek", "devin")
-HARNESSES = ("claude", "dsh", "codex", "grok", "gemini")
+HARNESSES = ("claude", "dsh", "codex", "grok")
 # Способ исполнения маршрута (listik-2gry): `skill` — конвейер-скил/прямая выдача,
 # `swarm` — рой: Listik поднимает по процессу на этап и сам ведёт этапы.
 DRIVERS = ("skill", "swarm")

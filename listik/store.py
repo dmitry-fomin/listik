@@ -865,10 +865,6 @@ def claim(conn: sqlite3.Connection, task_id: str, *, holder: str, harness: str |
     # Чужую задачу не берут: проверка идёт раньше харнесса, статуса, держателя и
     # блокеров — и `force` её не обходит (он про блокеры, а не про владельца).
     check_task_owner(row, as_owner, task_id=task_id)
-    # Harness must be allowed for the task's project/stage.
-    allowed = config_mod.allowed_harnesses(row["project"], row["stage"], conn=conn)
-    if harness and allowed and harness not in allowed:
-        raise ValueError(f"harness {harness} не разрешён для этапа {row['stage'] or 's1-spec'} проекта {row['project'] or '—'}; разрешены: {', '.join(allowed)}")
     if row["status"] in FINAL_STATUSES:
         raise ValueError(f"задача {task_id} уже {row['status']}")
     # A silent holder past the red-verdict return window loses the task before we
@@ -1967,7 +1963,7 @@ def upsert_project(conn: sqlite3.Connection, slug: str, **fields) -> dict:
 def _project_with_routing(conn: sqlite3.Connection, row: dict) -> dict:
     """Дописать к строке проекта действующую маршрутизацию: `routing` (переопределение
     из базы, распарсенное, или None), `routing_effective` (слитый словарь: то, чем
-    реально пользуются `allowed_harnesses`/`transition_kind`) и `routing_source` —
+    реально пользуется `transition_kind`) и `routing_source` —
     откуда взято переопределение (`default`/`config`/`db`/`config+db`).
 
     Устаревшие ключи (`config.LEGACY_ROUTING_KEYS`) не показываем и за

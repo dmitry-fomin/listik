@@ -25,8 +25,12 @@ import {
   UiTextarea,
   type UiRecordListColumn,
 } from '@zoloto585/facet'
+import IconToggle, { type IconToggleOption } from './IconToggle.vue'
+import ListikIcon from './ListikIcon.vue'
+import HarnessIcon from './marks/HarnessIcon.vue'
 import store from '@/store/listik'
 import type { Harness, HarnessCreate } from '@/api/types'
+import { HARNESS_ICON_OPTIONS } from '@/lib/harness'
 import { ROUTE_PLACEHOLDERS, braced, commandProblemText, previewCommand } from '@/lib/routes'
 
 const emit = defineEmits<{ created: [harness: Harness]; close: [] }>()
@@ -45,6 +49,7 @@ const key = ref('')
 const keyTouched = ref(false)
 const hint = ref('')
 const icon = ref('')
+const iconOptions: IconToggleOption<string>[] = HARNESS_ICON_OPTIONS
 const manual = ref(false)
 const prompt = ref('')
 
@@ -226,14 +231,21 @@ async function submit(): Promise<void> {
       <UiField label="Подпись">
         <UiInput v-model="hint" placeholder="необязательно" />
       </UiField>
-
-      <UiField
-        label="Иконка в списках"
-        hint="ключ глифа: claude, dsh, codex, grok, gemini, devin, pi, user — пусто: общий глиф"
-      >
-        <UiInput class="listik-mono" v-model="icon" placeholder="bolt" />
-      </UiField>
     </div>
+
+    <UiField label="Иконка в списках">
+      <IconToggle
+        :model-value="icon"
+        :options="iconOptions"
+        ariaLabel="Иконка харнесса"
+        @update:model-value="(value: string) => (icon = value)"
+      >
+        <template #icon="{ option }">
+          <ListikIcon v-if="option.value === ''" name="bolt" size="sm" />
+          <HarnessIcon v-else :icon="option.value" size="sm" />
+        </template>
+      </IconToggle>
+    </UiField>
 
     <UiSwitch v-model="manual">Ручная выдача — команды нет, карточку берёт человек</UiSwitch>
 

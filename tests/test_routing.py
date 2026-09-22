@@ -1,8 +1,8 @@
 """Tests for project routing overrides (шаг 04, порция b).
 
-Хранение переопределений harness/этапов/переходов у проекта (`config.validate_routing`,
+Хранение переопределений переходов/окна возврата у проекта (`config.validate_routing`,
 `store.update_project(..., routing=...)`), их показ (`routing_effective`/`routing_source`)
-и то, что `ready --harness`/`claim` действительно фильтруют по ним.
+и то, что устаревшие ключи (`default_process`, `harnesses`) молча игнорируются.
 """
 from __future__ import annotations
 
@@ -16,7 +16,6 @@ from unittest import mock
 
 from listik import config as config_mod
 from listik import db as db_mod
-from listik import deps as deps_mod
 from listik import paths
 from listik import store
 from tests.helpers import TempDbTestCase
@@ -38,23 +37,23 @@ class RoutingTests(TempDbTestCase):
     # -- 1. без переопределений ------------------------------------------------
 
     def test_no_overrides_uses_defaults(self) -> None:
-        allowed = config_mod.allowed_harnesses("demo", "s3-impl", conn=self.conn)
-        self.assertEqual(allowed, config_mod.DEFAULTS["routing"]["harnesses"]["s3-impl"])
         projects = store.list_all_projects(self.conn)
         demo = next(p for p in projects if p["slug"] == "demo")
         self.assertEqual(demo["routing_source"], "default")
         self.assertIsNone(demo["routing"])
+        self.assertEqual(demo["routing_effective"]["transitions"],
+                         config_mod.DEFAULTS["routing"]["transitions"])
 
     # -- 2. переопределение из базы ---------------------------------------------
 
-    def test_db_override_is_per_stage_merged(self) -> None:
+    def test_db_override_is_per_key_merged(self) -> None:
         store.update_project(self.conn, "demo",
-                             routing={"harnesses": {"s3-impl": ["dsh"]}})
-        allowed = config_mod.allowed_harnesses("demo", "s3-impl", conn=self.conn)
-        self.assertEqual(allowed, ["dsh"])
-        # Другой этап не задет поключевым слиянием.
-        allowed_s1 = config_mod.allowed_harnesses("demo", "s1-spec", conn=self.conn)
-        self.assertEqual(allowed_s1, config_mod.DEFAULTS["routing"]["harnesses"]["s1-spec"])
+                             routing={"transitions": {"s3-impl:s4-judge": "handoff"}})
+        effective = config_mod.routing("demo", conn=self.conn)
+        self.assertEqual(effective["transitions"]["s3-impl:s4-judge"], "handoff")
+        # Остальные переходы не задеты поключевым слиянием.
+        self.assertEqual(effective["transitions"]["s1-spec:s2-review"],
+                         config_mod.DEFAULTS["routing"]["transitions"]["s1-spec:s2-review"])
         projects = store.list_all_projects(self.conn)
         demo = next(p for p in projects if p["slug"] == "demo")
         self.assertEqual(demo["routing_source"], "db")
@@ -63,159 +62,113 @@ class RoutingTests(TempDbTestCase):
 
     def test_toml_override_and_db_wins_over_toml(self) -> None:
         self._config_path.write_text(
-            '[routing.projects.demo.harnesses]\n'
-            's3-impl = ["codex"]\n',
+            '[routing.projects.demo.transitions]\n'
+            '"s3-impl:s4-judge" = "handoff"\n',
             encoding="utf-8",
         )
-        allowed = config_mod.allowed_harnesses("demo", "s3-impl", conn=self.conn)
-        self.assertEqual(allowed, ["codex"])
+        effective = config_mod.routing("demo", conn=self.conn)
+        self.assertEqual(effective["transitions"]["s3-impl:s4-judge"], "handoff")
         projects = store.list_all_projects(self.conn)
         demo = next(p for p in projects if p["slug"] == "demo")
         self.assertEqual(demo["routing_source"], "config")
 
         store.update_project(self.conn, "demo",
-                             routing={"harnesses": {"s3-impl": ["dsh"]}})
-        allowed2 = config_mod.allowed_harnesses("demo", "s3-impl", conn=self.conn)
-        self.assertEqual(allowed2, ["dsh"])
+                             routing={"transitions": {"s3-impl:s4-judge": "sticky"}})
+        effective2 = config_mod.routing("demo", conn=self.conn)
+        self.assertEqual(effective2["transitions"]["s3-impl:s4-judge"], "sticky")
         projects2 = store.list_all_projects(self.conn)
         demo2 = next(p for p in projects2 if p["slug"] == "demo")
         self.assertEqual(demo2["routing_source"], "config+db")
 
-    # -- 4. ready_tasks фильтрует по harness --------------------------------------
+    # -- 4. claim больше не ограничен списком харнессов этапа --------------------
 
-    def test_ready_tasks_filters_by_harness(self) -> None:
-        store.update_project(self.conn, "demo",
-                             routing={"harnesses": {"s3-impl": ["dsh"]}})
-        impl_task = store.create_task(self.conn, title="реализация", project="demo",
-                                      stage="s3-impl")
-        spec_task = store.create_task(self.conn, title="тз", project="demo", stage="s1-spec")
-
-        codex_ids = {t["id"] for t in deps_mod.ready_tasks(self.conn, harness="codex")}
-        self.assertNotIn(impl_task["id"], codex_ids)
-        self.assertIn(spec_task["id"], codex_ids)
-
-        dsh_ids = {t["id"] for t in deps_mod.ready_tasks(self.conn, harness="dsh")}
-        self.assertIn(impl_task["id"], dsh_ids)
-        self.assertIn(spec_task["id"], dsh_ids)
-
-        any_ids = {t["id"] for t in deps_mod.ready_tasks(self.conn)}
-        self.assertIn(impl_task["id"], any_ids)
-        self.assertIn(spec_task["id"], any_ids)
-
-    # -- 5. задача без этапа не фильтруется по s1-spec (красный до правки) -------
-
-    def test_task_without_stage_is_not_filtered_by_s1_spec_override(self) -> None:
-        store.update_project(self.conn, "demo",
-                             routing={"harnesses": {"s1-spec": ["dsh"]}})
-        direct_task = store.create_task(self.conn, title="прямая", project="demo")
-        self.assertIsNone(direct_task["stage"])
-
-        codex_ids = {t["id"] for t in deps_mod.ready_tasks(self.conn, harness="codex")}
-        self.assertIn(direct_task["id"], codex_ids)
-
-    # -- 6. claim guard: порядок из ТЗ --------------------------------------------
-
-    def test_claim_guard_order(self) -> None:
-        store.update_project(self.conn, "demo",
-                             routing={"harnesses": {"s3-impl": ["dsh"]}})
+    def test_claim_accepts_any_harness(self) -> None:
+        """`routing.harnesses` убран: claim не сверяет исполнителя со списком
+        этапа — харнесс решается маршрутом/каталогом, а не конфигом."""
         task = store.create_task(self.conn, title="реализация", project="demo",
                                  stage="s3-impl")
-        task_id = task["id"]
-
-        with self.assertRaises(ValueError) as ctx:
-            store.claim(self.conn, task_id, holder="codex", harness="codex")
-        message = str(ctx.exception)
-        self.assertIn("codex", message)
-        self.assertIn("s3-impl", message)
-        self.assertIn("dsh", message)
-        current = store.get_task(self.conn, task_id)
-        self.assertFalse((current["holder"] or "").strip())
-
-        out = store.claim(self.conn, task_id, holder="codex")
-        self.assertEqual(out["holder"], "codex")
-
-        store.update_task(self.conn, task_id, holder="")
-
-        out2 = store.claim(self.conn, task_id, holder="dsh", harness="dsh")
-        self.assertEqual(out2["holder"], "dsh")
+        out = store.claim(self.conn, task["id"], holder="pi-glm", harness="pi-glm")
+        self.assertEqual(out["holder"], "pi-glm")
 
     # -- 7. validate_routing -------------------------------------------------------
 
     def test_validate_routing_accepts_valid_shapes(self) -> None:
         example = {
-            "harnesses": {"s3-impl": ["dsh", "codex"]},
             "transitions": {"s1-spec:s2-review": "sticky", "s4-judge:done": "handoff"},
             "return_window_hours": 12,
         }
         out = config_mod.validate_routing(example)
-        self.assertEqual(out["harnesses"]["s3-impl"], ["dsh", "codex"])
+        self.assertEqual(out, example)
         self.assertEqual(config_mod.validate_routing({}), {})
 
-    def test_validate_routing_ignores_legacy_default_process(self) -> None:
-        """Убранный ключ не должен ломать старые вызовы и старое сохранённое значение
-        (listik-sqh6): он молча выкидывается, а не превращается в «неизвестный ключ»."""
+    def test_validate_routing_ignores_legacy_keys(self) -> None:
+        """Убранные ключи не должны ломать старые вызовы и старые сохранённые
+        значения: `default_process` (listik-sqh6) и `harnesses` молча
+        выкидываются, а не превращаются в «неизвестный ключ»."""
         out = config_mod.validate_routing(
-            {"default_process": ["s1-spec", "s3-impl"], "return_window_hours": 5}
+            {"default_process": ["s1-spec", "s3-impl"],
+             "harnesses": {"s3-impl": ["dsh"]},
+             "return_window_hours": 5}
         )
         self.assertEqual(out, {"return_window_hours": 5})
         self.assertEqual(config_mod.validate_routing({"default_process": []}), {})
+        self.assertEqual(config_mod.validate_routing({"harnesses": "not-a-dict"}), {})
         # Перезапись проекта со старым ключом проходит и не оставляет его в базе.
         saved = store.update_project(self.conn, "demo",
-                                     routing={"default_process": ["s1-spec"]})
+                                     routing={"harnesses": {"s3-impl": ["dsh"]}})
         self.assertIsNone(saved["routing"])
-        self.assertNotIn("default_process", saved["routing_effective"])
+        self.assertNotIn("harnesses", saved["routing_effective"])
         self.assertEqual(saved["routing_source"], "default")
         # Настоящий неизвестный ключ по-прежнему отвергается.
         with self.assertRaises(ValueError):
             config_mod.validate_routing({"bad": 1})
 
-    def test_legacy_default_process_in_db_override_is_ignored(self) -> None:
-        """Старое переопределение проекта в базе читается: ключ не виден ни в `routing`,
-        ни в `routing_effective`, и сам по себе не считается переопределением."""
+    def test_legacy_keys_in_db_override_are_ignored(self) -> None:
+        """Старое переопределение проекта в базе читается: устаревшие ключи не
+        видны ни в `routing`, ни в `routing_effective`, и сами по себе не
+        считаются переопределением."""
         self.conn.execute("UPDATE projects SET routing = ? WHERE slug = 'demo'",
-                          (json.dumps({"default_process": ["s1-spec"]}),))
+                          (json.dumps({"default_process": ["s1-spec"],
+                                       "harnesses": {"s3-impl": ["dsh"]}}),))
         self.conn.commit()
         demo = next(p for p in store.list_all_projects(self.conn) if p["slug"] == "demo")
         self.assertIsNone(demo["routing"])
         self.assertEqual(demo["routing_source"], "default")
         self.assertNotIn("default_process", demo["routing_effective"])
-        self.assertEqual(demo["routing_effective"]["harnesses"],
-                         config_mod.DEFAULTS["routing"]["harnesses"])
+        self.assertNotIn("harnesses", demo["routing_effective"])
 
         # А вместе с настоящим ключом — сохраняется только он.
         self.conn.execute(
             "UPDATE projects SET routing = ? WHERE slug = 'demo'",
             (json.dumps({"default_process": ["s1-spec"],
-                         "harnesses": {"s3-impl": ["dsh"]}}),),
+                         "transitions": {"s3-impl:s4-judge": "handoff"}}),),
         )
         self.conn.commit()
         demo2 = next(p for p in store.list_all_projects(self.conn) if p["slug"] == "demo")
-        self.assertEqual(demo2["routing"], {"harnesses": {"s3-impl": ["dsh"]}})
+        self.assertEqual(demo2["routing"],
+                         {"transitions": {"s3-impl:s4-judge": "handoff"}})
         self.assertEqual(demo2["routing_source"], "db")
-        self.assertEqual(config_mod.allowed_harnesses("demo", "s3-impl", conn=self.conn), ["dsh"])
+        effective = config_mod.routing("demo", conn=self.conn)
+        self.assertEqual(effective["transitions"]["s3-impl:s4-judge"], "handoff")
 
     def test_legacy_default_process_in_toml_project_override_is_ignored(self) -> None:
         """То же для `[routing.projects.<slug>]` в config.toml."""
         self._config_path.write_text(
             '[routing]\ndefault_process = ["s1-spec", "s2-review"]\n'
+            'harnesses = {s3-impl = ["dsh"]}\n'
             '[routing.projects.demo]\ndefault_process = ["s3-impl"]\n',
             encoding="utf-8",
         )
         effective = config_mod.routing("demo", conn=self.conn)
         self.assertNotIn("default_process", effective)
+        self.assertNotIn("harnesses", effective)
         demo = next(p for p in store.list_all_projects(self.conn) if p["slug"] == "demo")
         self.assertIsNone(demo["routing"])
         self.assertEqual(demo["routing_source"], "default")
-        self.assertEqual(config_mod.allowed_harnesses("demo", "s3-impl", conn=self.conn),
-                         config_mod.DEFAULTS["routing"]["harnesses"]["s3-impl"])
 
     def test_validate_routing_rejects_bad_shapes(self) -> None:
         with self.assertRaises(ValueError):
             config_mod.validate_routing({"bad": 1})
-        with self.assertRaises(ValueError):
-            config_mod.validate_routing({"harnesses": {"s9-x": ["dsh"]}})
-        with self.assertRaises(ValueError):
-            config_mod.validate_routing({"harnesses": "not-a-dict"})
         with self.assertRaises(ValueError):
             config_mod.validate_routing({"return_window_hours": 0})
         with self.assertRaises(ValueError):
@@ -238,13 +191,15 @@ class RoutingTests(TempDbTestCase):
         demo = next(p for p in projects if p["slug"] == "demo")
         self.assertIn(demo["routing"], (None,))
         self.assertIsInstance(demo["routing_effective"], dict)
-        for key in ("harnesses", "transitions", "return_window_hours"):
+        for key in ("transitions", "return_window_hours"):
             self.assertIn(key, demo["routing_effective"])
         self.assertNotIn("default_process", demo["routing_effective"])
+        self.assertNotIn("harnesses", demo["routing_effective"])
 
         out = store.update_project(self.conn, "demo",
-                                   routing={"harnesses": {"s3-impl": ["dsh"]}})
-        self.assertEqual(out["routing_effective"]["harnesses"]["s3-impl"], ["dsh"])
+                                   routing={"transitions": {"s3-impl:s4-judge": "handoff"}})
+        self.assertEqual(out["routing_effective"]["transitions"]["s3-impl:s4-judge"],
+                         "handoff")
         self.assertEqual(out["routing_source"], "db")
 
     # -- 9. CLI ------------------------------------------------------------------
@@ -265,9 +220,9 @@ class RoutingTests(TempDbTestCase):
         self.assertNotIn("процесс по умолчанию", p.stdout)
 
         p2 = self._cli("--local", "projects", "demo", "--routing",
-                       '{"harnesses":{"s3-impl":["dsh"]}}')
+                       '{"transitions":{"s3-impl:s4-judge":"handoff"}}')
         self.assertEqual(p2.returncode, 0, p2.stderr)
-        self.assertIn("s3-impl:   dsh", p2.stdout)
+        self.assertIn("s3-impl→s4-judge handoff", p2.stdout)
         self.assertIn("источник: база", p2.stdout)
 
     def test_cli_json_includes_routing_effective(self) -> None:
@@ -287,21 +242,6 @@ class RoutingTests(TempDbTestCase):
         p = self._cli("--local", "projects", "nope", "--routing", "{}")
         self.assertEqual(p.returncode, 1)
         self.assertIn("проект не найден", p.stderr)
-
-    def test_cli_ready_harness_after_override(self) -> None:
-        task = store.create_task(self.conn, title="реализация", project="demo",
-                                 stage="s3-impl")
-        p_set = self._cli("--local", "projects", "demo", "--routing",
-                          '{"harnesses":{"s3-impl":["dsh"]}}')
-        self.assertEqual(p_set.returncode, 0, p_set.stderr)
-
-        p_codex = self._cli("--local", "ready", "--harness", "codex")
-        self.assertEqual(p_codex.returncode, 0, p_codex.stderr)
-        self.assertNotIn(task["id"], p_codex.stdout)
-
-        p_dsh = self._cli("--local", "ready", "--harness", "dsh")
-        self.assertEqual(p_dsh.returncode, 0, p_dsh.stderr)
-        self.assertIn(task["id"], p_dsh.stdout)
 
     def test_local_client_helpers_never_touch_http(self) -> None:
         """`local=True` не должен ходить по HTTP, даже если сервер выглядит поднятым."""

@@ -263,7 +263,7 @@ def local_call(op: str, *, fence: fence_mod.Token | dict | None = None, **kwargs
     if op == "ready":
         from . import deps as deps_mod
         return {"tasks": deps_mod.ready_tasks(conn, project=kwargs.get("project"),
-                                              stage=kwargs.get("stage"), harness=kwargs.get("harness"),
+                                              stage=kwargs.get("stage"),
                                               include_occupied=kwargs.get("include_occupied", False),
                                               limit=kwargs.get("limit", 50),
                                               as_owner=kwargs.get("as_owner")),

@@ -31,20 +31,6 @@ export const ROLE_STAGE: Record<RoleKey, PipelineStage> = {
 }
 
 /**
- * Харнессы, разрешённые этапу по умолчанию, — зеркало
- * `config.DEFAULTS["routing"]["harnesses"]` (`listik/config.py`): `claim` за
- * роль откажет харнессу вне списка этапа, поэтому исполнитель роли по
- * умолчанию берётся по этому порядку, а не всегда `claude`. Переопределения
- * `[routing.projects.<slug>]` доске не видны — это только дефолт формы.
- */
-export const STAGE_HARNESSES: Record<PipelineStage, readonly string[]> = {
-  's1-spec': ['claude', 'dsh', 'codex', 'grok', 'pi-glm', 'pi-deepseek'],
-  's2-review': ['claude', 'dsh', 'codex', 'grok', 'pi-glm', 'pi-deepseek'],
-  's3-impl': ['codex', 'dsh', 'claude', 'grok', 'pi-glm', 'pi-deepseek'],
-  's4-judge': ['claude', 'dsh', 'codex', 'grok', 'pi-glm', 'pi-deepseek'],
-}
-
-/**
  * Обратное соответствие этап → роль — собрано из `ROLE_STAGE`, чтобы литералы
  * этапов и ролей не дублировались в двух местах. По нему `lib/executors.ts`
  * находит ячейку `roles` записи маршрута для текущего этапа задачи.

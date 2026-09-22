@@ -9,7 +9,7 @@
  * клику. Причина — у харнесса команда по умолчанию делится между прямым
  * маршрутом и ролями роя, и полуготовое состояние лучше не уносить на сервер.
  *
- * Поля: имя, подпись, иконка (ключ глифа — `bolt`, если пусто), тумблер
+ * Поля: имя, подпись, иконка (пикер глифов — `bolt`, если «общий глиф»), тумблер
  * «В списках выбора», у `kind=exec` — команда по умолчанию (argv по строкам +
  * промпт последним аргументом) и предпросмотр. У `manual` командного блока нет.
  * Ниже — «Где используется»: записи `used_by` из `GET /api/harnesses`
@@ -29,6 +29,7 @@ import {
   UiTextarea,
   type UiRecordListColumn,
 } from '@zoloto585/facet'
+import IconToggle, { type IconToggleOption } from './IconToggle.vue'
 import ListikIcon from './ListikIcon.vue'
 import HarnessIcon from './marks/HarnessIcon.vue'
 import RouteSubstitutions from './RouteSubstitutions.vue'
@@ -36,6 +37,7 @@ import store from '@/store/listik'
 import type { Harness, HarnessPatch } from '@/api/types'
 import { ROLE_STAGE, type RoleKey } from '@/lib/pipelines'
 import { PIPELINE_STAGES } from '@/lib/dictionaries'
+import { HARNESS_ICON_OPTIONS } from '@/lib/harness'
 import { commandProblemText, previewCommand } from '@/lib/routes'
 
 const props = defineProps<{ harness: Harness }>()
@@ -60,6 +62,14 @@ const argRows = ref<ArgRow[]>(argRowsOf(props.harness.argv ?? []))
 const prompt = ref(props.harness.prompt ?? '')
 
 const manual = computed(() => props.harness.kind === 'manual')
+
+/* ── иконка: кнопки-глифы, как у карточек маршрутов; «общий глиф» — bolt ── */
+
+const iconOptions: IconToggleOption<string>[] = HARNESS_ICON_OPTIONS
+
+function onIcon(value: string): void {
+  icon.value = value
+}
 
 /* ── проверки ── */
 
@@ -209,13 +219,22 @@ const usages = computed<UsageRow[]>(() =>
       <UiField label="Подпись">
         <UiInput v-model="hint" placeholder="необязательно" />
       </UiField>
-      <UiField
-        label="Иконка в списках"
-        hint="ключ глифа: claude, dsh, codex, grok, gemini, devin, pi, user — пусто: общий глиф"
-      >
-        <UiInput class="listik-mono" v-model="icon" placeholder="bolt" />
-      </UiField>
     </div>
+
+    <section class="listik-harness-card__icon">
+      <h4 class="listik-harness-card__label">Иконка в списках</h4>
+      <IconToggle
+        :model-value="icon"
+        :options="iconOptions"
+        ariaLabel="Иконка харнесса"
+        @update:model-value="onIcon"
+      >
+        <template #icon="{ option }">
+          <ListikIcon v-if="option.value === ''" name="bolt" size="sm" />
+          <HarnessIcon v-else :icon="option.value" size="sm" />
+        </template>
+      </IconToggle>
+    </section>
 
     <template v-if="!manual">
       <section class="listik-harness-card__section">
@@ -340,6 +359,21 @@ const usages = computed<UsageRow[]>(() =>
   display: grid;
   grid-template-columns: repeat(2, minmax(0, 1fr));
   gap: var(--space-4);
+}
+
+/* ── иконка ── */
+
+.listik-harness-card__icon {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-2);
+}
+
+.listik-harness-card__label {
+  margin: 0;
+  font-size: var(--text-sm);
+  font-weight: var(--weight-medium);
+  color: var(--ink-2);
 }
 
 .listik-harness-card__section {

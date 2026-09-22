@@ -149,7 +149,7 @@ CREATE TABLE IF NOT EXISTS actors (
     key        TEXT PRIMARY KEY,   -- me | agent:claude | ...
     title      TEXT,
     kind       TEXT NOT NULL DEFAULT 'human',   -- human|agent
-    kind_hint  TEXT,                             -- claude|dsh|grok|codex|gemini|human
+    kind_hint  TEXT,                             -- claude|dsh|grok|codex|human
     created_at TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%SZ','now'))
 );
 
@@ -220,7 +220,7 @@ CREATE TABLE IF NOT EXISTS harnesses (
     key        TEXT PRIMARY KEY,           -- ^[a-z0-9][a-z0-9-]*$ — хвост agent:<key>
     label      TEXT NOT NULL,              -- имя в списках
     hint       TEXT NOT NULL DEFAULT '',   -- подпись под именем
-    icon       TEXT,                       -- ключ глифа (claude|dsh|codex|grok|gemini|devin|pi|user) или NULL — своя буква
+    icon       TEXT,                       -- ключ глифа (claude|dsh|codex|grok|devin|pi|pi-glm|pi-deepseek|user) или NULL — своя буква
     argv       TEXT,                       -- JSON-массив argv по умолчанию, NULL — команды нет
     prompt     TEXT,                       -- промпт по умолчанию (последний аргумент), NULL — нет
     kind       TEXT NOT NULL DEFAULT 'exec',   -- exec — процесс | manual — ручная выдача, без команды

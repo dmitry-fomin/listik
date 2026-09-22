@@ -6,8 +6,8 @@
  *
  * Шапка — своя, а не `UiEntityHeader`: у кита в subtitle нет слота, а ключ
  * маршрута в строке «Прямая выдача · ключ <key>» обязан быть моноширинным.
- * Держатель карточки — только показ: в `.listik-route-direct__holder` нет
- * ни `input`, ни `select` (треб. 11).
+ * Держатель карточки — только показ, одной строкой: подпись, замочек с
+ * тултипом «держателя не сменить», глиф и имя харнесса (треб. 11).
  *
  * Сохранение автоматическое, как у карточки конвейера: текст — через 600мс
  * после последней клавиши и сразу по потере фокуса, тумблер и иконка — сразу,
@@ -38,6 +38,7 @@ import {
   UiSaveStatus,
   UiSwitch,
   UiTextarea,
+  UiTooltip,
   type SaveStatusValue,
   type UiRecordListColumn,
 } from '@zoloto585/facet'
@@ -394,14 +395,17 @@ const preview = computed(() => previewCommand(commandDraft.value, props.route.ke
       </section>
 
       <section class="listik-route-direct__holder-field">
-        <span class="listik-route-direct__label">Держатель карточки</span>
         <div class="listik-route-direct__holder">
+          <span class="listik-route-direct__label">Держатель карточки</span>
+          <UiTooltip text="держателя не сменить" placement="top">
+            <ListikIcon
+              class="listik-route-direct__holder-lock"
+              name="lock"
+              size="sm"
+            />
+          </UiTooltip>
           <HarnessIcon :harness="route.harness" size="sm" />
           <code class="listik-mono">{{ harnessTitle(route.harness) }}</code>
-          <span class="listik-route-direct__holder-note">
-            <ListikIcon name="lock" size="sm" />
-            держателя не сменить
-          </span>
         </div>
       </section>
     </div>
@@ -537,9 +541,11 @@ const preview = computed(() => previewCommand(commandDraft.value, props.route.ke
 
 /* ── иконка и держатель в одной строке ── */
 
+/* Колонка держателя — по содержимому: строка «подпись + замочек + глиф +
+   имя» шире бывших 14rem и резать её нельзя. */
 .listik-route-direct__row {
   display: grid;
-  grid-template-columns: minmax(0, 1fr) minmax(0, 14rem);
+  grid-template-columns: minmax(0, 1fr) auto;
   gap: var(--space-4);
   align-items: end;
 }
@@ -564,25 +570,19 @@ const preview = computed(() => previewCommand(commandDraft.value, props.route.ke
   color: var(--ink-3);
 }
 
+/* Держатель — показ одной строкой: подпись, замочек «не сменить» (тултип),
+   глиф и имя харнесса. Бокса-поля нет: внутри нечего вводить. */
 .listik-route-direct__holder {
   display: flex;
   flex-wrap: wrap;
   align-items: center;
   gap: var(--space-2);
   min-height: var(--control-h-md);
-  padding: 0 var(--space-3);
-  border: 1px solid var(--hairline);
-  border-radius: var(--radius-md);
-  background: var(--surface-2);
+  min-width: 0;
   font-size: var(--text-sm);
 }
 
-.listik-route-direct__holder-note {
-  display: inline-flex;
-  align-items: center;
-  gap: var(--space-1);
-  margin-left: auto;
-  font-size: var(--text-xs);
+.listik-route-direct__holder-lock {
   color: var(--ink-3);
 }
 

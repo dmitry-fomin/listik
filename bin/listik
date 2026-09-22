@@ -1294,10 +1294,10 @@ def store_now() -> str:
 def cmd_ready(args) -> int:
     """Что можно взять прямо сейчас: без незакрытых блокеров и без держателя."""
     res = call("ready", args, "/api/ready",
-               query={"project": args.project, "stage": args.stage, "harness": getattr(args, "harness", None),
+               query={"project": args.project, "stage": args.stage,
                       "include_occupied": str(args.with_occupied).lower(),
                       "limit": args.limit},
-               local_kwargs={"project": args.project, "stage": args.stage, "harness": getattr(args, "harness", None),
+               local_kwargs={"project": args.project, "stage": args.stage,
                              "include_occupied": args.with_occupied, "limit": args.limit})
     tasks = res["tasks"]
     if getattr(args, "json", False):
@@ -1939,11 +1939,6 @@ def _print_routing(project: dict) -> None:
     source = _ROUTING_SOURCE_TITLES.get(project.get("routing_source"),
                                         project.get("routing_source") or "?")
     print(f"маршрутизация (источник: {source}):")
-    harnesses = eff.get("harnesses") or {}
-    for stage in store.PIPELINE_STAGES:
-        names = harnesses.get(stage) or []
-        label = ", ".join(names) if names else "любой"
-        print(f"  {stage + ':':11s}{label}")
     transitions = eff.get("transitions") or {}
     trans_line = ", ".join(f"{k.replace(':', '→')} {v}" for k, v in transitions.items())
     print(f"  переходы:  {trans_line or '—'}")
@@ -1995,7 +1990,7 @@ def cmd_projects(args) -> int:
             raise errors.ListikError(f"невалидный JSON маршрутизации: {exc}",
                                      code=errors.BAD_ARGUMENT,
                                      hint="пример: listik projects <slug> --routing "
-                                          "'{\"harnesses\": {\"s3-impl\": [\"dsh\"]}}'") from exc
+                                          "'{\"transitions\": {\"s3-impl:s4-judge\": \"handoff\"}}'") from exc
         project = call("project_routing", args, f"/api/projects/{urllib.parse.quote(slug, safe='')}",
                        method="PATCH", body={"routing": parsed},
                        local_kwargs={"slug": slug, "routing": parsed}, fallback_warning=False)

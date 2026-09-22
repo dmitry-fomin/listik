@@ -16,7 +16,7 @@ export const FIXTURE_PROJECTS: ProjectRow[] = [
   { slug: 'listik', title: 'Listik', kind: 'git', color: null },
 ]
 
-export const FIXTURE_HARNESSES: HarnessKey[] = ['claude', 'dsh', 'codex', 'grok', 'gemini', 'human']
+export const FIXTURE_HARNESSES: HarnessKey[] = ['claude', 'dsh', 'codex', 'grok', 'human']
 
 export const FIXTURE_HEALTH_LEGEND: { health: Health; hint: string }[] = [
   { health: 'healthy', hint: 'hb < 15 мин' },

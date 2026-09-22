@@ -370,7 +370,7 @@ def expire_return_handoffs(conn: sqlite3.Connection, *, task_id: str | None = No
     which now also refreshes `holder_at`) keeps the task — only silence counts.
     """
     from . import store
-    # Return windows may be overridden per project, just like harness routing.
+    # Return windows may be overridden per project (`[routing.projects.<slug>]`).
     where = "stage='s3-impl' AND holder IS NOT NULL AND holder != ''"
     params: tuple = ()
     if task_id is not None:
@@ -404,7 +404,7 @@ def expire_return_handoffs(conn: sqlite3.Connection, *, task_id: str | None = No
 
 
 def ready_tasks(conn: sqlite3.Connection, *, project: str | None = None,
-                stage: str | None = None, harness: str | None = None,
+                stage: str | None = None,
                 include_occupied: bool = False,
                 limit: int = 50, as_owner: str | None = None) -> list[dict]:
     """Задачи, которые можно взять прямо сейчас (нет незакрытых блокеров).
@@ -442,20 +442,10 @@ def ready_tasks(conn: sqlite3.Connection, *, project: str | None = None,
         if statuses.get(r["depends_on"], "open") not in FINAL_STATUSES:
             blocked_by.setdefault(r["issue_id"], []).append(r["depends_on"])
     out = []
-    # Один вызов config.routing (чтение config.toml) на пару (project, stage), а не на
-    # каждую задачу — ready --harness на десятках задач не должен читать диск столько же раз.
-    harness_cache: dict[tuple, list[str]] = {}
     for row in rows:
         if blocked_by.get(row["id"]):
             continue
         task = store.row_to_task(conn, row)
-        if harness:
-            key = (row["project"], row["stage"])
-            if key not in harness_cache:
-                harness_cache[key] = util.allowed_harnesses(row["project"], row["stage"], conn=conn)
-            allowed = harness_cache[key]
-            if allowed and harness not in allowed:
-                continue
         task["waiting_for_count"] = len(waiting_for(conn, row["id"]))
         out.append(task)
         if limit and len(out) >= limit:

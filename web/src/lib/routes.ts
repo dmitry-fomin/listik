@@ -341,6 +341,25 @@ export function previewArg(value: string, routeKey: string): string {
 }
 
 /**
+ * Тот же предпросмотр, что `previewArg`, но кусками для подсветки: допустимая
+ * подстановка приходит куском `placeholder` с примерным значением в `value`,
+ * незнакомое имя остаётся куском `unknown` (рендер показывает его сырым
+ * `{имя}`). Элемент, чья подставленная строка содержит пробел, оборачивается
+ * кавычками — то же правило, что у `previewCommand`.
+ */
+export function previewChunks(element: string, routeKey: string): PlaceholderChunk[] {
+  const quoted = /\s/.test(previewArg(element, routeKey))
+  const chunks = splitPlaceholders(element).map((chunk): PlaceholderChunk => {
+    if (chunk.type === 'placeholder') {
+      return { type: 'placeholder', value: placeholderExample(chunk.value, routeKey) }
+    }
+    return { type: chunk.type, value: quoted ? chunk.value.replace(/"/g, '\\"') : chunk.value }
+  })
+  if (!quoted) return chunks
+  return [{ type: 'text', value: '"' }, ...chunks, { type: 'text', value: '"' }]
+}
+
+/**
  * Картинка того, что получится: элементы argv с подставленными примерными
  * значениями, соединённые пробелами; элемент с пробелом внутри — в кавычках,
  * чтобы было видно его границы. Это только показ: на сервер уходит массив

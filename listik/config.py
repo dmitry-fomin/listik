@@ -46,12 +46,6 @@ DEFAULTS: dict[str, Any] = {
         "max_depth": 6,
     },
     "routing": {
-        "harnesses": {
-            "s1-spec": ["claude", "dsh", "codex", "grok", "pi-glm", "pi-deepseek"],
-            "s2-review": ["claude", "dsh", "codex", "grok", "pi-glm", "pi-deepseek"],
-            "s3-impl": ["codex", "dsh", "claude", "grok", "pi-glm", "pi-deepseek"],
-            "s4-judge": ["claude", "dsh", "codex", "grok", "pi-glm", "pi-deepseek"],
-        },
         "transitions": {
             # После подготовки ТЗ следующий harness забирает этап ревью сам.
             # Без явного --holder переход освобождает держателя.
@@ -84,9 +78,11 @@ def _merge(base: dict, override: dict) -> dict:
 
 #: Ключи routing, которые больше не поддерживаются, но встречаются в старых
 #: config.toml и переопределениях проектов. `default_process` валидировался, однако
-#: ни на что не влиял: `next_stage` всегда идёт по `PIPELINE_STAGES`. Ключ убран
-#: (listik-sqh6), но читаться старый конфиг обязан по-прежнему — молча игнорируем.
-LEGACY_ROUTING_KEYS = frozenset({"default_process"})
+#: ни на что не влиял: `next_stage` всегда идёт по `PIPELINE_STAGES` (listik-sqh6).
+#: `harnesses` ограничивал, какому исполнителю разрешён этап, — с каталогом
+#: харнессов (`harnesses`, админка) разрешение не нужно: `claim` его больше не
+#: проверяет. Оба ключа читаются из старых конфигов и молча игнорируются.
+LEGACY_ROUTING_KEYS = frozenset({"default_process", "harnesses"})
 
 
 def without_legacy_routing(obj: dict) -> dict:
@@ -316,18 +312,6 @@ def routing(project: str | None = None, conn=None) -> dict:
     # и из переопределения проекта — наружу действующая таблица уходит уже без них.
     return without_legacy_routing(base)
 
-def allowed_harnesses(project: str | None, stage: str | None, conn=None) -> list[str]:
-    # Прямая задача (без этапа) и задача на done не привязаны к этапу конвейера —
-    # ограничение по s1-spec к ним неприменимо, поэтому harness не фильтруется.
-    if not stage or stage == "done":
-        return []
-    r = routing(project, conn=conn)
-    harnesses = r.get("harnesses") or {}
-    if isinstance(harnesses, list):
-        return [str(x) for x in harnesses]
-    return [str(x) for x in (harnesses.get(stage) or [])]
-
-
 _TRANSITION_KINDS = {"sticky", "handoff", "sticky-return"}
 #: «sticky» и «sticky-return» держателя не снимают; «handoff» снимает его, если
 #: `stage` не передали явного `--holder`: явный держатель — это выдача, её пишет
@@ -337,11 +321,12 @@ _TRANSITION_KINDS = {"sticky", "handoff", "sticky-return"}
 def validate_routing(obj: Any) -> dict:
     """Проверить и нормализовать переопределение маршрутизации проекта.
 
-    Принимает словарь с любым подмножеством ключей `harnesses`, `transitions`,
+    Принимает словарь с любым подмножеством ключей `transitions`,
     `return_window_hours`. Поднимает ``ValueError`` с текстом на русском, если
     форма не соответствует ожидаемой. Пустой словарь — валиден (значит «нет
-    переопределений»). Устаревшие ключи (`default_process`) молча игнорируются:
-    старые переопределения проектов не должны ломать ни чтение, ни перезапись.
+    переопределений»). Устаревшие ключи (`default_process`, `harnesses`) молча
+    игнорируются: старые переопределения проектов не должны ломать ни чтение,
+    ни перезапись.
     """
     if not isinstance(obj, dict):
         raise ValueError("routing: ожидается объект (словарь)")
@@ -352,26 +337,7 @@ def validate_routing(obj: Any) -> dict:
     for key, value in obj.items():
         if key in LEGACY_ROUTING_KEYS:
             continue
-        if key == "harnesses":
-            if not isinstance(value, dict):
-                raise ValueError("routing: harnesses должен быть словарём этап → список")
-            harnesses: dict[str, list[str]] = {}
-            for stage, names in value.items():
-                if stage not in stages:
-                    raise ValueError(f"routing: неизвестный этап в harnesses: {stage}")
-                if not isinstance(names, list):
-                    raise ValueError(f"routing: harnesses.{stage} должен быть списком")
-                clean: list[str] = []
-                seen: set[str] = set()
-                for name in names:
-                    if not isinstance(name, str) or not name.strip():
-                        raise ValueError(f"routing: harnesses.{stage} содержит пустое имя")
-                    if name not in seen:
-                        seen.add(name)
-                        clean.append(name)
-                harnesses[stage] = clean
-            out["harnesses"] = harnesses
-        elif key == "transitions":
+        if key == "transitions":
             if not isinstance(value, dict):
                 raise ValueError("routing: transitions должен быть словарём")
             transitions: dict[str, str] = {}

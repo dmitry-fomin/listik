@@ -191,9 +191,10 @@ function onNavClick(event: MouseEvent): void {
 .listik-settings__body {
   display: grid;
   /* Колонка разделов — ширина макета, собранная из шагов кита: своей ширины
-     в токенах у сайдбара нет, а `max-content` теперь тянула бы её по длинной
-     заметке. */
-  grid-template-columns: calc(var(--space-24) * 3) minmax(0, 1fr);
+     в токенах у сайдбара нет, а `max-content` тянула бы её по длинной заметке.
+     Два шага вместо трёх — меню примерно на треть уже (288 → 192px), место
+     уходит колонкам раздела (в «Маршрутах» — списку и карточке). */
+  grid-template-columns: calc(var(--space-24) * 2) minmax(0, 1fr);
   gap: var(--space-6);
   align-items: start;
 }

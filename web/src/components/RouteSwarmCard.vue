@@ -25,6 +25,7 @@
 import { computed, onBeforeUnmount, onMounted, reactive, ref, watch } from 'vue'
 import {
   UiAlert,
+  UiCopyButton,
   UiField,
   UiInput,
   UiRecordList,
@@ -47,7 +48,14 @@ import type { RouteIconKey, RoutePatch, SwarmLikeRoute, SwarmRoles } from '@/api
 import { PIPELINE_STAGES, ROUTE_ICONS } from '@/lib/dictionaries'
 import { harnessTitle, runnableHarness } from '@/lib/harness'
 import { isSwarmCell, ROLE_KEYS, ROLE_STAGE, ROLE_TITLES, type RoleKey } from '@/lib/pipelines'
-import { commandProblemText, previewCommand } from '@/lib/routes'
+import {
+  braced,
+  commandProblemText,
+  previewChunks,
+  previewCommand,
+  unknownPlaceholders,
+  type PlaceholderChunk,
+} from '@/lib/routes'
 
 const props = defineProps<{ route: SwarmLikeRoute }>()
 const emit = defineEmits<{ 'update:dirty': [value: boolean] }>()
@@ -454,20 +462,38 @@ function hasBraces(value: string): boolean {
 }
 
 /**
- * Предпросмотр команды раскрытой роли: свой argv или шаблон харнесса + промпт
+ * Элементы команды раскрытой роли: свой argv или шаблон харнесса + промпт
  * последним аргументом. Пустой промпт — лаунчер сам добавляет протокол роя
  * (`SWARM_PROMPT` приходит в `GET /api/harnesses` → `store.swarmPrompt`),
  * промпт харнесса в рой не наследуется (`stage_launch._cell_prompt`).
  */
-const roleCommandPreview = computed(() => {
+const roleCommandParts = computed<string[]>(() => {
   const cell = roles[openRole.value]
-  if (!cell) return ''
+  if (!cell) return []
   const harness = store.harnesses.value.find((item) => item.key === cell.harness)
   const argv = cell.argv ?? harness?.argv ?? []
   const prompt = cell.prompt.trim() !== '' ? cell.prompt : store.swarmPrompt.value
-  const parts = prompt !== '' ? [...argv, prompt] : argv
-  return previewCommand(parts, props.route.key)
+  return prompt !== '' ? [...argv, prompt] : argv
 })
+
+/** Та же команда одной строкой — её забирает кнопка копирования у заголовка секции. */
+const roleCommandPreview = computed(() => previewCommand(roleCommandParts.value, props.route.key))
+
+/**
+ * Предпросмотр кусками для подсветки, как в блоке «Чем запускается» карточки
+ * конвейера: места подстановок (уже примерные значения) — акцентом, незнакомое
+ * `{имя}` — красным с волной. Элементы соединены пробелом — как в команде.
+ */
+const rolePreviewChunks = computed<PlaceholderChunk[]>(() => {
+  const chunks: PlaceholderChunk[] = []
+  roleCommandParts.value.forEach((element, index) => {
+    if (index > 0) chunks.push({ type: 'text', value: ' ' })
+    chunks.push(...previewChunks(element, props.route.key))
+  })
+  return chunks
+})
+
+const roleUnknownNames = computed(() => unknownPlaceholders(roleCommandParts.value))
 
 /** Своей команды у роли нет — под редактором пишется, откуда она берётся. */
 const roleInherits = computed(() => {
@@ -548,7 +574,6 @@ const roleInherits = computed(() => {
             @click="selectRole(tile.role)"
           >
             <span class="listik-route-swarm__role-stage">{{ tile.stageCode }} · {{ tile.stageLabel }}</span>
-            <span class="listik-route-swarm__role-title">{{ tile.roleTitle }}</span>
           </button>
           <div class="listik-route-swarm__role-pick">
             <HarnessIcon v-if="tile.harness" :harness="tile.harness" size="sm" />
@@ -632,8 +657,31 @@ const roleInherits = computed(() => {
       </section>
 
       <section class="listik-route-swarm__section">
-        <h4 class="listik-route-swarm__section-title">Что выполнится на этапе</h4>
-        <p class="listik-mono listik-route-swarm__preview">{{ roleCommandPreview || '—' }}</p>
+        <div class="listik-route-swarm__section-head">
+          <h4 class="listik-route-swarm__section-title">Что выполнится на этапе</h4>
+          <UiCopyButton v-if="roleCommandPreview" :value="roleCommandPreview" label="Команда этапа">
+            <template #icon="{ copied }"><ListikIcon :name="copied ? 'check' : 'copy'" size="sm" /></template>
+          </UiCopyButton>
+        </div>
+        <!-- Внутри `pre` нет ни одного переноса строки между узлами, как в блоке
+             «Чем запускается» карточки конвейера: отступ шаблона утёк бы в
+             команду на экране. -->
+        <pre
+          class="listik-mono listik-route-swarm__preview"
+        ><span v-if="rolePreviewChunks.length === 0">—</span><template
+          v-for="(chunk, at) in rolePreviewChunks"
+          :key="at"
+        ><span v-if="chunk.type === 'text'">{{ chunk.value }}</span><span
+          v-else-if="chunk.type === 'placeholder'"
+          class="listik-route-swarm__placeholder"
+        >{{ chunk.value }}</span><span
+          v-else
+          class="listik-route-swarm__placeholder listik-route-swarm__placeholder--unknown"
+          :title="`неизвестная подстановка: ${chunk.value}`"
+        >{{ braced(chunk.value) }}</span></template></pre>
+        <p v-if="roleUnknownNames.length > 0" class="listik-route-swarm__problem">
+          неизвестная подстановка: {{ roleUnknownNames.join(', ') }}
+        </p>
       </section>
     </template>
 
@@ -826,16 +874,6 @@ const roleInherits = computed(() => {
   color: var(--ink-4);
 }
 
-.listik-route-swarm__role-title {
-  font-size: var(--text-base);
-  font-weight: var(--weight-medium);
-  color: var(--ink-1);
-}
-
-.listik-route-swarm__role.is-skip .listik-route-swarm__role-title {
-  color: var(--ink-3);
-}
-
 .listik-route-swarm__role-pick {
   display: flex;
   align-items: center;
@@ -907,6 +945,18 @@ const roleInherits = computed(() => {
   overflow-y: auto;
   overflow-wrap: break-word;
   white-space: pre-wrap;
+}
+
+/* Подсветка подстановок — та же пара стилей, что у `__placeholder` карточки
+   конвейера: допустимая — акцентом, незнакомая — красным с волной. */
+.listik-route-swarm__placeholder {
+  color: var(--accent-600);
+  font-weight: var(--weight-medium);
+}
+
+.listik-route-swarm__placeholder--unknown {
+  color: var(--danger-600);
+  text-decoration: underline wavy;
 }
 
 /* ── нижняя полоса: заметка + статус автосохранения + причина ── */

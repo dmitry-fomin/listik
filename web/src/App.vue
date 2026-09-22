@@ -284,8 +284,8 @@ onBeforeUnmount(() => {
         <div class="listik-shell__top">
           <UiAlert v-if="store.connectionLost.value" tone="danger">
             <template #title>Сервер Listik недоступен</template>
-            Запустите сервер командой <code class="listik-mono">./bin/listik serve</code> из корня
-            <code class="listik-mono">Listik</code> и нажмите «Обновить».
+            Запустите сервер командой <code class="listik-mono">listik serve</code>
+            и нажмите «Обновить».
             <div class="listik-row" style="margin-top: var(--space-3)">
               <UiButton size="sm" variant="secondary" @click="refreshAll">Повторить запрос</UiButton>
             </div>

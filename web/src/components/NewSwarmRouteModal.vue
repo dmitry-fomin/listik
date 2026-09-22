@@ -32,7 +32,7 @@ import store from '@/store/listik'
 import type { RouteIconKey, SwarmRoleCell, SwarmRoles, SwarmRouteDef } from '@/api/types'
 import { PIPELINE_STAGES, ROUTE_ICONS } from '@/lib/dictionaries'
 import { runnableHarness } from '@/lib/harness'
-import { ROLE_KEYS, ROLE_STAGE, ROLE_TITLES, STAGE_HARNESSES, type RoleKey } from '@/lib/pipelines'
+import { ROLE_KEYS, ROLE_STAGE, ROLE_TITLES, type RoleKey } from '@/lib/pipelines'
 
 const emit = defineEmits<{ created: [route: SwarmRouteDef]; close: [] }>()
 
@@ -63,18 +63,12 @@ const harnessOptions = computed<UiSelectOption<string>[]>(() => [
 ])
 
 /**
- * Исполнитель роли по умолчанию — первый доступный из разрешённых этапу
- * (`STAGE_HARNESSES`, зеркало `config.DEFAULTS.routing.harnesses`): claim за
- * этап откажет харнессу вне его списка. Поэтому без доступных разрешённых
- * фолбэка на «первый runnable каталога» нет — такой харнесс claim отвергнет;
- * роль остаётся «пропустить этап», исполнителя выбирает пользователь.
+ * Исполнитель роли по умолчанию — первый харнесс каталога с командой: этапы
+ * больше не ограничены списком разрешённых, claim возьмёт любой из каталога.
+ * Пустой каталог — роль остаётся «пропустить этап», выбор за пользователем.
  */
-function defaultHarness(role: RoleKey): string {
-  const available = new Set(runnable.value.map((item) => item.key))
-  for (const key of STAGE_HARNESSES[ROLE_STAGE[role]]) {
-    if (available.has(key)) return key
-  }
-  return SKIP
+function defaultHarness(_role: RoleKey): string {
+  return runnable.value[0]?.key ?? SKIP
 }
 
 /**
@@ -343,7 +337,6 @@ async function submit(): Promise<void> {
         <li v-for="row in roleRows" :key="row.role" class="listik-new-swarm__role">
           <div class="listik-new-swarm__role-head">
             <span class="listik-new-swarm__role-stage">{{ row.stageCode }} · {{ row.stageLabel }}</span>
-            <span class="listik-new-swarm__role-title">{{ row.roleTitle }}</span>
             <span class="listik-new-swarm__role-note">{{ row.note }}</span>
           </div>
           <div class="listik-new-swarm__role-pick">
@@ -433,12 +426,6 @@ async function submit(): Promise<void> {
   letter-spacing: 0.06em;
   text-transform: uppercase;
   color: var(--accent-600);
-}
-
-.listik-new-swarm__role-title {
-  font-size: var(--text-sm);
-  font-weight: var(--weight-medium);
-  color: var(--ink-1);
 }
 
 .listik-new-swarm__role-note {

@@ -964,7 +964,7 @@ def handle(method: str, path: str, query: dict, body: dict, authed: bool = False
     if path == "/api/ready":
         return 200, {
             "tasks": deps_mod.ready_tasks(
-                conn, project=q1("project"), stage=q1("stage"), harness=q1("harness"),
+                conn, project=q1("project"), stage=q1("stage"),
                 include_occupied=as_bool(q1("include_occupied", False)),
                 limit=as_int(q1("limit"), 50) or 50, as_owner=owner),
             "cycles": deps_mod.cycles(conn),

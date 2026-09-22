@@ -14,17 +14,20 @@
  *
  * Заведение — первичное действие раздела «Завести маршрут»: открывает выбор
  * вида (рой или прямая выдача; конвейер приходит из поставки сам), выбор ведёт
- * в `NewSwarmRouteModal`/`NewDirectRouteModal`. В заголовках групп кнопок
- * заведения нет — по правке заказчика (listik-2gry).
+ * в `NewSwarmRouteModal`/`NewDirectRouteModal`. Те же окна открывают кнопки
+ * «+» в заголовках групп «Рой» и «Прямая выдача» — сразу нужный вид, без
+ * выбора. У «Конвейеров» кнопки нет: конвейер приходит из поставки сам.
  */
 import { computed, onBeforeUnmount, onMounted, ref } from 'vue'
 import {
   UiAlert,
   UiBadge,
+  UiButton,
   UiCard,
   UiConfirmDialog,
   UiEmptyState,
   UiSpinner,
+  UiTooltip,
 } from '@zoloto585/facet'
 import RouteCard from './RouteCard.vue'
 import RouteSwarmCard from './RouteSwarmCard.vue'
@@ -336,6 +339,17 @@ onBeforeUnmount(() => {
               <div class="listik-routes-settings__group-head">
                 <h3 class="listik-section__title">Рой</h3>
                 <UiBadge tone="neutral" size="sm">{{ swarmRoutes.length }}</UiBadge>
+                <UiTooltip text="добавить новый рой" placement="left">
+                  <UiButton
+                    class="listik-routes-settings__add"
+                    size="sm"
+                    variant="ghost"
+                    v-bind="{ 'aria-label': 'добавить новый рой' }"
+                    @click="openCreate('swarm')"
+                  >
+                    <template #icon><ListikIcon name="plus" size="sm" /></template>
+                  </UiButton>
+                </UiTooltip>
               </div>
 
               <UiEmptyState v-if="swarmRoutes.length === 0" compact title="Маршрутов роя нет" />
@@ -371,6 +385,17 @@ onBeforeUnmount(() => {
               <div class="listik-routes-settings__group-head">
                 <h3 class="listik-section__title">Прямая выдача</h3>
                 <UiBadge tone="neutral" size="sm">{{ directRoutes.length }}</UiBadge>
+                <UiTooltip text="добавить прямую выдачу" placement="left">
+                  <UiButton
+                    class="listik-routes-settings__add"
+                    size="sm"
+                    variant="ghost"
+                    v-bind="{ 'aria-label': 'добавить прямую выдачу' }"
+                    @click="openCreate('direct')"
+                  >
+                    <template #icon><ListikIcon name="plus" size="sm" /></template>
+                  </UiButton>
+                </UiTooltip>
               </div>
 
               <UiEmptyState v-if="directRoutes.length === 0" compact title="Прямых маршрутов нет" />
@@ -494,11 +519,12 @@ onBeforeUnmount(() => {
   color: var(--ink-3);
 }
 
-/* 2:3 в пользу карточки: ширину стоит отдавать редактору argv, плиткам
-   состава и блоку команды. Списку хватает 240px. */
+/* Ширину стоит отдавать редактору argv, плиткам состава и блоку команды —
+   карточка растёт на `1fr`. Списку хватает 320px: суженная колонка разделов
+   отдала место и ему — в строке помещаются ключ и бейджи состава. */
 .listik-routes-settings__layout {
   display: grid;
-  grid-template-columns: minmax(0, 240px) minmax(0, 1fr);
+  grid-template-columns: minmax(0, 320px) minmax(0, 1fr);
   gap: var(--space-4);
   align-items: start;
 }
@@ -525,6 +551,11 @@ onBeforeUnmount(() => {
   align-items: center;
   gap: var(--space-2);
   margin-bottom: var(--space-3);
+}
+
+/* «+» заведения прижата к правому краю заголовка группы. */
+.listik-routes-settings__add {
+  margin-left: auto;
 }
 
 .listik-routes-settings__rows {

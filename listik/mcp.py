@@ -331,7 +331,6 @@ TOOLS: list[dict] = [
             "properties": {
                 "project": {"type": "string"},
                 "stage": {"type": "string"},
-                "harness": {"type": "string", "description": "фильтр по routing проекта: только задачи, чей этап разрешён этому harness; задачи без этапа — всем"},
                 "include_occupied": {"type": "boolean", "default": False},
                 "limit": {"type": "integer", "default": 30},
             },
@@ -608,7 +607,6 @@ def call_tool(name: str, args: dict, conn=None, owner=FROM_ENV, fence=FROM_ENV) 
         from . import deps as deps_mod
         return {"tasks": deps_mod.ready_tasks(
                     conn, project=args.get("project"), stage=args.get("stage"),
-                    harness=args.get("harness"),
                     include_occupied=bool(args.get("include_occupied")),
                     limit=int(args.get("limit", 30)), as_owner=owner),
                 "cycles": deps_mod.cycles(conn)}

@@ -12,9 +12,13 @@ from tests.helpers import TempDbTestCase
 class SeedTests(TempDbTestCase):
     def test_seeds_present_after_init(self) -> None:
         keys = {h["key"] for h in harnesses_store.list_harnesses(self.conn)}
-        for key in ("claude", "dsh", "codex", "grok", "gemini", "pi-glm",
+        for key in ("claude", "dsh", "codex", "grok", "pi-glm",
                     "pi-deepseek", "devin", "me"):
             self.assertIn(key, keys)
+        self.assertNotIn("gemini", keys)
+        # И актора agent:gemini в реестре нет — он не возвращается seed_actors.
+        self.assertIsNone(self.conn.execute(
+            "SELECT key FROM actors WHERE key = 'agent:gemini'").fetchone())
         me = harnesses_store.get(self.conn, "me")
         self.assertEqual(me["kind"], "manual")
         self.assertIsNone(me["argv"])
@@ -31,6 +35,33 @@ class SeedTests(TempDbTestCase):
             "SELECT actor FROM actor_aliases WHERE raw = 'codex'").fetchone()
         self.assertIsNotNone(row)
         self.assertEqual(row["actor"], "agent:codex")
+
+    def test_seed_drops_builtin_gemini_once(self) -> None:
+        # Старая база: поставочный gemini ещё есть, флага фикса — нет.
+        self.conn.execute(
+            "INSERT INTO harnesses(key, label, kind, builtin, enabled, position, "
+            "created_at, updated_at) VALUES('gemini', 'gemini', 'exec', 1, 1, 99, "
+            "'2020', '2020')")
+        self.conn.execute(
+            "INSERT INTO actors(key, title, kind, kind_hint) "
+            "VALUES('agent:gemini', 'gemini', 'agent', 'gemini')")
+        self.conn.execute(
+            "INSERT INTO actor_aliases(raw, actor) VALUES('gemini', 'agent:gemini')")
+        self.conn.execute(
+            "DELETE FROM meta WHERE key = 'seed_drop_gemini'")
+        self.conn.commit()
+        harnesses_store.seed(self.conn)
+        self.assertIsNone(harnesses_store.by_key(self.conn, "gemini"))
+        self.assertIsNone(self.conn.execute(
+            "SELECT key FROM actors WHERE key = 'agent:gemini'").fetchone())
+        # Повторный seed не трогает gemini, заведённого руками, — ни запись,
+        # ни её алиас держателя.
+        harnesses_store.create(self.conn, {"key": "gemini", "argv": ["gemini"]})
+        harnesses_store.seed(self.conn)
+        self.assertIsNotNone(harnesses_store.by_key(self.conn, "gemini"))
+        row = self.conn.execute(
+            "SELECT actor FROM actor_aliases WHERE raw = 'gemini'").fetchone()
+        self.assertEqual(row["actor"], "agent:gemini")
 
 
 class CrudTests(TempDbTestCase):

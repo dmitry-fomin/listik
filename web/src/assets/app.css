@@ -41,10 +41,13 @@ body {
   --listik-harness-dsh: #4d6bfe;
   --listik-harness-codex: #4a8cff;
   --listik-harness-grok: currentColor;
-  --listik-harness-gemini: #8e7cf2;
   --listik-harness-glm: #16a394;
   --listik-harness-devin: currentColor;
   --listik-harness-pi: currentColor;
+  /* У pi-glm/pi-deepseek та же «π» основа, что у pi; цвет модели несёт точка
+     в углу глифа, поэтому токены — currentColor, как у pi. */
+  --listik-harness-pi-glm: currentColor;
+  --listik-harness-pi-deepseek: currentColor;
 }
 
 /* Раскладка доски (Main.dc.html): колонки резиновые — `--listik-col-min` лишь

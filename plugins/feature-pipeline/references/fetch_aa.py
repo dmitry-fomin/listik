@@ -60,6 +60,16 @@ def objects(buf: str, key: str = '"intelligenceIndex"'):
             k += 1
     return list(out.values())
 
+def _field(m, *keys):
+    """Первое непустое поле. Каталог AA переименовал часть бенчей
+    (`terminalbenchV40` → `terminalBench40`, галлюцинации вынесены наверх),
+    старые ключи оставлены как запасной путь."""
+    for k in keys:
+        v = m.get(k)
+        if v is not None:
+            return v
+    return None
+
 def _perf(m, key):
     """Скорость/задержки лежат в performanceByPromptType, срез medium (fallback: timescaleData)."""
     p = m.get("performanceByPromptType") or {}
@@ -90,8 +100,8 @@ COLS = [
     ("released", lambda m: m.get("releaseDate")),
     ("deprecated", lambda m: m.get("deprecated")),
     # агентные/кодовые бенчи — то, что важно для пайплайна разработки
-    ("terminalbench_v40", lambda m: m.get("terminalbenchV40")),
-    ("terminalbench_v21", lambda m: m.get("terminalbenchV21")),
+    ("terminalbench_v40", lambda m: _field(m, "terminalBench40", "terminalbenchV40")),
+    ("terminalbench_v21", lambda m: _field(m, "terminalBench21", "terminalbenchV21")),
     ("scicode", lambda m: m.get("scicode")),
     ("livecodebench", lambda m: m.get("livecodebench")),
     ("lcr", lambda m: m.get("lcr")),
@@ -131,7 +141,7 @@ def main():
     with open(base + ".json", "w") as f:
         json.dump(snap, f, ensure_ascii=False, indent=1)
     with open(base + ".csv", "w", newline="") as f:
-        w = csv.writer(f)
+        w = csv.writer(f, lineterminator="\n")
         w.writerow([c for c, _ in COLS])
         for m in models:
             w.writerow([g(m) for _, g in COLS])

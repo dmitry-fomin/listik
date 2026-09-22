@@ -5,7 +5,7 @@
  * `docs/design/settings/Настройки · Маршруты · конвейер-html/Routes.dc.html`.
  *
  * Шапка — своя, а не `UiEntityHeader`: у кита в subtitle нет слота, а ключ
- * маршрута в строке «Конвейер · ключ <key>» обязан быть моноширинным.
+ * маршрута в строке «Конвейер · скилл <key>» обязан быть моноширинным.
  * Остальное — из кита: `UiSwitch` (видимость), `UiField`/`UiInput`,
  * `IconToggle`, `UiEmptyState`, `UiCopyButton`, `UiSaveStatus`,
  * `UiAlert`.
@@ -53,7 +53,6 @@ import {
   isProviderCell,
   ROLE_KEYS,
   ROLE_STAGE,
-  ROLE_TITLES,
   type ProviderKey,
   type RoleCell,
   type RoleKey,
@@ -185,7 +184,6 @@ interface RoleTile {
   stageCode: string
   /** Подпись этапа — из `PIPELINE_STAGES`, руками не пишется. */
   stageLabel: string
-  roleTitle: string
   /** Вендор роли — глифом `ProviderIcon`, как в `RoutePicker`. */
   provider: ProviderKey
   /** Короткая подпись ячейки рядом с глифом; пусто — показываем ключ вендора. */
@@ -202,7 +200,6 @@ const roleTiles = computed<RoleTile[]>(() =>
       role,
       stageCode: stage?.code ?? '',
       stageLabel: stage?.label ?? '',
-      roleTitle: ROLE_TITLES[role],
       provider: cell.provider,
       vendorLabel: cell.label || cell.provider,
       vendorTitle: cell.title || cell.label || cell.provider,
@@ -233,7 +230,7 @@ function braced(name: string): string {
       <div class="listik-route-card__head-main">
         <h2 class="listik-route-card__name">{{ route.title }}</h2>
         <p class="listik-route-card__keyline">
-          Конвейер · ключ <code class="listik-mono">{{ route.key }}</code>
+          Конвейер · скилл <code class="listik-mono">{{ route.key }}</code>
         </p>
       </div>
       <UiSwitch
@@ -283,7 +280,6 @@ function braced(name: string): string {
       <div v-if="roleTiles.length > 0" class="listik-route-card__roles">
         <div v-for="tile in roleTiles" :key="tile.role" class="listik-route-card__role">
           <span class="listik-route-card__role-stage">{{ tile.stageCode }} · {{ tile.stageLabel }}</span>
-          <span class="listik-route-card__role-title">{{ tile.roleTitle }}</span>
           <span class="listik-route-card__role-vendor" :title="tile.vendorTitle">
             <ProviderIcon :provider="tile.provider" size="sm" />
             <span class="listik-route-card__role-vendor-label">{{ tile.vendorLabel }}</span>
@@ -471,12 +467,6 @@ function braced(name: string): string {
   letter-spacing: 0.06em;
   text-transform: uppercase;
   color: var(--accent-600);
-}
-
-.listik-route-card__role-title {
-  font-size: var(--text-sm);
-  font-weight: var(--weight-medium);
-  color: var(--ink-1);
 }
 
 .listik-route-card__role-vendor {

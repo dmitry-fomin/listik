@@ -33,6 +33,7 @@ ARCHIVE = TOP + ".tar.gz"
 TRACKED_FILES = {
     "VERSION": VERSION + "\n",
     "bin/listik": "#!/bin/sh\necho listik\n",
+    "swarm/config.mjs": "// swarm\n",
     "listik/__init__.py": '"""listik."""\n',
     "listik/paths.py": "HOME = 1\n",
     "alembic/env.py": "# env\n",

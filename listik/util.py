@@ -32,12 +32,6 @@ def routing(project: str | None = None, conn=None) -> dict:
     return config.routing(project, conn=conn)
 
 
-def allowed_harnesses(project: str | None, stage: str | None, conn=None) -> list[str]:
-    """Список разрешённых исполнителей из эффективной конфигурации."""
-    from . import config
-    return config.allowed_harnesses(project, stage, conn=conn)
-
-
 def path(value: Path | str) -> Path:
     """Привести значение к :class:`~pathlib.Path` без дополнительных эффектов."""
     return Path(value)

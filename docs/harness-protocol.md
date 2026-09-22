@@ -45,7 +45,7 @@ The board tells the two apart — `holder_taken=false` / `not_taken=true` means 
 
 ### Holder on transitions
 
-`ready --harness <you>` lists only stages your harness is routed to. `claim` refuses (and says why)
+`ready --harness <you>` lists what's open for you to take. `claim` refuses (and says why)
 on an open blocker, another holder, or a busy worktree; `--force` can't take another's card.
 
 - **handoff** (`s2→s3`, `s4→done`): without `--holder` the server clears the holder and the next

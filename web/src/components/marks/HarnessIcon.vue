@@ -2,13 +2,17 @@
 /**
  * HarnessIcon — глиф харнесса-держателя (прототип: `.hico`). SVG-пути — ассеты
  * из прототипа (multi-path/fill, не влезают в контракт icons.ts), фирменные
- * цвета — токены `--listik-harness-*` (app.css). `human`/`me` — обычная иконка
- * `user` из общего словаря. `null`/пустой актор — ничего не рендерит.
+ * цвета — токены `--listik-harness-*` (app.css). `human`/`me` и запись с
+ * `icon='user'` — обычная иконка `user` из общего словаря. `null`/пустой
+ * актор — ничего не рендерит.
  *
- * Ключ может быть любым ключом каталога `harnesses` (listik-2gry), не только
- * встроенным: глиф ищется по точному ключу, потом по префиксу до дефиса
- * (`pi-glm` → `pi`). Фирменного глифа у пользовательского харнесса нет — ему
- * рисуется общий `bolt`, а цвет без фирменного токена — `ink-3`.
+ * Глиф решается так: явный проп `icon` (пикер иконки в карточке), потом `icon`
+ * записи каталога — он и есть выбранный знак (`PATCH /api/harnesses/<key>`),
+ * в том числе `null` — осознанный «общий глиф». Вывод из ключа (точное
+ * совпадение или голова до дефиса, `pi-foo` → `pi`) работает только когда
+ * записи в каталоге нет — каталог ещё не догрузился или ключ не из него.
+ * Фирменного глифа нет (свой ключ без иконки, незнакомый `icon`) —
+ * рисуется общий `bolt`.
  */
 import { computed, onMounted } from 'vue'
 import ListikIcon from '@/components/ListikIcon.vue'
@@ -19,9 +23,11 @@ const props = withDefaults(
   defineProps<{
     actor?: string | null
     harness?: HarnessKey | string
+    /** Явный ключ глифа — рисуется сам, минуя ключ и каталог (пикер иконки). */
+    icon?: string
     size?: 'xs' | 'sm' | 'md'
   }>(),
-  { actor: undefined, harness: undefined, size: 'sm' },
+  { actor: undefined, harness: undefined, icon: undefined, size: 'sm' },
 )
 
 /** Ключи каталога: голый держатель `mini`/`devin` разбирается ключом, не «человеком». */
@@ -33,13 +39,24 @@ const resolved = computed<string | null>(
 )
 const title = computed(() => harnessTitle(resolved.value))
 
-/**
- * Глиф по ключу: точное совпадение, иначе голова до первого дефиса
- * (`pi-glm`/`pi-deepseek` → `pi`). `null` — фирменного глифа у ключа нет.
- */
+/** Запись каталога для разобранного ключа — её `icon` задаёт глиф явно. */
+const record = computed(() =>
+  store.harnesses.value.find((item) => item.key === resolved.value),
+)
+
+/** Что умеет рисовать шаблон: фирменные ветки плюс `user` из общего словаря. */
+const DRAWABLE = new Set([...HARNESS_GLYPHS, 'user'])
+
 const glyph = computed<string | null>(() => {
+  if (props.icon) return DRAWABLE.has(props.icon) ? props.icon : null
   const key = resolved.value
-  if (!key) return null
+  if (!key || key === 'human' || key === 'me') return null
+  // Запись каталога есть — решает её `icon`: `null` («общий глиф») и
+  // незнакомый ключ дают bolt, фолбэка на ключ харнесса нет.
+  if (record.value !== undefined) {
+    const icon = record.value.icon
+    return icon && DRAWABLE.has(icon) ? icon : null
+  }
   if (HARNESS_GLYPHS.includes(key)) return key
   const head = key.split('-', 1)[0]
   return head && HARNESS_GLYPHS.includes(head) ? head : null
@@ -48,11 +65,11 @@ const glyph = computed<string | null>(() => {
 
 <template>
   <ListikIcon
-    v-if="resolved === 'human' || resolved === 'me'"
+    v-if="resolved === 'human' || resolved === 'me' || glyph === 'user'"
     name="user"
     :size="size"
   />
-  <ListikIcon v-else-if="resolved && !glyph" name="bolt" :size="size" />
+  <ListikIcon v-else-if="(resolved || icon) && !glyph" name="bolt" :size="size" />
   <span
     v-else-if="glyph"
     class="listik-harness-icon"
@@ -96,30 +113,59 @@ const glyph = computed<string | null>(() => {
         stroke-linejoin="round"
       />
     </svg>
-    <svg v-else-if="glyph === 'gemini'" viewBox="0 0 16 16" fill="none" aria-hidden="true">
-      <path
-        d="M8 2.2c.4 3.3 2.5 5.4 5.8 5.8-3.3.4-5.4 2.5-5.8 5.8-.4-3.3-2.5-5.4-5.8-5.8 3.3-.4 5.4-2.5 5.8-5.8Z"
-        stroke="currentColor"
-        stroke-width="1.25"
-        stroke-linecap="round"
-        stroke-linejoin="round"
-      />
-    </svg>
     <svg v-else-if="glyph === 'devin'" viewBox="0 0 16 16" fill="currentColor" aria-hidden="true">
       <path d="M5 1.4 7.6 2.9v3L5 7.4 2.4 5.9v-3Z" />
       <path d="M5 8.6 7.6 10.1v3L5 14.6 2.4 13.1v-3Z" />
       <path d="M10.8 5 13.4 6.5v3L10.8 11 8.2 9.5v-3Z" />
     </svg>
-    <!-- pi: фирменного пути нет, глиф — буква «π» моношириной, как в макете. -->
+    <!-- pi: фирменного пути нет, глиф — буква «π» моношириной, как в макете.
+         У pi-glm/pi-deepseek — та же «π» сдвинута влево плюс точка цвета
+         модели в правом нижнем углу. -->
     <svg v-else-if="glyph === 'pi'" viewBox="0 0 16 16" aria-hidden="true">
       <text
         x="8"
-        y="12.6"
+        y="13.2"
         text-anchor="middle"
         font-family="var(--font-mono)"
-        font-size="13"
+        font-size="15"
         fill="currentColor"
       >π</text>
+    </svg>
+    <svg v-else-if="glyph === 'pi-glm'" viewBox="0 0 16 16" aria-hidden="true">
+      <text
+        x="6.6"
+        y="12.4"
+        text-anchor="middle"
+        font-family="var(--font-mono)"
+        font-size="12"
+        fill="currentColor"
+      >π</text>
+      <circle
+        cx="12.2"
+        cy="12.2"
+        r="2.3"
+        fill="var(--listik-harness-glm)"
+        stroke="var(--surface)"
+        stroke-width="1"
+      />
+    </svg>
+    <svg v-else-if="glyph === 'pi-deepseek'" viewBox="0 0 16 16" aria-hidden="true">
+      <text
+        x="6.6"
+        y="12.4"
+        text-anchor="middle"
+        font-family="var(--font-mono)"
+        font-size="12"
+        fill="currentColor"
+      >π</text>
+      <circle
+        cx="12.2"
+        cy="12.2"
+        r="2.3"
+        fill="var(--listik-harness-dsh)"
+        stroke="var(--surface)"
+        stroke-width="1"
+      />
     </svg>
   </span>
 </template>

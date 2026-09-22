@@ -15,7 +15,8 @@ CANONICAL = {
     "agent:dsh": "DeepSeek Harness",
     "agent:grok": "Grok",
     "agent:codex": "Codex",
-    "agent:gemini": "Gemini",
+    # agent:gemini нет: харнесс выведен из поставки, иначе seed_actors на каждом
+    # init возвращал бы его строку в `actors`; резолв имени живёт в AGENT_HINTS.
     "agent:pi-glm": "pi · GLM",
     "agent:pi-deepseek": "pi · DeepSeek",
     "agent:local": "локальный субагент",

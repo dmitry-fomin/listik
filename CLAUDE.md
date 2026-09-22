@@ -153,8 +153,8 @@ Database migrations exist as two parallel mechanisms — don't confuse them:
   (`node_modules/@zoloto585/facet`); read that package's `README.md` and this repo's
   `docs/facet-components.md` before adding or changing UI, and never hand-roll markup/CSS that
   duplicates a kit component.
-- `config.toml` — server host/port, the board's auth token, and `[routing]` (harnesses per
-  stage, transition kinds, the red-verdict return window); a project override lives in
+- `config.toml` — server host/port, the board's auth token, and `[routing]` (transition
+  kinds, the red-verdict return window); a project override lives in
   `[routing.projects.<slug>]` or the `projects.routing` column (`listik projects <slug>
   --routing`). `web/.env.example` documents the matching frontend env vars (`VITE_API_BASE`,
   `VITE_LISTIK_TOKEN`).

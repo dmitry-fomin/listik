@@ -22,17 +22,21 @@ python3 fetch_openrouter.py  # OpenRouter: реальный прайс дост�
 
 Официальный API (`/api/v2/data/llms/models`) требует ключ — отдаёт `401`.
 Обход: **любая карточка модели** `https://artificialanalysis.ai/models/<slug>` встраивает
-в RSC-пейлоад (`self.__next_f.push`) **полный каталог** — на снимке 646 записей,
-включая варианты effort (`claude-opus-5-low/medium/high/xhigh`), цены, бенчмарки, скорость.
+в RSC-пейлоад (`self.__next_f.push`) **полный каталог** — в снимке от 2026-09-22
+673 записи, включая варианты effort (`claude-opus-5-5-low/medium/high/xhigh`),
+цены, бенчмарки, скорость.
 
 Важно: страница-список `/models` отдаёт только ~26 моделей, а `?models=<список>` фильтрует
 на клиенте и на пейлоад не влияет. Поэтому ходим именно на карточку.
 
-Что лежит в каждой записи: `intelligenceIndex`, разбивка по бенчам (`terminalbenchV40`,
-`terminalbenchV21`, `scicode`, `livecodebench`, `lcr`, `tau2`, `gpqa`, `hle`, `aime25`,
-`gdpval`, `omniscience` + `omniscienceBreakdown`), цены (вход/выход/кэш/blended),
-`performanceByPromptType` (скорость и TTFT по длине промпта), `intelligenceIndexCostPerTask`
-($ на задачу — честнее цены за токен), `contextWindowTokens`, даты, лицензия.
+Что лежит в каждой записи: `intelligenceIndex`, бенчи (`terminalBench40`,
+`terminalBench21`, `scicode`, `livecodebench`, `lcr`, `tau2`, `gpqa`, `hle`, `aime25`,
+`gdpval`), `omniscience` вместе с `omniscienceAccuracy` и `omniscienceHallucinationRate`,
+цены (вход/выход/кэш/blended), `performanceByPromptType` (скорость и TTFT по длине
+промпта), `intelligenceIndexCostPerTask` ($ на задачу — честнее цены за токен),
+`contextWindowTokens`, даты, лицензия. Имена бенчей в пейлоаде уже переименовывались
+(`terminalbenchV40` → `terminalBench40`, галлюцинации уехали из `omniscienceBreakdown`
+на верхний уровень); `fetch_aa.py` читает новое имя и оставляет старое запасным путём.
 
 `models.csv` — плоская выжимка ключевых колонок; `models.json` — всё сырьё.
 

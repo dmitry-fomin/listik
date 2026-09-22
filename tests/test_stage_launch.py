@@ -18,8 +18,6 @@ def script(line: str) -> list[str]:
     return [sys.executable, "-c", f"print({line!r})"]
 
 
-# Все четыре этапа отдаём харнессу-пробнику: умолчание config.py («codex, dsh,
-# claude…») чужие ключи на этапах не пропускает.
 _STAGES = ("s1-spec", "s2-review", "s3-impl", "s4-judge")
 
 
@@ -28,10 +26,6 @@ class SwarmCase(TempDbTestCase):
         super().setUp()
         store.add_project(self.conn, path=str(self.tmp_path), slug="proj",
                           title="Проект")
-        self.conn.execute(
-            "UPDATE projects SET routing = ? WHERE slug = 'proj'",
-            (json.dumps({"harnesses": {s: ["probe"] for s in _STAGES}}),))
-        self.conn.commit()
         harnesses_store.create(self.conn, {
             "key": "probe", "label": "probe",
             "argv": [sys.executable, "-c", "print('готово')"]})

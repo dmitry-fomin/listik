@@ -36,7 +36,7 @@ for (const [what, address] of [['приложение', url], ['API', apiHealth]
   }
   if (problem) {
     console.error(
-      `smoke: ${what} недоступно по ${address} (${problem}). Поднимите bin/listik serve ` +
+      `smoke: ${what} недоступно по ${address} (${problem}). Поднимите listik serve ` +
         'или scripts/mock-api.mjs и npm run dev / npm run preview; адрес API — SMOKE_API.',
     )
     process.exit(1)

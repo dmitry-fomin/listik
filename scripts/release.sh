@@ -119,13 +119,15 @@ git -C "$root" ls-files > "$tracked" || die "git ls-files не сработал 
 while IFS= read -r path; do
     [ -n "$path" ] || continue
     case $path in
-        bin/*|listik/*|alembic/*|VERSION|routes.json|config.example.toml|alembic.ini|README.md|docs/API.md|AGENTS.md|docs/harness-protocol.md|install.sh)
+        swarm/test/*)
+            ;;
+        bin/*|listik/*|swarm/*|alembic/*|VERSION|routes.json|config.example.toml|alembic.ini|README.md|docs/API.md|AGENTS.md|docs/harness-protocol.md|install.sh)
             printf '%s\n' "$path" >> "$selected"
             ;;
     esac
 done < "$tracked"
 
-for dir in bin listik alembic; do
+for dir in bin listik swarm alembic; do
     grep -q "^$dir/" "$tracked" ||
         die "в git нет ни одного файла под $dir/ — релиз неполный"
 done

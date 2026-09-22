@@ -127,6 +127,25 @@ def _launchd_target(label: str = LABEL) -> str:
     return f"gui/{os.getuid()}/{label}"
 
 
+def _wait_launchd_gone(target: str, timeout: float = 10.0) -> bool:
+    """Дождаться, пока `bootout` уберёт сервис из домена.
+
+    `launchctl bootout` возвращается сразу, а сервис с KeepAlive ещё ~0.1 с
+    снимается; `bootstrap` в это окно отвечает кодом 5 (EIO). Опрашиваем
+    `launchctl print`, пока сервис не перестанет находиться. True — сервис
+    был в домене (и исчез или не дождались); False — его там сразу не было.
+    """
+    deadline = time.monotonic() + timeout
+    seen = False
+    while time.monotonic() < deadline:
+        code, _ = run(["launchctl", "print", target])
+        if code != 0:
+            return seen
+        seen = True
+        time.sleep(0.05)
+    return seen
+
+
 def _remove_legacy_unit(*, unload: bool) -> bool:
     """Выгрузить и удалить старый launchd-плист, если он остался."""
     path = _legacy_unit_path("launchd")
@@ -338,6 +357,10 @@ def install(bin_arg: str | None, no_load: bool, stop: bool = False) -> dict:
         if plat == "launchd":
             run(["launchctl", "bootout", _launchd_target()])  # ошибка игнорируется
             code, out = run(["launchctl", "bootstrap", f"gui/{os.getuid()}", str(path)])
+            if code != 0 and _wait_launchd_gone(_launchd_target()):
+                # bootstrap попал в окно асинхронного bootout (код 5, EIO) —
+                # сервис уже ушёл из домена, повторяем.
+                code, out = run(["launchctl", "bootstrap", f"gui/{os.getuid()}", str(path)])
             if code != 0:
                 _raise_runner_failed("launchctl bootstrap", code, out)
         else:

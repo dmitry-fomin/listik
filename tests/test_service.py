@@ -159,6 +159,47 @@ class ServiceCliTestCase(unittest.TestCase):
         self.assertEqual(self.runner.calls[2][2], f"gui/{os.getuid()}")
         self.assertEqual(self.runner.calls[2][3], str(self.launchd_unit()))
 
+    def test_darwin_install_retries_bootstrap_while_bootout_in_flight(self) -> None:
+        """bootout асинхронен: bootstrap падает кодом 5, пока сервис ещё в домене."""
+        calls: list[list[str]] = []
+        state = {"prints": 0, "bootstraps": 0}
+
+        def runner(argv: list[str]) -> tuple[int, str]:
+            calls.append(list(argv))
+            if argv[:2] == ["launchctl", "bootstrap"]:
+                state["bootstraps"] += 1
+                if state["bootstraps"] == 1:
+                    return 5, "Bootstrap failed: 5: Input/output error"
+                return 0, ""
+            if argv[:2] == ["launchctl", "print"]:
+                state["prints"] += 1
+                # is_loaded плюс два опроса ожидания «ещё в домене», затем «ушёл».
+                return (0, "") if state["prints"] <= 3 else (1, "")
+            return 0, ""
+
+        self._enter(mock.patch.object(service, "run", runner))
+        code, out = self.run_cli("install", "--bin", str(self.make_bin()))
+        self.assertEqual(code, 0, out)
+        self.assertEqual(state["bootstraps"], 2, calls)
+
+    def test_darwin_install_bootstrap_failure_without_loaded_service_fails(self) -> None:
+        """Падение bootstrap не по гонке bootout (сервиса в домене нет) — не ретраим."""
+        calls: list[list[str]] = []
+
+        def runner(argv: list[str]) -> tuple[int, str]:
+            calls.append(list(argv))
+            if argv[:2] == ["launchctl", "bootstrap"]:
+                return 1, "Bootstrap failed: 1: Operation not permitted"
+            if argv[:2] == ["launchctl", "print"]:
+                return 1, "Could not find service"
+            return 0, ""
+
+        self._enter(mock.patch.object(service, "run", runner))
+        code, out = self.run_cli("install", "--bin", str(self.make_bin()))
+        self.assertNotEqual(code, 0, out)
+        bootstraps = [c for c in calls if c[:2] == ["launchctl", "bootstrap"]]
+        self.assertEqual(len(bootstraps), 1, calls)
+
     def test_darwin_install_migrates_legacy_plist(self) -> None:
         legacy = self.legacy_launchd_unit()
         legacy.parent.mkdir(parents=True, exist_ok=True)

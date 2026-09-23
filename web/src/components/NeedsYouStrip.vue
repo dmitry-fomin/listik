@@ -20,6 +20,7 @@ import type { Task } from '@/api/types'
 import { taskHealth } from '@/lib/health'
 import { stageCode } from '@/lib/stages'
 import { humanAge } from '@/lib/format'
+import { markdownPlainText } from '@/lib/markdown'
 import { projectOf } from '@/lib/task-presentation'
 
 const props = defineProps<{
@@ -89,13 +90,15 @@ function reasonText(task: Task): string {
   const branch = branchOf(task)
   const code = stageCode(task.stage) ?? '—'
   if (branch === 'needs_owner') {
+    // Вопрос и заметка держателя — пользовательский markdown; в двухстрочном
+    // превью рендерим их плоским текстом без сырых `**`/кавычек.
     const question = store.inboxQuestions.value[task.id]
-    if (question) return question
-    return task.holder_note || 'вопрос без текста — откройте карточку'
+    if (question) return markdownPlainText(question)
+    return markdownPlainText(task.holder_note) || 'вопрос без текста — откройте карточку'
   }
   if (branch === 'dead') {
     if (task.holder) {
-      const note = task.holder_note
+      const note = markdownPlainText(task.holder_note)
       const base = `держатель ${task.holder_title} замолчал на ${code} без heartbeat`
       return note ? `${base}; последняя заметка: «${note}»` : base
     }

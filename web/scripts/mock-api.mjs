@@ -609,6 +609,37 @@ const MARKDOWN_DESCRIPTION = [
   '<script>alert(1)</script>',
 ].join('\n')
 
+/**
+ * Комментарии `listik-markdown-case` (`--markdown`): жирный, инлайн-код,
+ * маркированный список и вложенный ответ с кодом — по ним verify-markdown
+ * проверяет, что лента «Журнал и вердикты» рендерит markdown, а не сырой
+ * текст. Тексты не содержат `##`, `- ` в начале строки и тройных кавычек вне
+ * целевых конструкций — как и MARKDOWN_DESCRIPTION.
+ */
+const MARKDOWN_COMMENTS = [
+  {
+    id: 10,
+    author: 'agent:dsh',
+    kind: 'journal',
+    text: '**Итог проверки:** перенесено, см. `docs/tasks/decision.md`.\n\n- первый пункт журнала\n- второй пункт журнала',
+    created_at: iso(4),
+  },
+  {
+    id: 11,
+    author: 'agent:dsh',
+    kind: 'question',
+    text: 'Переносить ли **MobileDetect**?',
+    created_at: iso(3),
+  },
+  {
+    id: 12,
+    author: 'me',
+    kind: 'answer',
+    text: 'не переносить — `as-is` остаётся',
+    created_at: iso(2),
+  },
+]
+
 if (markdownMode) {
   tasks.push(
     task({
@@ -1033,6 +1064,7 @@ function details(id) {
     deps_state: depsStateOf(id),
     comments: [
       ...(extraComments.get(id) ?? []),
+      ...(markdownMode && id === 'listik-markdown-case' ? MARKDOWN_COMMENTS : []),
       { id: 1, author: 'agent:dsh', kind: 'journal', text: 'взял в работу', created_at: iso(2) },
       { id: 2, author: 'me', kind: 'verdict', text: 'ок, собирай', created_at: iso(1) },
     ],

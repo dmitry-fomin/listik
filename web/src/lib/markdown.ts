@@ -179,3 +179,17 @@ export function renderMarkdown(source: string | null | undefined): string {
   }
   return html
 }
+
+/**
+ * Тот же рендер, но обратно в плоский текст — для компактных превью
+ * (инбокс «Ты нужен»), где блочная разметка не помещается, а сырые `**`/
+ * обратные кавычки показывать не хочется. Теги снимаются через detached-элемент:
+ * вход уже экранирован `renderMarkdown`, исполнять там нечего.
+ */
+export function markdownPlainText(source: string | null | undefined): string {
+  const html = renderMarkdown(source)
+  if (!html) return ''
+  const el = document.createElement('div')
+  el.innerHTML = html
+  return (el.textContent ?? '').replace(/\s+/g, ' ').trim()
+}

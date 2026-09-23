@@ -12,7 +12,10 @@
  * Все кейсы ограничены поддеревом секции описания: корень — `<section
  * class="listik-section">` панели задачи с заголовком «Описание · ТЗ», а внутри
  * него markdown-контейнер `.listik-prose--markdown` (снято шагом 0 с реального
- * рендера). Поиск узлов идёт от этого корня, не от `document`.
+ * рендера). Поиск узлов идёт от этого корня, не от `document`. Отдельная
+ * группа кейсов (`лента: …`) ограничена секцией «Журнал и вердикты»: тексты
+ * комментариев, вложенный ответ и закреплённый вопрос должны рендериться тем же
+ * markdown-контейнером.
  *
  * Запуск: node scripts/verify-markdown.mjs [url]
  *   Без аргумента сам поднимает мок и статику — нужен собранный `web/dist`
@@ -95,6 +98,30 @@ const DESCRIPTION_STATE = `(() => {
     links: [...scope.querySelectorAll('a')].map((el) => ({ text: textOf(el), href: el.getAttribute('href') })),
     scripts: scope.querySelectorAll('script').length,
     innerText: scope.innerText,
+  };
+})()`
+
+/**
+ * Снимок секции «Журнал и вердикты»: markdown-контейнеры комментариев
+ * (`.listik-feed-row__text` и текст вложенного ответа — MarkdownProse) и
+ * видимый текст секции целиком.
+ */
+const FEED_STATE = `(() => {
+  const sections = [...document.querySelectorAll('.ui-drawer .listik-section')];
+  const root = sections.find((s) => s.querySelector('h4.listik-section__title')?.textContent.trim() === 'Журнал и вердикты');
+  if (!root) {
+    return { found: false, titles: sections.map((s) => s.querySelector('h4.listik-section__title')?.textContent?.trim() ?? null) };
+  }
+  const textOf = (el) => (el?.textContent ?? '').replace(/\\s+/g, ' ').trim();
+  const itemsOf = (list) => [...list.children].filter((el) => el.tagName === 'LI').map(textOf);
+  return {
+    found: true,
+    proseCount: root.querySelectorAll('.listik-feed-row .listik-prose--markdown, .listik-feed-answer .listik-prose--markdown').length,
+    strongs: [...root.querySelectorAll('.listik-prose--markdown strong')].map(textOf),
+    codes: [...root.querySelectorAll('.listik-prose--markdown code')].map(textOf),
+    uls: [...root.querySelectorAll('.listik-prose--markdown ul')].map(itemsOf),
+    answerMarkdown: Boolean(root.querySelector('.listik-feed-answer .listik-prose--markdown')),
+    innerText: root.innerText,
   };
 })()`
 
@@ -274,6 +301,74 @@ try {
       ok: Object.values(checks).every(Boolean),
       expect: `нет <script>, нет диалога alert, видно текстом «${EXPECT.escaped}»`,
       got: { checks, scripts: seen.scripts, dialogs, visible: seen.innerText.includes(EXPECT.escaped) },
+    }
+  })
+
+  const feed = () => evaluate(FEED_STATE)
+
+  await record('лента: секция найдена', async () => {
+    const seen = await feed()
+    return {
+      ok: Boolean(seen.found),
+      expect: 'секция «Журнал и вердикты» в панели задачи',
+      got: seen.found ? 'найдена' : seen,
+    }
+  })
+
+  await record('лента: комментарии — markdown-контейнеры', async () => {
+    const seen = await feed()
+    return {
+      ok: seen.proseCount === 5,
+      expect: '5 записей ленты-комментариев с .listik-prose--markdown (3 фикстурных + 2 стандартных)',
+      got: { proseCount: seen.proseCount },
+    }
+  })
+
+  await record('лента: жирный и инлайн-код', async () => {
+    const seen = await feed()
+    const checks = {
+      'strong «Итог проверки:»': seen.strongs.includes('Итог проверки:'),
+      'strong «MobileDetect»': seen.strongs.includes('MobileDetect'),
+      'code «docs/tasks/decision.md»': seen.codes.includes('docs/tasks/decision.md'),
+      'code «as-is»': seen.codes.includes('as-is'),
+    }
+    return {
+      ok: Object.values(checks).every(Boolean),
+      expect: 'в комментариях <strong> и <code> вместо ** и обратных кавычек',
+      got: { checks, strongs: seen.strongs, codes: seen.codes },
+    }
+  })
+
+  await record('лента: маркированный список', async () => {
+    const seen = await feed()
+    const expected = ['первый пункт журнала', 'второй пункт журнала']
+    return {
+      ok: seen.uls.some((items) => JSON.stringify(items) === JSON.stringify(expected)),
+      expect: `<ul><li>${expected.join('</li><li>')}</li></ul>`,
+      got: seen.uls,
+    }
+  })
+
+  await record('лента: вложенный ответ — markdown', async () => {
+    const seen = await feed()
+    return {
+      ok: Boolean(seen.answerMarkdown),
+      expect: 'внутри .listik-feed-answer есть .listik-prose--markdown',
+      got: { answerMarkdown: seen.answerMarkdown },
+    }
+  })
+
+  await record('лента: сырой разметки не осталось', async () => {
+    const seen = await feed()
+    const checks = {
+      'нет **': !seen.innerText.includes('**'),
+      'нет обратных кавычек': !seen.innerText.includes('`'),
+      'нет строк с - в начале': rawBulletLines(seen.innerText).length === 0,
+    }
+    return {
+      ok: Object.values(checks).every(Boolean),
+      expect: 'в видимом тексте ленты нет **, обратных кавычек и строк «- »',
+      got: { checks, innerText: seen.innerText },
     }
   })
 

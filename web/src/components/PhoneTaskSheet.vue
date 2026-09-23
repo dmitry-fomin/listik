@@ -182,7 +182,13 @@ const journalItems = computed<UiTimelineItem[]>(() => {
               <UiBadge tone="neutral" size="sm">{{ task.comments.length }}</UiBadge>
             </h4>
           </div>
-          <UiTimeline :items="journalItems" dense empty-title="Записей нет" />
+          <UiTimeline :items="journalItems" dense empty-title="Записей нет">
+            <!-- Текст комментария — markdown: тот же MarkdownProse, что у
+                 «Последнего review» выше и ленты десктопной панели. -->
+            <template #content="{ item }">
+              <MarkdownProse :text="item.description" />
+            </template>
+          </UiTimeline>
         </section>
       </div>
     </div>

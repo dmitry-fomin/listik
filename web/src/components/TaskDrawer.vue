@@ -814,6 +814,11 @@ interface FeedRow extends UiTimelineItem {
   marker: FeedMarker
   authorLine?: string
   text?: string
+  /**
+   * `text` — пользовательский markdown (комментарий) и рендерится через
+   * MarkdownProse; без флага это служебная строка события — обычный `<p>`.
+   */
+  markdown?: boolean
   subtext?: string
   answer: FeedAnswer | null
   sortKey: string
@@ -849,6 +854,7 @@ function commentRow(comment: TaskComment, answer: TaskComment | null): FeedRow {
     marker: commentMark(comment.kind, comment.text),
     authorLine: `${comment.author || 'без автора'} · ${commentTime(comment.created_at)}`,
     text: comment.text,
+    markdown: true,
     answer: answer ? answerRow(answer) : null,
     sortKey: datetimeAttr(comment.created_at) ?? '',
   }
@@ -1426,7 +1432,7 @@ async function loadTree(): Promise<void> {
             <span class="listik-feed-pinned__title">ждёт ответа</span>
             <span class="listik-feed-pinned__meta tnum">{{ pinnedAuthor }} · {{ pinnedAge }}</span>
           </div>
-          <p class="listik-feed-pinned__text">{{ pinnedText }}</p>
+          <MarkdownProse :text="pinnedText" class="listik-feed-pinned__text" />
           <div class="listik-feed-pinned__reply">
             <UiInput
               ref="pinnedAnswerRef"
@@ -1461,7 +1467,12 @@ async function loadTree(): Promise<void> {
           <template #content="{ item }">
             <div class="listik-feed-row">
               <span v-if="asFeedRow(item).authorLine" class="listik-feed-row__meta tnum">{{ asFeedRow(item).authorLine }}</span>
-              <p v-if="asFeedRow(item).text" class="listik-feed-row__text">{{ asFeedRow(item).text }}</p>
+              <MarkdownProse
+                v-if="asFeedRow(item).text && asFeedRow(item).markdown"
+                :text="asFeedRow(item).text"
+                class="listik-feed-row__text"
+              />
+              <p v-else-if="asFeedRow(item).text" class="listik-feed-row__text">{{ asFeedRow(item).text }}</p>
               <p v-if="asFeedRow(item).subtext" class="listik-feed-row__subtext">{{ asFeedRow(item).subtext }}</p>
             </div>
             <div v-if="asFeedRow(item).answer" class="listik-feed-answer">
@@ -1474,7 +1485,7 @@ async function loadTree(): Promise<void> {
               </span>
               <div class="listik-feed-row">
                 <span class="listik-feed-row__meta tnum">{{ asFeedRow(item).answer!.author }} · {{ asFeedRow(item).answer!.time }}</span>
-                <p class="listik-feed-row__text">{{ asFeedRow(item).answer!.text }}</p>
+                <MarkdownProse :text="asFeedRow(item).answer!.text" class="listik-feed-row__text" />
               </div>
             </div>
           </template>

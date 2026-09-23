@@ -8,7 +8,7 @@ import {execFileSync} from "node:child_process";
 import {Listik} from "../listik.mjs";
 import {tick} from "../run.mjs";
 import {open as openLog} from "../log.mjs";
-import {questionReason, waitingLine} from "../main.mjs";
+import {acquireProjectLock, questionReason, waitingLine} from "../main.mjs";
 
 // `git` может отсутствовать на машине судьи — тогда блок watch+barrier пропускается целиком.
 let gitAvailable = true;
@@ -771,7 +771,8 @@ test("main: карточка needs_owner true с «рой: процесс зад
   process.stdout.write = (chunk, ...rest) => { chunks.push(String(chunk)); return true; };
   let code;
   try {
-    code = await main(["--project", "proj", "--listik", FAKE_BIN, "--log-dir", logDir, "--interval", "1"]);
+    code = await main(["--project", "proj", "--listik", FAKE_BIN, "--log-dir", logDir,
+      "--interval", "1", "--exit-when-idle"]);
   } finally {
     process.stdout.write = origWrite;
   }
@@ -780,6 +781,53 @@ test("main: карточка needs_owner true с «рой: процесс зад
   const logPath = chunks[0].trim();
   const logText = fs.readFileSync(logPath, "utf8");
   assert.match(logText, /a — упала/);
+});
+
+test("main: без --exit-when-idle ждёт и запускает, когда карточка стала готова", {timeout: 15000}, async () => {
+  const plan = {project: "proj", waves: [["a"]], cycles: [], unroutable: [], unscoped: [], blocked: {}};
+  const routes = [{key: "r-a", icon: "low"}];
+  const waiting = task("a", {needs_owner: true});
+  const ready = task("a");
+  const responses = {
+    status: statusUp,
+    projects: {stdout: JSON.stringify([{slug: "proj", path: ""}])},
+    waves: {stdout: JSON.stringify({waves: plan, added: [], removed: [], kept: 0})},
+    list: [
+      {stdout: JSON.stringify({total: 1, limit: 1000, offset: 0, tasks: [waiting]})},
+      {stdout: JSON.stringify({total: 1, limit: 1000, offset: 0, tasks: [ready]})},
+    ],
+    routes: {stdout: JSON.stringify({ok: true, routes})},
+    show: {stdout: JSON.stringify({id: "a", comments: [{
+      author: "agent:listik-swarm", kind: "question",
+      text: "рой: у задачи нет write_scope — какие файлы она правит?",
+      created_at: "2026-01-01T00:00:00Z",
+    }]})},
+    worktree: {stdout: JSON.stringify({path: "/wt/a", branch: "b", status: "created"})},
+    set: {stdout: JSON.stringify({id: "a", labels: []})},
+    launch: {stdout: JSON.stringify({id: "a", generation: 1})},
+  };
+  const {calls} = setupFake(responses);
+  const logDir = fs.mkdtempSync(path.join(os.tmpdir(), "listik-swarm-stay-"));
+  const {code, chunks} = await runMain(mainArgv(logDir, ["--max-launches", "1"]));
+  assert.equal(code, 5);
+  assert.equal(calls().filter(c => c.sub === "launch").length, 1);
+  const logText = fs.readFileSync(chunks[0].trim(), "utf8");
+  assert.match(logText, /жду: запустить нечего, открыто 1/);
+  assert.match(logText, /a — без области/);
+  assert.ok(!logText.includes("итог: закрыто"));
+});
+
+test("acquireProjectLock: живой pid отказывает, мёртвый забирается", () => {
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), "listik-swarm-lock-"));
+  const release = acquireProjectLock(dir, "proj");
+  assert.throws(() => acquireProjectLock(dir, "proj"), /уже запущен/);
+  release();
+  const lockPath = path.join(dir, "swarm-proj.pid");
+  fs.writeFileSync(lockPath, "99999999\n");
+  const releaseStale = acquireProjectLock(dir, "proj");
+  assert.equal(fs.readFileSync(lockPath, "utf8").trim(), String(process.pid));
+  releaseStale();
+  assert.equal(fs.existsSync(lockPath), false);
 });
 
 // --- порция c: наблюдатель (watch) + барьер (runBarrier) внутри тика ---
@@ -2101,7 +2149,8 @@ gitTest("предел (и): main на двух тиках — код 2, один
     const {calls} = setupFake(responses);
     const logDir = fs.mkdtempSync(path.join(os.tmpdir(), "listik-swarm-rollback-main-"));
     const {code, chunks} = await runMain(
-      ["--project", "proj", "--listik", FAKE_BIN, "--log-dir", logDir, "--interval", "1"]);
+      ["--project", "proj", "--listik", FAKE_BIN, "--log-dir", logDir, "--interval", "1",
+        "--exit-when-idle"]);
     assert.equal(code, 2);
     const parks = calls().filter(c => c.sub === "needs-owner");
     assert.equal(parks.length, 1);

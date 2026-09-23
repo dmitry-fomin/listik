@@ -21,6 +21,7 @@ const OPTIONS = {
   "port-count": {type: "string"},
   interval: {type: "string"},
   once: {type: "boolean"},
+  "exit-when-idle": {type: "boolean"},
   "dry-run": {type: "boolean"},
   listik: {type: "string"},
   "listik-host": {type: "string"},
@@ -47,6 +48,7 @@ export const HELP_TEXT = `listik-swarm — каркас роя: план, needs-
   --port-count <N>            размер диапазона портов (по умолчанию 100)
   --interval <сек>            пауза между тиками (по умолчанию 30)
   --once                      один тик и выход
+  --exit-when-idle            выйти, когда запустить нечего (код 0 или 2); без флага рой остаётся и ждёт
   --dry-run                   один тик без записи, только план и намерения
   --listik <путь или имя>     бинарь listik (по умолчанию "listik" из PATH)
   --listik-host <host>        --host для вызовов listik
@@ -135,6 +137,7 @@ export function parseConfig(argv) {
     portCount: values["port-count"] !== undefined ? parseNumber("port-count", values["port-count"]) : 100,
     interval: values.interval !== undefined ? parseNumber("interval", values.interval) : 30,
     once: !!values.once,
+    exitWhenIdle: !!values["exit-when-idle"],
     dryRun: !!values["dry-run"],
     listikBin: values.listik ?? "listik",
     listikHost: values["listik-host"],

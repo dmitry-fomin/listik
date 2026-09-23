@@ -174,7 +174,7 @@ class WavesTests(TempDbTestCase):
         self.assertEqual(result["blocked"], {b: a})
 
     def test_unscoped(self) -> None:
-        a = _task(self.conn, "a", scope=(), priority=0)
+        a = _task(self.conn, "a", scope=(), priority=0, stage="s3-impl")
         b = _task(self.conn, "b", scope=("pkg/b.py",), priority=1)
         c = _task(self.conn, "c", scope=("pkg/c.py",), priority=2)
         store.add_dep(self.conn, b, a, "blocks")
@@ -183,6 +183,16 @@ class WavesTests(TempDbTestCase):
         self.assertEqual(result["unscoped"], [a])
         self.assertEqual(result["blocked"], {b: a})
         self.assertNotIn(a, result["unroutable"])
+
+    def test_spec_and_review_need_no_write_scope(self) -> None:
+        spec = _task(self.conn, "spec", scope=(), priority=0, stage="s1-spec")
+        fresh = _task(self.conn, "fresh", scope=(), priority=1)
+        review = _task(self.conn, "review", scope=(), priority=2, stage="s2-review")
+        impl = _task(self.conn, "impl", scope=(), priority=3, stage="s3-impl")
+        judge = _task(self.conn, "judge", scope=(), priority=4, stage="s4-judge")
+        result = deps.waves(self.conn, project="demo")
+        self.assertEqual(result["waves"], [[spec, fresh, review]])
+        self.assertEqual(result["unscoped"], [impl, judge])
 
     def test_unroutable_and_unscoped(self) -> None:
         a = _no_route(self.conn, "a", priority=0, scope=())

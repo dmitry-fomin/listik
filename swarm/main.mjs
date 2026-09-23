@@ -2,6 +2,10 @@
 // заново из Listik субпроцессами `listik … --json` и решает жадно по правилам
 // (`decide.mjs`), поэтому не хранит состояния между запусками — падение
 // переживается перезапуском, повторный тик ничего не задваивает.
+// Без `--exit-when-idle` процесс не завершается, когда запустить нечего:
+// спит `--interval` и читает доску снова.
+import fs from "node:fs";
+import path from "node:path";
 import {parseConfig, ConfigError, HelpRequested} from "./config.mjs";
 import {isSoftQuestion} from "./decide.mjs";
 import {Listik} from "./listik.mjs";
@@ -89,6 +93,66 @@ function spentShown(n) {
   return String(Math.round(n * 10) / 10);
 }
 
+function readLockPid(lockPath) {
+  try {
+    const pid = Number(fs.readFileSync(lockPath, "utf8").trim());
+    return Number.isInteger(pid) && pid > 0 ? pid : null;
+  } catch {
+    return null;
+  }
+}
+
+function pidAlive(pid) {
+  try {
+    process.kill(pid, 0);
+    return true;
+  } catch (err) {
+    return err.code === "EPERM";
+  }
+}
+
+// Один рой на проект в каталоге логов. Мёртвый pid в файле — чужой прошлый
+// прогон, файл забираем. Живой — отказ, чтобы два тика не запустили одну карточку.
+export function acquireProjectLock(logDir, project) {
+  fs.mkdirSync(logDir, {recursive: true});
+  const lockPath = path.join(logDir, `swarm-${project}.pid`);
+  for (let attempt = 0; attempt < 2; attempt++) {
+    try {
+      const fd = fs.openSync(lockPath, "wx");
+      try {
+        fs.writeSync(fd, `${process.pid}\n`);
+      } finally {
+        fs.closeSync(fd);
+      }
+      return () => {
+        try {
+          if (readLockPid(lockPath) === process.pid) fs.unlinkSync(lockPath);
+        } catch {
+          // файл уже снят
+        }
+      };
+    } catch (err) {
+      if (err.code !== "EEXIST") throw err;
+      const owner = readLockPid(lockPath);
+      if (owner != null && pidAlive(owner)) {
+        throw new ConfigError(
+          `рой проекта ${project} уже запущен (pid ${owner}, ${lockPath})`);
+      }
+      try {
+        fs.unlinkSync(lockPath);
+      } catch (unlinkErr) {
+        if (unlinkErr.code !== "ENOENT") throw unlinkErr;
+      }
+    }
+  }
+  throw new ConfigError(`рой проекта ${project}: не удалось занять ${lockPath}`);
+}
+
+function idleSignature(result) {
+  const ids = (list) => (list || []).slice().sort().join(",");
+  return `${ids(result.open)}|${ids(result.needsOwnerOpen)}`;
+}
+
 export async function main(argv) {
   let config;
   try {
@@ -106,8 +170,25 @@ export async function main(argv) {
   }
 
   const log = openLog(config.logDir, config.project);
+  process.stdout.on("error", (err) => {
+    if (err.code !== "EPIPE") throw err;
+  });
   process.stdout.write(`${log.path}\n`);
   log.line(configLine(config));
+
+  let releaseLock = () => {};
+  if (!config.dryRun) {
+    try {
+      releaseLock = acquireProjectLock(config.logDir, config.project);
+    } catch (err) {
+      if (err instanceof ConfigError) {
+        process.stderr.write(`${err.message}\n`);
+        log.line(err.message);
+        return 2;
+      }
+      throw err;
+    }
+  }
 
   const listik = new Listik({
     bin: config.listikBin,
@@ -124,9 +205,14 @@ export async function main(argv) {
   };
   process.once("SIGINT", onSignal("SIGINT", 130));
   process.once("SIGTERM", onSignal("SIGTERM", 143));
+  const onHangup = () => {
+    log.line("SIGHUP — терминал закрыт, рой продолжает");
+  };
+  process.on("SIGHUP", onHangup);
 
   const runState = {startedAt: new Date(), launches: 0};
 
+  try {
   if (config.once || config.dryRun) {
     const result = await runOneTick(listik, config, log, runState);
     if (signalExit != null) return signalExit;
@@ -140,6 +226,7 @@ export async function main(argv) {
   let totalRestarts = 0;
   let totalRollbacks = 0;
   let totalRollbackMinutes = 0;
+  let lastIdle = null;
   const parkedIds = new Set();
 
   for (;;) {
@@ -184,19 +271,40 @@ export async function main(argv) {
 
     if (launchedNone && restartedNone && runningEmpty) {
       const openList = result.open || [];
-      if (openList.length === 0) return 0;
-      await reportWaiting(listik, config, log, result);
-      const lastOpen = new Set(openList);
-      const closed = firstOpen.filter(id => !lastOpen.has(id));
-      const leftToHuman = (result.needsOwnerOpen || []).length;
-      log.line(`итог: закрыто ${closed.length} (${closed.join(", ")}), ` +
-        `перезапусков ${totalRestarts}, откатов ${totalRollbacks} ` +
-        `(на откаты ${totalRollbackMinutes} мин), по пределу ${parkedIds.size} ` +
-        `(${[...parkedIds].join(", ")}), оставлено человеку ${leftToHuman}`);
-      return 2;
+      if (config.exitWhenIdle) {
+        if (openList.length === 0) return 0;
+        await reportWaiting(listik, config, log, result);
+        const lastOpen = new Set(openList);
+        const closed = firstOpen.filter(id => !lastOpen.has(id));
+        const leftToHuman = (result.needsOwnerOpen || []).length;
+        log.line(`итог: закрыто ${closed.length} (${closed.join(", ")}), ` +
+          `перезапусков ${totalRestarts}, откатов ${totalRollbacks} ` +
+          `(на откаты ${totalRollbackMinutes} мин), по пределу ${parkedIds.size} ` +
+          `(${[...parkedIds].join(", ")}), оставлено человеку ${leftToHuman}`);
+        return 2;
+      }
+      const sig = idleSignature(result);
+      if (sig !== lastIdle) {
+        lastIdle = sig;
+        if (openList.length === 0) {
+          log.line(`жду: открытых задач нет, следующий тик через ${config.interval} с`);
+        } else {
+          await reportWaiting(listik, config, log, result);
+          log.line(`жду: запустить нечего, открыто ${openList.length}, ` +
+            `следующий тик через ${config.interval} с`);
+        }
+      }
+      await sleep(config.interval * 1000);
+      if (signalExit != null) return signalExit;
+      continue;
     }
+    lastIdle = null;
 
     await sleep(config.interval * 1000);
     if (signalExit != null) return signalExit;
+  }
+  } finally {
+    process.removeListener("SIGHUP", onHangup);
+    releaseLock();
   }
 }

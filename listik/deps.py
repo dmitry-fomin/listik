@@ -762,8 +762,10 @@ def waves(conn: sqlite3.Connection, *, project: str, stage: str | None = None) -
     рёбра (`SEMANTIC_HARD`); области — нормализованные пути с покрытием по
     каталогу (`scope.covers`); ключ дерева — только у пишущих этапов
     (`''`/`s3-impl`/`s4-judge`) с непустым `worktree`; пустой `write_scope`
-    уводит задачу в `unscoped`, а не в ошибку валидации; `failed` не
-    моделируется — задача с упавшим воркером просто остаётся открытой.
+    уводит в `unscoped` только разработку и приёмку (`s3-impl`/`s4-judge`).
+    Старт ТЗ (пустой этап и `s1-spec`) и критика (`s2-review`) область не
+    пишут и в волну входят без неё. `failed` не моделируется — задача с
+    упавшим воркером просто остаётся открытой.
     """
     from . import scope as scope_mod
     from . import store
@@ -801,7 +803,10 @@ def waves(conn: sqlite3.Connection, *, project: str, stage: str | None = None) -
             unroutable.append(tid)
             continue
         ws = store_helpers.json_list(row["write_scope"])
-        if not ws:
+        # ТЗ и критика файлов не правят. Область нужна, чтобы развести
+        # одновременную разработку и приёмку.
+        stage_v = (row["stage"] or "").strip()
+        if stage_v not in ("", "s1-spec", "s2-review") and not ws:
             unscoped.append(tid)
             continue
         write_scopes[tid] = ws

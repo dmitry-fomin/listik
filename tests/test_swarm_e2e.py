@@ -197,7 +197,8 @@ class SwarmE2ECase(AutostartTestCase, FencingHttpCase):
                 "--listik-host", "127.0.0.1", "--listik-port", str(self.port),
                 "--parallel", str(parallel), "--interval", str(interval),
                 "--log-dir", str(self.swarm_log_dir),
-                "--port-base", "5170", "--port-count", "10"]
+                "--port-base", "5170", "--port-count", "10",
+                "--exit-when-idle"]
         if stale_minutes is not None:
             args += ["--stale-minutes", str(stale_minutes)]
         if max_restarts is not None:
@@ -344,6 +345,9 @@ class WaveToCompletionTests(SwarmE2ECase):
         c = self.make_scenario_task("C", route="fake-low", write_scope=["c/"])
         d = self.make_scenario_task("D", route=None, write_scope=["d/"])
         e = self.make_scenario_task("E", route="fake-low", write_scope=None)
+        # Пустой этап и s1/s2 идут без области. Без области остаётся разработка.
+        self.conn.execute("UPDATE tasks SET stage = 's3-impl' WHERE id = ?", (e["id"],))
+        self.conn.commit()
         store.add_dep(self.conn, c["id"], a["id"], dep_type="blocks", created_by="dmitry")
         # Без явного `integration` барьер (listik-dzf0) после первого же слияния ставит
         # карточку-стоп и останавливает волну -- явный зелёный список делает интеграцию

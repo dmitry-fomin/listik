@@ -11,6 +11,7 @@ test("дефолты", () => {
   assert.equal(config.portBase, 5170);
   assert.equal(config.portCount, 100);
   assert.equal(config.interval, 30);
+  assert.equal(config.exitWhenIdle, false);
   assert.equal(config.actor, "agent:listik-swarm");
   assert.deepEqual(config.weights, {xhigh: 3, high: 2, medium: 1, low: 1, xlow: 1, direct: 1});
 });
@@ -46,6 +47,8 @@ test("бюджет: дефолты 0, разбор флагов, ошибки в
 
   assert.match(HELP_TEXT, /--budget-minutes/);
   assert.match(HELP_TEXT, /--max-launches/);
+  assert.match(HELP_TEXT, /--exit-when-idle/);
+  assert.equal(parseConfig(["--project", "p", "--exit-when-idle"]).exitWhenIdle, true);
 });
 
 test("без --project — ошибка", () => {

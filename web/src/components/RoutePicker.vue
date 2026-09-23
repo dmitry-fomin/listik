@@ -4,10 +4,8 @@
  * `docs/prototype/NewTaskRoutes-html/NewTaskRoutes.dc.html`, listik-2gry):
  * «Конвейеры» (таблица пресетов: иконка уровня + роли), «Рой» (строки с
  * цепочкой харнессов этапов, пропущенный этап — пунктир) и «Прямая выдача»
- * (одна карточка-строка на харнесс). У групп «Рой» и «Прямая выдача» в
- * заголовке — кнопка «＋» заведения нового маршрута (событие `create`,
- * само окно — у вызывающей стороны); у «Конвейеров» кнопка приглушена —
- * конвейер приходит из plugins/ сам, из доски его не завести.
+ * (одна карточка-строка на харнесс). Заведение нового маршрута отсюда
+ * убрано — оно живёт только в настройках «Маршруты».
  *
  * Тот же контрол в «Новой задаче» и в панели заведённой карточки: кит такого
  * поля не знает, записи приходят с `GET /api/routes`. Клик эмитит ключ —
@@ -43,21 +41,16 @@ const props = withDefaults(
     disabled?: boolean
     /** Пункт «без маршрута» — снять `launch_route` (только у заведённой задачи). */
     allowClear?: boolean
-    /** Показывать кнопки «＋» заведения маршрута в заголовках групп. */
-    allowCreate?: boolean
   }>(),
   {
     disabled: false,
     allowClear: false,
-    allowCreate: false,
   },
 )
 
 const emit = defineEmits<{
   /** Ключ записи или пустая строка («без маршрута»). */
   select: [key: string]
-  /** Кнопка «＋» в заголовке группы: завести маршрут этого вида. */
-  create: [kind: 'swarm' | 'direct']
 }>()
 
 const shownRoutes = computed(() => pickerRoutesOf(props.routes, props.selectedKey))
@@ -209,23 +202,13 @@ function onRouteKeydown(event: KeyboardEvent, key: string): void {
     :aria-disabled="disabled || undefined"
     :aria-busy="disabled || undefined"
   >
-    <!-- Группа «Конвейеры»: этапы ведёт claude внутри одного процесса, завести
-         конвейер из доски нельзя — кнопка приглушена, как в макете. -->
+    <!-- Группа «Конвейеры»: этапы ведёт claude внутри одного процесса;
+         конвейер приходит из plugins/ сам, из доски его не завести. -->
     <div class="listik-rgroup">
       <div class="listik-rgroup__head">
         <span class="listik-rgroup__title">Конвейеры</span>
         <span class="listik-rgroup__hint">этапы внутри одного процесса</span>
         <span class="listik-rgroup__spacer" aria-hidden="true" />
-        <button
-          v-if="allowCreate"
-          type="button"
-          class="listik-rgroup__add is-dim"
-          disabled
-          title="Конвейер появляется сам, когда в plugins/feature-pipeline/skills/ ляжет новый SKILL.md"
-        >
-          <ListikIcon name="plus" size="xs" />
-          конвейер…
-        </button>
       </div>
 
       <div class="listik-pipelines">
@@ -287,16 +270,6 @@ function onRouteKeydown(event: KeyboardEvent, key: string): void {
         <span class="listik-rgroup__title">Рой</span>
         <span class="listik-rgroup__hint">Listik водит карточку по этапам — на каждый отдельный харнесс</span>
         <span class="listik-rgroup__spacer" aria-hidden="true" />
-        <button
-          v-if="allowCreate"
-          type="button"
-          class="listik-rgroup__add"
-          title="Завести маршрут роя: выбрать исполнителя каждой роли"
-          @click="emit('create', 'swarm')"
-        >
-          <ListikIcon name="plus" size="xs" />
-          маршрут роя…
-        </button>
       </div>
 
       <button
@@ -341,16 +314,6 @@ function onRouteKeydown(event: KeyboardEvent, key: string): void {
         <span class="listik-rgroup__title">Прямая выдача</span>
         <span class="listik-rgroup__hint">одна команда на всю задачу, без этапов</span>
         <span class="listik-rgroup__spacer" aria-hidden="true" />
-        <button
-          v-if="allowCreate"
-          type="button"
-          class="listik-rgroup__add"
-          title="Завести прямой маршрут или новый харнесс"
-          @click="emit('create', 'direct')"
-        >
-          <ListikIcon name="plus" size="xs" />
-          харнесс…
-        </button>
       </div>
 
       <div class="listik-direct__items">
@@ -450,31 +413,6 @@ function onRouteKeydown(event: KeyboardEvent, key: string): void {
   flex: 1 1 auto;
 }
 
-/* Кнопка «＋» заведения: мелкая текстовая — в ките компактной кнопки-призмы
-   в заголовке нет, а `UiButton size="sm"` отвесил бы заголовку лишний рост. */
-.listik-rgroup__add {
-  display: inline-flex;
-  align-items: center;
-  gap: var(--space-1);
-  padding: 2px var(--space-2);
-  border: 1px solid var(--hairline);
-  border-radius: var(--radius-md);
-  background: transparent;
-  color: var(--ink-2);
-  font: inherit;
-  font-size: var(--text-xs);
-  cursor: pointer;
-}
-
-.listik-rgroup__add:hover {
-  background: var(--surface-2);
-}
-
-.listik-rgroup__add.is-dim {
-  color: var(--ink-3);
-  cursor: not-allowed;
-}
-
 /* Строка маршрута роя: имя, цепочка глифов этапов, мета и ключ. */
 .listik-rrow {
   display: flex;
@@ -496,11 +434,6 @@ function onRouteKeydown(event: KeyboardEvent, key: string): void {
 }
 
 .listik-rrow:focus-visible {
-  outline: none;
-  box-shadow: var(--focus-ring);
-}
-
-.listik-rgroup__add:focus-visible {
   outline: none;
   box-shadow: var(--focus-ring);
 }

@@ -540,9 +540,9 @@ try {
         filled.modalType === 'задача' &&
         filled.modalProject === 'Listik' &&
         filled.modalRoute === 'low-pipeline' &&
-        filled.modalAutostart === false &&
+        filled.modalAutostart === null &&
         after.modalRoute === 'low-pipeline',
-      expect: 'заполнены заголовок/описание/критерии, тип task, проект listik, маршрут low-pipeline, автостарт выключен; после смены типа маршрут не сброшен',
+      expect: 'заполнены заголовок/описание/критерии, тип task, проект listik, маршрут low-pipeline, галки автостарта нет; после смены типа маршрут не сброшен',
       got: {
         filled: {
           title: filled.modalTitle,

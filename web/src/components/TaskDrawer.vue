@@ -1266,7 +1266,7 @@ async function loadTree(): Promise<void> {
             пунктом «без маршрута» (вместе с маршрутом уезжают метки
             <span class="listik-mono">harness:</span>/<span class="listik-mono">process:</span>
             и ошибка автостарта); после начала работы сервер откажет. Сам маршрут ничего не
-            запускает: процесс поднимает только галочка «Автостарт» при создании.
+            запускает: карточку с маршрутом берёт рой.
           </p>
 
           <UiAlert v-if="task.launch_error" tone="warning">

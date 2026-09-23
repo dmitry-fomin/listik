@@ -19,7 +19,6 @@ import { computed, reactive, ref, watch } from 'vue'
 import {
   UiAlert,
   UiButton,
-  UiCheckbox,
   UiDrawer,
   UiField,
   UiInput,
@@ -33,8 +32,6 @@ import ListikIcon from '@/components/ListikIcon.vue'
 import AssistantField from '@/components/AssistantField.vue'
 import ProjectMark from '@/components/marks/ProjectMark.vue'
 import RoutePicker from '@/components/RoutePicker.vue'
-import NewDirectRouteModal from '@/components/NewDirectRouteModal.vue'
-import NewSwarmRouteModal from '@/components/NewSwarmRouteModal.vue'
 import TaskGlyph from '@/components/marks/TaskGlyph.vue'
 import { TASK_TYPES, priority } from '@/lib/dictionaries'
 import type {
@@ -114,14 +111,11 @@ const form = reactive(defaults())
 const submitted = ref(false)
 /** Пока false — маршрут следует умолчанию по типу (эпик → high, иначе low); ручной выбор это выключает. */
 const routeTouched = ref(false)
-/** Галочка «Автостарт»: доступна только при выбранном маршруте и живых данных маршрутов. */
-const autostart = ref(false)
 
 function resetForm(): void {
   Object.assign(form, defaults())
   submitted.value = false
   routeTouched.value = false
-  autostart.value = false
   applyDefaultRoute()
 }
 
@@ -303,29 +297,6 @@ function onPickRoute(key: string): void {
   if (route) selectRoute(route)
 }
 
-/*
- * Кнопки «＋» в заголовках групп пикера («Рой», «Прямая выдача») открывают
- * заведение маршрута прямо из «Новой задачи» (макет NewTaskRoutes). Созданная
- * запись уже в `store.routes` (стор перечитал список) — выбираем её сразу.
- */
-const createRouteKind = ref<'swarm' | 'direct' | null>(null)
-
-function onRouteCreated(route: RouteDef): void {
-  createRouteKind.value = null
-  if (routeAllowedForType(route, form.type)) {
-    routeTouched.value = true
-    form.routeKey = route.key
-  }
-}
-
-/** Галочка доступна, только когда маршрут выбран и данные маршрутов живые. */
-const autostartAvailable = computed(() => Boolean(selectedRoute.value) && !routesFailed.value)
-
-// Сняли маршрут, файл сломан, запрос упал — галочка выключается и сбрасывается.
-watch(autostartAvailable, (available) => {
-  if (!available) autostart.value = false
-})
-
 const routesAlert = computed(() => routesAlertText(store.routesRequestFailed.value, store.routesError.value))
 
 /**
@@ -358,11 +329,11 @@ function submit(): void {
     description: form.description,
     acceptance: form.acceptance,
     ...(form.specPath.trim() ? { spec_path: form.specPath.trim() } : {}),
-    // Метки маршрута ставит сервер (`routes.labels_for`); без маршрута — `route` нет
-    // и автостарт выключен.
+    // Метки маршрута ставит сервер (`routes.labels_for`); без маршрута ключа нет.
+    // Процесс поднимает рой, не галочка на этой форме.
     ...(route ? { route: route.key } : {}),
     ...(owner ? { owner } : {}),
-    autostart: route ? autostart.value : false,
+    autostart: false,
     actor: 'me',
   })
 }
@@ -519,30 +490,12 @@ function cancel(): void {
             :routes="store.routes.value"
             :selected-key="form.routeKey"
             :issue-type="form.type"
-            allow-create
             @select="onPickRoute"
-            @create="(kind) => (createRouteKind = kind)"
           />
         </template>
 
-        <UiTooltip text="Listik сам запустит команду маршрута после создания" placement="bottom">
-          <UiCheckbox v-model="autostart" :disabled="!autostartAvailable">Автостарт</UiCheckbox>
-        </UiTooltip>
       </section>
     </div>
-
-    <!-- Заведение маршрута прямо из «Новой задачи» (кнопки «＋» в группах
-         пикера): новый маршрут появляется в своей группе сразу и выбирается. -->
-    <NewSwarmRouteModal
-      v-if="createRouteKind === 'swarm'"
-      @created="onRouteCreated"
-      @close="createRouteKind = null"
-    />
-    <NewDirectRouteModal
-      v-else-if="createRouteKind === 'direct'"
-      @created="onRouteCreated"
-      @close="createRouteKind = null"
-    />
 
     <template #footer>
       <UiButton variant="ghost" size="md" @click="cancel">Отмена</UiButton>

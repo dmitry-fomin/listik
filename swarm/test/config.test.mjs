@@ -51,8 +51,18 @@ test("бюджет: дефолты 0, разбор флагов, ошибки в
   assert.equal(parseConfig(["--project", "p", "--exit-when-idle"]).exitWhenIdle, true);
 });
 
-test("без --project — ошибка", () => {
-  assert.throws(() => parseConfig([]), ConfigError);
+test("без --project — все проекты, интервал 30", () => {
+  const config = parseConfig([]);
+  assert.equal(config.project, null);
+  assert.equal(config.allProjects, true);
+  assert.equal(config.interval, 30);
+  assert.equal(config.exitWhenIdle, false);
+});
+
+test("--project оставляет один проект", () => {
+  const config = parseConfig(["--project", "listik"]);
+  assert.equal(config.allProjects, false);
+  assert.equal(config.project, "listik");
 });
 
 test("--help — HelpRequested", () => {

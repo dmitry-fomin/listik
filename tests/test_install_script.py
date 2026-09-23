@@ -443,7 +443,7 @@ class InstallScriptTests(unittest.TestCase):
     def test_help(self) -> None:
         result = self.run_install("--help")
         self.assertEqual(result.returncode, 0, result.stderr)
-        for text in ("--version", "--archive", "LISTIK_DOWNLOAD_BASE", "LISTIK_HOME"):
+        for text in ("--version", "--archive", "--swarm", "LISTIK_DOWNLOAD_BASE", "LISTIK_HOME"):
             self.assertIn(text, result.stdout, f"в --help нет {text}")
         self.assertNotIn("--routes", result.stdout)
         self.assertNotIn("LISTIK_ROUTES", result.stdout)
@@ -464,7 +464,8 @@ class InstallScriptTests(unittest.TestCase):
         else:
             self.assertIn("systemctl --user is-active", text)
             self.assertIn("systemctl --user restart", text)
-        self.assertIn(f"mcp add --scope user listik -- {self.wrapper} mcp", text)
+        self.assertNotIn("mcp add", text)
+        self.assertIn("MCP: пропущен", result.stdout)
         self.assertIn("plugin marketplace add dmitry-fomin/listik", text)
         self.assertIn("plugin install listik@listik", text)
         self.assertIn("plugin install feature-pipeline@listik", text)
@@ -478,7 +479,7 @@ class InstallScriptTests(unittest.TestCase):
         env = self.env(PATH=f"{fake_dir}:{os.environ.get('PATH', '')}",
                        FAKE_LOG=str(log), FAKE_CLAUDE_MCP_GET_EXIT="0",
                        LISTIK_PORT=str(free_port()))
-        result = self.run_install("--archive", str(archive), "--yes",
+        result = self.run_install("--archive", str(archive), "--yes", "--mcp", "yes",
                                   "--service", "no", "--plugins", "no", env=env)
         self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
         lines = [ln for ln in log.read_text(encoding="utf-8").splitlines()
@@ -486,6 +487,21 @@ class InstallScriptTests(unittest.TestCase):
         remove_idx = next(i for i, ln in enumerate(lines) if ln.startswith("claude mcp remove"))
         add_idx = next(i for i, ln in enumerate(lines) if ln.startswith("claude mcp add"))
         self.assertLess(remove_idx, add_idx, lines)
+
+    def test_swarm_yes_writes_enabled_without_model_key(self) -> None:
+        archive = self.make_archive(VERSION)
+        result = self.install(archive, "--swarm", "yes")
+        self.assertIn("рой: ok", result.stdout)
+        parsed = tomllib.loads((self.installed_home / "config.toml").read_text(encoding="utf-8"))
+        self.assertIs(parsed["swarm"]["enabled"], True)
+        self.assertNotIn("api_key", parsed["swarm"])
+
+    def test_swarm_no_writes_disabled(self) -> None:
+        archive = self.make_archive(VERSION)
+        result = self.install(archive, "--swarm", "no")
+        self.assertIn("рой: выключен", result.stdout)
+        parsed = tomllib.loads((self.installed_home / "config.toml").read_text(encoding="utf-8"))
+        self.assertIs(parsed["swarm"]["enabled"], False)
 
     def test_all_no_skips_everything(self) -> None:
         fake_dir, log = self.make_fake_tools()
@@ -503,8 +519,8 @@ class InstallScriptTests(unittest.TestCase):
     def test_no_claude_in_path(self) -> None:
         archive = self.make_archive(VERSION)
         env = self.env(PATH=path_without("claude"), LISTIK_PORT=str(free_port()))
-        result = self.run_install("--archive", str(archive), "--yes", "--service", "no",
-                                  env=env)
+        result = self.run_install("--archive", str(archive), "--yes", "--mcp", "yes",
+                                  "--service", "no", env=env)
         self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
         self.assertIn("claude mcp add", result.stdout)
         self.assertIn("/plugin install", result.stdout)
@@ -517,7 +533,7 @@ class InstallScriptTests(unittest.TestCase):
         env = self.env(PATH=f"{fake_dir}:{os.environ.get('PATH', '')}",
                        FAKE_LOG=str(log), FAKE_CLAUDE_EXIT="1",
                        LISTIK_PORT=str(free_port()))
-        result = self.run_install("--archive", str(archive), "--yes", env=env)
+        result = self.run_install("--archive", str(archive), "--yes", "--mcp", "yes", env=env)
         self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
         self.assertTrue(result.stderr.strip(), "ожидалось предупреждение в stderr")
         self.assertIn("MCP: не удалось", result.stdout)

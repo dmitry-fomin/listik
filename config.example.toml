@@ -32,6 +32,12 @@ base_url = "https://api.deepgram.com"
 model = "nova-2"
 language = "ru"
 
+# Рой. true — сервер сам держит один процесс на все проекты и проверяет их
+# каждые 30 секунд. Ключи модели (api_key, base_url, model, command) нужны
+# только проходам plan/rescope; пока их не задали, в этот раздел они не пишутся.
+[swarm]
+enabled = false
+
 [import]
 projects_root = "/Users/pathToProjects"
 max_depth = 6

@@ -94,6 +94,14 @@ export class Listik {
     return this._call(["list", "-p", project, "-a", "-n", "1000"]);
   }
 
+  // Все проекты сразу. `--project all` — зарезервированное «без фильтра»:
+  // иначе CLI подставит проект по текущему каталогу.
+  listAcross({closed = false} = {}) {
+    const argv = ["list", "--project", "all", "-n", "1000"];
+    if (closed) argv.push("-a");
+    return this._call(argv);
+  }
+
   routes() {
     return this._call(["routes"]);
   }

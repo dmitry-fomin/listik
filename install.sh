@@ -432,8 +432,11 @@ usage() {
                         по умолчанию ~/.local/bin
   --service yes|no      поставить и (пере)запустить автозапуск сервера
                         (launchd/systemd --user), по умолчанию yes
-  --mcp yes|no          подключить MCP-сервер (claude mcp add), по умолчанию yes
+  --mcp yes|no          подключить MCP-сервер (claude mcp add), по умолчанию no
   --plugins yes|no      поставить плагины Claude (marketplace + listik/feature-pipeline),
+                        по умолчанию yes
+  --swarm yes|no        включить рой: сервер сам проверяет задачи всех проектов
+                        каждые 30 секунд ([swarm] enabled в config.toml),
                         по умолчанию yes
   --codex-network yes|no|ask
                         если codex установлен, а в его config.toml нет
@@ -442,7 +445,7 @@ usage() {
                         сохранив копию конфига рядом (.bak-<время>), no — только
                         предупредить, ask — спросить в /dev/tty
   --yes                 на вопросы без явного флага отвечать значением по умолчанию
-                        (для service/mcp/plugins — yes; вопрос Codex он не закрывает
+                        (service/plugins/swarm — yes, mcp — no; вопрос Codex он не закрывает
                         — нужен --codex-network yes)
   --help                эта справка
 
@@ -474,6 +477,7 @@ bin_dir=${LISTIK_BIN_DIR:-}
 service_answer=
 mcp_answer=
 plugins_answer=
+swarm_answer=
 codex_network=${LISTIK_CODEX_NETWORK:-}
 assume_yes=0
 
@@ -521,6 +525,12 @@ while [ $# -gt 0 ]; do
             shift
             ;;
         --plugins=*) plugins_answer=${1#--plugins=} ;;
+        --swarm)
+            [ $# -ge 2 ] || die "--swarm ждёт yes или no"
+            swarm_answer=$2
+            shift
+            ;;
+        --swarm=*) swarm_answer=${1#--swarm=} ;;
         --codex-network)
             [ $# -ge 2 ] || die "--codex-network ждёт yes, no или ask"
             codex_network=$2
@@ -551,6 +561,10 @@ esac
 case $plugins_answer in
     ""|yes|no) ;;
     *) die "--plugins ждёт yes или no, а не '$plugins_answer'" ;;
+esac
+case $swarm_answer in
+    ""|yes|no) ;;
+    *) die "--swarm ждёт yes или no, а не '$swarm_answer'" ;;
 esac
 case $codex_network in
     ""|yes|no|ask) ;;
@@ -822,11 +836,44 @@ ask_yes_default_yes() {
     esac
 }
 
+ask_yes_default_no() {
+    # Как ask_yes_default_yes, только пустой ответ и --yes — no.
+    if [ -n "$1" ]; then
+        decision=$1
+        return
+    fi
+    if [ "$assume_yes" = 1 ]; then
+        decision=no
+        return
+    fi
+    if ui_menu2 "$2" "$3" "Да|" "Нет|пропустить этот шаг" 2; then
+        if [ "$menu_choice" = 1 ]; then
+            decision=yes
+        else
+            decision=no
+        fi
+        return
+    fi
+    if ! printf '%s [y/N] ' "$2" >/dev/tty 2>/dev/null; then
+        decision=no
+        return
+    fi
+    answer=
+    if ! read -r answer < /dev/tty 2>/dev/null; then
+        decision=no
+        return
+    fi
+    case $answer in
+        [yY]*) decision=yes ;;
+        *) decision=no ;;
+    esac
+}
+
 ask_yes_default_yes "$service_answer" \
     "Установить автозапуск сервера (launchd/systemd)?" \
     "Сервер будет подниматься сам при входе в систему."
 service_answer=$decision
-ask_yes_default_yes "$mcp_answer" \
+ask_yes_default_no "$mcp_answer" \
     "Подключить MCP-сервер Claude (claude mcp add)?" \
     "Даёт агентам инструменты listik_* без CLI."
 mcp_answer=$decision
@@ -834,6 +881,30 @@ ask_yes_default_yes "$plugins_answer" \
     "Установить плагины Claude (marketplace + listik/feature-pipeline)?" \
     "Скилы работы с задачами и конвейеры реализации."
 plugins_answer=$decision
+ask_yes_default_yes "$swarm_answer" \
+    "Включить рой?" \
+    "Сервер будет сам проверять задачи всех проектов каждые 30 секунд."
+swarm_answer=$decision
+
+# Флаг пишем до автозапуска: сервер, который сейчас встанет, должен его увидеть.
+swarm_status=пропущен
+if [ "$swarm_answer" = yes ]; then
+    if swarm_out=$("$wrapper" swarm on 2>&1); then
+        swarm_status=ok
+    else
+        swarm_status="не удалось"
+        note "$prog: рой: 'listik swarm on' не выполнился:" >&2
+        note "$swarm_out" >&2
+    fi
+else
+    if swarm_out=$("$wrapper" swarm off 2>&1); then
+        swarm_status=выключен
+    else
+        swarm_status="не удалось"
+        note "$prog: рой: 'listik swarm off' не выполнился:" >&2
+        note "$swarm_out" >&2
+    fi
+fi
 
 service_status=пропущен
 service_note=
@@ -1118,6 +1189,7 @@ if [ "$ui_enabled" = 1 ]; then
     ui_report "обёртка:" "$wrapper"
     ui_line ""
     ui_report "автозапуск:" "$service_report" "$service_status"
+    ui_report "рой:       " "$swarm_status" "$swarm_status"
     ui_report "MCP:       " "$mcp_status" "$mcp_status"
     ui_report "плагины:   " "$plugins_status" "$plugins_status"
     ui_report "Codex:     " "$codex_status" "$codex_status"
@@ -1149,6 +1221,7 @@ else
         note "протокол изменился: выполните listik init-projects (сначала можно с --dry-run)"
     fi
     note "автозапуск: $service_report"
+    note "рой: $swarm_status"
     note "MCP: $mcp_status"
     note "плагины: $plugins_status"
     note "Codex: $codex_status"

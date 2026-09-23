@@ -622,6 +622,7 @@ def cmd_status(args) -> int:
             "config_path": str(paths.CONFIG_PATH),
             "log_path": str(paths.LOG_PATH),
             "code_dir": str(paths.ROOT_DIR),
+            "swarm": _swarm_view(h),
             # Ответ /api/health как есть — только когда он что-то значит.
             "health": h if state in ("up", "unauthorized") else None,
         }, "", force_json=True, indent=None)
@@ -637,9 +638,11 @@ def cmd_status(args) -> int:
     if local:
         print(f"база:   {paths.DB_PATH}")
         print("сервер: не проверялся (--local)")
+        _print_swarm(None)
         return 0
     if h is None:
         print("сервер: не отвечает" + (f" (pid-файл: {pid})" if pid else ""))
+        _print_swarm(None)
         print("поднять: listik serve --daemon")
         return 1
     print(f"сервер: работает{' (pid ' + str(pid) + ')' if pid else ''}")
@@ -685,6 +688,7 @@ def cmd_status(args) -> int:
         print("(подробности недоступны: токен не принят)")
     # Маршруты — только из ответа /api/health работающего сервера: там они из таблицы
     # `routes`, а сам status ни файл, ни базу маршрутов не читает.
+    _print_swarm(h)
     routes = h.get("routes")
     if routes:
         if routes.get("ok"):
@@ -1397,6 +1401,57 @@ def cmd_waves(args) -> int:
 
     print("\n".join(lines))
     return 1 if cycles else 0
+
+
+def _swarm_view(health: dict | None) -> dict:
+    """Рой для status: с живого сервера, иначе по конфигу и swarm.pid."""
+    from listik import swarm_proc
+    if health and isinstance(health.get("swarm"), dict):
+        return health["swarm"]
+    try:
+        enabled = client.config_mod.swarm_enabled()
+    except ValueError as exc:
+        return {"enabled": False, "running": False, "pid": None, "error": str(exc)}
+    pid = swarm_proc.dispatcher_pid()
+    return {"enabled": enabled, "running": pid is not None, "pid": pid}
+
+
+def _print_swarm(health: dict | None) -> None:
+    info = _swarm_view(health)
+    if info.get("error"):
+        print(f"рой:    конфиг: {info['error']}")
+        return
+    if not info.get("enabled"):
+        print("рой:    выключен (listik swarm on)")
+        return
+    if info.get("running"):
+        pid = info.get("pid")
+        print(f"рой:    работает{f' (pid {pid})' if pid else ''}")
+    else:
+        print("рой:    включён, процесс не запущен")
+
+
+def cmd_swarm(args) -> int:
+    """Включить или выключить рой в config.toml. Сервер подхватывает сам."""
+    state = args.state
+    if state == "status":
+        info = _swarm_view(None)
+        if getattr(args, "json", False):
+            emit(args, {k: v for k, v in info.items() if k != "error"}, "")
+            return 0
+        _print_swarm(None)
+        if info.get("enabled") and not info.get("running"):
+            print("его поднимает listik serve; если сервер уже работает — подожди несколько секунд")
+        return 0
+    enabled = state == "on"
+    client.config_mod.set_swarm_enabled(enabled)
+    if enabled:
+        print("рой включён: [swarm] enabled = true")
+        print("живой сервер на этой машине подхватит флаг в течение нескольких секунд")
+    else:
+        print("рой выключен: [swarm] enabled = false")
+        print("живой сервер на этой машине остановит процесс в течение нескольких секунд")
+    return 0
 
 
 def cmd_plan(args) -> int:
@@ -2540,6 +2595,11 @@ def build_parser() -> argparse.ArgumentParser:
     sp.add_argument("--apply", action="store_true",
                     help="записать ресурсные рёбра resource-blocks в базу под этот расчёт: "
                     "устаревшие снять, недостающие поставить")
+
+    sp = add("swarm", cmd_swarm,
+             help="включить рой в config.toml: сервер сам гоняет все проекты")
+    sp.add_argument("state", choices=["on", "off", "status"],
+                    help="on — [swarm] enabled = true; off — false; status — что сейчас")
 
     sp = add("plan", cmd_plan, help="LLM-проход роя: грубые зависимости между открытыми "
                                     "задачами проекта — какие ТЗ можно писать параллельно")

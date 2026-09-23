@@ -40,7 +40,7 @@ const OPTIONS = {
 
 export const HELP_TEXT = `listik-swarm — каркас роя: план, needs-owner, партия, дерево, порт, запуск
 
-  --project <slug>          проект (обязателен)
+  --project <slug>          один проект; без флага — все, у которых есть работа
   --parallel <N>             ёмкость партии в единицах веса (по умолчанию 3)
   --weights xhigh=3,high=2,medium=1,low=1,xlow=1,direct=1
                               частичное переопределение весов уровня маршрута
@@ -125,12 +125,9 @@ export function parseConfig(argv) {
     throw new HelpRequested(HELP_TEXT);
   }
 
-  if (!values.project) {
-    throw new ConfigError("нужен --project <slug>");
-  }
-
   const config = {
-    project: values.project,
+    project: values.project ?? null,
+    allProjects: !values.project,
     parallel: values.parallel !== undefined ? parseNumber("parallel", values.parallel) : 3,
     weights: parseWeights(values.weights),
     portBase: values["port-base"] !== undefined ? parseNumber("port-base", values["port-base"]) : 5170,

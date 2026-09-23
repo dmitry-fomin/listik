@@ -39,6 +39,7 @@ from . import search as search_mod
 from . import skills as skills_mod
 from . import store
 from . import swarm_llm
+from . import swarm_proc
 from . import voice as voice_mod
 
 # Соединение с базой — своё на каждый поток.
@@ -626,6 +627,11 @@ def handle(method: str, path: str, query: dict, body: dict, authed: bool = False
         # Режим — без токена: по нему клиент понимает, нужно ли представляться.
         # Список людей и то, как сервер понял заголовок, — только авторизованному.
         data["mode"] = "server" if config_mod.is_server_mode(cfg) else "local"
+        # Рой: включён ли в конфиге и жив ли процесс. pid — только с токеном.
+        swarm = swarm_proc.runtime()
+        if not authed:
+            swarm = {"enabled": swarm["enabled"], "running": swarm["running"]}
+        data["swarm"] = swarm
         if authed:
             data["users"] = config_mod.users(cfg) if config_mod.is_server_mode(cfg) else []
             data["owner"] = owner if config_mod.is_server_mode(cfg) else None
@@ -1835,6 +1841,31 @@ def log_file() -> Path:
     return paths.LOG_PATH
 
 
+def _swarm_port(httpd, fallback: int) -> int:
+    try:
+        return int(httpd.server_address[1])
+    except (TypeError, ValueError, IndexError):
+        return int(fallback)
+
+
+def _start_swarm(host: str, port: int) -> None:
+    """Поднять надзор за роем. Сам процесс стартует, только если включён в конфиге."""
+    try:
+        on = config_mod.swarm_enabled()
+    except ValueError as exc:
+        print(f"рой: {exc}", flush=True)
+        on = False
+    if on:
+        print("рой: включён, проекты проверяются каждые 30 с", flush=True)
+    else:
+        print("рой: выключен (listik swarm on)", flush=True)
+    swarm_proc.Supervisor(host, port).start()
+
+
+def _stop_swarm() -> None:
+    swarm_proc.stop_current()
+
+
 def read_pid() -> int | None:
     try:
         pid = int(pid_file().read_text().strip())
@@ -1913,9 +1944,12 @@ def serve(host: str | None = None, port: int | None = None, quiet: bool = False,
         start_db_watch()
         if not no_embed:
             start_embed_worker()
+        # Рой — после daemonize: до fork поток нельзя заводить.
+        _start_swarm(host, _swarm_port(httpd, port))
         try:
             httpd.serve_forever()
         finally:
+            _stop_swarm()
             stop_db_watch()
             httpd.server_close()
             try:
@@ -1932,6 +1966,7 @@ def serve(host: str | None = None, port: int | None = None, quiet: bool = False,
     start_db_watch()
     if not no_embed:
         start_embed_worker()
+    _start_swarm(host, _swarm_port(httpd, port))
     url = f"http://{host}:{port}/?token={token}"
     print(f"Listik слушает http://{host}:{port}")
     print(f"доска:          {url}")
@@ -1945,6 +1980,7 @@ def serve(host: str | None = None, port: int | None = None, quiet: bool = False,
     except KeyboardInterrupt:
         print("\nостановлен")
     finally:
+        _stop_swarm()
         stop_db_watch()
         httpd.server_close()
         try:

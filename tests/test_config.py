@@ -254,6 +254,65 @@ class AssistantSectionTests(unittest.TestCase):
             self.assertTrue(assistant_mod.status(parsed)["enabled"])
 
 
+class SwarmEnabledTests(unittest.TestCase):
+    """[swarm] enabled — флаг роя. Ключ модели рядом не выдумывается."""
+
+    def test_missing_is_off_and_ensure_token_does_not_create_section(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            path = pathlib.Path(tmp) / "config.toml"
+            with mock.patch.object(paths, "CONFIG_PATH", path):
+                self.assertFalse(config_mod.swarm_enabled())
+                config_mod.ensure_token()
+            parsed = tomllib.loads(path.read_text(encoding="utf-8"))
+            self.assertNotIn("swarm", parsed)
+
+    def test_set_preserves_model_key(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            path = pathlib.Path(tmp) / "config.toml"
+            path.write_text('[swarm]\napi_key = "secret-swarm"\nmodel = "z-ai/glm"\n',
+                            encoding="utf-8")
+            with mock.patch.object(paths, "CONFIG_PATH", path):
+                self.assertFalse(config_mod.swarm_enabled())
+                config_mod.set_swarm_enabled(True)
+                self.assertTrue(config_mod.swarm_enabled())
+                config_mod.set_swarm_enabled(False)
+            text = path.read_text(encoding="utf-8")
+            parsed = tomllib.loads(text)
+            self.assertEqual(parsed["swarm"]["api_key"], "secret-swarm")
+            self.assertEqual(parsed["swarm"]["model"], "z-ai/glm")
+            self.assertIs(parsed["swarm"]["enabled"], False)
+            self.assertNotIn("[embed]", text)
+            self.assertNotIn("[routing]", text)
+
+    def test_set_keeps_comments_and_other_tables(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            path = pathlib.Path(tmp) / "config.toml"
+            path.write_text(
+                "# мой токен\n"
+                "[auth]\n"
+                'token = "abc"\n'
+                "\n"
+                "[swarm]\n"
+                'api_key = "secret-swarm"\n',
+                encoding="utf-8",
+            )
+            config_mod.set_swarm_enabled(True, path)
+            text = path.read_text(encoding="utf-8")
+            self.assertIn("# мой токен", text)
+            self.assertIn('token = "abc"', text)
+            self.assertIn('api_key = "secret-swarm"', text)
+            self.assertIn("enabled = true", text)
+            self.assertNotIn("[server]", text)
+            parsed = tomllib.loads(text)
+            self.assertEqual(set(parsed), {"auth", "swarm"})
+            self.assertTrue(parsed["swarm"]["enabled"])
+
+    def test_bad_value_is_an_error(self) -> None:
+        cfg = {"swarm": {"enabled": "yes"}}
+        with self.assertRaises(ValueError):
+            config_mod.swarm_enabled(cfg)
+
+
 class DefaultsIsolationTests(unittest.TestCase):
     """load() не должен отдавать вложенные словари DEFAULTS по ссылке."""
 

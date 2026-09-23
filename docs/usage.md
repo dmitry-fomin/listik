@@ -166,19 +166,27 @@ slug `all` выбрать этим CLI нельзя. Автоопределен�
 зовёт `listik rescope --project X --apply` сам (см. «Барьер волны», шаг 11); метрика качества
 ТЗ — в строке `rescope:` лога роя.
 
-Требования: `node` ≥ 22, поднятый сервер Listik (`listik serve --daemon`), установленный `listik`
-в `PATH` (или путь через `--listik`). Обёртки в `PATH` пока нет — ставится позже, вместе с
-релизом; запускают из репозитория:
+Пока в `config.toml` стоит `[swarm] enabled = true`, рой поднимает сам `listik serve`:
+один процесс на все проекты, круг каждые 30 секунд. Установщик спрашивает, включать ли
+его, и пишет ответ в этот ключ; то же делают `listik swarm on` и `listik swarm off`.
+Сервер перечитывает флаг и поднимает процесс заново, если тот умер. Выключенный рой
+карточки не запускает.
+
+Ручной запуск остаётся для одного проекта. Требования: `node` ≥ 22, поднятый сервер
+Listik, `listik` в `PATH` (или `--listik`):
 
 ```sh
-node <репозиторий>/bin/listik-swarm --project <slug> [--parallel 3] [--once] [--dry-run]
+node <репозиторий>/bin/listik-swarm [--project <slug>] [--parallel 3] [--once] [--dry-run]
 ```
 
-Флаги (все — с дефолтом, кроме `--project`):
+Без `--project` рой сам берёт каждый проект, где есть открытая карточка, вопрос человеку
+или закрытая карточка с ещё не снятым деревом.
+
+Флаги (у всех есть значение по умолчанию; `--project` можно не указывать):
 
 | Флаг | По умолчанию | Смысл |
 |---|---|---|
-| `--project <slug>` | — | проект (обязателен) |
+| `--project <slug>` | все проекты с работой | один проект; без флага рой обходит все |
 | `--parallel <N>` | 3 | ёмкость партии в единицах веса |
 | `--weights xhigh=3,high=2,medium=1,low=1,xlow=1,direct=1` | см. слева | частичное переопределение весов уровня маршрута |
 | `--port-base <N>` | 5170 | начало диапазона портов для `LISTIK_DEV_PORT` |
@@ -471,7 +479,7 @@ show <id>`).
 | Связи | `dep add\|confirm\|rm\|suggest\|link\|suggested`, `blocked`, `tree`, `cycles` |
 | Поиск | `search`, `memory`, `remember`, `embed` |
 | Проекты | `projects`, `actors`, `init-projects`, `import-from-bd` |
-| Рой | `node bin/listik-swarm --project X [--parallel N] [--once] [--exit-when-idle] [--dry-run]` |
+| Рой | `listik swarm on\|off\|status`; `node bin/listik-swarm [--project X] [--once] [--exit-when-idle] [--dry-run]` |
 
 `listik <команда> --help` — все флаги.
 

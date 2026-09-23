@@ -186,13 +186,9 @@ def _dump(cfg: dict) -> str:
     return "\n".join(lines).rstrip() + "\n"
 
 
-def save(cfg: dict, path: Path | None = None) -> Path:
-    cfg_path = Path(path or paths.CONFIG_PATH)
-    text = _dump(cfg)
-    # Пишем через временный файл в том же каталоге: параллельный читатель (второй
-    # CLI, сервер, тесты) не увидит обрезанный TOML, а mkstemp сразу даёт 0600,
-    # так что токен не засветится даже на миг. resolve() — чтобы не подменить
-    # символическую ссылку config.toml обычным файлом.
+def _atomic_write(cfg_path: Path, text: str) -> Path:
+    """Записать конфиг целиком через временный файл (0600, без обрезка посередине)."""
+    # resolve() — чтобы не подменить символическую ссылку config.toml обычным файлом.
     target = cfg_path.resolve()
     # Каталог данных создаётся только при записи: при LISTIK_HOME его может ещё не быть.
     target.parent.mkdir(parents=True, exist_ok=True)
@@ -211,6 +207,11 @@ def save(cfg: dict, path: Path | None = None) -> Path:
     return cfg_path
 
 
+def save(cfg: dict, path: Path | None = None) -> Path:
+    cfg_path = Path(path or paths.CONFIG_PATH)
+    return _atomic_write(cfg_path, _dump(cfg))
+
+
 def ensure_token(cfg: dict | None = None) -> tuple[dict, str]:
     """Возвращает (cfg, token), создавая файл конфига и токен при необходимости."""
     cfg = cfg or load()
@@ -220,6 +221,96 @@ def ensure_token(cfg: dict | None = None) -> tuple[dict, str]:
         cfg.setdefault("auth", {})["token"] = token
         save(cfg)
     return cfg, token
+
+
+def swarm_enabled(cfg: dict | None = None) -> bool:
+    """Включён ли рой: `[swarm] enabled` в config.toml.
+
+    Ключа нет — выключен. Раздел целиком в DEFAULTS не кладём: рядом лежат
+    ключ и модель проходов plan/rescope, и `ensure_token` не должен их выдумывать.
+    """
+    cfg = load() if cfg is None else cfg
+    section = cfg.get("swarm")
+    if not isinstance(section, dict) or "enabled" not in section:
+        return False
+    value = section["enabled"]
+    if isinstance(value, bool):
+        return value
+    raise ValueError(f"[swarm] enabled: ожидается true или false, а не {value!r}")
+
+
+_TABLE_RE = re.compile(r"^\s*\[\s*([^\]]+?)\s*\]\s*(?:#.*)?$")
+
+
+def _patch_swarm_enabled(text: str, enabled: bool) -> str:
+    """Вписать `enabled` в таблицу `[swarm]`, не переписывая остальной файл.
+
+    Комментарии и чужие таблицы остаются как были. Полный `save()` сюда не годится:
+    он материализует DEFAULTS и стирает комментарии.
+    """
+    literal = "true" if enabled else "false"
+    newline = "\r\n" if "\r\n" in text else "\n"
+    lines = text.splitlines(keepends=True)
+    section_at: int | None = None
+    enabled_at: int | None = None
+    in_swarm = False
+    for index, line in enumerate(lines):
+        body = line.rstrip("\r\n")
+        header = _TABLE_RE.match(body)
+        if header:
+            name = header.group(1).strip().strip('"').strip("'")
+            in_swarm = name == "swarm"
+            if in_swarm and section_at is None:
+                section_at = index
+            continue
+        if in_swarm and body.lstrip().startswith("enabled") and "=" in body.split("#", 1)[0]:
+            key = body.split("=", 1)[0].strip()
+            if key == "enabled" and enabled_at is None:
+                enabled_at = index
+    assignment = f"enabled = {literal}"
+    if section_at is None:
+        base = text
+        if base and not base.endswith(("\n", "\r")):
+            base += newline
+        if base and not base.endswith(newline * 2):
+            base += newline
+        return base + f"[swarm]{newline}{assignment}{newline}"
+    if enabled_at is not None:
+        old = lines[enabled_at]
+        ending = "\r\n" if old.endswith("\r\n") else ("\n" if old.endswith("\n") else newline)
+        indent = re.match(r"^(\s*)", old).group(1)
+        lines[enabled_at] = f"{indent}{assignment}{ending}"
+        return "".join(lines)
+    header = lines[section_at]
+    ending = "\r\n" if header.endswith("\r\n") else "\n"
+    lines.insert(section_at + 1, f"{assignment}{ending}")
+    return "".join(lines)
+
+
+def set_swarm_enabled(enabled: bool, path: Path | None = None) -> None:
+    """Записать `[swarm] enabled`, не трогая остальные ключи, комментарии и таблицы."""
+    if not isinstance(enabled, bool):
+        raise ValueError("enabled: ожидается bool")
+    cfg_path = Path(path or paths.CONFIG_PATH)
+    if cfg_path.is_file():
+        text = cfg_path.read_text(encoding="utf-8")
+        if text.strip():
+            try:
+                tomllib.loads(text)
+            except tomllib.TOMLDecodeError as exc:
+                raise ValueError(f"config.toml не читается: {exc}") from exc
+        new = _patch_swarm_enabled(text, enabled)
+    else:
+        literal = "true" if enabled else "false"
+        new = f"[swarm]\nenabled = {literal}\n"
+    try:
+        parsed = tomllib.loads(new)
+    except tomllib.TOMLDecodeError as exc:
+        raise ValueError(f"config.toml после записи [swarm] enabled не читается: {exc}") from exc
+    section = parsed.get("swarm")
+    if not isinstance(section, dict) or section.get("enabled") is not enabled:
+        raise ValueError("не удалось записать [swarm] enabled")
+    _atomic_write(cfg_path, new)
 
 
 #: Режимы работы хаба: «локальный» (один человек, владелец задачи не нужен) и

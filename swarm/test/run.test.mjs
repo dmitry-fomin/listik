@@ -8,7 +8,7 @@ import {execFileSync} from "node:child_process";
 import {Listik} from "../listik.mjs";
 import {tick} from "../run.mjs";
 import {open as openLog} from "../log.mjs";
-import {acquireProjectLock, questionReason, waitingLine} from "../main.mjs";
+import {acquireProjectLock, projectsDue, questionReason, waitingLine} from "../main.mjs";
 
 // `git` может отсутствовать на машине судьи — тогда блок watch+barrier пропускается целиком.
 let gitAvailable = true;
@@ -2376,4 +2376,54 @@ gitTest("rescope (и): dry-run — не зовётся", async () => {
   const result = await tick(listik, {...baseConfig, logDir, dryRun: true}, log);
   assert.equal(calls().filter(c => c.sub === "rescope").length, 0);
   assert.equal(result.rescope, null);
+});
+
+test("projectsDue: открытые, вопрос и дерево закрытой; старый done мимо", () => {
+  assert.deepEqual(projectsDue([
+    {id: "a", project: "alpha", status: "open"},
+    {id: "b", project: "beta", status: "done", needs_owner: true},
+    {id: "c", project: "gamma", status: "done", worktree: "/wt/c"},
+    {id: "d", project: "delta", status: "done", worktree: "", launched_by: "listik"},
+    {id: "e", project: "", status: "open"},
+  ]), ["alpha", "beta", "gamma"]);
+});
+
+test("main: без --project тикает каждый проект с работой и выходит по --once", async () => {
+  const emptyPlan = {waves: [[]], cycles: [], unroutable: [], unscoped: [], blocked: {}};
+  const responses = {
+    status: statusUp,
+    projects: {stdout: JSON.stringify([{slug: "alpha", path: ""}, {slug: "beta", path: ""}])},
+    waves: {stdout: JSON.stringify({waves: emptyPlan, added: [], removed: [], kept: 0})},
+    list: [
+      {stdout: JSON.stringify({total: 2, limit: 1000, offset: 0, tasks: [
+        {id: "a", project: "alpha", status: "open"},
+        {id: "b", project: "beta", status: "in_progress"},
+      ]})},
+      {stdout: JSON.stringify({total: 0, limit: 1000, offset: 0, tasks: []})},
+      {stdout: JSON.stringify({total: 0, limit: 1000, offset: 0, tasks: []})},
+    ],
+    routes: {stdout: JSON.stringify({ok: true, routes: []})},
+  };
+  const {calls} = setupFake(responses);
+  const logDir = fs.mkdtempSync(path.join(os.tmpdir(), "listik-swarm-all-"));
+  const {code} = await runMain(["--listik", FAKE_BIN, "--log-dir", logDir, "--once"]);
+  assert.equal(code, 0);
+  const waved = calls().filter(c => c.sub === "waves").map(c => c.argv[c.argv.indexOf("--project") + 1]);
+  assert.deepEqual(waved, ["alpha", "beta"]);
+  assert.equal(calls().some(c => c.argv.includes("--project") && c.argv.includes("all")), true);
+});
+
+test("main: без работы по проектам --once не зовёт waves", async () => {
+  const responses = {
+    status: statusUp,
+    list: {stdout: JSON.stringify({total: 0, limit: 1000, offset: 0, tasks: []})},
+  };
+  const {calls} = setupFake(responses);
+  const logDir = fs.mkdtempSync(path.join(os.tmpdir(), "listik-swarm-all-idle-"));
+  const {code, chunks} = await runMain(["--listik", FAKE_BIN, "--log-dir", logDir, "--once"]);
+  assert.equal(code, 0);
+  assert.equal(calls().filter(c => c.sub === "waves").length, 0);
+  assert.equal(calls().filter(c => c.sub === "list").length, 2);
+  const logText = fs.readFileSync(chunks[0].trim(), "utf8");
+  assert.match(logText, /"allProjects":true/);
 });

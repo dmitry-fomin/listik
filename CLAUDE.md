@@ -125,8 +125,11 @@ Database migrations exist as two parallel mechanisms — don't confuse them:
   The bodies differ per file (`migrate.body_for`): `AGENTS.md` gets the full protocol read from
   `docs/harness-protocol.md` (`migrate.body()`) — change the protocol there, not in `migrate.py`;
   `CLAUDE.md` gets only `CLAUDE_BODY`, a pointer to the `listik:listik` skill.
-- `bin/listik-swarm` + `swarm/` — the swarm: drives a project's wave of tasks to completion
-  without a human re-running `launch` for each one. Node, stdlib only, no model calls of its own
+- `bin/listik-swarm` + `swarm/` — the swarm: drives waves of tasks to completion
+  without a human re-running `launch` for each one. When `[swarm] enabled` is true in
+  `config.toml` (`listik swarm on`, or the installer's question), `listik serve` keeps one
+  process running for every project that has work and restarts it if it exits; the tick
+  interval is 30s. `--project` still limits a manual run to one project. Node, stdlib only, no model calls of its own
   (the one exception is the merge-conflict arbiter below); talks to Listik exclusively through
   the installed `listik` CLI (`bin/listik … --json`), never `listik/` directly, and keeps no
   state between ticks — a crash is survived by restarting, a re-run sees the real card state and

@@ -1151,7 +1151,7 @@ id внутри файлового пути (`docs/specs/<id>.md`, `/wt/<id>/lis
 
 | Метод | Путь | Параметры | Ответ |
 |---|---|---|---|
-| GET | `/api/health` | — | `status, version, embed{model}, now, authed, installation{code_dir,data_dir,config_path}` (пути установки доступны и без токена для диагностики CLI, содержимое config не отдаётся), `mode` (`local`\|`server` — тоже без токена: по нему клиент понимает, надо ли представляться); авторизованному — ещё `users[]` (люди из `server.users`; в локальном режиме `[]`) и `owner` (как сервер понял заголовок `X-Listik-Owner` после `strip`; в локальном режиме всегда `null`), `db`, `counts`, `embed{ok,models}`, `routes{ok,error,path,count}`, `db_error{where,error,at}` — только если последний фоновый проход упал с `sqlite3.DatabaseError`, и `runtime{code_dir,data_dir,cwd,worktree,main_repo,warning}` — откуда запущен сервер (`data_dir` — каталог данных, `LISTIK_HOME`; `warning` — если из связанного git worktree, listik-i23u), `db_replaced{kind,at,detail,before,after}` — если сервер заметил подмену файла базы или WAL (см. ниже) |
+| GET | `/api/health` | — | `status, version, embed{model}, now, authed, swarm{enabled,running}` (pid процесса роя — только авторизованному), `installation{code_dir,data_dir,config_path}` (пути установки доступны и без токена для диагностики CLI, содержимое config не отдаётся), `mode` (`local`\|`server` — тоже без токена: по нему клиент понимает, надо ли представляться); авторизованному — ещё `users[]` (люди из `server.users`; в локальном режиме `[]`) и `owner` (как сервер понял заголовок `X-Listik-Owner` после `strip`; в локальном режиме всегда `null`), `db`, `counts`, `embed{ok,models}`, `routes{ok,error,path,count}`, `db_error{where,error,at}` — только если последний фоновый проход упал с `sqlite3.DatabaseError`, и `runtime{code_dir,data_dir,cwd,worktree,main_repo,warning}` — откуда запущен сервер (`data_dir` — каталог данных, `LISTIK_HOME`; `warning` — если из связанного git worktree, listik-i23u), `db_replaced{kind,at,detail,before,after}` — если сервер заметил подмену файла базы или WAL (см. ниже) |
 | GET | `/api/routes` | — | `ok, error, path, warnings[], routes[]` — записи таблицы `routes` (`command`, `roles`/`harness`, `position`, посчитанный `icon`; см. «Маршруты запуска»), у `kind=pipeline` ещё `skill_path` и, если скила нет, `skill_missing: true` (в ответе `visible: false`) — см. «Справочник маршрутов и скилов конвейеров»; `warnings` — замечания ввоза и сверки со скилами (неизвестный `icon` записи: фолбэк по ключу и поле `icon_error`; маршрут без скила: строка про скрытый маршрут); ошибка базы — `ok=false` и текст, а не HTTP-ошибка |
 | GET | `/api/routes/launchers` | — | `skills_available, launchers[], providers[], roles[]` — справочник для редактора состава ролей: `launchers` — скилы-запускаторы установки (`key` вида `плагин:скил`, `plugin`, `skill`, `title`, `hint`, `provider` по умолчанию, `skill_path` или `null` у плагина вне репозитория), `providers` — допустимые вендоры ячейки роли, `roles` — ключи ролей (`spec`/`critic`/`impl`/`judge`); метод не GET — `405` |
 | GET/POST | `/api/harnesses`, GET/PATCH `/api/harnesses/{key}` | см. «Каталог харнессов» | каталог исполнителей: список с `used_by[]`, заведение и правка; удаления нет |
@@ -1591,8 +1591,13 @@ resource-blocks` снимает ребро до следующего `--apply` �
 угодно; если задан, используется вместо HTTP и ключ ему не нужен). Переменные окружения
 `LISTIK_SWARM_API_KEY`/`LISTIK_SWARM_BASE_URL`/`LISTIK_SWARM_MODEL` сильнее значений из файла.
 Ключ никогда не попадает ни в ответ, ни в сообщение ошибки — только в лог сервера, и то
-замаскированным. Раздел `[swarm]` — пользовательский, как `[assistant]`/`[deepgram]`: Listik его
-не создаёт и не дописывает в чужой `config.toml`.
+замаскированным. Ключи модели (`api_key`, `base_url`, `model`, `command`) — пользовательские,
+как `[assistant]`/`[deepgram]`: `ensure_token` их не создаёт и не дописывает. `enabled`
+(`true`/`false`, без ключа — выключен) решает, держит ли `listik serve` один процесс роя на
+все проекты: круг каждые 30 секунд, перезапуск если процесс умер. Пишут его установщик
+(вопрос «Включить рой?») и `listik swarm on`/`off`. Эти команды дописывают только
+`enabled` в таблицу `[swarm]` и не переписывают остальной `config.toml`. Выключенный
+рой карточки не запускает.
 
 Проход роя по флагу `--apply` (`listik plan --apply`/`listik rescope --apply`) пишет по графу,
 который вернула модель, обычные машинные рёбра `blocks` с автором `agent:listik-swarm` — тем же,

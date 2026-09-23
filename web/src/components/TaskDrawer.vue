@@ -46,7 +46,6 @@ import IconToggle, { type IconToggleOption } from './IconToggle.vue'
 import ListikIcon from './ListikIcon.vue'
 import MarkdownProse from './MarkdownProse.vue'
 import ProjectMark from './marks/ProjectMark.vue'
-import RouteIcon from './marks/RouteIcon.vue'
 import RoutePicker from './RoutePicker.vue'
 import TaskGlyph from './marks/TaskGlyph.vue'
 import {
@@ -98,7 +97,7 @@ import {
   projectOf,
   type ColdRow,
 } from '@/lib/task-presentation'
-import { NO_ROUTE, routeByKey, routesAlertText } from '@/lib/routes'
+import { NO_ROUTE, routesAlertText } from '@/lib/routes'
 import { stageExecutor } from '@/lib/executors'
 import store from '@/store/listik'
 
@@ -340,8 +339,8 @@ function retryRoutes(): void {
  * что при создании (`routes.labels_for`), поэтому доска их не считает.
  *
  * Пункт «без маршрута» шлёт пустую строку — маршрут снимается совсем (как
- * `set launch_route=`): сервер убирает и его метки, и ошибку автостарта.
- * Повторный клик по уже выбранному ничего не шлёт.
+ * `set launch_route=`): сервер убирает и его метки. Повторный клик по уже
+ * выбранному ничего не шлёт.
  */
 function pickRoute(key: string): void {
   if (!props.task || props.pending === 'route') return
@@ -354,46 +353,14 @@ function pickRoute(key: string): void {
   })
 }
 
-// ── «Автостарт»: процесс маршрута поднимает сервер (см. docs/API.md) ───────────
-
-/**
- * Маршрут задачи (`launch_route` — ключ записи `routes.json`) для иконки уровня;
- * записи нет в списке `GET /api/routes` — иконки не будет.
- */
-const launchRoute = computed(() => routeByKey(props.task?.launch_route, store.routes.value))
-
 /**
  * Плановый исполнитель текущего этапа из ролей маршрута (`lib/executors.ts`):
  * держатель у конвейера — оркестратор, а этап делает роль (GLM-критик и т.п.).
  * Хелпер зовётся здесь, а не в `desktopHolderPresentation`, потому что зависит
- * от `store.routes` — как `launchRoute` выше. У закрытой карточки (ветка
- * `workedBy`) строки «делает» нет — там уже «выполнял …».
+ * от `store.routes`. У закрытой карточки (ветка `workedBy`) строки «делает»
+ * нет — там уже «выполнял …».
  */
 const executor = computed(() => (props.task ? stageExecutor(props.task, store.routes.value) : null))
-
-/** Блок нужен, если маршрут можно менять или о запуске уже есть что сказать. */
-const showLaunch = computed(() => {
-  const task = props.task
-  if (!task) return false
-  return Boolean(task.route_editable || task.autostart || task.launched_by
-    || task.launch_error || task.launch_route)
-})
-
-/**
- * Статус запуска: «идёт», пока процесс не завершён; «код N» — код выхода;
- * «отслеживание потеряно» — `launch_finished_at` заполнен, а код null (сервер
- * потерял процесс). Задача без попытки запуска строки статуса не получает.
- */
-const launchStatus = computed<string | null>(() => {
-  const task = props.task
-  if (!task) return null
-  const closed = task.status === 'done' || task.status === 'cancelled'
-  // Закрытая задача без launch_finished_at — процесс потерян, а не «идёт» (listik-3a4m).
-  if (task.launched_by === 'listik' && !task.launch_finished_at) return closed ? 'отслеживание потеряно' : 'идёт'
-  if (task.launch_finished_at && task.launch_exit_code != null) return `код ${task.launch_exit_code}`
-  if (task.launch_finished_at) return 'отслеживание потеряно'
-  return null
-})
 
 function defaultHolder(): string {
   try {
@@ -1235,13 +1202,12 @@ async function loadTree(): Promise<void> {
         </div>
       </section>
 
-      <section v-if="showLaunch && routeEditable" class="listik-section">
+      <section v-if="routeEditable" class="listik-section">
         <div class="listik-section__head">
           <h4 class="listik-section__title">Маршрут запуска</h4>
-          <span v-if="routeEditable" class="listik-section__hint">менять можно, пока задача не начата</span>
+          <span class="listik-section__hint">менять можно, пока задача не начата</span>
         </div>
 
-        <template v-if="routeEditable">
           <UiAlert v-if="routesFailed" tone="warning">
             {{ routesAlert }}
             <div class="listik-row" style="margin-top: var(--space-3)">
@@ -1264,16 +1230,10 @@ async function loadTree(): Promise<void> {
           <p v-if="!routesFailed" class="listik-section__hint">
             Пока задача заведена — без этапа, держателя и запуска — маршрут можно сменить или снять
             пунктом «без маршрута» (вместе с маршрутом уезжают метки
-            <span class="listik-mono">harness:</span>/<span class="listik-mono">process:</span>
-            и ошибка автостарта); после начала работы сервер откажет. Сам маршрут ничего не
-            запускает: карточку с маршрутом берёт рой.
+            <span class="listik-mono">harness:</span>/<span class="listik-mono">process:</span>);
+            после начала работы сервер откажет. Сам маршрут ничего не запускает:
+            карточку с маршрутом берёт рой.
           </p>
-
-          <UiAlert v-if="task.launch_error" tone="warning">
-            <template #title>Автостарт не выполнен</template>
-            {{ task.launch_error }}
-          </UiAlert>
-        </template>
 
       </section>
 
@@ -1369,32 +1329,6 @@ async function loadTree(): Promise<void> {
             <dt>исполнитель</dt>
             <dd>{{ holderBlock.assignee }}</dd>
           </template>
-            </dl>
-          </section>
-          <section v-if="showLaunch && !routeEditable" class="listik-section">
-            <h4 class="listik-section__title">Автостарт</h4>
-            <dl class="listik-dl">
-              <dt>маршрут</dt>
-              <dd class="listik-row listik-drawer__nowrap">
-                <RouteIcon v-if="launchRoute" :route="launchRoute" size="sm" :title="`маршрут: ${launchRoute.title}`" />
-                <span class="listik-mono">{{ task.launch_route || '—' }}</span>
-              </dd>
-              <template v-if="task.launched_by === 'listik'">
-                <dt>запуск</dt>
-                <dd>
-                  запущена Listik<template v-if="task.launch_pid != null"> · pid {{ task.launch_pid }}</template>
-                  <template v-if="task.launched_at"> · {{ formatDateTime(task.launched_at) }}</template>
-                </dd>
-              </template>
-              <template v-if="launchStatus"><dt>статус</dt><dd>{{ launchStatus }}</dd></template>
-              <template v-if="task.launch_error">
-                <dt>ошибка</dt>
-                <dd class="listik-row listik-drawer__nowrap listik-drawer__start"><ListikIcon name="warning" size="xs" /><span>{{ task.launch_error }}</span></dd>
-              </template>
-              <template v-if="task.launch_log">
-                <dt>лог</dt>
-                <dd class="listik-row listik-drawer__nowrap"><span class="listik-mono">{{ task.launch_log }}</span><UiCopyButton :value="task.launch_log" label="Путь к логу запуска"><template #icon="{ copied }"><ListikIcon :name="copied ? 'check' : 'copy'" size="sm" /></template></UiCopyButton></dd>
-              </template>
             </dl>
           </section>
         </div>

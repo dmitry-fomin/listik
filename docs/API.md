@@ -83,7 +83,7 @@ users = ["ann", "bob"]   # люди, которые работают с этим
 | `journal_path` | str? | алиас `decision_path` (совместимость со старыми задачами) |
 | `worktree` | str? | где идёт работа: путь к отдельному рабочему дереву или маркер основной ветки `main`/`master` («работа в основной ветке, без дерева»; см. «Работа в основной ветке: `worktree=main`») |
 | `branch` | str? | ветка задачи (для маркера обычно совпадает с `main`/`master`) |
-| `autostart` | bool | галочка «запустить сразу»: процесс задачи поднимает сам сервер Listik |
+| `autostart` | bool | колонка создания осталась у старых карточек. `POST /api/tasks` с `autostart: true` отвечает 400 и задачу не создаёт; доска шлёт `false`. Процесс поднимает рой или `POST /api/tasks/{id}/launch` |
 | `launch_route` | str? | ключ маршрута из таблицы `routes`, по которому запускать |
 | `route_editable` | bool | можно ли ещё менять `launch_route`: `true` — задача заведена, без этапа, держателя и запущенного процесса (считает сервер) |
 | `launched_by` | str? | `listik`, если процесс запустил сервер; иначе `null` |
@@ -562,8 +562,8 @@ dispatch_id IS ?` — именно `IS`, чтобы обслуживать и з
 Снятое видно в событии `route`: его `note` дополняется строками `снята ошибка автостарта:
 <текст>` и `снят флаг «нужен человек»`.
 
-Смена маршрута ничего не запускает: процесс поднимает только `autostart` в момент создания
-задачи. Метки `harness:<…>`/`process:<…>` сервер выводит из маршрута сам (`routes.labels_for`)
+Смена маршрута ничего не запускает. Процесс поднимает рой или `POST /api/tasks/{id}/launch`.
+Метки `harness:<…>`/`process:<…>` сервер выводит из маршрута сам (`routes.labels_for`)
 и переписывает при смене: старые метки маршрута снимаются, метки нового встают на их место,
 чужие метки задачи остаются. Правило одно для всех, кто заводит задачу, — CLI `new --route`,
 `POST /api/tasks` с `route` и MCP `listik_create` ставят те же метки, что форма «Новая задача»
@@ -1711,7 +1711,7 @@ stage/status/holder/needs_owner/assignee/route) — доска узнаёт из
 listik serve                       # поднять сервер и доску
 listik import-from-bd --source <path> [--project writerllm] [--dry-run] [--update]   # импорт выгрузки bd export WriterLLM, идемпотентно; --project так же сверяется с доской без учёта регистра
 listik new "Заголовок" -p project --type bug --priority 1 --actor agent:dsh
-listik new "Заголовок" -p project --autostart --route low-pipeline   # сразу запустить по маршруту (--autostart без --route — ошибка)
+listik new "Заголовок" -p project --route low-pipeline   # маршрут сохраняется; процесс поднимает рой или listik launch
 listik new "Шаг 09, порция b" -p listik --parent <id шага> --spec … --checklist … --review …  # порция — дочерняя карточка шага (parent-child)
 listik ready                        # что можно взять прямо сейчас
 listik ready --harness dsh          # то же, с идентичностью harness (флаг общий)

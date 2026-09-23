@@ -816,13 +816,6 @@ def cmd_import_from_bd(args) -> int:
 
 
 def cmd_new(args) -> int:
-    if args.autostart and not (args.route or "").strip():
-        # Задача не создаётся: запускать автостарт нечем, а молча создать её без
-        # маршрута — значит соврать галочке. Код 2 — как у parser.error.
-        raise errors.ListikError("--autostart требует --route <ключ маршрута из таблицы routes>",
-                                 code=errors.BAD_ARGUMENT, exit_code=2,
-                                 hint="например: listik new \"заголовок\" --autostart "
-                                      "--route low-pipeline")
     body = {
         "title": args.title, "project": args.project, "type": args.type,
         "priority": args.priority, "description": args.description or "",
@@ -832,7 +825,7 @@ def cmd_new(args) -> int:
         "checklist_path": args.checklist,
         "review_path": args.review, "decision_path": args.decision,
         "actor": actor_default(args), "harness": args.harness,
-        "autostart": args.autostart, "route": args.route,
+        "route": args.route,
         "parent": args.parent, "discovered_from": args.discovered_from,
     }
     local = dict(body)
@@ -2431,11 +2424,10 @@ def build_parser() -> argparse.ArgumentParser:
     sp.add_argument("--review")
     sp.add_argument("--decision")
     sp.add_argument("--journal")
-    sp.add_argument("--autostart", action="store_true",
-                    help="сервер Listik сам запустит процесс задачи по маршруту (нужен --route)")
     sp.add_argument("--route", metavar="КЛЮЧ",
                     help="ключ маршрута из таблицы routes; сервер помечает карточку метками "
-                         "harness:/process:, без --autostart маршрут просто сохраняется")
+                         "harness:/process:. Процесс при создании не запускается: карточку "
+                         "берёт рой, вручную — listik launch")
     sp.add_argument("--parent", metavar="ID",
                     help="родительская карточка (шаг/эпик): новая карточка станет её порцией "
                          "(связь parent-child) со своими spec/checklist/review; проект "

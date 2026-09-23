@@ -648,13 +648,13 @@ class RouteCliTests(TempDbTestCase):
         proc = self._run("set", task_id, "route=low-pipeline")
         self.assertEqual(proc.returncode, 0, proc.stderr)
 
-    def test_cli_route_change_clears_local_autostart_error(self) -> None:
-        """Локальный `new --autostart` отказывает («сервер не запущен»), а смена
-        маршрута снимает и ошибку, и флаг — тем же `store.update_task`, что у сервера."""
-        proc = self._run("new", "проба", "-p", "listik", "--route", "low-pipeline",
-                         "--autostart", "--json")
-        self.assertEqual(proc.returncode, 0, proc.stderr)
-        task_id = json.loads(proc.stdout)["id"]
+    def test_cli_route_change_clears_launch_error(self) -> None:
+        """Смена маршрута снимает ошибку запуска и флаг «нужен человек»,
+        если флаг поднял сам отказ (`launcher.refuse`)."""
+        from listik import launcher
+
+        task_id = self._new()
+        launcher.refuse(self.conn, task_id, "сервер Listik не запущен")
         shown = self._show(task_id)
         self.assertEqual(shown["launch_error"], "сервер Listik не запущен")
         self.assertIs(shown["needs_owner"], True)

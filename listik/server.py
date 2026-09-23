@@ -1097,7 +1097,12 @@ def handle(method: str, path: str, query: dict, body: dict, authed: bool = False
         )
 
     if path == "/api/tasks" and method == "POST":
-        autostart = as_bool(body.get("autostart", False))
+        if as_bool(body.get("autostart", False)):
+            raise ApiError(
+                400,
+                "autostart больше не поддерживается: карточку с маршрутом берёт рой; "
+                "запустить процесс — POST /api/tasks/{id}/launch",
+                code=errors_mod.BAD_ARGUMENT)
         route = body.get("route")
         if route is not None and not isinstance(route, str):
             raise ApiError(400, "route должен быть строкой")
@@ -1107,9 +1112,6 @@ def handle(method: str, path: str, query: dict, body: dict, authed: bool = False
         discovered_from = body.get("discovered_from")
         if discovered_from is not None and not isinstance(discovered_from, str):
             raise ApiError(400, "discovered_from должен быть строкой")
-        # Автостарт без маршрута запускать нечего: задача не создаётся вовсе.
-        if autostart and not (route or "").strip():
-            raise ApiError(400, "autostart: нужен непустой route")
         try:
             task = store.create_task(
                 conn,
@@ -1139,7 +1141,7 @@ def handle(method: str, path: str, query: dict, body: dict, authed: bool = False
                 created_by=body.get("actor") or body.get("created_by"),
                 needs_owner=as_bool(body.get("needs_owner", False)),
                 harness=body.get("harness"),
-                autostart=autostart,
+                autostart=False,
                 route=route,
                 parent=parent or None,
                 discovered_from=discovered_from or None,
@@ -1151,11 +1153,6 @@ def handle(method: str, path: str, query: dict, body: dict, authed: bool = False
             raise api_error(404, exc) from exc
         except ValueError as exc:
             raise api_error(400, exc) from exc
-        if autostart:
-            # Процесс не ждём: start возвращается сразу после Popen, отказ (нет
-            # маршрута/command/каталога) не отменяет создание задачи.
-            launcher_mod.start(conn, task["id"], notify=publish)
-            task = store.get_task(conn, task["id"])
         publish("task", {"id": task["id"], "action": "created"})
         return 201, task
 

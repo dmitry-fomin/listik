@@ -28,6 +28,7 @@ from unittest import mock
 
 from listik import client
 from listik import db as db_mod
+from listik import errors
 from listik import launcher as launcher_mod
 from listik import paths
 from listik import routes_store
@@ -562,15 +563,19 @@ class ServerPostTests(AutostartTestCase):
     def post(self, **body):
         return server.handle("POST", "/api/tasks", {}, body, authed=True)
 
-    def test_autostart_without_route_is_400_and_creates_nothing(self) -> None:
+    def launch(self, task_id: str):
+        return server.handle("POST", f"/api/tasks/{task_id}/launch", {}, {}, authed=True)
+
+    def test_autostart_is_rejected_and_creates_nothing(self) -> None:
         before = self.conn.execute("SELECT count(*) FROM tasks").fetchone()[0]
-        for route in (None, "", "   "):
+        for route in (None, "", "   ", "low-pipeline"):
             body = {"title": "t", "autostart": True}
             if route is not None:
                 body["route"] = route
             with self.assertRaises(server.ApiError) as ctx:
                 self.post(**body)
             self.assertEqual(ctx.exception.status, 400, route)
+            self.assertIn("autostart больше не поддерживается", ctx.exception.message)
         after = self.conn.execute("SELECT count(*) FROM tasks").fetchone()[0]
         self.assertEqual(after, before, "задача всё-таки создана")
 
@@ -596,11 +601,13 @@ class ServerPostTests(AutostartTestCase):
         self.set_routes(pipeline_record("low-pipeline",
                                         command=[sys.executable, "-c",
                                                  "import time; time.sleep(2)"]))
-        started = time.monotonic()
-        status, task = self.post(title="t", project="proj", autostart=True,
-                                 route="low-pipeline")
-        elapsed = time.monotonic() - started
+        status, created = self.post(title="t", project="proj", route="low-pipeline")
         self.assertEqual(status, 201)
+        self.assertIsNone(created["launch_pid"])
+        started = time.monotonic()
+        status, task = self.launch(created["id"])
+        elapsed = time.monotonic() - started
+        self.assertEqual(status, 200)
         self.assertLess(elapsed, 1.0, "POST ждал завершения процесса")
         self.assertIsInstance(task["launch_pid"], int)
         self.assertIsNone(task["launch_exit_code"])
@@ -612,24 +619,28 @@ class ServerPostTests(AutostartTestCase):
         self.join_tracker(task["id"])
         self.assertEqual(self.row(task["id"])["launch_exit_code"], 0)
 
-    def test_broken_routes_post_is_201_with_needs_owner(self) -> None:
+    def test_broken_routes_launch_is_409_with_needs_owner(self) -> None:
+        _, created = self.post(title="t", project="proj", route="low-pipeline")
         self.break_routes()
         with contextlib.redirect_stderr(io.StringIO()):
-            status, task = self.post(title="t", project="proj", autostart=True,
-                                     route="low-pipeline")
-        self.assertEqual(status, 201)
+            with self.assertRaises(server.ApiError) as ctx:
+                self.launch(created["id"])
+        self.assertEqual(ctx.exception.status, 409)
+        task = store.get_task(self.conn, created["id"])
         self.assertIs(task["needs_owner"], True)
         self.assertIsNone(task["launch_pid"])
         self.assertIsNone(task["launched_by"])
         self.assertTrue(task["launch_error"].startswith("маршруты в базе недоступны"),
                         task["launch_error"])
 
-    def test_oserror_post_is_201_not_500(self) -> None:
+    def test_oserror_launch_is_409_not_500(self) -> None:
         self.set_routes(pipeline_record("low-pipeline", command=["/nonexistent/bin/listik"]))
+        _, created = self.post(title="t", project="proj", route="low-pipeline")
         with contextlib.redirect_stderr(io.StringIO()):
-            status, task = self.post(title="t", project="proj", autostart=True,
-                                     route="low-pipeline")
-        self.assertEqual(status, 201)
+            with self.assertRaises(server.ApiError) as ctx:
+                self.launch(created["id"])
+        self.assertEqual(ctx.exception.status, 409)
+        task = store.get_task(self.conn, created["id"])
         self.assertIsNone(task["launch_pid"])
         self.assertIsNone(task["launched_by"])
         self.assertTrue(task["launch_error"].startswith("не удалось запустить"),
@@ -639,11 +650,13 @@ class ServerPostTests(AutostartTestCase):
     def test_command_from_request_is_ignored(self) -> None:
         evil = self.tmp_path / "evil"
         self.set_routes(pipeline_record("low-pipeline", command=None))
+        _, created = self.post(title="t", project="proj", route="low-pipeline",
+                               command=["touch", str(evil)])
         with contextlib.redirect_stderr(io.StringIO()):
-            status, task = self.post(title="t", project="proj", autostart=True,
-                                     route="low-pipeline",
-                                     command=["touch", str(evil)])
-        self.assertEqual(status, 201)
+            with self.assertRaises(server.ApiError) as ctx:
+                self.launch(created["id"])
+        self.assertEqual(ctx.exception.status, 409)
+        task = store.get_task(self.conn, created["id"])
         self.assertEqual(task["launch_error"],
                          "у маршрута low-pipeline нет command в базе")
         self.assertFalse(evil.exists())
@@ -652,10 +665,11 @@ class ServerPostTests(AutostartTestCase):
     def test_post_passes_publish_as_notify(self) -> None:
         self.set_routes(pipeline_record("low-pipeline", command=[sys.executable, "-c", "pass"]))
         with mock.patch.object(server, "publish") as publish:
-            status, task = self.post(title="t", project="proj", autostart=True,
-                                     route="low-pipeline")
+            status, created = self.post(title="t", project="proj", route="low-pipeline")
+            self.assertEqual(status, 201)
+            status, task = self.launch(created["id"])
             self.join_tracker(task["id"])
-        self.assertEqual(status, 201)
+        self.assertEqual(status, 200)
         launches = [c for c in publish.call_args_list
                     if c.args == ("task", {"id": task["id"], "action": "launch"})]
         self.assertTrue(launches, publish.call_args_list)
@@ -664,7 +678,8 @@ class ServerPostTests(AutostartTestCase):
 
     def test_patch_does_not_change_launch_fields(self) -> None:
         self.set_routes(pipeline_record("low-pipeline", command=[sys.executable, "-c", "pass"]))
-        _, task = self.post(title="t", project="proj", autostart=True, route="low-pipeline")
+        _, created = self.post(title="t", project="proj", route="low-pipeline")
+        _, task = self.launch(created["id"])
         self.join_tracker(task["id"])
         before = {name: self.row(task["id"])[name] for name in NINE}
 
@@ -704,20 +719,13 @@ class LocalFallbackTests(AutostartTestCase):
         self._init_patch.start()
         self.addCleanup(self._init_patch.stop)
 
-    def test_local_create_with_autostart_refuses(self) -> None:
-        err = io.StringIO()
-        with contextlib.redirect_stderr(err):
-            task = client.local_call("create", title="t", project=None, autostart=True,
-                                     route="low-pipeline")
-        self.assertEqual(task["launch_error"], "сервер Listik не запущен")
-        self.assertIs(task["needs_owner"], True)
-        self.assertIsNone(task["launch_pid"])
-        self.assertIsNone(task["launched_by"])
-        self.assertIn(f"autostart {task['id']}: сервер Listik не запущен", err.getvalue())
+    def test_local_create_with_autostart_is_rejected(self) -> None:
+        with self.assertRaises(errors.ListikError) as ctx:
+            client.local_call("create", title="t", project=None, autostart=True,
+                              route="low-pipeline")
+        self.assertIn("autostart больше не поддерживается", str(ctx.exception))
+        self.assertEqual(self.conn.execute("SELECT count(*) FROM tasks").fetchone()[0], 0)
         self.assertEqual(self.log_files(), [])
-        questions = self.comments(task["id"], "question")
-        self.assertEqual([c["text"] for c in questions],
-                         ["автостарт не выполнен: сервер Listik не запущен — нужен ты"])
 
     def test_local_create_without_autostart_does_not_refuse(self) -> None:
         task = client.local_call("create", title="t", project=None, route="low-pipeline")
@@ -813,7 +821,7 @@ class RecoverTests(AutostartTestCase):
 
 
 class CliTests(AutostartTestCase):
-    """Пункт 24 чек-листа: `listik new --autostart --route` и строка в `show`."""
+    """`listik new` не принимает `--autostart`; `show` по-прежнему печатает строку запуска."""
 
     def setUp(self) -> None:
         super().setUp()
@@ -831,22 +839,13 @@ class CliTests(AutostartTestCase):
             code = self.cli.main(argv)
         return code, out.getvalue(), err.getvalue()
 
-    def test_new_autostart_without_route_fails_and_creates_nothing(self) -> None:
-        code, _, err = self.run_cli(["--local", "new", "t", "--autostart"])
-        self.assertEqual(code, 2)
-        self.assertIn("--route", err)
+    def test_new_autostart_is_rejected_and_creates_nothing(self) -> None:
+        for argv in (["--local", "new", "t", "--autostart"],
+                     ["--local", "new", "t", "--autostart", "--route", "low-pipeline"]):
+            code, _, err = self.run_cli(argv)
+            self.assertEqual(code, 2, argv)
+            self.assertIn("неизвестный аргумент: --autostart", err)
         self.assertEqual(self.conn.execute("SELECT count(*) FROM tasks").fetchone()[0], 0)
-
-    def test_new_local_autostart_refuses_because_server_is_down(self) -> None:
-        code, out, _ = self.run_cli(["--local", "new", "t", "--autostart", "--route",
-                                     "low-pipeline"])
-        self.assertEqual(code, 0)
-        row = self.conn.execute("SELECT * FROM tasks ORDER BY rowid DESC LIMIT 1").fetchone()
-        self.assertEqual(row["launch_error"], "сервер Listik не запущен")
-        self.assertEqual(row["needs_owner"], 1)
-        self.assertEqual(row["launch_route"], "low-pipeline")
-        self.assertIn(row["id"], out)
-        self.assertIsNone(row["launch_pid"])
 
     def test_show_prints_autostart_line(self) -> None:
         task = self.make_task(autostart=True, route="low-pipeline")

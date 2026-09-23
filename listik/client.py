@@ -230,18 +230,12 @@ def local_call(op: str, *, fence: fence_mod.Token | dict | None = None, **kwargs
         return documents.context(conn, kwargs["task_id"], kwargs.get("stage", "s1-spec"),
                                  portion=kwargs.get("portion"), max_chars=kwargs.get("max_chars"))
     if op == "create":
-        autostart = bool(kwargs.get("autostart"))
-        task = store.create_task(conn, **kwargs)
-        if autostart:
-            # Локальный режим — это «сервера нет»: запускать процесс некому, поэтому
-            # задача создаётся, но сразу с отказом и флагом «нужен человек».
-            from . import launcher
-            launcher.refuse(conn, task["id"], "сервер Listik не запущен")
-            fresh = store.get_task(conn, task["id"])
-            if "link_hints" in task:  # перечитывание карточки не должно терять подсказку
-                fresh["link_hints"] = task["link_hints"]
-            return fresh
-        return task
+        if kwargs.get("autostart"):
+            raise errors.ListikError(
+                "autostart больше не поддерживается",
+                code=errors.BAD_ARGUMENT, exit_code=2,
+                hint="карточку с маршрутом берёт рой; запустить процесс — listik launch <id>")
+        return store.create_task(conn, **kwargs)
     if op == "update":
         task_id = kwargs.pop("task_id")
         return store.update_task(conn, task_id, **kwargs)

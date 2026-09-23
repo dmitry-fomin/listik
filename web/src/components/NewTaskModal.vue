@@ -330,7 +330,7 @@ function submit(): void {
     acceptance: form.acceptance,
     ...(form.specPath.trim() ? { spec_path: form.specPath.trim() } : {}),
     // Метки маршрута ставит сервер (`routes.labels_for`); без маршрута ключа нет.
-    // Процесс поднимает рой, не галочка на этой форме.
+    // Процесс поднимает рой.
     ...(route ? { route: route.key } : {}),
     ...(owner ? { owner } : {}),
     autostart: false,

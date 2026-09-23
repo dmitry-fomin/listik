@@ -354,7 +354,7 @@ async function retryDraft(): Promise<void> {
   await runDraft()
 }
 
-/** Тело создания по черновику. `autostart` — литерал false: голос харнесс не запускает. */
+/** Тело создания по черновику. Процесс не поднимается: карточку берёт рой. */
 function buildCreateBody(): Record<string, unknown> {
   const source = draft.value
   // Неизвестный доске slug — как пустой: одной кнопкой такую задачу не создаём.

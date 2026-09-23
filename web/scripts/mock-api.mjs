@@ -878,7 +878,7 @@ if (routesMode) {
   for (const item of [
     task({
       id: 'listik-routes-error',
-      title: 'Автостарт упал: маршрут можно сменить',
+      title: 'Маршрут можно сменить',
       status: 'open',
       status_title: 'открыта',
       stage: null,

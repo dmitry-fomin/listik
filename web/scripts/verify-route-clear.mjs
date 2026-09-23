@@ -175,9 +175,9 @@ try {
   }
 
   // 1. Заведённая задача: матрица маршрута с иконками, текущий пресет выбран,
-  //    кнопки «Сохранить» нет, ошибка автостарта и метки на месте.
-  await record('карточка с отказом автостарта: матрица маршрута показана', async () => {
-    await openCard('Автостарт упал: маршрут можно сменить', CARD)
+  //    кнопки «Сохранить» нет, метки маршрута на месте.
+  await record('заведённая карточка: матрица маршрута показана', async () => {
+    await openCard('Маршрут можно сменить', CARD)
     const current = await waitFor(async () => {
       const seen = await state()
       return seen.hasPicker && seen.selectedKey === ROUTE ? seen : null
@@ -188,12 +188,12 @@ try {
       && current.hasClear === true
       && current.hasSave === false
       && current.icons > 0
-      && Boolean(current.alert?.includes('маршрута low-pipeline нет в routes.json'))
+      && current.alert == null
       && current.labels.includes('harness:claude')
       && current.labels.includes('process:low-pipeline')
     return {
       ok,
-      expect: 'матрица с текущим маршрутом и иконками, без кнопки сохранения, алерт, метки harness:/process:',
+      expect: 'матрица с текущим маршрутом и иконками, без кнопки сохранения и без алерта, метки harness:/process:',
       got: current ? { ...current, labels: current.labels.join(', ') } : null,
     }
   })

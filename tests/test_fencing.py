@@ -716,20 +716,28 @@ class CliErrorBothPathsTests(FencingHttpCase):
         self.assertIn("остановись", payload["error"]["hint"])
 
     def test_http_mode(self):
-        with mock.patch.dict(os.environ, self._zombie_env()):
+        # is_up зафиксирован: иначе медленный /api/health уводит call() в локальный
+        # фолбэк, и тест молча проверяет не HTTP-путь. Сам запрос идёт на тестовый сервер.
+        with mock.patch.dict(os.environ, self._zombie_env()), \
+             mock.patch.object(client, "is_up", return_value=True) as is_up_mock:
             argv = ["--host", "127.0.0.1", "--port", str(self.port),
                     "comment", self.tid, "зомби", "-k", "journal"]
             code, _, err = self.run_cli(argv)
+        is_up_mock.assert_called_once()
         self.assertEqual(code, 1)
-        self.assertTrue(err.strip().startswith("ошибка: полномочия на задачу"), err)
+        self.assertNotIn("не отвечает", err)
+        lines = err.splitlines()
+        self.assertTrue(any(line.startswith("ошибка: полномочия на задачу") for line in lines), err)
         self.assertIn("остановись", err)
         self.assertNotIn("посмотри состояние карточки", err)
 
     def test_http_mode_json(self):
-        with mock.patch.dict(os.environ, self._zombie_env()):
+        with mock.patch.dict(os.environ, self._zombie_env()), \
+             mock.patch.object(client, "is_up", return_value=True) as is_up_mock:
             argv = ["--host", "127.0.0.1", "--port", str(self.port),
                     "comment", self.tid, "зомби", "-k", "journal", "--json"]
             code, out, _ = self.run_cli(argv)
+        is_up_mock.assert_called_once()
         self.assertEqual(code, 1)
         payload = json.loads(out)
         self.assertEqual(payload["error"]["code"], "revoked")

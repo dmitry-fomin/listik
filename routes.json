@@ -27,7 +27,7 @@
         "judge": {
           "provider": "grok",
           "label": "xhigh",
-          "title": "Grok 4.6 · xhigh"
+          "title": "Grok 4.7 · xhigh"
         }
       },
       "command": [
@@ -63,7 +63,7 @@
         "judge": {
           "provider": "grok",
           "label": "xhigh",
-          "title": "Grok 4.6 · xhigh"
+          "title": "Grok 4.7 · xhigh"
         }
       },
       "command": [
@@ -99,7 +99,7 @@
         "judge": {
           "provider": "grok",
           "label": "medium",
-          "title": "Grok 4.6 · medium"
+          "title": "Grok 4.7 · medium"
         }
       },
       "command": [
@@ -135,7 +135,7 @@
         "judge": {
           "provider": "grok",
           "label": "medium",
-          "title": "Grok 4.6 · medium"
+          "title": "Grok 4.7 · medium"
         }
       },
       "command": [
@@ -161,7 +161,7 @@
         "judge": {
           "provider": "grok",
           "label": "high",
-          "title": "Grok 4.6 · high"
+          "title": "Grok 4.7 · high"
         }
       },
       "command": [
@@ -187,7 +187,7 @@
         "judge": {
           "provider": "grok",
           "label": "xhigh",
-          "title": "Grok 4.6 · xhigh"
+          "title": "Grok 4.7 · xhigh"
         }
       },
       "command": [
@@ -213,7 +213,7 @@
         "judge": {
           "provider": "grok",
           "label": "xhigh",
-          "title": "Grok 4.6 · xhigh"
+          "title": "Grok 4.7 · xhigh"
         }
       },
       "command": [
@@ -323,7 +323,7 @@
         "judge": {
           "provider": "grok",
           "label": "high",
-          "title": "Grok 4.6 · high"
+          "title": "Grok 4.7 · high"
         }
       },
       "command": [

@@ -1213,7 +1213,26 @@ function listTasks(params, source = tasks) {
 }
 
 function board(groupBy, source = tasks) {
-  const open = source.filter((item) => !['done', 'cancelled'].includes(item.status))
+  // Находка lint — у одной карточки «в работе без держателя» (как в store.lint); копии,
+  // чтобы поле `lint` не протекло в list/show.
+  const lintTarget = source.find(
+    (item) =>
+      item.status === 'in_progress' && !item.holder && !item.needs_owner && !item.stale && !item.abandoned,
+  )
+  const open = source
+    .filter((item) => !['done', 'cancelled'].includes(item.status))
+    .map((item) => ({ ...item, lint: item === lintTarget ? ['in_progress_no_holder'] : [] }))
+  const lintItems = lintTarget
+    ? [{
+        rule: 'in_progress_no_holder',
+        id: lintTarget.id,
+        title: lintTarget.title,
+        stage: lintTarget.stage,
+        status: lintTarget.status,
+        message: 'в работе без держателя',
+        details: { released_at: null },
+      }]
+    : []
   const columnsMap = new Map()
   const keyOf = (item) => {
     if (groupBy === 'stage') return item.stage ?? 'none'
@@ -1252,10 +1271,11 @@ function board(groupBy, source = tasks) {
     group_by: groupBy,
     columns,
     total: open.length,
-    needs_you: open.filter((item) => item.needs_owner || item.stale || item.abandoned),
+    needs_you: open.filter((item) => item.needs_owner || item.stale || item.abandoned || item.lint?.length),
     ready,
     blocked_count: blockedCount,
     cycles: [],
+    lint: { count: lintItems.length, items: lintItems },
     generated_at: new Date().toISOString(),
   }
 }

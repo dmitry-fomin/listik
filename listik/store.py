@@ -1739,7 +1739,14 @@ def task_timeline(conn: sqlite3.Connection, limit: int = 100, *,
 def board(conn: sqlite3.Connection, *, group_by: str = "status", project: str | None = None,
           include_closed: bool = False, limit_per_column: int = 300,
           ready_limit: int = 15, as_owner: str | None = None) -> dict:
-    """Данные для канбан-доски: колонки с задачами."""
+    """Данные для канбан-доски: колонки с задачами.
+
+    С ``project`` доска зовёт ``lint`` (порог — дефолт): у каждой карточки поле
+    ``lint`` — отсортированные коды её находок, в корне ``lint{count, items}``;
+    карточка с непустым ``lint`` попадает в ``needs_you`` (в конец ленты). Без
+    ``project`` (доска по всем проектам) lint не вызывается: ``lint`` пуст везде.
+    Ошибка lint доску не роняет — тогда тоже пусто.
+    """
     where, params = [], []
     owner_cfg = server_cfg()
     if owner_cfg is not None:
@@ -1758,6 +1765,19 @@ def board(conn: sqlite3.Connection, *, group_by: str = "status", project: str | 
         f"SELECT * FROM tasks {sql_where} ORDER BY priority ASC, updated_at DESC", params
     ).fetchall()
     tasks = [row_to_task(conn, r) for r in rows]
+
+    lint_result: dict = {"count": 0, "items": []}
+    if project:
+        try:
+            found = lint(conn, project)
+            lint_result = {"count": found["count"], "items": found["items"]}
+        except Exception:  # noqa: BLE001 — доска не должна падать из-за lint
+            lint_result = {"count": 0, "items": []}
+    lint_by_id: dict[str, list[str]] = {}
+    for item in lint_result["items"]:
+        lint_by_id.setdefault(item["id"], []).append(item["rule"])
+    for t in tasks:
+        t["lint"] = sorted(lint_by_id.get(t["id"], []))
 
     columns: dict[str, dict] = {}
     if group_by == "stage":
@@ -1809,10 +1829,13 @@ def board(conn: sqlite3.Connection, *, group_by: str = "status", project: str | 
 
     # «Выдана, но не взята» дольше порога — тот же сигнал «нужен ты», что и
     # брошенная: оркестратор выдал работу, а агент не запустился.
-    needs_you = [t for t in tasks
-                 if t["needs_owner"] or t["stale"] or t["abandoned"] or t["not_taken_warn"]]
-    # Самое запущенное — наверх: сначала ждущие человека, потом по времени без движения
-    needs_you.sort(key=lambda t: (not t["needs_owner"],
+    def _urgent(t: dict) -> bool:
+        return bool(t["needs_owner"] or t["stale"] or t["abandoned"] or t["not_taken_warn"])
+
+    needs_you = [t for t in tasks if _urgent(t) or t["lint"]]
+    # Самое запущенное — наверх: сначала ждущие человека, потом по времени без движения;
+    # попавшие в ленту только из-за lint — в самом конце.
+    needs_you.sort(key=lambda t: (not t["needs_owner"], not _urgent(t),
                                   -(t.get("idle_hours") or t.get("assigned_hours") or 0)))
 
     # Что можно взять прямо сейчас: без незакрытых блокеров и без держателя.
@@ -1845,6 +1868,7 @@ def board(conn: sqlite3.Connection, *, group_by: str = "status", project: str | 
         "ready": ready_list,
         "blocked_count": blocked_count,
         "cycles": deps_mod.cycles(conn) if ready_limit else [],
+        "lint": lint_result,
         "generated_at": now_iso(),
     }
 

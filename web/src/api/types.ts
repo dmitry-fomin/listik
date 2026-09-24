@@ -108,6 +108,8 @@ export interface Task {
   launch_exit_code: number | null
   launch_finished_at: string | null
   launch_error: string | null
+  /** Коды находок `GET /api/lint` по карточке — только у карточек доски (в `list`/`show` нет). */
+  lint?: string[]
 }
 
 export interface TaskComment {
@@ -306,6 +308,14 @@ export interface BlockedTask extends Task {
   blocked_by_holder: string | null
 }
 
+/** Находка `GET /api/lint`. */
+export interface LintItem {
+  rule: string
+  id: string
+  message: string
+  [key: string]: unknown
+}
+
 export interface Board {
   group_by: GroupBy
   columns: BoardColumn[]
@@ -317,6 +327,8 @@ export interface Board {
   blocked_count: number
   /** Циклы в зависимостях; нормально — пустой массив. */
   cycles: string[][]
+  /** Находки lint по проекту доски; без `project` — пусто. */
+  lint: { count: number; items: LintItem[] }
   generated_at: string
 }
 

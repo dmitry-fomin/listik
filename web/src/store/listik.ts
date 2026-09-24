@@ -383,6 +383,7 @@ const inbox = computed<Task[]>(() => {
   const rank = (task: Task): number => {
     if (task.needs_owner) return 0
     if (taskHealth(task) === 'dead') return 1
+    if (taskHealth(task) !== 'at-risk' && (task.lint?.length ?? 0) > 0) return 3
     return 2
   }
   return filtered.slice().sort((left, right) => {

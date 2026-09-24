@@ -1161,7 +1161,7 @@ id внутри файлового пути (`docs/specs/<id>.md`, `/wt/<id>/lis
 | GET | `/api/meta` | `archived` | `projects[], actors[], facets{}, statuses{}, stages{}, priorities{}` |
 | GET | `/api/projects` | — | `projects[]` — все репозитории доски, включая скрытые: `slug, title, kind, path, path_exists, git_remote, git_branch, archived, n_tasks, n_open, n_wip`, плюс `routing` (переопределение проекта — объект или `null`), `routing_effective` (действующая слитая таблица, которой реально пользуется `transition_kind`), `routing_source` (`default`\|`config`\|`db`\|`config+db`), плюс `root` (корень поиска проектов) |
 | GET | `/api/stats` | `project` | `by_status{}, by_stage{}, by_project[], by_holder[], by_actor[], stale, needs_owner, closed_7d, closed_prev_7d, closed_delta, closed_by_day[{date,count}] (14 дней), long_stage, running[], generated_at` |
-| GET | `/api/board` | `group_by=status\|stage\|project\|holder`, `project`, `include_closed`, `limit` | `group_by, columns[], total, needs_you[], generated_at`. В серверном режиме заголовок `X-Listik-Owner` фильтрует все колонки и блок `ready`: «свои + без владельца»; имя не из `server.users` — 400 `bad_argument` |
+| GET | `/api/board` | `group_by=status\|stage\|project\|holder`, `project`, `include_closed`, `limit` | `group_by, columns[], total, needs_you[], lint{count, items[]}, generated_at`; у каждой карточки доски — `lint[]` (отсортированные коды `rule` её находок `GET /api/lint`; в `list`/`show` поля нет). `lint` считается только с `project`: без него (и при ошибке lint) у всех карточек `lint: []`, в корне `{count: 0, items: []}`. В серверном режиме заголовок `X-Listik-Owner` фильтрует все колонки и блок `ready`: «свои + без владельца»; имя не из `server.users` — 400 `bad_argument` |
 | GET | `/api/tasks` | `project,status,stage,assignee,holder,needs_owner,type,label,text,include_closed,include_archived,limit,offset,order=updated\|created\|priority\|stage` | `total, limit, offset, tasks[]`. В серверном режиме заголовок `X-Listik-Owner` оставляет «свои + без владельца»; имя не из `server.users` — 400 `bad_argument` |
 | GET | `/api/tasks/{id}` | `details=0/1`, `rejected` (`0/1`, по умолчанию нет — с `1` добавляет ключ `rejected[]`, карантин задачи; см. «Ограждение запуска»), `fields` (список полей через запятую: в ответе остаются только они, порядок ключей — как в запросе; неизвестное поле — `400` `bad_argument` с перечнем доступных; то же умеют `listik show --fields a,b` и `listik_show(fields)` в MCP) | задача + `comments/dependencies/dependents/events/documents/children` |
 | GET | `/api/tasks/{id}/context` | `stage`, `portion`, `max_chars` | компактный, побайтно стабильный контекст этапа для harness — см. ниже |
@@ -1236,8 +1236,9 @@ WAL и исчезновение WAL при открытых соединения
   "not_taken": 1, "tasks": [ { ...задача... } ] }
 ```
 
-`needs_you` — задачи, требующие человека: `needs_owner`, `stale`, `abandoned` (в работе без держателя дольше `board.assign_warn_minutes` после `release`) или `not_taken_warn`
-(выдана, но не взята дольше `board.assign_warn_minutes`).
+`needs_you` — задачи, требующие человека: `needs_owner`, `stale`, `abandoned` (в работе без держателя дольше `board.assign_warn_minutes` после `release`) `not_taken_warn`
+(выдана, но не взята дольше `board.assign_warn_minutes`) или непустой `lint` (несостыковки по
+`GET /api/lint`; такие карточки в конце ленты).
 
 `/api/search` — форма `results[]`: карточка задачи (обычные поля) плюс `snippet`, `score`,
 `hits[]` и `best_hit` (лучший из `hits[]`). Каждый элемент `hits[]` — либо попадание в саму

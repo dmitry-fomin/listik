@@ -68,7 +68,13 @@ class ReleaseGraceTests(TempDbTestCase):
         self.assertFalse(out["abandoned"])
         self.assertEqual(out["released_at"], self._release_ts())
         self.assertTrue(out["released_at"])
-        self.assertNotIn(self.task, self._needs_you_ids())
+        # В ленту карточку ведёт только lint (`in_progress_no_holder`), не «брошена».
+        card = next((t for t in store.board(self.conn, project="demo")["needs_you"]
+                     if t["id"] == self.task), None)
+        self.assertIsNotNone(card)
+        self.assertFalse(card["abandoned"] or card["stale"] or card["needs_owner"]
+                         or card["not_taken_warn"])
+        self.assertIn("in_progress_no_holder", card["lint"])
 
     def test_release_command_is_not_abandoned_yet(self) -> None:
         """B2: `release` командой — карточка не брошена сразу."""

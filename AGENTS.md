@@ -7,6 +7,8 @@
 Полный контракт данных — `docs/API.md`, ежедневные команды — `README.md`.
 
 <!-- BEGIN LISTIK -->
+<!-- listik-protocol: 1 -->
+
 ## Listik — harness protocol
 
 Listik is the single work queue and journal: `listik`.

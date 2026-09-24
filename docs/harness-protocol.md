@@ -1,3 +1,5 @@
+<!-- listik-protocol: 1 -->
+
 ## Listik — harness protocol
 
 Listik is the single work queue and journal: `listik`.

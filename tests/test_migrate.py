@@ -97,7 +97,7 @@ class UpsertTests(unittest.TestCase):
         result = migrate.upsert(target)
         self.assertEqual(result, "unchanged")
 
-        other_body = "другой текст\n"
+        other_body = "<!-- listik-protocol: 1 -->\n\nдругой текст\n"
         result = migrate.upsert(target, body=other_body)
         self.assertEqual(result, "updated")
         after_update = target.read_text(encoding="utf-8")
@@ -367,6 +367,120 @@ class InitProjectsCliTests(TempDbTestCase):
         self.assertEqual((project / ".gitignore").read_text(encoding="utf-8"),
                          migrate.GITIGNORE_ENTRY + "\n")
 
+
+def _versioned(n: int | None, text: str = "## Listik\n\nprotocol text\n") -> str:
+    return (f"<!-- listik-protocol: {n} -->\n\n" if n is not None else "") + text
+
+
+class ProtocolVersionTests(unittest.TestCase):
+    """Метка версии протокола: блок новее тела не откатывается без force (listik-e8za)."""
+
+    def setUp(self) -> None:
+        self._tmp = tempfile.TemporaryDirectory()
+        self.dir = Path(self._tmp.name)
+        self.path = self.dir / "AGENTS.md"
+
+    def tearDown(self) -> None:
+        self._tmp.cleanup()
+
+    def _seed(self, body: str) -> bytes:
+        self.path.write_text("# Proj\n\n" + migrate.block(body) + "\ntail\n", encoding="utf-8")
+        return self.path.read_bytes()
+
+    def test_protocol_version_parsing(self) -> None:
+        self.assertEqual(migrate.protocol_version(_versioned(7)), 7)
+        self.assertEqual(migrate.protocol_version("## Listik\n"), 0)
+        self.assertEqual(migrate.protocol_version("<!-- listik-protocol: abc -->\n"), 0)
+        self.assertEqual(
+            migrate.protocol_version("see <!-- listik-protocol: 3 --> in prose\n"), 0)
+
+    def test_newer_block_is_skipped(self) -> None:
+        before = self._seed(_versioned(5))
+        for dry in (False, True):
+            self.assertEqual(
+                migrate.upsert(self.path, body=_versioned(1, "new\n"), dry_run=dry),
+                "skipped-newer")
+            self.assertEqual(self.path.read_bytes(), before)
+
+    def test_force_overwrites_newer_block(self) -> None:
+        self._seed(_versioned(5))
+        self.assertEqual(
+            migrate.upsert(self.path, body=_versioned(1, "new\n"), force=True), "updated")
+        self.assertIn(migrate.block(_versioned(1, "new\n")),
+                      self.path.read_text(encoding="utf-8"))
+
+    def test_older_block_is_updated(self) -> None:
+        self._seed(_versioned(1))
+        self.assertEqual(migrate.upsert(self.path, body=_versioned(5)), "updated")
+
+    def test_unmarked_block_is_updated(self) -> None:
+        self._seed("## Listik\nold\n")
+        self.assertEqual(migrate.upsert(self.path, body=_versioned(1)), "updated")
+
+    def test_unmarked_body_skips_marked_block(self) -> None:
+        self._seed(_versioned(1))
+        self.assertEqual(migrate.upsert(self.path, body="## Listik\nold\n"), "skipped-newer")
+
+    def test_equal_marks_different_text_updated(self) -> None:
+        self._seed(_versioned(2, "a\n"))
+        self.assertEqual(migrate.upsert(self.path, body=_versioned(2, "b\n")), "updated")
+
+    def test_force_identical_is_unchanged_and_dry_run_keeps_file(self) -> None:
+        self._seed(_versioned(2))
+        self.assertEqual(migrate.upsert(self.path, body=_versioned(2), force=True), "unchanged")
+        before = self._seed(_versioned(1))
+        self.assertEqual(
+            migrate.upsert(self.path, body=_versioned(3), force=True, dry_run=True), "updated")
+        self.assertEqual(self.path.read_bytes(), before)
+
+    def test_migrate_all_report_and_remove(self) -> None:
+        self._seed(_versioned(999))
+        report = migrate.migrate_all([self.dir], verbose=False)
+        self.assertEqual(report["skipped-newer"], [str(self.path)])
+        forced = migrate.migrate_all([self.dir], verbose=False, force=True)
+        self.assertEqual(forced["updated"], [str(self.path)])
+        self.assertEqual(forced["skipped-newer"], [])
+        self._seed(_versioned(999))
+        removed = migrate.migrate_all([self.dir], remove_block=True, verbose=False)
+        self.assertEqual(removed["removed"], [str(self.path)])
+        self.assertNotIn(migrate.BEGIN, self.path.read_text(encoding="utf-8"))
+
+    def test_repo_protocol_is_marked(self) -> None:
+        protocol = (paths.ROOT_DIR / "docs" / "harness-protocol.md").read_text(encoding="utf-8")
+        self.assertTrue(protocol.startswith("<!-- listik-protocol: "))
+        self.assertGreaterEqual(migrate.protocol_version(migrate.body()), 1)
+
+
+class InitProjectsForceCliTests(TempDbTestCase):
+    """`init-projects` пропускает блок новее шаблона, `--force` его перезаписывает."""
+
+    def test_skip_then_force(self) -> None:
+        project = (self.tmp_path / "proj").resolve()
+        project.mkdir()
+        agents = project / "AGENTS.md"
+        agents.write_text("# Project\n\n" + migrate.block(_versioned(999)), encoding="utf-8")
+        before = agents.read_bytes()
+        store.add_project(self.conn, path=str(project))
+        env = {**os.environ, "LISTIK_DB": str(self.db_path),
+               "LISTIK_LOG": str(self.tmp_path / "listik.log")}
+
+        def run(*extra: str) -> subprocess.CompletedProcess:
+            return subprocess.run(
+                [sys.executable, str(LISTIK_BIN), "--local", "init-projects", *extra],
+                capture_output=True, text=True, env=env, cwd=str(self.tmp_path))
+
+        proc = run()
+        self.assertEqual(proc.returncode, 0, proc.stdout + proc.stderr)
+        self.assertIn("! пропущен", proc.stdout)
+        self.assertIn("новее шаблона: 1", proc.stdout)
+        self.assertEqual(agents.read_bytes(), before)
+
+        proc = run("--force")
+        self.assertEqual(proc.returncode, 0, proc.stdout + proc.stderr)
+        self.assertIn("обновлено: 1", proc.stdout)
+        text = agents.read_text(encoding="utf-8")
+        self.assertIn(migrate.BEGIN + "\n<!-- listik-protocol: 1 -->\n", text)
+        self.assertIn("## Listik — harness protocol", text)
 
 if __name__ == "__main__":
     unittest.main()

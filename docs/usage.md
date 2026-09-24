@@ -114,6 +114,8 @@ claude mcp add --transport http listik https://<домен>/mcp \
 
 **Правила в проектах**: `listik projects --add <путь>`, затем `listik init-projects` вписывает
 протокол в `AGENTS.md`/`CLAUDE.md` проектов и `.worktrees/` в их `.gitignore`.
+Блок, чья метка версии протокола (`<!-- listik-protocol: N -->`) новее ставящегося шаблона,
+пропускается с предупреждением `! пропущен`; перезаписать его — `listik init-projects --force`.
 
 ## Проект по рабочему каталогу
 

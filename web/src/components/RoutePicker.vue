@@ -17,7 +17,7 @@ import ListikIcon from '@/components/ListikIcon.vue'
 import HarnessIcon from '@/components/marks/HarnessIcon.vue'
 import ProviderIcon from '@/components/marks/ProviderIcon.vue'
 import RouteIcon from '@/components/marks/RouteIcon.vue'
-import type { RouteDef, SwarmLikeRoute } from '@/api/types'
+import type { RouteDef } from '@/api/types'
 import { harnessTitle } from '@/lib/harness'
 import { isSwarmCell, ROLE_KEYS, ROLE_TITLES } from '@/lib/pipelines'
 import {
@@ -117,44 +117,6 @@ function routeTooltip(route: RouteDef): string {
   }
   if (routeAllowed(route)) return route.hint
   return 'Эпик всегда режется на шаги через ТЗ (s1) — пресеты без этапа ТЗ для эпиков закрыты.'
-}
-
-/**
- * Мета-подпись строки роя: «N ролей» плюс пропуски («s2 пропущен»), как в
- * макете. Склонение — то же, что у списка настроек (правило 1/2–4/5+,
- * исключение 11–14).
- */
-function swarmMeta(route: SwarmLikeRoute): string {
-  const filled = ROLE_KEYS.filter((role) => Boolean(route.roles[role]))
-  const skipped = ROLE_KEYS.filter((role) => !route.roles[role])
-  const count = filled.length
-  const lastTwo = count % 100
-  const word =
-    lastTwo >= 11 && lastTwo <= 14
-      ? 'ролей'
-      : count % 10 === 1
-        ? 'роль'
-        : count % 10 >= 2 && count % 10 <= 4
-          ? 'роли'
-          : 'ролей'
-  const parts = [`${count} ${word}`]
-  if (skipped.length > 0) {
-    parts.push(skipped.map((role) => `${ROLE_STAGE_CODE[role]} пропущен`).join(' · '))
-  }
-  return parts.join(' · ')
-}
-
-/** Код этапа роли (`s1`…`s4`) — из `ROLE_STAGE`, литералов здесь нет. */
-const ROLE_STAGE_CODE: Record<string, string> = { spec: 's1', critic: 's2', impl: 's3', judge: 's4' }
-
-/**
- * Харнесс ячейки цепочки роя, `null` — этап пропущен или ячейка чужой формы
- * (provider-ячейка в роевом конвейере не должна сохраниться — рисуем
- * пунктиром, как пропуск).
- */
-function chainHarness(route: SwarmLikeRoute, role: (typeof ROLE_KEYS)[number]): string | null {
-  const cell = route.roles[role]
-  return isSwarmCell(cell) ? cell.harness : null
 }
 
 function routeTabindex(key: string): number {
@@ -272,39 +234,49 @@ function onRouteKeydown(event: KeyboardEvent, key: string): void {
         <span class="listik-rgroup__spacer" aria-hidden="true" />
       </div>
 
-      <button
-        v-for="route in swarmRoutes"
-        :key="route.key"
-        :ref="(el) => setRouteRef(route.key, el)"
-        type="button"
-        role="radio"
-        class="listik-rrow"
-        :class="{ 'is-on': isOn(route.key), 'is-off': !routeAllowed(route) }"
-        :data-route-key="route.key"
-        :aria-checked="isOn(route.key)"
-        :aria-disabled="!routeAllowed(route) || undefined"
-        :disabled="disabled || !routeAllowed(route)"
-        :tabindex="routeTabindex(route.key)"
-        :title="routeTooltip(route)"
-        @click="selectRoute(route)"
-        @keydown="onRouteKeydown($event, route.key)"
-      >
-        <RouteIcon :route="route" size="sm" />
-        <span class="listik-rrow__name">{{ route.title }}</span>
-        <span class="listik-rrow__chain" aria-hidden="true">
-          <template v-for="role in ROLE_KEYS" :key="role">
-            <HarnessIcon
-              v-if="chainHarness(route, role)"
-              :harness="chainHarness(route, role)!"
-              size="sm"
-            />
-            <span v-else class="listik-rrow__skip" />
-          </template>
-        </span>
-        <span class="listik-rrow__spacer" aria-hidden="true" />
-        <span class="listik-rrow__meta">{{ swarmMeta(route) }}</span>
-        <code class="listik-mono listik-rrow__key">{{ route.key }}</code>
-      </button>
+      <div class="listik-pipelines">
+        <button
+          v-for="route in swarmRoutes"
+          :key="route.key"
+          :ref="(el) => setRouteRef(route.key, el)"
+          type="button"
+          role="radio"
+          class="listik-pipelines__row"
+          :class="{ 'is-on': isOn(route.key), 'is-off': !routeAllowed(route) }"
+          :data-route-key="route.key"
+          :aria-checked="isOn(route.key)"
+          :aria-disabled="!routeAllowed(route) || undefined"
+          :disabled="disabled || !routeAllowed(route)"
+          :tabindex="routeTabindex(route.key)"
+          :title="routeTooltip(route)"
+          @click="selectRoute(route)"
+          @keydown="onRouteKeydown($event, route.key)"
+        >
+          <span class="listik-pipelines__row-title">
+            <RouteIcon :route="route" size="sm" />
+            <span class="listik-pipelines__row-text">
+              <span class="listik-pipelines__row-name">{{ route.title }}</span>
+              <span class="listik-pipelines__row-hint">{{ route.hint }}</span>
+            </span>
+          </span>
+
+          <span v-for="role in ROLE_KEYS" :key="role" class="listik-pipelines__cell">
+            <template v-if="route.roles[role]">
+              <!-- Ячейка роевой формы (`driver=swarm` у pipeline) рисуется
+                   глифом харнесса — у неё нет `provider`. -->
+              <template v-if="isSwarmCell(route.roles[role])">
+                <HarnessIcon :harness="route.roles[role]!.harness" size="sm" />
+                <span class="listik-pipelines__cell-label">{{ harnessTitle(route.roles[role]!.harness) }}</span>
+              </template>
+              <template v-else>
+                <ProviderIcon :provider="route.roles[role]!.provider" size="sm" />
+                <span class="listik-pipelines__cell-label">{{ route.roles[role]!.label }}</span>
+              </template>
+            </template>
+            <span v-else class="listik-pipelines__cell-empty" aria-hidden="true">—</span>
+          </span>
+        </button>
+      </div>
     </div>
 
     <!-- Группа «Прямая выдача»: одна команда на всю задачу; сюда же пункт
@@ -411,97 +383,5 @@ function onRouteKeydown(event: KeyboardEvent, key: string): void {
 
 .listik-rgroup__spacer {
   flex: 1 1 auto;
-}
-
-/* Строка маршрута роя: имя, цепочка глифов этапов, мета и ключ. */
-.listik-rrow {
-  display: flex;
-  align-items: center;
-  gap: var(--space-2);
-  width: 100%;
-  padding: var(--space-2) var(--space-3);
-  border: 1px solid transparent;
-  border-radius: var(--radius-lg);
-  background: transparent;
-  color: inherit;
-  font: inherit;
-  text-align: left;
-  cursor: pointer;
-}
-
-.listik-rrow:hover {
-  background: var(--surface-2);
-}
-
-.listik-rrow:focus-visible {
-  outline: none;
-  box-shadow: var(--focus-ring);
-}
-
-.listik-rrow.is-on {
-  background: var(--accent-50);
-  border-color: var(--accent-200);
-}
-
-.listik-rrow.is-off {
-  color: var(--ink-3);
-}
-
-.listik-rrow__name {
-  min-width: 0;
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-  font-weight: var(--weight-medium);
-}
-
-/* Цепочка исполнителей ролей: глифы через тонкий разделитель; пропуск —
-   пунктирная черта, как `<i class="skip">` в макете. */
-.listik-rrow__chain {
-  display: inline-flex;
-  align-items: center;
-  gap: var(--space-1);
-  flex-shrink: 0;
-}
-
-.listik-rrow__chain > * + * {
-  margin-left: var(--space-1);
-  position: relative;
-}
-
-.listik-rrow__chain > * + *::before {
-  content: '';
-  position: absolute;
-  left: calc(-1 * var(--space-1) - 1px);
-  top: 50%;
-  width: 2px;
-  height: 1px;
-  background: var(--hairline-strong);
-}
-
-.listik-rrow__skip {
-  display: inline-block;
-  width: 14px;
-  height: 14px;
-  border: 1px dashed var(--ink-4);
-  border-radius: var(--radius-sm);
-  opacity: 0.7;
-}
-
-.listik-rrow__spacer {
-  flex: 1 1 auto;
-}
-
-.listik-rrow__meta {
-  flex-shrink: 0;
-  font-size: var(--text-xs);
-  color: var(--ink-3);
-  white-space: nowrap;
-}
-
-.listik-rrow__key {
-  flex-shrink: 0;
-  font-size: var(--text-xs);
-  color: var(--ink-3);
 }
 </style>

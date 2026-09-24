@@ -835,6 +835,39 @@ class FeaturePipelinePiExecutorTests(unittest.TestCase):
                     self.assertIn(needle, text, f"{name}/{SKILL_FILE}: нет {needle!r}")
 
 
+
+#: Двухходовка пресетов без писателя ТЗ (listik-47y8, порция d): ход 1 на чтении возвращает
+#: границы правки и план, ход 2 — продолжение той же сессии с правом записи.
+TWO_TURN_COMMON = (
+    "Ход 1",
+    "--permission read",
+    "write_scope=",
+    "## Границы правки",
+    "Файлы:",
+    "Не трогать:",
+    "## План",
+    "ход 1 пропущен — write_scope задан",
+    "пути названы автором",
+    "ничего не правь, команд не запускай",
+    "только из этого списка",
+    "оба",
+)
+TWO_TURN_PER_SKILL = {
+    "xlow-pipeline": ("resume --session", "--channel deepseek"),
+    "nano-pipeline": ("resume <job-id", "--model gpt-6-astra", "--effort high"),
+}
+
+
+class FeaturePipelineTwoTurnTests(unittest.TestCase):
+    """xlow/nano: ход 1 — границы правки на чтении, ход 2 — продолжение сессии (listik-47y8)."""
+
+    def test_xlow_and_nano_describe_two_turns(self) -> None:
+        for name, own in sorted(TWO_TURN_PER_SKILL.items()):
+            text = _skill_text(name)
+            for needle in TWO_TURN_COMMON + own:
+                with self.subTest(skill=name, required=needle):
+                    self.assertIn(needle, text, f"{name}/{SKILL_FILE}: нет {needle!r}")
+
 #: Канон правила о коммите порции приёмкой (listik-4n4y): заголовок раздела ядра.
 COMMIT_RULE_HEADING = "## Коммит порции приёмкой"
 

@@ -69,7 +69,15 @@ const glyph = computed<string | null>(() => {
     name="user"
     :size="size"
   />
-  <ListikIcon v-else-if="(resolved || icon) && !glyph" name="bolt" :size="size" />
+  <span
+    v-else-if="(resolved || icon) && !glyph"
+    class="listik-harness-icon"
+    :class="`listik-harness-icon--${size}`"
+    :title="title"
+  >
+    <!-- style перебивает inline-габарит ListikIcon (--icon-*): глиф на весь span, как у фирменных глифов -->
+    <ListikIcon name="bolt" :size="size" style="width: 100%; height: 100%" />
+  </span>
   <span
     v-else-if="glyph"
     class="listik-harness-icon"

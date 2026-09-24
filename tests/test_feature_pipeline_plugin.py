@@ -1261,5 +1261,21 @@ class FeaturePipelineListikCardTests(unittest.TestCase):
                                  f"{name}: listik:listik не должен преднагружаться")
 
 
+class FeaturePipelineLocalCardLineTests(unittest.TestCase):
+    """Локальному субагенту — строка карточки, вердикт пишет судья сам (listik-5qzq, порция d)."""
+
+    def test_core_has_local_subagent_card_line(self) -> None:
+        text = _plugin_text(CORE_DOC)
+        heading = "\n### Строка задания локальному субагенту\n"
+        self.assertIn(heading, text, "в ядре нет подраздела «Строка задания локальному субагенту»")
+        section = text.split(heading, 1)[1].split("\n### ", 1)[0]
+        self.assertIn("`Listik, карточка <P>`", section)
+
+    def test_no_skill_says_session_writes_verdict(self) -> None:
+        for name in sorted(_skill_names()):
+            with self.subTest(skill=name):
+                self.assertNotIn("Вердикт в карточку пишет сессия", _skill_text(name))
+
+
 if __name__ == "__main__":
     unittest.main()

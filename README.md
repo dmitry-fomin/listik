@@ -93,6 +93,7 @@ MCP-инструментами `listik_*` или командой `listik new`. 
 | `inherit-pipeline` | Fable | Opus | Sonnet | Opus | всё внутри Claude, наружу ничего не уходит |
 | `nano-pipeline` | — | — | Codex | Grok | короткая задача: сделать и принять |
 
+Перезаписать таблицу из `routes.json` установленной копии — `listik routes --reimport`.
 Полный список — `listik routes`, `GET /api/routes` или
 доска; там же собирается свой набор. Исполнители подключаются плагинами Claude Code,
 репозиторий сам является маркетплейсом:
@@ -160,8 +161,14 @@ curl -fsSL https://github.com/dmitry-fomin/listik/releases/latest/download/insta
 в `/dev/tty`); `--yes` этот вопрос не закрывает — конфиг Codex правится только явным
 `--codex-network yes`.
 
+При обновлении (база уже есть) установщик спрашивает, перезаписать ли таблицу маршрутов
+из `routes.json` новой версии — иначе новые исполнители и подписи ролей не доедут, а ваши
+правки маршрутов на доске при перезаписи пропадут. Ответ — флаг `--routes-reimport yes|no|ask`
+(`LISTIK_ROUTES_REIMPORT`, по умолчанию `ask` — вопрос в `/dev/tty`, без tty и с `--yes` — `no`);
+то же вручную — `listik routes --reimport`.
+
 Все флаги (`--version`, `--archive`, `--home`, `--service`, `--swarm`, `--mcp`, `--plugins`,
-`--codex-network`, `--yes`, …) — `install.sh --help`.
+`--codex-network`, `--routes-reimport`, `--yes`, …) — `install.sh --help`.
 
 ### Из исходников
 

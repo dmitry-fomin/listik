@@ -437,6 +437,23 @@ def import_file(conn: sqlite3.Connection, path=None, *, replace=False) -> dict:
             "replaced": bool(replace)}
 
 
+def reimport(conn: sqlite3.Connection, path=None) -> dict:
+    """Перезаписать таблицу из файла поставки (`listik routes --reimport`).
+
+    Отчёт `import_file(replace=True)` плюс `orphans` — `{ключ: число задач}` для
+    задач, чей `launch_route` после перезаписи указывает на несуществующий ключ.
+    Сами задачи не трогаются: это только предупреждение.
+    """
+    result = import_file(conn, path, replace=True)
+    add_shipped(conn, fresh=True)
+    keys = {row[0] for row in conn.execute("SELECT key FROM routes")}
+    rows = conn.execute("SELECT launch_route, COUNT(*) FROM tasks "
+                        "WHERE launch_route IS NOT NULL AND launch_route != '' "
+                        "GROUP BY launch_route ORDER BY launch_route").fetchall()
+    result["orphans"] = {key: n for key, n in rows if key not in keys}
+    return result
+
+
 def ensure_imported(conn: sqlite3.Connection) -> dict:
     """`import_file` без `replace`, но никогда не роняет вызывающего.
 

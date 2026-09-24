@@ -444,15 +444,21 @@ usage() {
                         (LISTIK_CODEX_NETWORK), по умолчанию ask; yes — дописать,
                         сохранив копию конфига рядом (.bak-<время>), no — только
                         предупредить, ask — спросить в /dev/tty
+  --routes-reimport yes|no|ask
+                        при обновлении (база уже есть) перезаписать таблицу маршрутов
+                        из routes.json новой версии — listik routes --reimport
+                        (LISTIK_ROUTES_REIMPORT), по умолчанию ask; правки маршрутов
+                        на доске пропадут; ask — спросить в /dev/tty, без tty — no
   --yes                 на вопросы без явного флага отвечать значением по умолчанию
-                        (service/plugins/swarm — yes, mcp — no; вопрос Codex он не закрывает
-                        — нужен --codex-network yes)
+                        (service/plugins/swarm — yes, mcp и routes-reimport — no; вопрос
+                        Codex он не закрывает — нужен --codex-network yes)
   --help                эта справка
 
 Переменные окружения:
   LISTIK_HOME           каталог данных (по умолчанию ~/.listik); обёртка ставит его
                         по умолчанию, но заданное пользователем значение важнее
-  LISTIK_VERSION, LISTIK_ARCHIVE, LISTIK_BIN_DIR, LISTIK_CODEX_NETWORK — см. флаги
+  LISTIK_VERSION, LISTIK_ARCHIVE, LISTIK_BIN_DIR, LISTIK_CODEX_NETWORK,
+  LISTIK_ROUTES_REIMPORT — см. флаги
   CODEX_HOME            каталог настроек Codex (по умолчанию ~/.codex); в нём
                         установщик смотрит config.toml
   LISTIK_PLAIN          1 — без заставки, анимации, цвета и меню: только прежние
@@ -479,6 +485,7 @@ mcp_answer=
 plugins_answer=
 swarm_answer=
 codex_network=${LISTIK_CODEX_NETWORK:-}
+routes_reimport=${LISTIK_ROUTES_REIMPORT:-}
 assume_yes=0
 
 while [ $# -gt 0 ]; do
@@ -537,6 +544,12 @@ while [ $# -gt 0 ]; do
             shift
             ;;
         --codex-network=*) codex_network=${1#--codex-network=} ;;
+        --routes-reimport)
+            [ $# -ge 2 ] || die "--routes-reimport ждёт yes, no или ask"
+            routes_reimport=$2
+            shift
+            ;;
+        --routes-reimport=*) routes_reimport=${1#--routes-reimport=} ;;
         --yes|-y) assume_yes=1 ;;
         -h|--help)
             usage
@@ -569,6 +582,10 @@ esac
 case $codex_network in
     ""|yes|no|ask) ;;
     *) die "--codex-network ждёт yes, no или ask, а не '$codex_network'" ;;
+esac
+case $routes_reimport in
+    ""|yes|no|ask) ;;
+    *) die "--routes-reimport ждёт yes, no или ask, а не '$routes_reimport'" ;;
 esac
 [ -n "$home" ] || die "--home не может быть пустым"
 
@@ -786,6 +803,10 @@ ln -sfn "$version" "$app_dir/current" || die "не удалось переклю
 ui_step ok "current → $version"
 
 # ------------------------------------------------------------ шаг 7: listik init
+
+# База до init — значит, это обновление и таблица маршрутов уже наполнена (шаг 7.3).
+routes_update=0
+[ -f "$home/listik.db" ] && routes_update=1
 
 ui_step run "listik init: схема базы"
 # Вывод listik init в панель не пускаем — он ломает раскладку заставки и меню;
@@ -1160,6 +1181,55 @@ if [ "$codex_warn" = 1 ]; then
     note "  network_access = true" >&2
 fi
 
+# ------------------------------------ шаг 7.3: перезаписать маршруты из routes.json
+
+# `listik init` ввозит routes.json только в пустую таблицу, поэтому при обновлении
+# новые исполнители/подписи ролей не доезжают — перезапись по согласию (listik-ttjm).
+ask_routes_reimport() {
+    # 0 — перезаписать, 1 — не трогать. По умолчанию — нет.
+    case $routes_reimport in
+        yes) return 0 ;;
+        no) return 1 ;;
+    esac
+    [ "$assume_yes" = 1 ] && return 1
+    if ui_menu2 "Перезаписать маршруты из routes.json?" \
+            "Ваши правки маршрутов на доске пропадут." \
+            "Перезаписать|listik routes --reimport" \
+            "Не трогать|маршруты в базе останутся как есть" 2; then
+        [ "$menu_choice" = 1 ]
+        return
+    fi
+    printf 'Перезаписать маршруты из routes.json? Ваши правки маршрутов на доске пропадут [y/N] ' \
+        >/dev/tty 2>/dev/null || return 1
+    answer=
+    read -r answer < /dev/tty 2>/dev/null || return 1
+    case $answer in
+        [yY]*) return 0 ;;
+        *) return 1 ;;
+    esac
+}
+
+routes_status="пропущен (первая установка)"
+if [ "$routes_update" = 1 ]; then
+    if ask_routes_reimport; then
+        # --local: идём в базу кодом новой версии. Живой сервер может оказаться
+        # прежней версией (ручной `serve` при --service no) — через него ввёзся бы
+        # её собственный routes.json.
+        if routes_out=$("$wrapper" --local routes --reimport 2>&1); then
+            routes_status=перезаписаны
+            printf '%s\n' "$routes_out" | grep -v '^! --local' | while IFS= read -r line; do
+                note "$prog: маршруты: $line"
+            done
+        else
+            routes_status="не удалось"
+            note "$prog: маршруты: 'listik routes --reimport' не выполнился:" >&2
+            note "$routes_out" >&2
+        fi
+    else
+        routes_status="не тронуты"
+    fi
+fi
+
 # -------------------------------------------------- шаг 8: протокол и шаг 9: сводка
 
 protocol_changed=0
@@ -1193,6 +1263,7 @@ if [ "$ui_enabled" = 1 ]; then
     ui_report "MCP:       " "$mcp_status" "$mcp_status"
     ui_report "плагины:   " "$plugins_status" "$plugins_status"
     ui_report "Codex:     " "$codex_status" "$codex_status"
+    ui_report "маршруты:  " "$routes_status" "$routes_status"
     if [ -n "${path_hint:-}" ]; then
         ui_line ""
         ui_fit "$path_hint"
@@ -1225,6 +1296,7 @@ else
     note "MCP: $mcp_status"
     note "плагины: $plugins_status"
     note "Codex: $codex_status"
+    note "маршруты: $routes_status"
     note "дальше:"
     note "  $next_1"
     note "  $next_2"

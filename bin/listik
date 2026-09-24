@@ -2277,7 +2277,37 @@ def cmd_actors(args) -> int:
 
 def cmd_routes(args) -> int:
     """Маршруты запуска: список из таблицы `routes` (через сервер или локально)."""
+    if getattr(args, "reimport", False):
+        return _cmd_routes_reimport(args)
     return _cmd_routes_list(args)
+
+
+def _cmd_routes_reimport(args) -> int:
+    """Перезаписать таблицу `routes` из `routes.json` установленной копии."""
+    # Локальный путь — здесь, а не в `client.local_call`: операция одна и живёт
+    # целиком в `routes_store.reimport`, как и у HTTP-ручки POST /api/routes/reimport.
+    local = getattr(args, "local", False)
+    if not local and client.is_up(args.host, args.port):
+        data = client.request("POST", "/api/routes/reimport", body={},
+                              host=args.host, port=args.port)
+    else:
+        if local:
+            warn_local_bypass(args, writing=True)
+        try:
+            data = routes_store.reimport(db.init())
+        except ValueError as exc:
+            raise errors.ListikError(errors.message_of(exc), code=errors.BAD_ARGUMENT,
+                                     hint="проверь routes.json установленной копии") from exc
+    if getattr(args, "json", False):
+        emit(args, data, "")
+        return 0
+    print(f"маршруты перезаписаны из {data.get('source')}: ввезено {data.get('imported')}")
+    orphans = data.get("orphans") or {}
+    if orphans:
+        listed = ", ".join(f"{key} ({n})" for key, n in orphans.items())
+        print(f"! задач с маршрутом, которого больше нет: {sum(orphans.values())} — {listed}; "
+              "задачи не тронуты, маршрут смените: listik set <id> route=<ключ>")
+    return 0
 
 
 def _cmd_routes_list(args) -> int:
@@ -2840,7 +2870,10 @@ def build_parser() -> argparse.ArgumentParser:
                          "'{}' — сбросить; нужен позиционный slug проекта")
     add("actors", cmd_actors, help="список исполнителей")
 
-    add("routes", cmd_routes, help="маршруты запуска: список из таблицы routes")
+    sp = add("routes", cmd_routes, help="маршруты запуска: список из таблицы routes")
+    sp.add_argument("--reimport", action="store_true",
+                    help="перезаписать таблицу из routes.json установленной копии "
+                         "(правки маршрутов на доске пропадут)")
 
     sp = add("dep", cmd_dep,
              help="связи между задачами: add, confirm, rm, tree, cycles, suggest, link, suggested")

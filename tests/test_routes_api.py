@@ -322,6 +322,27 @@ class ReorderRouteTests(RoutesApiBase):
         self.assertEqual(ctx.exception.status, 400)
 
 
+class ReimportRoutesTests(RoutesApiBase):
+    """`POST /api/routes/reimport` — HTTP-путь `listik routes --reimport` (listik-ttjm)."""
+
+    def test_reimport_rewrites_table(self) -> None:
+        self.import_sample()
+        routes_store.update_route(self.conn, "grok", title="Моя правка")
+        with mock.patch.object(server, "publish") as publish:
+            status, report = server.handle("POST", "/api/routes/reimport", {}, {}, authed=True)
+        self.assertEqual(status, 200)
+        self.assertTrue(report["replaced"])
+        self.assertEqual(report["imported"], len(EXPECTED_KEYS))
+        self.assertEqual(report["orphans"], {})
+        self.assertEqual(routes_store.get_route(self.conn, "grok")["title"], "grok")
+        publish.assert_called_once_with("route", {"key": None, "action": "reimported"})
+
+    def test_reimport_get_is_405(self) -> None:
+        with self.assertRaises(server.ApiError) as ctx:
+            self.get("/api/routes/reimport")
+        self.assertEqual(ctx.exception.status, 405)
+
+
 class CreateDirectRouteTests(RoutesApiBase):
     """`POST /api/routes` с `kind="direct"` заводит прямой маршрут (listik-sjx3, порция a)."""
 

@@ -445,8 +445,10 @@ class InstallScriptTests(unittest.TestCase):
         self.assertEqual(result.returncode, 0, result.stderr)
         for text in ("--version", "--archive", "--swarm", "LISTIK_DOWNLOAD_BASE", "LISTIK_HOME"):
             self.assertIn(text, result.stdout, f"в --help нет {text}")
-        self.assertNotIn("--routes", result.stdout)
-        self.assertNotIn("LISTIK_ROUTES", result.stdout)
+        # Старый `--routes keep` и `LISTIK_ROUTES` убраны; `--routes-reimport` и
+        # `LISTIK_ROUTES_REIMPORT` (listik-ttjm) — другие имена и гардом не ловятся.
+        self.assertNotRegex(result.stdout, r"--routes(?![-\w])")
+        self.assertNotRegex(result.stdout, r"LISTIK_ROUTES(?!_)")
 
     # --- шаг 12, порция d, пункт 14: --service/--mcp/--plugins -----------
 
@@ -761,6 +763,72 @@ class InstallScriptTests(unittest.TestCase):
         self.assertEqual(result.returncode, 0, result.stderr)
         self.assertIn("--codex-network", result.stdout)
         self.assertIn("CODEX_HOME", result.stdout)
+
+    # --- listik-ttjm: --routes-reimport ------------------------------------
+
+    def edit_installed_route(self) -> None:
+        import sqlite3
+        conn = sqlite3.connect(self.installed_home / "listik.db")
+        with conn:
+            conn.execute("UPDATE routes SET title = 'Моя правка' WHERE key = 'grok'")
+        conn.close()
+
+    def installed_route_title(self) -> str:
+        import sqlite3
+        conn = sqlite3.connect(self.installed_home / "listik.db")
+        try:
+            return conn.execute("SELECT title FROM routes WHERE key = 'grok'").fetchone()[0]
+        finally:
+            conn.close()
+
+    def test_routes_reimport_yes_rewrites(self) -> None:
+        archive = self.make_archive(VERSION)
+        self.install(archive)
+        self.edit_installed_route()
+        result = self.install(archive, "--routes-reimport", "yes")
+        self.assertEqual(self.installed_route_title(), "grok")
+        self.assertIn("маршруты: перезаписаны", result.stdout)
+        self.assertIn("ввезено 17", result.stdout)
+
+    def test_routes_reimport_env_yes(self) -> None:
+        archive = self.make_archive(VERSION)
+        self.install(archive)
+        self.edit_installed_route()
+        self.install(archive, env=self.env(LISTIK_ROUTES_REIMPORT="yes"))
+        self.assertEqual(self.installed_route_title(), "grok")
+
+    def test_routes_reimport_no_keeps(self) -> None:
+        archive = self.make_archive(VERSION)
+        self.install(archive)
+        self.edit_installed_route()
+        result = self.install(archive, "--routes-reimport", "no")
+        self.assertEqual(self.installed_route_title(), "Моя правка")
+        self.assertIn("маршруты: не тронуты", result.stdout)
+
+    def test_routes_reimport_ask_without_tty_keeps(self) -> None:
+        archive = self.make_archive(VERSION)
+        self.install(archive)
+        self.edit_installed_route()
+        result = self.run_install("--archive", str(archive), "--service", "no", "--mcp", "no",
+                                  "--plugins", "no", "--routes-reimport", "ask",
+                                  stdin=subprocess.DEVNULL, session=True)
+        self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+        self.assertEqual(self.installed_route_title(), "Моя правка")
+        self.assertIn("маршруты: не тронуты", result.stdout)
+
+    def test_routes_reimport_first_install_skipped(self) -> None:
+        result = self.install(self.make_archive(VERSION), "--routes-reimport", "yes")
+        self.assertIn("маршруты: пропущен (первая установка)", result.stdout)
+
+    def test_routes_reimport_flag_invalid(self) -> None:
+        result = self.run_install("--routes-reimport", "maybe", "--yes")
+        self.assertNotEqual(result.returncode, 0, result.stdout + result.stderr)
+        self.assertIn("--routes-reimport", result.stderr)
+
+    def test_routes_reimport_in_help(self) -> None:
+        result = self.run_install("--help")
+        self.assertIn("--routes-reimport", result.stdout)
+        self.assertIn("LISTIK_ROUTES_REIMPORT", result.stdout)
 
 
 if __name__ == "__main__":

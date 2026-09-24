@@ -607,6 +607,7 @@ show <id>`).
 | Связи | `dep add\|confirm\|rm\|suggest\|link\|suggested`, `blocked`, `tree`, `cycles` |
 | Поиск | `search`, `memory`, `remember`, `embed` |
 | Проекты | `projects`, `actors`, `init-projects`, `import-from-bd` |
+| Маршруты | `routes`, `routes --reimport` — перезаписать таблицу из `routes.json` установленной копии (правки на доске пропадут; установщик спрашивает об этом при обновлении, флаг `--routes-reimport yes\|no\|ask`) |
 | Рой | `listik swarm on\|off\|status`; `node bin/listik-swarm [--project X] [--once] [--exit-when-idle] [--dry-run]` |
 
 `listik <команда> --help` — все флаги.

@@ -847,6 +847,16 @@ def handle(method: str, path: str, query: dict, body: dict, authed: bool = False
             raise ApiError(405, "метод не поддерживается")
         return 200, routes_store.sync_report(conn)
 
+    if path == "/api/routes/reimport":
+        if method != "POST":
+            raise ApiError(405, "метод не поддерживается")
+        try:
+            report = routes_store.reimport(conn)
+        except ValueError as exc:
+            raise ApiError(400, errors_mod.message_of(exc), code=errors_mod.BAD_ARGUMENT) from exc
+        publish("route", {"key": None, "action": "reimported"})
+        return 200, report
+
     if path == "/api/routes/reorder":
         if method != "POST":
             raise ApiError(405, "метод не поддерживается")

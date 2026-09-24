@@ -903,3 +903,18 @@ test("бюджет: gate unmerged + budgetExhausted — report.reason unmerged",
   assert.equal(res.report.reason, "unmerged");
   assert.deepEqual(res.report.budget, {exhausted: true, launchesLeft: null});
 });
+
+// --- listik-eps7, порция b ---
+
+test("порты: нечисловая метка пропускается, берётся следующая", () => {
+  assert.equal(portOf(task("a", {labels: ["port:x", "port:5173"]})), 5173);
+  assert.equal(portOf(task("a", {labels: ["port:x"]})), null);
+  assert.equal(portOf(task("a", {labels: ["port:"]})), null);
+});
+
+test("defaultLine: несколько маркеров — действует последний", () => {
+  const text = "по умолчанию: A\nили так\nпо умолчанию: B";
+  assert.equal(defaultLine(text), "B");
+  assert.equal(isSoftQuestion(text), true);
+  assert.equal(isSoftQuestion("рой: вопрос\nпо умолчанию: A\nпо умолчанию: B"), false);
+});

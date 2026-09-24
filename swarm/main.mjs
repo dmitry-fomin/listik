@@ -212,6 +212,19 @@ function scopedLog(log, slug) {
   };
 }
 
+function cyclesDesc(cycles) {
+  return cycles.map(c => [...c, c[0]].join(" → ")).join("; ");
+}
+
+// «циклы: …» — когда набор циклов сменился с прошлого тика проекта. `last` — null в
+// --once/--dry-run (пишется всегда), иначе {value} с описанием прошлого тика.
+export function noteCycles(log, result, last) {
+  if (result.error || result.serverDown) return;
+  const desc = result.cycles && result.cycles.length ? cyclesDesc(result.cycles) : null;
+  if (desc && (!last || last.value !== desc)) log.line(`циклы: ${desc}`);
+  if (last) last.value = desc;
+}
+
 function projectState(states, slug) {
   let state = states.get(slug);
   if (!state) {
@@ -233,7 +246,7 @@ function idleSignature(result) {
   return `${ids(result.open)}|${ids(result.needsOwnerOpen)}`;
 }
 
-async function tickDue(listik, config, log, states, holdProject) {
+async function tickDue(listik, config, log, states, holdProject, lastCycles = null) {
   let slugs;
   try {
     slugs = await dueProjects(listik, log);
@@ -246,8 +259,14 @@ async function tickDue(listik, config, log, states, holdProject) {
   for (const slug of slugs) {
     if (!config.dryRun && !holdProject(slug)) continue;
     const state = projectState(states, slug);
-    const result = await runOneTick(
-      listik, {...config, project: slug}, scopedLog(log, slug), state);
+    const slugLog = scopedLog(log, slug);
+    const result = await runOneTick(listik, {...config, project: slug}, slugLog, state);
+    let last = null;
+    if (lastCycles) {
+      last = lastCycles.get(slug) || {value: null};
+      lastCycles.set(slug, last);
+    }
+    noteCycles(slugLog, result, last);
     state.launches += (result.launched || []).length + (result.restarted || []).length;
     results.push({slug, result});
     if (result.serverDown) return {serverDown: true, results};
@@ -267,8 +286,9 @@ function onceCode(bundle) {
 async function runAllLoop(listik, config, log, states, holdProject, signalExitOf) {
   let lastIdle = null;
   const budgetNoted = new Set();
+  const lastCycles = new Map();
   for (;;) {
-    const bundle = await tickDue(listik, config, log, states, holdProject);
+    const bundle = await tickDue(listik, config, log, states, holdProject, lastCycles);
     if (signalExitOf() != null) return signalExitOf();
     if (bundle.serverDown || bundle.error) {
       await sleep(config.interval * 1000);
@@ -422,6 +442,7 @@ export async function main(argv) {
 
   if (config.once || config.dryRun) {
     const result = await runOneTick(listik, config, log, runState);
+    noteCycles(log, result, null);
     if (signalExit != null) return signalExit;
     if (result.error) return 4;
     if (result.serverDown) return 3;
@@ -435,9 +456,11 @@ export async function main(argv) {
   let totalRollbackMinutes = 0;
   let lastIdle = null;
   const parkedIds = new Set();
+  const lastCycles = {value: null};
 
   for (;;) {
     const result = await runOneTick(listik, config, log, runState);
+    noteCycles(log, result, lastCycles);
     if (signalExit != null) return signalExit;
 
     if (result.serverDown || result.error || (result.cycles && result.cycles.length)) {

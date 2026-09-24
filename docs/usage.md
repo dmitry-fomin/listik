@@ -115,6 +115,36 @@ claude mcp add --transport http listik https://<домен>/mcp \
 **Правила в проектах**: `listik projects --add <путь>`, затем `listik init-projects` вписывает
 протокол в `AGENTS.md`/`CLAUDE.md` проектов и `.worktrees/` в их `.gitignore`.
 
+### Stop-хук Claude Code
+
+`listik lint --stop-hook` не даёт Claude закончить ход, пока в карточках проекта есть
+несостыковки (`listik lint`). Хук — локальная настройка, в репозиторий не кладётся
+(`.claude/*` в `.gitignore`). Подключить — добавить в `.claude/settings.json` проекта (или в
+`~/.claude/settings.json`, чтобы во всех проектах):
+
+```json
+{"hooks": {"Stop": [{"hooks": [{"type": "command",
+  "command": "listik lint --stop-hook 2>/dev/null || true"}]}]}}
+```
+
+Команда — установленный `listik` из PATH, а не `bin/listik` репозитория. Обёртка
+`2>/dev/null || true` обязательна: пока глобальный `listik` не обновлён релизом и не знает флага,
+argparse выйдет с кодом 2, а код 2 у Stop-хука **блокирует** ход; `|| true` и глушение stderr
+делают старую установку безвредной.
+
+При находках команда печатает `{"decision": "block", "reason": …}` — первая строка причины
+`listik lint: N несостыковок в проекте <slug> — …`, дальше до 20 находок `<id>  <rule>  <message>`
+(остальные — `… и ещё K`), и Claude продолжает ход, чтобы их исправить. Без находок, без проекта
+(`--project` → `LISTIK_PROJECT` → каталог), без базы или при любой своей ошибке — пустой вывод и
+код 0: хук не блокирует ход из-за собственной поломки. Карточек, комментариев и событий хук не
+меняет.
+
+Не зацикливается: если ход уже продолжен этим хуком, Claude Code передаёт на stdin
+`"stop_hook_active": true`, и хук молча отпускает ход — второй круг не устраивается.
+
+Проверить руками: `echo '{}' | listik lint --stop-hook --project listik`. Отключить — убрать
+блок `hooks.Stop` из `settings.json`.
+
 ## Проект по рабочему каталогу
 
 Команды `ready`, `list`, `board`, `stats`, `search`, `blocked`, `new`, `inbox`, `timeline` и `lint`,

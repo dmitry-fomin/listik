@@ -188,7 +188,7 @@ def project_default(args) -> str | None:
     slug = _detect_project(args)
     if not slug:
         return None
-    if not getattr(args, "json", False):
+    if not getattr(args, "json", False) and not getattr(args, "stop_hook", False):
         print(f"{PROJECT_DETECTED_PREFIX}: {slug} (все проекты: --project all)",
               file=sys.stderr)
     return slug
@@ -1851,8 +1851,57 @@ def cmd_blocked(args) -> int:
     return 0
 
 
+#: Сколько находок Stop-хук перечисляет в `reason`, остальные — «… и ещё K».
+STOP_HOOK_MAX_LINES = 20
+
+
+def lint_stop_hook(args) -> int:
+    """`lint --stop-hook`: Stop-хук Claude Code. Находки — JSON-блок хода на stdout.
+
+    Всегда код 0 и ничего в stderr: хук не должен ни зациклиться
+    (`stop_hook_active`), ни заблокировать ход из-за собственной поломки.
+    """
+    try:
+        try:
+            payload = json.loads(sys.stdin.read() or "{}")
+        except ValueError:
+            payload = {}
+        if isinstance(payload, dict) and payload.get("stop_hook_active") is True:
+            return 0
+        # Сервер лежит, а базы нет — не создаём её ни автоопределением проекта,
+        # ни самим lint (local_call открывает базу через db.init).
+        local = getattr(args, "local", False) or not client.is_up(args.host, args.port)
+        if local and not paths.DB_PATH.exists():
+            return 0
+        project = project_default(args)
+        if not project:
+            return 0
+        res = call("lint", args, "/api/lint", query={"project": project},
+                   local_kwargs={"project": project}, fallback_warning=False)
+        items = res["items"]
+        if not items:
+            return 0
+        lines = [f"listik lint: {len(items)} несостыковок в проекте {project} — исправь "
+                 "карточки (или объясни автору, почему нельзя) и заверши ход"]
+        lines += [f"{i['id']}  {i['rule']}  {i['message']}"
+                  for i in items[:STOP_HOOK_MAX_LINES]]
+        if len(items) > STOP_HOOK_MAX_LINES:
+            lines.append(f"… и ещё {len(items) - STOP_HOOK_MAX_LINES}")
+        print(json.dumps({"decision": "block", "reason": "\n".join(lines)},
+                         ensure_ascii=False))
+    except Exception as exc:  # noqa: BLE001 — поломка хука не блокирует ход
+        log_traceback(exc)
+    return 0
+
+
 def cmd_lint(args) -> int:
     """Несостыковки карточек проекта; код 1, если что-то нашлось."""
+    if getattr(args, "stop_hook", False):
+        if getattr(args, "json", False):
+            raise errors.ListikError(
+                "--stop-hook несовместим с --json", code=errors.BAD_ARGUMENT, exit_code=2,
+                hint="listik lint --stop-hook (ответ хука и так JSON)")
+        return lint_stop_hook(args)
     if not args.project:
         raise errors.ListikError(
             "укажи проект", code=errors.BAD_ARGUMENT, exit_code=2,
@@ -2651,6 +2700,9 @@ def build_parser() -> argparse.ArgumentParser:
     sp.add_argument("--suggested-hours", type=float, default=None,
                     help="через сколько часов неподтверждённая предложенная связь — находка "
                     "(по умолчанию 24)")
+    sp.add_argument("--stop-hook", action="store_true",
+                    help="режим Stop-хука Claude Code: stdin — JSON хука, при находках "
+                    "на stdout {\"decision\": \"block\"}, код всегда 0; несовместим с --json")
 
     sp = add("waves", cmd_waves, help="волны запуска: что можно делать одновременно")
     sp.add_argument("-p", "--project")
@@ -2791,7 +2843,9 @@ def main(argv: list[str] | None = None) -> int:
     if not hasattr(args, "json"):
         args.json = False
     json_mode = json_mode or args.json
-    if getattr(args, "cmd", None) in PROJECT_DEFAULT_COMMANDS:
+    # lint --stop-hook определяет проект сам: сначала stdin хука, потом база.
+    if (getattr(args, "cmd", None) in PROJECT_DEFAULT_COMMANDS
+            and not getattr(args, "stop_hook", False)):
         args.project = project_default(args)
     try:
         return int(args.func(args) or 0)

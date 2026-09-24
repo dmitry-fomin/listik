@@ -854,7 +854,7 @@ TWO_TURN_COMMON = (
 )
 TWO_TURN_PER_SKILL = {
     "xlow-pipeline": ("resume --session", "--channel deepseek"),
-    "nano-pipeline": ("resume <job-id", "--model gpt-6-astra", "--effort high"),
+    "nano-pipeline": ("resume --session", "--thinking max", "devin:devin-delegate"),
 }
 
 

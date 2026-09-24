@@ -20,9 +20,9 @@
           "title": "GLM 5.3 Flash по HTTP"
         },
         "impl": {
-          "provider": "openai",
-          "label": "xhigh",
-          "title": "GPT-6 Astra · xhigh, в Codex"
+          "provider": "devin",
+          "label": "max",
+          "title": "devin · SWE-2 max"
         },
         "judge": {
           "provider": "grok",
@@ -180,9 +180,9 @@
       "icon": "xlow",
       "roles": {
         "impl": {
-          "provider": "openai",
-          "label": "astra",
-          "title": "Codex · GPT-6 Astra high"
+          "provider": "devin",
+          "label": "max",
+          "title": "devin · SWE-2 max"
         },
         "judge": {
           "provider": "grok",

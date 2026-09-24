@@ -108,6 +108,9 @@ MCP-инструментами `listik_*` или командой `listik new`. 
 /plugin install codex@listik              # OpenAI Codex CLI
 /plugin install pi@listik                 # pi CLI (GLM 5.3 Flash, DeepSeek v4.1 Flash)
 /plugin install second-opinion@listik     # независимая критика ТЗ
+/plugin install devin@listik              # devin (SWE-2)
+/plugin install opencode@listik           # opencode CLI
+# обновить уже стоящие: /plugin marketplace update listik, затем /plugin update <имя>@listik
 ```
 
 ![Одна команда — и дальше само: запуск задачи с маршрутом и лента событий карточки](docs/img/flow.png)

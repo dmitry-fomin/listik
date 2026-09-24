@@ -433,7 +433,7 @@ usage() {
   --service yes|no      поставить и (пере)запустить автозапуск сервера
                         (launchd/systemd --user), по умолчанию yes
   --mcp yes|no          подключить MCP-сервер (claude mcp add), по умолчанию no
-  --plugins yes|no      поставить плагины Claude (marketplace + listik/feature-pipeline),
+  --plugins yes|no      поставить или обновить все плагины marketplace listik,
                         по умолчанию yes
   --swarm yes|no        включить рой: сервер сам проверяет задачи всех проектов
                         каждые 30 секунд ([swarm] enabled в config.toml),
@@ -901,7 +901,7 @@ ask_yes_default_no "$mcp_answer" \
     "Даёт агентам инструменты listik_* без CLI."
 mcp_answer=$decision
 ask_yes_default_yes "$plugins_answer" \
-    "Установить плагины Claude (marketplace + listik/feature-pipeline)?" \
+    "Установить или обновить плагины Claude (marketplace listik)?" \
     "Скилы работы с задачами и конвейеры реализации."
 plugins_answer=$decision
 ask_yes_default_yes "$swarm_answer" \
@@ -970,38 +970,38 @@ if [ "$mcp_answer" = yes ]; then
 fi
 
 plugins_status=пропущен
+# Все плагины marketplace listik: при обновлении установки их скилы тоже должны
+# обновиться, иначе агенты читают устаревшие копии из ~/.claude/plugins/cache.
+listik_plugins="listik feature-pipeline dsh codex opencode pi devin second-opinion"
+plugins_manual() {
+    note "  /plugin marketplace add dmitry-fomin/listik"
+    note "  /plugin marketplace update listik"
+    for p in $listik_plugins; do
+        note "  /plugin install $p@listik  (уже стоит — /plugin update $p@listik)"
+    done
+}
 if [ "$plugins_answer" = yes ]; then
     if command -v claude >/dev/null 2>&1 && claude plugin --help >/dev/null 2>&1; then
         plugins_ok=1
-        if ! claude plugin marketplace add dmitry-fomin/listik >/dev/null 2>&1; then
-            claude plugin marketplace update listik >/dev/null 2>&1 || plugins_ok=0
-        fi
-        claude plugin install listik@listik >/dev/null 2>&1 || plugins_ok=0
-        claude plugin install feature-pipeline@listik >/dev/null 2>&1 || plugins_ok=0
-        claude plugin install dsh@listik >/dev/null 2>&1 || plugins_ok=0
-        claude plugin install codex@listik >/dev/null 2>&1 || plugins_ok=0
-        claude plugin install second-opinion@listik >/dev/null 2>&1 || plugins_ok=0
+        # add на уже добавленном marketplace ничего не подтягивает — update всегда.
+        claude plugin marketplace add dmitry-fomin/listik >/dev/null 2>&1 || true
+        claude plugin marketplace update listik >/dev/null 2>&1 || plugins_ok=0
+        for p in $listik_plugins; do
+            # install на уже стоящем плагине — no-op, версию поднимает только update.
+            claude plugin install "$p@listik" >/dev/null 2>&1 || plugins_ok=0
+            claude plugin update "$p@listik" >/dev/null 2>&1 || plugins_ok=0
+        done
         if [ "$plugins_ok" = 1 ]; then
             plugins_status=ok
         else
             plugins_status="не удалось"
             note "$prog: плагины: не все команды claude plugin отработали — поставьте вручную:" >&2
-            note "  /plugin marketplace add dmitry-fomin/listik" >&2
-            note "  /plugin install listik@listik" >&2
-            note "  /plugin install feature-pipeline@listik" >&2
-            note "  /plugin install dsh@listik" >&2
-            note "  /plugin install codex@listik" >&2
-            note "  /plugin install second-opinion@listik" >&2
+            plugins_manual >&2
         fi
     else
         plugins_status="не удалось"
         note "$prog: плагины: claude недоступен (нет в PATH или без подкоманды plugin) — поставьте вручную:"
-        note "  /plugin marketplace add dmitry-fomin/listik"
-        note "  /plugin install listik@listik"
-        note "  /plugin install feature-pipeline@listik"
-        note "  /plugin install dsh@listik"
-        note "  /plugin install codex@listik"
-        note "  /plugin install second-opinion@listik"
+        plugins_manual
     fi
 fi
 

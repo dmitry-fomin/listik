@@ -474,6 +474,10 @@ class InstallScriptTests(unittest.TestCase):
         self.assertIn("plugin install dsh@listik", text)
         self.assertIn("plugin install codex@listik", text)
         self.assertIn("plugin install second-opinion@listik", text)
+        self.assertIn("plugin marketplace update listik", text)
+        for name in ("listik", "feature-pipeline", "pi", "devin", "opencode"):
+            self.assertIn(f"plugin install {name}@listik", text)
+            self.assertIn(f"plugin update {name}@listik", text)
 
     def test_mcp_get_zero_removes_before_add(self) -> None:
         fake_dir, log = self.make_fake_tools()

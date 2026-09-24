@@ -984,6 +984,17 @@ def handle(method: str, path: str, query: dict, body: dict, authed: bool = False
             "generated_at": store.now_iso(),
         }
 
+    if path == "/api/lint":
+        raw_hours = q1("suggested_hours")
+        hours = store.LINT_SUGGESTED_HOURS
+        if raw_hours is not None:
+            try:
+                hours = float(raw_hours)
+            except ValueError:
+                raise ApiError(400, "suggested_hours: ожидается число",
+                               code=errors_mod.BAD_ARGUMENT) from None
+        return 200, store.lint(conn, q1("project"), suggested_hours=hours)
+
     if path == "/api/waves/apply":
         if method != "POST":
             raise ApiError(405, "метод не поддерживается")

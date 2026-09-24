@@ -117,7 +117,7 @@ claude mcp add --transport http listik https://<домен>/mcp \
 
 ## Проект по рабочему каталогу
 
-Команды `ready`, `list`, `board`, `stats`, `search`, `blocked`, `new`, `inbox` и `timeline`,
+Команды `ready`, `list`, `board`, `stats`, `search`, `blocked`, `new`, `inbox`, `timeline` и `lint`,
 если проект не задан явно, определяют его по текущему каталогу. Проект подставляется как
 значение `--project`, поэтому вызов из каталога проекта показывает очередь этого проекта,
 а не всех сразу.
@@ -474,7 +474,7 @@ show <id>`).
 | Сервер | `serve`, `stop`, `status`, `init`, `token`, `mcp`, `service` |
 | Копии | `backup`, `restore` |
 | Задачи | `new`, `list`, `show`, `set`, `context`, `board`, `stats`, `timeline` |
-| Работа | `ready`, `worktree`, `claim`, `heartbeat`, `stage`, `release`, `done`, `needs-owner`, `inbox`, `launch`, `revoke` |
+| Работа | `ready`, `worktree`, `claim`, `heartbeat`, `stage`, `release`, `done`, `needs-owner`, `inbox`, `launch`, `revoke`, `lint` |
 | Журнал | `comment -k comment\|journal\|review\|verdict\|question\|answer` |
 | Связи | `dep add\|confirm\|rm\|suggest\|link\|suggested`, `blocked`, `tree`, `cycles` |
 | Поиск | `search`, `memory`, `remember`, `embed` |

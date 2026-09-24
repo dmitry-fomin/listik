@@ -6,6 +6,7 @@ HTTP-слой; если нет, CLI работает с базой напрям�
 from __future__ import annotations
 
 import json
+import os
 import random
 import re
 import sqlite3
@@ -28,6 +29,8 @@ from . import textutil
 OPEN_STATUSES = ("open", "in_progress", "blocked", "review")
 FINAL_STATUSES = ("done", "cancelled")
 PIPELINE_STAGES = ("s1-spec", "s2-review", "s3-impl", "s4-judge")
+#: Сколько часов предложенная связь (`suggested-blocks`) ждёт без замечания `listik lint`.
+LINT_SUGGESTED_HOURS = 24.0
 STAGE_TITLES = {
     "s1-spec": "1. ТЗ и чек-лист",
     "s2-review": "2. Второе мнение",
@@ -2443,3 +2446,100 @@ def remember(conn: sqlite3.Connection, text: str, *, key: str | None = None,
     conn.execute("INSERT INTO memory_fts(memory_key, body) VALUES(?,?)", (key, text))
     conn.commit()
     return {"key": key, "project": project}
+
+
+def _lint_steps_files(cache: dict, steps_dir: str | None) -> list[str]:
+    """Имена файлов каталога шагов, один `listdir` на каталог за вызов lint."""
+    if not steps_dir:
+        return []
+    if steps_dir not in cache:
+        try:
+            cache[steps_dir] = sorted(os.listdir(steps_dir))
+        except OSError:
+            cache[steps_dir] = []
+    return cache[steps_dir]
+
+
+def lint(conn: sqlite3.Connection, project: str | None, *,
+         suggested_hours: float = LINT_SUGGESTED_HOURS) -> dict:
+    """Несостыковки карточек проекта (только чтение): держатели, документы, порции, связи."""
+    project = (project or "").strip()
+    if not project:
+        raise errors_mod.BadArgument("укажи проект: --project <slug>")
+    try:
+        limit_hours = float(suggested_hours)
+    except (TypeError, ValueError):
+        raise errors_mod.BadArgument("suggested_hours: ожидается число") from None
+    if not limit_hours > 0:
+        raise errors_mod.BadArgument("suggested_hours: ожидается число больше 0")
+
+    tasks = conn.execute(
+        "SELECT id, title, stage, status, holder, spec_path, journal_path FROM tasks "
+        "WHERE project = ? AND archived = 0", (project,)).fetchall()
+    by_id = {t["id"]: t for t in tasks}
+    prow = conn.execute("SELECT path FROM projects WHERE slug = ?", (project,)).fetchone()
+    project_steps = (os.path.join(prow["path"], "docs", "specs", "steps")
+                     if prow and (prow["path"] or "").strip() else None)
+    listing: dict[str, list[str]] = {}
+    items: list[dict] = []
+
+    def add(t, rule: str, message: str, details: dict) -> None:
+        items.append({"rule": rule, "id": t["id"], "title": t["title"], "stage": t["stage"],
+                      "status": t["status"], "message": message, "details": details})
+
+    for t in tasks:
+        holder = (t["holder"] or "").strip()
+        is_open = t["status"] not in FINAL_STATUSES
+        if t["status"] == "in_progress" and not holder:
+            add(t, "in_progress_no_holder", "в работе без держателя",
+                {"released_at": _last_release_ts(conn, t["id"])})
+        if not is_open and holder:
+            add(t, "done_with_holder", f"закрыта, но держатель не снят: {t['holder']}",
+                {"holder": t["holder"]})
+        if not is_open:
+            continue
+        if t["stage"] in ("s2-review", "s3-impl", "s4-judge"):
+            missing = [k for k in ("spec_path", "journal_path") if not (t[k] or "").strip()]
+            if missing:
+                add(t, "stage_without_docs", f"этап {t['stage']} без {', '.join(missing)}",
+                    {"missing": missing})
+        children = conn.execute(
+            "SELECT t.id, t.status, t.stage FROM deps d JOIN tasks t ON t.id = d.issue_id "
+            "WHERE d.depends_on = ? AND d.dep_type = 'parent-child' AND t.archived = 0",
+            (t["id"],)).fetchall()
+        if not children:
+            spec = (t["spec_path"] or "").strip()
+            steps_dir = os.path.dirname(spec) if spec else project_steps
+            pattern = re.compile(rf"^{re.escape(t['id'])}\.([a-z])\.md$")
+            files = [f for f in _lint_steps_files(listing, steps_dir) if pattern.match(f)]
+            if files:
+                add(t, "portion_files_without_cards",
+                    f"файлы порций без карточек: {', '.join(files)}",
+                    {"files": files, "steps_dir": steps_dir})
+            continue
+        parent_stage = t["stage"]
+        parent_idx = (PIPELINE_STAGES.index(parent_stage)
+                      if parent_stage in PIPELINE_STAGES else -1)
+        open_idx = [PIPELINE_STAGES.index(c["stage"]) for c in children
+                    if c["status"] not in FINAL_STATUSES and c["stage"] in PIPELINE_STAGES]
+        if open_idx and max(open_idx) > parent_idx:
+            max_stage = PIPELINE_STAGES[max(open_idx)]
+            add(t, "stage_behind_portions",
+                f"этап шага {parent_stage or '—'} позади порций ({max_stage})",
+                {"parent_stage": parent_stage, "max_child_stage": max_stage})
+        elif (all(c["status"] in FINAL_STATUSES for c in children)
+              and parent_stage in ("s3-impl", "s4-judge")):
+            add(t, "stage_behind_portions", f"все порции закрыты, шаг ещё на {parent_stage}",
+                {"parent_stage": parent_stage, "children_done": True})
+
+    for s in deps_mod.suggested(conn, project=project, limit=0):
+        t = by_id.get(s["issue_id"])
+        hours = hours_since(s["created_at"])
+        if t is None or hours is None or not hours > limit_hours:
+            continue
+        add(t, "suggested_dep_stale",
+            f"предложенная связь с {s['depends_on']} ждёт подтверждения {round(hours, 1)} ч",
+            {"depends_on": s["depends_on"], "hours": round(hours, 1)})
+
+    items.sort(key=lambda i: (i["rule"], i["id"]))
+    return {"project": project, "generated_at": now_iso(), "count": len(items), "items": items}

@@ -266,6 +266,10 @@ def local_call(op: str, *, fence: fence_mod.Token | dict | None = None, **kwargs
         from . import deps as deps_mod
         return {"tasks": deps_mod.blocked_tasks(conn, project=kwargs.get("project"),
                                                 limit=kwargs.get("limit", 100))}
+    if op == "lint":
+        return store.lint(conn, project=kwargs.get("project"),
+                          suggested_hours=kwargs.get("suggested_hours",
+                                                     store.LINT_SUGGESTED_HOURS))
     if op == "waves":
         from . import deps as deps_mod
         return deps_mod.waves(conn, project=kwargs.get("project"), stage=kwargs.get("stage"))

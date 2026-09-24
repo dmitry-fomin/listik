@@ -143,7 +143,7 @@ def owner_default(args) -> str:
 #: значит другое (куда писать/что показать) — автоопределение им не подставляется.
 PROJECT_DEFAULT_COMMANDS = frozenset({
     "ready", "list", "board", "stats", "search", "blocked", "new", "inbox", "timeline",
-    "waves",
+    "waves", "lint",
 })
 
 #: Зарезервированное значение `--project`/`LISTIK_PROJECT` — «все проекты».
@@ -1822,6 +1822,37 @@ def cmd_blocked(args) -> int:
     return 0
 
 
+def cmd_lint(args) -> int:
+    """Несостыковки карточек проекта; код 1, если что-то нашлось."""
+    if not args.project:
+        raise errors.ListikError(
+            "укажи проект", code=errors.BAD_ARGUMENT, exit_code=2,
+            hint="listik lint --project <slug> (или LISTIK_PROJECT, или запусти из "
+                 "каталога проекта)")
+    query = {"project": args.project}
+    if args.suggested_hours is not None:
+        if not args.suggested_hours > 0:
+            raise errors.ListikError(
+                "--suggested-hours ждёт число больше 0", code=errors.BAD_ARGUMENT,
+                exit_code=2, hint="listik lint --suggested-hours 24")
+        query["suggested_hours"] = args.suggested_hours
+    res = call("lint", args, "/api/lint", query=query, local_kwargs=dict(query))
+    rc = 1 if res["items"] else 0
+    if getattr(args, "json", False):
+        emit(args, res, "")
+        return rc
+    if not res["items"]:
+        print("несостыковок нет")
+        return rc
+    rule = None
+    for item in res["items"]:
+        if item["rule"] != rule:
+            rule = item["rule"]
+            print(f"{rule}:")
+        print(f"  {item['id']}  {item['message']}")
+    return rc
+
+
 def cmd_dep_tree(args) -> int:
     body = {"depth": args.depth}
     tree = call("dep_tree", args, f"/api/tasks/{args.task_id}/deps", method="POST", body=body,
@@ -2580,6 +2611,13 @@ def build_parser() -> argparse.ArgumentParser:
     sp = add("blocked", cmd_blocked, help="кто кого ждёт: незакрытые блокеры задач")
     sp.add_argument("-p", "--project")
     sp.add_argument("-n", "--limit", type=int, default=60)
+
+    sp = add("lint", cmd_lint,
+             help="несостыковки карточек проекта: держатели, документы, порции, связи")
+    sp.add_argument("-p", "--project")
+    sp.add_argument("--suggested-hours", type=float, default=None,
+                    help="через сколько часов неподтверждённая предложенная связь — находка "
+                    "(по умолчанию 24)")
 
     sp = add("waves", cmd_waves, help="волны запуска: что можно делать одновременно")
     sp.add_argument("-p", "--project")

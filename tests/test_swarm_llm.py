@@ -1,6 +1,6 @@
 """`listik/swarm_llm.py` — единственная точка вызова модели в рое (`complete_json`), и
 `deps.find_cycles`/`deps.apply_planned_blocks` — запись машинных `blocks` от модели
-(listik-kbh5, шаг swarm-6, порция a).
+(listik-kbh5, шаг swarm-7, порция a).
 
 Реальная сеть и подпроцессы в тестах не участвуют, кроме одного теста «настоящий
 подпроцесс» — он зовёт `sys.executable`, не сеть.

@@ -1,5 +1,5 @@
 """`listik rescope` / `POST /api/swarm/rescope` / `swarm_llm.rescope` (listik-kbh5, шаг
-swarm-6, порция c): области `read_scope`/`write_scope` из готовых ТЗ и уточнение графа
+swarm-7, порция c): области `read_scope`/`write_scope` из готовых ТЗ и уточнение графа
 `blocks` по копилке расхождений «объявил X, тронул Y».
 
 Реальная сеть/подпроцессы не участвуют: функция/HTTP-тесты мокают `swarm_llm.complete_json`,

@@ -1,4 +1,4 @@
-"""`listik plan` / `POST /api/swarm/plan` / `swarm_llm.plan` (listik-kbh5, шаг swarm-6,
+"""`listik plan` / `POST /api/swarm/plan` / `swarm_llm.plan` (listik-kbh5, шаг swarm-7,
 порция b): грубый граф зависимостей `blocks` между открытыми задачами проекта от модели.
 
 Реальная сеть/подпроцессы не участвуют: функция/HTTP-тесты мокают `swarm_llm.complete_json`,

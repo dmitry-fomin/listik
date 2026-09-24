@@ -111,6 +111,20 @@ class SettingsTests(unittest.TestCase):
         with self.assertRaises(errors.BadArgument):
             swarm_llm.settings({"swarm": {"command": "pi"}})
 
+    def test_model_name_resolution(self) -> None:
+        self.assertEqual(swarm_llm.model_name({}), swarm_llm.DEFAULT_MODEL)
+        cfg = {"swarm": {"model": " m "}}
+        self.assertEqual(swarm_llm.model_name(cfg), "m")
+        with mock.patch.dict("os.environ", {swarm_llm.ENV_MODEL: "m2"}, clear=False):
+            self.assertEqual(swarm_llm.model_name(cfg), "m2")
+        with mock.patch.dict("os.environ", {swarm_llm.ENV_MODEL: ""}, clear=False):
+            self.assertEqual(swarm_llm.model_name(cfg), "m")
+        command_cfg = {"swarm": {"command": "pi", "model": "m"}}
+        self.assertEqual(swarm_llm.model_name(command_cfg), "m")
+        with self.assertRaises(errors.BadArgument):
+            swarm_llm.settings(command_cfg)
+        self.assertEqual(swarm_llm.settings(cfg)["model"], swarm_llm.model_name(cfg))
+
 
 # --------------------------------------------------------------------------- HTTP
 

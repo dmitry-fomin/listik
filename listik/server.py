@@ -629,6 +629,8 @@ def handle(method: str, path: str, query: dict, body: dict, authed: bool = False
         data["mode"] = "server" if config_mod.is_server_mode(cfg) else "local"
         # Рой: включён ли в конфиге и жив ли процесс. pid — только с токеном.
         swarm = swarm_proc.runtime()
+        if authed:
+            swarm["model"] = swarm_llm.model_name(cfg)
         if not authed:
             swarm = {"enabled": swarm["enabled"], "running": swarm["running"]}
         data["swarm"] = swarm

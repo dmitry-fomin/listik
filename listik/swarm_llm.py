@@ -59,6 +59,22 @@ class SwarmLlmError(errors.ListikError):
         super().__init__(message, code=code, hint=hint, exit_code=1, status=status)
 
 
+def model_name(cfg: dict | None = None) -> str:
+    """Итоговое имя модели роя из конфига и окружения.
+
+    Резолвинг модели намеренно отделён от полной :func:`settings`: он не читает
+    ключ и не валидирует внешний ``command``.
+    """
+    cfg = cfg if cfg is not None else util.load_config()
+    section = cfg.get("swarm") if isinstance(cfg, dict) else None
+    if not isinstance(section, dict):
+        section = {}
+    model = section.get("model")
+    model = model.strip() if isinstance(model, str) and model.strip() else ""
+    env_model = (os.environ.get(ENV_MODEL) or "").strip()
+    return env_model or model or DEFAULT_MODEL
+
+
 def settings(cfg: dict | None = None) -> dict:
     """Настройки канала модели из `[swarm]`; переменные окружения сильнее файла."""
     cfg = cfg if cfg is not None else util.load_config()
@@ -79,12 +95,7 @@ def settings(cfg: dict | None = None) -> dict:
         base_url = env_base_url
     base_url = (base_url or DEFAULT_BASE_URL).rstrip("/")
 
-    model = section.get("model")
-    model = model.strip() if isinstance(model, str) and model.strip() else ""
-    env_model = (os.environ.get(ENV_MODEL) or "").strip()
-    if env_model:
-        model = env_model
-    model = model or DEFAULT_MODEL
+    model = model_name(cfg)
 
     raw_command = section.get("command")
     if raw_command in (None, [], ()):

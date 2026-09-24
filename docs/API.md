@@ -1149,6 +1149,11 @@ id внутри файлового пути (`docs/specs/<id>.md`, `/wt/<id>/lis
 
 ### Чтение
 
+В `/api/health` авторизованному также доступно поле `swarm.model` в объекте
+`swarm{enabled,running,model}` — имя модели LLM-точек роя
+(рядом с `swarm.pid`, неавторизованной пробе живости не отдаётся); подробности — в разделе
+«LLM-проходы роя: модель и машинные рёбра».
+
 | Метод | Путь | Параметры | Ответ |
 |---|---|---|---|
 | GET | `/api/health` | — | `status, version, embed{model}, now, authed, swarm{enabled,running}` (pid процесса роя — только авторизованному), `installation{code_dir,data_dir,config_path}` (пути установки доступны и без токена для диагностики CLI, содержимое config не отдаётся), `mode` (`local`\|`server` — тоже без токена: по нему клиент понимает, надо ли представляться); авторизованному — ещё `users[]` (люди из `server.users`; в локальном режиме `[]`) и `owner` (как сервер понял заголовок `X-Listik-Owner` после `strip`; в локальном режиме всегда `null`), `db`, `counts`, `embed{ok,models}`, `routes{ok,error,path,count}`, `db_error{where,error,at}` — только если последний фоновый проход упал с `sqlite3.DatabaseError`, и `runtime{code_dir,data_dir,cwd,worktree,main_repo,warning}` — откуда запущен сервер (`data_dir` — каталог данных, `LISTIK_HOME`; `warning` — если из связанного git worktree, listik-i23u), `db_replaced{kind,at,detail,before,after}` — если сервер заметил подмену файла базы или WAL (см. ниже) |
@@ -1598,6 +1603,10 @@ resource-blocks` снимает ребро до следующего `--apply` �
 (вопрос «Включить рой?») и `listik swarm on`/`off`. Эти команды дописывают только
 `enabled` в таблицу `[swarm]` и не переписывают остальной `config.toml`. Выключенный
 рой карточки не запускает.
+
+Итоговое имя модели (из файла, непустой переменной окружения или дефолта) отдаётся
+авторизованному в `/api/health` → `swarm.model` и в `listik status --json` → `swarm.model`;
+локальный фолбэк `status` считает его сам по тем же правилам.
 
 Проход роя по флагу `--apply` (`listik plan --apply`/`listik rescope --apply`) пишет по графу,
 который вернула модель, обычные машинные рёбра `blocks` с автором `agent:listik-swarm` — тем же,

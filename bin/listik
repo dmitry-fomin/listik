@@ -1398,7 +1398,7 @@ def cmd_waves(args) -> int:
 
 def _swarm_view(health: dict | None) -> dict:
     """Рой для status: с живого сервера, иначе по конфигу и swarm.pid."""
-    from listik import swarm_proc
+    from listik import swarm_llm, swarm_proc
     if health and isinstance(health.get("swarm"), dict):
         return health["swarm"]
     try:
@@ -1406,7 +1406,8 @@ def _swarm_view(health: dict | None) -> dict:
     except ValueError as exc:
         return {"enabled": False, "running": False, "pid": None, "error": str(exc)}
     pid = swarm_proc.dispatcher_pid()
-    return {"enabled": enabled, "running": pid is not None, "pid": pid}
+    return {"enabled": enabled, "running": pid is not None, "pid": pid,
+            "model": swarm_llm.model_name()}
 
 
 def _print_swarm(health: dict | None) -> None:
@@ -1414,14 +1415,15 @@ def _print_swarm(health: dict | None) -> None:
     if info.get("error"):
         print(f"рой:    конфиг: {info['error']}")
         return
+    suffix = f" · модель {info['model']}" if info.get("model") else ""
     if not info.get("enabled"):
-        print("рой:    выключен (listik swarm on)")
+        print(f"рой:    выключен (listik swarm on){suffix}")
         return
     if info.get("running"):
         pid = info.get("pid")
-        print(f"рой:    работает{f' (pid {pid})' if pid else ''}")
+        print(f"рой:    работает{f' (pid {pid})' if pid else ''}{suffix}")
     else:
-        print("рой:    включён, процесс не запущен")
+        print(f"рой:    включён, процесс не запущен{suffix}")
 
 
 def cmd_swarm(args) -> int:

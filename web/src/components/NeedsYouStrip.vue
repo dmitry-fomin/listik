@@ -2,7 +2,7 @@
 /**
  * Инбокс «Ты нужен» — главный блок страницы: вопросы автору, брошенные задачи
  * и молчащие держатели одной сеткой карточек над доской. Состояние карточки —
- * одна из трёх веток (needs_owner → dead → at-risk), проверяемых строго по
+ * одна из веток (needs_owner → dead → at-risk → lint), проверяемых строго по
  * порядку; первая сработавшая задаёт бейдж, левую полосу, текст причины и
  * набор кнопок целиком (карточка не красится по статусу целиком).
  *
@@ -60,11 +60,13 @@ watch(collapsed, (value) => {
   }
 })
 
-type Branch = 'needs_owner' | 'dead' | 'at-risk'
+type Branch = 'needs_owner' | 'dead' | 'at-risk' | 'lint'
 
 function branchOf(task: Task): Branch {
   if (task.needs_owner) return 'needs_owner'
   if (taskHealth(task) === 'dead') return 'dead'
+  if (taskHealth(task) === 'at-risk') return 'at-risk'
+  if (task.lint?.length) return 'lint'
   return 'at-risk'
 }
 
@@ -74,6 +76,10 @@ function badgeText(task: Task): string {
   if (branch === 'dead') {
     if (task.abandoned && !task.holder) return 'брошена · без держателя'
     return `брошена ${task.idle_age}`
+  }
+  if (branch === 'lint') {
+    const count = task.lint?.length ?? 0
+    return count > 1 ? `несостыковки ×${count}` : 'несостыковка'
   }
   if (task.not_taken_warn) return `не взята ${task.assigned_age}`
   return `молчит ${task.idle_age}`
@@ -103,6 +109,12 @@ function reasonText(task: Task): string {
       return note ? `${base}; последняя заметка: «${note}»` : base
     }
     return `в работе без держателя с ${humanAge(task.started_at)}`
+  }
+  if (branch === 'lint') {
+    const messages = (store.board.value?.lint?.items ?? [])
+      .filter((item) => item.id === task.id)
+      .map((item) => item.message)
+    return messages.length ? messages.join('; ') : (task.lint ?? []).join(', ')
   }
   if (task.not_taken_warn) {
     const by = task.holder_assigned_by_title ? ` (выдал ${task.holder_assigned_by_title})` : ''
@@ -160,7 +172,7 @@ function footerText(task: Task): string {
           @keydown.space.self.prevent="emit('open', task.id)"
           :class="{
             'is-danger': branchOf(task) === 'dead',
-            'is-warning': branchOf(task) === 'at-risk',
+            'is-warning': branchOf(task) === 'at-risk' || branchOf(task) === 'lint',
           }"
         >
           <div class="listik-inbox-card__top">

@@ -143,7 +143,7 @@ def owner_default(args) -> str:
 #: значит другое (куда писать/что показать) — автоопределение им не подставляется.
 PROJECT_DEFAULT_COMMANDS = frozenset({
     "ready", "list", "board", "stats", "search", "blocked", "new", "inbox", "timeline",
-    "waves",
+    "waves", "lint",
 })
 
 #: Зарезервированное значение `--project`/`LISTIK_PROJECT` — «все проекты».
@@ -188,7 +188,7 @@ def project_default(args) -> str | None:
     slug = _detect_project(args)
     if not slug:
         return None
-    if not getattr(args, "json", False):
+    if not getattr(args, "json", False) and not getattr(args, "stop_hook", False):
         print(f"{PROJECT_DETECTED_PREFIX}: {slug} (все проекты: --project all)",
               file=sys.stderr)
     return slug
@@ -207,7 +207,7 @@ WRITE_OPS = frozenset({
     "create", "update", "claim", "heartbeat", "stage", "comment",
     "needs-owner", "dep_add", "dep_remove", "project_add", "project_archive",
     "project_remove", "project_routing", "waves_apply", "revoke", "launch",
-    "swarm_plan", "swarm_rescope",
+    "swarm_plan", "swarm_rescope", "portions_sync",
 })
 
 #: `--local` при живом сервере обходит push доски так же молча, как фолбэк без
@@ -1183,6 +1183,35 @@ def cmd_done(args) -> int:
     return 0
 
 
+def cmd_portions(args) -> int:
+    """`portions sync`: карточки порций по файлам шага `<id>.<X>.md`."""
+    actor = actor_default(args)
+    harness = getattr(args, "harness", None)
+    try:
+        res = call("portions_sync", args, f"/api/tasks/{args.task_id}/portions/sync",
+                   method="POST", body={"actor": actor, "harness": harness},
+                   local_kwargs={"task_id": args.task_id, "actor": actor, "harness": harness})
+    except (errors.ListikError, ValueError) as exc:
+        # Нет spec_path/каталога шага — неверный аргумент: код 2, как у прочих bad_argument.
+        err = errors.as_error(exc)
+        if err.code != errors.BAD_ARGUMENT:
+            raise
+        raise errors.ListikError(err.message, code=err.code, hint=err.hint,
+                                 exit_code=2, status=err.status) from exc
+    if getattr(args, "json", False):
+        emit(args, res, "")
+        return 0
+    for p in res["portions"]:
+        state = ("создана" if p["id"] in res["created"] else
+                 "обновлена" if p["id"] in res["updated"] else "без изменений")
+        print(f"  {p['letter']}  {p['id']}  {state}  {p['title']}")
+    if not res["portions"]:
+        print(f"  файлов порций нет в {res['steps_dir']}")
+    links = ", ".join(f"{cur} ждёт {prev}" for prev, cur in res["linked"])
+    print(f"связи: {links or 'без изменений'}")
+    return 0
+
+
 def cmd_revoke(args) -> int:
     actor = actor_default(args)
     kill = not args.no_kill
@@ -1822,6 +1851,86 @@ def cmd_blocked(args) -> int:
     return 0
 
 
+#: Сколько находок Stop-хук перечисляет в `reason`, остальные — «… и ещё K».
+STOP_HOOK_MAX_LINES = 20
+
+
+def lint_stop_hook(args) -> int:
+    """`lint --stop-hook`: Stop-хук Claude Code. Находки — JSON-блок хода на stdout.
+
+    Всегда код 0 и ничего в stderr: хук не должен ни зациклиться
+    (`stop_hook_active`), ни заблокировать ход из-за собственной поломки.
+    """
+    try:
+        try:
+            payload = json.loads(sys.stdin.read() or "{}")
+        except ValueError:
+            payload = {}
+        if isinstance(payload, dict) and payload.get("stop_hook_active") is True:
+            return 0
+        # Сервер лежит, а базы нет — не создаём её ни автоопределением проекта,
+        # ни самим lint (local_call открывает базу через db.init).
+        local = getattr(args, "local", False) or not client.is_up(args.host, args.port)
+        if local and not paths.DB_PATH.exists():
+            return 0
+        project = project_default(args)
+        if not project:
+            return 0
+        res = call("lint", args, "/api/lint", query={"project": project},
+                   local_kwargs={"project": project}, fallback_warning=False)
+        items = res["items"]
+        if not items:
+            return 0
+        lines = [f"listik lint: {len(items)} несостыковок в проекте {project} — исправь "
+                 "карточки (или объясни автору, почему нельзя) и заверши ход"]
+        lines += [f"{i['id']}  {i['rule']}  {i['message']}"
+                  for i in items[:STOP_HOOK_MAX_LINES]]
+        if len(items) > STOP_HOOK_MAX_LINES:
+            lines.append(f"… и ещё {len(items) - STOP_HOOK_MAX_LINES}")
+        print(json.dumps({"decision": "block", "reason": "\n".join(lines)},
+                         ensure_ascii=False))
+    except Exception as exc:  # noqa: BLE001 — поломка хука не блокирует ход
+        log_traceback(exc)
+    return 0
+
+
+def cmd_lint(args) -> int:
+    """Несостыковки карточек проекта; код 1, если что-то нашлось."""
+    if getattr(args, "stop_hook", False):
+        if getattr(args, "json", False):
+            raise errors.ListikError(
+                "--stop-hook несовместим с --json", code=errors.BAD_ARGUMENT, exit_code=2,
+                hint="listik lint --stop-hook (ответ хука и так JSON)")
+        return lint_stop_hook(args)
+    if not args.project:
+        raise errors.ListikError(
+            "укажи проект", code=errors.BAD_ARGUMENT, exit_code=2,
+            hint="listik lint --project <slug> (или LISTIK_PROJECT, или запусти из "
+                 "каталога проекта)")
+    query = {"project": args.project}
+    if args.suggested_hours is not None:
+        if not args.suggested_hours > 0:
+            raise errors.ListikError(
+                "--suggested-hours ждёт число больше 0", code=errors.BAD_ARGUMENT,
+                exit_code=2, hint="listik lint --suggested-hours 24")
+        query["suggested_hours"] = args.suggested_hours
+    res = call("lint", args, "/api/lint", query=query, local_kwargs=dict(query))
+    rc = 1 if res["items"] else 0
+    if getattr(args, "json", False):
+        emit(args, res, "")
+        return rc
+    if not res["items"]:
+        print("несостыковок нет")
+        return rc
+    rule = None
+    for item in res["items"]:
+        if item["rule"] != rule:
+            rule = item["rule"]
+            print(f"{rule}:")
+        print(f"  {item['id']}  {item['message']}")
+    return rc
+
+
 def cmd_dep_tree(args) -> int:
     body = {"depth": args.depth}
     tree = call("dep_tree", args, f"/api/tasks/{args.task_id}/deps", method="POST", body=body,
@@ -2432,8 +2541,8 @@ def build_parser() -> argparse.ArgumentParser:
                          "берёт рой, вручную — listik launch")
     sp.add_argument("--parent", metavar="ID",
                     help="родительская карточка (шаг/эпик): новая карточка станет её порцией "
-                         "(связь parent-child) со своими spec/checklist/review; проект "
-                         "наследуется от родителя, если не задан -p")
+                         "(связь parent-child) со своими spec/checklist/review; проект и "
+                         "journal_path наследуются от родителя, если не заданы")
     sp.add_argument("--discovered-from", metavar="ID",
                     help="карточка, при работе над которой задачу нашли: сразу ставит мягкую "
                          "связь discovered-from, и исходная карточка видит находку в связях")
@@ -2542,6 +2651,10 @@ def build_parser() -> argparse.ArgumentParser:
     sp.add_argument("--reason")
     add_note(sp)
 
+    sp = add("portions", cmd_portions, help="карточки порций шага по файлам <id>.<X>.md")
+    sp.add_argument("action", choices=["sync"])
+    add_task_id(sp)
+
     sp = add("revoke", cmd_revoke,
              help="отзыв поднимает поколение и по умолчанию снимает процесс")
     add_task_note(sp)
@@ -2582,6 +2695,16 @@ def build_parser() -> argparse.ArgumentParser:
     sp = add("blocked", cmd_blocked, help="кто кого ждёт: незакрытые блокеры задач")
     sp.add_argument("-p", "--project")
     sp.add_argument("-n", "--limit", type=int, default=60)
+
+    sp = add("lint", cmd_lint,
+             help="несостыковки карточек проекта: держатели, документы, порции, связи")
+    sp.add_argument("-p", "--project")
+    sp.add_argument("--suggested-hours", type=float, default=None,
+                    help="через сколько часов неподтверждённая предложенная связь — находка "
+                    "(по умолчанию 24)")
+    sp.add_argument("--stop-hook", action="store_true",
+                    help="режим Stop-хука Claude Code: stdin — JSON хука, при находках "
+                    "на stdout {\"decision\": \"block\"}, код всегда 0; несовместим с --json")
 
     sp = add("waves", cmd_waves, help="волны запуска: что можно делать одновременно")
     sp.add_argument("-p", "--project")
@@ -2722,7 +2845,9 @@ def main(argv: list[str] | None = None) -> int:
     if not hasattr(args, "json"):
         args.json = False
     json_mode = json_mode or args.json
-    if getattr(args, "cmd", None) in PROJECT_DEFAULT_COMMANDS:
+    # lint --stop-hook определяет проект сам: сначала stdin хука, потом база.
+    if (getattr(args, "cmd", None) in PROJECT_DEFAULT_COMMANDS
+            and not getattr(args, "stop_hook", False)):
         args.project = project_default(args)
     try:
         return int(args.func(args) or 0)

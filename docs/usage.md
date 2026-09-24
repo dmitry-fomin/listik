@@ -117,9 +117,39 @@ claude mcp add --transport http listik https://<домен>/mcp \
 Блок, чья метка версии протокола (`<!-- listik-protocol: N -->`) новее ставящегося шаблона,
 пропускается с предупреждением `! пропущен`; перезаписать его — `listik init-projects --force`.
 
+### Stop-хук Claude Code
+
+`listik lint --stop-hook` не даёт Claude закончить ход, пока в карточках проекта есть
+несостыковки (`listik lint`). Хук — локальная настройка, в репозиторий не кладётся
+(`.claude/*` в `.gitignore`). Подключить — добавить в `.claude/settings.json` проекта (или в
+`~/.claude/settings.json`, чтобы во всех проектах):
+
+```json
+{"hooks": {"Stop": [{"hooks": [{"type": "command",
+  "command": "listik lint --stop-hook 2>/dev/null || true"}]}]}}
+```
+
+Команда — установленный `listik` из PATH, а не `bin/listik` репозитория. Обёртка
+`2>/dev/null || true` обязательна: пока глобальный `listik` не обновлён релизом и не знает флага,
+argparse выйдет с кодом 2, а код 2 у Stop-хука **блокирует** ход; `|| true` и глушение stderr
+делают старую установку безвредной.
+
+При находках команда печатает `{"decision": "block", "reason": …}` — первая строка причины
+`listik lint: N несостыковок в проекте <slug> — …`, дальше до 20 находок `<id>  <rule>  <message>`
+(остальные — `… и ещё K`), и Claude продолжает ход, чтобы их исправить. Без находок, без проекта
+(`--project` → `LISTIK_PROJECT` → каталог), без базы или при любой своей ошибке — пустой вывод и
+код 0: хук не блокирует ход из-за собственной поломки. Карточек, комментариев и событий хук не
+меняет.
+
+Не зацикливается: если ход уже продолжен этим хуком, Claude Code передаёт на stdin
+`"stop_hook_active": true`, и хук молча отпускает ход — второй круг не устраивается.
+
+Проверить руками: `echo '{}' | listik lint --stop-hook --project listik`. Отключить — убрать
+блок `hooks.Stop` из `settings.json`.
+
 ## Проект по рабочему каталогу
 
-Команды `ready`, `list`, `board`, `stats`, `search`, `blocked`, `new`, `inbox` и `timeline`,
+Команды `ready`, `list`, `board`, `stats`, `search`, `blocked`, `new`, `inbox`, `timeline` и `lint`,
 если проект не задан явно, определяют его по текущему каталогу. Проект подставляется как
 значение `--project`, поэтому вызов из каталога проекта показывает очередь этого проекта,
 а не всех сразу.
@@ -476,8 +506,8 @@ show <id>`).
 |---|---|
 | Сервер | `serve`, `stop`, `status`, `init`, `token`, `mcp`, `service` |
 | Копии | `backup`, `restore` |
-| Задачи | `new`, `list`, `show`, `set`, `context`, `board`, `stats`, `timeline` |
-| Работа | `ready`, `worktree`, `claim`, `heartbeat`, `stage`, `release`, `done`, `needs-owner`, `inbox`, `launch`, `revoke` |
+| Задачи | `new`, `list`, `show`, `set`, `context`, `board`, `stats`, `timeline`, `portions sync` |
+| Работа | `ready`, `worktree`, `claim`, `heartbeat`, `stage`, `release`, `done`, `needs-owner`, `inbox`, `launch`, `revoke`, `lint` |
 | Журнал | `comment -k comment\|journal\|review\|verdict\|question\|answer` |
 | Связи | `dep add\|confirm\|rm\|suggest\|link\|suggested`, `blocked`, `tree`, `cycles` |
 | Поиск | `search`, `memory`, `remember`, `embed` |

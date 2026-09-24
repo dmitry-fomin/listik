@@ -411,5 +411,77 @@ class PortionHttpTests(TempDbTestCase):
         self.assertEqual([c["id"] for c in task["children"]], [child["id"]])
 
 
+class PortionJournalTests(TempDbTestCase):
+    """Порция без своего `journal_path` наследует журнал родителя, и только его."""
+
+    def setUp(self) -> None:
+        super().setUp()
+        self.journal = self.tmp_path / "step.journal.md"
+        self.journal.write_text("# Журнал шага\n\nрешение\n", encoding="utf-8")
+        self.P = str(self.journal)
+        self.parent = store.create_task(self.conn, title="Шаг", project="listik",
+                                        stage="s1-spec", journal_path=self.P)
+        self.pid = self.parent["id"]
+
+    def test_inherits_parent_journal(self) -> None:
+        child = store.create_task(self.conn, title="порция", parent=self.pid)
+        task = store.get_task(self.conn, child["id"])
+        self.assertEqual(task["journal_path"], self.P)
+        self.assertIn(("decision", self.P),
+                      [(d["kind"], d["path"]) for d in task["documents"]])
+
+    def test_explicit_journal_wins(self) -> None:
+        q = self.tmp_path / "own.journal.md"
+        q.write_text("# свой\n", encoding="utf-8")
+        child = store.create_task(self.conn, title="порция", parent=self.pid,
+                                  journal_path=str(q))
+        self.assertEqual(store.get_task(self.conn, child["id"])["journal_path"], str(q))
+
+    def test_parent_without_journal_leaves_child_empty(self) -> None:
+        bare = store.create_task(self.conn, title="Шаг без журнала", project="listik",
+                                 stage="s1-spec")
+        child = store.create_task(self.conn, title="порция", parent=bare["id"])
+        self.assertFalse(store.get_task(self.conn, child["id"])["journal_path"])
+
+    def test_empty_journal_inherits(self) -> None:
+        for empty in ("", "   "):
+            child = store.create_task(self.conn, title="порция", parent=self.pid,
+                                      journal_path=empty)
+            self.assertEqual(store.get_task(self.conn, child["id"])["journal_path"], self.P)
+
+    def test_missing_parent_journal_file_still_inherited(self) -> None:
+        ghost = str(self.tmp_path / "nope.journal.md")
+        parent = store.create_task(self.conn, title="Шаг", project="listik",
+                                   stage="s1-spec", journal_path=ghost)
+        child = store.create_task(self.conn, title="порция", parent=parent["id"])
+        self.assertEqual(store.get_task(self.conn, child["id"])["journal_path"], ghost)
+
+    def test_other_fields_not_inherited(self) -> None:
+        spec = self.tmp_path / "s.md"
+        spec.write_text("# spec\n", encoding="utf-8")
+        check = self.tmp_path / "c.md"
+        check.write_text("# check\n- [ ] x\n", encoding="utf-8")
+        parent = store.create_task(self.conn, title="Шаг", project="listik", stage="s1-spec",
+                                   labels=["x"], priority=0, spec_path=str(spec),
+                                   checklist_path=str(check), journal_path=self.P)
+        task = store.get_task(self.conn, store.create_task(
+            self.conn, title="порция", parent=parent["id"])["id"])
+        self.assertEqual(task["labels"], [])
+        self.assertEqual(task["priority"], 2)
+        self.assertFalse(task["spec_path"])
+        self.assertFalse(task["checklist_path"])
+
+    def test_cli_new_parent_inherits_journal(self) -> None:
+        p = subprocess.run(
+            [sys.executable, str(LISTIK_BIN), "--local", "new", "порция",
+             "--parent", self.pid, "--json"],
+            capture_output=True, text=True,
+            env={**os.environ, "LISTIK_DB": str(self.db_path)},
+            cwd=str(LISTIK_BIN.parent.parent),
+        )
+        self.assertEqual(p.returncode, 0, p.stderr)
+        self.assertEqual(json.loads(p.stdout)["journal_path"], self.P)
+
+
 if __name__ == "__main__":
     unittest.main()

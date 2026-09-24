@@ -171,6 +171,9 @@ class AssignedNotTakenTests(TempDbTestCase):
     def test_taken_task_does_not_reach_needs_you(self) -> None:
         self._issue()
         store.claim(self.conn, self.task, holder="dsh", actor="agent:dsh", harness="dsh")
+        # Документы этапа на месте: без них lint (`stage_without_docs`) сам ведёт в ленту.
+        store.update_task(self.conn, self.task, spec_path="/tmp/spec.md",
+                          journal_path="/tmp/journal.md")
         self._backdate_assignment(40)
         board = store.board(self.conn, project="demo")
         self.assertNotIn(self.task, [t["id"] for t in board["needs_you"]])

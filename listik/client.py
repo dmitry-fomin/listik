@@ -177,7 +177,7 @@ def request(method: str, path: str, *, query: dict | None = None, body: dict | N
 FENCED_LOCAL_OPS = {
     "update": "task_id", "needs-owner": "task_id", "claim": "task_id",
     "heartbeat": "task_id", "stage": "task_id", "comment": "task_id",
-    "dep_add": "issue_id", "dep_remove": "issue_id",
+    "dep_add": "issue_id", "dep_remove": "issue_id", "portions_sync": "task_id",
 }
 
 
@@ -255,6 +255,9 @@ def local_call(op: str, *, fence: fence_mod.Token | dict | None = None, **kwargs
     if op == "comment":
         task_id = kwargs.pop("task_id")
         return store.add_comment(conn, task_id, **kwargs)
+    if op == "portions_sync":
+        return store.sync_portions(conn, kwargs["task_id"], actor=kwargs.get("actor"),
+                                   harness=kwargs.get("harness"))
     if op == "ready":
         from . import deps as deps_mod
         return {"tasks": deps_mod.ready_tasks(conn, project=kwargs.get("project"),
@@ -267,6 +270,10 @@ def local_call(op: str, *, fence: fence_mod.Token | dict | None = None, **kwargs
         from . import deps as deps_mod
         return {"tasks": deps_mod.blocked_tasks(conn, project=kwargs.get("project"),
                                                 limit=kwargs.get("limit", 100))}
+    if op == "lint":
+        return store.lint(conn, project=kwargs.get("project"),
+                          suggested_hours=kwargs.get("suggested_hours",
+                                                     store.LINT_SUGGESTED_HOURS))
     if op == "waves":
         from . import deps as deps_mod
         return deps_mod.waves(conn, project=kwargs.get("project"), stage=kwargs.get("stage"))

@@ -18,14 +18,14 @@ AGENTS.md      правила работы агента с задачами
 ## Команды
 
 ```sh
-python3 -m unittest discover tests      # тесты на временной базе, без сервера и Ollama
+python3 -m unittest discover -s tests -t .   # тесты на временной базе, без сервера и Ollama
 node --test swarm/test/                 # чистые функции роя (config/decide/run/listik)
 cd web && npm run dev                   # доска с hot reload
 cd web && npm run typecheck && npm run build
 ```
 
 `tests/test_swarm_e2e.py` и `tests/test_swarm_barrier_e2e.py` (тот же барьер волны, но сквозь
-процесс роя) входят в `discover tests`: гоняют настоящий `bin/listik-swarm` против живого
+процесс роя) входят в `discover -s tests -t .`: гоняют настоящий `bin/listik-swarm` против живого
 сервера Listik и настоящего git на временном проекте. Требуют `node` и `git` в `PATH` — без них
 модуль пропускается (`skip`) с понятной причиной; при их наличии `test_swarm_e2e.py` занимает
 до 3 минут, `test_swarm_barrier_e2e.py` — до 5.

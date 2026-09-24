@@ -1449,6 +1449,35 @@ def cmd_swarm(args) -> int:
     return 0
 
 
+def cmd_arbiter_check(args) -> int:
+    """Проверить результат арбитра слияния через jev; формат входа — docs/API.md."""
+    try:
+        if args.input == "-":
+            payload = json.load(sys.stdin)
+        else:
+            with open(args.input, encoding="utf-8") as fh:
+                payload = json.load(fh)
+    except (OSError, UnicodeError, json.JSONDecodeError) as exc:
+        raise errors.BadArgument(f"--input: не удалось прочитать JSON ({exc})") from exc
+    if not isinstance(payload, dict):
+        raise errors.BadArgument("--input: ожидался объект JSON")
+
+    res = call("swarm_arbiter_check", args, "/api/swarm/arbiter-check", method="POST",
+               body=payload, local_kwargs={"payload": payload}, timeout=600)
+    if getattr(args, "json", False):
+        emit(args, res, "")
+    else:
+        verdict = "ok" if res["ok"] else "reject"
+        if res["ok"] and res.get("skipped"):
+            verdict = f"пропущена ({res['skipped']})"
+        lines = [f"проверка слияния {payload['task']['id']}: {verdict}, модель {res['model']}"]
+        for file in res["files"]:
+            reason = f" — {file['reason']}" if file.get("reason") else ""
+            lines.append(f"  {file['path']}: {file['verdict']}{reason}")
+        print("\n".join(lines))
+    return 0 if res["ok"] else 1
+
+
 def cmd_plan(args) -> int:
     """LLM-проход роя: грубые зависимости `blocks` между открытыми задачами проекта —
     какие ТЗ можно писать параллельно."""
@@ -2610,6 +2639,12 @@ def build_parser() -> argparse.ArgumentParser:
              help="включить рой в config.toml: сервер сам гоняет все проекты")
     sp.add_argument("state", choices=["on", "off", "status"],
                     help="on — [swarm] enabled = true; off — false; status — что сейчас")
+
+    sp = add("arbiter-check", cmd_arbiter_check,
+             help="проверка результата арбитра слияния через jev (рой зовёт сам)",
+             description="Проверка результата арбитра слияния через jev; формат входа описан в docs/API.md.")
+    sp.add_argument("--input", required=True, metavar="FILE",
+                    help="JSON с task, others, files; - — читать stdin")
 
     sp = add("plan", cmd_plan, help="LLM-проход роя: грубые зависимости между открытыми "
                                     "задачами проекта — какие ТЗ можно писать параллельно")

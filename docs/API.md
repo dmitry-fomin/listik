@@ -1338,6 +1338,7 @@ dropped_chunks, reason`), `reasons[]` (по одному пункту на ка�
 | POST | `/api/tasks/{id}/ready` | — | вердикт по задаче (`deps_state`, см. ниже) |
 | POST | `/api/tasks/{id}/mentions` | `limit` | задачи, упомянутые в тексте этой задачи, но не связанные с ней. Отдаёт все совпадения — тем же режимом пользуются `dep suggest`/`dep link`; подсказка `link_hints[]` при создании отсеивает id в путях и кавычках (см. «Найденная по ходу задача») |
 | POST | `/api/waves/apply` | `project` (обязателен), `stage` | записать в базу ресурсные рёбра `resource-blocks` под свежий расчёт `waves` — см. «Волны запуска: `listik waves`»; `actor` в теле и заголовок `X-Listik-Owner` на автора ребра не влияют — автор всегда `agent:listik-swarm`; ответ `added[], removed[], kept, waves{}, generated_at`; без `project`/с пустым `project` — 400 `bad_argument`; цикл в зависимостях — 409 `conflict`, ничего не записано; метод не POST — 405; событие доске (`{"id", "action": "deps"}`) — по каждой затронутой задаче |
+| POST | `/api/swarm/arbiter-check` | `{task:{id,title,description,acceptance}, others:[], files:[{path,before,after}]}` | Проверка результата арбитра слияния через jev; ответ `{ok, model, skipped, files:[{path, verdict: ok\|reject\|skipped, reason, answers:{task_kept,main_kept,clean}}]}`; негодное тело — 400 `bad_argument`, метод не POST — 405; обычная авторизация `/api/*`; без записи в базу и без событий доске; ненастроенный/недоступный jev — `ok: true` и причина в `skipped`, если до ошибки не было `reject` (он сохраняет `ok: false`) |
 | POST | `/api/swarm/plan` | `project` (обязателен), `stage`, `apply` | LLM-проход роя: грубые зависимости `blocks` между открытыми задачами проекта — см. «LLM-проходы роя: модель и машинные рёбра»; `actor` в теле и заголовок `X-Listik-Owner` игнорируются — автор рёбер всегда `agent:listik-swarm`; ответ — `project, stage, model, attempts, tasks{}, edges[], fixed[], previous[], dropped[], cycles[], cycles_from, applied, jev{model,checked,dropped[{edge,p}],skipped}` + `generated_at`; без `project`/с пустым `project` — 400 `bad_argument`; слишком много текста для одного вызова модели — 400 `bad_argument`; цикл (в базе или у модели после исчерпанных попыток) — **200** с непустым `cycles` и `applied: null` (CLI отдаёт код `1`), не 409; 409 `conflict` только если сама запись рёбер отказала (защитный случай — штатный цикл до записи не доходит); 404 `not_found` — задача не найдена; 502/503/504 `server_error` — модель роя недоступна/не настроена/не ответила; метод не POST — 405; событие доске (`{"id", "action": "deps"}`) — по каждой затронутой задаче, только при `applied` |
 | POST | `/api/swarm/rescope` | `project` (обязателен), `tasks[]`, `drift[]`, `apply` | LLM-проход роя: `read_scope`/`write_scope` из ТЗ готовых задач плюс уточнение графа `blocks` по копилке расхождений — см. «LLM-проходы роя: модель и машинные рёбра»; `tasks` — список id (не список строк — 400 `bad_argument`), сверх копилки из карточек — `drift` (не список — 400 `bad_argument`); `actor` в теле и заголовок `X-Listik-Owner` игнорируются — автор записей всегда `agent:listik-swarm`; ответ — `project, model, extracted, attempts, tasks{}, unspecced{}, unscoped[], invalid{}, drift{}, edges[], fixed[], previous[], dropped[], cycles[], cycles_from, applied` + `generated_at`; без `project`/с пустым `project` — 400 `bad_argument`; цикл (в базе или у модели) — **200** с непустым `cycles`, области в `applied.scopes` пишутся, `applied.edges: null`; 404 `not_found` — задача не найдена; 502/503/504 `server_error` — модель роя недоступна/не настроена/не ответила; метод не POST — 405; события доске через `publish`, не таблицу `events` — `{"id", "action": "updated"}` по каждой записанной в `applied.scopes` задаче и `{"id", "action": "deps"}` по задачам из `applied.edges.added`/`removed` |
 | POST | `/api/projects` | `path` (каталог репозитория) или `slug`, `title`, `kind=native` | добавить репозиторий на доску; slug по умолчанию — имя каталога, git remote/ветка подтягиваются сами. `path` — абсолютный, от `~` или относительный — от корня проектов (`root` из `GET /api/projects`, `LISTIK_PROJECTS_ROOT`, по умолчанию `~/Projects`), никогда от рабочего каталога сервера (listik-i23u); нет каталога — 400 `bad_argument` «каталога нет: <полный путь>». То же правило для `path` в `PATCH`. Если каталог лежит внутри git-репозитория, путь приводится к корню (`git rev-parse --show-toplevel`), а в ответе появляется `path_adjusted_from` — исходный путь, иначе `null`. Существующий slug не падает: проект возвращается на доску и обновляется. Сверка slug идёт **без учёта регистра** (`store.existing_slug`): если проект с таким slug уже есть в другом написании, возвращается он — с прежним регистром slug, `created=false`, — а не второй проект-дубль |
@@ -1613,6 +1614,38 @@ jev — модель типизированных решений TypeSafe на O
 Это отдельный канал `swarm_llm.decide`, а не `chat/completions`: модель jev нельзя ставить
 в `[swarm].model`.
 
+`listik arbiter-check --input FILE|- [--json]` (`POST /api/swarm/arbiter-check`, локальный
+фолбэк `client.local_call("swarm_arbiter_check", payload=…)`) проверяет результат слияния.
+Рой вызывает её после арбитра, до добавления файлов в индекс (интеграция — порция f);
+человек может вызвать команду руками, в том числе с `--input -` для JSON из stdin.
+Вход — JSON-объект с обязательными `task` и непустым `files`, необязательным `others`
+(по умолчанию `[]`). `task` и каждый элемент `others` — объект с непустой строкой `id`;
+`title`, `description`, `acceptance` необязательны, но должны быть строками, если заданы.
+Каждый элемент `files` содержит три обязательные строки `path`, `before`, `after`:
+
+```json
+{"task":{"id":"t1"},"others":[],"files":[{"path":"a.txt","before":"<<<<<<< HEAD\nx\n||||||| base\n\n=======\ny\n>>>>>>> t1\n","after":"x\ny\n"}]}
+```
+
+Listik режет diff3-текст «до» на куски `main`/`base`/`task` (без базы — `base: null`) и
+находит те же места «после» по якорям из трёх строк контекста. Если якорь потерян, jev
+получает весь результат файла размером до 40 000 символов включительно. Состояние файла
+больше 100 000 символов в JSON пропускается. Карточки передаются только полями `id`,
+`title`, `acceptance` (приёмка обрезается до первых 1500 символов плюс многоточие), без `description`.
+Три вопроса `noul`: `task_kept` — сохранены изменения задачи относительно базы,
+`main_kept` — сохранены изменения основной ветки, `clean` — нет повторов, обрывков строк
+и маркеров конфликта. Файл получает `ok`, если все три вероятности **≥ 0.7**; иначе
+`reject` и `reason` с не прошедшими вопросами, например `task_kept=0.31, clean=0.55`.
+
+Общий ответ — `{ok, model, skipped, files}`; `ok` истинен, если ни один файл не получил
+`reject`. Без ключа — `model: null`, `skipped: "не настроен"`, `files: []`. При сбое jev
+проверка останавливается с `skipped: "ошибка: …"`, завершённые результаты остаются,
+текущий и последующие файлы в ответ не попадают. Уже найденный `reject` сохраняет отказ.
+Файл без маркеров, с неразобранными маркерами или слишком большой получает собственный
+`verdict: "skipped"`, причину и `answers: {}`. Код CLI — `1` при `ok: false`, иначе `0`,
+включая пропуск из-за недоступности jev. Проверка не пишет в базу, не публикует события
+доске и не требует `--actor`; секрет jev в ответ и текст команды не попадает.
+
 Итоговое имя модели (из файла, непустой переменной окружения или дефолта) отдаётся
 авторизованному в `/api/health` → `swarm.model` и в `listik status --json` → `swarm.model`;
 локальный фолбэк `status` считает его сам по тем же правилам.
@@ -1751,6 +1784,7 @@ listik ready --harness dsh          # то же, с идентичностью h
 listik blocked                      # кто кого ждёт и почему
 listik waves --project X [--stage s3-impl] [--json]   # волны запуска: что можно делать одновременно
 listik waves --project X --apply                     # записать ресурсные рёбра resource-blocks под этот расчёт
+listik arbiter-check --input FILE|- [--json]   # проверка результата арбитра слияния через jev; код 1 — reject
 listik plan --project X [--stage s] [--apply] [--json]   # LLM-проход роя: грубые blocks между открытыми задачами
 listik rescope --project X [--task id …] [--drift file.json] [--apply] [--json]   # LLM-проход роя: read_scope/write_scope из готовых ТЗ, уточнение графа по копилке расхождений
 listik watch --project X [--task id …] [--dry-run] [--json]   # наблюдатель роя: тронутые файлы, пробное слияние по парам, расхождения с write_scope, лестница заморозки опоздавшего при конфликте (код возврата 1, если решение упало)

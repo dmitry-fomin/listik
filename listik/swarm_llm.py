@@ -369,6 +369,193 @@ def decide(state, questions: dict, *, cfg_settings: dict, opener=None,
     return {"answers": answers, "usage": usage, "model": model}
 
 
+# --- проверка результата арбитра слияния через jev ------------------------------------
+
+JEV_MERGE_ACCEPT = 0.7          # ponytail: порог не калиброван; крутить по verdict.json
+MERGE_CONTEXT_LINES = 3
+MERGE_MAX_STATE_CHARS = 100_000  # ≈25k токенов; контекст jev — 32k
+MERGE_FILE_FALLBACK_CHARS = 40_000
+
+MERGE_QUESTIONS = {
+    "task_kept": {
+        "type": "noul",
+        "instructions": (
+            "В каждом resolved (или в resolved_file) сохранено то, что сторона task "
+            "добавила или изменила относительно base? Учитывай task_card."),
+        "criteria": {"true": "Изменения стороны task сохранены во всех кусках.",
+                     "false": "Изменения стороны task потеряны хотя бы в одном куске."},
+    },
+    "main_kept": {
+        "type": "noul",
+        "instructions": (
+            "В каждом resolved (или в resolved_file) сохранено то, что сторона main "
+            "добавила или изменила относительно base? Учитывай main_cards."),
+        "criteria": {"true": "Изменения стороны main сохранены во всех кусках.",
+                     "false": "Изменения стороны main потеряны хотя бы в одном куске."},
+    },
+    "clean": {
+        "type": "noul",
+        "instructions": (
+            "Результат в resolved (или в resolved_file) цельный: один фрагмент не "
+            "повторён дважды, нет обрывков строк и маркеров конфликта?"),
+        "criteria": {"true": "Результат цельный, без повторов, обрывков и маркеров.",
+                     "false": "Есть повтор, обрывок строки или маркер конфликта."},
+    },
+}
+
+
+def extract_conflicts(before: str) -> list[dict]:
+    """Разобрать diff3/обычные конфликты, не захватывая соседние блоки в якоря."""
+    lines = before.splitlines()
+    blocks: list[tuple[int, int, dict]] = []
+    start = base = separator = None
+    for i, line in enumerate(lines):
+        if line.startswith("<<<<<<< "):
+            if start is not None:
+                raise errors.BadArgument(f"маркеры конфликта не разобраны: строка {i + 1}")
+            start = i
+        elif line.startswith("||||||| "):
+            if start is None or base is not None or separator is not None:
+                raise errors.BadArgument(f"маркеры конфликта не разобраны: строка {i + 1}")
+            base = i
+        elif line == "=======":
+            if start is None or separator is not None:
+                raise errors.BadArgument(f"маркеры конфликта не разобраны: строка {i + 1}")
+            separator = i
+        elif line.startswith(">>>>>>> "):
+            if start is None or separator is None:
+                raise errors.BadArgument(f"маркеры конфликта не разобраны: строка {i + 1}")
+            blocks.append((start, i, {
+                "main": "\n".join(lines[start + 1:base if base is not None else separator]),
+                "base": "\n".join(lines[base + 1:separator]) if base is not None else None,
+                "task": "\n".join(lines[separator + 1:i]),
+            }))
+            start = base = separator = None
+    if start is not None:
+        raise errors.BadArgument(f"маркеры конфликта не разобраны: строка {start + 1}")
+
+    hunks = []
+    for n, (start, end, hunk) in enumerate(blocks):
+        previous_end = blocks[n - 1][1] + 1 if n else 0
+        next_start = blocks[n + 1][0] if n + 1 < len(blocks) else len(lines)
+        hunks.append({**hunk,
+                      "ctx_before": lines[max(previous_end, start - MERGE_CONTEXT_LINES):start],
+                      "ctx_after": lines[end + 1:min(next_start, end + 1 + MERGE_CONTEXT_LINES)]})
+    return hunks
+
+
+def resolved_regions(after: str, hunks: list[dict]) -> list[str | None]:
+    """Найти области между якорями; неудачный поиск не сдвигает курсор."""
+    lines = after.splitlines()
+
+    def find(anchor: list[str], start: int) -> int | None:
+        for i in range(start, len(lines) - len(anchor) + 1):
+            if lines[i:i + len(anchor)] == anchor:
+                return i
+        return None
+
+    regions: list[str | None] = []
+    cursor = 0
+    for hunk in hunks:
+        left, right = hunk["ctx_before"], hunk["ctx_after"]
+        start = find(left, cursor) if left else cursor
+        if start is None:
+            regions.append(None)
+            continue
+        start += len(left)
+        end = find(right, start) if right else len(lines)
+        if end is None:
+            regions.append(None)
+            continue
+        regions.append("\n".join(lines[start:end]))
+        # Правый якорь может быть левым якорем следующего близкого конфликта.
+        cursor = end
+    return regions
+
+
+def merge_state(path, before, after) -> tuple[dict | None, str | None]:
+    """Снимок конфликтных кусков и результата либо причина пропуска файла."""
+    try:
+        hunks = extract_conflicts(before)
+    except errors.BadArgument as exc:
+        return None, str(exc)
+    if not hunks:
+        return None, "в «до» нет маркеров конфликта"
+    regions = resolved_regions(after, hunks)
+    state = {"path": path, "hunks": [
+        {"main": hunk["main"], "base": hunk["base"], "task": hunk["task"],
+         "resolved": region} for hunk, region in zip(hunks, regions)]}
+    if any(region is None for region in regions):
+        if len(after) > MERGE_FILE_FALLBACK_CHARS:
+            return None, "не удалось сопоставить куски, файл велик"
+        state["resolved_file"] = after
+    if len(util.json_dumps(state)) > MERGE_MAX_STATE_CHARS:
+        return None, "слишком большой для jev"
+    return state, None
+
+
+def _merge_card(card, field: str) -> dict:
+    if not isinstance(card, dict):
+        raise errors.BadArgument(f"{field}: ожидался объект")
+    if not isinstance(card.get("id"), str) or not card["id"].strip():
+        raise errors.BadArgument(f"{field}.id: ожидалась непустая строка")
+    for name in ("title", "description", "acceptance"):
+        if name in card and not isinstance(card[name], str):
+            raise errors.BadArgument(f"{field}.{name}: ожидалась строка")
+    return {"id": card["id"], "title": card.get("title", ""),
+            "acceptance": _clip(card.get("acceptance", ""), 1500)}
+
+
+def judge_merge(payload, *, cfg_settings=None, opener=None, timeout=JEV_TIMEOUT) -> dict:
+    """Проверить снимки слияния без записи в БД; недоступный jev — пропуск."""
+    if not isinstance(payload, dict):
+        raise errors.BadArgument("payload: ожидался объект")
+    task_card = _merge_card(payload.get("task"), "task")
+    others = payload.get("others", [])
+    if not isinstance(others, list):
+        raise errors.BadArgument("others: ожидался список")
+    main_cards = [_merge_card(card, f"others[{i}]") for i, card in enumerate(others)]
+    files = payload.get("files")
+    if not isinstance(files, list) or not files:
+        raise errors.BadArgument("files: ожидался непустой список")
+    for i, file in enumerate(files):
+        if not isinstance(file, dict):
+            raise errors.BadArgument(f"files[{i}]: ожидался объект")
+        for name in ("path", "before", "after"):
+            if not isinstance(file.get(name), str):
+                raise errors.BadArgument(f"files[{i}].{name}: ожидалась строка")
+
+    cfg_settings = cfg_settings or settings()
+    if not jev_enabled(cfg_settings):
+        return {"ok": True, "model": None, "skipped": "не настроен", "files": []}
+
+    results = []
+    skipped = None
+    for file in files:
+        state, reason = merge_state(file["path"], file["before"], file["after"])
+        if state is None:
+            results.append({"path": file["path"], "verdict": "skipped",
+                            "reason": reason, "answers": {}})
+            continue
+        try:
+            reply = decide(state={"task_card": task_card, "main_cards": main_cards, **state},
+                           questions=MERGE_QUESTIONS, cfg_settings=cfg_settings,
+                           opener=opener, timeout=timeout)
+        except SwarmLlmError as exc:
+            skipped = f"ошибка: {exc.message}"
+            logger.warning("проверка слияния jev пропущена: %s", exc.message)
+            break
+        answers = {name: reply["answers"][name]["noul"] for name in MERGE_QUESTIONS}
+        failed = [f"{name}={p:.2f}" for name, p in answers.items() if p < JEV_MERGE_ACCEPT]
+        result = {"path": file["path"], "verdict": "reject" if failed else "ok",
+                  "answers": answers}
+        if failed:
+            result["reason"] = ", ".join(failed)
+        results.append(result)
+    return {"ok": not any(item["verdict"] == "reject" for item in results),
+            "model": cfg_settings["jev_model"], "skipped": skipped, "files": results}
+
+
 # --- проход `listik plan`: грубые зависимости между открытыми задачами проекта -----------
 
 MAX_FIELD_CHARS = 4000          # описание/приёмка одной карточки в промпте

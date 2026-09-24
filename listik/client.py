@@ -182,6 +182,10 @@ FENCED_LOCAL_OPS = {
 
 def local_call(op: str, *, fence: fence_mod.Token | dict | None = None, **kwargs):
     """Прямая работа с базой, когда сервер не поднят."""
+    if op == "swarm_arbiter_check":
+        from . import swarm_llm
+        return swarm_llm.judge_merge(kwargs["payload"])
+
     from . import search as search_mod
     from . import store
 

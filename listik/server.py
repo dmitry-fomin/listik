@@ -604,6 +604,16 @@ def handle(method: str, path: str, query: dict, body: dict, authed: bool = False
     сверяется с текущим поколением — устаревший запуск получает `errors.Revoked`,
     а его запись уходит в карантин (см. `listik/fence.py`).
     """
+    if path == "/api/swarm/arbiter-check":
+        if method != "POST":
+            raise ApiError(405, "метод не поддерживается")
+        try:
+            return 200, swarm_llm.judge_merge(body)
+        except errors_mod.BadArgument as exc:
+            raise ApiError(400, str(exc), code=errors_mod.BAD_ARGUMENT) from exc
+        except swarm_llm.SwarmLlmError as exc:
+            raise ApiError(exc.status, exc.message, code=exc.code) from exc
+
     conn = get_conn()
     parts = [p for p in path.strip("/").split("/") if p]
     q1 = lambda k, d=None: query.get(k, [d])[0] if isinstance(query.get(k), list) else query.get(k, d)  # noqa: E731

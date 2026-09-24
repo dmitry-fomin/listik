@@ -336,8 +336,8 @@ class SwarmE2ECase(AutostartTestCase, FencingHttpCase):
 # ------------------------------------------------------------------ сценарий 1
 
 class WaveToCompletionTests(SwarmE2ECase):
-    """п.4: волна до конца без ручного вмешательства; задача без маршрута/области —
-    needs-owner, не запускается."""
+    """п.4: волна до конца без ручного вмешательства; задача без маршрута не
+    запускается и без вопроса, без области — needs-owner."""
 
     def test_wave_runs_to_completion_and_flags_unroutable_and_unscoped(self):
         a = self.make_scenario_task("A", route="fake-low", write_scope=["a/"])
@@ -403,14 +403,16 @@ class WaveToCompletionTests(SwarmE2ECase):
 
         for tid in (d["id"], e["id"]):
             row = self.row(tid)
-            self.assertTrue(row["needs_owner"], tid)
             self.assertEqual(row["generation"], 0, tid)
             self.assertFalse(row["launched_by"], tid)
             self.assertFalse(row["worktree"], tid)
-            questions = self.question_texts(tid)
-            self.assertEqual(len(questions), 1, tid)
-        self.assertIn("маршрут", self.question_texts(d["id"])[0])
-        self.assertIn("write_scope", self.question_texts(e["id"])[0])
+        # Без маршрута рой карточку не берёт и не спрашивает (listik-utw9).
+        self.assertFalse(self.row(d["id"])["needs_owner"])
+        self.assertEqual(self.question_texts(d["id"]), [])
+        self.assertTrue(self.row(e["id"])["needs_owner"])
+        questions = self.question_texts(e["id"])
+        self.assertEqual(len(questions), 1)
+        self.assertIn("write_scope", questions[0])
 
         # Барьер убирает деревья закрытых задач после зелёной интеграции.
         worktrees = list((self.project_dir / ".worktrees").iterdir())
@@ -419,13 +421,13 @@ class WaveToCompletionTests(SwarmE2ECase):
         stdout = self.swarm_stdout(proc)
         for tid in (a["id"], b["id"], c["id"]):
             self.assertIn(f"запуск {tid}", stdout)
-        for tid in (d["id"], e["id"]):
-            self.assertIn(f"needs-owner {tid}", stdout)
+        self.assertNotIn(f"needs-owner {d['id']}", stdout)
+        self.assertIn(f"needs-owner {e['id']}", stdout)
         log_text = "\n".join(lines)
         for tid in (a["id"], b["id"], c["id"]):
             self.assertIn(f"запуск {tid}", log_text)
-        for tid in (d["id"], e["id"]):
-            self.assertIn(f"needs-owner {tid}", log_text)
+        self.assertNotIn(f"needs-owner {d['id']}", log_text)
+        self.assertIn(f"needs-owner {e['id']}", log_text)
 
 
 # ------------------------------------------------------------------ сценарий 2

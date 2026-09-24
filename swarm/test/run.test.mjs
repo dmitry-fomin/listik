@@ -124,11 +124,11 @@ test("тик: план из трёх + без маршрута + без обла
   const result = await tick(listik, baseConfig, log);
 
   assert.deepEqual(result.launched.sort(), ["t1", "t2", "t3"]);
-  assert.deepEqual(result.needsOwner.sort(), ["nr", "ns"]);
+  assert.deepEqual(result.needsOwner.sort(), ["ns"]);  // nr без маршрута — без вопроса
 
   // требование 7: строки действий и пишущие исходы — в stdout, не только в файл.
   assert.ok(log.stdout.some(l => l.startsWith("waves --apply: записано 1 рёбер") && l.includes("t1 → t2")));
-  assert.equal(log.stdout.filter(l => l.startsWith("needs-owner ")).length, 2);
+  assert.equal(log.stdout.filter(l => l.startsWith("needs-owner ")).length, 1);
   assert.equal(log.stdout.filter(l => l.startsWith("worktree ") && l.includes("→ /wt/x")).length, 3);
   assert.equal(log.stdout.filter(l => l.startsWith("set ") && l.includes("labels += port:")).length, 3);
   assert.equal(log.stdout.filter(l => l.startsWith("запуск ")).length, 3);
@@ -138,7 +138,7 @@ test("тик: план из трёх + без маршрута + без обла
   assert.equal(subs[1], "waves");
   assert.equal(subs[2], "list");
   assert.equal(subs[3], "routes");
-  assert.equal(subs.filter(s => s === "needs-owner").length, 2);
+  assert.equal(subs.filter(s => s === "needs-owner").length, 1);
   const perTaskOrder = subs.slice(4).filter(s => s !== "needs-owner" && s !== "projects");
   assert.deepEqual(perTaskOrder, [
     "worktree", "show", "set", "launch",
@@ -262,7 +262,8 @@ test("--dry-run: ни одного пишущего вызова, waves без -
   assert.deepEqual(writeSubs, []);
 
   // требование 7: строки [dry-run] тоже видны в stdout, не только в файле лога.
-  assert.ok(log.stdout.some(l => l.startsWith("[dry-run] needs-owner nr:")));
+  // карточка без маршрута (nr) — ни запуска, ни вопроса человеку.
+  assert.ok(!log.stdout.some(l => l.startsWith("[dry-run] needs-owner nr:")));
   assert.ok(log.stdout.some(l => l === "[dry-run] worktree t1"));
   assert.ok(log.stdout.some(l => l.startsWith("[dry-run] set t1 labels += port:")));
   assert.ok(log.stdout.some(l => l.startsWith("[dry-run] launch t1 →")));

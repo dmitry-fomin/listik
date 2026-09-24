@@ -688,7 +688,7 @@ const roleInherits = computed(() => {
     <UiAlert tone="info">
       На старте этапа Listik сам делает <code class="listik-mono">claim</code> за харнесс роли —
       харнесс <code class="listik-mono">claim</code>, <code class="listik-mono">release</code> и
-      <code class="listik-mono">stage</code> не вызывает. Сдача — первая строка «готово»; красный
+      <code class="listik-mono">stage</code> не вызывает. Сдача — последняя строка вывода «готово», вопрос и правки — строками выше; красный
       вердикт судьи возвращает карточку исполнителю.
     </UiAlert>
 

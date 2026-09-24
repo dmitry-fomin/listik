@@ -47,6 +47,7 @@ export function open(dir, project) {
           : s.reason === "frozen" ? "заморожена"
           : s.reason === "gated" ? "гейт"
           : s.reason === "budget" ? "бюджет"
+          : s.reason === "unroutable" ? "без маршрута"
           : "не влезла"
       }`)
       .join(", ");

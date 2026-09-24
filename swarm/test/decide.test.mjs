@@ -131,31 +131,31 @@ test("7б: has_portions прячет родителя только у роя; к
   assert.ok(res.skipped.every(s => s.reason === "sliced"));
 });
 
-test("8: needsOwner для unroutable/unscoped с needs_owner ложным, не для true, не для закрытых", () => {
+test("8: unroutable — без вопроса; unscoped — needsOwner с needs_owner ложным, не для true", () => {
   const openUnroutable = task("a");
-  const flaggedUnroutable = task("b", {needs_owner: true});
+  const flaggedUnscoped = task("b", {needs_owner: true});
   const openUnscoped = task("c");
-  const closedUnroutable = task("d", {status: "done"});
-  const tasks = [openUnroutable, flaggedUnroutable, openUnscoped, closedUnroutable];
-  const plan = {
-    waves: [[]], cycles: [], blocked: {},
-    unroutable: ["a", "b", "d"], unscoped: ["c"],
-  };
+  const tasks = [openUnroutable, flaggedUnscoped, openUnscoped];
+  const plan = {waves: [[]], cycles: [], blocked: {}, unroutable: ["a"], unscoped: ["b", "c"]};
   const res = decide({plan, tasks, routes: [], config, now: new Date()});
-  assert.deepEqual(res.needsOwner.map(n => n.id).sort(), ["a", "c"]);
-  const a = res.needsOwner.find(n => n.id === "a");
-  assert.equal(a.reason, "unroutable");
-  assert.match(a.text, /Рой маршрут не выбирает никогда\.$/);
-  const c = res.needsOwner.find(n => n.id === "c");
+  assert.deepEqual(res.needsOwner.map(n => n.id), ["c"]);
+  const c = res.needsOwner[0];
   assert.equal(c.reason, "unscoped");
   assert.match(c.text, /listik set c write_scope=<пути через запятую>\.$/);
 });
 
-test("8б: карточку держит не рой — ни вопроса unroutable/unscoped, ни ответа по умолчанию", () => {
+test("8а: карточка без launch_route в волне не запускается", () => {
+  const plan = {waves: [["a"]], cycles: [], unroutable: [], unscoped: [], blocked: {}};
+  const res = decide({plan, tasks: [task("a", {launch_route: null})], routes: [], config, now: new Date()});
+  assert.deepEqual(res.launch, []);
+  assert.ok(res.skipped.some(s => s.id === "a" && s.reason === "unroutable"));
+});
+
+test("8б: карточку держит не рой — ни вопроса unscoped, ни ответа по умолчанию", () => {
   const held = task("a", {holder: "claude", status: "in_progress"});
   const heldScoped = task("b", {holder: "claude", status: "in_progress"});
   const ours = task("c", {holder: "grok", launched_by: "agent:listik-swarm", status: "in_progress"});
-  const plan = {waves: [[]], cycles: [], blocked: {}, unroutable: ["a"], unscoped: ["b", "c"]};
+  const plan = {waves: [[]], cycles: [], blocked: {}, unroutable: [], unscoped: ["a", "b", "c"]};
   const res = decide({plan, tasks: [held, heldScoped, ours], routes: [], config, now: new Date()});
   assert.deepEqual(res.needsOwner.map(n => n.id), ["c"]);
 

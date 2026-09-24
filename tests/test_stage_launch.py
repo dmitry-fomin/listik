@@ -1,4 +1,4 @@
-"""Режим роя (`driver=swarm`): claim за роль, первая строка `.out`, нарезка,
+"""Режим роя (`driver=swarm`): claim за роль, последняя строка `.out`, нарезка,
 закрытие родителя, `launched:false` (listik-2gry, docs/specs/swarm-stage-launch.md).
 
 Процессы — настоящие `python3 -c` короткоживущие скрипты (харнесс `probe`),
@@ -99,7 +99,7 @@ class LaunchTests(SwarmCase):
     def test_judge_red_returns_to_impl(self) -> None:
         harnesses_store.update(self.conn, "probe", {
             "argv": [sys.executable, "-c",
-                     "print('красный')\nprint('1. поправь foo')"]})
+                     "print('1. поправь foo')\nprint('красный')"]})
         self.add_route({"impl": {"harness": "probe"},
                         "judge": {"harness": "probe"}})
         task_id = self.add_task(stage="s4-judge")
@@ -113,7 +113,7 @@ class LaunchTests(SwarmCase):
                             for v in verdicts))
 
     def test_question_and_garbage_open_question(self) -> None:
-        for line, marker, key in (("вопрос\nкак проверять?", "как проверять?", "roy-q"),
+        for line, marker, key in (("как проверять?\nвопрос", "как проверять?", "roy-q"),
                                   ("сюр", "не сдал работу", "roy-x")):
             with self.subTest(line=line):
                 harnesses_store.update(self.conn, "probe", {"argv": script(line)})
@@ -152,7 +152,7 @@ class LaunchTests(SwarmCase):
         self.assertIsNone(self.task(task_id)["launch_error"])
 
     def test_role_argv_overrides_harness(self) -> None:
-        self.add_route({"impl": {"harness": "probe", "argv": script("вопрос\nпочему?")}})
+        self.add_route({"impl": {"harness": "probe", "argv": script("почему?\nвопрос")}})
         task_id = self.add_task(stage="s3-impl")
         self.assertIsNone(self.start_and_wait(task_id))
         self.assertTrue(self.task(task_id)["needs_owner"])
@@ -311,27 +311,54 @@ class SlicingTests(SwarmCase):
 
 
 class HelpersTests(SwarmCase):
-    def test_out_path_and_first_line(self) -> None:
+    def test_out_path_and_answer_line(self) -> None:
         out = stage_launch.out_path_of("/tmp/launch-x.log")
         self.assertEqual(str(out), "/tmp/launch-x.out")
-        out.write_text("﻿готово\nхвост\n", encoding="utf-8")
-        self.assertEqual(stage_launch.read_first_line(out), ("готово", "хвост"))
-        self.assertEqual(stage_launch.read_first_line(
+        out.write_text("\ufeffтекст\nготово\n\n", encoding="utf-8")
+        self.assertEqual(stage_launch.read_answer(out), ("готово", "текст"))
+        self.assertEqual(stage_launch.read_answer(
             self.tmp_path / "нет-файла.out"), ("", ""))
 
+    def test_glued_chatter_before_answer(self) -> None:
+        # devin -p склеивает промежуточные реплики без переводов строки —
+        # ответ всё равно последней строкой (listik-utw9).
+        out = stage_launch.out_path_of("/tmp/launch-g.log")
+        out.write_text("Let me look.Now I write.готово-не-тут\nИтог.\nготово\n",
+                       encoding="utf-8")
+        self.assertEqual(stage_launch.read_answer(out)[0], "готово")
+
+    def test_answer_after_long_output_is_read(self) -> None:
+        out = stage_launch.out_path_of("/tmp/launch-z.log")
+        out.write_bytes(b"x" * (stage_launch.OUT_READ_LIMIT + 10)
+                        + "\nправка\nкрасный\n".encode())
+        answer, text = stage_launch.read_answer(out)
+        self.assertEqual(answer, "красный")
+        self.assertEqual(text, "x" * stage_launch.CUT_LINE_KEEP + "\nправка")
+
+    def test_question_glued_to_long_chatter_keeps_text(self) -> None:
+        # Вопрос приклеен к склейке длиннее окна — текст не теряется.
+        out = stage_launch.out_path_of("/tmp/launch-q.log")
+        out.write_bytes(b"x" * (stage_launch.OUT_READ_LIMIT + 50)
+                        + "Как проверять?\nвопрос\n".encode())
+        answer, text = stage_launch.read_answer(out)
+        self.assertEqual(answer, "вопрос")
+        self.assertTrue(text.endswith("Как проверять?"))
+        self.assertLessEqual(len(text), stage_launch.CUT_LINE_KEEP)
+
+    def test_whole_first_line_of_window_is_kept(self) -> None:
+        # Окно начинается ровно после перевода строки — строка целая.
+        out = stage_launch.out_path_of("/tmp/launch-w.log")
+        body = "правка 1\nкрасный\n".encode()
+        out.write_bytes(b"y" * 9 + b"\n" + b"z" * (stage_launch.OUT_READ_LIMIT - len(body) - 1)
+                        + b"\n" + body)
+        answer, text = stage_launch.read_answer(out)
+        self.assertEqual(answer, "красный")
+        self.assertIn("правка 1", text)
+
     def test_unfinished_line_over_limit_is_empty(self) -> None:
-        # Первая строка не кончается в окне 64 КиБ — обрезанный префикс
-        # ответом не считается (docs/specs/swarm-stage-launch.md).
         out = stage_launch.out_path_of("/tmp/launch-y.log")
         out.write_bytes(b"x" * (stage_launch.OUT_READ_LIMIT + 10))
-        self.assertEqual(stage_launch.read_first_line(out), ("", ""))
-
-    def test_first_line_within_limit_is_read(self) -> None:
-        out = stage_launch.out_path_of("/tmp/launch-z.log")
-        out.write_bytes("готово\n".encode()
-                        + b"x" * stage_launch.OUT_READ_LIMIT)
-        first, _rest = stage_launch.read_first_line(out)
-        self.assertEqual(first, "готово")
+        self.assertEqual(stage_launch.read_answer(out), ("", ""))
 
     def test_resolve_role_and_next_stage(self) -> None:
         record = self.add_route({"impl": {"harness": "probe"},
@@ -340,7 +367,7 @@ class HelpersTests(SwarmCase):
         self.assertIsNone(stage_launch.resolve_role(self.conn, record, "spec"))
         impl = stage_launch.resolve_role(self.conn, record, "impl")
         self.assertEqual(impl["argv"], [sys.executable, "-c", "print('готово')"])
-        # Роль без своего промпта получает протокол первой строки — `prompt`
+        # Роль без своего промпта получает протокол ответа последней строкой — `prompt`
         # харнесса (текст прямой выдачи) не наследуется.
         self.assertEqual(impl["prompt"], harnesses_store.SWARM_PROMPT)
         self.assertIn("{role}", impl["prompt"])

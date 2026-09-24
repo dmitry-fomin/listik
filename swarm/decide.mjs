@@ -7,8 +7,6 @@ export const OPEN_STATUSES = new Set(["open", "in_progress", "blocked", "review"
 export const REJECTED_MARK = "рой: не принята:";
 export const SOFT_DEFAULT_RE = /^по умолчанию:\s*(\S.*)$/mu;
 
-const TEXT_UNROUTABLE = "рой: у задачи нет маршрута (launch_route) — каким маршрутом её делать? " +
-  "Рой маршрут не выбирает никогда.";
 const textUnscoped = (id) => "рой: у задачи нет write_scope — какие файлы и каталоги она правит? " +
   `Без области записи планировщик не ставит её в волну: listik set ${id} write_scope=<пути через запятую>.`;
 
@@ -374,13 +372,9 @@ export function decide({plan, tasks, routes, config, now, events, gate = null}) 
     };
   }
 
+  // Карточку без маршрута рой не берёт и не спрашивает о ней: маршрут выбирает
+  // человек, пока его нет — задача не для роя.
   const needsOwner = [];
-  for (const id of plan.unroutable || []) {
-    const t = openById.get(id);
-    if (t && !t.needs_owner && !heldByOther(t)) {
-      needsOwner.push({id, reason: "unroutable", text: TEXT_UNROUTABLE});
-    }
-  }
   for (const id of plan.unscoped || []) {
     const t = openById.get(id);
     if (t && !t.needs_owner && !heldByOther(t)) {
@@ -424,6 +418,10 @@ export function decide({plan, tasks, routes, config, now, events, gate = null}) 
       }
       if (t.holder) {
         skipped.push({id, reason: "held"});
+        continue;
+      }
+      if (!t.launch_route) {
+        skipped.push({id, reason: "unroutable"});
         continue;
       }
       // Родитель нарезки сам по ролям не идёт — бегут его порции. Пропуск

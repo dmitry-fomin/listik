@@ -1,5 +1,5 @@
-"""Этапный запуск роя (`driver="swarm"`): расклад этап↔роль, разбор первой
-строки вывода харнесса, переходы и порции. Протокол и контракт —
+"""Этапный запуск роя (`driver="swarm"`): расклад этап↔роль, разбор ответа
+(последней строки вывода) харнесса, переходы и порции. Протокол и контракт —
 `docs/specs/swarm-stage-launch.md`.
 """
 from __future__ import annotations
@@ -20,7 +20,7 @@ STAGE_ROLES: tuple[tuple[str, str], ...] = (
 )
 STAGE_TO_ROLE = dict(STAGE_ROLES)
 
-#: Первые строки, которые принимает этап. Чужая строка — как пустой ответ.
+#: Ответы (последняя строка вывода), которые принимает этап. Чужая строка — как пустой ответ.
 #: `вопрос`/`не смог` годятся на любом этапе, включая приёмку; `зелёный`/`красный`
 #: — только у судьи, `готово` — только не у него.
 ANSWERS: dict[str, frozenset[str]] = {
@@ -30,12 +30,15 @@ ANSWERS: dict[str, frozenset[str]] = {
     "judge": frozenset({"вопрос", "не смог", "зелёный", "красный"}),
 }
 
-#: Сколько читаем из `.out` (первая строка + хвост вопроса/правок).
+#: Сколько читаем с конца `.out` (ответ + текст вопроса/правок над ним).
 OUT_READ_LIMIT = 64 * 1024
 #: Хвост stdout в текст вопроса человеку и в тело `VERDICT: FAIL`.
 TAIL_LIMIT = 4000
 #: Хвост, который можно прицепить второй строкой к «не сдал работу».
 FAIL_TAIL_LIMIT = 1000
+#: Сколько оставить от строки, обрезанной началом окна `.out`: мегабайт склейки
+#: не должен вытеснить из `TAIL_LIMIT` строки ближе к ответу.
+CUT_LINE_KEEP = 500
 
 SWARM_ACTOR = "agent:listik"
 
@@ -63,7 +66,7 @@ def _cell_argv(cell: dict, harness_record: dict | None) -> list | None:
 
 def _cell_prompt(cell: dict) -> str:
     """Промпт роли — последний аргумент argv: свой `prompt` ячейки, иначе
-    `SWARM_PROMPT` (протокол первой строки). `prompt` харнесса не наследуем:
+    `SWARM_PROMPT` (протокол ответа последней строкой). `prompt` харнесса не наследуем:
     это текст прямой выдачи — он велит самому делать claim/stage/done, чего
     харнесс роя делать не должен (docs/specs/swarm-stage-launch.md)."""
     prompt = cell.get("prompt")
@@ -290,7 +293,7 @@ def note_portions_cancelled(conn: sqlite3.Connection, task_id: str) -> None:
                           text="рой: все порции отменены, родитель не закрыт")
 
 
-# ------------------------------------------------------------------ первая строка
+# ------------------------------------------------------------------ ответ этапа
 
 def out_path_of(launch_log: str | None) -> Path | None:
     """Файл stdout рядом с `launch_log`: суффикс `.out` вместо `.log`."""
@@ -302,32 +305,44 @@ def out_path_of(launch_log: str | None) -> Path | None:
     return Path(str(path) + ".out")
 
 
-def read_first_line(path: Path | None) -> tuple[str, str]:
-    """Первая строка stdout и хвост после неё.
+def read_answer(path: Path | None) -> tuple[str, str]:
+    """Ответ этапа — последняя непустая строка stdout — и текст над ним.
 
-    UTF-8 с заменой ошибок, один ведущий BOM снят, не больше 64 КиБ. Пустой
-    файл, нет файла или пустая первая строка — `("", "")`: следующие строки
-    пустую первую не подменяют.
+    Маркер в конце, как вердикт: харнессы вроде `devin -p` печатают в stdout
+    промежуточные реплики без переводов строки, и начало вывода склеено
+    (listik-utw9). Читаем последние 64 КиБ, UTF-8 с заменой ошибок. Строка,
+    обрезанная началом окна, ответом не бывает, но в тексте над ним остаётся
+    её хвост (`CUT_LINE_KEEP`). Нет файла или пусто — `("", "")`.
     """
     if path is None:
         return "", ""
     try:
         with path.open("rb") as fh:
-            raw = fh.read(OUT_READ_LIMIT + 1)
+            fh.seek(0, 2)
+            size = fh.tell()
+            start = max(0, size - OUT_READ_LIMIT)
+            # Байт левее окна — перевод строки: первая строка окна целая.
+            cut = False
+            if start:
+                fh.seek(start - 1)
+                cut = fh.read(1) not in (b"\n", b"\r")
+            fh.seek(start)
+            raw = fh.read(OUT_READ_LIMIT)
     except OSError:
         return "", ""
-    window = raw[:OUT_READ_LIMIT]
-    # Строка, которая внутри окна не кончается, — обрезанный префикс, за ответ
-    # не считается (docs/specs/swarm-stage-launch.md).
-    if len(raw) > OUT_READ_LIMIT and b"\n" not in window and b"\r" not in window:
-        return "", ""
-    text = window.decode("utf-8", errors="replace")
-    if text.startswith("﻿"):
+    text = raw.decode("utf-8", errors="replace")
+    if text.startswith("\ufeff"):
         text = text[1:]
     lines = text.splitlines()
+    if cut and lines:
+        if len(lines) == 1:
+            return "", ""
+        lines[0] = lines[0][-CUT_LINE_KEEP:]
+    while lines and not lines[-1].strip():
+        lines.pop()
     if not lines:
         return "", ""
-    return lines[0].strip(), "\n".join(lines[1:])
+    return lines[-1].strip(), "\n".join(lines[:-1])
 
 
 def _release_capture(conn: sqlite3.Connection, task_id: str, dispatch_id) -> None:
@@ -343,7 +358,7 @@ def _clear_holder(conn: sqlite3.Connection, task_id: str, note: str) -> None:
 
 
 def apply_outcome(conn: sqlite3.Connection, task_id: str, *, notify=None) -> None:
-    """Разобрать первую строку `.out` завершившегося процесса и повести карточку.
+    """Разобрать последнюю строку `.out` завершившегося процесса и повести карточку.
 
     Вызывается из `_track`/`recover`/опросчика после записи кода выхода —
     только когда `dispatch_id` ещё наш (ограждение делает вызывающий). Любой
@@ -357,8 +372,8 @@ def apply_outcome(conn: sqlite3.Connection, task_id: str, *, notify=None) -> Non
     launch_log = row["launch_log"]
     stage = (row["stage"] or "").strip() or "s1-spec"
     role = STAGE_TO_ROLE.get(stage)
-    first, tail = read_first_line(out_path_of(launch_log))
-    tail = tail[:TAIL_LIMIT]
+    first, tail = read_answer(out_path_of(launch_log))
+    tail = tail[-TAIL_LIMIT:]
     route_key = (row["launch_route"] or "").strip()
     record = None
     if route_key:
@@ -372,7 +387,7 @@ def apply_outcome(conn: sqlite3.Connection, task_id: str, *, notify=None) -> Non
             # Этап без роли (done и т.п.) — разбирать нечего.
             store.add_comment(conn, task_id,
                               f"рой: этап {stage or '—'} без роли — ответ процесса "
-                              f"не применяю (первая строка: {first or 'пусто'})",
+                              f"не применяю (последняя строка: {first or 'пусто'})",
                               author=SWARM_ACTOR, kind="journal")
             return
         allowed = ANSWERS.get(role, frozenset())
@@ -431,8 +446,8 @@ def apply_outcome(conn: sqlite3.Connection, task_id: str, *, notify=None) -> Non
             # `не смог`, пустой вывод и любая чужая строка — один исход.
             shown = first or "пусто"
             text = (f"рой: этап {stage} ({role}) не сдал работу "
-                    f"(первая строка: {shown}). Лог: {launch_log}")
-            rest = tail.strip()[:FAIL_TAIL_LIMIT]
+                    f"(последняя строка: {shown}). Лог: {launch_log}")
+            rest = tail.strip()[-FAIL_TAIL_LIMIT:]
             if rest:
                 text += f"\n{rest}"
             _clear_holder(conn, task_id, "рой: работа не сдана, держатель снят")

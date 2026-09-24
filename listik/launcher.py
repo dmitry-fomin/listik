@@ -550,7 +550,7 @@ def _start_swarm(conn, task_id: str, row, record: dict, *, notify, log_dir,
     log_dir = Path(log_dir) if log_dir is not None else paths.LOGS_DIR
     stamp = datetime.now(timezone.utc).strftime("%Y%m%dT%H%M%SZ")
     log_path = log_dir / f"launch-{task_id}-{stamp}.log"
-    # У роя потоки разделены: stdout (ответ на первой строке) — в `.out`,
+    # У роя потоки разделены: stdout (ответ — последней строкой) — в `.out`,
     # stderr — в `launch_log` (docs/specs/swarm-stage-launch.md).
     out_path = stage_launch.out_path_of(str(log_path))
     generation = int(row["generation"] or 0)

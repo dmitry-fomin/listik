@@ -29,6 +29,7 @@ export function waitingLine(result) {
       : s.reason === "frozen" ? "заморожена"
       : s.reason === "gated" ? "гейт"
       : s.reason === "budget" ? "бюджет"
+      : s.reason === "unroutable" ? "без маршрута"
       : "не влезла в партию";
     parts.push(`${s.id} ${label}`);
   }

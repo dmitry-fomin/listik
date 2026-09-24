@@ -243,6 +243,34 @@ class SlicingTests(SwarmCase):
             "AND dep_type = 'blocks'", (child_b, child_a)).fetchone()
         self.assertIsNotNone(hard)
 
+    def test_portion_on_s1_spec_without_route_is_left_alone(self) -> None:
+        # Порция с этапом — начатая, даже если это `s1-spec` и маршрута нет:
+        # её не трогают, остальные порции нарезки обрабатываются (listik-itjo).
+        self.add_route()
+        parent = self.add_task()
+        child_a = self.add_task(parent=parent, route="")
+        child_b = self.add_task(parent=parent, route="", stage="s1-spec")
+        child_c = self.add_task(parent=parent, route="")
+        store.add_dep(self.conn, child_c, child_a, "suggested-blocks",
+                      created_by="agent:probe")
+        self.fake_finish(parent, "s1-spec", "готово")
+        task = self.task(parent)
+        self.assertFalse(task["needs_owner"])
+        self.assertEqual(task["stage"], "s1-spec")
+        for child in (child_a, child_c):
+            kid = self.task(child)
+            self.assertEqual(kid["stage"], "s3-impl")
+            self.assertEqual(kid["launch_route"], "roy")
+            self.assertEqual(kid["launch_driver"], "swarm")
+        middle = self.task(child_b)
+        self.assertEqual(middle["stage"], "s1-spec")
+        self.assertFalse(middle["launch_route"])
+        self.assertIsNone(middle["launch_driver"])
+        hard = self.conn.execute(
+            "SELECT 1 FROM deps WHERE issue_id = ? AND depends_on = ? "
+            "AND dep_type = 'blocks'", (child_c, child_a)).fetchone()
+        self.assertIsNotNone(hard)
+
     def test_parent_closes_when_all_portions_done(self) -> None:
         self.add_route()
         parent = self.add_task()

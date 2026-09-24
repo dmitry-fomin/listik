@@ -179,11 +179,10 @@ def _slice_parent(conn: sqlite3.Connection, task_id: str, record: dict,
         return
     portion_ids = {row["id"] for row in children}
     for row in children:
-        # Уже начатую порцию не переписываем. Неначатая — статус open без
-        # держателя и запуска; этап пустой или ровно `s1-spec` (такую тоже
-        # переводим — спека её уже прошла, docs/specs/swarm-stage-launch.md).
-        child_stage = (row["stage"] or "").strip()
-        if row["status"] != "open" or child_stage not in ("", "s1-spec") \
+        # Уже начатую порцию (этап — любой, включая `s1-spec`, держатель или
+        # запуск) не переписываем (docs/specs/swarm-stage-launch.md): маршрут
+        # карточке с этапом уже не записать (`route_change_denied`).
+        if row["status"] != "open" or (row["stage"] or "").strip() \
                 or (row["holder"] or "").strip() or (row["launched_by"] or "").strip():
             continue
         # Маршрут меняется, только пока карточка «просто заведена» (без этапа,

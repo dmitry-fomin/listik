@@ -228,6 +228,12 @@ listik worktree <id> [--track <часть>] [--recreate] [--json]
   (`git worktree add` без `-b`), и база — её `HEAD`.
 - Перед заведением дерева строка `.worktrees/` попадает в `.gitignore` проекта
   (`migrate.ensure_gitignore`); результат — поле `gitignore`: `added`/`updated`/`unchanged`.
+  Строку `.agents/skills/listik` эта функция добавляет, только если симлинк скила уже лежит в
+  проекте (его заводит `listik init-projects`, не `worktree`).
+- В самом дереве (во всех режимах) заводится симлинк `.agents/skills/listik` на скил из установки
+  (`migrate.ensure_skill_link`); результат — поле `skill_link`:
+  `added`/`updated`/`unchanged`/`skipped`. От git он закрыт не `.gitignore` дерева, а файлом
+  исключений `git rev-parse --git-path info/exclude`, поэтому `dirty` остаётся `false`.
 - Репозиторий без коммитов, каталог не-репозиторий, отсутствующий каталог или проект без
   `path` — `bad_argument` (до любых записей на диск).
 
@@ -279,7 +285,8 @@ listik worktree <id> [--track <часть>] [--recreate] [--json]
 {"task_id": "listik-9ytm", "name": "listik-9ytm",
  "path": "/repo/.worktrees/listik-9ytm", "branch": "task/listik-9ytm",
  "base": {"sha": "…", "sha7": "…", "subject": "…"},
- "status": "created", "dirty": false, "gitignore": "added", "card_updated": true}
+ "status": "created", "dirty": false, "gitignore": "added",
+ "skill_link": "added", "card_updated": true}
 ```
 
 Код возврата — `0` при любом из трёх статусов. Любой неописанный отказ `git` — `conflict`
@@ -1500,8 +1507,9 @@ MCP по stdio (`listik mcp`) пишет в базу мимо сервера, п
 их routing; удаление задач (`DELETE /api/tasks/{id}`); импорты (
 `listik import-from-bd`); пересчёт векторов (`POST /api/embed`, `listik embed`); серверные
 команды `listik serve`, `listik stop`, `listik status`, `listik init` и `listik token`; раскладка
-блока протокола по чужим `AGENTS.md`/`CLAUDE.md` и заведение строки `.worktrees/` в их
-`.gitignore` (`listik init-projects`). Из проектов через MCP
+блока протокола по чужим `AGENTS.md`/`CLAUDE.md`, заведение строки `.worktrees/` в их
+`.gitignore` и симлинка `.agents/skills/listik` на скил установки (со строкой под него в
+`.gitignore`) (`listik init-projects`). Из проектов через MCP
 доступно только чтение — `listik_projects`.
 
 **`confirm` у `listik_deps`.** Инструмент принимает `confirm` и технически может поставить

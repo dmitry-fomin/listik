@@ -10,9 +10,17 @@
 конвейеры и прямые харнессы заводят в `<проект>/.worktrees/<id>`, и без этой строки они
 светятся в `git status` основного дерева. Строка дописывается, только если её ещё нет;
 `--remove` её не трогает — он откатывает блок протокола, а не чужие правила git.
+
+Ещё проект получает симлинк `.agents/skills/listik` на скил из установки Listik
+(`skill_source()`, через `app/current`, чтобы переживать обновления): его читают харнессы,
+которые ищут скилы в `<cwd>/.agents/skills` (codex, opencode, pi, grok). Симлинк с абсолютным
+путём в чужой git не нужен, поэтому рядом с ним в `.gitignore` идёт строка `.agents/skills/listik`
+— только если симлинк там действительно лежит. Настоящий каталог на этом месте (репозиторий
+Listik сам зарегистрирован проектом) не трогается. `--remove` снимает симлинк, но не строку.
 """
 from __future__ import annotations
 
+import os
 import re
 from pathlib import Path
 
@@ -130,48 +138,116 @@ def remove(path: Path, *, dry_run: bool = False) -> str:
     return "removed"
 
 
-def _gitignore_has_entry(text: str) -> bool:
-    """Закрывает ли этот .gitignore каталог .worktrees/ — строкой `.worktrees/`,
-    `.worktrees` или `/.worktrees`. Комментарии и пустые строки не считаются."""
-    wanted = GITIGNORE_ENTRY.rstrip("/")
+def skill_source() -> Path:
+    """Каталог скила в установке: через `app/current` (без `resolve()` — иначе симлинк
+    после обновления Listik останется на старой версии), в dev-checkout — из репозитория."""
+    current = paths.DATA_DIR / "app" / "current"
+    if current.is_dir():
+        return current / SKILL_REL
+    return paths.ROOT_DIR / SKILL_REL
+
+
+def ensure_skill_link(project_dir: Path, *, dry_run: bool = False) -> str:
+    """Симлинк `<проект>/.agents/skills/listik` → `skill_source()`.
+
+    Возвращает: `added` | `updated` (был на другой путь) | `unchanged` | `skipped`
+    (нет каталога проекта, нет скила в установке или на месте настоящий каталог/файл).
+    """
+    source = skill_source()
+    if not project_dir.is_dir() or not (source / "SKILL.md").exists():
+        return "skipped"
+    link = project_dir / SKILL_REL
+    target = str(source)
+    if os.path.islink(link):
+        if os.readlink(link) == target:
+            return "unchanged"
+        status = "updated" if link.exists() else "added"  # битый симлинк — как новый
+        if not dry_run:
+            link.unlink()
+            link.symlink_to(target)
+        return status
+    if link.exists():
+        return "skipped"
+    if not dry_run:
+        link.parent.mkdir(parents=True, exist_ok=True)
+        link.symlink_to(target)
+    return "added"
+
+
+def remove_skill_link(project_dir: Path, *, dry_run: bool = False) -> str:
+    """Снять симлинк скила (`removed`); настоящий каталог или файл не трогается (`unchanged`)."""
+    link = project_dir / SKILL_REL
+    if not os.path.islink(link):
+        return "unchanged"
+    if not dry_run:
+        link.unlink()
+    return "removed"
+
+
+def _norm_entry(entry: str) -> str:
+    return entry.strip().lstrip("/").rstrip("/")
+
+
+def _gitignore_has_entry(text: str, entry: str = GITIGNORE_ENTRY) -> bool:
+    """Есть ли в этом .gitignore строка `entry` — с ведущим `/` или без, с хвостовым `/`
+    или без. Комментарии и пустые строки не считаются."""
+    wanted = _norm_entry(entry)
     for raw in text.splitlines():
-        entry = raw.strip()
-        if not entry or entry.startswith("#"):
+        line = raw.strip()
+        if not line or line.startswith("#"):
             continue
-        if entry.lstrip("/").rstrip("/") == wanted:
+        if _norm_entry(line) == wanted:
             return True
     return False
 
 
 def ensure_gitignore(project_dir: Path, *, dry_run: bool = False) -> str:
-    """Гарантирует строку `.worktrees/` в `<проект>/.gitignore`.
+    """Гарантирует строки `.worktrees/` и (если в проекте лежит симлинк скила)
+    `.agents/skills/listik` в `<проект>/.gitignore`.
 
-    Возвращает: `added` — файла не было и он создан; `updated` — строка дописана;
-    `unchanged` — строка уже есть; `skipped` — каталога проекта нет. При `dry_run`
+    Возвращает: `added` — файла не было и он создан; `updated` — дописана хотя бы одна
+    строка; `unchanged` — всё уже было; `skipped` — каталога проекта нет. При `dry_run`
     файл не пишется, а возвращается то, что было бы сделано.
     """
     if not project_dir.is_dir():
         return "skipped"
+    entries = [GITIGNORE_ENTRY]
+    # Проверка пассивная: симлинк заводит ensure_skill_link, здесь только закрываем его от git.
+    if os.path.islink(project_dir / SKILL_REL):
+        entries.append(SKILL_REL)
     path = project_dir / ".gitignore"
     if not path.exists():
         if not dry_run:
-            path.write_text(GITIGNORE_ENTRY + "\n", encoding="utf-8")
+            path.write_text("".join(e + "\n" for e in entries), encoding="utf-8")
         return "added"
     text = path.read_text(encoding="utf-8")
-    if _gitignore_has_entry(text):
+    missing = [e for e in entries if not _gitignore_has_entry(text, e)]
+    if not missing:
         return "unchanged"
     # Чужой текст не переписываем: только добиваем перевод строки, если файл им не кончался.
     tail = "" if text.endswith("\n") or not text else "\n"
     if not dry_run:
-        path.write_text(text + tail + GITIGNORE_ENTRY + "\n", encoding="utf-8")
+        path.write_text(text + tail + "".join(e + "\n" for e in missing), encoding="utf-8")
     return "updated"
 
 
 def migrate_all(project_dirs: list[Path], *, dry_run: bool = False, remove_block: bool = False,
                 verbose: bool = True) -> dict:
     report: dict = {"added": [], "updated": [], "unchanged": [], "skipped": [], "removed": [],
-                    "gitignore": []}
+                    "gitignore": [], "skill_link": []}
     for project in project_dirs:
+        link = project / SKILL_REL
+        if remove_block:
+            result = remove_skill_link(project, dry_run=dry_run)
+        else:
+            result = ensure_skill_link(project, dry_run=dry_run)
+            if (result == "skipped" and verbose and project.is_dir()
+                    and not (skill_source() / "SKILL.md").exists()):
+                print(f"  {'skipped':9s} {link} (в установке нет скила: {skill_source()})")
+        if result in ("added", "updated", "removed"):
+            report["skill_link"].append(str(link))
+            if verbose:
+                print(f"  {result:9s} {link}")
         # Строку в .gitignore заводим и проекту без AGENTS.md/CLAUDE.md: деревья задач
         # появляются в нём независимо от того, прописан ли уже блок протокола.
         if not remove_block:

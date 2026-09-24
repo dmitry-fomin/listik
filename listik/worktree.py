@@ -206,7 +206,7 @@ def ensure(project_path: str, name: str, *, card_path: str | None = None,
     зарегистрирован в этом репозитории и существует на диске, переиспользуется
     именно он, а `.worktrees/<name>` не трогается.
 
-    Возвращает `{path, branch, status, base, dirty, gitignore}`.
+    Возвращает `{path, branch, status, base, dirty, gitignore, skill_link}`.
     """
     check_repo(project_path)
     branch = f"task/{name}"
@@ -271,8 +271,27 @@ def ensure(project_path: str, name: str, *, card_path: str | None = None,
     else:
         status = "reused"
 
+    # Симлинк скила — в дереве задачи (в проекте его заводит init-projects). Закрываем его
+    # через info/exclude дерева, а не .gitignore из HEAD: дерево должно остаться чистым.
+    skill_link = migrate.ensure_skill_link(Path(path))
+    _ensure_exclude(path, migrate.SKILL_REL)
+
     return {"path": path, "branch": branch, "status": status,
-            "base": base_info(path), "dirty": is_dirty(path), "gitignore": gitignore}
+            "base": base_info(path), "dirty": is_dirty(path), "gitignore": gitignore,
+            "skill_link": skill_link}
+
+
+def _ensure_exclude(path: str, entry: str) -> None:
+    """Дописать `entry` в `info/exclude` этого дерева, если строки ещё нет."""
+    exclude = Path(git_out(path, "rev-parse", "--git-path", "info/exclude"))
+    if not exclude.is_absolute():
+        exclude = Path(path) / exclude
+    text = exclude.read_text(encoding="utf-8") if exclude.exists() else ""
+    if migrate._gitignore_has_entry(text, entry):
+        return
+    exclude.parent.mkdir(parents=True, exist_ok=True)
+    tail = "" if text.endswith("\n") or not text else "\n"
+    exclude.write_text(text + tail + entry + "\n", encoding="utf-8")
 
 
 def human_lines(payload: dict) -> list[str]:

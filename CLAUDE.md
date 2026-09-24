@@ -126,6 +126,9 @@ Database migrations exist as two parallel mechanisms — don't confuse them:
   `docs/harness-protocol.md` (`migrate.body()`) — change the protocol there, not in `migrate.py`;
   the same text also ships as the skill `.agents/skills/listik/SKILL.md` (`migrate.SKILL_REL`) for
   harnesses that read `.agents/skills`, and `test_migrate` requires the two to be equal;
+  `init-projects` symlinks each project's `.agents/skills/listik` to that skill in the install
+  (`migrate.skill_source()`, via `app/current`) and gitignores the link, and `listik worktree`
+  repeats the link in the task tree, hidden via `info/exclude`;
   `CLAUDE.md` gets only `CLAUDE_BODY`, a pointer to the `listik:listik` skill.
 - `bin/listik-swarm` + `swarm/` — the swarm: drives waves of tasks to completion
   without a human re-running `launch` for each one. When `[swarm] enabled` is true in

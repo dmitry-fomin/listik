@@ -769,7 +769,7 @@ def cmd_init_projects(args) -> int:
                                  verbose=not args.quiet)
     print("\nдобавлено: {added}, обновлено: {updated}, без изменений: {unchanged}, "
           "удалено блоков: {removed}, пропущено: {skipped}, "
-          "поправлен .gitignore: {gitignore}".format(**{
+          "поправлен .gitignore: {gitignore}, скил: {skill_link}".format(**{
               k: len(v) for k, v in report.items()}))
     return 0
 
@@ -1079,7 +1079,8 @@ def cmd_worktree(args) -> int:
 
     payload = {"task_id": task_id, "name": name, "path": out["path"], "branch": out["branch"],
                "base": out["base"], "status": out["status"], "dirty": out["dirty"],
-               "gitignore": out["gitignore"], "card_updated": card_updated}
+               "gitignore": out["gitignore"], "skill_link": out["skill_link"],
+               "card_updated": card_updated}
     emit(args, payload, "\n".join(worktree_mod.human_lines(payload)))
     return 0
 

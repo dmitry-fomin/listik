@@ -504,7 +504,7 @@ evaluator-optimizer, собранные из правильных частей, 
    журнале», то есть тот же промпт просит не забыть. Это единственная по-настоящему хрупкая
    часть.
 2. **Приёмка не привязана к тестам машинно.** Судья — LLM с чек-листом; в репозитории есть
-   `python3 -m unittest discover tests`, `npm run typecheck`, `web/scripts/verify-*.mjs`, но
+   `python3 -m unittest discover -s tests -t .`, `npm run typecheck`, `web/scripts/verify-*.mjs`, но
    нигде нет ворот вида «красные тесты → порция не может быть закоммичена». В изученных
    подходах это делается хуком (`Stop` / `SubagentStop` с `continue: true`) или программными
    воротами, а не доверием к отчёту. Правило OAC «отчёт агента не доказательство, смотри дифф»
@@ -605,7 +605,7 @@ permission prompts appear in the lead session».
    не выполнен**; `PreToolUse` с `permissionDecision: deny` и причиной — мягкий блок, «модель
    получает причину и пробует иначе, без человека».
    *Закрывает здесь:* дефект 3.2.2. Хук `Stop`, который прогоняет
-   `python3 -m unittest discover tests` и `npm run typecheck` и при красном возвращает
+   `python3 -m unittest discover -s tests -t .` и `npm run typecheck` и при красном возвращает
    `continue: true` с выводом, снимает целый класс поводов доложить автору — и, главное,
    снимает нужду в доверии к отчёту.
 5. **Эскалация только по исчерпании попыток, а не при первой развилке.**
@@ -755,7 +755,7 @@ Temporal («по таймауту решает код»), и они описан
 **Что делается.** Вариант А плюс два механических куска:
 
 1. **Хук `Stop` / `SubagentStop`** в `plugins/feature-pipeline`: прогоняет
-   `python3 -m unittest discover tests` и, если тронут `web/`, `npm run typecheck`; при красном
+   `python3 -m unittest discover -s tests -t .` и, если тронут `web/`, `npm run typecheck`; при красном
    возвращает `continue: true` с выводом — исполнитель не может закончить на красных тестах
    ([hooks](https://code.claude.com/docs/en/hooks)). Плюс `PostToolUse` с `additionalContext`,
    чтобы вывод тестов приходил агенту сразу после правки.

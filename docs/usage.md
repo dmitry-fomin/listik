@@ -386,7 +386,7 @@ show <id>`).
 ```json
 {
   "integration_timeout": 99,
-  "verify": [["python3", "-m", "unittest", "discover", "tests"]],
+  "verify": [["python3", "-m", "unittest", "discover", "-s", "tests", "-t", "."]],
   "verify_timeout": 1800,
   "verify_retries": 1,
   "question_timeout": 30,
@@ -398,7 +398,7 @@ show <id>`).
       "rescope": false,
       "arbiter_timeout": 42,
       "integration": [
-        ["python3", "-m", "unittest", "discover", "tests"],
+        ["python3", "-m", "unittest", "discover", "-s", "tests", "-t", "."],
         ["npm", "--prefix", "web", "run", "typecheck"]
       ]
     }

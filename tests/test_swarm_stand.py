@@ -2,7 +2,7 @@
 
 Запустить весь стенд:
 
-    python3 -m unittest discover tests -p 'test_swarm_stand*.py'
+    python3 -m unittest discover -s tests -t . -p 'test_swarm_stand*.py'
 
 Запустить только этот сквозной сценарий:
 

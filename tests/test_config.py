@@ -2,7 +2,7 @@
 
 Регрессия listik-17mh: `listik status`/`show` в worktree без своего config.toml
 создавали файл с голыми ключами вида `s1-spec:s2-review`; tomllib такой файл не
-читает, и после этого падал весь CLI и `python3 -m unittest discover tests`.
+читает, и после этого падал весь CLI и `python3 -m unittest discover -s tests -t .`.
 """
 from __future__ import annotations
 

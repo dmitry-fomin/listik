@@ -766,11 +766,11 @@ def cmd_init_projects(args) -> int:
     print(f"проектов к обработке: {len(dirs)}"
           + (" (dry-run, ничего не записано)" if args.dry_run else ""))
     report = migrate.migrate_all(dirs, dry_run=args.dry_run, remove_block=args.remove,
-                                 verbose=not args.quiet)
-    print("\nдобавлено: {added}, обновлено: {updated}, без изменений: {unchanged}, "
-          "удалено блоков: {removed}, пропущено: {skipped}, "
-          "поправлен .gitignore: {gitignore}".format(**{
-              k: len(v) for k, v in report.items()}))
+                                 verbose=not args.quiet, force=args.force)
+    c = {k: len(v) for k, v in report.items()}
+    print(f"\nдобавлено: {c['added']}, обновлено: {c['updated']}, без изменений: {c['unchanged']}, "
+          f"удалено блоков: {c['removed']}, пропущено: {c['skipped']}, "
+          f"поправлен .gitignore: {c['gitignore']}, новее шаблона: {c['skipped-newer']}")
     return 0
 
 
@@ -2395,6 +2395,8 @@ def build_parser() -> argparse.ArgumentParser:
     sp.add_argument("--remove", action="store_true",
                     help="убрать блок Listik из файлов (.gitignore не трогает)")
     sp.add_argument("-q", "--quiet", action="store_true")
+    sp.add_argument("--force", action="store_true",
+                    help="перезаписать блок, даже если его метка версии протокола новее шаблона")
 
     sp = add("import-from-bd", cmd_import_from_bd,
              help="идемпотентный импорт WriterLLM (работает с базой напрямую, --local не нужен)",

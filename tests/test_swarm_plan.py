@@ -167,6 +167,16 @@ class DroppedTests(TempDbTestCase):
         self.assertEqual(out["tasks"][b]["depends_on"], [])
 
 
+class DroppedNonDictTests(TempDbTestCase):
+    def test_non_dict_entry_is_dropped(self) -> None:
+        a = _task(self.conn, "A", priority=0)
+        reply = {"tasks": ["мусор", 7, {"id": a, "depends_on": [], "reason": ""}]}
+        with mock.patch.object(swarm_llm, "complete_json", return_value=reply):
+            out = swarm_llm.plan(self.conn, project="demo", cfg={"swarm": {}})
+        junk = [d for d in out["dropped"] if d == {"id": None, "why": "unknown_task"}]
+        self.assertEqual(len(junk), 2)
+
+
 class CycleRetryTests(TempDbTestCase):
     def test_retry_resolves_cycle(self) -> None:
         a = _task(self.conn, "A", priority=0)

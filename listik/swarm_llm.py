@@ -24,6 +24,7 @@ from __future__ import annotations
 import logging
 import os
 import re
+import http.client
 import subprocess
 import urllib.error
 import urllib.request
@@ -199,9 +200,18 @@ def _via_http(messages: list[dict], schema: dict, *, name: str, cfg_settings: di
         raise SwarmLlmError(
             f"модель роя недоступна ({cfg_settings['base_url']}): {exc.reason}",
             status=504) from exc
+    except http.client.HTTPException as exc:
+        # Раньше `OSError`: `RemoteDisconnected` — и `HTTPException`, и `ConnectionResetError`.
+        raise SwarmLlmError(
+            f"модель роя оборвала ответ ({cfg_settings['base_url']}): "
+            f"{type(exc).__name__}: {exc}", status=502) from exc
     except TimeoutError as exc:
         raise SwarmLlmError(
             f"модель роя не ответила за {timeout:.0f} с ({cfg_settings['base_url']})",
+            status=504) from exc
+    except OSError as exc:
+        raise SwarmLlmError(
+            f"модель роя недоступна ({cfg_settings['base_url']}): {type(exc).__name__}: {exc}",
             status=504) from exc
 
     try:
@@ -346,6 +356,7 @@ def normalize_graph(data: dict, ids: list[str]) -> tuple[dict, list[list[str]], 
 
     for entry in raw_tasks:
         if not isinstance(entry, dict):
+            dropped.append({"id": None, "why": "unknown_task"})
             continue
         tid = entry.get("id")
         if not isinstance(tid, str) or tid not in id_set:
@@ -611,7 +622,7 @@ def drift_records(conn, *, project: str, extra: list | None = None) -> tuple[lis
             outside = list(touched)
         else:
             touched = _clean_str_list(data.get("files"))
-            outside = (_clean_str_list(data.get("outside")) if "outside" in data
+            outside = (_clean_str_list(data["outside"]) if isinstance(data.get("outside"), list)
                       else _uncovered(touched, declared))
         records.append({"task": row["task_id"], "declared": declared, "touched": touched,
                         "outside": outside, "source": source, "ts": row["created_at"]})
@@ -632,7 +643,7 @@ def drift_records(conn, *, project: str, extra: list | None = None) -> tuple[lis
             if touched_raw is None:
                 touched_raw = item.get("files")
             touched = _clean_str_list(touched_raw)
-            outside = (_clean_str_list(item.get("outside")) if "outside" in item
+            outside = (_clean_str_list(item["outside"]) if isinstance(item.get("outside"), list)
                       else _uncovered(touched, declared))
             records.append({"task": task, "declared": declared, "touched": touched,
                             "outside": outside, "source": "file", "ts": None})
@@ -683,6 +694,7 @@ def rescope(conn, *, project: str, tasks: list[str] | None = None, drift: list |
     unspecced: dict[str, str] = {}
     unscoped: list[str] = []
     invalid: dict[str, str] = {}
+    path_dropped: list[dict] = []
     unscoped_summary: dict[str, str] = {}
     extracted = 0
 
@@ -725,8 +737,6 @@ def rescope(conn, *, project: str, tasks: list[str] | None = None, drift: list |
             for f in r["outside"]:
                 if f not in outside_own:
                     outside_own.append(f)
-        write_scope_raw = list(write_scope_raw) + [f for f in outside_own
-                                                    if f not in write_scope_raw]
 
         try:
             read_scope_norm = scope_mod.normalize_scope(read_scope_raw, field="read_scope")
@@ -734,6 +744,15 @@ def rescope(conn, *, project: str, tasks: list[str] | None = None, drift: list |
         except errors.BadArgument as exc:
             invalid[tid] = str(exc)
             continue
+        # Факты из копилки — по одному: кривой путь не роняет задачу в `invalid`,
+        # а уходит в `dropped` (сигнал дрейфа остаётся).
+        for f in outside_own:
+            try:
+                fact = scope_mod.normalize_scope([f], field="write_scope")
+            except errors.BadArgument:
+                path_dropped.append({"id": tid, "file": f, "why": "bad_path"})
+                continue
+            write_scope_norm += [x for x in fact if x not in write_scope_norm]
 
         summary_raw = data.get("summary") if isinstance(data, dict) else None
         summary = summary_raw[:MAX_SUMMARY_CHARS] if isinstance(summary_raw, str) else ""
@@ -843,6 +862,8 @@ def rescope(conn, *, project: str, tasks: list[str] | None = None, drift: list |
 
     return {"project": project, "model": cfg_settings["model"], "extracted": extracted,
             "attempts": attempts, "tasks": tasks_out, "unspecced": unspecced,
-            "unscoped": unscoped, "invalid": invalid, "drift": drift_out, "edges": edges,
-            "fixed": fixed, "previous": previous, "dropped": dropped, "cycles": cycles,
+            "unscoped": unscoped, "invalid": invalid, "drift": drift_out,
+            "edges": [] if cycles else edges,
+            "fixed": fixed, "previous": previous, "dropped": path_dropped + dropped,
+            "cycles": cycles,
             "cycles_from": cycles_from, "applied": applied}

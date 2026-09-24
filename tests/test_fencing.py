@@ -561,6 +561,53 @@ class McpStdioTests(TempDbTestCase):
         self.assertFalse(response["result"].get("isError"))
 
 
+class McpDepsRemoveTests(TempDbTestCase):
+    """`listik_deps action=rm` ограждён так же, как добавление связи."""
+
+    def setUp(self) -> None:
+        super().setUp()
+        self.tid = store.create_task(self.conn, title="T")["id"]
+        self.blocker = store.create_task(self.conn, title="блокер")["id"]
+        self.other = store.create_task(self.conn, title="другая")["id"]
+        self.conn.execute("UPDATE tasks SET generation = 2, dispatch_id = 'cur' WHERE id = ?",
+                          (self.tid,))
+        for issue in (self.tid, self.other):
+            self.conn.execute("INSERT INTO deps(issue_id, depends_on, dep_type) VALUES (?,?,?)",
+                              (issue, self.blocker, "blocks"))
+        self.conn.commit()
+
+    def _rm(self, task_id: str, token):
+        return mcp.call_tool("listik_deps", {"action": "rm", "id": task_id,
+                                             "depends_on": self.blocker},
+                             conn=self.conn, owner=None, fence=token)
+
+    def _deps(self, task_id: str) -> int:
+        return self.conn.execute("SELECT count(*) FROM deps WHERE issue_id = ?",
+                                 (task_id,)).fetchone()[0]
+
+    def test_stale_token_is_revoked_and_quarantined(self):
+        with self.assertRaises(errors.Revoked):
+            self._rm(self.tid, fence.Token(self.tid, 1, "old"))
+        self.assertEqual(self._deps(self.tid), 1)
+        rejected = fence.list_rejected(self.conn, self.tid)
+        self.assertEqual(len(rejected), 1, rejected)
+        self.assertEqual(rejected[0]["op"], "deps")
+
+    def test_current_token_removes(self):
+        self._rm(self.tid, fence.Token(self.tid, 2, "cur"))
+        self.assertEqual(self._deps(self.tid), 0)
+        self.assertEqual(fence.list_rejected(self.conn, self.tid), [])
+
+    def test_no_token_removes(self):
+        self._rm(self.tid, None)
+        self.assertEqual(self._deps(self.tid), 0)
+
+    def test_token_for_other_task_does_not_guard(self):
+        self._rm(self.other, fence.Token(self.tid, 1, "old"))
+        self.assertEqual(self._deps(self.other), 0)
+        self.assertEqual(fence.list_rejected(self.conn, self.other), [])
+
+
 # ------------------------------------------------------------------ 9: клиент
 
 class ClientHeadersTests(unittest.TestCase):

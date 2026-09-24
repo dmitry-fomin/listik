@@ -516,7 +516,7 @@ def _conn():
 
 #: Инструменты, ограждаемые по поколению запуска (см. `listik/fence.py`): `guard`
 #: зовётся до store, `op` — имя инструмента без префикса `listik_`. `listik_deps`
-#: ограждается только в ветке добавления связи (см. ниже, отдельно).
+#: ограждается отдельно (см. ниже) с `op="deps"` — и добавление, и удаление связи.
 FENCED_TOOLS = {
     "listik_update": "update", "listik_claim": "claim", "listik_heartbeat": "heartbeat",
     "listik_stage": "stage", "listik_comment": "comment",
@@ -546,7 +546,7 @@ def call_tool(name: str, args: dict, conn=None, owner=FROM_ENV, fence=FROM_ENV) 
     if fence is FROM_ENV:
         fence = fence_mod.from_env()
     guard_op = FENCED_TOOLS.get(name)
-    if guard_op is None and name == "listik_deps" and args.get("action") != "rm":
+    if guard_op is None and name == "listik_deps":
         guard_op = "deps"
     if guard_op is not None:
         fence_mod.guard(conn, args.get("id"), fence, op=guard_op, args=args,

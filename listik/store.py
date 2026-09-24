@@ -332,8 +332,9 @@ def create_task(
     `parent-child`: так заводят порции шага — у каждой свой `spec_path`/
     `checklist_path`/`review_path`, а родитель видит их все через `show`/`context`.
     Если `project` не задан, порция наследует проект родителя (иначе она уехала бы
-    на другую доску). Несуществующий родитель — ошибка до вставки: карточка не
-    создаётся.
+    на другую доску). Без своего непустого `journal_path` порция наследует журнал
+    родителя — журнал у шага один на все порции; остальные поля не наследуются.
+    Несуществующий родитель — ошибка до вставки: карточка не создаётся.
 
     `discovered_from` — ID карточки, при работе над которой задачу нашли: сразу
     ставит мягкую связь `discovered-from`, и исходная карточка показывает находку
@@ -358,11 +359,13 @@ def create_task(
     parent_id = (parent or "").strip() or None
     parent_project = None
     if parent_id is not None:
-        parent_row = conn.execute("SELECT project FROM tasks WHERE id = ?",
+        parent_row = conn.execute("SELECT project, journal_path FROM tasks WHERE id = ?",
                                   (parent_id,)).fetchone()
         if parent_row is None:
             raise errors_mod.NotFound(f"задача не найдена: {parent_id}")
         parent_project = parent_row["project"]
+        if not (journal_path or "").strip():
+            journal_path = parent_row["journal_path"]
     source_id = (discovered_from or "").strip() or None
     if source_id is not None and not store_helpers.task_exists(conn, source_id):
         raise KeyError(f"задача не найдена: {source_id}")

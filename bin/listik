@@ -2430,8 +2430,8 @@ def build_parser() -> argparse.ArgumentParser:
                          "берёт рой, вручную — listik launch")
     sp.add_argument("--parent", metavar="ID",
                     help="родительская карточка (шаг/эпик): новая карточка станет её порцией "
-                         "(связь parent-child) со своими spec/checklist/review; проект "
-                         "наследуется от родителя, если не задан -p")
+                         "(связь parent-child) со своими spec/checklist/review; проект и "
+                         "journal_path наследуются от родителя, если не заданы")
     sp.add_argument("--discovered-from", metavar="ID",
                     help="карточка, при работе над которой задачу нашли: сразу ставит мягкую "
                          "связь discovered-from, и исходная карточка видит находку в связях")

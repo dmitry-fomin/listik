@@ -2,7 +2,7 @@
 
 Запустить весь стенд:
 
-    python3 -m unittest discover tests -p 'test_swarm_stand*.py'
+    python3 -m unittest discover -s tests -t . -p 'test_swarm_stand*.py'
 
 Запустить только этот сквозной сценарий:
 
@@ -101,6 +101,10 @@ class SwarmStandTests(unittest.TestCase):
             [["t1", "t2", "t3", "t4"], ["t3", "t5", "t6", "t8", "t11"], ["t7"]],
         )
         self.assertEqual(result.stopped, "no_ready_tasks")
+        stopped = journal.of("stopped")
+        self.assertEqual(len(stopped), 1)
+        self.assertEqual(stopped[0]["reason"], "no_ready_tasks")
+        self.assertNotIn("cycles", stopped[0])
 
         # -- слияние и итог ----------------------------------------------------------
 

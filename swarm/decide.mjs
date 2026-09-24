@@ -16,8 +16,9 @@ export function portOf(task) {
   const labels = task.labels || [];
   for (const label of labels) {
     if (typeof label === "string" && label.startsWith("port:")) {
-      const n = Number(label.slice("port:".length));
-      return Number.isFinite(n) ? n : null;
+      const raw = label.slice("port:".length).trim();
+      const n = Number(raw);
+      if (raw && Number.isFinite(n)) return n;
     }
   }
   return null;
@@ -44,7 +45,8 @@ export function isRunning(t) {
 
 export function defaultLine(text) {
   if (typeof text !== "string") return null;
-  const m = text.match(SOFT_DEFAULT_RE);
+  // Несколько маркеров — действует последний.
+  const m = [...text.matchAll(new RegExp(SOFT_DEFAULT_RE.source, "gmu"))].at(-1);
   return m ? m[1].trim() : null;
 }
 
@@ -83,6 +85,11 @@ function isSoftTask(t, events) {
   return !!(q && isSoftQuestion(q.text));
 }
 
+// Карточка, которую держит не рой: держатель есть, а запуска роя не было —
+// её ведёт человек или чужой оркестратор, рой её не трогает (ни вопросов,
+// ни ответов по умолчанию, ни запуска).
+const heldByOther = (t) => !!t.holder && !t.launched_by;
+
 export function dueDefaults({tasks, events, config, now}) {
   const minutes = config && config.questionTimeout != null
     ? config.questionTimeout
@@ -90,7 +97,7 @@ export function dueDefaults({tasks, events, config, now}) {
   if (!(minutes > 0)) return [];
   const out = [];
   for (const t of tasks || []) {
-    if (!t.needs_owner) continue;
+    if (!t.needs_owner || heldByOther(t)) continue;
     if (!OPEN_STATUSES.has(t.status) && t.status !== "done") continue;
     const q = openQuestion(fromEvents((events || {})[t.id] || []));
     if (!q || !isSoftQuestion(q.text)) continue;
@@ -370,13 +377,13 @@ export function decide({plan, tasks, routes, config, now, events, gate = null}) 
   const needsOwner = [];
   for (const id of plan.unroutable || []) {
     const t = openById.get(id);
-    if (t && !t.needs_owner) {
+    if (t && !t.needs_owner && !heldByOther(t)) {
       needsOwner.push({id, reason: "unroutable", text: TEXT_UNROUTABLE});
     }
   }
   for (const id of plan.unscoped || []) {
     const t = openById.get(id);
-    if (t && !t.needs_owner) {
+    if (t && !t.needs_owner && !heldByOther(t)) {
       needsOwner.push({id, reason: "unscoped", text: textUnscoped(id)});
     }
   }

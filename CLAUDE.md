@@ -25,11 +25,13 @@ listik projects <slug> --routing '<json>'   # show/set the project's harness rou
 ```
 
 ```sh
-python3 -m unittest discover tests   # Python test suite
+python3 -m unittest discover -s tests -t .   # Python test suite
 ```
 
 The tests run against a temporary sqlite database created per test; they need no running server
-and no Ollama. Also verify backend/CLI changes by exercising the relevant `listik` subcommand
+and no Ollama. `-t .` (top-level is the repo root) is what makes `tests/__init__.py` run, and it
+points `LISTIK_HOME` at a fresh temporary data directory, so the suite never reads or writes the
+real `~/.listik`. Also verify backend/CLI changes by exercising the relevant `listik` subcommand
 directly (optionally with `--local` to bypass the HTTP server and hit sqlite directly) and by
 checking `listik.log`.
 
@@ -129,7 +131,11 @@ Database migrations exist as two parallel mechanisms — don't confuse them:
   `init-projects` symlinks each project's `.agents/skills/listik` to that skill in the install
   (`migrate.skill_source()`, via `app/current`) and gitignores the link, and `listik worktree`
   repeats the link in the task tree, hidden via `info/exclude`;
-  `CLAUDE.md` gets only `CLAUDE_BODY`, a pointer to the `listik:listik` skill.
+  `CLAUDE.md` gets only `CLAUDE_BODY`, a pointer to the `listik:listik` skill. The `AGENTS.md` body
+  comes from `<project>/docs/harness-protocol.md` if the project has one, otherwise from the
+  installed copy. Its first line `<!-- listik-protocol: N -->` is the protocol version — bump N
+  whenever you change the protocol; `init-projects` won't roll back a block with a higher mark
+  unless given `--force`.
 - `bin/listik-swarm` + `swarm/` — the swarm: drives waves of tasks to completion
   without a human re-running `launch` for each one. When `[swarm] enabled` is true in
   `config.toml` (`listik swarm on`, or the installer's question), `listik serve` keeps one
@@ -152,7 +158,7 @@ Database migrations exist as two parallel mechanisms — don't confuse them:
   status`, re-read every tick: `integration`/`arbiter` commands, their timeouts, per-project
   overrides under `projects.<slug>`). End-to-end proof against a real server, real git and a fake
   worker is `tests/test_swarm_e2e.py`, plus `tests/test_swarm_barrier_e2e.py` for the barrier
-  itself (both part of `discover tests`; skipped without `node`/`git`).
+  itself (both part of `discover -s tests -t .`; skipped without `node`/`git`).
 - `listik/import_writerllm.py` (CLI: `listik import-from-bd`) — idempotent importer for the
   JSON/JSONL produced by `bd export` on WriterLLM's dolt-backed tracker; idempotency key is
   `(source, project, external_ref)`, `--update` writes a diff to the journal; tests in

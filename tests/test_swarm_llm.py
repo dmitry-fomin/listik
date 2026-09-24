@@ -1,12 +1,13 @@
 """`listik/swarm_llm.py` — единственная точка вызова модели в рое (`complete_json`), и
 `deps.find_cycles`/`deps.apply_planned_blocks` — запись машинных `blocks` от модели
-(listik-kbh5, шаг swarm-6, порция a).
+(listik-kbh5, шаг swarm-7, порция a).
 
 Реальная сеть и подпроцессы в тестах не участвуют, кроме одного теста «настоящий
 подпроцесс» — он зовёт `sys.executable`, не сеть.
 """
 from __future__ import annotations
 
+import http.client
 import io
 import json
 import subprocess
@@ -188,6 +189,43 @@ class HttpErrorTests(unittest.TestCase):
         with self.assertRaises(swarm_llm.SwarmLlmError) as ctx:
             swarm_llm.complete_json([], SCHEMA, name="n", cfg_settings=self._cfg(), opener=opener)
         self.assertEqual(ctx.exception.status, 504)
+
+    def _raise(self, error):
+        cfg = swarm_llm.settings({"swarm": {"api_key": "sekretkey123",
+                                            "base_url": "https://x/v1"}})
+        with self.assertRaises(swarm_llm.SwarmLlmError) as ctx:
+            swarm_llm.complete_json([], SCHEMA, name="n", cfg_settings=cfg,
+                                    opener=_Opener(error=error))
+        self.assertIn("https://x/v1", ctx.exception.message)
+        for part in ("sekretkey123", "sekret", "key123"):
+            self.assertNotIn(part, ctx.exception.message)
+            self.assertNotIn(part, ctx.exception.hint or "")
+        return ctx.exception
+
+    def test_remote_disconnected_is_502(self) -> None:
+        exc = self._raise(http.client.RemoteDisconnected("closed"))
+        self.assertEqual(exc.status, 502)
+        self.assertIn("оборвала ответ", exc.message)
+        self.assertIn("RemoteDisconnected", exc.message)
+
+    def test_incomplete_read_is_502(self) -> None:
+        exc = self._raise(http.client.IncompleteRead(b"abc", 10))
+        self.assertEqual(exc.status, 502)
+        self.assertIn("IncompleteRead", exc.message)
+
+    def test_bad_status_line_is_502(self) -> None:
+        exc = self._raise(http.client.BadStatusLine("xx"))
+        self.assertEqual(exc.status, 502)
+
+    def test_connection_reset_is_504(self) -> None:
+        exc = self._raise(ConnectionResetError(54, "reset"))
+        self.assertEqual(exc.status, 504)
+        self.assertIn("недоступна", exc.message)
+
+    def test_timeout_still_timeout_text(self) -> None:
+        exc = self._raise(TimeoutError("timed out"))
+        self.assertEqual(exc.status, 504)
+        self.assertIn("не ответила", exc.message)
 
     def test_body_not_json_is_502(self) -> None:
         opener = _Opener(payload="не json")

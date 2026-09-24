@@ -322,11 +322,30 @@ export async function tick(listik, config, log, runState = null) {
   const launchesSoFar = runState ? runState.launches : 0;
   const exhausted = (budgetMinutes > 0 && spentMinutes >= budgetMinutes)
     || (maxLaunches > 0 && launchesSoFar >= maxLaunches);
-  const launchesLeft = maxLaunches > 0 ? Math.max(maxLaunches - launchesSoFar, 0) : null;
+  const launchesLeft = runState && maxLaunches > 0 ? Math.max(maxLaunches - launchesSoFar, 0) : null;
   log.line(`бюджет: минут ${spentShown(spentMinutes)}/${budgetBound(budgetMinutes)}, ` +
     `запусков ${launchesSoFar}/${budgetBound(maxLaunches)}`);
 
   const tickConfig = {...config, questionTimeout, budgetExhausted: exhausted, launchesLeft};
+  // Флаг, поставленный в этом тике пределом откатов или барьером, тем же тиком не снимается:
+  // события таких карточек перечитываются (у rejected — уже перечитаны выше).
+  if (!config.dryRun) {
+    const rejected = new Set((barrierResult && barrierResult.rejected) || []);
+    const flagged = new Set([
+      ...rollbacks.filter(r => r.parked).map(r => r.id),
+      ...((barrierResult && barrierResult.unmerged) || []),
+    ]);
+    for (const id of flagged) {
+      if (rejected.has(id)) continue;
+      try {
+        const shown = await listik.show(id);
+        events[id] = shown.events || [];
+      } catch (err) {
+        log.line(`show ${id} ошибка: ${errText(err)}`);
+        delete events[id];
+      }
+    }
+  }
   const due = dueDefaults({tasks, events, config: tickConfig, now});
   const defaultsDone = [];
   for (const item of due) {
@@ -357,8 +376,7 @@ export async function tick(listik, config, log, runState = null) {
   const decision = decide({plan, tasks, routes, config: tickConfig, now, events, gate});
 
   if (decision.cycles.length) {
-    const desc = decision.cycles.map(c => [...c, c[0]].join(" → ")).join("; ");
-    log.line(`циклы: ${desc}`);
+    // Строку «циклы: …» пишет main.mjs — он помнит набор прошлого тика.
     return {serverDown: false, server: status.server, cycles: decision.cycles};
   }
 
@@ -553,9 +571,20 @@ export async function tick(listik, config, log, runState = null) {
         log.action(`[dry-run] set ${item.id} labels += port:${port}`);
         task.labels = [...(task.labels || []), `port:${port}`];
       } else {
-        const fresh = await listik.show(item.id);
+        let fresh;
+        try {
+          fresh = await listik.show(item.id);
+        } catch (err) {
+          log.line(`show ${item.id} ошибка: ${errText(err)}`);
+          continue;
+        }
         const labels = [...(fresh.labels || []), `port:${port}`];
-        await listik.setLabels(item.id, labels);
+        try {
+          await listik.setLabels(item.id, labels);
+        } catch (err) {
+          log.line(`set ${item.id} ошибка: ${errText(err)}`);
+          continue;
+        }
         task.labels = labels;
         log.action(`set ${item.id} labels += port:${port}`);
       }

@@ -8,15 +8,21 @@
 на импорте модуля, и подмена `paths.ROOT_DIR` на него не действует — подменять надо
 `paths.LOGS_DIR` (это делает `tests.test_autostart.AutostartTestCase`).
 
-Имя модуля начинается с `test_zz`, чтобы при `python3 -m unittest discover tests`
+Имя модуля начинается с `test_zz`, чтобы при `python3 -m unittest discover -s tests -t .`
 (модули берутся в алфавитном порядке) страж отработал последним, уже после всех
 запускающих тестов. Снимок каталога берётся на импорте модуля: discover импортирует все
 тестовые модули до того, как запустит хоть один тест, поэтому снимок — это состояние
 каталога до прогона.
+
+Каталог логов теперь временный: `tests/__init__.py` уводит `LISTIK_HOME` в свежий
+`listik-tests-*` до первого импорта `listik`, так что боевой рой, пишущий в
+`~/.listik/logs`, на этот прогон не влияет. Страж по-прежнему ловит тест, который
+насорил в `paths.LOGS_DIR` без подмены.
 """
 from __future__ import annotations
 
 import unittest
+from pathlib import Path
 
 from listik import paths
 
@@ -41,3 +47,12 @@ class LogsDirGuardTests(unittest.TestCase):
             f"{paths.LOGS_DIR}: {appeared}. Тест, который зовёт launcher.start "
             "(в том числе через сервер), должен подменять paths.LOGS_DIR — "
             "см. tests.test_autostart.AutostartTestCase.setUp")
+
+
+class DataDirIsolationTests(unittest.TestCase):
+    def test_data_dir_is_temporary_and_config_lives_inside(self) -> None:
+        """`tests/__init__.py` уводит прогон в свежий временный каталог: `DATA_DIR` —
+        ни боевой `~/.listik`, ни корень репозитория, а `CONFIG_PATH` лежит внутри него."""
+        self.assertNotEqual(paths.DATA_DIR, Path.home() / ".listik")
+        self.assertNotEqual(paths.DATA_DIR, paths.ROOT_DIR)
+        self.assertIn(paths.DATA_DIR, paths.CONFIG_PATH.parents)

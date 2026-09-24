@@ -17,6 +17,17 @@
 путём в чужой git не нужен, поэтому рядом с ним в `.gitignore` идёт строка `.agents/skills/listik`
 — только если симлинк там действительно лежит. Настоящий каталог на этом месте (репозиторий
 Listik сам зарегистрирован проектом) не трогается. `--remove` снимает симлинк, но не строку.
+
+Тело блока в AGENTS.md — протокол из `<проект>/docs/harness-protocol.md`, если такой файл
+есть у проекта, иначе из `docs/harness-protocol.md` запущенной копии Listik (шаблон установки).
+Проектный файл приоритетнее: установленная копия со старым протоколом иначе откатывает блок
+в репозитории, где протокол свежее (инцидент 20.09.2026 — пропал абзац «Revoked authority»,
+listik-e8za). Тело для CLAUDE.md — всегда `CLAUDE_BODY`.
+
+Первая строка протокола `<!-- listik-protocol: N -->` — версия протокола (не версия Listik);
+при правке протокола N увеличивают руками. Блок, чья метка больше метки ставящегося тела,
+`upsert` не перезаписывает (`skipped-newer`), пока не передан `force` (`init-projects --force`);
+блок без метки — версия 0.
 """
 from __future__ import annotations
 
@@ -34,6 +45,17 @@ END = "<!-- END LISTIK -->"
 # же модуля) распознаётся как настоящий блок и заменяется целиком.
 _BEGIN_RE = re.compile(rf"^{re.escape(BEGIN)}$", re.MULTILINE)
 _END_RE = re.compile(rf"^{re.escape(END)}$", re.MULTILINE)
+
+
+_VERSION_RE = re.compile(r"^<!-- listik-protocol: (\S+) -->$", re.MULTILINE)
+
+
+def protocol_version(text: str) -> int:
+    """Версия протокола из строки `<!-- listik-protocol: N -->`; нет метки или N не целое — 0."""
+    m = _VERSION_RE.search(text)
+    if not m or not m.group(1).isdecimal():
+        return 0
+    return int(m.group(1))
 
 
 def _find_block(text: str) -> tuple[int, int] | None:
@@ -67,29 +89,35 @@ TODO в чате или в файлах вместо карточки. Скил�
 """
 
 
-def body_for(name: str) -> str:
+def body_for(name: str, project_dir: Path | None = None) -> str:
     """Тело блока для файла `name`: CLAUDE.md — указание на скил, остальные — полный протокол."""
-    return CLAUDE_BODY if name == "CLAUDE.md" else _compute_body()
+    return CLAUDE_BODY if name == "CLAUDE.md" else _compute_body(project_dir)
 
 
-def _compute_body() -> str:
+def _compute_body(project_dir: Path | None = None) -> str:
+    if project_dir is not None:
+        project_path = project_dir / "docs" / "harness-protocol.md"
+        if project_path.exists():
+            return project_path.read_text(encoding="utf-8")
     protocol_path = paths.ROOT_DIR / "docs" / "harness-protocol.md"
     if not protocol_path.exists():
+        project_note = (f"; проектного {project_dir / 'docs' / 'harness-protocol.md'} тоже нет"
+                        if project_dir is not None else "")
         raise FileNotFoundError(
-            f"docs/harness-protocol.md не найден ({protocol_path}) — "
+            f"docs/harness-protocol.md не найден ({protocol_path}){project_note} — "
             "блок правил без протокола ставить нельзя"
         )
     protocol = protocol_path.read_text(encoding="utf-8")
     return protocol
 
 
-def body() -> str:
+def body(project_dir: Path | None = None) -> str:
     """Собирает блок для AGENTS.md/CLAUDE.md: вводный абзац + канонический протокол.
 
     Читает docs/harness-protocol.md в момент вызова (не на импорте), чтобы правки
     протокола подхватывались без перезапуска.
     """
-    return _compute_body()
+    return _compute_body(project_dir)
 
 
 def block(body: str | None = None) -> str:
@@ -98,10 +126,14 @@ def block(body: str | None = None) -> str:
     return f"{BEGIN}\n{body}{END}\n"
 
 
-def upsert(path: Path, *, dry_run: bool = False, body: str | None = None) -> str:
-    """Возвращает: added | updated | unchanged | skipped."""
+def upsert(path: Path, *, dry_run: bool = False, body: str | None = None,
+           force: bool = False) -> str:
+    """Возвращает: added | updated | unchanged | skipped | skipped-newer.
+
+    `skipped-newer` — в файле блок с меткой протокола новее тела; `force` перезаписывает его.
+    """
     if body is None:
-        body = body_for(path.name)
+        body = body_for(path.name, path.parent)
     if not path.exists():
         if dry_run:
             return "skipped"
@@ -114,6 +146,8 @@ def upsert(path: Path, *, dry_run: bool = False, body: str | None = None) -> str
         start, end = found
         if text[start:end + 1] == new_block:
             return "unchanged"
+        if not force and protocol_version(text[start:end]) > protocol_version(body):
+            return "skipped-newer"
         updated = text[:start] + new_block.rstrip("\n") + text[end:]
         if not dry_run:
             path.write_text(updated, encoding="utf-8")
@@ -232,9 +266,9 @@ def ensure_gitignore(project_dir: Path, *, dry_run: bool = False) -> str:
 
 
 def migrate_all(project_dirs: list[Path], *, dry_run: bool = False, remove_block: bool = False,
-                verbose: bool = True) -> dict:
+                verbose: bool = True, force: bool = False) -> dict:
     report: dict = {"added": [], "updated": [], "unchanged": [], "skipped": [], "removed": [],
-                    "gitignore": [], "skill_link": []}
+                    "gitignore": [], "skill_link": [], "skipped-newer": []}
     for project in project_dirs:
         link = project / SKILL_REL
         if remove_block:
@@ -261,8 +295,16 @@ def migrate_all(project_dirs: list[Path], *, dry_run: bool = False, remove_block
             if not path.exists():
                 report["skipped"].append(str(path))
                 continue
-            result = remove(path, dry_run=dry_run) if remove_block else upsert(path, dry_run=dry_run)
+            result = (remove(path, dry_run=dry_run) if remove_block
+                      else upsert(path, dry_run=dry_run, force=force))
             report[result].append(str(path))
             if verbose and result in ("added", "updated", "removed"):
                 print(f"  {result:9s} {path}")
+            elif verbose and result == "skipped-newer":
+                text = path.read_text(encoding="utf-8")
+                start, end = _find_block(text)
+                have = protocol_version(text[start:end])
+                want = protocol_version(body_for(name, project))
+                print(f"  ! пропущен  {path}: блок протокола новее шаблона ({have} > {want}), "
+                      "перезапись — init-projects --force")
     return report

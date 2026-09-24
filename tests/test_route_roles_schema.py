@@ -177,6 +177,10 @@ class LauncherCatalogueTest(unittest.TestCase):
         self.assertEqual(skills_mod.launcher_info("grok:delegate")["provider"], "grok")
         self.assertIsNone(skills_mod.launcher_info("strange:delegate")["provider"])
 
+    def test_provider_devin(self):
+        self.write_skill("devin", "devin-delegate", "---\nname: devin-delegate\n---\n")
+        self.assertEqual(skills_mod.launcher_info("devin:devin-delegate")["provider"], "devin")
+
     def test_info_fallbacks(self):
         self.write_skill("pi", "pi-delegate", "нет frontmatter вовсе\n")
         info = skills_mod.launcher_info("pi:pi-delegate")

@@ -96,6 +96,35 @@ class DispatcherTests(unittest.TestCase):
         self.assertEqual(journal.discrepancies, [])
         self.assertEqual(dispatcher.states["t1"].head, sandbox.head("task/t1"))
 
+    def test_withdraw_done_clears_launch_fields(self):
+        tasks = [Task(id="t1", profile="append", write_scope=["pkg/alpha.py"])]
+        sandbox, journal, dispatcher, _procs = self._make_stand(tasks, RunConfig())
+
+        dispatcher.dispatch(["t1"])
+        dispatcher.wait(deadline=10)
+        state = dispatcher.states["t1"]
+        self.assertEqual(state.status, "done")
+
+        dispatcher.withdraw("t1", reason="dropped")
+        dispatcher.remove_tree("t1", generation=0)
+        self.assertEqual(state.status, "pending")
+        self.assertEqual(state.generation, 1)
+        for name in (
+            "proc", "deadline", "tree", "branch", "base",
+            "report_path", "gate_start", "gate_finish",
+        ):
+            self.assertIsNone(getattr(state, name), name)
+
+        dispatcher.dispatch(["t1"], base=sandbox.head("main"))
+        self.assertIsNotNone(state.tree)
+        self.assertIsNotNone(state.branch)
+        self.assertIsNotNone(state.base)
+        self.assertIsNotNone(state.report_path)
+        dispatcher.wait(deadline=10)
+        self.assertEqual(state.status, "done")
+        self.assertEqual(state.branch, "task/t1-g1")
+        self.assertEqual(state.head, sandbox.head("task/t1-g1"))
+
     def test_crash(self):
         tasks = [Task(id="t-crash", profile="crash", write_scope=["pkg/alpha.py"])]
         sandbox, journal, dispatcher, _procs = self._make_stand(tasks, RunConfig())

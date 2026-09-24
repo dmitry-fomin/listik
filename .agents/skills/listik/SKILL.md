@@ -2,6 +2,8 @@
 name: listik
 description: Protocol for working a Listik task queue card through the `listik` CLI — claim as the first action, heartbeat, comment -k journal / -k verdict, stage, needs-owner, done. Use when the project tracks its tasks in Listik and the assignment names a card id like <project>-<xxxx>.
 ---
+<!-- listik-protocol: 1 -->
+
 ## Listik — harness protocol
 
 Listik is the single work queue and journal: `listik`.

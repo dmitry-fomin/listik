@@ -28,7 +28,6 @@ const OPTIONS = {
   "listik-port": {type: "string"},
   "cli-timeout": {type: "string"},
   "log-dir": {type: "string"},
-  actor: {type: "string"},
   "stale-minutes": {type: "string"},
   "timeout-minutes": {type: "string"},
   "max-restarts": {type: "string"},
@@ -55,7 +54,6 @@ export const HELP_TEXT = `listik-swarm — каркас роя: план, needs-
   --listik-port <port>        --port для вызовов listik
   --cli-timeout <сек>         предел одного вызова listik (по умолчанию 120)
   --log-dir <путь>            каталог лога роя
-  --actor <actor>             актёр для пишущих вызовов (по умолчанию agent:listik-swarm)
   --stale-minutes <N>         (порция c) по умолчанию 20
   --timeout-minutes <N>       (порция c) по умолчанию 0
   --max-restarts <N>          (порция c) по умолчанию 1
@@ -143,7 +141,8 @@ export function parseConfig(argv) {
     logDir: values["log-dir"] ?? (process.env.LISTIK_HOME
       ? path.join(process.env.LISTIK_HOME, "logs")
       : path.join(REPO_ROOT, "logs")),
-    actor: values.actor ?? "agent:listik-swarm",
+    // Все записи роя идут от одного автора: маркеры читаются только от него (barrier.SWARM_AUTHOR).
+    actor: "agent:listik-swarm",
     staleMinutes: values["stale-minutes"] !== undefined ? parseNumber("stale-minutes", values["stale-minutes"]) : 20,
     timeoutMinutes: values["timeout-minutes"] !== undefined ? parseNumber("timeout-minutes", values["timeout-minutes"]) : 0,
     maxRestarts: values["max-restarts"] !== undefined ? parseNumber("max-restarts", values["max-restarts"]) : 1,

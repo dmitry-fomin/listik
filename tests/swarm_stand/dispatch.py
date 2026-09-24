@@ -520,6 +520,14 @@ class Dispatcher:
         state.head = None
         state.first_change_tick = None
         state.status = "pending"
+        state.proc = None
+        state.deadline = None
+        state.tree = None
+        state.branch = None
+        state.base = None
+        state.report_path = None
+        state.gate_start = None
+        state.gate_finish = None
         self.journal.add(
             "revoked", task=task_id, generation=old_generation, reason=reason, killed=False
         )

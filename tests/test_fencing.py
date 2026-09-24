@@ -561,6 +561,53 @@ class McpStdioTests(TempDbTestCase):
         self.assertFalse(response["result"].get("isError"))
 
 
+class McpDepsRemoveTests(TempDbTestCase):
+    """`listik_deps action=rm` ограждён так же, как добавление связи."""
+
+    def setUp(self) -> None:
+        super().setUp()
+        self.tid = store.create_task(self.conn, title="T")["id"]
+        self.blocker = store.create_task(self.conn, title="блокер")["id"]
+        self.other = store.create_task(self.conn, title="другая")["id"]
+        self.conn.execute("UPDATE tasks SET generation = 2, dispatch_id = 'cur' WHERE id = ?",
+                          (self.tid,))
+        for issue in (self.tid, self.other):
+            self.conn.execute("INSERT INTO deps(issue_id, depends_on, dep_type) VALUES (?,?,?)",
+                              (issue, self.blocker, "blocks"))
+        self.conn.commit()
+
+    def _rm(self, task_id: str, token):
+        return mcp.call_tool("listik_deps", {"action": "rm", "id": task_id,
+                                             "depends_on": self.blocker},
+                             conn=self.conn, owner=None, fence=token)
+
+    def _deps(self, task_id: str) -> int:
+        return self.conn.execute("SELECT count(*) FROM deps WHERE issue_id = ?",
+                                 (task_id,)).fetchone()[0]
+
+    def test_stale_token_is_revoked_and_quarantined(self):
+        with self.assertRaises(errors.Revoked):
+            self._rm(self.tid, fence.Token(self.tid, 1, "old"))
+        self.assertEqual(self._deps(self.tid), 1)
+        rejected = fence.list_rejected(self.conn, self.tid)
+        self.assertEqual(len(rejected), 1, rejected)
+        self.assertEqual(rejected[0]["op"], "deps")
+
+    def test_current_token_removes(self):
+        self._rm(self.tid, fence.Token(self.tid, 2, "cur"))
+        self.assertEqual(self._deps(self.tid), 0)
+        self.assertEqual(fence.list_rejected(self.conn, self.tid), [])
+
+    def test_no_token_removes(self):
+        self._rm(self.tid, None)
+        self.assertEqual(self._deps(self.tid), 0)
+
+    def test_token_for_other_task_does_not_guard(self):
+        self._rm(self.other, fence.Token(self.tid, 1, "old"))
+        self.assertEqual(self._deps(self.other), 0)
+        self.assertEqual(fence.list_rejected(self.conn, self.other), [])
+
+
 # ------------------------------------------------------------------ 9: клиент
 
 class ClientHeadersTests(unittest.TestCase):
@@ -596,6 +643,47 @@ class ClientHeadersTests(unittest.TestCase):
         self.assertEqual(req.get_header("X-listik-task"), "t1")
         self.assertEqual(req.get_header("X-listik-generation"), "3")
         self.assertEqual(req.get_header("X-listik-dispatch"), "d1")
+
+    def _capture_health(self, fn, tok):
+        """Вызывает fn() с моком urlopen и token → tok; возвращает (результат, Request)."""
+        captured = {}
+
+        class FakeResp:
+            def read(self):
+                return json.dumps({"ok": True, "data": {"status": "ok"}}).encode("utf-8")
+
+            def __enter__(self):
+                return self
+
+            def __exit__(self, *a):
+                return False
+
+        def fake_urlopen(req, timeout=None):
+            captured["req"] = req
+            return FakeResp()
+
+        with mock.patch("urllib.request.urlopen", fake_urlopen), \
+             mock.patch.object(client, "token", return_value=tok), \
+             mock.patch.dict(os.environ, {"LISTIK_OWNER": "who"}):
+            result = fn()
+        return result, captured["req"]
+
+    def test_is_up_probe_sends_no_token_and_no_owner(self):
+        up, req = self._capture_health(client.is_up, "t")
+        self.assertTrue(up)
+        self.assertFalse(req.has_header("Authorization"))
+        self.assertFalse(req.has_header("X-listik-owner"))
+
+    def test_health_still_sends_token_and_owner(self):
+        data, req = self._capture_health(client.health, "t")
+        self.assertIsNotNone(data)
+        self.assertEqual(req.get_header("Authorization"), "Bearer t")
+        self.assertEqual(req.get_header("X-listik-owner"), "who")
+
+    def test_is_up_with_empty_token(self):
+        up, req = self._capture_health(client.is_up, "")
+        self.assertTrue(up)
+        self.assertFalse(req.has_header("Authorization"))
 
     def test_cli_call_passes_fence_env_to_both_paths(self):
         cli = _load_cli()
@@ -716,20 +804,28 @@ class CliErrorBothPathsTests(FencingHttpCase):
         self.assertIn("остановись", payload["error"]["hint"])
 
     def test_http_mode(self):
-        with mock.patch.dict(os.environ, self._zombie_env()):
+        # is_up зафиксирован: иначе медленный /api/health уводит call() в локальный
+        # фолбэк, и тест молча проверяет не HTTP-путь. Сам запрос идёт на тестовый сервер.
+        with mock.patch.dict(os.environ, self._zombie_env()), \
+             mock.patch.object(client, "is_up", return_value=True) as is_up_mock:
             argv = ["--host", "127.0.0.1", "--port", str(self.port),
                     "comment", self.tid, "зомби", "-k", "journal"]
             code, _, err = self.run_cli(argv)
+        is_up_mock.assert_called_once()
         self.assertEqual(code, 1)
-        self.assertTrue(err.strip().startswith("ошибка: полномочия на задачу"), err)
+        self.assertNotIn("не отвечает", err)
+        lines = err.splitlines()
+        self.assertTrue(any(line.startswith("ошибка: полномочия на задачу") for line in lines), err)
         self.assertIn("остановись", err)
         self.assertNotIn("посмотри состояние карточки", err)
 
     def test_http_mode_json(self):
-        with mock.patch.dict(os.environ, self._zombie_env()):
+        with mock.patch.dict(os.environ, self._zombie_env()), \
+             mock.patch.object(client, "is_up", return_value=True) as is_up_mock:
             argv = ["--host", "127.0.0.1", "--port", str(self.port),
                     "comment", self.tid, "зомби", "-k", "journal", "--json"]
             code, out, _ = self.run_cli(argv)
+        is_up_mock.assert_called_once()
         self.assertEqual(code, 1)
         payload = json.loads(out)
         self.assertEqual(payload["error"]["code"], "revoked")

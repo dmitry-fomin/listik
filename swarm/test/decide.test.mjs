@@ -151,6 +151,28 @@ test("8: needsOwner для unroutable/unscoped с needs_owner ложным, не
   assert.match(c.text, /listik set c write_scope=<пути через запятую>\.$/);
 });
 
+test("8б: карточку держит не рой — ни вопроса unroutable/unscoped, ни ответа по умолчанию", () => {
+  const held = task("a", {holder: "claude", status: "in_progress"});
+  const heldScoped = task("b", {holder: "claude", status: "in_progress"});
+  const ours = task("c", {holder: "grok", launched_by: "agent:listik-swarm", status: "in_progress"});
+  const plan = {waves: [[]], cycles: [], blocked: {}, unroutable: ["a"], unscoped: ["b", "c"]};
+  const res = decide({plan, tasks: [held, heldScoped, ours], routes: [], config, now: new Date()});
+  assert.deepEqual(res.needsOwner.map(n => n.id), ["c"]);
+
+  const now = new Date("2026-09-24T12:00:00Z");
+  const q = {kind: "question", ts: "2026-09-24T10:00:00Z", text: "вопрос?\nпо умолчанию: да"};
+  const events = {
+    a: [{kind: "question", to_value: q.text, from_value: "0", ts: q.ts}],
+    c: [{kind: "question", to_value: q.text, from_value: "0", ts: q.ts}],
+  };
+  const flagged = [
+    task("a", {holder: "claude", status: "in_progress", needs_owner: true}),
+    task("c", {holder: "grok", launched_by: "agent:listik-swarm", status: "in_progress", needs_owner: true}),
+  ];
+  const due = dueDefaults({tasks: flagged, events, config: {questionTimeout: 30}, now});
+  assert.ok(!due.some(d => d.id === "a"));
+});
+
 test("9: cycles непуст — launch и needsOwner пусты", () => {
   const tasks = [task("a")];
   const plan = {waves: [["a"]], cycles: [["a", "b"]], unroutable: ["a"], unscoped: [], blocked: {}};
@@ -902,4 +924,19 @@ test("бюджет: gate unmerged + budgetExhausted — report.reason unmerged",
   assert.equal(res.giveUp[0].reason, "budget");
   assert.equal(res.report.reason, "unmerged");
   assert.deepEqual(res.report.budget, {exhausted: true, launchesLeft: null});
+});
+
+// --- listik-eps7, порция b ---
+
+test("порты: нечисловая метка пропускается, берётся следующая", () => {
+  assert.equal(portOf(task("a", {labels: ["port:x", "port:5173"]})), 5173);
+  assert.equal(portOf(task("a", {labels: ["port:x"]})), null);
+  assert.equal(portOf(task("a", {labels: ["port:"]})), null);
+});
+
+test("defaultLine: несколько маркеров — действует последний", () => {
+  const text = "по умолчанию: A\nили так\nпо умолчанию: B";
+  assert.equal(defaultLine(text), "B");
+  assert.equal(isSoftQuestion(text), true);
+  assert.equal(isSoftQuestion("рой: вопрос\nпо умолчанию: A\nпо умолчанию: B"), false);
 });

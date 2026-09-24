@@ -121,7 +121,9 @@ class Watcher:
 
         if committed_a and committed_b:
             return self._probe_committed(a, b, common)
-        return self._probe_uncommitted(a, b, common, committed_a=committed_a)
+        return self._probe_uncommitted(
+            a, b, common, committed_a=committed_a, committed_b=committed_b
+        )
 
     def _probe_committed(self, a: str, b: str, common: list[str]) -> Probe:
         branch_a = self.dispatcher.states[a].branch
@@ -141,11 +143,18 @@ class Watcher:
         return Probe(a=a, b=b, files=common, clean=clean, mode="committed")
 
     def _probe_uncommitted(
-        self, a: str, b: str, common: list[str], *, committed_a: bool, _retry: bool = True
+        self,
+        a: str,
+        b: str,
+        common: list[str],
+        *,
+        committed_a: bool,
+        committed_b: bool,
+        _retry: bool = True,
     ) -> Probe | None:
         # незакоммиченная сторона — u; если обе незакоммичены, u = b (правило "если
         # обе — b" из ТЗ).
-        u = b if committed_a else a
+        u = a if (not committed_a and committed_b) else b
         o = a if u == b else b
 
         tree_u = Path(self.dispatcher.states[u].tree)
@@ -170,7 +179,7 @@ class Watcher:
             if committed_a2 and committed_b2:
                 return self._probe_committed(a, b, common2)
             return self._probe_uncommitted(
-                a, b, common2, committed_a=committed_a2, _retry=False
+                a, b, common2, committed_a=committed_a2, committed_b=committed_b2, _retry=False
             )
 
         result = self.sandbox.git(
@@ -260,5 +269,8 @@ class Watcher:
 
                 decisions.append(event)
                 active_set.discard(late)
+                if late == a:
+                    # a снята — её files_cache устарел, остальные пары с a не пробуем
+                    break
 
         return decisions

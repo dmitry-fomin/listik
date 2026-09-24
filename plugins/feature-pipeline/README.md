@@ -18,6 +18,7 @@
 | `xlow-pipeline` | задача в один прогон, нужна независимая приёмка | — | — | dsh, фоновой задачей | Grok 4.7 high |
 | `nano-pipeline` | то же, исполнитель Codex | — | — | GPT-6 Astra high в Codex | Grok 4.7 xhigh |
 | `devin-pipeline` | то же, исполнитель devin | — | — | devin (SWE-2, max) | Grok 4.7 xhigh |
+| `cross-pipeline` | автор ТЗ и исполнитель на разных вендорах: Devin пишет ТЗ, GLM в pi — код | Devin (SWE-2, max) | Grok 4.7 xhigh, без записи | GLM 5.3 Flash в pi | Grok 4.7 xhigh |
 | `opus-single-pipeline` | понятная работа в один заход, приёмка не нужна; $0 внешних | — | — | Opus medium (`pipeline-implementer-solo`, `model: opus`), сам коммитит | — |
 | `opus-sonnet-pipeline` | пачка простых задач трекера параллельно, по worktree | — | — | Opus medium (`pipeline-implementer`, `model: opus`) | Sonnet medium (`pipeline-judge`, `model: sonnet`) |
 | `inherit-pipeline` | только локальные субагенты Claude, автор отвечает на вопросы по ходу | Fable (`pipeline-spec-writer`) | Opus (`pipeline-critic`) | Sonnet (`pipeline-implementer`) | Opus (`pipeline-judge`) |

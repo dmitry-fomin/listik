@@ -101,23 +101,6 @@ class Sandbox:
     def head(self, ref: str = "HEAD", cwd: Path | str | None = None) -> str:
         return self.git_out("rev-parse", ref, cwd=cwd)
 
-    def git_version(self) -> tuple[int, ...]:
-        out = self.git_out("--version")
-        # "git version 2.50.1 (Apple Git-155)" -> (2, 50, 1)
-        version_str = out.split()[2]
-        parts = []
-        for chunk in version_str.split("."):
-            digits = ""
-            for ch in chunk:
-                if ch.isdigit():
-                    digits += ch
-                else:
-                    break
-            if not digits:
-                break
-            parts.append(int(digits))
-        return tuple(parts)
-
     def test_command(self) -> list[str]:
         if self._test_command is not None:
             return self._test_command

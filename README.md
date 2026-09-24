@@ -88,6 +88,7 @@ MCP-инструментами `listik_*` или командой `listik new`. 
 | Маршрут | ТЗ | Критика | Реализация | Приёмка | Когда берут |
 |---|---|---|---|---|---|
 | `xhigh-pipeline` | Fable | GLM | Codex | Grok | ошибка дороже прогона |
+| `cross-pipeline` | Devin | Grok | GLM в pi | Grok | автор ТЗ и код — разные вендоры |
 | `high-pipeline` | Fable | GLM | Opus | Grok | расклад по умолчанию |
 | `inherit-pipeline` | Fable | Opus | Sonnet | Opus | всё внутри Claude, наружу ничего не уходит |
 | `nano-pipeline` | — | — | Codex | Grok | короткая задача: сделать и принять |

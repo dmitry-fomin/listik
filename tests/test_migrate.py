@@ -125,7 +125,7 @@ class UpsertTests(unittest.TestCase):
         result = migrate.upsert(target)
         self.assertEqual(result, "unchanged")
 
-        other_body = "другой текст\n"
+        other_body = "<!-- listik-protocol: 1 -->\n\nдругой текст\n"
         result = migrate.upsert(target, body=other_body)
         self.assertEqual(result, "updated")
         after_update = target.read_text(encoding="utf-8")
@@ -185,6 +185,84 @@ class MissingProtocolFileTests(unittest.TestCase):
                     migrate.body()
         finally:
             missing_root.rmdir()
+
+
+class ProjectProtocolSourceTests(unittest.TestCase):
+    """Тело блока AGENTS.md берётся из протокола проекта, если он есть (listik-e8za):
+    установленная копия со старым шаблоном не должна откатывать свежий блок."""
+
+    PROJECT_TEXT = "локальный протокол\n"
+    TEMPLATE_TEXT = "шаблон установки\n"
+
+    def setUp(self) -> None:
+        self.project_tmp = tempfile.TemporaryDirectory()
+        self.root_tmp = tempfile.TemporaryDirectory()
+        self.project = Path(self.project_tmp.name)
+        self.fake_root = Path(self.root_tmp.name)
+        (self.fake_root / "docs").mkdir()
+        self.template = self.fake_root / "docs" / "harness-protocol.md"
+        self.template.write_text(self.TEMPLATE_TEXT, encoding="utf-8")
+        patcher = patch.object(paths, "ROOT_DIR", self.fake_root)
+        patcher.start()
+        self.addCleanup(patcher.stop)
+        self.agents = self.project / "AGENTS.md"
+        self.claude = self.project / "CLAUDE.md"
+
+    def tearDown(self) -> None:
+        self.project_tmp.cleanup()
+        self.root_tmp.cleanup()
+
+    def _write_project_protocol(self, text: str) -> None:
+        (self.project / "docs").mkdir()
+        (self.project / "docs" / "harness-protocol.md").write_text(text, encoding="utf-8")
+
+    def test_project_protocol_wins_over_install_template(self) -> None:
+        self._write_project_protocol(self.PROJECT_TEXT)
+        self.agents.write_text("# Project\n", encoding="utf-8")
+        self.claude.write_text("# Project\n", encoding="utf-8")
+        migrate.migrate_all([self.project], verbose=False)
+        agents = self.agents.read_text(encoding="utf-8")
+        self.assertIn(migrate.block(self.PROJECT_TEXT), agents)
+        self.assertNotIn("шаблон установки", agents)
+        claude = self.claude.read_text(encoding="utf-8")
+        self.assertIn(migrate.block(migrate.CLAUDE_BODY), claude)
+
+    def test_fresh_project_block_is_not_rolled_back_by_old_template(self) -> None:
+        self._write_project_protocol(self.PROJECT_TEXT)
+        before = "# Project\n\n" + migrate.block(self.PROJECT_TEXT)
+        self.agents.write_text(before, encoding="utf-8")
+        self.assertEqual(migrate.upsert(self.agents), "unchanged")
+        self.assertEqual(self.agents.read_bytes(), before.encode("utf-8"))
+
+    def test_project_without_protocol_gets_install_template(self) -> None:
+        self.agents.write_text("# Project\n", encoding="utf-8")
+        report = migrate.migrate_all([self.project], verbose=False)
+        self.assertIn(str(self.agents), report["added"])
+        self.assertIn(migrate.block(self.TEMPLATE_TEXT), self.agents.read_text(encoding="utf-8"))
+
+    def test_empty_project_protocol_is_a_valid_source(self) -> None:
+        self._write_project_protocol("")
+        self.agents.write_text("# Project\n", encoding="utf-8")
+        migrate.upsert(self.agents)
+        agents = self.agents.read_text(encoding="utf-8")
+        self.assertIn(f"{migrate.BEGIN}\n{migrate.END}\n", agents)
+        self.assertNotIn("шаблон установки", agents)
+
+    def test_no_protocol_anywhere_raises(self) -> None:
+        self.template.unlink()
+        self.agents.write_text("# Project\n", encoding="utf-8")
+        with self.assertRaises(FileNotFoundError):
+            migrate.upsert(self.agents)
+
+
+class RealTreeProtocolRegressionTests(unittest.TestCase):
+    """Приёмка 4 listik-e8za на реальном дереве, без подмены ROOT_DIR."""
+
+    def test_repo_agents_md_keeps_revoked_authority(self) -> None:
+        agents = paths.ROOT_DIR / "AGENTS.md"
+        self.assertEqual(migrate.upsert(agents, dry_run=True), "unchanged")
+        lines = agents.read_text(encoding="utf-8").splitlines()
+        self.assertTrue(any(line.startswith("**Revoked authority.**") for line in lines))
 
 
 class MarkerSubstringRegressionTests(unittest.TestCase):
@@ -412,6 +490,120 @@ class InitProjectsCliTests(TempDbTestCase):
         self.assertEqual((project / ".gitignore").read_text(encoding="utf-8").splitlines(),
                          [migrate.GITIGNORE_ENTRY, migrate.SKILL_REL])
 
+
+def _versioned(n: int | None, text: str = "## Listik\n\nprotocol text\n") -> str:
+    return (f"<!-- listik-protocol: {n} -->\n\n" if n is not None else "") + text
+
+
+class ProtocolVersionTests(unittest.TestCase):
+    """Метка версии протокола: блок новее тела не откатывается без force (listik-e8za)."""
+
+    def setUp(self) -> None:
+        self._tmp = tempfile.TemporaryDirectory()
+        self.dir = Path(self._tmp.name)
+        self.path = self.dir / "AGENTS.md"
+
+    def tearDown(self) -> None:
+        self._tmp.cleanup()
+
+    def _seed(self, body: str) -> bytes:
+        self.path.write_text("# Proj\n\n" + migrate.block(body) + "\ntail\n", encoding="utf-8")
+        return self.path.read_bytes()
+
+    def test_protocol_version_parsing(self) -> None:
+        self.assertEqual(migrate.protocol_version(_versioned(7)), 7)
+        self.assertEqual(migrate.protocol_version("## Listik\n"), 0)
+        self.assertEqual(migrate.protocol_version("<!-- listik-protocol: abc -->\n"), 0)
+        self.assertEqual(
+            migrate.protocol_version("see <!-- listik-protocol: 3 --> in prose\n"), 0)
+
+    def test_newer_block_is_skipped(self) -> None:
+        before = self._seed(_versioned(5))
+        for dry in (False, True):
+            self.assertEqual(
+                migrate.upsert(self.path, body=_versioned(1, "new\n"), dry_run=dry),
+                "skipped-newer")
+            self.assertEqual(self.path.read_bytes(), before)
+
+    def test_force_overwrites_newer_block(self) -> None:
+        self._seed(_versioned(5))
+        self.assertEqual(
+            migrate.upsert(self.path, body=_versioned(1, "new\n"), force=True), "updated")
+        self.assertIn(migrate.block(_versioned(1, "new\n")),
+                      self.path.read_text(encoding="utf-8"))
+
+    def test_older_block_is_updated(self) -> None:
+        self._seed(_versioned(1))
+        self.assertEqual(migrate.upsert(self.path, body=_versioned(5)), "updated")
+
+    def test_unmarked_block_is_updated(self) -> None:
+        self._seed("## Listik\nold\n")
+        self.assertEqual(migrate.upsert(self.path, body=_versioned(1)), "updated")
+
+    def test_unmarked_body_skips_marked_block(self) -> None:
+        self._seed(_versioned(1))
+        self.assertEqual(migrate.upsert(self.path, body="## Listik\nold\n"), "skipped-newer")
+
+    def test_equal_marks_different_text_updated(self) -> None:
+        self._seed(_versioned(2, "a\n"))
+        self.assertEqual(migrate.upsert(self.path, body=_versioned(2, "b\n")), "updated")
+
+    def test_force_identical_is_unchanged_and_dry_run_keeps_file(self) -> None:
+        self._seed(_versioned(2))
+        self.assertEqual(migrate.upsert(self.path, body=_versioned(2), force=True), "unchanged")
+        before = self._seed(_versioned(1))
+        self.assertEqual(
+            migrate.upsert(self.path, body=_versioned(3), force=True, dry_run=True), "updated")
+        self.assertEqual(self.path.read_bytes(), before)
+
+    def test_migrate_all_report_and_remove(self) -> None:
+        self._seed(_versioned(999))
+        report = migrate.migrate_all([self.dir], verbose=False)
+        self.assertEqual(report["skipped-newer"], [str(self.path)])
+        forced = migrate.migrate_all([self.dir], verbose=False, force=True)
+        self.assertEqual(forced["updated"], [str(self.path)])
+        self.assertEqual(forced["skipped-newer"], [])
+        self._seed(_versioned(999))
+        removed = migrate.migrate_all([self.dir], remove_block=True, verbose=False)
+        self.assertEqual(removed["removed"], [str(self.path)])
+        self.assertNotIn(migrate.BEGIN, self.path.read_text(encoding="utf-8"))
+
+    def test_repo_protocol_is_marked(self) -> None:
+        protocol = (paths.ROOT_DIR / "docs" / "harness-protocol.md").read_text(encoding="utf-8")
+        self.assertTrue(protocol.startswith("<!-- listik-protocol: "))
+        self.assertGreaterEqual(migrate.protocol_version(migrate.body()), 1)
+
+
+class InitProjectsForceCliTests(TempDbTestCase):
+    """`init-projects` пропускает блок новее шаблона, `--force` его перезаписывает."""
+
+    def test_skip_then_force(self) -> None:
+        project = (self.tmp_path / "proj").resolve()
+        project.mkdir()
+        agents = project / "AGENTS.md"
+        agents.write_text("# Project\n\n" + migrate.block(_versioned(999)), encoding="utf-8")
+        before = agents.read_bytes()
+        store.add_project(self.conn, path=str(project))
+        env = {**os.environ, "LISTIK_DB": str(self.db_path),
+               "LISTIK_LOG": str(self.tmp_path / "listik.log")}
+
+        def run(*extra: str) -> subprocess.CompletedProcess:
+            return subprocess.run(
+                [sys.executable, str(LISTIK_BIN), "--local", "init-projects", *extra],
+                capture_output=True, text=True, env=env, cwd=str(self.tmp_path))
+
+        proc = run()
+        self.assertEqual(proc.returncode, 0, proc.stdout + proc.stderr)
+        self.assertIn("! пропущен", proc.stdout)
+        self.assertIn("новее шаблона: 1", proc.stdout)
+        self.assertEqual(agents.read_bytes(), before)
+
+        proc = run("--force")
+        self.assertEqual(proc.returncode, 0, proc.stdout + proc.stderr)
+        self.assertIn("обновлено: 1", proc.stdout)
+        text = agents.read_text(encoding="utf-8")
+        self.assertIn(migrate.BEGIN + "\n<!-- listik-protocol: 1 -->\n", text)
+        self.assertIn("## Listik — harness protocol", text)
 
 if __name__ == "__main__":
     unittest.main()

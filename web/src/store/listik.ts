@@ -155,7 +155,6 @@ const pending = ref<string | null>(null)
 
 /** Репозитории (проекты) раздела настроек: что показывать на доске, что скрыто. */
 const projects = ref<ProjectRow[]>([])
-const projectsRoot = ref('')
 const projectsLoading = ref(false)
 const projectsError = ref<string | null>(null)
 
@@ -1235,7 +1234,6 @@ async function loadProjects(): Promise<void> {
     })
     if (data === null) return
     projects.value = data.projects
-    projectsRoot.value = data.root
     projectsError.value = null
   })
 }
@@ -1404,7 +1402,6 @@ export function useListikStore() {
     paletteOpen,
     pending,
     projects,
-    projectsRoot,
     projectsLoading,
     projectsError,
     routes,

@@ -185,6 +185,28 @@ class TrackerForeignDispatchTests(GenerationTestCase):
         self.assertEqual(self.notify, [("task", {"id": task["id"], "action": "launch"})])
 
 
+class TrackerProcsCleanupTests(GenerationTestCase):
+    """`_track` убирает свою запись из `_procs` и не трогает чужую."""
+
+    def test_own_entry_removed_after_exit(self) -> None:
+        task = self.prepare(self.sleepy_writer_command(self.tmp_path / "o.txt", sleep_s=0.1))
+        self.addCleanup(launcher_mod._procs.pop, task["id"], None)
+        self.assertIsNone(self.launch(task["id"], notify=self.notify_cb))
+        self.assertIn(task["id"], launcher_mod._procs)
+        self.join_tracker(task["id"])
+        self.assertNotIn(task["id"], launcher_mod._procs)
+
+    def test_foreign_entry_kept(self) -> None:
+        task = self.prepare(self.sleepy_writer_command(self.tmp_path / "o.txt", sleep_s=0.5))
+        self.addCleanup(launcher_mod._procs.pop, task["id"], None)
+        self.assertIsNone(self.launch(task["id"], notify=self.notify_cb))
+        other = object()
+        with launcher_mod._trackers_lock:
+            launcher_mod._procs[task["id"]] = other
+        self.join_tracker(task["id"])
+        self.assertIs(launcher_mod._procs.get(task["id"]), other)
+
+
 class RecoverGenerationTests(GenerationTestCase):
     """Пункт 6 требований: `recover`/`_poll` не переиздают поколение, ограждают по dispatch_id."""
 

@@ -417,13 +417,6 @@ defineExpose({ openPrimaryAction: askAdd })
       >
         <UiInput v-model="formTitle" placeholder="название (необязательно)" />
       </UiField>
-
-      <span class="listik-section__hint">
-        git remote и ветка подтянутся сами, если это git-репозиторий.
-        <template v-if="store.projectsRoot.value">
-          · корень проектов: <code class="listik-mono">{{ store.projectsRoot.value }}</code>
-        </template>
-      </span>
     </template>
 
     <template v-else>
@@ -447,9 +440,6 @@ defineExpose({ openPrimaryAction: askAdd })
       <span class="listik-section__hint">
         При правке каталог не проверяется: если пути нет, проект остаётся на доске с пометкой
         «нет каталога».
-        <template v-if="store.projectsRoot.value">
-          · корень проектов: <code class="listik-mono">{{ store.projectsRoot.value }}</code>
-        </template>
       </span>
     </template>
   </UiFormModal>

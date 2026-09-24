@@ -315,6 +315,37 @@ class LadderTests(unittest.TestCase):
         self.assertEqual(len(journal.of("dropped")), 1)
         self.assertEqual(watcher.decided, {("t1", "t2")})
 
+    # -- 6a. снятая сторона a выходит из остальных пар тика ----------------------------------------------------------
+
+    def test_withdrawn_a_leaves_remaining_pairs(self):
+        # захват: t2, затем t1, затем t3. Пара (t1, t2) снимает t1 (late == a);
+        # пара (t1, t3) по устаревшему files_cache[t1] сняла бы t3 с владельцем
+        # t1 — вместо этого t3 снимается парой (t2, t3) с владельцем t2.
+        tasks = [
+            Task(id="t1", profile="append", write_scope=["pkg/alpha.py"]),
+            Task(id="t2", profile="append", write_scope=["pkg/alpha.py"]),
+            Task(id="t3", profile="append", write_scope=["pkg/alpha.py"]),
+        ]
+        sandbox, scenario, journal, dispatcher, watcher = self._build(tasks)
+
+        dispatcher.dispatch(["t1", "t2", "t3"])
+        for task_id in ("t2", "t1", "t3"):
+            dispatcher.open_gate(task_id, "start")
+            dispatcher.wait(
+                until=lambda t=task_id: dispatcher.states[t].first_change_tick is not None,
+                deadline=15,
+            )
+        for task_id in ("t1", "t2", "t3"):
+            dispatcher.open_gate(task_id, "finish")
+        dispatcher.wait(deadline=15)
+
+        watcher.tick()
+
+        dropped = {e["task"]: e["owner"] for e in journal.of("dropped")}
+        self.assertEqual(dropped, {"t1": "t2", "t3": "t2"})
+        self.assertIsNone(journal.last("probe", a="t1", b="t3"))
+        self.assertEqual(watcher.decided, {("t1", "t2"), ("t2", "t3")})
+
     # -- 7. чужой файл при чистом слиянии — вливается, факт записан ----------------------------------------------------------
 
     def test_no_common_files_still_records_scope_violation(self):

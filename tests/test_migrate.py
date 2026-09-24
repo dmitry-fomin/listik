@@ -159,6 +159,84 @@ class MissingProtocolFileTests(unittest.TestCase):
             missing_root.rmdir()
 
 
+class ProjectProtocolSourceTests(unittest.TestCase):
+    """Тело блока AGENTS.md берётся из протокола проекта, если он есть (listik-e8za):
+    установленная копия со старым шаблоном не должна откатывать свежий блок."""
+
+    PROJECT_TEXT = "локальный протокол\n"
+    TEMPLATE_TEXT = "шаблон установки\n"
+
+    def setUp(self) -> None:
+        self.project_tmp = tempfile.TemporaryDirectory()
+        self.root_tmp = tempfile.TemporaryDirectory()
+        self.project = Path(self.project_tmp.name)
+        self.fake_root = Path(self.root_tmp.name)
+        (self.fake_root / "docs").mkdir()
+        self.template = self.fake_root / "docs" / "harness-protocol.md"
+        self.template.write_text(self.TEMPLATE_TEXT, encoding="utf-8")
+        patcher = patch.object(paths, "ROOT_DIR", self.fake_root)
+        patcher.start()
+        self.addCleanup(patcher.stop)
+        self.agents = self.project / "AGENTS.md"
+        self.claude = self.project / "CLAUDE.md"
+
+    def tearDown(self) -> None:
+        self.project_tmp.cleanup()
+        self.root_tmp.cleanup()
+
+    def _write_project_protocol(self, text: str) -> None:
+        (self.project / "docs").mkdir()
+        (self.project / "docs" / "harness-protocol.md").write_text(text, encoding="utf-8")
+
+    def test_project_protocol_wins_over_install_template(self) -> None:
+        self._write_project_protocol(self.PROJECT_TEXT)
+        self.agents.write_text("# Project\n", encoding="utf-8")
+        self.claude.write_text("# Project\n", encoding="utf-8")
+        migrate.migrate_all([self.project], verbose=False)
+        agents = self.agents.read_text(encoding="utf-8")
+        self.assertIn(migrate.block(self.PROJECT_TEXT), agents)
+        self.assertNotIn("шаблон установки", agents)
+        claude = self.claude.read_text(encoding="utf-8")
+        self.assertIn(migrate.block(migrate.CLAUDE_BODY), claude)
+
+    def test_fresh_project_block_is_not_rolled_back_by_old_template(self) -> None:
+        self._write_project_protocol(self.PROJECT_TEXT)
+        before = "# Project\n\n" + migrate.block(self.PROJECT_TEXT)
+        self.agents.write_text(before, encoding="utf-8")
+        self.assertEqual(migrate.upsert(self.agents), "unchanged")
+        self.assertEqual(self.agents.read_bytes(), before.encode("utf-8"))
+
+    def test_project_without_protocol_gets_install_template(self) -> None:
+        self.agents.write_text("# Project\n", encoding="utf-8")
+        report = migrate.migrate_all([self.project], verbose=False)
+        self.assertIn(str(self.agents), report["added"])
+        self.assertIn(migrate.block(self.TEMPLATE_TEXT), self.agents.read_text(encoding="utf-8"))
+
+    def test_empty_project_protocol_is_a_valid_source(self) -> None:
+        self._write_project_protocol("")
+        self.agents.write_text("# Project\n", encoding="utf-8")
+        migrate.upsert(self.agents)
+        agents = self.agents.read_text(encoding="utf-8")
+        self.assertIn(f"{migrate.BEGIN}\n{migrate.END}\n", agents)
+        self.assertNotIn("шаблон установки", agents)
+
+    def test_no_protocol_anywhere_raises(self) -> None:
+        self.template.unlink()
+        self.agents.write_text("# Project\n", encoding="utf-8")
+        with self.assertRaises(FileNotFoundError):
+            migrate.upsert(self.agents)
+
+
+class RealTreeProtocolRegressionTests(unittest.TestCase):
+    """Приёмка 4 listik-e8za на реальном дереве, без подмены ROOT_DIR."""
+
+    def test_repo_agents_md_keeps_revoked_authority(self) -> None:
+        agents = paths.ROOT_DIR / "AGENTS.md"
+        self.assertEqual(migrate.upsert(agents, dry_run=True), "unchanged")
+        lines = agents.read_text(encoding="utf-8").splitlines()
+        self.assertTrue(any(line.startswith("**Revoked authority.**") for line in lines))
+
+
 class MarkerSubstringRegressionTests(unittest.TestCase):
     """`upsert`/`remove` used to look for BEGIN/END as a bare substring anywhere in the
     text, so a file that merely *mentions* the markers in prose (no real generated block)

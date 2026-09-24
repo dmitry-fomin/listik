@@ -10,6 +10,12 @@
 конвейеры и прямые харнессы заводят в `<проект>/.worktrees/<id>`, и без этой строки они
 светятся в `git status` основного дерева. Строка дописывается, только если её ещё нет;
 `--remove` её не трогает — он откатывает блок протокола, а не чужие правила git.
+
+Тело блока в AGENTS.md — протокол из `<проект>/docs/harness-protocol.md`, если такой файл
+есть у проекта, иначе из `docs/harness-protocol.md` запущенной копии Listik (шаблон установки).
+Проектный файл приоритетнее: установленная копия со старым протоколом иначе откатывает блок
+в репозитории, где протокол свежее (инцидент 20.09.2026 — пропал абзац «Revoked authority»,
+listik-e8za). Тело для CLAUDE.md — всегда `CLAUDE_BODY`.
 """
 from __future__ import annotations
 
@@ -56,29 +62,35 @@ TODO в чате или в файлах вместо карточки. Скил�
 """
 
 
-def body_for(name: str) -> str:
+def body_for(name: str, project_dir: Path | None = None) -> str:
     """Тело блока для файла `name`: CLAUDE.md — указание на скил, остальные — полный протокол."""
-    return CLAUDE_BODY if name == "CLAUDE.md" else _compute_body()
+    return CLAUDE_BODY if name == "CLAUDE.md" else _compute_body(project_dir)
 
 
-def _compute_body() -> str:
+def _compute_body(project_dir: Path | None = None) -> str:
+    if project_dir is not None:
+        project_path = project_dir / "docs" / "harness-protocol.md"
+        if project_path.exists():
+            return project_path.read_text(encoding="utf-8")
     protocol_path = paths.ROOT_DIR / "docs" / "harness-protocol.md"
     if not protocol_path.exists():
+        project_note = (f"; проектного {project_dir / 'docs' / 'harness-protocol.md'} тоже нет"
+                        if project_dir is not None else "")
         raise FileNotFoundError(
-            f"docs/harness-protocol.md не найден ({protocol_path}) — "
+            f"docs/harness-protocol.md не найден ({protocol_path}){project_note} — "
             "блок правил без протокола ставить нельзя"
         )
     protocol = protocol_path.read_text(encoding="utf-8")
     return protocol
 
 
-def body() -> str:
+def body(project_dir: Path | None = None) -> str:
     """Собирает блок для AGENTS.md/CLAUDE.md: вводный абзац + канонический протокол.
 
     Читает docs/harness-protocol.md в момент вызова (не на импорте), чтобы правки
     протокола подхватывались без перезапуска.
     """
-    return _compute_body()
+    return _compute_body(project_dir)
 
 
 def block(body: str | None = None) -> str:
@@ -90,7 +102,7 @@ def block(body: str | None = None) -> str:
 def upsert(path: Path, *, dry_run: bool = False, body: str | None = None) -> str:
     """Возвращает: added | updated | unchanged | skipped."""
     if body is None:
-        body = body_for(path.name)
+        body = body_for(path.name, path.parent)
     if not path.exists():
         if dry_run:
             return "skipped"

@@ -83,6 +83,11 @@ function isSoftTask(t, events) {
   return !!(q && isSoftQuestion(q.text));
 }
 
+// Карточка, которую держит не рой: держатель есть, а запуска роя не было —
+// её ведёт человек или чужой оркестратор, рой её не трогает (ни вопросов,
+// ни ответов по умолчанию, ни запуска).
+const heldByOther = (t) => !!t.holder && !t.launched_by;
+
 export function dueDefaults({tasks, events, config, now}) {
   const minutes = config && config.questionTimeout != null
     ? config.questionTimeout
@@ -90,7 +95,7 @@ export function dueDefaults({tasks, events, config, now}) {
   if (!(minutes > 0)) return [];
   const out = [];
   for (const t of tasks || []) {
-    if (!t.needs_owner) continue;
+    if (!t.needs_owner || heldByOther(t)) continue;
     if (!OPEN_STATUSES.has(t.status) && t.status !== "done") continue;
     const q = openQuestion(fromEvents((events || {})[t.id] || []));
     if (!q || !isSoftQuestion(q.text)) continue;
@@ -370,13 +375,13 @@ export function decide({plan, tasks, routes, config, now, events, gate = null}) 
   const needsOwner = [];
   for (const id of plan.unroutable || []) {
     const t = openById.get(id);
-    if (t && !t.needs_owner) {
+    if (t && !t.needs_owner && !heldByOther(t)) {
       needsOwner.push({id, reason: "unroutable", text: TEXT_UNROUTABLE});
     }
   }
   for (const id of plan.unscoped || []) {
     const t = openById.get(id);
-    if (t && !t.needs_owner) {
+    if (t && !t.needs_owner && !heldByOther(t)) {
       needsOwner.push({id, reason: "unscoped", text: textUnscoped(id)});
     }
   }

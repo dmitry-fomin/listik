@@ -129,6 +129,12 @@ watch(isOpen, (open) => {
   // Имя в шапке могли сменить, пока форма была закрыта — подставляем текущее
   // (после resetForm, иначе умолчания затрут подстановку).
   form.owner = store.owner.value
+  // Доска открыта в контексте проекта (фильтр `store.filters.project`) — он и
+  // проект новой задачи; поле можно сменить, а черновик голоса ляжет поверх.
+  const contextProject = store.filters.project
+  if (contextProject && props.projects.some((project) => project.slug === contextProject)) {
+    form.project = contextProject
+  }
   applyDraft(props.draft)
   // Первое открытие формы — единственный запрос маршрутов за сессию доски.
   store.ensureRoutes()

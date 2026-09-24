@@ -27,7 +27,7 @@ from tests.helpers import TempDbTestCase
 REPO_DIR = pathlib.Path(__file__).resolve().parent.parent
 ROUTES_JSON = REPO_DIR / "routes.json"
 
-DIRECT_KEYS = ["dsh", "grok", "codex"]
+DIRECT_KEYS = ["pi-deepseek", "grok", "codex"]
 EXPECTED_KEYS = [
     "xhigh-pipeline", "high-pipeline", "medium-pipeline", "low-pipeline", "xlow-pipeline",
     "nano-pipeline", "devin-pipeline", "cross-pipeline", "inherit-pipeline", "opus-single-pipeline", "opus-sonnet-pipeline",
@@ -181,7 +181,7 @@ class PatchRouteTests(RoutesApiBase):
         self.import_sample()
 
     def test_patch_updates_title_hint_icon_visible(self) -> None:
-        status, record = self.patch("/api/routes/dsh",
+        status, record = self.patch("/api/routes/pi-deepseek",
                                     {"title": "Новый", "hint": "h", "icon": "high",
                                      "visible": False})
         self.assertEqual(status, 200)
@@ -201,7 +201,7 @@ class PatchRouteTests(RoutesApiBase):
         for field, value in (("kind", "direct"), ("key", "x"), ("harness", "dsh"),
                              ("position", 0)):
             with self.assertRaises(server.ApiError) as ctx:
-                self.patch("/api/routes/dsh", {field: value})
+                self.patch("/api/routes/pi-deepseek", {field: value})
             self.assertEqual(ctx.exception.status, 400, field)
             self.assertIn(field, ctx.exception.message)
 
@@ -212,19 +212,19 @@ class PatchRouteTests(RoutesApiBase):
 
     def test_patch_command_unknown_placeholder_names_it(self) -> None:
         with self.assertRaises(server.ApiError) as ctx:
-            self.patch("/api/routes/dsh", {"command": ["run", "{foo}"]})
+            self.patch("/api/routes/pi-deepseek", {"command": ["run", "{foo}"]})
         self.assertEqual(ctx.exception.status, 400)
         self.assertIn("{foo}", ctx.exception.message)
 
     def test_patch_unknown_field_is_400_names_it(self) -> None:
         with self.assertRaises(server.ApiError) as ctx:
-            self.patch("/api/routes/dsh", {"foo": 1})
+            self.patch("/api/routes/pi-deepseek", {"foo": 1})
         self.assertEqual(ctx.exception.status, 400)
         self.assertIn("foo", ctx.exception.message)
 
     def test_patch_empty_body_is_400(self) -> None:
         with self.assertRaises(server.ApiError) as ctx:
-            self.patch("/api/routes/dsh", {})
+            self.patch("/api/routes/pi-deepseek", {})
         self.assertEqual(ctx.exception.status, 400)
 
     def test_patch_unknown_key_is_404(self) -> None:
@@ -268,19 +268,19 @@ class DeleteRouteTests(RoutesApiBase):
         self.import_sample()
 
     def test_delete_clears_route_and_labels_but_keeps_tasks(self) -> None:
-        open_task = store.create_task(self.conn, title="open", project="p", route="dsh")
-        working = store.create_task(self.conn, title="working", project="p", route="dsh")
+        open_task = store.create_task(self.conn, title="open", project="p", route="pi-deepseek")
+        working = store.create_task(self.conn, title="working", project="p", route="pi-deepseek")
         store.claim(self.conn, working["id"], holder="dsh")
-        status, data = self.delete("/api/routes/dsh")
+        status, data = self.delete("/api/routes/pi-deepseek")
         self.assertEqual(status, 200)
-        self.assertEqual(data["removed"], "dsh")
+        self.assertEqual(data["removed"], "pi-deepseek")
         self.assertEqual(data["tasks_cleared"], 2)
         for tid in (open_task["id"], working["id"]):
             row = self.conn.execute(
                 "SELECT launch_route, labels, status, holder FROM tasks WHERE id = ?",
                 (tid,)).fetchone()
             self.assertIsNone(row["launch_route"])
-            self.assertNotIn("harness:dsh", json.loads(row["labels"]))
+            self.assertNotIn("harness:pi-deepseek", json.loads(row["labels"]))
             self.assertNotIn("process:direct", json.loads(row["labels"]))
         # Держатель и статус задачи в работе — не тронуты.
         self.assertEqual(
@@ -289,7 +289,7 @@ class DeleteRouteTests(RoutesApiBase):
         self.assertIsNotNone(store.get_task(self.conn, open_task["id"]))
         self.assertIsNotNone(store.get_task(self.conn, working["id"]))
         with self.assertRaises(errors.NotFound):
-            routes_store.get_route(self.conn, "dsh")
+            routes_store.get_route(self.conn, "pi-deepseek")
 
     def test_delete_unknown_key_is_404(self) -> None:
         with self.assertRaises(server.ApiError) as ctx:

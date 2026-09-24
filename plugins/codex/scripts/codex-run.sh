@@ -166,7 +166,8 @@ usage:
   codex-run.sh cancel <job-id|--all>
   codex-run.sh clean [--older-than <days>] [--all]
   codex-run.sh transcript [job-id]
-  codex-run.sh resume <job-id> [--background] [--timeout <sec>] [--label <text>]
+  codex-run.sh resume <job-id> [--permission read|bash|write] [--write] [--background]
+                    [--timeout <sec>] [--label <text>]
                     < prompt.txt
 
 --permission: read (default) and bash both map to the codex sandbox -s read-only
@@ -1009,12 +1010,15 @@ discover_codex_session() {
   session_meta_field "$f" session_id
 }
 
-# Продолжить сессию Codex задачи: те же --write/--model/--effort/--cwd, новый промпт.
+# Продолжить сессию Codex задачи: те же --model/--effort/--cwd, новый промпт; режим
+# наследуется, если не перебит --permission/--write.
 # Нет id сессии или задача ещё running — код 2, оркестратор откатывается на run.
 cmd_resume() {
-  local job_id="" background=0 timeout_s="" label=""
+  local job_id="" background=0 timeout_s="" label="" mode_override=""
   while [[ $# -gt 0 ]]; do
     case "$1" in
+      --permission) mode_override="$(mode_from_permission "$(need_value --permission "${2:-}")")"; shift 2 ;;
+      --write)      mode_override="workspace-write"; shift ;;
       --background) background=1; shift ;;
       --timeout)    timeout_s="${2:-}"; [[ -z "$timeout_s" ]] && die 2 "--timeout needs a value"; shift 2 ;;
       --label)      label="${2:-}"; [[ -z "$label" ]] && die 2 "--label needs a value"; shift 2 ;;
@@ -1055,6 +1059,7 @@ cmd_resume() {
 
   local bin; bin="$(resolve_codex)"
   [[ -n "$mode" && "$mode" != "—" ]] || mode="read-only"
+  [[ -n "$mode_override" ]] && mode="$mode_override"
   local args=(--skip-git-repo-check -s "$mode" -C "$workdir")
   [[ -n "$model" && "$model" != "—" ]] && args+=(-m "$model")
   [[ -n "$effort" && "$effort" != "—" ]] && args+=(-c "model_reasoning_effort=\"$effort\"")

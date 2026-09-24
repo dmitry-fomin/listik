@@ -27,9 +27,9 @@ ROUTES_JSON = REPO_DIR / "routes.json"
 EXPECTED_KEYS = [
     "xhigh-pipeline", "high-pipeline", "medium-pipeline", "low-pipeline", "xlow-pipeline",
     "nano-pipeline", "devin-pipeline", "cross-pipeline", "inherit-pipeline", "opus-single-pipeline", "opus-sonnet-pipeline",
-    "universal-pipeline", "feature-pipeline", "dsh", "grok", "codex",
+    "universal-pipeline", "feature-pipeline", "pi-deepseek", "grok", "codex",
 ]
-DIRECT_KEYS = ["dsh", "grok", "codex"]
+DIRECT_KEYS = ["pi-deepseek", "grok", "codex"]
 
 
 def pipeline_record() -> dict:
@@ -93,9 +93,9 @@ class ImportSampleTests(RoutesDbTestCase):
 
     def test_direct_dsh_has_harness_and_command(self) -> None:
         self.import_sample()
-        record = routes_store.get_route(self.conn, "dsh")
+        record = routes_store.get_route(self.conn, "pi-deepseek")
         self.assertEqual(record["kind"], "direct")
-        self.assertEqual(record["harness"], "dsh")
+        self.assertEqual(record["harness"], "pi-deepseek")
         self.assertTrue(record["command"])
         self.assertNotIn("roles", record)
 
@@ -154,22 +154,22 @@ class ReimportTests(RoutesDbTestCase):
 
     def test_second_import_without_replace_is_skipped(self) -> None:
         self.import_sample()
-        routes_store.update_route(self.conn, "dsh", title="Правленый")
+        routes_store.update_route(self.conn, "pi-deepseek", title="Правленый")
         report = self.import_sample()
         self.assertTrue(report["skipped"])
         self.assertEqual(report["imported"], 0)
         self.assertFalse(report["replaced"])
-        self.assertEqual(routes_store.get_route(self.conn, "dsh")["title"], "Правленый")
+        self.assertEqual(routes_store.get_route(self.conn, "pi-deepseek")["title"], "Правленый")
 
     def test_import_with_replace_rewrites(self) -> None:
         self.import_sample()
-        routes_store.update_route(self.conn, "dsh", title="Правленый", visible=False)
+        routes_store.update_route(self.conn, "pi-deepseek", title="Правленый", visible=False)
         report = self.import_sample(replace=True)
         self.assertFalse(report["skipped"])
         self.assertTrue(report["replaced"])
         self.assertEqual(report["imported"], 16)
-        record = routes_store.get_route(self.conn, "dsh")
-        self.assertEqual(record["title"], "dsh")
+        record = routes_store.get_route(self.conn, "pi-deepseek")
+        self.assertEqual(record["title"], "pi-deepseek")
         self.assertTrue(record["visible"])
 
     def test_broken_file_keeps_db_and_raises(self) -> None:
@@ -280,14 +280,14 @@ class UpdateRouteTests(RoutesDbTestCase):
         self.assertIn("command", str(ctx.exception))
 
     def test_command_on_direct_is_saved(self) -> None:
-        updated = routes_store.update_route(self.conn, "dsh", command=["echo", "{task_id}"])
+        updated = routes_store.update_route(self.conn, "pi-deepseek", command=["echo", "{task_id}"])
         self.assertEqual(updated["command"], ["echo", "{task_id}"])
-        self.assertEqual(routes_store.get_route(self.conn, "dsh")["command"],
+        self.assertEqual(routes_store.get_route(self.conn, "pi-deepseek")["command"],
                          ["echo", "{task_id}"])
 
     def test_partial_update_keeps_other_fields(self) -> None:
-        before = routes_store.get_route(self.conn, "dsh")
-        after = routes_store.update_route(self.conn, "dsh", title="Новый")
+        before = routes_store.get_route(self.conn, "pi-deepseek")
+        after = routes_store.update_route(self.conn, "pi-deepseek", title="Новый")
         self.assertEqual(after["title"], "Новый")
         self.assertEqual(after["command"], before["command"])
         self.assertEqual(after["harness"], before["harness"])
@@ -308,9 +308,9 @@ class CrudTests(RoutesDbTestCase):
 
     def test_create_duplicate_key(self) -> None:
         with self.assertRaises(ValueError) as ctx:
-            routes_store.create_route(self.conn, key="dsh", kind="direct", title="Dup",
+            routes_store.create_route(self.conn, key="pi-deepseek", kind="direct", title="Dup",
                                       harness="dsh")
-        self.assertIn("dsh", str(ctx.exception))
+        self.assertIn("pi-deepseek", str(ctx.exception))
 
     def test_get_unknown_raises_not_found(self) -> None:
         with self.assertRaises(errors.NotFound):
@@ -321,16 +321,16 @@ class CrudTests(RoutesDbTestCase):
                          len(routes_store.list_routes(self.conn)))
 
     def test_delete_counts_tasks_but_keeps_them(self) -> None:
-        self.conn.execute("INSERT INTO tasks(id, launch_route) VALUES('t1', 'dsh')")
-        self.conn.execute("INSERT INTO tasks(id, launch_route) VALUES('t2', 'dsh')")
+        self.conn.execute("INSERT INTO tasks(id, launch_route) VALUES('t1', 'pi-deepseek')")
+        self.conn.execute("INSERT INTO tasks(id, launch_route) VALUES('t2', 'pi-deepseek')")
         self.conn.execute("INSERT INTO tasks(id, launch_route) VALUES('t3', 'grok')")
         self.conn.commit()
-        removed = routes_store.delete_route(self.conn, "dsh")
+        removed = routes_store.delete_route(self.conn, "pi-deepseek")
         self.assertEqual(removed, 2)
         self.assertEqual(self.conn.execute("SELECT COUNT(*) FROM tasks").fetchone()[0], 3)
-        self.assertNotIn("dsh", [r["key"] for r in routes_store.list_routes(self.conn)])
+        self.assertNotIn("pi-deepseek", [r["key"] for r in routes_store.list_routes(self.conn)])
         with self.assertRaises(errors.NotFound):
-            routes_store.get_route(self.conn, "dsh")
+            routes_store.get_route(self.conn, "pi-deepseek")
 
     def test_reorder_full(self) -> None:
         reordered = routes_store.reorder(self.conn, list(reversed(EXPECTED_KEYS)))
@@ -340,9 +340,9 @@ class CrudTests(RoutesDbTestCase):
                          list(reversed(EXPECTED_KEYS)))
 
     def test_reorder_subset_pushes_rest_to_end(self) -> None:
-        rest = [k for k in EXPECTED_KEYS if k not in ("dsh", "grok")]
-        reordered = routes_store.reorder(self.conn, ["dsh", "grok"])
-        self.assertEqual([r["key"] for r in reordered], ["dsh", "grok", *rest])
+        rest = [k for k in EXPECTED_KEYS if k not in ("pi-deepseek", "grok")]
+        reordered = routes_store.reorder(self.conn, ["pi-deepseek", "grok"])
+        self.assertEqual([r["key"] for r in reordered], ["pi-deepseek", "grok", *rest])
         positions = [r["position"] for r in reordered]
         self.assertEqual(positions, list(range(16)))
 

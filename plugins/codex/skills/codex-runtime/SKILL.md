@@ -25,7 +25,7 @@ TASK
 | Subcommand | Purpose |
 | --- | --- |
 | `run` | new session; prompt on stdin. With `--background` stdout is a job-id, without it the answer |
-| `resume <job-id>` | continue that job's Codex session (`codex exec resume`); prompt on stdin. Inherits the original permission mode, `--model`, `--effort`, `--cwd`; takes `--background`, `--timeout`, `--label` |
+| `resume <job-id>` | continue that job's Codex session (`codex exec resume`); prompt on stdin. Inherits the original permission mode, `--model`, `--effort`, `--cwd`; takes `--background`, `--timeout`, `--label`, and `--permission`/`--write` to override the inherited mode (a read-only run can be continued with write access) |
 | `check [--json]` | readiness: binary, `codex doctor`, active provider/model, credentials, jobs in flight |
 | `status [--json] [--all] [--running] [job-id]` | no argument — jobs of the current cwd subtree; `--all` — every job on the machine; with an id — one job card |
 | `result <job-id> [--wait [s]]` | fetch the answer; `--wait` waits the given seconds (default 300) |
@@ -119,7 +119,8 @@ TASK
 ```
 
 The new job gets its own job-id; `codex_session` stays the same and `resumed_from` points
-at the old id. Exit 2 — no session id, the job is still `running`, or codex could not find
+at the old id. The permission mode is inherited unless `--permission`/`--write` overrides it, so a
+read-only run can be continued with write access. Exit 2 — no session id, the job is still `running`, or codex could not find
 the session — means **fall back to a fresh `run`** with the current task text. Don't invent
 another syntax.
 

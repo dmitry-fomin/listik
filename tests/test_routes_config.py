@@ -41,7 +41,7 @@ LISTIK_BIN = REPO_DIR / "bin" / "listik"
 ROUTE_LEVEL_RE = re.compile(r"value: '([a-z0-9-]+)'")
 ROUTE_GLYPH_RE = re.compile(r"icon: '([a-z0-9-]+)'")
 
-DIRECT_KEYS = ["dsh", "grok", "codex"]
+DIRECT_KEYS = ["pi-deepseek", "grok", "codex"]
 
 # Порядок записей в routes.json — он же порядок строк формы «Новая задача».
 EXPECTED_KEYS = [
@@ -625,9 +625,9 @@ class FileLoadTests(TempDbTestCase):
 
     def test_database_update_is_visible_immediately(self) -> None:
         routes_store.import_file(self.conn, self.source)
-        self.conn.execute("UPDATE routes SET title = ? WHERE key = 'dsh'", ("Проверка",))
+        self.conn.execute("UPDATE routes SET title = ? WHERE key = 'pi-deepseek'", ("Проверка",))
         self.conn.commit()
-        self.assertEqual(routes_mod.state(self.conn).by_key["dsh"]["title"], "Проверка")
+        self.assertEqual(routes_mod.state(self.conn).by_key["pi-deepseek"]["title"], "Проверка")
 
     def test_database_error_is_reported(self) -> None:
         with mock.patch.object(routes_store, "list_routes",
@@ -697,7 +697,7 @@ class RoutesApiTests(TempDbTestCase):
         icons = {record["key"]: record["icon"] for record in data["routes"]}
         self.assertEqual(icons["xhigh-pipeline"], "xhigh")
         self.assertEqual(icons["medium-pipeline"], "medium")
-        self.assertEqual(icons["dsh"], "direct")
+        self.assertEqual(icons["pi-deepseek"], "direct")
         self.assertIsNone(icons["feature-pipeline"])
 
     def test_routes_with_bad_icon_import_fallback_and_keep_all_records(self) -> None:
@@ -802,11 +802,11 @@ class RoutesApiTests(TempDbTestCase):
 
     def test_database_change_reaches_live_http_without_restart(self) -> None:
         self._init_from_repo()
-        self.conn.execute("UPDATE routes SET title = ? WHERE key = ?", ("Проверка", "dsh"))
+        self.conn.execute("UPDATE routes SET title = ? WHERE key = ?", ("Проверка", "pi-deepseek"))
         self.conn.commit()
         status, payload = self._get("/api/routes", token=self.TOKEN)
         self.assertEqual(status, 200)
-        self.assertEqual(next(r for r in payload["data"]["routes"] if r["key"] == "dsh")
+        self.assertEqual(next(r for r in payload["data"]["routes"] if r["key"] == "pi-deepseek")
                          ["title"], "Проверка")
 
     def test_health_reports_routes(self) -> None:

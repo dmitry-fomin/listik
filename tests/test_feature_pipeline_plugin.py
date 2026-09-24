@@ -732,6 +732,10 @@ VENDORED_SESSION_TO_PATH = {
     "codex:codex-runtime": "plugins/codex/skills/codex-runtime/SKILL.md",
     "second-opinion:ask": "plugins/second-opinion/skills/ask/SKILL.md",
     "listik:listik": "plugins/listik/skills/listik/SKILL.md",
+    "pi:pi-delegate": "plugins/pi/skills/pi-delegate/SKILL.md",
+    "pi:pi-check": "plugins/pi/skills/pi-check/SKILL.md",
+    "pi:pi-jobs": "plugins/pi/skills/pi-jobs/SKILL.md",
+    "pi:pi-runtime": "plugins/pi/skills/pi-runtime/SKILL.md",
 }
 
 #: Канал в пресете называется запуском; у него в тексте ещё и путь `plugins/…`.
@@ -740,10 +744,12 @@ VENDORED_LAUNCH_SKILLS = (
     "codex:codex-delegate",
     "second-opinion:ask",
     "listik:listik",
+    "pi:pi-delegate",
 )
 
 MD_SKILL_LINK_RE = re.compile(r"\[`(?P<name>[^`]+)`\]\((?P<href>[^)]+)\)")
 VENDORED_HREF_MARKS = ("/dsh/", "/codex/", "/second-opinion/", "/listik/")
+VENDORED_HREF_MARKS += ("/pi/",)
 
 
 def _pipeline_docs() -> list[pathlib.Path]:
@@ -800,6 +806,67 @@ class FeaturePipelineVendoredSkillPathTests(unittest.TestCase):
                             f"{rel}: упоминается {name}, но нет пути `{repo_path}`",
                         )
 
+
+#: Пресеты, где этап 3 ведёт pi на канале deepseek (listik-47y8), и что обязано быть в их тексте.
+PI_EXECUTOR_PRESETS = ("low-pipeline", "xlow-pipeline")
+PI_EXECUTOR_REQUIRED = (
+    "pi:pi-delegate",
+    "--channel deepseek",
+    "--holder pi-deepseek",
+    '--label "$BASE <X>"',
+    "--cwd $WT",
+    "порция <X>: pi <job-id>",
+    '--session "$BASE-<X>"',
+)
+PI_EXECUTOR_FORBIDDEN = ("dsh:dsh-delegate", "DJOB")
+
+
+class FeaturePipelinePiExecutorTests(unittest.TestCase):
+    """low/xlow: исполнитель этапа 3 — pi на канале deepseek, следов dsh нет (listik-47y8)."""
+
+    def test_low_and_xlow_run_pi_deepseek(self) -> None:
+        for name in PI_EXECUTOR_PRESETS:
+            text = _skill_text(name)
+            for needle in PI_EXECUTOR_FORBIDDEN:
+                with self.subTest(skill=name, forbidden=needle):
+                    self.assertNotIn(needle, text, f"{name}/{SKILL_FILE}: осталось {needle!r}")
+            for needle in PI_EXECUTOR_REQUIRED:
+                with self.subTest(skill=name, required=needle):
+                    self.assertIn(needle, text, f"{name}/{SKILL_FILE}: нет {needle!r}")
+
+
+
+#: Двухходовка пресетов без писателя ТЗ (listik-47y8, порция d): ход 1 на чтении возвращает
+#: границы правки и план, ход 2 — продолжение той же сессии с правом записи.
+TWO_TURN_COMMON = (
+    "Ход 1",
+    "--permission read",
+    "write_scope=",
+    "## Границы правки",
+    "Файлы:",
+    "Не трогать:",
+    "## План",
+    "ход 1 пропущен — write_scope задан",
+    "пути названы автором",
+    "ничего не правь, команд не запускай",
+    "только из этого списка",
+    "оба",
+)
+TWO_TURN_PER_SKILL = {
+    "xlow-pipeline": ("resume --session", "--channel deepseek"),
+    "nano-pipeline": ("resume <job-id", "--model gpt-6-astra", "--effort high"),
+}
+
+
+class FeaturePipelineTwoTurnTests(unittest.TestCase):
+    """xlow/nano: ход 1 — границы правки на чтении, ход 2 — продолжение сессии (listik-47y8)."""
+
+    def test_xlow_and_nano_describe_two_turns(self) -> None:
+        for name, own in sorted(TWO_TURN_PER_SKILL.items()):
+            text = _skill_text(name)
+            for needle in TWO_TURN_COMMON + own:
+                with self.subTest(skill=name, required=needle):
+                    self.assertIn(needle, text, f"{name}/{SKILL_FILE}: нет {needle!r}")
 
 #: Канон правила о коммите порции приёмкой (listik-4n4y): заголовок раздела ядра.
 COMMIT_RULE_HEADING = "## Коммит порции приёмкой"

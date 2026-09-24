@@ -188,6 +188,60 @@ class HarnessRunResumeTests(unittest.TestCase):
         self.assertIn("has no Codex session id", proc.stderr)
         self.assertIn("fall back to a fresh run", proc.stderr)
 
+    def _codex_run_then_resume(self, run_flags: list[str], resume_flags: list[str]) -> tuple[str, str, dict]:
+        """run (с флагами) → resume (с флагами); строки лога фейка: (run, resume), карточка resume."""
+        if self.fake_log.exists():
+            self.fake_log.unlink()
+        launched = self._run_codex(["run", "--background", *run_flags], stdin="first turn")
+        self.assertEqual(launched.returncode, 0, launched.stderr)
+        job_id = launched.stdout.strip().splitlines()[0]
+        self.assertEqual(self._wait_codex_job(job_id).get("status"), "completed")
+        resumed = self._run_codex(["resume", job_id, "--background", *resume_flags], stdin="second turn")
+        self.assertEqual(resumed.returncode, 0, resumed.stderr)
+        resume_id = resumed.stdout.strip().splitlines()[0]
+        card = self._wait_codex_job(resume_id)
+        self.assertEqual(card.get("status"), "completed", card)
+        self.assertEqual(card.get("codex_session"), FAKE_SID, card)
+        self.assertEqual(card.get("resumed_from"), job_id, card)
+        lines = [l for l in self.fake_log.read_text(encoding="utf-8").splitlines() if l.strip()]
+        run_lines = [l for l in lines if " resume " not in l]
+        resume_lines = [l for l in lines if " resume " in l]
+        self.assertEqual((len(run_lines), len(resume_lines)), (1, 1), lines)
+        return run_lines[0], resume_lines[0], card
+
+    def _assert_resume_write(self, resume_flags: list[str]) -> None:
+        run_line, resume_line, card = self._codex_run_then_resume([], resume_flags)
+        self.assertIn("-s read-only", run_line)
+        self.assertIn("-s workspace-write", resume_line)
+        self.assertNotIn("--permission", resume_line)
+        self.assertNotIn("--write", resume_line)
+        self.assertEqual(card.get("mode"), "workspace-write", card)
+
+    def test_codex_resume_permission_write_overrides_read_only(self) -> None:
+        self._assert_resume_write(["--permission", "write"])
+
+    def test_codex_resume_write_alias_overrides_read_only(self) -> None:
+        self._assert_resume_write(["--write"])
+
+    def test_codex_resume_permission_bash_and_inherited_write(self) -> None:
+        _, resume_line, card = self._codex_run_then_resume(["--permission", "write"], ["--permission", "bash"])
+        self.assertIn("-s read-only", resume_line)
+        self.assertEqual(card.get("mode"), "read-only", card)
+
+        run_line, resume_line, card = self._codex_run_then_resume(["--permission", "write"], [])
+        self.assertIn("-s workspace-write", run_line)
+        self.assertIn("-s workspace-write", resume_line)
+        self.assertEqual(card.get("mode"), "workspace-write", card)
+
+    def test_codex_resume_invalid_permission_exits_2(self) -> None:
+        launched = self._run_codex(["run", "--background"], stdin="x")
+        self.assertEqual(launched.returncode, 0, launched.stderr)
+        job_id = launched.stdout.strip().splitlines()[0]
+        self._wait_codex_job(job_id)
+        proc = self._run_codex(["resume", job_id, "--permission", "nope"], stdin="again")
+        self.assertEqual(proc.returncode, 2, proc.stderr)
+        self.assertIn("invalid --permission", proc.stderr)
+
     def test_dsh_usage_lists_resume(self) -> None:
         proc = self._run_dsh(["-h"])
         self.assertEqual(proc.returncode, 2)

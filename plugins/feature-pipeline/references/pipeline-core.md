@@ -47,7 +47,7 @@
 2. Задай вопросы автору инструментом `AskUserQuestion`: вопрос — как сформулировал исполнитель, варианты — его варианты, предпочтение первым и с пометкой «(предпочитает агент)». До четырёх вопросов в одном вызове, больше — в двух.
 3. Ответы верни **тому же исполнителю**:
    - Claude-субагент — через `SendMessage`, адрес — agent id из результата его запуска. Завершённый субагент возобновляется сам, с полным контекстом. `SendMessage` отказал или agent id не сохранился (после `/clear`) — **откат на нового субагента** с текущим текстом задачи и теми же ответами дословно; строка об откате идёт в журнал.
-   - внешний харнесс (`dsh`, `codex`, `grok`) — **продолжением той же сессии**: её id лежит в журнале строкой `порция <X>: <харнесс> сессия <id>`, ответы автора уходят в сессию дословно, и текст задачи заново не собирается. Команду продолжения даёт скил контракта харнесса (`dsh:dsh-runtime`, `codex:codex-runtime`, `grok:grok-cli-runtime`) — **её точный синтаксис протокол не назначает**. Команды нет, она вернула
+   - внешний харнесс (`dsh`, `codex`, `grok`, `pi`) — **продолжением той же сессии**: её id лежит в журнале строкой `порция <X>: <харнесс> сессия <id>`, ответы автора уходят в сессию дословно, и текст задачи заново не собирается. Команду продолжения даёт скил контракта харнесса (`dsh:dsh-runtime`, `codex:codex-runtime`, `grok:grok-cli-runtime`, `pi:pi-runtime`) — **её точный синтаксис протокол не назначает**. Команды нет, она вернула
      ошибку или сессии по id уже нет — **откат на новый прогон** с текущим текстом задачи и теми же
      ответами дословно; строка об откате идёт в журнал.
 
@@ -153,7 +153,9 @@ Agent id субагента живёт только в этом разговор
 автора ты кладёшь **дословно** в `<steps>/<id>.a.md` при карточке (правило 4), без карточки —
 в `<steps>/adhoc-<ГГГГ-ММ-ДД>-<слаг>.a.md`, с двумя разделами:
 «Требования» — текст автора как есть, «Границы правки» — то, что автор назвал; не назвал —
-«только названные файлы и слой, остальное не трогать». Своих требований не добавляешь. Приёмке
+«только названные файлы и слой, остальное не трогать». Пресеты без писателя ТЗ (`xlow-pipeline`, `nano-pipeline`)
+могут уточнить этот раздел ходом 1 самого исполнителя — списком путей „Файлы:“/„Не трогать:“,
+который уходит и в `write_scope` карточки; правило и условие запуска — в самих пресетах. Своих требований не добавляешь. Приёмке
 этот же файл идёт и как порция, и как чек-лист. Везде ниже, где стоит `<id>`, для этой ветки при
 карточке пишется `<id>`, без карточки — `adhoc-<ГГГГ-ММ-ДД>-<слаг>` по правилу 3, а `<X>` — `a`;
 этапа 1 у ветки нет, поэтому третье красное — не полный круг, а остановка и доклад автору.
@@ -257,6 +259,7 @@ P="$(sed -n 's/^Рабочее дерево: //p' <steps>/<имя>.<X>.md | head
 | --- | --- | --- | --- | --- |
 | dsh | [`dsh:dsh-delegate`](../../dsh/skills/dsh-delegate/SKILL.md) `plugins/dsh/skills/dsh-delegate/SKILL.md` | [`dsh:dsh-check`](../../dsh/skills/dsh-check/SKILL.md) | [`dsh:dsh-jobs`](../../dsh/skills/dsh-jobs/SKILL.md) | [`dsh:dsh-runtime`](../../dsh/skills/dsh-runtime/SKILL.md) |
 | Codex | [`codex:codex-delegate`](../../codex/skills/codex-delegate/SKILL.md) `plugins/codex/skills/codex-delegate/SKILL.md` | [`codex:codex-check`](../../codex/skills/codex-check/SKILL.md) | [`codex:codex-jobs`](../../codex/skills/codex-jobs/SKILL.md) | [`codex:codex-runtime`](../../codex/skills/codex-runtime/SKILL.md) |
+| pi | [`pi:pi-delegate`](../../pi/skills/pi-delegate/SKILL.md) `plugins/pi/skills/pi-delegate/SKILL.md` | [`pi:pi-check`](../../pi/skills/pi-check/SKILL.md) | [`pi:pi-jobs`](../../pi/skills/pi-jobs/SKILL.md) | [`pi:pi-runtime`](../../pi/skills/pi-runtime/SKILL.md) |
 | Grok | `/grok:delegate` | `/grok:setup` | `/grok:status`, `/grok:result` | `grok:grok-cli-runtime` |
 | второе мнение | [`second-opinion:ask`](../../second-opinion/skills/ask/SKILL.md) `plugins/second-opinion/skills/ask/SKILL.md` | скил есть в сессии | — | — |
 | Listik | [`listik:listik`](../../listik/skills/listik/SKILL.md) `plugins/listik/skills/listik/SKILL.md` | — | — | — |
@@ -266,13 +269,14 @@ P="$(sed -n 's/^Рабочее дерево: //p' <steps>/<имя>.<X>.md | head
 внешнего канала из таблицы «Роли»). Нет хотя бы одного — **стоп и вопрос автору**, шаг 0 и этапы
 не начинай. Варианты: поставить плагин и открыть новую сессию, либо другой пресет.
 
-Поставить в Claude Code (после установки нужна **новая сессия**). dsh, Codex и второе мнение
+Поставить в Claude Code (после установки нужна **новая сессия**). dsh, Codex, pi и второе мнение
 живут в маркетплейсе Listik; Grok — отдельный плагин:
 
 ```
 /plugin marketplace add dmitry-fomin/listik
 /plugin install dsh@listik
 /plugin install codex@listik
+/plugin install pi@listik
 /plugin install second-opinion@listik
 
 /plugin marketplace add dashpot4/grok-plugin-for-claude
@@ -366,7 +370,7 @@ listik worktree <id> --track <часть> --actor agent:claude --harness claude
   и остальными бумагами, куда он только читает, — и перепутать их легче, поэтому в задаче стоят
   оба абсолютных пути. Исполнитель стартует в каталоге сессии, и `cd` между его вызовами Bash
   не живёт — путь нужен ему в каждом вызове, а не один раз. Внешним харнессам каталог задаётся
-  в вызове скила запуска (у `dsh:dsh-delegate` и `codex:codex-delegate` — `--cwd`,
+  в вызове скила запуска (у `dsh:dsh-delegate`, `codex:codex-delegate` и `pi:pi-delegate` — `--cwd`,
   у `/grok:delegate` — рабочий каталог в аргументах скила).
 - **Бумаги шага не разъезжаются по деревьям.** ТЗ, чек-листы, файлы замечаний и журнал пишутся
   и коммитятся только в основном дереве: журнал — твоя память, а копия его в дереве трека после
@@ -708,7 +712,7 @@ listik
   listik comment <карточка> $'VERDICT: FAIL\n<пункты дословно, по одному в строке>' -k verdict --actor agent:<харнесс> --harness <харнесс>
 ```
 
-`<харнесс>` в `--holder` и `--harness` — одно и то же имя (`dsh`, `grok`, `codex`), подставляй то, что реально
+`<харнесс>` в `--holder` и `--harness` — одно и то же имя (`dsh`, `grok`, `codex`, `pi-deepseek`), подставляй то, что реально
 запускаешь. Порядок вокруг запуска: сначала выдача карточки (`stage … --holder <харнесс>`), потом вызов
 скила запуска с этим текстом; своего claim и своего журнала от оркестратора нет.
 

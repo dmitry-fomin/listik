@@ -90,7 +90,7 @@ Cut flags out of the task text so they don't land in the prompt as content.
 | `--sync`, "wait for it", "I need it now" | drop `--background` |
 | a directory or subsystem named | `--cwd <path>` |
 | "take as long as it needs" | `--timeout 0` |
-| "continue that run", a past job-id named | `resume <job-id>` |
+| "continue that run", a past job-id named | `resume <job-id>`, with `--permission write` if the continuation must edit (the mode is inherited, flags are not added silently) |
 
 Model, provider and effort are never your choice: a run goes on the human's settings in
 `~/.codex/config.toml`. The one exception is a call from a feature-pipeline preset, which

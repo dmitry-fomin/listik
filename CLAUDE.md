@@ -126,6 +126,11 @@ Database migrations exist as two parallel mechanisms — don't confuse them:
   `AGENTS.md`/`CLAUDE.md` (`listik init-projects`) so those projects' agents know to use Listik.
   The bodies differ per file (`migrate.body_for`): `AGENTS.md` gets the full protocol read from
   `docs/harness-protocol.md` (`migrate.body()`) — change the protocol there, not in `migrate.py`;
+  the same text also ships as the skill `.agents/skills/listik/SKILL.md` (`migrate.SKILL_REL`) for
+  harnesses that read `.agents/skills`, and `test_migrate` requires the two to be equal;
+  `init-projects` symlinks each project's `.agents/skills/listik` to that skill in the install
+  (`migrate.skill_source()`, via `app/current`) and gitignores the link, and `listik worktree`
+  repeats the link in the task tree, hidden via `info/exclude`;
   `CLAUDE.md` gets only `CLAUDE_BODY`, a pointer to the `listik:listik` skill. The `AGENTS.md` body
   comes from `<project>/docs/harness-protocol.md` if the project has one, otherwise from the
   installed copy. Its first line `<!-- listik-protocol: N -->` is the protocol version — bump N

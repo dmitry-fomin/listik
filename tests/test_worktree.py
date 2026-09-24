@@ -14,7 +14,7 @@ import shutil
 import subprocess
 import sys
 
-from listik import store
+from listik import migrate, store
 from listik import worktree as worktree_mod
 from tests.helpers import TempDbTestCase
 from tests.test_claim import LISTIK_BIN
@@ -151,7 +151,7 @@ class CreateTests(WorktreeCase):
     def test_json_keys(self) -> None:
         out = self.worktree()
         self.assertEqual(set(out), {"task_id", "name", "path", "branch", "base", "status",
-                                    "dirty", "gitignore", "card_updated"})
+                                    "dirty", "gitignore", "skill_link", "card_updated"})
         self.assertEqual(set(out["base"]), {"sha", "sha7", "subject"})
         self.assertEqual(out["task_id"], self.task_id)
         self.assertEqual(out["name"], self.task_id)
@@ -337,6 +337,45 @@ class RepeatTests(WorktreeCase):
         self.assertEqual(err["code"], "conflict")
         self.assertIn(third, err["message"])
         self.assertFalse(os.path.exists(self.wt_path()))
+
+
+class SkillLinkTests(WorktreeCase):
+    """Симлинк скила в дереве задачи, закрытый через info/exclude (listik-5qzq)."""
+
+    def exclude_lines(self) -> list[str]:
+        exclude = self.git_out("rev-parse", "--git-path", "info/exclude", cwd=self.wt_path())
+        if not os.path.isabs(exclude):
+            exclude = os.path.join(self.wt_path(), exclude)
+        with open(exclude, encoding="utf-8") as fh:
+            return [line.strip() for line in fh if line.strip() == migrate.SKILL_REL]
+
+    def assert_link_and_clean(self) -> None:
+        link = os.path.join(self.wt_path(), migrate.SKILL_REL)
+        self.assertTrue(os.path.islink(link))
+        self.assertEqual(os.readlink(link), str(migrate.skill_source()))
+        self.assertFalse(worktree_mod.is_dirty(self.wt_path()))
+        self.assertEqual(self.git_out("status", "--porcelain", cwd=self.wt_path()), "")
+        self.assertEqual(self.exclude_lines(), [migrate.SKILL_REL])
+
+    def test_link_in_worktree_keeps_it_clean(self) -> None:
+        out = self.worktree()
+        self.assertEqual(out["skill_link"], "added")
+        self.assertFalse(out["dirty"])
+        self.assert_link_and_clean()
+
+        again = self.worktree()
+        self.assertEqual(again["status"], "reused")
+        self.assertEqual(again["skill_link"], "unchanged")
+        self.assert_link_and_clean()
+
+        out = self.worktree("--recreate")
+        self.assertEqual(out["status"], "recreated")
+        self.assert_link_and_clean()
+
+        # Проект через init-projects не проходил: ни симлинка в корне, ни строки в .gitignore.
+        self.assertFalse(os.path.lexists(os.path.join(self.project_path, migrate.SKILL_REL)))
+        with open(os.path.join(self.project_path, ".gitignore"), encoding="utf-8") as fh:
+            self.assertNotIn(migrate.SKILL_REL, fh.read())
 
 
 class RecreateTests(WorktreeCase):

@@ -113,7 +113,9 @@ claude mcp add --transport http listik https://<домен>/mcp \
 на `server.host`/`server.port` из своего `config.toml` — укажите там адрес нужного сервера.
 
 **Правила в проектах**: `listik projects --add <путь>`, затем `listik init-projects` вписывает
-протокол в `AGENTS.md`/`CLAUDE.md` проектов и `.worktrees/` в их `.gitignore`.
+протокол в `AGENTS.md`/`CLAUDE.md` проектов и `.worktrees/` в их `.gitignore`. Ещё она заводит в
+проекте симлинк `.agents/skills/listik` на скил из установки Listik — для харнессов, читающих
+`.agents/skills` (codex, opencode, pi, grok), — и строку под него в `.gitignore`.
 Блок, чья метка версии протокола (`<!-- listik-protocol: N -->`) новее ставящегося шаблона,
 пропускается с предупреждением `! пропущен`; перезаписать его — `listik init-projects --force`.
 

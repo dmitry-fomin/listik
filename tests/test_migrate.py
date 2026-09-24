@@ -75,6 +75,34 @@ class BlockContentTests(unittest.TestCase):
             )
 
 
+class SkillFileTests(unittest.TestCase):
+    """.agents/skills/listik/SKILL.md — the same protocol as docs/harness-protocol.md."""
+
+    def setUp(self) -> None:
+        self.skill_dir = paths.ROOT_DIR / migrate.SKILL_REL
+        self.text = (self.skill_dir / "SKILL.md").read_text(encoding="utf-8")
+
+    def _split(self) -> tuple[list[str], str]:
+        self.assertTrue(self.text.startswith("---\n"), "SKILL.md must start with ---")
+        head, sep, body = self.text[4:].partition("\n---\n")
+        self.assertTrue(sep, "frontmatter is not closed with ---")
+        return head.split("\n"), body
+
+    def test_frontmatter_is_name_and_description(self) -> None:
+        lines, _ = self._split()
+        self.assertEqual(2, len(lines), lines)
+        self.assertEqual(f"name: {self.skill_dir.name}", lines[0])
+        self.assertRegex(lines[1], r"^description: \S")
+
+    def test_body_equals_harness_protocol(self) -> None:
+        _, body = self._split()
+        protocol = (paths.ROOT_DIR / "docs" / "harness-protocol.md").read_text(encoding="utf-8")
+        self.assertEqual(protocol, body)
+
+    def test_no_harness_names(self) -> None:
+        self.assertNotRegex(self.text, _HARNESS_NAMES)
+
+
 class UpsertTests(unittest.TestCase):
     def setUp(self) -> None:
         self._tmpdir = tempfile.TemporaryDirectory()
@@ -348,6 +376,98 @@ class GitignoreTests(unittest.TestCase):
         self.assertIn(migrate.GITIGNORE_ENTRY, self.gitignore.read_text(encoding="utf-8"))
 
 
+class SkillLinkTests(unittest.TestCase):
+    """Симлинк `.agents/skills/listik` на скил из установки (listik-5qzq)."""
+
+    def setUp(self) -> None:
+        self._tmpdir = tempfile.TemporaryDirectory()
+        self.tmp = Path(self._tmpdir.name)
+        self.project = self.tmp / "proj"
+        self.project.mkdir()
+        self.link = self.project / migrate.SKILL_REL
+        self.gitignore = self.project / ".gitignore"
+
+    def tearDown(self) -> None:
+        self._tmpdir.cleanup()
+
+    def _install(self, version: str = "1.2.3") -> Path:
+        """Каталог данных установленного Listik: app/<версия> + ссылка app/current."""
+        home = self.tmp / "home"
+        skill = home / "app" / version / migrate.SKILL_REL
+        skill.mkdir(parents=True)
+        (skill / "SKILL.md").write_text("# listik\n", encoding="utf-8")
+        (home / "app" / "current").symlink_to(home / "app" / version)
+        return home
+
+    def test_skill_source_goes_through_app_current(self) -> None:
+        home = self._install("9.9.9")
+        with patch.object(paths, "DATA_DIR", home):
+            source = migrate.skill_source()
+        self.assertEqual(source, home / "app" / "current" / migrate.SKILL_REL)
+        self.assertIn(os.path.join("app", "current"), str(source))
+        self.assertNotIn("9.9.9", str(source.relative_to(home)))
+        self.assertTrue((source / "SKILL.md").exists())
+
+    def test_skill_source_without_install_is_the_repo(self) -> None:
+        with patch.object(paths, "DATA_DIR", self.tmp / "empty-home"):
+            self.assertEqual(migrate.skill_source(), paths.ROOT_DIR / migrate.SKILL_REL)
+
+    def test_link_cycle_added_unchanged_updated_then_real_dir_skipped(self) -> None:
+        self.assertEqual(migrate.ensure_skill_link(self.project, dry_run=True), "added")
+        self.assertFalse(os.path.lexists(self.link))
+
+        self.assertEqual(migrate.ensure_skill_link(self.project), "added")
+        self.assertEqual(os.readlink(self.link), str(migrate.skill_source()))
+        self.assertEqual(migrate.ensure_skill_link(self.project), "unchanged")
+
+        home = self._install()
+        with patch.object(paths, "DATA_DIR", home):
+            self.assertEqual(migrate.ensure_skill_link(self.project), "updated")
+            self.assertEqual(os.readlink(self.link), str(migrate.skill_source()))
+
+        self.link.unlink()
+        self.link.mkdir()
+        (self.link / "SKILL.md").write_text("настоящий\n", encoding="utf-8")
+        self.assertEqual(migrate.ensure_skill_link(self.project), "skipped")
+        self.assertFalse(os.path.islink(self.link))
+        self.assertEqual((self.link / "SKILL.md").read_text(encoding="utf-8"), "настоящий\n")
+
+    def test_install_without_skill_is_skipped(self) -> None:
+        home = self.tmp / "old-home"
+        (home / "app" / "1.0.0").mkdir(parents=True)
+        (home / "app" / "current").symlink_to(home / "app" / "1.0.0")
+        with patch.object(paths, "DATA_DIR", home):
+            self.assertEqual(migrate.ensure_skill_link(self.project), "skipped")
+        self.assertFalse(os.path.lexists(self.link))
+
+    def test_gitignore_gets_both_lines_only_for_a_symlink(self) -> None:
+        migrate.ensure_skill_link(self.project)
+        self.assertEqual(migrate.ensure_gitignore(self.project), "added")
+        self.assertEqual(self.gitignore.read_text(encoding="utf-8").splitlines(),
+                         [migrate.GITIGNORE_ENTRY, migrate.SKILL_REL])
+        self.assertEqual(migrate.ensure_gitignore(self.project), "unchanged")
+
+    def test_real_dir_gets_no_gitignore_line(self) -> None:
+        self.link.mkdir(parents=True)
+        migrate.ensure_gitignore(self.project)
+        self.assertNotIn(migrate.SKILL_REL, self.gitignore.read_text(encoding="utf-8"))
+
+    def test_migrate_all_reports_link_and_remove_takes_only_symlink(self) -> None:
+        report = migrate.migrate_all([self.project], verbose=False)
+        self.assertEqual(report["skill_link"], [str(self.link)])
+        self.assertIn(migrate.SKILL_REL, self.gitignore.read_text(encoding="utf-8"))
+        self.assertEqual(migrate.migrate_all([self.project], verbose=False)["skill_link"], [])
+
+        removed = migrate.migrate_all([self.project], remove_block=True, verbose=False)
+        self.assertEqual(removed["skill_link"], [str(self.link)])
+        self.assertFalse(os.path.lexists(self.link))
+
+        self.link.mkdir(parents=True)
+        removed = migrate.migrate_all([self.project], remove_block=True, verbose=False)
+        self.assertEqual(removed["skill_link"], [])
+        self.assertTrue(self.link.is_dir())
+
+
 class InitProjectsCliTests(TempDbTestCase):
     """`listik init-projects` доводит строку .worktrees/ до .gitignore проекта."""
 
@@ -364,8 +484,11 @@ class InitProjectsCliTests(TempDbTestCase):
             capture_output=True, text=True, env=env, cwd=str(self.tmp_path))
         self.assertEqual(proc.returncode, 0, proc.stdout + proc.stderr)
         self.assertIn("поправлен .gitignore: 1", proc.stdout)
-        self.assertEqual((project / ".gitignore").read_text(encoding="utf-8"),
-                         migrate.GITIGNORE_ENTRY + "\n")
+        self.assertIn("скил: 1", proc.stdout)
+        link = project / migrate.SKILL_REL
+        self.assertTrue(os.path.islink(link))
+        self.assertEqual((project / ".gitignore").read_text(encoding="utf-8").splitlines(),
+                         [migrate.GITIGNORE_ENTRY, migrate.SKILL_REL])
 
 
 def _versioned(n: int | None, text: str = "## Listik\n\nprotocol text\n") -> str:

@@ -14,8 +14,8 @@
 | `xhigh-pipeline` | ошибка дороже прогона; ~$5 на задачу | Fable xhigh (`pipeline-spec-writer-xhigh`) | GLM 5.3 Flash по HTTP | GPT-6 Astra xhigh в Codex | Grok 4.7 xhigh |
 | `high-pipeline` | расклад по умолчанию; ~$2 | Fable medium (`pipeline-spec-writer-medium`) | GLM 5.3 Flash по HTTP | Opus medium (`pipeline-implementer`, `model: opus`) | Grok 4.7 xhigh |
 | `medium-pipeline` | работа понятная, хватит пониженного усилия; ~$1.70 | Fable low (`pipeline-spec-writer-low`) | GLM 5.3 Flash по HTTP | Opus medium (`pipeline-implementer`, `model: opus`) | Grok 4.7 medium |
-| `low-pipeline` | поджимает лимит Max (квоты вдвое меньше high); ~$2 | Opus low (`pipeline-spec-writer-low`, `model: opus`) | GLM 5.3 Flash по HTTP | dsh, фоновой задачей | Grok 4.7 medium |
-| `xlow-pipeline` | задача в один прогон, нужна независимая приёмка | — | — | dsh, фоновой задачей | Grok 4.7 high |
+| `low-pipeline` | поджимает лимит Max (квоты вдвое меньше high); ~$2 | Opus low (`pipeline-spec-writer-low`, `model: opus`) | GLM 5.3 Flash по HTTP | pi · DeepSeek v4.1 Flash, фоновой задачей | Grok 4.7 medium |
+| `xlow-pipeline` | задача в один прогон, нужна независимая приёмка | — | — | pi · DeepSeek v4.1 Flash, фоновой задачей | Grok 4.7 high |
 | `nano-pipeline` | то же, исполнитель Codex | — | — | GPT-6 Astra high в Codex | Grok 4.7 xhigh |
 | `devin-pipeline` | то же, исполнитель devin | — | — | devin (SWE-2, max) | Grok 4.7 xhigh |
 | `opus-single-pipeline` | понятная работа в один заход, приёмка не нужна; $0 внешних | — | — | Opus medium (`pipeline-implementer-solo`, `model: opus`), сам коммитит | — |

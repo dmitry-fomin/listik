@@ -210,6 +210,46 @@ class ReimportTests(RoutesDbTestCase):
         self.assertNotIn("strip", columns)
 
 
+class ReimportCommandTests(RoutesDbTestCase):
+    """`listik routes --reimport` (listik-ttjm): перезапись из файла поставки."""
+
+    def test_reimport_rewrites_and_reports_orphans(self) -> None:
+        from listik import store
+        self.import_sample()
+        routes_store.update_route(self.conn, "grok", title="Моя правка")
+        task = store.create_task(self.conn, title="проба", project="listik")
+        self.conn.execute("UPDATE tasks SET launch_route = 'gone-route' WHERE id = ?",
+                          (task["id"],))
+        self.conn.commit()
+        report = routes_store.reimport(self.conn, ROUTES_JSON)
+        self.assertTrue(report["replaced"])
+        self.assertEqual(report["imported"], 17)
+        self.assertEqual(report["orphans"], {"gone-route": 1})
+        self.assertEqual(routes_store.get_route(self.conn, "grok")["title"], "grok")
+        row = self.conn.execute("SELECT launch_route FROM tasks WHERE id = ?",
+                                (task["id"],)).fetchone()
+        self.assertEqual(row[0], "gone-route", "задачу трогать нельзя")
+
+    def test_cli_local_reimport(self) -> None:
+        import os
+        import subprocess
+        import sys
+        from tests.test_claim import LISTIK_BIN
+        self.import_sample()
+        routes_store.update_route(self.conn, "grok", title="Моя правка")
+        env = {**os.environ, "LISTIK_DB": str(self.db_path),
+               "LISTIK_LOG": str(self.tmp_path / "listik.log")}
+        proc = subprocess.run([sys.executable, str(LISTIK_BIN), "--local", "routes",
+                               "--reimport", "--json"], capture_output=True, text=True,
+                              env=env, cwd=str(REPO_DIR))
+        self.assertEqual(proc.returncode, 0, proc.stdout + proc.stderr)
+        report = json.loads(proc.stdout)
+        self.assertTrue(report["replaced"])
+        self.assertEqual(report["imported"], 17)
+        self.assertEqual(report["orphans"], {})
+        self.assertEqual(routes_store.get_route(self.conn, "grok")["title"], "grok")
+
+
 class FieldRulesTests(RoutesDbTestCase):
     """Правила полей — по одному случаю на нарушение."""
 

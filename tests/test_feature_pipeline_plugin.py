@@ -1222,5 +1222,44 @@ class FeaturePipelineSpecWriterWorktreeTests(unittest.TestCase):
                 )
 
 
+class FeaturePipelineListikCardTests(unittest.TestCase):
+    """Исполнители и судья преднагружают `listik:listik` и ведут карточку сами (listik-5qzq, порция c)."""
+
+    CARD_AGENTS = {
+        "pipeline-implementer.md": "-k journal",
+        "pipeline-implementer-high.md": "-k journal",
+        "pipeline-implementer-solo.md": "-k journal",
+        "pipeline-judge.md": "-k verdict",
+    }
+
+    @staticmethod
+    def _has_listik_skill(frontmatter: list[str]) -> bool:
+        """Строка `skills:` и сразу под ней `  - listik:listik`."""
+        return any(line == "skills:" and frontmatter[index + 1] == "  - listik:listik"
+                   for index, line in enumerate(frontmatter[:-1]))
+
+    def test_card_agents_preload_listik_skill(self) -> None:
+        for name, marker in self.CARD_AGENTS.items():
+            with self.subTest(agent=name):
+                text = _plugin_text(pathlib.Path(AGENTS_SUBDIR) / name)
+                frontmatter = _frontmatter(text.splitlines())
+                self.assertIsNotNone(frontmatter, f"{name}: нет frontmatter")
+                self.assertTrue(self._has_listik_skill(frontmatter),
+                                f"{name}: во frontmatter нет skills: с - listik:listik")
+                self.assertIn("\n## Карточка Listik\n", text, f"{name}: нет раздела «Карточка Listik»")
+                self.assertIn(marker, text, f"{name}: нет {marker!r}")
+
+    def test_spec_and_critic_agents_do_not_preload_listik(self) -> None:
+        agents = PLUGIN_DIR / AGENTS_SUBDIR
+        names = ["pipeline-critic.md"] + sorted(path.name for path in agents.glob("pipeline-spec-writer*.md"))
+        self.assertGreater(len(names), 1, "не нашлось ни одного pipeline-spec-writer*.md")
+        for name in names:
+            with self.subTest(agent=name):
+                frontmatter = _frontmatter(_plugin_text(pathlib.Path(AGENTS_SUBDIR) / name).splitlines())
+                self.assertIsNotNone(frontmatter, f"{name}: нет frontmatter")
+                self.assertFalse(any("listik:listik" in line for line in frontmatter),
+                                 f"{name}: listik:listik не должен преднагружаться")
+
+
 if __name__ == "__main__":
     unittest.main()

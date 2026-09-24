@@ -41,6 +41,8 @@
 | `pipeline-implementer-solo` | sonnet / medium | задача в один проход и сам коммитит | `opus-single-pipeline` — **`model: opus`** |
 | `pipeline-judge` | opus / high | приёмка: чек-лист, срезанные углы в диффе, вердикт, при зелёном — коммит; код не правит | `inherit-pipeline`, `feature-pipeline`, `universal-pipeline`; `opus-sonnet-pipeline` — **`model: sonnet`** |
 
+Исполнители и судья преднагружают скил `listik:listik` (поле `skills:`) и при названном в задаче id (`Listik, карточка <id>`) ведут карточку сами — раздел «Карточка Listik» в теле агента.
+
 ## Хуки
 
 `hooks/hooks.json` → `approve-pipeline-agents.py` на `PermissionRequest` (Bash/Edit/Write/MultiEdit/

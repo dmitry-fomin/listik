@@ -224,6 +224,42 @@
       ]
     },
     {
+      "key": "cross-pipeline",
+      "kind": "pipeline",
+      "title": "cross",
+      "hint": "Devin ТЗ · Grok критика · GLM код · Grok приёмка",
+      "visible": true,
+      "icon": "xhigh",
+      "roles": {
+        "spec": {
+          "provider": "devin",
+          "label": "Devin",
+          "title": "devin · SWE-2 max"
+        },
+        "critic": {
+          "provider": "grok",
+          "label": "Grok",
+          "title": "Grok 4.7 · xhigh, без записи"
+        },
+        "impl": {
+          "provider": "glm",
+          "label": "GLM",
+          "title": "GLM 5.3 Flash в pi"
+        },
+        "judge": {
+          "provider": "grok",
+          "label": "Grok",
+          "title": "Grok 4.7 · xhigh"
+        }
+      },
+      "command": [
+        "claude",
+        "--dangerously-skip-permissions",
+        "-p",
+        "Задача {task_id} (проект {project}), маршрут {route}. Запусти скил /feature-pipeline:{route} и веди карточку по нему: ты оркестратор, кода не пишешь и порцию не коммитишь. Протокол — AGENTS.md. Первым действием, до чтения кода и show: claim {task_id} --holder claude. Дальше heartbeat каждые 10–15 мин, пока карточку держишь ты. Все команды с --actor agent:claude --harness claude."
+      ]
+    },
+    {
       "key": "inherit-pipeline",
       "kind": "pipeline",
       "title": "inherit",

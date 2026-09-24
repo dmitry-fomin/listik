@@ -1429,7 +1429,7 @@ def cmd_waves(args) -> int:
 
 def _swarm_view(health: dict | None) -> dict:
     """Рой для status: с живого сервера, иначе по конфигу и swarm.pid."""
-    from listik import swarm_proc
+    from listik import swarm_llm, swarm_proc
     if health and isinstance(health.get("swarm"), dict):
         return health["swarm"]
     try:
@@ -1437,7 +1437,8 @@ def _swarm_view(health: dict | None) -> dict:
     except ValueError as exc:
         return {"enabled": False, "running": False, "pid": None, "error": str(exc)}
     pid = swarm_proc.dispatcher_pid()
-    return {"enabled": enabled, "running": pid is not None, "pid": pid}
+    return {"enabled": enabled, "running": pid is not None, "pid": pid,
+            "model": swarm_llm.model_name()}
 
 
 def _print_swarm(health: dict | None) -> None:
@@ -1445,14 +1446,15 @@ def _print_swarm(health: dict | None) -> None:
     if info.get("error"):
         print(f"рой:    конфиг: {info['error']}")
         return
+    suffix = f" · модель {info['model']}" if info.get("model") else ""
     if not info.get("enabled"):
-        print("рой:    выключен (listik swarm on)")
+        print(f"рой:    выключен (listik swarm on){suffix}")
         return
     if info.get("running"):
         pid = info.get("pid")
-        print(f"рой:    работает{f' (pid {pid})' if pid else ''}")
+        print(f"рой:    работает{f' (pid {pid})' if pid else ''}{suffix}")
     else:
-        print("рой:    включён, процесс не запущен")
+        print(f"рой:    включён, процесс не запущен{suffix}")
 
 
 def cmd_swarm(args) -> int:
@@ -1478,6 +1480,35 @@ def cmd_swarm(args) -> int:
     return 0
 
 
+def cmd_arbiter_check(args) -> int:
+    """Проверить результат арбитра слияния через jev; формат входа — docs/API.md."""
+    try:
+        if args.input == "-":
+            payload = json.load(sys.stdin)
+        else:
+            with open(args.input, encoding="utf-8") as fh:
+                payload = json.load(fh)
+    except (OSError, UnicodeError, json.JSONDecodeError) as exc:
+        raise errors.BadArgument(f"--input: не удалось прочитать JSON ({exc})") from exc
+    if not isinstance(payload, dict):
+        raise errors.BadArgument("--input: ожидался объект JSON")
+
+    res = call("swarm_arbiter_check", args, "/api/swarm/arbiter-check", method="POST",
+               body=payload, local_kwargs={"payload": payload}, timeout=600)
+    if getattr(args, "json", False):
+        emit(args, res, "")
+    else:
+        verdict = "ok" if res["ok"] else "reject"
+        if res["ok"] and res.get("skipped"):
+            verdict = f"пропущена ({res['skipped']})"
+        lines = [f"проверка слияния {payload['task']['id']}: {verdict}, модель {res['model']}"]
+        for file in res["files"]:
+            reason = f" — {file['reason']}" if file.get("reason") else ""
+            lines.append(f"  {file['path']}: {file['verdict']}{reason}")
+        print("\n".join(lines))
+    return 0 if res["ok"] else 1
+
+
 def cmd_plan(args) -> int:
     """LLM-проход роя: грубые зависимости `blocks` между открытыми задачами проекта —
     какие ТЗ можно писать параллельно."""
@@ -1500,6 +1531,22 @@ def cmd_plan(args) -> int:
 
     lines = [f"план {project}: задач {len(res.get('tasks') or {})}, "
             f"модель {res.get('model')}, попыток {res.get('attempts')}"]
+
+    jev = res.get("jev") or {}
+    jev_skipped = jev.get("skipped")
+    if jev_skipped == "не настроен":
+        lines.append("jev: не настроен")
+    elif jev_skipped == "не вызывался":
+        lines.append("jev: не вызывался")
+    elif isinstance(jev_skipped, str) and jev_skipped.startswith("ошибка:"):
+        lines.append(f"jev: пропущен — {jev_skipped}")
+    else:
+        jev_dropped = jev.get("dropped") or []
+        lines.append(f"jev: проверено рёбер {jev.get('checked', 0)}, снято {len(jev_dropped)}")
+        for item in jev_dropped:
+            edge = item.get("edge") or []
+            if len(edge) == 2:
+                lines.append(f"снято jev: {edge[0]} → {edge[1]} (p={item.get('p', 0):g})")
 
     tasks = res.get("tasks") or {}
     without_deps: list[str] = []
@@ -2719,6 +2766,12 @@ def build_parser() -> argparse.ArgumentParser:
              help="включить рой в config.toml: сервер сам гоняет все проекты")
     sp.add_argument("state", choices=["on", "off", "status"],
                     help="on — [swarm] enabled = true; off — false; status — что сейчас")
+
+    sp = add("arbiter-check", cmd_arbiter_check,
+             help="проверка результата арбитра слияния через jev (рой зовёт сам)",
+             description="Проверка результата арбитра слияния через jev; формат входа описан в docs/API.md.")
+    sp.add_argument("--input", required=True, metavar="FILE",
+                    help="JSON с task, others, files; - — читать stdin")
 
     sp = add("plan", cmd_plan, help="LLM-проход роя: грубые зависимости между открытыми "
                                     "задачами проекта — какие ТЗ можно писать параллельно")

@@ -839,6 +839,29 @@ function statusFor(dataDir) {
   })};
 }
 
+for (const [label, swarm, expected] of [
+  ["с моделью", {enabled: true, running: true, model: "glm-x"}, "model=glm-x"],
+  ["без swarm", undefined, "model=-"],
+]) {
+  test(`тик: строка сервера показывает модель ${label}`, async () => {
+    const dataDir = fs.mkdtempSync(path.join(os.tmpdir(), "listik-swarm-data-"));
+    const status = JSON.parse(statusFor(dataDir).stdout);
+    if (swarm) status.swarm = swarm;
+    const responses = {
+      status: {stdout: JSON.stringify(status)},
+      waves: {stdout: JSON.stringify({waves: {project: "proj", waves: [], cycles: [], unroutable: [], unscoped: [], blocked: {}}, added: [], removed: [], kept: 0})},
+      list: {stdout: JSON.stringify({total: 0, limit: 1000, offset: 0, tasks: []})},
+      routes: {stdout: JSON.stringify({ok: true, routes: []})},
+      projects: {stdout: JSON.stringify([{slug: "proj", path: ""}])},
+    };
+    setupFake(responses);
+    const listik = new Listik({bin: FAKE_BIN, actor: "agent:listik-swarm", cliTimeout: 5});
+    const log = makeLog();
+    await tick(listik, {...baseConfig, logDir: fs.mkdtempSync(path.join(os.tmpdir(), "listik-swarm-log-"))}, log);
+    assert.ok(log.lines.some(line => line.includes(expected)), log.lines.join("\n"));
+  });
+}
+
 gitTest("watch+barrier (а): running пуст — watch раньше comment MERGED_MARK, партия после слияния", async () => {
   const repo = initRepo();
   const treeT1 = addWorktree(repo, "t1");

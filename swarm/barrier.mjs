@@ -169,7 +169,7 @@ async function abortQuiet(git, worktree) {
 // Оркестрация барьера волны: rebase → ff-merge по одной, запись факта, гейт.
 // Порция c — конфликт ребейза здесь всегда отказ (`rebaseAbort`), без арбитра.
 export async function runBarrier({listik, git, fs, config, swarmConfig, log, tasks, projectPath, now,
-  swarmJsonPath}) {
+  swarmJsonPath, swarmModel}) {
   const dryRun = !!(config && config.dryRun);
   const EMPTY_TAIL = {unfrozen: [], integration: null, cleaned: [], rejected: []};
 
@@ -478,7 +478,7 @@ export async function runBarrier({listik, git, fs, config, swarmConfig, log, tas
       try {
         arbRes = await resolveWithArbiter({
           git, listik, fs, config, swarmConfig, log, projectPath, task: entry, card: entry,
-          worktree: entry.worktree, base, tasks, now,
+          worktree: entry.worktree, base, tasks, now, model: swarmModel,
         });
       } catch (err) {
         await abortQuiet(git, entry.worktree);

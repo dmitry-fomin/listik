@@ -49,6 +49,14 @@ ENV_API_KEY = "LISTIK_SWARM_API_KEY"
 ENV_BASE_URL = "LISTIK_SWARM_BASE_URL"
 ENV_MODEL = "LISTIK_SWARM_MODEL"
 
+JEV_DEFAULT_URL = "https://openrouter.ai/api/alpha/decisions"
+JEV_DEFAULT_MODEL = "typesafe/jev-1.13"
+JEV_TIMEOUT = 30.0
+ENV_JEV_API_KEY = "LISTIK_SWARM_JEV_API_KEY"
+ENV_JEV_URL = "LISTIK_SWARM_JEV_URL"
+ENV_JEV_MODEL = "LISTIK_SWARM_JEV_MODEL"
+JEV_EDGE_DROP_BELOW = 0.2  # ponytail: порог не калиброван; поднимать по журналу jev.dropped
+
 logger = logging.getLogger("listik.swarm_llm")
 
 
@@ -58,6 +66,22 @@ class SwarmLlmError(errors.ListikError):
     def __init__(self, message: str, *, status: int = 502, code: str = errors.SERVER_ERROR,
                  hint: str = ""):
         super().__init__(message, code=code, hint=hint, exit_code=1, status=status)
+
+
+def model_name(cfg: dict | None = None) -> str:
+    """Итоговое имя модели роя из конфига и окружения.
+
+    Резолвинг модели намеренно отделён от полной :func:`settings`: он не читает
+    ключ и не валидирует внешний ``command``.
+    """
+    cfg = cfg if cfg is not None else util.load_config()
+    section = cfg.get("swarm") if isinstance(cfg, dict) else None
+    if not isinstance(section, dict):
+        section = {}
+    model = section.get("model")
+    model = model.strip() if isinstance(model, str) and model.strip() else ""
+    env_model = (os.environ.get(ENV_MODEL) or "").strip()
+    return env_model or model or DEFAULT_MODEL
 
 
 def settings(cfg: dict | None = None) -> dict:
@@ -80,12 +104,27 @@ def settings(cfg: dict | None = None) -> dict:
         base_url = env_base_url
     base_url = (base_url or DEFAULT_BASE_URL).rstrip("/")
 
-    model = section.get("model")
-    model = model.strip() if isinstance(model, str) and model.strip() else ""
-    env_model = (os.environ.get(ENV_MODEL) or "").strip()
-    if env_model:
-        model = env_model
-    model = model or DEFAULT_MODEL
+    model = model_name(cfg)
+
+    jev_api_key = section.get("jev_api_key")
+    jev_api_key = jev_api_key.strip() if isinstance(jev_api_key, str) else ""
+    env_jev_api_key = (os.environ.get(ENV_JEV_API_KEY) or "").strip()
+    if env_jev_api_key:
+        jev_api_key = env_jev_api_key
+
+    jev_url = section.get("jev_url")
+    jev_url = jev_url.strip() if isinstance(jev_url, str) and jev_url.strip() else ""
+    env_jev_url = (os.environ.get(ENV_JEV_URL) or "").strip()
+    if env_jev_url:
+        jev_url = env_jev_url
+    jev_url = (jev_url or JEV_DEFAULT_URL).rstrip("/")
+
+    jev_model = section.get("jev_model")
+    jev_model = jev_model.strip() if isinstance(jev_model, str) and jev_model.strip() else ""
+    env_jev_model = (os.environ.get(ENV_JEV_MODEL) or "").strip()
+    if env_jev_model:
+        jev_model = env_jev_model
+    jev_model = jev_model or JEV_DEFAULT_MODEL
 
     raw_command = section.get("command")
     if raw_command in (None, [], ()):
@@ -95,7 +134,12 @@ def settings(cfg: dict | None = None) -> dict:
     else:
         raise errors.BadArgument("[swarm].command: ожидался список строк argv")
 
-    return {"api_key": api_key, "base_url": base_url, "model": model, "command": command}
+    return {"api_key": api_key, "base_url": base_url, "model": model, "command": command,
+            "jev_api_key": jev_api_key, "jev_url": jev_url, "jev_model": jev_model}
+
+
+def jev_enabled(cfg_settings: dict) -> bool:
+    return bool(cfg_settings.get("jev_api_key"))
 
 
 _FENCE_RE = re.compile(r"```(?:json)?\s*(.*?)\s*```", re.DOTALL)
@@ -243,6 +287,283 @@ def complete_json(messages: list[dict], schema: dict, *, name: str, cfg_settings
                            model=cfg_settings["model"], runner=runner, timeout=timeout)
     return _via_http(messages, schema, name=name, cfg_settings=cfg_settings, opener=opener,
                     timeout=timeout)
+
+
+def _jev_error(raw: str, api_key: str, message: str) -> SwarmLlmError:
+    message = message[:200]
+    assistant.log_upstream(message, raw, api_key=api_key, target=logger)
+    return SwarmLlmError(message, status=502)
+
+
+def decide(state, questions: dict, *, cfg_settings: dict, opener=None,
+           timeout: float = JEV_TIMEOUT) -> dict:
+    """Сделать один типизированный запрос к OpenRouter Decisions API (jev)."""
+    api_key = cfg_settings.get("jev_api_key", "")
+    if not api_key:
+        raise SwarmLlmError(
+            "jev не настроен: добавь jev_api_key в config.toml, раздел [swarm] "
+            "(или LISTIK_SWARM_JEV_API_KEY)", status=503)
+
+    url = cfg_settings["jev_url"]
+    payload = {"model": cfg_settings["jev_model"],
+               "state": state, "questions": questions}
+    headers = {"Content-Type": "application/json", "Accept": "application/json",
+               "Authorization": f"Bearer {api_key}"}
+    request = urllib.request.Request(
+        url,
+        data=util.json_dumps(payload).encode("utf-8"), headers=headers, method="POST")
+    open_url = opener or urllib.request.urlopen
+    try:
+        with open_url(request, timeout=timeout) as response:
+            raw = response.read().decode("utf-8", "replace")
+    except urllib.error.HTTPError as exc:
+        try:
+            raw = exc.read().decode("utf-8", "replace")
+        except Exception:  # noqa: BLE001 — тело ошибки может быть недоступно
+            raw = ""
+        if exc.code in (401, 403):
+            raise _jev_error(
+                raw, api_key,
+                f"jev отклонил ключ (HTTP {exc.code}): проверь [swarm].jev_api_key") from exc
+        raise _jev_error(raw, api_key, f"jev ответил ошибкой HTTP {exc.code}") from exc
+    except urllib.error.URLError as exc:
+        detail = f"jev недоступен ({url}): {exc.reason}".replace(api_key, "***")
+        raise SwarmLlmError(
+            detail, status=504) from exc
+    except TimeoutError as exc:
+        raise SwarmLlmError(f"jev не ответил за {timeout:.0f} с", status=504) from exc
+
+    try:
+        data = util.json_loads(raw)
+    except util.JSONDecodeError as exc:
+        raise _jev_error(raw, api_key, "jev ответил не JSON") from exc
+    if not isinstance(data, dict) or not isinstance(data.get("answers"), dict):
+        raise _jev_error(raw, api_key, "jev: в ответе нет answers")
+
+    answers = data["answers"]
+    for name, question in questions.items():
+        answer = answers.get(name)
+        safe_name = name.replace(api_key, "***")
+        detail = "нет ответа" if answer is None else "неверная форма"
+        if not isinstance(answer, dict):
+            raise _jev_error(raw, api_key,
+                             f"jev: негодный ответ на {safe_name}: {detail}")
+        expected_type = question.get("type") if isinstance(question, dict) else None
+        if answer.get("type") != expected_type:
+            detail = f"type должен быть {expected_type!r}"
+        elif expected_type == "noul":
+            value = answer.get("noul")
+            if isinstance(value, bool) or not isinstance(value, (int, float)):
+                detail = "noul должен быть числом от 0 до 1"
+            elif not 0 <= value <= 1:
+                detail = "noul должен быть числом от 0 до 1"
+            else:
+                continue
+        elif expected_type == "choice":
+            value = answer.get("choice")
+            criteria = question.get("criteria") if isinstance(question, dict) else None
+            if not isinstance(value, str) or not isinstance(criteria, dict) or value not in criteria:
+                detail = "choice отсутствует в criteria"
+            else:
+                continue
+        else:
+            detail = "неподдерживаемый type"
+        raise _jev_error(raw, api_key, f"jev: негодный ответ на {safe_name}: {detail}")
+
+    usage = data.get("usage")
+    if not isinstance(usage, dict):
+        usage = None
+    model = data.get("model")
+    if not isinstance(model, str):
+        model = None
+    return {"answers": answers, "usage": usage, "model": model}
+
+
+# --- проверка результата арбитра слияния через jev ------------------------------------
+
+JEV_MERGE_ACCEPT = 0.7          # ponytail: порог не калиброван; крутить по verdict.json
+MERGE_CONTEXT_LINES = 3
+MERGE_MAX_STATE_CHARS = 100_000  # ≈25k токенов; контекст jev — 32k
+MERGE_FILE_FALLBACK_CHARS = 40_000
+
+MERGE_QUESTIONS = {
+    "task_kept": {
+        "type": "noul",
+        "instructions": (
+            "В каждом resolved (или в resolved_file) сохранено то, что сторона task "
+            "добавила или изменила относительно base? Учитывай task_card."),
+        "criteria": {"true": "Изменения стороны task сохранены во всех кусках.",
+                     "false": "Изменения стороны task потеряны хотя бы в одном куске."},
+    },
+    "main_kept": {
+        "type": "noul",
+        "instructions": (
+            "В каждом resolved (или в resolved_file) сохранено то, что сторона main "
+            "добавила или изменила относительно base? Учитывай main_cards."),
+        "criteria": {"true": "Изменения стороны main сохранены во всех кусках.",
+                     "false": "Изменения стороны main потеряны хотя бы в одном куске."},
+    },
+    "clean": {
+        "type": "noul",
+        "instructions": (
+            "Результат в resolved (или в resolved_file) цельный: один фрагмент не "
+            "повторён дважды, нет обрывков строк и маркеров конфликта?"),
+        "criteria": {"true": "Результат цельный, без повторов, обрывков и маркеров.",
+                     "false": "Есть повтор, обрывок строки или маркер конфликта."},
+    },
+}
+
+
+def extract_conflicts(before: str) -> list[dict]:
+    """Разобрать diff3/обычные конфликты, не захватывая соседние блоки в якоря."""
+    lines = before.splitlines()
+    blocks: list[tuple[int, int, dict]] = []
+    start = base = separator = None
+    for i, line in enumerate(lines):
+        if line.startswith("<<<<<<< "):
+            if start is not None:
+                raise errors.BadArgument(f"маркеры конфликта не разобраны: строка {i + 1}")
+            start = i
+        elif line.startswith("||||||| "):
+            if start is None or base is not None or separator is not None:
+                raise errors.BadArgument(f"маркеры конфликта не разобраны: строка {i + 1}")
+            base = i
+        elif line == "=======":
+            if start is None or separator is not None:
+                raise errors.BadArgument(f"маркеры конфликта не разобраны: строка {i + 1}")
+            separator = i
+        elif line.startswith(">>>>>>> "):
+            if start is None or separator is None:
+                raise errors.BadArgument(f"маркеры конфликта не разобраны: строка {i + 1}")
+            blocks.append((start, i, {
+                "main": "\n".join(lines[start + 1:base if base is not None else separator]),
+                "base": "\n".join(lines[base + 1:separator]) if base is not None else None,
+                "task": "\n".join(lines[separator + 1:i]),
+            }))
+            start = base = separator = None
+    if start is not None:
+        raise errors.BadArgument(f"маркеры конфликта не разобраны: строка {start + 1}")
+
+    hunks = []
+    for n, (start, end, hunk) in enumerate(blocks):
+        previous_end = blocks[n - 1][1] + 1 if n else 0
+        next_start = blocks[n + 1][0] if n + 1 < len(blocks) else len(lines)
+        hunks.append({**hunk,
+                      "ctx_before": lines[max(previous_end, start - MERGE_CONTEXT_LINES):start],
+                      "ctx_after": lines[end + 1:min(next_start, end + 1 + MERGE_CONTEXT_LINES)]})
+    return hunks
+
+
+def resolved_regions(after: str, hunks: list[dict]) -> list[str | None]:
+    """Найти области между якорями; неудачный поиск не сдвигает курсор."""
+    lines = after.splitlines()
+
+    def find(anchor: list[str], start: int) -> int | None:
+        for i in range(start, len(lines) - len(anchor) + 1):
+            if lines[i:i + len(anchor)] == anchor:
+                return i
+        return None
+
+    regions: list[str | None] = []
+    cursor = 0
+    for hunk in hunks:
+        left, right = hunk["ctx_before"], hunk["ctx_after"]
+        start = find(left, cursor) if left else cursor
+        if start is None:
+            regions.append(None)
+            continue
+        start += len(left)
+        end = find(right, start) if right else len(lines)
+        if end is None:
+            regions.append(None)
+            continue
+        regions.append("\n".join(lines[start:end]))
+        # Правый якорь может быть левым якорем следующего близкого конфликта.
+        cursor = end
+    return regions
+
+
+def merge_state(path, before, after) -> tuple[dict | None, str | None]:
+    """Снимок конфликтных кусков и результата либо причина пропуска файла."""
+    try:
+        hunks = extract_conflicts(before)
+    except errors.BadArgument as exc:
+        return None, str(exc)
+    if not hunks:
+        return None, "в «до» нет маркеров конфликта"
+    regions = resolved_regions(after, hunks)
+    state = {"path": path, "hunks": [
+        {"main": hunk["main"], "base": hunk["base"], "task": hunk["task"],
+         "resolved": region} for hunk, region in zip(hunks, regions)]}
+    if any(region is None for region in regions):
+        if len(after) > MERGE_FILE_FALLBACK_CHARS:
+            return None, "не удалось сопоставить куски, файл велик"
+        state["resolved_file"] = after
+    if len(util.json_dumps(state)) > MERGE_MAX_STATE_CHARS:
+        return None, "слишком большой для jev"
+    return state, None
+
+
+def _merge_card(card, field: str) -> dict:
+    if not isinstance(card, dict):
+        raise errors.BadArgument(f"{field}: ожидался объект")
+    if not isinstance(card.get("id"), str) or not card["id"].strip():
+        raise errors.BadArgument(f"{field}.id: ожидалась непустая строка")
+    for name in ("title", "description", "acceptance"):
+        if name in card and not isinstance(card[name], str):
+            raise errors.BadArgument(f"{field}.{name}: ожидалась строка")
+    return {"id": card["id"], "title": card.get("title", ""),
+            "acceptance": _clip(card.get("acceptance", ""), 1500)}
+
+
+def judge_merge(payload, *, cfg_settings=None, opener=None, timeout=JEV_TIMEOUT) -> dict:
+    """Проверить снимки слияния без записи в БД; недоступный jev — пропуск."""
+    if not isinstance(payload, dict):
+        raise errors.BadArgument("payload: ожидался объект")
+    task_card = _merge_card(payload.get("task"), "task")
+    others = payload.get("others", [])
+    if not isinstance(others, list):
+        raise errors.BadArgument("others: ожидался список")
+    main_cards = [_merge_card(card, f"others[{i}]") for i, card in enumerate(others)]
+    files = payload.get("files")
+    if not isinstance(files, list) or not files:
+        raise errors.BadArgument("files: ожидался непустой список")
+    for i, file in enumerate(files):
+        if not isinstance(file, dict):
+            raise errors.BadArgument(f"files[{i}]: ожидался объект")
+        for name in ("path", "before", "after"):
+            if not isinstance(file.get(name), str):
+                raise errors.BadArgument(f"files[{i}].{name}: ожидалась строка")
+
+    cfg_settings = cfg_settings or settings()
+    if not jev_enabled(cfg_settings):
+        return {"ok": True, "model": None, "skipped": "не настроен", "files": []}
+
+    results = []
+    skipped = None
+    for file in files:
+        state, reason = merge_state(file["path"], file["before"], file["after"])
+        if state is None:
+            results.append({"path": file["path"], "verdict": "skipped",
+                            "reason": reason, "answers": {}})
+            continue
+        try:
+            reply = decide(state={"task_card": task_card, "main_cards": main_cards, **state},
+                           questions=MERGE_QUESTIONS, cfg_settings=cfg_settings,
+                           opener=opener, timeout=timeout)
+        except SwarmLlmError as exc:
+            skipped = f"ошибка: {exc.message}"
+            logger.warning("проверка слияния jev пропущена: %s", exc.message)
+            break
+        answers = {name: reply["answers"][name]["noul"] for name in MERGE_QUESTIONS}
+        failed = [f"{name}={p:.2f}" for name, p in answers.items() if p < JEV_MERGE_ACCEPT]
+        result = {"path": file["path"], "verdict": "reject" if failed else "ok",
+                  "answers": answers}
+        if failed:
+            result["reason"] = ", ".join(failed)
+        results.append(result)
+    return {"ok": not any(item["verdict"] == "reject" for item in results),
+            "model": cfg_settings["jev_model"], "skipped": skipped, "files": results}
 
 
 # --- проход `listik plan`: грубые зависимости между открытыми задачами проекта -----------
@@ -433,6 +754,57 @@ def _graph_pass(messages: list[dict], schema: dict, *, name: str, ids: list[str]
     return tasks_view, model_edges, dropped, cycles, attempts
 
 
+JEV_EDGE_INSTRUCTIONS = "Задачу b нельзя спланировать и написать её ТЗ, не зная результата задачи a"
+JEV_EDGE_TRUE = ("a вводит схему, API, модуль, команду, формат или решение, на которое b "
+                 "прямо опирается; reason это подтверждает")
+JEV_EDGE_FALSE = ("общая тема, общий родитель, соседние файлы, порядок «для удобства» или "
+                  "зависимость «на всякий случай» — b можно спланировать, не зная результата a")
+
+
+def _jev_card(task_id: str, by_id: dict) -> dict:
+    row = by_id[task_id]
+    return {"id": task_id, "title": row["title"],
+            "description": _clip(row["description"] or "", MAX_FIELD_CHARS),
+            "acceptance": _clip(row["acceptance"] or "", MAX_FIELD_CHARS)}
+
+
+def check_plan_edges(model_edges: list[list[str]], *, fixed: list[list[str]], by_id: dict,
+                     tasks_view: dict, cfg_settings: dict, opener=None,
+                     timeout: float = JEV_TIMEOUT) -> tuple[list[list[str]], dict]:
+    """Проверить предложенные моделью рёбра jev и снять только явно лишние."""
+    fixed_set = {tuple(edge) for edge in fixed}
+    checked = 0
+    dropped: list[dict] = []
+    kept: list[list[str]] = []
+    try:
+        for edge in model_edges:
+            earlier, later = edge
+            if tuple(edge) in fixed_set:
+                kept.append(edge)
+                continue
+            reason = tasks_view.get(later, {}).get("reason", "")
+            state = {"a": _jev_card(earlier, by_id), "b": _jev_card(later, by_id),
+                     "reason": reason}
+            questions = {"needed": {"type": "noul", "instructions": JEV_EDGE_INSTRUCTIONS,
+                                     "criteria": {"true": JEV_EDGE_TRUE, "false": JEV_EDGE_FALSE}}}
+            result = decide(state, questions, cfg_settings=cfg_settings, opener=opener,
+                            timeout=timeout)
+            checked += 1
+            p = result["answers"]["needed"]["noul"]
+            if p < JEV_EDGE_DROP_BELOW:
+                dropped.append({"edge": list(edge), "p": p})
+            else:
+                kept.append(edge)
+    except SwarmLlmError as exc:
+        message = f"ошибка: {exc.message}"
+        logger.warning(message)
+        return [list(edge) for edge in model_edges], {
+            "model": cfg_settings.get("jev_model") or JEV_DEFAULT_MODEL,
+            "checked": checked, "dropped": [], "skipped": message}
+    return kept, {"model": cfg_settings.get("jev_model") or JEV_DEFAULT_MODEL,
+                  "checked": checked, "dropped": dropped, "skipped": None}
+
+
 def plan(conn, *, project: str, stage: str | None = None, apply: bool = False,
          cfg: dict | None = None, opener=None, runner=None, timeout: float = TIMEOUT) -> dict:
     """Проход plan: грубый граф `blocks` между открытыми задачами проекта от модели.
@@ -451,7 +823,9 @@ def plan(conn, *, project: str, stage: str | None = None, apply: bool = False,
     if not ids:
         return {"project": project, "stage": stage, "model": cfg_settings["model"],
                 "attempts": 0, "tasks": {}, "edges": [], "fixed": [], "previous": [],
-                "dropped": [], "cycles": [], "cycles_from": None, "applied": None}
+                "dropped": [], "cycles": [], "cycles_from": None, "applied": None,
+                "jev": {"model": None, "checked": 0, "dropped": [],
+                        "skipped": "не вызывался"}}
 
     fixed, previous = fixed_edges(conn, ids)
     incoming_fixed: dict[str, set[str]] = {}
@@ -464,7 +838,9 @@ def plan(conn, *, project: str, stage: str | None = None, apply: bool = False,
                 "tasks": {tid: {"title": by_id[tid]["title"], "depends_on": [], "reason": ""}
                          for tid in ids},
                 "edges": [], "fixed": fixed, "previous": previous, "dropped": [],
-                "cycles": db_cycles, "cycles_from": "db", "applied": None}
+                "cycles": db_cycles, "cycles_from": "db", "applied": None,
+                "jev": {"model": None, "checked": 0, "dropped": [],
+                        "skipped": "не вызывался"}}
 
     payload_tasks = []
     for tid in ids:
@@ -507,7 +883,21 @@ def plan(conn, *, project: str, stage: str | None = None, apply: bool = False,
         return {"project": project, "stage": stage, "model": cfg_settings["model"],
                 "attempts": attempts, "tasks": tasks_out, "edges": [], "fixed": fixed,
                 "previous": previous, "dropped": dropped, "cycles": cycles,
-                "cycles_from": "model", "applied": None}
+                "cycles_from": "model", "applied": None,
+                "jev": {"model": None, "checked": 0, "dropped": [],
+                        "skipped": "не вызывался"}}
+
+    if jev_enabled(cfg_settings):
+        model_edges, jev = check_plan_edges(
+            model_edges, fixed=fixed, by_id=by_id, tasks_view=tasks_view,
+            cfg_settings=cfg_settings, opener=opener)
+        remaining = {tuple(edge) for edge in model_edges}
+        for tid in ids:
+            original = tasks_out[tid]["depends_on"]
+            tasks_out[tid]["depends_on"] = [
+                earlier for earlier in original if (earlier, tid) in remaining]
+    else:
+        jev = {"model": None, "checked": 0, "dropped": [], "skipped": "не настроен"}
 
     applied = None
     if apply:
@@ -516,7 +906,7 @@ def plan(conn, *, project: str, stage: str | None = None, apply: bool = False,
     return {"project": project, "stage": stage, "model": cfg_settings["model"],
             "attempts": attempts, "tasks": tasks_out, "edges": model_edges, "fixed": fixed,
             "previous": previous, "dropped": dropped, "cycles": [], "cycles_from": None,
-            "applied": applied}
+            "applied": applied, "jev": jev}
 
 
 # --- проход `listik rescope`: области read_scope/write_scope из ТЗ + уточнение графа ------

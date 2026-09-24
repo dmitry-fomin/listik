@@ -233,3 +233,29 @@ test("rescope: timeoutSec перекрывает cliTimeout", async () => {
     return true;
   });
 });
+
+test("arbiterCheck: argv — arbiter-check --input FILE --json, без --actor", async () => {
+  const {calls} = setupFake({"arbiter-check": {stdout: JSON.stringify({ok: true, skipped: "не настроен", files: []})}});
+  const listik = new Listik({bin: FAKE_BIN, actor: "agent:listik-swarm", cliTimeout: 5});
+  const res = await listik.arbiterCheck("/p.json");
+  const [argv] = calls();
+  assert.deepEqual(argv, ["arbiter-check", "--input", "/p.json", "--json"]);
+  assert.equal(res.skipped, "не настроен");
+});
+
+test("arbiterCheck: таймаут по умолчанию 600 с", async () => {
+  const listik = new Listik({bin: FAKE_BIN, actor: "agent:listik-swarm", cliTimeout: 5});
+  const seen = [];
+  listik._call = async (sub, opts) => { seen.push({sub, opts}); return {}; };
+  await listik.arbiterCheck("/p.json");
+  assert.deepEqual(seen, [{sub: ["arbiter-check", "--input", "/p.json"], opts: {timeoutSec: 600}}]);
+});
+
+test("arbiterCheck: ненулевой код с JSON без error (reject) — объект", async () => {
+  setupFake({"arbiter-check": {exitCode: 1, stdout: JSON.stringify({ok: false, model: "m", skipped: null,
+    files: [{path: "f.txt", verdict: "reject", reason: "task_kept=0.10", answers: {}}]})}});
+  const listik = new Listik({bin: FAKE_BIN, actor: "agent:listik-swarm", cliTimeout: 5});
+  const res = await listik.arbiterCheck("/p.json");
+  assert.equal(res.ok, false);
+  assert.equal(res.files[0].verdict, "reject");
+});

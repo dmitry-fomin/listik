@@ -175,4 +175,10 @@ export class Listik {
   rescope(project, {timeoutSec = null} = {}) {
     return this._call(["rescope", "--project", project, "--apply"], {write: true, timeoutSec});
   }
+
+  // Проверка слияния арбитра (jev) — вся jev-логика в `listik arbiter-check`, рой к jev
+  // не ходит. Не пишет в базу — без `--actor`. `reject` (код 1, JSON без error) — объект.
+  arbiterCheck(inputPath, {timeoutSec = 600} = {}) {
+    return this._call(["arbiter-check", "--input", inputPath], {timeoutSec});
+  }
 }

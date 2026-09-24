@@ -3,7 +3,11 @@
 // у которой уже нет — открытые замороженные задачи конфликт разрешают сами (шаг 7,
 // не здесь). Чистое (`renderArgv`…`buildPrompt`) — только обычные объекты внутрь и
 // наружу; `runArbiter`/`resolveWithArbiter` — оркестрация: `spawn` прямой импорт (как
-// `runIntegrationCommand` в `barrier.mjs`), git/listik/fs приходят параметрами.
+// `runIntegrationCommand` в `barrier.mjs`), git/listik/fs приходят параметрами. Плейсхолдер
+// `{model}` — имя из `[swarm].model`, полученное через `listik status`; префикс провайдера
+// пользователь пишет в шаблоне. Результат арбитра проверяет jev — только через
+// `listik arbiter-check` (`listik.arbiterCheck`): рой к jev и к HTTP сам не ходит, ключа
+// jev не видит; `reject` — тот же отказ, что «арбитр не справился».
 import {spawn, execFileSync} from "node:child_process";
 import {openSync, closeSync, readFileSync as readFileSyncNode} from "node:fs";
 import path from "node:path";
@@ -15,11 +19,11 @@ const MAX_STOPS = 10;
 
 // ------------------------------------------------------------------- чистое ---
 
-// Подстановка `{prompt}`, `{task_id}`, `{worktree}`, `{files}` (файлы через запятую,
+// Подстановка `{prompt}`, `{task_id}`, `{worktree}`, `{files}`, `{model}` (файлы через запятую,
 // если `vars.files` — массив) в каждом элементе `template`; неизвестные `{…}` не трогать.
 export function renderArgv(template, vars) {
   const files = Array.isArray(vars.files) ? vars.files.join(",") : (vars.files ?? "");
-  const map = {prompt: vars.prompt, task_id: vars.task_id, worktree: vars.worktree, files};
+  const map = {prompt: vars.prompt, task_id: vars.task_id, worktree: vars.worktree, files, model: vars.model};
   return (template || []).map(item => {
     let out = item;
     for (const [k, v] of Object.entries(map)) {
@@ -27,6 +31,10 @@ export function renderArgv(template, vars) {
     }
     return out;
   });
+}
+
+export function needsModel(template) {
+  return (template || []).some(item => item.includes("{model}"));
 }
 
 function escapeRe(s) {
@@ -111,6 +119,45 @@ export function buildPrompt({task, others, conflicts, base, worktree, specText, 
   lines.push("- Если непротиворечивое слияние невозможно — ничего не правь и выйди с ненулевым " +
     "кодом, объяснив причину в stdout.");
   return lines.join("\n");
+}
+
+function cardFields(c) {
+  return {id: c.id, title: c.title, description: c.description, acceptance: c.acceptance};
+}
+
+// Вход `listik arbiter-check`: карточки и пары «до»/«после» по конфликтным файлам.
+// Файл без снимка «до» или с нечитаемым «после» — в `unreadable`, в `files` не идёт.
+export function buildCheckPayload({task, others, conflicts, before, readAfter}) {
+  const files = [];
+  const unreadable = [];
+  for (const f of conflicts || []) {
+    const b = before ? before[f] : undefined;
+    let after;
+    if (typeof b === "string") {
+      try {
+        after = readAfter(f);
+      } catch {
+        after = undefined;
+      }
+    }
+    if (typeof b === "string" && typeof after === "string") {
+      files.push({path: f, before: b, after});
+    } else {
+      unreadable.push(f);
+    }
+  }
+  return {
+    payload: {task: cardFields(task), others: (others || []).map(cardFields), files},
+    unreadable,
+  };
+}
+
+// Итог проверки по состояниям остановок: `error` > `skipped` > `ok`; пусто — `skipped`.
+export function jevSummary(states) {
+  const list = states || [];
+  if (list.includes("error")) return "error";
+  if (!list.length || list.includes("skipped")) return "skipped";
+  return "ok";
 }
 
 // ------------------------------------------------------------------- запуск ---
@@ -201,7 +248,11 @@ async function abortIfInProgress(git, worktree) {
 // Вызывается только из шага 5 `runBarrier`, когда `rebase` вернул `{ok: false}` и
 // `swarmConfig.arbiter` непуст. Цикл не более `MAX_STOPS` остановок ребейза.
 export async function resolveWithArbiter({git, listik, fs, config, swarmConfig, log, projectPath, task,
-  card, worktree, base, tasks, now}) {
+  card, worktree, base, tasks, now, model}) {
+  if (needsModel(swarmConfig.arbiter) && (typeof model !== "string" || !model)) {
+    await abortIfInProgress(git, worktree);
+    return {ok: false, reason: "модель роя неизвестна: в arbiter есть {model}, а listik status не отдал swarm.model"};
+  }
   const branch = (task.branch || "").trim() || `task/${task.id}`;
   const knownIds = (tasks || []).map(t => t.id);
   const specText = loadSpec(fs, projectPath, card.spec_path);
@@ -235,6 +286,8 @@ export async function resolveWithArbiter({git, listik, fs, config, swarmConfig, 
   fs.mkdirSync(config.logDir, {recursive: true});
 
   const resolvedFiles = new Set();
+  const jevStates = [];
+  let checkVerdictPath = null;
 
   for (let n = 1; n <= MAX_STOPS; n++) {
     let conflicts;
@@ -265,7 +318,19 @@ export async function resolveWithArbiter({git, listik, fs, config, swarmConfig, 
     });
     fs.writeFileSync(promptPath, prompt, "utf8");
 
-    const argv = renderArgv(swarmConfig.arbiter, {prompt: promptPath, task_id: task.id, worktree, files: conflicts});
+    const argv = renderArgv(swarmConfig.arbiter, {
+      prompt: promptPath, task_id: task.id, worktree, files: conflicts, model,
+    });
+
+    // Снимок «до» — до запуска арбитра: маркеры конфликта как их оставил git.
+    const before = {};
+    for (const f of conflicts) {
+      try {
+        before[f] = fs.readFileSync(path.join(worktree, f), "utf8");
+      } catch {
+        log.line(`арбитр ${task.id} (${n}): ${f} не прочитан для проверки`);
+      }
+    }
 
     const startedAt = Date.now();
     const res = await runArbiter({argv, cwd: worktree, timeoutSec: swarmConfig.arbiterTimeout, logPath});
@@ -298,6 +363,46 @@ export async function resolveWithArbiter({git, listik, fs, config, swarmConfig, 
       await abortIfInProgress(git, worktree);
       return {ok: false, reason: `маркеры остались: ${remainingMarkers.join(", ")}`, logPath};
     }
+
+    // Проверка слияния (jev) — строго между «маркеров нет» и `git add`.
+    const {payload, unreadable} = buildCheckPayload({
+      task: {id: task.id, title: card.title, description: card.description, acceptance: card.acceptance},
+      others, conflicts, before,
+      readAfter: f => fs.readFileSync(path.join(worktree, f), "utf8"),
+    });
+    for (const f of unreadable) {
+      if (f in before) log.line(`арбитр ${task.id} (${n}): ${f} не прочитан для проверки`);
+    }
+    const verdictPath = path.resolve(config.logDir, `arbiter-${task.id}-${stamp}-${n}.verdict.json`);
+    checkVerdictPath = verdictPath;
+    let verdict;
+    let state;
+    if (!payload.files.length) {
+      verdict = {ok: true, skipped: "нечего проверять", files: []};
+      state = "skipped";
+    } else {
+      const checkPath = path.resolve(config.logDir, `arbiter-${task.id}-${stamp}-${n}.check.json`);
+      fs.writeFileSync(checkPath, JSON.stringify(payload, null, 2), "utf8");
+      try {
+        verdict = await listik.arbiterCheck(checkPath, {timeoutSec: 600});
+        state = verdict?.ok === false ? "reject" : (verdict?.skipped ? "skipped" : "ok");
+      } catch (err) {
+        verdict = {ok: true, skipped: `ошибка вызова: ${err?.message ?? err}`, files: []};
+        state = "error";
+      }
+    }
+    fs.writeFileSync(verdictPath, JSON.stringify(verdict, null, 2), "utf8");
+    const rejects = (verdict?.files || []).filter(v => v.verdict === "reject")
+      .map(v => `${v.path}: ${v.reason}`).join("; ");
+    const jevDesc = state === "reject" ? `reject (${rejects})`
+      : state === "error" ? verdict.skipped
+      : state === "skipped" ? `пропущена (${verdict.skipped})` : "ok";
+    log.line(`арбитр ${task.id} (${n}): jev → ${jevDesc}`);
+    if (state === "reject") {
+      await abortIfInProgress(git, worktree);
+      return {ok: false, reason: `проверка слияния (jev): ${rejects}`, logPath};
+    }
+    jevStates.push(state);
     try {
       await git.add(worktree, conflicts);
     } catch (err) {
@@ -328,6 +433,7 @@ export async function resolveWithArbiter({git, listik, fs, config, swarmConfig, 
       try {
         await listik.comment(task.id, `${ARBITER_MARK} ${JSON.stringify({
           base, files, stops: n, prompt: promptPath, log: logPath,
+          jev: jevSummary(jevStates), check: checkVerdictPath,
         })}`);
       } catch (err) {
         log.line(`comment ${task.id} ошибка: ${err.message ?? err}`);

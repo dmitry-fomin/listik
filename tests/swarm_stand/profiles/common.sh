@@ -28,8 +28,7 @@ stand_gate() {
 
 stand_commit() {
     message="$1"
-    git add -A
-    git commit -q -m "$message"
+    git add -A && git commit -q -m "$message"
 }
 
 stand_report() {

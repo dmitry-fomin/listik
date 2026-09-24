@@ -137,6 +137,7 @@ class BarrierTests(unittest.TestCase):
         rebased = journal.last("rebased", task="t3")
         self.assertIsNotNone(rebased)
         self.assertEqual(rebased["conflicts"], ["pkg/alpha.py"])
+        self.assertEqual(conflict_resolved["files"], rebased["conflicts"])
 
         alpha_lines = (sandbox.root / "pkg" / "alpha.py").read_text().splitlines()
         self.assertEqual(alpha_lines[-3:], ["# t1 line 1", "# t1 line 2", "# t3 foreign"])
@@ -217,6 +218,12 @@ class BarrierTests(unittest.TestCase):
         self.assertTrue((result.sandbox.root / ".worktrees" / "t1").exists())
         self.assertEqual(result.unfinished, {"t8": "not_started"})
 
+        stopped = journal.of("stopped")
+        self.assertEqual(len(stopped), 1)
+        self.assertEqual(stopped[0]["reason"], "integration_red")
+        self.assertEqual(stopped[0]["wave"], 0)
+        self.assertNotIn("cycles", stopped[0])
+
     # -- 6. run без лестницы ----------------------------------------------------------
 
     def test_run_cycles_waves(self):
@@ -274,7 +281,52 @@ class BarrierTests(unittest.TestCase):
         for task_id in ("t4", "t5"):
             self.assertTrue((result.sandbox.root / ".worktrees" / task_id).exists())
 
+        stopped = journal.of("stopped")
+        self.assertEqual(len(stopped), 1)
+        self.assertEqual(stopped[0]["reason"], "no_ready_tasks")
+        self.assertEqual(stopped[0]["wave"], 2)
+        self.assertNotIn("cycles", stopped[0])
+        self.assertEqual(journal.events[-1]["event"], "stopped")
+
         json.dumps(journal.events)
+
+    # -- 6a. цикл зависимостей — стоп до первого диспетча, событие stopped с cycles --------
+
+    def test_cycle_stops_run_with_event(self):
+        tasks = [
+            Task(id="a", profile="append", write_scope=["pkg/alpha.py"], deps=["c"]),
+            Task(id="b", profile="append", write_scope=["pkg/beta.py"], deps=["a"]),
+            Task(id="c", profile="append", write_scope=["pkg/gamma.py"], deps=["b"]),
+        ]
+        result = run(Scenario(tasks=tasks), stand_tmpdir(self), RunConfig(timeout=5))
+        self.addCleanup(self._revoke_running, result.dispatcher)
+
+        self.assertEqual(result.stopped, "cycle")
+        self.assertFalse(result.journal.of("wave_started"))
+        stopped = result.journal.of("stopped")
+        self.assertEqual(len(stopped), 1)
+        self.assertEqual(stopped[0]["reason"], "cycle")
+        self.assertEqual(stopped[0]["wave"], 0)
+        self.assertEqual(stopped[0]["cycles"], [["a", "b", "c"]])
+
+    # -- 6b. исчерпан max_waves — одно событие stopped без cycles --------
+
+    def test_max_waves_stops_run_with_event(self):
+        tasks = [Task(id="t2", profile="rewrite", write_scope=["pkg/beta.py"])]
+        result = run(
+            Scenario(tasks=tasks),
+            stand_tmpdir(self),
+            RunConfig(timeout=5, gates="sequential", ladder=False),
+            max_waves=0,
+        )
+        self.addCleanup(self._revoke_running, result.dispatcher)
+
+        self.assertEqual(result.stopped, "max_waves")
+        stopped = result.journal.of("stopped")
+        self.assertEqual(len(stopped), 1)
+        self.assertEqual(stopped[0]["reason"], "max_waves")
+        self.assertEqual(stopped[0]["wave"], 0)
+        self.assertNotIn("cycles", stopped[0])
 
     # -- 7. пустая волна не гоняет интеграцию ----------------------------------------------------------
 

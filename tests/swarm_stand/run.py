@@ -124,6 +124,11 @@ def run(
         else:
             unfinished[task_id] = "not_started"
 
+    stop_fields: dict = {"reason": stopped, "wave": wave}
+    if stopped == "cycle":
+        stop_fields["cycles"] = last_plan["cycles"]
+    journal.add("stopped", **stop_fields)
+
     return RunResult(
         sandbox=sandbox,
         dispatcher=dispatcher,

@@ -41,13 +41,13 @@ LISTIK_BIN = REPO_DIR / "bin" / "listik"
 ROUTE_LEVEL_RE = re.compile(r"value: '([a-z0-9-]+)'")
 ROUTE_GLYPH_RE = re.compile(r"icon: '([a-z0-9-]+)'")
 
-DIRECT_KEYS = ["pi-glm", "pi-deepseek", "grok", "codex"]
+DIRECT_KEYS = ["pi-glm", "pi-deepseek", "grok", "codex", "devin"]
 
 # Порядок записей в routes.json — он же порядок строк формы «Новая задача».
 EXPECTED_KEYS = [
     "xhigh-pipeline", "high-pipeline", "medium-pipeline", "low-pipeline", "xlow-pipeline",
-    "nano-pipeline", "devin-pipeline", "cross-pipeline", "inherit-pipeline", "opus-single-pipeline", "opus-sonnet-pipeline",
-    "universal-pipeline", "feature-pipeline",
+    "nano-pipeline", "cross-pipeline", "opus-pipeline",
+    "universal-pipeline",
     *DIRECT_KEYS,
 ]
 
@@ -96,7 +96,7 @@ class RepoRoutesFileTests(unittest.TestCase):
 
     def test_has_sixteen_records_in_order(self) -> None:
         self.assertEqual(self.raw["version"], 1)
-        self.assertEqual(len(self.raw["routes"]), 17)
+        self.assertEqual(len(self.raw["routes"]), 14)
         self.assertEqual([r["key"] for r in self.raw["routes"]], EXPECTED_KEYS)
 
     def test_validates_and_every_record_is_visible(self) -> None:
@@ -107,13 +107,13 @@ class RepoRoutesFileTests(unittest.TestCase):
 
     def test_kinds_match_the_table(self) -> None:
         kinds = [r["kind"] for r in self.raw["routes"]]
-        self.assertEqual(kinds[:13], ["pipeline"] * 13)
-        self.assertEqual(kinds[13:], ["direct"] * 4)
+        self.assertEqual(kinds[:9], ["pipeline"] * 9)
+        self.assertEqual(kinds[9:], ["direct"] * 5)
 
     def test_direct_records_are_exact(self) -> None:
         normalized = routes_mod.validate(self.raw)
         raw_by_key = {record["key"]: record for record in self.raw["routes"]}
-        for key, got in zip(DIRECT_KEYS, normalized[13:]):
+        for key, got in zip(DIRECT_KEYS, normalized[9:]):
             self.assertEqual(got["title"], key)
             self.assertEqual(got, {"key": key, "kind": "direct", "title": key, "hint": "",
                                    "visible": True, "icon": "direct", "harness": key,
@@ -131,8 +131,7 @@ class RepoRoutesFileTests(unittest.TestCase):
         for key in DIRECT_KEYS:
             self.assertEqual(normalized[key], "direct")
         # У пресетов без уровня поля нет — иконка не выдумывается.
-        for key in ("inherit-pipeline", "opus-single-pipeline", "opus-sonnet-pipeline",
-                    "feature-pipeline"):
+        for key in ("opus-pipeline",):
             self.assertIsNone(normalized[key])
 
     def test_repo_every_record_has_command(self) -> None:
@@ -265,7 +264,7 @@ class ValidateTests(unittest.TestCase):
         self.assertIn("None", warnings[0])
 
     def test_icon_explicit_level_passes(self) -> None:
-        record = {**pipeline_record(), "key": "feature-pipeline", "icon": "high"}
+        record = {**pipeline_record(), "key": "universal-pipeline", "icon": "high"}
         normalized, warnings = self.validate_with_warnings(document(record))
         self.assertEqual(normalized[0]["icon"], "high")
         self.assertEqual(warnings, [])
@@ -283,7 +282,7 @@ class ValidateTests(unittest.TestCase):
         self.assertEqual(routes_mod.validate(document(direct_record()))[0]["icon"], "direct")
 
     def test_icon_fallback_has_nothing_for_unknown_prefix(self) -> None:
-        for key in ("feature-pipeline", "inherit-pipeline", "demo-pipeline"):
+        for key in ("universal-pipeline", "demo-pipeline"):
             with self.subTest(key=key):
                 normalized = routes_mod.validate(document({**pipeline_record(), "key": key}))
                 self.assertIsNone(normalized[0]["icon"])
@@ -575,7 +574,7 @@ class FileLoadTests(TempDbTestCase):
         self.assertTrue(state.ok)
         self.assertIsNone(state.error)
         self.assertEqual(state.path, str(self.source))
-        self.assertEqual(len(state.routes), 17)
+        self.assertEqual(len(state.routes), 14)
         self.assertEqual(sorted(state.by_key), sorted(r["key"] for r in state.routes))
         self.assertEqual(state.warnings, [])
 
@@ -616,12 +615,12 @@ class FileLoadTests(TempDbTestCase):
         self.source.write_text("{ битый", encoding="utf-8")
         current = routes_mod.state(self.conn)
         self.assertTrue(current.ok)
-        self.assertEqual(len(current.routes), 17)
+        self.assertEqual(len(current.routes), 14)
         self.assertEqual(current.path, str(paths.DB_PATH))
         self.assertEqual(current.warnings, [])
         with contextlib.redirect_stderr(io.StringIO()):
             self.assertTrue(routes_store.ensure_imported(self.conn).get("skipped"))
-        self.assertEqual(len(routes_mod.state(self.conn).routes), 17)
+        self.assertEqual(len(routes_mod.state(self.conn).routes), 14)
 
     def test_database_update_is_visible_immediately(self) -> None:
         routes_store.import_file(self.conn, self.source)
@@ -689,7 +688,7 @@ class RoutesApiTests(TempDbTestCase):
         self.assertTrue(data["ok"])
         self.assertIsNone(data["error"])
         self.assertEqual(data["path"], str(paths.DB_PATH))
-        self.assertEqual(len(data["routes"]), 17)
+        self.assertEqual(len(data["routes"]), 14)
         for record in data["routes"]:
             self.assertIn("command", record)
             self.assertNotIn("strip", record)
@@ -698,12 +697,12 @@ class RoutesApiTests(TempDbTestCase):
         self.assertEqual(icons["xhigh-pipeline"], "xhigh")
         self.assertEqual(icons["medium-pipeline"], "medium")
         self.assertEqual(icons["pi-deepseek"], "direct")
-        self.assertIsNone(icons["feature-pipeline"])
+        self.assertIsNone(icons["opus-pipeline"])
 
     def test_routes_with_bad_icon_import_fallback_and_keep_all_records(self) -> None:
         """Предупреждение при ввозе; база хранит фолбэк, без файловых предупреждений."""
         bad = {**pipeline_record(), "key": "xhigh-pipeline", "icon": "xhihg"}
-        plain = {**pipeline_record(), "key": "feature-pipeline"}
+        plain = {**pipeline_record(), "key": "universal-pipeline"}
         self.target.parent.mkdir(parents=True)
         self.target.write_text(json.dumps({"version": 1, "routes": [bad, plain, direct_record()]},
                                           ensure_ascii=False), encoding="utf-8")
@@ -718,11 +717,11 @@ class RoutesApiTests(TempDbTestCase):
         self.assertIsNone(data["error"])
         self.assertEqual(data["warnings"], [])
         records = {record["key"]: record for record in data["routes"]}
-        self.assertEqual(sorted(records), ["dsh", "feature-pipeline", "xhigh-pipeline"])
+        self.assertEqual(sorted(records), ["dsh", "universal-pipeline", "xhigh-pipeline"])
         self.assertEqual(records["xhigh-pipeline"]["icon"], "xhigh")
         self.assertNotIn("icon_error", records["xhigh-pipeline"])
-        self.assertIsNone(records["feature-pipeline"]["icon"])
-        self.assertNotIn("icon_error", records["feature-pipeline"])
+        self.assertIsNone(records["universal-pipeline"]["icon"])
+        self.assertNotIn("icon_error", records["universal-pipeline"])
         self.assertEqual(records["dsh"]["icon"], "direct")
         for record in records.values():
             self.assertIn("command", record)
@@ -738,7 +737,7 @@ class RoutesApiTests(TempDbTestCase):
         """Рабочая копия без поля `icon` (создана до его появления) — уровни по ключу."""
         records = [
             {**pipeline_record(), "key": "low-pipeline"},
-            {**pipeline_record(), "key": "feature-pipeline"},
+            {**pipeline_record(), "key": "universal-pipeline"},
             direct_record(),
         ]
         self.target.parent.mkdir(parents=True)
@@ -748,7 +747,7 @@ class RoutesApiTests(TempDbTestCase):
         status, payload = self._get("/api/routes", token=self.TOKEN)
         self.assertEqual(status, 200)
         icons = {record["key"]: record["icon"] for record in payload["data"]["routes"]}
-        self.assertEqual(icons, {"low-pipeline": "low", "feature-pipeline": None, "dsh": "direct"})
+        self.assertEqual(icons, {"low-pipeline": "low", "universal-pipeline": None, "dsh": "direct"})
 
     def test_handle_routes_reports_database_error(self) -> None:
         with mock.patch.object(routes_store, "list_routes",
@@ -773,8 +772,8 @@ class RoutesApiTests(TempDbTestCase):
         self.assertEqual(status, 200)
         data = payload["data"]
         self.assertTrue(data["ok"])
-        self.assertEqual(len(data["routes"]), 17)
-        self.assertEqual([r["key"] for r in data["routes"]][-4:], DIRECT_KEYS)
+        self.assertEqual(len(data["routes"]), 14)
+        self.assertEqual([r["key"] for r in data["routes"]][-5:], DIRECT_KEYS)
         self.assertTrue(all("command" in r for r in data["routes"]))
 
     def test_invisible_records_are_returned(self) -> None:
@@ -798,7 +797,7 @@ class RoutesApiTests(TempDbTestCase):
         status, payload = self._get("/api/routes", token=self.TOKEN)
         self.assertEqual(status, 200)
         self.assertTrue(payload["data"]["ok"])
-        self.assertEqual(len(payload["data"]["routes"]), 17)
+        self.assertEqual(len(payload["data"]["routes"]), 14)
 
     def test_database_change_reaches_live_http_without_restart(self) -> None:
         self._init_from_repo()
@@ -818,7 +817,7 @@ class RoutesApiTests(TempDbTestCase):
         self.assertTrue(state["ok"])
         self.assertIsNone(state["error"])
         self.assertEqual(state["path"], str(paths.DB_PATH))
-        self.assertEqual(state["count"], 17)
+        self.assertEqual(state["count"], 14)
 
     def test_health_database_error_is_reported(self) -> None:
         with mock.patch.object(routes_store, "list_routes",

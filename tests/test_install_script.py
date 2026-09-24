@@ -788,7 +788,7 @@ class InstallScriptTests(unittest.TestCase):
         result = self.install(archive, "--routes-reimport", "yes")
         self.assertEqual(self.installed_route_title(), "grok")
         self.assertIn("маршруты: перезаписаны", result.stdout)
-        self.assertIn("ввезено 17", result.stdout)
+        self.assertIn("ввезено 14", result.stdout)
 
     def test_routes_reimport_env_yes(self) -> None:
         archive = self.make_archive(VERSION)

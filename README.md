@@ -90,7 +90,6 @@ MCP-инструментами `listik_*` или командой `listik new`. 
 | `xhigh-pipeline` | Opus xhigh | GLM | Opus xhigh | Grok xhigh | ошибка дороже прогона |
 | `cross-pipeline` | Devin | Grok | GLM в pi | Grok | автор ТЗ и код — разные вендоры |
 | `high-pipeline` | Opus high | GLM | Opus high | Grok xhigh | расклад по умолчанию |
-| `inherit-pipeline` | Fable | Opus | Sonnet | Opus | всё внутри Claude, наружу ничего не уходит |
 | `medium-pipeline` | Opus medium | GLM | Opus medium | Grok high | работа понятная |
 | `low-pipeline` | Opus low | GLM | devin SWE-2 max | Grok high | код вне квоты Max |
 | `xlow-pipeline` | — | — | devin SWE-2 max | Grok high | один прогон с приёмкой |

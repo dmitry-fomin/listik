@@ -34,7 +34,7 @@
         "claude",
         "--dangerously-skip-permissions",
         "-p",
-        "Задача {task_id} (проект {project}), маршрут {route}. Запусти скил /feature-pipeline:{route} и веди карточку по нему: ты оркестратор, кода не пишешь и порцию не коммитишь. Протокол — AGENTS.md. Первым действием, до чтения кода и show: claim {task_id} --holder claude. Дальше heartbeat каждые 10–15 мин, пока карточку держишь ты. Все команды с --actor agent:claude --harness claude."
+        "Задача {task_id} (проект {project}), маршрут {route}. Запусти скил /feature-pipeline:{route} и веди карточку по нему: ты оркестратор, кода не пишешь и порцию не коммитишь. Протокол — скил listik:listik. Первым действием, до чтения кода и show: claim {task_id} --holder claude. Дальше heartbeat каждые 10–15 мин, пока карточку держишь ты. Все команды с --actor agent:claude --harness claude."
       ]
     },
     {
@@ -70,7 +70,7 @@
         "claude",
         "--dangerously-skip-permissions",
         "-p",
-        "Задача {task_id} (проект {project}), маршрут {route}. Запусти скил /feature-pipeline:{route} и веди карточку по нему: ты оркестратор, кода не пишешь и порцию не коммитишь. Протокол — AGENTS.md. Первым действием, до чтения кода и show: claim {task_id} --holder claude. Дальше heartbeat каждые 10–15 мин, пока карточку держишь ты. Все команды с --actor agent:claude --harness claude."
+        "Задача {task_id} (проект {project}), маршрут {route}. Запусти скил /feature-pipeline:{route} и веди карточку по нему: ты оркестратор, кода не пишешь и порцию не коммитишь. Протокол — скил listik:listik. Первым действием, до чтения кода и show: claim {task_id} --holder claude. Дальше heartbeat каждые 10–15 мин, пока карточку держишь ты. Все команды с --actor agent:claude --harness claude."
       ]
     },
     {
@@ -106,7 +106,7 @@
         "claude",
         "--dangerously-skip-permissions",
         "-p",
-        "Задача {task_id} (проект {project}), маршрут {route}. Запусти скил /feature-pipeline:{route} и веди карточку по нему: ты оркестратор, кода не пишешь и порцию не коммитишь. Протокол — AGENTS.md. Первым действием, до чтения кода и show: claim {task_id} --holder claude. Дальше heartbeat каждые 10–15 мин, пока карточку держишь ты. Все команды с --actor agent:claude --harness claude."
+        "Задача {task_id} (проект {project}), маршрут {route}. Запусти скил /feature-pipeline:{route} и веди карточку по нему: ты оркестратор, кода не пишешь и порцию не коммитишь. Протокол — скил listik:listik. Первым действием, до чтения кода и show: claim {task_id} --holder claude. Дальше heartbeat каждые 10–15 мин, пока карточку держишь ты. Все команды с --actor agent:claude --harness claude."
       ]
     },
     {
@@ -146,7 +146,7 @@
         "claude",
         "--dangerously-skip-permissions",
         "-p",
-        "Задача {task_id} (проект {project}), маршрут {route}. Запусти скил /feature-pipeline:{route} и веди карточку по нему: ты оркестратор, кода не пишешь и порцию не коммитишь. Протокол — AGENTS.md. Первым действием, до чтения кода и show: claim {task_id} --holder claude. Дальше heartbeat каждые 10–15 мин, пока карточку держишь ты. Все команды с --actor agent:claude --harness claude."
+        "Задача {task_id} (проект {project}), маршрут {route}. Запусти скил /feature-pipeline:{route} и веди карточку по нему: ты оркестратор, кода не пишешь и порцию не коммитишь. Протокол — скил listik:listik. Первым действием, до чтения кода и show: claim {task_id} --holder claude. Дальше heartbeat каждые 10–15 мин, пока карточку держишь ты. Все команды с --actor agent:claude --harness claude."
       ]
     },
     {
@@ -176,7 +176,7 @@
         "claude",
         "--dangerously-skip-permissions",
         "-p",
-        "Задача {task_id} (проект {project}), маршрут {route}. Запусти скил /feature-pipeline:{route} и веди карточку по нему: ты оркестратор, кода не пишешь и порцию не коммитишь. Протокол — AGENTS.md. Первым действием, до чтения кода и show: claim {task_id} --holder claude. Дальше heartbeat каждые 10–15 мин, пока карточку держишь ты. Все команды с --actor agent:claude --harness claude."
+        "Задача {task_id} (проект {project}), маршрут {route}. Запусти скил /feature-pipeline:{route} и веди карточку по нему: ты оркестратор, кода не пишешь и порцию не коммитишь. Протокол — скил listik:listik. Первым действием, до чтения кода и show: claim {task_id} --holder claude. Дальше heartbeat каждые 10–15 мин, пока карточку держишь ты. Все команды с --actor agent:claude --harness claude."
       ]
     },
     {
@@ -210,33 +210,7 @@
         "claude",
         "--dangerously-skip-permissions",
         "-p",
-        "Задача {task_id} (проект {project}), маршрут {route}. Запусти скил /feature-pipeline:{route} и веди карточку по нему: ты оркестратор, кода не пишешь и порцию не коммитишь. Протокол — AGENTS.md. Первым действием, до чтения кода и show: claim {task_id} --holder claude. Дальше heartbeat каждые 10–15 мин, пока карточку держишь ты. Все команды с --actor agent:claude --harness claude."
-      ]
-    },
-    {
-      "key": "devin-pipeline",
-      "kind": "pipeline",
-      "title": "devin",
-      "hint": "без ТЗ и критики · не для эпиков · devin max + grok xhigh",
-      "visible": true,
-      "icon": "xlow",
-      "roles": {
-        "impl": {
-          "provider": "devin",
-          "label": "max",
-          "title": "devin · SWE-2 max"
-        },
-        "judge": {
-          "provider": "grok",
-          "label": "xhigh",
-          "title": "Grok 4.7 · xhigh"
-        }
-      },
-      "command": [
-        "claude",
-        "--dangerously-skip-permissions",
-        "-p",
-        "Задача {task_id} (проект {project}), маршрут {route}. Запусти скил /feature-pipeline:{route} и веди карточку по нему: ты оркестратор, кода не пишешь и порцию не коммитишь. Протокол — AGENTS.md. Первым действием, до чтения кода и show: claim {task_id} --holder claude. Дальше heartbeat каждые 10–15 мин, пока карточку держишь ты. Все команды с --actor agent:claude --harness claude."
+        "Задача {task_id} (проект {project}), маршрут {route}. Запусти скил /feature-pipeline:{route} и веди карточку по нему: ты оркестратор, кода не пишешь и порцию не коммитишь. Протокол — скил listik:listik. Первым действием, до чтения кода и show: claim {task_id} --holder claude. Дальше heartbeat каждые 10–15 мин, пока карточку держишь ты. Все команды с --actor agent:claude --harness claude."
       ]
     },
     {
@@ -272,46 +246,11 @@
         "claude",
         "--dangerously-skip-permissions",
         "-p",
-        "Задача {task_id} (проект {project}), маршрут {route}. Запусти скил /feature-pipeline:{route} и веди карточку по нему: ты оркестратор, кода не пишешь и порцию не коммитишь. Протокол — AGENTS.md. Первым действием, до чтения кода и show: claim {task_id} --holder claude. Дальше heartbeat каждые 10–15 мин, пока карточку держишь ты. Все команды с --actor agent:claude --harness claude."
+        "Задача {task_id} (проект {project}), маршрут {route}. Запусти скил /feature-pipeline:{route} и веди карточку по нему: ты оркестратор, кода не пишешь и порцию не коммитишь. Протокол — скил listik:listik. Первым действием, до чтения кода и show: claim {task_id} --holder claude. Дальше heartbeat каждые 10–15 мин, пока карточку держишь ты. Все команды с --actor agent:claude --harness claude."
       ]
     },
     {
-      "key": "inherit-pipeline",
-      "kind": "pipeline",
-      "title": "inherit",
-      "hint": "без внешних харнессов · effort наследуется от оркестратора · вопросы этапов приходят вам по ходу",
-      "visible": true,
-      "roles": {
-        "spec": {
-          "provider": "claude",
-          "label": "Fable",
-          "title": "Fable · effort наследует от оркестратора"
-        },
-        "critic": {
-          "provider": "claude",
-          "label": "Opus",
-          "title": "Opus (критик) · effort наследует от оркестратора"
-        },
-        "impl": {
-          "provider": "claude",
-          "label": "Sonnet",
-          "title": "Sonnet · effort наследует от оркестратора"
-        },
-        "judge": {
-          "provider": "claude",
-          "label": "Opus",
-          "title": "Opus (судья) · effort наследует от оркестратора"
-        }
-      },
-      "command": [
-        "claude",
-        "--dangerously-skip-permissions",
-        "-p",
-        "Задача {task_id} (проект {project}), маршрут {route}. Запусти скил /feature-pipeline:{route} и веди карточку по нему: ты оркестратор, кода не пишешь и порцию не коммитишь. Протокол — AGENTS.md. Первым действием, до чтения кода и show: claim {task_id} --holder claude. Дальше heartbeat каждые 10–15 мин, пока карточку держишь ты. Все команды с --actor agent:claude --harness claude."
-      ]
-    },
-    {
-      "key": "opus-single-pipeline",
+      "key": "opus-pipeline",
       "kind": "pipeline",
       "title": "«Один прогон»",
       "hint": "внешних $0 · ~6 мин · без ТЗ, критики и приёмки — Opus делает всё сам и коммитит",
@@ -331,32 +270,7 @@
         "claude",
         "--dangerously-skip-permissions",
         "-p",
-        "Задача {task_id} (проект {project}), маршрут {route}. Запусти скил /feature-pipeline:{route} и веди карточку по нему: ты оркестратор, кода не пишешь и порцию не коммитишь. Протокол — AGENTS.md. Первым действием, до чтения кода и show: claim {task_id} --holder claude. Дальше heartbeat каждые 10–15 мин, пока карточку держишь ты. Все команды с --actor agent:claude --harness claude."
-      ]
-    },
-    {
-      "key": "opus-sonnet-pipeline",
-      "kind": "pipeline",
-      "title": "opus & sonnet",
-      "hint": "пачка задач из трекера · без ТЗ и критики",
-      "visible": true,
-      "roles": {
-        "impl": {
-          "provider": "claude",
-          "label": "Opus",
-          "title": "Opus, medium или high"
-        },
-        "judge": {
-          "provider": "claude",
-          "label": "Sonnet",
-          "title": "Sonnet-судья, коммитит"
-        }
-      },
-      "command": [
-        "claude",
-        "--dangerously-skip-permissions",
-        "-p",
-        "Задача {task_id} (проект {project}), маршрут {route}. Запусти скил /feature-pipeline:{route} и веди карточку по нему: ты оркестратор, кода не пишешь и порцию не коммитишь. Протокол — AGENTS.md. Первым действием, до чтения кода и show: claim {task_id} --holder claude. Дальше heartbeat каждые 10–15 мин, пока карточку держишь ты. Все команды с --actor agent:claude --harness claude."
+        "Задача {task_id} (проект {project}), маршрут {route}. Запусти скил /feature-pipeline:{route} и веди карточку по нему: ты оркестратор, кода не пишешь и порцию не коммитишь. Протокол — скил listik:listik. Первым действием, до чтения кода и show: claim {task_id} --holder claude. Дальше heartbeat каждые 10–15 мин, пока карточку держишь ты. Все команды с --actor agent:claude --harness claude."
       ]
     },
     {
@@ -382,46 +296,7 @@
         "claude",
         "--dangerously-skip-permissions",
         "-p",
-        "Задача {task_id} (проект {project}), маршрут {route}. Запусти скил /feature-pipeline:{route} и веди карточку по нему: ты оркестратор, кода не пишешь и порцию не коммитишь. Протокол — AGENTS.md. Первым действием, до чтения кода и show: claim {task_id} --holder claude. Дальше heartbeat каждые 10–15 мин, пока карточку держишь ты. Все команды с --actor agent:claude --harness claude."
-      ]
-    },
-    {
-      "key": "feature-pipeline",
-      "kind": "pipeline",
-      "title": "По конфигу проекта",
-      "hint": "те же четыре роли, но вендор каждой — из .claude/feature-pipeline.yaml, по умолчанию grok",
-      "visible": true,
-      "roles": {
-        "spec": {
-          "provider": "claude",
-          "label": "Fable",
-          "title": "Fable, эффорт из конфига"
-        },
-        "critic": {
-          "provider": "grok",
-          "label": "2nd",
-          "title": "second-opinion, провайдер по умолчанию grok"
-        },
-        "impl": {
-          "provider": "grok",
-          "label": "grok",
-          "title": "grok:grok-delegate → pi → локально (фолбэк)"
-        },
-        "judge": {
-          "provider": "claude",
-          "label": "judge",
-          "title": "pipeline-judge, локально"
-        }
-      },
-      "strip": {
-        "glyph": "gear",
-        "label": "по конфигу"
-      },
-      "command": [
-        "claude",
-        "--dangerously-skip-permissions",
-        "-p",
-        "Задача {task_id} (проект {project}), маршрут {route}. Запусти скил /feature-pipeline:{route} и веди карточку по нему: ты оркестратор, кода не пишешь и порцию не коммитишь. Протокол — AGENTS.md. Первым действием, до чтения кода и show: claim {task_id} --holder claude. Дальше heartbeat каждые 10–15 мин, пока карточку держишь ты. Все команды с --actor agent:claude --harness claude."
+        "Задача {task_id} (проект {project}), маршрут {route}. Запусти скил /feature-pipeline:{route} и веди карточку по нему: ты оркестратор, кода не пишешь и порцию не коммитишь. Протокол — скил listik:listik. Первым действием, до чтения кода и show: claim {task_id} --holder claude. Дальше heartbeat каждые 10–15 мин, пока карточку держишь ты. Все команды с --actor agent:claude --harness claude."
       ]
     },
     {
@@ -490,6 +365,25 @@
         "{cwd}",
         "--dangerously-bypass-approvals-and-sandbox",
         "Задача {task_id} (проект {project}) уже выдана тебе: Listik поставил этап s1-spec и держателя codex. Работай по протоколу из AGENTS.md. Первое действие, до чтения кода и show: claim {task_id} --holder codex. Потом show, изучение, heartbeat каждые 10–15 мин. Двухходовка: если в show поле write_scope пустое, до первой правки кода сделай ход 1 только на чтении — изучи задачу и код и запиши в карточку границы: comment {task_id} -k journal с текстом, где первая строка ровно «Границы правки:», дальше по одному пути в строке (файлы и каталоги от корня проекта, которые будешь править), затем строка «не трогать:» и пути, которых не касаешься, и в конце план работы длиной по задаче (для правки текста — три-четыре строки); после этого set {task_id} write_scope=<те же правимые пути через запятую>. Если write_scope уже задан — ход 1 пропусти и работай в этих границах. Ход 2 — реализация; за объявленные границы не выходи, понадобилось — сначала обнови write_scope тем же set и объясни в journal. Перед первой правкой кода (не позже): stage {task_id} --to s3-impl. Итог — comment -k journal, затем done {task_id} -r \"…\". Все команды с --actor agent:codex --harness codex. Рабочее дерево: если в show поле worktree пустое, до правок создай его внутри папки проекта — cd {cwd} && mkdir -p .worktrees && git worktree add -b task/{task_id} .worktrees/{task_id} HEAD, запиши в карточку set {task_id} worktree={cwd}/.worktrees/{task_id} branch=task/{task_id} и работай только там; строку .worktrees/ держи в .gitignore проекта — нет её, добавь до правок. Если worktree задан или равен main — дерево не создавай. Уборка: если ты сам создал дерево и сам делаешь done, после done выйди из него и выполни git -C {cwd} worktree remove {cwd}/.worktrees/{task_id} (без --force; ветка task/{task_id} остаётся). Если git отказал из-за незакоммиченных правок — не удаляй, напиши об этом comment -k journal."
+      ]
+    },
+    {
+      "key": "devin",
+      "kind": "direct",
+      "harness": "devin",
+      "title": "devin",
+      "hint": "",
+      "visible": true,
+      "icon": "direct",
+      "command": [
+        "devin",
+        "--model",
+        "swe-2-max",
+        "--permission-mode",
+        "dangerous",
+        "-p",
+        "--",
+        "Задача {task_id} (проект {project}) уже выдана тебе: Listik поставил этап s1-spec и держателя devin. Работай по протоколу из AGENTS.md. Первое действие, до чтения кода и show: claim {task_id} --holder devin. Потом show, изучение, heartbeat каждые 10–15 мин. Двухходовка: если в show поле write_scope пустое, до первой правки кода сделай ход 1 только на чтении — изучи задачу и код и запиши в карточку границы: comment {task_id} -k journal с текстом, где первая строка ровно «Границы правки:», дальше по одному пути в строке (файлы и каталоги от корня проекта, которые будешь править), затем строка «не трогать:» и пути, которых не касаешься, и в конце план работы длиной по задаче (для правки текста — три-четыре строки); после этого set {task_id} write_scope=<те же правимые пути через запятую>. Если write_scope уже задан — ход 1 пропусти и работай в этих границах. Ход 2 — реализация; за объявленные границы не выходи, понадобилось — сначала обнови write_scope тем же set и объясни в journal. Перед первой правкой кода (не позже): stage {task_id} --to s3-impl. Итог — comment -k journal, затем done {task_id} -r \"…\". Все команды с --actor agent:devin --harness devin. Рабочее дерево: если в show поле worktree пустое, до правок создай его внутри папки проекта — cd {cwd} && mkdir -p .worktrees && git worktree add -b task/{task_id} .worktrees/{task_id} HEAD, запиши в карточку set {task_id} worktree={cwd}/.worktrees/{task_id} branch=task/{task_id} и работай только там; строку .worktrees/ держи в .gitignore проекта — нет её, добавь до правок. Если worktree задан или равен main — дерево не создавай. Уборка: если ты сам создал дерево и сам делаешь done, после done выйди из него и выполни git -C {cwd} worktree remove {cwd}/.worktrees/{task_id} (без --force; ветка task/{task_id} остаётся). Если git отказал из-за незакоммиченных правок — не удаляй, напиши об этом comment -k journal."
       ]
     }
   ]

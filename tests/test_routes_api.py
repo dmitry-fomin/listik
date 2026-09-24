@@ -4,7 +4,7 @@
 Прогоняется через `server.handle(...)`, как соседние тесты ручек (`test_route_change.py`,
 `test_projects_add.py`): `get_conn` подменяется на временное соединение, ошибки — это
 `server.ApiError`, пойманный `assertRaises`. Скилы читаются из настоящего
-`plugins/feature-pipeline/skills/*` репозитория (там ровно те 10 ключей, что и в образце
+`plugins/feature-pipeline/skills/*` репозитория (там ровно те 9 ключей, что и в образце
 `routes.json`) — кроме тестов, которые явно подменяют `skills.SKILLS_DIR` на пустой/чужой
 каталог.
 """
@@ -27,11 +27,11 @@ from tests.helpers import TempDbTestCase
 REPO_DIR = pathlib.Path(__file__).resolve().parent.parent
 ROUTES_JSON = REPO_DIR / "routes.json"
 
-DIRECT_KEYS = ["pi-glm", "pi-deepseek", "grok", "codex"]
+DIRECT_KEYS = ["pi-glm", "pi-deepseek", "grok", "codex", "devin"]
 EXPECTED_KEYS = [
     "xhigh-pipeline", "high-pipeline", "medium-pipeline", "low-pipeline", "xlow-pipeline",
-    "nano-pipeline", "devin-pipeline", "cross-pipeline", "inherit-pipeline", "opus-single-pipeline", "opus-sonnet-pipeline",
-    "universal-pipeline", "feature-pipeline", *DIRECT_KEYS,
+    "nano-pipeline", "cross-pipeline", "opus-pipeline",
+    "universal-pipeline", *DIRECT_KEYS,
 ]
 
 

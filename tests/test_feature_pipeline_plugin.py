@@ -68,6 +68,9 @@ def _frontmatter(lines: list[str]) -> list[str] | None:
     return None
 
 
+#: Скилы плагина без маршрута в routes.json (сейчас таких нет).
+SKILLS_WITHOUT_ROUTE: set[str] = set()
+
 class FeaturePipelinePluginTests(unittest.TestCase):
     """routes.json, скилы плагина и маркетплейс не разъезжаются."""
 
@@ -76,7 +79,7 @@ class FeaturePipelinePluginTests(unittest.TestCase):
         skills = _skill_names()
         self.assertTrue(keys, "в routes.json нет ни одной записи kind == pipeline")
         extra = sorted(keys - skills)
-        missing = sorted(skills - keys)
+        missing = sorted(skills - keys - SKILLS_WITHOUT_ROUTE)
         self.assertEqual(
             (extra, missing), ([], []),
             "ключи конвейеров в routes.json и скилы плагина разошлись: "
@@ -158,8 +161,6 @@ class FeaturePipelinePluginTests(unittest.TestCase):
 #: Пути (относительно PLUGIN_DIR), которые должны называть работу по id карточки (`<id>`), а не
 #: по номеру шага. `agents/*.md` собирается в момент вызова теста, а не при импорте.
 CORE_DOC = pathlib.Path("references") / "pipeline-core.md"
-INHERIT_SKILL = pathlib.Path("skills") / "inherit-pipeline" / SKILL_FILE
-FEATURE_SKILL = pathlib.Path("skills") / "feature-pipeline" / SKILL_FILE
 AGENTS_SUBDIR = "agents"
 
 MANIFEST_LINE = (
@@ -370,7 +371,6 @@ class FeaturePipelineStepNamingTests(unittest.TestCase):
 #: Пресеты, у которых по канону есть строка `BASE=<id>` в примере префикса команд.
 BASE_ID_SKILLS = (
     "high-pipeline",
-    "inherit-pipeline",
     "xhigh-pipeline",
     "medium-pipeline",
     "low-pipeline",
@@ -383,8 +383,6 @@ ARGUMENT_HINT_ID_SKILLS = (
     "xhigh-pipeline",
     "medium-pipeline",
     "low-pipeline",
-    "inherit-pipeline",
-    "feature-pipeline",
 )
 
 BASE_LINE_RE = re.compile(r"^BASE=<id>", re.MULTILINE)
@@ -392,8 +390,8 @@ BASE_LINE_RE = re.compile(r"^BASE=<id>", re.MULTILINE)
 #: Ссылка на ядро, которую держит каждый SKILL.md пресета.
 CORE_LINK = "[pipeline-core.md](../../references/pipeline-core.md)"
 
-#: Пресет, который ссылается на ядро разделом Listik, структура своя.
-PRESETS_WITHOUT_CORE_LINK = ("opus-sonnet-pipeline",)
+#: Пресеты без ссылки на ядро (сейчас таких нет).
+PRESETS_WITHOUT_CORE_LINK: tuple[str, ...] = ()
 
 
 class FeaturePipelineSkillNamingTests(unittest.TestCase):
@@ -433,72 +431,6 @@ class FeaturePipelineSkillNamingTests(unittest.TestCase):
                     f"{name}/{SKILL_FILE}: argument-hint не содержит '<id>.<X>.md'",
                 )
 
-    def test_inherit_pipeline_naming(self) -> None:
-        text = _skill_text("inherit-pipeline")
-        required = [
-            "[pipeline-core.md](../../references/pipeline-core.md)",
-            "Ниже — только то, чем inherit-pipeline отличается",
-            "process:inherit-pipeline",
-            "## Роли",
-            "## Нужные скилы",
-            "## Префикс",
-            "STEPS=<paths.steps",
-            "BASE=<id>",
-            "WT=",
-            "feature-pipeline:pipeline-spec-writer",
-            "feature-pipeline:pipeline-critic",
-            "feature-pipeline:pipeline-implementer",
-            "feature-pipeline:pipeline-judge",
-            "пресет inherit-pipeline",
-            "judge_preflight",
-            "VERDICT: PASS",
-            "VERDICT: FAIL",
-            'git -C "$WT" log --oneline -1',
-        ]
-        for needle in required:
-            with self.subTest(needle=needle):
-                self.assertIn(
-                    needle, text,
-                    f"inherit-pipeline/{SKILL_FILE}: не нашлось обязательной подстроки {needle!r}",
-                )
-
-    def test_inherit_pipeline_has_no_core_copies(self) -> None:
-        """Пресет не держит своей копии ядра: ни шага 0, ни треков, ни пределов, ни общих граблей."""
-        text = _skill_text("inherit-pipeline")
-        forbidden = [
-            "## Жёсткие правила",
-            "**Цикл.**",
-            "## Протокол вопросов",
-            "## Шаг 0",
-            "## Треки",
-            "## Пределы на порцию",
-            "## Журнал",
-            "### Правила треков",
-            "### Сведение и уборка",
-            "listik worktree",
-            "merge --no-ff",
-            "git worktree remove",
-            "add -A -N",
-            "diff HEAD -U10",
-            "reset -q",
-            "M ≤ 2",
-            MANIFEST_LINE,
-            ADHOC_PARAGRAPH_START,
-            "Названная правка в одном-двух файлах",
-        ]
-        for needle in forbidden:
-            with self.subTest(needle=needle):
-                self.assertNotIn(
-                    needle, text,
-                    f"inherit-pipeline/{SKILL_FILE}: осталась копия ядра — {needle!r}",
-                )
-        with self.subTest(needle="## Грабли"):
-            self.assertIsNone(
-                re.search(r"^## Грабли$", text, re.MULTILINE),
-                f"inherit-pipeline/{SKILL_FILE}: остался заголовок общих граблей ядра "
-                "«## Грабли» (у пресета бывает только «## Грабли пресета»)",
-            )
-
     def test_presets_read_core(self) -> None:
         """Каждый пресет отсылает к ядру ссылкой на pipeline-core.md."""
         for name in sorted(_skill_names()):
@@ -510,103 +442,8 @@ class FeaturePipelineSkillNamingTests(unittest.TestCase):
                     f"{name}/{SKILL_FILE}: нет ссылки на ядро {CORE_LINK!r}",
                 )
 
-    def test_feature_pipeline_naming(self) -> None:
-        text = _skill_text("feature-pipeline")
-        required = [
-            "[pipeline-core.md](../../references/pipeline-core.md)",
-            "Ниже — только то, чем feature-pipeline отличается",
-            "process:feature-pipeline",
-            "## Роли",
-            "## Конфиг пресета",
-            "## Нужные скилы",
-            "## Префикс",
-            "JOB",
-            "executor.primary",
-            "executor.fallback",
-            "executor.local",
-            "on_fallback",
-            "second_opinion.when",
-            "spec-only",
-            "feature-pipeline:pipeline-spec-writer",
-            "feature-pipeline:pipeline-implementer",
-            "feature-pipeline:pipeline-judge",
-            "--no-system",
-            "VERDICT: PASS",
-            "VERDICT: FAIL",
-            "фолбэк",
-            'git -C "$WT" log --oneline -1',
-        ]
-        for needle in required:
-            with self.subTest(needle=needle):
-                self.assertIn(
-                    needle, text,
-                    f"feature-pipeline/{SKILL_FILE}: не нашлось обязательной подстроки {needle!r}",
-                )
-
-    def test_feature_pipeline_has_no_core_copies(self) -> None:
-        """Пресет не держит своей копии ядра: ни шага 0, ни пределов, ни общих граблей."""
-        text = _skill_text("feature-pipeline")
-        lowered = text.lower()
-        forbidden = [
-            "pipeline-<",
-            "EnterWorktree",
-            "--ff-only",
-            "git worktree add",
-            "grok:grok-delegate",
-            "dsh:dsh-runner",
-            "tracks.md",
-            "## Жёсткие правила",
-            "## Пределы на порцию",
-            "## Формат отчёта",
-            "Сколько раз можно",
-            "полный круг",
-            "листинги, логи, цитаты кода",
-            "paths.tz",
-            "add -A -N",
-            "diff HEAD -U10",
-            "reset -q",
-            "disable-model-invocation",
-            "синхронный",
-            "SECOND_OPINION_NO_SYSTEM",
-        ]
-        for needle in forbidden:
-            with self.subTest(needle=needle):
-                self.assertNotIn(
-                    needle, text,
-                    f"feature-pipeline/{SKILL_FILE}: осталась копия ядра — {needle!r}",
-                )
-        with self.subTest(needle="разведк"):
-            self.assertNotIn(
-                "разведк", lowered,
-                f"feature-pipeline/{SKILL_FILE}: остался класс задачи «разведка», "
-                "которого у пресета нет",
-            )
-
-    def test_config_example_names_readers(self) -> None:
-        """Образец конфига называет каналы именами каналов и честно — своих читателей."""
-        path = PLUGIN_DIR / "skills" / "feature-pipeline" / "config.example.yaml"
-        text = path.read_text(encoding="utf-8")
-        for needle in (
-            "primary: grok",
-            "fallback: dsh",
-            "local: feature-pipeline:pipeline-implementer",
-            "feature-pipeline",
-            "opus-sonnet-pipeline",
-        ):
-            with self.subTest(needle=needle):
-                self.assertIn(
-                    needle, text,
-                    f"{path.name}: не нашлось обязательной подстроки {needle!r}",
-                )
-        for needle in ("grok:grok-delegate", "dsh:dsh-runner", "пресетами не читаются"):
-            with self.subTest(needle=needle):
-                self.assertNotIn(
-                    needle, text,
-                    f"{path.name}: осталась устаревшая подстрока {needle!r}",
-                )
-
-    def test_opus_single_pipeline_naming(self) -> None:
-        text = _skill_text("opus-single-pipeline")
+    def test_opus_pipeline_naming(self) -> None:
+        text = _skill_text("opus-pipeline")
         required = [
             "<steps>/<id>.md",
             "<steps>/<id>.journal.md",
@@ -616,7 +453,7 @@ class FeaturePipelineSkillNamingTests(unittest.TestCase):
             with self.subTest(needle=needle):
                 self.assertIn(
                     needle, text,
-                    f"opus-single-pipeline/{SKILL_FILE}: не нашлось обязательной подстроки {needle!r}",
+                    f"opus-pipeline/{SKILL_FILE}: не нашлось обязательной подстроки {needle!r}",
                 )
 
     def test_xlow_pipeline_naming(self) -> None:
@@ -628,7 +465,7 @@ class FeaturePipelineSkillNamingTests(unittest.TestCase):
 
     def test_no_pipeline_branch_prefix(self) -> None:
         """pipeline-< и git worktree add -b pipeline больше не используются."""
-        for relative in (CORE_DOC, INHERIT_SKILL, FEATURE_SKILL):
+        for relative in (CORE_DOC,):
             with self.subTest(file=str(relative)):
                 text = _plugin_text(relative)
                 self.assertNotIn(
@@ -669,12 +506,9 @@ SESSION_JOURNAL_LINES = (
 #: сессии: локальный субагент — `SendMessage` по agent id, внешний харнесс — сессия по id
 #: из журнала. Продолжение обязательно и после `вопрос`, и после красного вердикта.
 EXECUTOR_PRESETS = {
-    "feature-pipeline": "SendMessage",
     "high-pipeline": "SendMessage",
     "medium-pipeline": "SendMessage",
-    "inherit-pipeline": "SendMessage",
-    "opus-single-pipeline": "SendMessage",
-    "opus-sonnet-pipeline": "SendMessage",
+    "opus-pipeline": "SendMessage",
     "xhigh-pipeline": "SendMessage",
     "low-pipeline": "сессия <id>",
     "xlow-pipeline": "сессия <id>",
@@ -807,39 +641,59 @@ class FeaturePipelineVendoredSkillPathTests(unittest.TestCase):
                         )
 
 
-#: low/xlow: этап 3 ведёт devin на SWE-2 max, запасной — pi на канале deepseek (расклад 2026-09-24).
-PI_EXECUTOR_PRESETS = ("low-pipeline", "xlow-pipeline")
-PI_EXECUTOR_REQUIRED = (
+#: low/xlow: этап 3 ведёт devin на SWE-2 max, запасного нет (правило владельца: роль
+#: недоступна — конвейер стоит).
+DEVIN_EXECUTOR_PRESETS = ("low-pipeline", "xlow-pipeline")
+DEVIN_EXECUTOR_REQUIRED = (
     "devin:devin-delegate",
     "--thinking max",
     "--holder devin",
     '--label "$BASE <X>"',
     "--cwd $WT",
     '--session "$BASE-<X>"',
-    "pi:pi-delegate",
-    "--channel deepseek",
-    "pi-deepseek",
 )
-PI_EXECUTOR_FORBIDDEN = ("dsh:dsh-delegate",)
+NO_FALLBACK_PRESETS = ("low-pipeline", "xlow-pipeline", "nano-pipeline")
+NO_FALLBACK_FORBIDDEN = ("dsh:dsh-delegate", "pi-deepseek", "--channel deepseek", "запасной —",
+                         "Запасной исполнитель")
+#: Формулировка стоп-фактора: строка журнала из ядра (`pipeline-core.md`, «Стоп-фактор»).
+STOP_LINE = "стоп: <роль> — <харнесс> недоступен: <причина>"
+STOP_MARK = "Стоп-фактор"
 
 
-class FeaturePipelinePiExecutorTests(unittest.TestCase):
-    """low/xlow: исполнитель этапа 3 — devin SWE-2 max, pi deepseek только запасной."""
+class FeaturePipelineNoFallbackTests(unittest.TestCase):
+    """Недоступная роль останавливает конвейер: запасных исполнителей нет нигде."""
 
-    def test_low_and_xlow_run_devin_with_pi_fallback(self) -> None:
-        for name in PI_EXECUTOR_PRESETS:
+    def test_low_and_xlow_run_devin_without_fallback(self) -> None:
+        for name in DEVIN_EXECUTOR_PRESETS:
             text = _skill_text(name)
-            for needle in PI_EXECUTOR_FORBIDDEN:
-                with self.subTest(skill=name, forbidden=needle):
-                    self.assertNotIn(needle, text, f"{name}/{SKILL_FILE}: осталось {needle!r}")
-            for needle in PI_EXECUTOR_REQUIRED:
+            for needle in DEVIN_EXECUTOR_REQUIRED:
                 with self.subTest(skill=name, required=needle):
                     self.assertIn(needle, text, f"{name}/{SKILL_FILE}: нет {needle!r}")
-            with self.subTest(skill=name, order="devin primary"):
-                self.assertLess(
-                    text.index("devin:devin-delegate"), text.index("pi:pi-delegate"),
-                    f"{name}/{SKILL_FILE}: pi упомянут раньше devin — основной исполнитель devin",
-                )
+            with self.subTest(skill=name, required="стоп devin"):
+                self.assertIn("стоп: исполнитель — devin недоступен", text)
+
+    def test_low_xlow_nano_have_no_fallback(self) -> None:
+        for name in NO_FALLBACK_PRESETS:
+            text = _skill_text(name)
+            for needle in NO_FALLBACK_FORBIDDEN:
+                with self.subTest(skill=name, forbidden=needle):
+                    self.assertNotIn(needle, text, f"{name}/{SKILL_FILE}: осталось {needle!r}")
+
+    def test_every_preset_has_stop_factor(self) -> None:
+        skills = sorted(p.parent.name for p in (PLUGIN_DIR / "skills").glob("*/" + SKILL_FILE))
+        self.assertTrue(skills)
+        for name in skills:
+            text = _skill_text(name)
+            for needle in (STOP_MARK, STOP_LINE, "needs-owner"):
+                with self.subTest(skill=name, required=needle):
+                    self.assertIn(needle, text, f"{name}/{SKILL_FILE}: нет стоп-фактора {needle!r}")
+
+    def test_core_defines_stop_factor(self) -> None:
+        core = (PLUGIN_DIR / "references" / "pipeline-core.md").read_text(encoding="utf-8")
+        for needle in ("### Стоп-фактор", "`стоп: <роль> — <харнесс> недоступен: <причина>`",
+                       "Запасного исполнителя нет", "стоп-фактор недоступной роли"):
+            with self.subTest(required=needle):
+                self.assertIn(needle, core)
 
 
 
@@ -847,7 +701,6 @@ class FeaturePipelinePiExecutorTests(unittest.TestCase):
 #: границы правки и план, ход 2 — продолжение той же сессии с правом записи.
 TWO_TURN_COMMON = (
     "Ход 1",
-    "--permission read",
     "write_scope=",
     "## Границы правки",
     "Файлы:",
@@ -860,8 +713,9 @@ TWO_TURN_COMMON = (
     "оба",
 )
 TWO_TURN_PER_SKILL = {
-    "xlow-pipeline": ("resume --session", "--channel deepseek"),
-    "nano-pipeline": ("resume --session", "--thinking high", "devin:devin-delegate"),
+    "xlow-pipeline": ("resume --session", "--thinking max"),
+    "nano-pipeline": ("resume --session", "--thinking high", "devin:devin-delegate",
+                      "--permission read"),
 }
 
 
@@ -929,7 +783,7 @@ def _line_forbids_amend(line: str) -> bool:
     return any(marker in lowered for marker in AMEND_FORBID_MARKERS)
 
 
-#: Семь `SKILL.md`, где задание судье лежит inline (listik-4n4y, порция b). Список закрытый
+#: Шесть `SKILL.md`, где задание судье лежит inline (listik-4n4y, порция b). Список закрытый
 #: и явный: именно он — основа выбора файлов, страховочный скан ниже лишь ловит расширение.
 INLINE_JUDGE_SKILLS = (
     pathlib.Path(SKILLS_SUBDIR) / "high-pipeline" / SKILL_FILE,
@@ -938,7 +792,6 @@ INLINE_JUDGE_SKILLS = (
     pathlib.Path(SKILLS_SUBDIR) / "low-pipeline" / SKILL_FILE,
     pathlib.Path(SKILLS_SUBDIR) / "xlow-pipeline" / SKILL_FILE,
     pathlib.Path(SKILLS_SUBDIR) / "nano-pipeline" / SKILL_FILE,
-    pathlib.Path(SKILLS_SUBDIR) / "devin-pipeline" / SKILL_FILE,
 )
 
 #: Начало блока inline-задания судье: строка про зелёный вердикт и коммит порции. В пяти
@@ -1159,7 +1012,7 @@ CORE_WORKTREE_LINES = (
     "отдельной строкой, без пояснений и без кавычек после пути.",
     "Строка обязательна в любом режиме, а не только в треке.",
     "Своего дерева у работы нет — в строке стоит абсолютный путь основного дерева.",
-    "У `opus-single-pipeline` та же строка стоит в файле задачи.",
+    "У `opus-pipeline` та же строка стоит в файле задачи.",
     "Эталон — путь из строки журнала шага `дерево <путь>`.",
     "Сравнение — точное равенство путей после `cd … && pwd -P`, не префикс и не вхождение "
     "подстроки.",

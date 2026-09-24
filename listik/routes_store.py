@@ -474,7 +474,8 @@ def ensure_imported(conn: sqlite3.Connection) -> dict:
 #: ключи. Уже установленная база получает их один раз (номер — в `meta`
 #: `routes_additions`); удалённый потом человеком маршрут не возвращается.
 ROUTE_ADDITIONS: list[tuple[int, tuple[str, ...]]] = [
-    (1, ("devin-pipeline",)),
+    (1, ()),  # было devin-pipeline — маршрут снят как дубликат xlow-pipeline
+    (2, ("opus-pipeline",)),  # переименован из opus-single-pipeline
 ]
 
 

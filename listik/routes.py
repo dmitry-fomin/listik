@@ -29,7 +29,7 @@
     `xhigh`/`high`/`medium`/`low`/`xlow`/`direct`. Если поля нет, уровень выводится из самой
     записи (`fallback_icon`): у `direct` это `direct`, у `pipeline` — часть ключа до
     первого `-`, если она из того же набора (`xhigh-pipeline` → `xhigh`); у записи без
-    выводимого уровня (`feature-pipeline`) иконки нет. Неизвестное значение — не ошибка
+    выводимого уровня (`opus-pipeline`) иконки нет. Неизвестное значение — не ошибка
     файла, а предупреждение (listik-itg8): запись получает уровень по ключу, поле
     `icon_error` с причиной и текст в `warnings` ответа `GET /api/routes`; строка уходит
     в stderr (у демона — в `listik.log`), а остальные записи и автостарт работают как обычно;
@@ -304,8 +304,8 @@ def fallback_icon(kind: str, key: str) -> str | None:
 
     У `direct`-записи уровня в ключе нет (`dsh`, `grok`, `codex`) — она и есть
     `direct`. У `pipeline` берётся часть ключа до первого `-` (`xhigh-pipeline` →
-    `xhigh`), но только если она из `ROUTE_ICONS`: у `feature-pipeline` и
-    `inherit-pipeline` уровня нет, и иконка для них не выдумывается (`None`).
+    `xhigh`), но только если она из `ROUTE_ICONS`: у `opus-pipeline`
+    уровня нет, и иконка для них не выдумывается (`None`).
     """
     if kind == "direct":
         return "direct"

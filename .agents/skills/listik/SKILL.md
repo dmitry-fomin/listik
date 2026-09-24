@@ -2,7 +2,7 @@
 name: listik
 description: Protocol for working a Listik task queue card through the `listik` CLI — claim as the first action, heartbeat, comment -k journal / -k verdict, stage, needs-owner, done. Use when the project tracks its tasks in Listik and the assignment names a card id like <project>-<xxxx>.
 ---
-<!-- listik-protocol: 1 -->
+<!-- listik-protocol: 2 -->
 
 ## Listik — harness protocol
 
@@ -139,7 +139,12 @@ listik needs-owner <id> "question"
 listik needs-owner <id> --clear "answer"
 listik release <id>
 listik done <id> -r "short verifiable result"
+listik remember "fact" -p <project> [--key <key>]   # long-term memory; same --key overwrites
+listik memory "about what" --project <project>      # hybrid search over memory
 ```
+
+Long-term memory is for facts that outlive a card (decisions, agreements, environment pitfalls);
+progress on a task goes to `comment -k journal`, not memory.
 
 Cold start: everything needed is in `show <id>` (holder, stage, Q&A, journal, verdicts,
 `spec_path`, worktree/branch, `holder_taken`/`not_taken`) and `context` — no chat history required.

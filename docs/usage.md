@@ -98,8 +98,8 @@ listik memory "про что-то"
 ```
 
 Пресеты `feature-pipeline` зовут внешние харнессы скилами этих плагинов; Grok остаётся отдельным
-(`grok@grok-build`). `inherit-pipeline`, `opus-single-pipeline` и `opus-sonnet-pipeline` обходятся
-субагентами Claude. При изменении плагина поднимайте `version` в его `plugin.json` и в `marketplace.json`.
+(`grok@grok-build`). `opus-pipeline` обходится
+субагентом Claude. При изменении плагина поднимайте `version` в его `plugin.json` и в `marketplace.json`.
 
 **MCP** (инструменты `listik_*`, список — в docs/API.md):
 

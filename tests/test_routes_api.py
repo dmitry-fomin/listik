@@ -27,7 +27,7 @@ from tests.helpers import TempDbTestCase
 REPO_DIR = pathlib.Path(__file__).resolve().parent.parent
 ROUTES_JSON = REPO_DIR / "routes.json"
 
-DIRECT_KEYS = ["pi-deepseek", "grok", "codex"]
+DIRECT_KEYS = ["pi-glm", "pi-deepseek", "grok", "codex"]
 EXPECTED_KEYS = [
     "xhigh-pipeline", "high-pipeline", "medium-pipeline", "low-pipeline", "xlow-pipeline",
     "nano-pipeline", "devin-pipeline", "cross-pipeline", "inherit-pipeline", "opus-single-pipeline", "opus-sonnet-pipeline",

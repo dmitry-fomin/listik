@@ -3,7 +3,7 @@
 ## Что это
 
 Listik — самостоятельный трекер задач. Один сервер, одна база SQLite,
-один API. Все агенты (dsh, grok, claude, codex) и доска работают с ним же.
+один API. Все агенты (pi-glm, pi-deepseek, grok, claude, codex) и доска работают с ним же.
 
 - База: `listik.db` в корне Listik
 - Сервер: `listik serve` → `http://127.0.0.1:8787`
@@ -52,7 +52,7 @@ users = ["ann", "bob"]   # люди, которые работают с этим
 | `stage` | str? | этап конвейера: `s1-spec` \| `s2-review` \| `s3-impl` \| `s4-judge` \| `done` |
 | `priority` | int | 0 (срочно) … 4 (потом) |
 | `issue_type` | str | `task` \| `bug` \| `feature` \| `epic` \| `chore` \| `decision` \| `question` |
-| `assignee` | str? | кому поручена: `me`, `agent:claude`, `agent:dsh`, `agent:grok`, `agent:codex` |
+| `assignee` | str? | кому поручена: `me`, `agent:claude`, `agent:pi-glm`, `agent:pi-deepseek`, `agent:grok`, `agent:codex` |
 | `holder` | str? | кто **держит прямо сейчас** (может отличаться от assignee); у закрытой карточки всегда пуст |
 | `owner` | str? | владелец-человек из `server.users` (серверный режим); в локальном режиме всегда `null` |
 | `holder_at` | str? | heartbeat держащего |
@@ -313,7 +313,7 @@ to create index.lock: File exists». Пострадавший — воркер, 
 Маршруты — это таблица пресетов конвейера и отдельных исполнителей; она же даёт команду
 для автостарта. Источник и при чтении, и при записи — таблица `routes` в базе
 (`listik/routes_store.py`); у каждой записи есть `command` (конвейер — `claude -p` со
-скилом `/feature-pipeline:{route}`, прямой — pi-deepseek/grok/codex). `routes.json` в корне
+скилом `/feature-pipeline:{route}`, прямой — pi-glm/pi-deepseek/grok/codex). `routes.json` в корне
 Listik — только файл поставки: `listik init`/старт сервера ввозят его в пустую таблицу
 один раз (непустая при старте не перезаписывается), и больше файл не перечитывается и
 ни с чем не сверяется — записи в базе главнее. Дальше запись правится через HTTP API
@@ -1339,9 +1339,9 @@ dropped_chunks, reason`), `reasons[]` (по одному пункту на ка�
 | PATCH | `/api/tasks/{id}` | любые из `title, description, acceptance, design, notes, result, status, stage, priority, issue_type, assignee, holder, holder_note, project, labels[], spec_path, checklist_path, review_path, decision_path, journal_path, worktree, branch, close_reason, needs_owner, external_ref, archived, owner, read_scope[], write_scope[]` + `route` (алиас `launch_route`, см. «Смена маршрута») + `actor`, `harness`, `note` | изменить (каждое изменение пишется в events). `route` — «тип запуска»: принимается, только пока задача заведена — без этапа, держателя и запуска, иначе `400`/`conflict`; пустая строка снимает маршрут; событие `route`; вместе с маршрутом сервер переписывает его метки `harness:`/`process:`. Остальные восемь полей запуска не принимаются. `read_scope`/`write_scope` — списком строк, валидация и нормализация см. «Области чтения и записи» выше; строка вместо массива — `400 bad_argument`. `owner` — смена владельца: имя из `server.users`, пустая строка `""` снимает владельца (`null`); `null` в теле не проходит фильтр полей и означает «поле не передано». В серверном режиме правка **чужой** задачи (заголовок `X-Listik-Owner` не совпал с владельцем) с любым полем, кроме `owner`, — 403 `forbidden`, карточка не меняется; тело только с `owner` проходит при любом заголовке, а без заголовка владелец для правки не обязателен. `status` в `done`/`cancelled` снимает держателя; непустой `holder` в том же теле игнорируется |
 | DELETE | `/api/tasks/{id}` | — | удалить |
 | PUT | `/api/tasks/{id}/documents/{kind}` | `content` (обязателен, строка не длиннее 1 000 000 символов), `path`, `actor` | принять текст документа и хранить его в базе (`source=upload`) — для сервера, где файлов проектов нет. Путь выбирается по шагам, ровно в этом порядке: 1) непустой `path` из тела; 2) иначе — уже записанный в карточке путь этого вида (`spec_path`/`checklist_path`/`review_path`/`decision_path`); 3) иначе, для `decision`, — `journal_path`; 4) иначе — виртуальный `listik://<id>/<kind>.md`. В случаях 1 и 4 выбранный путь дописывается в карточку. `revision` растёт только при смене текста (новая запись — сразу `revision=1`); при новой записи и при смене текста пишется событие `document_uploaded` с пометкой `r<revision>`; повтор с тем же текстом ревизию не меняет и события не создаёт. 400 — неизвестный `kind`, не передан или не строка `content`, текст длиннее 1 000 000 символов, не строка `path`; 404 — нет такой задачи; 405 — любой метод по этому пути, кроме `GET` и `PUT` |
-| POST | `/api/tasks/{id}/claim` | `holder`(обязателен), `harness`, `note`, `actor`, `force=false` | взять в работу. 400 по трём причинам: незакрытые жёсткие блокеры (обходится `force`, пишет предупреждение в историю), чужой держатель, занятое рабочее дерево — держатель и рабочее дерево `force` не обходят. `harness` проверяется, только если передан (сверяется с routing проекта на этапе задачи). В серверном режиме до всех этих проверок идёт владелец: без заголовка `X-Listik-Owner` — 400 `bad_argument` («укажи, от чьего имени берёшь задачу»), имя не из `server.users` — 400, чужая задача — 403 `forbidden` (и `force` этого не обходит); задачу без владельца берёт любой, владелец ей при этом не проставляется. `actor` пишется в событие `claim`: по нему доска отличает «взята» (`actor` = сам держатель) от «выдана, но не взята»; повторный claim того же держателя идемпотентен, но первый claim держателя по выданной карточке событие пишет. Тождество держателя — по актору: повторный claim тем же актором в любом написании (`dsh`, `agent:dsh`) идемпотентен, и хранимое написание держателя при этом не меняется |
+| POST | `/api/tasks/{id}/claim` | `holder`(обязателен), `harness`, `note`, `actor`, `force=false` | взять в работу. 400 по трём причинам: незакрытые жёсткие блокеры (обходится `force`, пишет предупреждение в историю), чужой держатель, занятое рабочее дерево — держатель и рабочее дерево `force` не обходят. `harness` проверяется, только если передан (сверяется с routing проекта на этапе задачи). В серверном режиме до всех этих проверок идёт владелец: без заголовка `X-Listik-Owner` — 400 `bad_argument` («укажи, от чьего имени берёшь задачу»), имя не из `server.users` — 400, чужая задача — 403 `forbidden` (и `force` этого не обходит); задачу без владельца берёт любой, владелец ей при этом не проставляется. `actor` пишется в событие `claim`: по нему доска отличает «взята» (`actor` = сам держатель) от «выдана, но не взята»; повторный claim того же держателя идемпотентен, но первый claim держателя по выданной карточке событие пишет. Тождество держателя — по актору: повторный claim тем же актором в любом написании (`pi-glm`, `agent:pi-glm`) идемпотентен, и хранимое написание держателя при этом не меняется |
 | POST | `/api/tasks/{id}/heartbeat` | `holder`(обязателен), `note`, `actor` | отметка «жив, работаю» (событие не чаще 10 мин). Если `holder` — другой актор, чем текущий (сравнение через `actors.resolve`; иное написание того же актора держателя не меняет, хранимое написание не перезаписывает и заметку не сбрасывает), держатель перезаписывается без проверок, `holder_note` прежнего сбрасывается (сохраняется только явно переданный `note`), а событие пишется всегда — смена держателя видна в истории. Отдельно от троттлинга событие пишется всегда, пока карточка «выдана, но не взята» (`not_taken`): первый heartbeat держателя и есть доказательство запуска, терять его в 10-минутном окне нельзя. Heartbeat от самого держателя (`actor`/`harness` = он) подтверждает, что карточка взята; heartbeat за него чужой рукой — нет. Владелец проверяется так же, как у `claim`: нет заголовка или имя не из `server.users` — 400 `bad_argument`, чужая задача — 403 `forbidden` |
-| POST | `/api/tasks/{id}/stage` | `holder`, `note`, `harness`, `actor`, `to` | следующий этап конвейера s1→s2→s3→s4→done, считает длительность прошлого этапа. `to` — явный этап (`s1-spec`…`s4-judge`/`done`). Переход в `done` (явный `to=done` или следующий после `s4-judge`) закрывает задачу так же, как `/done`: `status=done`, `closed_at`, держатель снимается даже при явном `holder` (listik-rku8). Явный `holder` — это **выдача**: он ставится держателем и пишется событием-назначением `claim` (автор — выдающий), после чего карточка «выдана, но не взята», пока сам харнесс не сделает `claim`/`heartbeat`. Так работает и handoff-переход (`--to s3-impl --holder dsh` ставит dsh; без `holder` handoff, как раньше, снимает держателя), и повторная выдача на том же этапе (круг после красного вердикта). Если `to` совпал с текущим этапом: этап, `stage_at` и событие `stage` не меняются, непустой `note` уходит событием `note` в историю; в ответе та же карточка с `stage_unchanged: true`, `unchanged: true` и `message`. Без `holder` это тихий no-op — держателя не трогает; с `holder` держатель ставится заново, даже если он тот же самый, — новое назначение сбрасывает «взята» у старого claim того же харнесса (listik-xut1, listik-udop). Владелец в серверном режиме проверяется **только при переданном `holder`** (это выдача карточки): 400 `bad_argument` без владельца или с именем не из `server.users`, 403 `forbidden` на чужой задаче. Без `holder` заголовок не смотрится вовсе |
+| POST | `/api/tasks/{id}/stage` | `holder`, `note`, `harness`, `actor`, `to` | следующий этап конвейера s1→s2→s3→s4→done, считает длительность прошлого этапа. `to` — явный этап (`s1-spec`…`s4-judge`/`done`). Переход в `done` (явный `to=done` или следующий после `s4-judge`) закрывает задачу так же, как `/done`: `status=done`, `closed_at`, держатель снимается даже при явном `holder` (listik-rku8). Явный `holder` — это **выдача**: он ставится держателем и пишется событием-назначением `claim` (автор — выдающий), после чего карточка «выдана, но не взята», пока сам харнесс не сделает `claim`/`heartbeat`. Так работает и handoff-переход (`--to s3-impl --holder pi-deepseek` ставит pi-deepseek; без `holder` handoff, как раньше, снимает держателя), и повторная выдача на том же этапе (круг после красного вердикта). Если `to` совпал с текущим этапом: этап, `stage_at` и событие `stage` не меняются, непустой `note` уходит событием `note` в историю; в ответе та же карточка с `stage_unchanged: true`, `unchanged: true` и `message`. Без `holder` это тихий no-op — держателя не трогает; с `holder` держатель ставится заново, даже если он тот же самый, — новое назначение сбрасывает «взята» у старого claim того же харнесса (listik-xut1, listik-udop). Владелец в серверном режиме проверяется **только при переданном `holder`** (это выдача карточки): 400 `bad_argument` без владельца или с именем не из `server.users`, 403 `forbidden` на чужой задаче. Без `holder` заголовок не смотрится вовсе |
 | POST | `/api/tasks/{id}/comment` | `text`(обязателен), `author`/`actor`, `kind=comment\|journal\|question\|answer\|review\|verdict`, `harness` | комментарий в журнал задачи; `kind=question`/`answer` — те же виды, что пишет `needs-owner` (см. ниже), их можно оставить и вручную, но сам флаг `needs_owner` они не меняют; `kind=verdict` принимается как вердикт на `s4-judge` от агента или на любом этапе от человека и требует первой строки ровно `VERDICT: PASS` или `VERDICT: FAIL` (после `FAIL` — список правок), иначе 400; агентский verdict вне `s4-judge` сохраняется как обычный `comment`, этап не двигается, ответ содержит `verdict_accepted=false` и `message` с причиной |
 | POST | `/api/tasks/{id}/needs-owner` | `value=true\|false`, `note`, `actor`, `harness` | поднять/снять флаг «нужен человек»: при непустом `note` создаётся комментарий `kind=question` (`value=true`) или `kind=answer` (`value=false`); событие `question`/`answer` пишется при каждом вызове, даже если флаг уже стоит в нужном значении; ответ — полная карточка, как у `PATCH`. Автор комментария и события — `actor`; без него в серверном режиме подписывается человек из заголовка `X-Listik-Owner` (явный агентский `actor` сильнее), чтобы вопрос/ответ с доски не остался без автора. `PATCH /api/tasks/{id}` с `needs_owner` меняет только флаг и комментария не пишет |
 | POST | `/api/tasks/{id}/release` | `note`, `actor` | освободить задачу |
@@ -1732,11 +1732,11 @@ stage/status/holder/needs_owner/assignee/route) — доска узнаёт из
 ```
 listik serve                       # поднять сервер и доску
 listik import-from-bd --source <path> [--project writerllm] [--dry-run] [--update]   # импорт выгрузки bd export WriterLLM, идемпотентно; --project так же сверяется с доской без учёта регистра
-listik new "Заголовок" -p project --type bug --priority 1 --actor agent:dsh
+listik new "Заголовок" -p project --type bug --priority 1 --actor agent:pi-glm
 listik new "Заголовок" -p project --route low-pipeline   # маршрут сохраняется; процесс поднимает рой или listik launch
 listik new "Шаг 09, порция b" -p listik --parent <id шага> --spec … --checklist … --review …  # порция — дочерняя карточка шага (parent-child)
 listik ready                        # что можно взять прямо сейчас
-listik ready --harness dsh          # то же, с идентичностью harness (флаг общий)
+listik ready --harness pi-glm          # то же, с идентичностью harness (флаг общий)
 listik blocked                      # кто кого ждёт и почему
 listik waves --project X [--stage s3-impl] [--json]   # волны запуска: что можно делать одновременно
 listik waves --project X --apply                     # записать ресурсные рёбра resource-blocks под этот расчёт
@@ -1755,11 +1755,11 @@ listik list --mine --json
 listik show <id> [--json]          # полная карточка задачи; у шага — порции с их документами
 listik show <id> --fields launch_route,labels   # только эти поля (фильтрует сервер или локальная база); повторяемо или через запятую
 listik context <id> --stage s1-spec|s2-review|s3-impl|s4-judge [--portion "текст"] [--max-chars N] [--format text|json]  # на s3/s4 порция ищется среди дочерних карточек, иначе — раздел ТЗ
-listik claim <id> --holder dsh/deepseek-flash   # заблокированную, чужую или в занятом дереве не возьмёт, скажет почему
-listik claim <id> --holder dsh/deepseek-flash --force   # осознанный обход запрета по блокеру
-listik heartbeat <id> --holder dsh/deepseek-flash --note "пишу порцию B"
-listik stage <id> --holder dsh/deepseek-flash      # следующий этап; --holder — выдача: держатель поставлен, «выдана, но не взята»
-listik stage <id> --to s3-impl --holder dsh --actor agent:claude --harness claude   # выдача на этапе; без --holder держателя не трогает
+listik claim <id> --holder pi-deepseek   # заблокированную, чужую или в занятом дереве не возьмёт, скажет почему
+listik claim <id> --holder pi-deepseek --force   # осознанный обход запрета по блокеру
+listik heartbeat <id> --holder pi-deepseek --note "пишу порцию B"
+listik stage <id> --holder pi-deepseek      # следующий этап; --holder — выдача: держатель поставлен, «выдана, но не взята»
+listik stage <id> --to s3-impl --holder pi-deepseek --actor agent:claude --harness claude   # выдача на этапе; без --holder держателя не трогает
 listik stage <id> --to s3-impl --note "вернул на тот же этап"   # явный этап; текущий — no-op с заметкой в истории
 listik comment <id> "текст" --kind journal
 listik needs-owner <id> "вопрос автору"
@@ -1776,7 +1776,7 @@ listik backup [--out <файл>] [--force]     # согласованная ко
 listik restore <копия> [--stop] [--force]  # восстановление; при работающем сервере отказывает (conflict), --stop гасит его
 ```
 
-Глобальные флаги: `--json`, `--actor <кто>`, `--owner <кто>`, `--harness <dsh|grok|claude>`,
+Глобальные флаги: `--json`, `--actor <кто>`, `--owner <кто>`, `--harness <pi-glm|pi-deepseek|grok|claude>`,
 `--server/--port`.
 
 `--owner` — серверный режим: от чьего имени идёт команда (владелец-человек из `server.users`).

@@ -489,7 +489,7 @@ workflow-паттернов, из которых для нашей задачи 
 | Счётчики `M` / `K` / `V`, «полный круг» один раз на порцию, ведутся в журнале, а не в голове («после `/clear` невидимый счётчик равен нулю») | `guardrail_max_retries=3` в CrewAI; Retry Policy в Temporal; `max_consecutive_auto_reply` в AutoGen. Эскалация по исчерпании попыток — ровно тот приём |
 | `listik/launcher.py`: сервер сам поднимает процесс по `routes.command` без shell, пишет `launch_pid`/`launch_log`/`launch_exit_code`, поток слежения, `recover()` после перезапуска сервера | Durable-execution-лайт: внешнее состояние прогона переживает падение оркестратора (Temporal Event History, DBOS-чекпойнты) — в упрощённом виде |
 | `needs-owner <id> "вопрос"` / `--clear "ответ"` и правило протокола: «Questions never stall the pipeline: keep working other tasks, apply the answer when it comes» | **Это ровно приём №3 и №4 из раздела 2.8**: вопрос уходит в общее состояние, работа не блокируется. Механизм уже есть и правильный |
-| `--dangerously-skip-permissions` / `DSH_PERMISSION_MODE=danger-full-access` / `--always-approve` / `--dangerously-bypass-approvals-and-sandbox` во всех `routes.command` | `permissionMode: bypassPermissions`; `human_input_mode="NEVER"`. Прав у исполнителей не спрашивают уже сейчас |
+| `--dangerously-skip-permissions` / `--always-approve` / `--dangerously-bypass-approvals-and-sandbox` во всех `routes.command` | `permissionMode: bypassPermissions`; `human_input_mode="NEVER"`. Прав у исполнителей не спрашивают уже сейчас |
 
 Итого: **архитектура не самодельна.** Это blackboard + queue-of-work + orchestrator-workers +
 evaluator-optimizer, собранные из правильных частей, с изоляцией в worktree и независимой
@@ -672,7 +672,7 @@ git branch -d task/<id>
 `.worktrees/` в `.gitignore`, вернуть путь/ветку/базу) и вспомогательные `is_dirty`,
 `branch_exists`, `worktree_list`. Ни `merge`, ни `remove`, ни `branch -d` не реализованы.
 
-### 5.2. В текущей схеме — прямые маршруты (`dsh`, `codex`, `grok`)
+### 5.2. В текущей схеме — прямые маршруты (`pi-glm`, `pi-deepseek`, `codex`, `grok`)
 
 Слияния **нет**. Судя по `routes.json`, промпт прямого маршрута велит харнессу создать
 `.worktrees/<task_id>` на ветке `task/<task_id>`, работать там, сделать `done`, потом
@@ -784,7 +784,7 @@ C-компилятор Anthropic работоспособным («the task veri
    `branch -d`, с осмысленными ошибками `errors.*` на конфликте и грязном дереве.
 2. Поле/событие `merged` в карточке (ветка + хеш merge-коммита), чтобы «слито» было видно на
    доске, а не только в git.
-3. Для прямых маршрутов (`dsh`, `codex`, `grok`) — решить и записать в карточку, сливается их
+3. Для прямых маршрутов (`pi-glm`, `pi-deepseek`, `codex`, `grok`) — решить и записать в карточку, сливается их
    ветка или остаётся автору; сейчас это молчание.
 
 **Сложность понимания: средняя** — предмет знакомый, `worktree.py` уже рядом.

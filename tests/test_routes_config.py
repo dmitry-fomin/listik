@@ -41,7 +41,7 @@ LISTIK_BIN = REPO_DIR / "bin" / "listik"
 ROUTE_LEVEL_RE = re.compile(r"value: '([a-z0-9-]+)'")
 ROUTE_GLYPH_RE = re.compile(r"icon: '([a-z0-9-]+)'")
 
-DIRECT_KEYS = ["pi-deepseek", "grok", "codex"]
+DIRECT_KEYS = ["pi-glm", "pi-deepseek", "grok", "codex"]
 
 # Порядок записей в routes.json — он же порядок строк формы «Новая задача».
 EXPECTED_KEYS = [
@@ -96,7 +96,7 @@ class RepoRoutesFileTests(unittest.TestCase):
 
     def test_has_sixteen_records_in_order(self) -> None:
         self.assertEqual(self.raw["version"], 1)
-        self.assertEqual(len(self.raw["routes"]), 16)
+        self.assertEqual(len(self.raw["routes"]), 17)
         self.assertEqual([r["key"] for r in self.raw["routes"]], EXPECTED_KEYS)
 
     def test_validates_and_every_record_is_visible(self) -> None:
@@ -108,7 +108,7 @@ class RepoRoutesFileTests(unittest.TestCase):
     def test_kinds_match_the_table(self) -> None:
         kinds = [r["kind"] for r in self.raw["routes"]]
         self.assertEqual(kinds[:13], ["pipeline"] * 13)
-        self.assertEqual(kinds[13:], ["direct"] * 3)
+        self.assertEqual(kinds[13:], ["direct"] * 4)
 
     def test_direct_records_are_exact(self) -> None:
         normalized = routes_mod.validate(self.raw)
@@ -575,7 +575,7 @@ class FileLoadTests(TempDbTestCase):
         self.assertTrue(state.ok)
         self.assertIsNone(state.error)
         self.assertEqual(state.path, str(self.source))
-        self.assertEqual(len(state.routes), 16)
+        self.assertEqual(len(state.routes), 17)
         self.assertEqual(sorted(state.by_key), sorted(r["key"] for r in state.routes))
         self.assertEqual(state.warnings, [])
 
@@ -616,12 +616,12 @@ class FileLoadTests(TempDbTestCase):
         self.source.write_text("{ битый", encoding="utf-8")
         current = routes_mod.state(self.conn)
         self.assertTrue(current.ok)
-        self.assertEqual(len(current.routes), 16)
+        self.assertEqual(len(current.routes), 17)
         self.assertEqual(current.path, str(paths.DB_PATH))
         self.assertEqual(current.warnings, [])
         with contextlib.redirect_stderr(io.StringIO()):
             self.assertTrue(routes_store.ensure_imported(self.conn).get("skipped"))
-        self.assertEqual(len(routes_mod.state(self.conn).routes), 16)
+        self.assertEqual(len(routes_mod.state(self.conn).routes), 17)
 
     def test_database_update_is_visible_immediately(self) -> None:
         routes_store.import_file(self.conn, self.source)
@@ -689,7 +689,7 @@ class RoutesApiTests(TempDbTestCase):
         self.assertTrue(data["ok"])
         self.assertIsNone(data["error"])
         self.assertEqual(data["path"], str(paths.DB_PATH))
-        self.assertEqual(len(data["routes"]), 16)
+        self.assertEqual(len(data["routes"]), 17)
         for record in data["routes"]:
             self.assertIn("command", record)
             self.assertNotIn("strip", record)
@@ -773,8 +773,8 @@ class RoutesApiTests(TempDbTestCase):
         self.assertEqual(status, 200)
         data = payload["data"]
         self.assertTrue(data["ok"])
-        self.assertEqual(len(data["routes"]), 16)
-        self.assertEqual([r["key"] for r in data["routes"]][-3:], DIRECT_KEYS)
+        self.assertEqual(len(data["routes"]), 17)
+        self.assertEqual([r["key"] for r in data["routes"]][-4:], DIRECT_KEYS)
         self.assertTrue(all("command" in r for r in data["routes"]))
 
     def test_invisible_records_are_returned(self) -> None:
@@ -798,7 +798,7 @@ class RoutesApiTests(TempDbTestCase):
         status, payload = self._get("/api/routes", token=self.TOKEN)
         self.assertEqual(status, 200)
         self.assertTrue(payload["data"]["ok"])
-        self.assertEqual(len(payload["data"]["routes"]), 16)
+        self.assertEqual(len(payload["data"]["routes"]), 17)
 
     def test_database_change_reaches_live_http_without_restart(self) -> None:
         self._init_from_repo()
@@ -818,7 +818,7 @@ class RoutesApiTests(TempDbTestCase):
         self.assertTrue(state["ok"])
         self.assertIsNone(state["error"])
         self.assertEqual(state["path"], str(paths.DB_PATH))
-        self.assertEqual(state["count"], 16)
+        self.assertEqual(state["count"], 17)
 
     def test_health_database_error_is_reported(self) -> None:
         with mock.patch.object(routes_store, "list_routes",

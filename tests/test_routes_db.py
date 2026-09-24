@@ -27,9 +27,9 @@ ROUTES_JSON = REPO_DIR / "routes.json"
 EXPECTED_KEYS = [
     "xhigh-pipeline", "high-pipeline", "medium-pipeline", "low-pipeline", "xlow-pipeline",
     "nano-pipeline", "devin-pipeline", "cross-pipeline", "inherit-pipeline", "opus-single-pipeline", "opus-sonnet-pipeline",
-    "universal-pipeline", "feature-pipeline", "pi-deepseek", "grok", "codex",
+    "universal-pipeline", "feature-pipeline", "pi-glm", "pi-deepseek", "grok", "codex",
 ]
-DIRECT_KEYS = ["pi-deepseek", "grok", "codex"]
+DIRECT_KEYS = ["pi-glm", "pi-deepseek", "grok", "codex"]
 
 
 def pipeline_record() -> dict:
@@ -76,11 +76,11 @@ class ImportSampleTests(RoutesDbTestCase):
 
     def test_sample_imports_in_file_order(self) -> None:
         report = self.import_sample()
-        self.assertEqual(report, {"imported": 16, "skipped": False,
+        self.assertEqual(report, {"imported": 17, "skipped": False,
                                   "source": str(ROUTES_JSON), "replaced": False})
         records = routes_store.list_routes(self.conn)
         self.assertEqual([r["key"] for r in records], EXPECTED_KEYS)
-        self.assertEqual([r["position"] for r in records], list(range(16)))
+        self.assertEqual([r["position"] for r in records], list(range(17)))
 
     def test_high_pipeline_roles_keep_providers(self) -> None:
         self.import_sample()
@@ -146,7 +146,7 @@ class ShippedAdditionsTests(RoutesDbTestCase):
         with self.patch_paths(source=ROUTES_JSON), contextlib.redirect_stderr(io.StringIO()):
             report = routes_store.ensure_imported(self.conn)
         self.assertEqual(report["added"], [])
-        self.assertEqual(routes_store.count(self.conn), 16)
+        self.assertEqual(routes_store.count(self.conn), 17)
 
 
 class ReimportTests(RoutesDbTestCase):
@@ -167,7 +167,7 @@ class ReimportTests(RoutesDbTestCase):
         report = self.import_sample(replace=True)
         self.assertFalse(report["skipped"])
         self.assertTrue(report["replaced"])
-        self.assertEqual(report["imported"], 16)
+        self.assertEqual(report["imported"], 17)
         record = routes_store.get_route(self.conn, "pi-deepseek")
         self.assertEqual(record["title"], "pi-deepseek")
         self.assertTrue(record["visible"])
@@ -181,7 +181,7 @@ class ReimportTests(RoutesDbTestCase):
             with self.assertRaises(routes_mod.RoutesError):
                 routes_store.import_file(self.conn, bad)
         self.assertEqual(routes_store.list_routes(self.conn), before)
-        self.assertEqual(routes_store.count(self.conn), 16)
+        self.assertEqual(routes_store.count(self.conn), 17)
 
     def test_ensure_imported_swallows_broken_file(self) -> None:
         bad = self.tmp_path / "broken.json"
@@ -195,7 +195,7 @@ class ReimportTests(RoutesDbTestCase):
     def test_default_source_is_sample(self) -> None:
         with self.patch_paths(source=ROUTES_JSON):
             report = routes_store.ensure_imported(self.conn)
-        self.assertEqual(report["imported"], 16)
+        self.assertEqual(report["imported"], 17)
         self.assertEqual(report["source"], str(ROUTES_JSON))
 
     def test_strip_field_is_not_stored(self) -> None:
@@ -303,7 +303,7 @@ class CrudTests(RoutesDbTestCase):
     def test_create_uses_max_position_plus_one(self) -> None:
         record = routes_store.create_route(self.conn, key="zzz-direct", kind="direct",
                                            title="Zzz", harness="dsh")
-        self.assertEqual(record["position"], 16)
+        self.assertEqual(record["position"], 17)
         self.assertEqual(routes_store.list_routes(self.conn)[-1]["key"], "zzz-direct")
 
     def test_create_duplicate_key(self) -> None:
@@ -335,7 +335,7 @@ class CrudTests(RoutesDbTestCase):
     def test_reorder_full(self) -> None:
         reordered = routes_store.reorder(self.conn, list(reversed(EXPECTED_KEYS)))
         self.assertEqual([r["key"] for r in reordered], list(reversed(EXPECTED_KEYS)))
-        self.assertEqual([r["position"] for r in reordered], list(range(16)))
+        self.assertEqual([r["position"] for r in reordered], list(range(17)))
         self.assertEqual([r["key"] for r in routes_store.list_routes(self.conn)],
                          list(reversed(EXPECTED_KEYS)))
 
@@ -344,7 +344,7 @@ class CrudTests(RoutesDbTestCase):
         reordered = routes_store.reorder(self.conn, ["pi-deepseek", "grok"])
         self.assertEqual([r["key"] for r in reordered], ["pi-deepseek", "grok", *rest])
         positions = [r["position"] for r in reordered]
-        self.assertEqual(positions, list(range(16)))
+        self.assertEqual(positions, list(range(17)))
 
     def test_reorder_unknown_key(self) -> None:
         with self.assertRaises(ValueError) as ctx:

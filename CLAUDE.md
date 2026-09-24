@@ -124,6 +124,8 @@ Database migrations exist as two parallel mechanisms — don't confuse them:
   `AGENTS.md`/`CLAUDE.md` (`listik init-projects`) so those projects' agents know to use Listik.
   The bodies differ per file (`migrate.body_for`): `AGENTS.md` gets the full protocol read from
   `docs/harness-protocol.md` (`migrate.body()`) — change the protocol there, not in `migrate.py`;
+  the same text also ships as the skill `.agents/skills/listik/SKILL.md` (`migrate.SKILL_REL`) for
+  harnesses that read `.agents/skills`, and `test_migrate` requires the two to be equal;
   `CLAUDE.md` gets only `CLAUDE_BODY`, a pointer to the `listik:listik` skill.
 - `bin/listik-swarm` + `swarm/` — the swarm: drives waves of tasks to completion
   without a human re-running `launch` for each one. When `[swarm] enabled` is true in

@@ -43,6 +43,9 @@ TARGETS = ("AGENTS.md", "CLAUDE.md")
 #: Строка, которой рабочие деревья задач закрываются от git (см. listik-airk).
 GITIGNORE_ENTRY = ".worktrees/"
 
+#: Скил с тем же протоколом для харнессов, читающих `.agents/skills` (от корня репозитория).
+SKILL_REL = ".agents/skills/listik"
+
 # CLAUDE.md читает только Claude Code, а у него есть скил listik:listik с полным протоколом —
 # туда идёт указание на скил. Внешние харнессы (dsh, grok, codex) читают AGENTS.md и скила
 # не имеют, поэтому AGENTS.md получает протокол целиком.

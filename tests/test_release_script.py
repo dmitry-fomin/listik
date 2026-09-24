@@ -44,6 +44,7 @@ TRACKED_FILES = {
     "docs/API.md": "# API\n",
     "AGENTS.md": "# AGENTS\n",
     "docs/harness-protocol.md": "# protocol\n",
+    ".agents/skills/listik/SKILL.md": "---\nname: listik\n---\n# protocol\n",
     "docs/specs/x.md": "# spec\n",
     "tests/test_x.py": "# test\n",
     "plugins/p/a.md": "# plugin\n",
@@ -231,12 +232,21 @@ class ReleaseScriptTests(unittest.TestCase):
                          "в архиве не должно быть AppleDouble-мусора macOS")
         for rel in ("bin/listik", "listik/paths.py", "alembic/env.py", "alembic.ini", "VERSION",
                     "routes.json", "config.example.toml", "README.md", "docs/API.md", "AGENTS.md",
-                    "docs/harness-protocol.md", "web/dist/index.html"):
+                    "docs/harness-protocol.md", ".agents/skills/listik/SKILL.md", "web/dist/index.html"):
             self.assert_in_archive(names, rel)
         for rel in ("tests", "docs/specs", "plugins", ".claude-plugin", "web/src",
                     "node_modules", "web/node_modules", "junk.txt", "listik/junk.py", ".env",
                     "listik.db", "listik.pid", "logs", "config.toml", "install.sh"):
             self.assert_not_in_archive(names, rel)
+
+    def test_missing_skill_fails(self):
+        root = self.make_repo()
+        self.git(root, "rm", "-q", ".agents/skills/listik/SKILL.md")
+        self.git(root, "commit", "-q", "-m", "no skill")
+        result = self.run_release(root, "--skip-web", "--out", str(self.tmp / "out"))
+        self.assertNotEqual(0, result.returncode, result.stdout)
+        self.assertIn("обязательный файл", result.stderr)
+        self.assertIn("не отслеживается git", result.stderr)
 
     def test_sha256_file_matches_hashlib(self):
         root = self.make_repo()

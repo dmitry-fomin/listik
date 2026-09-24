@@ -75,6 +75,34 @@ class BlockContentTests(unittest.TestCase):
             )
 
 
+class SkillFileTests(unittest.TestCase):
+    """.agents/skills/listik/SKILL.md — the same protocol as docs/harness-protocol.md."""
+
+    def setUp(self) -> None:
+        self.skill_dir = paths.ROOT_DIR / migrate.SKILL_REL
+        self.text = (self.skill_dir / "SKILL.md").read_text(encoding="utf-8")
+
+    def _split(self) -> tuple[list[str], str]:
+        self.assertTrue(self.text.startswith("---\n"), "SKILL.md must start with ---")
+        head, sep, body = self.text[4:].partition("\n---\n")
+        self.assertTrue(sep, "frontmatter is not closed with ---")
+        return head.split("\n"), body
+
+    def test_frontmatter_is_name_and_description(self) -> None:
+        lines, _ = self._split()
+        self.assertEqual(2, len(lines), lines)
+        self.assertEqual(f"name: {self.skill_dir.name}", lines[0])
+        self.assertRegex(lines[1], r"^description: \S")
+
+    def test_body_equals_harness_protocol(self) -> None:
+        _, body = self._split()
+        protocol = (paths.ROOT_DIR / "docs" / "harness-protocol.md").read_text(encoding="utf-8")
+        self.assertEqual(protocol, body)
+
+    def test_no_harness_names(self) -> None:
+        self.assertNotRegex(self.text, _HARNESS_NAMES)
+
+
 class UpsertTests(unittest.TestCase):
     def setUp(self) -> None:
         self._tmpdir = tempfile.TemporaryDirectory()

@@ -20,6 +20,7 @@ import subprocess
 import sys
 import time
 import unittest
+from unittest import mock
 from pathlib import Path
 
 from listik import deps as deps_mod
@@ -37,7 +38,7 @@ SWARM_AUTHOR = "agent:listik-swarm"
 
 GREEN_INTEGRATION = [[sys.executable, "-c", "raise SystemExit(0)"]]
 RED_INTEGRATION = [[sys.executable, "-c", "print('boom'); raise SystemExit(1)"]]
-ARBITER_CMD = ["node", str(FAKE_ARBITER), "{prompt}", "{files}"]
+ARBITER_CMD = ["node", str(FAKE_ARBITER), "{prompt}", "{files}", "m/{model}"]
 
 # Воркер сценария барьера: поведение `_WORKER_SRC` (9hcc.d) плюс перезапись
 # `shared.txt` единственной строкой `<id>`, когда в окружении `FAKE_SHARED=1` --
@@ -276,10 +277,14 @@ class ArbiterResolvesConflictTests(SwarmBarrierE2ECase):
         b = self.scenario_task("B", route="fake-low")
         self.write_swarm_config({"integration": GREEN_INTEGRATION, "arbiter": ARBITER_CMD})
 
-        proc = self.start_swarm(parallel=2, interval=1,
-                                extra_env={"FAKE_SHARED": "1", "FAKE_ARBITER_MODE": "ok"})
-        code = self.wait_swarm(proc, deadline=90)
+        argv_file = self.tmp_path / "arbiter-argv.json"
+        with mock.patch.dict(os.environ, {"LISTIK_SWARM_MODEL": "e2e-model"}):
+            proc = self.start_swarm(parallel=2, interval=1,
+                                    extra_env={"FAKE_SHARED": "1", "FAKE_ARBITER_MODE": "ok",
+                                               "FAKE_ARBITER_ARGV_FILE": str(argv_file)})
+            code = self.wait_swarm(proc, deadline=90)
         self.assertEqual(code, 0, self.swarm_log_tail(proc, 200))
+        self.assertEqual(json.loads(argv_file.read_text(encoding="utf-8"))[2], "m/e2e-model")
 
         shared = self.git("show", f"main:shared.txt").splitlines()
         self.assertEqual(set(shared), {a["id"], b["id"]}, shared)

@@ -6,7 +6,7 @@ import nodeFs from "node:fs";
 import {tmpdir} from "node:os";
 import {join, resolve, dirname} from "node:path";
 import {fileURLToPath} from "node:url";
-import {renderArgv, otherSideIds, buildPrompt, runArbiter, resolveWithArbiter} from "../arbiter.mjs";
+import {renderArgv, needsModel, otherSideIds, buildPrompt, runArbiter, resolveWithArbiter} from "../arbiter.mjs";
 import {ARBITER_MARK} from "../barrier.mjs";
 
 const HERE = dirname(fileURLToPath(import.meta.url));
@@ -95,6 +95,21 @@ test("renderArgv: подстановка известных плейсхолде
     prompt: "/tmp/x.prompt.md", task_id: "t1", worktree: "/tmp/wt", files: ["a.txt", "b.txt"],
   });
   assert.deepEqual(out, ["x", "-p", "/tmp/x.prompt.md", "t1:a.txt,b.txt", "{other}"]);
+});
+
+test("renderArgv: подстановка модели и пустое значение без vars", () => {
+  assert.deepEqual(
+    renderArgv(["pi", "--model", "b-ai-glm/{model}", "{prompt}"], {
+      prompt: "/p", model: "glm-5.3-flash",
+    }),
+    ["pi", "--model", "b-ai-glm/glm-5.3-flash", "/p"],
+  );
+  assert.deepEqual(renderArgv(["b-ai-glm/{model}"], {}), ["b-ai-glm/"]);
+});
+
+test("needsModel: только шаблон с {model} требует модель", () => {
+  assert.equal(needsModel(["x", "{prompt}"]), false);
+  assert.equal(needsModel(["x", "a/{model}"]), true);
 });
 
 test("otherSideIds: целый токен, без ложного t1 из t10", () => {

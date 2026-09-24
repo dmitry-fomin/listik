@@ -46,8 +46,9 @@ export async function tick(listik, config, log, runState = null) {
     }
     return {serverDown: true, server: status.server, cycles: []};
   }
+  const swarmModel = typeof status.swarm?.model === "string" && status.swarm.model ? status.swarm.model : null;
   log.line(`сервер: bin_path=${status.bin_path} data_dir=${status.data_dir} ` +
-    `db_path=${status.db_path} url=${status.url}`);
+    `db_path=${status.db_path} url=${status.url} model=${swarmModel ?? "-"}`);
 
   const logWavesApply = (p) => {
     if (!p.applyResult) return;
@@ -233,7 +234,7 @@ export async function tick(listik, config, log, runState = null) {
       } else if (!configErrored) {
         barrierResult = await runBarrier({
           listik, git, fs, config, swarmConfig, log, tasks, projectPath, now: new Date(),
-          swarmJsonPath: cfgPath,
+          swarmJsonPath: cfgPath, swarmModel,
         });
         gate = barrierResult.gate;
 

@@ -3,7 +3,9 @@
 // у которой уже нет — открытые замороженные задачи конфликт разрешают сами (шаг 7,
 // не здесь). Чистое (`renderArgv`…`buildPrompt`) — только обычные объекты внутрь и
 // наружу; `runArbiter`/`resolveWithArbiter` — оркестрация: `spawn` прямой импорт (как
-// `runIntegrationCommand` в `barrier.mjs`), git/listik/fs приходят параметрами.
+// `runIntegrationCommand` в `barrier.mjs`), git/listik/fs приходят параметрами. Плейсхолдер
+// `{model}` — имя из `[swarm].model`, полученное через `listik status`; префикс провайдера
+// пользователь пишет в шаблоне.
 import {spawn, execFileSync} from "node:child_process";
 import {openSync, closeSync, readFileSync as readFileSyncNode} from "node:fs";
 import path from "node:path";
@@ -15,11 +17,11 @@ const MAX_STOPS = 10;
 
 // ------------------------------------------------------------------- чистое ---
 
-// Подстановка `{prompt}`, `{task_id}`, `{worktree}`, `{files}` (файлы через запятую,
+// Подстановка `{prompt}`, `{task_id}`, `{worktree}`, `{files}`, `{model}` (файлы через запятую,
 // если `vars.files` — массив) в каждом элементе `template`; неизвестные `{…}` не трогать.
 export function renderArgv(template, vars) {
   const files = Array.isArray(vars.files) ? vars.files.join(",") : (vars.files ?? "");
-  const map = {prompt: vars.prompt, task_id: vars.task_id, worktree: vars.worktree, files};
+  const map = {prompt: vars.prompt, task_id: vars.task_id, worktree: vars.worktree, files, model: vars.model};
   return (template || []).map(item => {
     let out = item;
     for (const [k, v] of Object.entries(map)) {
@@ -27,6 +29,10 @@ export function renderArgv(template, vars) {
     }
     return out;
   });
+}
+
+export function needsModel(template) {
+  return (template || []).some(item => item.includes("{model}"));
 }
 
 function escapeRe(s) {
@@ -201,7 +207,11 @@ async function abortIfInProgress(git, worktree) {
 // Вызывается только из шага 5 `runBarrier`, когда `rebase` вернул `{ok: false}` и
 // `swarmConfig.arbiter` непуст. Цикл не более `MAX_STOPS` остановок ребейза.
 export async function resolveWithArbiter({git, listik, fs, config, swarmConfig, log, projectPath, task,
-  card, worktree, base, tasks, now}) {
+  card, worktree, base, tasks, now, model}) {
+  if (needsModel(swarmConfig.arbiter) && (typeof model !== "string" || !model)) {
+    await abortIfInProgress(git, worktree);
+    return {ok: false, reason: "модель роя неизвестна: в arbiter есть {model}, а listik status не отдал swarm.model"};
+  }
   const branch = (task.branch || "").trim() || `task/${task.id}`;
   const knownIds = (tasks || []).map(t => t.id);
   const specText = loadSpec(fs, projectPath, card.spec_path);
@@ -265,7 +275,9 @@ export async function resolveWithArbiter({git, listik, fs, config, swarmConfig, 
     });
     fs.writeFileSync(promptPath, prompt, "utf8");
 
-    const argv = renderArgv(swarmConfig.arbiter, {prompt: promptPath, task_id: task.id, worktree, files: conflicts});
+    const argv = renderArgv(swarmConfig.arbiter, {
+      prompt: promptPath, task_id: task.id, worktree, files: conflicts, model,
+    });
 
     const startedAt = Date.now();
     const res = await runArbiter({argv, cwd: worktree, timeoutSec: swarmConfig.arbiterTimeout, logPath});

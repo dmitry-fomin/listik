@@ -1607,6 +1607,7 @@ resource-blocks` снимает ребро до следующего `--apply` �
 Итоговое имя модели (из файла, непустой переменной окружения или дефолта) отдаётся
 авторизованному в `/api/health` → `swarm.model` и в `listik status --json` → `swarm.model`;
 локальный фолбэк `status` считает его сам по тем же правилам.
+По нему рой подставляет `{model}` в команду арбитра (`docs/usage.md`, «swarm.json»).
 
 Проход роя по флагу `--apply` (`listik plan --apply`/`listik rescope --apply`) пишет по графу,
 который вернула модель, обычные машинные рёбра `blocks` с автором `agent:listik-swarm` — тем же,

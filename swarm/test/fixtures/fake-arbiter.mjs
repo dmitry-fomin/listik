@@ -8,7 +8,11 @@ import fs from "node:fs";
 import path from "node:path";
 import {execFileSync} from "node:child_process";
 
-const [promptPath, filesArg] = process.argv.slice(2);
+const argv = process.argv.slice(2);
+if (process.env.FAKE_ARBITER_ARGV_FILE) {
+  fs.writeFileSync(process.env.FAKE_ARBITER_ARGV_FILE, JSON.stringify(argv), "utf8");
+}
+const [promptPath, filesArg] = argv;
 const files = (filesArg || "").split(",").map(s => s.trim()).filter(Boolean);
 const mode = process.env.FAKE_ARBITER_MODE || "ok";
 

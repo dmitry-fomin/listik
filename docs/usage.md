@@ -389,7 +389,8 @@ show <id>`).
   "verify_retries": 1,
   "question_timeout": 30,
   "rescope_timeout": 1800,
-  "arbiter": ["claude", "--dangerously-skip-permissions", "-p", "{prompt}"],
+  "arbiter": ["pi", "--print", "--no-session", "--model", "openrouter/{model}",
+    "Прочитай файл {prompt} и выполни его указания. Правь только файлы: {files}."],
   "projects": {
     "listik": {
       "max_freezes": 1,
@@ -423,7 +424,15 @@ show <id>`).
   `claude -p {prompt}` без файловой обёртки прочитает как промпт саму строку-путь, а не её
   содержимое — нужна обёртка, которая читает файл по этому пути и передаёт его текст модели.
   Другие плейсхолдеры: `{task_id}`, `{worktree}` (дерево задачи), `{files}` (конфликтующие
-  файлы через запятую).
+  файлы через запятую), `{model}` (имя модели LLM-точек роя, то же, что у `listik plan`/
+  `rescope`: `[swarm].model` в `config.toml`, с переопределением `LISTIK_SWARM_MODEL`; рой
+  берёт его из `listik status --json` → `swarm.model`). Префикс провайдера задаётся в шаблоне
+  и должен соответствовать `[swarm].base_url`: для OpenRouter — `openrouter/{model}`, для
+  b.ai — `b-ai-glm/{model}` (pi адресует модель как `<провайдер>/<имя>`). Если в шаблоне есть
+  `{model}`, а `status` его не отдал (старый сервер или `unauthorized`), арбитр не запускается,
+  needs-owner получает «арбитр не справился: модель роя неизвестна».
+  Предупреждение про `claude -p {prompt}` выше относится к чтению файла: форма с инструкцией
+  «Прочитай файл `{prompt}` …» работает и у `claude`, и у `pi` — агент читает файл сам.
 - `integration_timeout`/`arbiter_timeout` — секунды на команду/на одну остановку арбитра
   (дефолты 1800/1200).
 - `rescope` — `true`/`false`, дефолт `true`; `false` выключает проход `listik rescope` после
@@ -482,4 +491,3 @@ show <id>`).
 | Рой | `listik swarm on\|off\|status`; `node bin/listik-swarm [--project X] [--once] [--exit-when-idle] [--dry-run]` |
 
 `listik <команда> --help` — все флаги.
-

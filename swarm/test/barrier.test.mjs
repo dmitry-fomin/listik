@@ -1352,6 +1352,80 @@ suite("барьер + арбитр ok: обе влиты, MERGED_MARK второ
   assert.match(content, /t2-side/);
 });
 
+suite("барьер + арбитр: {model} получает swarmModel", async () => {
+  const {repo, tasks} = conflictSetup();
+  const listik = fakeListik({
+    t1: {id: "t1", comments: [], write_scope: []},
+    t2: {id: "t2", comments: [], write_scope: []},
+  });
+  const log = makeLog();
+  const logDir = tmpLogDir();
+  const argvFile = join(logDir, "argv.json");
+  process.env.FAKE_ARBITER_ARGV_FILE = argvFile;
+  try {
+    const result = await runBarrier({
+      listik, git, fs: nodeFs, config: {dryRun: false, project: "demo", logDir},
+      swarmConfig: {integration: [], arbiter: ["node", ARBITER_FIXTURE, "{prompt}", "{files}", "m/{model}"], arbiterTimeout: 30},
+      swarmModel: "glm-x", log, tasks, projectPath: repo, now: new Date(),
+    });
+    assert.deepEqual(result.mergedNow, ["t1", "t2"]);
+    assert.deepEqual(result.unmerged, []);
+    const c2 = listik.calls.comment.find(c => c.id === "t2" && c.text.startsWith(MERGED_MARK));
+    assert.ok(c2);
+    assert.equal(JSON.parse(c2.text.slice(MERGED_MARK.length).trim()).arbiter, true);
+    assert.equal(JSON.parse(readFileSync(argvFile, "utf8"))[2], "m/glm-x");
+  } finally {
+    delete process.env.FAKE_ARBITER_ARGV_FILE;
+  }
+});
+
+for (const swarmModel of [null, ""]) {
+  suite(`барьер + арбитр: неизвестная модель ${JSON.stringify(swarmModel)} не запускает процесс`, async () => {
+    const {repo, treeT2, tasks} = conflictSetup();
+    const listik = fakeListik({
+      t1: {id: "t1", comments: [], write_scope: []},
+      t2: {id: "t2", comments: [], write_scope: []},
+    });
+    const log = makeLog();
+    const logDir = tmpLogDir();
+    const result = await runBarrier({
+      listik, git, fs: nodeFs, config: {dryRun: false, project: "demo", logDir},
+      swarmConfig: {integration: [], arbiter: ["node", ARBITER_FIXTURE, "{prompt}", "{files}", "m/{model}"], arbiterTimeout: 30},
+      swarmModel, log, tasks, projectPath: repo, now: new Date(),
+    });
+    assert.deepEqual(result.unmerged, ["t2"]);
+    assert.match(listik.calls.needsOwner[0].text, /арбитр не справился: модель роя неизвестна/);
+    assert.equal(await git.rebaseInProgress(treeT2), false);
+    assert.deepEqual(readdirSync(logDir).filter(f => f.startsWith("arbiter-t2-") && f.endsWith(".log")), []);
+    assert.deepEqual(readdirSync(logDir).filter(f => f.startsWith("arbiter-t2-") && f.endsWith(".prompt.md")), []);
+  });
+}
+
+suite("барьер + арбитр: без {model} работает при переданном swarmModel", async () => {
+  const {repo, tasks} = conflictSetup();
+  const listik = fakeListik({
+    t1: {id: "t1", comments: [], write_scope: []},
+    t2: {id: "t2", comments: [], write_scope: []},
+  });
+  const log = makeLog();
+  const logDir = tmpLogDir();
+  const argvFile = join(logDir, "argv.json");
+  process.env.FAKE_ARBITER_ARGV_FILE = argvFile;
+  try {
+    const result = await runBarrier({
+      listik, git, fs: nodeFs, config: {dryRun: false, project: "demo", logDir},
+      swarmConfig: {integration: [], arbiter: ["node", ARBITER_FIXTURE, "{prompt}", "{files}"], arbiterTimeout: 30},
+      swarmModel: "glm-x", log, tasks, projectPath: repo, now: new Date(),
+    });
+    assert.deepEqual(result.mergedNow, ["t1", "t2"]);
+    assert.deepEqual(result.unmerged, []);
+    assert.deepEqual(JSON.parse(readFileSync(argvFile, "utf8")).length, 2);
+    assert.doesNotMatch(readFileSync(argvFile, "utf8"), /glm-x/);
+  } finally {
+    delete process.env.FAKE_ARBITER_ARGV_FILE;
+  }
+});
+
 suite("барьер без арбитра: needs-owner содержит «арбитр не настроен»", async () => {
   const {repo, tasks} = conflictSetup();
   const listik = fakeListik({
@@ -2178,4 +2252,3 @@ suite("верификатор не задан, integration красная → в
   assert.equal(nodeFs.readdirSync(logDir).filter(f => f.startsWith("verify-")).length, 0);
   assert.ok(log.lines.some(l => l === "верификатор: команд нет"));
 });
-

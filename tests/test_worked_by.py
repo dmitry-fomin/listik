@@ -112,11 +112,11 @@ class WorkedByTests(TempDbTestCase):
         self.assertEqual(card["worked_by_title"], "")
 
     def test_done_keeping_holder(self) -> None:
-        """C8: `listik done` держателя не снимает — поле от этого не зависит."""
+        """C8: `listik done` снимает держателя (listik-ugw8) — поле от этого не зависит."""
         store.claim(self.conn, self.task, holder="grok", actor="agent:grok")
         store.update_task(self.conn, self.task, status="done", stage="done")
         card = self.card()
-        self.assertEqual(card["holder"], "grok")
+        self.assertFalse(card["holder"])
         self.assertEqual(card["worked_by"], ["agent:grok"])
 
     def test_claim_older_than_hundred_events(self) -> None:

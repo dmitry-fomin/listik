@@ -657,6 +657,14 @@ def update_task(conn: sqlite3.Connection, task_id: str, *, actor: str | None = N
             merged = labels_after_route_change(conn, base, fields[ROUTE_FIELD])
             if merged is not None:
                 fields["labels"] = merged
+    # Закрытие снимает держателя (как `stage --to done`, listik-rku8): у закрытой
+    # карточки его нет, переданный `holder` не в счёт. Держателя не было — поле
+    # выбрасываем, иначе `None` против `""` дал бы ложный `release`.
+    if fields.get("status") in FINAL_STATUSES and fields["status"] != row["status"]:
+        if (row["holder"] or "").strip():
+            fields["holder"] = ""
+        else:
+            fields.pop("holder", None)
     # Смену маршрута проверяем по карточке, какой она станет после этого вызова:
     # в тех же полях может прийти начало работы (`status`/`stage`/`holder`).
     effective = route_card_after(row, fields)
@@ -1310,8 +1318,8 @@ def holder_claim_state(conn: sqlite3.Connection, task_id: str, holder: str | Non
 def worked_by_actors(conn: sqlite3.Connection, task_id: str) -> list[str]:
     """Кто подтвердил работу по карточке своим `claim`/`heartbeat`.
 
-    У закрытой карточки не видно, кто её вёл: `listik done` держателя не снимает,
-    а `stage --to done` — снимает, и `assignee` помнит только первый claim. Поле
+    У закрытой карточки не видно, кто её вёл: закрытие (`listik done`, `stage --to
+    done`) снимает держателя, а `assignee` помнит только первый claim. Поле
     считается по событиям: событие «своё», если его автор (`actor`, иначе
     `harness`) тождествен держателю события (`to_value`) как актор
     (`actors.same_actor`). Выдача оркестратором (`stage --holder кому`) и

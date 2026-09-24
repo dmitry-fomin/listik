@@ -497,11 +497,16 @@ export async function runBarrier({listik, git, fs, config, swarmConfig, log, tas
       usedArbiter = true;
     }
 
-    let changed = [];
+    let changed;
     try {
       changed = await git.changedFiles(projectPath, base, entry.branch);
     } catch (err) {
-      log.line(`changedFiles ${entry.id} ошибка: ${listikErrText(err)}`);
+      // Ошибка git — не «пустой дифф»: не переоткрываем задачу, а зовём человека.
+      unmerged.push(entry.id);
+      log.action(`needs-owner ${entry.id}: diff_error`);
+      await needsOwnerSafe(listik, log, entry.id,
+        withHint(entry.id, "`git diff --name-only`: " + (err.message ?? String(err)) + "."));
+      continue;
     }
     if (!changed.length) {
       await rejectOne({entry, base, reason: "empty"});
@@ -554,28 +559,47 @@ export async function runBarrier({listik, git, fs, config, swarmConfig, log, tas
 
     const sha = await git.headSha(projectPath);
     let files = [];
+    let filesError = null;
     try {
       files = await git.changedFiles(projectPath, base, sha);
     } catch (err) {
+      filesError = err.message ?? String(err);
       log.line(`changedFiles ${entry.id} ошибка: ${listikErrText(err)}`);
     }
     const declared = entry.write_scope || [];
     const outside = outsideScope(files, declared);
     const record = {sha, branch: entry.branch, base, files, declared, outside};
+    if (filesError !== null) record.files_error = filesError;
     if (usedArbiter) record.arbiter = true;
-    let marked = false;
-    try {
-      await listik.comment(entry.id, `${MERGED_MARK} ${JSON.stringify(record)}`);
-      marked = true;
-    } catch (err) {
-      log.line(`comment ${entry.id} ошибка: ${listikErrText(err)}`);
-    }
+    const markText = `${MERGED_MARK} ${JSON.stringify(record)}`;
     const sha7 = sha.slice(0, 7);
     const outsideDesc = outside.length ? outside.join(", ") : "нет";
     log.action(`влито ${entry.id} → ${sha7} (файлов ${files.length}, вне области: ${outsideDesc})`);
+    // Одна повторная попытка записи маркера; без маркера следующий тик счёл бы влитую ветку
+    // пустой и переоткрыл задачу — поэтому при второй неудаче зовём человека.
+    let markErr = null;
+    for (let attempt = 0; attempt < 2; attempt++) {
+      try {
+        await listik.comment(entry.id, markText);
+        markErr = null;
+        break;
+      } catch (err) {
+        markErr = err;
+        log.line(`comment ${entry.id} ошибка: ${listikErrText(err)}`);
+      }
+    }
+    if (markErr) {
+      const body = `ветка ${entry.branch} уже влита в ${sha7} (merge --ff-only прошёл), но записать ` +
+        `журнал не удалось: ${markErr.message ?? String(markErr)}. Запиши маркер сам: ` +
+        `listik comment ${entry.id} '${markText}' -k journal --actor ${SWARM_AUTHOR} — потом сними флаг.`;
+      unmerged.push(entry.id);
+      log.action(`needs-owner ${entry.id}: mark_failed`);
+      await needsOwnerSafe(listik, log, entry.id, withHint(entry.id, body));
+      continue;
+    }
     merged.push(entry.id);
     mergedNow.push(entry.id);
-    if (marked) pending.push(entry.id);
+    pending.push(entry.id);
   }
 
   let gate = unmerged.length ? {reason: "unmerged", ids: unmerged} : null;

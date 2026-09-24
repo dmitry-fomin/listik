@@ -205,7 +205,8 @@ node <репозиторий>/bin/listik-swarm [--project <slug>] [--parallel 3]
 | `--listik-host <host>` | — | `--host` для вызовов `listik` |
 | `--listik-port <port>` | — | `--port` для вызовов `listik` |
 | `--log-dir <путь>` | `logs/` репозитория | каталог лог-файла роя |
-| `--actor <actor>` | `agent:listik-swarm` | актёр для пишущих вызовов |
+
+Все записи роя в карточки идут от автора `agent:listik-swarm`.
 
 Что рой пишет в карточки: needs-owner с понятным текстом («у задачи нет маршрута», «нет
 write_scope», «процесс завершился кодом …», «задача зависла»), рабочее дерево и ветку

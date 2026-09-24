@@ -73,12 +73,13 @@ _resolve_owner = owner
 
 
 def health(host: str | None = None, port: int | None = None, timeout: float = 2.0,
-           owner: str | None = None) -> dict | None:
-    """Состояние сервера: None — не отвечает. 401 тоже считается «отвечает»."""
+           owner: str | None = None, auth: bool = True) -> dict | None:
+    """Состояние сервера: None — не отвечает. 401 тоже считается «отвечает».
+    auth=False — без токена и владельца: сервер отвечает лёгкой веткой (без git/Ollama)."""
     req = urllib.request.Request(f"{base_url(host, port)}/api/health")
-    if token():
+    if auth and token():
         req.add_header("Authorization", f"Bearer {token()}")
-    who = _resolve_owner(owner)
+    who = _resolve_owner(owner) if auth else None
     if who:
         req.add_header("X-Listik-Owner", who)
     try:
@@ -94,7 +95,7 @@ def health(host: str | None = None, port: int | None = None, timeout: float = 2.
 
 
 def is_up(host: str | None = None, port: int | None = None, timeout: float = 2.0) -> bool:
-    return health(host, port, timeout) is not None
+    return health(host, port, timeout, auth=False) is not None
 
 
 def _query_string(query: dict) -> str:

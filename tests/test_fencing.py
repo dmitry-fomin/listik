@@ -597,6 +597,47 @@ class ClientHeadersTests(unittest.TestCase):
         self.assertEqual(req.get_header("X-listik-generation"), "3")
         self.assertEqual(req.get_header("X-listik-dispatch"), "d1")
 
+    def _capture_health(self, fn, tok):
+        """Вызывает fn() с моком urlopen и token → tok; возвращает (результат, Request)."""
+        captured = {}
+
+        class FakeResp:
+            def read(self):
+                return json.dumps({"ok": True, "data": {"status": "ok"}}).encode("utf-8")
+
+            def __enter__(self):
+                return self
+
+            def __exit__(self, *a):
+                return False
+
+        def fake_urlopen(req, timeout=None):
+            captured["req"] = req
+            return FakeResp()
+
+        with mock.patch("urllib.request.urlopen", fake_urlopen), \
+             mock.patch.object(client, "token", return_value=tok), \
+             mock.patch.dict(os.environ, {"LISTIK_OWNER": "who"}):
+            result = fn()
+        return result, captured["req"]
+
+    def test_is_up_probe_sends_no_token_and_no_owner(self):
+        up, req = self._capture_health(client.is_up, "t")
+        self.assertTrue(up)
+        self.assertFalse(req.has_header("Authorization"))
+        self.assertFalse(req.has_header("X-listik-owner"))
+
+    def test_health_still_sends_token_and_owner(self):
+        data, req = self._capture_health(client.health, "t")
+        self.assertIsNotNone(data)
+        self.assertEqual(req.get_header("Authorization"), "Bearer t")
+        self.assertEqual(req.get_header("X-listik-owner"), "who")
+
+    def test_is_up_with_empty_token(self):
+        up, req = self._capture_health(client.is_up, "")
+        self.assertTrue(up)
+        self.assertFalse(req.has_header("Authorization"))
+
     def test_cli_call_passes_fence_env_to_both_paths(self):
         cli = _load_cli()
 
@@ -716,20 +757,28 @@ class CliErrorBothPathsTests(FencingHttpCase):
         self.assertIn("остановись", payload["error"]["hint"])
 
     def test_http_mode(self):
-        with mock.patch.dict(os.environ, self._zombie_env()):
+        # is_up зафиксирован: иначе медленный /api/health уводит call() в локальный
+        # фолбэк, и тест молча проверяет не HTTP-путь. Сам запрос идёт на тестовый сервер.
+        with mock.patch.dict(os.environ, self._zombie_env()), \
+             mock.patch.object(client, "is_up", return_value=True) as is_up_mock:
             argv = ["--host", "127.0.0.1", "--port", str(self.port),
                     "comment", self.tid, "зомби", "-k", "journal"]
             code, _, err = self.run_cli(argv)
+        is_up_mock.assert_called_once()
         self.assertEqual(code, 1)
-        self.assertTrue(err.strip().startswith("ошибка: полномочия на задачу"), err)
+        self.assertNotIn("не отвечает", err)
+        lines = err.splitlines()
+        self.assertTrue(any(line.startswith("ошибка: полномочия на задачу") for line in lines), err)
         self.assertIn("остановись", err)
         self.assertNotIn("посмотри состояние карточки", err)
 
     def test_http_mode_json(self):
-        with mock.patch.dict(os.environ, self._zombie_env()):
+        with mock.patch.dict(os.environ, self._zombie_env()), \
+             mock.patch.object(client, "is_up", return_value=True) as is_up_mock:
             argv = ["--host", "127.0.0.1", "--port", str(self.port),
                     "comment", self.tid, "зомби", "-k", "journal", "--json"]
             code, out, _ = self.run_cli(argv)
+        is_up_mock.assert_called_once()
         self.assertEqual(code, 1)
         payload = json.loads(out)
         self.assertEqual(payload["error"]["code"], "revoked")

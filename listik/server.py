@@ -1753,6 +1753,13 @@ class Server(ThreadingHTTPServer):
         finally:
             close_thread_conn()
 
+    def handle_error(self, request, client_address):
+        # Клиент оборвал соединение (проба по таймауту, keep-alive) — штатно, без трейсбека.
+        if isinstance(sys.exc_info()[1], (ConnectionResetError, ConnectionAbortedError,
+                                          BrokenPipeError, TimeoutError)):
+            return
+        super().handle_error(request, client_address)
+
 
 def make_server(host: str, port: int, quiet: bool = False) -> Server:
     return Server((host, port), Handler, quiet=quiet)

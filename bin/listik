@@ -207,7 +207,7 @@ WRITE_OPS = frozenset({
     "create", "update", "claim", "heartbeat", "stage", "comment",
     "needs-owner", "dep_add", "dep_remove", "project_add", "project_archive",
     "project_remove", "project_routing", "waves_apply", "revoke", "launch",
-    "swarm_plan", "swarm_rescope",
+    "swarm_plan", "swarm_rescope", "portions_sync",
 })
 
 #: `--local` при живом сервере обходит push доски так же молча, как фолбэк без
@@ -1180,6 +1180,35 @@ def cmd_done(args) -> int:
                               "result": args.result or "", "actor": actor,
                               "close_reason": args.reason or args.result})
     emit(args, task, f"закрыта {task['id']}\n  результат: {args.result or '—'}")
+    return 0
+
+
+def cmd_portions(args) -> int:
+    """`portions sync`: карточки порций по файлам шага `<id>.<X>.md`."""
+    actor = actor_default(args)
+    harness = getattr(args, "harness", None)
+    try:
+        res = call("portions_sync", args, f"/api/tasks/{args.task_id}/portions/sync",
+                   method="POST", body={"actor": actor, "harness": harness},
+                   local_kwargs={"task_id": args.task_id, "actor": actor, "harness": harness})
+    except (errors.ListikError, ValueError) as exc:
+        # Нет spec_path/каталога шага — неверный аргумент: код 2, как у прочих bad_argument.
+        err = errors.as_error(exc)
+        if err.code != errors.BAD_ARGUMENT:
+            raise
+        raise errors.ListikError(err.message, code=err.code, hint=err.hint,
+                                 exit_code=2, status=err.status) from exc
+    if getattr(args, "json", False):
+        emit(args, res, "")
+        return 0
+    for p in res["portions"]:
+        state = ("создана" if p["id"] in res["created"] else
+                 "обновлена" if p["id"] in res["updated"] else "без изменений")
+        print(f"  {p['letter']}  {p['id']}  {state}  {p['title']}")
+    if not res["portions"]:
+        print(f"  файлов порций нет в {res['steps_dir']}")
+    links = ", ".join(f"{cur} ждёт {prev}" for prev, cur in res["linked"])
+    print(f"связи: {links or 'без изменений'}")
     return 0
 
 
@@ -2570,6 +2599,10 @@ def build_parser() -> argparse.ArgumentParser:
     sp.add_argument("-r", "--result")
     sp.add_argument("--reason")
     add_note(sp)
+
+    sp = add("portions", cmd_portions, help="карточки порций шага по файлам <id>.<X>.md")
+    sp.add_argument("action", choices=["sync"])
+    add_task_id(sp)
 
     sp = add("revoke", cmd_revoke,
              help="отзыв поднимает поколение и по умолчанию снимает процесс")

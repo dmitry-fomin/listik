@@ -1095,6 +1095,15 @@ config.toml, раздел [deepgram]»; Deepgram ответил ошибкой �
   открыт хоть один ребёнок (`deps_state.can_finish`, `children_open` — только незакрытые).
 - Порядок порций, если он важен, задаётся жёсткой связью `blocks` между ними; `dep add` от
   агента без `--confirm` остаётся предложением `suggested-blocks`.
+- **Карточки по файлам шага.** `listik portions sync <id шага>` (`POST
+  /api/tasks/{id}/portions/sync`) читает каталог `spec_path` шага и для каждого файла
+  `<id>.<буква>.md` находит или заводит дочернюю карточку: заголовок — первая строка `# …`
+  файла (иначе `порция <буква>`), `spec_path` — файл, `checklist_path` — `<id>.check-<буква>.md`,
+  если он есть. Существующему ребёнку (с тем же `spec_path` или найденному по букве, как у
+  `context --portion`) дописываются только пустые пути, заголовок не меняется. Соседние по букве
+  порции связываются жёстко: `b blocks a`, `c blocks b` (предложение `suggested-blocks` той же
+  пары становится жёсткой связью). Повторный вызов без изменений на диске ничего не пишет.
+  Карточки и файлы не удаляются, этапы/статусы/держатели не меняются.
 - **Холодный старт родителя.** `show <шаг>` (при `details=1`) и `context <шаг>` отдают
   `children[]` — все дочерние карточки, включая закрытые, по порядку создания. У каждой:
   `id, project, title, status, status_title, stage, stage_title, priority, priority_title,
@@ -1328,6 +1337,7 @@ dropped_chunks, reason`), `reasons[]` (по одному пункту на ка�
 | POST | `/api/tasks/{id}/comment` | `text`(обязателен), `author`/`actor`, `kind=comment\|journal\|question\|answer\|review\|verdict`, `harness` | комментарий в журнал задачи; `kind=question`/`answer` — те же виды, что пишет `needs-owner` (см. ниже), их можно оставить и вручную, но сам флаг `needs_owner` они не меняют; `kind=verdict` принимается как вердикт на `s4-judge` от агента или на любом этапе от человека и требует первой строки ровно `VERDICT: PASS` или `VERDICT: FAIL` (после `FAIL` — список правок), иначе 400; агентский verdict вне `s4-judge` сохраняется как обычный `comment`, этап не двигается, ответ содержит `verdict_accepted=false` и `message` с причиной |
 | POST | `/api/tasks/{id}/needs-owner` | `value=true\|false`, `note`, `actor`, `harness` | поднять/снять флаг «нужен человек»: при непустом `note` создаётся комментарий `kind=question` (`value=true`) или `kind=answer` (`value=false`); событие `question`/`answer` пишется при каждом вызове, даже если флаг уже стоит в нужном значении; ответ — полная карточка, как у `PATCH`. Автор комментария и события — `actor`; без него в серверном режиме подписывается человек из заголовка `X-Listik-Owner` (явный агентский `actor` сильнее), чтобы вопрос/ответ с доски не остался без автора. `PATCH /api/tasks/{id}` с `needs_owner` меняет только флаг и комментария не пишет |
 | POST | `/api/tasks/{id}/release` | `note`, `actor` | освободить задачу |
+| POST | `/api/tasks/{id}/portions/sync` | `actor`, `harness` | карточки порций шага по файлам `<id>.<буква>.md` в каталоге его `spec_path` (см. «Карточка-порция»): `{id, steps_dir, created[], updated[], unchanged[], linked[[prev, cur]…], portions[{letter, file, checklist, id, title}]}`; если что-то изменилось — событие `note` у шага «порции: создано N, обновлено M, связано K». 400 `bad_argument`: у шага нет `spec_path` или его каталога нет; 404 — шага нет |
 | POST | `/api/tasks/{id}/done` | `result`, `reason`, `actor`, `note` | закрыть: `status=done`, `stage=done`; держатель снимается (событие `release`), `holder_note` очищается |
 | POST | `/api/tasks/{id}/revoke` | `actor`, `harness`, `note`, `kill=true` | отозвать полномочия текущего запуска (поднять поколение) и, если `kill`, снять его процесс — см. «Отзыв и перезапуск». `400` — задачу не запускали (`generation == 0`) или поколение изменилось параллельно. `200` — карточка после отзыва |
 | POST | `/api/tasks/{id}/launch` | `actor`, `harness`, `note` (пока не используется), `env{}` (`LISTIK_*` → строка, необязательный) | запустить задачу по маршруту следующим поколением (`launcher.start` без изменений логики) — см. «Отзыв и перезапуск». `200` — карточка с `"launched": true`; `409 conflict` — текст отказа `start` (уже запущена, нет маршрута и т. п.), состояние — как у автостарта; `400 bad_argument` — `env` не прошёл `check_env` (карточка не трогается) |
@@ -1728,6 +1738,7 @@ listik tree <id>                    # дерево зависимостей за
 listik dep confirm <id> <блокер>    # подтвердить предложение агента → жёсткая связь
 listik dep suggested [--project]    # предложения агентов, ждущие подтверждения человеком
 listik lint [--project X] [--suggested-hours N] [--json]   # код возврата 1 при находках
+listik portions sync <id> [--json]   # карточки порций шага по файлам <id>.<буква>.md, порядок — жёсткие blocks
 listik dep rm <id> <dep> --dep-type resource-blocks   # снять ресурсный блокер планировщика (dep add его не ставит)
 listik set <id> write_scope=listik/store.py,docs/API.md   # область правки, пути от корня проекта; write_scope= — очистить
 listik projects <slug> [--routing '<json>']   # показать/задать маршрутизацию проекта

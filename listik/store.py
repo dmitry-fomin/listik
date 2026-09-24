@@ -1650,6 +1650,102 @@ def parent_card(conn: sqlite3.Connection, task_id: str) -> dict | None:
     return card_link(conn, row["depends_on"]) if row else None
 
 
+def _portion_title(path: str, letter: str) -> str:
+    """Первая строка `# …` файла порции, иначе `порция <X>`."""
+    try:
+        with open(path, encoding="utf-8") as fh:
+            for line in fh:
+                if line.startswith("# "):
+                    title = line[2:].strip()[:200]
+                    if title:
+                        return title
+    except OSError:
+        pass
+    return f"порция {letter}"
+
+
+def sync_portions(conn: sqlite3.Connection, task_id: str, *, actor: str | None = None,
+                  harness: str | None = None) -> dict:
+    """Карточки порций по файлам шага `<id>.<X>.md` рядом со `spec_path` шага.
+
+    Идемпотентна: нет карточки — создаёт дочернюю, есть — дописывает только пустые
+    `spec_path`/`checklist_path`; соседние по букве порции связывает жёстко
+    `cur blocks prev`. Ничего не удаляет и не меняет этапы/статусы/держателей."""
+    row = store_helpers.task_row(conn, task_id)
+    spec = (row["spec_path"] or "").strip()
+    if not spec:
+        raise errors_mod.BadArgument("у шага нет spec_path: не знаю, где искать порции")
+    steps_dir = os.path.dirname(spec)
+    if not os.path.isdir(steps_dir):
+        raise errors_mod.BadArgument(f"каталог шага не найден: {steps_dir}")
+    pattern = re.compile(rf"^{re.escape(task_id)}\.([a-z])\.md$")
+    letters = sorted(m.group(1) for m in map(pattern.match, os.listdir(steps_dir)) if m)
+
+    from . import documents
+    children = child_cards(conn, task_id)
+    taken: set[str] = set()
+    created: list[str] = []
+    updated: list[str] = []
+    unchanged: list[str] = []
+    portions: list[dict] = []
+    for letter in letters:
+        file = os.path.join(steps_dir, f"{task_id}.{letter}.md")
+        check = os.path.join(steps_dir, f"{task_id}.check-{letter}.md")
+        check = check if os.path.isfile(check) else None
+        free = [c for c in children if c["id"] not in taken]
+        real = os.path.realpath(file)
+        child = next((c for c in free if (c.get("spec_path") or "").strip()
+                      and os.path.realpath(c["spec_path"]) == real), None)
+        if child is None:
+            child = documents.match_portion_child(free, letter)
+        if child is None:
+            card = create_task(conn, title=_portion_title(file, letter), parent=task_id,
+                               spec_path=file, checklist_path=check, created_by=actor,
+                               harness=harness)
+            created.append(card["id"])
+        else:
+            fields = {}
+            if not (child.get("spec_path") or "").strip():
+                fields["spec_path"] = file
+            if check and not (child.get("checklist_path") or "").strip():
+                fields["checklist_path"] = check
+            if fields:
+                card = update_task(conn, child["id"], actor=actor, harness=harness, **fields)
+                updated.append(child["id"])
+            else:
+                card = child
+                unchanged.append(child["id"])
+        taken.add(card["id"])
+        portions.append({"letter": letter, "file": file, "checklist": check,
+                         "id": card["id"], "title": card["title"]})
+
+    # Порядок — после всех созданий: ошибка связи не оставит порцию без parent-child.
+    linked: list[list[str]] = []
+    hard = ",".join("?" * len(deps_mod.SEMANTIC_HARD))
+    for prev, cur in zip(portions, portions[1:]):
+        pair = (cur["id"], prev["id"])
+        has_hard = conn.execute(
+            f"SELECT 1 FROM deps WHERE issue_id=? AND depends_on=? AND dep_type IN ({hard})",
+            (*pair, *deps_mod.SEMANTIC_HARD)).fetchone()
+        has_suggested = conn.execute(
+            "SELECT 1 FROM deps WHERE issue_id=? AND depends_on=? AND dep_type='suggested-blocks'",
+            pair).fetchone()
+        if has_hard and not has_suggested:
+            continue
+        # add_dep с confirm сам снимает suggested-blocks той же пары.
+        add_dep(conn, *pair, "blocks", created_by=actor, confirm=True)
+        linked.append([prev["id"], cur["id"]])
+
+    if created or updated or linked:
+        actor_key, _ = actors_mod.resolve(actor, conn)
+        event(conn, task_id, "note", actor=actor_key, harness=harness,
+              note=f"порции: создано {len(created)}, обновлено {len(updated)}, "
+                   f"связано {len(linked)}")
+        conn.commit()
+    return {"id": task_id, "steps_dir": steps_dir, "created": created, "updated": updated,
+            "unchanged": unchanged, "linked": linked, "portions": portions}
+
+
 def list_tasks(conn: sqlite3.Connection, *, project: str | None = None, status: str | None = None,
                stage: str | None = None, assignee: str | None = None, holder: str | None = None,
                needs_owner: bool = False, issue_type: str | None = None, label: str | None = None,

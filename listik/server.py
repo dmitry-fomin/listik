@@ -1249,6 +1249,9 @@ def handle(method: str, path: str, query: dict, body: dict, authed: bool = False
                 store.delete_task(conn, tid)
                 publish("task", {"id": tid, "action": "deleted"})
                 return 200, {"deleted": tid}
+        if len(parts) == 5 and parts[3:] == ["portions", "sync"] and method == "POST":
+            # Двухсловное действие идёт общим путём POST-действий карточки.
+            parts = [*parts[:3], "portions/sync"]
         if len(parts) == 4:
             tid, action = parts[2], parts[3]
             if action == "context" and method == "GET":
@@ -1266,7 +1269,8 @@ def handle(method: str, path: str, query: dict, body: dict, authed: bool = False
                 _guard_op = {"claim": "claim", "heartbeat": "heartbeat", "stage": "stage",
                             "comment": "comment", "needs-owner": "needs-owner",
                             "release": "release", "done": "done",
-                            "revoke": "revoke", "launch": "launch"}.get(action)
+                            "revoke": "revoke", "launch": "launch",
+                            "portions/sync": "portions_sync"}.get(action)
                 if _guard_op is None and action == "deps" and body.get("depends_on"):
                     _guard_op = "dep_add"
                 if _guard_op is not None:
@@ -1322,6 +1326,9 @@ def handle(method: str, path: str, query: dict, body: dict, authed: bool = False
                                             result=body.get("result", ""),
                                             close_reason=body.get("reason") or body.get("result"),
                                             note=body.get("note"))
+                elif action == "portions/sync":
+                    out = store.sync_portions(conn, tid, actor=body.get("actor") or owner,
+                                              harness=body.get("harness"))
                 elif action == "revoke":
                     # `revoke` шлёт свой `publish("task", {..., "action": "revoke"})`
                     # изнутри (`notify=publish`) — второй раз ниже не шлём (см. пропуск

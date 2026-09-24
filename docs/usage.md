@@ -473,7 +473,7 @@ show <id>`).
 |---|---|
 | Сервер | `serve`, `stop`, `status`, `init`, `token`, `mcp`, `service` |
 | Копии | `backup`, `restore` |
-| Задачи | `new`, `list`, `show`, `set`, `context`, `board`, `stats`, `timeline` |
+| Задачи | `new`, `list`, `show`, `set`, `context`, `board`, `stats`, `timeline`, `portions sync` |
 | Работа | `ready`, `worktree`, `claim`, `heartbeat`, `stage`, `release`, `done`, `needs-owner`, `inbox`, `launch`, `revoke`, `lint` |
 | Журнал | `comment -k comment\|journal\|review\|verdict\|question\|answer` |
 | Связи | `dep add\|confirm\|rm\|suggest\|link\|suggested`, `blocked`, `tree`, `cycles` |

@@ -6,7 +6,8 @@ import nodeFs from "node:fs";
 import {tmpdir} from "node:os";
 import {join, resolve, dirname} from "node:path";
 import {fileURLToPath} from "node:url";
-import {renderArgv, needsModel, otherSideIds, buildPrompt, runArbiter, resolveWithArbiter} from "../arbiter.mjs";
+import {renderArgv, needsModel, otherSideIds, buildPrompt, runArbiter, resolveWithArbiter, buildCheckPayload,
+  jevSummary} from "../arbiter.mjs";
 import {ARBITER_MARK} from "../barrier.mjs";
 
 const HERE = dirname(fileURLToPath(import.meta.url));
@@ -449,4 +450,44 @@ suite("resolveWithArbiter: предел 10 остановок — отказ, re
   assert.equal(await git.rebaseInProgress(worktree), false);
   assert.equal(await git.headSha(worktree), treeHeadBefore);
   assert.equal(listik.calls.comment.length, 0);
+});
+
+// ------------------------------------------------ порция f: проверка слияния ---
+
+test("jevSummary: error > skipped > ok, пусто — skipped", () => {
+  assert.equal(jevSummary(["ok", "ok"]), "ok");
+  assert.equal(jevSummary(["ok", "skipped"]), "skipped");
+  assert.equal(jevSummary(["skipped", "error"]), "error");
+  assert.equal(jevSummary(["error", "ok"]), "error");
+  assert.equal(jevSummary([]), "skipped");
+});
+
+const JEV_TASK = {id: "t2", title: "T", description: "D", acceptance: "A", spec_path: "x.md", extra: 1};
+const JEV_OTHER = {id: "t1", title: "T1", description: "D1", acceptance: "A1", specText: "ТЗ"};
+
+test("buildCheckPayload: нечитаемое «после» — в unreadable, карточки ровно из четырёх полей", () => {
+  const {payload, unreadable} = buildCheckPayload({
+    task: JEV_TASK, others: [JEV_OTHER], conflicts: ["a.txt", "b.txt"],
+    before: {"a.txt": "A-before", "b.txt": "B-before"},
+    readAfter: f => { if (f === "b.txt") throw new Error("ENOENT"); return "A-after"; },
+  });
+  assert.deepEqual(payload.files, [{path: "a.txt", before: "A-before", after: "A-after"}]);
+  assert.deepEqual(unreadable, ["b.txt"]);
+  assert.deepEqual(payload.task, {id: "t2", title: "T", description: "D", acceptance: "A"});
+  assert.deepEqual(payload.others, [{id: "t1", title: "T1", description: "D1", acceptance: "A1"}]);
+});
+
+test("buildCheckPayload: без снимка «до» — в unreadable; ни одного читаемого — files пуст", () => {
+  const one = buildCheckPayload({
+    task: JEV_TASK, others: [], conflicts: ["a.txt", "b.txt"], before: {"b.txt": "B"},
+    readAfter: () => "after",
+  });
+  assert.deepEqual(one.unreadable, ["a.txt"]);
+  assert.deepEqual(one.payload.files, [{path: "b.txt", before: "B", after: "after"}]);
+  const none = buildCheckPayload({
+    task: JEV_TASK, others: [], conflicts: ["a.txt"], before: {},
+    readAfter: () => { throw new Error("нет"); },
+  });
+  assert.deepEqual(none.payload.files, []);
+  assert.deepEqual(none.unreadable, ["a.txt"]);
 });

@@ -278,7 +278,9 @@ class ArbiterResolvesConflictTests(SwarmBarrierE2ECase):
         self.write_swarm_config({"integration": GREEN_INTEGRATION, "arbiter": ARBITER_CMD})
 
         argv_file = self.tmp_path / "arbiter-argv.json"
-        with mock.patch.dict(os.environ, {"LISTIK_SWARM_MODEL": "e2e-model"}):
+        # Пустой ключ jev = «не задан»: ключ из окружения разработчика не уводит тест в сеть.
+        with mock.patch.dict(os.environ, {"LISTIK_SWARM_MODEL": "e2e-model",
+                                          "LISTIK_SWARM_JEV_API_KEY": ""}):
             proc = self.start_swarm(parallel=2, interval=1,
                                     extra_env={"FAKE_SHARED": "1", "FAKE_ARBITER_MODE": "ok",
                                                "FAKE_ARBITER_ARGV_FILE": str(argv_file)})
@@ -307,6 +309,16 @@ class ArbiterResolvesConflictTests(SwarmBarrierE2ECase):
         self.assertEqual(len(arb_records), 1, arb_records)
         self.assertEqual(arb_records[0]["files"], ["shared.txt"], arb_records[0])
         self.assertEqual(self.marked_records(clean_side, ARBITER_MARK), [])
+        self.assertEqual(arb_records[0]["jev"], "skipped", arb_records[0])
+        check = Path(arb_records[0]["check"])
+        self.assertEqual(check.parent.resolve(), self.swarm_log_dir.resolve())
+        self.assertTrue(check.is_file(), check)
+        self.assertEqual(json.loads(check.read_text(encoding="utf-8"))["skipped"], "не настроен")
+        check_inputs = list(self.swarm_log_dir.glob(f"arbiter-{arbiter_side}-*.check.json"))
+        self.assertTrue(check_inputs, list(self.swarm_log_dir.iterdir()))
+        check_input = json.loads(check_inputs[0].read_text(encoding="utf-8"))
+        self.assertEqual(check_input["files"][0]["path"], "shared.txt")
+        self.assertIn("<<<<<<< ", check_input["files"][0]["before"])
 
         prompts = list(self.swarm_log_dir.glob(f"arbiter-{arbiter_side}-*.prompt.md"))
         self.assertTrue(prompts, list(self.swarm_log_dir.iterdir()))

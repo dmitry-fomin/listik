@@ -1,6 +1,6 @@
 ---
 name: pipeline-spec-writer-medium
-description: Тот же автор ТЗ, что pipeline-spec-writer, но с effort medium — Fable medium в high-pipeline, Opus low при перебивке model в low-pipeline. Получает путь к спеке или текст задачи, каталог шагов и имя бумаг; в режиме правки — ещё путь к файлу замечаний и решения автора. Пишет только в каталог шагов, кода не трогает. Неясность в требованиях не додумывает, а возвращает вопросом автору.
+description: Тот же автор ТЗ, что pipeline-spec-writer, но с effort medium — для medium-pipeline, где в вызове его перебивают на model opus (Opus medium). Получает путь к спеке или текст задачи, каталог шагов и имя бумаг; в режиме правки — ещё путь к файлу замечаний и решения автора. Пишет только в каталог шагов, кода не трогает. Неясность в требованиях не додумывает, а возвращает вопросом автору.
 model: fable
 effort: medium
 tools: Read, Grep, Glob, Bash, Write, Edit

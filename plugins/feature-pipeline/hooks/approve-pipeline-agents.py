@@ -20,6 +20,7 @@ import sys
 AGENTS = {
     "feature-pipeline:pipeline-implementer",
     "feature-pipeline:pipeline-implementer-high",
+    "feature-pipeline:pipeline-implementer-xhigh",
     "feature-pipeline:pipeline-implementer-solo",
     "feature-pipeline:pipeline-judge",
 }

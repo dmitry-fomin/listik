@@ -675,7 +675,7 @@ EXECUTOR_PRESETS = {
     "inherit-pipeline": "SendMessage",
     "opus-single-pipeline": "SendMessage",
     "opus-sonnet-pipeline": "SendMessage",
-    "xhigh-pipeline": "сессия <id>",
+    "xhigh-pipeline": "SendMessage",
     "low-pipeline": "сессия <id>",
     "xlow-pipeline": "сессия <id>",
     "nano-pipeline": "сессия <id>",
@@ -807,24 +807,26 @@ class FeaturePipelineVendoredSkillPathTests(unittest.TestCase):
                         )
 
 
-#: Пресеты, где этап 3 ведёт pi на канале deepseek (listik-47y8), и что обязано быть в их тексте.
+#: low/xlow: этап 3 ведёт devin на SWE-2 max, запасной — pi на канале deepseek (расклад 2026-09-24).
 PI_EXECUTOR_PRESETS = ("low-pipeline", "xlow-pipeline")
 PI_EXECUTOR_REQUIRED = (
-    "pi:pi-delegate",
-    "--channel deepseek",
-    "--holder pi-deepseek",
+    "devin:devin-delegate",
+    "--thinking max",
+    "--holder devin",
     '--label "$BASE <X>"',
     "--cwd $WT",
-    "порция <X>: pi <job-id>",
     '--session "$BASE-<X>"',
+    "pi:pi-delegate",
+    "--channel deepseek",
+    "pi-deepseek",
 )
-PI_EXECUTOR_FORBIDDEN = ("dsh:dsh-delegate", "DJOB")
+PI_EXECUTOR_FORBIDDEN = ("dsh:dsh-delegate",)
 
 
 class FeaturePipelinePiExecutorTests(unittest.TestCase):
-    """low/xlow: исполнитель этапа 3 — pi на канале deepseek, следов dsh нет (listik-47y8)."""
+    """low/xlow: исполнитель этапа 3 — devin SWE-2 max, pi deepseek только запасной."""
 
-    def test_low_and_xlow_run_pi_deepseek(self) -> None:
+    def test_low_and_xlow_run_devin_with_pi_fallback(self) -> None:
         for name in PI_EXECUTOR_PRESETS:
             text = _skill_text(name)
             for needle in PI_EXECUTOR_FORBIDDEN:
@@ -833,6 +835,11 @@ class FeaturePipelinePiExecutorTests(unittest.TestCase):
             for needle in PI_EXECUTOR_REQUIRED:
                 with self.subTest(skill=name, required=needle):
                     self.assertIn(needle, text, f"{name}/{SKILL_FILE}: нет {needle!r}")
+            with self.subTest(skill=name, order="devin primary"):
+                self.assertLess(
+                    text.index("devin:devin-delegate"), text.index("pi:pi-delegate"),
+                    f"{name}/{SKILL_FILE}: pi упомянут раньше devin — основной исполнитель devin",
+                )
 
 
 
@@ -854,7 +861,7 @@ TWO_TURN_COMMON = (
 )
 TWO_TURN_PER_SKILL = {
     "xlow-pipeline": ("resume --session", "--channel deepseek"),
-    "nano-pipeline": ("resume --session", "--thinking max", "devin:devin-delegate"),
+    "nano-pipeline": ("resume --session", "--thinking high", "devin:devin-delegate"),
 }
 
 

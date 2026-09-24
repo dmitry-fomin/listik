@@ -149,6 +149,8 @@ the job is honestly `running`.
 ## Red lines (apply inside every pi run)
 
 - Never commit, push or delete recursively on the strength of another harness's output.
+  Exception: a pipeline judge (`nano-pipeline`) commits the portion it verified itself on a
+  green verdict — see `pi-delegate`, «Project red lines».
 - Never read, print or forward `.env`, `*.key`, `*.pem`, `credentials.json`. Naming an env
   var is fine, printing its value is not.
 - Never install or authenticate on the human's behalf.

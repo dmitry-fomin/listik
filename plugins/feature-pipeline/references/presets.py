@@ -13,22 +13,27 @@ D = {m["slug"]: m for m in SNAP["models"]}
 R = {r["slug"]: r for r in csv.DictReader(open(os.path.join(HERE, "models.csv")))}
 
 # Вендоры, доступные для разработки (харнессы: Codex, dsh, grok CLI, Claude Code, GLM)
-VENDORS = {"OpenAI", "Anthropic", "DeepSeek", "SpaceXAI", "Z AI"}
+VENDORS = {"Cognition", "OpenAI", "Anthropic", "DeepSeek", "SpaceXAI", "Z AI"}
 # Всё от Anthropic идёт по подписке Claude Max x20 → внешняя цена 0, расходуется квота
 SUBSCRIPTION = "Anthropic"
 EFFORTS = {"low", "medium", "high", "xhigh", "max"}
 
 PRESETS = {
-    "2. Максимум": dict(spec="claude-opus-5-5-xhigh", critic="glm-5-3-flash",
-                        dev="claude-opus-5-5-high", judge="grok-4-7"),
-    "1. Баланс":   dict(spec="claude-opus-5-5-high", critic="glm-5-3-flash",
-                        dev="claude-opus-5-5-medium", judge="grok-4-7"),
-    "3. Лошадь":   dict(spec="claude-opus-5-5-medium", critic="glm-5-3-flash",
-                        dev="claude-opus-5-5-medium", judge="grok-4-7-high"),
-    "4. Дёшево":   dict(spec="claude-opus-5-5-low", critic="glm-5-3-flash",
-                        dev="deepseek-v4-1-flash", judge="grok-4-7-high"),
-    "5. Один прогон": dict(dev="claude-opus-5-5-medium"),
+    "xhigh":  dict(spec="claude-opus-5-5-xhigh", critic="glm-5-3-flash",
+                   dev="claude-opus-5-5-xhigh", judge="grok-4-7"),
+    "high":   dict(spec="claude-opus-5-5-high", critic="glm-5-3-flash",
+                   dev="claude-opus-5-5-high", judge="grok-4-7"),
+    "medium": dict(spec="claude-opus-5-5-medium", critic="glm-5-3-flash",
+                   dev="claude-opus-5-5-medium", judge="grok-4-7-high"),
+    "low":    dict(spec="claude-opus-5-5-low", critic="glm-5-3-flash",
+                   dev="swe-2-max", judge="grok-4-7-high"),
+    "xlow":   dict(dev="swe-2-max", judge="grok-4-7-high"),
+    "nano":   dict(dev="swe-2-high", judge="glm-5-3-flash"),
 }
+# ponytail: SWE-2 (devin) в AA не замерен — заглушка без метрик, все числа по нему «-»
+UNRATED = {"swe-2-max", "swe-2-high"}
+for _s in UNRATED:
+    D.setdefault(_s, {"slug": _s, "creator": {"name": "Cognition"}})
 ROLES = [("spec", "Писатель ТЗ"), ("critic", "Критик"), ("dev", "Разработчик"), ("judge", "Судья")]
 
 def num(slug, col):
@@ -250,12 +255,12 @@ def checks():
     claim("omniscience == 100*(accuracy - (1-accuracy)*hallucinationRate)", bad == 0,
           f"сошлось на {tot} моделях, расхождений {bad}")
 
-    # 5. Пресет 5 не дороже пресета 4 ни по деньгам, ни по времени
-    p4, p5 = PRESETS["4. Дёшево"], PRESETS["5. Один прогон"]
+    # 5. nano не дороже xlow ни по деньгам, ни по времени
+    p4, p5 = PRESETS["xlow"], PRESETS["nano"]
     c4, c5 = sum(paid(s) for s in p4.values()), sum(paid(s) for s in p5.values())
     t4, t5 = sum(num(s,"sec_per_task") or 0 for s in p4.values()), sum(num(s,"sec_per_task") or 0 for s in p5.values())
-    claim("пресет 5 дешевле пресета 4 по внешним деньгам", c5 <= c4, f"${c5:.2f} <= ${c4:.2f}")
-    claim("пресет 5 быстрее пресета 4", t5 < t4, f"{t5:.0f}с < {t4:.0f}с")
+    claim("nano дешевле xlow по внешним деньгам", c5 <= c4, f"${c5:.2f} <= ${c4:.2f}")
+    claim("nano быстрее xlow", t5 < t4, f"{t5:.0f}с < {t4:.0f}с")
 
     # 6. Все выбранные модели — из доступных вендоров и не сняты с поддержки
     used = {s for p in PRESETS.values() for s in p.values()}
@@ -296,15 +301,10 @@ def checks():
             claim(f"[{name}] {label} {s_} на фронте Парето (квота-$/II/tb4)", not dom,
                   ", ".join(dom) or "не доминируется")
 
-    # 10. Где писатель и разработчик — разные модели, писатель сильнее по индексу.
-    #     «Лошадь» сознательно ставит одну и ту же: скачок low→medium слишком большой.
-    for name in ("2. Максимум", "1. Баланс", "4. Дёшево"):
+    # 10. На верхних ступенях писатель и разработчик — одна модель (Opus 5.5 того же усилия).
+    for name in ("xhigh", "high", "medium"):
         p = PRESETS[name]
-        si, di = D[p["spec"]]["intelligenceIndex"], D[p["dev"]]["intelligenceIndex"]
-        claim(f"[{name}] писатель сильнее разработчика по II", si > di, f"{si:.1f} > {di:.1f}")
-    horse = PRESETS["3. Лошадь"]
-    claim("[3. Лошадь] писатель и разработчик — одна модель",
-          horse["spec"] == horse["dev"], f"{horse['spec']}")
+        claim(f"[{name}] писатель и разработчик — одна модель", p["spec"] == p["dev"], p["spec"])
 
     # 11. Исполнитель с высоким hallucinationRate не может работать без приёмки.
     for name, p in PRESETS.items():

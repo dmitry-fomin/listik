@@ -11,12 +11,12 @@
 
 | Скил | Когда брать | ТЗ | Критика ТЗ | Код | Приёмка + коммит |
 | --- | --- | --- | --- | --- | --- |
-| `xhigh-pipeline` | ошибка дороже прогона; ~$5 на задачу | Fable xhigh (`pipeline-spec-writer-xhigh`) | GLM 5.3 Flash по HTTP | devin (SWE-2, max) | Grok 4.7 xhigh |
-| `high-pipeline` | расклад по умолчанию; ~$2 | Fable medium (`pipeline-spec-writer-medium`) | GLM 5.3 Flash по HTTP | Opus medium (`pipeline-implementer`, `model: opus`) | Grok 4.7 xhigh |
-| `medium-pipeline` | работа понятная, хватит пониженного усилия; ~$1.70 | Fable low (`pipeline-spec-writer-low`) | GLM 5.3 Flash по HTTP | Opus medium (`pipeline-implementer`, `model: opus`) | Grok 4.7 medium |
-| `low-pipeline` | поджимает лимит Max (квоты вдвое меньше high); ~$2 | Opus low (`pipeline-spec-writer-low`, `model: opus`) | GLM 5.3 Flash по HTTP | pi · DeepSeek v4.1 Flash, фоновой задачей | Grok 4.7 medium |
-| `xlow-pipeline` | задача в один прогон, нужна независимая приёмка | — | — | pi · DeepSeek v4.1 Flash, фоновой задачей | Grok 4.7 high |
-| `nano-pipeline` | то же, исполнитель devin; при пустом `write_scope` сперва ход на чтении за границами правки | — | — | devin (SWE-2, max) | Grok 4.7 xhigh |
+| `xhigh-pipeline` | ошибка дороже прогона; ~$4 на задачу | Opus 5.5 xhigh (`pipeline-spec-writer-xhigh`, `model: opus`) | GLM 5.3 Flash по HTTP | Opus 5.5 xhigh (`pipeline-implementer-xhigh`) | Grok 4.7 xhigh |
+| `high-pipeline` | расклад по умолчанию; ~$4 | Opus 5.5 high (`pipeline-spec-writer`, `model: opus`) | GLM 5.3 Flash по HTTP | Opus 5.5 high (`pipeline-implementer-high`, `model: opus`) | Grok 4.7 xhigh |
+| `medium-pipeline` | работа понятная, хватит пониженного усилия; ~$3 | Opus 5.5 medium (`pipeline-spec-writer-medium`, `model: opus`) | GLM 5.3 Flash по HTTP | Opus 5.5 medium (`pipeline-implementer`, `model: opus`) | Grok 4.7 high |
+| `low-pipeline` | поджимает лимит Max: код вне квоты; ~$3 | Opus 5.5 low (`pipeline-spec-writer-low`, `model: opus`) | GLM 5.3 Flash по HTTP | devin SWE-2 max (`devin:devin-delegate --thinking max`) | Grok 4.7 high |
+| `xlow-pipeline` | задача в один прогон, нужна независимая приёмка | — | — | devin SWE-2 max (`devin:devin-delegate --thinking max`) | Grok 4.7 high |
+| `nano-pipeline` | то же, дешевле; при пустом `write_scope` сперва ход на чтении за границами правки | — | — | devin SWE-2 high (`devin:devin-delegate --thinking high`) | GLM 5.3 Flash (`pi:pi-delegate --channel glm`) |
 | `devin-pipeline` | то же, исполнитель devin | — | — | devin (SWE-2, max) | Grok 4.7 xhigh |
 | `cross-pipeline` | автор ТЗ и исполнитель на разных вендорах: Devin пишет ТЗ, GLM в pi — код | Devin (SWE-2, max) | Grok 4.7 xhigh, без записи | GLM 5.3 Flash в pi | Grok 4.7 xhigh |
 | `opus-single-pipeline` | понятная работа в один заход, приёмка не нужна; $0 внешних | — | — | Opus medium (`pipeline-implementer-solo`, `model: opus`), сам коммитит | — |
@@ -32,13 +32,14 @@
 
 | Агент | Модель / effort | Роль | Где используется (перебивка model) |
 | --- | --- | --- | --- |
-| `pipeline-spec-writer` | fable / high | ТЗ шага, порции, чек-листы; только каталог шагов, неясное — вопросом автору | `inherit-pipeline`, `feature-pipeline`, `universal-pipeline` |
-| `pipeline-spec-writer-xhigh` | fable / xhigh | то же | `xhigh-pipeline` |
-| `pipeline-spec-writer-medium` | fable / medium | то же | `high-pipeline` |
-| `pipeline-spec-writer-low` | fable / low | то же | `medium-pipeline`; `low-pipeline` — **`model: opus`** |
+| `pipeline-spec-writer` | fable / high | ТЗ шага, порции, чек-листы; только каталог шагов, неясное — вопросом автору | `inherit-pipeline`, `feature-pipeline`, `universal-pipeline`; `high-pipeline` — **`model: opus`** |
+| `pipeline-spec-writer-xhigh` | fable / xhigh | то же | `xhigh-pipeline` — **`model: opus`** |
+| `pipeline-spec-writer-medium` | fable / medium | то же | `medium-pipeline` — **`model: opus`** |
+| `pipeline-spec-writer-low` | fable / low | то же | `low-pipeline` — **`model: opus`** |
 | `pipeline-critic` | opus / high | критика ТЗ и чек-листа до реализации, репозиторий только на чтение, ничего не правит | `inherit-pipeline` |
-| `pipeline-implementer` | sonnet / medium | реализует одну порцию, не коммитит | `inherit-pipeline`, `feature-pipeline`, `universal-pipeline`; `high-`/`medium-`/`opus-sonnet-pipeline` — **`model: opus`** |
-| `pipeline-implementer-high` | sonnet / high | то же для неочевидных порций | ни в одном SKILL.md сейчас не зовётся |
+| `pipeline-implementer` | sonnet / medium | реализует одну порцию, не коммитит | `inherit-pipeline`, `feature-pipeline`, `universal-pipeline`; `medium-`/`opus-sonnet-pipeline` — **`model: opus`** |
+| `pipeline-implementer-high` | sonnet / high | то же для неочевидных порций | `high-pipeline` — **`model: opus`** |
+| `pipeline-implementer-xhigh` | opus / xhigh | то же на максимальном усилии | `xhigh-pipeline` |
 | `pipeline-implementer-solo` | sonnet / medium | задача в один проход и сам коммитит | `opus-single-pipeline` — **`model: opus`** |
 | `pipeline-judge` | opus / high | приёмка: чек-лист, срезанные углы в диффе, вердикт, при зелёном — коммит; код не правит | `inherit-pipeline`, `feature-pipeline`, `universal-pipeline`; `opus-sonnet-pipeline` — **`model: sonnet`** |
 

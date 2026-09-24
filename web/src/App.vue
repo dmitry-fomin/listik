@@ -22,6 +22,7 @@ import {
   UiInput,
   UiModal,
   UiSaveStatus,
+  UiSpinner,
   UiTabs,
   UiToast,
   useToast,
@@ -318,7 +319,10 @@ onBeforeUnmount(() => {
                 @update:model-value="(value) => store.setView(value as ViewKey)"
               />
               <div class="listik-row">
-                <UiSaveStatus :status="saveStatus" :at="saveAt" />
+                <span v-if="store.loading.value && !store.pending.value" class="listik-row" role="status">
+                  <UiSpinner size="sm" tone="current" label="" /> Обновление…
+                </span>
+                <UiSaveStatus v-else :status="saveStatus" :at="saveAt" />
                 <UiBadge tone="neutral" size="sm">{{ tasksCountLabel(store.counts.value.total) }}</UiBadge>
               </div>
             </div>

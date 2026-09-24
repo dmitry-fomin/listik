@@ -87,11 +87,14 @@ MCP-инструментами `listik_*` или командой `listik new`. 
 
 | Маршрут | ТЗ | Критика | Реализация | Приёмка | Когда берут |
 |---|---|---|---|---|---|
-| `xhigh-pipeline` | Fable | GLM | Codex | Grok | ошибка дороже прогона |
+| `xhigh-pipeline` | Opus xhigh | GLM | Opus xhigh | Grok xhigh | ошибка дороже прогона |
 | `cross-pipeline` | Devin | Grok | GLM в pi | Grok | автор ТЗ и код — разные вендоры |
-| `high-pipeline` | Fable | GLM | Opus | Grok | расклад по умолчанию |
+| `high-pipeline` | Opus high | GLM | Opus high | Grok xhigh | расклад по умолчанию |
 | `inherit-pipeline` | Fable | Opus | Sonnet | Opus | всё внутри Claude, наружу ничего не уходит |
-| `nano-pipeline` | — | — | Codex | Grok | короткая задача: сделать и принять |
+| `medium-pipeline` | Opus medium | GLM | Opus medium | Grok high | работа понятная |
+| `low-pipeline` | Opus low | GLM | devin SWE-2 max | Grok high | код вне квоты Max |
+| `xlow-pipeline` | — | — | devin SWE-2 max | Grok high | один прогон с приёмкой |
+| `nano-pipeline` | — | — | devin SWE-2 high | GLM в pi | короткая задача: сделать и принять |
 
 Полный список — `listik routes`, `GET /api/routes` или
 доска; там же собирается свой набор. Исполнители подключаются плагинами Claude Code,

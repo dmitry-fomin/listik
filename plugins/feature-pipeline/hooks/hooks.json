@@ -1,5 +1,5 @@
 {
-  "description": "Автоодобрение запросов разрешений от агентов конвейера (pipeline-implementer, pipeline-implementer-high, pipeline-implementer-solo, pipeline-judge), если в настройках плагина включён auto_approve_agents. Опасные команды и секреты по-прежнему идут запросом.",
+  "description": "Автоодобрение запросов разрешений от агентов конвейера (pipeline-implementer, pipeline-implementer-high, pipeline-implementer-xhigh, pipeline-implementer-solo, pipeline-judge), если в настройках плагина включён auto_approve_agents. Опасные команды и секреты по-прежнему идут запросом.",
   "hooks": {
     "PermissionRequest": [
       {

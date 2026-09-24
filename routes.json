@@ -12,7 +12,7 @@
         "spec": {
           "provider": "claude",
           "label": "xhigh",
-          "title": "Fable · xhigh"
+          "title": "Opus 5.5 · xhigh"
         },
         "critic": {
           "provider": "glm",
@@ -20,9 +20,9 @@
           "title": "GLM 5.3 Flash по HTTP"
         },
         "impl": {
-          "provider": "devin",
-          "label": "max",
-          "title": "devin · SWE-2 max"
+          "provider": "claude",
+          "label": "xhigh",
+          "title": "Opus 5.5 · xhigh"
         },
         "judge": {
           "provider": "grok",
@@ -47,8 +47,8 @@
       "roles": {
         "spec": {
           "provider": "claude",
-          "label": "medium",
-          "title": "Fable · medium"
+          "label": "high",
+          "title": "Opus 5.5 · high"
         },
         "critic": {
           "provider": "glm",
@@ -57,8 +57,8 @@
         },
         "impl": {
           "provider": "claude",
-          "label": "medium",
-          "title": "Opus · medium"
+          "label": "high",
+          "title": "Opus 5.5 · high"
         },
         "judge": {
           "provider": "grok",
@@ -83,8 +83,8 @@
       "roles": {
         "spec": {
           "provider": "claude",
-          "label": "low",
-          "title": "Fable · low"
+          "label": "medium",
+          "title": "Opus 5.5 · medium"
         },
         "critic": {
           "provider": "glm",
@@ -94,12 +94,12 @@
         "impl": {
           "provider": "claude",
           "label": "medium",
-          "title": "Opus · medium"
+          "title": "Opus 5.5 · medium"
         },
         "judge": {
           "provider": "grok",
-          "label": "medium",
-          "title": "Grok 4.7 · medium"
+          "label": "high",
+          "title": "Grok 4.7 · high"
         }
       },
       "command": [
@@ -120,7 +120,7 @@
         "spec": {
           "provider": "claude",
           "label": "low",
-          "title": "Opus · low"
+          "title": "Opus 5.5 · low"
         },
         "critic": {
           "provider": "glm",
@@ -128,14 +128,18 @@
           "title": "GLM 5.3 Flash по HTTP"
         },
         "impl": {
-          "provider": "deepseek",
-          "label": "pi",
-          "title": "pi · DeepSeek v4.1 Flash (b-ai-deepseek/deepseek-v4.1-flash)"
+          "provider": "devin",
+          "label": "max",
+          "title": "devin · SWE-2 max",
+          "skill": "devin:devin-delegate",
+          "params": {
+            "thinking": "max"
+          }
         },
         "judge": {
           "provider": "grok",
-          "label": "medium",
-          "title": "Grok 4.7 · medium"
+          "label": "high",
+          "title": "Grok 4.7 · high"
         }
       },
       "command": [
@@ -154,9 +158,13 @@
       "icon": "xlow",
       "roles": {
         "impl": {
-          "provider": "deepseek",
-          "label": "pi",
-          "title": "pi · DeepSeek v4.1 Flash (b-ai-deepseek/deepseek-v4.1-flash)"
+          "provider": "devin",
+          "label": "max",
+          "title": "devin · SWE-2 max",
+          "skill": "devin:devin-delegate",
+          "params": {
+            "thinking": "max"
+          }
         },
         "judge": {
           "provider": "grok",
@@ -181,13 +189,21 @@
       "roles": {
         "impl": {
           "provider": "devin",
-          "label": "max",
-          "title": "devin · SWE-2 max"
+          "label": "high",
+          "title": "devin · SWE-2 high",
+          "skill": "devin:devin-delegate",
+          "params": {
+            "thinking": "high"
+          }
         },
         "judge": {
-          "provider": "grok",
-          "label": "xhigh",
-          "title": "Grok 4.7 · xhigh"
+          "provider": "glm",
+          "label": "GLM",
+          "title": "GLM 5.3 Flash в pi",
+          "skill": "pi:pi-delegate",
+          "params": {
+            "channel": "glm"
+          }
         }
       },
       "command": [

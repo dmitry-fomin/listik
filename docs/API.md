@@ -1338,7 +1338,7 @@ dropped_chunks, reason`), `reasons[]` (по одному пункту на ка�
 | POST | `/api/tasks/{id}/ready` | — | вердикт по задаче (`deps_state`, см. ниже) |
 | POST | `/api/tasks/{id}/mentions` | `limit` | задачи, упомянутые в тексте этой задачи, но не связанные с ней. Отдаёт все совпадения — тем же режимом пользуются `dep suggest`/`dep link`; подсказка `link_hints[]` при создании отсеивает id в путях и кавычках (см. «Найденная по ходу задача») |
 | POST | `/api/waves/apply` | `project` (обязателен), `stage` | записать в базу ресурсные рёбра `resource-blocks` под свежий расчёт `waves` — см. «Волны запуска: `listik waves`»; `actor` в теле и заголовок `X-Listik-Owner` на автора ребра не влияют — автор всегда `agent:listik-swarm`; ответ `added[], removed[], kept, waves{}, generated_at`; без `project`/с пустым `project` — 400 `bad_argument`; цикл в зависимостях — 409 `conflict`, ничего не записано; метод не POST — 405; событие доске (`{"id", "action": "deps"}`) — по каждой затронутой задаче |
-| POST | `/api/swarm/plan` | `project` (обязателен), `stage`, `apply` | LLM-проход роя: грубые зависимости `blocks` между открытыми задачами проекта — см. «LLM-проходы роя: модель и машинные рёбра»; `actor` в теле и заголовок `X-Listik-Owner` игнорируются — автор рёбер всегда `agent:listik-swarm`; ответ — `project, stage, model, attempts, tasks{}, edges[], fixed[], previous[], dropped[], cycles[], cycles_from, applied` + `generated_at`; без `project`/с пустым `project` — 400 `bad_argument`; слишком много текста для одного вызова модели — 400 `bad_argument`; цикл (в базе или у модели после исчерпанных попыток) — **200** с непустым `cycles` и `applied: null` (CLI отдаёт код `1`), не 409; 409 `conflict` только если сама запись рёбер отказала (защитный случай — штатный цикл до записи не доходит); 404 `not_found` — задача не найдена; 502/503/504 `server_error` — модель роя недоступна/не настроена/не ответила; метод не POST — 405; событие доске (`{"id", "action": "deps"}`) — по каждой затронутой задаче, только при `applied` |
+| POST | `/api/swarm/plan` | `project` (обязателен), `stage`, `apply` | LLM-проход роя: грубые зависимости `blocks` между открытыми задачами проекта — см. «LLM-проходы роя: модель и машинные рёбра»; `actor` в теле и заголовок `X-Listik-Owner` игнорируются — автор рёбер всегда `agent:listik-swarm`; ответ — `project, stage, model, attempts, tasks{}, edges[], fixed[], previous[], dropped[], cycles[], cycles_from, applied, jev{model,checked,dropped[{edge,p}],skipped}` + `generated_at`; без `project`/с пустым `project` — 400 `bad_argument`; слишком много текста для одного вызова модели — 400 `bad_argument`; цикл (в базе или у модели после исчерпанных попыток) — **200** с непустым `cycles` и `applied: null` (CLI отдаёт код `1`), не 409; 409 `conflict` только если сама запись рёбер отказала (защитный случай — штатный цикл до записи не доходит); 404 `not_found` — задача не найдена; 502/503/504 `server_error` — модель роя недоступна/не настроена/не ответила; метод не POST — 405; событие доске (`{"id", "action": "deps"}`) — по каждой затронутой задаче, только при `applied` |
 | POST | `/api/swarm/rescope` | `project` (обязателен), `tasks[]`, `drift[]`, `apply` | LLM-проход роя: `read_scope`/`write_scope` из ТЗ готовых задач плюс уточнение графа `blocks` по копилке расхождений — см. «LLM-проходы роя: модель и машинные рёбра»; `tasks` — список id (не список строк — 400 `bad_argument`), сверх копилки из карточек — `drift` (не список — 400 `bad_argument`); `actor` в теле и заголовок `X-Listik-Owner` игнорируются — автор записей всегда `agent:listik-swarm`; ответ — `project, model, extracted, attempts, tasks{}, unspecced{}, unscoped[], invalid{}, drift{}, edges[], fixed[], previous[], dropped[], cycles[], cycles_from, applied` + `generated_at`; без `project`/с пустым `project` — 400 `bad_argument`; цикл (в базе или у модели) — **200** с непустым `cycles`, области в `applied.scopes` пишутся, `applied.edges: null`; 404 `not_found` — задача не найдена; 502/503/504 `server_error` — модель роя недоступна/не настроена/не ответила; метод не POST — 405; события доске через `publish`, не таблицу `events` — `{"id", "action": "updated"}` по каждой записанной в `applied.scopes` задаче и `{"id", "action": "deps"}` по задачам из `applied.edges.added`/`removed` |
 | POST | `/api/projects` | `path` (каталог репозитория) или `slug`, `title`, `kind=native` | добавить репозиторий на доску; slug по умолчанию — имя каталога, git remote/ветка подтягиваются сами. `path` — абсолютный, от `~` или относительный — от корня проектов (`root` из `GET /api/projects`, `LISTIK_PROJECTS_ROOT`, по умолчанию `~/Projects`), никогда от рабочего каталога сервера (listik-i23u); нет каталога — 400 `bad_argument` «каталога нет: <полный путь>». То же правило для `path` в `PATCH`. Если каталог лежит внутри git-репозитория, путь приводится к корню (`git rev-parse --show-toplevel`), а в ответе появляется `path_adjusted_from` — исходный путь, иначе `null`. Существующий slug не падает: проект возвращается на доску и обновляется. Сверка slug идёт **без учёта регистра** (`store.existing_slug`): если проект с таким slug уже есть в другом написании, возвращается он — с прежним регистром slug, `created=false`, — а не второй проект-дубль |
 | PATCH | `/api/projects/{slug}` | `title`, `path`, `color`, `kind`, `archived=0/1`, `routing` | правка проекта; `archived=1` — убрать с доски, не теряя задачи; `routing` — объект-переопределение маршрутизации проекта (`{}` сбрасывает его), проверяется `config.validate_routing`: допустимые ключи — `transitions` (словарь `"<этап>:<этап-или-done>"` → `sticky`\|`handoff`\|`sticky-return`), `return_window_hours` (число > 0); неизвестный ключ или неверная форма — 400 с текстом на русском; устаревшие `default_process` и `harnesses` (исполнителей этапов теперь решает каталог `harnesses` и маршруты, не конфиг) молча игнорируются, как и в старых `config.toml`/`routing` проекта |
@@ -1588,7 +1588,7 @@ resource-blocks` снимает ребро до следующего `--apply` �
 
 ### LLM-проходы роя: модель и машинные рёбра
 
-Проходы `listik plan`/`listik rescope` (шаг swarm-6) зовут модель ровно один раз за вызов, через
+Проходы `listik plan`/`listik rescope` (шаг swarm-6) зовут генеративную модель через
 единственную точку `swarm_llm.complete_json` — настройки читаются из раздела `[swarm]`
 `config.toml`: `api_key`, `base_url` (дефолт — OpenRouter), `model` (дефолт
 `z-ai/glm-5.3-flash`), `command` (второй канал: argv внешней команды, которая читает запрос
@@ -1603,6 +1603,15 @@ resource-blocks` снимает ребро до следующего `--apply` �
 (вопрос «Включить рой?») и `listik swarm on`/`off`. Эти команды дописывают только
 `enabled` в таблицу `[swarm]` и не переписывают остальной `config.toml`. Выключенный
 рой карточки не запускает.
+
+jev — модель типизированных решений TypeSafe на OpenRouter: Decisions API вызывается через
+`POST https://openrouter.ai/api/alpha/decisions` и возвращает вероятности, а не текст.
+Настройки `[swarm].jev_api_key`/`jev_url`/`jev_model` переопределяются непустыми переменными
+`LISTIK_SWARM_JEV_API_KEY`/`LISTIK_SWARM_JEV_URL`/`LISTIK_SWARM_JEV_MODEL`; дефолты — пустой
+ключ, указанный URL и `typesafe/jev-1.13`. Без ключа проверки пропускаются. Ошибка jev также
+пропускает проверку с причиной в `jev.skipped`; ключ маскируется в логе так же, как `api_key`.
+Это отдельный канал `swarm_llm.decide`, а не `chat/completions`: модель jev нельзя ставить
+в `[swarm].model`.
 
 Итоговое имя модели (из файла, непустой переменной окружения или дефолта) отдаётся
 авторизованному в `/api/health` → `swarm.model` и в `listik status --json` → `swarm.model`;
@@ -1638,11 +1647,24 @@ resource-blocks` снимает ребро до следующего `--apply` �
 больше `MAX_ATTEMPTS=2` вызовов модели за проход) — HTTP-статус при этом **200**, не 409 (как
 `GET /api/waves`, не как `waves --apply`); при цикле `applied` всегда `null`, даже с `--apply`.
 Ответ: `project`, `stage`, `model`, `attempts`, `tasks` (по каждой задаче множества —
-`title`/`depends_on`/`reason`), `edges` (граф от модели после нормализации ответа), `fixed`,
+`title`/`depends_on`/`reason`), `edges` (граф от модели после нормализации и проверки jev), `fixed`,
 `previous`, `dropped` (записи/ссылки, которые модель предложила мимо схемы — `id` не из
 множества, ссылка не из множества, ссылка на себя), `cycles`, `cycles_from`, `applied`
-(`{added, removed, kept, covered, promoted}` или `null`). Код возврата CLI — `1`, если `cycles`
-непуст, иначе `0`; текст без `--json` печатает зависимости по задаче (`<id> ждёт <a>, <b> —
+(`{added, removed, kept, covered, promoted}` или `null`), `jev` (`{model, checked,
+dropped: [{edge, p}], skipped}`). jev проверяет каждое нефиксированное ребро одним вопросом
+`needed` типа `noul` (таймаут 30 с на ребро) и снимает его
+при `p < 0.2`; снятые рёбра не попадают в `edges`, `tasks[].depends_on` и `applied`, а
+`dropped` верхнего уровня по-прежнему означает только нарушения схемы. Человеческие и чужие
+жёсткие рёбра (`fixed`) не проверяются, не снимаются и не входят в `checked`.
+`checked` считает только успешно завершившиеся вызовы jev: при ошибке второго вызова
+после успешного первого он равен 1; при ошибке первого — 0.
+При любой ошибке jev отбрасывается весь частичный результат: исходные рёбра GLM остаются,
+`jev.dropped` пуст, `skipped = "ошибка: …"`. Без ключа `skipped = "не настроен"`; для пустого
+проекта или цикла в базе/ответе модели — `"не вызывался"`. При пропуске до вызовов `model`
+равен `null`, `checked` — 0. При успешной проверке `skipped` равен `null`.
+Код возврата CLI — `1`, если `cycles` непуст, иначе `0`; ошибка jev этот код не меняет.
+Текст без `--json` печатает строку `jev:` и снятые рёбра с вероятностями,
+зависимости по задаче (`<id> ждёт <a>, <b> —
 <reason>`), список без зависимостей, отброшенные записи, циклы и (с `--apply`) сводку записи.
 Слишком много текста для одного вызова модели (сумма длин сообщений > `MAX_TOTAL_CHARS`) — 400
 `bad_argument` с подсказкой ограничить `--stage`, модель не зовётся. Заголовок `X-Listik-Owner`

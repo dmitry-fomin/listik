@@ -474,3 +474,272 @@ class HttpTests(OwnerHttpCase):
                                            {"project": "demo"})
         self.assertEqual(status, 404)
         self.assertEqual(payload["code"], "not_found")
+
+
+class JevEdgeTests(TempDbTestCase):
+    def setUp(self) -> None:
+        super().setUp()
+        env = mock.patch.dict(os.environ, {swarm_llm.ENV_JEV_API_KEY: "",
+                                          swarm_llm.ENV_JEV_URL: "",
+                                          swarm_llm.ENV_JEV_MODEL: ""})
+        env.start()
+        self.addCleanup(env.stop)
+        network = mock.patch("urllib.request.urlopen", side_effect=AssertionError("unexpected network"))
+        network.start()
+        self.addCleanup(network.stop)
+        self.cfg = {"swarm": {"jev_api_key": "k"}}
+
+    @staticmethod
+    def answer(p):
+        return {"answers": {"needed": {"type": "noul", "noul": p}},
+                "usage": None, "model": "typesafe/jev-1.13"}
+
+    def chain(self):
+        a = _task(self.conn, "A", priority=0, description="описание", acceptance="приёмка")
+        b = _task(self.conn, "B", priority=1)
+        c = _task(self.conn, "C", priority=2)
+        return a, b, c
+
+    def test_filters_edges_and_sends_cards_reason_and_own_timeout(self) -> None:
+        a, b, c = self.chain()
+        opener = mock.Mock()
+        with mock.patch.object(swarm_llm, "complete_json", return_value=_reply({c: [b], b: [a]})), \
+                mock.patch.object(swarm_llm, "decide", side_effect=[self.answer(0.9), self.answer(0.1)]) as decide:
+            out = swarm_llm.plan(self.conn, project="demo", cfg=self.cfg, opener=opener, timeout=999)
+        self.assertEqual(out["edges"], [[a, b]])
+        self.assertEqual(out["tasks"][b]["depends_on"], [a])
+        self.assertEqual(out["tasks"][c]["depends_on"], [])
+        self.assertEqual(out["jev"], {"model": "typesafe/jev-1.13", "checked": 2,
+                                      "dropped": [{"edge": [b, c], "p": 0.1}], "skipped": None})
+        self.assertEqual(out["dropped"], [])
+        self.assertEqual(_all_deps(self.conn), set())
+        self.assertEqual(decide.call_count, 2)
+        for call, (earlier, later) in zip(decide.call_args_list, ((a, b), (b, c))):
+            state, questions = call.args
+            self.assertEqual(state["a"]["id"], earlier)
+            self.assertEqual(state["b"]["id"], later)
+            for card in (state["a"], state["b"]):
+                row = self.conn.execute("SELECT * FROM tasks WHERE id=?", (card["id"],)).fetchone()
+                self.assertEqual(card, {key: row[key] for key in
+                                        ("id", "title", "description", "acceptance")})
+            self.assertEqual(state["reason"], "потому что")
+            self.assertEqual(set(questions), {"needed"})
+            self.assertEqual(questions["needed"]["type"], "noul")
+            self.assertEqual(set(questions["needed"]["criteria"]), {"true", "false"})
+            self.assertIn("ТЗ", questions["needed"]["instructions"])
+            self.assertIs(call.kwargs["opener"], opener)
+            self.assertEqual(call.kwargs["timeout"], swarm_llm.JEV_TIMEOUT)
+
+    def test_cards_clip_long_fields_like_plan(self) -> None:
+        long_text = "я" * (swarm_llm.MAX_FIELD_CHARS + 10)
+        a = _task(self.conn, "A", priority=0, description=long_text, acceptance=long_text)
+        b = _task(self.conn, "B", priority=1, description=long_text, acceptance=long_text)
+        with mock.patch.object(swarm_llm, "complete_json", return_value=_reply({b: [a]})), \
+                mock.patch.object(swarm_llm, "decide", return_value=self.answer(0.9)) as decide:
+            swarm_llm.plan(self.conn, project="demo", cfg=self.cfg)
+        state = decide.call_args.args[0]
+        for side in ("a", "b"):
+            for field in ("description", "acceptance"):
+                self.assertEqual(state[side][field], "я" * swarm_llm.MAX_FIELD_CHARS + "…")
+
+    def test_threshold_is_strict(self) -> None:
+        a, b, c = self.chain()
+        with mock.patch.object(swarm_llm, "complete_json", return_value=_reply({c: [b], b: [a]})), \
+                mock.patch.object(swarm_llm, "decide", side_effect=[self.answer(0.9), self.answer(0.2)]):
+            out = swarm_llm.plan(self.conn, project="demo", cfg=self.cfg)
+        self.assertEqual(out["edges"], [[a, b], [b, c]])
+        self.assertEqual(out["jev"]["dropped"], [])
+
+    def test_apply_only_kept_edge(self) -> None:
+        a, b, c = self.chain()
+        with mock.patch.object(swarm_llm, "complete_json", return_value=_reply({c: [b], b: [a]})), \
+                mock.patch.object(swarm_llm, "decide", side_effect=[self.answer(0.9), self.answer(0.1)]):
+            out = swarm_llm.plan(self.conn, project="demo", cfg=self.cfg, apply=True)
+        self.assertEqual(_all_deps(self.conn), {(b, a, "blocks", "agent:listik-swarm")})
+        self.assertEqual(out["applied"]["added"], [[a, b]])
+
+    def test_human_edge_is_not_checked_and_stays_covered(self) -> None:
+        a, b, c = self.chain()
+        store.add_dep(self.conn, b, a, "blocks", created_by="ann")
+        with mock.patch.object(swarm_llm, "complete_json", return_value=_reply({b: [a]})), \
+                mock.patch.object(swarm_llm, "decide", return_value=self.answer(0.0)) as decide:
+            out = swarm_llm.plan(self.conn, project="demo", cfg=self.cfg, apply=True)
+        decide.assert_not_called()
+        self.assertEqual(out["jev"], {"model": "typesafe/jev-1.13", "checked": 0,
+                                      "dropped": [], "skipped": None})
+        self.assertEqual(out["edges"], [[a, b]])
+        self.assertEqual(_all_deps(self.conn), {(b, a, "blocks", "ann")})
+        self.assertEqual(out["applied"]["covered"], [[a, b]])
+        self.assertEqual(out["applied"]["added"], [])
+
+    def test_without_key_does_not_call_decide(self) -> None:
+        a, b, c = self.chain()
+        with mock.patch.object(swarm_llm, "complete_json", return_value=_reply({c: [b], b: [a]})), \
+                mock.patch.object(swarm_llm, "decide") as decide:
+            out = swarm_llm.plan(self.conn, project="demo", cfg={"swarm": {}})
+        decide.assert_not_called()
+        self.assertEqual(out["edges"], [[a, b], [b, c]])
+        self.assertEqual(out["jev"], {"model": None, "checked": 0, "dropped": [],
+                                      "skipped": "не настроен"})
+
+    def test_error_discards_partial_drops_and_applies_complete_graph(self) -> None:
+        a, b, c = self.chain()
+        for apply in (False, True):
+            with self.subTest(apply=apply), self.assertLogs("listik.swarm_llm", "WARNING") as logs, \
+                    mock.patch.object(swarm_llm, "complete_json", return_value=_reply({c: [b], b: [a]})), \
+                    mock.patch.object(swarm_llm, "decide", side_effect=[
+                        self.answer(0.1), swarm_llm.SwarmLlmError("jev недоступен …", status=504)]) as decide:
+                out = swarm_llm.plan(self.conn, project="demo", cfg=self.cfg, apply=apply)
+            self.assertEqual(decide.call_count, 2)
+            self.assertEqual(out["jev"]["checked"], 1)
+            self.assertEqual(out["edges"], [[a, b], [b, c]])
+            self.assertEqual(out["tasks"][b]["depends_on"], [a])
+            self.assertEqual(out["tasks"][c]["depends_on"], [b])
+            self.assertEqual(out["jev"]["dropped"], [])
+            self.assertEqual(out["jev"]["model"], "typesafe/jev-1.13")
+            self.assertEqual(out["jev"]["skipped"], "ошибка: jev недоступен …")
+            self.assertIn(out["jev"]["skipped"], logs.output[0])
+            if apply:
+                self.assertEqual(out["applied"]["added"], [[a, b], [b, c]])
+            else:
+                self.assertEqual(_all_deps(self.conn), set())
+        self.assertEqual(_all_deps(self.conn), {(b, a, "blocks", "agent:listik-swarm"),
+                                               (c, b, "blocks", "agent:listik-swarm")})
+
+    def test_cycles_and_empty_project_never_call_jev(self) -> None:
+        untouched = {"model": None, "checked": 0, "dropped": [], "skipped": "не вызывался"}
+        with mock.patch.object(swarm_llm, "complete_json") as complete, \
+                mock.patch.object(swarm_llm, "decide") as decide:
+            empty = swarm_llm.plan(self.conn, project="demo", cfg=self.cfg)
+        complete.assert_not_called()
+        decide.assert_not_called()
+        self.assertEqual(empty["jev"], untouched)
+        a, b, c = self.chain()
+        with mock.patch.object(swarm_llm, "complete_json", return_value=_reply({a: [b], b: [a]})), \
+                mock.patch.object(swarm_llm, "decide") as decide:
+            cycle = swarm_llm.plan(self.conn, project="demo", cfg=self.cfg, apply=True)
+        decide.assert_not_called()
+        self.assertEqual(cycle["attempts"], swarm_llm.MAX_ATTEMPTS)
+        self.assertEqual(cycle["jev"], untouched)
+        self.assertEqual(cycle["cycles_from"], "model")
+        for later, earlier in ((a, b), (b, a)):
+            self.conn.execute("INSERT INTO deps(issue_id, depends_on, dep_type, created_by) "
+                              "VALUES (?, ?, 'blocks', 'ann')", (later, earlier))
+        self.conn.commit()
+        with mock.patch.object(swarm_llm, "complete_json") as complete, \
+                mock.patch.object(swarm_llm, "decide") as decide:
+            cycle = swarm_llm.plan(self.conn, project="demo", cfg=self.cfg, apply=True)
+        complete.assert_not_called()
+        decide.assert_not_called()
+        self.assertEqual(cycle["cycles_from"], "db")
+        self.assertEqual(cycle["jev"], untouched)
+
+
+class JevCliTests(TempDbTestCase):
+    _run = CliTests._run
+    _seed = CliTests._seed
+
+    def env_for(self, edges):
+        config = _config_with_fake_model(self.tmp_path)
+        replies = self.tmp_path / "jev-replies.json"
+        replies.write_text(json.dumps({"swarm_plan": [_reply(edges)]}), encoding="utf-8")
+        return {"LISTIK_CONFIG": str(config), "LISTIK_HOME": str(self.tmp_path),
+                "FAKE_MODEL_REPLIES": str(replies),
+                "FAKE_MODEL_CALLS": str(self.tmp_path / "jev-calls.jsonl"),
+                "LISTIK_SWARM_JEV_API_KEY": "", "LISTIK_SWARM_JEV_MODEL": ""}
+
+    def test_no_key_json_and_text(self) -> None:
+        a, b, c = self._seed()
+        env = self.env_for({b: [a], c: [b]})
+        result = self._run("plan", "--project", "demo", "--json", env_extra=env)
+        self.assertEqual(result.returncode, 0, result.stderr)
+        out = json.loads(result.stdout)
+        self.assertEqual(out["jev"]["skipped"], "не настроен")
+        self.assertEqual(out["edges"], [[a, b], [b, c]])
+        text = self._run("plan", "--project", "demo", env_extra=env)
+        self.assertEqual(text.returncode, 0, text.stderr)
+        self.assertEqual(text.stdout.splitlines()[1], "jev: не настроен")
+
+    def test_empty_project_text(self) -> None:
+        result = self._run("plan", "--project", "demo", env_extra=self.env_for({}))
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertEqual(result.stdout.splitlines()[1], "jev: не вызывался")
+
+    def test_closed_loopback_port_preserves_graph_json_and_text(self) -> None:
+        from tests.test_status_json import free_port
+
+        a, b, c = self._seed()
+        env = self.env_for({b: [a], c: [b]})
+        baseline = self._run("plan", "--project", "demo", "--json", env_extra=env)
+        self.assertEqual(baseline.returncode, 0, baseline.stderr)
+        env.update({"LISTIK_SWARM_JEV_API_KEY": "jev-test-key",
+                    "LISTIK_SWARM_JEV_URL": f"http://127.0.0.1:{free_port()}/d",
+                    "NO_PROXY": "127.0.0.1", "no_proxy": "127.0.0.1"})
+        result = self._run("plan", "--project", "demo", "--json", "--apply", env_extra=env)
+        self.assertEqual(result.returncode, 0, result.stderr)
+        out = json.loads(result.stdout)
+        self.assertTrue(out["jev"]["skipped"].startswith("ошибка:"))
+        self.assertEqual(out["jev"]["checked"], 0)
+        self.assertEqual(out["edges"], json.loads(baseline.stdout)["edges"])
+        self.assertEqual(out["applied"]["added"], [[a, b], [b, c]])
+        self.assertNotIn("jev-test-key", result.stdout + result.stderr)
+        text = self._run("plan", "--project", "demo", env_extra=env)
+        self.assertEqual(text.returncode, 0, text.stderr)
+        self.assertIn("jev: пропущен — ошибка:", text.stdout)
+
+    def test_text_reports_checked_and_dropped_probabilities(self) -> None:
+        import contextlib
+        import io
+        import runpy
+        from argparse import Namespace
+
+        cli = runpy.run_path(str(LISTIK_BIN))
+        result = {"tasks": {}, "model": "glm", "attempts": 1, "cycles": [],
+                  "jev": {"checked": 2, "dropped": [{"edge": ["a", "b"], "p": 0.12}],
+                          "skipped": None}}
+        stdout = io.StringIO()
+        with mock.patch.dict(cli["cmd_plan"].__globals__, {"call": mock.Mock(return_value=result)}), \
+                contextlib.redirect_stdout(stdout):
+            code = cli["cmd_plan"](Namespace(project="demo", stage=None, apply=False, json=False))
+        self.assertEqual(code, 0)
+        lines = stdout.getvalue().splitlines()
+        self.assertEqual(lines[1], "jev: проверено рёбер 2, снято 1")
+        self.assertEqual(lines[2], "снято jev: a → b (p=0.12)")
+
+
+class JevHttpTests(OwnerHttpCase):
+    config_text = LOCAL_CONFIG
+    _seed = HttpTests._seed
+
+    def test_http_drop_and_publish_only_remaining_edges(self) -> None:
+        a, b = self._seed()
+        conn = db_mod.connect(self.db_path)
+        try:
+            c = _task(conn, "C", priority=2)
+        finally:
+            conn.close()
+        env = {"LISTIK_SWARM_JEV_API_KEY": "k", "LISTIK_SWARM_JEV_MODEL": ""}
+        with mock.patch.dict(os.environ, env), \
+                mock.patch("listik.server.swarm_llm.complete_json", return_value=_reply({b: [a]})), \
+                mock.patch("listik.server.swarm_llm.decide", return_value=JevEdgeTests.answer(0.1)), \
+                mock.patch("listik.server.publish") as published:
+            status, _, payload = self.call("POST", "/api/swarm/plan", AUTH,
+                                           {"project": "demo", "apply": True})
+        self.assertEqual(status, 200, payload)
+        self.assertEqual(payload["data"]["jev"]["checked"], 1)
+        self.assertEqual(payload["data"]["edges"], [])
+        self.assertEqual(payload["data"]["jev"]["dropped"], [{"edge": [a, b], "p": 0.1}])
+        published.assert_not_called()
+        with mock.patch.dict(os.environ, env), \
+                mock.patch("listik.server.swarm_llm.complete_json", return_value=_reply({b: [a], c: [b]})), \
+                mock.patch("listik.server.swarm_llm.decide",
+                           side_effect=[JevEdgeTests.answer(0.9), JevEdgeTests.answer(0.1)]), \
+                mock.patch("listik.server.publish") as published:
+            status, _, payload = self.call("POST", "/api/swarm/plan", AUTH,
+                                           {"project": "demo", "apply": True})
+        self.assertEqual(status, 200, payload)
+        self.assertEqual(payload["data"]["edges"], [[a, b]])
+        self.assertEqual(payload["data"]["applied"]["added"], [[a, b]])
+        self.assertEqual({call.args[1]["id"] for call in published.call_args_list}, {a, b})
+        for call in published.call_args_list:
+            self.assertEqual(call.args[1]["action"], "deps")

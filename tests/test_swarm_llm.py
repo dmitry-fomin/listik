@@ -125,6 +125,167 @@ class SettingsTests(unittest.TestCase):
             swarm_llm.settings(command_cfg)
         self.assertEqual(swarm_llm.settings(cfg)["model"], swarm_llm.model_name(cfg))
 
+    def test_jev_defaults(self) -> None:
+        with mock.patch.dict("os.environ", {
+            swarm_llm.ENV_JEV_API_KEY: "", swarm_llm.ENV_JEV_URL: "",
+            swarm_llm.ENV_JEV_MODEL: "",
+        }):
+            out = swarm_llm.settings({})
+        self.assertEqual(out["jev_api_key"], "")
+        self.assertEqual(out["jev_url"], "https://openrouter.ai/api/alpha/decisions")
+        self.assertEqual(out["jev_url"], swarm_llm.JEV_DEFAULT_URL)
+        self.assertEqual(out["jev_model"], "typesafe/jev-1.13")
+        self.assertFalse(swarm_llm.jev_enabled(out))
+
+    def test_jev_file_and_env_settings(self) -> None:
+        cfg = {"swarm": {"jev_api_key": " k ", "jev_url": "https://x/d/",
+                         "jev_model": "m"}}
+        blank = {swarm_llm.ENV_JEV_API_KEY: "", swarm_llm.ENV_JEV_URL: "",
+                 swarm_llm.ENV_JEV_MODEL: ""}
+        for value in ("", "   "):
+            with self.subTest(value=value), mock.patch.dict(
+                    "os.environ", dict.fromkeys(blank, value)):
+                out = swarm_llm.settings(cfg)
+            self.assertEqual((out["jev_api_key"], out["jev_url"], out["jev_model"]),
+                             ("k", "https://x/d", "m"))
+            self.assertTrue(swarm_llm.jev_enabled(out))
+        with mock.patch.dict("os.environ", {
+            swarm_llm.ENV_JEV_API_KEY: " k2 ", swarm_llm.ENV_JEV_URL: " https://y/d/ ",
+            swarm_llm.ENV_JEV_MODEL: " m2 ",
+        }):
+            out = swarm_llm.settings(cfg)
+        self.assertEqual((out["jev_api_key"], out["jev_url"], out["jev_model"]),
+                         ("k2", "https://y/d", "m2"))
+
+    def test_jev_enabled_uses_only_jev_key(self) -> None:
+        self.assertFalse(swarm_llm.jev_enabled({"api_key": "glm", "jev_api_key": ""}))
+        self.assertTrue(swarm_llm.jev_enabled({"jev_api_key": "k"}))
+
+
+class DecideTests(unittest.TestCase):
+    question = {"needed": {"type": "noul", "instructions": "Нужна зависимость?",
+                            "criteria": {"true": "да", "false": "нет"}}}
+    state = {"a": {"id": "a"}, "b": {"id": "b"}}
+
+    def _settings(self, **kwargs):
+        return {"jev_api_key": "secret-key", "jev_url": "https://x/d",
+                "jev_model": "typesafe/jev-1.13", **kwargs}
+
+    def test_request_shape_and_tutorial_response(self) -> None:
+        questions = {**self.question,
+                     "route": {"type": "choice", "instructions": "Выбери маршрут",
+                               "criteria": {"fast": "быстрый", "slow": "медленный"}}}
+        payload = {
+            "id": "gen-dec-example", "model": "typesafe/jev-1.13-20260917",
+            "provider": "TypeSafe",
+            "answers": {"needed": {"type": "noul", "noul": 0.96},
+                        "route": {"type": "choice", "choice": "fast", "confidence": 0.67,
+                                  "probabilities": {"fast": 0.78, "slow": 0.22}}},
+            "usage": {"input_tokens": 476, "output_tokens": 70, "cost": 0.00002},
+        }
+        opener = mock.Mock(wraps=_Opener(payload=payload))
+        out = swarm_llm.decide(self.state, questions, cfg_settings=self._settings(jev_api_key="k"),
+                               opener=opener)
+        req = opener.call_args.args[0]
+        self.assertEqual(req.full_url, "https://x/d")
+        self.assertEqual(req.get_method(), "POST")
+        self.assertEqual(req.get_header("Authorization"), "Bearer k")
+        self.assertEqual(req.get_header("Content-type"), "application/json")
+        self.assertEqual(req.get_header("Accept"), "application/json")
+        self.assertEqual(opener.call_args.kwargs, {"timeout": swarm_llm.JEV_TIMEOUT})
+        self.assertEqual(json.loads(req.data), {"model": "typesafe/jev-1.13",
+                                                "state": self.state, "questions": questions})
+        self.assertEqual(out, {k: payload[k] for k in ("answers", "usage", "model")})
+
+    def test_optional_metadata_and_probability_endpoints(self) -> None:
+        for value in (0, 1, 0.0, 1.0):
+            answers = {"needed": {"type": "noul", "noul": value}}
+            with self.subTest(value=value):
+                out = swarm_llm.decide(None, self.question, cfg_settings=self._settings(),
+                                       opener=_Opener(payload={"answers": answers}))
+            self.assertEqual(out, {"answers": answers, "usage": None, "model": None})
+
+    def test_http_errors_mask_key_and_log_body(self) -> None:
+        for code in (401, 403, 429, 500):
+            error = urllib.error.HTTPError(
+                "https://x/d", code, "err", {}, io.BytesIO(b'{"error":"invalid secret-key"}'))
+            with self.subTest(code=code), self.assertLogs("listik.swarm_llm", "WARNING") as logs:
+                with self.assertRaises(swarm_llm.SwarmLlmError) as ctx:
+                    swarm_llm.decide(self.state, self.question, cfg_settings=self._settings(),
+                                     opener=_Opener(error=error))
+            self.assertEqual(ctx.exception.status, 502)
+            self.assertIn(f"HTTP {code}", ctx.exception.message)
+            if code in (401, 403):
+                self.assertIn("[swarm].jev_api_key", ctx.exception.message)
+            self.assertNotIn("secret-key", ctx.exception.message)
+            self.assertIn('"error":"invalid ***"', "\n".join(logs.output))
+            self.assertNotIn("secret-key", "\n".join(logs.output))
+
+    def test_transport_errors_are_504(self) -> None:
+        cases = [(urllib.error.URLError("boom"), "jev недоступен (https://x/d): boom"),
+                 (TimeoutError(), "jev не ответил за 7 с")]
+        for error, message in cases:
+            with self.subTest(error=error), self.assertRaises(swarm_llm.SwarmLlmError) as ctx:
+                swarm_llm.decide(self.state, self.question, cfg_settings=self._settings(),
+                                 opener=_Opener(error=error), timeout=7)
+            self.assertEqual(ctx.exception.status, 504)
+            self.assertEqual(ctx.exception.message, message)
+
+    def test_invalid_json_and_answers_container_log_body(self) -> None:
+        for payload in ("secret-key не JSON", ["secret-key"],
+                        {"error": "secret-key"}, {"answers": ["secret-key"]}):
+            with self.subTest(payload=payload), self.assertLogs("listik.swarm_llm", "WARNING") as logs:
+                with self.assertRaises(swarm_llm.SwarmLlmError) as ctx:
+                    swarm_llm.decide(self.state, self.question, cfg_settings=self._settings(),
+                                     opener=_Opener(payload=payload))
+            self.assertEqual(ctx.exception.status, 502)
+            self.assertNotIn("secret-key", ctx.exception.message)
+            self.assertNotIn("secret-key", "\n".join(logs.output))
+            self.assertIn("***", "\n".join(logs.output))
+
+    def test_invalid_question_answers_are_502_and_logged(self) -> None:
+        choice = {"needed": {"type": "choice", "instructions": "Выбор",
+                             "criteria": {"yes": "да"}}}
+        cases = [(self.question, {}),
+                 (self.question, {"needed": None}),
+                 (self.question, {"needed": []}),
+                 (self.question, {"needed": {"noul": 0.9}}),
+                 (self.question, {"needed": {"type": "choice", "choice": "yes"}}),
+                 (self.question, {"needed": {"type": "noul"}}),
+                 *[(self.question, {"needed": {"type": "noul", "noul": value}})
+                   for value in (-0.1, 1.5, "да", True, False, None, float("nan"), float("inf"))],
+                 *[(choice, {"needed": {"type": "choice", "choice": value}})
+                   for value in ("other", 1, None)],
+                 (choice, {"needed": {"type": "noul", "noul": 0.9}})]
+        for question, answers in cases:
+            payload = {"answers": answers, "extra": "secret-key"}
+            with self.subTest(answers=answers), self.assertLogs("listik.swarm_llm", "WARNING") as logs:
+                with self.assertRaises(swarm_llm.SwarmLlmError) as ctx:
+                    swarm_llm.decide(self.state, question, cfg_settings=self._settings(),
+                                     opener=_Opener(payload=payload))
+            self.assertEqual(ctx.exception.status, 502)
+            self.assertTrue(ctx.exception.message.startswith("jev: негодный ответ на needed:"))
+            self.assertLessEqual(len(ctx.exception.message), 200)
+            self.assertIn('"answers"', "\n".join(logs.output))
+            self.assertIn("***", "\n".join(logs.output))
+            self.assertNotIn("secret-key", "\n".join(logs.output))
+
+    def test_bad_answer_message_is_bounded_for_long_question_name(self) -> None:
+        with self.assertLogs("listik.swarm_llm", "WARNING"):
+            with self.assertRaises(swarm_llm.SwarmLlmError) as ctx:
+                swarm_llm.decide({}, {"x" * 300: self.question["needed"]},
+                                 cfg_settings=self._settings(), opener=_Opener(payload={"answers": {}}))
+        self.assertLessEqual(len(ctx.exception.message), 200)
+
+    def test_empty_key_is_503_without_network(self) -> None:
+        opener = _Opener()
+        with self.assertRaises(swarm_llm.SwarmLlmError) as ctx:
+            swarm_llm.decide(self.state, self.question,
+                             cfg_settings=self._settings(jev_api_key=""), opener=opener)
+        self.assertEqual(ctx.exception.status, 503)
+        self.assertIn("LISTIK_SWARM_JEV_API_KEY", ctx.exception.message)
+        self.assertEqual(opener.requests, [])
+
 
 # --------------------------------------------------------------------------- HTTP
 

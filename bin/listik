@@ -1472,6 +1472,22 @@ def cmd_plan(args) -> int:
     lines = [f"план {project}: задач {len(res.get('tasks') or {})}, "
             f"модель {res.get('model')}, попыток {res.get('attempts')}"]
 
+    jev = res.get("jev") or {}
+    jev_skipped = jev.get("skipped")
+    if jev_skipped == "не настроен":
+        lines.append("jev: не настроен")
+    elif jev_skipped == "не вызывался":
+        lines.append("jev: не вызывался")
+    elif isinstance(jev_skipped, str) and jev_skipped.startswith("ошибка:"):
+        lines.append(f"jev: пропущен — {jev_skipped}")
+    else:
+        jev_dropped = jev.get("dropped") or []
+        lines.append(f"jev: проверено рёбер {jev.get('checked', 0)}, снято {len(jev_dropped)}")
+        for item in jev_dropped:
+            edge = item.get("edge") or []
+            if len(edge) == 2:
+                lines.append(f"снято jev: {edge[0]} → {edge[1]} (p={item.get('p', 0):g})")
+
     tasks = res.get("tasks") or {}
     without_deps: list[str] = []
     for tid, info in tasks.items():

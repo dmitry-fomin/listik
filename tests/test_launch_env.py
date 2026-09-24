@@ -100,7 +100,8 @@ class ReservedEnvGuardTests(AutostartTestCase):
         names |= set(pattern.findall((REPO_DIR / "bin" / "listik").read_text(encoding="utf-8")))
         allowed = launcher_mod.RESERVED_ENV | {
             "LISTIK_DEV_PORT", "LISTIK_SWARM_API_KEY", "LISTIK_SWARM_BASE_URL",
-            "LISTIK_SWARM_MODEL",
+            "LISTIK_SWARM_MODEL", "LISTIK_SWARM_JEV_API_KEY", "LISTIK_SWARM_JEV_URL",
+            "LISTIK_SWARM_JEV_MODEL",
         }
         self.assertLessEqual(names, allowed, names - allowed)
 

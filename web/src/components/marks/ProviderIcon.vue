@@ -6,7 +6,9 @@
  * `HarnessKey` не входит нарочно: это внешний критик по HTTP, который никогда
  * не становится держателем задачи на сервере, — ему свой маленький глиф;
  * devin — тоже свой: три шестиугольника его лого, монохромно, как grok.
+ * Неизвестный вендор — общий `bolt` с ключом в `title`, а не глиф GLM.
  */
+import ListikIcon from '@/components/ListikIcon.vue'
 import HarnessIcon from './HarnessIcon.vue'
 import type { HarnessKey } from '@/lib/harness'
 import type { ProviderKey } from '@/lib/pipelines'
@@ -37,7 +39,7 @@ const HARNESS_OF: Partial<Record<ProviderKey, HarnessKey>> = {
     </svg>
   </span>
   <span
-    v-else
+    v-else-if="props.provider === 'glm'"
     class="listik-harness-icon"
     :class="`listik-harness-icon--${size}`"
     style="color: var(--listik-harness-glm)"
@@ -52,5 +54,9 @@ const HARNESS_OF: Partial<Record<ProviderKey, HarnessKey>> = {
       />
       <path d="M8 2.2v11.6" stroke="currentColor" stroke-width="1.25" />
     </svg>
+  </span>
+  <span v-else class="listik-harness-icon" :class="`listik-harness-icon--${size}`" :title="props.provider">
+    <!-- style перебивает inline-габарит ListikIcon (--icon-*): глиф на весь span, как у соседних веток -->
+    <ListikIcon name="bolt" :size="size" style="width: 100%; height: 100%" />
   </span>
 </template>

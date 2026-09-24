@@ -1,5 +1,5 @@
 """`listik rescope` / `POST /api/swarm/rescope` / `swarm_llm.rescope` (listik-kbh5, шаг
-swarm-6, порция c): области `read_scope`/`write_scope` из готовых ТЗ и уточнение графа
+swarm-7, порция c): области `read_scope`/`write_scope` из готовых ТЗ и уточнение графа
 `blocks` по копилке расхождений «объявил X, тронул Y».
 
 Реальная сеть/подпроцессы не участвуют: функция/HTTP-тесты мокают `swarm_llm.complete_json`,
@@ -334,6 +334,7 @@ class CycleRemainsTests(RescopeTestCase):
         self.assertEqual(out["attempts"], 2)
         self.assertEqual(sorted(out["applied"]["scopes"]), sorted([a, b]))
         self.assertIsNone(out["applied"]["edges"])
+        self.assertEqual(out["edges"], [])
         self.assertEqual(len(self.conn.execute(
             "SELECT * FROM deps WHERE dep_type='blocks' AND created_by=?",
             (swarm_llm.SWARM_AUTHOR,)).fetchall()), 0)
@@ -356,6 +357,7 @@ class CycleInDbTests(RescopeTestCase):
         self.assertEqual(out["attempts"], 0)
         self.assertEqual(out["cycles_from"], "db")
         self.assertEqual(mocked.call_count, 2)
+        self.assertEqual(out["edges"], [])
 
 
 class ModelErrorTests(RescopeTestCase):
@@ -653,3 +655,58 @@ class HttpTests(OwnerHttpCase):
                                                {"project": "demo"})
         self.assertEqual(status, 404)
         self.assertEqual(payload["code"], "not_found")
+
+
+class DriftBadPathTests(RescopeTestCase):
+    def test_bad_fact_path_goes_to_dropped_not_invalid(self) -> None:
+        a = self._task("A", spec="ТЗ A")
+        self._watch_drift(a, files=["/abs/x.py", "./listik/deps.py", "a*b.py", "c\\d.py",
+                                    "listik/store.py"],
+                          declared=[])
+        with mock.patch.object(swarm_llm, "complete_json",
+                               return_value=_extract_reply([], ["listik/store.py"])):
+            out = swarm_llm.rescope(self.conn, project="demo", apply=True,
+                                    cfg={"swarm": {"api_key": "k"}})
+        self.assertNotIn(a, out["invalid"])
+        self.assertEqual(out["tasks"][a]["write_scope"], ["listik/store.py", "listik/deps.py"])
+        self.assertIn(a, out["applied"]["scopes"])
+        bad = [d for d in out["dropped"] if d.get("why") == "bad_path"]
+        self.assertEqual(bad, [{"id": a, "file": "/abs/x.py", "why": "bad_path"},
+                               {"id": a, "file": "a*b.py", "why": "bad_path"},
+                               {"id": a, "file": "c\\d.py", "why": "bad_path"}])
+
+    def test_bad_model_path_still_invalid(self) -> None:
+        a = self._task("A", spec="ТЗ A")
+        self._watch_drift(a, files=["ok.py"], declared=[])
+        with mock.patch.object(swarm_llm, "complete_json",
+                               return_value=_extract_reply([], ["/abs.py"])):
+            out = swarm_llm.rescope(self.conn, project="demo", cfg={"swarm": {"api_key": "k"}})
+        self.assertIn(a, out["invalid"])
+
+
+class DriftOutsideNotListTests(RescopeTestCase):
+    def test_merged_outside_not_list_falls_back(self) -> None:
+        a = self._task("A", spec="ТЗ A")
+        payload = json.dumps({"files": ["a.py", "b.py"], "declared": ["a.py"],
+                              "outside": "b.py"})
+        store.add_comment(self.conn, a, f"{MERGED_MARK} {payload}",
+                          author="agent:listik-swarm", kind="journal")
+        records, _ = swarm_llm.drift_records(self.conn, project="demo")
+        self.assertEqual(records[0]["outside"], ["b.py"])
+
+    def test_merged_outside_list_with_garbage_kept(self) -> None:
+        a = self._task("A", spec="ТЗ A")
+        payload = json.dumps({"files": ["a.py", "b.py"], "declared": ["a.py"],
+                              "outside": ["c.py", 5]})
+        store.add_comment(self.conn, a, f"{MERGED_MARK} {payload}",
+                          author="agent:listik-swarm", kind="journal")
+        records, _ = swarm_llm.drift_records(self.conn, project="demo")
+        self.assertEqual(records[0]["outside"], ["c.py"])
+
+    def test_extra_outside_not_list_falls_back(self) -> None:
+        a = self._task("A", spec="ТЗ A")
+        records, _ = swarm_llm.drift_records(
+            self.conn, project="demo",
+            extra=[{"task": a, "declared": ["a.py"], "touched": ["a.py", "b.py"],
+                    "outside": None}])
+        self.assertEqual(records[0]["outside"], ["b.py"])

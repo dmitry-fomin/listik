@@ -1575,7 +1575,7 @@ def cmd_rescope(args) -> int:
 
     unscoped = res.get("unscoped") or []
     if unscoped:
-        lines.append("без области: " + ", ".join(unscoped))
+        lines.append("без области в ТЗ: " + ", ".join(unscoped))
 
     invalid = res.get("invalid") or {}
     for tid, why in invalid.items():

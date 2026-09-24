@@ -95,7 +95,7 @@ def merge_task(
             )
             if cont.returncode == 0:
                 journal.add("rebased", task=task_id, wave=wave, conflicts=all_conflicts)
-                journal.add("conflict_resolved", task=task_id, wave=wave, files=files)
+                journal.add("conflict_resolved", task=task_id, wave=wave, files=all_conflicts)
                 resolved = True
                 break
 

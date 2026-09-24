@@ -16,8 +16,9 @@ export function portOf(task) {
   const labels = task.labels || [];
   for (const label of labels) {
     if (typeof label === "string" && label.startsWith("port:")) {
-      const n = Number(label.slice("port:".length));
-      return Number.isFinite(n) ? n : null;
+      const raw = label.slice("port:".length).trim();
+      const n = Number(raw);
+      if (raw && Number.isFinite(n)) return n;
     }
   }
   return null;
@@ -44,7 +45,8 @@ export function isRunning(t) {
 
 export function defaultLine(text) {
   if (typeof text !== "string") return null;
-  const m = text.match(SOFT_DEFAULT_RE);
+  // Несколько маркеров — действует последний.
+  const m = [...text.matchAll(new RegExp(SOFT_DEFAULT_RE.source, "gmu"))].at(-1);
   return m ? m[1].trim() : null;
 }
 

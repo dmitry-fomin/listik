@@ -222,6 +222,10 @@ def _start_tracker(conn, task_id: str, pid: int, proc: subprocess.Popen, notify,
 def _track(conn, db_path, task_id: str, pid: int, proc: subprocess.Popen, notify,
            dispatch_id: str | None, generation: int) -> None:
     code = proc.wait()
+    with _trackers_lock:
+        # Только свою запись: под тем же task_id уже может стоять новый Popen.
+        if _procs.get(task_id) is proc:
+            del _procs[task_id]
     own = db_mod.connect(db_path) if db_path else None
     target = own or conn
     try:

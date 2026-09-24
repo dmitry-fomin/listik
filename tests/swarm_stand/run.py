@@ -1,7 +1,7 @@
 """Цикл волн стенда роя: план → диспетч волны → (при `config.ladder`) наблюдатель и
 лестница реакций → барьер → следующая волна от нового main, пока задачи не кончатся,
 план не зациклится, интеграция не покраснеет или не кончится лимит волн. Настоящий
-цикл (наблюдатель, лестница реакций) пишет swarm-6 в `listik/`; этот модуль только
+цикл (наблюдатель, лестница реакций) пишет swarm-5 в `listik/`; этот модуль только
 модель для тестов.
 """
 
@@ -123,6 +123,11 @@ def run(
             unfinished[task_id] = f"blocked:{last_plan['blocked'][task_id]}"
         else:
             unfinished[task_id] = "not_started"
+
+    stop_fields: dict = {"reason": stopped, "wave": wave}
+    if stopped == "cycle":
+        stop_fields["cycles"] = last_plan["cycles"]
+    journal.add("stopped", **stop_fields)
 
     return RunResult(
         sandbox=sandbox,

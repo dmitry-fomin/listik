@@ -265,3 +265,9 @@ test("rescope_timeout: число, дефолт 3600, 0 и строка — Conf
     );
   }
 });
+
+test("--actor убран: неизвестный флаг, актор — константа роя", () => {
+  assert.throws(() => parseConfig(["--project", "p", "--actor", "x"]), ConfigError);
+  assert.equal(parseConfig(["--project", "p"]).actor, "agent:listik-swarm");
+  assert.ok(!HELP_TEXT.includes("--actor"));
+});

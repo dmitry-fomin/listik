@@ -1526,12 +1526,120 @@ suite("comment после ff падает — дерево не сносят, ц
     listik, git, fs: nodeFs, config: {dryRun: false, project: "demo", logDir: tmpLogDir()},
     swarmConfig: {integration: []}, log, tasks, projectPath: repo, now: new Date(),
   });
-  assert.ok(result.merged.includes("t2"));
+  assert.ok(!result.merged.includes("t2"));
   assert.ok(result.cleaned.includes("t1"));
   assert.ok(!result.cleaned.includes("t2"));
   assert.equal(nodeFs.existsSync(treeT2), true);
   assert.equal(await git.branchExists(repo, "task/t2"), true);
   assert.ok(!listik.calls.set.some(c => c.id === "t2"));
+});
+
+suite("comment маркера падает один раз — повтор записывает, задача влита", async () => {
+  const {repo, tasks, listik: base} = twoMergedSetup();
+  let t2Fails = 0;
+  const listik = fakeListik({t1: await base.show("t1"), t2: await base.show("t2")}, {
+    commentFail: (id) => id === "t2" && t2Fails++ === 0,
+  });
+  const log = makeLog();
+  const result = await runBarrier({
+    listik, git, fs: nodeFs, config: {dryRun: false, project: "demo", logDir: tmpLogDir()},
+    swarmConfig: {integration: []}, log, tasks, projectPath: repo, now: new Date(),
+  });
+  assert.ok(result.merged.includes("t2"));
+  assert.ok(!result.unmerged.includes("t2"));
+  const marks = listik.calls.comment.filter(c => c.id === "t2" && c.text.startsWith(MERGED_MARK));
+  assert.equal(marks.length, 2);
+  assert.equal(marks[0].text, marks[1].text);
+  assert.equal(listik.calls.needsOwner.length, 0);
+});
+
+suite("comment маркера падает дважды — ровно один повтор, needs-owner с командой, след. тик ждёт человека", async () => {
+  const {repo, treeT2, tasks, listik: base} = twoMergedSetup();
+  const listik = fakeListik({t1: await base.show("t1"), t2: await base.show("t2")},
+    {commentFail: (id) => id === "t2"});
+  const log = makeLog();
+  const result = await runBarrier({
+    listik, git, fs: nodeFs, config: {dryRun: false, project: "demo", logDir: tmpLogDir()},
+    swarmConfig: {integration: []}, log, tasks, projectPath: repo, now: new Date(),
+  });
+  const marks = listik.calls.comment.filter(c => c.id === "t2" && c.text.startsWith(MERGED_MARK));
+  assert.equal(marks.length, 2);
+  assert.ok(!result.merged.includes("t2"));
+  assert.ok(!result.mergedNow.includes("t2"));
+  assert.ok(result.unmerged.includes("t2"));
+  assert.deepEqual(result.rejected, []);
+  assert.ok(!listik.calls.comment.some(c => c.text.startsWith(REJECTED_MARK)));
+  assert.ok(!listik.calls.set.some(c => c.id === "t2"));
+  assert.ok(log.lines.includes("needs-owner t2: mark_failed"));
+  const note = listik.calls.needsOwner.find(c => c.id === "t2");
+  assert.ok(note.text.startsWith("рой: не влита — "));
+  assert.ok(note.text.includes(`listik comment t2 '${marks[0].text}' -k journal --actor agent:listik-swarm`));
+
+  // Следующий тик: needs_owner с жёстким вопросом роя — гейт шага 3, не rejectOne.
+  const head = await git.headSha(repo);
+  const next = fakeListik({t2: {id: "t2", comments: [
+    {kind: "question", text: note.text, created_at: "2026-01-01T00:01:00Z"},
+  ], write_scope: []}});
+  const log2 = makeLog();
+  const r2 = await runBarrier({
+    listik: next, git, fs: nodeFs, config: {dryRun: false, project: "demo", logDir: tmpLogDir()},
+    swarmConfig: {integration: []}, log: log2,
+    tasks: [{...tasks[1], needs_owner: true}], projectPath: repo, now: new Date(),
+  });
+  assert.ok(log2.lines.includes("t2 не влита: ждёт человека"));
+  assert.deepEqual(r2.rejected, []);
+  assert.equal(next.calls.set.length, 0);
+  assert.equal(await git.headSha(repo), head);
+  assert.equal(nodeFs.existsSync(treeT2), true);
+});
+
+suite("changedFiles бросает до слияния — needs-owner diff_error, не empty", async () => {
+  const repo = initRepo();
+  const tree = addWorktree(repo, "t1");
+  commitFile(tree, "t1.txt", "a\n", "t1");
+  const tasks = [doneTask("t1", tree)];
+  const listik = fakeListik({t1: {id: "t1", comments: [], write_scope: []}});
+  const wrapped = {...git, async changedFiles() { throw new GitError("boom diff", ["diff"], 128); }};
+  const log = makeLog();
+  const before = await git.headSha(repo);
+  const result = await runBarrier({
+    listik, git: wrapped, fs: nodeFs, config: {dryRun: false, project: "demo", logDir: tmpLogDir()},
+    swarmConfig: {integration: []}, log, tasks, projectPath: repo, now: new Date(),
+  });
+  assert.equal(await git.headSha(repo), before);
+  assert.deepEqual(result.rejected, []);
+  assert.deepEqual(result.unmerged, ["t1"]);
+  assert.equal(listik.calls.set.length, 0);
+  assert.ok(!listik.calls.comment.some(c => c.text.startsWith(REJECTED_MARK)));
+  assert.ok(log.lines.includes("needs-owner t1: diff_error"));
+  const note = listik.calls.needsOwner[0].text;
+  assert.ok(note.startsWith("рой: не влита — "));
+  assert.ok(note.includes("git diff --name-only"));
+});
+
+suite("changedFiles бросает после слияния — маркер с files_error, задача влита", async () => {
+  const repo = initRepo();
+  const tree = addWorktree(repo, "t1");
+  commitFile(tree, "t1.txt", "a\n", "t1");
+  const tasks = [doneTask("t1", tree)];
+  const listik = fakeListik({t1: {id: "t1", comments: [], write_scope: []}});
+  let n = 0;
+  const wrapped = {...git, async changedFiles(...args) {
+    if (n++ === 0) return git.changedFiles(...args);
+    throw new GitError("boom diff", ["diff"], 128);
+  }};
+  const log = makeLog();
+  const result = await runBarrier({
+    listik, git: wrapped, fs: nodeFs, config: {dryRun: false, project: "demo", logDir: tmpLogDir()},
+    swarmConfig: {integration: []}, log, tasks, projectPath: repo, now: new Date(),
+  });
+  assert.ok(result.merged.includes("t1"));
+  const c = listik.calls.comment.find(x => x.id === "t1" && x.text.startsWith(MERGED_MARK));
+  const rec = JSON.parse(c.text.slice(MERGED_MARK.length).trim());
+  assert.deepEqual(rec.files, []);
+  assert.deepEqual(rec.outside, []);
+  assert.match(rec.files_error, /boom diff/);
+  assert.ok(log.lines.some(l => l.startsWith("влито t1")));
 });
 
 suite("rebaseAbort бросает — runBarrier не вылетает, кандидат в unmerged", async () => {

@@ -337,6 +337,26 @@ class ReimportRoutesTests(RoutesApiBase):
         self.assertEqual(routes_store.get_route(self.conn, "grok")["title"], "grok")
         publish.assert_called_once_with("route", {"key": None, "action": "reimported"})
 
+    def test_reimport_from_backup_path(self) -> None:
+        from listik import paths
+        self.import_sample()
+        routes_store.update_route(self.conn, "grok", title="Моя правка")
+        with mock.patch.object(paths, "DATA_DIR", self.tmp_path / "data"), \
+                mock.patch.object(server, "publish"), \
+                contextlib.redirect_stderr(io.StringIO()):
+            _, first = server.handle("POST", "/api/routes/reimport", {}, {}, authed=True)
+            self.assertEqual(routes_store.get_route(self.conn, "grok")["title"], "grok")
+            status, report = server.handle("POST", "/api/routes/reimport", {},
+                                           {"path": first["backup"]}, authed=True)
+        self.assertEqual(status, 200)
+        self.assertEqual(report["source"], first["backup"])
+        self.assertEqual(routes_store.get_route(self.conn, "grok")["title"], "Моя правка")
+
+    def test_reimport_bad_path_is_400(self) -> None:
+        with self.assertRaises(server.ApiError) as ctx:
+            server.handle("POST", "/api/routes/reimport", {}, {"path": 5}, authed=True)
+        self.assertEqual(ctx.exception.status, 400)
+
     def test_reimport_get_is_405(self) -> None:
         with self.assertRaises(server.ApiError) as ctx:
             self.get("/api/routes/reimport")

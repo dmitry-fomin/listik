@@ -251,6 +251,180 @@ class ReimportCommandTests(RoutesDbTestCase):
         self.assertEqual(routes_store.get_route(self.conn, "grok")["title"], "grok")
 
 
+class ReimportKeepsUserRoutesTests(RoutesDbTestCase):
+    """`reimport` сохраняет маршруты не из файла, кроме пайплайнов-скилов, и пишет бэкап
+    (listik-zr05, порция g)."""
+
+    SWARM_ROLES = {"impl": {"harness": "codex", "argv": ["codex", "exec", "{task_id}"]}}
+    KEPT = ["chiki-pow", "my-direct", "my-swarm-pipe"]
+    BACKUP_RE = r"routes\.bak-\d{8}T\d{6}Z(-\d+)?\.json"
+
+    def setUp(self) -> None:
+        super().setUp()
+        from listik import paths, store
+        self.data_dir = self.tmp_path / "data"
+        patcher = mock.patch.object(paths, "DATA_DIR", self.data_dir)
+        patcher.start()
+        self.addCleanup(patcher.stop)
+        self.import_sample()
+        routes_store.create_route(self.conn, key="chiki-pow", kind="swarm", title="Рой чики",
+                                  roles=self.SWARM_ROLES)
+        routes_store.upsert_route(self.conn, {**direct_record(), "key": "my-direct",
+                                              "title": "Мой dsh"})
+        routes_store.upsert_route(self.conn, {**pipeline_record(), "key": "my-swarm-pipe",
+                                              "driver": "swarm", "roles": self.SWARM_ROLES})
+        routes_store.upsert_route(self.conn, {**pipeline_record(), "key": "my-pipe"})
+        routes_store.update_route(self.conn, "high-pipeline", title="Моя правка")
+        task = store.create_task(self.conn, title="рой", project="listik")
+        self.conn.execute("UPDATE tasks SET launch_route = 'chiki-pow' WHERE id = ?",
+                          (task["id"],))
+        self.conn.commit()
+        self.before = {r["key"]: r for r in routes_store.list_routes(self.conn)}
+
+    def reimport(self, path=ROUTES_JSON) -> dict:
+        with contextlib.redirect_stderr(io.StringIO()):
+            return routes_store.reimport(self.conn, path)
+
+    def backups(self) -> list:
+        return sorted(self.data_dir.glob("routes.bak-*"))
+
+    @staticmethod
+    def without_position(record: dict) -> dict:
+        return {k: v for k, v in record.items() if k != "position"}
+
+    def test_keeps_user_routes_and_drops_skill_pipelines(self) -> None:
+        report = self.reimport()
+        for key in self.KEPT:
+            self.assertEqual(self.without_position(routes_store.get_route(self.conn, key)),
+                             self.without_position(self.before[key]), key)
+        with self.assertRaises(errors.NotFound):
+            routes_store.get_route(self.conn, "my-pipe")
+        self.assertEqual(routes_store.get_route(self.conn, "high-pipeline")["title"],
+                         routes_mod.load(ROUTES_JSON).by_key["high-pipeline"]["title"])
+        self.assertEqual(sorted(report["kept"]), sorted(self.KEPT))
+        self.assertEqual(report["removed"], ["my-pipe"])
+        self.assertEqual(report["orphans"], {})
+        self.assertTrue(report["replaced"])
+        self.assertFalse(report["skipped"])
+        self.assertEqual(report["imported"], 14)
+        backup = pathlib.Path(report["backup"])
+        self.assertTrue(backup.is_file())
+        self.assertEqual(backup.parent, self.data_dir)
+        self.assertRegex(backup.name, "^" + self.BACKUP_RE + "$")
+
+    def test_backup_is_loadable_and_complete(self) -> None:
+        report = self.reimport()
+        with contextlib.redirect_stderr(io.StringIO()):
+            state = routes_mod.load(report["backup"])
+        self.assertTrue(state.ok, state.error)
+        for key in ["high-pipeline", "my-pipe", *self.KEPT]:
+            self.assertIn(key, state.by_key)
+        self.assertEqual(state.by_key["high-pipeline"]["title"], "Моя правка")
+
+    def test_swarm_cell_without_argv_survives_backup(self) -> None:
+        # Ячейка роя без своего argv (команда — argv харнесса по умолчанию) в файле
+        # допустима: каталога харнессов у валидатора файла нет.
+        routes_store.create_route(self.conn, key="roy-default", kind="swarm", title="Рой",
+                                  roles={"impl": {"harness": "codex"}})
+        report = self.reimport()
+        with contextlib.redirect_stderr(io.StringIO()):
+            state = routes_mod.load(report["backup"])
+        self.assertTrue(state.ok, state.error)
+        self.assertEqual(state.by_key["roy-default"]["roles"], {"impl": {"harness": "codex"}})
+        routes_store.delete_route(self.conn, "roy-default")
+        self.reimport(report["backup"])
+        self.assertEqual(routes_store.get_route(self.conn, "roy-default")["roles"],
+                         {"impl": {"harness": "codex"}})
+
+    def test_file_validator_swarm_cells(self) -> None:
+        base = {"key": "p", "title": "t", "visible": True}
+        cell = {"impl": {"harness": "codex"}}
+        for kind, driver in (("swarm", None), ("pipeline", "swarm")):
+            record = {**base, "kind": kind, "roles": cell,
+                      **({"driver": driver} if driver else {})}
+            self.assertEqual(routes_mod.validate(document(record))[0]["roles"], cell)
+        with self.assertRaises(routes_mod.RoutesError):
+            routes_mod.validate(document({**base, "kind": "pipeline", "driver": "swarm",
+                                          "roles": pipeline_record()["roles"]}))
+        # С каталогом без argv по умолчанию команда по-прежнему обязательна.
+        with self.assertRaises(routes_mod.RoutesError):
+            routes_mod.validate_swarm_roles(cell, "roles", {"codex": {"argv": None}})
+
+    def test_restore_from_backup(self) -> None:
+        report = self.reimport()
+        self.reimport(report["backup"])
+        self.assertEqual(routes_store.get_route(self.conn, "my-pipe")["title"], "Демо")
+        self.assertEqual(routes_store.get_route(self.conn, "high-pipeline")["title"],
+                         "Моя правка")
+
+    def test_positions_file_first_then_kept_in_order(self) -> None:
+        old_order = [k for k in self.before if k in self.KEPT]
+        self.reimport()
+        file_keys = [r["key"] for r in routes_mod.load(ROUTES_JSON).routes]
+        rows = routes_store.list_routes(self.conn)
+        self.assertEqual([r["key"] for r in rows], file_keys + old_order)
+        self.assertEqual([r["position"] for r in rows], list(range(len(rows))))
+
+    def test_broken_file_changes_nothing(self) -> None:
+        broken = self.tmp_path / "broken.json"
+        broken.write_text("{не json", encoding="utf-8")
+        with self.assertRaises(routes_mod.RoutesError):
+            self.reimport(broken)
+        self.assertEqual({r["key"]: r for r in routes_store.list_routes(self.conn)},
+                         self.before)
+        self.assertEqual(self.backups(), [])
+
+    def test_same_second_backups_get_suffix(self) -> None:
+        with mock.patch.object(routes_store, "_backup_stamp", return_value="20260101T000000Z"):
+            first = self.reimport()["backup"]
+            first_text = pathlib.Path(first).read_text(encoding="utf-8")
+            second = self.reimport()["backup"]
+        self.assertTrue(first.endswith("routes.bak-20260101T000000Z.json"))
+        self.assertTrue(second.endswith("routes.bak-20260101T000000Z-2.json"))
+        self.assertEqual(pathlib.Path(first).read_text(encoding="utf-8"), first_text)
+
+    def test_error_in_transaction_rolls_back_but_backup_stays(self) -> None:
+        with mock.patch.object(routes_store, "_upsert_raw", side_effect=RuntimeError("сбой")):
+            with self.assertRaises(RuntimeError):
+                self.reimport()
+        self.assertEqual({r["key"]: r for r in routes_store.list_routes(self.conn)},
+                         self.before)
+        [backup] = self.backups()
+        saved = json.loads(backup.read_text(encoding="utf-8"))["routes"]
+        self.assertEqual([r["key"] for r in saved], list(self.before))
+
+    def run_cli(self, *argv):
+        import os
+        import subprocess
+        import sys
+        from tests.test_claim import LISTIK_BIN
+        env = {**os.environ, "LISTIK_DB": str(self.db_path), "LISTIK_HOME": str(self.data_dir),
+               "LISTIK_LOG": str(self.tmp_path / "listik.log")}
+        return subprocess.run([sys.executable, str(LISTIK_BIN), "--local", "routes", *argv],
+                              capture_output=True, text=True, env=env, cwd=str(REPO_DIR))
+
+    def test_cli_from_backup_json(self) -> None:
+        backup = self.reimport()["backup"]
+        proc = self.run_cli("--reimport", "--from", backup, "--json")
+        self.assertEqual(proc.returncode, 0, proc.stdout + proc.stderr)
+        report = json.loads(proc.stdout)
+        self.assertEqual(report["source"], backup)
+        for name in ("backup", "kept", "removed"):
+            self.assertIn(name, report)
+        self.assertEqual(routes_store.get_route(self.conn, "my-pipe")["title"], "Демо")
+
+    def test_cli_from_without_reimport_is_bad_argument(self) -> None:
+        proc = self.run_cli("--from", str(ROUTES_JSON))
+        self.assertEqual(proc.returncode, 2, proc.stdout + proc.stderr)
+
+    def test_cli_human_output(self) -> None:
+        proc = self.run_cli("--reimport")
+        self.assertEqual(proc.returncode, 0, proc.stdout + proc.stderr)
+        self.assertIn("сохранены:", proc.stdout)
+        self.assertIn("удалены: my-pipe", proc.stdout)
+        self.assertIn("копия таблицы:", proc.stdout)
+
+
 class FieldRulesTests(RoutesDbTestCase):
     """Правила полей — по одному случаю на нарушение."""
 

@@ -2314,31 +2314,47 @@ def cmd_actors(args) -> int:
 
 def cmd_routes(args) -> int:
     """Маршруты запуска: список из таблицы `routes` (через сервер или локально)."""
+    if getattr(args, "source", None) is not None and not getattr(args, "reimport", False):
+        raise errors.ListikError("--from работает только вместе с --reimport",
+                                 code=errors.BAD_ARGUMENT, exit_code=2,
+                                 hint="listik routes --reimport --from <файл>")
     if getattr(args, "reimport", False):
         return _cmd_routes_reimport(args)
     return _cmd_routes_list(args)
 
 
 def _cmd_routes_reimport(args) -> int:
-    """Перезаписать таблицу `routes` из `routes.json` установленной копии."""
+    """Привести таблицу `routes` к `routes.json` установленной копии или к файлу `--from`."""
     # Локальный путь — здесь, а не в `client.local_call`: операция одна и живёт
     # целиком в `routes_store.reimport`, как и у HTTP-ручки POST /api/routes/reimport.
+    source = getattr(args, "source", None)
+    if source is not None:
+        # Сервер читает файл сам и из своего каталога: путь — абсолютный.
+        source = os.path.abspath(os.path.expanduser(source))
     local = getattr(args, "local", False)
     if not local and client.is_up(args.host, args.port):
-        data = client.request("POST", "/api/routes/reimport", body={},
+        body = {} if source is None else {"path": source}
+        data = client.request("POST", "/api/routes/reimport", body=body,
                               host=args.host, port=args.port)
     else:
         if local:
             warn_local_bypass(args, writing=True)
         try:
-            data = routes_store.reimport(db.init())
+            data = routes_store.reimport(db.init(), source)
         except ValueError as exc:
+            hint = ("проверь файл --from" if source is not None
+                    else "проверь routes.json установленной копии")
             raise errors.ListikError(errors.message_of(exc), code=errors.BAD_ARGUMENT,
-                                     hint="проверь routes.json установленной копии") from exc
+                                     hint=hint) from exc
     if getattr(args, "json", False):
         emit(args, data, "")
         return 0
     print(f"маршруты перезаписаны из {data.get('source')}: ввезено {data.get('imported')}")
+    if data.get("kept"):
+        print(f"сохранены: {', '.join(data['kept'])}")
+    if data.get("removed"):
+        print(f"удалены: {', '.join(data['removed'])}")
+    print(f"копия таблицы: {data.get('backup')}")
     orphans = data.get("orphans") or {}
     if orphans:
         listed = ", ".join(f"{key} ({n})" for key, n in orphans.items())
@@ -2917,8 +2933,12 @@ def build_parser() -> argparse.ArgumentParser:
 
     sp = add("routes", cmd_routes, help="маршруты запуска: список из таблицы routes")
     sp.add_argument("--reimport", action="store_true",
-                    help="перезаписать таблицу из routes.json установленной копии "
-                         "(правки маршрутов на доске пропадут)")
+                    help="привести таблицу к routes.json установленной копии: пайплайны "
+                         "из файла перезапишутся, свои маршруты роя и прямых харнессов "
+                         "останутся; копия таблицы — routes.bak-*.json в каталоге данных")
+    sp.add_argument("--from", dest="source", metavar="FILE",
+                    help="с --reimport: взять маршруты из этого файла (например, из "
+                         "копии routes.bak-*.json) вместо routes.json")
 
     sp = add("dep", cmd_dep,
              help="связи между задачами: add, confirm, rm, tree, cycles, suggest, link, suggested")

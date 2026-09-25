@@ -24,8 +24,9 @@ from __future__ import annotations
 import json
 import sqlite3
 import sys
+from datetime import datetime, timezone
 
-from . import errors, harnesses_store, routes, skills, store
+from . import errors, harnesses_store, paths, routes, skills, store
 
 #: Поля, которые вообще разрешено менять точечно.  Всё остальное (`kind`, `key`,
 #: `harness`, `position`) через `update_route` недоступно.  `roles` правится
@@ -437,21 +438,91 @@ def import_file(conn: sqlite3.Connection, path=None, *, replace=False) -> dict:
             "replaced": bool(replace)}
 
 
-def reimport(conn: sqlite3.Connection, path=None) -> dict:
-    """Перезаписать таблицу из файла поставки (`listik routes --reimport`).
+def _backup_stamp() -> str:
+    """Метка времени имени бэкапа: UTC `ГГГГММДДTЧЧММССZ`."""
+    return datetime.now(timezone.utc).strftime("%Y%m%dT%H%M%SZ")
 
-    Отчёт `import_file(replace=True)` плюс `orphans` — `{ключ: число задач}` для
-    задач, чей `launch_route` после перезаписи указывает на несуществующий ключ.
-    Сами задачи не трогаются: это только предупреждение.
+
+def _backup_record(record: dict) -> dict:
+    """Запись `list_routes` в форме `routes.json`: без полей, которых нет в формате
+    файла (`position`), без `driver` у `direct` и без пустых `icon`/`command`
+    (валидатор файла `null` в них не принимает)."""
+    out = {k: v for k, v in record.items() if k in routes.RECORD_FIELDS}
+    if out.get("kind") == "direct":
+        out.pop("driver", None)
+    for name in ("icon", "command"):
+        if out.get(name) is None:
+            out.pop(name, None)
+    return out
+
+
+def _write_backup(conn: sqlite3.Connection) -> str:
+    """Снять таблицу в `<DATA_DIR>/routes.bak-<UTC>.json`; занятое имя — суффикс `-2`, `-3`…"""
+    doc = {"version": routes.VERSION,
+           "routes": [_backup_record(r) for r in list_routes(conn)]}
+    text = json.dumps(doc, ensure_ascii=False, indent=2) + "\n"
+    base = paths.DATA_DIR / f"routes.bak-{_backup_stamp()}"
+    paths.DATA_DIR.mkdir(parents=True, exist_ok=True)
+    n = 1
+    while True:
+        target = base.with_name(f"{base.name}.json" if n == 1 else f"{base.name}-{n}.json")
+        try:
+            with open(target, "x", encoding="utf-8") as fh:  # "x": чужой бэкап не перезаписываем
+                fh.write(text)
+            return str(target)
+        except FileExistsError:
+            n += 1
+
+
+def reimport(conn: sqlite3.Connection, path=None) -> dict:
+    """Привести таблицу к файлу (`listik routes --reimport [--from <файл>]`).
+
+    Ключи из файла перезаписываются записями файла (позиции `0…n-1`). Из ключей,
+    которых в файле нет, удаляются только пайплайны-скилы (`kind=pipeline`,
+    `driver=skill`); остальные (рой, прямые харнессы, пайплайны роя, будущие виды)
+    сохраняются как есть и встают после записей файла в прежнем порядке. До записи
+    таблица снимается в бэкап (`backup`) — из него можно восстановиться, передав его
+    как `path`. Ошибка файла — `routes.RoutesError`, база и бэкапы не меняются.
+
+    Отчёт: `imported`, `skipped`, `source`, `replaced`, `kept`, `removed`, `backup`
+    и `orphans` — `{ключ: число задач}` для задач, чей `launch_route` указывает на
+    несуществующий ключ. Сами задачи не трогаются: это только предупреждение.
     """
-    result = import_file(conn, path, replace=True)
+    source = _source_path(path)
+    state = routes.load(source)
+    if not state.ok:
+        raise routes.RoutesError(state.error or "routes.json не читается")
+    backup = _write_backup(conn)
+    file_keys = {record["key"] for record in state.routes}
+    kept: list[str] = []
+    removed: list[str] = []
+    for record in list_routes(conn):
+        if record["key"] in file_keys:
+            continue
+        if record["kind"] == "pipeline" and record["driver"] == "skill":
+            removed.append(record["key"])
+        else:
+            kept.append(record["key"])
+    try:
+        for key in [*removed, *file_keys]:
+            conn.execute("DELETE FROM routes WHERE key = ?", (key,))
+        for position, record in enumerate(state.routes):
+            _upsert_raw(conn, record, position=position)
+        for offset, key in enumerate(kept):
+            conn.execute("UPDATE routes SET position = ? WHERE key = ?",
+                         (len(state.routes) + offset, key))
+        conn.commit()
+    except Exception:
+        conn.rollback()
+        raise
     add_shipped(conn, fresh=True)
     keys = {row[0] for row in conn.execute("SELECT key FROM routes")}
     rows = conn.execute("SELECT launch_route, COUNT(*) FROM tasks "
                         "WHERE launch_route IS NOT NULL AND launch_route != '' "
                         "GROUP BY launch_route ORDER BY launch_route").fetchall()
-    result["orphans"] = {key: n for key, n in rows if key not in keys}
-    return result
+    return {"imported": len(state.routes), "skipped": False, "source": str(source),
+            "replaced": True, "kept": kept, "removed": removed, "backup": backup,
+            "orphans": {key: n for key, n in rows if key not in keys}}
 
 
 def ensure_imported(conn: sqlite3.Connection) -> dict:

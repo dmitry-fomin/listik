@@ -822,6 +822,43 @@ Listik**, зарезервирован. `env` живёт только в это�
 (см. ниже) — штатный журнал отзыва по-прежнему от `agent:listik`, событие `revoke` — от
 актора вызова (`agent:listik-swarm`).
 
+### Перезапуск карточки роя с этапа: `listik restart`
+
+`listik/stage_launch.py: restart_task`, `POST /api/tasks/{id}/restart`, `listik restart <id>
+[--stage <этап>] [--route <ключ>] [--note TEXT]` — возвращает карточку роя в состояние «этап
+выбран, никто не держит, запуска нет»; роль этапа запустит рой на следующем тике как обычному
+кандидату. Команда не связана с полем `restart` в отчёте тика роя (`listik-swarm`): то —
+перезапуск зависшего процесса (`revoke` + `launch`), а эта команда процесс не запускает, не зовёт
+лаунчер и не трогает `generation`.
+
+Порядок жёсткий: все проверки → перенос файлов → запись в базу; отказ не меняет ни базу, ни
+файлы. Отказы по порядку проверки: нет карточки — `404`; статус `done`/`cancelled` — `409`;
+карточка не роя (`launch_driver` не `swarm`, а без снимка — `driver` маршрута) — `400
+bad_argument` с подсказкой `listik stage <id> --to <этап>`; живой запуск (`launched_by` есть,
+`launch_finished_at` пуст) — `409` с подсказкой `listik revoke <id>`; `route` нет в `routes` —
+`409` со списком ключей; этап не из `s1-spec`…`s4-judge` — `400`; эпик с детьми и цель не
+`s1-spec` — `409` «эпик: перезапускай подзадачи: …»; у цели нет роли в маршруте (новом, если
+передан `route`) — `409` со списком этапов, у которых роль есть; цель `s1-spec`, и начат хоть
+один ребёнок по `parent-child`/`parent` (статус не `open`, этап, держатель или `launched_by`;
+`cancelled` — не начат, `done` — начат) — `409` с их id. Подсказка отказа входит в сам текст.
+
+Целевой этап — `stage`, иначе текущий, пустой — `s1-spec`. С `route` маршрут меняется при
+любом держателе: `launch_route`, метки маршрута, `launch_driver = NULL`, событие `route` и журнал
+«маршрут: <старый> → <новый>». На `s1-spec` снимаются все дети `parent-child`/`parent`, включая
+отменённых: связь становится `discovered-from` (ребёнок → родитель), незакрытые дети —
+`cancelled` с `close_reason` «рой: перезапуск <id> с s1-spec, порция снята». Их файлы порций
+(`spec_path`/`checklist_path`/`decision_path` в каталоге `spec_path` родителя с именем `<id>.…`,
+кроме собственных путей родителя) переносятся в `<каталог шага>/<id>.restart-<N>/`, пути в
+карточках переписываются, туда же кладётся копия ТЗ родителя; общий журнал шага остаётся на
+месте. Относительные пути разрешаются от `projects.path`. У родителя нет `spec_path` — архива
+нет, журнал «архив не сделан: у родителя нет spec_path». Повтор после сбоя доводит дело в тот же
+архив. Карточка: держатель снят, вопрос `needs_owner` снят, восемь полей запуска
+(`launched_by`, `launch_pid`, `launched_at`, `launch_log`, `launch_exit_code`,
+`launch_finished_at`, `launch_error`, `dispatch_id`) — `NULL`; прежний лог — строкой журнала
+«прежний лог запуска: …». Итог — журнал «рой: перезапуск с <этап>[, порции сняты: <ids>, файлы в
+<архив>]. <note>». Ответ — карточка плюс `restarted_from`, `detached` (id снятых детей),
+`archive_dir` (или `null`), `route_from` (только с `route`).
+
 ### Наблюдатель деревьев роя: `listik watch`
 
 ```
@@ -1423,6 +1460,7 @@ dropped_chunks, reason`), `reasons[]` (по одному пункту на ка�
 | POST | `/api/tasks/{id}/done` | `result`, `reason`, `actor`, `note` | закрыть: `status=done`, `stage=done`; держатель снимается (событие `release`), `holder_note` очищается |
 | POST | `/api/tasks/{id}/revoke` | `actor`, `harness`, `note`, `kill=true` | отозвать полномочия текущего запуска (поднять поколение) и, если `kill`, снять его процесс — см. «Отзыв и перезапуск». `400` — задачу не запускали (`generation == 0`) или поколение изменилось параллельно. `200` — карточка после отзыва |
 | POST | `/api/tasks/{id}/launch` | `actor`, `harness`, `note` (пока не используется), `env{}` (`LISTIK_*` → строка, необязательный) | запустить задачу по маршруту следующим поколением (`launcher.start` без изменений логики) — см. «Отзыв и перезапуск». `200` — карточка с `"launched": true`; `409 conflict` — текст отказа `start` (уже запущена, нет маршрута и т. п.), состояние — как у автостарта; `400 bad_argument` — `env` не прошёл `check_env` (карточка не трогается) |
+| POST | `/api/tasks/{id}/restart` | `stage?`, `route?`, `note?`, `actor`, `harness` | перезапуск карточки роя с этапа — см. «Перезапуск карточки роя с этапа». `200` — карточка плюс `restarted_from`, `detached`, `archive_dir`, `route_from` (при `route`); `404` — нет карточки; `400 bad_argument` — карточка не роя или этап не из `s1-spec`…`s4-judge`; `409 conflict` — закрыта, живой запуск, неизвестный `route`, эпик не на `s1-spec`, нет роли этапа, начатые порции |
 | POST | `/api/tasks/{id}/deps` | `depends_on`, `dep_type=blocks`, `confirm=false`, `actor` | с `depends_on` — добавить связь; без него — дерево зависимостей (`waits_for`/`waited_by`). Жёсткий `dep_type` (`blocks`/`blocked-by`/`waits-for`/`conditional-blocks`) от агентского `actor` без `confirm=true` не ставится сразу жёстким — пишется как `suggested-blocks` (мягкая, ждёт подтверждения человеком); `confirm=true` (или неагентский `actor`) ставит жёсткую связь сразу. `dep_type=resource-blocks` — 400 `bad_argument` для любого `actor` и `confirm`: ставит только планировщик роя, через этот путь не принимается. Ответ: `dep_type` (фактически записанный тип), `requested_dep_type` (что просили), `suggested`, `confirmed`, `promoted` (предложение заменено на жёсткую связь этим вызовом), `created`, `created_by`. 400 на самосвязь и на цикл жёстких связей — «уже есть жёсткая связь на паре» и цикл считаются без учёта `resource-blocks` |
 | DELETE | `/api/tasks/{id}/deps/{depends_on}` | `dep_type` строкой запроса | снять связь; без `dep_type` снимает разом `blocks` и `suggested-blocks` между той же парой задач, `resource-blocks` — только явным `dep_type=resource-blocks` (актор не ограничен). Ответ: `removed` (число снятых строк), `dep_types[]` |
 | POST | `/api/tasks/{id}/ready` | — | вердикт по задаче (`deps_state`, см. ниже) |
@@ -1904,6 +1942,7 @@ listik needs-owner <id> --clear "ответ"
 listik done <id> --result "чем кончилось"
 listik launch <id>                                    # перезапуск по маршруту следующим поколением
 listik launch <id> --env LISTIK_DEV_PORT=5173         # плюс окружение процесса (LISTIK_* незарезервированные)
+listik restart <id> [--stage s3-impl] [--route <ключ>] [--note TEXT]   # карточку роя заново с этапа (не поле restart отчёта роя)
 listik search "запрос" [--mode hybrid] [--json]
 listik board [--group-by stage]
 listik stats

@@ -207,7 +207,7 @@ WRITE_OPS = frozenset({
     "create", "update", "claim", "heartbeat", "stage", "comment",
     "needs-owner", "dep_add", "dep_remove", "project_add", "project_archive",
     "project_remove", "project_routing", "waves_apply", "revoke", "launch",
-    "swarm_plan", "swarm_rescope", "portions_sync",
+    "swarm_plan", "swarm_rescope", "portions_sync", "restart",
 })
 
 #: `--local` при живом сервере обходит push доски так же молча, как фолбэк без
@@ -1228,6 +1228,32 @@ def cmd_revoke(args) -> int:
                   and "отозваны" in (c.get("text") or "")]
         if journal:
             print(f"  {journal[-1]['text']}")
+    return 0
+
+
+def cmd_restart(args) -> int:
+    """`restart`: карточка роя заново с этапа — держатель, запуск и вопрос сняты."""
+    actor = actor_default(args)
+    fields = {"stage": args.stage, "route": args.route, "note": args.note,
+              "actor": actor, "harness": args.harness}
+    try:
+        task = call("restart", args, f"/api/tasks/{args.task_id}/restart", method="POST",
+                    body=fields, local_kwargs={"task_id": args.task_id, **fields})
+    except (errors.ListikError, ValueError) as exc:
+        # Неверный этап, карточка не роя — неверный аргумент: код 2, как у `portions`.
+        err = errors.as_error(exc)
+        if err.code != errors.BAD_ARGUMENT:
+            raise
+        raise errors.ListikError(err.message, code=err.code, hint=err.hint,
+                                 exit_code=2, status=err.status) from exc
+    lines = [f"перезапущена: {task['id']} с {task['restarted_from']}"]
+    if "route_from" in task:
+        lines.append(f"маршрут: {task['route_from'] or '—'} → {task.get('launch_route')}")
+    if task.get("detached"):
+        lines.append(f"порции сняты: {', '.join(task['detached'])}")
+    if task.get("archive_dir"):
+        lines.append(f"архив: {task['archive_dir']}")
+    emit(args, task, "\n".join(lines))
     return 0
 
 
@@ -2739,6 +2765,13 @@ def build_parser() -> argparse.ArgumentParser:
     add_task_note(sp)
     sp.add_argument("--no-kill", action="store_true",
                     help="оставить процесс жить (не убивать, только отозвать полномочия)")
+
+    sp = add("restart", cmd_restart,
+             help="карточку роя заново с этапа: держатель, запуск и вопрос сняты; "
+                  "на s1-spec порции снимаются в архив")
+    add_task_note(sp)
+    sp.add_argument("--stage", help="этап s1-spec…s4-judge (по умолчанию текущий)")
+    sp.add_argument("--route", help="сменить маршрут на этот ключ")
 
     sp = add("launch", cmd_launch,
              help="запуск стартует процесс по маршруту карточки следующим поколением")

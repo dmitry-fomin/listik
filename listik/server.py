@@ -1292,7 +1292,8 @@ def handle(method: str, path: str, query: dict, body: dict, authed: bool = False
                             "comment": "comment", "needs-owner": "needs-owner",
                             "release": "release", "done": "done",
                             "revoke": "revoke", "launch": "launch",
-                            "portions/sync": "portions_sync"}.get(action)
+                            "portions/sync": "portions_sync",
+                            "restart": "restart"}.get(action)
                 if _guard_op is None and action == "deps" and body.get("depends_on"):
                     _guard_op = "dep_add"
                 if _guard_op is not None:
@@ -1365,6 +1366,20 @@ def handle(method: str, path: str, query: dict, body: dict, authed: bool = False
                         conn, tid, actor=body.get("actor"), harness=body.get("harness"),
                         note=body.get("note"), kill=as_bool(body.get("kill", True)),
                         notify=publish)
+                elif action == "restart":
+                    # NotFound (404) и BadArgument (400) — общим `try` ниже: они не
+                    # ListikError; отказы по состоянию карточки — 409 conflict.
+                    from . import stage_launch
+                    try:
+                        out = stage_launch.restart_task(
+                            conn, tid, stage=body.get("stage"), route=body.get("route"),
+                            note=body.get("note"), actor=body.get("actor") or owner,
+                            harness=body.get("harness"))
+                    except errors_mod.Revoked:
+                        raise
+                    except errors_mod.ListikError as exc:
+                        raise ApiError(409 if exc.code == errors_mod.CONFLICT else 400,
+                                       exc.message, code=exc.code) from exc
                 elif action == "launch":
                     # Как `revoke`: `start` публикует свои кадры сам (`notify=publish`).
                     # `env` — только LISTIK_*, не зарезервированные (check_env в launcher);

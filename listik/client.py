@@ -178,6 +178,7 @@ FENCED_LOCAL_OPS = {
     "update": "task_id", "needs-owner": "task_id", "claim": "task_id",
     "heartbeat": "task_id", "stage": "task_id", "comment": "task_id",
     "dep_add": "issue_id", "dep_remove": "issue_id", "portions_sync": "task_id",
+    "restart": "task_id",
 }
 
 
@@ -262,6 +263,11 @@ def local_call(op: str, *, fence: fence_mod.Token | dict | None = None, **kwargs
     if op == "portions_sync":
         return store.sync_portions(conn, kwargs["task_id"], actor=kwargs.get("actor"),
                                    harness=kwargs.get("harness"))
+    if op == "restart":
+        from . import stage_launch
+        return stage_launch.restart_task(
+            conn, kwargs["task_id"], stage=kwargs.get("stage"), route=kwargs.get("route"),
+            note=kwargs.get("note"), actor=kwargs.get("actor"), harness=kwargs.get("harness"))
     if op == "ready":
         from . import deps as deps_mod
         return {"tasks": deps_mod.ready_tasks(conn, project=kwargs.get("project"),

@@ -4,9 +4,14 @@
 """
 from __future__ import annotations
 
+import json
+import os
+import re
+import shutil
 import sqlite3
 from pathlib import Path
 
+from . import actors as actors_mod
 from . import errors as errors_mod
 from . import harnesses_store
 from . import store
@@ -401,3 +406,302 @@ def apply_outcome(conn: sqlite3.Connection, task_id: str, *, notify=None) -> Non
     finally:
         _release_capture(conn, task_id, dispatch_id)
         conn.commit()
+
+
+# ------------------------------------------------------------------ перезапуск
+
+#: Поля запуска, которые `restart_task` сбрасывает в NULL.
+LAUNCH_FIELDS = ("launched_by", "launch_pid", "launched_at", "launch_log",
+                 "launch_exit_code", "launch_finished_at", "launch_error", "dispatch_id")
+#: Пути порции, которые уходят в архив перезапуска.
+_PORTION_PATHS = ("spec_path", "checklist_path", "decision_path")
+#: Собственные пути родителя: их файлы не переносятся, даже если имя подходит.
+_OWN_PATHS = ("spec_path", "checklist_path", "decision_path", "journal_path", "review_path")
+_PARENT_TYPES = ("parent-child", "parent")
+
+
+def _conflict(message: str, hint: str = "") -> errors_mod.ListikError:
+    """409: подсказка и в тексте (по HTTP `hint` не уходит), и в `hint`."""
+    text = f"{message}; {hint}" if hint else message
+    return errors_mod.ListikError(text, code=errors_mod.CONFLICT, hint=hint, status=409)
+
+
+def _started(child) -> bool:
+    """Порция начата — как в `_slice_parent`; `cancelled` начатой не считается."""
+    if child["status"] == "cancelled":
+        return False
+    return bool(child["status"] != "open" or (child["stage"] or "").strip()
+                or (child["holder"] or "").strip() or (child["launched_by"] or "").strip())
+
+
+def _abs_path(base: str, value: str) -> Path:
+    """Путь карточки: относительный — от `projects.path` проекта, не от cwd."""
+    path = Path(value).expanduser()
+    if not path.is_absolute() and base:
+        path = Path(base) / path
+    return Path(os.path.abspath(path))
+
+
+def _archive_no(step_dir: Path, task_id: str, path: Path) -> int | None:
+    """Номер архива, если `path` уже лежит в `<dir>/<id>.restart-K/`."""
+    if path.parent.parent != step_dir:
+        return None
+    match = re.fullmatch(re.escape(task_id) + r"\.restart-(\d+)", path.parent.name)
+    return int(match.group(1)) if match else None
+
+
+def _step_files(step_dir: Path, task_id: str, own: set, base: str, child) -> list:
+    """`(поле, значение, путь)` путей порции этого шага: в каталоге шага с именем
+    `<id>.…` (не собственный путь родителя) или уже в архиве перезапуска."""
+    out = []
+    for field in _PORTION_PATHS:
+        value = (child[field] or "").strip()
+        if not value:
+            continue
+        path = _abs_path(base, value)
+        in_step = (path.parent == step_dir and path.name.startswith(f"{task_id}.")
+                   and path not in own)
+        if in_step or _archive_no(step_dir, task_id, path) is not None:
+            out.append((field, value, path))
+    return out
+
+
+def _children(conn: sqlite3.Connection, row, step_dir: Path | None, own: set,
+              base: str) -> tuple[list, list]:
+    """`(дети по parent-child/parent, осиротевшие порции)` в порядке создания.
+
+    Осиротевшие — дети по `discovered-from` с файлом порции этого шага (закрытые —
+    только с путём ещё в каталоге шага): прошлый перезапуск упал после смены связей
+    (идемпотентность).
+    Без каталога шага их не узнать — тогда только дети по `parent-child`.
+    """
+    task_id = row["id"]
+    linked = conn.execute(
+        "SELECT DISTINCT t.*, t.rowid AS rid FROM deps d JOIN tasks t ON t.id = d.issue_id "
+        "WHERE d.depends_on = ? AND d.dep_type IN (?,?) ORDER BY t.created_at, t.rowid",
+        (task_id, *_PARENT_TYPES)).fetchall()
+    orphans = []
+    if step_dir is not None:
+        ids = {child["id"] for child in linked}
+        for child in conn.execute(
+                "SELECT DISTINCT t.*, t.rowid AS rid FROM deps d JOIN tasks t ON t.id = d.issue_id "
+                "WHERE d.depends_on = ? AND d.dep_type = 'discovered-from' "
+                "ORDER BY t.created_at, t.rowid", (task_id,)).fetchall():
+            if child["id"] in ids:
+                continue
+            found = _step_files(step_dir, task_id, own, base, child)
+            if child["status"] in store.FINAL_STATUSES:
+                # Закрытую — только с путём ещё в каталоге шага: порции прошлых
+                # удачных перезапусков уже смотрят в свой архив.
+                found = [f for f in found
+                         if _archive_no(step_dir, task_id, f[2]) is None]
+            if found:
+                orphans.append(child)
+    return list(linked), orphans
+
+
+def _plan_archive(row, children: list, step_dir: Path, own: set, base: str,
+                  parent_spec: Path) -> tuple[Path | None, list, list]:
+    """Что делать с файлами: `(архив, переносы, переписи путей)`.
+
+    Переносы — `(src, dst)`; переписи — `(child_id, поле, новое значение)`. Файл,
+    которого нет на месте, но есть в последнем архиве, — уже перенесён (повтор после
+    сбоя): архив тогда тот же `K`, и оставшиеся файлы доносятся туда же. Ничего не
+    меняет на диске: конфликт имён отказывает до первого переноса.
+    """
+    task_id = row["id"]
+    numbers = []
+    if step_dir.is_dir():
+        for entry in step_dir.iterdir():
+            number = _archive_no(step_dir, task_id, entry / "x")
+            if number is not None and entry.is_dir():
+                numbers.append(number)
+    last = max(numbers, default=0)
+    reuse: set[int] = set()
+    pending = []  # (child_id, field, value, path, уже перенесён в K | None)
+    for child in children:
+        for field, value, path in _step_files(step_dir, task_id, own, base, child):
+            number = _archive_no(step_dir, task_id, path)
+            if number is not None:
+                reuse.add(number)  # путь уже переписан на архив
+                continue
+            if path.exists():
+                pending.append((child["id"], field, value, path, None))
+            elif last and (step_dir / f"{task_id}.restart-{last}" / path.name).exists():
+                reuse.add(last)
+                pending.append((child["id"], field, value, path, last))
+            # файла нет нигде — путь оставляем как есть
+    need_copy = parent_spec.is_file()
+    if not pending and not reuse and not need_copy:
+        return None, [], []
+    number = max(reuse) if reuse else last + 1
+    archive = step_dir / f"{task_id}.restart-{number}"
+    moves, rewrites, seen = [], [], {}
+    for child_id, field, value, path, _moved in pending:
+        dst = archive / path.name
+        if path.exists() and path not in seen:
+            if dst.exists():
+                raise _conflict(f"в архиве {archive} уже есть {path.name}",
+                                "разберись с файлами вручную и повтори listik restart")
+            seen[path] = dst
+            moves.append((path, dst))
+        new = str(dst) if Path(value).is_absolute() else str(
+            Path(value).parent / archive.name / path.name)
+        rewrites.append((child_id, field, new))
+    return archive, moves, rewrites
+
+
+def restart_task(conn: sqlite3.Connection, task_id: str, *, stage: str | None = None,
+                 route: str | None = None, note: str | None = None,
+                 actor: str | None = None, harness: str | None = None) -> dict:
+    """Перезапустить карточку роя с этапа: «этап выбран, никто не держит, запуска нет».
+
+    Порядок жёсткий: все проверки → перенос файлов → запись в базу. На `s1-spec`
+    ещё и снимает порции: связь → `discovered-from`, отмена, файлы — в архив
+    `<каталог шага>/<id>.restart-N/`. Рой запустит роль этапа на следующем тике.
+    """
+    from . import routes_store
+    row = conn.execute("SELECT * FROM tasks WHERE id = ?", (task_id,)).fetchone()
+    if row is None:
+        raise errors_mod.NotFound(f"задача не найдена: {task_id}")
+    if row["status"] in store.FINAL_STATUSES:
+        raise _conflict(f"задача {task_id} закрыта ({row['status']}): перезапускать нечего")
+    if not is_swarm_task(conn, row):
+        raise errors_mod.BadArgument(
+            f"перезапуск только для карточек роя; этап карточки скила переводят: "
+            f"listik stage {task_id} --to <этап>")
+    if (row["launched_by"] or "").strip() and not (row["launch_finished_at"] or "").strip():
+        raise _conflict(f"у задачи {task_id} идёт запуск ({row['launched_by']})",
+                        f"сначала отзови его: listik revoke {task_id}")
+    route = (route or "").strip() or None
+    if route is not None:
+        keys = [r["key"] for r in routes_store.list_routes(conn)]
+        if route not in keys:
+            raise _conflict(f"маршрута {route} нет в базе", f"есть: {', '.join(keys)}")
+    target = (stage or "").strip() or (row["stage"] or "").strip() or "s1-spec"
+    if target not in STAGE_TO_ROLE:
+        raise errors_mod.BadArgument(
+            f"этап {target} не перезапускается; есть: {', '.join(STAGE_TO_ROLE)}")
+    children_all = store.epic_children(conn, task_id)
+    if children_all and target != "s1-spec":
+        ids = ", ".join(c["id"] for c in children_all)
+        raise _conflict(f"эпик: перезапускай подзадачи: {ids}",
+                        "listik restart <id подзадачи>")
+    route_key = route or (row["launch_route"] or "").strip()
+    try:
+        record = routes_store.get_route(conn, route_key) if route_key else {}
+    except errors_mod.NotFound:
+        record = {}
+    if resolve_role(conn, record, STAGE_TO_ROLE[target]) is None:
+        with_role = [s for s, r in STAGE_ROLES if resolve_role(conn, record, r) is not None]
+        raise _conflict(f"у маршрута {route_key or '—'} нет роли этапа {target}",
+                        f"роль есть у этапов: {', '.join(with_role) or 'ни у одного'}")
+
+    base = store.project_path(conn, row["project"])
+    spec = (row["spec_path"] or "").strip()
+    parent_spec = _abs_path(base, spec) if spec else None
+    step_dir = parent_spec.parent if parent_spec else None
+    own = {_abs_path(base, row[f]) for f in _OWN_PATHS if (row[f] or "").strip()}
+    linked, orphans = ([], [])
+    if target == "s1-spec":
+        linked, orphans = _children(conn, row, step_dir, own, base)
+        started = [c["id"] for c in linked if _started(c)]
+        if started:
+            raise _conflict(f"порции уже начаты: {', '.join(started)}",
+                            "перезапусти их по отдельности или закрой")
+    children = sorted([*linked, *orphans], key=lambda c: (c["created_at"] or "", c["rid"]))
+    archive = None
+    moves: list = []
+    rewrites: list = []
+    if children and parent_spec is not None:
+        archive, moves, rewrites = _plan_archive(row, children, step_dir, own, base,
+                                                 parent_spec)
+
+    # --- файлы: перенос и копия ТЗ родителя (до записи в базу)
+    if archive is not None:
+        archive.mkdir(parents=True, exist_ok=True)
+        for src, dst in moves:
+            shutil.move(str(src), str(dst))
+        copy = archive / parent_spec.name
+        if parent_spec.is_file() and not copy.exists():
+            shutil.copy2(parent_spec, copy)
+
+    # --- база
+    actor_key, _kind = actors_mod.resolve(actor, conn)
+    route_from = None
+    if route is not None:
+        route_from = row["launch_route"]
+        labels = store.labels_after_route_change(
+            conn, store.route_labels_from_row(row), route)
+        if labels is None:
+            labels = store.route_labels_from_row(row)
+        conn.execute("UPDATE tasks SET launch_route = ?, labels = ?, launch_driver = NULL, "
+                     "updated_at = ? WHERE id = ?",
+                     (route, json.dumps(labels, ensure_ascii=False), store.now_iso(), task_id))
+        store.event(conn, task_id, "route", from_value=route_from, to_value=route,
+                    actor=actor_key, harness=harness, note="перезапуск")
+        store._index_task(conn, task_id)
+        conn.commit()
+        store.add_comment(conn, task_id, f"маршрут: {route_from or '—'} → {route}",
+                          author=actor, kind="journal", harness=harness)
+
+    if children:
+        # Сначала связи всех детей: иначе `sync_epic` отменил бы родителя, у
+        # которого все подзадачи отменены. Закрытых детей отвязываем первыми —
+        # пока остаются незакрытые, эпик не отменится и при частичном снятии.
+        for child in sorted(children, key=lambda c: c["status"] not in store.FINAL_STATUSES):
+            store.add_dep(conn, child["id"], task_id, "discovered-from", created_by=actor)
+            for dep_type in _PARENT_TYPES:
+                if conn.execute("SELECT 1 FROM deps WHERE issue_id = ? AND depends_on = ? "
+                                "AND dep_type = ?", (child["id"], task_id, dep_type)).fetchone():
+                    store.remove_dep(conn, child["id"], task_id, dep_type)
+        # Повтор после сбоя в `sync_epic` последнего `remove_dep`: тип эпика вернуть.
+        store.sync_epic(conn, task_id)
+        for child_id, field, value in rewrites:
+            store.update_task(conn, child_id, actor=actor, harness=harness,
+                              note=f"перезапуск {task_id}: файл в архиве", **{field: value})
+        reason = f"рой: перезапуск {task_id} с s1-spec, порция снята"
+        for child in children:
+            fresh = conn.execute("SELECT status FROM tasks WHERE id = ?",
+                                 (child["id"],)).fetchone()
+            if fresh["status"] not in store.FINAL_STATUSES:
+                store.update_task(conn, child["id"], actor=actor, harness=harness,
+                                  status="cancelled", close_reason=reason, note=reason)
+        if parent_spec is None:
+            store.add_comment(conn, task_id, "архив не сделан: у родителя нет spec_path",
+                              author=actor, kind="journal", harness=harness)
+
+    row = conn.execute("SELECT * FROM tasks WHERE id = ?", (task_id,)).fetchone()
+    if (row["launch_log"] or "").strip():
+        store.add_comment(conn, task_id, f"прежний лог запуска: {row['launch_log']}",
+                          author=actor, kind="journal", harness=harness)
+    fields = {}
+    if (row["stage"] or "") != target:
+        fields["stage"] = target
+    if (row["holder"] or "").strip():
+        fields["holder"] = ""
+    if fields:
+        store.update_task(conn, task_id, actor=actor, harness=harness,
+                          note=f"рой: перезапуск с {target}", **fields)
+    if row["needs_owner"]:
+        store.set_needs_owner(conn, task_id, value=False, actor=actor, harness=harness,
+                              text=f"рой: вопрос снят перезапуском с {target}")
+    conn.execute(f"UPDATE tasks SET {', '.join(f + ' = NULL' for f in LAUNCH_FIELDS)} "
+                 "WHERE id = ?", (task_id,))
+    conn.commit()
+    text = f"рой: перезапуск с {target}"
+    detached = [c["id"] for c in children]
+    if detached:
+        text += f", порции сняты: {', '.join(detached)}"
+        if archive is not None:
+            text += f", файлы в {archive}"
+    text += "."
+    if (note or "").strip():
+        text += f" {note.strip()}"
+    store.add_comment(conn, task_id, text, author=actor, kind="journal", harness=harness)
+    out = store.get_task(conn, task_id)
+    out.update(restarted_from=target, detached=detached,
+               archive_dir=str(archive) if archive is not None else None)
+    if route is not None:
+        out["route_from"] = route_from
+    return out

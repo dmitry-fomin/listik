@@ -51,9 +51,8 @@
 #
 # 7. Доверие к каталогу (`--respect-workspace-trust`): в неинтерактивном
 #    режиме devin не может показать запрос доверия и падает в недоверенном
-#    каталоге. Обвязка НЕ снимает проверку сама — это делается только явным
-#    `--trust-workspace`, а по умолчанию ошибка доверия объясняется в тексте
-#    отказа (снять проверку — решение человека, а не агента).
+#    каталоге. Поэтому обвязка всегда передаёт `--respect-workspace-trust false`
+#    (решение автора 25.09.2026); `--trust-workspace` оставлен для совместимости.
 #
 # 8. Фонового режима у devin нет вовсе — фон целиком на обвязке (воркер,
 #    meta-файл, kill_tree, каталог состояния).
@@ -135,8 +134,8 @@ usage:
 channel: swe = SWE-2 (the only channel); --thinking picks the effort level
   medium (default), high, max -> models swe-2-medium, swe-2-high, swe-2-max.
 --sandbox: off by default; turns on devin's OS sandbox for the exec tool.
---trust-workspace: pass --respect-workspace-trust false to devin; needed only
-  in a directory that was never trusted interactively.
+--trust-workspace: kept for compatibility; --respect-workspace-trust false
+  is always passed to devin.
 USAGE
   exit 2
 }
@@ -650,7 +649,7 @@ cmd_check() {
     printf 'Reply with one word: pong' > "$pf"
     start=$(date +%s)
     run_devin_with_timeout "$probe_timeout" "$pout" "$perr" "" \
-      "$bin" --model "$default_model" --permission-mode auto --prompt-file "$pf" -p
+      "$bin" --model "$default_model" --permission-mode auto --respect-workspace-trust false --prompt-file "$pf" -p
     end=$(date +%s)
     if [[ $DEVIN_RC -eq 0 && -s "$pout" ]]; then
       pstatus="ok"; pseconds="$((end-start))"
@@ -698,7 +697,7 @@ cmd_check() {
     echo "probe:              $(probe_label "$pstatus" "$pseconds" "$perror")"
     echo "default permission: $(mode_label read-only) (devin --permission-mode auto)"
     echo "OS sandbox:         off by default (turn on with --sandbox)"
-    echo "workspace trust:    respected; --trust-workspace passes --respect-workspace-trust false"
+    echo "workspace trust:    skipped (--respect-workspace-trust false always passed)"
     echo "background jobs running: $running"
     echo "named sessions:     ${named:-0}"
     echo "state directory:    $STATE_DIR"
@@ -719,7 +718,7 @@ count_running_jobs() {
 # --- run ------------------------------------------------------------------
 cmd_run() {
   local mode="read-only" thinking="$DEFAULT_THINKING" workdir="" timeout_s="" \
-        background=0 label="" name="" sandbox=0 trust_off=0
+        background=0 label="" name="" sandbox=0 trust_off=1
   while [[ $# -gt 0 ]]; do
     case "$1" in
       --session)         name="$(need_value --session "${2:-}")"; shift 2 ;;

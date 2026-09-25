@@ -28,6 +28,7 @@ import threading
 import time
 import urllib.request
 
+from . import __version__
 from . import config as config_mod
 from . import db as db_mod
 from . import errors as errors_mod
@@ -37,7 +38,7 @@ from . import store
 
 PROTOCOL_VERSION = "2025-06-18"
 SUPPORTED_PROTOCOL_VERSIONS = ("2025-06-18", "2025-03-26", "2024-11-05")
-SERVER_INFO = {"name": "listik", "version": "0.1.0"}
+SERVER_INFO = {"name": "listik", "version": __version__}
 
 # Инструменты, после которых доске нужно событие: она обновляется по SSE, а не по опросу.
 WRITE_TOOLS = frozenset({

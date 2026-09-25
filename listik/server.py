@@ -21,6 +21,7 @@ from datetime import datetime, timezone
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 
+from . import __version__
 from . import actors as actors_mod
 from . import assistant as assistant_mod
 from . import config as config_mod
@@ -622,7 +623,7 @@ def handle(method: str, path: str, query: dict, body: dict, authed: bool = False
         cfg = config_mod.load()
         data = {
             "status": "ok",
-            "version": "0.1.0",
+            "version": __version__,
             "now": store.now_iso(),
             "embed": {"model": cfg["embed"]["model"]},
             "authed": authed,

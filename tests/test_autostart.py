@@ -694,14 +694,15 @@ class ServerPostTests(AutostartTestCase):
         for name in NINE:
             self.assertEqual(updated[name], before[name], name)
 
-        # Маршрут — единственное поле запуска, которое вообще принимает PATCH, но
-        # у начатой задачи смена запрещена (см. tests/test_route_change.py).
+        # Маршрут — единственное поле запуска, которое вообще принимает PATCH; ключа
+        # нет в таблице routes — 400 bad_argument (см. tests/test_route_change.py).
         with self.assertRaises(server.ApiError) as ctx:
             with mock.patch.object(server, "publish"):
                 server.handle("PATCH", f"/api/tasks/{task['id']}", {},
                               {"route": "xhigh-pipeline"}, authed=True)
         self.assertEqual(ctx.exception.status, 400)
-        self.assertIn("маршрут нельзя менять", ctx.exception.message)
+        self.assertEqual(ctx.exception.code, "bad_argument")
+        self.assertIn("нет в базе", ctx.exception.message)
         self.assertEqual(self.row(task["id"])["launch_route"], before["launch_route"])
 
 

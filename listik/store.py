@@ -460,7 +460,8 @@ UPDATABLE = {
     "external_ref", "archived",
     # «Тип запуска» задачи. Остальные восемь колонок запуска по-прежнему пишут
     # только `create_task` и `launcher.py`, а маршрут можно сменить правкой
-    # карточки — но лишь пока работа не началась (`route_change_denied`).
+    # карточки — у незакрытой задачи без держателя и живого запуска
+    # (`route_change_denied`).
     "launch_route",
     # Области роя, валидация — `scope.normalize_scope`; `dispatch_id`/`generation`
     # сюда не входят.
@@ -473,18 +474,21 @@ ROUTE_FIELD = "launch_route"
 ROUTE_ALIAS = "route"
 
 #: Хвост отказа — один и тот же у проверки до записи и у гонки на самой записи.
-ROUTE_LOCKED_TAIL = (". Его меняют, только пока задача заведена — без этапа, "
-                     "держателя и запущенного процесса")
+ROUTE_LOCKED_TAIL = (". Его меняют у незакрытой задачи без держателя "
+                     "и без запущенного процесса; этап не мешает")
 
-#: SQL-условие «задача ещё заведена» — ровно то, что проверяет `route_change_denied`.
+#: SQL-условие «маршрут можно менять» — ровно то, что проверяет `route_change_denied`.
 #: Стоит в WHERE самого UPDATE: между чтением карточки и записью задачу могли взять
-#: в работу (`claim`), тогда UPDATE не заденет ни одной строки и `update_task` откажет.
-ROUTE_GUARD_SQL = ("status = 'open' AND trim(ifnull(holder, '')) = '' "
-                   "AND trim(ifnull(stage, '')) = '' AND trim(ifnull(launched_by, '')) = ''")
+#: (`claim`) или запустить, тогда UPDATE не заденет ни одной строки и `update_task` откажет.
+ROUTE_GUARD_SQL = (
+    "ifnull(status, '') NOT IN (" + ", ".join(f"'{s}'" for s in FINAL_STATUSES) + ") "
+    "AND trim(ifnull(holder, '')) = '' "
+    "AND NOT (trim(ifnull(launched_by, '')) != '' "
+    "AND trim(ifnull(launch_finished_at, '')) = '')")
 
-#: Поля, которые могут «начать работу» в том же вызове `update_task`, что и смена
-#: маршрута: их новые значения учитывает проверка (см. `route_card_after`).
-ROUTE_STARTING_FIELDS = ("status", "stage", "holder")
+#: Поля, которые в том же вызове `update_task` делают смену маршрута запрещённой
+#: (закрытие, держатель): их новые значения учитывает проверка (см. `route_card_after`).
+ROUTE_STARTING_FIELDS = ("status", "holder")
 
 #: Отказ автостарта: автор вопроса «нужен человек» и начало его текста. Одни и те же
 #: константы у `launcher.refuse` (пишет вопрос) и у `update_task` (узнаёт по истории,
@@ -494,41 +498,49 @@ AUTOSTART_QUESTION_PREFIX = "автостарт не выполнен"
 
 
 def route_change_denied(row) -> str | None:
-    """Почему у задачи нельзя сменить маршрут; None — можно (работа не началась).
+    """Почему у задачи нельзя сменить маршрут; None — можно.
 
-    Маршрут — «тип запуска»: его выбирают при создании и меняют, пока задача
-    заведена, то есть у неё нет этапа, держателя и запущенного процесса. Как
-    только работа началась, смена запрещена: сервер отказывает понятной ошибкой,
-    а доска не даёт выбрать новый маршрут (поле `route_editable` в карточке).
+    Маршрут — «тип запуска»: его меняют у незакрытой задачи без держателя и без
+    живого запуска (`launched_by` есть, `launch_finished_at` пуст). Этап и статусы
+    `in_progress`/`blocked`/`review` не мешают — этап сохраняется, лаунчер
+    подхватит новый маршрут. Иначе сервер отказывает понятной ошибкой, а доска не
+    даёт выбрать новый маршрут (поле `route_editable` в карточке).
 
     Условия отказа держим синхронными с `ROUTE_GUARD_SQL` — той же проверкой,
     но уже на самой записи, — иначе смену маршрута можно было бы протащить
     гонкой с `claim`.
     """
     reasons = []
-    if (row["status"] or "") != "open":
+    if (row["status"] or "") in FINAL_STATUSES:
         reasons.append(f"статус «{STATUS_TITLES.get(row['status'], row['status'])}»")
-    if (row["stage"] or "").strip():
-        reasons.append(f"этап {row['stage']}")
     if (row["holder"] or "").strip():
         reasons.append(f"держит {row['holder']}")
-    if (row["launched_by"] or "").strip():
-        reasons.append("процесс уже запускали")
+    if (row["launched_by"] or "").strip() and not (row["launch_finished_at"] or "").strip():
+        reasons.append("процесс запущен")
     if not reasons:
         return None
     return "маршрут нельзя менять: " + ", ".join(reasons) + ROUTE_LOCKED_TAIL
 
 
+def route_must_exist(conn: sqlite3.Connection, key: str) -> None:
+    """Ключ маршрута есть в таблице `routes`; нет — `BadArgument` со списком ключей."""
+    from . import routes_store  # routes_store сам импортирует store
+    keys = [route["key"] for route in routes_store.list_routes(conn)]
+    if key not in keys:
+        raise errors_mod.BadArgument(
+            f"маршрута {key} нет в базе; есть: {', '.join(keys)}")
+
+
 def route_card_after(row, fields: dict) -> dict:
     """Карточка такой, какой она станет после этого же вызова `update_task`.
 
-    Один запрос может начать работу (`status`/`stage`/`holder`) и заодно сменить
-    маршрут: проверять смену только по старой строке нельзя — после запроса задача
-    уже не заведена, и менять маршрут поздно. `fields` — уже разобранные поля вызова.
+    Один запрос может закрыть задачу или назначить держателя (`status`/`holder`) и
+    заодно сменить маршрут: проверять смену только по старой строке нельзя — после
+    запроса менять маршрут уже поздно. `fields` — уже разобранные поля вызова.
 
     Это дополнение к проверке старой строки, а не замена: условный UPDATE
-    (`ROUTE_GUARD_SQL`) видит состояние до запроса, поэтому «снять этап и сменить
-    маршрут одним вызовом» тоже отказ — задача должна быть заведена уже сейчас.
+    (`ROUTE_GUARD_SQL`) видит состояние до запроса, поэтому снять держателя и
+    сменить маршрут одним вызовом тоже отказ.
     """
     effective = dict(row)
     for key in ROUTE_STARTING_FIELDS:
@@ -742,6 +754,10 @@ def update_task(conn: sqlite3.Connection, task_id: str, *, actor: str | None = N
         fields[ROUTE_FIELD] = fields.pop(ROUTE_ALIAS)
     if ROUTE_FIELD in fields and fields[ROUTE_FIELD] is not None:
         fields[ROUTE_FIELD] = store_helpers.normalize_route(fields[ROUTE_FIELD])
+        # Неизвестный ключ — ошибка аргумента раньше любых отказов по состоянию
+        # карточки: иначе агент чинил бы держателя, а потом упёрся бы в опечатку.
+        if fields[ROUTE_FIELD] and fields[ROUTE_FIELD] != (row[ROUTE_FIELD] or ""):
+            route_must_exist(conn, fields[ROUTE_FIELD])
     # Вместе с маршрутом сервер сам переписывает его метки (`harness:`/`process:`) —
     # ровно так же, как при создании задачи: старые снимаются, метки нового встают на
     # их место, чужие метки остаются. Клиент про них больше не думает.
@@ -762,7 +778,7 @@ def update_task(conn: sqlite3.Connection, task_id: str, *, actor: str | None = N
         else:
             fields.pop("holder", None)
     # Смену маршрута проверяем по карточке, какой она станет после этого вызова:
-    # в тех же полях может прийти начало работы (`status`/`stage`/`holder`).
+    # в тех же полях может прийти закрытие или держатель (`status`/`holder`).
     effective = route_card_after(row, fields)
     sets, params = [], []
     changes: list[tuple[str, object, object]] = []
@@ -796,6 +812,9 @@ def update_task(conn: sqlite3.Connection, task_id: str, *, actor: str | None = N
                 denied = route_change_denied(row) or route_change_denied(effective)
                 if denied:
                     raise ValueError(denied)
+                # `launch_driver` — снимок режима старого маршрута; лаунчер снимет
+                # его заново с нового.
+                sets.append("launch_driver = NULL")
                 # Новый «тип запуска» отменяет прошлую ошибку автостарта и поднятый
                 # ею флаг — одним UPDATE с самим маршрутом (см. `autostart_reset`).
                 # Явный `needs_owner` в том же вызове сильнее: его оставляем как есть.

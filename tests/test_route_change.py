@@ -1,15 +1,16 @@
 """Смена маршрута («типа запуска») задачи — store, API и CLI.
 
 Маршрут живёт в колонке `launch_route`: его выбирают при создании, а потом можно
-поменять — но только пока задача заведена и работа не началась: нет этапа,
-держателя и запущенного процесса. Как только задача пошла в работу, сервер
-отказывает понятной ошибкой (400/`conflict`), а доска, глядя на `route_editable`,
-даже не показывает выбор. Остальные восемь колонок запуска правкой карточки
-по-прежнему не меняются.
+поменять у любой незакрытой задачи без держателя и без живого запуска (listik-zr05).
+Этап не мешает и сохраняется; `launch_driver` (снимок режима старого маршрута)
+сбрасывается. Иначе сервер отказывает понятной ошибкой (400), а доска, глядя на
+`route_editable`, не показывает выбор. Новый ключ должен быть в таблице `routes`:
+неизвестный — `bad_argument` раньше любых отказов по состоянию. Остальные колонки
+запуска правкой карточки по-прежнему не меняются.
 
-Два запрета проверяются отдельно: один вызов не может заодно начать работу и
-сменить маршрут (в нём видны новые `status`/`stage`/`holder`), а гонку с `claim`
-на втором соединении ловит условный UPDATE — у взятой задачи маршрут не меняется.
+Два запрета проверяются отдельно: один вызов не может заодно закрыть задачу или
+назначить держателя и сменить маршрут (в нём видны новые `status`/`holder`), а
+гонку с `claim` на втором соединении ловит условный UPDATE.
 """
 from __future__ import annotations
 
@@ -26,13 +27,24 @@ import unittest
 from unittest import mock
 
 from listik import db as db_mod
+from listik import errors
 from listik import launcher
+from listik import routes_store
 from listik import server
 from listik import store
 from tests.helpers import TempDbTestCase
 
 REPO_DIR = pathlib.Path(__file__).resolve().parent.parent
 LISTIK_BIN = REPO_DIR / "bin" / "listik"
+
+
+class RoutesSeeded(TempDbTestCase):
+    """Временная база с маршрутами из `routes.json` репозитория: ключ смены
+    маршрута обязан быть в таблице."""
+
+    def setUp(self) -> None:
+        super().setUp()
+        routes_store.import_file(self.conn, REPO_DIR / "routes.json")
 
 # Восемь колонок запуска, которые пишет только create_task/launcher (девятая,
 # launch_route, — предмет этих тестов).
@@ -41,8 +53,8 @@ FROZEN_LAUNCH_FIELDS = ("autostart", "launched_by", "launch_pid", "launched_at",
                         "launch_error")
 
 
-class RouteStoreTests(TempDbTestCase):
-    """store.update_task: смена маршрута и её запрет после начала работы."""
+class RouteStoreTests(RoutesSeeded):
+    """store.update_task: смена маршрута и её запреты."""
 
     def task(self, **fields) -> dict:
         return store.create_task(self.conn, title="проба", project="listik", **fields)
@@ -79,8 +91,8 @@ class RouteStoreTests(TempDbTestCase):
 
     def test_route_alias_route_is_the_same_field(self) -> None:
         task = self.task(route="low-pipeline")
-        updated = store.update_task(self.conn, task["id"], route="dsh")
-        self.assertEqual(updated["launch_route"], "dsh")
+        updated = store.update_task(self.conn, task["id"], route="grok")
+        self.assertEqual(updated["launch_route"], "grok")
 
     def test_empty_route_clears_it(self) -> None:
         task = self.task(route="low-pipeline")
@@ -97,35 +109,67 @@ class RouteStoreTests(TempDbTestCase):
         self.assertIn("holder_title", out, "no-op set должен отдавать карточку, а не строку таблицы")
         self.assertEqual(self.route_events(task["id"]), [])
 
-    def test_status_in_progress_refuses_and_keeps_route(self) -> None:
+    def test_in_progress_without_holder_changes_route(self) -> None:
         task = self.task(route="low-pipeline")
-        store.claim(self.conn, task["id"], holder="dsh")
-        self.assertIs(store.get_task(self.conn, task["id"])["route_editable"], False)
+        store.update_task(self.conn, task["id"], status="in_progress")
+        self.assertIs(store.get_task(self.conn, task["id"])["route_editable"], True)
+        updated = store.update_task(self.conn, task["id"], route="grok")
+        self.assertEqual(updated["launch_route"], "grok")
+        self.assertEqual(updated["status"], "in_progress")
 
-        with self.assertRaises(ValueError) as ctx:
-            store.update_task(self.conn, task["id"], route="grok")
-        message = str(ctx.exception)
-        self.assertIn("маршрут нельзя менять", message)
-        self.assertIn("статус «в работе»", message)
-        self.assertEqual(self.row(task["id"])["launch_route"], "low-pipeline")
+    def test_stage_is_kept_and_launch_driver_reset(self) -> None:
+        for stage in ("s1-spec", "s3-impl"):
+            with self.subTest(stage=stage):
+                task = self.task(route="low-pipeline", stage=stage)
+                self.conn.execute(
+                    "UPDATE tasks SET launch_driver = 'swarm', launched_by = 'x', "
+                    "launch_finished_at = '2026-01-01T00:00:00Z', generation = 7 "
+                    "WHERE id = ?", (task["id"],))
+                self.conn.commit()
+                self.assertIs(store.get_task(self.conn, task["id"])["route_editable"], True)
+                labels_before = store.route_labels_from_row(self.row(task["id"]))
+
+                updated = store.update_task(self.conn, task["id"], route="high-pipeline")
+                self.assertEqual(updated["launch_route"], "high-pipeline")
+                row = self.row(task["id"])
+                self.assertEqual(row["stage"], stage)
+                self.assertIsNone(row["launch_driver"])
+                self.assertEqual(row["generation"], 7)
+                self.assertEqual(row["launched_by"], "x")
+                self.assertEqual(row["launch_finished_at"], "2026-01-01T00:00:00Z")
+                self.assertEqual(
+                    store.route_labels_from_row(row),
+                    store.labels_after_route_change(self.conn, labels_before, "high-pipeline"))
+
+    def test_clearing_route_resets_launch_driver(self) -> None:
+        task = self.task(route="low-pipeline", stage="s3-impl")
+        self.conn.execute("UPDATE tasks SET launch_driver = 'swarm' WHERE id = ?",
+                          (task["id"],))
+        self.conn.commit()
+        store.update_task(self.conn, task["id"], route="")
+        self.assertIsNone(self.row(task["id"])["launch_driver"])
+
+    def test_same_route_keeps_launch_driver(self) -> None:
+        task = self.task(route="low-pipeline", stage="s3-impl")
+        self.conn.execute("UPDATE tasks SET launch_driver = 'swarm' WHERE id = ?",
+                          (task["id"],))
+        self.conn.commit()
+        out = store.update_task(self.conn, task["id"], route="low-pipeline")
+        self.assertIs(out.get("unchanged"), True)
+        self.assertEqual(self.row(task["id"])["launch_driver"], "swarm")
         self.assertEqual(self.route_events(task["id"]), [])
-
-    def test_stage_refuses(self) -> None:
-        task = self.task(route="low-pipeline", stage="s1-spec")
-        self.assertIs(store.get_task(self.conn, task["id"])["route_editable"], False)
-        with self.assertRaises(ValueError) as ctx:
-            store.update_task(self.conn, task["id"], route="grok")
-        self.assertIn("этап s1-spec", str(ctx.exception))
 
     def test_holder_refuses(self) -> None:
         task = self.task()
         store.update_task(self.conn, task["id"], holder="dsh")
+        self.assertIs(store.get_task(self.conn, task["id"])["route_editable"], False)
         with self.assertRaises(ValueError) as ctx:
             store.update_task(self.conn, task["id"], route="grok")
+        self.assertIn("маршрут нельзя менять", str(ctx.exception))
         self.assertIn("держит dsh", str(ctx.exception))
         self.assertIsNone(self.row(task["id"])["launch_route"])
 
-    def test_launched_task_refuses(self) -> None:
+    def test_live_launch_refuses(self) -> None:
         task = self.task(route="low-pipeline")
         self.conn.execute(
             "UPDATE tasks SET launched_by = 'listik', launch_pid = 42, "
@@ -134,44 +178,82 @@ class RouteStoreTests(TempDbTestCase):
         self.assertIs(store.get_task(self.conn, task["id"])["route_editable"], False)
         with self.assertRaises(ValueError) as ctx:
             store.update_task(self.conn, task["id"], route="grok")
-        self.assertIn("процесс уже запускали", str(ctx.exception))
+        self.assertIn("маршрут нельзя менять", str(ctx.exception))
+        self.assertIn("процесс запущен", str(ctx.exception))
+        self.assertEqual(self.row(task["id"])["launch_route"], "low-pipeline")
 
-    def test_same_call_starting_work_cannot_change_route(self) -> None:
-        """Один вызов не может начать работу и сменить маршрут: `status`/`stage`/`holder`
-        из тех же полей учитываются проверкой, и отказ не применяет ни одного поля."""
+    def test_finished_launch_allows_change(self) -> None:
+        task = self.task(route="low-pipeline")
+        self.conn.execute(
+            "UPDATE tasks SET launched_by = 'listik', launch_pid = 42, "
+            "launched_at = '2026-01-01T00:00:00Z', "
+            "launch_finished_at = '2026-01-01T01:00:00Z' WHERE id = ?", (task["id"],))
+        self.conn.commit()
+        self.assertIs(store.get_task(self.conn, task["id"])["route_editable"], True)
+        updated = store.update_task(self.conn, task["id"], route="grok")
+        self.assertEqual(updated["launch_route"], "grok")
+
+    def test_final_status_refuses(self) -> None:
+        for status in ("done", "cancelled"):
+            with self.subTest(status=status):
+                task = self.task(route="low-pipeline")
+                store.update_task(self.conn, task["id"], status=status)
+                self.assertIs(store.get_task(self.conn, task["id"])["route_editable"], False)
+                with self.assertRaises(ValueError) as ctx:
+                    store.update_task(self.conn, task["id"], route="grok")
+                self.assertIn("маршрут нельзя менять", str(ctx.exception))
+                self.assertIn("статус «", str(ctx.exception))
+                self.assertEqual(self.row(task["id"])["launch_route"], "low-pipeline")
+
+    def test_same_call_holder_or_close_cannot_change_route(self) -> None:
+        """Один вызов не может назначить держателя или закрыть задачу и сменить
+        маршрут: `status`/`holder` из тех же полей учитываются проверкой, и отказ
+        не применяет ни одного поля."""
         task = self.task(route="low-pipeline")
         calls = (
-            (("status", "in_progress"), ("route", "grok")),
-            (("route", "grok"), ("status", "in_progress")),
-            (("stage", "s3-impl"), ("route", "grok")),
             (("holder", "dsh"), ("route", "grok")),
+            (("route", "grok"), ("holder", "dsh")),
+            (("status", "done"), ("route", "grok")),
+            (("status", "cancelled"), ("route", "grok")),
             (("holder", "dsh"), ("status", "in_progress"), ("route", "grok")),
         )
         for pairs in calls:
             with self.subTest(pairs=pairs):
                 with self.assertRaises(ValueError) as ctx:
                     store.update_task(self.conn, task["id"], **dict(pairs))
-                message = str(ctx.exception)
-                self.assertIn("маршрут нельзя менять", message)
+                self.assertIn("маршрут нельзя менять", str(ctx.exception))
                 row = self.row(task["id"])
                 self.assertEqual(row["launch_route"], "low-pipeline", "маршрут не менялся")
                 self.assertEqual(row["status"], "open", "отказ не применяет status")
-                self.assertIsNone(row["stage"], "отказ не применяет stage")
                 self.assertIsNone(row["holder"], "отказ не применяет holder")
                 self.assertEqual(self.route_events(task["id"]), [])
 
-    def test_same_call_clearing_stage_does_not_bypass_the_ban(self) -> None:
-        """Снять этап и сменить маршрут одним вызовом нельзя: на записи задача ещё
-        с этапом (условный UPDATE смотрит состояние до запроса), поэтому отказ —
-        и ни одно из полей не применяется."""
+    def test_same_call_clearing_stage_changes_route(self) -> None:
+        """Этап смене не мешает — и снятие этапа в том же вызове тоже."""
         task = self.task(route="low-pipeline", stage="s1-spec")
-        with self.assertRaises(ValueError) as ctx:
-            store.update_task(self.conn, task["id"], stage="", route="grok")
-        self.assertIn("этап s1-spec", str(ctx.exception))
-        row = self.row(task["id"])
-        self.assertEqual(row["launch_route"], "low-pipeline")
-        self.assertEqual(row["stage"], "s1-spec")
-        self.assertEqual(self.route_events(task["id"]), [])
+        updated = store.update_task(self.conn, task["id"], stage="", route="grok")
+        self.assertEqual(updated["launch_route"], "grok")
+        self.assertFalse(self.row(task["id"])["stage"])
+        self.assertEqual(self.route_events(task["id"]), [("low-pipeline", "grok")])
+
+    def test_unknown_route_is_bad_argument_before_state_checks(self) -> None:
+        """Неизвестный ключ — `BadArgument` «нет в базе» у любой карточки: и у
+        открытой, и у закрытой, и у взятой (не «маршрут нельзя менять»)."""
+        open_task = self.task(route="low-pipeline")
+        done_task = self.task(route="low-pipeline")
+        store.update_task(self.conn, done_task["id"], status="done")
+        held_task = self.task(route="low-pipeline")
+        store.update_task(self.conn, held_task["id"], holder="dsh")
+        for task in (open_task, done_task, held_task):
+            with self.subTest(task=task["id"]):
+                with self.assertRaises(errors.BadArgument) as ctx:
+                    store.update_task(self.conn, task["id"], route="нет-такого")
+                message = str(ctx.exception)
+                self.assertIn("маршрута нет-такого нет в базе; есть: ", message)
+                self.assertIn("low-pipeline", message)
+                self.assertNotIn("маршрут нельзя менять", message)
+                self.assertEqual(self.row(task["id"])["launch_route"], "low-pipeline")
+                self.assertEqual(self.route_events(task["id"]), [])
 
     def test_same_call_with_same_route_starts_work(self) -> None:
         """Маршрут не меняется — началу работы это не мешает: смена была бы no-op."""
@@ -204,7 +286,7 @@ class RouteStoreTests(TempDbTestCase):
                 self.assertIsNone(row[name], name)
 
 
-class RouteRaceTests(TempDbTestCase):
+class RouteRaceTests(RoutesSeeded):
     """Смена маршрута против `claim` на двух соединениях: у взятой задачи маршрут стоит.
 
     Обе операции читают карточку, а пишут по очереди. Проверка «ещё заведена» стоит
@@ -318,7 +400,7 @@ class RouteRaceTests(TempDbTestCase):
             store.delete_task(self.conn, task["id"])
 
 
-class RouteAutostartResetTests(TempDbTestCase):
+class RouteAutostartResetTests(RoutesSeeded):
     """Смена (и снятие) маршрута снимает прошлый отказ автостарта.
 
     `launch_error` и флаг «нужен человек» ставит отказ запуска (`launcher.refuse`
@@ -427,8 +509,9 @@ class RouteAutostartResetTests(TempDbTestCase):
         self.assertEqual(row["needs_owner"], 1)
 
     def test_refused_route_change_keeps_error(self) -> None:
-        """Отказ смены (работа началась) не снимает ни ошибку, ни флаг."""
-        task = self.refused_task(stage="s1-spec")
+        """Отказ смены (есть держатель) не снимает ни ошибку, ни флаг."""
+        task = self.refused_task()
+        store.update_task(self.conn, task["id"], holder="dsh")
         with self.assertRaises(ValueError):
             store.update_task(self.conn, task["id"], route="high-pipeline")
         row = self.row(task["id"])
@@ -448,8 +531,8 @@ class RouteAutostartResetTests(TempDbTestCase):
         self.assertIs(updated["needs_owner"], False)
 
 
-class RouteApiTests(TempDbTestCase):
-    """PATCH /api/tasks/{id}: `route`/`launch_route` и отказ после начала работы."""
+class RouteApiTests(RoutesSeeded):
+    """PATCH /api/tasks/{id}: `route`/`launch_route`, отказы и неизвестный ключ."""
 
     def setUp(self) -> None:
         super().setUp()
@@ -480,21 +563,29 @@ class RouteApiTests(TempDbTestCase):
         self.assertEqual(status, 200)
         self.assertEqual(task["launch_route"], "medium-pipeline")
 
-    def test_patch_route_is_400_once_work_started(self) -> None:
+    def test_patch_route_is_400_once_taken(self) -> None:
         store.claim(self.conn, self.task["id"], holder="dsh")
         with self.assertRaises(server.ApiError) as ctx:
             self.patch({"route": "grok"})
         self.assertEqual(ctx.exception.status, 400)
         self.assertIn("маршрут нельзя менять", ctx.exception.message)
-        self.assertIn("статус «в работе»", ctx.exception.message)
+        self.assertIn("держит dsh", ctx.exception.message)
         self.assertEqual(self.row_route(), "low-pipeline")
 
-    def test_patch_route_400_on_stage(self) -> None:
+    def test_patch_route_on_stage_passes(self) -> None:
         staged = store.create_task(self.conn, title="этап", project="listik", stage="s3-impl")
+        status, task = self.patch({"route": "grok"}, task_id=staged["id"])
+        self.assertEqual(status, 200)
+        self.assertEqual(task["launch_route"], "grok")
+        self.assertEqual(task["stage"], "s3-impl")
+
+    def test_patch_unknown_route_is_400_bad_argument(self) -> None:
         with self.assertRaises(server.ApiError) as ctx:
-            self.patch({"route": "grok"}, task_id=staged["id"])
+            self.patch({"route": "нет-такого"})
         self.assertEqual(ctx.exception.status, 400)
-        self.assertIn("этап s3-impl", ctx.exception.message)
+        self.assertEqual(ctx.exception.code, "bad_argument")
+        self.assertIn("маршрута нет-такого нет в базе", ctx.exception.message)
+        self.assertEqual(self.row_route(), "low-pipeline")
 
     def test_patch_route_400_on_non_string(self) -> None:
         with self.assertRaises(server.ApiError) as ctx:
@@ -502,11 +593,11 @@ class RouteApiTests(TempDbTestCase):
         self.assertEqual(ctx.exception.status, 400)
         self.assertIn("маршрут должен быть строкой", ctx.exception.message)
 
-    def test_patch_same_call_starting_work_and_route_is_400(self) -> None:
-        """Один PATCH не может начать работу и сменить маршрут — ни одного поля."""
-        for body in ({"status": "in_progress", "route": "grok"},
-                     {"route": "grok", "holder": "dsh"},
-                     {"stage": "s3-impl", "route": "grok"}):
+    def test_patch_same_call_holder_or_close_and_route_is_400(self) -> None:
+        """Один PATCH не может закрыть задачу или назначить держателя и сменить
+        маршрут — ни одного поля."""
+        for body in ({"status": "done", "route": "grok"},
+                     {"route": "grok", "holder": "dsh"}):
             with self.subTest(body=body):
                 with self.assertRaises(server.ApiError) as ctx:
                     self.patch(dict(body))
@@ -563,7 +654,7 @@ class RouteApiTests(TempDbTestCase):
         self.assertIs(task["needs_owner"], False)
 
 
-class RouteMcpTests(TempDbTestCase):
+class RouteMcpTests(RoutesSeeded):
     """MCP `listik_update` принимает маршрут и под алиасом `route`, и под колонкой."""
 
     def test_mcp_update_accepts_route_alias(self) -> None:
@@ -592,7 +683,7 @@ class RouteMcpTests(TempDbTestCase):
         self.assertIn("маршрут нельзя менять", str(ctx.exception))
 
 
-class RouteCliTests(TempDbTestCase):
+class RouteCliTests(RoutesSeeded):
     """`listik set <id> route=…` и показ маршрута в `listik show`."""
 
     def _run(self, *args):
@@ -638,7 +729,24 @@ class RouteCliTests(TempDbTestCase):
         proc = self._run("set", task_id, "route=high-pipeline")
         self.assertEqual(proc.returncode, 1)
         self.assertIn("маршрут нельзя менять", proc.stderr)
-        self.assertIn("статус «в работе»", proc.stderr)
+        self.assertIn("держит dsh", proc.stderr)
+        self.assertEqual(self._show(task_id)["launch_route"], "low-pipeline")
+
+    def test_cli_changes_route_of_staged_task(self) -> None:
+        task_id = self._new("--stage", "s3-impl")
+        proc = self._run("set", task_id, "route=high-pipeline")
+        self.assertEqual(proc.returncode, 0, proc.stderr)
+        shown = self._show(task_id)
+        self.assertEqual(shown["launch_route"], "high-pipeline")
+        self.assertEqual(shown["stage"], "s3-impl")
+
+    def test_cli_unknown_route_is_bad_argument_json(self) -> None:
+        task_id = self._new()
+        proc = self._run("set", task_id, "route=нет-такого", "--json")
+        self.assertNotEqual(proc.returncode, 0)
+        error = json.loads(proc.stdout)["error"]
+        self.assertEqual(error["code"], "bad_argument")
+        self.assertIn("маршрута нет-такого нет в базе", error["message"])
         self.assertEqual(self._show(task_id)["launch_route"], "low-pipeline")
 
     def test_cli_noop_route_change_does_not_fail(self) -> None:

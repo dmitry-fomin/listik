@@ -22,6 +22,7 @@ import sys
 import unittest
 from unittest import mock
 
+from listik import errors
 from listik import mcp
 from listik import routes as routes_mod
 from listik import routes_store
@@ -149,12 +150,15 @@ class StoreLabelTests(RoutesStateMixin, TempDbTestCase):
         self.assertEqual(updated["labels"], ["frontend"])
 
     def test_unknown_route_on_change_keeps_labels(self) -> None:
-        # Маршрута нет в таблице — стирать метки
-        # нельзя: они единственное, что осталось от прежнего маршрута.
+        # Маршрута нет в таблице — смена отклоняется (`BadArgument`, listik-zr05):
+        # ни маршрут, ни метки карточки не меняются.
         task = self.task(route=PIPELINE, labels=["frontend"])
-        updated = store.update_task(self.conn, task["id"], route="нет-такого")
-        self.assertEqual(updated["launch_route"], "нет-такого")
-        self.assertEqual(updated["labels"], ["frontend", *PIPELINE_LABELS])
+        with self.assertRaises(errors.BadArgument) as ctx:
+            store.update_task(self.conn, task["id"], route="нет-такого")
+        self.assertIn("маршрута нет-такого нет в базе", str(ctx.exception))
+        after = store.get_task(self.conn, task["id"])
+        self.assertEqual(after["launch_route"], PIPELINE)
+        self.assertEqual(after["labels"], ["frontend", *PIPELINE_LABELS])
 
     def test_same_route_does_not_touch_labels(self) -> None:
         task = self.task(route=PIPELINE)

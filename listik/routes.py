@@ -29,7 +29,7 @@
     `xhigh`/`high`/`medium`/`low`/`xlow`/`direct`. Если поля нет, уровень выводится из самой
     записи (`fallback_icon`): у `direct` это `direct`, у `pipeline` — часть ключа до
     первого `-`, если она из того же набора (`xhigh-pipeline` → `xhigh`); у записи без
-    выводимого уровня (`opus-pipeline`) иконки нет. Неизвестное значение — не ошибка
+    выводимого уровня (`opus-pipeline`) иконки нет; явный `null` — иконки нет. Неизвестное значение — не ошибка
     файла, а предупреждение (listik-itg8): запись получает уровень по ключу, поле
     `icon_error` с причиной и текст в `warnings` ответа `GET /api/routes`; строка уходит
     в stderr (у демона — в `listik.log`), а остальные записи и автостарт работают как обычно;
@@ -328,6 +328,8 @@ def _validate_icon(item: dict, kind: str, key: str, where: str,
     if "icon" not in item:
         return fallback_icon(kind, key), None
     value = item["icon"]
+    if value is None:
+        return None, None  # явный null — иконки нет (так пишет бэкап маршрутов)
     if value in ROUTE_ICONS:
         return value, None
     fallback = fallback_icon(kind, key)

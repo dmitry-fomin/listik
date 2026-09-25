@@ -445,14 +445,14 @@ def _backup_stamp() -> str:
 
 def _backup_record(record: dict) -> dict:
     """Запись `list_routes` в форме `routes.json`: без полей, которых нет в формате
-    файла (`position`), без `driver` у `direct` и без пустых `icon`/`command`
-    (валидатор файла `null` в них не принимает)."""
+    файла (`position`), без `driver` у `direct` и без пустого `command` (валидатор
+    файла `null` в нём не принимает). `icon: null` остаётся: без поля ввоз вывел бы
+    уровень по ключу, и снятая иконка вернулась бы из бэкапа."""
     out = {k: v for k, v in record.items() if k in routes.RECORD_FIELDS}
     if out.get("kind") == "direct":
         out.pop("driver", None)
-    for name in ("icon", "command"):
-        if out.get(name) is None:
-            out.pop(name, None)
+    if out.get("command") is None:
+        out.pop("command", None)
     return out
 
 

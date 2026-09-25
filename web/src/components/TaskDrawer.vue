@@ -1582,7 +1582,7 @@ async function loadTree(): Promise<void> {
             :key="`c-${index}-${child.id}`"
             class="listik-dep-tree__row listik-dep-tree__row--child"
           >
-            <UiBadge v-if="child.stage" tone="info" size="sm">{{ stageCode(child.stage) }}</UiBadge>
+            <UiBadge v-if="stageCode(child.stage)" tone="info" size="sm">{{ stageCode(child.stage) }}</UiBadge>
             <UiBadge class="listik-dep-tree__status" size="sm">{{ statusTitle(child.status as TaskStatus) }}</UiBadge>
             <button
               v-if="child.linked"

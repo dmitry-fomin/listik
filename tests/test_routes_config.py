@@ -256,12 +256,12 @@ class ValidateTests(unittest.TestCase):
         self.assertIn("routes[0].icon", warnings[0])
         self.assertIn("4", warnings[0])
 
-    def test_icon_null_is_not_a_level(self) -> None:
+    def test_icon_null_means_no_icon(self) -> None:
         normalized, warnings = self.validate_with_warnings(
             document({**pipeline_record(), "key": "high-pipeline", "icon": None}))
-        self.assertEqual(normalized[0]["icon"], "high")
-        self.assertIn("routes[0].icon", warnings[0])
-        self.assertIn("None", warnings[0])
+        self.assertIsNone(normalized[0]["icon"])
+        self.assertEqual(warnings, [])
+        self.assertNotIn("icon_error", normalized[0])
 
     def test_icon_explicit_level_passes(self) -> None:
         record = {**pipeline_record(), "key": "universal-pipeline", "icon": "high"}

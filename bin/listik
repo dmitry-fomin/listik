@@ -1194,7 +1194,11 @@ def cmd_portions(args) -> int:
         res = call("portions_adopt", args, f"/api/tasks/{args.task_id}/portions/adopt",
                    method="POST", body={"actor": actor, "harness": harness},
                    local_kwargs={"task_id": args.task_id, "actor": actor, "harness": harness})
-        if res.get("stage"):
+        if res.get("merged"):
+            text = (f"одна порция слита в {args.task_id} → {res['stage']}" if res.get("stage")
+                    else f"одна порция слита в {args.task_id}; этап не получен: "
+                         "после s1-spec роли нет")
+        elif res.get("stage"):
             text = f"порции приняты: {', '.join(res['adopted'])} → {res['stage']}"
         else:
             text = "порции не получили этап: после s1-spec роли нет"
@@ -1215,7 +1219,8 @@ def cmd_portions(args) -> int:
         emit(args, res, "")
         return 0
     for p in res["portions"]:
-        state = ("создана" if p["id"] in res["created"] else
+        state = ("слита в шаг" if res.get("merged") else
+                 "создана" if p["id"] in res["created"] else
                  "обновлена" if p["id"] in res["updated"] else "без изменений")
         print(f"  {p['letter']}  {p['id']}  {state}  {p['title']}")
     if not res["portions"]:

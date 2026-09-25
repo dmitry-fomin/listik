@@ -41,10 +41,13 @@ const cases = [
 ]
 
 /**
- * Бейдж этапа ряда — как в панели: есть при непустом этапе, текст — код этапа
- * (`stageCode`); у этапа `done` кода в словаре нет, и бейдж пуст — так было до порции.
+ * Бейдж этапа ряда — как в панели: есть, только когда у этапа есть код (`stageCode`);
+ * у этапа `done` кода в словаре нет — бейджа нет вовсе, а не пустой.
  */
-const stageBadges = (stage) => (stage ? [PIPELINE_STAGES.find((step) => step.value === stage)?.code ?? ''] : [])
+const stageBadges = (stage) => {
+  const code = PIPELINE_STAGES.find((step) => step.value === stage)?.code
+  return code ? [code] : []
+}
 
 /** Ряды детей в дереве панели: id, заголовок, подпись статуса и прочие бейджи (этап). */
 const TREE_ROWS = `(() => {

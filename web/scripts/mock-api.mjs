@@ -41,6 +41,12 @@
  * `--hint` добавляет карточку `listik-hint-hub` со ссылками на шесть задач, на
  * которых проверяется строка «закрывать нельзя: открыты дети» в панели задачи
  * (scripts/verify-children-hint.mjs).
+ * `--epic` добавляет эпик `listik-epic-hub` (в работе, без этапа) и четыре его
+ * подзадачи: открыта (s1-spec), в работе (s3-impl), готова (этап `done`) и
+ * отменена (без этапа). Только в этом режиме `GET /api/tasks/listik-epic-hub`
+ * отдаёт поле `children` — все дети в форме `store.child_cards`, включая
+ * закрытых; так проверяется статус подзадачи в дереве панели
+ * (scripts/verify-epic.mjs).
  * `--markdown` добавляет карточку `listik-markdown-case`, у которой поле
  * `description` — полный набор markdown-конструкций (заголовок `##`,
  * маркированный и нумерованный списки, инлайн-код, блок кода в тройных
@@ -86,6 +92,7 @@ const assistantMode = process.argv.slice(3).includes('--assistant')
 const voiceMode = process.argv.slice(3).includes('--voice')
 const coldMode = process.argv.slice(3).includes('--cold')
 const hintMode = process.argv.slice(3).includes('--hint')
+const epicMode = process.argv.slice(3).includes('--epic')
 const markdownMode = process.argv.slice(3).includes('--markdown')
 const serverMode = process.argv.slice(3).includes('--server-mode')
 /** `server.users` из config.toml — кем можно представиться в серверном режиме. */
@@ -570,6 +577,31 @@ if (hintMode) {
   ]) {
     tasks.push(item)
   }
+}
+
+/**
+ * `--epic`: эпик `listik-epic-hub` и четыре подзадачи во всех статусах. Ребёнок
+ * привязан полем `parent`; поле `children` у эпика собирает `details()`.
+ */
+const EPIC_HUB = 'listik-epic-hub'
+if (epicMode) {
+  const child = (id, title, status, stage, extra = {}) =>
+    task({ id, title, status, status_title: STATUS_TITLES[status], stage, stage_title: stage ? STAGE_TITLES[stage] : null, parent: EPIC_HUB, ...extra })
+  tasks.push(
+    task({
+      id: EPIC_HUB,
+      title: 'Эпик: проверка подзадач',
+      issue_type: 'epic',
+      status: 'in_progress',
+      status_title: 'в работе',
+      stage: null,
+      stage_title: null,
+    }),
+    child('listik-epic-open', 'Подзадача открыта', 'open', 's1-spec', { holder: null, holder_title: '' }),
+    child('listik-epic-work', 'Подзадача в работе', 'in_progress', 's3-impl'),
+    child('listik-epic-done', 'Подзадача готова', 'done', 'done', { closed_at: iso(3), holder: null, holder_title: '' }),
+    child('listik-epic-cancel', 'Подзадача отменена', 'cancelled', null, { closed_at: iso(4), holder: null, holder_title: '' }),
+  )
 }
 
 /**
@@ -1062,6 +1094,15 @@ function details(id) {
   return {
     ...found,
     deps_state: depsStateOf(id),
+    ...(epicMode && id === EPIC_HUB
+      ? {
+          children: tasks
+            .filter((item) => item.parent === EPIC_HUB)
+            .map(({ id, title, status, status_title, stage, holder, holder_title }) => ({
+              id, title, status, status_title, stage, holder, holder_title,
+            })),
+        }
+      : {}),
     comments: [
       ...(extraComments.get(id) ?? []),
       ...(markdownMode && id === 'listik-markdown-case' ? MARKDOWN_COMMENTS : []),

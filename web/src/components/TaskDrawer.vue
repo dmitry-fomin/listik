@@ -57,6 +57,7 @@ import {
   linkType,
   linkTypeLabel,
   priority,
+  statusTitle,
   verdictMark,
   type DepSummaryKind,
   type FeedFilterValue,
@@ -76,6 +77,7 @@ import type {
   TaskDetail,
   TaskEvent,
   TaskStage,
+  TaskStatus,
 } from '@/api/types'
 import {
   commentKindTitle,
@@ -1581,6 +1583,7 @@ async function loadTree(): Promise<void> {
             class="listik-dep-tree__row listik-dep-tree__row--child"
           >
             <UiBadge v-if="child.stage" tone="info" size="sm">{{ stageCode(child.stage) }}</UiBadge>
+            <UiBadge class="listik-dep-tree__status" size="sm">{{ statusTitle(child.status as TaskStatus) }}</UiBadge>
             <button
               v-if="child.linked"
               type="button"

@@ -24,8 +24,8 @@ don't restate them in your answer.
   background work, polled by whoever called you.
 - Committing, pushing, deleting recursively, or touching `.env`, `*.key`, `*.pem`,
   `credentials.json` — neither yourself nor through the task text you pass to devin.
-- Adding `--trust-workspace` or `--sandbox` on your own. Both change the safety boundary of
-  the run and need the human's word.
+- Adding `--sandbox` on your own. It changes the safety boundary of the run and needs the
+  human's word.
 
 ## Three modes
 

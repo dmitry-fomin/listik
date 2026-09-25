@@ -32,10 +32,10 @@ Don't retell the whole table.
   without SWE-2 rather than a wrong name; the probe is still the final word.
 - `OS sandbox: off by default` is the intended state, not a misconfiguration: devin has to
   be able to write code. `--sandbox` per run turns it on.
-- `workspace trust: respected` means a run in a directory nobody trusted interactively will
-  fail — the fix is the human trusting it, or an explicit `--trust-workspace`.
+- `workspace trust: skipped` is the intended state: the bridge always passes
+  `--respect-workspace-trust false`, so a fresh worktree runs without being trusted first.
 - A non-standard `state directory` means `DEVIN_CLAUDE_STATE_DIR` is set.
 
-Diagnosis ends here: installing, authenticating and trusting a directory are the human's
+Diagnosis ends here: installing and authenticating are the human's
 actions, not yours. Don't go checking `brew`/`npm`/`curl` on your own. Once ready, delegate
 via `/devin:devin-delegate`. Red lines and the full script contract: `devin-runtime`.

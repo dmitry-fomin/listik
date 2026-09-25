@@ -48,7 +48,7 @@ Options for `run`/`resume`:
 | `--thinking <medium\|high\|max>` | `medium` | effort level = model `swe-2-<level>`; this list only |
 | `--channel <swe>` | `swe` | the only channel; the flag exists so presets can pass it |
 | `--sandbox` | off | devin's OS sandbox for the exec tool (macOS seatbelt / Linux bwrap) |
-| `--trust-workspace` | off | pass `--respect-workspace-trust false`; only for a directory never trusted interactively |
+| `--trust-workspace` | always on | kept for compatibility: `--respect-workspace-trust false` is always passed |
 | `--cwd <dir>` | current | working directory of the run |
 | `--timeout <s>` | 540 foreground, 7200 background | `0` removes the limit |
 
@@ -161,7 +161,6 @@ text**. The bridge reports that as exit 6 "empty answer", not as a silent succes
 | --- | --- |
 | Bash call cut at 600 s | run was started in foreground; restart with `--background` |
 | `devin not found in PATH` | not installed, or installed after the session started — new terminal or `DEVIN_CLAUDE_BIN` |
-| `Refusing to run in an untrusted workspace` | the directory was never trusted: the human runs `devin` there once interactively, or you rerun with `--trust-workspace` — say which you did |
 | exit 6 "empty answer" | a tool was blocked by the permission mode; rerun with the rights the task actually needs, or accept the limit |
 | `rejected a tool call that requires confirmation` on stderr | same cause, seen from devin's side |
 | job stuck in `running` with no output | check `logs`: no turns in the session yet means the run has not reached the model |
@@ -173,6 +172,3 @@ text**. The bridge reports that as exit 6 "empty answer", not as a silent succes
 - Never read, print or forward `.env`, `*.key`, `*.pem`, `credentials.json`. Naming an env
   var is fine, printing its value is not.
 - Never install or authenticate on the human's behalf.
-- Never turn workspace trust off on your own initiative — `--trust-workspace` needs the
-  human's word, because it is the check that keeps an agent out of a directory nobody
-  vouched for.

@@ -104,7 +104,6 @@ Cut flags out of the task text so they don't land in the prompt as content.
 | "take as long as it needs" | `--timeout 0` |
 | "think harder", an effort level named | `--thinking high` or `--thinking max` |
 | "sandbox it", "don't let it out of the repo" | `--sandbox` |
-| the directory was never opened in devin | `--trust-workspace`, and say so in your report |
 
 The effort level is not your choice: the default is `medium`, and you pass `--thinking`
 only when the human named it or a pipeline preset requires it.

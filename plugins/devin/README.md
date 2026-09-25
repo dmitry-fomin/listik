@@ -42,8 +42,6 @@ behaviour, and the bridge relies on it instead of re-sending a model on every tu
 - `bash`
 - `python3` — not needed to *run* devin, but the bridge reads devin's own sqlite session
   database through it. Without python3 you lose session ids, `logs` turns and `transcript`
-- the working directory must be **trusted** by devin: a non-interactive run refuses an
-  untrusted workspace (see below)
 
 Verify everything at once with `/devin:devin-check` after installing.
 
@@ -107,7 +105,7 @@ Options of `run` / `resume`:
 | `--thinking medium\|high\|max` | `medium` | effort level → model `swe-2-<level>` |
 | `--channel swe` | `swe` | the only channel; the flag exists so presets can pass it |
 | `--sandbox` | off | devin's OS sandbox for the exec tool |
-| `--trust-workspace` | off | pass `--respect-workspace-trust false` to devin |
+| `--trust-workspace` | always on | kept for compatibility: `--respect-workspace-trust false` is always passed |
 | `--cwd <dir>` | current | working directory of the run |
 | `--timeout <sec>` | 540 foreground, 7200 background | `0` removes the limit |
 | `--background` | off | detach and print a job-id instead of the answer |
@@ -168,17 +166,16 @@ task really needs it
 
 ## The OS sandbox and workspace trust
 
-Two devin-specific switches, both **off by default and both deliberate**:
+Two devin-specific switches:
 
 - `--sandbox` turns on devin's process sandbox (macOS seatbelt / Linux bwrap+seccomp) for
   the exec tool. It is off by default because devin has to be able to write code; with it
   on, commands can write only inside the workspace. `status` records `sandbox=on|off` and
   the full `cmdline`, so what a job actually ran with is checkable after the fact.
-- `--trust-workspace` passes `--respect-workspace-trust false`. devin refuses to run
-  non-interactively in a directory nobody has trusted (`Refusing to run in an untrusted
-  workspace`), because the trust prompt cannot be shown. The bridge does **not** disable
-  that check on its own: trusting a directory is a human decision. When a run fails on it,
-  the error text says so and names both ways out.
+- Workspace trust is always skipped: the bridge passes `--respect-workspace-trust false` on
+  every run. devin refuses to run non-interactively in a directory nobody has trusted,
+  because the trust prompt cannot be shown — and every new task worktree is such a
+  directory. `--trust-workspace` is still accepted and changes nothing.
 
 ## What it looks like
 
@@ -194,7 +191,7 @@ default model:      swe-2-medium (in catalog: yes)
 probe:              answered in 5s
 default permission: read-only (edits and commands blocked) (devin --permission-mode auto)
 OS sandbox:         off by default (turn on with --sandbox)
-workspace trust:    respected; --trust-workspace passes --respect-workspace-trust false
+workspace trust:    skipped (--respect-workspace-trust false always passed)
 background jobs running: 0
 named sessions:     1
 state directory:    /Users/dmitry.fomin/.local/state/devin-claude
@@ -243,8 +240,7 @@ answer:  658 bytes
    interactive TUI. Parallel runs in one directory are told apart by the exact prompt text
    and by the ids other jobs have already claimed.
 5. **There is an OS sandbox** (`--sandbox`) — the other bridges have no such boundary at
-   all — and a **workspace-trust check** that can make a run fail before the model is ever
-   reached.
+   all — and a **workspace-trust check**, which the bridge always switches off.
 6. **One channel.** Nothing in the bridge picks a model; the only choice is the effort
    level.
 

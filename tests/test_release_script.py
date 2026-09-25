@@ -29,6 +29,14 @@ VERSION = "1.2.3"
 TOP = "listik-" + VERSION
 ARCHIVE = TOP + ".tar.gz"
 
+# Файлы агентов feature-pipeline — единственное из plugins/, что идёт в релиз.
+AGENT_FILES = tuple(
+    f"plugins/feature-pipeline/agents/pipeline-{name}.md"
+    for name in ("spec-writer", "critic", "implementer", "judge")
+)
+# Вариант-сосед: лежит рядом с агентами, но в архив идти не должен.
+AGENT_VARIANT = "plugins/feature-pipeline/agents/pipeline-judge-x.md"
+
 # Отслеживаемые файлы тестового репозитория — тот же белый список, что в настоящем.
 TRACKED_FILES = {
     "VERSION": VERSION + "\n",
@@ -48,6 +56,8 @@ TRACKED_FILES = {
     "docs/specs/x.md": "# spec\n",
     "tests/test_x.py": "# test\n",
     "plugins/p/a.md": "# plugin\n",
+    **{rel: "# agent\n" for rel in AGENT_FILES},
+    AGENT_VARIANT: "# variant\n",
     ".claude-plugin/marketplace.json": "{}\n",
     "web/src/main.ts": "// main\n",
     ".gitignore": (
@@ -234,7 +244,13 @@ class ReleaseScriptTests(unittest.TestCase):
                     "routes.json", "config.example.toml", "README.md", "docs/API.md", "AGENTS.md",
                     "docs/harness-protocol.md", ".agents/skills/listik/SKILL.md", "web/dist/index.html"):
             self.assert_in_archive(names, rel)
-        for rel in ("tests", "docs/specs", "plugins", ".claude-plugin", "web/src",
+        for rel in AGENT_FILES:
+            self.assert_in_archive(names, rel)
+        with tarfile.open(archive, "r:gz") as tar:
+            plugin_files = {m.name for m in tar.getmembers()
+                            if m.isfile() and m.name.startswith(f"{TOP}/plugins/")}
+        self.assertEqual({f"{TOP}/{rel}" for rel in AGENT_FILES}, plugin_files)
+        for rel in ("tests", "docs/specs", "plugins/p", AGENT_VARIANT, ".claude-plugin", "web/src",
                     "node_modules", "web/node_modules", "junk.txt", "listik/junk.py", ".env",
                     "listik.db", "listik.pid", "logs", "config.toml", "install.sh"):
             self.assert_not_in_archive(names, rel)
@@ -247,6 +263,19 @@ class ReleaseScriptTests(unittest.TestCase):
         self.assertNotEqual(0, result.returncode, result.stdout)
         self.assertIn("обязательный файл", result.stderr)
         self.assertIn("не отслеживается git", result.stderr)
+
+    def test_missing_agent_fails(self):
+        root = self.make_repo()
+        for i, rel in enumerate(AGENT_FILES):
+            with self.subTest(rel=rel):
+                self.git(root, "rm", "-q", rel)
+                self.git(root, "commit", "-q", "-m", f"no {rel}")
+                result = self.run_release(root, "--skip-web", "--out", str(self.tmp / f"out-{i}"))
+                self.assertNotEqual(0, result.returncode, result.stdout)
+                self.assertIn(f"обязательный файл {rel} не отслеживается git — релиз неполный",
+                              result.stderr)
+                self.git(root, "checkout", "HEAD~1", "--", rel)
+                self.git(root, "commit", "-q", "-m", f"back {rel}")
 
     def test_sha256_file_matches_hashlib(self):
         root = self.make_repo()

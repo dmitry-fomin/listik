@@ -4,8 +4,9 @@
 # Архив listik-<VERSION>.tar.gz содержит единственный верхний каталог listik-<VERSION>/.
 # Состав задан белым списком: код и документация из `git ls-files` плюс собранная доска
 # web/dist с файловой системы; скил протокола .agents/skills/listik/SKILL.md входит
-# в белый список. Всё остальное (tests/, plugins/, исходники доски, неотслеживаемые
-# файлы) в релиз не попадает.
+# в белый список; из plugins/ — только четыре файла plugins/feature-pipeline/agents/pipeline-{spec-writer,critic,implementer,judge}.md
+# (критерии ролей роя). Всё остальное (tests/, остальное plugins/, исходники доски,
+# неотслеживаемые файлы) в релиз не попадает.
 #
 # Запуск: scripts/release.sh [--skip-web] [--out КАТАЛОГ] [--publish] [--notes-file ФАЙЛ]
 set -eu
@@ -122,7 +123,8 @@ while IFS= read -r path; do
     case $path in
         swarm/test/*)
             ;;
-        bin/*|listik/*|swarm/*|alembic/*|VERSION|routes.json|config.example.toml|alembic.ini|README.md|docs/API.md|AGENTS.md|docs/harness-protocol.md|.agents/skills/listik/SKILL.md|install.sh)
+        bin/*|listik/*|swarm/*|alembic/*|VERSION|routes.json|config.example.toml|alembic.ini|README.md|docs/API.md|AGENTS.md|docs/harness-protocol.md|.agents/skills/listik/SKILL.md|install.sh|\
+        plugins/feature-pipeline/agents/pipeline-spec-writer.md|plugins/feature-pipeline/agents/pipeline-critic.md|plugins/feature-pipeline/agents/pipeline-implementer.md|plugins/feature-pipeline/agents/pipeline-judge.md)
             printf '%s\n' "$path" >> "$selected"
             ;;
     esac
@@ -132,7 +134,11 @@ for dir in bin listik swarm alembic; do
     grep -q "^$dir/" "$tracked" ||
         die "в git нет ни одного файла под $dir/ — релиз неполный"
 done
-for path in VERSION routes.json config.example.toml alembic.ini README.md docs/API.md AGENTS.md docs/harness-protocol.md .agents/skills/listik/SKILL.md; do
+for path in VERSION routes.json config.example.toml alembic.ini README.md docs/API.md AGENTS.md docs/harness-protocol.md .agents/skills/listik/SKILL.md \
+    plugins/feature-pipeline/agents/pipeline-spec-writer.md \
+    plugins/feature-pipeline/agents/pipeline-critic.md \
+    plugins/feature-pipeline/agents/pipeline-implementer.md \
+    plugins/feature-pipeline/agents/pipeline-judge.md; do
     grep -qxF "$path" "$tracked" ||
         die "обязательный файл $path не отслеживается git — релиз неполный"
 done

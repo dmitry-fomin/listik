@@ -10,7 +10,7 @@ import {parseConfig, ConfigError, HelpRequested} from "./config.mjs";
 import {isSoftQuestion} from "./decide.mjs";
 import {Listik} from "./listik.mjs";
 import {tick} from "./run.mjs";
-import {open as openLog} from "./log.mjs";
+import {open as openLog, skipLabel} from "./log.mjs";
 
 function sleep(ms) {
   return new Promise(resolve => setTimeout(resolve, ms));
@@ -24,15 +24,7 @@ function configLine(config) {
 export function waitingLine(result) {
   const parts = [];
   const report = result.report || {};
-  for (const s of report.skipped || []) {
-    const label = s.reason === "held" ? "держит другой"
-      : s.reason === "frozen" ? "заморожена"
-      : s.reason === "gated" ? "гейт"
-      : s.reason === "budget" ? "бюджет"
-      : s.reason === "unroutable" ? "без маршрута"
-      : "не влезла в партию";
-    parts.push(`${s.id} ${label}`);
-  }
+  for (const s of report.skipped || []) parts.push(`${s.id} ${skipLabel(s)}`);
   if (report.blocked) parts.push(`${report.blocked} стоят за блокерами`);
   return `ждут: ${parts.length ? parts.join(", ") : (result.open || []).join(", ")}`;
 }
@@ -45,6 +37,7 @@ export function questionReason(text) {
     return isSoftQuestion(text) ? "вопрос воркера, есть дефолт" : "вопрос воркера";
   }
   if (text.includes("бюджет прогона исчерпан")) return "бюджет";
+  if (text.includes("ни одна порция не запускается")) return "порции не запускаются";
   if (text.includes("нет маршрута")) return "без маршрута";
   if (text.includes("нет write_scope")) return "без области";
   if (text.includes("процесс задачи завершился")) return "упала";

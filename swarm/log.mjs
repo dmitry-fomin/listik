@@ -11,6 +11,24 @@ function stampLine(d) {
   return d.toISOString();
 }
 
+// Подписи причин — одна таблица для сводки тика и строки `ждут:` (main.mjs).
+const SKIP_LABELS = {
+  frozen: "заморожена", gated: "гейт", budget: "бюджет", unroutable: "без маршрута",
+  sliced: "нарезана, ждёт порции", capacity: "не влезла в партию",
+};
+const NEEDS_OWNER_LABELS = {
+  unroutable: "без маршрута", unscoped: "без области", sliced_stuck: "порции не запускаются",
+};
+
+export function skipLabel(s) {
+  if (s.reason === "held") return `держит ${s.holder ?? "другой"}`;
+  return Object.hasOwn(SKIP_LABELS, s.reason) ? SKIP_LABELS[s.reason] : s.reason;
+}
+
+export function needsOwnerLabel(n) {
+  return Object.hasOwn(NEEDS_OWNER_LABELS, n.reason) ? NEEDS_OWNER_LABELS[n.reason] : n.reason;
+}
+
 export function open(dir, project) {
   fs.mkdirSync(dir, {recursive: true});
   const file = `swarm-${project}-${stampFile(new Date())}.log`;
@@ -40,17 +58,9 @@ export function open(dir, project) {
       }).join(", ");
     const launchedDesc = (report.launch || []).join(", ");
     const needsOwnerDesc = (report.needsOwner || [])
-      .map(n => `${n.id} ${n.reason === "unroutable" ? "без маршрута" : "без области"}`).join(", ");
+      .map(n => `${n.id} ${needsOwnerLabel(n)}`).join(", ");
     const skippedDesc = (report.skipped || [])
-      .map(s => `${s.id} ${
-        s.reason === "held" ? `держит ${s.holder ?? "другого"}`
-          : s.reason === "frozen" ? "заморожена"
-          : s.reason === "gated" ? "гейт"
-          : s.reason === "budget" ? "бюджет"
-          : s.reason === "unroutable" ? "без маршрута"
-          : "не влезла"
-      }`)
-      .join(", ");
+      .map(s => `${s.id} ${skipLabel(s)}`).join(", ");
     const restartDesc = (report.restart || [])
       .map(r => `${r.id} ${r.reason} → поколение ${r.generation}`).join(", ");
     const crashedDesc = (report.crashed || [])

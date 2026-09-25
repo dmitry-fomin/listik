@@ -4,6 +4,7 @@ import fs from "node:fs";
 import {fileURLToPath} from "node:url";
 import {decide, portOf, allocatePort, isFrozen, REJECTED_MARK, isSoftQuestion, defaultLine,
   openQuestion, fromEvents, fromComments, dueDefaults} from "../decide.mjs";
+import {textSlicedStuck} from "../decide.mjs";
 import {DEFAULT_QUESTION_TIMEOUT} from "../config.mjs";
 
 const config = {parallel: 3, weights: {xhigh: 3, high: 2, medium: 1, low: 1, xlow: 1, direct: 1}};
@@ -939,4 +940,96 @@ test("defaultLine: несколько маркеров — действует п
   assert.equal(defaultLine(text), "B");
   assert.equal(isSoftQuestion(text), true);
   assert.equal(isSoftQuestion("рой: вопрос\nпо умолчанию: A\nпо умолчанию: B"), false);
+});
+
+// Зависшая нарезка (listik-zr05, порция f).
+const stuckRoutes = [{key: "swarm", icon: "low", driver: "swarm"}, {key: "skill", icon: "low", driver: "skill"}];
+const stuck = (id, over = {}) => task(id, {
+  launch_driver: "swarm", launch_route: "swarm", has_portions: true, portions_stuck: true, ...over,
+});
+const stuckPlan = (over = {}) => ({waves: [[]], cycles: [], unroutable: [], unscoped: [], blocked: {}, ...over});
+const recordsFor = (res, id) =>
+  res.needsOwner.filter(n => n.id === id).length + res.skipped.filter(s => s.id === id).length;
+
+test("sliced_stuck: текст вопроса дословно, две строки, без по умолчанию", () => {
+  const text = textSlicedStuck("dg-1");
+  assert.equal(text,
+    "рой: задача нарезана, но ни одна порция не запускается (нет маршрута или этапа).\n" +
+    "Принять порции: listik portions adopt dg-1. Начать заново с s1-spec (порции снимутся, " +
+    "текст сохранится): listik restart dg-1 --stage s1-spec.");
+  assert.equal(text.split("\n").length, 2);
+  assert.ok(!text.includes("по умолчанию:"));
+});
+
+test("sliced_stuck: карточка роя вне волн, никто не бежит — вопрос, не пропуск", () => {
+  const res = decide({plan: stuckPlan(), tasks: [stuck("e")], routes: stuckRoutes, config, now: new Date()});
+  assert.deepEqual(res.needsOwner, [{id: "e", reason: "sliced_stuck", text: textSlicedStuck("e")}]);
+  assert.ok(!res.skipped.some(s => s.id === "e"));
+  assert.deepEqual(res.report.needsOwner, [{id: "e", reason: "sliced_stuck"}]);
+});
+
+test("sliced_stuck: при поднятом гейте вопрос есть", () => {
+  const res = decide({plan: stuckPlan(), tasks: [stuck("e")], routes: stuckRoutes, config,
+    now: new Date(), gate: {reason: "config"}});
+  assert.deepEqual(res.needsOwner.map(n => [n.id, n.reason]), [["e", "sliced_stuck"]]);
+});
+
+test("sliced_stuck: держатель или launched_by — ни вопроса, ни пропуска", () => {
+  const tasks = [stuck("h", {holder: "dsh"}), stuck("l", {launched_by: "swarm", launch_finished_at: "2026-09-25T00:00:00Z"})];
+  const res = decide({plan: stuckPlan(), tasks, routes: stuckRoutes, config, now: new Date()});
+  assert.equal(recordsFor(res, "h"), 0);
+  assert.equal(recordsFor(res, "l"), 0);
+});
+
+test("sliced_stuck: карточка из волны 0 при гейте — ровно одна запись", () => {
+  const res = decide({plan: stuckPlan({waves: [["w"]]}), tasks: [stuck("w")], routes: stuckRoutes,
+    config, now: new Date(), gate: {reason: "config"}});
+  assert.equal(recordsFor(res, "w"), 1);
+  assert.equal(res.needsOwner[0].reason, "sliced_stuck");
+});
+
+test("sliced_stuck: карточка из unscoped — ровно одна запись в needsOwner", () => {
+  const res = decide({plan: stuckPlan({unscoped: ["u"]}), tasks: [stuck("u")], routes: stuckRoutes,
+    config, now: new Date()});
+  assert.equal(res.needsOwner.filter(n => n.id === "u").length, 1);
+  assert.equal(recordsFor(res, "u"), 1);
+});
+
+test("sliced_stuck: кто-то бежит — пропуск sliced, без вопроса", () => {
+  const runner = task("r", {launched_by: "swarm", launch_finished_at: "", launched_at: new Date().toISOString()});
+  const res = decide({plan: stuckPlan(), tasks: [stuck("e"), runner], routes: stuckRoutes, config,
+    now: new Date()});
+  assert.deepEqual(res.skipped.filter(s => s.id === "e"), [{id: "e", reason: "sliced"}]);
+  assert.ok(!res.needsOwner.some(n => n.id === "e"));
+});
+
+test("has_portions без portions_stuck в волне 0 — skipped sliced, как раньше", () => {
+  const t = stuck("p", {portions_stuck: false});
+  const res = decide({plan: stuckPlan({waves: [["p"]]}), tasks: [t], routes: stuckRoutes, config,
+    now: new Date()});
+  assert.deepEqual(res.skipped, [{id: "p", reason: "sliced"}]);
+  assert.deepEqual(res.needsOwner, []);
+});
+
+test("portions_stuck у карточки скила в волне 0 — кандидат в launch", () => {
+  const t = stuck("s", {launch_driver: "skill", launch_route: "skill"});
+  const res = decide({plan: stuckPlan({waves: [["s"]]}), tasks: [t], routes: stuckRoutes, config,
+    now: new Date()});
+  assert.deepEqual(res.launch.map(l => l.id), ["s"]);
+  assert.equal(recordsFor(res, "s"), 0);
+});
+
+test("portions_stuck и needs_owner — ни вопроса, ни пропуска", () => {
+  const res = decide({plan: stuckPlan({waves: [["n"]]}), tasks: [stuck("n", {needs_owner: true})],
+    routes: stuckRoutes, config, now: new Date()});
+  assert.equal(recordsFor(res, "n"), 0);
+});
+
+test("sliced_stuck: карточка и в unscoped, и в волне 0 — ровно одна запись (с гейтом и без)", () => {
+  for (const gate of [{reason: "config"}, null]) {
+    const res = decide({plan: stuckPlan({unscoped: ["x"], waves: [["x"]]}), tasks: [stuck("x")],
+      routes: stuckRoutes, config, now: new Date(), gate});
+    assert.equal(recordsFor(res, "x"), 1, JSON.stringify(gate));
+    assert.deepEqual(res.needsOwner.map(n => [n.id, n.reason]), [["x", "unscoped"]]);
+  }
 });

@@ -2653,3 +2653,9 @@ test("main --once: цикл — строка «циклы:» и код 1", {time
   const logText = fs.readFileSync(chunks[0].trim(), "utf8");
   assert.ok(logText.includes("циклы: a → b → a"));
 });
+
+test("questionReason: зависшая нарезка → порции не запускаются", async () => {
+  const {questionReason} = await import("../main.mjs");
+  const {textSlicedStuck} = await import("../decide.mjs");
+  assert.equal(questionReason(textSlicedStuck("x")), "порции не запускаются");
+});

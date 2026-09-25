@@ -10,6 +10,18 @@ export const SOFT_DEFAULT_RE = /^по умолчанию:\s*(\S.*)$/mu;
 const textUnscoped = (id) => "рой: у задачи нет write_scope — какие файлы и каталоги она правит? " +
   `Без области записи планировщик не ставит её в волну: listik set ${id} write_scope=<пути через запятую>.`;
 
+export const textSlicedStuck = (id) =>
+  "рой: задача нарезана, но ни одна порция не запускается (нет маршрута или этапа).\n" +
+  `Принять порции: listik portions adopt ${id}. Начать заново с s1-spec (порции снимутся, ` +
+  `текст сохранится): listik restart ${id} --stage s1-spec.`;
+
+// Карточка режима роя: снимок launch_driver, а до первого запуска — driver/kind маршрута.
+function isSwarmCard(t, routeByKey) {
+  if (t.launch_driver === "swarm") return true;
+  const route = routeByKey.get(t.launch_route);
+  return !t.launch_driver && !!route && (route.kind === "swarm" || route.driver === "swarm");
+}
+
 export function portOf(task) {
   const labels = task.labels || [];
   for (const label of labels) {
@@ -383,12 +395,29 @@ export function decide({plan, tasks, routes, config, now, events, gate = null}) 
   }
 
   const skipped = [];
+  // Нарезанный родитель роя, у которого ни одна порция не движется: вопрос с двумя
+  // выходами. Обход всех открытых — эпики в волны не входят.
+  const asked = new Set(needsOwner.map(n => n.id));
+  const handled = new Set();
+  for (const t of open) {
+    if (!t.portions_stuck || t.needs_owner || t.holder || t.launched_by) continue;
+    if (!isSwarmCard(t, routeByKey)) continue;
+    handled.add(t.id);
+    if (asked.has(t.id)) continue;
+    if (running.length === 0) {
+      needsOwner.push({id: t.id, reason: "sliced_stuck", text: textSlicedStuck(t.id)});
+    } else {
+      skipped.push({id: t.id, reason: "sliced"});
+    }
+  }
+
   let launch = [];
   let reason;
 
   if (gate != null) {
     const wave0 = (plan.waves && plan.waves[0]) || [];
     for (const id of wave0) {
+      if (handled.has(id)) continue;
       const t = openById.get(id);
       if (!t) continue;
       if (t.launched_by) continue;
@@ -407,6 +436,7 @@ export function decide({plan, tasks, routes, config, now, events, gate = null}) 
     const wave0 = (plan.waves && plan.waves[0]) || [];
     const candidates = [];
     for (const id of wave0) {
+      if (handled.has(id)) continue;
       const t = openById.get(id);
       if (!t) continue;
       if (t.launched_by) continue;
@@ -429,14 +459,9 @@ export function decide({plan, tasks, routes, config, now, events, gate = null}) 
       // driver/kind маршрута; карточку режима скила дети не прячут
       // (docs/specs/swarm-stage-launch.md). Родитель, у которого все порции
       // отменены, тоже не запускается — на нём уже вопрос человеку.
-      if (t.has_portions || t.portions_cancelled_only) {
-        const route = routeByKey.get(t.launch_route);
-        const swarm = t.launch_driver === "swarm" ||
-          (!t.launch_driver && !!route && (route.kind === "swarm" || route.driver === "swarm"));
-        if (swarm) {
-          skipped.push({id, reason: "sliced"});
-          continue;
-        }
+      if ((t.has_portions || t.portions_cancelled_only) && isSwarmCard(t, routeByKey)) {
+        skipped.push({id, reason: "sliced"});
+        continue;
       }
       candidates.push(t);
     }

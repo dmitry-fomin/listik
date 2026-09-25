@@ -157,7 +157,7 @@ const journalItems = computed<UiTimelineItem[]>(() => {
             <li v-for="dep in blockedBy" :key="dep.id">
               <span class="listik-mono">{{ dep.id }}</span>
               <span>{{ dep.title }}</span>
-              <UiBadge v-if="dep.stage" tone="info" size="sm">{{ stageCode(dep.stage) }}</UiBadge>
+              <UiBadge v-if="dep.stage && stageCode(dep.stage)" tone="info" size="sm">{{ stageCode(dep.stage) }}</UiBadge>
               <span class="listik-section__hint">{{ depHolderHint(dep) }}</span>
               <UiBadge v-if="dep.missing" tone="danger" size="sm">задача не найдена</UiBadge>
             </li>

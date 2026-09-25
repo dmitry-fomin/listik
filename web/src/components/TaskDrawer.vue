@@ -1539,7 +1539,7 @@ async function loadTree(): Promise<void> {
             <span v-else class="listik-mono">{{ row.dep.id }}</span>
             <span class="listik-dep-blocker__title">{{ row.dep.title }}</span>
             <UiBadge v-if="row.dep.missing" tone="danger" size="sm">задача не найдена</UiBadge>
-            <UiBadge v-if="row.dep.stage" tone="info" size="sm">{{ stageCode(row.dep.stage) }}</UiBadge>
+            <UiBadge v-if="row.dep.stage && stageCode(row.dep.stage)" tone="info" size="sm">{{ stageCode(row.dep.stage) }}</UiBadge>
             <span class="listik-dep-blocker__hint">{{ depCardHint(row.dep) }}</span>
           </article>
         </div>

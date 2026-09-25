@@ -17,6 +17,8 @@
 """
 from __future__ import annotations
 
+import hashlib
+import json
 import os
 import re
 import signal
@@ -544,8 +546,19 @@ def _start_swarm(conn, task_id: str, row, record: dict, *, notify, log_dir,
               "cwd": str(cwd), "worktree": worktree, "branch": row["branch"] or "",
               "stage": stage, "role": role or "", "harness": harness}
     argv = [_substitute(element, values) for element in resolved["argv"]]
-    if resolved.get("prompt"):
-        argv.append(_substitute(resolved["prompt"], values))
+    prompt = _substitute(resolved["prompt"], values) if resolved.get("prompt") else None
+    if prompt is not None and stage == "s3-impl":
+        # Возврат с приёмки: правки красного вердикта — первым блоком промпта, а не
+        # только в `context` (listik-po5v: исполнитель прогонял чек-лист, пункт — нет).
+        from . import documents
+        verdict = documents.last_fail_verdict(conn, task_id)
+        if verdict is not None:
+            fixes = verdict["text"].strip().partition("\n")[2].strip()
+            prompt = ("Приёмка вернула работу красным вердиктом. Сначала закрой каждый "
+                      "его пункт, потом остальное; в ответе перечисли, что сделал по "
+                      f"каждому пункту.\nПравки вердикта:\n{fixes}\n\n{prompt}")
+    if prompt is not None:
+        argv.append(prompt)
 
     log_dir = Path(log_dir) if log_dir is not None else paths.LOGS_DIR
     stamp = datetime.now(timezone.utc).strftime("%Y%m%dT%H%M%SZ")
@@ -564,6 +577,13 @@ def _start_swarm(conn, task_id: str, row, record: dict, *, notify, log_dir,
         log_dir.mkdir(parents=True, exist_ok=True)
         out_file = open(out_path, "wb")
         log_file = open(log_path, "wb")
+        # Шапка лога — чем запущен этап: без неё разбор «что было в промпте» невозможен.
+        log_file.write(
+            f"рой: этап {stage}, роль {role}, харнесс {harness}\n"
+            f"рой: argv {json.dumps(argv[:-1] if prompt is not None else argv, ensure_ascii=False)}\n"
+            f"рой: промпт (sha256 {hashlib.sha256((prompt or '').encode()).hexdigest()[:16]}):\n"
+            f"{prompt or '—'}\nрой: конец промпта\n".encode())
+        log_file.flush()
         try:
             proc = subprocess.Popen(argv, cwd=str(cwd), stdin=subprocess.DEVNULL,
                                     stdout=out_file, stderr=log_file,

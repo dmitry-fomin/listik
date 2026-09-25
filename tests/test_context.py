@@ -196,6 +196,29 @@ class ContextContractTests(TempDbTestCase):
         self.assertTrue(spec_chunks)
         self.assertTrue(all("начало документа" in c["reason"] for c in spec_chunks))
 
+    def test_s3_gets_last_red_verdict_only(self) -> None:
+        # Последний вердикт зелёный — правок нет, блока нет.
+        self.assertIsNone(self.ctx("s3-impl")["verdict"])
+        time.sleep(0.005)
+        store.add_comment(self.conn, self.tid, "VERDICT: FAIL\n1. старый пункт",
+                          author="human", kind="verdict")
+        time.sleep(0.005)
+        red = store.add_comment(self.conn, self.tid, "VERDICT: FAIL\n1. README.md:17 — поправь",
+                                author="human", kind="verdict")
+        out = self.ctx("s3-impl")
+        self.assertEqual(out["verdict"]["text"], red["text"])
+        self.assertIn("verdict", {r["block"] for r in out["reasons"]})
+        # Текстовый вывод CLI: правки вердикта — первым блоком, до acceptance и чанков.
+        p = subprocess.run(
+            ["python3", str(LISTIK_BIN), "--local", "context", self.tid, "--stage", "s3-impl"],
+            capture_output=True, text=True,
+            env={**__import__("os").environ, "LISTIK_DB": str(self.db_path)})
+        self.assertEqual(p.returncode, 0, p.stderr)
+        text = p.stdout
+        self.assertIn("README.md:17", text)
+        self.assertLess(text.index("README.md:17"), text.index("acceptance:"))
+        self.assertNotIn("старый пункт", text)
+
     # ------------------------------------------------------------------ s4
 
     def test_s4_has_last_verdict_and_full_journal(self) -> None:

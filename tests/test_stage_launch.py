@@ -9,6 +9,7 @@ from __future__ import annotations
 import json
 import sys
 import unittest
+from pathlib import Path
 
 from listik import harnesses_store, launcher, routes_store, stage_launch, store
 from tests.helpers import TempDbTestCase
@@ -111,6 +112,44 @@ class LaunchTests(SwarmCase):
         verdicts = self.comments(task_id, "verdict")
         self.assertTrue(any(v.startswith("VERDICT: FAIL") and "поправь foo" in v
                             for v in verdicts))
+
+    def test_impl_after_red_gets_fixes_first_and_prompt_logged(self) -> None:
+        # listik-po5v: s3 после красного вердикта — его правки первым блоком промпта,
+        # промпт виден в `.log` запуска.
+        harnesses_store.update(self.conn, "probe", {
+            "argv": [sys.executable, "-c",
+                     "import sys; print(sys.argv[-1]); print('готово')"]})
+        self.add_route({"impl": {"harness": "probe"},
+                        "judge": {"harness": "probe"}})
+        task_id = self.add_task(stage="s3-impl")
+        store.add_comment(self.conn, task_id, "VERDICT: FAIL\n1. старый пункт",
+                          author="human", kind="verdict")
+        store.add_comment(self.conn, task_id,
+                          "VERDICT: FAIL\n1. README.md:17 — замени формулировку",
+                          author="human", kind="verdict", created_at="2099-01-01T00:00:00Z")
+        self.assertIsNone(self.start_and_wait(task_id))
+        log = Path(self.task(task_id)["launch_log"])
+        prompt = stage_launch.out_path_of(str(log)).read_text(encoding="utf-8")
+        self.assertTrue(prompt.startswith("Приёмка вернула работу красным вердиктом"), prompt)
+        fixes = prompt.index("README.md:17")
+        self.assertLess(fixes, prompt.index(f"Задача {task_id}"))
+        self.assertNotIn("старый пункт", prompt)
+        logged = log.read_text(encoding="utf-8")
+        self.assertIn("рой: промпт (sha256 ", logged)
+        self.assertIn("README.md:17 — замени формулировку", logged)
+
+    def test_impl_without_red_verdict_prompt_unchanged(self) -> None:
+        harnesses_store.update(self.conn, "probe", {
+            "argv": [sys.executable, "-c",
+                     "import sys; print(sys.argv[-1]); print('готово')"]})
+        self.add_route({"impl": {"harness": "probe"},
+                        "judge": {"harness": "probe"}})
+        task_id = self.add_task(stage="s3-impl")
+        self.assertIsNone(self.start_and_wait(task_id))
+        log = Path(self.task(task_id)["launch_log"])
+        prompt = stage_launch.out_path_of(str(log)).read_text(encoding="utf-8")
+        self.assertTrue(prompt.startswith(f"Задача {task_id}"), prompt)
+        self.assertIn(f"Задача {task_id}", log.read_text(encoding="utf-8"))
 
     def test_question_and_garbage_open_question(self) -> None:
         for line, marker, key in (("как проверять?\nвопрос", "как проверять?", "roy-q"),

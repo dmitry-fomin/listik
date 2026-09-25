@@ -927,6 +927,11 @@ def cmd_context(args) -> int:
     print(f"контекст {card.get('id') or args.task_id} · этап {out['stage']}")
     print(f"{card.get('title', '')} [{card.get('project') or '—'}] "
           f"статус {card.get('status')} этап {card.get('stage')} держит {card.get('holder') or '—'}")
+    if out.get("verdict"):
+        # Первым блоком: на s3-impl это список правок красного вердикта (listik-po5v).
+        head = ("последний красный вердикт — сначала закрой каждый его пункт"
+                if out["stage"] == "s3-impl" else "verdict")
+        print(f"\n{head}: {out['verdict'].get('author')}: {out['verdict'].get('text')}\n")
     if out.get("portion"):
         portion_card = out.get("portion_card")
         if portion_card:
@@ -974,8 +979,6 @@ def cmd_context(args) -> int:
         print("\nreviews:")
         for r in out["reviews"]:
             print(f"  - {r.get('author')}: {r.get('text')}")
-    if out.get("verdict"):
-        print(f"\nverdict: {out['verdict'].get('author')}: {out['verdict'].get('text')}")
     if out.get("journal"):
         print("\njournal:")
         for j in out["journal"]:

@@ -775,6 +775,21 @@ def _layered_chunks(conn: sqlite3.Connection, task_id: str, task: dict, docs: li
     return selected
 
 
+def _is_fail(comment: dict) -> bool:
+    try:
+        return store.parse_verdict(comment.get("text"))
+    except ValueError:
+        return False
+
+
+def last_fail_verdict(conn: sqlite3.Connection, task_id: str) -> dict | None:
+    """Последний вердикт карточки, если он красный (`VERDICT: FAIL`), иначе None."""
+    row = conn.execute(
+        "SELECT id, author, kind, text, created_at FROM comments WHERE task_id=? "
+        "AND kind='verdict' ORDER BY created_at DESC, id DESC LIMIT 1", (task_id,)).fetchone()
+    return dict(row) if row is not None and _is_fail(dict(row)) else None
+
+
 def context(conn: sqlite3.Connection, task_id: str, stage: str, *, portion: str | None = None,
             max_chars: int | None = None) -> dict:
     requested_task = store.get_task(conn, task_id, with_details=False)
@@ -844,7 +859,14 @@ def context(conn: sqlite3.Connection, task_id: str, stage: str, *, portion: str 
 
     reviews = [] if stage == "s1-spec" else (
         reviews_all if stage == "s2-review" else reviews_all[-1:])
-    verdict = verdicts_all[-1] if stage == "s4-judge" and verdicts_all else None
+    if stage == "s4-judge":
+        verdict = verdicts_all[-1] if verdicts_all else None
+    elif stage == "s3-impl":
+        # Возврат с приёмки: исполнитель s3 получает список правок последнего
+        # вердикта, если тот красный (listik-po5v). Зелёный последний — правок нет.
+        verdict = verdicts_all[-1] if verdicts_all and _is_fail(verdicts_all[-1]) else None
+    else:
+        verdict = None
     journal = _journal_items(conn, task_id, journals_all) if stage == "s4-judge" else []
     worktree = _worktree(task, conn) if stage == "s4-judge" else None
 
@@ -869,7 +891,8 @@ def context(conn: sqlite3.Connection, task_id: str, stage: str, *, portion: str 
     if reviews:
         reasons.append({"block": "review", "reason": "ревью этапа"})
     if verdict is not None:
-        reasons.append({"block": "verdict", "reason": "последний вердикт судьи"})
+        reasons.append({"block": "verdict", "reason": "последний вердикт судьи" if stage == "s4-judge"
+                        else "последний красный вердикт: сначала его пункты"})
     if journal:
         reasons.append({"block": "journal", "reason": "журнал решений и переходов"})
     if worktree is not None:

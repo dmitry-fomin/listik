@@ -224,6 +224,7 @@ def _validate_swarm_role_cell(cell, where: str, harnesses) -> dict:
     `harness` — ключ из каталога `harnesses` (словарь `key → запись` или None —
     тогда только форма ключа). Команда роли: свой `argv`, иначе argv харнесса
     по умолчанию; ни того ни другого — роль не годится («нет роли с командой»).
+    Без каталога (None) наличие команды не проверяется: argv по умолчанию неизвестен.
     `prompt` — строка с теми же подстановками, что у argv; идёт последним
     аргументом argv при запуске.
     """
@@ -240,7 +241,9 @@ def _validate_swarm_role_cell(cell, where: str, harnesses) -> dict:
     if argv is not None:
         argv = validate_command(argv, f"{where}.argv")
     default_argv = record.get("argv") if record else None
-    if not argv and not default_argv:
+    # Без каталога (`harnesses is None` — проверка файла) argv харнесса по умолчанию
+    # неизвестен: ячейка без своего argv допустима, команду сверит слой базы при ввозе.
+    if not argv and not default_argv and harnesses is not None:
         raise _err(f"{where}.argv",
                    "нет команды: задайте argv у роли или по умолчанию у харнесса")
     prompt = cell.get("prompt")
@@ -381,7 +384,12 @@ def _validate_route(item, where: str, warnings: list[str] | None = None) -> dict
     if kind == "pipeline":
         if "roles" not in item:
             raise _err(f"{where}.roles", "обязательно для pipeline")
-        record["roles"] = _validate_roles(item["roles"], f"{where}.roles")
+        # Пайплайн роя (`driver: swarm`) хранит ячейки роя `{harness, argv?, prompt?}`,
+        # как `kind: swarm`, — так его и проверяем, иначе бэкап таблицы не читается.
+        if driver == "swarm":
+            record["roles"] = validate_swarm_roles(item["roles"], f"{where}.roles")
+        else:
+            record["roles"] = _validate_roles(item["roles"], f"{where}.roles")
         if "harness" in item:
             raise _err(f"{where}.harness", "у pipeline-записи harness быть не должно")
         record["driver"] = driver or "skill"

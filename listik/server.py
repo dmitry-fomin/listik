@@ -850,8 +850,12 @@ def handle(method: str, path: str, query: dict, body: dict, authed: bool = False
     if path == "/api/routes/reimport":
         if method != "POST":
             raise ApiError(405, "метод не поддерживается")
+        source = (body or {}).get("path")
+        if source is not None and (not isinstance(source, str) or not source.strip()):
+            raise ApiError(400, "path: нужна непустая строка — путь к файлу маршрутов",
+                           code=errors_mod.BAD_ARGUMENT)
         try:
-            report = routes_store.reimport(conn)
+            report = routes_store.reimport(conn, source)
         except ValueError as exc:
             raise ApiError(400, errors_mod.message_of(exc), code=errors_mod.BAD_ARGUMENT) from exc
         publish("route", {"key": None, "action": "reimported"})

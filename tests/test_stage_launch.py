@@ -373,5 +373,185 @@ class HelpersTests(SwarmCase):
                                                           "s4-judge"))
 
 
+class AdoptPortionsTests(SwarmCase):
+    """listik-zr05, порция d: `portions_stuck`, `write_scope` порций, `portions adopt`."""
+
+    fake_finish = SlicingTests.fake_finish
+
+    def add_route(self, roles: dict | None = None, key: str = "roy") -> dict:
+        if self.conn.execute("SELECT 1 FROM routes WHERE key = ?", (key,)).fetchone():
+            return routes_store.get_route(self.conn, key)
+        return super().add_route(roles or {"spec": {"harness": "probe"},
+                                           "impl": {"harness": "probe"},
+                                           "judge": {"harness": "probe"}}, key=key)
+
+    def stuck_parent(self, *, scope: list | None = None) -> tuple[str, str, str]:
+        """Родитель роя на `s1-spec` с вопросом и двумя порциями без маршрута и этапа."""
+        self.add_route()
+        parent = self.add_task(stage="s1-spec")
+        if scope:
+            store.update_task(self.conn, parent, write_scope=scope, actor="agent:t")
+        a = self.add_task(parent=parent, route="")
+        b = self.add_task(parent=parent, route="")
+        store.set_needs_owner(self.conn, parent, value=True, actor="agent:listik",
+                              text="рой: исход s1-spec не засчитан")
+        return parent, a, b
+
+    def conflict(self, task_id: str) -> None:
+        from listik import errors
+        with self.assertRaises(errors.ListikError) as caught:
+            stage_launch.adopt_portions(self.conn, task_id, actor="agent:t")
+        self.assertEqual(caught.exception.code, errors.CONFLICT)
+        self.assertEqual(caught.exception.status, 409)
+
+    def test_portions_stuck_flag(self) -> None:  # 1, 7
+        parent, a, b = self.stuck_parent()
+        self.assertTrue(self.task(parent)["portions_stuck"])
+        listed = {t["id"]: t for t in store.list_tasks(self.conn, project="proj")["tasks"]}
+        self.assertTrue(listed[parent]["portions_stuck"])
+        self.assertFalse(listed[a]["portions_stuck"])  # детей нет
+        store.update_task(self.conn, a, holder="agent:x", actor="agent:t")
+        self.assertFalse(self.task(parent)["portions_stuck"])
+        store.update_task(self.conn, a, holder="", actor="agent:t")
+        self.assertTrue(self.task(parent)["portions_stuck"])
+        store.update_task(self.conn, a, launch_route="roy", actor="agent:t")
+        self.assertTrue(self.task(parent)["portions_stuck"])  # маршрут без этапа — не движение
+        store.update_task(self.conn, a, stage="s3-impl", actor="agent:t")
+        self.assertFalse(self.task(parent)["portions_stuck"])
+        store.set_needs_owner(self.conn, a, value=True, actor="agent:t", text="вопрос")
+        self.assertFalse(self.task(parent)["portions_stuck"])
+        for kid in (a, b):
+            store.update_task(self.conn, kid, status="done", stage="done", actor="agent:t")
+        self.assertFalse(self.task(parent)["portions_stuck"])
+
+    def test_write_scope_inherited_on_slice(self) -> None:  # 2
+        self.add_route()
+        parent = self.add_task()
+        store.update_task(self.conn, parent, write_scope=["src/a.py"], actor="agent:t")
+        a = self.add_task(parent=parent, route="")
+        b = self.add_task(parent=parent, route="")
+        store.update_task(self.conn, b, write_scope=["src/b.py"], actor="agent:t")
+        self.fake_finish(parent, "s1-spec", "готово")
+        self.assertEqual(self.task(a)["write_scope"], ["src/a.py"])
+        self.assertIn(f"write_scope унаследован от {parent}", self.comments(a, "journal"))
+        self.assertEqual(self.task(b)["write_scope"], ["src/b.py"])
+        self.assertFalse(any("унаследован" in t for t in self.comments(b)))
+
+    def test_no_parent_scope_leaves_portions_empty(self) -> None:  # 2
+        self.add_route()
+        parent = self.add_task()
+        a = self.add_task(parent=parent, route="")
+        self.fake_finish(parent, "s1-spec", "готово")
+        self.assertEqual(self.task(a)["write_scope"], [])
+        self.assertFalse(any("унаследован" in t for t in self.comments(a)))
+
+    def test_adopt(self) -> None:  # 3
+        parent, a, b = self.stuck_parent(scope=["src/a.py"])
+        out = stage_launch.adopt_portions(self.conn, parent, actor="agent:t")
+        self.assertEqual(out["adopted"], [a, b])
+        self.assertEqual(out["stage"], "s3-impl")
+        for kid in (a, b):
+            task = self.task(kid)
+            self.assertEqual(task["launch_route"], "roy")
+            self.assertEqual(task["stage"], "s3-impl")
+            self.assertEqual(task["launch_driver"], "swarm")
+            self.assertEqual(task["write_scope"], ["src/a.py"])
+            self.assertIn(f"write_scope унаследован от {parent}",
+                          self.comments(kid, "journal"))
+        task = self.task(parent)
+        self.assertFalse(task["needs_owner"])
+        self.assertFalse(task["portions_stuck"])
+        self.assertFalse(task["holder"])
+
+    def test_adopt_refusals(self) -> None:  # 4
+        for status in ("done", "cancelled"):
+            parent, _a, _b = self.stuck_parent()
+            self.conn.execute("UPDATE tasks SET status = ? WHERE id = ?", (status, parent))
+            self.conflict(parent)
+        routes_store.create_route(self.conn, key="skillish", kind="pipeline", title="Скил")
+        skill_parent = self.add_task(route="skillish", stage="s1-spec")
+        self.add_task(parent=skill_parent, route="")
+        self.conflict(skill_parent)
+        parent, _a, _b = self.stuck_parent()
+        self.conn.execute("UPDATE tasks SET stage = 's3-impl' WHERE id = ?", (parent,))
+        self.conflict(parent)
+        parent, a, b = self.stuck_parent()
+        for kid in (a, b):
+            store.update_task(self.conn, kid, holder="agent:x", actor="agent:t")
+        self.conflict(parent)
+        parent, _a, _b = self.stuck_parent()
+        self.conn.execute("UPDATE tasks SET launch_route = 'gone', launch_driver = 'swarm' "
+                          "WHERE id = ?", (parent,))
+        self.conflict(parent)
+
+    def spec_only_parent(self) -> str:
+        self.add_route({"spec": {"harness": "probe"}}, key="spec-only")
+        parent = self.add_task(route="spec-only", stage="s1-spec")
+        self.add_task(parent=parent, route="")
+        return parent
+
+    def test_adopt_without_role_after_spec(self) -> None:  # 5
+        parent = self.spec_only_parent()
+        out = stage_launch.adopt_portions(self.conn, parent, actor="agent:t")
+        self.assertIsNone(out["stage"])
+        self.assertEqual(out["adopted"], [])
+        self.assertTrue(self.task(parent)["needs_owner"])
+
+    def cli(self, *argv: str):
+        import os
+        import pathlib
+        import subprocess
+        self.conn.commit()
+        binary = pathlib.Path(__file__).resolve().parent.parent / "bin" / "listik"
+        return subprocess.run(
+            [sys.executable, str(binary), "--local", "portions", "adopt", *argv],
+            capture_output=True, text=True, cwd=str(self.tmp_path),
+            env={**os.environ, "LISTIK_DB": str(self.db_path), "LISTIK_PROJECT": ""})
+
+    def test_cli_human_without_role(self) -> None:  # 5
+        parent = self.spec_only_parent()
+        run = self.cli(parent)
+        self.assertEqual(run.returncode, 0, run.stdout + run.stderr)
+        self.assertIn("порции не получили этап: после s1-spec роли нет", run.stdout)
+
+    def test_cli_json(self) -> None:  # 6
+        parent, a, b = self.stuck_parent()
+        run = self.cli(parent, "--json")
+        self.assertEqual(run.returncode, 0, run.stdout + run.stderr)
+        self.assertEqual(json.loads(run.stdout)["adopted"], [a, b])
+
+    def test_http(self) -> None:  # 6
+        import threading
+        from listik import errors, paths, server
+        saved = (paths.DB_PATH, server._conn_made, server._conn_local)
+        paths.DB_PATH = self.db_path
+        server._conn_made = False
+        server._conn_local = threading.local()
+
+        def restore() -> None:
+            conn = getattr(server._conn_local, "conn", None)
+            if conn is not None:
+                conn.close()
+            paths.DB_PATH, server._conn_made, server._conn_local = saved
+        self.addCleanup(restore)
+
+        def post(tid: str):
+            self.conn.commit()
+            try:
+                return server.handle("POST", f"/api/tasks/{tid}/portions/adopt", {},
+                                     {"actor": "agent:t"}, authed=True) + ("",)
+            except Exception as exc:  # noqa: BLE001 — разбираем как сервер
+                return server.error_response(exc)
+
+        parent, a, b = self.stuck_parent()
+        status, data, _ = post(parent)
+        self.assertEqual(status, 200, data)
+        self.assertEqual(data["adopted"], [a, b])
+        other, _a, _b = self.stuck_parent()
+        self.conn.execute("UPDATE tasks SET stage = 's3-impl' WHERE id = ?", (other,))
+        status, message, code = post(other)
+        self.assertEqual((status, code), (409, errors.CONFLICT), message)
+
+
 if __name__ == "__main__":
     unittest.main()

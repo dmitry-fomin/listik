@@ -207,7 +207,7 @@ WRITE_OPS = frozenset({
     "create", "update", "claim", "heartbeat", "stage", "comment",
     "needs-owner", "dep_add", "dep_remove", "project_add", "project_archive",
     "project_remove", "project_routing", "waves_apply", "revoke", "launch",
-    "swarm_plan", "swarm_rescope", "portions_sync", "restart",
+    "swarm_plan", "swarm_rescope", "portions_sync", "portions_adopt", "restart",
 })
 
 #: `--local` при живом сервере обходит push доски так же молча, как фолбэк без
@@ -1186,9 +1186,20 @@ def cmd_done(args) -> int:
 
 
 def cmd_portions(args) -> int:
-    """`portions sync`: карточки порций по файлам шага `<id>.<X>.md`."""
+    """`portions sync`: карточки порций по файлам шага `<id>.<X>.md`;
+    `portions adopt`: принять заведённые порции роя (этап и маршрут родителя)."""
     actor = actor_default(args)
     harness = getattr(args, "harness", None)
+    if args.action == "adopt":
+        res = call("portions_adopt", args, f"/api/tasks/{args.task_id}/portions/adopt",
+                   method="POST", body={"actor": actor, "harness": harness},
+                   local_kwargs={"task_id": args.task_id, "actor": actor, "harness": harness})
+        if res.get("stage"):
+            text = f"порции приняты: {', '.join(res['adopted'])} → {res['stage']}"
+        else:
+            text = "порции не получили этап: после s1-spec роли нет"
+        emit(args, res, text)
+        return 0
     try:
         res = call("portions_sync", args, f"/api/tasks/{args.task_id}/portions/sync",
                    method="POST", body={"actor": actor, "harness": harness},
@@ -2756,8 +2767,9 @@ def build_parser() -> argparse.ArgumentParser:
     sp.add_argument("--reason")
     add_note(sp)
 
-    sp = add("portions", cmd_portions, help="карточки порций шага по файлам <id>.<X>.md")
-    sp.add_argument("action", choices=["sync"])
+    sp = add("portions", cmd_portions,
+             help="sync: карточки порций по файлам <id>.<X>.md; adopt: принять порции роя")
+    sp.add_argument("action", choices=["sync", "adopt"])
     add_task_id(sp)
 
     sp = add("revoke", cmd_revoke,

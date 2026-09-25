@@ -15,6 +15,7 @@ from . import actors as actors_mod
 from . import errors as errors_mod
 from . import harnesses_store
 from . import store
+from . import store_helpers
 
 #: Этап → роль в раскладе маршрута. Порядок списка — порядок прохода карточки.
 STAGE_ROLES: tuple[tuple[str, str], ...] = (
@@ -186,6 +187,10 @@ def _slice_parent(conn: sqlite3.Connection, task_id: str, record: dict,
             text="рой: порции заведены, но после s1-spec роли нет")
         return
     portion_ids = {row["id"] for row in children}
+    parent_scope = conn.execute("SELECT write_scope FROM tasks WHERE id = ?",
+                                (task_id,)).fetchone()
+    parent_scope = store_helpers.json_list(parent_scope["write_scope"]) \
+        if parent_scope else []
     for row in children:
         # Уже начатую порцию (этап — любой, включая `s1-spec`, держатель или
         # запуск) не переписываем (docs/specs/swarm-stage-launch.md): маршрут
@@ -208,6 +213,15 @@ def _slice_parent(conn: sqlite3.Connection, task_id: str, record: dict,
         # захвата — переписываем на `swarm` (docs/specs/swarm-stage-launch.md).
         conn.execute("UPDATE tasks SET launch_driver = 'swarm' WHERE id = ?",
                      (row["id"],))
+        # Порция без своей области пишет туда же, что родитель: иначе после
+        # `s2-review` рой повесит на неё вопрос `unscoped`. Свою область не трогаем.
+        own_scope = conn.execute("SELECT write_scope FROM tasks WHERE id = ?",
+                                 (row["id"],)).fetchone()["write_scope"]
+        if parent_scope and not store_helpers.json_list(own_scope):
+            store.update_task(conn, row["id"], actor=SWARM_ACTOR, write_scope=parent_scope,
+                              note=f"рой: write_scope родителя {task_id}")
+            store.add_comment(conn, row["id"], f"write_scope унаследован от {task_id}",
+                              author=SWARM_ACTOR, kind="journal")
     # Порядок порций: предложения агента между порциями этого родителя
     # подтверждаем жёсткими `blocks`; чужие рёбра и рёбра наружу не трогаем.
     marks = ",".join("?" * len(portion_ids))
@@ -704,4 +718,48 @@ def restart_task(conn: sqlite3.Connection, task_id: str, *, stage: str | None = 
                archive_dir=str(archive) if archive is not None else None)
     if route is not None:
         out["route_from"] = route_from
+    return out
+
+
+def adopt_portions(conn: sqlite3.Connection, task_id: str, *, actor: str | None = None,
+                   harness: str | None = None) -> dict:
+    """«Принять нарезку» (`listik portions adopt`): порции заведены, но исход
+    `s1-spec` не засчитан — тот же `_slice_parent` с маршрутом родителя."""
+    from . import routes_store
+    row = conn.execute("SELECT * FROM tasks WHERE id = ?", (task_id,)).fetchone()
+    if row is None:
+        raise errors_mod.NotFound(f"задача не найдена: {task_id}")
+    if row["status"] in store.FINAL_STATUSES:
+        raise _conflict(f"задача {task_id} закрыта ({row['status']}): принимать нечего")
+    if not is_swarm_task(conn, row):
+        raise _conflict(f"задача {task_id} не роя: порции принимает только рой",
+                        f"порции скила ведут сами: listik show {task_id}")
+    stage_now = (row["stage"] or "").strip()
+    if stage_now not in ("", "s1-spec"):
+        raise _conflict(f"задача {task_id} на этапе {stage_now}: нарезку принимают на s1-spec",
+                        f"вернуть на нарезку: listik restart {task_id} --stage s1-spec")
+    route_key = (row["launch_route"] or "").strip()
+    try:
+        record = routes_store.get_route(conn, route_key) if route_key else None
+    except errors_mod.NotFound:
+        record = None
+    if record is None:
+        raise _conflict(f"маршрута {route_key or '—'} нет в базе",
+                        f"задай маршрут: listik set {task_id} route=<ключ>")
+    before = portions(conn, task_id)
+    fresh = [c["id"] for c in before if not _started(c)]
+    if not fresh:
+        raise _conflict(f"у задачи {task_id} нет не начатых порций",
+                        f"нарезать заново: listik restart {task_id} --stage s1-spec")
+    stage = next_stage_with_role(conn, record, "s1-spec")
+    adopted = fresh if stage is not None else []
+    _clear_holder(conn, task_id, "рой: порции приняты, держатель снят")
+    _slice_parent(conn, task_id, record, portions(conn, task_id))
+    if stage is not None and conn.execute(
+            "SELECT needs_owner FROM tasks WHERE id = ?", (task_id,)).fetchone()["needs_owner"]:
+        store.set_needs_owner(conn, task_id, value=False, actor=actor, harness=harness,
+                              text="порции приняты: listik portions adopt")
+    conn.commit()
+    out = store.get_task(conn, task_id)
+    out.update(adopted=adopted, stage=stage)
     return out

@@ -1517,26 +1517,35 @@ def _last_release_ts(conn: sqlite3.Connection, task_id: str) -> str | None:
 
 
 def _portion_flags(conn: sqlite3.Connection, task_id: str,
-                   stage: str | None) -> tuple[bool, bool]:
-    """`(has_portions, portions_cancelled_only)` — вычисляемые поля нарезки.
+                   stage: str | None) -> tuple[bool, bool, bool]:
+    """`(has_portions, portions_cancelled_only, portions_stuck)` — вычисляемые поля нарезки.
 
     `has_portions` — есть хотя бы один не отменённый ребёнок `parent-child`
     (закрытые `done` тоже считаются: до закрытия родителя они ещё часть
     нарезки). `portions_cancelled_only` — дети есть, каждый `cancelled`, и
     этап родителя ещё пустой или `s1-spec` (docs/specs/swarm-stage-launch.md).
+    `portions_stuck` — есть незакрытые дети, и ни у одного нет признака движения:
+    маршрута вместе с этапом, держателя, запуска (`listik portions adopt`).
     """
     try:
-        statuses = [r["status"] for r in conn.execute(
-            "SELECT t.status FROM deps d JOIN tasks t ON t.id = d.issue_id "
+        children = conn.execute(
+            "SELECT t.status, t.stage, t.holder, t.launched_by, t.launch_route "
+            "FROM deps d JOIN tasks t ON t.id = d.issue_id "
             "WHERE d.depends_on = ? AND d.dep_type IN ('parent-child','parent')",
-            (task_id,)).fetchall()]
+            (task_id,)).fetchall()
     except sqlite3.OperationalError:
-        return False, False
+        return False, False, False
+    statuses = [r["status"] for r in children]
     has = any(status != "cancelled" for status in statuses)
     cancelled_only = (bool(statuses)
                       and all(status == "cancelled" for status in statuses)
                       and (stage or "").strip() in ("", "s1-spec"))
-    return has, cancelled_only
+    live = [r for r in children if r["status"] not in FINAL_STATUSES]
+    stuck = bool(live) and not any(
+        ((r["launch_route"] or "").strip() and (r["stage"] or "").strip())
+        or (r["holder"] or "").strip() or (r["launched_by"] or "").strip()
+        for r in live)
+    return has, cancelled_only, stuck
 
 
 def row_to_task(conn: sqlite3.Connection, row: sqlite3.Row) -> dict:
@@ -1583,7 +1592,7 @@ def row_to_task(conn: sqlite3.Connection, row: sqlite3.Row) -> dict:
     in_release_grace = bool(released_at and released_hours is not None
                             and released_hours <= assign_warn_min / 60.0)
     abandoned = (orphan and not in_release_grace) or missing_heartbeat
-    has_portions, portions_cancelled_only = _portion_flags(
+    has_portions, portions_cancelled_only, portions_stuck = _portion_flags(
         conn, row["id"], row["stage"])
     # «Выдана, но не взята»: держателя поставил оркестратор (`stage --holder`), а
     # сам агент ещё не записал ни claim, ни heartbeat от своего имени. Порог
@@ -1673,6 +1682,7 @@ def row_to_task(conn: sqlite3.Connection, row: sqlite3.Row) -> dict:
                           if "launch_driver" in row.keys() else None),
         "has_portions": has_portions,
         "portions_cancelled_only": portions_cancelled_only,
+        "portions_stuck": portions_stuck,
         # Рой (listik-s520): области файлов и ограждение запуска.
         "read_scope": store_helpers.json_list(row["read_scope"]),
         "write_scope": store_helpers.json_list(row["write_scope"]),

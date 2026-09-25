@@ -1271,9 +1271,10 @@ def handle(method: str, path: str, query: dict, body: dict, authed: bool = False
                 store.delete_task(conn, tid)
                 publish("task", {"id": tid, "action": "deleted"})
                 return 200, {"deleted": tid}
-        if len(parts) == 5 and parts[3:] == ["portions", "sync"] and method == "POST":
+        if len(parts) == 5 and parts[3] == "portions" and parts[4] in ("sync", "adopt") \
+                and method == "POST":
             # Двухсловное действие идёт общим путём POST-действий карточки.
-            parts = [*parts[:3], "portions/sync"]
+            parts = [*parts[:3], f"portions/{parts[4]}"]
         if len(parts) == 4:
             tid, action = parts[2], parts[3]
             if action == "context" and method == "GET":
@@ -1293,6 +1294,7 @@ def handle(method: str, path: str, query: dict, body: dict, authed: bool = False
                             "release": "release", "done": "done",
                             "revoke": "revoke", "launch": "launch",
                             "portions/sync": "portions_sync",
+                            "portions/adopt": "portions_adopt",
                             "restart": "restart"}.get(action)
                 if _guard_op is None and action == "deps" and body.get("depends_on"):
                     _guard_op = "dep_add"
@@ -1358,6 +1360,17 @@ def handle(method: str, path: str, query: dict, body: dict, authed: bool = False
                 elif action == "portions/sync":
                     out = store.sync_portions(conn, tid, actor=body.get("actor") or owner,
                                               harness=body.get("harness"))
+                elif action == "portions/adopt":
+                    from . import stage_launch
+                    try:
+                        out = stage_launch.adopt_portions(
+                            conn, tid, actor=body.get("actor") or owner,
+                            harness=body.get("harness"))
+                    except errors_mod.Revoked:
+                        raise
+                    except errors_mod.ListikError as exc:
+                        raise ApiError(409 if exc.code == errors_mod.CONFLICT else 400,
+                                       exc.message, code=exc.code) from exc
                 elif action == "revoke":
                     # `revoke` шлёт свой `publish("task", {..., "action": "revoke"})`
                     # изнутри (`notify=publish`) — второй раз ниже не шлём (см. пропуск

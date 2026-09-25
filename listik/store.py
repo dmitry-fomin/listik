@@ -621,8 +621,98 @@ def delete_task(conn: sqlite3.Connection, task_id: str) -> None:
     conn.execute("DELETE FROM embeddings WHERE task_id=?", (task_id,))
     conn.execute("DELETE FROM documents WHERE task_id=?", (task_id,))
     conn.execute("DELETE FROM comments WHERE task_id=?", (task_id,))
+    parents = _parent_ids(conn, task_id)
     conn.execute("DELETE FROM tasks WHERE id=?", (task_id,))
     conn.commit()
+    for parent_id in parents:
+        sync_epic(conn, parent_id)
+
+
+#: Автор автоматических записей эпика (`sync_epic`): тип, статус, журнал.
+EPIC_ACTOR = "agent:listik"
+#: Типы связи «ребёнок → родитель»; `parent` — старое имя `parent-child`.
+PARENT_TYPES = ("parent-child", "parent")
+_EPIC_TYPE_NOTE = "подзадачи"
+_EPIC_TYPE_BACK_NOTE = "подзадач не осталось"
+#: Статусы ребёнка, при которых эпик «в работе».
+_EPIC_ACTIVE = ("in_progress", "blocked", "review")
+
+
+def _parent_ids(conn: sqlite3.Connection, task_id: str) -> list[str]:
+    return [r["depends_on"] for r in conn.execute(
+        "SELECT DISTINCT depends_on FROM deps WHERE issue_id = ? AND dep_type IN (?,?)",
+        (task_id, *PARENT_TYPES))]
+
+
+def epic_children(conn: sqlite3.Connection, task_id: str) -> list:
+    """Дети карточки по `parent-child`/`parent` в порядке создания; висячие
+    строки `deps` без задачи не в счёт."""
+    return conn.execute(
+        "SELECT DISTINCT t.id, t.status, t.created_at, t.rowid FROM deps d "
+        "JOIN tasks t ON t.id = d.issue_id "
+        "WHERE d.depends_on = ? AND d.dep_type IN (?,?) ORDER BY t.created_at, t.rowid",
+        (task_id, *PARENT_TYPES)).fetchall()
+
+
+def sync_epic(conn: sqlite3.Connection, task_id: str) -> None:
+    """Пересчитать тип и статус карточки по её детям (docs/API.md, «Эпик»).
+
+    Инвариант: parent-child пишется только через add_dep: прямой INSERT этого
+    типа обойдёт sync_epic.
+    """
+    row = store_helpers.task_row(conn, task_id, required=False)
+    if row is None:
+        return
+    children = epic_children(conn, task_id)
+    old_type = row["issue_type"] or ""
+    if children and old_type != "epic":
+        update_task(conn, task_id, actor=EPIC_ACTOR, issue_type="epic", note=_EPIC_TYPE_NOTE)
+        add_comment(conn, task_id, f"тип: {old_type} → epic (появились подзадачи)",
+                    author=EPIC_ACTOR, kind="journal")
+    elif not children and old_type == "epic":
+        last = conn.execute(
+            "SELECT from_value, to_value, note FROM events WHERE task_id = ? "
+            "AND kind = 'type_change' ORDER BY rowid DESC LIMIT 1", (task_id,)).fetchone()
+        if last and last["note"] == _EPIC_TYPE_NOTE and last["to_value"] == "epic" \
+                and last["from_value"]:
+            back = last["from_value"]
+            update_task(conn, task_id, actor=EPIC_ACTOR, issue_type=back,
+                        note=_EPIC_TYPE_BACK_NOTE)
+            add_comment(conn, task_id, f"тип: epic → {back} ({_EPIC_TYPE_BACK_NOTE})",
+                        author=EPIC_ACTOR, kind="journal")
+    if not children:
+        return
+    statuses = [c["status"] for c in children]
+    ids = ", ".join(c["id"] for c in children)
+    fields: dict = {}
+    reason = None
+    if any(s in _EPIC_ACTIVE for s in statuses):
+        fields["status"] = "in_progress"
+    elif "open" in statuses:
+        fields["status"] = "open"
+    elif all(s in FINAL_STATUSES for s in statuses):
+        if "done" in statuses:
+            fields.update(status="done", stage="done")
+            reason = f"подзадачи закрыты: {ids}"
+        else:
+            fields["status"] = "cancelled"
+            reason = f"подзадачи отменены: {ids}"
+    else:
+        return  # статус ребёнка вне словаря — эпик не трогаем
+    row = store_helpers.task_row(conn, task_id)
+    if row["status"] == fields["status"] and (
+            fields["status"] != "done" or row["stage"] == "done"):
+        return
+    if row["status"] in FINAL_STATUSES and fields["status"] not in FINAL_STATUSES \
+            and row["stage"] == "done":
+        # Воскрешение закрытого эпика: этап `done` снимается вместе со статусом,
+        # `close_reason` сбрасывает сам `update_task`.
+        fields["stage"] = ""
+    if reason:
+        fields["close_reason"] = reason
+    update_task(conn, task_id, actor=EPIC_ACTOR, note=reason or "подзадачи", **fields)
+    if reason:
+        add_comment(conn, task_id, reason, author=EPIC_ACTOR, kind="journal")
 
 
 def update_task(conn: sqlite3.Connection, task_id: str, *, actor: str | None = None,
@@ -778,6 +868,9 @@ def update_task(conn: sqlite3.Connection, task_id: str, *, actor: str | None = N
         elif key == ROUTE_FIELD:
             event(conn, task_id, "route", from_value=old, to_value=new, actor=actor_key,
                   harness=harness, note=" · ".join(x for x in [note, *reset_notes] if x) or None)
+        elif key == "issue_type":
+            event(conn, task_id, "type_change", from_value=old, to_value=new,
+                  actor=actor_key, harness=harness, note=note)
 
     sets.append("updated_at = ?")
     params.append(ts)
@@ -811,17 +904,13 @@ def update_task(conn: sqlite3.Connection, task_id: str, *, actor: str | None = N
         except Exception as exc:
             event(conn, task_id, "document_error", note=str(exc))
     conn.commit()
-    if any(key == "status" and new in FINAL_STATUSES for key, _old, new in changes):
-        # Порция нарезки закрылась — возможно, это была последняя: родитель-рой
-        # закрывается сам (`stage_launch.close_swarm_parent`, listik-2gry), а при
-        # отмене последней живой порции на родителе ставится вопрос человеку
-        # (`stage_launch.note_portions_cancelled`). Ленивый импорт: `stage_launch`
-        # уже импортирует `store`, цикл наверху нельзя.
+    if any(key == "status" for key, _old, _new in changes):
+        # Статус ребёнка сменился — эпик-родитель пересчитывает тип и статус
+        # (`sync_epic`); вложенные эпики поднимаются вверх по цепочке сами.
         try:
-            from . import stage_launch
-            stage_launch.close_swarm_parent(conn, task_id)
-            stage_launch.note_portions_cancelled(conn, task_id)
-        except Exception as exc:  # noqa: BLE001 — закрытие порции не роняем
+            for parent_id in _parent_ids(conn, task_id):
+                sync_epic(conn, parent_id)
+        except Exception as exc:  # noqa: BLE001 — смену статуса ребёнка не роняем
             event(conn, task_id, "swarm_parent_error", note=str(exc))
             conn.commit()
     return get_task(conn, task_id)
@@ -881,6 +970,15 @@ def claim(conn: sqlite3.Connection, task_id: str, *, holder: str, harness: str |
     check_task_owner(row, as_owner, task_id=task_id)
     if row["status"] in FINAL_STATUSES:
         raise ValueError(f"задача {task_id} уже {row['status']}")
+    # Эпик с детьми в работу не берётся — только его подзадачи; `force` не обходит.
+    if row["issue_type"] == "epic":
+        children = epic_children(conn, task_id)
+        if children:
+            live = [c["id"] for c in children if c["status"] not in FINAL_STATUSES]
+            raise errors_mod.ListikError(
+                f"задача {task_id} — эпик: бери подзадачи: "
+                + ", ".join(live or [c["id"] for c in children]),
+                code=errors_mod.CONFLICT, status=409)
     # A silent holder past the red-verdict return window loses the task before we
     # even look at who holds it — otherwise this claim would just bounce off "уже
     # удерживается" instead of taking over.  Re-read the row: expiry commits its own
@@ -2364,7 +2462,9 @@ def facet_values(conn: sqlite3.Connection) -> dict:
 
 
 def add_dep(conn: sqlite3.Connection, issue_id: str, depends_on: str, dep_type: str = "blocks",
-            created_by: str | None = None, confirm: bool = False) -> dict:
+            created_by: str | None = None, confirm: bool = False, sync: bool = True) -> dict:
+    """`sync=False` — не пересчитывать эпик (`sync_epic`) по связи `parent-child`:
+    так пишет импорт, восстанавливающий историю как есть."""
     for tid in (issue_id, depends_on):
         if not store_helpers.task_exists(conn, tid):
             raise errors_mod.NotFound(f"задача не найдена: {tid}")
@@ -2505,6 +2605,8 @@ def add_dep(conn: sqlite3.Connection, issue_id: str, depends_on: str, dep_type: 
     deps_mod.refresh_task(conn, issue_id)
     deps_mod.refresh_task(conn, depends_on)
     conn.commit()
+    if sync and dep_type in PARENT_TYPES:
+        sync_epic(conn, depends_on)
     return {"issue_id": issue_id, "depends_on": depends_on, "dep_type": dep_type,
             "requested_dep_type": dep_type, "suggested": False, "confirmed": False,
             "promoted": False, "created": not exists, "created_by": actor_key or created_by}
@@ -2534,6 +2636,8 @@ def remove_dep(conn: sqlite3.Connection, issue_id: str, depends_on: str,
     deps_mod.refresh_task(conn, issue_id)
     deps_mod.refresh_task(conn, depends_on)
     conn.commit()
+    if any(t in PARENT_TYPES for t in removed_types):
+        sync_epic(conn, depends_on)
     return {"removed": len(removed_types), "dep_types": removed_types}
 
 

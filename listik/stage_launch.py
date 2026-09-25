@@ -231,68 +231,6 @@ def is_swarm_task(conn: sqlite3.Connection, row) -> bool:
         return False
 
 
-def close_swarm_parent(conn: sqlite3.Connection, task_id: str) -> None:
-    """Если `task_id` — порция и все порции её родителя-роя закрыты — закрыть его.
-
-    Условие (docs/specs/swarm-stage-launch.md): у родителя режим роя, есть хотя
-    бы один ребёнок `done`, каждый ребёнок `parent-child` — `done` или
-    `cancelled`. Закрытие — `status=done`, `stage=done`, держатель снят,
-    `close_reason` «порции закрыты», журнал. Вердикт родителю не пишется.
-    Повторный вызов и родитель не-роем — no-op.
-    """
-    row = conn.execute(
-        "SELECT depends_on FROM deps WHERE issue_id = ? "
-        "AND dep_type IN ('parent-child','parent') LIMIT 1", (task_id,)).fetchone()
-    if row is None:
-        return
-    parent_id = row["depends_on"]
-    parent = conn.execute("SELECT * FROM tasks WHERE id = ?", (parent_id,)).fetchone()
-    if parent is None or parent["status"] in store.FINAL_STATUSES:
-        return
-    children = portions(conn, parent_id)
-    if not children:
-        return
-    statuses = [child["status"] for child in children]
-    if "done" not in statuses:
-        return
-    if any(status not in ("done", "cancelled") for status in statuses):
-        return
-    if not is_swarm_task(conn, parent):
-        return
-    store.update_task(conn, parent_id, actor=SWARM_ACTOR,
-                      status="done", stage="done", holder="",
-                      close_reason="порции закрыты",
-                      note="рой: все порции закрыты, родитель закрыт")
-    store.add_comment(conn, parent_id,
-                      "рой: все порции закрыты, родитель закрыт",
-                      author=SWARM_ACTOR, kind="journal")
-
-
-def note_portions_cancelled(conn: sqlite3.Connection, task_id: str) -> None:
-    """Последняя живая порция отменена — вопрос человеку на родителе-рое.
-
-    Вызывается из `update_task`, когда порция становится `cancelled`
-    (docs/specs/swarm-stage-launch.md): все дети `cancelled` и ни одного
-    `done` — родителя не закрывать и `s1-spec` заново не запускать. Родитель
-    не в режиме роя, уже закрыт или уже с вопросом — no-op.
-    """
-    row = conn.execute(
-        "SELECT depends_on FROM deps WHERE issue_id = ? "
-        "AND dep_type IN ('parent-child','parent') LIMIT 1", (task_id,)).fetchone()
-    if row is None:
-        return
-    parent = conn.execute("SELECT * FROM tasks WHERE id = ?",
-                          (row["depends_on"],)).fetchone()
-    if parent is None or parent["status"] in store.FINAL_STATUSES:
-        return
-    if parent["needs_owner"] or not is_swarm_task(conn, parent):
-        return
-    if not portions_cancelled_only(conn, parent):
-        return
-    store.set_needs_owner(conn, parent["id"], value=True, actor=SWARM_ACTOR,
-                          text="рой: все порции отменены, родитель не закрыт")
-
-
 # ------------------------------------------------------------------ ответ этапа
 
 def out_path_of(launch_log: str | None) -> Path | None:

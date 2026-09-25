@@ -123,6 +123,8 @@ class PortionFilesTests(LintCase):
         self.assertNotIn(tid, self.found("portion_files_without_cards"))
         store.update_task(self.conn, child, status="done")
         self.assertNotIn(tid, self.found("portion_files_without_cards"))
+        # Эпик закрылся сам (docs/API.md, «Эпик») — открываем руками, чтобы lint его видел.
+        store.update_task(self.conn, tid, status="open")
         self.archive(child)
         self.assertIn(tid, self.found("portion_files_without_cards"))
 
@@ -179,6 +181,9 @@ class StageBehindPortionsTests(LintCase):
             for _ in range(2):
                 store.update_task(self.conn, self.new(parent=parent, stage="s3-impl"),
                                   status="done")
+        # Эпик закрылся сам (docs/API.md, «Эпик») — возвращаем шаг, как он был.
+        for parent, stage in ((late, "s4-judge"), (early, "s2-review")):
+            store.update_task(self.conn, parent, status="open", stage=stage)
         found = self.found("stage_behind_portions")
         self.assertEqual(found[late][0]["details"],
                          {"parent_stage": "s4-judge", "children_done": True})

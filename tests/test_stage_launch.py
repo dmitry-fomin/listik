@@ -284,7 +284,7 @@ class SlicingTests(SwarmCase):
                           actor="agent:listik")
         task = self.task(parent)
         self.assertEqual(task["status"], "done")
-        self.assertEqual(task["close_reason"], "порции закрыты")
+        self.assertEqual(task["close_reason"], f"подзадачи закрыты: {child_a}, {child_b}")
 
     def test_parent_stays_open_without_done_portion(self) -> None:
         self.add_route()
@@ -298,16 +298,12 @@ class SlicingTests(SwarmCase):
         self.assertFalse(self.task(parent)["needs_owner"])
         store.update_task(self.conn, child_b, status="cancelled", stage="done",
                           actor="agent:listik")
-        # Ни одной done-порции — родитель не закрывается сам, на нём вопрос
-        # человеку, и рой его не запускает (portions_cancelled_only).
+        # Ни одной done-порции — эпик отменяется сам, без вопроса человеку
+        # (правило эпика, `store.sync_epic`).
         task = self.task(parent)
-        self.assertEqual(task["status"], "open")
-        self.assertTrue(task["needs_owner"])
-        self.assertTrue(task["portions_cancelled_only"])
-        self.assertFalse(task["has_portions"])
-        result = self.start_and_wait(parent)
-        self.assertEqual(result, {"launched": False, "reason": "sliced"})
-        self.assertIsNone(self.task(parent)["launched_by"])
+        self.assertEqual(task["status"], "cancelled")
+        self.assertTrue(task["close_reason"].startswith("подзадачи отменены:"))
+        self.assertFalse(task["needs_owner"])
 
 
 class HelpersTests(SwarmCase):

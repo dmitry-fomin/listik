@@ -632,7 +632,9 @@ def import_file(conn: sqlite3.Connection, path: str | Path, *, project: str | No
             if exists:
                 continue
             try:
-                store.add_dep(conn, tid, target, dep_type, created_by=dep_created_by, confirm=True)
+                # Импорт восстанавливает историю: эпик по подзадачам не пересчитываем.
+                store.add_dep(conn, tid, target, dep_type, created_by=dep_created_by,
+                              confirm=True, sync=False)
                 report["dependencies"] += 1
             except ValueError as exc:
                 _push_error(report, {"where": "dependency", "line": record["line"],

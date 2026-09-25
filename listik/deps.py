@@ -403,6 +403,14 @@ def expire_return_handoffs(conn: sqlite3.Connection, *, task_id: str | None = No
     return released
 
 
+def not_epic_with_children_sql(alias: str = "") -> str:
+    """SQL-условие «не эпик с детьми»: эпик в работу не берётся (docs/API.md, «Эпик»)."""
+    a = f"{alias}." if alias else ""
+    return (f"NOT ({a}issue_type = 'epic' AND EXISTS (SELECT 1 FROM deps ed "
+            f"JOIN tasks ec ON ec.id = ed.issue_id WHERE ed.depends_on = {a}id "
+            "AND ed.dep_type IN ('parent-child','parent')))")
+
+
 def ready_tasks(conn: sqlite3.Connection, *, project: str | None = None,
                 stage: str | None = None,
                 include_occupied: bool = False,
@@ -415,7 +423,8 @@ def ready_tasks(conn: sqlite3.Connection, *, project: str | None = None,
     from . import config as config_mod
     from . import store
     expire_return_handoffs(conn)
-    where = ["t.archived = 0", "t.status IN ('open','in_progress','review')"]
+    where = ["t.archived = 0", "t.status IN ('open','in_progress','review')",
+             not_epic_with_children_sql("t")]
     params: list = []
     owner_cfg = config_mod.load()
     if config_mod.is_server_mode(owner_cfg):
@@ -777,7 +786,8 @@ def waves(conn: sqlite3.Connection, *, project: str, stage: str | None = None) -
     order_sql = "priority ASC, created_at ASC, id ASC"
     where = ["archived = 0",
              f"status IN ({','.join('?' * len(OPEN_STATUSES))})",
-             "project = ?"]
+             "project = ?",
+             not_epic_with_children_sql("tasks")]
     params: list = [*OPEN_STATUSES, project]
     if stage is not None:
         where.append("stage = ?")

@@ -1299,10 +1299,16 @@ def handle(method: str, path: str, query: dict, body: dict, authed: bool = False
                     fence_mod.guard(conn, tid, fence, op=_guard_op, args=body,
                                     actor=body.get("actor") or owner, harness=body.get("harness"))
                 if action == "claim":
-                    out = store.claim(conn, tid, holder=need(body, "holder"),
-                                      harness=body.get("harness"), note=body.get("note"),
-                                      actor=body.get("actor"), as_owner=owner,
-                                      force=as_bool(body.get("force", False)))
+                    try:
+                        out = store.claim(conn, tid, holder=need(body, "holder"),
+                                          harness=body.get("harness"), note=body.get("note"),
+                                          actor=body.get("actor"), as_owner=owner,
+                                          force=as_bool(body.get("force", False)))
+                    except errors_mod.ListikError as exc:
+                        # Отказ эпику (`conflict`) — 409, как у `waves/apply`.
+                        if exc.code != errors_mod.CONFLICT:
+                            raise
+                        raise ApiError(409, exc.message, code=exc.code) from exc
                 elif action == "heartbeat":
                     out = store.heartbeat(conn, tid, holder=need(body, "holder"),
                                           note=body.get("note"), harness=body.get("harness"),

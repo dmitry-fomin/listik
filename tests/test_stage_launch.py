@@ -484,6 +484,75 @@ class AdoptPortionsTests(SwarmCase):
                           "WHERE id = ?", (parent,))
         self.conflict(parent)
 
+    # --- порция e: одна порция сливается в родителя
+
+    def single_portion_parent(self, *, stage: str | None = None) -> tuple[str, str, str]:
+        self.add_route()
+        parent = self.add_task(stage=stage)
+        step = self.tmp_path / f"{parent}.md"
+        step.write_text("# шаг\n", encoding="utf-8")
+        store.update_task(self.conn, parent, spec_path=str(step), actor="agent:t")
+        file = self.tmp_path / f"{parent}.a.md"
+        file.write_text("# a\n", encoding="utf-8")
+        kid = store.create_task(self.conn, title="порция a", project="proj",
+                                parent=parent, spec_path=str(file))["id"]
+        return parent, kid, str(file)
+
+    def assert_merged(self, parent: str, kid: str, file: str) -> None:
+        child = self.task(kid)
+        self.assertEqual(child["status"], "cancelled")
+        self.assertEqual(child["close_reason"], "слита в родителя")
+        types = [r[0] for r in self.conn.execute(
+            "SELECT dep_type FROM deps WHERE issue_id = ? AND depends_on = ?", (kid, parent))]
+        self.assertEqual(types, ["discovered-from"])
+        task = self.task(parent)
+        self.assertEqual(task["spec_path"], file)
+        self.assertEqual(task["stage"], "s3-impl")
+        self.assertNotEqual(task["issue_type"], "epic")
+        self.assertFalse(task["has_portions"])
+        self.assertFalse(task["review_path"])
+        self.assertFalse(task["holder"])
+        journal = self.comments(parent, "journal")
+        self.assertIn(f"ТЗ шага: {self.tmp_path / f'{parent}.md'}", journal)
+        self.assertIn("одна порция a — ведёт сам родитель", journal)
+
+    def test_single_portion_gotovo_merges(self) -> None:
+        parent, kid, file = self.single_portion_parent()
+        self.fake_finish(parent, "s1-spec", "готово")
+        self.assert_merged(parent, kid, file)
+        self.assertFalse(self.task(parent)["needs_owner"])
+
+    def test_single_portion_adopt_merges(self) -> None:
+        parent, kid, file = self.single_portion_parent(stage="s1-spec")
+        store.set_needs_owner(self.conn, parent, value=True, actor="agent:listik",
+                              text="рой: исход s1-spec не засчитан")
+        out = stage_launch.adopt_portions(self.conn, parent, actor="agent:t")
+        self.assertTrue(out["merged"])
+        self.assertEqual(out["adopted"], [])
+        self.assertEqual(out["stage"], "s3-impl")
+        self.assert_merged(parent, kid, file)
+        self.assertFalse(self.task(parent)["needs_owner"])
+
+    def test_single_started_portion_slices_as_before(self) -> None:
+        parent, kid, _file = self.single_portion_parent()
+        store.update_task(self.conn, kid, stage="s1-spec", actor="agent:t")
+        self.fake_finish(parent, "s1-spec", "готово")
+        task = self.task(parent)
+        self.assertEqual(task["stage"], "s1-spec")
+        self.assertTrue(task["has_portions"])
+        self.assertEqual(self.task(kid)["status"], "open")
+        self.assertTrue(any("нарезано" in t for t in self.comments(parent)))
+
+    def test_adopt_two_portions_not_merged(self) -> None:
+        parent, a, b = self.stuck_parent()
+        for kid, letter in ((a, "a"), (b, "b")):
+            file = self.tmp_path / f"{parent}.{letter}.md"
+            file.write_text("# x\n", encoding="utf-8")
+            store.update_task(self.conn, kid, spec_path=str(file), actor="agent:t")
+        out = stage_launch.adopt_portions(self.conn, parent, actor="agent:t")
+        self.assertFalse(out["merged"])
+        self.assertEqual(out["adopted"], [a, b])
+
     def spec_only_parent(self) -> str:
         self.add_route({"spec": {"harness": "probe"}}, key="spec-only")
         parent = self.add_task(route="spec-only", stage="s1-spec")

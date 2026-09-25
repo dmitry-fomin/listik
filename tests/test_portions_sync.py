@@ -131,6 +131,83 @@ class SyncTests(TempDbTestCase):
         self.assertEqual(store.sync_portions(self.conn, self.sid)["unchanged"], data["created"])
 
 
+class SinglePortionSyncTests(TempDbTestCase):
+    """listik-zr05, порция e: один файл порции — карточку не заводим."""
+
+    def setUp(self) -> None:
+        super().setUp()
+        self.sid = make_step(self.conn, self.tmp_path, portions=False)
+        self.file = str(self.tmp_path / f"{self.sid}.a.md")
+        self.check = str(self.tmp_path / f"{self.sid}.check-a.md")
+        pathlib.Path(self.file).write_text("# Порция a: единственная\n", encoding="utf-8")
+        pathlib.Path(self.check).write_text("# чек-лист a\n", encoding="utf-8")
+
+    def journal(self) -> list[str]:
+        return [r[0] for r in self.conn.execute(
+            "SELECT text FROM comments WHERE task_id = ? AND kind = 'journal'", (self.sid,))]
+
+    def counts(self) -> tuple[int, ...]:
+        return tuple(self.conn.execute(f"SELECT count(*) FROM {t}").fetchone()[0]
+                     for t in ("tasks", "deps", "events", "comments"))
+
+    def test_single_file_no_card(self) -> None:
+        tasks_before = self.counts()[0]
+        res = store.sync_portions(self.conn, self.sid, actor="agent:t")
+        self.assertTrue(res["merged"])
+        self.assertEqual((res["created"], res["updated"], res["unchanged"], res["linked"]),
+                         ([], [], [], []))
+        self.assertEqual(res["portions"], [{"letter": "a", "file": self.file,
+                                            "checklist": self.check, "id": self.sid,
+                                            "title": "Порция a: единственная"}])
+        self.assertEqual(self.counts()[0], tasks_before)
+        task = store.get_task(self.conn, self.sid)
+        self.assertEqual(task["spec_path"], self.file)
+        self.assertEqual(task["checklist_path"], self.check)
+        self.assertFalse(task["review_path"])
+        self.assertNotEqual(task["issue_type"], "epic")
+        journal = self.journal()
+        self.assertIn(f"ТЗ шага: {self.tmp_path / f'{self.sid}.md'}", journal)
+        self.assertIn("одна порция a — ведёт сам родитель", journal)
+
+        before = self.counts()
+        again = store.sync_portions(self.conn, self.sid, actor="agent:t")
+        self.assertTrue(again["merged"])
+        self.assertEqual(self.counts(), before)
+
+    def test_single_file_lint_clean_after_merge(self) -> None:
+        rule = "portion_files_without_cards"
+        rules = lambda: [i["rule"] for i in store.lint(self.conn, "p")["items"]]  # noqa: E731
+        self.assertIn(rule, rules())
+        store.sync_portions(self.conn, self.sid, actor="agent:t")
+        self.assertNotIn(rule, rules())
+
+    def test_single_file_inherits_child_scope(self) -> None:
+        kid = store.create_task(self.conn, title="порция a", parent=self.sid)["id"]
+        store.update_task(self.conn, kid, write_scope=["src/x.py"], actor="agent:t")
+        store.sync_portions(self.conn, self.sid, actor="agent:t")
+        self.assertEqual(store.get_task(self.conn, self.sid)["write_scope"], ["src/x.py"])
+
+    def test_single_file_existing_child_merged(self) -> None:
+        kid = store.create_task(self.conn, title="порция a", parent=self.sid,
+                                spec_path=self.file)["id"]
+        self.assertEqual(store.get_task(self.conn, self.sid)["issue_type"], "epic")
+        res = store.sync_portions(self.conn, self.sid, actor="agent:t")
+        self.assertTrue(res["merged"])
+        child = store.get_task(self.conn, kid)
+        self.assertEqual(child["status"], "cancelled")
+        self.assertEqual(child["close_reason"], "слита в родителя")
+        types = [r[0] for r in self.conn.execute(
+            "SELECT dep_type FROM deps WHERE issue_id = ? AND depends_on = ?", (kid, self.sid))]
+        self.assertEqual(types, ["discovered-from"])
+        parent = store.get_task(self.conn, self.sid)
+        self.assertNotEqual(parent["issue_type"], "epic")
+        self.assertFalse(parent["has_portions"])
+        self.assertEqual(parent["status"], "open")
+        before = self.counts()
+        store.sync_portions(self.conn, self.sid, actor="agent:t")
+        self.assertEqual(self.counts(), before)
+
+
 class SyncHttpTests(unittest.TestCase):
     def setUp(self) -> None:
         self._saved_paths = (paths.DB_PATH, paths.CONFIG_PATH)

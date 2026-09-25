@@ -234,6 +234,60 @@ def _slice_parent(conn: sqlite3.Connection, task_id: str, record: dict,
                       created_by=SWARM_ACTOR, confirm=True)
 
 
+def merge_single_portion(conn: sqlite3.Connection, parent_id: str, *, file: str,
+                         checklist: str | None = None, child_id: str | None = None,
+                         actor: str | None = None, harness: str | None = None) -> None:
+    """Одна порция — дочерней карточки нет, путь `s1→s4` проходит сам родитель
+    (listik-zr05, порция e): его `spec_path` — файл порции, ребёнок (если был)
+    переводится на `discovered-from` и отменяется. Идемпотентна."""
+    row = store_helpers.task_row(conn, parent_id)
+    old = (row["spec_path"] or "").strip()
+    same = bool(old) and os.path.realpath(old) == os.path.realpath(file)
+    child = None
+    if child_id:
+        child = next((c for c in store.child_cards(conn, parent_id)
+                      if c["id"] == child_id), None)
+    if same and child is None:
+        return
+    base = store.project_path(conn, row["project"])
+    fields = {"spec_path": file}
+    if checklist and _abs_path(base, checklist).is_file():
+        fields["checklist_path"] = checklist
+    if child is not None and not store_helpers.json_list(row["write_scope"]):
+        child_scope = conn.execute("SELECT write_scope FROM tasks WHERE id = ?",
+                                   (child["id"],)).fetchone()["write_scope"]
+        if store_helpers.json_list(child_scope):
+            fields["write_scope"] = store_helpers.json_list(child_scope)
+    match = re.match(rf"^{re.escape(parent_id)}\.([a-z])\.md$", os.path.basename(file))
+    letter = match.group(1) if match else os.path.basename(file)
+    store.update_task(conn, parent_id, actor=actor, harness=harness,
+                      note=f"одна порция {letter}", **fields)
+    if old and not same:
+        store.add_comment(conn, parent_id, f"ТЗ шага: {old}", author=actor,
+                          harness=harness, kind="journal")
+    store.add_comment(conn, parent_id, f"одна порция {letter} — ведёт сам родитель",
+                      author=actor, harness=harness, kind="journal")
+    if child is None:
+        return
+    # Сначала связь: `sync_epic` вернёт тип родителя до отмены ребёнка.
+    for dep_type in _PARENT_TYPES:
+        store.remove_dep(conn, child["id"], parent_id, dep_type)
+    store.add_dep(conn, child["id"], parent_id, "discovered-from", created_by=actor)
+    if child["status"] not in store.FINAL_STATUSES:
+        store.update_task(conn, child["id"], actor=actor, harness=harness,
+                          status="cancelled", close_reason="слита в родителя",
+                          note=f"одна порция: слита в {parent_id}")
+
+
+def _single_fresh(conn: sqlite3.Connection, children: list):
+    """Единственная порция, не начатая и с `spec_path`, — её сливают в родителя."""
+    if len(children) != 1 or _started(children[0]):
+        return None
+    row = conn.execute("SELECT id, spec_path, checklist_path FROM tasks WHERE id = ?",
+                       (children[0]["id"],)).fetchone()
+    return row if (row["spec_path"] or "").strip() else None
+
+
 def is_swarm_task(conn: sqlite3.Connection, row) -> bool:
     """Карточка едет роем: снимок `launch_driver`, а до первого запуска — живой
     `driver` её маршрута."""
@@ -351,10 +405,16 @@ def apply_outcome(conn: sqlite3.Connection, task_id: str, *, notify=None) -> Non
         if first == "готово" and first in allowed:
             children = portions(conn, task_id)
             if stage == "s1-spec" and role == "spec" and children:
-                _clear_holder(conn, task_id, "рой: нарезка, держатель снят")
-                _slice_parent(conn, task_id, record or {"key": route_key,
-                                                      "roles": {}}, children)
-                return
+                single = _single_fresh(conn, children)
+                if single is None:
+                    _clear_holder(conn, task_id, "рой: нарезка, держатель снят")
+                    _slice_parent(conn, task_id, record or {"key": route_key,
+                                                          "roles": {}}, children)
+                    return
+                # Одна не начатая порция — её ведёт сам родитель, дальше как без нарезки.
+                merge_single_portion(conn, task_id, file=single["spec_path"],
+                                     checklist=single["checklist_path"],
+                                     child_id=single["id"], actor=SWARM_ACTOR)
             nxt = next_stage_with_role(conn, record or {}, stage) if record else None
             if nxt is not None:
                 # Одним next_stage: handoff снимает держателя сам, а sticky
@@ -747,6 +807,31 @@ def adopt_portions(conn: sqlite3.Connection, task_id: str, *, actor: str | None 
         raise _conflict(f"маршрута {route_key or '—'} нет в базе",
                         f"задай маршрут: listik set {task_id} route=<ключ>")
     before = portions(conn, task_id)
+    single = _single_fresh(conn, before)
+    if single is not None:
+        merge_single_portion(conn, task_id, file=single["spec_path"],
+                             checklist=single["checklist_path"], child_id=single["id"],
+                             actor=actor, harness=harness)
+        stage = next_stage_with_role(conn, record, "s1-spec")
+        if stage is not None:
+            store.next_stage(conn, task_id, to_stage=stage, actor=actor, harness=harness,
+                             note=f"одна порция слита, этап s1-spec → {stage}")
+            _clear_holder(conn, task_id, "рой: одна порция слита, держатель снят")
+            if conn.execute("SELECT needs_owner FROM tasks WHERE id = ?",
+                            (task_id,)).fetchone()["needs_owner"]:
+                store.set_needs_owner(conn, task_id, value=False, actor=actor,
+                                      harness=harness,
+                                      text="порция слита в родителя: listik portions adopt")
+        else:
+            _clear_holder(conn, task_id, "рой: роли кончились, держатель снят")
+            store.set_needs_owner(
+                conn, task_id, value=True, actor=SWARM_ACTOR,
+                text="рой: после s1-spec роли нет, карточку не закрываю. "
+                     "Сними флаг — запущу тот же этап снова.")
+        conn.commit()
+        out = store.get_task(conn, task_id)
+        out.update(adopted=[], stage=stage, merged=True)
+        return out
     fresh = [c["id"] for c in before if not _started(c)]
     if not fresh:
         raise _conflict(f"у задачи {task_id} нет не начатых порций",
@@ -761,5 +846,5 @@ def adopt_portions(conn: sqlite3.Connection, task_id: str, *, actor: str | None 
                               text="порции приняты: listik portions adopt")
     conn.commit()
     out = store.get_task(conn, task_id)
-    out.update(adopted=adopted, stage=stage)
+    out.update(adopted=adopted, stage=stage, merged=False)
     return out

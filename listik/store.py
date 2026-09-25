@@ -1797,7 +1797,9 @@ def sync_portions(conn: sqlite3.Connection, task_id: str, *, actor: str | None =
 
     Идемпотентна: нет карточки — создаёт дочернюю, есть — дописывает только пустые
     `spec_path`/`checklist_path`; соседние по букве порции связывает жёстко
-    `cur blocks prev`. Ничего не удаляет и не меняет этапы/статусы/держателей."""
+    `cur blocks prev`. Ничего не удаляет и не меняет этапы/статусы/держателей.
+    Ровно один файл — карточку не заводит: `stage_launch.merge_single_portion`
+    (ответ с `merged: true`)."""
     row = store_helpers.task_row(conn, task_id)
     spec = (row["spec_path"] or "").strip()
     if not spec:
@@ -1810,6 +1812,26 @@ def sync_portions(conn: sqlite3.Connection, task_id: str, *, actor: str | None =
 
     from . import documents
     children = child_cards(conn, task_id)
+    if len(letters) == 1:
+        # Одна порция — карточку не заводим, её ведёт сам шаг (listik-zr05, порция e).
+        from . import stage_launch
+        letter = letters[0]
+        file = os.path.join(steps_dir, f"{task_id}.{letter}.md")
+        check = os.path.join(steps_dir, f"{task_id}.check-{letter}.md")
+        check = check if os.path.isfile(check) else None
+        real = os.path.realpath(file)
+        child = next((c for c in children if (c.get("spec_path") or "").strip()
+                      and os.path.realpath(c["spec_path"]) == real), None)
+        if child is None:
+            child = documents.match_portion_child(children, letter)
+        stage_launch.merge_single_portion(conn, task_id, file=file, checklist=check,
+                                          child_id=child["id"] if child else None,
+                                          actor=actor, harness=harness)
+        conn.commit()
+        return {"id": task_id, "steps_dir": steps_dir, "created": [], "updated": [],
+                "unchanged": [], "linked": [], "merged": True,
+                "portions": [{"letter": letter, "file": file, "checklist": check,
+                              "id": task_id, "title": _portion_title(file, letter)}]}
     taken: set[str] = set()
     created: list[str] = []
     updated: list[str] = []
@@ -1870,7 +1892,7 @@ def sync_portions(conn: sqlite3.Connection, task_id: str, *, actor: str | None =
                    f"связано {len(linked)}")
         conn.commit()
     return {"id": task_id, "steps_dir": steps_dir, "created": created, "updated": updated,
-            "unchanged": unchanged, "linked": linked, "portions": portions}
+            "unchanged": unchanged, "linked": linked, "portions": portions, "merged": False}
 
 
 def list_tasks(conn: sqlite3.Connection, *, project: str | None = None, status: str | None = None,
@@ -2764,7 +2786,10 @@ def lint(conn: sqlite3.Connection, project: str | None, *,
             spec = (t["spec_path"] or "").strip()
             steps_dir = os.path.dirname(spec) if spec else project_steps
             pattern = re.compile(rf"^{re.escape(t['id'])}\.([a-z])\.md$")
-            files = [f for f in _lint_steps_files(listing, steps_dir) if pattern.match(f)]
+            # Файл, на который указывает `spec_path` шага, — слитая одна порция (listik-zr05).
+            own = os.path.realpath(spec) if spec else None
+            files = [f for f in _lint_steps_files(listing, steps_dir) if pattern.match(f)
+                     and os.path.realpath(os.path.join(steps_dir, f)) != own]
             if files:
                 add(t, "portion_files_without_cards",
                     f"файлы порций без карточек: {', '.join(files)}",

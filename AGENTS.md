@@ -7,7 +7,7 @@
 Полный контракт данных — `docs/API.md`, ежедневные команды — `README.md`.
 
 <!-- BEGIN LISTIK -->
-<!-- listik-protocol: 2 -->
+<!-- listik-protocol: 3 -->
 
 ## Listik — harness protocol
 
@@ -92,8 +92,9 @@ this process's work is stale.
 ### Stages
 
 **s1-spec** — read `show`, `context <id> --stage s1-spec`, existing `spec_path`. Write the Markdown
-spec, acceptance checklist, one child card per portion (`new "…порция b" --parent <id шага>
---spec … --checklist … --review …`), soft links (`dep link`/`relates-to`). `dep add <portion>
+spec, acceptance checklist; two or more portions — one child card per portion (`new "…порция b"
+--parent <id шага> --spec … --checklist … --review …`); a single portion — no child card, the
+task itself carries it; soft links (`dep link`/`relates-to`). `dep add <portion>
 <blocker>` from an agent is only a suggestion; the human confirms with `dep confirm`. Never use
 `--confirm`. Next: `stage` → `s2-review` (sticky).
 

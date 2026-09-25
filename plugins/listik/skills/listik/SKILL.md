@@ -72,7 +72,7 @@ Listik — общая очередь задач и журнал работы д�
 
 | Этап | Что читать | Что менять | Переход |
 |---|---|---|---|
-| `s1-spec` | `show`, `L context <id> --stage s1-spec`, `spec_path` | ТЗ и чек-лист (файлы), порции — дочерние карточки: `L new "…порция b" --parent <id шага> --spec … --checklist … --review …` | `stage` → s2, **sticky**: держатель остаётся |
+| `s1-spec` | `show`, `L context <id> --stage s1-spec`, `spec_path` | ТЗ и чек-лист (файлы); две порции и больше — по дочерней карточке на каждую: `L new "…порция b" --parent <id шага> --spec … --checklist … --review …`; одна порция — карточку не заводить, её ведёт сама задача | `stage` → s2, **sticky**: держатель остаётся |
 | `s2-review` | `L context <id> --stage s2-review` | ничего, кроме `comment -k review` | `stage` → s3, **handoff**: держатель снимается |
 | `s3-impl` | `L context <id> --stage s3-impl --portion "<порция>"` и `show` (ответы, прошлый вердикт) | первым действием `claim --holder <себя>` и `heartbeat` каждые 10–15 мин; код в `worktree`/`branch` карточки, проверки, `-k journal` | `stage` → s4, **sticky**; не коммитить |
 | `s4-judge` | `L context <id> --stage s4-judge`, чек-лист, дифф | судья сам берёт задачу (`claim --holder <себя>`) и сам пишет `comment -k verdict`; код не править | `VERDICT: PASS` — коммит и `done`; `VERDICT: FAIL` — сервер сам вернёт на s3 |

@@ -14,6 +14,7 @@ from pathlib import Path
 from . import actors as actors_mod
 from . import errors as errors_mod
 from . import harnesses_store
+from . import paths
 from . import store
 from . import store_helpers
 
@@ -75,14 +76,102 @@ def _cell_prompt(cell: dict) -> str:
     `SWARM_PROMPT` (протокол ответа последней строкой). `prompt` харнесса не наследуем:
     это текст прямой выдачи — он велит самому делать claim/stage/done, чего
     харнесс роя делать не должен (docs/specs/swarm-stage-launch.md)."""
+    return _own_prompt(cell) or harnesses_store.SWARM_PROMPT
+
+
+def _own_prompt(cell: dict) -> str | None:
+    """Свой непустой `prompt` ячейки, иначе None."""
     prompt = cell.get("prompt")
-    if isinstance(prompt, str) and prompt.strip():
-        return prompt
-    return harnesses_store.SWARM_PROMPT
+    return prompt if isinstance(prompt, str) and prompt.strip() else None
+
+
+#: Каталог агентов конвейера: из них берутся критерии роли. Читается в момент вызова —
+#: тесты подменяют его своим каталогом.
+AGENTS_DIR = paths.ROOT_DIR / "plugins" / "feature-pipeline" / "agents"
+
+#: Роль → (файл агента, заголовки его разделов по порядку, без `## `).
+ROLE_AGENTS: dict[str, tuple[str, tuple[str, ...]]] = {
+    "spec": ("pipeline-spec-writer.md",
+             ("Вопрос автору — это остановка, а не абзац в отчёте",
+              "Что тебе запрещено", "Файлы")),
+    "critic": ("pipeline-critic.md", ("Что ты смотришь", "Что тебе запрещено")),
+    "impl": ("pipeline-implementer.md",
+             ("Порядок работы", "Что тебе запрещено", "Если не получается")),
+    "judge": ("pipeline-judge.md",
+              ("Что тебе запрещено", "Работа", "Коммит при зелёном вердикте")),
+}
+
+_ROLE_BRIDGE = (
+    "Критерии роли {role} — разделы агента {stem} (plugins/feature-pipeline/agents/{name}). "
+    "Где они расходятся с протоколом выше, действует протокол: ответ — последняя строка "
+    "вывода, а не первая строка отчёта; claim, heartbeat, release, stage, needs-owner и "
+    "вердикт (-k verdict) ты не делаешь — карточку ведёт Listik; оркестратора и дампов "
+    "диффа нет, всё нужное — в listik context."
+)
+
+_ROLE_NOTES = {
+    "spec": "Обозначения в тексте агента: `<steps>` — каталог spec_path карточки (spec_path "
+            "пуст — docs/specs/steps в рабочем дереве), `<id>` — id задачи, рабочее дерево — "
+            "из протокола выше.",
+    "critic": "Замечания кладёшь не файлом, а одним комментарием в карточку: `listik comment "
+              "<id задачи> \"<замечания>\" -k review`, тремя разделами — блокирующие, "
+              "существенные, заметки.",
+    "judge": "Красные пункты пиши строками над последней строкой «красный» — Listik переносит "
+             "их в VERDICT: FAIL дословно. При зелёном коммит делаешь ты, до ответа «зелёный».",
+}
+
+_ANSWER_LINE = "Последняя строка вывода — одно слово: «готово», «вопрос» или «не смог»."
+_JUDGE_ANSWER_LINE = ("Последняя строка вывода — одно слово: «зелёный», «красный», «вопрос» "
+                      "или «не смог».")
+
+
+class CriteriaError(Exception):
+    """Критериев роли нет: нет файла агента или его раздела. Это не «роли нет»."""
+
+
+def role_criteria(role: str) -> str:
+    """Разделы агента роли (`ROLE_AGENTS`) по порядку, через одну пустую строку.
+
+    Раздел — строка `## <заголовок>` (хвостовые пробелы не считаются) и всё до
+    следующей строки на `## ` или конца файла; `### ` раздел не обрывает, пустые
+    строки в конце раздела отбрасываются.
+    """
+    name, titles = ROLE_AGENTS[role]
+    path = Path(AGENTS_DIR) / name
+    try:
+        lines = path.read_text(encoding="utf-8").splitlines()
+    except FileNotFoundError:
+        raise CriteriaError(f"нет файла {path.absolute()}") from None
+    sections = []
+    for title in titles:
+        head = f"## {title}"
+        start = next((i for i, line in enumerate(lines) if line.rstrip() == head), None)
+        if start is None:
+            raise CriteriaError(f"в {name} нет раздела «{title}»")
+        end = next((i for i in range(start + 1, len(lines))
+                    if lines[i].startswith("## ")), len(lines))
+        body = lines[start:end]
+        while body and not body[-1].strip():
+            body.pop()
+        sections.append("\n".join(body))
+    return "\n\n".join(sections)
+
+
+def role_tail(role: str) -> str:
+    """Блоки промпта роли после протокола: связка, строка роли (spec/critic/judge),
+    критерии агента и строка ответа. Подстановки к ним не применяются."""
+    name, _ = ROLE_AGENTS[role]
+    blocks = [_ROLE_BRIDGE.format(role=role, stem=name.removesuffix(".md"), name=name)]
+    if role in _ROLE_NOTES:
+        blocks.append(_ROLE_NOTES[role])
+    blocks.append(role_criteria(role))
+    blocks.append(_JUDGE_ANSWER_LINE if role == "judge" else _ANSWER_LINE)
+    return "\n\n".join(blocks)
 
 
 def resolve_role(conn: sqlite3.Connection, record: dict, role: str | None) -> dict | None:
-    """Роль этапа в виде `{role, harness, argv, prompt}`; None — роли нет.
+    """Роль этапа в виде `{role, harness, argv, prompt, own_prompt}`; None — роли нет.
+    `own_prompt` — у ячейки свой промпт: критерии агента лаунчер к нему не дописывает.
 
     Роль есть, когда у ячейки задан `harness` и находится команда: свой argv
     (`argv` у `kind=swarm`, `command` у конвейера с `driver=swarm`) или argv
@@ -103,7 +192,8 @@ def resolve_role(conn: sqlite3.Connection, record: dict, role: str | None) -> di
     if not argv:
         return None
     return {"role": role, "harness": harness, "argv": list(argv),
-            "prompt": _cell_prompt(cell)}
+            "prompt": _cell_prompt(cell),
+            "own_prompt": _own_prompt(cell) is not None}
 
 
 def next_stage_with_role(conn: sqlite3.Connection, record: dict,

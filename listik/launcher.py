@@ -504,6 +504,17 @@ def _start_swarm(conn, task_id: str, row, record: dict, *, notify, log_dir,
 
     harness = resolved["harness"]
 
+    # Без своего промпта ячейки роль получает критерии своего агента; нет файла или
+    # раздела — отказ до `claim` и поиска каталога, процесс не поднимаем.
+    tail = None
+    if not resolved.get("own_prompt"):
+        try:
+            tail = stage_launch.role_tail(role)
+        except stage_launch.CriteriaError as exc:
+            return _swarm_refuse(conn, task_id,
+                                 f"рой: нет критериев роли {role} (этап {stage}): {exc}",
+                                 notify)
+
     # Каталог запуска ищется до `claim`: без рабочего каталога держателя не
     # ставим и процесс не поднимаем (порядок шагов спеки).
     cwd = _workdir(conn, row)
@@ -547,6 +558,8 @@ def _start_swarm(conn, task_id: str, row, record: dict, *, notify, log_dir,
               "stage": stage, "role": role or "", "harness": harness}
     argv = [_substitute(element, values) for element in resolved["argv"]]
     prompt = _substitute(resolved["prompt"], values) if resolved.get("prompt") else None
+    if prompt is not None and tail is not None:
+        prompt = f"{prompt}\n\n{tail}"  # критерии — без подстановок
     if prompt is not None and stage == "s3-impl":
         # Возврат с приёмки: правки красного вердикта — первым блоком промпта, а не
         # только в `context` (listik-po5v: исполнитель прогонял чек-лист, пункт — нет).

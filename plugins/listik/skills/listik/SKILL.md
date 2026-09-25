@@ -44,8 +44,8 @@ Listik — общая очередь задач и журнал работы д�
 
 Исключение — этап делает субагент твоей же сессии (роль с `"provider": "claude"`): выдай карточку себе (`L stage <id> --to <этап> --holder claude`), сделай `L claim <id> --holder claude` и держи `L heartbeat <id> --holder claude`, пока субагент работает. Иначе карточка останется без держателя.
 
-1. **Найти.** Slug проекта — по карточке или `L projects`. Дальше
-   `L ready --project <slug> --harness claude`, `L search "суть" --project <slug>`, `L show <id>`, `L list --project <slug>`. Всю очередь без `--project` — только по явной просьбе. Не бери задачу, которой нет в `ready`.
+1. **Найти.** Проект определяется сам по рабочему каталогу: `ready`, `list`, `search`, `board`, `new` и др. без `--project` работают по проекту из cwd (в stderr — `# проект определён по каталогу`). `L projects` для этого не зови — он отдаёт все проекты. Каталог не распознан — slug бери из карточки или спроси. Дальше
+   `L ready --project <slug> --harness claude`, `L search "суть" --project <slug>`, `L show <id>`, `L list --project <slug>`. Всю очередь (`--project all`) — только по явной просьбе. Не бери задачу, которой нет в `ready`.
 
    **«Что висит на проекте» — отвечай по полной выдаче:** `L list --project <slug> --limit 200 --json`, незакрытое — всё, у чего `status` не `done` и не `cancelled`. `L list` без `--limit` урезает список, `L ready` не показывает задачи с держателем или блокером. Сверься с числом, прежде чем называть его.
    

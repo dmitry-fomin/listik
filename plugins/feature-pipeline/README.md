@@ -28,10 +28,10 @@
 
 | Агент | Модель / effort | Роль | Где используется (перебивка model) |
 | --- | --- | --- | --- |
-| `pipeline-spec-writer` | fable / high | ТЗ шага, порции, чек-листы; только каталог шагов, неясное — вопросом автору | `universal-pipeline`; `high-pipeline` — **`model: opus`** |
-| `pipeline-spec-writer-xhigh` | fable / xhigh | то же | `xhigh-pipeline` — **`model: opus`** |
-| `pipeline-spec-writer-medium` | fable / medium | то же | `medium-pipeline` — **`model: opus`** |
-| `pipeline-spec-writer-low` | fable / low | то же | `low-pipeline` — **`model: opus`** |
+| `pipeline-spec-writer` | opus / high | ТЗ шага, порции, чек-листы; только каталог шагов, неясное — вопросом автору | `universal-pipeline`; `high-pipeline` — **`model: opus`** |
+| `pipeline-spec-writer-xhigh` | opus / xhigh | то же | `xhigh-pipeline` — **`model: opus`** |
+| `pipeline-spec-writer-medium` | opus / medium | то же | `medium-pipeline` — **`model: opus`** |
+| `pipeline-spec-writer-low` | opus / low | то же | `low-pipeline` — **`model: opus`** |
 | `pipeline-critic` | opus / high | критика ТЗ и чек-листа до реализации, репозиторий только на чтение, ничего не правит | не зовётся ни одним скилом |
 | `pipeline-implementer` | sonnet / medium | реализует одну порцию, не коммитит | `universal-pipeline`; `medium-pipeline` — **`model: opus`** |
 | `pipeline-implementer-high` | sonnet / high | то же для неочевидных порций | `high-pipeline` — **`model: opus`** |

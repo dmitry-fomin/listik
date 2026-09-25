@@ -29,14 +29,14 @@ license: MIT
 
 | Этап | Кто | Модель и усилие | Первая строка отчёта |
 | --- | --- | --- | --- |
-| 1. ТЗ и чек-листы | субагент `feature-pipeline:pipeline-spec-writer` | **`model: opus` в вызове** (frontmatter — Fable, effort high) → Opus high | `готово` или `вопрос` |
+| 1. ТЗ и чек-листы | субагент `feature-pipeline:pipeline-spec-writer` | **`model: opus` в вызове** (frontmatter — opus, effort high) → Opus high | `готово` или `вопрос` |
 | 2. Критика ТЗ | скил `second-opinion:ask`, провайдер `glm` | `z-ai/glm-5.3-flash` | файл замечаний с разделами «Блокирующие» и «Существенные» |
 | 3. Реализация | субагент `feature-pipeline:pipeline-implementer-high` | **`model: opus` в вызове** (frontmatter — Sonnet, effort high) → Opus high | `готово`, `не смог` или `вопрос` |
 | 4. Приёмка и коммит | `/grok:delegate`, фоновой задачей | `--model grok-4.7 --effort xhigh` | `зелёный` с хешем или `красный` |
 
 Оба Claude-субагента **перебивают параметром `model: opus` в вызове**: у автора ТЗ во frontmatter
-`fable` + `high`, у исполнителя — `sonnet` + `high`. `model` перебивает frontmatter, усилие остаётся
-из него — так и получается Opus high на обоих этапах. Забудешь `model` — ТЗ напишет Fable, код —
+`opus` + `high`, у исполнителя — `sonnet` + `high`. `model` перебивает frontmatter, усилие остаётся
+из него — так и получается Opus high на обоих этапах. Забудешь `model` — код напишет
 Sonnet, то есть уже другой пресет. Усилие меняется только сменой агента.
 
 ## Нужные скилы
@@ -224,7 +224,6 @@ Job id из ответа `/grok:delegate` — в журнал и в `JOB=`. Ве
 
 | Симптом | Причина | Что делать |
 | --- | --- | --- |
-| ТЗ написано Fable, а не Opus | забыт `model: opus` у автора ТЗ | у `pipeline-spec-writer` во frontmatter `fable` — `model: opus` в каждом запуске и в режиме правки |
 | Код написан Sonnet вместо Opus | забыт `model: opus` у исполнителя | у `pipeline-implementer-high` во frontmatter `sonnet` — `model: opus` в каждом запуске и повторе |
 | Судья упал с 402, порция повисла | баланс Grok Build исчерпан | предполётный прогон судьи до этапа 1; 402 по ходу — вопрос автору, порция не закрывается |
 | Фоновая задача не находится по статусу | статус или забор вызваны из другого каталога, чем запуск | тот же каталог во всех вызовах; ход — `/grok:status` и `/grok:result` |

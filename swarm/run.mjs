@@ -2,8 +2,8 @@
 // действия, свести итог. Без состояния между тиками — всё читается заново.
 import path from "node:path";
 import fs from "node:fs";
-import {decide, portOf, allocatePort, isRunning, OPEN_STATUSES, dueDefaults, restartCauseRu} from "./decide.mjs";
-import {runBarrier, haltCards} from "./barrier.mjs";
+import {decide, swarmPlan, swarmTasks, portOf, allocatePort, isRunning, OPEN_STATUSES, dueDefaults, restartCauseRu} from "./decide.mjs";
+import {runBarrier, haltCards, HALT_LABEL} from "./barrier.mjs";
 import {ConfigError, parseSwarmConfig, swarmConfigFor, DEFAULT_QUESTION_TIMEOUT} from "./config.mjs";
 import {limitText, rollbackVerdict} from "./rollback.mjs";
 import * as git from "./git.mjs";
@@ -59,10 +59,19 @@ export async function tick(listik, config, log, runState = null) {
   };
   let plan = await listik.waves(config.project, {apply: !config.dryRun});
   logWavesApply(plan);
+  // Карточки не роя (без маршрута или с маршрутом не из роя) рой не видит вовсе:
+  // ни надзор, ни барьер, ни автоответы, ни волны их не трогают.
   const listRes = await listik.list(config.project);
-  let tasks = listRes.tasks || [];
   const routesRes = await listik.routes();
   const routes = routesRes.routes || [];
+  // Порты — по меткам всех карточек проекта: чужой занятый порт рой не выдаёт.
+  let allTasks = listRes.tasks || [];
+  // Стоп-карточка роя (`swarm:halt`) без маршрута — её тоже видим, иначе гейт держится один тик.
+  const ours = list => {
+    const swarm = new Set(swarmTasks(list, routes));
+    return list.filter(t => swarm.has(t) || (t.labels || []).includes(HALT_LABEL));
+  };
+  let tasks = ours(allTasks);
 
   const events = {};
   for (const t of tasks) {
@@ -81,7 +90,7 @@ export async function tick(listik, config, log, runState = null) {
   let rescopeResult = null;
   let questionTimeout = DEFAULT_QUESTION_TIMEOUT;
   const rollbacks = [];
-  const cyclesPending = !!(plan.cycles && plan.cycles.length);
+  const cyclesPending = !!swarmPlan(plan, tasks, routes).cycles.length;
 
   if (!cyclesPending) {
     const projectsRes = await listik.projects();
@@ -143,7 +152,8 @@ export async function tick(listik, config, log, runState = null) {
         if (!config.dryRun && decisions.some(d => d.action === "freeze" && d.ok !== false)) {
           try {
             const relist = await listik.list(config.project);
-            tasks = relist.tasks || [];
+            allTasks = relist.tasks || [];
+            tasks = ours(allTasks);
           } catch (err) {
             log.line(`list после watch ошибка: ${errText(err)}`);
           }
@@ -241,7 +251,8 @@ export async function tick(listik, config, log, runState = null) {
         if (!config.dryRun && barrierResult.rejected && barrierResult.rejected.length) {
           try {
             const relist = await listik.list(config.project);
-            tasks = relist.tasks || [];
+            allTasks = relist.tasks || [];
+            tasks = ours(allTasks);
           } catch (err) {
             log.line(`list после отклонения ошибка: ${errText(err)}`);
           }
@@ -299,7 +310,8 @@ export async function tick(listik, config, log, runState = null) {
                 log.line(`waves после rescope ошибка: ${errText(err)}`);
               }
               try {
-                tasks = (await listik.list(config.project)).tasks || [];
+                allTasks = (await listik.list(config.project)).tasks || [];
+                tasks = ours(allTasks);
               } catch (err) {
                 log.line(`list после rescope ошибка: ${errText(err)}`);
               }
@@ -374,7 +386,7 @@ export async function tick(listik, config, log, runState = null) {
     if (answered) answered.needs_owner = false;
   }
 
-  const decision = decide({plan, tasks, routes, config: tickConfig, now, events, gate});
+  const decision = decide({plan, tasks: allTasks, routes, config: tickConfig, now, events, gate});
 
   if (decision.cycles.length) {
     // Строку «циклы: …» пишет main.mjs — он помнит набор прошлого тика.
@@ -561,7 +573,7 @@ export async function tick(listik, config, log, runState = null) {
       }
     }
 
-    const port = allocatePort(tasks, task, config.portBase, config.portCount);
+    const port = allocatePort(allTasks, task, config.portBase, config.portCount);
     if (port == null) {
       log.line(`порты кончились: ${item.id}`);
       continue;
@@ -668,7 +680,7 @@ export async function tick(listik, config, log, runState = null) {
     running: decision.running.map(t => t.id),
     open: decision.open.map(t => t.id),
     needsOwnerOpen: decision.open.filter(t => t.needs_owner).map(t => t.id),
-    blocked: plan.blocked || {},
+    blocked: swarmPlan(plan, tasks, routes).blocked,
     report,
     barrier: {
       merged: barrierMerged,

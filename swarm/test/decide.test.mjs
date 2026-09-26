@@ -7,6 +7,9 @@ import {decide, portOf, allocatePort, isFrozen, REJECTED_MARK, isSoftQuestion, d
 import {textSlicedStuck} from "../decide.mjs";
 import {DEFAULT_QUESTION_TIMEOUT} from "../config.mjs";
 
+// Маршрут роя для каждого id фикстур: карточки не роя рой не видит вовсе.
+const SWARM_ROUTES = [..."abcdefghijklmnopqrstuvwxyz".split(""), ...Array.from({length: 21}, (_, i) => "t" + i), "nr", "ns", "frozen", "canc", "cand", "done-plain", "done-port", "done1", "halt1", "n1", "new", "running1"].map(id => ({key: "route-" + id, driver: "swarm", icon: "low"}));
+
 const config = {parallel: 3, weights: {xhigh: 3, high: 2, medium: 1, low: 1, xlow: 1, direct: 1}};
 
 function task(id, over = {}) {
@@ -17,10 +20,10 @@ function task(id, over = {}) {
 }
 
 function routesFor(ids, icon) {
-  return ids.map(id => ({key: "route-" + id, icon}));
+  return ids.map(id => ({key: "route-" + id, driver: "swarm", icon}));
 }
 
-test("нарезанный родитель режима роя не запускается, режим скила с детьми запускается", () => {
+test("нарезанный родитель режима роя не запускается, режим скила в выборку не попадает", () => {
   const sliced = task("p", {launch_driver: "swarm", has_portions: true, launch_route: "swarm"});
   const skill = task("s", {launch_driver: "skill", has_portions: true, launch_route: "skill"});
   const cancelled = task("c", {
@@ -32,8 +35,9 @@ test("нарезанный родитель режима роя не запус�
     {key: "skill", icon: "low", driver: "skill"},
   ];
   const res = decide({plan, tasks: [sliced, skill, cancelled], routes, config, now: new Date()});
-  assert.deepEqual(res.launch.map(l => l.id), ["s"]);
+  assert.deepEqual(res.launch, []);
   assert.deepEqual(res.skipped.filter(s => s.reason === "sliced").map(s => s.id), ["p", "c"]);
+  assert.ok(!res.skipped.some(s => s.id === "s"));
 });
 
 test("1: три независимые задачи, parallel 3, вес 1 — все три в launch", () => {
@@ -49,7 +53,7 @@ test("2а: xhigh=3, parallel 3, [xhigh, low, low] — берём xhigh, оста
   const ids = ["a", "b", "c"];
   const tasks = ids.map(id => task(id));
   const plan = {waves: [ids], cycles: [], unroutable: [], unscoped: [], blocked: {}};
-  const routes = [{key: "route-a", icon: "xhigh"}, {key: "route-b", icon: "low"}, {key: "route-c", icon: "low"}];
+  const routes = [{key: "route-a", driver: "swarm", icon: "xhigh"}, {key: "route-b", driver: "swarm", icon: "low"}, {key: "route-c", driver: "swarm", icon: "low"}];
   const res = decide({plan, tasks, routes, config, now: new Date()});
   assert.deepEqual(res.launch.map(l => l.id), ["a"]);
   assert.deepEqual(res.skipped.map(s => s.id), ["b", "c"]);
@@ -60,7 +64,7 @@ test("2б: xhigh=3, parallel 3, [low, low, xhigh] — два low, xhigh проп
   const ids = ["a", "b", "c"];
   const tasks = ids.map(id => task(id));
   const plan = {waves: [ids], cycles: [], unroutable: [], unscoped: [], blocked: {}};
-  const routes = [{key: "route-a", icon: "low"}, {key: "route-b", icon: "low"}, {key: "route-c", icon: "xhigh"}];
+  const routes = [{key: "route-a", driver: "swarm", icon: "low"}, {key: "route-b", driver: "swarm", icon: "low"}, {key: "route-c", driver: "swarm", icon: "xhigh"}];
   const res = decide({plan, tasks, routes, config, now: new Date()});
   assert.deepEqual(res.launch.map(l => l.id), ["a", "b"]);
   assert.deepEqual(res.skipped.map(s => s.id), ["c"]);
@@ -69,7 +73,7 @@ test("2б: xhigh=3, parallel 3, [low, low, xhigh] — два low, xhigh проп
 test("3: parallel 2, единственный кандидат xhigh (вес 3) — берём одного, oversized", () => {
   const tasks = [task("a")];
   const plan = {waves: [["a"]], cycles: [], unroutable: [], unscoped: [], blocked: {}};
-  const routes = [{key: "route-a", icon: "xhigh"}];
+  const routes = [{key: "route-a", driver: "swarm", icon: "xhigh"}];
   const res = decide({plan, tasks, routes, config: {...config, parallel: 2}, now: new Date()});
   assert.deepEqual(res.launch.map(l => l.id), ["a"]);
   assert.equal(res.report.reason, "oversized");
@@ -77,7 +81,7 @@ test("3: parallel 2, единственный кандидат xhigh (вес 3) 
 
 test("4: одна бегущая — launch пуст, batch_running, running содержит её", () => {
   const running = task("a", {launched_by: "listik", launch_finished_at: null});
-  const candidate = task("b");
+  const candidate = task("b", {launch_driver: "swarm"});
   const tasks = [running, candidate];
   const plan = {waves: [["b"]], cycles: [], unroutable: [], unscoped: [], blocked: {}};
   const routes = routesFor(["a", "b"], "low");
@@ -91,7 +95,7 @@ test("5: закрытая карточка с launched_by и пустым launch
   const done = task("a", {status: "done", launched_by: "listik", launch_finished_at: ""});
   const tasks = [done];
   const plan = {waves: [[]], cycles: [], unroutable: [], unscoped: [], blocked: {}};
-  const res = decide({plan, tasks, routes: [], config, now: new Date()});
+  const res = decide({plan, tasks, routes: SWARM_ROUTES, config, now: new Date()});
   assert.deepEqual(res.running.map(t => t.id), ["a"]);
   assert.deepEqual(res.launch, []);
 });
@@ -100,7 +104,7 @@ test("6: launch_finished_at непуст — не бегущая, и не кан
   const t = task("a", {launched_by: "listik", launch_finished_at: "2026-01-01T00:00:00Z"});
   const tasks = [t];
   const plan = {waves: [["a"]], cycles: [], unroutable: [], unscoped: [], blocked: {}};
-  const res = decide({plan, tasks, routes: [], config, now: new Date()});
+  const res = decide({plan, tasks, routes: SWARM_ROUTES, config, now: new Date()});
   assert.deepEqual(res.running, []);
   assert.deepEqual(res.launch, []);
 });
@@ -109,12 +113,12 @@ test("7: кандидат с holder — в skipped held, не в launch", () => 
   const t = task("a", {holder: "dmitry"});
   const tasks = [t];
   const plan = {waves: [["a"]], cycles: [], unroutable: [], unscoped: [], blocked: {}};
-  const res = decide({plan, tasks, routes: [], config, now: new Date()});
+  const res = decide({plan, tasks, routes: routesFor(["a"]), config, now: new Date()});
   assert.deepEqual(res.launch, []);
   assert.deepEqual(res.skipped, [{id: "a", reason: "held"}]);
 });
 
-test("7б: has_portions прячет родителя только у роя; карточка скила с порциями — кандидат", () => {
+test("7б: has_portions прячет родителя роя; карточка скила в выборку не попадает", () => {
   const snapSwarm = task("a", {has_portions: true, launch_driver: "swarm"});
   const snapSkill = task("b", {has_portions: true, launch_driver: "skill"});
   // Снимка нет — смотрим маршрут: конвейер с driver=swarm тоже рой.
@@ -122,14 +126,13 @@ test("7б: has_portions прячет родителя только у роя; к
   const tasks = [snapSwarm, snapSkill, routeSwarm];
   const plan = {waves: [["a", "b", "c"]], cycles: [], unroutable: [], unscoped: [], blocked: {}};
   const routes = [
-    {key: "route-a", icon: "low"},
-    {key: "route-b", icon: "low"},
+    {key: "route-a", driver: "swarm", icon: "low"},
+    {key: "route-b", driver: "swarm", icon: "low"},
     {key: "route-c", icon: "low", kind: "pipeline", driver: "swarm"},
   ];
   const res = decide({plan, tasks, routes, config, now: new Date()});
-  assert.deepEqual(res.launch.map(l => l.id), ["b"]);
-  assert.deepEqual(res.skipped.map(s => s.id), ["a", "c"]);
-  assert.ok(res.skipped.every(s => s.reason === "sliced"));
+  assert.deepEqual(res.launch, []);
+  assert.deepEqual(res.skipped.map(s => [s.id, s.reason]), [["a", "sliced"], ["c", "sliced"]]);
 });
 
 test("8: unroutable — без вопроса; unscoped — needsOwner с needs_owner ложным, не для true", () => {
@@ -138,7 +141,7 @@ test("8: unroutable — без вопроса; unscoped — needsOwner с needs_
   const openUnscoped = task("c");
   const tasks = [openUnroutable, flaggedUnscoped, openUnscoped];
   const plan = {waves: [[]], cycles: [], blocked: {}, unroutable: ["a"], unscoped: ["b", "c"]};
-  const res = decide({plan, tasks, routes: [], config, now: new Date()});
+  const res = decide({plan, tasks, routes: routesFor(["a", "b", "c"]), config, now: new Date()});
   assert.deepEqual(res.needsOwner.map(n => n.id), ["c"]);
   const c = res.needsOwner[0];
   assert.equal(c.reason, "unscoped");
@@ -147,9 +150,10 @@ test("8: unroutable — без вопроса; unscoped — needsOwner с needs_
 
 test("8а: карточка без launch_route в волне не запускается", () => {
   const plan = {waves: [["a"]], cycles: [], unroutable: [], unscoped: [], blocked: {}};
-  const res = decide({plan, tasks: [task("a", {launch_route: null})], routes: [], config, now: new Date()});
+  const res = decide({plan, tasks: [task("a", {launch_route: null})], routes: SWARM_ROUTES, config, now: new Date()});
   assert.deepEqual(res.launch, []);
-  assert.ok(res.skipped.some(s => s.id === "a" && s.reason === "unroutable"));
+  assert.deepEqual(res.skipped, []);
+  assert.deepEqual(res.needsOwner, []);
 });
 
 test("8б: карточку держит не рой — ни вопроса unscoped, ни ответа по умолчанию", () => {
@@ -157,7 +161,7 @@ test("8б: карточку держит не рой — ни вопроса uns
   const heldScoped = task("b", {holder: "claude", status: "in_progress"});
   const ours = task("c", {holder: "grok", launched_by: "agent:listik-swarm", status: "in_progress"});
   const plan = {waves: [[]], cycles: [], blocked: {}, unroutable: [], unscoped: ["a", "b", "c"]};
-  const res = decide({plan, tasks: [held, heldScoped, ours], routes: [], config, now: new Date()});
+  const res = decide({plan, tasks: [held, heldScoped, ours], routes: routesFor(["a", "b", "c"]), config, now: new Date()});
   assert.deepEqual(res.needsOwner.map(n => n.id), ["c"]);
 
   const now = new Date("2026-09-24T12:00:00Z");
@@ -175,9 +179,9 @@ test("8б: карточку держит не рой — ни вопроса uns
 });
 
 test("9: cycles непуст — launch и needsOwner пусты", () => {
-  const tasks = [task("a")];
+  const tasks = [task("a"), task("b")];
   const plan = {waves: [["a"]], cycles: [["a", "b"]], unroutable: ["a"], unscoped: [], blocked: {}};
-  const res = decide({plan, tasks, routes: [], config, now: new Date()});
+  const res = decide({plan, tasks, routes: routesFor(["a", "b"]), config, now: new Date()});
   assert.deepEqual(res.cycles, [["a", "b"]]);
   assert.deepEqual(res.launch, []);
   assert.deepEqual(res.needsOwner, []);
@@ -185,17 +189,17 @@ test("9: cycles непуст — launch и needsOwner пусты", () => {
 
 test("10: задача из waves[0], которой нет в tasks — пропускается без ошибки", () => {
   const plan = {waves: [["ghost"]], cycles: [], unroutable: [], unscoped: [], blocked: {}};
-  const res = decide({plan, tasks: [], routes: [], config, now: new Date()});
+  const res = decide({plan, tasks: [], routes: SWARM_ROUTES, config, now: new Date()});
   assert.deepEqual(res.launch, []);
   assert.deepEqual(res.skipped, []);
 });
 
 test("11: маршрут без icon и маршрут не в routes — вес 1", () => {
   const a = task("a", {launch_route: "no-icon"});
-  const b = task("b", {launch_route: "missing-route"});
+  const b = task("b", {launch_route: "missing-route", launch_driver: "swarm"});
   const tasks = [a, b];
   const plan = {waves: [["a", "b"]], cycles: [], unroutable: [], unscoped: [], blocked: {}};
-  const routes = [{key: "no-icon", icon: null}];
+  const routes = [{key: "no-icon", icon: null, kind: "swarm"}];
   const res = decide({plan, tasks, routes, config, now: new Date()});
   assert.deepEqual(res.launch.map(l => l.id), ["a", "b"]);
   assert.ok(res.launch.every(l => l.weight === 1));
@@ -247,7 +251,7 @@ function runningTask(id, over = {}) {
 
 function decideRunning(t, {plan, config: cfg = supConfig, now = new Date(), events} = {}) {
   const p = plan ?? {waves: [[]], cycles: [], unroutable: [], unscoped: [], blocked: {}};
-  return decide({plan: p, tasks: [t], routes: [], config: cfg, now, events});
+  return decide({plan: p, tasks: [t], routes: SWARM_ROUTES, config: cfg, now, events});
 }
 
 test("надзор: режим роя молчит 30 мин — не stale; timeoutMinutes его всё же снимает", () => {
@@ -388,7 +392,7 @@ test("надзор: зависшая без метки порта — свобо
   for (let p = 5170; p < 5270; p++) full.push(task(`o${p}`, {labels: [`port:${p}`]}));
   const res = decide({
     plan: {waves: [[]], cycles: [], unroutable: [], unscoped: [], blocked: {}},
-    tasks: [t, ...full], routes: [], config: supConfig, now,
+    tasks: [t, ...full], routes: SWARM_ROUTES, config: supConfig, now,
   });
   assert.equal(res.restart.length, 0);
   assert.equal(res.giveUp.length, 1);
@@ -506,7 +510,7 @@ test("гейт: launch пуст, кандидаты в skipped gated, report.rea
   const tasks = [t9];
   const plan = {waves: [["t9"]], cycles: [], unroutable: [], unscoped: [], blocked: {}};
   const gate = {reason: "unmerged", ids: ["t9"]};
-  const res = decide({plan, tasks, routes: [], config, now: new Date(), gate});
+  const res = decide({plan, tasks, routes: routesFor(["t9"]), config, now: new Date(), gate});
   assert.deepEqual(res.launch, []);
   assert.deepEqual(res.skipped, [{id: "t9", reason: "gated"}]);
   assert.equal(res.report.reason, "unmerged");
@@ -518,7 +522,7 @@ test("гейт с ids: [] — то же поведение, report.reason = conf
   const tasks = [t];
   const plan = {waves: [["a"]], cycles: [], unroutable: [], unscoped: [], blocked: {}};
   const gate = {reason: "config", ids: []};
-  const res = decide({plan, tasks, routes: [], config, now: new Date(), gate});
+  const res = decide({plan, tasks, routes: routesFor(["a"]), config, now: new Date(), gate});
   assert.deepEqual(res.launch, []);
   assert.deepEqual(res.skipped, [{id: "a", reason: "gated"}]);
   assert.equal(res.report.reason, "config");
@@ -526,7 +530,7 @@ test("гейт с ids: [] — то же поведение, report.reason = conf
 
 test("гейт вместе с надзором: кандидат волны gated, stale running restart, crashed отдельно", () => {
   const now = new Date();
-  const candidate = task("b");
+  const candidate = task("b", {launch_driver: "swarm"});
   const stale = runningTask("a", {
     launched_at: minsAgo(now, 30), holder_at: minsAgo(now, 30), labels: ["port:5170"],
   });
@@ -537,7 +541,7 @@ test("гейт вместе с надзором: кандидат волны gat
   const tasks = [candidate, stale, crashedTask];
   const plan = {waves: [["b"]], cycles: [], unroutable: [], unscoped: [], blocked: {}};
   const gate = {reason: "unmerged", ids: []};
-  const res = decide({plan, tasks, routes: [], config: supConfig, now, gate});
+  const res = decide({plan, tasks, routes: SWARM_ROUTES, config: supConfig, now, gate});
   assert.deepEqual(res.launch, []);
   assert.ok(res.skipped.some(s => s.id === "b" && s.reason === "gated"));
   assert.ok(res.restart.some(r => r.id === "a"));
@@ -549,9 +553,9 @@ test("надзор: упавшая с needs_owner true — ничего; упа�
   const crashedFlagged = task("a", {
     launched_by: "agent:listik-swarm", launch_finished_at: "2026-01-01T00:00:00Z", needs_owner: true,
   });
-  const candidate = task("b");
+  const candidate = task("b", {launch_driver: "swarm"});
   const plan = {waves: [["b"]], cycles: [], unroutable: [], unscoped: [], blocked: {}};
-  const res = decide({plan, tasks: [crashedFlagged, candidate], routes: [], config: supConfig, now: new Date()});
+  const res = decide({plan, tasks: [crashedFlagged, candidate], routes: SWARM_ROUTES, config: supConfig, now: new Date()});
   assert.deepEqual(res.crashed, []);
   assert.deepEqual(res.restart, []);
   assert.deepEqual(res.running, []);
@@ -908,7 +912,7 @@ test("бюджет: budgetExhausted не трогает dueDefaults", () => {
 
 test("бюджет: gate unmerged + budgetExhausted — report.reason unmerged", () => {
   const now = new Date();
-  const candidate = task("b");
+  const candidate = task("b", {launch_driver: "swarm"});
   const stale = runningTask("a", {
     launched_at: minsAgo(now, 30), holder_at: minsAgo(now, 30), labels: ["port:5170"],
   });
@@ -916,7 +920,7 @@ test("бюджет: gate unmerged + budgetExhausted — report.reason unmerged",
   const plan = {waves: [["b"]], cycles: [], unroutable: [], unscoped: [], blocked: {}};
   const gate = {reason: "unmerged", ids: []};
   const res = decide({
-    plan, tasks, routes: [], config: {...supConfig, budgetExhausted: true}, now, gate,
+    plan, tasks, routes: SWARM_ROUTES, config: {...supConfig, budgetExhausted: true}, now, gate,
   });
   assert.deepEqual(res.launch, []);
   assert.ok(res.skipped.some(s => s.id === "b" && s.reason === "gated"));
@@ -996,7 +1000,7 @@ test("sliced_stuck: карточка из unscoped — ровно одна за�
 });
 
 test("sliced_stuck: кто-то бежит — пропуск sliced, без вопроса", () => {
-  const runner = task("r", {launched_by: "swarm", launch_finished_at: "", launched_at: new Date().toISOString()});
+  const runner = task("r", {launched_by: "swarm", launch_finished_at: "", launched_at: new Date().toISOString(), launch_driver: "swarm"});
   const res = decide({plan: stuckPlan(), tasks: [stuck("e"), runner], routes: stuckRoutes, config,
     now: new Date()});
   assert.deepEqual(res.skipped.filter(s => s.id === "e"), [{id: "e", reason: "sliced"}]);
@@ -1011,11 +1015,12 @@ test("has_portions без portions_stuck в волне 0 — skipped sliced, к�
   assert.deepEqual(res.needsOwner, []);
 });
 
-test("portions_stuck у карточки скила в волне 0 — кандидат в launch", () => {
+test("portions_stuck у карточки скила в волне 0 — в выборку не попадает", () => {
   const t = stuck("s", {launch_driver: "skill", launch_route: "skill"});
   const res = decide({plan: stuckPlan({waves: [["s"]]}), tasks: [t], routes: stuckRoutes, config,
     now: new Date()});
-  assert.deepEqual(res.launch.map(l => l.id), ["s"]);
+  assert.deepEqual(res.launch, []);
+  assert.deepEqual(res.skipped, []);
   assert.equal(recordsFor(res, "s"), 0);
 });
 
@@ -1032,4 +1037,22 @@ test("sliced_stuck: карточка и в unscoped, и в волне 0 — ро
     assert.equal(recordsFor(res, "x"), 1, JSON.stringify(gate));
     assert.deepEqual(res.needsOwner.map(n => [n.id, n.reason]), [["x", "unscoped"]]);
   }
+});
+
+test("рой берёт только маршруты роя: пайплайн скила, прямой харнесс, без маршрута — вне выборки", () => {
+  const tasks = [task("a", {launch_route: "shiki-pow"}), task("b", {launch_route: "high-pipeline"}),
+    task("c", {launch_route: "grok"}), task("d", {launch_route: null}), task("e", {launch_route: "grok"})];
+  const routes = [{key: "shiki-pow", kind: "swarm", driver: "swarm", icon: "low"},
+    {key: "high-pipeline", kind: "pipeline", driver: "skill", icon: "low"},
+    {key: "grok", kind: "direct", driver: "skill", icon: "low"}];
+  const plan = {waves: [["a", "b", "c", "d"]], cycles: [["b", "c"], ["a", "b"]], unroutable: ["d"], unscoped: ["e"],
+    blocked: {e: ["b"]}};
+  const res = decide({plan, tasks, routes, config, now: new Date()});
+  assert.deepEqual(res.cycles, []);
+  assert.deepEqual(res.launch.map(l => l.id), ["a"]);
+  assert.deepEqual(res.skipped, []);
+  assert.deepEqual(res.needsOwner, []);
+  assert.deepEqual(res.report.unroutable, []);
+  assert.deepEqual(res.report.unscoped, []);
+  assert.equal(res.report.blocked, 0);
 });

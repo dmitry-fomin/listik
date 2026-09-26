@@ -10,6 +10,9 @@ import {tick} from "../run.mjs";
 import {open as openLog} from "../log.mjs";
 import {acquireProjectLock, noteCycles, projectsDue, questionReason, waitingLine} from "../main.mjs";
 
+// Маршрут роя для каждого id фикстур: карточки не роя рой не видит вовсе.
+const SWARM_ROUTES = [..."abcdefghijklmnopqrstuvwxyz".split(""), ...Array.from({length: 21}, (_, i) => "t" + i), "nr", "ns", "frozen", "canc", "cand", "done-plain", "done-port", "done1", "halt1", "n1", "new", "running1"].map(id => ({key: "r-" + id, driver: "swarm", icon: "low"}));
+
 // `git` может отсутствовать на машине судьи — тогда блок watch+barrier пропускается целиком.
 let gitAvailable = true;
 try {
@@ -105,7 +108,7 @@ test("тик: план из трёх + без маршрута + без обла
     project: "proj", waves: [["t1", "t2", "t3"]], cycles: [],
     unroutable: ["nr"], unscoped: ["ns"], blocked: {},
   };
-  const routes = [{key: "r-t1", icon: "low"}, {key: "r-t2", icon: "low"}, {key: "r-t3", icon: "low"}];
+  const routes = SWARM_ROUTES;
   const responses = {
     status: statusUp,
     projects: {stdout: JSON.stringify([{slug: "proj", path: ""}])},
@@ -168,7 +171,7 @@ test("повторный тик: те же три бегут, needs_owner уже
     projects: {stdout: JSON.stringify([{slug: "proj", path: ""}])},
     waves: {stdout: JSON.stringify({waves: plan, added: [], removed: [], kept: 0})},
     list: {stdout: JSON.stringify({total: tasks.length, limit: 1000, offset: 0, tasks})},
-    routes: {stdout: JSON.stringify({ok: true, routes: []})},
+    routes: {stdout: JSON.stringify({ok: true, routes: SWARM_ROUTES})},
   };
   const {calls} = setupFake(responses);
   const listik = new Listik({bin: FAKE_BIN, actor: "agent:listik-swarm", cliTimeout: 5});
@@ -192,7 +195,7 @@ test("одна закрыта (done), но launch_finished_at пуст, втор
     projects: {stdout: JSON.stringify([{slug: "proj", path: ""}])},
     waves: {stdout: JSON.stringify({waves: plan, added: [], removed: [], kept: 0})},
     list: {stdout: JSON.stringify({total: tasks.length, limit: 1000, offset: 0, tasks})},
-    routes: {stdout: JSON.stringify({ok: true, routes: []})},
+    routes: {stdout: JSON.stringify({ok: true, routes: SWARM_ROUTES})},
   };
   const {calls} = setupFake(responses);
   const listik = new Listik({bin: FAKE_BIN, actor: "agent:listik-swarm", cliTimeout: 5});
@@ -209,7 +212,7 @@ test("замороженная в waves[0] — ни worktree, ни set, ни lau
   const plan = {
     project: "proj", waves: [["frozen", "t1"]], cycles: [], unroutable: [], unscoped: [], blocked: {},
   };
-  const routes = [{key: "r-frozen", icon: "low"}, {key: "r-t1", icon: "low"}];
+  const routes = SWARM_ROUTES;
   const responses = {
     status: statusUp,
     projects: {stdout: JSON.stringify([{slug: "proj", path: ""}])},
@@ -242,7 +245,7 @@ test("--dry-run: ни одного пишущего вызова, waves без -
   const plan = {
     project: "proj", waves: [["t1"]], cycles: [], unroutable: ["nr"], unscoped: [], blocked: {},
   };
-  const routes = [{key: "r-t1", icon: "low"}];
+  const routes = SWARM_ROUTES;
   const responses = {
     status: statusUp,
     projects: {stdout: JSON.stringify([{slug: "proj", path: ""}])},
@@ -300,8 +303,8 @@ test("waves --apply конфликт цикла — cycles, пишущих вы�
       }})},
       {stdout: JSON.stringify({cycles: [["a", "b"]], waves: [], unroutable: [], unscoped: [], blocked: {}})},
     ],
-    list: {stdout: JSON.stringify({total: 0, limit: 1000, offset: 0, tasks: []})},
-    routes: {stdout: JSON.stringify({ok: true, routes: []})},
+    list: {stdout: JSON.stringify({total: 0, limit: 1000, offset: 0, tasks: [{id: "a", status: "open", launch_route: "r-a", launch_driver: "swarm"}, {id: "b", status: "open", launch_route: "r-b", launch_driver: "swarm"}]})},
+    routes: {stdout: JSON.stringify({ok: true, routes: SWARM_ROUTES})},
   };
   const {calls} = setupFake(responses);
   const listik = new Listik({bin: FAKE_BIN, actor: "agent:listik-swarm", cliTimeout: 5});
@@ -331,7 +334,7 @@ test("надзор-тик: зависла с меткой port:5170 — show, re
     projects: {stdout: JSON.stringify([{slug: "proj", path: ""}])},
     waves: {stdout: JSON.stringify({waves: plan, added: [], removed: [], kept: 0})},
     list: {stdout: JSON.stringify({total: 1, limit: 1000, offset: 0, tasks})},
-    routes: {stdout: JSON.stringify({ok: true, routes: []})},
+    routes: {stdout: JSON.stringify({ok: true, routes: SWARM_ROUTES})},
     show: {stdout: JSON.stringify({id: "a", events: []})},
     revoke: {stdout: JSON.stringify({id: "a", launch_finished_at: "2026-01-01T00:00:00Z", launch_pid: 1, generation: 5})},
     launch: {stdout: JSON.stringify({id: "a", generation: 6})},
@@ -359,7 +362,7 @@ test("надзор-тик: зависла без метки — show, revoke, sh
     projects: {stdout: JSON.stringify([{slug: "proj", path: ""}])},
     waves: {stdout: JSON.stringify({waves: plan, added: [], removed: [], kept: 0})},
     list: {stdout: JSON.stringify({total: 1, limit: 1000, offset: 0, tasks})},
-    routes: {stdout: JSON.stringify({ok: true, routes: []})},
+    routes: {stdout: JSON.stringify({ok: true, routes: SWARM_ROUTES})},
     show: [
       {stdout: JSON.stringify({id: "a", events: []})},
       {stdout: JSON.stringify({id: "a", labels: []})},
@@ -390,7 +393,7 @@ test("надзор-тик: revoke отвечает пустым launch_finished_
     projects: {stdout: JSON.stringify([{slug: "proj", path: ""}])},
     waves: {stdout: JSON.stringify({waves: plan, added: [], removed: [], kept: 0})},
     list: {stdout: JSON.stringify({total: 1, limit: 1000, offset: 0, tasks})},
-    routes: {stdout: JSON.stringify({ok: true, routes: []})},
+    routes: {stdout: JSON.stringify({ok: true, routes: SWARM_ROUTES})},
     show: {stdout: JSON.stringify({id: "a", events: []})},
     revoke: {stdout: JSON.stringify({id: "a", launch_finished_at: null, launch_pid: 42, generation: 5})},
     "needs-owner": {stdout: JSON.stringify({id: "a"})},
@@ -416,7 +419,7 @@ test("надзор-тик: revoke-перезапуск уже есть — revok
     projects: {stdout: JSON.stringify([{slug: "proj", path: ""}])},
     waves: {stdout: JSON.stringify({waves: plan, added: [], removed: [], kept: 0})},
     list: {stdout: JSON.stringify({total: 1, limit: 1000, offset: 0, tasks})},
-    routes: {stdout: JSON.stringify({ok: true, routes: []})},
+    routes: {stdout: JSON.stringify({ok: true, routes: SWARM_ROUTES})},
     show: {stdout: JSON.stringify({id: "a", events: [
       {kind: "revoke", actor: "agent:listik-swarm", ts: minsAgo(25),
         note: "рой: перезапуск — stale; запуск …, pid 1, процесс снят"},
@@ -446,7 +449,7 @@ test("надзор-тик: упала — needs-owner «процесс зада�
     projects: {stdout: JSON.stringify([{slug: "proj", path: ""}])},
     waves: {stdout: JSON.stringify({waves: plan, added: [], removed: [], kept: 0})},
     list: {stdout: JSON.stringify({total: 1, limit: 1000, offset: 0, tasks})},
-    routes: {stdout: JSON.stringify({ok: true, routes: []})},
+    routes: {stdout: JSON.stringify({ok: true, routes: SWARM_ROUTES})},
     show: {stdout: JSON.stringify({id: "a", events: []})},
     "needs-owner": {stdout: JSON.stringify({id: "a"})},
   };
@@ -469,7 +472,7 @@ test("надзор-тик: упала с answer позже — revoke «пере
     projects: {stdout: JSON.stringify([{slug: "proj", path: ""}])},
     waves: {stdout: JSON.stringify({waves: plan, added: [], removed: [], kept: 0})},
     list: {stdout: JSON.stringify({total: 1, limit: 1000, offset: 0, tasks})},
-    routes: {stdout: JSON.stringify({ok: true, routes: []})},
+    routes: {stdout: JSON.stringify({ok: true, routes: SWARM_ROUTES})},
     show: {stdout: JSON.stringify({id: "a", events: [
       {kind: "answer", actor: "dmitry", ts: "2026-01-01T01:00:00Z"},
     ]})},
@@ -495,7 +498,7 @@ test("надзор-тик: закрытая бежит дольше timeout — 
     projects: {stdout: JSON.stringify([{slug: "proj", path: ""}])},
     waves: {stdout: JSON.stringify({waves: plan, added: [], removed: [], kept: 0})},
     list: {stdout: JSON.stringify({total: 1, limit: 1000, offset: 0, tasks})},
-    routes: {stdout: JSON.stringify({ok: true, routes: []})},
+    routes: {stdout: JSON.stringify({ok: true, routes: SWARM_ROUTES})},
     revoke: {stdout: JSON.stringify({id: "a", launch_finished_at: "2026-01-01T00:00:00Z", generation: 3})},
   };
   const {calls} = setupFake(responses);
@@ -519,7 +522,7 @@ test("надзор-тик: бежит одна с needs_owner: true без со�
     projects: {stdout: JSON.stringify([{slug: "proj", path: ""}])},
     waves: {stdout: JSON.stringify({waves: plan, added: [], removed: [], kept: 0})},
     list: {stdout: JSON.stringify({total: 1, limit: 1000, offset: 0, tasks})},
-    routes: {stdout: JSON.stringify({ok: true, routes: []})},
+    routes: {stdout: JSON.stringify({ok: true, routes: SWARM_ROUTES})},
     show: {stdout: JSON.stringify({id: "a", events: []})},
   };
   const {calls} = setupFake(responses);
@@ -550,7 +553,7 @@ test("надзор-тик: упавшая мягкая 40 мин — answer, п�
     projects: {stdout: JSON.stringify([{slug: "proj", path: ""}])},
     waves: {stdout: JSON.stringify({waves: plan, added: [], removed: [], kept: 0})},
     list: {stdout: JSON.stringify({total: 1, limit: 1000, offset: 0, tasks})},
-    routes: {stdout: JSON.stringify({ok: true, routes: []})},
+    routes: {stdout: JSON.stringify({ok: true, routes: SWARM_ROUTES})},
     show: [
       {stdout: JSON.stringify({id: "a", events: [qEvent]})},
       {stdout: JSON.stringify({id: "a", events: [qEvent, aEvent]})},
@@ -596,7 +599,7 @@ test("надзор-тик: упавшая мягкая 40 мин, второй s
     projects: {stdout: JSON.stringify([{slug: "proj", path: ""}])},
     waves: {stdout: JSON.stringify({waves: plan, added: [], removed: [], kept: 0})},
     list: {stdout: JSON.stringify({total: 1, limit: 1000, offset: 0, tasks})},
-    routes: {stdout: JSON.stringify({ok: true, routes: []})},
+    routes: {stdout: JSON.stringify({ok: true, routes: SWARM_ROUTES})},
     show: [
       {stdout: JSON.stringify({id: "a", events: [qEvent]})},
       {stdout: JSON.stringify({id: "a", events: [qEvent]})},
@@ -624,7 +627,7 @@ test("надзор-тик: вопрос 6 мин при дефолтном timeo
     projects: {stdout: JSON.stringify([{slug: "proj", path: ""}])},
     waves: {stdout: JSON.stringify({waves: plan, added: [], removed: [], kept: 0})},
     list: {stdout: JSON.stringify({total: 1, limit: 1000, offset: 0, tasks})},
-    routes: {stdout: JSON.stringify({ok: true, routes: []})},
+    routes: {stdout: JSON.stringify({ok: true, routes: SWARM_ROUTES})},
     show: {stdout: JSON.stringify({id: "a", events: [qEvent]})},
   };
   const {calls} = setupFake(responses);
@@ -643,7 +646,7 @@ test("надзор-тик: --dry-run автоответ — нет needs-owner, 
     projects: {stdout: JSON.stringify([{slug: "proj", path: ""}])},
     waves: {stdout: JSON.stringify(plan)},
     list: {stdout: JSON.stringify({total: 1, limit: 1000, offset: 0, tasks})},
-    routes: {stdout: JSON.stringify({ok: true, routes: []})},
+    routes: {stdout: JSON.stringify({ok: true, routes: SWARM_ROUTES})},
     show: {stdout: JSON.stringify({id: "a", events: [qEvent]})},
   };
   const {calls} = setupFake(responses);
@@ -666,7 +669,7 @@ test("надзор-тик: done с needs_owner и port — show; без порт
     projects: {stdout: JSON.stringify([{slug: "proj", path: ""}])},
     waves: {stdout: JSON.stringify({waves: plan, added: [], removed: [], kept: 0})},
     list: {stdout: JSON.stringify({total: tasks.length, limit: 1000, offset: 0, tasks})},
-    routes: {stdout: JSON.stringify({ok: true, routes: []})},
+    routes: {stdout: JSON.stringify({ok: true, routes: SWARM_ROUTES})},
     show: {stdout: JSON.stringify({id: "done-port", events: []})},
   };
   const {calls} = setupFake(responses);
@@ -689,7 +692,7 @@ test("надзор-тик: упавшая, answer роя позже заверш
     projects: {stdout: JSON.stringify([{slug: "proj", path: ""}])},
     waves: {stdout: JSON.stringify({waves: plan, added: [], removed: [], kept: 0})},
     list: {stdout: JSON.stringify({total: 1, limit: 1000, offset: 0, tasks})},
-    routes: {stdout: JSON.stringify({ok: true, routes: []})},
+    routes: {stdout: JSON.stringify({ok: true, routes: SWARM_ROUTES})},
     show: {stdout: JSON.stringify({id: "a", events: [
       {kind: "answer", actor: "agent:listik-swarm", ts: "2026-01-01T01:00:00Z"},
     ]})},
@@ -719,7 +722,7 @@ test("надзор-тик: --dry-run на зависла — ни revoke, ни l
     projects: {stdout: JSON.stringify([{slug: "proj", path: ""}])},
     waves: {stdout: JSON.stringify(plan)},
     list: {stdout: JSON.stringify({total: 1, limit: 1000, offset: 0, tasks})},
-    routes: {stdout: JSON.stringify({ok: true, routes: []})},
+    routes: {stdout: JSON.stringify({ok: true, routes: SWARM_ROUTES})},
     show: {stdout: JSON.stringify({id: "a", events: []})},
   };
   const {calls} = setupFake(responses);
@@ -757,7 +760,7 @@ test("main: карточка needs_owner true с «рой: процесс зад
     projects: {stdout: JSON.stringify([{slug: "proj", path: ""}])},
     waves: {stdout: JSON.stringify({waves: plan, added: [], removed: [], kept: 0})},
     list: {stdout: JSON.stringify({total: 1, limit: 1000, offset: 0, tasks})},
-    routes: {stdout: JSON.stringify({ok: true, routes: []})},
+    routes: {stdout: JSON.stringify({ok: true, routes: SWARM_ROUTES})},
     show: {stdout: JSON.stringify({id: "a", comments: [
       {id: 1, author: "agent:listik-swarm", kind: "question", text:
         "рой: процесс задачи завершился (код 1, поколение 2), а карточка не закрыта — лог /log/a.log. " +
@@ -786,7 +789,7 @@ test("main: карточка needs_owner true с «рой: процесс зад
 
 test("main: без --exit-when-idle ждёт и запускает, когда карточка стала готова", {timeout: 15000}, async () => {
   const plan = {project: "proj", waves: [["a"]], cycles: [], unroutable: [], unscoped: [], blocked: {}};
-  const routes = [{key: "r-a", icon: "low"}];
+  const routes = SWARM_ROUTES;
   const waiting = task("a", {needs_owner: true});
   const ready = task("a");
   const responses = {
@@ -852,7 +855,7 @@ for (const [label, swarm, expected] of [
       status: {stdout: JSON.stringify(status)},
       waves: {stdout: JSON.stringify({waves: {project: "proj", waves: [], cycles: [], unroutable: [], unscoped: [], blocked: {}}, added: [], removed: [], kept: 0})},
       list: {stdout: JSON.stringify({total: 0, limit: 1000, offset: 0, tasks: []})},
-      routes: {stdout: JSON.stringify({ok: true, routes: []})},
+      routes: {stdout: JSON.stringify({ok: true, routes: SWARM_ROUTES})},
       projects: {stdout: JSON.stringify([{slug: "proj", path: ""}])},
     };
     setupFake(responses);
@@ -875,7 +878,7 @@ gitTest("watch+barrier (а): running пуст — watch раньше comment MER
     task("t2", {}),
   ];
   const plan = {project: "proj", waves: [["t2"]], cycles: [], unroutable: [], unscoped: [], blocked: {}};
-  const routes = [{key: "r-t2", icon: "low"}];
+  const routes = SWARM_ROUTES;
   const dataDir = fs.mkdtempSync(path.join(os.tmpdir(), "listik-swarm-data-"));
   fs.writeFileSync(path.join(dataDir, "swarm.json"), JSON.stringify({integration: []}));
   const logDir = fs.mkdtempSync(path.join(os.tmpdir(), "listik-swarm-integration-log-"));
@@ -925,7 +928,7 @@ gitTest("watch+barrier (л): разморозка в тике — comment UNFROZ
       task("t2", {status: "open", launch_route: "r-t2", labels: ["frozen-by:t1"]}),
     ];
     const plan = {project: "proj", waves: [["t2"]], cycles: [], unroutable: [], unscoped: [], blocked: {}};
-    const routes = [{key: "r-t2", icon: "low"}];
+    const routes = SWARM_ROUTES;
     const dataDir = fs.mkdtempSync(path.join(os.tmpdir(), "listik-swarm-data-"));
     fs.writeFileSync(path.join(dataDir, "swarm.json"), JSON.stringify({integration: []}));
     const logDir = fs.mkdtempSync(path.join(os.tmpdir(), "listik-swarm-integration-log-"));
@@ -987,7 +990,7 @@ gitTest("watch+barrier (б): running непуст — барьер не зовё
     status: statusFor(dataDir),
     waves: {stdout: JSON.stringify({waves: plan, added: [], removed: [], kept: 0})},
     list: {stdout: JSON.stringify({total: tasks.length, limit: 1000, offset: 0, tasks})},
-    routes: {stdout: JSON.stringify({ok: true, routes: []})},
+    routes: {stdout: JSON.stringify({ok: true, routes: SWARM_ROUTES})},
     projects: {stdout: JSON.stringify([{slug: "proj", path: repo}])},
     watch: {stdout: JSON.stringify({tasks: {}, decisions: [], probes: []})},
     show: {stdout: JSON.stringify({id: "running1", events: []})},
@@ -1010,7 +1013,7 @@ gitTest("watch+barrier (в): swarm.json с ошибкой — лог = err.messa
 
   const tasks = [task("t1")];
   const plan = {project: "proj", waves: [["t1"]], cycles: [], unroutable: [], unscoped: [], blocked: {}};
-  const routes = [{key: "r-t1", icon: "low"}];
+  const routes = SWARM_ROUTES;
   const responses = {
     status: statusFor(dataDir),
     waves: {stdout: JSON.stringify({waves: plan, added: [], removed: [], kept: 0})},
@@ -1044,7 +1047,7 @@ gitTest("watch+barrier (г): gate unmerged — launch не вызван, report.
     task("t2", {}),
   ];
   const plan = {project: "proj", waves: [["t2"]], cycles: [], unroutable: [], unscoped: [], blocked: {}};
-  const routes = [{key: "r-t2", icon: "low"}];
+  const routes = SWARM_ROUTES;
   const dataDir = fs.mkdtempSync(path.join(os.tmpdir(), "listik-swarm-data-"));
   const responses = {
     status: statusFor(dataDir),
@@ -1073,8 +1076,8 @@ test("watch+barrier (д): plan.cycles непуст — watch/comment/merge не 
       waves: {project: "proj", waves: [], cycles: [["a", "b"]], unroutable: [], unscoped: [], blocked: {}},
       added: [], removed: [], kept: 0,
     })},
-    list: {stdout: JSON.stringify({total: 0, limit: 1000, offset: 0, tasks: []})},
-    routes: {stdout: JSON.stringify({ok: true, routes: []})},
+    list: {stdout: JSON.stringify({total: 0, limit: 1000, offset: 0, tasks: [{id: "a", status: "open", launch_route: "r-a", launch_driver: "swarm"}, {id: "b", status: "open", launch_route: "r-b", launch_driver: "swarm"}]})},
+    routes: {stdout: JSON.stringify({ok: true, routes: SWARM_ROUTES})},
   };
   const {calls} = setupFake(responses);
   const listik = new Listik({bin: FAKE_BIN, actor: "agent:listik-swarm", cliTimeout: 5});
@@ -1090,7 +1093,7 @@ test("watch+barrier (д): plan.cycles непуст — watch/comment/merge не 
 test("watch+barrier (е): пустой path проекта — в argv нет watch", async () => {
   const tasks = [task("t1")];
   const plan = {project: "proj", waves: [["t1"]], cycles: [], unroutable: [], unscoped: [], blocked: {}};
-  const routes = [{key: "r-t1", icon: "low"}];
+  const routes = SWARM_ROUTES;
   const responses = {
     status: statusUp,
     waves: {stdout: JSON.stringify({waves: plan, added: [], removed: [], kept: 0})},
@@ -1121,7 +1124,7 @@ gitTest("watch+barrier (ж): dryRun непустой path — watch с --dry-run
     status: statusFor(dataDir),
     waves: {stdout: JSON.stringify(plan)},
     list: {stdout: JSON.stringify({total: tasks.length, limit: 1000, offset: 0, tasks})},
-    routes: {stdout: JSON.stringify({ok: true, routes: []})},
+    routes: {stdout: JSON.stringify({ok: true, routes: SWARM_ROUTES})},
     projects: {stdout: JSON.stringify([{slug: "proj", path: repo}])},
     watch: {stdout: JSON.stringify({tasks: {}, decisions: [], probes: []})},
   };
@@ -1139,7 +1142,7 @@ gitTest("watch+barrier (з): watch бросает ListikError — лог watch �
   const repo = initRepo();
   const tasks = [task("t1")];
   const plan = {project: "proj", waves: [["t1"]], cycles: [], unroutable: [], unscoped: [], blocked: {}};
-  const routes = [{key: "r-t1", icon: "low"}];
+  const routes = SWARM_ROUTES;
   const dataDir = fs.mkdtempSync(path.join(os.tmpdir(), "listik-swarm-data-"));
   const responses = {
     status: statusFor(dataDir),
@@ -1168,7 +1171,7 @@ gitTest("watch+barrier (и): freeze ok:true — повторный list, t2 не
   const tasksInitial = [task("t1", {}), task("t2", {})];
   const tasksAfter = [task("t1", {}), task("t2", {labels: ["frozen-by:t1"], launched_by: ""})];
   const plan = {project: "proj", waves: [["t1", "t2"]], cycles: [], unroutable: [], unscoped: [], blocked: {}};
-  const routes = [{key: "r-t1", icon: "low"}, {key: "r-t2", icon: "low"}];
+  const routes = SWARM_ROUTES;
   const dataDir = fs.mkdtempSync(path.join(os.tmpdir(), "listik-swarm-data-"));
   const responses = {
     status: statusFor(dataDir),
@@ -1204,7 +1207,7 @@ gitTest("watch+barrier (к): decisions ok:false без top-level error — не 
   const repo = initRepo();
   const tasks = [task("t1")];
   const plan = {project: "proj", waves: [["t1"]], cycles: [], unroutable: [], unscoped: [], blocked: {}};
-  const routes = [{key: "r-t1", icon: "low"}];
+  const routes = SWARM_ROUTES;
   const dataDir = fs.mkdtempSync(path.join(os.tmpdir(), "listik-swarm-data-"));
   const responses = {
     status: statusFor(dataDir),
@@ -1233,7 +1236,7 @@ gitTest("watch+barrier: второй list после freeze бросает — �
   const repo = initRepo();
   const tasksInitial = [task("t1", {}), task("t2", {})];
   const plan = {project: "proj", waves: [["t1", "t2"]], cycles: [], unroutable: [], unscoped: [], blocked: {}};
-  const routes = [{key: "r-t1", icon: "low"}, {key: "r-t2", icon: "low"}];
+  const routes = SWARM_ROUTES;
   const dataDir = fs.mkdtempSync(path.join(os.tmpdir(), "listik-swarm-data-"));
   const responses = {
     status: statusFor(dataDir),
@@ -1269,11 +1272,11 @@ gitTest("watch+barrier: running + swarm:halt — report.halt id, launch нет",
       labels: ["port:5170"], launched_at: new Date().toISOString(),
       holder_at: new Date().toISOString(),
     }),
-    task("halt1", {labels: ["swarm:halt"]}),
+    task("halt1", {labels: ["swarm:halt"], launch_route: null}),
     task("n1", {}),
   ];
   const plan = {project: "proj", waves: [["n1"]], cycles: [], unroutable: [], unscoped: [], blocked: {}};
-  const routes = [{key: "r-n1", icon: "low"}];
+  const routes = SWARM_ROUTES;
   const responses = {
     status: statusFor(dataDir),
     waves: {stdout: JSON.stringify({waves: plan, added: [], removed: [], kept: 0})},
@@ -1391,7 +1394,7 @@ gitTest("тик: барьер отклоняет единственную зак
         {stdout: JSON.stringify({total: 1, limit: 1000, offset: 0, tasks: [doneTask]})},
         {stdout: JSON.stringify({total: 1, limit: 1000, offset: 0, tasks: [openTask]})},
       ],
-      routes: {stdout: JSON.stringify({ok: true, routes: []})},
+      routes: {stdout: JSON.stringify({ok: true, routes: SWARM_ROUTES})},
       projects: {stdout: JSON.stringify([{slug: "proj", path: repo}])},
       watch: {stdout: JSON.stringify({tasks: {}, decisions: [], probes: []})},
       show: [
@@ -1450,7 +1453,7 @@ gitTest("надзор-тик: swarm.json question_timeout 5, вопрос 6 ми
     status: statusFor(dataDir),
     waves: {stdout: JSON.stringify({waves: plan, added: [], removed: [], kept: 0})},
     list: {stdout: JSON.stringify({total: 1, limit: 1000, offset: 0, tasks})},
-    routes: {stdout: JSON.stringify({ok: true, routes: []})},
+    routes: {stdout: JSON.stringify({ok: true, routes: SWARM_ROUTES})},
     projects: {stdout: JSON.stringify([{slug: "proj", path: repo}])},
     watch: {stdout: JSON.stringify({tasks: {}, decisions: [], probes: []})},
     show: [
@@ -1475,7 +1478,7 @@ gitTest("надзор-тик: swarm.json question_timeout 5, вопрос 6 ми
 test("бюджет-тик: без runState — launch как раньше, budget.exhausted false", async () => {
   const tasks = [task("t1")];
   const plan = {project: "proj", waves: [["t1"]], cycles: [], unroutable: [], unscoped: [], blocked: {}};
-  const routes = [{key: "r-t1", icon: "low"}];
+  const routes = SWARM_ROUTES;
   const responses = {
     status: statusUp,
     projects: {stdout: JSON.stringify([{slug: "proj", path: ""}])},
@@ -1499,7 +1502,7 @@ test("бюджет-тик: без runState — launch как раньше, budge
 test("бюджет-тик: runState 2 часа назад, budgetMinutes 60 — launch нет, exhausted", async () => {
   const tasks = [task("t1")];
   const plan = {project: "proj", waves: [["t1"]], cycles: [], unroutable: [], unscoped: [], blocked: {}};
-  const routes = [{key: "r-t1", icon: "low"}];
+  const routes = SWARM_ROUTES;
   const responses = {
     status: statusUp,
     projects: {stdout: JSON.stringify([{slug: "proj", path: ""}])},
@@ -1524,7 +1527,7 @@ test("бюджет-тик: runState 2 часа назад, budgetMinutes 60 — 
 test("бюджет-тик: runState.launches 1, maxLaunches 1 — launch нет, exhausted", async () => {
   const tasks = [task("t1")];
   const plan = {project: "proj", waves: [["t1"]], cycles: [], unroutable: [], unscoped: [], blocked: {}};
-  const routes = [{key: "r-t1", icon: "low"}];
+  const routes = SWARM_ROUTES;
   const responses = {
     status: statusUp,
     projects: {stdout: JSON.stringify([{slug: "proj", path: ""}])},
@@ -1549,7 +1552,7 @@ test("бюджет-тик: maxLaunches 2, launches 1, три кандидата 
     project: "proj", waves: [["t1", "t2", "t3"]], cycles: [], unroutable: [], unscoped: [], blocked: {},
   };
   const routes = [
-    {key: "r-t1", icon: "low"}, {key: "r-t2", icon: "low"}, {key: "r-t3", icon: "low"},
+    {key: "r-t1", kind: "swarm", icon: "low"}, {key: "r-t2", kind: "swarm", icon: "low"}, {key: "r-t3", kind: "swarm", icon: "low"},
   ];
   const responses = {
     status: statusUp,
@@ -1583,7 +1586,7 @@ test("бюджет-тик: exhausted + зависшая с портом — revo
     projects: {stdout: JSON.stringify([{slug: "proj", path: ""}])},
     waves: {stdout: JSON.stringify({waves: plan, added: [], removed: [], kept: 0})},
     list: {stdout: JSON.stringify({total: 1, limit: 1000, offset: 0, tasks})},
-    routes: {stdout: JSON.stringify({ok: true, routes: []})},
+    routes: {stdout: JSON.stringify({ok: true, routes: SWARM_ROUTES})},
     show: {stdout: JSON.stringify({id: "a", events: []})},
     revoke: {stdout: JSON.stringify({id: "a", launch_finished_at: "2026-01-01T00:00:00Z", generation: 5})},
     "needs-owner": {stdout: JSON.stringify({id: "a"})},
@@ -1622,7 +1625,7 @@ gitTest("бюджет-тик: exhausted + закрытая с деревом —
     task("t2", {}),
   ];
   const plan = {project: "proj", waves: [["t2"]], cycles: [], unroutable: [], unscoped: [], blocked: {}};
-  const routes = [{key: "r-t2", icon: "low"}];
+  const routes = SWARM_ROUTES;
   const dataDir = fs.mkdtempSync(path.join(os.tmpdir(), "listik-swarm-data-"));
   fs.writeFileSync(path.join(dataDir, "swarm.json"), JSON.stringify({integration: []}));
   const logDir = fs.mkdtempSync(path.join(os.tmpdir(), "listik-swarm-budget-log-"));
@@ -1690,7 +1693,7 @@ test("main: --max-launches 1, два кандидата — код 5, launch о�
   const plan = {
     project: "proj", waves: [["t1", "t2"]], cycles: [], unroutable: [], unscoped: [], blocked: {},
   };
-  const routes = [{key: "r-t1", icon: "low"}, {key: "r-t2", icon: "low"}];
+  const routes = SWARM_ROUTES;
   const openBoth = [task("t1"), task("t2")];
   const t1Done = [task("t1", {status: "done"}), task("t2")];
   const responses = {
@@ -1722,7 +1725,7 @@ test("main: --max-launches 1, во втором тике running — цикла 
     const plan = {
       project: "proj", waves: [["t1", "t2"]], cycles: [], unroutable: [], unscoped: [], blocked: {},
     };
-    const routes = [{key: "r-t1", icon: "low"}, {key: "r-t2", icon: "low"}];
+    const routes = SWARM_ROUTES;
     const openBoth = [task("t1"), task("t2")];
     const t1Running = [
       task("t1", {launched_by: "agent:listik-swarm", launch_finished_at: null, labels: ["port:5170"]}),
@@ -1754,7 +1757,7 @@ test("main: --max-launches 1, во втором тике running — цикла 
 
 test("main: --max-launches 1, один кандидат после done — код 0", {timeout: 15000}, async () => {
   const plan = {project: "proj", waves: [["t1"]], cycles: [], unroutable: [], unscoped: [], blocked: {}};
-  const routes = [{key: "r-t1", icon: "low"}];
+  const routes = SWARM_ROUTES;
   const responses = {
     status: statusUp,
     projects: {stdout: JSON.stringify([{slug: "proj", path: ""}])},
@@ -1779,7 +1782,7 @@ test("main: --once --max-launches 1, два кандидата — один laun
   const plan = {
     project: "proj", waves: [["t1", "t2"]], cycles: [], unroutable: [], unscoped: [], blocked: {},
   };
-  const routes = [{key: "r-t1", icon: "low"}, {key: "r-t2", icon: "low"}];
+  const routes = SWARM_ROUTES;
   const responses = {
     status: statusUp,
     projects: {stdout: JSON.stringify([{slug: "proj", path: ""}])},
@@ -1882,7 +1885,7 @@ function showOut(card) {
   return {stdout: JSON.stringify(card)};
 }
 
-function prepareRollback({json, tasks, plan, routes = [], watch, show, list, dryRun = false, extra = {}}) {
+function prepareRollback({json, tasks, plan, routes = SWARM_ROUTES, watch, show, list, dryRun = false, extra = {}}) {
   const repo = initRepo();
   const dataDir = fs.mkdtempSync(path.join(os.tmpdir(), "listik-swarm-data-"));
   fs.writeFileSync(path.join(dataDir, "swarm.json"), typeof json === "string" ? json : JSON.stringify(json));
@@ -1985,7 +1988,7 @@ gitTest("предел (в): после парковки t2 запускаетс�
   const {responses} = prepareRollback({
     json: {integration: [], max_freezes: 2},
     tasks, plan: rollbackPlan(["t2", "t3"]),
-    routes: [{key: "r-t3", icon: "low"}],
+    routes: [{key: "r-t3", kind: "swarm", icon: "low"}],
     watch: watchOf([freezeDecision()]),
     show: [showOut(freezeCard(3, {lastGen: 4})), showOut({id: "t3", labels: []})],
     extra: {
@@ -2099,7 +2102,7 @@ gitTest("предел (з): ошибка show — тик не падает, па
   const {responses} = prepareRollback({
     json: {integration: [], max_freezes: 2},
     tasks, plan: rollbackPlan(["t1", "t2"]),
-    routes: [{key: "r-t1", icon: "low"}],
+    routes: [{key: "r-t1", kind: "swarm", icon: "low"}],
     watch: watchOf([freezeDecision()]),
     show: {exitCode: 1, stdout: JSON.stringify({error: {code: "cli", message: "boom"}})},
     extra: {
@@ -2148,7 +2151,7 @@ gitTest("предел (и): main на двух тиках — код 2, один
         {stdout: JSON.stringify({total: 2, limit: 1000, offset: 0, tasks: [t1Running, t2Frozen]})},
         {stdout: JSON.stringify({total: 2, limit: 1000, offset: 0, tasks: [t1Waiting, t2Parked]})},
       ],
-      routes: {stdout: JSON.stringify({ok: true, routes: []})},
+      routes: {stdout: JSON.stringify({ok: true, routes: SWARM_ROUTES})},
       watch: [
         watchOf([freezeDecision()]),
         watchOf([]),
@@ -2214,7 +2217,7 @@ function rescopeScenario({swarmJson = {integration: []}, rescope, merge = true, 
   const wavesOut = (w) => ({stdout: JSON.stringify({
     waves: {project: "proj", waves: w, cycles: [], unroutable: [], unscoped: [], blocked: {}},
     added: [], removed: [], kept: 0})});
-  const routes = tasks.map(t => ({key: "r-" + t.id, icon: "low"}));
+  const routes = tasks.map(t => ({key: "r-" + t.id, kind: "swarm", icon: "low"}));
   const dataDir = fs.mkdtempSync(path.join(os.tmpdir(), "listik-swarm-data-"));
   fs.writeFileSync(path.join(dataDir, "swarm.json"), JSON.stringify(swarmJson));
   const logDir = fs.mkdtempSync(path.join(os.tmpdir(), "listik-swarm-integration-log-"));
@@ -2427,7 +2430,7 @@ test("main: без --project тикает каждый проект с рабо�
       {stdout: JSON.stringify({total: 0, limit: 1000, offset: 0, tasks: []})},
       {stdout: JSON.stringify({total: 0, limit: 1000, offset: 0, tasks: []})},
     ],
-    routes: {stdout: JSON.stringify({ok: true, routes: []})},
+    routes: {stdout: JSON.stringify({ok: true, routes: SWARM_ROUTES})},
   };
   const {calls} = setupFake(responses);
   const logDir = fs.mkdtempSync(path.join(os.tmpdir(), "listik-swarm-all-"));
@@ -2483,7 +2486,7 @@ gitTest("К1: барьер поставил needs-owner поверх проср�
       status: statusFor(dataDir),
       waves: {stdout: JSON.stringify({waves: plan, added: [], removed: [], kept: 0})},
       list: {stdout: JSON.stringify({total: 1, limit: 1000, offset: 0, tasks})},
-      routes: {stdout: JSON.stringify({ok: true, routes: []})},
+      routes: {stdout: JSON.stringify({ok: true, routes: SWARM_ROUTES})},
       projects: {stdout: JSON.stringify([{slug: "proj", path: repo}])},
       watch: {stdout: JSON.stringify({tasks: {}, decisions: [], probes: []})},
       show: [
@@ -2537,7 +2540,7 @@ function batchResponses(extra) {
     projects: {stdout: JSON.stringify([{slug: "proj", path: ""}])},
     waves: {stdout: JSON.stringify({waves: plan, added: [], removed: [], kept: 0})},
     list: {stdout: JSON.stringify({total: 2, limit: 1000, offset: 0, tasks})},
-    routes: {stdout: JSON.stringify({ok: true, routes: [{key: "r-t1", icon: "low"}, {key: "r-t2", icon: "low"}]})},
+    routes: {stdout: JSON.stringify({ok: true, routes: [{key: "r-t1", kind: "swarm", icon: "low"}, {key: "r-t2", kind: "swarm", icon: "low"}]})},
     worktree: {stdout: JSON.stringify({path: "/wt/x", branch: "b", status: "created"})},
     show: {stdout: JSON.stringify({id: "x", labels: []})},
     set: {stdout: JSON.stringify({id: "x", labels: []})},
@@ -2580,8 +2583,8 @@ test("циклы: tick строку не пишет, noteCycles — только
     status: statusUp,
     projects: {stdout: JSON.stringify([{slug: "proj", path: ""}])},
     waves: {stdout: JSON.stringify({waves: CYCLE_PLAN, added: [], removed: [], kept: 0})},
-    list: {stdout: JSON.stringify({total: 0, limit: 1000, offset: 0, tasks: []})},
-    routes: {stdout: JSON.stringify({ok: true, routes: []})},
+    list: {stdout: JSON.stringify({total: 0, limit: 1000, offset: 0, tasks: [task("a"), task("b")]})},
+    routes: {stdout: JSON.stringify({ok: true, routes: SWARM_ROUTES})},
   });
   const listik = new Listik({bin: FAKE_BIN, actor: "agent:listik-swarm", cliTimeout: 5});
   const log = makeLog();
@@ -2615,8 +2618,8 @@ test("main: цикл четыре тика подряд — «циклы:» од
       status: statusUp,
       projects: {stdout: JSON.stringify([{slug: "proj", path: ""}])},
       waves: [w(CYCLE_PLAN), w(CYCLE_PLAN), w(empty), w(CYCLE_PLAN)],
-      list: {stdout: JSON.stringify({total: 0, limit: 1000, offset: 0, tasks: []})},
-      routes: {stdout: JSON.stringify({ok: true, routes: []})},
+      list: {stdout: JSON.stringify({total: 0, limit: 1000, offset: 0, tasks: [task("a"), task("b")]})},
+      routes: {stdout: JSON.stringify({ok: true, routes: SWARM_ROUTES})},
     });
     const logDir = fs.mkdtempSync(path.join(os.tmpdir(), "listik-swarm-cycles-"));
     const stopper = setInterval(() => {
@@ -2643,8 +2646,8 @@ test("main --once: цикл — строка «циклы:» и код 1", {time
     status: statusUp,
     projects: {stdout: JSON.stringify([{slug: "proj", path: ""}])},
     waves: {stdout: JSON.stringify({waves: CYCLE_PLAN, added: [], removed: [], kept: 0})},
-    list: {stdout: JSON.stringify({total: 0, limit: 1000, offset: 0, tasks: []})},
-    routes: {stdout: JSON.stringify({ok: true, routes: []})},
+    list: {stdout: JSON.stringify({total: 0, limit: 1000, offset: 0, tasks: [{id: "a", status: "open", launch_route: "r-a", launch_driver: "swarm"}, {id: "b", status: "open", launch_route: "r-b", launch_driver: "swarm"}]})},
+    routes: {stdout: JSON.stringify({ok: true, routes: SWARM_ROUTES})},
   });
   const logDir = fs.mkdtempSync(path.join(os.tmpdir(), "listik-swarm-cycles-once-"));
   const {code, chunks} = await runMain(

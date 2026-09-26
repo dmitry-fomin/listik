@@ -567,12 +567,10 @@ const roleInherits = computed(() => {
           :key="tile.role"
           class="listik-route-swarm__role"
           :class="{ 'is-open': tile.role === openRole, 'is-skip': !tile.harness }"
+          @click.capture="selectRole(tile.role)"
         >
-          <button
-            type="button"
-            class="listik-route-swarm__role-head"
-            @click="selectRole(tile.role)"
-          >
+          <!-- Клик по любой части плитки выбирает роль; кнопка — для клавиатуры. -->
+          <button type="button" class="listik-route-swarm__role-head">
             <span class="listik-route-swarm__role-stage">{{ tile.stageCode }} · {{ tile.stageLabel }}</span>
           </button>
           <div class="listik-route-swarm__role-pick">
@@ -830,6 +828,7 @@ const roleInherits = computed(() => {
   border: 1px solid var(--hairline);
   border-radius: var(--radius-lg);
   background: var(--surface-2);
+  cursor: pointer;
 }
 
 .listik-route-swarm__role.is-open {

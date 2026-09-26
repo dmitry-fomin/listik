@@ -17,9 +17,30 @@ export const textSlicedStuck = (id) =>
 
 // Карточка режима роя: снимок launch_driver, а до первого запуска — driver/kind маршрута.
 function isSwarmCard(t, routeByKey) {
+  if (!t.launch_route) return false;
   if (t.launch_driver === "swarm") return true;
   const route = routeByKey.get(t.launch_route);
   return !t.launch_driver && !!route && (route.kind === "swarm" || route.driver === "swarm");
+}
+
+// План волн только из карточек роя: без маршрута или с маршрутом не из роя карточка
+// в выборку не попадает вовсе — ни в запуск, ни в пропуски, ни в вопросы, ни в циклы.
+export function swarmTasks(tasks, routes) {
+  const routeByKey = new Map((routes || []).map(r => [r.key, r]));
+  return (tasks || []).filter(t => isSwarmCard(t, routeByKey));
+}
+
+export function swarmPlan(plan, tasks, routes) {
+  const ours = new Set(swarmTasks(tasks, routes).map(t => t.id));
+  const keep = ids => (ids || []).filter(id => ours.has(id));
+  return {
+    ...plan,
+    waves: Array.isArray(plan.waves) ? plan.waves.map(keep).filter(w => w.length) : [],
+    cycles: (plan.cycles || []).filter(c => c.every(id => ours.has(id))),
+    unroutable: [],
+    unscoped: keep(plan.unscoped),
+    blocked: Object.fromEntries(Object.entries(plan.blocked || {}).filter(([id]) => ours.has(id))),
+  };
 }
 
 export function portOf(task) {
@@ -359,6 +380,9 @@ function superviseCrashed({open, events, tasks, config}) {
 }
 
 export function decide({plan, tasks, routes, config, now, events, gate = null}) {
+  const portTasks = tasks;  // порты — по всем карточкам проекта, не только роя
+  tasks = swarmTasks(tasks, routes);
+  plan = swarmPlan(plan, tasks, routes);
   const open = tasks.filter(t => OPEN_STATUSES.has(t.status));
   const openById = new Map(open.map(t => [t.id, t]));
   const routeByKey = new Map((routes || []).map(r => [r.key, r]));
@@ -501,8 +525,8 @@ export function decide({plan, tasks, routes, config, now, events, gate = null}) 
     }
   }
 
-  const runningSup = superviseRunning({running, open, openById, events, tasks, config, now});
-  const crashedSup = superviseCrashed({open, events, tasks, config});
+  const runningSup = superviseRunning({running, open, openById, events, tasks: portTasks, config, now});
+  const crashedSup = superviseCrashed({open, events, tasks: portTasks, config});
   let restart = [...runningSup.restart, ...crashedSup.restart];
   const giveUp = [...runningSup.giveUp, ...crashedSup.giveUp];
   const crashed = crashedSup.crashed;

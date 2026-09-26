@@ -1988,7 +1988,7 @@ gitTest("предел (в): после парковки t2 запускаетс�
   const {responses} = prepareRollback({
     json: {integration: [], max_freezes: 2},
     tasks, plan: rollbackPlan(["t2", "t3"]),
-    routes: [{key: "r-t3", kind: "swarm", icon: "low"}],
+    routes: [{key: "r-t2", kind: "swarm", icon: "low"}, {key: "r-t3", kind: "swarm", icon: "low"}],
     watch: watchOf([freezeDecision()]),
     show: [showOut(freezeCard(3, {lastGen: 4})), showOut({id: "t3", labels: []})],
     extra: {
@@ -2102,7 +2102,7 @@ gitTest("предел (з): ошибка show — тик не падает, па
   const {responses} = prepareRollback({
     json: {integration: [], max_freezes: 2},
     tasks, plan: rollbackPlan(["t1", "t2"]),
-    routes: [{key: "r-t1", kind: "swarm", icon: "low"}],
+    routes: [{key: "r-t1", kind: "swarm", icon: "low"}, {key: "r-t2", kind: "swarm", icon: "low"}],
     watch: watchOf([freezeDecision()]),
     show: {exitCode: 1, stdout: JSON.stringify({error: {code: "cli", message: "boom"}})},
     extra: {
@@ -2408,12 +2408,12 @@ gitTest("rescope (и): dry-run — не зовётся", async () => {
 
 test("projectsDue: открытые, вопрос и дерево закрытой; старый done мимо", () => {
   assert.deepEqual(projectsDue([
-    {id: "a", project: "alpha", status: "open"},
-    {id: "b", project: "beta", status: "done", needs_owner: true},
-    {id: "c", project: "gamma", status: "done", worktree: "/wt/c"},
-    {id: "d", project: "delta", status: "done", worktree: "", launched_by: "listik"},
-    {id: "e", project: "", status: "open"},
-  ]), ["alpha", "beta", "gamma"]);
+    {id: "a", project: "alpha", status: "open", launch_route: "r-a"},
+    {id: "b", project: "beta", status: "done", needs_owner: true, launch_route: "r-b"},
+    {id: "c", project: "gamma", status: "done", worktree: "/wt/c", launch_route: "r-c"},
+    {id: "d", project: "delta", status: "done", worktree: "", launched_by: "listik", launch_route: "r-d"},
+    {id: "e", project: "", status: "open", launch_route: "r-e"},
+  ], SWARM_ROUTES), ["alpha", "beta", "gamma"]);
 });
 
 test("main: без --project тикает каждый проект с работой и выходит по --once", async () => {
@@ -2424,8 +2424,8 @@ test("main: без --project тикает каждый проект с рабо�
     waves: {stdout: JSON.stringify({waves: emptyPlan, added: [], removed: [], kept: 0})},
     list: [
       {stdout: JSON.stringify({total: 2, limit: 1000, offset: 0, tasks: [
-        {id: "a", project: "alpha", status: "open"},
-        {id: "b", project: "beta", status: "in_progress"},
+        {id: "a", project: "alpha", status: "open", launch_route: "r-a"},
+        {id: "b", project: "beta", status: "in_progress", launch_route: "r-b"},
       ]})},
       {stdout: JSON.stringify({total: 0, limit: 1000, offset: 0, tasks: []})},
       {stdout: JSON.stringify({total: 0, limit: 1000, offset: 0, tasks: []})},
@@ -2439,6 +2439,79 @@ test("main: без --project тикает каждый проект с рабо�
   const waved = calls().filter(c => c.sub === "waves").map(c => c.argv[c.argv.indexOf("--project") + 1]);
   assert.deepEqual(waved, ["alpha", "beta"]);
   assert.equal(calls().some(c => c.argv.includes("--project") && c.argv.includes("all")), true);
+});
+
+// --- listik-w7ge, порция c: projectsDue и откаты только по карточкам роя ---
+
+test("projectsDue: проекты только с не-роевыми карточками мимо, с роевыми — в ответе", () => {
+  const routes = [...SWARM_ROUTES, {key: "r-skill", driver: "skill", icon: "low"}];
+  assert.deepEqual(projectsDue([
+    {id: "h1", project: "bare", status: "open"},
+    {id: "h2", project: "skill", status: "open", launch_route: "r-skill"},
+    {id: "h3", project: "snap", status: "open", launch_route: "r-a", launch_driver: "skill"},
+    {id: "a", project: "route", status: "open", launch_route: "r-a"},
+    {id: "x", project: "snapped", status: "open", launch_route: "r-skill", launch_driver: "swarm"},
+    {id: "c", project: "tree", status: "done", worktree: "/wt/c", launch_route: "r-c"},
+  ], routes), ["route", "snapped", "tree"]);
+});
+
+test("main: без --project проект только с не-роевыми карточками не тикается", async () => {
+  const emptyPlan = {waves: [[]], cycles: [], unroutable: [], unscoped: [], blocked: {}};
+  const responses = {
+    status: statusUp,
+    projects: {stdout: JSON.stringify([{slug: "alpha", path: ""}, {slug: "beta", path: ""}])},
+    waves: {stdout: JSON.stringify({waves: emptyPlan, added: [], removed: [], kept: 0})},
+    list: [
+      {stdout: JSON.stringify({total: 3, limit: 1000, offset: 0, tasks: [
+        {id: "h1", project: "alpha", status: "open"},
+        {id: "h2", project: "alpha", status: "in_progress", launch_route: "r-a", launch_driver: "skill"},
+        {id: "b", project: "beta", status: "open", launch_route: "r-b"},
+      ]})},
+      {stdout: JSON.stringify({total: 0, limit: 1000, offset: 0, tasks: []})},
+      {stdout: JSON.stringify({total: 0, limit: 1000, offset: 0, tasks: []})},
+    ],
+    routes: {stdout: JSON.stringify({ok: true, routes: SWARM_ROUTES})},
+  };
+  const {calls} = setupFake(responses);
+  const logDir = fs.mkdtempSync(path.join(os.tmpdir(), "listik-swarm-ours-"));
+  const {code} = await runMain(["--listik", FAKE_BIN, "--log-dir", logDir, "--once"]);
+  assert.equal(code, 0);
+  const waved = calls().filter(c => c.sub === "waves").map(c => c.argv[c.argv.indexOf("--project") + 1]);
+  assert.deepEqual(waved, ["beta"]);
+});
+
+gitTest("предел: freeze по не-роевой карточке — ни show, ни needs-owner, в rollbacks нет, в watch.frozen есть",
+  async () => {
+    const tasks = [frozenT2(), task("h1", {launch_route: ""})];
+    const {responses} = prepareRollback({
+      json: {integration: [], max_freezes: 2},
+      tasks, plan: rollbackPlan([]),
+      watch: watchOf([freezeDecision({task: "h1"})]),
+      show: showOut(freezeCard(3, {lastGen: 4})),
+      extra: {"needs-owner": {stdout: JSON.stringify({id: "h1"})}},
+    });
+    const {calls, result} = await tickPrepared(responses);
+    assert.ok(!calls().some(c => ["show", "needs-owner"].includes(c.sub) && c.argv.includes("h1")));
+    assert.deepEqual(result.rollbacks, []);
+    assert.deepEqual(result.watch.frozen, ["h1"]);
+  });
+
+gitTest("предел: тот же freeze по роевой карточке — show, needs-owner и запись в rollbacks", async () => {
+  const tasks = [frozenT2(), task("h1", {launch_route: ""})];
+  const {responses} = prepareRollback({
+    json: {integration: [], max_freezes: 2},
+    tasks, plan: rollbackPlan([]),
+    watch: watchOf([freezeDecision()]),
+    show: showOut(freezeCard(3, {lastGen: 4})),
+    extra: {"needs-owner": {stdout: JSON.stringify({id: "t2"})}},
+  });
+  const {calls, result} = await tickPrepared(responses);
+  assert.ok(calls().some(c => c.sub === "show" && c.argv.includes("t2")));
+  assert.ok(needsOwnerText(calls, "t2"));
+  assert.deepEqual(result.rollbacks, [
+    {id: "t2", owner: "t1", minutes: 10, count: 3, total: 3, parked: true},
+  ]);
+  assert.deepEqual(result.watch.frozen, ["t2"]);
 });
 
 test("main: без работы по проектам --once не зовёт waves", async () => {

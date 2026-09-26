@@ -236,7 +236,7 @@ class PortHolderTests(_TempDirTests):
         """Возврат с судейства: подстрока «listik» в пути и «serve» в «server» — не сервер."""
         # vite serve из worktree listik-l2fy: имя бинаря — vite, listik лишь часть каталога.
         self.assertFalse(server.is_listik_serve(
-            "/Users/me/Projects/Listik-wt/listik-l2fy/web/node_modules/.bin/vite serve"))
+            "/Users/me/Projects/Listik/.worktrees/listik-l2fy/web/node_modules/.bin/vite serve"))
         # listik-helper/bin/app: имя бинаря — app, listik лишь часть каталога.
         self.assertFalse(server.is_listik_serve("/opt/listik-helper/bin/app serve --port 8080"))
         # «serve» — подстрока «server»: отдельного токена serve нет.

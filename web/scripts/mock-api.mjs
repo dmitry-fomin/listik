@@ -1027,7 +1027,7 @@ if (coldMode) {
       ...coldFields,
       id: 'listik-cold-branch',
       title: 'Холодный старт: дерево и ветка',
-      worktree: '/Users/dmitry.fomin/Projects/Listik-wt/listik-cold-branch',
+      worktree: '/Users/dmitry.fomin/Projects/Listik/.worktrees/listik-cold-branch',
       branch: 'task/listik-cold-branch',
     }),
     task({ ...coldFields, id: 'listik-cold-main', title: 'Холодный старт: работа в main',

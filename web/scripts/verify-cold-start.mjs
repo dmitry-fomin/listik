@@ -153,7 +153,7 @@ try {
     const drawn = await openCard('Холодный старт: дерево и ветка', 'listik-cold-branch')
     const row = worktreeRow(drawn)
     const ok = row?.tone === 'listik-cold__dot--success'
-      && row.value === '/Users/dmitry.fomin/Projects/Listik-wt/listik-cold-branch · task/listik-cold-branch'
+      && row.value === '/Users/dmitry.fomin/Projects/Listik/.worktrees/listik-cold-branch · task/listik-cold-branch'
       && drawn.counter === '7 из 7'
       && drawn.badgeTone === 'ui-badge--success'
     return {

@@ -2,7 +2,7 @@
  * Исполнитель этапа по маршруту задачи (`launch_route` → запись `GET /api/routes`).
  * Держатель (`holder`) — тот, кто управляет карточкой; исполнитель — кто реально
  * делает этап: у конвейера это ячейка `roles` по этапу (обратная мапа
- * `STAGE_ROLE` в `lib/pipelines.ts`), у прямого маршрута — сам харнесс записи.
+ * `STAGE_ROLE` в `lib/pipelines.ts`), у роя — харнесс ячейки роли этапа.
  * Исполнитель и держатель совпадают не всегда: оркестратор держит карточку,
  * а этап делает GLM-критик или DeepSeek через dsh — поэтому «кто делает» доска
  * берёт отсюда, а фактический держатель остаётся muted-подписью «держит …».
@@ -13,7 +13,7 @@ import { isSwarmCell, STAGE_ROLE, type ProviderKey } from './pipelines'
 import { routeByKey } from './routes'
 
 export interface StageExecutor {
-  kind: 'role' | 'direct' | 'swarm'
+  kind: 'role' | 'swarm'
   provider?: ProviderKey
   /** Ключ харнесса — любой из каталога `harnesses`, не только встроенный. */
   harness?: HarnessKey | string
@@ -25,7 +25,7 @@ export interface StageExecutor {
 
 /**
  * Плановый исполнитель текущего этапа задачи. `null` — маршрута нет или запись
- * убрали из `routes.json`, у прямого маршрута исполнитель есть всегда; у
+ * убрали из `routes.json`; у
  * конвейера этапа без роли (`null`, `done`, неизвестный) или ячейки в `roles`
  * нет — тоже `null`, и карточка показывает держателя как раньше. У роя
  * исполнитель — харнесс ячейки роли этапа (listik-2gry).
@@ -36,14 +36,6 @@ export function stageExecutor(
 ): StageExecutor | null {
   const route = routeByKey(task.launch_route, routes)
   if (!route) return null
-  if (route.kind === 'direct') {
-    return {
-      kind: 'direct',
-      harness: route.harness,
-      label: harnessTitle(route.harness),
-      title: route.title || harnessTitle(route.harness),
-    }
-  }
   if (!task.stage || task.stage === 'done') return null
   const cell = route.roles[STAGE_ROLE[task.stage]]
   if (!cell) return null

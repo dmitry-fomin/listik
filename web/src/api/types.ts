@@ -441,7 +441,7 @@ interface RouteBase {
   position: number
   /** Argv команды маршрута; `null` — команды нет (роли ещё не переввезены и т.п.). */
   command: string[] | null
-  /** Способ исполнения; у `direct` всегда `skill` (роя без ролей нет). */
+  /** Способ исполнения: `skill` — один процесс, `swarm` — этапы отдельными процессами. */
   driver?: RouteDriver
 }
 
@@ -457,13 +457,6 @@ export interface PipelineRouteDef extends RouteBase {
   skill_path?: string | null
   /** Каталог скила пропал (переименовали/удалили) — запись отдаётся скрытой (`visible:false`). */
   skill_missing?: boolean
-}
-
-/** Прямой маршрут: харнесс делает задачу целиком, без ролей. */
-export interface DirectRouteDef extends RouteBase {
-  kind: 'direct'
-  /** Ключ харнесса из каталога (`agent:<key>`) — любой, не только встроенный. */
-  harness: string
 }
 
 /**
@@ -486,7 +479,7 @@ export interface SwarmRouteDef extends RouteBase {
   roles: SwarmRoles
 }
 
-export type RouteDef = PipelineRouteDef | DirectRouteDef | SwarmRouteDef
+export type RouteDef = PipelineRouteDef | SwarmRouteDef
 
 /**
  * Маршрут, исполняемый роем: `kind='swarm'` или конвейер с `driver='swarm'`
@@ -509,22 +502,6 @@ export interface RoutesResponse {
 }
 
 /**
- * Тело `POST /api/routes` для прямого маршрута (`kind="direct"`, listik-sjx3 порция `a`).
- * `key`, `title`, `harness`, `command` обязательны; `hint` по умолчанию `""`,
- * `icon: null` — запись без иконки. `visible` не передаётся: новый маршрут заводится
- * выключенным. Ключ собирает клиент — сервер его не выводит.
- */
-export interface DirectRouteCreate {
-  kind: 'direct'
-  key: string
-  title: string
-  hint: string
-  icon: RouteIconKey | null
-  harness: string
-  command: string[]
-}
-
-/**
  * Тело `POST /api/routes` для маршрута роя (`kind="swarm"`, listik-2gry):
  * `key`, `title`, `roles` обязательны (хотя бы одна роль с харнессом и
  * командой); `command` и `harness` сервер не примет — исполнитель живёт в
@@ -540,13 +517,12 @@ export interface SwarmRouteCreate {
   visible?: boolean
 }
 
-/** Правка записи — PATCH /api/routes/{key}; `command` только у `kind=direct`. */
+/** Правка записи — PATCH /api/routes/{key}; `command` сервер не принимает. */
 export interface RoutePatch {
   title?: string
   hint?: string
   icon?: RouteIconKey | null
   visible?: boolean
-  command?: string[] | null
   /**
    * Расклад ролей целиком: у `kind=pipeline` ячейки скилового вида
    * (`{provider,label,title}`), у `kind=swarm` — `{harness,argv?,prompt?}`
@@ -563,7 +539,7 @@ export interface RoutePatch {
 /** Вид харнесса: `exec` — процесс с командой, `manual` — ручная выдача без команды. */
 export type HarnessKind = 'exec' | 'manual'
 
-/** Харнесс каталога: исполнитель прямого маршрута или роли роя. */
+/** Харнесс каталога: исполнитель роли роя. */
 export interface Harness {
   /** Ключ `^[a-z0-9][a-z0-9-]*$`; держатель на сервере — `agent:<key>`. */
   key: string
@@ -580,8 +556,8 @@ export interface Harness {
   /** Показывать в списках выбора; выключенный остаётся в базе. */
   enabled: boolean
   position: number
-  /** Где задействован: прямые маршруты и роли маршрутов роя (есть у GET). */
-  used_by?: { route: string; kind: 'direct' | 'swarm'; role: string | null }[]
+  /** Где задействован: роли маршрутов роя (есть у GET). */
+  used_by?: { route: string; kind: 'swarm'; role: string | null }[]
   created_at?: string | null
   updated_at?: string | null
 }

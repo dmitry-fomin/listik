@@ -1,10 +1,10 @@
 <script setup lang="ts">
 /**
- * RoutePicker — визуальный выбор маршрута тремя группами (макет
+ * RoutePicker — визуальный выбор маршрута двумя группами (макет
  * `docs/prototype/NewTaskRoutes-html/NewTaskRoutes.dc.html`, listik-2gry):
- * «Конвейеры» (таблица пресетов: иконка уровня + роли), «Рой» (строки с
- * цепочкой харнессов этапов, пропущенный этап — пунктир) и «Прямая выдача»
- * (одна карточка-строка на харнесс). Заведение нового маршрута отсюда
+ * «Конвейеры» (таблица пресетов: иконка уровня + роли) и «Рой» (строки с
+ * цепочкой харнессов этапов, пропущенный этап — пунктир); под ними — пункт
+ * «без маршрута» и осиротевший ключ. Заведение нового маршрута отсюда
  * убрано — оно живёт только в настройках «Маршруты».
  *
  * Тот же контрол в «Новой задаче» и в панели заведённой карточки: кит такого
@@ -22,7 +22,6 @@ import { harnessTitle } from '@/lib/harness'
 import { isSwarmCell, ROLE_KEYS, ROLE_TITLES } from '@/lib/pipelines'
 import {
   NO_ROUTE,
-  directRoutesOf,
   pickerRoutesOf,
   pipelineRowsOf,
   routeAllowedForType,
@@ -36,7 +35,7 @@ const props = withDefaults(
     routes: RouteDef[]
     /** Ключ выбранной записи; `null`/пустая строка — маршрут не выбран. */
     selectedKey: string | null
-    /** Тип задачи: эпику закрыты прямой маршрут и пресеты без этапа ТЗ. */
+    /** Тип задачи: эпику закрыты маршруты без этапа ТЗ. */
     issueType: string
     disabled?: boolean
     /** Пункт «без маршрута» — снять `launch_route` (только у заведённой задачи). */
@@ -57,7 +56,6 @@ const shownRoutes = computed(() => pickerRoutesOf(props.routes, props.selectedKe
 
 const pipelineRows = computed(() => pipelineRowsOf(shownRoutes.value))
 const swarmRoutes = computed(() => swarmRoutesOf(shownRoutes.value))
-const directRoutes = computed(() => directRoutesOf(shownRoutes.value))
 
 /**
  * Текущий ключ есть на карточке, а записи в `routes.json` уже нет — рисуем
@@ -84,7 +82,6 @@ const pickerItems = computed<PickerItem[]>(() => {
     ...swarmRoutes.value.map((route) => ({ key: route.key, route })),
   ]
   if (props.allowClear) items.push({ key: NO_ROUTE, route: null })
-  items.push(...directRoutes.value.map((route) => ({ key: route.key, route })))
   if (orphanKey.value) items.push({ key: orphanKey.value, route: null })
   return items
 })
@@ -109,12 +106,6 @@ function selectClear(): void {
 }
 
 function routeTooltip(route: RouteDef): string {
-  if (route.kind === 'direct') {
-    if (routeAllowed(route)) {
-      return `${harnessTitle(route.harness)} делает задачу напрямую, без ТЗ, критики и приёмки`
-    }
-    return 'Эпик всегда режется на шаги через ТЗ (s1) — прямой маршрут в обход разбивки на шаги и критики закрыт для эпиков.'
-  }
   if (routeAllowed(route)) return route.hint
   return 'Эпик всегда режется на шаги через ТЗ (s1) — пресеты без этапа ТЗ для эпиков закрыты.'
 }
@@ -279,15 +270,9 @@ function onRouteKeydown(event: KeyboardEvent, key: string): void {
       </div>
     </div>
 
-    <!-- Группа «Прямая выдача»: одна команда на всю задачу; сюда же пункт
-         «без маршрута» и осиротевший ключ выбранной записи. -->
-    <div class="listik-rgroup">
-      <div class="listik-rgroup__head">
-        <span class="listik-rgroup__title">Прямая выдача</span>
-        <span class="listik-rgroup__hint">одна команда на всю задачу, без этапов</span>
-        <span class="listik-rgroup__spacer" aria-hidden="true" />
-      </div>
-
+    <!-- Пункт «без маршрута» и осиротевший ключ выбранной записи — отдельным
+         блоком под группами, без заголовка. -->
+    <div v-if="allowClear || orphanKey" class="listik-rgroup">
       <div class="listik-direct__items">
         <button
           v-if="allowClear"
@@ -307,28 +292,6 @@ function onRouteKeydown(event: KeyboardEvent, key: string): void {
         >
           <ListikIcon name="close" size="sm" />
           без маршрута
-        </button>
-
-        <button
-          v-for="route in directRoutes"
-          :key="route.key"
-          :ref="(el) => setRouteRef(route.key, el)"
-          type="button"
-          role="radio"
-          class="listik-direct__item"
-          :class="{ 'is-on': isOn(route.key), 'is-off': !routeAllowed(route) }"
-          :data-route-key="route.key"
-          :aria-checked="isOn(route.key)"
-          :aria-disabled="!routeAllowed(route) || undefined"
-          :disabled="disabled || !routeAllowed(route)"
-          :tabindex="routeTabindex(route.key)"
-          :title="routeTooltip(route)"
-          @click="selectRoute(route)"
-          @keydown="onRouteKeydown($event, route.key)"
-        >
-          <RouteIcon :route="route" size="sm" />
-          <HarnessIcon :harness="route.harness" size="md" />
-          {{ route.title }}
         </button>
 
         <button

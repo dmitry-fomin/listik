@@ -2451,3 +2451,90 @@ suite("jev 4: вызов бросил — обе влиты, jev error, в ве�
   assert.match(content, /t1-side/);
   assert.match(content, /t2-side/);
 });
+
+// --- listik-c7nj: закрытая, влитая руками, каталог дерева удалён, висит жёсткий вопрос ---
+
+const HAND_MERGED_LINE = "t1 ветка уже в HEAD, дерева нет — считаю влитой, вопрос не снимаю";
+
+function hardQuestionSetup({merge}) {
+  const repo = initRepo();
+  const tree = addWorktree(repo, "t1");
+  writeFileSync(join(tree, "a.txt"), "a\n");
+  sh(tree, "add", "a.txt");
+  sh(tree, "commit", "-q", "-m", "t1");
+  if (merge) sh(repo, "merge", "-q", "--ff-only", "task/t1");
+  nodeFs.rmSync(tree, {recursive: true, force: true});
+  const tasks = [{id: "t1", status: "done", worktree: tree, branch: "task/t1", labels: ["port:1"], needs_owner: true}];
+  const listik = fakeListik({
+    t1: {id: "t1", comments: [
+      {kind: "question", text: "рой: что делать с деревом?", created_at: "2026-01-01T00:00:00Z"},
+    ], write_scope: []},
+  });
+  return {repo, tree, tasks, listik};
+}
+
+suite("барьер c7nj: жёсткий вопрос, ветка влита руками, каталога нет — влита и убрана, вопрос не тронут", async () => {
+  const {repo, tree, tasks, listik} = hardQuestionSetup({merge: true});
+  const log = makeLog();
+  const result = await runBarrier({
+    listik, git, fs: nodeFs, config: {dryRun: false, project: "demo", logDir: tmpLogDir()},
+    swarmConfig: {integration: []}, log, tasks, projectPath: repo, now: new Date(),
+  });
+
+  assert.equal(result.unmerged.includes("t1"), false);
+  assert.ok(result.merged.includes("t1"));
+  assert.ok(result.cleaned.includes("t1"));
+  assert.equal(result.gate, null);
+  assert.equal(await git.branchExists(repo, "task/t1"), false);
+  assert.equal(sh(repo, "worktree", "list", "--porcelain").includes(tree), false);
+  assert.deepEqual(listik.calls.set, [{id: "t1", fields: {worktree: "", branch: ""}}]);
+  assert.equal(listik.calls.comment.length, 1);
+  assert.ok(listik.calls.comment[0].text.includes(MERGED_MARK));
+  assert.deepEqual(listik.calls.needsOwner, []);
+  assert.deepEqual(listik.calls.answer, []);
+  assert.equal(listik.calls.show.length, 1);
+  assert.equal(log.lines.filter(l => l === HAND_MERGED_LINE).length, 1);
+  assert.equal(log.lines.includes("t1 не влита: ждёт человека"), false);
+});
+
+suite("барьер c7nj: жёсткий вопрос, ветка впереди HEAD, каталога нет — ждёт человека, ветка на месте", async () => {
+  const {repo, tasks, listik} = hardQuestionSetup({merge: false});
+  const branchSha = sh(repo, "rev-parse", "task/t1").trim();
+  const headSha = sh(repo, "rev-parse", "HEAD").trim();
+  const log = makeLog();
+  const result = await runBarrier({
+    listik, git, fs: nodeFs, config: {dryRun: false, project: "demo", logDir: tmpLogDir()},
+    swarmConfig: {integration: []}, log, tasks, projectPath: repo, now: new Date(),
+  });
+
+  assert.deepEqual(result.unmerged, ["t1"]);
+  assert.ok(log.lines.includes("t1 не влита: ждёт человека"));
+  assert.equal(sh(repo, "rev-parse", "task/t1").trim(), branchSha);
+  assert.equal(sh(repo, "rev-parse", "HEAD").trim(), headSha);
+  assert.deepEqual(listik.calls.needsOwner, []);
+  assert.deepEqual(listik.calls.answer, []);
+  assert.deepEqual(listik.calls.comment, []);
+  assert.deepEqual(listik.calls.set, []);
+});
+
+suite("барьер c7nj: жёсткий вопрос, aheadCount бросает в шаге 3 — ждёт человека, ничего не убрано", async () => {
+  const {repo, tasks, listik} = hardQuestionSetup({merge: true});
+  const wrapped = {...git, async aheadCount(r, base, br) {
+    if (br === "task/t1") throw new GitError("boom rev-list", ["rev-list"], 128);
+    return git.aheadCount(r, base, br);
+  }};
+  const log = makeLog();
+  const result = await runBarrier({
+    listik, git: wrapped, fs: nodeFs, config: {dryRun: false, project: "demo", logDir: tmpLogDir()},
+    swarmConfig: {integration: []}, log, tasks, projectPath: repo, now: new Date(),
+  });
+
+  assert.deepEqual(result.unmerged, ["t1"]);
+  assert.ok(log.lines.includes("t1 не влита: ждёт человека"));
+  assert.equal(await git.branchExists(repo, "task/t1"), true);
+  assert.deepEqual(listik.calls.needsOwner, []);
+  assert.deepEqual(listik.calls.answer, []);
+  assert.deepEqual(listik.calls.comment, []);
+  assert.deepEqual(listik.calls.set, []);
+  assert.deepEqual(result.cleaned, []);
+});

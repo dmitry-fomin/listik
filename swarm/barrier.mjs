@@ -211,6 +211,7 @@ export async function runBarrier({listik, git, fs, config, swarmConfig, log, tas
   }
 
   // Шаг 3: живость кандидата (каталог/ветка), needs_owner (мягкий — show один раз) и missing_tree.
+  // Жёсткий вопрос, но каталога нет, а ветка целиком в HEAD — влита руками: идёт в live, вопрос не трогаем.
   for (const c of candidates) {
     const cbranch = (c.branch || "").trim() || `task/${c.id}`;
     let shown = null;
@@ -225,6 +226,20 @@ export async function runBarrier({listik, git, fs, config, swarmConfig, log, tas
       }
       const q = openQuestion(fromComments(shown.comments));
       if (!q || !isSoftQuestion(q.text)) {
+        let mergedByHand = false;
+        if (!fs.existsSync(c.worktree || "")) {
+          try {
+            mergedByHand = await git.branchExists(projectPath, cbranch) &&
+              await git.aheadCount(projectPath, "HEAD", cbranch) === 0;
+          } catch {
+            mergedByHand = false;
+          }
+        }
+        if (mergedByHand) {
+          log.line(`${c.id} ветка уже в HEAD, дерева нет — считаю влитой, вопрос не снимаю`);
+          live.push({id: c.id, worktree: c.worktree, branch: cbranch, shown, aheadChecked: true});
+          continue;
+        }
         skippedOut++;
         unmerged.push(c.id);
         log.line(`${c.id} не влита: ждёт человека`);
@@ -302,13 +317,15 @@ export async function runBarrier({listik, git, fs, config, swarmConfig, log, tas
       continue;
     }
 
-    let ahead;
-    try {
-      ahead = await git.aheadCount(projectPath, "HEAD", entry.branch);
-    } catch (err) {
-      await markUnmerged(entry.id, "ahead_error",
-        `ветка ${entry.branch}: ${err.message ?? String(err)}.`);
-      continue;
+    let ahead = 0;
+    if (!entry.aheadChecked) {
+      try {
+        ahead = await git.aheadCount(projectPath, "HEAD", entry.branch);
+      } catch (err) {
+        await markUnmerged(entry.id, "ahead_error",
+          `ветка ${entry.branch}: ${err.message ?? String(err)}.`);
+        continue;
+      }
     }
     if (ahead === 0 && !fs.existsSync(entry.worktree)) {
       merged.push(entry.id);

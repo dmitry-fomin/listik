@@ -54,7 +54,7 @@ export interface Filters {
   project: string
   status: string
   stage: string
-  assignee: string
+  orchestrator: string
   type: string
   needsOwner: boolean
   /** Здоровье по heartbeat/держателю (см. lib/health.ts): пусто — без фильтра. */
@@ -76,7 +76,7 @@ export function emptyFilters(): Filters {
     project: '',
     status: '',
     stage: '',
-    assignee: '',
+    orchestrator: '',
     type: '',
     needsOwner: false,
     health: '',
@@ -258,9 +258,9 @@ function matchesFilters(task: Task, f: Filters, board: BoardFilters = { health: 
   if (board.health === 'dead' && taskHealth(task) !== 'dead') return false
   if (board.health === 'at-risk' && taskHealth(task) !== 'at-risk') return false
   if (f.type && task.issue_type !== f.type) return false
-  if (f.assignee) {
-    const target = f.assignee === '—' ? null : f.assignee
-    if ((task.assignee ?? null) !== target) return false
+  if (f.orchestrator) {
+    const target = f.orchestrator === '—' ? null : f.orchestrator
+    if ((task.orchestrator ?? null) !== target) return false
   }
   if (f.updatedFrom && task.updated_at < `${f.updatedFrom}T00:00:00`) return false
   if (f.updatedTo && task.updated_at > `${f.updatedTo}T23:59:59`) return false
@@ -275,7 +275,7 @@ function matchesFilters(task: Task, f: Filters, board: BoardFilters = { health: 
 /** Часть фильтров сервер для доски не умеет — эти применяются на клиенте. */
 function needsClientFilter(f: Filters, board: BoardFilters = { health: '', deps: 'all' }): boolean {
   return Boolean(
-    f.needsOwner || f.health || f.type || f.assignee || f.updatedFrom || f.updatedTo || f.deps !== 'all' ||
+    f.needsOwner || f.health || f.type || f.orchestrator || f.updatedFrom || f.updatedTo || f.deps !== 'all' ||
       board.health || board.deps !== 'all',
   )
 }
@@ -1323,7 +1323,7 @@ async function loadListTasks(params: {
         project: filters.project || undefined,
         status: filters.status || undefined,
         stage: filters.stage || undefined,
-        assignee: filters.assignee || undefined,
+        orchestrator: filters.orchestrator || undefined,
         needs_owner: filters.needsOwner || undefined,
         type: filters.type || undefined,
         limit: params.limit,

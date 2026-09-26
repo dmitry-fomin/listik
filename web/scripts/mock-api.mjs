@@ -15,7 +15,11 @@
  * (scripts/verify-route-clear.mjs). В том же режиме живёт карточка
  * `listik-executor`: держит её `claude`, а этап s3-impl по маршруту делает
  * роль `impl` — по ней проверяется подпись «делает …»
- * (scripts/verify-card-executor.mjs).
+ * (scripts/verify-card-executor.mjs). Там же — карточки блока «Кто держит»:
+ * `listik-executor-same` (s1-spec, роль `spec` вендора `claude`, держит
+ * `claude`, оркестратор `listik` с пустой подписью), `listik-executor-glm`
+ * (s2-review, роль `critic` вендора `glm`, держит `agent:pi-glm`) и
+ * `listik-executor-free` (s4-judge, роль `judge`, без держателя и оркестратора).
  * `--assistant` добавляет `GET /api/assistant/status` (`enabled`) и
  * `POST /api/assistant/suggest`; формы — `AssistantStatus` и
  * `AssistantSuggestResponse` из `web/src/api/types.ts`. Ответ подбирается по
@@ -136,8 +140,10 @@ function task(overrides) {
     priority: 2,
     priority_title: 'P2 обычный',
     issue_type: 'feature',
-    assignee: 'agent:dsh',
-    assignee_title: 'dsh',
+    // Оркестратор — кто ведёт карточку по маршруту (`listik`/`claude`); пишет
+    // только сервер, PATCH его не меняет.
+    orchestrator: 'claude',
+    orchestrator_title: 'claude',
     holder: 'agent:dsh',
     holder_title: 'dsh',
     holder_note: 'пишу панель задачи',
@@ -321,8 +327,8 @@ function ownerTask(id, title, owner, priority) {
     blocked_by: [],
     parent: null,
     soft_links: [],
-    assignee: null,
-    assignee_title: '',
+    orchestrator: null,
+    orchestrator_title: '',
     labels: [],
   })
 }
@@ -383,8 +389,8 @@ function fillTask(i) {
     abandoned: false,
     blocked_by: [],
     labels: [],
-    assignee: null,
-    assignee_title: '',
+    orchestrator: null,
+    orchestrator_title: '',
     spec_path: null,
     journal_path: null,
     worktree: null,
@@ -927,8 +933,8 @@ if (routesMode) {
       holder_note: null,
       stage_at: null,
       stage_age: '',
-      assignee: null,
-      assignee_title: '',
+      orchestrator: null,
+      orchestrator_title: '',
       autostart: true,
       launch_route: 'low-pipeline',
       launch_error: 'маршрута low-pipeline нет в routes.json',
@@ -952,8 +958,8 @@ if (routesMode) {
       holder_note: null,
       stage_at: null,
       stage_age: '',
-      assignee: null,
-      assignee_title: '',
+      orchestrator: null,
+      orchestrator_title: '',
       labels: ['frontend'],
       stale: false,
       abandoned: false,
@@ -975,6 +981,79 @@ if (routesMode) {
       holder_hours: 0.1,
       idle_hours: 0.1,
       idle_age: '6 мин',
+      orchestrator: 'claude',
+      orchestrator_title: 'claude',
+      launch_route: 'low-pipeline',
+      labels: ['harness:claude', 'process:low-pipeline', 'frontend'],
+      stale: false,
+      abandoned: false,
+    }),
+    // Этап s1-spec делает роль `spec` вендора `claude`, держит тоже `claude` —
+    // строки «делает» в панели нет. Пустой `orchestrator_title` проверяет
+    // запасное значение `orchestrator` в строке «оркестратор».
+    task({
+      id: 'listik-executor-same',
+      title: 'Этап делает сам держатель',
+      status: 'in_progress',
+      status_title: 'в работе',
+      stage: 's1-spec',
+      stage_title: '1. ТЗ и чек-лист',
+      holder: 'claude',
+      holder_title: 'Claude',
+      holder_at: iso(0.1),
+      holder_age: '6 мин',
+      holder_hours: 0.1,
+      idle_hours: 0.1,
+      idle_age: '6 мин',
+      orchestrator: 'listik',
+      orchestrator_title: '',
+      launch_route: 'low-pipeline',
+      labels: ['harness:claude', 'process:low-pipeline', 'frontend'],
+      stale: false,
+      abandoned: false,
+    }),
+    // Этап s2-review — роль `critic` вендора `glm`, держит `agent:pi-glm`:
+    // вендор и харнесс совпадают (`glm` ↔ `pi-glm`), «делает» скрыта.
+    task({
+      id: 'listik-executor-glm',
+      title: 'Критик GLM держит сам',
+      status: 'in_progress',
+      status_title: 'в работе',
+      stage: 's2-review',
+      stage_title: '2. Второе мнение',
+      holder: 'agent:pi-glm',
+      holder_title: 'pi · GLM',
+      holder_at: iso(0.1),
+      holder_age: '6 мин',
+      holder_hours: 0.1,
+      idle_hours: 0.1,
+      idle_age: '6 мин',
+      orchestrator: 'listik',
+      orchestrator_title: 'listik',
+      launch_route: 'low-pipeline',
+      labels: ['harness:claude', 'process:low-pipeline', 'frontend'],
+      stale: false,
+      abandoned: false,
+    }),
+    // Этап s4-judge — роль `judge` («Проверка»), держателя нет: «делает» видна,
+    // «держит никто».
+    task({
+      id: 'listik-executor-free',
+      title: 'Этап без держателя',
+      status: 'in_progress',
+      status_title: 'в работе',
+      stage: 's4-judge',
+      stage_title: '4. Проверка и коммит',
+      holder: null,
+      holder_title: '',
+      holder_at: null,
+      holder_age: '',
+      holder_hours: null,
+      holder_note: null,
+      idle_hours: 0.1,
+      idle_age: '6 мин',
+      orchestrator: null,
+      orchestrator_title: '',
       launch_route: 'low-pipeline',
       labels: ['harness:claude', 'process:low-pipeline', 'frontend'],
       stale: false,
@@ -1154,7 +1233,7 @@ function applyPatch(id, body) {
     } else if (key === 'stage') {
       found.stage = String(value)
       found.stage_title = STAGE_TITLES[found.stage] ?? found.stage
-    } else if (key === 'holder' || key === 'assignee' || key === 'project' || key === 'title') {
+    } else if (key === 'holder' || key === 'project' || key === 'title') {
       found[key] = value === '' ? null : value
       if (key === 'holder') found.holder_title = value || ''
     } else if (key === 'owner') {
@@ -1626,7 +1705,7 @@ const server = createServer(async (request, response) => {
       ],
       facets: {
         projects: [...projects.map((project) => project.slug), ...extra],
-        assignees: ['agent:dsh', '—'],
+        orchestrators: ['claude', '—'],
         holders: ['agent:dsh', 'agent:claude', '—'],
         statuses: Object.keys(STATUS_TITLES),
         stages: Object.keys(STAGE_TITLES),
@@ -1644,7 +1723,7 @@ const server = createServer(async (request, response) => {
       by_stage: { 's1-spec': 1, 's2-review': 1, 's3-impl': 1, 's4-judge': 1 },
       by_project: [{ project: 'listik', total: 4, in_progress: 1, waiting: 1 }],
       by_holder: [{ holder: 'agent:dsh', title: 'dsh', count: 1 }],
-      by_actor: [{ actor: 'agent:dsh', title: 'dsh', count: 2 }],
+      by_orchestrator: [{ orchestrator: 'claude', title: 'claude', count: 2 }],
       stale: 1,
       needs_owner: 1,
       running: tasks.filter((item) => item.status === 'in_progress'),

@@ -33,8 +33,8 @@ export function stageOptions(): FacetsOption[] {
   return STAGES.map(({ value, label }) => ({ value, label }))
 }
 
-export function assigneeOptions(meta: Meta | null): FacetsOption[] {
-  const fromFacets = meta?.facets?.assignees ?? []
+export function orchestratorOptions(meta: Meta | null): FacetsOption[] {
+  const fromFacets = meta?.facets?.orchestrators ?? []
   return fromFacets.map((value) => {
     const actor = (meta?.actors ?? []).find((item) => item.key === value)
     return { value, label: actor?.title || value }

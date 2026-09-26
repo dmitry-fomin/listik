@@ -27,8 +27,8 @@ export interface Task {
   priority: number
   priority_title: string
   issue_type: string
-  assignee: string | null
-  assignee_title: string
+  orchestrator: string | null
+  orchestrator_title: string
   holder: string | null
   holder_title: string
   /** Владелец задачи (`server.users`): чьи задачи видно и кому их можно брать; null — без владельца. */
@@ -726,7 +726,7 @@ export interface FacetActors {
 
 export interface MetaFacets {
   projects: string[]
-  assignees: string[]
+  orchestrators: string[]
   holders: string[]
   statuses: string[]
   stages: string[]
@@ -756,8 +756,8 @@ export interface StatsHolder {
   count: number
 }
 
-export interface StatsActor {
-  actor: string
+export interface StatsOrchestrator {
+  orchestrator: string
   title: string
   count: number
 }
@@ -767,7 +767,7 @@ export interface Stats {
   by_stage: Record<string, number>
   by_project: StatsProject[]
   by_holder: StatsHolder[]
-  by_actor: StatsActor[]
+  by_orchestrator: StatsOrchestrator[]
   stale: number
   needs_owner: number
   /** Закрыто за последние 7 суток и за 7 суток до них. */
@@ -848,7 +848,7 @@ export interface TaskQuery {
   project?: string
   status?: string
   stage?: string
-  assignee?: string
+  orchestrator?: string
   holder?: string
   needs_owner?: boolean
   type?: string
@@ -873,7 +873,6 @@ export interface TaskPatch {
   stage?: string
   priority?: number
   issue_type?: string
-  assignee?: string
   holder?: string
   holder_note?: string
   /** Смена владельца задачи; пустая строка снимает владельца. */

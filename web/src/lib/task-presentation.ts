@@ -3,7 +3,7 @@ import { formatDateTime, humanAge } from './format'
 import { harnessOf, harnessTitle } from './harness'
 import { HEALTH_TITLES, healthReason, taskHealth } from './health'
 import { worktreeState, worktreeValue } from './dictionaries'
-import { stageExecutor } from './executors'
+import { executorIsHolder, stageExecutor } from './executors'
 
 /** Общие представления задачи для настольной и телефонной карточек. */
 
@@ -57,15 +57,17 @@ export function depHolderHint(dep: DepInfo): string {
 /**
  * Текст статуса держателя для компактного списка телефона. «Выдана, не взята»
  * важнее исполнителя (прогон ещё не подтвердился); иначе при известном
- * исполнителе этапа (`lib/executors.ts`) показываем его, а держатель уходит
- * в хвост «держит …» — держателя может и не быть вовсе.
+ * исполнителе этапа (`lib/executors.ts`), который не сам держатель
+ * (`executorIsHolder`), показываем его, а держатель уходит в хвост «держит …» —
+ * держателя может и не быть вовсе. Этап делает сам держатель — строка как без
+ * маршрута.
  */
 export function holderStatusText(task: TaskDetail, routes: RouteDef[] = []): string {
   if (task.not_taken && task.holder) {
     return `выдана ${task.holder_title}, не взята ${task.assigned_age}${task.holder_assigned_by_title ? ` · выдал ${task.holder_assigned_by_title}` : ''}`
   }
   const executor = stageExecutor(task, routes)
-  if (executor) {
+  if (executor && !executorIsHolder(executor, task.holder)) {
     const parts = [executor.title]
     if (hasHolderTitle(task.holder_title)) parts.push(`держит ${task.holder_title}`)
     if (task.holder_age) parts.push(task.holder_age)
@@ -92,7 +94,8 @@ export interface DesktopHolderPresentation {
   assignedBy: string | null
   heartbeat: string
   stageStarted: string
-  assignee: string | null
+  /** Кто ведёт карточку по маршруту (`listik`/`claude`); `null` — поле пусто. */
+  orchestrator: string | null
   note: string
   /**
    * «Кто выполнял» — у закрытой карточки (done/cancelled) с непустым `worked_by`:
@@ -123,7 +126,7 @@ export function desktopHolderPresentation(task: TaskDetail): DesktopHolderPresen
     assignedBy: task.holder_assigned_by_title,
     heartbeat: heartbeatText(task),
     stageStarted: task.stage_at ? `${formatDateTime(task.stage_at)} · ${task.stage_age}` : `— · ${task.stage_age}`,
-    assignee: task.assignee && task.assignee !== task.holder ? (task.assignee_title || task.assignee) : null,
+    orchestrator: task.orchestrator?.trim() ? (task.orchestrator_title || task.orchestrator) : null,
     note: task.holder_note ? `«${task.holder_note}»` : '—',
   }
 }

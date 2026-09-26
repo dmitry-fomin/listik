@@ -8,6 +8,19 @@
  * без маршрута), отдаёт собранный `web/dist` и гоняет сценарии в headless
  * Chrome через CDP.
  *
+ * Сценарии: 1–2 — подвал карточки доски; 3–7 — блок «Кто держит» панели
+ * (listik-6g0q). Строка «делает» — только когда этап делает не сам держатель,
+ * без хвоста « · <label>»; строка «оркестратор» — всегда, когда поле заполнено:
+ *   3. `listik-executor` — «делает» ровно «DeepSeek — код», держит Claude,
+ *      оркестратор `claude` (совпадает с держателем, но строка есть);
+ *   4. `listik-executor-same` — роль `spec` вендора `claude`, держит `claude`:
+ *      «делает» нет; оркестратор `listik` — запасное значение при пустой подписи;
+ *   5. `listik-routes-fresh` — оркестратора нет, строки «оркестратор» нет;
+ *   6. `listik-executor-glm` — роль `critic` вендора `glm`, держит `agent:pi-glm`:
+ *      «делает» нет, держит «pi · GLM»;
+ *   7. `listik-executor-free` — роль `judge`, без держателя: «делает Проверка»,
+ *      держит «никто».
+ *
  * Запуск: node scripts/verify-card-executor.mjs [url]
  *   Без аргумента сам поднимает мок и статику — нужен собранный `web/dist`
  *   (`npx vite build --configLoader runner`). С аргументом работает с уже
@@ -34,6 +47,14 @@ const FRESH = 'listik-routes-fresh'
 const FRESH_TITLE = 'Заведена без маршрута'
 /** title роли `impl` в `low-pipeline` мока — должен попасть в «делает …». */
 const IMPL_TITLE = 'DeepSeek — код'
+const SAME = 'listik-executor-same'
+const SAME_TITLE = 'Этап делает сам держатель'
+const GLM = 'listik-executor-glm'
+const GLM_TITLE = 'Критик GLM держит сам'
+const FREE = 'listik-executor-free'
+const FREE_TITLE = 'Этап без держателя'
+/** title роли `judge` в `low-pipeline` мока. */
+const JUDGE_TITLE = 'Проверка'
 
 /* ── Сценарии ───────────────────────────────────────────────────────────── */
 
@@ -106,6 +127,35 @@ try {
       return true;
     })()`)
 
+  async function pressEscape() {
+    for (const type of ['rawKeyDown', 'keyUp']) {
+      await send('Input.dispatchKeyEvent', {
+        type,
+        key: 'Escape',
+        code: 'Escape',
+        windowsVirtualKeyCode: 27,
+        nativeVirtualKeyCode: 27,
+      })
+    }
+  }
+
+  /**
+   * Открыть панель задачи карточкой доски и дождаться, пока `ready(rows)` не
+   * станет истинным. Открытая панель делает фон inert — сначала закрыть её.
+   */
+  const openDrawer = async (title, id, ready) => {
+    if ((await state()).open) {
+      await pressEscape()
+      await waitFor(async () => ((await state()).open === false ? true : null))
+    }
+    const clicked = await clickCard(title)
+    const drawer = await waitFor(async () => {
+      const seen = await state()
+      return seen.id === id && ready(seen.rows) ? seen : null
+    })
+    return { clicked, drawer, rows: drawer?.rows ?? (await state()).rows ?? {} }
+  }
+
   await send('Page.navigate', { url })
   // Ждём, пока доска отрисует карточки (мок отвечает сразу, запас — на шрифты и SSE).
   const boardReady = await waitFor(
@@ -147,22 +197,74 @@ try {
     return { ok, expect: 'без держателя', got: foot }
   })
 
-  // 3. Панель задачи: строка «делает» с title роли перед «держит».
+  // 3. Панель задачи: строка «делает» ровно с title роли (без « · <label>»)
+  //    перед «держит»; оркестратор `claude` виден, хотя совпадает с держателем.
   await record('панель задачи: строка «делает» с исполнителем этапа', async () => {
-    const clicked = await clickCard(CARD_TITLE)
-    const drawer = await waitFor(async () => {
-      const seen = await state()
-      return seen.id === CARD && seen.rows['делает'] ? seen : null
-    })
-    const rows = drawer?.rows ?? (await state()).rows
+    const { clicked, drawer, rows } = await openDrawer(CARD_TITLE, CARD, (seen) => seen['делает'] && seen['оркестратор'])
     const ok = Boolean(clicked)
       && Boolean(drawer)
-      && rows['делает']?.includes(IMPL_TITLE)
+      && rows['делает'] === IMPL_TITLE
       && Boolean(rows['держит']?.includes('Claude'))
+      && rows['оркестратор'] === 'claude'
     return {
       ok,
-      expect: `делает «${IMPL_TITLE}», держит «Claude …»`,
-      got: { clicked, делает: rows?.['делает'], держит: rows?.['держит'] },
+      expect: `делает «${IMPL_TITLE}», держит «Claude …», оркестратор «claude»`,
+      got: { clicked, делает: rows['делает'], держит: rows['держит'], оркестратор: rows['оркестратор'] },
+    }
+  })
+
+  // 4. Этап делает сам держатель (роль `spec` вендора `claude`, держит `claude`):
+  //    строки «делает» нет; пустая подпись оркестратора — запасное значение ключа.
+  await record('панель задачи: держатель сам делает этап — «делает» нет', async () => {
+    const { clicked, drawer, rows } = await openDrawer(SAME_TITLE, SAME, (seen) => seen['держит'] && seen['оркестратор'])
+    const ok = Boolean(clicked)
+      && Boolean(drawer)
+      && !('делает' in rows)
+      && Boolean(rows['держит']?.includes('Claude'))
+      && rows['оркестратор'] === 'listik'
+    return {
+      ok,
+      expect: 'нет «делает», держит «Claude …», оркестратор «listik»',
+      got: { clicked, делает: rows['делает'], держит: rows['держит'], оркестратор: rows['оркестратор'] },
+    }
+  })
+
+  // 5. Карточка без оркестратора — строки «оркестратор» нет.
+  await record('панель задачи: без оркестратора — строки нет', async () => {
+    const { clicked, drawer, rows } = await openDrawer(FRESH_TITLE, FRESH, (seen) => seen['держит'])
+    const ok = Boolean(clicked) && Boolean(drawer) && !('оркестратор' in rows)
+    return {
+      ok,
+      expect: 'нет строки «оркестратор»',
+      got: { clicked, оркестратор: rows['оркестратор'], держит: rows['держит'] },
+    }
+  })
+
+  // 6. Роль `critic` вендора `glm`, держит `agent:pi-glm` — это она же: «делает» нет.
+  await record('панель задачи: GLM-критик держит сам — «делает» нет', async () => {
+    const { clicked, drawer, rows } = await openDrawer(GLM_TITLE, GLM, (seen) => seen['держит'])
+    const ok = Boolean(clicked)
+      && Boolean(drawer)
+      && !('делает' in rows)
+      && Boolean(rows['держит']?.includes('pi · GLM'))
+    return {
+      ok,
+      expect: 'нет «делает», держит «pi · GLM …»',
+      got: { clicked, делает: rows['делает'], держит: rows['держит'] },
+    }
+  })
+
+  // 7. Этап без держателя — «делает» с title роли, «держит никто».
+  await record('панель задачи: этап без держателя — «делает» видна', async () => {
+    const { clicked, drawer, rows } = await openDrawer(FREE_TITLE, FREE, (seen) => seen['делает'] && seen['держит'])
+    const ok = Boolean(clicked)
+      && Boolean(drawer)
+      && rows['делает'] === JUDGE_TITLE
+      && Boolean(rows['держит']?.includes('никто'))
+    return {
+      ok,
+      expect: `делает «${JUDGE_TITLE}», держит «никто»`,
+      got: { clicked, делает: rows['делает'], держит: rows['держит'] },
     }
   })
 

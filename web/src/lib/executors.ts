@@ -8,7 +8,7 @@
  * берёт отсюда, а фактический держатель остаётся muted-подписью «держит …».
  */
 import type { RouteDef, Task } from '@/api/types'
-import { harnessTitle, type HarnessKey } from './harness'
+import { harnessOf, harnessTitle, type HarnessKey } from './harness'
 import { isSwarmCell, STAGE_ROLE, type ProviderKey } from './pipelines'
 import { routeByKey } from './routes'
 
@@ -44,4 +44,27 @@ export function stageExecutor(
     return { kind: 'swarm', harness: cell.harness, label: name, title: name }
   }
   return { kind: 'role', provider: cell.provider, label: cell.label, title: cell.title || cell.label }
+}
+
+/** Харнессы держателя, которыми вендор ячейки роли исполняет этап. */
+const PROVIDER_HARNESSES: Record<ProviderKey, readonly string[]> = {
+  claude: ['claude'],
+  grok: ['grok'],
+  devin: ['devin'],
+  openai: ['codex'],
+  deepseek: ['dsh', 'pi-deepseek'],
+  glm: ['pi-glm'],
+}
+
+/**
+ * Этап делает сам держатель: ключ держателя (`harnessOf`) равен харнессу
+ * роевой ячейки или входит в харнессы вендора ячейки роли. Без держателя и у
+ * человека — не совпадает. Одно правило для строки «делает» панели и для
+ * телефонного `holderStatusText`.
+ */
+export function executorIsHolder(executor: StageExecutor, holder: string | null | undefined): boolean {
+  const key = harnessOf(holder)
+  if (!key || key === 'human') return false
+  if (executor.kind === 'swarm') return executor.harness === key
+  return executor.provider ? (PROVIDER_HARNESSES[executor.provider] ?? []).includes(key) : false
 }

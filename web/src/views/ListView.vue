@@ -27,7 +27,7 @@ import TaskGlyph from '@/components/marks/TaskGlyph.vue'
 import store, { type Filters } from '@/store/listik'
 import type { Task, TaskPatch } from '@/api/types'
 import { formatDateTime, humanAge } from '@/lib/format'
-import { assigneeOptions, stageOptions, statusOptions, typeOptions } from '@/lib/facets'
+import { orchestratorOptions, stageOptions, statusOptions, typeOptions } from '@/lib/facets'
 
 const COLUMNS_KEY = 'listik.columns'
 
@@ -47,7 +47,7 @@ const COLUMN_CATALOG: ColumnDef[] = [
   { key: 'stage_title', label: 'Этап', width: '140px' },
   { key: 'priority_title', label: 'Приоритет', width: '110px', sortable: true },
   { key: 'issue_type', label: 'Тип', width: '100px' },
-  { key: 'assignee_title', label: 'Исполнитель', width: '140px' },
+  { key: 'orchestrator_title', label: 'Оркестратор', width: '140px' },
   { key: 'holder_title', label: 'Держит', width: '140px' },
   { key: 'holder_age', label: 'Держит, время', width: '120px', sortable: true },
   { key: 'stage_age', label: 'На этапе', width: '120px', sortable: true },
@@ -279,12 +279,6 @@ const bulkFields = computed<UiBulkEditModalField[]>(() => {
     type: 'select',
     options: statusOptions().map((option) => ({ value: option.value, label: option.label })),
   }
-  const assignees: UiFieldFormField = {
-    key: 'assignee',
-    label: 'Исполнитель',
-    type: 'select',
-    options: assigneeOptions(store.meta.value).map((option) => ({ value: option.value, label: option.label })),
-  }
   const labels: UiFieldFormField = {
     key: 'labels',
     label: 'Метки (через запятую)',
@@ -292,14 +286,13 @@ const bulkFields = computed<UiBulkEditModalField[]>(() => {
     hint: 'пустое значение очистит список меток',
   }
   const holder: UiFieldFormField = { key: 'holder', label: 'Держатель', type: 'text' }
-  return [statuses, assignees, labels, holder]
+  return [statuses, labels, holder]
 })
 
 async function submitBulk(changes: Record<string, unknown>): Promise<void> {
   bulkError.value = null
   const patch: TaskPatch = {}
   if (typeof changes.status === 'string' && changes.status) patch.status = changes.status as Task['status']
-  if (typeof changes.assignee === 'string' && changes.assignee) patch.assignee = changes.assignee
   if (typeof changes.holder === 'string') patch.holder = changes.holder
   if (typeof changes.labels === 'string') {
     patch.labels = changes.labels
@@ -330,7 +323,7 @@ defineExpose({ reload: load })
       :filters="filtersModel"
       :status-options="statusOptions()"
       :stage-options="stageOptions()"
-      :assignee-options="assigneeOptions(store.meta.value)"
+      :orchestrator-options="orchestratorOptions(store.meta.value)"
       :type-options="typeOptions()"
       @update:filters="patchFilters"
       @reset="store.clearFilters()"

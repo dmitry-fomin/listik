@@ -121,7 +121,7 @@ class ImportSampleTests(RoutesDbTestCase):
         self.assertEqual(record["kind"], "pipeline")
         self.assertEqual(list(record["roles"]), ["spec", "critic", "impl", "judge"])
         self.assertEqual([cell["label"] for cell in record["roles"].values()],
-                         ["Devin", "Grok", "GLM", "Grok"])
+                         ["max", "xhigh", "GLM", "xhigh"])
         self.assertEqual(record["command"][0], "claude")
         values = {name: name for name in routes_mod.PLACEHOLDERS}
         values["route"] = "cross-pipeline"

@@ -9,13 +9,14 @@ from __future__ import annotations
 
 import json
 import os
+import sqlite3
 import subprocess
 import sys
 from pathlib import Path
 from unittest import mock
 
 from listik import db as db_mod
-from listik import errors, store, swarm_llm
+from listik import errors, harnesses_store, routes_store, store, swarm_llm
 from listik.swarm_watch import SCOPE_MARK
 from tests.helpers import TempDbTestCase
 from tests.test_owner_http import AUTH, LOCAL_CONFIG, OwnerHttpCase
@@ -25,6 +26,14 @@ REPO_ROOT = LISTIK_BIN.parent.parent
 FAKE_MODEL = Path(__file__).resolve().parent / "fixtures" / "fake_model.py"
 
 MERGED_MARK = swarm_llm.MERGED_MARK
+
+
+def _swarm_route(conn, key: str = "swarmy") -> None:
+    """Маршрут роя `kind="swarm"` (нужна роль с харнессом — заводим харнесс `probe`)."""
+    harnesses_store.create(conn, {"key": "probe", "label": "probe",
+                                  "argv": [sys.executable, "-c", "print(1)"]})
+    routes_store.create_route(conn, key=key, kind="swarm", title="Рой",
+                              roles={"impl": {"harness": "probe"}})
 
 
 def _snapshot(conn, table: str) -> set:
@@ -39,10 +48,17 @@ class RescopeTestCase(TempDbTestCase):
         store.upsert_project(self.conn, "demo", path=str(self.tmp_path))
         self.spec_dir = self.tmp_path / "specs"
         self.spec_dir.mkdir(exist_ok=True)
+        # rescope берёт только карточки роя (listik-w7ge): `_task` ставит маршрут `swarmy`.
+        _swarm_route(self.conn)
 
-    def _task(self, title: str, *, spec: str | None = None, status: str = "open") -> str:
+    def _task(self, title: str, *, spec: str | None = None, status: str = "open",
+              route: str | None = "swarmy", driver: str | None = None) -> str:
+        """Карточка роя по умолчанию: маршрут `swarmy` (`kind="swarm"`) без снимка;
+        `driver` — снимок `launch_driver`, `route=None` — карточка без маршрута."""
         tid = store.create_task(self.conn, title=title, project="demo",
                                 status=status)["id"]
+        self.conn.execute("UPDATE tasks SET launch_route = ?, launch_driver = ? WHERE id = ?",
+                          (route, driver, tid))
         if spec is not None:
             spec_path = self.spec_dir / f"{tid}.md"
             spec_path.write_text(spec, encoding="utf-8")
@@ -547,9 +563,11 @@ class HttpTests(OwnerHttpCase):
             store.upsert_project(conn, "demo", path=str(tmp_path))
             spec_dir = tmp_path / "specs"
             spec_dir.mkdir(exist_ok=True)
+            _swarm_route(conn)
             a = store.create_task(conn, title="A", project="demo")["id"]
             b = store.create_task(conn, title="B", project="demo")["id"]
             for tid in (a, b):
+                conn.execute("UPDATE tasks SET launch_route = 'swarmy' WHERE id = ?", (tid,))
                 spec_path = spec_dir / f"{tid}.md"
                 spec_path.write_text("ТЗ", encoding="utf-8")
                 store.update_task(conn, tid, spec_path=str(spec_path))
@@ -710,3 +728,90 @@ class DriftOutsideNotListTests(RescopeTestCase):
             extra=[{"task": a, "declared": ["a.py"], "touched": ["a.py", "b.py"],
                     "outside": None}])
         self.assertEqual(records[0]["outside"], ["b.py"])
+
+
+# --------------------------------------------------------------------------- только карточки роя
+
+
+class SwarmOnlyTests(RescopeTestCase):
+    """Рабочее множество rescope — только карточки роя (listik-w7ge, порция b)."""
+
+    def setUp(self) -> None:
+        super().setUp()
+        routes_store.create_route(self.conn, key="skillish", kind="pipeline", title="Скил")
+        # Роевые: по маршруту `kind="swarm"` без снимка и по снимку `launch_driver`
+        # (маршрута `nano` в базе нет).
+        self.by_route = self._task("R", spec="ТЗ R")
+        self.by_snapshot = self._task("S", spec="ТЗ S", route="nano", driver="swarm")
+        # Не-роевые с ТЗ: маршрут режима скила и без маршрута.
+        self.skill = self._task("N", spec="ТЗ N", route="skillish")
+        self.bare = self._task("M", spec="ТЗ M", route=None)
+        for tid in (self.skill, self.bare):
+            store.update_task(self.conn, tid, read_scope=["old/read.md"],
+                              write_scope=["old/write.py"])
+        self.conn.commit()
+
+    def _router(self):
+        r, s = self.by_route, self.by_snapshot
+        return _reply_router({r: _extract_reply([], ["pkg/r.py"]),
+                              s: _extract_reply([], ["pkg/s.py"])},
+                             [_graph_reply({s: [r]})])
+
+    def test_non_swarm_cards_untouched(self) -> None:
+        r, s, n, m = self.by_route, self.by_snapshot, self.skill, self.bare
+        with mock.patch.object(swarm_llm, "complete_json", side_effect=self._router()) as mocked:
+            out = swarm_llm.rescope(self.conn, project="demo", apply=True,
+                                    cfg={"swarm": {"api_key": "k"}})
+
+        self.assertEqual(set(out["tasks"]), {r, s})
+        self.assertEqual(sorted(out["applied"]["scopes"]), sorted([r, s]))
+        extracted = {json.loads(c[0][0][1]["content"])["task"]["id"]
+                     for c in mocked.call_args_list
+                     if c.kwargs["name"] == "swarm_rescope_extract"}
+        self.assertEqual(extracted, {r, s})
+        graph_call = next(c for c in mocked.call_args_list
+                          if c.kwargs["name"] == "swarm_rescope_graph")
+        graph_text = graph_call[0][0][1]["content"]
+        self.assertEqual({t["id"] for t in json.loads(graph_text)["tasks"]}, {r, s})
+        self.assertNotIn(n, graph_text)
+        self.assertNotIn(m, graph_text)
+
+        for tid in (n, m):
+            card = store.get_task(self.conn, tid)
+            self.assertEqual(card["read_scope"], ["old/read.md"])
+            self.assertEqual(card["write_scope"], ["old/write.py"])
+        blocks = self.conn.execute(
+            "SELECT issue_id, depends_on FROM deps WHERE dep_type = 'blocks'").fetchall()
+        self.assertIn((s, r), {tuple(b) for b in blocks})
+        self.assertEqual({x for b in blocks for x in b} & {n, m}, set())
+
+    def test_task_filter_non_swarm_is_bad_argument(self) -> None:
+        for tid in (self.skill, self.bare):
+            with mock.patch.object(swarm_llm, "complete_json") as mocked:
+                with self.assertRaises(errors.BadArgument):
+                    swarm_llm.rescope(self.conn, project="demo", tasks=[tid],
+                                      cfg={"swarm": {"api_key": "k"}})
+            mocked.assert_not_called()
+
+    def test_drift_total_counts_whole_project(self) -> None:
+        with mock.patch.object(swarm_llm, "complete_json", side_effect=self._router()):
+            out = swarm_llm.rescope(self.conn, project="demo", cfg={"swarm": {"api_key": "k"}})
+        self.assertEqual(out["drift"]["tasks_total"], 4)
+
+    def test_plan_still_sees_all_open_cards(self) -> None:
+        with mock.patch.object(swarm_llm, "complete_json", return_value=_graph_reply({})):
+            out = swarm_llm.plan(self.conn, project="demo", cfg={"swarm": {"api_key": "k"}})
+        self.assertEqual(set(out["tasks"]),
+                         {self.by_route, self.by_snapshot, self.skill, self.bare})
+
+    def test_routes_unavailable_keeps_only_snapshot_cards(self) -> None:
+        s = self.by_snapshot
+        router = _reply_router({s: _extract_reply([], ["pkg/s.py"])}, [_graph_reply({})])
+        with mock.patch.object(routes_store, "list_routes",
+                               side_effect=sqlite3.DatabaseError("база недоступна")), \
+             mock.patch.object(swarm_llm, "complete_json", side_effect=router):
+            out = swarm_llm.rescope(self.conn, project="demo", apply=True,
+                                    cfg={"swarm": {"api_key": "k"}})
+        self.assertEqual(set(out["tasks"]), {s})
+        self.assertEqual(out["applied"]["scopes"], [s])
+        self.assertEqual(store.get_task(self.conn, self.by_route)["write_scope"], [])

@@ -482,6 +482,10 @@ class DryRunTests(LadderCase):
         self.assertEqual(after2["comments"], before2["comments"])
         self.assertEqual(after2["events"], before2["events"])
 
+        # `watch` видит только карточки роя (listik-w7ge): снимок после `start`.
+        self.conn.execute("UPDATE tasks SET launch_driver = 'swarm' WHERE id IN (?, ?)",
+                          (t1, t2))
+        self.conn.commit()
         proc = self.run_cli("watch", "--project", "demo", "--dry-run")
         self.assertEqual(proc.returncode, 0, proc.stdout + proc.stderr)
         self.assertTrue(any(line.startswith(f"заморозила бы {t2}")
@@ -600,6 +604,10 @@ class RevokeErrorTests(LadderCase):
     def test_cli_local_revoke_unsupported_returns_json_and_exit_1(self) -> None:
         t1, t2 = self._setup_conflict_pair()
         before_labels = list(self.card(t2)["labels"])
+        # `watch` видит только карточки роя (listik-w7ge): снимок после `start`.
+        self.conn.execute("UPDATE tasks SET launch_driver = 'swarm' WHERE id IN (?, ?)",
+                          (t1, t2))
+        self.conn.commit()
 
         proc = self.run_cli("watch", "--project", "demo", "--json")
         self.assertEqual(proc.returncode, 1, proc.stdout + proc.stderr)

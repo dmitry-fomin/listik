@@ -1047,8 +1047,17 @@ def rescope(conn, *, project: str, tasks: list[str] | None = None, drift: list |
     """Проход rescope: `read_scope`/`write_scope` из ТЗ готовых задач проекта плюс
     уточнение графа `blocks` по выжимкам, областям, чужим рёбрам и копилке
     расхождений «объявил X, тронул Y». Без `apply` — сухой прогон.
+
+    Рабочее множество — `working_set` без не-роевых карточек (`stage_launch.in_swarm`;
+    маршруты недоступны — роем остаются только карточки со снимком `launch_driver`).
+    Метрика `drift` по-прежнему по всему проекту.
     """
-    rows = working_set(conn, project=project)
+    from . import routes as routes_mod
+    from . import stage_launch
+
+    by_key = routes_mod.state(conn).by_key
+    rows = [r for r in working_set(conn, project=project)
+            if stage_launch.in_swarm(r, by_key)]
     ids = [r["id"] for r in rows]
     by_id = {r["id"]: r for r in rows}
     cfg_settings = settings(cfg)
@@ -1057,7 +1066,8 @@ def rescope(conn, *, project: str, tasks: list[str] | None = None, drift: list |
         id_set = set(ids)
         for tid in tasks:
             if tid not in id_set:
-                raise errors.BadArgument(f"задача {tid} не в рабочем множестве проекта")
+                raise errors.BadArgument(
+                    f"задача {tid} не карточка роя или не в рабочем множестве проекта")
         wanted = set(tasks)
         extract_ids = [tid for tid in ids if tid in wanted]
     else:

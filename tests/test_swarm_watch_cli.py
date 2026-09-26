@@ -16,7 +16,7 @@ import unittest
 from importlib.machinery import SourceFileLoader
 from unittest import mock
 
-from listik import errors, paths, store
+from listik import errors, harnesses_store, paths, routes_store, store
 from listik import swarm_watch
 from listik import worktree as worktree_mod
 from tests.helpers import TempDbTestCase
@@ -30,6 +30,14 @@ MOD_CONTENT = (
     "    b = 2\n"
     "    return a + b\n"
 )
+
+
+def _swarm_route(conn, key: str = "swarmy") -> None:
+    """Маршрут роя `kind="swarm"` (нужна роль с харнессом — заводим харнесс `probe`)."""
+    harnesses_store.create(conn, {"key": "probe", "label": "probe",
+                                  "argv": [sys.executable, "-c", "print(1)"]})
+    routes_store.create_route(conn, key=key, kind="swarm", title="Рой",
+                              roles={"impl": {"harness": "probe"}})
 
 
 class _StorePort:
@@ -72,6 +80,8 @@ class WatchCliCase(TempDbTestCase):
         self.git("commit", "-qm", "первый")
         self.project_path = str(self.repo.resolve())
         store.add_project(self.conn, path=self.project_path, slug="demo")
+        # Рой видит только карточки роя (listik-w7ge): `make_task` ставит маршрут `swarmy`.
+        _swarm_route(self.conn)
 
     # -------------------------------------------------------------- git
 
@@ -86,8 +96,14 @@ class WatchCliCase(TempDbTestCase):
 
     # -------------------------------------------------------------- задачи/деревья
 
-    def make_task(self, title: str = "Проба", task_id: str | None = None, **fields) -> str:
+    def make_task(self, title: str = "Проба", task_id: str | None = None, *,
+                  route: str | None = "swarmy", driver: str | None = None, **fields) -> str:
+        """Карточка роя по умолчанию: маршрут `swarmy` (`kind="swarm"`) без снимка;
+        `driver` — снимок `launch_driver`, `route=None` — карточка без маршрута."""
         tid = store.create_task(self.conn, title=title, project="demo", task_id=task_id)["id"]
+        self.conn.execute("UPDATE tasks SET launch_route = ?, launch_driver = ? WHERE id = ?",
+                          (route, driver, tid))
+        self.conn.commit()
         if fields:
             store.update_task(self.conn, tid, **fields)
         return tid
@@ -737,6 +753,111 @@ class TruncatedTests(WatchCliCase):
         self.make_tree(t)
         out = self.watch()
         self.assertFalse(out["truncated"])
+
+
+# ---------------------------------------------------------------- 21 (только карточки роя, listik-w7ge)
+
+
+class SwarmOnlyWatchTests(WatchCliCase):
+    """`watch` берёт только карточки роя; не-роевые не сканируются и не замораживаются."""
+
+    def setUp(self) -> None:
+        super().setUp()
+        routes_store.create_route(self.conn, key="skillish", kind="pipeline", title="Скил")
+
+    def watch_any(self, *args: str) -> dict:
+        """`watch --json` без проверки кода: в `--local` заморозка падает на `revoke`
+        (его выполняет только сервер) и команда отдаёт 1, но результат печатает."""
+        proc = self.run_cli("watch", "--project", "demo", "--json", *args)
+        self.assertIn(proc.returncode, (0, 1), proc.stdout + proc.stderr)
+        return json.loads(proc.stdout)
+
+    def make_alive(self, task_id: str) -> None:
+        self.conn.execute(
+            "UPDATE tasks SET launched_by = 'listik', launch_pid = 12345, "
+            "launch_finished_at = NULL WHERE id = ?", (task_id,))
+        self.conn.commit()
+
+    def conflict(self, owner: str, late: str, *args: str) -> dict:
+        """Владелец правит раньше (маркер первой правки — первым `watch`, отодвинут в
+        прошлое), опоздавший — конфликтующая правка того же файла и живой запуск."""
+        tree_owner = self.make_tree(owner)
+        tree_late = self.make_tree(late)
+        self.edit(tree_owner, "pkg/mod.py",
+                  MOD_CONTENT.replace("return a + b", "return a - b  # owner"))
+        self.watch_any(*args)
+        self.assertEqual(len(self.marks(owner)), 1)
+        self.conn.execute("UPDATE comments SET created_at = ? WHERE id = ?",
+                          ("2000-01-01T00:00:00Z", self.marks(owner)[0]["id"]))
+        self.conn.commit()
+        self.edit(tree_late, "pkg/mod.py",
+                  MOD_CONTENT.replace("return a + b", "return a * b  # late"), commit=False)
+        self.make_alive(late)
+        return self.watch_any(*args)
+
+    def assert_untouched(self, tid: str, out: dict) -> None:
+        self.assertNotIn(tid, out["tasks"])
+        self.assertNotIn(tid, out["order"])
+        self.assertEqual([d for d in out["decisions"] if d["task"] == tid], [])
+        card = self.card(tid)
+        self.assertFalse(any(lbl.startswith(swarm_watch.FROZEN_LABEL)
+                             for lbl in card["labels"]))
+        self.assertIsNone(self.conn.execute(
+            "SELECT 1 FROM events WHERE task_id = ? AND kind = 'revoke'", (tid,)).fetchone())
+        for mark in (swarm_watch.FREEZE_MARK, swarm_watch.FIRST_CHANGE_MARK,
+                     swarm_watch.SCOPE_MARK):
+            self.assertEqual(self.marks(tid, mark=mark), [])
+
+    def test_non_swarm_late_is_not_frozen(self) -> None:
+        owner = self.make_task(write_scope=["pkg"])
+        late = self.make_task(route="skillish", write_scope=["pkg"])
+        out = self.conflict(owner, late)
+        self.assertIn(owner, out["tasks"])
+        self.assertNotIn(late, out["skipped"])
+        self.assert_untouched(late, out)
+
+    def test_task_filter_names_non_swarm(self) -> None:
+        owner = self.make_task(write_scope=["pkg"])
+        late = self.make_task(route=None, write_scope=["pkg"])
+        out = self.conflict(owner, late, "--task", owner, "--task", late,
+                            "--task", "nope-0000")
+        self.assertEqual(out["skipped"][late], "not_swarm")
+        self.assertEqual(out["skipped"]["nope-0000"], "unknown")
+        self.assertIn(owner, out["tasks"])
+        self.assert_untouched(late, out)
+
+    def test_two_swarm_cards_late_is_frozen(self) -> None:
+        # Обе формы роевости: владелец — по маршруту `swarmy`, опоздавший — по снимку.
+        owner = self.make_task(write_scope=["pkg"])
+        late = self.make_task(route="nano", driver="swarm", write_scope=["pkg"])
+        out = self.conflict(owner, late)
+        self.assertEqual(out["order"], [owner, late])
+        freezes = [d for d in out["decisions"] if d["action"] == "freeze"]
+        self.assertEqual([(d["task"], d["owner"]) for d in freezes], [(late, owner)])
+
+    def test_routes_unavailable_keeps_snapshot_cards(self) -> None:
+        by_snapshot = self.make_task(route="nano", driver="swarm")
+        by_route = self.make_task()
+        for tid in (by_snapshot, by_route):
+            self.make_tree(tid)
+        cli = self.cli_module()
+        real_call = cli.call
+
+        def fake_call(op, *args, **kwargs):
+            if op == "routes":
+                return {"ok": False, "routes": []}
+            return real_call(op, *args, **kwargs)
+
+        out = io.StringIO()
+        with mock.patch.object(paths, "DB_PATH", self.db_path), \
+             mock.patch.object(cli, "call", side_effect=fake_call), \
+             contextlib.redirect_stdout(out):
+            rc = cli.main(["--local", "watch", "--project", "demo", "--json"])
+        self.assertEqual(rc, 0)
+        payload = json.loads(out.getvalue())
+        self.assertIn(by_snapshot, payload["tasks"])
+        self.assertNotIn(by_route, payload["tasks"])
+        self.assertNotIn(by_route, payload["skipped"])
 
 
 if __name__ == "__main__":  # pragma: no cover

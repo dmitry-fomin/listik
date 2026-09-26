@@ -1834,6 +1834,13 @@ def cmd_watch(args) -> int:
     if truncated:
         print("! задач больше 1000, активное множество неполное", file=sys.stderr)
 
+    from listik import stage_launch
+
+    # Только карточки роя (`stage_launch.in_swarm`); маршруты недоступны (`ok: false`) —
+    # роем остаются карточки со снимком `launch_driver`. Сбой самого вызова — падение до scan.
+    routes_res = call("routes", args, "/api/routes", local_kwargs={}, fallback_warning=False)
+    by_key = {r.get("key"): r for r in (routes_res.get("routes") or [])}
+
     task_filter = list(getattr(args, "task", None) or [])
     filter_skipped: dict[str, str] = {}
     if task_filter:
@@ -1843,10 +1850,12 @@ def cmd_watch(args) -> int:
             t = by_id.get(tid)
             if t is None:
                 filter_skipped[tid] = "unknown"
+            elif not stage_launch.in_swarm(t, by_key):
+                filter_skipped[tid] = "not_swarm"
             else:
                 tasks.append(t)
     else:
-        tasks = all_tasks
+        tasks = [t for t in all_tasks if stage_launch.in_swarm(t, by_key)]
 
     cards = _SwarmCards(args)
     result = swarm_watch.scan(project_path, tasks, cards,

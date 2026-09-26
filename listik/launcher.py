@@ -487,7 +487,9 @@ def _start_swarm(conn, task_id: str, row, record: dict, *, notify, log_dir,
     tail = None
     if not resolved.get("own_prompt"):
         try:
-            tail = stage_launch.role_tail(role)
+            last = (role == "impl"
+                    and stage_launch.next_stage_with_role(conn, record, stage) is None)
+            tail = stage_launch.role_tail(role, last=last)
         except stage_launch.CriteriaError as exc:
             return _swarm_refuse(conn, task_id,
                                  f"рой: нет критериев роли {role} (этап {stage}): {exc}",

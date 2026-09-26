@@ -380,6 +380,106 @@ class LaunchTests(SwarmCase):
                 self.assertLess(len(prompt.encode("utf-8")), 32768)
 
 
+class ImplOnlyRouteTests(SwarmCase):
+    """listik-ar8v, порция b: «готово» от последней роли impl закрывает карточку,
+    роль impl без приёмки получает блок коммита."""
+
+    CLOSED = "рой: ответ «готово», ролей после s3-impl нет — карточка закрыта"
+    COMMIT_BLOCK = (
+        "Приёмки после тебя в этом маршруте нет — работу закрываешь ты. Перед ответом "
+        "«готово» закоммить свою правку в ветку задачи: git add только тех путей, что ты "
+        "правил (не git add -A, без ТЗ и журнала шага), затем git commit с сообщением "
+        "«<id задачи из первой строки этого промпта>: <суть правки>». Этот пункт отменяет "
+        "запрет коммита из критериев выше. Закоммитить не вышло — ответ «не смог».")
+
+    def assert_closed(self, task_id: str) -> None:
+        task = self.task(task_id)
+        self.assertEqual(task["status"], "done")
+        self.assertEqual(task["stage"], "done")
+        self.assertEqual(task["holder"], "")
+        self.assertFalse(task["needs_owner"])
+        self.assertIsNone(task["launched_by"])
+        self.assertIn(self.CLOSED, self.comments(task_id, "journal"))
+        self.assertEqual(self.comments(task_id, "verdict"), [])
+
+    def test_impl_only_closes(self) -> None:
+        self.add_route({"impl": {"harness": "probe"}})
+        task_id = self.add_task()
+        self.assertEqual(self.start_and_wait(task_id),
+                         {"launched": False, "stage_skipped": "s3-impl"})
+        self.assertIsNone(self.start_and_wait(task_id))
+        self.assert_closed(task_id)
+
+    def test_spec_and_impl_one_harness_closes(self) -> None:
+        self.add_route({"spec": {"harness": "probe"}, "impl": {"harness": "probe"}})
+        task_id = self.add_task()
+        self.assertIsNone(self.start_and_wait(task_id))
+        self.assertEqual(self.task(task_id)["stage"], "s3-impl")
+        self.assertIsNone(self.start_and_wait(task_id))
+        self.assert_closed(task_id)
+
+    def test_spec_only_asks(self) -> None:
+        self.add_route({"spec": {"harness": "probe"}})
+        task_id = self.add_task()
+        self.assertIsNone(self.start_and_wait(task_id))
+        task = self.task(task_id)
+        self.assertTrue(task["needs_owner"])
+        self.assertNotEqual(task["status"], "done")
+        self.assertIn("после s1-spec роли нет", "\n".join(self.comments(task_id)))
+
+    def test_impl_only_cannot_asks(self) -> None:
+        harnesses_store.update(self.conn, "probe", {"argv": script("не смог")})
+        self.add_route({"impl": {"harness": "probe"}})
+        task_id = self.add_task(stage="s3-impl")
+        self.assertIsNone(self.start_and_wait(task_id))
+        task = self.task(task_id)
+        self.assertTrue(task["needs_owner"])
+        self.assertNotEqual(task["status"], "done")
+        self.assertEqual(task["stage"], "s3-impl")
+
+    def logged_prompt(self, roles: dict, stage: str, key: str) -> str:
+        harnesses_store.update(self.conn, "probe", {
+            "argv": [sys.executable, "-c", "print('готово')"]})
+        self.add_route(roles, key=key)
+        task_id = self.add_task(stage=stage, route=key)
+        self.assertIsNone(self.start_and_wait(task_id))
+        return Path(self.task(task_id)["launch_log"]).read_text(encoding="utf-8")
+
+    def test_commit_block_only_for_last_impl(self) -> None:
+        logged = self.logged_prompt({"impl": {"harness": "probe"}}, "s3-impl", "only")
+        self.assertIn(self.COMMIT_BLOCK, logged)
+        prompt = logged[:logged.index(stage_launch._ANSWER_LINE)
+                        + len(stage_launch._ANSWER_LINE)]
+        last = [line for line in prompt.splitlines() if line.strip()]
+        self.assertEqual(last[-1], stage_launch._ANSWER_LINE)
+        self.assertEqual(last[-2], self.COMMIT_BLOCK)
+        for roles, stage, key in (
+                ({"impl": {"harness": "probe"}, "judge": {"harness": "probe"}},
+                 "s3-impl", "with-judge"),
+                ({"impl": {"harness": "probe", "prompt": "свой {task_id}"}},
+                 "s3-impl", "own"),
+                ({"spec": {"harness": "probe"}}, "s1-spec", "spec")):
+            with self.subTest(key=key):
+                self.assertNotIn("Приёмки после тебя",
+                                 self.logged_prompt(roles, stage, key))
+
+    def test_role_tail_default_unchanged(self) -> None:
+        self.assertEqual(stage_launch.role_tail("impl"),
+                         stage_launch.role_tail("impl", last=False))
+        self.assertNotIn(self.COMMIT_BLOCK, stage_launch.role_tail("judge", last=True))
+        self.assertIn(self.COMMIT_BLOCK, stage_launch.role_tail("impl", last=True))
+
+    def test_waves_unscoped_impl_only(self) -> None:
+        from listik import deps
+        self.add_route({"impl": {"harness": "probe"}})
+        bare = self.add_task(stage="s3-impl")
+        scoped = self.add_task(stage="s3-impl")
+        store.update_task(self.conn, scoped, write_scope=["src/a.py"], actor="agent:t")
+        unscoped = deps.waves(self.conn, project="proj")["unscoped"]
+        self.assertIn(bare, unscoped)
+        self.assertNotIn(scoped, unscoped)
+
+
 class SlicingTests(SwarmCase):
     def add_route(self, roles: dict | None = None, key: str = "roy") -> dict:
         return super().add_route(roles or {"spec": {"harness": "probe"},

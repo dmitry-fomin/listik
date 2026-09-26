@@ -11,7 +11,7 @@ from pathlib import Path
 
 from . import paths
 
-SCHEMA_VERSION = 11
+SCHEMA_VERSION = 12
 
 SCHEMA = """
 PRAGMA journal_mode = WAL;
@@ -198,13 +198,12 @@ CREATE TABLE IF NOT EXISTS meta (
 -- который один раз наполняет пустую таблицу (ввоз делает listik/routes_store.py).
 CREATE TABLE IF NOT EXISTS routes (
     key        TEXT PRIMARY KEY,
-    kind       TEXT NOT NULL,              -- pipeline | direct | swarm
+    kind       TEXT NOT NULL,              -- pipeline | swarm
     title      TEXT NOT NULL,
     hint       TEXT NOT NULL DEFAULT '',
     icon       TEXT,                       -- xhigh|high|medium|low|xlow|direct, NULL — уровня нет
     visible    INTEGER NOT NULL DEFAULT 1, -- 0/1
     position   INTEGER NOT NULL DEFAULT 0, -- порядок в списке и в «Новой задаче»
-    harness    TEXT,                       -- только у kind=direct, иначе NULL
     command    TEXT,                       -- JSON-массив argv, либо NULL
     roles      TEXT,                       -- pipeline: {"spec":{provider,label,title},…}; swarm: {"spec":{harness,argv,prompt},…}
     driver     TEXT NOT NULL DEFAULT 'skill',  -- skill | swarm (swarm — у kind=swarm)
@@ -214,8 +213,8 @@ CREATE TABLE IF NOT EXISTS routes (
 CREATE INDEX IF NOT EXISTS idx_routes_position ON routes(position);
 
 -- Каталог харнессов (listik-2gry): кто может исполнять задачу/этап и какой
--- командой его поднимать. `key` — имя держателя (`agent:<key>`), у прямых
--- маршрутов и у ролей роя ссылка именно на него.
+-- командой его поднимать. `key` — имя держателя (`agent:<key>`), у ролей роя
+-- ссылка именно на него.
 CREATE TABLE IF NOT EXISTS harnesses (
     key        TEXT PRIMARY KEY,           -- ^[a-z0-9][a-z0-9-]*$ — хвост agent:<key>
     label      TEXT NOT NULL,              -- имя в списках
@@ -397,7 +396,56 @@ def init(db_path: Path | None = None, *, verbose: bool = False) -> sqlite3.Conne
     from . import harnesses_store
     harnesses_store.seed(conn)
     conn.commit()
+    drop_direct_routes(conn)
     return conn
+
+
+#: Перевод старой базы без вида `direct` (listik-ar8v): каждая строка
+#: `kind='direct'` становится маршрутом роя с одной ролью `impl` — харнесс строки,
+#: argv — `command` без последнего элемента (последний элемент — промпт, он не переносится:
+#: у роя claim/stage/done делает Listik). Харнесса нет в каталоге — заводится
+#: запись. Тот же текст — у alembic-ревизии 0010_drop_direct_routes.
+_ARGV = ("CASE WHEN json_valid(command) THEN CASE WHEN json_array_length(command) >= 2 "
+         "THEN json_remove(command, '$[#-1]') END END")
+DROP_DIRECT_SQL = (
+    "INSERT INTO harnesses(key, label, hint, icon, argv, prompt, kind, builtin, enabled, "
+    "position, created_at, updated_at) "
+    f"SELECT harness, harness, '', NULL, {_ARGV}, NULL, 'exec', 0, 1, "
+    "(SELECT COALESCE(MAX(position), -1) FROM harnesses) "
+    "+ ROW_NUMBER() OVER (ORDER BY position, key), "
+    "strftime('%Y-%m-%dT%H:%M:%SZ', 'now'), strftime('%Y-%m-%dT%H:%M:%SZ', 'now') "
+    "FROM routes WHERE kind = 'direct' AND harness IS NOT NULL "
+    "AND harness NOT IN (SELECT key FROM harnesses) "
+    "ORDER BY position, key "
+    "ON CONFLICT(key) DO NOTHING",
+    "UPDATE routes SET roles = json_object('impl', json_object('harness', harness)) "
+    "WHERE kind = 'direct'",
+    f"UPDATE routes SET roles = json_set(roles, '$.impl.argv', {_ARGV}) "
+    f"WHERE kind = 'direct' AND ({_ARGV}) IS NOT NULL",
+    "UPDATE routes SET kind = 'swarm', driver = 'swarm', command = NULL "
+    "WHERE kind = 'direct'",
+    "ALTER TABLE routes DROP COLUMN harness",
+)
+
+
+def drop_direct_routes(conn: sqlite3.Connection) -> bool:
+    """Перевести direct-маршруты в рой и удалить `routes.harness` одной транзакцией.
+
+    Только если колонка ещё есть — повторный вызов ничего не делает (False).
+    """
+    if "harness" not in _existing_columns(conn, "routes"):
+        return False
+    conn.execute("SAVEPOINT drop_direct")
+    try:
+        for sql in DROP_DIRECT_SQL:
+            conn.execute(sql)
+    except Exception:
+        conn.execute("ROLLBACK TO drop_direct")
+        conn.execute("RELEASE drop_direct")
+        raise
+    conn.execute("RELEASE drop_direct")
+    conn.commit()
+    return True
 
 
 def seed_actors(conn: sqlite3.Connection) -> None:

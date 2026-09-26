@@ -127,18 +127,14 @@ class CrudTests(TempDbTestCase):
 
 
 class UsedByTests(TempDbTestCase):
-    def test_used_by_direct_and_swarm(self) -> None:
-        routes_store.create_route(
-            self.conn, key="d-mini", kind="direct", title="d",
-            harness="mini", command=["mini", "run"])
+    def test_used_by_swarm_roles_only(self) -> None:
         harnesses_store.create(self.conn, {"key": "mini", "argv": ["mini", "run"]})
         routes_store.create_route(
             self.conn, key="roy", kind="swarm", title="рой",
             roles={"impl": {"harness": "mini"},
                    "judge": {"harness": "claude"}})
         used = harnesses_store.used_by(self.conn, "mini")
-        self.assertIn({"route": "d-mini", "kind": "direct", "role": None}, used)
-        self.assertIn({"route": "roy", "kind": "swarm", "role": "impl"}, used)
+        self.assertEqual(used, [{"route": "roy", "kind": "swarm", "role": "impl"}])
         # Чужое упоминание в roles не считается: ключа "mini2" нет в раскладе.
         self.assertEqual(harnesses_store.used_by(self.conn, "grok"), [])
 

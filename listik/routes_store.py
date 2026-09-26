@@ -8,8 +8,8 @@
 
 Запись в базе и запись наружу — та же форма, что отдаёт `routes.validate`:
 `{"key", "kind", "title", "hint", "visible": bool, "icon": str|None,
-"position": int, "command": list[str]|None}`, плюс `"roles": dict` у
-`pipeline` (пустой словарь, если ролей нет) и `"harness": str` у `direct`.
+"position": int, "command": list[str]|None, "driver": str, "roles": dict}`
+(`roles` — пустой словарь, если ролей нет).
 JSON-колонки (`command`, `roles`) разбираются здесь, битый JSON — пустое
 значение, а не исключение.
 
@@ -29,12 +29,11 @@ from datetime import datetime, timezone
 from . import errors, harnesses_store, paths, routes, skills, store
 
 #: Поля, которые вообще разрешено менять точечно.  Всё остальное (`kind`, `key`,
-#: `harness`, `position`) через `update_route` недоступно.  `roles` правится
+#: `command`, `position`) через `update_route` недоступно.  `roles` правится
 #: (listik-syu8): расклад ролей задаётся из UI доски, а не только ввозом файла.
-UPDATE_FIELDS = ("title", "hint", "icon", "visible", "command", "roles", "driver")
+UPDATE_FIELDS = ("title", "hint", "icon", "visible", "roles", "driver")
 
-COLS = ("key", "kind", "title", "hint", "icon", "visible", "position", "harness",
-        "command", "roles", "driver", "created_at", "updated_at")
+COLS = ("key", "kind", "title", "hint", "icon", "visible", "position", "command", "roles", "driver", "created_at", "updated_at")
 
 
 # ------------------------------------------------------------------ значения
@@ -91,28 +90,22 @@ def _check_visible(value) -> bool:
     return value
 
 
-def _check_command(value, kind: str, *, direct_only: bool = False):
+def _check_command(value):
     """Проверить `command` и, если это список, нормализовать его.
 
-    Сначала проверяется форма (через `routes.validate_command`), потом — при
-    `direct_only` — право поля быть у этого `kind`: точечная правка `command`
-    разрешена только у `direct`.  Ввоз и `create_route` принимают `command` у
-    любого `kind`: в образце `routes.json` argv есть у всех записей, и конвейер
-    без него не запустить.
+    Ввоз и `create_route` принимают `command` у любого `kind`: в образце
+    `routes.json` argv есть у конвейеров, и режим скила без него не запустить.
+    Точечной правки поля нет (`UPDATE_FIELDS`).
     """
     if value is None:
         return None
-    checked = routes.validate_command(value, "command")
-    if direct_only and kind != "direct":
-        raise ValueError('command: допустимо только у kind="direct"')
-    return checked
+    return routes.validate_command(value, "command")
 
 
 def _check_roles(conn, value, kind: str, driver: str = "skill") -> dict:
     """Проверить расклад ролей той же проверкой, что у файла маршрутов.
 
-    Роли есть у `pipeline` и у `swarm`; у `direct` поле запрещено самой формой
-    записи. Форма ячейки — по способу исполнения: `driver=swarm` (всегда у
+    Роли есть у `pipeline` и у `swarm`. Форма ячейки — по способу исполнения: `driver=swarm` (всегда у
     `kind=swarm`, опционально у `pipeline`) — `{harness,argv?,prompt?}`, харнесс
     из каталога; режим скила — `{provider,label,title}`. Проверки бросают
     `RoutesError` — подкласс `ValueError`, поэтому нарушение уходит наружу тем же
@@ -127,12 +120,8 @@ def _check_roles(conn, value, kind: str, driver: str = "skill") -> dict:
 
 
 def _check_driver(value, kind: str) -> str:
-    """`driver`: у `direct` поля нет, у `swarm` всегда `swarm`, у `pipeline` —
-    `skill` (по умолчанию) или `swarm`."""
-    if kind == "direct":
-        if value not in (None, "skill"):
-            raise ValueError('driver: у kind="direct" поля нет')
-        return "skill"
+    """`driver`: у `swarm` всегда `swarm`, у `pipeline` — `skill` (по умолчанию)
+    или `swarm`."""
     if kind == "swarm":
         if value not in (None, "swarm"):
             raise ValueError('driver: у kind="swarm" всегда "swarm"')
@@ -153,18 +142,15 @@ def _prepare(conn, record: dict) -> dict:
         raise ValueError("key: ключ должен подходить под ^[a-z0-9][a-z0-9-]*$")
     kind = record.get("kind")
     if kind not in routes.KINDS:
-        raise ValueError('kind: должен быть "pipeline", "direct" или "swarm"')
+        raise ValueError('kind: должен быть "pipeline" или "swarm"')
     driver = _check_driver(record.get("driver"), kind)
     title = _check_title(record.get("title"))
     hint = _check_hint(record.get("hint", ""))
     icon = _check_icon(record.get("icon"))
     visible = _check_visible(record.get("visible", False))
-    command = _check_command(record.get("command"), kind)
+    command = _check_command(record.get("command"))
     roles = record.get("roles")
-    harness = record.get("harness")
     if kind == "pipeline":
-        if harness is not None:
-            raise ValueError("harness: у pipeline-записи harness быть не должно")
         if roles is None:
             roles = {}
         if not isinstance(roles, dict):
@@ -175,24 +161,13 @@ def _prepare(conn, record: dict) -> dict:
             # словарь»: иначе запись мимо файла могла бы положить в базу расклад,
             # который ввоз того же файла отверг бы.
             roles = _check_roles(conn, roles, kind, driver)
-        harness = None
-    elif kind == "swarm":
-        if harness is not None:
-            raise ValueError("harness: у swarm-записи harness быть не должно")
+    else:
         if not isinstance(roles, dict) or not roles:
             raise ValueError("roles: у swarm-записи нужна хотя бы одна роль "
                              "spec/critic/impl/judge с харнессом и командой")
         roles = _check_roles(conn, roles, kind)
-        harness = None
-    else:
-        if roles not in (None, {}):
-            raise ValueError("roles: у direct-записи ролей быть не должно")
-        roles = None
-        if not isinstance(harness, str) or not routes.KEY_RE.match(harness):
-            raise ValueError("harness: ключ харнесса под ^[a-z0-9][a-z0-9-]*$ — "
-                             "имя держателя agent:<key>")
     return {"key": key, "kind": kind, "title": title, "hint": hint, "icon": icon,
-            "visible": 1 if visible else 0, "harness": harness, "driver": driver,
+            "visible": 1 if visible else 0, "driver": driver,
             "command": _dumps(command), "roles": _dumps(roles)}
 
 
@@ -209,11 +184,8 @@ def _row_to_record(row: sqlite3.Row) -> dict:
         "position": int(row["position"]),
         "command": _loads_list(row["command"]),
         "driver": row["driver"] if "driver" in row.keys() and row["driver"] else "skill",
+        "roles": _loads_dict(row["roles"]),
     }
-    if row["kind"] in ("pipeline", "swarm"):
-        record["roles"] = _loads_dict(row["roles"])
-    else:
-        record["harness"] = row["harness"]
     return record
 
 
@@ -246,10 +218,10 @@ def count(conn: sqlite3.Connection) -> int:
 def _insert(conn: sqlite3.Connection, values: dict, position: int) -> None:
     now = store.now_iso()
     conn.execute(
-        "INSERT INTO routes(key, kind, title, hint, icon, visible, position, harness, "
-        "command, roles, driver, created_at, updated_at) VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?)",
+        "INSERT INTO routes(key, kind, title, hint, icon, visible, position, "
+        "command, roles, driver, created_at, updated_at) VALUES(?,?,?,?,?,?,?,?,?,?,?,?)",
         (values["key"], values["kind"], values["title"], values["hint"], values["icon"],
-         values["visible"], int(position), values["harness"], values["command"],
+         values["visible"], int(position), values["command"],
          values["roles"], values["driver"], now, now),
     )
 
@@ -257,10 +229,6 @@ def _insert(conn: sqlite3.Connection, values: dict, position: int) -> None:
 def _upsert_raw(conn: sqlite3.Connection, record: dict, *, position=None) -> None:
     """Вставка/перезапись без `commit` — для `import_file` (одна транзакция)."""
     values = _prepare(conn, record)
-    if values["kind"] == "direct" and values["harness"]:
-        # Держатель прямого маршрута — держатель его харнесса: ключ каталога
-        # регистрируем синонимом `agent:<key>` (той же транзакцией).
-        harnesses_store.register_holder(conn, values["harness"])
     key = values["key"]
     existing = conn.execute("SELECT position FROM routes WHERE key = ?", (key,)).fetchone()
     if existing is None:
@@ -270,9 +238,9 @@ def _upsert_raw(conn: sqlite3.Connection, record: dict, *, position=None) -> Non
         position = existing["position"]
     conn.execute(
         "UPDATE routes SET kind=?, title=?, hint=?, icon=?, visible=?, position=?, "
-        "harness=?, command=?, roles=?, driver=?, updated_at=? WHERE key=?",
+        "command=?, roles=?, driver=?, updated_at=? WHERE key=?",
         (values["kind"], values["title"], values["hint"], values["icon"], values["visible"],
-         int(position), values["harness"], values["command"], values["roles"],
+         int(position), values["command"], values["roles"],
          values["driver"], store.now_iso(), key),
     )
 
@@ -282,7 +250,7 @@ def upsert_route(conn: sqlite3.Connection, record: dict, *, position=None) -> di
 
     `record` — запись в форме `routes.validate` (см. модуль-docstring).  Поля
     проверяются теми же правилами, что и в `update_route`, плюс `kind` из
-    `routes.KINDS` и `harness` из `routes.HARNESSES` у `direct`.  При вставке
+    `routes.KINDS`.  При вставке
     проставляется `created_at`, при любой записи — `updated_at`.
     """
     _upsert_raw(conn, record, position=position)
@@ -291,11 +259,10 @@ def upsert_route(conn: sqlite3.Connection, record: dict, *, position=None) -> di
 
 
 def create_route(conn: sqlite3.Connection, *, key, kind, title, hint="", icon=None,
-                 visible=False, harness=None, command=None, roles=None,
-                 driver=None) -> dict:
+                 visible=False, command=None, roles=None, driver=None) -> dict:
     """Новая запись, `position = max(position)+1`; дубликат ключа — `ValueError`."""
     record = {"key": key, "kind": kind, "title": title, "hint": hint, "icon": icon,
-              "visible": visible, "harness": harness, "command": command,
+              "visible": visible, "command": command,
               "roles": roles, "driver": driver}
     _prepare(conn, record)  # проверяем до обращения к базе: ключ и остальные поля
     if conn.execute("SELECT 1 FROM routes WHERE key = ?", (key,)).fetchone():
@@ -307,11 +274,10 @@ def create_route(conn: sqlite3.Connection, *, key, kind, title, hint="", icon=No
 
 
 def update_route(conn: sqlite3.Connection, key: str, **fields) -> dict:
-    """Частичная правка полей `title`, `hint`, `icon`, `visible`, `command`, `roles`.
+    """Частичная правка полей `title`, `hint`, `icon`, `visible`, `roles`, `driver`.
 
-    Любое другое имя поля (`kind`, `key`, `harness`, `position`) — `ValueError`
-    с именем поля.  `command` допустим только у `kind="direct"`, `roles` — только
-    у `kind="pipeline"`.  `updated_at` обновляется.
+    Любое другое имя поля (`kind`, `key`, `command`, `position`) — `ValueError`
+    с именем поля.  `updated_at` обновляется.
     """
     record = get_route(conn, key)
     for name in fields:
@@ -331,10 +297,6 @@ def update_route(conn: sqlite3.Connection, key: str, **fields) -> dict:
     if "visible" in fields:
         sets.append("visible = ?")
         params.append(1 if _check_visible(fields["visible"]) else 0)
-    if "command" in fields:
-        sets.append("command = ?")
-        params.append(_dumps(_check_command(fields["command"], record["kind"],
-                                            direct_only=True)))
     if "roles" in fields:
         sets.append("roles = ?")
         # Способ исполнения для проверки ячеек — тот, что будет у записи: из
@@ -445,12 +407,10 @@ def _backup_stamp() -> str:
 
 def _backup_record(record: dict) -> dict:
     """Запись `list_routes` в форме `routes.json`: без полей, которых нет в формате
-    файла (`position`), без `driver` у `direct` и без пустого `command` (валидатор
+    файла (`position`) и без пустого `command` (валидатор
     файла `null` в нём не принимает). `icon: null` остаётся: без поля ввоз вывел бы
     уровень по ключу, и снятая иконка вернулась бы из бэкапа."""
     out = {k: v for k, v in record.items() if k in routes.RECORD_FIELDS}
-    if out.get("kind") == "direct":
-        out.pop("driver", None)
     if out.get("command") is None:
         out.pop("command", None)
     return out
@@ -479,7 +439,7 @@ def reimport(conn: sqlite3.Connection, path=None) -> dict:
 
     Ключи из файла перезаписываются записями файла (позиции `0…n-1`). Из ключей,
     которых в файле нет, удаляются только пайплайны-скилы (`kind=pipeline`,
-    `driver=skill`); остальные (рой, прямые харнессы, пайплайны роя, будущие виды)
+    `driver=skill`); остальные (рой, пайплайны роя, будущие виды)
     сохраняются как есть и встают после записей файла в прежнем порядке. До записи
     таблица снимается в бэкап (`backup`) — из него можно восстановиться, передав его
     как `path`. Ошибка файла — `routes.RoutesError`, база и бэкапы не меняются.

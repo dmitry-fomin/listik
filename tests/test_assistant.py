@@ -59,11 +59,11 @@ def route_records() -> list[dict]:
         },
         {
             "key": "dsh",
-            "kind": "direct",
+            "kind": "swarm",
             "title": "dsh",
             "hint": "",
             "visible": True,
-            "harness": "dsh",
+            "roles": {"impl": {"harness": "dsh"}},
             "command": None,
         },
     ]

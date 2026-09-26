@@ -34,13 +34,13 @@ LISTIK_BIN = REPO_DIR / "bin" / "listik"
 WEB_SRC = REPO_DIR / "web" / "src"
 
 PIPELINE = "low-pipeline"
-DIRECT = "dsh"
-#: У конвейера исполнитель-оркестратор claude, у прямого маршрута — харнесс записи.
+SWARM = "dsh"
+#: У конвейера исполнитель-оркестратор claude; у роя общего исполнителя нет — только ключ.
 PIPELINE_LABELS = ["harness:claude", "process:low-pipeline"]
-DIRECT_LABELS = ["harness:dsh", "process:direct"]
+SWARM_LABELS = ["process:dsh"]
 
 #: Образец таблицы маршрутов: конвейер с чужим провайдером роли impl (правило меток от
-#: него не зависит) и прямой маршрут. Ключ `нет-такого` намеренно отсутствует.
+#: него не зависит) и маршрут роя. Ключ `нет-такого` намеренно отсутствует.
 ROUTES_DOC = {
     "version": 1,
     "routes": [
@@ -57,8 +57,8 @@ ROUTES_DOC = {
                 "judge": {"provider": "grok", "label": "xhigh", "title": "Grok · xhigh"},
             },
         },
-        {"key": DIRECT, "kind": "direct", "title": "dsh", "hint": "", "visible": True,
-         "harness": "dsh"},
+        {"key": SWARM, "kind": "swarm", "title": "dsh", "hint": "", "visible": True,
+         "roles": {"impl": {"harness": "dsh"}}},
     ],
 }
 
@@ -84,8 +84,8 @@ class LabelRuleTests(RoutesStateMixin, TempDbTestCase):
     def test_pipeline_gets_claude_and_its_key(self) -> None:
         self.assertEqual(routes_mod.labels_for(self.conn, PIPELINE), PIPELINE_LABELS)
 
-    def test_direct_gets_its_harness_and_direct_process(self) -> None:
-        self.assertEqual(routes_mod.labels_for(self.conn, DIRECT), DIRECT_LABELS)
+    def test_swarm_gets_only_its_key(self) -> None:
+        self.assertEqual(routes_mod.labels_for(self.conn, SWARM), SWARM_LABELS)
 
     def test_empty_unknown_or_whitespace_key_gets_nothing(self) -> None:
         for key in (None, "", "   ", "нет-такого"):
@@ -111,9 +111,9 @@ class StoreLabelTests(RoutesStateMixin, TempDbTestCase):
         self.assertEqual(task["launch_route"], PIPELINE)
         self.assertEqual(task["labels"], PIPELINE_LABELS)
 
-    def test_create_with_direct_route_labels_the_card(self) -> None:
-        task = self.task(route=DIRECT)
-        self.assertEqual(task["labels"], DIRECT_LABELS)
+    def test_create_with_swarm_route_labels_the_card(self) -> None:
+        task = self.task(route=SWARM)
+        self.assertEqual(task["labels"], SWARM_LABELS)
 
     def test_manual_label_is_not_duplicated(self) -> None:
         task = self.task(route=PIPELINE, labels=["harness:claude", "срочно"])
@@ -121,8 +121,8 @@ class StoreLabelTests(RoutesStateMixin, TempDbTestCase):
         self.assertEqual(task["labels"].count("harness:claude"), 1)
 
     def test_route_labels_do_not_duplicate_each_other(self) -> None:
-        task = self.task(route=DIRECT, labels=[*DIRECT_LABELS])
-        self.assertEqual(task["labels"], DIRECT_LABELS)
+        task = self.task(route=SWARM, labels=[*SWARM_LABELS])
+        self.assertEqual(task["labels"], SWARM_LABELS)
 
     def test_without_route_labels_are_untouched(self) -> None:
         task = self.task(labels=["frontend"])
@@ -135,11 +135,11 @@ class StoreLabelTests(RoutesStateMixin, TempDbTestCase):
 
     def test_route_change_replaces_route_labels_and_keeps_others(self) -> None:
         task = self.task(route=PIPELINE, labels=["frontend"])
-        updated = store.update_task(self.conn, task["id"], route=DIRECT)
-        self.assertEqual(updated["labels"], ["frontend", *DIRECT_LABELS])
+        updated = store.update_task(self.conn, task["id"], route=SWARM)
+        self.assertEqual(updated["labels"], ["frontend", *SWARM_LABELS])
 
     def test_route_change_back_to_a_pipeline(self) -> None:
-        task = self.task(route=DIRECT)
+        task = self.task(route=SWARM)
         updated = store.update_task(self.conn, task["id"], route=PIPELINE)
         self.assertEqual(updated["labels"], PIPELINE_LABELS)
 
@@ -176,9 +176,9 @@ class StoreLabelTests(RoutesStateMixin, TempDbTestCase):
         # Явные метки того же вызова — основа; метки маршрута сервер всё равно
         # нормализует сам (снимает старые `harness:`/`process:` и ставит новые).
         task = self.task(route=PIPELINE)
-        updated = store.update_task(self.conn, task["id"], route=DIRECT,
+        updated = store.update_task(self.conn, task["id"], route=SWARM,
                                     labels=["harness:dsh", "ручное"])
-        self.assertEqual(updated["labels"], ["ручное", "harness:dsh", "process:direct"])
+        self.assertEqual(updated["labels"], ["ручное", "process:dsh"])
 
 
 class ApiLabelTests(RoutesStateMixin, TempDbTestCase):
@@ -204,9 +204,9 @@ class ApiLabelTests(RoutesStateMixin, TempDbTestCase):
         self.assertEqual(task["launch_route"], PIPELINE)
 
     def test_post_does_not_duplicate_manual_labels(self) -> None:
-        _, task = self.post({"title": "проба", "project": "demo", "route": DIRECT,
-                             "labels": ["harness:dsh"], "actor": "me"})
-        self.assertEqual(task["labels"], DIRECT_LABELS)
+        _, task = self.post({"title": "проба", "project": "demo", "route": SWARM,
+                             "labels": ["process:dsh"], "actor": "me"})
+        self.assertEqual(task["labels"], SWARM_LABELS)
 
     def test_post_without_route_leaves_labels_empty(self) -> None:
         _, task = self.post({"title": "проба", "project": "demo", "actor": "me"})
@@ -216,9 +216,9 @@ class ApiLabelTests(RoutesStateMixin, TempDbTestCase):
         _, task = self.post({"title": "проба", "project": "demo", "route": PIPELINE,
                              "labels": ["frontend"], "actor": "me"})
         status, updated = server.handle("PATCH", f"/api/tasks/{task['id']}", {},
-                                        {"route": DIRECT, "actor": "me"}, authed=True)
+                                        {"route": SWARM, "actor": "me"}, authed=True)
         self.assertEqual(status, 200)
-        self.assertEqual(updated["labels"], ["frontend", *DIRECT_LABELS])
+        self.assertEqual(updated["labels"], ["frontend", *SWARM_LABELS])
 
 
 class McpLabelTests(RoutesStateMixin, TempDbTestCase):
@@ -299,11 +299,11 @@ class CliLabelTests(RoutesStateMixin, TempDbTestCase):
 
     def test_cli_route_change_rewrites_labels(self) -> None:
         task = self._new("--label", "frontend")
-        proc = self._run("set", task["id"], f"route={DIRECT}", "--json")
+        proc = self._run("set", task["id"], f"route={SWARM}", "--json")
         self.assertEqual(proc.returncode, 0, proc.stderr)
         updated = json.loads(proc.stdout)
-        self.assertEqual(updated["launch_route"], DIRECT)
-        self.assertEqual(updated["labels"], ["frontend", *DIRECT_LABELS])
+        self.assertEqual(updated["launch_route"], SWARM)
+        self.assertEqual(updated["labels"], ["frontend", *SWARM_LABELS])
 
     def test_cli_new_without_route_does_not_label(self) -> None:
         proc = self._run("new", "проба", "-p", "demo", "--json")

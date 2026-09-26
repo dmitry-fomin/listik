@@ -69,8 +69,9 @@ def fake_popen(argv, **kwargs):
 launcher.subprocess.Popen = fake_popen
 source = tmp / "routes-source.json"
 source.write_text(json.dumps({"version": 1, "routes": [
-    {"key": "probe", "kind": "direct", "harness": "dsh", "title": "проба",
-     "hint": "", "visible": True, "command": ["/bin/true"]}]}, ensure_ascii=False),
+    {"key": "probe", "kind": "pipeline", "title": "проба", "hint": "", "visible": True,
+     "roles": {"impl": {"provider": "claude", "label": "x", "title": "x"}},
+     "command": ["/bin/true"]}]}, ensure_ascii=False),
     encoding="utf-8")
 work = tmp / "work"
 work.mkdir(exist_ok=True)

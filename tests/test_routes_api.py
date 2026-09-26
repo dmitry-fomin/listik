@@ -27,11 +27,10 @@ from tests.helpers import TempDbTestCase
 REPO_DIR = pathlib.Path(__file__).resolve().parent.parent
 ROUTES_JSON = REPO_DIR / "routes.json"
 
-DIRECT_KEYS = ["pi-glm", "pi-deepseek", "grok", "codex", "devin"]
 EXPECTED_KEYS = [
     "xhigh-pipeline", "high-pipeline", "medium-pipeline", "low-pipeline", "xlow-pipeline",
     "nano-pipeline", "cross-pipeline", "opus-pipeline",
-    "universal-pipeline", *DIRECT_KEYS,
+    "universal-pipeline",
 ]
 
 
@@ -48,9 +47,9 @@ def pipeline_record(key: str = "demo-pipeline", **overrides) -> dict:
     return record
 
 
-def direct_record(key: str = "dsh", **overrides) -> dict:
-    record = {"key": key, "kind": "direct", "harness": "dsh", "title": key,
-              "hint": "", "visible": True}
+def swarm_record(key: str = "dsh", **overrides) -> dict:
+    record = {"key": key, "kind": "swarm", "title": key, "hint": "", "visible": True,
+              "roles": {"impl": {"harness": "dsh"}}}
     record.update(overrides)
     return record
 
@@ -92,7 +91,7 @@ class RoutesApiBase(TempDbTestCase):
 
 
 class GetRoutesFieldsTests(RoutesApiBase):
-    """`GET /api/routes` отдаёт `command`, `roles`/`harness`, `position`, порядок по `position`."""
+    """`GET /api/routes` отдаёт `command`, `roles`, `position`, порядок по `position`."""
 
     def test_command_roles_position_are_present_and_ordered(self) -> None:
         self.import_sample()
@@ -103,19 +102,15 @@ class GetRoutesFieldsTests(RoutesApiBase):
         for record in data["routes"]:
             self.assertIn("command", record)
             self.assertIn("position", record)
-            if record["kind"] == "pipeline":
-                self.assertIsInstance(record["roles"], dict)
-                self.assertNotIn("harness", record)
-            else:
-                self.assertIsInstance(record["harness"], str)
-                self.assertNotIn("roles", record)
+            self.assertIsInstance(record["roles"], dict)
+            self.assertNotIn("harness", record)
 
 
 class SkillMatchTests(RoutesApiBase):
     """Маршрут `kind=pipeline` без каталога скила — скрыт и назван в предупреждениях."""
 
     def test_route_without_skill_is_hidden_with_warning(self) -> None:
-        self.write_and_import([pipeline_record(key="totally-fake-pipeline"), direct_record()])
+        self.write_and_import([pipeline_record(key="totally-fake-pipeline"), swarm_record()])
         status, data = self.get("/api/routes")
         self.assertEqual(status, 200)
         record = next(r for r in data["routes"] if r["key"] == "totally-fake-pipeline")
@@ -128,7 +123,7 @@ class SkillMatchTests(RoutesApiBase):
         self.assertTrue(row["visible"])
 
     def test_route_with_real_skill_has_skill_path_and_is_not_hidden(self) -> None:
-        self.write_and_import([pipeline_record(key="high-pipeline"), direct_record()])
+        self.write_and_import([pipeline_record(key="high-pipeline"), swarm_record()])
         status, data = self.get("/api/routes")
         record = next(r for r in data["routes"] if r["key"] == "high-pipeline")
         self.assertNotIn("skill_missing", record)
@@ -165,7 +160,7 @@ class NoSkillsDirectoryTests(RoutesApiBase):
 
 class SyncEndpointTests(RoutesApiBase):
     def test_sync_lists_both_directions(self) -> None:
-        self.write_and_import([pipeline_record(key="totally-fake-pipeline"), direct_record()])
+        self.write_and_import([pipeline_record(key="totally-fake-pipeline"), swarm_record()])
         status, data = self.get("/api/routes/sync")
         self.assertEqual(status, 200)
         self.assertTrue(data["skills_available"])
@@ -181,7 +176,7 @@ class PatchRouteTests(RoutesApiBase):
         self.import_sample()
 
     def test_patch_updates_title_hint_icon_visible(self) -> None:
-        status, record = self.patch("/api/routes/pi-deepseek",
+        status, record = self.patch("/api/routes/cross-pipeline",
                                     {"title": "Новый", "hint": "h", "icon": "high",
                                      "visible": False})
         self.assertEqual(status, 200)
@@ -197,34 +192,29 @@ class PatchRouteTests(RoutesApiBase):
         self.assertEqual(ctx.exception.code, errors.BAD_ARGUMENT)
         self.assertIn("roles", ctx.exception.message)
 
-    def test_patch_kind_key_harness_position_are_400(self) -> None:
-        for field, value in (("kind", "direct"), ("key", "x"), ("harness", "dsh"),
-                             ("position", 0)):
+    def test_patch_kind_key_harness_position_command_are_400(self) -> None:
+        for field, value in (("kind", "swarm"), ("key", "x"), ("harness", "dsh"),
+                             ("position", 0), ("command", ["run", "{task_id}"])):
             with self.assertRaises(server.ApiError) as ctx:
-                self.patch("/api/routes/pi-deepseek", {field: value})
+                self.patch("/api/routes/cross-pipeline", {field: value})
             self.assertEqual(ctx.exception.status, 400, field)
             self.assertIn(field, ctx.exception.message)
+            self.assertIn("нельзя менять", ctx.exception.message)
 
     def test_patch_command_on_pipeline_is_400(self) -> None:
         with self.assertRaises(server.ApiError) as ctx:
             self.patch("/api/routes/high-pipeline", {"command": ["x"]})
         self.assertEqual(ctx.exception.status, 400)
 
-    def test_patch_command_unknown_placeholder_names_it(self) -> None:
-        with self.assertRaises(server.ApiError) as ctx:
-            self.patch("/api/routes/pi-deepseek", {"command": ["run", "{foo}"]})
-        self.assertEqual(ctx.exception.status, 400)
-        self.assertIn("{foo}", ctx.exception.message)
-
     def test_patch_unknown_field_is_400_names_it(self) -> None:
         with self.assertRaises(server.ApiError) as ctx:
-            self.patch("/api/routes/pi-deepseek", {"foo": 1})
+            self.patch("/api/routes/cross-pipeline", {"foo": 1})
         self.assertEqual(ctx.exception.status, 400)
         self.assertIn("foo", ctx.exception.message)
 
     def test_patch_empty_body_is_400(self) -> None:
         with self.assertRaises(server.ApiError) as ctx:
-            self.patch("/api/routes/pi-deepseek", {})
+            self.patch("/api/routes/cross-pipeline", {})
         self.assertEqual(ctx.exception.status, 400)
 
     def test_patch_unknown_key_is_404(self) -> None:
@@ -268,20 +258,20 @@ class DeleteRouteTests(RoutesApiBase):
         self.import_sample()
 
     def test_delete_clears_route_and_labels_but_keeps_tasks(self) -> None:
-        open_task = store.create_task(self.conn, title="open", project="p", route="pi-deepseek")
-        working = store.create_task(self.conn, title="working", project="p", route="pi-deepseek")
+        open_task = store.create_task(self.conn, title="open", project="p", route="cross-pipeline")
+        working = store.create_task(self.conn, title="working", project="p", route="cross-pipeline")
         store.claim(self.conn, working["id"], holder="dsh")
-        status, data = self.delete("/api/routes/pi-deepseek")
+        status, data = self.delete("/api/routes/cross-pipeline")
         self.assertEqual(status, 200)
-        self.assertEqual(data["removed"], "pi-deepseek")
+        self.assertEqual(data["removed"], "cross-pipeline")
         self.assertEqual(data["tasks_cleared"], 2)
         for tid in (open_task["id"], working["id"]):
             row = self.conn.execute(
                 "SELECT launch_route, labels, status, holder FROM tasks WHERE id = ?",
                 (tid,)).fetchone()
             self.assertIsNone(row["launch_route"])
-            self.assertNotIn("harness:pi-deepseek", json.loads(row["labels"]))
-            self.assertNotIn("process:direct", json.loads(row["labels"]))
+            self.assertNotIn("harness:claude", json.loads(row["labels"]))
+            self.assertNotIn("process:cross-pipeline", json.loads(row["labels"]))
         # Держатель и статус задачи в работе — не тронуты.
         self.assertEqual(
             self.conn.execute("SELECT holder FROM tasks WHERE id = ?",
@@ -289,7 +279,7 @@ class DeleteRouteTests(RoutesApiBase):
         self.assertIsNotNone(store.get_task(self.conn, open_task["id"]))
         self.assertIsNotNone(store.get_task(self.conn, working["id"]))
         with self.assertRaises(errors.NotFound):
-            routes_store.get_route(self.conn, "pi-deepseek")
+            routes_store.get_route(self.conn, "cross-pipeline")
 
     def test_delete_unknown_key_is_404(self) -> None:
         with self.assertRaises(server.ApiError) as ctx:
@@ -297,9 +287,9 @@ class DeleteRouteTests(RoutesApiBase):
         self.assertEqual(ctx.exception.status, 404)
 
     def test_second_delete_of_same_key_is_404_and_noop(self) -> None:
-        self.delete("/api/routes/grok")
+        self.delete("/api/routes/nano-pipeline")
         with self.assertRaises(server.ApiError) as ctx:
-            self.delete("/api/routes/grok")
+            self.delete("/api/routes/nano-pipeline")
         self.assertEqual(ctx.exception.status, 404)
 
 
@@ -327,30 +317,34 @@ class ReimportRoutesTests(RoutesApiBase):
 
     def test_reimport_rewrites_table(self) -> None:
         self.import_sample()
-        routes_store.update_route(self.conn, "grok", title="Моя правка")
+        shipped = routes_store.get_route(self.conn, "cross-pipeline")["title"]
+        routes_store.update_route(self.conn, "cross-pipeline", title="Моя правка")
         with mock.patch.object(server, "publish") as publish:
             status, report = server.handle("POST", "/api/routes/reimport", {}, {}, authed=True)
         self.assertEqual(status, 200)
         self.assertTrue(report["replaced"])
         self.assertEqual(report["imported"], len(EXPECTED_KEYS))
         self.assertEqual(report["orphans"], {})
-        self.assertEqual(routes_store.get_route(self.conn, "grok")["title"], "grok")
+        self.assertEqual(routes_store.get_route(self.conn, "cross-pipeline")["title"], shipped)
         publish.assert_called_once_with("route", {"key": None, "action": "reimported"})
 
     def test_reimport_from_backup_path(self) -> None:
         from listik import paths
         self.import_sample()
-        routes_store.update_route(self.conn, "grok", title="Моя правка")
+        shipped = routes_store.get_route(self.conn, "cross-pipeline")["title"]
+        routes_store.update_route(self.conn, "cross-pipeline", title="Моя правка")
         with mock.patch.object(paths, "DATA_DIR", self.tmp_path / "data"), \
                 mock.patch.object(server, "publish"), \
                 contextlib.redirect_stderr(io.StringIO()):
             _, first = server.handle("POST", "/api/routes/reimport", {}, {}, authed=True)
-            self.assertEqual(routes_store.get_route(self.conn, "grok")["title"], "grok")
+            self.assertEqual(routes_store.get_route(self.conn, "cross-pipeline")["title"],
+                             shipped)
             status, report = server.handle("POST", "/api/routes/reimport", {},
                                            {"path": first["backup"]}, authed=True)
         self.assertEqual(status, 200)
         self.assertEqual(report["source"], first["backup"])
-        self.assertEqual(routes_store.get_route(self.conn, "grok")["title"], "Моя правка")
+        self.assertEqual(routes_store.get_route(self.conn, "cross-pipeline")["title"],
+                         "Моя правка")
 
     def test_reimport_bad_path_is_400(self) -> None:
         with self.assertRaises(server.ApiError) as ctx:
@@ -363,152 +357,32 @@ class ReimportRoutesTests(RoutesApiBase):
         self.assertEqual(ctx.exception.status, 405)
 
 
-class CreateDirectRouteTests(RoutesApiBase):
-    """`POST /api/routes` с `kind="direct"` заводит прямой маршрут (listik-sjx3, порция a)."""
+class CreateRouteKindTests(RoutesApiBase):
+    """`POST /api/routes`: проверка `kind` — первая; вида `direct` нет (listik-ar8v)."""
 
-    def body(self, **overrides) -> dict:
-        payload = {"kind": "direct", "key": "probe-direct", "title": "Проба",
-                   "harness": "codex", "command": ["codex", "exec", "{task_id}"]}
-        payload.update(overrides)
-        return payload
-
-    def test_post_creates_direct_route_and_get_shows_it(self) -> None:
-        status, record = self.post("/api/routes", self.body())
-        self.assertEqual(status, 201)
-        self.assertEqual(set(record), {"key", "kind", "title", "hint", "visible",
-                                       "icon", "position", "command", "harness",
-                                       "driver"})
-        self.assertEqual(record["key"], "probe-direct")
-        self.assertEqual(record["kind"], "direct")
-        self.assertEqual(record["title"], "Проба")
-        self.assertEqual(record["hint"], "")
-        self.assertFalse(record["visible"])
-        self.assertEqual(record["icon"], "direct")
-        self.assertEqual(record["command"], ["codex", "exec", "{task_id}"])
-        self.assertEqual(record["harness"], "codex")
-        status, data = self.get("/api/routes")
-        self.assertEqual(status, 200)
-        stored = next(r for r in data["routes"] if r["key"] == "probe-direct")
-        self.assertEqual(record, stored)
-
-    def test_post_direct_position_is_after_existing(self) -> None:
-        self.import_sample()
-        _, before = self.get("/api/routes")
-        top = max(r["position"] for r in before["routes"])
-        status, record = self.post("/api/routes", self.body())
-        self.assertEqual(status, 201)
-        self.assertGreater(record["position"], top)
-
-    def test_post_duplicate_direct_key_is_409(self) -> None:
-        self.post("/api/routes", self.body())
+    def assert_kind_rejected(self, body: dict) -> None:
         with self.assertRaises(server.ApiError) as ctx:
-            self.post("/api/routes", self.body(title="Другое"))
-        self.assertEqual(ctx.exception.status, 409)
-        self.assertEqual(ctx.exception.code, errors.CONFLICT)
-        self.assertIn("probe-direct", ctx.exception.message)
-        _, data = self.get("/api/routes")
-        matches = [r for r in data["routes"] if r["key"] == "probe-direct"]
-        self.assertEqual(len(matches), 1)
-        self.assertEqual(matches[0]["title"], "Проба")
-        self.assertEqual(matches[0]["command"], ["codex", "exec", "{task_id}"])
-
-    def test_hint_and_visible_defaults_and_overrides(self) -> None:
-        _, base = self.post("/api/routes", self.body(key="probe-a"))
-        self.assertEqual(base["hint"], "")
-        self.assertFalse(base["visible"])
-        _, custom = self.post("/api/routes",
-                              self.body(key="probe-b", hint="проба", visible=True))
-        self.assertEqual(custom["hint"], "проба")
-        self.assertTrue(custom["visible"])
-
-    def test_icon_default_null_and_override(self) -> None:
-        _, default = self.post("/api/routes", self.body(key="probe-a"))
-        self.assertEqual(default["icon"], "direct")
-        _, no_icon = self.post("/api/routes", self.body(key="probe-b", icon=None))
-        self.assertIsNone(no_icon["icon"])
-        _, xlow = self.post("/api/routes", self.body(key="probe-c", icon="xlow"))
-        self.assertEqual(xlow["icon"], "xlow")
-
-    def test_missing_required_fields_are_400_naming_field(self) -> None:
-        for field in ("key", "title", "harness", "command"):
-            with self.subTest(field=field):
-                payload = self.body()
-                del payload[field]
-                with self.assertRaises(server.ApiError) as ctx:
-                    self.post("/api/routes", payload)
-                self.assertEqual(ctx.exception.status, 400)
-                self.assertEqual(ctx.exception.code, errors.BAD_ARGUMENT)
-                self.assertIn(field, ctx.exception.message)
-        _, data = self.get("/api/routes")
-        self.assertFalse(any(r["key"] == "probe-direct" for r in data["routes"]))
-
-    def test_bad_command_is_400_and_not_created(self) -> None:
-        cases = [[], "codex exec", ["codex", ""], ["codex", "{foo}"]]
-        for i, command in enumerate(cases):
-            with self.subTest(command=command):
-                with self.assertRaises(server.ApiError) as ctx:
-                    self.post("/api/routes", self.body(key=f"probe-{i}", command=command))
-                self.assertEqual(ctx.exception.status, 400)
-                self.assertEqual(ctx.exception.code, errors.BAD_ARGUMENT)
-                if command == ["codex", "{foo}"]:
-                    self.assertIn("{foo}", ctx.exception.message)
-        _, data = self.get("/api/routes")
-        self.assertFalse(any(r["key"].startswith("probe-") for r in data["routes"]))
-
-    def test_bad_key_is_400(self) -> None:
-        for key in ("Прямой", "-abc"):
-            with self.subTest(key=key):
-                with self.assertRaises(server.ApiError) as ctx:
-                    self.post("/api/routes", self.body(key=key))
-                self.assertEqual(ctx.exception.status, 400)
-                self.assertEqual(ctx.exception.code, errors.BAD_ARGUMENT)
-                self.assertIn("key", ctx.exception.message)
-
-    def test_any_harness_key_and_bad_harness_key(self) -> None:
-        # listik-2gry: прямой маршрут принимает любой ключ харнесса по форме
-        # (держатель `agent:<key>` из каталога harnesses) — негодная форма ключа
-        # по-прежнему 400.
-        status, record = self.post("/api/routes", self.body(harness="opencode"))
-        self.assertEqual(status, 201)
-        self.assertEqual(record["harness"], "opencode")
-        with self.assertRaises(server.ApiError) as ctx:
-            self.post("/api/routes", self.body(key="probe-direct-2",
-                                             harness="Open Code"))
+            self.post("/api/routes", body)
         self.assertEqual(ctx.exception.status, 400)
         self.assertEqual(ctx.exception.code, errors.BAD_ARGUMENT)
-        self.assertIn("harness", ctx.exception.message)
-        with self.assertRaises(server.ApiError) as ctx:
-            self.post("/api/routes", self.body(key="probe-direct-3", icon="turbo"))
-        self.assertEqual(ctx.exception.status, 400)
-        self.assertEqual(ctx.exception.code, errors.BAD_ARGUMENT)
-        for name in ("xhigh", "high", "medium", "low", "xlow", "direct"):
-            self.assertIn(name, ctx.exception.message)
+        message = ctx.exception.message
+        self.assertIn("kind", message)
+        self.assertIn('"pipeline"', message)
+        self.assertIn('"swarm"', message)
+        self.assertNotIn("direct", message)
 
-    def test_extra_fields_are_400_with_field_name(self) -> None:
-        for field in ("roles", "position"):
-            with self.subTest(field=field):
-                with self.assertRaises(server.ApiError) as ctx:
-                    self.post("/api/routes", self.body(**{field: {}}))
-                self.assertEqual(ctx.exception.status, 400)
-                self.assertEqual(ctx.exception.code, errors.BAD_ARGUMENT)
-                self.assertIn(field, ctx.exception.message)
+    def test_direct_kind_is_400_and_not_created(self) -> None:
+        self.assert_kind_rejected({"kind": "direct", "key": "x", "title": "x"})
+        # Проверка `kind` идёт до лишних полей: `harness` не меняет ответ.
+        self.assert_kind_rejected({"kind": "direct", "key": "x", "title": "x",
+                                   "harness": "grok"})
+        _, data = self.get("/api/routes")
+        self.assertFalse(any(r["key"] == "x" for r in data["routes"]))
 
     def test_bad_kind_is_400_naming_kind_and_allowed(self) -> None:
-        for kind in ("conveyor", 5, []):
+        for kind in ("conveyor", 5, [], None):
             with self.subTest(kind=kind):
-                with self.assertRaises(server.ApiError) as ctx:
-                    self.post("/api/routes", self.body(kind=kind))
-                self.assertEqual(ctx.exception.status, 400)
-                self.assertEqual(ctx.exception.code, errors.BAD_ARGUMENT)
-                self.assertIn("kind", ctx.exception.message)
-                self.assertIn("pipeline", ctx.exception.message)
-                self.assertIn("direct", ctx.exception.message)
-        payload = self.body()
-        payload["kind"] = None
-        with self.assertRaises(server.ApiError) as ctx:
-            self.post("/api/routes", payload)
-        self.assertEqual(ctx.exception.status, 400)
-        self.assertEqual(ctx.exception.code, errors.BAD_ARGUMENT)
+                self.assert_kind_rejected({"kind": kind, "key": "x", "title": "x"})
 
     def test_pipeline_without_kind_and_explicit_kind_are_same(self) -> None:
         status_a, rec_a = self.post("/api/routes", {"key": "high-pipeline"})
@@ -583,17 +457,11 @@ class HarnessesApiTests(RoutesApiBase):
 
     def test_get_detail_lists_used_by(self) -> None:
         self.post("/api/harnesses", {"key": "mini", "argv": ["mini", "run"]})
-        self.post("/api/routes", {"kind": "direct", "key": "d-mini",
-                                  "title": "d", "harness": "mini",
-                                  "command": ["mini", "run"]})
         self.post("/api/routes", {"kind": "swarm", "key": "roy", "title": "рой",
                                   "roles": {"impl": {"harness": "mini"}}})
         status, detail = self.get("/api/harnesses/mini")
         self.assertEqual(status, 200)
-        self.assertIn({"route": "d-mini", "kind": "direct", "role": None},
-                      detail["used_by"])
-        self.assertIn({"route": "roy", "kind": "swarm", "role": "impl"},
-                      detail["used_by"])
+        self.assertEqual(detail["used_by"], [{"route": "roy", "kind": "swarm", "role": "impl"}])
 
     def test_get_unknown_key_is_404(self) -> None:
         with self.assertRaises(server.ApiError) as ctx:
@@ -708,15 +576,6 @@ class CreateSwarmRouteTests(RoutesApiBase):
         self.assertEqual(status, 200)
         self.assertIn({"route": "demo-pipeline", "kind": "swarm", "role": "impl"},
                       detail["used_by"])
-
-    def test_post_direct_registers_holder_alias(self) -> None:
-        """Ключ держателя прямого маршрута становится синонимом `agent:<key>` —
-        иначе `claim` ответил бы «неизвестный держатель»."""
-        from listik import actors
-        self.post("/api/routes",
-                  {"kind": "direct", "key": "d-mini", "title": "d",
-                   "harness": "mini", "command": ["mini", "run"]})
-        self.assertEqual(actors.resolve("mini", self.conn), ("agent:mini", "agent"))
 
 
 if __name__ == "__main__":

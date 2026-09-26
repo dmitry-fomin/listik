@@ -13,7 +13,7 @@ from listik import routes as routes_mod
 from listik import routes_store
 from listik import server
 from listik import skills as skills_mod
-from tests.test_routes_api import RoutesApiBase, direct_record, pipeline_record
+from tests.test_routes_api import RoutesApiBase, pipeline_record, swarm_record
 
 CATALOGUE = ["grok:delegate", "pi:pi-delegate"]
 
@@ -45,7 +45,7 @@ class RolesApiBase(RoutesApiBase):
 class PatchRolesTests(RolesApiBase):
     def setUp(self) -> None:
         super().setUp()
-        self.write_and_import([pipeline_record(key="high-pipeline"), direct_record()])
+        self.write_and_import([pipeline_record(key="high-pipeline"), swarm_record()])
 
     def test_patch_roles_written_and_published(self) -> None:
         before = self.route("high-pipeline")
@@ -72,13 +72,13 @@ class PatchRolesTests(RolesApiBase):
         self.assertEqual(params["tokens"], 12)
         self.assertEqual(params["channel"], "glm")
 
-    def test_direct_route_rejects_roles(self) -> None:
+    def test_swarm_route_rejects_skill_roles(self) -> None:
         before = self.route("dsh")
         with self.assertRaises(server.ApiError) as ctx:
             self.patch("/api/routes/dsh", {"roles": ROLES})
         self.assertEqual(ctx.exception.status, 400)
         self.assertEqual(ctx.exception.code, errors.BAD_ARGUMENT)
-        self.assertIn("pipeline", ctx.exception.message)
+        self.assertIn("roles.", ctx.exception.message)
         self.assertEqual(self.route("dsh"), before)
 
     def test_invalid_roles_rejected_without_write(self) -> None:
@@ -141,7 +141,7 @@ class PatchRolesTests(RolesApiBase):
 class PostRolesTests(RolesApiBase):
     def setUp(self) -> None:
         super().setUp()
-        self.write_and_import([direct_record()])
+        self.write_and_import([swarm_record()])
 
     def test_post_with_roles(self) -> None:
         with mock.patch.object(server, "publish") as publish:
@@ -178,6 +178,7 @@ class PostRolesTests(RolesApiBase):
         with self.assertRaises(server.ApiError) as ctx:
             self.post("/api/routes", {"key": "high-pipeline", "kind": "direct"})
         self.assertEqual(ctx.exception.status, 400)
+        self.assertIn("kind", ctx.exception.message)
 
     def test_post_with_invalid_roles_rejected(self) -> None:
         roles = {"impl": {"provider": "нет", "label": "x", "title": "y"}}

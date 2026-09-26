@@ -5,7 +5,7 @@
 `skills/codex-pipeline/agents` старого репозитория сюда не переехал). Имена
 скилов обязаны совпадать с ключами записей `kind == "pipeline"` в `routes.json`:
 доска выбирает конвейер по ключу маршрута, а плагин исполняет его скилом с тем
-же именем. Записи `kind == "direct"` — чужие харнессы, скилов у них нет.
+же именем. Записей `kind == "direct"` в `routes.json` больше нет (listik-ar8v).
 
 Файлы читаются в момент вызова через константы модуля, а не при импорте:
 поэтому `unittest.mock.patch.object` на `ROUTES_JSON`, `PLUGIN_DIR` и
@@ -148,15 +148,9 @@ class FeaturePipelinePluginTests(unittest.TestCase):
                 self.assertEqual(manifest.get("name"), name,
                                  f"{name}: name в plugin.json не совпал")
 
-    def test_direct_routes_are_not_skills(self) -> None:
-        keys = _keys_of_kind("direct")
-        skills = _skill_names()
-        self.assertTrue(keys, "в routes.json нет ни одной записи kind == direct")
-        self.assertTrue(skills, "в плагине нет ни одного каталога скила")
-        overlap = sorted(keys & skills)
-        self.assertEqual(overlap, [],
-                         f"ключи прямых маршрутов совпали с именами скилов плагина: {overlap}")
-
+    def test_no_direct_routes(self) -> None:
+        self.assertEqual(_keys_of_kind("direct"), set(),
+                         "в routes.json осталась запись kind == direct")
 
 #: Пути (относительно PLUGIN_DIR), которые должны называть работу по id карточки (`<id>`), а не
 #: по номеру шага. `agents/*.md` собирается в момент вызова теста, а не при импорте.

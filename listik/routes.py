@@ -1,13 +1,12 @@
 """Маршруты запуска задач: файл поставки `routes.json` и чтение таблицы `routes`.
 
-Таблица маршрутов (пресеты конвейеров и ряд «просто исполнитель») живёт в базе —
+Таблица маршрутов (пресеты конвейеров и маршруты роя) живёт в базе —
 таблице `routes` (см. :mod:`listik.routes_store`). `routes.json` в корне репозитория
 (`SOURCE_PATH`) — только затравка при установке: этот модуль читает, разбирает и
 проверяет файл (`load`/`validate`), а первичный ввоз в пустую таблицу делает
 `listik.routes_store` (при `listik init` и старте сервера). Больше файл не перечитывает
 никто и ни с чем не сверяет: записи в базе главнее. В образце у каждой записи
-есть `command`: конвейер запускает `claude -p` со скилом `/feature-pipeline:{route}`,
-прямой — dsh/grok/codex.
+есть `command`: конвейер запускает `claude -p` со скилом `/feature-pipeline:{route}`.
 
 Читатели берут маршруты только из базы (`state(conn)`), файл в обход ввоза не читает
 никто. Кеша нет: правка записи в базе видна сразу, перезапуск сервера не нужен.
@@ -18,23 +17,21 @@
 
 Запись маршрута:
   * `key` — `^[a-z0-9][a-z0-9-]*$`, уникален в файле;
-  * `kind` — `"pipeline"` или `"direct"`;
+  * `kind` — `"pipeline"` или `"swarm"`;
   * `title` — непустая строка;
   * `hint` — строка, по умолчанию `""`;
   * `visible` — именно JSON `true`/`false`;
-  * `roles` — обязателен для `pipeline` и запрещён для `direct`: ключи только из
-    `spec`/`critic`/`impl`/`judge`, значение — `{provider, label, title}` из непустых
-    строк (провайдер — `claude`/`glm`/`openai`/`grok`/`deepseek`);
+  * `roles` — обязателен: ключи только из `spec`/`critic`/`impl`/`judge`; у `pipeline`
+    режима скила значение — `{provider, label, title}` из непустых строк (провайдер —
+    `claude`/`glm`/`openai`/`grok`/`deepseek`), у роя — `{harness, argv?, prompt?}`;
   * `icon` — необязательный уровень маршрута для иконки на доске, одно из
     `xhigh`/`high`/`medium`/`low`/`xlow`/`direct`. Если поля нет, уровень выводится из самой
-    записи (`fallback_icon`): у `direct` это `direct`, у `pipeline` — часть ключа до
-    первого `-`, если она из того же набора (`xhigh-pipeline` → `xhigh`); у записи без
+    ключа (`fallback_icon`): часть ключа до первого `-`, если она из того же набора
+    (`xhigh-pipeline` → `xhigh`); у записи без
     выводимого уровня (`opus-pipeline`) иконки нет; явный `null` — иконки нет. Неизвестное значение — не ошибка
     файла, а предупреждение (listik-itg8): запись получает уровень по ключу, поле
     `icon_error` с причиной и текст в `warnings` ответа `GET /api/routes`; строка уходит
     в stderr (у демона — в `listik.log`), а остальные записи и автостарт работают как обычно;
-  * `harness` — обязателен для `direct` и запрещён для `pipeline` (`claude`, `dsh`,
-    `codex`, `grok`);
   * `command` — необязательный непустой массив непустых строк, argv запуска.
 
 Лишние поля на любом уровне — ошибка (защита от опечаток вроде `visble`).
@@ -58,11 +55,10 @@ from . import paths, util
 SOURCE_PATH = paths.ROOT_DIR / "routes.json"
 
 VERSION = 1
-KINDS = ("pipeline", "direct", "swarm")
+KINDS = ("pipeline", "swarm")
 ROLE_KEYS = ("spec", "critic", "impl", "judge")
 PROVIDERS = ("claude", "glm", "openai", "grok", "deepseek", "devin")
-HARNESSES = ("claude", "dsh", "codex", "grok")
-# Способ исполнения маршрута (listik-2gry): `skill` — конвейер-скил/прямая выдача,
+# Способ исполнения маршрута (listik-2gry): `skill` — конвейер-скил,
 # `swarm` — рой: Listik поднимает по процессу на этап и сам ведёт этапы.
 DRIVERS = ("skill", "swarm")
 # Уровни маршрута — значения поля `icon`; подписи и иконки для доски лежат в
@@ -72,8 +68,8 @@ PLACEHOLDERS = ("task_id", "project", "route", "cwd", "worktree", "branch",
                 "stage", "role", "harness")
 
 ROOT_FIELDS = ("version", "routes")
-RECORD_FIELDS = ("key", "kind", "title", "hint", "visible", "icon", "roles", "strip", "harness",
-                 "command", "driver")
+RECORD_FIELDS = ("key", "kind", "title", "hint", "visible", "icon", "roles", "strip", "command",
+                 "driver")
 ROLE_FIELDS = ("provider", "label", "title", "skill", "params")
 #: Поля ячейки роли маршрута `kind=swarm`: харнесс из каталога (`harnesses`),
 #: свой argv и свой промпт — последним аргументом. Пустая ячейка (роль не задана)
@@ -305,13 +301,10 @@ def validate_command(value, where: str) -> list[str]:
 def fallback_icon(kind: str, key: str) -> str | None:
     """Уровень маршрута для записи без поля `icon`.
 
-    У `direct`-записи уровня в ключе нет (`dsh`, `grok`, `codex`) — она и есть
-    `direct`. У `pipeline` берётся часть ключа до первого `-` (`xhigh-pipeline` →
-    `xhigh`), но только если она из `ROUTE_ICONS`: у `opus-pipeline`
-    уровня нет, и иконка для них не выдумывается (`None`).
+    Берётся часть ключа до первого `-` (`xhigh-pipeline` → `xhigh`), но только
+    если она из `ROUTE_ICONS`: у `opus-pipeline` или `pidi` уровня нет, и иконка
+    не выдумывается (`None`). `kind` на уровень не влияет.
     """
-    if kind == "direct":
-        return "direct"
     prefix = key.split("-", 1)[0]
     return prefix if prefix in ROUTE_ICONS else None
 
@@ -354,13 +347,10 @@ def _validate_route(item, where: str, warnings: list[str] | None = None) -> dict
 
     kind = _present(item, "kind", where)
     if kind not in KINDS:
-        raise _err(f"{where}.kind", 'должен быть "pipeline", "direct" или "swarm"')
+        raise _err(f"{where}.kind", 'должен быть "pipeline" или "swarm"')
 
     driver = item.get("driver")
-    if kind == "direct":
-        if "driver" in item:
-            raise _err(f"{where}.driver", "у direct-записи driver быть не должно")
-    elif driver is not None and driver not in DRIVERS:
+    if driver is not None and driver not in DRIVERS:
         raise _err(f"{where}.driver", f"допустимы: {', '.join(DRIVERS)}")
 
     title = _present(item, "title", where)
@@ -392,26 +382,14 @@ def _validate_route(item, where: str, warnings: list[str] | None = None) -> dict
             record["roles"] = validate_swarm_roles(item["roles"], f"{where}.roles")
         else:
             record["roles"] = _validate_roles(item["roles"], f"{where}.roles")
-        if "harness" in item:
-            raise _err(f"{where}.harness", "у pipeline-записи harness быть не должно")
         record["driver"] = driver or "skill"
-    elif kind == "swarm":
-        if "harness" in item:
-            raise _err(f"{where}.harness", "у swarm-записи harness быть не должно")
+    else:
         if "roles" not in item:
             raise _err(f"{where}.roles", "обязательно для swarm")
         # Каталог харнессов файлу недоступен: проверяется только форма ячеек
         # и наличие команды у самой роли (argv) — слой базы проверит строже.
         record["roles"] = validate_swarm_roles(item["roles"], f"{where}.roles")
         record["driver"] = "swarm"
-    else:
-        if "roles" in item:
-            raise _err(f"{where}.roles", "у direct-записи ролей быть не должно")
-        harness = _present(item, "harness", where)
-        if not isinstance(harness, str) or not KEY_RE.match(harness):
-            raise _err(f"{where}.harness",
-                       "ключ харнесса под ^[a-z0-9][a-z0-9-]*$ — имя держателя agent:<key>")
-        record["harness"] = harness
 
     record["command"] = (validate_command(item["command"], f"{where}.command")
                          if "command" in item else None)
@@ -523,8 +501,7 @@ def is_route_label(label: str) -> bool:
 def labels_for(conn, route_key: str | None) -> list[str]:
     """Метки карточки для маршрута — те же, что ставит форма «Новая задача» на доске.
 
-    У `direct` — харнесс самой записи (`harness:<harness>`, `process:direct`), у
-    `pipeline` — оркестратор `claude` и ключ записи (`harness:claude`,
+    У `pipeline` — оркестратор `claude` и ключ записи (`harness:claude`,
     `process:<key>`): конвейер ведёт claude, а провайдеры ролей у записей разные.
     Пустой или неизвестный ключ — пустой список: метки не выдумываем. Недоступная
     база (`sqlite3.DatabaseError`) тоже даёт пустой список и строку в stderr: метки —
@@ -542,8 +519,6 @@ def labels_for(conn, route_key: str | None) -> list[str]:
         return []
     except KeyError:  # errors.NotFound — маршрута нет: метки не выдумываем
         return []
-    if record["kind"] == "direct":
-        return [f"harness:{record['harness']}", "process:direct"]
     if record["kind"] == "swarm":
         # Рой ведёт сам Listik, харнесс меняется по этапам — общего исполнителя
         # в метке нет, только ключ маршрута.

@@ -131,10 +131,10 @@ class SchemaCase(TempDbTestCase):
             self.assertEqual([n for n in indexes if "owner" in n], [])
             version = conn.execute(
                 "SELECT value FROM meta WHERE key = 'schema_version'").fetchone()[0]
-            self.assertEqual(version, "12")
+            self.assertEqual(version, "13")
         finally:
             conn.close()
-        self.assertEqual(db_mod.SCHEMA_VERSION, 12)
+        self.assertEqual(db_mod.SCHEMA_VERSION, 13)
 
     # --- п. 10 (файл ревизии; прогон alembic — команда в чек-листе)
     def test_alembic_revision_file(self) -> None:

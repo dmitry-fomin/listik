@@ -32,7 +32,7 @@ const props = defineProps<{
   filters: Filters
   statusOptions: FacetsOption[]
   stageOptions: FacetsOption[]
-  assigneeOptions: FacetsOption[]
+  orchestratorOptions: FacetsOption[]
   typeOptions: FacetsOption[]
 }>()
 
@@ -52,7 +52,7 @@ const stageToggleOptions = computed<IconToggleOption<string>[]>(() => [
   { value: '', label: 'все этапы' },
   ...toOptions(props.stageOptions).map((option) => ({ value: String(option.value), label: option.label })),
 ])
-const assigneeOptions = computed(() => toOptions(props.assigneeOptions))
+const orchestratorOptions = computed(() => toOptions(props.orchestratorOptions))
 const typeOptions = computed(() => toOptions(props.typeOptions))
 
 /** «Любой тип» + facet-список — TaskGlyph уже знает иконку каждого известного
@@ -113,7 +113,7 @@ const activeCount = computed(() => {
   let count = 0
   if (f.status) count += 1
   if (f.stage) count += 1
-  if (f.assignee) count += 1
+  if (f.orchestrator) count += 1
   if (f.type) count += 1
   if (f.needsOwner) count += 1
   if (f.health) count += 1
@@ -155,15 +155,15 @@ const activeCount = computed(() => {
       </IconToggle>
     </UiFilterField>
 
-    <UiFilterField label="Исполнитель" :active="Boolean(filters.assignee)" @clear="patch({ assignee: '' })">
+    <UiFilterField label="Оркестратор" :active="Boolean(filters.orchestrator)" @clear="patch({ orchestrator: '' })">
       <template #default="{ fieldId }">
         <UiSelect
-          :model-value="filters.assignee || null"
-          :options="assigneeOptions"
+          :model-value="filters.orchestrator || null"
+          :options="orchestratorOptions"
           v-bind="{ 'aria-labelledby': fieldId }"
           size="sm"
           placeholder="любой"
-          @update:model-value="(value) => patch({ assignee: value ? String(value) : '' })"
+          @update:model-value="(value) => patch({ orchestrator: value ? String(value) : '' })"
         />
       </template>
     </UiFilterField>

@@ -2,10 +2,10 @@
 
 У закрытой карточки не видно, кто по ней работал: `listik done` держателя не
 снимает, а `stage --to done` — снимает, поэтому у одной закрытой карточки
-держатель есть, а у другой пусто; `assignee` же помнит только самый первый
-claim. `worked_by` собирается по событиям `claim`/`heartbeat`, сделанным от
-своего имени: выдача оркестратором (`stage --holder кому`) и heartbeat чужой
-рукой в список не идут.
+держатель есть, а у другой пусто; «оркестратор» же — кто ведёт карточку по
+маршруту, а не кто по ней работал. `worked_by` собирается по событиям
+`claim`/`heartbeat`, сделанным от своего имени: выдача оркестратором
+(`stage --holder кому`) и heartbeat чужой рукой в список не идут.
 """
 from __future__ import annotations
 
@@ -66,10 +66,10 @@ class WorkedByTests(TempDbTestCase):
         store.claim(self.conn, self.task, holder="dsh", actor="agent:dsh", harness="dsh")
         card = self.card()
         # Свой claim исполнителя — выполнял он; оркестратор, который выдал карточку,
-        # в списке не появляется, как и `assignee` (что бы там ни было).
+        # в списке не появляется, как и «оркестратор» (что бы там ни было).
         self.assertEqual(card["worked_by"], ["agent:dsh"])
         self.assertNotIn("agent:claude", card["worked_by"])
-        self.assertNotIn(card["assignee"], [k for k in card["worked_by"] if k != "agent:dsh"])
+        self.assertNotIn(card["orchestrator"], [k for k in card["worked_by"] if k != "agent:dsh"])
 
     def test_heartbeat_by_other_hand_is_not_worked_by(self) -> None:
         """C4: heartbeat чужой рукой не считается, своей — считается."""

@@ -303,7 +303,6 @@ def create_task(
     issue_type: str = "task",
     status: str = "open",
     priority: int = 2,
-    assignee: str | None = None,
     owner: str | None = None,
     as_owner: str | None = None,
     stage: str | None = None,
@@ -389,11 +388,11 @@ def create_task(
     conn.execute(
         """
         INSERT INTO tasks(id, project, title, description, acceptance, design, notes, result, status, stage,
-                          stage_at, priority, issue_type, assignee, owner, labels, spec_path,
+                          stage_at, priority, issue_type, owner, labels, spec_path,
                           journal_path,
                           source, external_ref, created_at, created_by, updated_at, needs_owner,
                           checklist_path, review_path, decision_path, autostart, launch_route)
-        VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)
+        VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)
         ON CONFLICT(id) DO UPDATE SET
             title=excluded.title, description=excluded.description, acceptance=excluded.acceptance,
             design=excluded.design, notes=excluded.notes, status=excluded.status,
@@ -401,7 +400,7 @@ def create_task(
             updated_at=excluded.updated_at
         """,
         (tid, project, title, description, acceptance, design, notes, result, status, stage,
-         ts if stage else None, priority, issue_type, assignee, owner_value,
+         ts if stage else None, priority, issue_type, owner_value,
          json.dumps(labels, ensure_ascii=False), spec_path, journal_path,
          source, external_ref, ts, created_by, ts, 1 if needs_owner else 0,
          checklist_path, review_path, decision_path, 1 if autostart else 0, route),
@@ -455,7 +454,7 @@ def link_hints(conn: sqlite3.Connection, task_id: str, *, limit: int = 5) -> lis
 
 UPDATABLE = {
     "title", "description", "acceptance", "design", "notes", "result", "status", "stage",
-    "priority", "issue_type", "assignee", "owner", "holder", "holder_note", "project", "labels",
+    "priority", "issue_type", "owner", "holder", "holder_note", "project", "labels",
     "spec_path", "checklist_path", "review_path", "decision_path", "journal_path", "worktree", "branch", "close_reason", "needs_owner",
     "external_ref", "archived",
     # «Тип запуска» задачи. Остальные восемь колонок запуска по-прежнему пишут
@@ -881,9 +880,6 @@ def update_task(conn: sqlite3.Connection, task_id: str, *, actor: str | None = N
         elif key == "needs_owner":
             event(conn, task_id, "question" if new else "answer",
                   from_value=old, to_value=new, actor=actor_key, harness=harness, note=note)
-        elif key == "assignee":
-            event(conn, task_id, "note", from_value=old, to_value=new, actor=actor_key,
-                  harness=harness, note=f"исполнитель: {note or ''}".strip())
         elif key == ROUTE_FIELD:
             event(conn, task_id, "route", from_value=old, to_value=new, actor=actor_key,
                   harness=harness, note=" · ".join(x for x in [note, *reset_notes] if x) or None)
@@ -1032,6 +1028,7 @@ def claim(conn: sqlite3.Connection, task_id: str, *, holder: str, harness: str |
                 event(conn, task_id, "claim", from_value=current_holder,
                       to_value=current_holder, actor=actor_key, harness=harness,
                       note=note or "взял задачу, которую выдали")
+            _mark_claude_orchestrator(conn, task_id, holder)
             conn.commit()
             return get_task(conn, task_id)
         cur_task = row_to_task(conn, row)
@@ -1083,10 +1080,27 @@ def claim(conn: sqlite3.Connection, task_id: str, *, holder: str, harness: str |
     # `claim` означает «беру я», поэтому держатель и есть автор. Без этого события
     # старых клиентов выглядели бы как «выдана, но не взята».
     out = update_task(conn, task_id, actor=actor, holder=holder,
-                      assignee=row["assignee"] or holder,
                       harness=harness or holder,
                       note=note or f"взял в работу: {holder}", **extra)
+    if _mark_claude_orchestrator(conn, task_id, holder):
+        conn.commit()
+        out = get_task(conn, task_id)
     return out
+
+
+def _mark_claude_orchestrator(conn: sqlite3.Connection, task_id: str, holder: str) -> bool:
+    """Успешный claim Claude по карточке без оркестратора: её ведёт сессия Claude Code.
+
+    Пишет `orchestrator = 'claude'` только в пустое поле (NULL или пробелы) и только
+    если берущий — Claude (`claude`, `agent:claude`, `opus…`, `sonnet…`); непустое
+    значение (`listik`, старое `me`) и других акторов не трогает. События нет.
+    Не коммитит — это делает вызывающий. True — строка изменилась.
+    """
+    if actors_mod.resolve(holder, conn)[0] != "agent:claude":
+        return False
+    return conn.execute(
+        "UPDATE tasks SET orchestrator = 'claude' "
+        "WHERE id = ? AND trim(coalesce(orchestrator, '')) = ''", (task_id,)).rowcount > 0
 
 
 def heartbeat(conn: sqlite3.Connection, task_id: str, *, holder: str, note: str | None = None,
@@ -1442,12 +1456,12 @@ def worked_by_actors(conn: sqlite3.Connection, task_id: str) -> list[str]:
     """Кто подтвердил работу по карточке своим `claim`/`heartbeat`.
 
     У закрытой карточки не видно, кто её вёл: закрытие (`listik done`, `stage --to
-    done`) снимает держателя, а `assignee` помнит только первый claim. Поле
+    done`) снимает держателя, а `orchestrator` — не исполнитель, а кто ведёт маршрут. Поле
     считается по событиям: событие «своё», если его автор (`actor`, иначе
     `harness`) тождествен держателю события (`to_value`) как актор
     (`actors.same_actor`). Выдача оркестратором (`stage --holder кому`) и
     heartbeat чужой рукой автору не тождественны и в список не идут; события
-    `stage`/`release`/`comment`/`status`/`note`, `assignee` и текущий держатель
+    `stage`/`release`/`comment`/`status`/`note`, `orchestrator` и текущий держатель
     без своего события — тоже.
 
     Порядок — по первому своему событию каждого актора, написание — всегда
@@ -1621,8 +1635,9 @@ def row_to_task(conn: sqlite3.Connection, row: sqlite3.Row) -> dict:
         "priority": row["priority"],
         "priority_title": PRIORITY_TITLES.get(row["priority"], str(row["priority"])),
         "issue_type": row["issue_type"],
-        "assignee": row["assignee"],
-        "assignee_title": actors_mod.display(row["assignee"]),
+        # Кто ведёт карточку по маршруту (`listik`/`claude`); пишет только система.
+        "orchestrator": row["orchestrator"],
+        "orchestrator_title": actors_mod.display(row["orchestrator"]),
         # Владелец-человек: в локальном режиме всегда null — там его не пишут.
         "owner": row["owner"],
         "holder": row["holder"],
@@ -1896,7 +1911,7 @@ def sync_portions(conn: sqlite3.Connection, task_id: str, *, actor: str | None =
 
 
 def list_tasks(conn: sqlite3.Connection, *, project: str | None = None, status: str | None = None,
-               stage: str | None = None, assignee: str | None = None, holder: str | None = None,
+               stage: str | None = None, orchestrator: str | None = None, holder: str | None = None,
                needs_owner: bool = False, issue_type: str | None = None, label: str | None = None,
                text: str | None = None, include_closed: bool = False, include_archived: bool = False,
                limit: int = 200, offset: int = 0, order: str = "updated",
@@ -1921,9 +1936,9 @@ def list_tasks(conn: sqlite3.Connection, *, project: str | None = None, status: 
     if stage:
         where.append("stage = ?")
         params.append(stage)
-    if assignee:
-        where.append("assignee = ?")
-        params.append(assignee)
+    if orchestrator:
+        where.append("orchestrator = ?")
+        params.append(orchestrator)
     if holder:
         where.append("holder = ?")
         params.append(holder)
@@ -2139,9 +2154,9 @@ def stats(conn: sqlite3.Connection, project: str | None = None) -> dict:
         f"SELECT coalesce(holder,'—') holder, count(*) n FROM tasks {where} AND "
         "status IN ('open','in_progress','blocked','review') GROUP BY holder ORDER BY n DESC",
         params))
-    by_actor = list(conn.execute(
-        f"SELECT coalesce(assignee,'—') actor, count(*) n FROM tasks {where} AND "
-        "status IN ('open','in_progress','blocked','review') GROUP BY assignee ORDER BY n DESC",
+    by_orchestrator = list(conn.execute(
+        f"SELECT coalesce(orchestrator,'—') orchestrator, count(*) n FROM tasks {where} AND "
+        "status IN ('open','in_progress','blocked','review') GROUP BY orchestrator ORDER BY n DESC",
         params))
     stale = conn.execute(
         f"SELECT count(*) FROM tasks {where} AND status IN ('in_progress','review') "
@@ -2182,8 +2197,9 @@ def stats(conn: sqlite3.Connection, project: str | None = None) -> dict:
              "waiting": r["waiting"]} for r in by_project_rows],
         "by_holder": [{"holder": r["holder"], "title": actors_mod.display(
             None if r["holder"] == "—" else r["holder"]), "count": r["n"]} for r in by_holder],
-        "by_actor": [{"actor": r["actor"], "title": actors_mod.display(
-            None if r["actor"] == "—" else r["actor"]), "count": r["n"]} for r in by_actor],
+        "by_orchestrator": [{"orchestrator": r["orchestrator"], "title": actors_mod.display(
+            None if r["orchestrator"] == "—" else r["orchestrator"]), "count": r["n"]}
+            for r in by_orchestrator],
         "stale": stale,
         "needs_owner": needs_owner,
         "closed_7d": closed_7d,
@@ -2488,7 +2504,7 @@ def remove_project(conn: sqlite3.Connection, slug: str, *, force: bool = False) 
 
 def list_actors(conn: sqlite3.Connection) -> list[dict]:
     rows = conn.execute(
-        """SELECT a.*, (SELECT count(*) FROM tasks t WHERE t.assignee = a.key
+        """SELECT a.*, (SELECT count(*) FROM tasks t WHERE t.orchestrator = a.key
                         AND t.status IN ('open','in_progress','blocked','review')) n_tasks,
                          (SELECT count(*) FROM tasks t WHERE t.holder = a.key
                         AND t.status IN ('open','in_progress','blocked','review')) n_held
@@ -2500,7 +2516,7 @@ def facet_values(conn: sqlite3.Connection) -> dict:
     out: dict[str, list] = {}
     for name, sql in {
         "projects": "SELECT DISTINCT coalesce(project,'—') v FROM tasks WHERE archived=0 ORDER BY v",
-        "assignees": "SELECT DISTINCT coalesce(assignee,'—') v FROM tasks WHERE archived=0 ORDER BY v",
+        "orchestrators": "SELECT DISTINCT coalesce(orchestrator,'—') v FROM tasks WHERE archived=0 ORDER BY v",
         "holders": "SELECT DISTINCT coalesce(holder,'—') v FROM tasks WHERE archived=0 ORDER BY v",
         "statuses": "SELECT DISTINCT status v FROM tasks ORDER BY v",
         "stages": "SELECT DISTINCT coalesce(stage,'—') v FROM tasks ORDER BY v",

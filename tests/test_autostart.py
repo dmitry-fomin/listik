@@ -195,8 +195,8 @@ class SchemaAndFieldsTests(AutostartTestCase):
                 self.assertIn(name, columns, name)
             version = conn.execute(
                 "SELECT value FROM meta WHERE key = 'schema_version'").fetchone()
-            self.assertEqual(version["value"], "12")
-            self.assertEqual(db_mod.SCHEMA_VERSION, 12)
+            self.assertEqual(version["value"], "13")
+            self.assertEqual(db_mod.SCHEMA_VERSION, 13)
         finally:
             conn.close()
 
@@ -363,6 +363,25 @@ class RefusalTests(AutostartTestCase):
         self.assertEqual(self.notify, [])
         self.assertEqual(len(self.log_files()), 1, "появился второй лог-файл")
 
+    def test_refusal_after_capture_keeps_listik_orchestrator(self) -> None:
+        """L2 (listik-6g0q): отказ после захвата оркестратора обратно не снимает."""
+        self.set_routes(pipeline_record("low-pipeline", command=None))
+        task = self.make_task(project=None, autostart=True, route="low-pipeline")
+        with contextlib.redirect_stderr(io.StringIO()):
+            reason = self.launch(task["id"])
+        self.assertEqual(reason, "у маршрута low-pipeline нет command в базе")
+        self.assertIsNone(self.row(task["id"])["launched_by"], "захват не снят")
+        self.assertEqual(self.row(task["id"])["orchestrator"], "listik")
+
+    def test_already_started_keeps_orchestrator(self) -> None:
+        """L3 (listik-6g0q): «уже запущена» не меняет и оркестратора."""
+        task = self.make_task(project=None, autostart=True, route="low-pipeline")
+        self.seed(task["id"], launched_by="listik", orchestrator="claude")
+        with contextlib.redirect_stderr(io.StringIO()):
+            reason = self.launch(task["id"])
+        self.assertEqual(reason, launcher_mod.ALREADY_STARTED)
+        self.assertEqual(self.row(task["id"])["orchestrator"], "claude")
+
 
 class LaunchTests(AutostartTestCase):
     """Пункты 12–17, 20 чек-листа: успешный запуск, argv, env, код выхода, гонка."""
@@ -415,6 +434,14 @@ class LaunchTests(AutostartTestCase):
         self.assertEqual(pathlib.Path(data["cwd"]).resolve(), proj_dir.resolve())
         self.assertEqual(self.notify, [("task", {"id": task["id"], "action": "launch"}),
                                        ("task", {"id": task["id"], "action": "launch"})])
+
+    def test_success_sets_listik_orchestrator(self) -> None:
+        """L1 (listik-6g0q): успешный запуск перезаписывает оркестратора на `listik`."""
+        task, _ = self.prepare([sys.executable, "-c", "pass"])
+        self.seed(task["id"], orchestrator="claude")
+        self.assertIsNone(self.launch(task["id"]))
+        self.join_tracker(task["id"])
+        self.assertEqual(self.row(task["id"])["orchestrator"], "listik")
 
     def test_worktree_wins_over_project_path(self) -> None:
         out = self.tmp_path / "out.json"

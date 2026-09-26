@@ -100,7 +100,7 @@ import {
   type ColdRow,
 } from '@/lib/task-presentation'
 import { NO_ROUTE, routesAlertText } from '@/lib/routes'
-import { stageExecutor } from '@/lib/executors'
+import { executorIsHolder, stageExecutor } from '@/lib/executors'
 import store from '@/store/listik'
 
 const props = defineProps<{
@@ -363,6 +363,10 @@ function pickRoute(key: string): void {
  * нет — там уже «выполнял …».
  */
 const executor = computed(() => (props.task ? stageExecutor(props.task, store.routes.value) : null))
+/** Строка «делает» — только когда этап делает не сам держатель (`executorIsHolder`). */
+const executorRow = computed(() =>
+  executor.value && props.task && !executorIsHolder(executor.value, props.task.holder) ? executor.value : null,
+)
 
 function defaultHolder(): string {
   try {
@@ -1281,16 +1285,14 @@ async function loadTree(): Promise<void> {
           </template>
           <template v-else>
             <!-- Плановый исполнитель этапа по ролям маршрута — перед «держит»,
-                 потому что отвечает на вопрос «кто делает». -->
-            <template v-if="executor">
+                 потому что отвечает на вопрос «кто делает»; когда этап делает
+                 сам держатель, строки нет. -->
+            <template v-if="executorRow">
               <dt>делает</dt>
               <dd>
-                <ProviderIcon v-if="executor.provider" :provider="executor.provider" />
-                <HarnessIcon v-else-if="executor.harness" :harness="executor.harness" />
-                {{ executor.title }}<span
-                  v-if="executor.label && executor.label !== executor.title"
-                  style="color: var(--ink-3)"
-                > · {{ executor.label }}</span>
+                <ProviderIcon v-if="executorRow.provider" :provider="executorRow.provider" />
+                <HarnessIcon v-else-if="executorRow.harness" :harness="executorRow.harness" />
+                {{ executorRow.title }}
               </dd>
             </template>
             <dt>держит</dt>
@@ -1327,9 +1329,9 @@ async function loadTree(): Promise<void> {
               />
             </dd>
           </template>
-          <template v-if="holderBlock?.assignee">
-            <dt>исполнитель</dt>
-            <dd>{{ holderBlock.assignee }}</dd>
+          <template v-if="holderBlock?.orchestrator">
+            <dt>оркестратор</dt>
+            <dd>{{ holderBlock.orchestrator }}</dd>
           </template>
             </dl>
           </section>

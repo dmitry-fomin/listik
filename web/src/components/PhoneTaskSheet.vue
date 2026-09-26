@@ -127,7 +127,8 @@ const journalItems = computed<UiTimelineItem[]>(() => {
             <dt>держит</dt>
             <dd>
               <!-- Исполнитель этапа из ролей маршрута (`stageExecutor` внутри
-                   `holderStatusText`) важнее держателя-оркестратора. -->
+                   `holderStatusText`) важнее держателя, если этап делает не сам
+                   держатель (`executorIsHolder`). -->
               {{ holderStatusText(task, store.routes.value) }}
             </dd>
             <dt>heartbeat</dt>

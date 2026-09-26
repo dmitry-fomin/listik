@@ -331,7 +331,7 @@ class AssignedNotTakenCliTests(TempDbTestCase):
         self.assertEqual(p.returncode, 0, p.stderr)
         self.assertIn("выдана", p.stdout)
         self.assertIn("не взята", p.stdout)
-        self.assertNotIn("держит", p.stdout.split("исполнитель:")[1].split("\n")[0])
+        self.assertNotIn("держит", p.stdout.split("оркестратор:")[1].split("\n")[0])
 
     def test_list_shows_flag_in_json(self) -> None:
         p = self.run_cli("list", "--project", "demo", "--json",

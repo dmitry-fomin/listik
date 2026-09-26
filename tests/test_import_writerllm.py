@@ -68,7 +68,7 @@ class ImportWriterllmJsonlTests(TempDbTestCase):
 
     def test_3_actors_are_normalized(self) -> None:
         task = self._task("WL-a1")
-        self.assertEqual(task["assignee"], "me")
+        self.assertIsNone(task["orchestrator"])
         self.assertEqual(task["created_by"], "me")
         authors = {c["author"] for c in task["comments"]}
         self.assertEqual(authors, {"me"})

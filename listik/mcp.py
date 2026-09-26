@@ -81,7 +81,8 @@ TOOLS: list[dict] = [
                            "enum": ["open", "in_progress", "blocked", "review", "done", "cancelled"]},
                 "stage": {"type": "string",
                           "enum": ["s1-spec", "s2-review", "s3-impl", "s4-judge", "done"]},
-                "assignee": {"type": "string"},
+                "orchestrator": {"type": "string",
+                                 "description": "кто ведёт карточку по маршруту: listik | claude"},
                 "holder": {"type": "string"},
                 "needs_owner": {"type": "boolean"},
                 "type": {"type": "string"},
@@ -129,7 +130,6 @@ TOOLS: list[dict] = [
                                                     "decision", "question"]},
                 "priority": {"type": "integer", "minimum": 0, "maximum": 4},
                 "stage": {"type": "string", "enum": ["s1-spec", "s2-review", "s3-impl", "s4-judge"]},
-                "assignee": ACTOR,
                 "labels": {"type": "array", "items": {"type": "string"}},
                 "spec_path": {"type": "string"},
                 "checklist_path": {"type": "string"},
@@ -154,7 +154,7 @@ TOOLS: list[dict] = [
     {
         "name": "listik_update",
         "description": ("Изменить поля задачи. Каждое изменение попадает в историю. "
-                        "status, stage, priority, assignee, holder, labels, needs_owner, "
+                        "status, stage, priority, holder, labels, needs_owner, "
                         "spec_path, checklist_path, review_path, decision_path, journal_path, "
                         "worktree, branch, result, read_scope, write_scope (списки "
                         "относительных путей от корня проекта, без .., абсолютных путей "
@@ -559,7 +559,8 @@ def call_tool(name: str, args: dict, conn=None, owner=FROM_ENV, fence=FROM_ENV) 
     if name == "listik_list":
         return store.list_tasks(
             conn, project=args.get("project"), status=args.get("status"),
-            stage=args.get("stage"), assignee=args.get("assignee"), holder=args.get("holder"),
+            stage=args.get("stage"), orchestrator=args.get("orchestrator"),
+            holder=args.get("holder"),
             needs_owner=bool(args.get("needs_owner")), issue_type=args.get("type"),
             text=args.get("text"), include_closed=bool(args.get("include_closed")),
             limit=int(args.get("limit", 50)), order=args.get("order", "updated"),
@@ -574,7 +575,7 @@ def call_tool(name: str, args: dict, conn=None, owner=FROM_ENV, fence=FROM_ENV) 
             conn, title=args["title"], project=args.get("project"),
             description=args.get("description", ""), acceptance=args.get("acceptance", ""),
             issue_type=args.get("type", "task"), priority=int(args.get("priority", 2)),
-            stage=args.get("stage"), assignee=_norm_actor(args.get("assignee")),
+            stage=args.get("stage"),
             labels=args.get("labels") or [], spec_path=args.get("spec_path"),
             checklist_path=args.get("checklist_path"), review_path=args.get("review_path"),
             decision_path=args.get("decision_path"), journal_path=args.get("journal_path"),

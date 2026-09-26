@@ -11,7 +11,10 @@ from tests.helpers import TempDbTestCase
 
 class DoneReleasesHolderTests(TempDbTestCase):
     def _claimed(self) -> str:
-        task = store.create_task(self.conn, title="Закрыть", project="p", assignee="me")
+        task = store.create_task(self.conn, title="Закрыть", project="p")
+        # Поле пишет только система — в тесте ставим его прямым SQL.
+        self.conn.execute("UPDATE tasks SET orchestrator = 'claude' WHERE id = ?", (task["id"],))
+        self.conn.commit()
         store.claim(self.conn, task["id"], holder="dsh")
         return task["id"]
 
@@ -42,7 +45,7 @@ class DoneReleasesHolderTests(TempDbTestCase):
                           actor="agent:dsh", note="готово")
         self.assertReleasedOnce(tid, before)
         task = store.get_task(self.conn, tid)
-        self.assertEqual(task["assignee"], "me")
+        self.assertEqual(task["orchestrator"], "claude")
         self.assertTrue(any("dsh" in k for k in task["worked_by"]))
 
     def test_b_local_call_releases(self) -> None:
@@ -78,7 +81,7 @@ class DoneReleasesHolderTests(TempDbTestCase):
         store.update_task(self.conn, tid, status="done", holder="other")
         self.assertReleasedOnce(tid, before)
         task = store.get_task(self.conn, tid)
-        self.assertEqual(task["assignee"], "me")
+        self.assertEqual(task["orchestrator"], "claude")
         self.assertTrue(any("dsh" in k for k in task["worked_by"]))
 
     def test_g_no_holder_no_false_release(self) -> None:

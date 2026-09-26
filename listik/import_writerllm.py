@@ -55,7 +55,6 @@ _UPDATE_FIELD_SOURCE_KEYS = {
     "status": ("status", "state"),
     "priority": ("priority", "importance"),
     "issue_type": ("issue_type", "type"),
-    "assignee": ("assignee", "assigned_to"),
     "labels": ("labels", "tags"),
     "close_reason": ("close_reason",),
 }
@@ -276,7 +275,7 @@ def _build_record(raw: dict, line: int, source_path: Path, conn: sqlite3.Connect
         result = close_reason
     result = str(result) if result is not None else ""
 
-    assignee = _resolve_actor(conn, _first_nonempty(raw, "assignee", "assigned_to"), dry_run)
+    # `assignee`/`assigned_to` из bd не читаются: `tasks.orchestrator` пишет только система.
     created_by = _resolve_actor(conn, _first_nonempty(raw, "created_by", "author"), dry_run)
     holder = _resolve_actor(conn, _first_nonempty(raw, "holder", "current_holder"), dry_run)
 
@@ -309,7 +308,6 @@ def _build_record(raw: dict, line: int, source_path: Path, conn: sqlite3.Connect
         "status": status,
         "priority": priority,
         "issue_type": str(_first_nonempty(raw, "issue_type", "type", default="task")),
-        "assignee": assignee,
         "created_by": created_by,
         "labels": _map_labels(_first_nonempty(raw, "labels", "tags", default=[])),
         "created_at": _first_nonempty(raw, "created_at"),
@@ -570,7 +568,7 @@ def import_file(conn: sqlite3.Connection, path: str | Path, *, project: str | No
                 title=record["title"], description=record["description"],
                 acceptance=record["acceptance"], design=record["design"], notes=record["notes"],
                 result=record["result"], status=record["status"], priority=record["priority"],
-                issue_type=record["issue_type"], assignee=record["assignee"],
+                issue_type=record["issue_type"],
                 labels=record["labels"], spec_path=record["spec_path"],
                 journal_path=record["journal_path"], checklist_path=record["checklist_path"],
             )

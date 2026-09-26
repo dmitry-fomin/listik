@@ -11,7 +11,7 @@ from pathlib import Path
 
 from . import paths
 
-SCHEMA_VERSION = 12
+SCHEMA_VERSION = 13
 
 SCHEMA = """
 PRAGMA journal_mode = WAL;
@@ -47,9 +47,10 @@ CREATE TABLE IF NOT EXISTS tasks (
     stage        TEXT,                   -- s1-spec|s2-review|s3-impl|s4-judge|done (этап конвейера)
     priority     INTEGER NOT NULL DEFAULT 2,
     issue_type   TEXT NOT NULL DEFAULT 'task',   -- task|bug|feature|epic|chore|decision|question
-    assignee     TEXT,                   -- actor_key: me | agent:claude | agent:dsh | ...
+    orchestrator TEXT,                   -- кто ведёт карточку по маршруту: listik | claude (пишет
+                                         -- система); у карточек до схемы 13 — прежние значения как есть
     owner        TEXT,                   -- владелец-человек, серверный режим ([server] users)
-    holder       TEXT,                   -- кто держит прямо сейчас (может отличаться от assignee)
+    holder       TEXT,                   -- кто держит прямо сейчас (может отличаться от оркестратора)
     holder_at    TEXT,                   -- heartbeat держащего
     holder_note  TEXT,                   -- что именно он делает сейчас
     stage_at     TEXT,                   -- когда вошёл в текущий этап
@@ -102,7 +103,7 @@ CREATE TABLE IF NOT EXISTS tasks (
 CREATE INDEX IF NOT EXISTS idx_tasks_status   ON tasks(status);
 CREATE INDEX IF NOT EXISTS idx_tasks_stage    ON tasks(stage);
 CREATE INDEX IF NOT EXISTS idx_tasks_project  ON tasks(project);
-CREATE INDEX IF NOT EXISTS idx_tasks_assignee ON tasks(assignee);
+CREATE INDEX IF NOT EXISTS idx_tasks_orchestrator ON tasks(orchestrator);
 CREATE INDEX IF NOT EXISTS idx_tasks_holder   ON tasks(holder);
 CREATE INDEX IF NOT EXISTS idx_tasks_updated  ON tasks(updated_at DESC);
 
@@ -383,6 +384,8 @@ def migrate(conn: sqlite3.Connection) -> list[str]:
 
 def init(db_path: Path | None = None, *, verbose: bool = False) -> sqlite3.Connection:
     conn = connect(db_path)
+    # До SCHEMA: её `CREATE INDEX … ON tasks(orchestrator)` на старой базе упал бы.
+    rename_task_orchestrator(conn)
     conn.executescript(SCHEMA)
     applied = migrate(conn)
     if verbose and applied:
@@ -444,6 +447,38 @@ def drop_direct_routes(conn: sqlite3.Connection) -> bool:
         conn.execute("RELEASE drop_direct")
         raise
     conn.execute("RELEASE drop_direct")
+    conn.commit()
+    return True
+
+
+#: Перевод старой базы (схема 13, listik-6g0q): колонка `tasks.assignee` становится
+#: `tasks.orchestrator`, значения переносятся как есть — никаких UPDATE. Тот же текст —
+#: у alembic-ревизии 0011_task_orchestrator.
+RENAME_ORCHESTRATOR_SQL = (
+    "ALTER TABLE tasks RENAME COLUMN assignee TO orchestrator",
+    "DROP INDEX IF EXISTS idx_tasks_assignee",
+    "CREATE INDEX IF NOT EXISTS idx_tasks_orchestrator ON tasks(orchestrator)",
+)
+
+
+def rename_task_orchestrator(conn: sqlite3.Connection) -> bool:
+    """Переименовать `tasks.assignee` в `orchestrator` и сменить индекс одной транзакцией.
+
+    Только если есть `assignee` и нет `orchestrator` — иначе (свежая база, повторный
+    вызов) ничего не делает (False). При ошибке откат до SAVEPOINT и исключение наружу.
+    """
+    cols = _existing_columns(conn, "tasks")
+    if "assignee" not in cols or "orchestrator" in cols:
+        return False
+    conn.execute("SAVEPOINT task_orchestrator")
+    try:
+        for sql in RENAME_ORCHESTRATOR_SQL:
+            conn.execute(sql)
+    except Exception:
+        conn.execute("ROLLBACK TO task_orchestrator")
+        conn.execute("RELEASE task_orchestrator")
+        raise
+    conn.execute("RELEASE task_orchestrator")
     conn.commit()
     return True
 

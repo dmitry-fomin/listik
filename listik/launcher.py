@@ -305,8 +305,10 @@ def start(conn, task_id: str, notify=None, *, log_dir=None, env=None) -> str | N
 
     ts = store.now_iso()
     dispatch_id = uuid.uuid4().hex
+    # Оркестратор карточки — Listik (listik-6g0q): пишется в том же захвате и
+    # только им; отказ после захвата (`_release`) его обратно не снимает.
     captured = conn.execute(
-        "UPDATE tasks SET launched_by = 'listik', launched_at = ?, "
+        "UPDATE tasks SET launched_by = 'listik', orchestrator = 'listik', launched_at = ?, "
         "generation = generation + 1, dispatch_id = ?, "
         "launch_driver = COALESCE(launch_driver, ?) "
         "WHERE id = ? AND launched_by IS NULL", (ts, dispatch_id, driver, task_id))

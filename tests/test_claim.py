@@ -79,7 +79,7 @@ class ClaimIdempotencyTests(TempDbTestCase):
         claim_events = _events(self.conn, self.a, "claim")
         self.assertEqual(len(claim_events), 1)
         self.assertEqual(out["status"], "in_progress")
-        self.assertEqual(out["assignee"], "dsh")
+        self.assertIsNone(out["orchestrator"])
         self.assertFalse(out["holder_note"])
 
 

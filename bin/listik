@@ -315,8 +315,8 @@ def task_line(t: dict, *, width: int = 96) -> str:
             bits.append(f"выдана {holder}, не взята {t.get('assigned_age', '')}".strip())
         else:
             bits.append(f"держит {holder} {t.get('holder_age', '')}".strip())
-    elif t.get("assignee"):
-        bits.append(f"назначен {label_of(t, 'assignee_title', 'assignee')}")
+    elif t.get("orchestrator"):
+        bits.append(f"оркестратор {label_of(t, 'orchestrator_title', 'orchestrator')}")
     flags = []
     if t.get("needs_owner"):
         flags.append("НУЖЕН ТЫ")
@@ -375,9 +375,9 @@ def show_task(t: dict) -> None:
             holder += f"   держит {t.get('holder_age') or '—'}"
         if t.get("holder_note"):
             holder += f" — {t['holder_note']}"
-    print(f"  исполнитель: {label_of(t, 'assignee_title', 'assignee')}   держатель: {holder}")
+    print(f"  оркестратор: {label_of(t, 'orchestrator_title', 'orchestrator')}   держатель: {holder}")
     # Кто подтвердил работу своим claim/heartbeat: у закрытой карточки держателя
-    # может уже не быть, а `assignee` помнит только первый claim.
+    # может уже не быть, а оркестратор — тот, кто вёл маршрут, а не исполнитель.
     worked = t.get("worked_by") or []
     if worked:
         worked_title = t.get("worked_by_title") or ", ".join(worked)
@@ -821,7 +821,7 @@ def cmd_new(args) -> int:
         "title": args.title, "project": args.project, "type": args.type,
         "priority": args.priority, "description": args.description or "",
         "acceptance": args.acceptance or "", "stage": args.stage,
-        "assignee": args.assignee, "labels": args.label or [],
+        "labels": args.label or [],
         "spec_path": args.spec, "journal_path": args.journal,
         "checklist_path": args.checklist,
         "review_path": args.review, "decision_path": args.decision,
@@ -872,7 +872,7 @@ def _link_hint_lines(task: dict) -> list[str]:
 def cmd_list(args) -> int:
     kwargs = {
         "project": args.project, "status": args.status, "stage": args.stage,
-        "assignee": args.assignee, "holder": args.holder, "issue_type": args.type,
+        "orchestrator": args.orchestrator, "holder": args.holder, "issue_type": args.type,
         "needs_owner": args.needs_owner, "include_closed": args.all,
         "limit": args.limit, "order": args.order,
     }
@@ -2668,7 +2668,6 @@ def build_parser() -> argparse.ArgumentParser:
     sp.add_argument("-d", "--description")
     sp.add_argument("-a", "--acceptance")
     sp.add_argument("--stage", choices=["s1-spec", "s2-review", "s3-impl", "s4-judge"])
-    sp.add_argument("--assignee")
     sp.add_argument("-l", "--label", action="append")
     sp.add_argument("--spec")
     sp.add_argument("--checklist")
@@ -2691,7 +2690,7 @@ def build_parser() -> argparse.ArgumentParser:
     sp.add_argument("-p", "--project")
     sp.add_argument("--status")
     sp.add_argument("--stage")
-    sp.add_argument("--assignee")
+    sp.add_argument("--orchestrator", help="кто ведёт карточку по маршруту: listik | claude")
     sp.add_argument("--holder")
     sp.add_argument("-t", "--type")
     sp.add_argument("--needs-owner", action="store_true")

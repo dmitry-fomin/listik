@@ -35,7 +35,7 @@ def _row_filter(row: sqlite3.Row, stage: str | None, actor: str | None, needs_ow
         st = (row["stage"] or "")
         if not (st == stage or st.startswith(stage) or stage in st):
             return False
-    if actor and (row["assignee"] or "") != actor and (row["holder"] or "") != actor:
+    if actor and (row["orchestrator"] or "") != actor and (row["holder"] or "") != actor:
         return False
     if needs_owner and not row["needs_owner"]:
         return False
@@ -344,8 +344,8 @@ def _card(row: sqlite3.Row, *, snippet: str, score: float, hits: list[dict],
         "status": row["status"],
         "stage": row["stage"],
         "holder": row["holder"],
-        "assignee": row["assignee"],
-        "assignee_title": actors.display(row["assignee"]),
+        "orchestrator": row["orchestrator"],
+        "orchestrator_title": actors.display(row["orchestrator"]),
         "priority": row["priority"],
         "issue_type": row["issue_type"],
         "updated_at": row["updated_at"],
@@ -545,8 +545,8 @@ def print_results(res: dict) -> None:
             section = best_hit.get("breadcrumb") or best_hit.get("heading") or "?"
             print(f"    раздел: {section} ({best_hit.get('document_kind')} "
                   f"{best_hit.get('path')}:{best_hit.get('start_line')})")
-        if r.get("assignee_title"):
-            print(f"    исполнитель: {r['assignee_title']}   обновлено: {r['updated_at']}")
+        if r.get("orchestrator_title"):
+            print(f"    оркестратор: {r['orchestrator_title']}   обновлено: {r['updated_at']}")
         if r["snippet"]:
             print(f"    …{r['snippet'][:220]}")
         print()

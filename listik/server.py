@@ -1092,7 +1092,7 @@ def handle(method: str, path: str, query: dict, body: dict, authed: bool = False
         return 200, store.list_tasks(
             conn,
             project=q1("project"), status=q1("status"), stage=q1("stage"),
-            assignee=q1("assignee"), holder=q1("holder"),
+            orchestrator=q1("orchestrator"), holder=q1("holder"),
             needs_owner=as_bool(q1("needs_owner", False)),
             issue_type=q1("type"), label=q1("label"), text=q1("text"),
             include_closed=as_bool(q1("include_closed", False)),
@@ -1130,7 +1130,6 @@ def handle(method: str, path: str, query: dict, body: dict, authed: bool = False
                 issue_type=body.get("type") or body.get("issue_type") or "task",
                 status=body.get("status", "open"),
                 priority=as_int(body.get("priority"), 2),
-                assignee=body.get("assignee"),
                 stage=body.get("stage"),
                 labels=body.get("labels") or [],
                 spec_path=body.get("spec_path"),

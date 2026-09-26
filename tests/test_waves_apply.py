@@ -19,7 +19,7 @@ from listik import db as db_mod
 from listik import deps, errors, mcp, paths, server, store
 from tests.helpers import TempDbTestCase
 from tests.test_owner_http import AUTH, LOCAL_CONFIG, SERVER_CONFIG, OwnerHttpCase
-from tests.test_waves import _no_route, _task
+from tests.test_waves import _no_route, _skill_task, _task
 
 LISTIK_BIN = Path(__file__).resolve().parent.parent / "bin" / "listik"
 REPO_ROOT = LISTIK_BIN.parent.parent
@@ -102,7 +102,7 @@ class AuthorAlwaysMachineHttpTests(OwnerHttpCase):
             a = store.create_task(conn, title="A", project="demo", priority=0, as_owner="ann")["id"]
             c = store.create_task(conn, title="C", project="demo", priority=2, as_owner="ann")["id"]
             for tid in (a, c):
-                conn.execute("UPDATE tasks SET launch_route='nano' WHERE id=?", (tid,))
+                conn.execute("UPDATE tasks SET launch_route='nano', launch_driver='swarm' WHERE id=?", (tid,))
                 store.update_task(conn, tid, write_scope=["pkg/alpha.py"], as_owner="ann")
             conn.commit()
             return a, c
@@ -297,6 +297,108 @@ class CycleTests(TempDbTestCase):
         self.assertEqual(_all_deps_rows(self.conn), before)
 
 
+def _deps_dump(conn) -> list[tuple]:
+    return [tuple(r) for r in conn.execute(
+        "SELECT * FROM deps ORDER BY issue_id, depends_on, dep_type").fetchall()]
+
+
+def _has_resource_edge(conn, issue_id: str, depends_on: str) -> bool:
+    return conn.execute(
+        "SELECT 1 FROM deps WHERE issue_id=? AND depends_on=? AND dep_type='resource-blocks'",
+        (issue_id, depends_on)).fetchone() is not None
+
+
+class NonSwarmCardsTests(TempDbTestCase):
+    """`apply` пишет рёбра только карточкам роя и убирает их у остальных (listik-w7ge)."""
+
+    def test_stale_edge_between_non_swarm_removed(self) -> None:
+        early = _skill_task(self.conn, "e", scope=("pkg/shared.py",), priority=0)
+        late = _skill_task(self.conn, "l", scope=("pkg/shared.py",), priority=1)
+        _stale_edge(self.conn, late, early)
+
+        out = deps.apply_resource_blocks(self.conn, project="demo")
+
+        self.assertFalse(_has_resource_edge(self.conn, late, early))
+        self.assertIn([early, late], out["removed"])
+
+    def test_no_edge_written_between_non_swarm(self) -> None:
+        a = _skill_task(self.conn, "a", scope=("pkg/shared.py",), priority=0)
+        b = _skill_task(self.conn, "b", scope=("pkg/shared.py",), priority=1)
+
+        out = deps.apply_resource_blocks(self.conn, project="demo")
+
+        self.assertFalse(_has_resource_edge(self.conn, b, a))
+        self.assertFalse(_has_resource_edge(self.conn, a, b))
+        self.assertEqual(out["added"], [])
+
+    def test_other_project_and_stage_untouched(self) -> None:
+        ox = _skill_task(self.conn, "ox", project="other", scope=("pkg/x.py",), priority=0)
+        oy = _skill_task(self.conn, "oy", project="other", scope=("pkg/x.py",), priority=1)
+        _stale_edge(self.conn, oy, ox)
+        sx = _skill_task(self.conn, "sx", scope=("pkg/y.py",), priority=0, stage="s1-spec")
+        sy = _skill_task(self.conn, "sy", scope=("pkg/y.py",), priority=1, stage="s1-spec")
+        _stale_edge(self.conn, sy, sx)
+        ix = _skill_task(self.conn, "ix", scope=("pkg/z.py",), priority=0, stage="s3-impl")
+        iy = _skill_task(self.conn, "iy", scope=("pkg/z.py",), priority=1, stage="s3-impl")
+        _stale_edge(self.conn, iy, ix)
+
+        out = deps.apply_resource_blocks(self.conn, project="demo", stage="s3-impl")
+
+        self.assertTrue(_has_resource_edge(self.conn, oy, ox))
+        self.assertTrue(_has_resource_edge(self.conn, sy, sx))
+        self.assertFalse(_has_resource_edge(self.conn, iy, ix))
+        self.assertEqual(out["removed"], [[ix, iy]])
+
+    def test_swarm_cycle_refused_no_cleanup(self) -> None:
+        a = _task(self.conn, "a", scope=("pkg/a.py",), priority=0)
+        b = _task(self.conn, "b", scope=("pkg/b.py",), priority=1)
+        for issue, dep in ((a, b), (b, a)):
+            self.conn.execute(
+                "INSERT INTO deps(issue_id, depends_on, dep_type, created_by) "
+                "VALUES(?, ?, 'blocks', 'human')", (issue, dep))
+        self.conn.commit()
+        nx = _skill_task(self.conn, "nx", scope=("pkg/n.py",), priority=2)
+        ny = _skill_task(self.conn, "ny", scope=("pkg/n.py",), priority=3)
+        _stale_edge(self.conn, ny, nx)
+        before = _deps_dump(self.conn)
+
+        with self.assertRaises(errors.ListikError) as cm:
+            deps.apply_resource_blocks(self.conn, project="demo")
+        self.assertEqual(cm.exception.code, errors.CONFLICT)
+        self.assertEqual(_deps_dump(self.conn), before)
+
+    def test_non_swarm_cycle_not_refused(self) -> None:
+        a = _task(self.conn, "a", scope=("pkg/shared.py",), priority=0)
+        b = _task(self.conn, "b", scope=("pkg/shared.py",), priority=1)
+        n1 = _skill_task(self.conn, "n1", priority=2)
+        n2 = _skill_task(self.conn, "n2", priority=3)
+        for issue, dep in ((n1, n2), (n2, n1)):
+            self.conn.execute(
+                "INSERT INTO deps(issue_id, depends_on, dep_type, created_by) "
+                "VALUES(?, ?, 'blocks', 'human')", (issue, dep))
+        self.conn.commit()
+
+        out = deps.apply_resource_blocks(self.conn, project="demo")
+
+        self.assertEqual(out["waves"]["cycles"], [])
+        self.assertEqual(out["added"], [[a, b]])
+
+    def test_semantic_edges_of_non_swarm_kept(self) -> None:
+        n1 = _skill_task(self.conn, "n1", scope=("pkg/shared.py",), priority=0)
+        n2 = _skill_task(self.conn, "n2", scope=("pkg/shared.py",), priority=1)
+        n3 = _skill_task(self.conn, "n3", scope=("pkg/shared.py",), priority=2)
+        for issue, dep, kind in ((n2, n1, "blocks"), (n3, n1, "suggested-blocks")):
+            self.conn.execute(
+                "INSERT INTO deps(issue_id, depends_on, dep_type, created_by) "
+                "VALUES(?, ?, ?, 'human')", (issue, dep, kind))
+        self.conn.commit()
+        before = _deps_dump(self.conn)
+
+        deps.apply_resource_blocks(self.conn, project="demo")
+
+        self.assertEqual(_deps_dump(self.conn), before)
+
+
 class RollbackTests(TempDbTestCase):
     def test_rollback_on_error_leaves_deps_untouched(self) -> None:
         a = _task(self.conn, "a", scope=("pkg/alpha.py",), priority=0)
@@ -408,7 +510,7 @@ class HttpTests(OwnerHttpCase):
             a = store.create_task(conn, title="A", project="demo", priority=0)["id"]
             c = store.create_task(conn, title="C", project="demo", priority=2)["id"]
             for tid in (a, c):
-                conn.execute("UPDATE tasks SET launch_route='nano' WHERE id=?", (tid,))
+                conn.execute("UPDATE tasks SET launch_route='nano', launch_driver='swarm' WHERE id=?", (tid,))
                 store.update_task(conn, tid, write_scope=["pkg/alpha.py"])
             conn.commit()
             return a, c

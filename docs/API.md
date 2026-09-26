@@ -1366,7 +1366,7 @@ id внутри файлового пути (`docs/specs/<id>.md`, `/wt/<id>/lis
 | GET | `/api/ready` | `project`, `stage`, `include_occupied`, `limit` | `tasks[]` (можно брать: нет незакрытых блокеров и держателя), `cycles[]`. Фильтр по `X-Listik-Owner` — тот же, что у `/api/tasks` |
 | GET | `/api/blocked` | `project`, `limit` | `tasks[]` с разбором `blockers[]`, `blocked_by_stale`, `blocked_by_holder` |
 | GET | `/api/lint` | `project` (обязателен), `suggested_hours` (число > 0, по умолчанию 24) | несостыковки неархивных карточек проекта, только чтение: `{project, generated_at, count, items[]}`, элемент — `{rule, id, title, stage, status, message, details}`, порядок `(rule, id)`. Правила: `in_progress_no_holder` — в работе без держателя; `done_with_holder` — закрыта, а держатель не снят; `stage_without_docs` — незакрытая на `s2-review`/`s3-impl`/`s4-judge` без `spec_path` или `journal_path`; `portion_files_without_cards` — в каталоге шагов есть `<id>.<буква>.md`, а детей `parent-child` нет (файл, на который указывает `spec_path` шага, не в счёт: это слитая одна порция); `stage_behind_portions` — незакрытая порция ушла дальше шага по этапам или все порции закрыты, а шаг на `s3-impl`/`s4-judge`; `suggested_dep_stale` — предложенная связь (`suggested-blocks`) не подтверждена дольше `suggested_hours`. Несуществующий проект — пустой `items`. 400 `bad_argument`: нет `project`, `suggested_hours` не число или ≤ 0 |
-| GET | `/api/waves` | `project` (обязателен), `stage` | `project, stage, waves[], cycles[], unroutable[], unscoped[], blocked{}, resource_blocks[], tasks{}, generated_at` — волны запуска (`listik waves`), см. «Волны запуска: `listik waves`»; без `project` — 400 `bad_argument`; метод не GET — 405; фильтр `X-Listik-Owner` не применяется — план проекта считается по всем его задачам |
+| GET | `/api/waves` | `project` (обязателен), `stage` | `project, stage, waves[], cycles[], unroutable[], unscoped[], blocked{}, resource_blocks[], tasks{}, generated_at` — волны запуска (`listik waves`), см. «Волны запуска: `listik waves`»; без `project` — 400 `bad_argument`; метод не GET — 405; фильтр `X-Listik-Owner` не применяется — план считается по карточкам роя проекта |
 | GET | `/api/deps/suggested` | `project`, `limit` | `items[]` (предложения агентов, ждущие подтверждения человеком: `issue_id, issue_title, issue_stage, project, depends_on, depends_on_title, depends_on_status, created_by, created_at`), `generated_at` |
 | GET | `/api/timeline` | `limit`, `project` (оставляет только события задач этого проекта) | `items[]`: `ts, kind, from_value, to_value, actor, actor_title, harness, note, duration_s, task_id, title, project, stage, status, age`. Событий карантина (`kind=rejected`) в ленте нет никогда — см. «Ограждение запуска» |
 | GET | `/api/events` | `limit` | сырые события; `kind=rejected` (карантин) отфильтрован, как у `/api/timeline` |
@@ -1538,7 +1538,7 @@ dropped_chunks, reason`), `reasons[]` (по одному пункту на ка�
 | DELETE | `/api/tasks/{id}/deps/{depends_on}` | `dep_type` строкой запроса | снять связь; без `dep_type` снимает разом `blocks` и `suggested-blocks` между той же парой задач, `resource-blocks` — только явным `dep_type=resource-blocks` (актор не ограничен). Ответ: `removed` (число снятых строк), `dep_types[]` |
 | POST | `/api/tasks/{id}/ready` | — | вердикт по задаче (`deps_state`, см. ниже) |
 | POST | `/api/tasks/{id}/mentions` | `limit` | задачи, упомянутые в тексте этой задачи, но не связанные с ней. Отдаёт все совпадения — тем же режимом пользуются `dep suggest`/`dep link`; подсказка `link_hints[]` при создании отсеивает id в путях и кавычках (см. «Найденная по ходу задача») |
-| POST | `/api/waves/apply` | `project` (обязателен), `stage` | записать в базу ресурсные рёбра `resource-blocks` под свежий расчёт `waves` — см. «Волны запуска: `listik waves`»; `actor` в теле и заголовок `X-Listik-Owner` на автора ребра не влияют — автор всегда `agent:listik-swarm`; ответ `added[], removed[], kept, waves{}, generated_at`; без `project`/с пустым `project` — 400 `bad_argument`; цикл в зависимостях — 409 `conflict`, ничего не записано; метод не POST — 405; событие доске (`{"id", "action": "deps"}`) — по каждой затронутой задаче |
+| POST | `/api/waves/apply` | `project` (обязателен), `stage` | записать в базу ресурсные рёбра `resource-blocks` под свежий расчёт `waves` (у не-роевых карточек той же выборки — снять) — см. «Волны запуска: `listik waves`»; `actor` в теле и заголовок `X-Listik-Owner` на автора ребра не влияют — автор всегда `agent:listik-swarm`; ответ `added[], removed[], kept, waves{}, generated_at`; без `project`/с пустым `project` — 400 `bad_argument`; цикл в зависимостях карточек роя — 409 `conflict`, ничего не записано; метод не POST — 405; событие доске (`{"id", "action": "deps"}`) — по каждой затронутой задаче |
 | POST | `/api/swarm/arbiter-check` | `{task:{id,title,description,acceptance}, others:[], files:[{path,before,after}]}` | Проверка результата арбитра слияния через jev; ответ `{ok, model, skipped, files:[{path, verdict: ok\|reject\|skipped, reason, answers:{task_kept,main_kept,clean}}]}`; негодное тело — 400 `bad_argument`, метод не POST — 405; обычная авторизация `/api/*`; без записи в базу и без событий доске; ненастроенный/недоступный jev — `ok: true` и причина в `skipped`, если до ошибки не было `reject` (он сохраняет `ok: false`) |
 | POST | `/api/swarm/plan` | `project` (обязателен), `stage`, `apply` | LLM-проход роя: грубые зависимости `blocks` между открытыми задачами проекта — см. «LLM-проходы роя: модель и машинные рёбра»; `actor` в теле и заголовок `X-Listik-Owner` игнорируются — автор рёбер всегда `agent:listik-swarm`; ответ — `project, stage, model, attempts, tasks{}, edges[], fixed[], previous[], dropped[], cycles[], cycles_from, applied, jev{model,checked,dropped[{edge,p}],skipped}` + `generated_at`; без `project`/с пустым `project` — 400 `bad_argument`; слишком много текста для одного вызова модели — 400 `bad_argument`; цикл (в базе или у модели после исчерпанных попыток) — **200** с непустым `cycles` и `applied: null` (CLI отдаёт код `1`), не 409; 409 `conflict` только если сама запись рёбер отказала (защитный случай — штатный цикл до записи не доходит); 404 `not_found` — задача не найдена; 502/503/504 `server_error` — модель роя недоступна/не настроена/не ответила; метод не POST — 405; событие доске (`{"id", "action": "deps"}`) — по каждой затронутой задаче, только при `applied` |
 | POST | `/api/swarm/rescope` | `project` (обязателен), `tasks[]`, `drift[]`, `apply` | LLM-проход роя: `read_scope`/`write_scope` из ТЗ готовых задач плюс уточнение графа `blocks` по копилке расхождений — см. «LLM-проходы роя: модель и машинные рёбра»; `tasks` — список id (не список строк — 400 `bad_argument`), сверх копилки из карточек — `drift` (не список — 400 `bad_argument`); `actor` в теле и заголовок `X-Listik-Owner` игнорируются — автор записей всегда `agent:listik-swarm`; ответ — `project, model, extracted, attempts, tasks{}, unspecced{}, unscoped[], invalid{}, drift{}, edges[], fixed[], previous[], dropped[], cycles[], cycles_from, applied` + `generated_at`; без `project`/с пустым `project` — 400 `bad_argument`; цикл (в базе или у модели) — **200** с непустым `cycles`, области в `applied.scopes` пишутся, `applied.edges: null`; 404 `not_found` — задача не найдена; 502/503/504 `server_error` — модель роя недоступна/не настроена/не ответила; метод не POST — 405; события доске через `publish`, не таблицу `events` — `{"id", "action": "updated"}` по каждой записанной в `applied.scopes` задаче и `{"id", "action": "deps"}` по задачам из `applied.edges.added`/`removed` |
@@ -1757,35 +1757,48 @@ MCP по stdio (`listik mcp`) пишет в базу мимо сервера, п
 
 `GET /api/waves` (`listik waves`, MCP `listik_waves`) — что из открытых задач проекта можно
 делать одновременно, чистый расчёт (ничего не пишет, существующие `resource-blocks` не
-читает). Рабочее множество — открытые неархивные задачи проекта (при `stage` — ещё и этого
-этапа), в порядке `priority, created_at, id`. Слои считаются алгоритмом Кана по смысловым
-жёстким рёбрам (`blocks`/`blocked-by`/`waits-for`/`conditional-blocks`); цикл в этом графе
-отменяет волны целиком — `waves: []`, `cycles` непуст, разрывать руками. Внутри каждого слоя
+читает). Рабочее множество — открытые неархивные **карточки роя** проекта (при `stage` — ещё
+и этого этапа), в порядке `priority, created_at, id`. Карточка роя (`stage_launch.in_swarm`,
+то же правило, что `isSwarmCard` у клиента роя): у неё непустой `launch_route` и либо снимок
+`launch_driver = swarm`, либо снимка нет, а её маршрут в базе роевой (`kind = swarm` или
+`driver = swarm`); снимок `skill`, маршрут без снимка, которого нет в базе, или пустой маршрут —
+не карточка роя. Недоступная таблица маршрутов — карточками роя остаются только карточки со
+снимком `swarm`. Не-роевые карточки в плане не участвуют: их нет ни в `waves`, ни в `cycles`,
+`unscoped`, `resource_blocks`, `tasks{}`, ни ключом в `blocked` — их id бывает только причиной
+в `blocked`, когда карточка роя ждёт открытую не-роевую. Слои считаются алгоритмом Кана по смысловым
+жёстким рёбрам (`blocks`/`blocked-by`/`waits-for`/`conditional-blocks`); цикл из карточек роя
+отменяет волны целиком (цикл через не-роевую карточку — нет: роевые участники уходят в
+`blocked`) — `waves: []`, `cycles` непуст, разрывать руками. Внутри каждого слоя
 идёт арбитраж: по `write_scope` (пересечение — `scope.covers`, каталог покрывает своё
 поддерево) и по ключу рабочего дерева (только явный `worktree` и только у пишущих этапов —
 `''`/`s3-impl`/`s4-judge`; пустой `worktree` читается как «дерево ещё не выдано», поэтому
 `claim` строже волн, и дерево агенту нужно выставить до `claim`, не полагаясь на волны).
-Задача без маршрута попадает в `unroutable`: рой её не берёт и вопроса не ставит. Без `write_scope` в `unscoped`
+`unroutable` всегда пуст (ключ оставлен для совместимости: задача без маршрута — не карточка
+роя и в план не входит). Без `write_scope` в `unscoped`
 попадают только `s3-impl` и `s4-judge` (нужен rescope): пустой этап, `s1-spec` и `s2-review`
 входят в волну без области — ТЗ и критика файлов не правят. Задача, которая ждёт что-то вне рабочего множества (другой этап при
 фильтре, чужой проект, отменённый статус вовне) — в `blocked` (`{id: id_причины}`, причина
 может быть вне `tasks`, если она не входит в рабочее множество). `resource_blocks` — пары
 `[раньше, позже]`: конфликтующие по ресурсу задачи одного слоя, «позже» ждёт «раньше».
-`tasks{}` — витрина по всем задачам рабочего множества (`title, priority, status, stage,
+`tasks{}` — витрина по всем карточкам рабочего множества (`title, priority, status, stage,
 holder, launch_route, write_scope, worktree`). Код возврата CLI — `1`, если есть цикл
-(в остальных случаях `0`, даже при `unroutable`/`unscoped`/`blocked` — это не ошибка вызова).
+(в остальных случаях `0`, даже при `unscoped`/`blocked` — это не ошибка вызова).
 
 Запись найденного плана в базу — отдельное явное действие, `listik waves --apply`
 (`POST /api/waves/apply`, MCP `listik_waves` с `apply: true`): пересчитывает план заново и
 переписывает `resource-blocks` только у задач рабочего множества (`tasks{}` того же расчёта) —
-устаревшие рёбра снимает, недостающие ставит; смысловые жёсткие связи, `suggested-blocks`,
-а также рёбра задач другого проекта или (при `stage`) другого этапа не трогает. Автор
+устаревшие рёбра снимает, недостающие ставит; дополнительно снимает все `resource-blocks`
+не-роевых карточек той же выборки (тот же проект, открытые, не в архиве, при `stage` — того же
+этапа) — они тоже попадают в `removed`; смысловые жёсткие связи, `suggested-blocks`,
+а также рёбра задач другого проекта, (при `stage`) другого этапа, закрытых и архивных не
+трогает. Автор
 ресурсного ребра — всегда `agent:listik-swarm`, на любом входе: ни `--actor`/`--owner`, ни
 заголовок `X-Listik-Owner`, ни `actor`/`owner` в теле или аргументах MCP его не переопределяют
 (ребро машинное по построению — его ставит только планировщик, подпись человеком была бы
 ложью). Повторный вызов без изменений в плане — no-op (`added`/`removed` пустые, `deps` не
-меняется). Цикл в смысловых зависимостях — отказ (`409 conflict`/`errors.ListikError`),
-ничего не записывается. После записи `claim` задачи «позже» отказывает штатно, с перечнем
+меняется). Цикл в смысловых зависимостях между карточками роя — отказ (`409
+conflict`/`errors.ListikError`), ничего не записывается и рёбра не-роевых не снимаются; цикл
+среди не-роевых отказом не считается. После записи `claim` задачи «позже» отказывает штатно, с перечнем
 блокеров (как у любого `resource-blocks`, см. выше); `dep rm <id> <блокер> --dep-type
 resource-blocks` снимает ребро до следующего `--apply` — планировщик его на следующем проходе,
 скорее всего, вернёт заново.

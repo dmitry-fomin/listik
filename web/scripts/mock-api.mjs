@@ -726,21 +726,25 @@ const ROUTES = [
   },
   {
     key: 'dsh-direct',
-    kind: 'direct',
+    kind: 'swarm',
+    driver: 'swarm',
     title: 'DeepSeek — целиком',
     hint: 'один харнесс, без конвейера',
     visible: true,
     icon: 'direct',
-    harness: 'dsh',
+    command: null,
+    roles: { impl: { harness: 'dsh' } },
   },
   {
     key: 'hidden-route',
-    kind: 'direct',
+    kind: 'swarm',
+    driver: 'swarm',
     title: 'Скрытый маршрут',
     hint: 'в списке доски не показывается',
     visible: false,
     icon: 'direct',
-    harness: 'codex',
+    command: null,
+    roles: { impl: { harness: 'codex' } },
   },
 ]
 
@@ -988,8 +992,8 @@ const ROUTE_LABEL_RE = /^(harness|process):/
 function routeLabelsOf(key) {
   const route = ROUTES.find((item) => item.key === key)
   if (!route) return []
-  return route.kind === 'direct'
-    ? [`harness:${route.harness}`, 'process:direct']
+  return route.kind === 'swarm'
+    ? [`process:${route.key}`]
     : ['harness:claude', `process:${route.key}`]
 }
 

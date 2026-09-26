@@ -6,7 +6,6 @@ import type {
   BlockedResponse,
   Board,
   CommentKind,
-  DirectRouteCreate,
   GroupBy,
   Harness,
   HarnessCreate,
@@ -132,22 +131,21 @@ export const api = {
   routes: () => get<RoutesResponse>('/api/routes'),
 
   /**
-   * Правка записи маршрута: `title|hint|icon|visible` у обоих видов, `command` —
-   * только у `kind=direct` (сервер отвечает `400` на `command` у `pipeline`).
+   * Правка записи маршрута: `title|hint|icon|visible|roles|driver`; `command`
+   * сервер не принимает (`400`).
    */
   patchRoute: (key: string, body: RoutePatch) =>
     patch<RouteDef>(`/api/routes/${encodeURIComponent(key)}`, body),
 
   /**
-   * Завести маршрут (`POST /api/routes`): прямой (`kind="direct"`, listik-sjx3
-   * порция `a`) или роя (`kind="swarm"`, listik-2gry). Ключ приходит от клиента,
+   * Завести маршрут роя (`POST /api/routes`, `kind="swarm"`, listik-2gry). Ключ приходит от клиента,
    * дубль ключа — `409`; ответ — запись в том же виде, что в `GET /api/routes`.
    * Конвейеры так не заводятся — они приходят из каталога плагинов.
    */
-  createRoute: (body: DirectRouteCreate | SwarmRouteCreate) =>
+  createRoute: (body: SwarmRouteCreate) =>
     post<RouteDef>('/api/routes', body),
 
-  /** Каталог харнесов (`GET /api/harnesses`, listik-2gry): исполнители прямых маршрутов и ролей роя. */
+  /** Каталог харнесов (`GET /api/harnesses`, listik-2gry): исполнители ролей роя. */
   harnesses: () => get<HarnessesResponse>('/api/harnesses'),
 
   /** Завести харнесс (`POST /api/harnesses`); дубль ключа — `409`. */

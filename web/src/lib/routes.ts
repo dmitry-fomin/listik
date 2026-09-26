@@ -8,7 +8,6 @@
  * поиска, а кто реально допущен до этапа, решает routing проекта.
  */
 import type {
-  DirectRouteDef,
   PipelineRouteDef,
   RouteDef,
   SwarmLikeRoute,
@@ -26,10 +25,6 @@ export function pipelineAllowed(route: PipelineRouteDef, type: string): boolean 
   return Boolean(route.roles.spec)
 }
 
-export function directAllowed(type: string): boolean {
-  return type !== 'epic'
-}
-
 /**
  * Рой (`kind = swarm`, listik-2gry): как у конвейера — эпику нужен этап ТЗ,
  * то есть заполненная ячейка `roles.spec`; остальным типам рой разрешён всегда.
@@ -41,10 +36,9 @@ export function swarmAllowed(route: SwarmLikeRoute, type: string): boolean {
 
 /**
  * Разрешён ли маршрут типу задачи — одни и те же правила у «Новой задачи» и у
- * смены маршрута в карточке: эпику нужен этап ТЗ, прямой маршрут ему закрыт.
+ * смены маршрута в карточке: эпику нужен этап ТЗ.
  */
 export function routeAllowedForType(route: RouteDef, type: string): boolean {
-  if (route.kind === 'direct') return directAllowed(type)
   if (route.kind === 'swarm' || route.driver === 'swarm') return swarmAllowed(route, type)
   return pipelineAllowed(route, type)
 }
@@ -128,10 +122,6 @@ export function swarmRoutesOf(routes: RouteDef[]): SwarmLikeRoute[] {
     (route): route is SwarmLikeRoute =>
       route.kind === 'swarm' || (route.kind === 'pipeline' && route.driver === 'swarm'),
   )
-}
-
-export function directRoutesOf(routes: RouteDef[]): DirectRouteDef[] {
-  return routes.filter((route): route is DirectRouteDef => route.kind === 'direct')
 }
 
 // ── подстановки команды (`command`, argv записи маршрута) ───────────────────
@@ -232,7 +222,7 @@ export function countPlaceholders(argv: string[] | string | null | undefined, na
  * поэлементно и в том же порядке: сначала «после вырезания подстановок осталась
  * скобка» (тогда в ответе `{`/`}`), потом имена вырезанных подстановок. Список
  * пуст ровно тогда, когда команду примет сервер, — поэтому по нему и решается,
- * слать ли `PATCH` вовсе (карточка прямой выдачи).
+ * слать ли `PATCH` вовсе (команда роли роя).
  */
 export function unknownPlaceholders(argv: string[] | string | null | undefined): string[] {
   const found = new Set<string>()

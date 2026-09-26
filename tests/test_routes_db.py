@@ -27,9 +27,8 @@ ROUTES_JSON = REPO_DIR / "routes.json"
 EXPECTED_KEYS = [
     "xhigh-pipeline", "high-pipeline", "medium-pipeline", "low-pipeline", "xlow-pipeline",
     "nano-pipeline", "cross-pipeline", "opus-pipeline",
-    "universal-pipeline", "pi-glm", "pi-deepseek", "grok", "codex", "devin",
+    "universal-pipeline",
 ]
-DIRECT_KEYS = ["pi-glm", "pi-deepseek", "grok", "codex", "devin"]
 
 
 def pipeline_record() -> dict:
@@ -43,9 +42,9 @@ def pipeline_record() -> dict:
     }
 
 
-def direct_record() -> dict:
-    return {"key": "dsh", "kind": "direct", "harness": "dsh", "title": "dsh",
-            "hint": "", "visible": True}
+def swarm_record() -> dict:
+    return {"key": "dsh", "kind": "swarm", "title": "dsh", "hint": "", "visible": True,
+            "roles": {"impl": {"harness": "dsh"}}}
 
 
 def document(*records) -> dict:
@@ -76,11 +75,11 @@ class ImportSampleTests(RoutesDbTestCase):
 
     def test_sample_imports_in_file_order(self) -> None:
         report = self.import_sample()
-        self.assertEqual(report, {"imported": 14, "skipped": False,
+        self.assertEqual(report, {"imported": 9, "skipped": False,
                                   "source": str(ROUTES_JSON), "replaced": False})
         records = routes_store.list_routes(self.conn)
         self.assertEqual([r["key"] for r in records], EXPECTED_KEYS)
-        self.assertEqual([r["position"] for r in records], list(range(14)))
+        self.assertEqual([r["position"] for r in records], list(range(9)))
 
     def test_high_pipeline_roles_keep_providers(self) -> None:
         self.import_sample()
@@ -91,23 +90,29 @@ class ImportSampleTests(RoutesDbTestCase):
             self.assertTrue(cell["label"])
             self.assertTrue(cell["title"])
 
-    def test_direct_dsh_has_harness_and_command(self) -> None:
-        self.import_sample()
-        record = routes_store.get_route(self.conn, "pi-deepseek")
-        self.assertEqual(record["kind"], "direct")
-        self.assertEqual(record["harness"], "pi-deepseek")
-        self.assertTrue(record["command"])
-        self.assertNotIn("roles", record)
+    def test_direct_kind_is_rejected(self) -> None:
+        """Вида `direct` нет (listik-ar8v): ни `_prepare`, ни `create_route` его не берут."""
+        with self.assertRaises(ValueError) as ctx:
+            routes_store._prepare(self.conn, {"key": "grok", "kind": "direct", "title": "grok",
+                                              "harness": "grok", "command": ["grok"]})
+        self.assertIn("kind", str(ctx.exception))
+        with self.assertRaises(ValueError) as ctx:
+            routes_store.create_route(self.conn, key="grok", kind="direct", title="grok",
+                                      command=["grok"])
+        self.assertIn("kind", str(ctx.exception))
+        with self.assertRaises(TypeError):  # параметра `harness` больше нет
+            routes_store.create_route(self.conn, key="grok", kind="swarm", title="grok",
+                                      harness="grok")
+        self.assertEqual(routes_store.count(self.conn), 0)
 
     def test_types_are_python_not_json(self) -> None:
         self.import_sample()
         for record in routes_store.list_routes(self.conn):
             self.assertIsInstance(record["visible"], bool)
             self.assertIsInstance(record["position"], int)
-            if record["kind"] == "pipeline":
-                self.assertIsInstance(record["roles"], dict)
-            else:
-                self.assertTrue(record["command"] is None or isinstance(record["command"], list))
+            self.assertIsInstance(record["roles"], dict)
+            self.assertNotIn("harness", record)
+            self.assertTrue(record["command"] is None or isinstance(record["command"], list))
 
     def test_cross_pipeline_roles_and_route_placeholder(self) -> None:
         """cross-pipeline: четыре роли, команда claude и свой скил в подстановке {route}."""
@@ -147,7 +152,7 @@ class ShippedAdditionsTests(RoutesDbTestCase):
         with self.patch_paths(source=ROUTES_JSON), contextlib.redirect_stderr(io.StringIO()):
             report = routes_store.ensure_imported(self.conn)
         self.assertEqual(report["added"], [])
-        self.assertEqual(routes_store.count(self.conn), 14)
+        self.assertEqual(routes_store.count(self.conn), 9)
 
 
 class ReimportTests(RoutesDbTestCase):
@@ -155,22 +160,23 @@ class ReimportTests(RoutesDbTestCase):
 
     def test_second_import_without_replace_is_skipped(self) -> None:
         self.import_sample()
-        routes_store.update_route(self.conn, "pi-deepseek", title="Правленый")
+        routes_store.update_route(self.conn, "cross-pipeline", title="Правленый")
         report = self.import_sample()
         self.assertTrue(report["skipped"])
         self.assertEqual(report["imported"], 0)
         self.assertFalse(report["replaced"])
-        self.assertEqual(routes_store.get_route(self.conn, "pi-deepseek")["title"], "Правленый")
+        self.assertEqual(routes_store.get_route(self.conn, "cross-pipeline")["title"], "Правленый")
 
     def test_import_with_replace_rewrites(self) -> None:
         self.import_sample()
-        routes_store.update_route(self.conn, "pi-deepseek", title="Правленый", visible=False)
+        shipped = routes_store.get_route(self.conn, "cross-pipeline")["title"]
+        routes_store.update_route(self.conn, "cross-pipeline", title="Правленый", visible=False)
         report = self.import_sample(replace=True)
         self.assertFalse(report["skipped"])
         self.assertTrue(report["replaced"])
-        self.assertEqual(report["imported"], 14)
-        record = routes_store.get_route(self.conn, "pi-deepseek")
-        self.assertEqual(record["title"], "pi-deepseek")
+        self.assertEqual(report["imported"], 9)
+        record = routes_store.get_route(self.conn, "cross-pipeline")
+        self.assertEqual(record["title"], shipped)
         self.assertTrue(record["visible"])
 
     def test_broken_file_keeps_db_and_raises(self) -> None:
@@ -182,7 +188,7 @@ class ReimportTests(RoutesDbTestCase):
             with self.assertRaises(routes_mod.RoutesError):
                 routes_store.import_file(self.conn, bad)
         self.assertEqual(routes_store.list_routes(self.conn), before)
-        self.assertEqual(routes_store.count(self.conn), 14)
+        self.assertEqual(routes_store.count(self.conn), 9)
 
     def test_ensure_imported_swallows_broken_file(self) -> None:
         bad = self.tmp_path / "broken.json"
@@ -196,7 +202,7 @@ class ReimportTests(RoutesDbTestCase):
     def test_default_source_is_sample(self) -> None:
         with self.patch_paths(source=ROUTES_JSON):
             report = routes_store.ensure_imported(self.conn)
-        self.assertEqual(report["imported"], 14)
+        self.assertEqual(report["imported"], 9)
         self.assertEqual(report["source"], str(ROUTES_JSON))
 
     def test_strip_field_is_not_stored(self) -> None:
@@ -217,16 +223,17 @@ class ReimportCommandTests(RoutesDbTestCase):
     def test_reimport_rewrites_and_reports_orphans(self) -> None:
         from listik import store
         self.import_sample()
-        routes_store.update_route(self.conn, "grok", title="Моя правка")
+        shipped = routes_store.get_route(self.conn, "cross-pipeline")["title"]
+        routes_store.update_route(self.conn, "cross-pipeline", title="Моя правка")
         task = store.create_task(self.conn, title="проба", project="listik")
         self.conn.execute("UPDATE tasks SET launch_route = 'gone-route' WHERE id = ?",
                           (task["id"],))
         self.conn.commit()
         report = routes_store.reimport(self.conn, ROUTES_JSON)
         self.assertTrue(report["replaced"])
-        self.assertEqual(report["imported"], 14)
+        self.assertEqual(report["imported"], 9)
         self.assertEqual(report["orphans"], {"gone-route": 1})
-        self.assertEqual(routes_store.get_route(self.conn, "grok")["title"], "grok")
+        self.assertEqual(routes_store.get_route(self.conn, "cross-pipeline")["title"], shipped)
         row = self.conn.execute("SELECT launch_route FROM tasks WHERE id = ?",
                                 (task["id"],)).fetchone()
         self.assertEqual(row[0], "gone-route", "задачу трогать нельзя")
@@ -237,7 +244,8 @@ class ReimportCommandTests(RoutesDbTestCase):
         import sys
         from tests.test_claim import LISTIK_BIN
         self.import_sample()
-        routes_store.update_route(self.conn, "grok", title="Моя правка")
+        shipped = routes_store.get_route(self.conn, "cross-pipeline")["title"]
+        routes_store.update_route(self.conn, "cross-pipeline", title="Моя правка")
         env = {**os.environ, "LISTIK_DB": str(self.db_path),
                "LISTIK_LOG": str(self.tmp_path / "listik.log")}
         proc = subprocess.run([sys.executable, str(LISTIK_BIN), "--local", "routes",
@@ -246,9 +254,9 @@ class ReimportCommandTests(RoutesDbTestCase):
         self.assertEqual(proc.returncode, 0, proc.stdout + proc.stderr)
         report = json.loads(proc.stdout)
         self.assertTrue(report["replaced"])
-        self.assertEqual(report["imported"], 14)
+        self.assertEqual(report["imported"], 9)
         self.assertEqual(report["orphans"], {})
-        self.assertEqual(routes_store.get_route(self.conn, "grok")["title"], "grok")
+        self.assertEqual(routes_store.get_route(self.conn, "cross-pipeline")["title"], shipped)
 
 
 class ReimportKeepsUserRoutesTests(RoutesDbTestCase):
@@ -256,7 +264,7 @@ class ReimportKeepsUserRoutesTests(RoutesDbTestCase):
     (listik-zr05, порция g)."""
 
     SWARM_ROLES = {"impl": {"harness": "codex", "argv": ["codex", "exec", "{task_id}"]}}
-    KEPT = ["chiki-pow", "my-direct", "my-swarm-pipe"]
+    KEPT = ["chiki-pow", "my-solo", "my-swarm-pipe"]
     BACKUP_RE = r"routes\.bak-\d{8}T\d{6}Z(-\d+)?\.json"
 
     def setUp(self) -> None:
@@ -269,7 +277,7 @@ class ReimportKeepsUserRoutesTests(RoutesDbTestCase):
         self.import_sample()
         routes_store.create_route(self.conn, key="chiki-pow", kind="swarm", title="Рой чики",
                                   roles=self.SWARM_ROLES)
-        routes_store.upsert_route(self.conn, {**direct_record(), "key": "my-direct",
+        routes_store.upsert_route(self.conn, {**swarm_record(), "key": "my-solo",
                                               "title": "Мой dsh"})
         routes_store.upsert_route(self.conn, {**pipeline_record(), "key": "my-swarm-pipe",
                                               "driver": "swarm", "roles": self.SWARM_ROLES})
@@ -306,7 +314,7 @@ class ReimportKeepsUserRoutesTests(RoutesDbTestCase):
         self.assertEqual(report["orphans"], {})
         self.assertTrue(report["replaced"])
         self.assertFalse(report["skipped"])
-        self.assertEqual(report["imported"], 14)
+        self.assertEqual(report["imported"], 9)
         backup = pathlib.Path(report["backup"])
         self.assertTrue(backup.is_file())
         self.assertEqual(backup.parent, self.data_dir)
@@ -320,6 +328,16 @@ class ReimportKeepsUserRoutesTests(RoutesDbTestCase):
         for key in ["high-pipeline", "my-pipe", *self.KEPT]:
             self.assertIn(key, state.by_key)
         self.assertEqual(state.by_key["high-pipeline"]["title"], "Моя правка")
+
+    def test_backup_records_have_no_harness(self) -> None:
+        """Бэкап таблицы без поля `harness` у любой записи (listik-ar8v)."""
+        report = self.reimport()
+        saved = json.loads(pathlib.Path(report["backup"]).read_text(encoding="utf-8"))["routes"]
+        self.assertEqual({r["key"] for r in saved}, set(self.before))
+        for record in saved:
+            self.assertNotIn("harness", record, record["key"])
+        self.assertEqual(next(r for r in saved if r["key"] == "my-solo")["roles"],
+                         {"impl": {"harness": "dsh"}})
 
     def test_swarm_cell_without_argv_survives_backup(self) -> None:
         # Ячейка роя без своего argv (команда — argv харнесса по умолчанию) в файле
@@ -482,8 +500,9 @@ class UpdateRouteTests(RoutesDbTestCase):
     def test_rejected_fields_name_the_field(self) -> None:
         # `key` сюда не подставить: оно уже занято позиционным параметром
         # сигнатуры, Python отвергнет вызов раньше проверки.
-        for name, value in (("roles", {}), ("kind", "direct"),
-                            ("harness", "dsh"), ("position", 0)):
+        for name, value in (("roles", {}), ("kind", "swarm"),
+                            ("harness", "dsh"), ("position", 0),
+                            ("command", ["echo", "{task_id}"])):
             with self.subTest(name=name):
                 with self.assertRaises(ValueError) as ctx:
                     routes_store.update_route(self.conn, "high-pipeline", **{name: value})
@@ -494,18 +513,21 @@ class UpdateRouteTests(RoutesDbTestCase):
             routes_store.update_route(self.conn, "high-pipeline", command=["echo", "{task_id}"])
         self.assertIn("command", str(ctx.exception))
 
-    def test_command_on_direct_is_saved(self) -> None:
-        updated = routes_store.update_route(self.conn, "pi-deepseek", command=["echo", "{task_id}"])
-        self.assertEqual(updated["command"], ["echo", "{task_id}"])
-        self.assertEqual(routes_store.get_route(self.conn, "pi-deepseek")["command"],
-                         ["echo", "{task_id}"])
+    def test_command_is_not_updatable(self) -> None:
+        """Точечной правки `command` нет ни у какого вида (listik-ar8v)."""
+        self.assertNotIn("command", routes_store.UPDATE_FIELDS)
+        routes_store.create_route(self.conn, key="solo", kind="swarm", title="Соло",
+                                  roles={"impl": {"harness": "dsh"}})
+        with self.assertRaises(ValueError) as ctx:
+            routes_store.update_route(self.conn, "solo", command=["echo", "{task_id}"])
+        self.assertIn("нельзя менять", str(ctx.exception))
 
     def test_partial_update_keeps_other_fields(self) -> None:
-        before = routes_store.get_route(self.conn, "pi-deepseek")
-        after = routes_store.update_route(self.conn, "pi-deepseek", title="Новый")
+        before = routes_store.get_route(self.conn, "cross-pipeline")
+        after = routes_store.update_route(self.conn, "cross-pipeline", title="Новый")
         self.assertEqual(after["title"], "Новый")
         self.assertEqual(after["command"], before["command"])
-        self.assertEqual(after["harness"], before["harness"])
+        self.assertEqual(after["roles"], before["roles"])
 
 
 class CrudTests(RoutesDbTestCase):
@@ -516,16 +538,16 @@ class CrudTests(RoutesDbTestCase):
         self.import_sample()
 
     def test_create_uses_max_position_plus_one(self) -> None:
-        record = routes_store.create_route(self.conn, key="zzz-direct", kind="direct",
-                                           title="Zzz", harness="dsh")
-        self.assertEqual(record["position"], 14)
-        self.assertEqual(routes_store.list_routes(self.conn)[-1]["key"], "zzz-direct")
+        record = routes_store.create_route(self.conn, key="zzz-solo", kind="swarm",
+                                           title="Zzz", roles={"impl": {"harness": "dsh"}})
+        self.assertEqual(record["position"], 9)
+        self.assertEqual(routes_store.list_routes(self.conn)[-1]["key"], "zzz-solo")
 
     def test_create_duplicate_key(self) -> None:
         with self.assertRaises(ValueError) as ctx:
-            routes_store.create_route(self.conn, key="pi-deepseek", kind="direct", title="Dup",
-                                      harness="dsh")
-        self.assertIn("pi-deepseek", str(ctx.exception))
+            routes_store.create_route(self.conn, key="cross-pipeline", kind="swarm", title="Dup",
+                                      roles={"impl": {"harness": "dsh"}})
+        self.assertIn("cross-pipeline", str(ctx.exception))
 
     def test_get_unknown_raises_not_found(self) -> None:
         with self.assertRaises(errors.NotFound):
@@ -536,30 +558,30 @@ class CrudTests(RoutesDbTestCase):
                          len(routes_store.list_routes(self.conn)))
 
     def test_delete_counts_tasks_but_keeps_them(self) -> None:
-        self.conn.execute("INSERT INTO tasks(id, launch_route) VALUES('t1', 'pi-deepseek')")
-        self.conn.execute("INSERT INTO tasks(id, launch_route) VALUES('t2', 'pi-deepseek')")
-        self.conn.execute("INSERT INTO tasks(id, launch_route) VALUES('t3', 'grok')")
+        self.conn.execute("INSERT INTO tasks(id, launch_route) VALUES('t1', 'cross-pipeline')")
+        self.conn.execute("INSERT INTO tasks(id, launch_route) VALUES('t2', 'cross-pipeline')")
+        self.conn.execute("INSERT INTO tasks(id, launch_route) VALUES('t3', 'nano-pipeline')")
         self.conn.commit()
-        removed = routes_store.delete_route(self.conn, "pi-deepseek")
+        removed = routes_store.delete_route(self.conn, "cross-pipeline")
         self.assertEqual(removed, 2)
         self.assertEqual(self.conn.execute("SELECT COUNT(*) FROM tasks").fetchone()[0], 3)
-        self.assertNotIn("pi-deepseek", [r["key"] for r in routes_store.list_routes(self.conn)])
+        self.assertNotIn("cross-pipeline", [r["key"] for r in routes_store.list_routes(self.conn)])
         with self.assertRaises(errors.NotFound):
-            routes_store.get_route(self.conn, "pi-deepseek")
+            routes_store.get_route(self.conn, "cross-pipeline")
 
     def test_reorder_full(self) -> None:
         reordered = routes_store.reorder(self.conn, list(reversed(EXPECTED_KEYS)))
         self.assertEqual([r["key"] for r in reordered], list(reversed(EXPECTED_KEYS)))
-        self.assertEqual([r["position"] for r in reordered], list(range(14)))
+        self.assertEqual([r["position"] for r in reordered], list(range(9)))
         self.assertEqual([r["key"] for r in routes_store.list_routes(self.conn)],
                          list(reversed(EXPECTED_KEYS)))
 
     def test_reorder_subset_pushes_rest_to_end(self) -> None:
-        rest = [k for k in EXPECTED_KEYS if k not in ("pi-deepseek", "grok")]
-        reordered = routes_store.reorder(self.conn, ["pi-deepseek", "grok"])
-        self.assertEqual([r["key"] for r in reordered], ["pi-deepseek", "grok", *rest])
+        rest = [k for k in EXPECTED_KEYS if k not in ("cross-pipeline", "nano-pipeline")]
+        reordered = routes_store.reorder(self.conn, ["cross-pipeline", "nano-pipeline"])
+        self.assertEqual([r["key"] for r in reordered], ["cross-pipeline", "nano-pipeline", *rest])
         positions = [r["position"] for r in reordered]
-        self.assertEqual(positions, list(range(14)))
+        self.assertEqual(positions, list(range(9)))
 
     def test_reorder_unknown_key(self) -> None:
         with self.assertRaises(ValueError) as ctx:
@@ -604,7 +626,7 @@ class SchemaUpgradeTests(unittest.TestCase):
             self.assertEqual(conn.execute("SELECT COUNT(*) FROM projects").fetchone()[0], 1)
             version = conn.execute(
                 "SELECT value FROM meta WHERE key = 'schema_version'").fetchone()[0]
-            self.assertEqual(version, "11")
+            self.assertEqual(version, "12")
         finally:
             conn.close()
 

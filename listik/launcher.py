@@ -203,8 +203,8 @@ def _workdir(conn, row) -> Path | None:
 
 
 def _substitute(element: str, values: dict) -> str:
-    # Незнакомые этому запуску подстановки (например, `{stage}` у прямого
-    # маршрута) — пустая строка, а не KeyError (docs/specs/swarm-stage-launch.md).
+    # Незнакомые этому запуску подстановки (например, `{stage}` у конвейера
+    # режима скила) — пустая строка, а не KeyError (docs/specs/swarm-stage-launch.md).
     return _SUBST_RE.sub(lambda m: values.get(m.group(1), ""), element)
 
 
@@ -298,10 +298,9 @@ def start(conn, task_id: str, notify=None, *, log_dir=None, env=None) -> str | N
     key = row["launch_route"] or ""
     record = state.by_key.get(key) if state.ok else None
     # Снимок способа исполнения (listik-2gry): `launch_driver` пишет только
-    # лаунчер и только в первый захват (снимок ещё пуст). У прямого маршрута
-    # снимка нет — `driver` там всегда `skill`.
+    # лаунчер и только в первый захват (снимок ещё пуст).
     driver = None
-    if record is not None and record.get("kind") in ("pipeline", "swarm"):
+    if record is not None:
         driver = record.get("driver") or "skill"
 
     ts = store.now_iso()
@@ -347,24 +346,6 @@ def start(conn, task_id: str, notify=None, *, log_dir=None, env=None) -> str | N
         return _fail(conn, task_id,
                      f"нет рабочего каталога (worktree или path проекта {project})", notify)
 
-    # Прямой маршрут: харнесс работает сам, оркестратора нет. Карточку выдаём ему до
-    # Popen — этап «ТЗ» (s1-spec, если этапа ещё нет) и держатель-харнесс, — чтобы её
-    # не взял никто другой, пока агент читает код. Это выдача, а не claim за агента:
-    # «взята» карточка станет только после его собственного claim. «Разработку»
-    # (s3-impl) агент ставит сам перед первой правкой кода (listik-tyxn).
-    issued = False
-    if record.get("kind") == "direct" and not (row["holder"] or "").strip():
-        # Держатель — ключ харнесса маршрута (devin, любой свой из каталога):
-        # регистрируем синоним `agent:<key>`, иначе `claim` ответит
-        # «неизвестный держатель» и «выдана, но не взята» никогда не снимется.
-        harnesses_store.register_holder(conn, record["harness"])
-        fields = {"holder": record["harness"]}
-        if not (row["stage"] or "").strip():
-            fields["stage"] = "s1-spec"
-        store.update_task(conn, task_id, actor="agent:listik",
-                          note=f"автостарт: выдана {record['harness']}", **fields)
-        issued = True
-
     # `{worktree}` — колонка `tasks.worktree`, но пустое значение и маркер основной
     # ветки (`main`/`master`) указывают не на дерево, а на каталог проекта: подставляем
     # `cwd`, чтобы значение всегда указывало на реальное дерево. `{branch}` пуст — пустая
@@ -392,9 +373,6 @@ def start(conn, task_id: str, notify=None, *, log_dir=None, env=None) -> str | N
                                     stdout=log, stderr=subprocess.STDOUT,
                                     start_new_session=True, env=proc_env)
     except OSError as exc:
-        if issued:  # процесса нет — выдача никому: держателя снимаем, этап остаётся
-            store.update_task(conn, task_id, actor="agent:listik", holder="",
-                              note="автостарт не выполнен: выдача снята")
         return _fail(conn, task_id, f"не удалось запустить: {exc}", notify)
 
     pid = proc.pid
@@ -509,7 +487,9 @@ def _start_swarm(conn, task_id: str, row, record: dict, *, notify, log_dir,
     tail = None
     if not resolved.get("own_prompt"):
         try:
-            tail = stage_launch.role_tail(role)
+            last = (role == "impl"
+                    and stage_launch.next_stage_with_role(conn, record, stage) is None)
+            tail = stage_launch.role_tail(role, last=last)
         except stage_launch.CriteriaError as exc:
             return _swarm_refuse(conn, task_id,
                                  f"рой: нет критериев роли {role} (этап {stage}): {exc}",

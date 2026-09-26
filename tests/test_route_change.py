@@ -91,8 +91,8 @@ class RouteStoreTests(RoutesSeeded):
 
     def test_route_alias_route_is_the_same_field(self) -> None:
         task = self.task(route="low-pipeline")
-        updated = store.update_task(self.conn, task["id"], route="grok")
-        self.assertEqual(updated["launch_route"], "grok")
+        updated = store.update_task(self.conn, task["id"], route="xlow-pipeline")
+        self.assertEqual(updated["launch_route"], "xlow-pipeline")
 
     def test_empty_route_clears_it(self) -> None:
         task = self.task(route="low-pipeline")
@@ -113,8 +113,8 @@ class RouteStoreTests(RoutesSeeded):
         task = self.task(route="low-pipeline")
         store.update_task(self.conn, task["id"], status="in_progress")
         self.assertIs(store.get_task(self.conn, task["id"])["route_editable"], True)
-        updated = store.update_task(self.conn, task["id"], route="grok")
-        self.assertEqual(updated["launch_route"], "grok")
+        updated = store.update_task(self.conn, task["id"], route="xlow-pipeline")
+        self.assertEqual(updated["launch_route"], "xlow-pipeline")
         self.assertEqual(updated["status"], "in_progress")
 
     def test_stage_is_kept_and_launch_driver_reset(self) -> None:
@@ -164,7 +164,7 @@ class RouteStoreTests(RoutesSeeded):
         store.update_task(self.conn, task["id"], holder="dsh")
         self.assertIs(store.get_task(self.conn, task["id"])["route_editable"], False)
         with self.assertRaises(ValueError) as ctx:
-            store.update_task(self.conn, task["id"], route="grok")
+            store.update_task(self.conn, task["id"], route="xlow-pipeline")
         self.assertIn("маршрут нельзя менять", str(ctx.exception))
         self.assertIn("держит dsh", str(ctx.exception))
         self.assertIsNone(self.row(task["id"])["launch_route"])
@@ -177,7 +177,7 @@ class RouteStoreTests(RoutesSeeded):
         self.conn.commit()
         self.assertIs(store.get_task(self.conn, task["id"])["route_editable"], False)
         with self.assertRaises(ValueError) as ctx:
-            store.update_task(self.conn, task["id"], route="grok")
+            store.update_task(self.conn, task["id"], route="xlow-pipeline")
         self.assertIn("маршрут нельзя менять", str(ctx.exception))
         self.assertIn("процесс запущен", str(ctx.exception))
         self.assertEqual(self.row(task["id"])["launch_route"], "low-pipeline")
@@ -190,8 +190,8 @@ class RouteStoreTests(RoutesSeeded):
             "launch_finished_at = '2026-01-01T01:00:00Z' WHERE id = ?", (task["id"],))
         self.conn.commit()
         self.assertIs(store.get_task(self.conn, task["id"])["route_editable"], True)
-        updated = store.update_task(self.conn, task["id"], route="grok")
-        self.assertEqual(updated["launch_route"], "grok")
+        updated = store.update_task(self.conn, task["id"], route="xlow-pipeline")
+        self.assertEqual(updated["launch_route"], "xlow-pipeline")
 
     def test_final_status_refuses(self) -> None:
         for status in ("done", "cancelled"):
@@ -200,7 +200,7 @@ class RouteStoreTests(RoutesSeeded):
                 store.update_task(self.conn, task["id"], status=status)
                 self.assertIs(store.get_task(self.conn, task["id"])["route_editable"], False)
                 with self.assertRaises(ValueError) as ctx:
-                    store.update_task(self.conn, task["id"], route="grok")
+                    store.update_task(self.conn, task["id"], route="xlow-pipeline")
                 self.assertIn("маршрут нельзя менять", str(ctx.exception))
                 self.assertIn("статус «", str(ctx.exception))
                 self.assertEqual(self.row(task["id"])["launch_route"], "low-pipeline")
@@ -211,11 +211,11 @@ class RouteStoreTests(RoutesSeeded):
         не применяет ни одного поля."""
         task = self.task(route="low-pipeline")
         calls = (
-            (("holder", "dsh"), ("route", "grok")),
-            (("route", "grok"), ("holder", "dsh")),
-            (("status", "done"), ("route", "grok")),
-            (("status", "cancelled"), ("route", "grok")),
-            (("holder", "dsh"), ("status", "in_progress"), ("route", "grok")),
+            (("holder", "dsh"), ("route", "xlow-pipeline")),
+            (("route", "xlow-pipeline"), ("holder", "dsh")),
+            (("status", "done"), ("route", "xlow-pipeline")),
+            (("status", "cancelled"), ("route", "xlow-pipeline")),
+            (("holder", "dsh"), ("status", "in_progress"), ("route", "xlow-pipeline")),
         )
         for pairs in calls:
             with self.subTest(pairs=pairs):
@@ -231,10 +231,10 @@ class RouteStoreTests(RoutesSeeded):
     def test_same_call_clearing_stage_changes_route(self) -> None:
         """Этап смене не мешает — и снятие этапа в том же вызове тоже."""
         task = self.task(route="low-pipeline", stage="s1-spec")
-        updated = store.update_task(self.conn, task["id"], stage="", route="grok")
-        self.assertEqual(updated["launch_route"], "grok")
+        updated = store.update_task(self.conn, task["id"], stage="", route="xlow-pipeline")
+        self.assertEqual(updated["launch_route"], "xlow-pipeline")
         self.assertFalse(self.row(task["id"])["stage"])
-        self.assertEqual(self.route_events(task["id"]), [("low-pipeline", "grok")])
+        self.assertEqual(self.route_events(task["id"]), [("low-pipeline", "xlow-pipeline")])
 
     def test_unknown_route_is_bad_argument_before_state_checks(self) -> None:
         """Неизвестный ключ — `BadArgument` «нет в базе» у любой карточки: и у
@@ -330,7 +330,7 @@ class RouteRaceTests(RoutesSeeded):
 
         with mock.patch.object(store, "now_iso", side_effect=claim_then_now):
             with self.assertRaises(ValueError) as ctx:
-                store.update_task(self.second, self.task["id"], route="grok")
+                store.update_task(self.second, self.task["id"], route="xlow-pipeline")
         self.assertTrue(fired, "подмена now_iso не сработала — гонка не воспроизвелась")
         message = str(ctx.exception)
         self.assertIn("маршрут нельзя менять", message)
@@ -368,7 +368,7 @@ class RouteRaceTests(RoutesSeeded):
 
             def change(task_id=task["id"], conn=conn_route) -> None:
                 try:
-                    store.update_task(conn, task_id, route="grok")
+                    store.update_task(conn, task_id, route="xlow-pipeline")
                 except ValueError:
                     pass  # отказ — законный исход гонки: задачу уже взяли
                 except BaseException as exc:  # noqa: BLE001
@@ -566,7 +566,7 @@ class RouteApiTests(RoutesSeeded):
     def test_patch_route_is_400_once_taken(self) -> None:
         store.claim(self.conn, self.task["id"], holder="dsh")
         with self.assertRaises(server.ApiError) as ctx:
-            self.patch({"route": "grok"})
+            self.patch({"route": "xlow-pipeline"})
         self.assertEqual(ctx.exception.status, 400)
         self.assertIn("маршрут нельзя менять", ctx.exception.message)
         self.assertIn("держит dsh", ctx.exception.message)
@@ -574,9 +574,9 @@ class RouteApiTests(RoutesSeeded):
 
     def test_patch_route_on_stage_passes(self) -> None:
         staged = store.create_task(self.conn, title="этап", project="listik", stage="s3-impl")
-        status, task = self.patch({"route": "grok"}, task_id=staged["id"])
+        status, task = self.patch({"route": "xlow-pipeline"}, task_id=staged["id"])
         self.assertEqual(status, 200)
-        self.assertEqual(task["launch_route"], "grok")
+        self.assertEqual(task["launch_route"], "xlow-pipeline")
         self.assertEqual(task["stage"], "s3-impl")
 
     def test_patch_unknown_route_is_400_bad_argument(self) -> None:
@@ -589,15 +589,15 @@ class RouteApiTests(RoutesSeeded):
 
     def test_patch_route_400_on_non_string(self) -> None:
         with self.assertRaises(server.ApiError) as ctx:
-            self.patch({"route": ["grok"]})
+            self.patch({"route": ["xlow-pipeline"]})
         self.assertEqual(ctx.exception.status, 400)
         self.assertIn("маршрут должен быть строкой", ctx.exception.message)
 
     def test_patch_same_call_holder_or_close_and_route_is_400(self) -> None:
         """Один PATCH не может закрыть задачу или назначить держателя и сменить
         маршрут — ни одного поля."""
-        for body in ({"status": "done", "route": "grok"},
-                     {"route": "grok", "holder": "dsh"}):
+        for body in ({"status": "done", "route": "xlow-pipeline"},
+                     {"route": "xlow-pipeline", "holder": "dsh"}):
             with self.subTest(body=body):
                 with self.assertRaises(server.ApiError) as ctx:
                     self.patch(dict(body))
@@ -679,7 +679,7 @@ class RouteMcpTests(RoutesSeeded):
         store.claim(self.conn, task["id"], holder="dsh")
         with self.assertRaises(ValueError) as ctx:
             mcp.call_tool("listik_update",
-                          {"id": task["id"], "fields": {"route": "grok"}}, conn=self.conn)
+                          {"id": task["id"], "fields": {"route": "xlow-pipeline"}}, conn=self.conn)
         self.assertIn("маршрут нельзя менять", str(ctx.exception))
 
 

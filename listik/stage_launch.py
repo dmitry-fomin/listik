@@ -74,7 +74,7 @@ def _cell_argv(cell: dict, harness_record: dict | None) -> list | None:
 def _cell_prompt(cell: dict) -> str:
     """Промпт роли — последний аргумент argv: свой `prompt` ячейки, иначе
     `SWARM_PROMPT` (протокол ответа последней строкой). `prompt` харнесса не наследуем:
-    это текст прямой выдачи — он велит самому делать claim/stage/done, чего
+    это промпт самостоятельной работы харнесса — он велит самому делать claim/stage/done, чего
     харнесс роя делать не должен (docs/specs/swarm-stage-launch.md)."""
     return _own_prompt(cell) or harnesses_store.SWARM_PROMPT
 
@@ -120,6 +120,15 @@ _ROLE_NOTES = {
              "их в VERDICT: FAIL дословно. При зелёном коммит делаешь ты, до ответа «зелёный».",
 }
 
+#: Блок роли `impl`, после которой в маршруте ролей нет: закрывает Listik, коммитит роль.
+_LAST_IMPL_BLOCK = (
+    "Приёмки после тебя в этом маршруте нет — работу закрываешь ты. Перед ответом «готово» "
+    "закоммить свою правку в ветку задачи: git add только тех путей, что ты правил "
+    "(не git add -A, без ТЗ и журнала шага), затем git commit с сообщением "
+    "«<id задачи из первой строки этого промпта>: <суть правки>». Этот пункт отменяет "
+    "запрет коммита из критериев выше. Закоммитить не вышло — ответ «не смог»."
+)
+
 _ANSWER_LINE = "Последняя строка вывода — одно слово: «готово», «вопрос» или «не смог»."
 _JUDGE_ANSWER_LINE = ("Последняя строка вывода — одно слово: «зелёный», «красный», «вопрос» "
                       "или «не смог».")
@@ -157,14 +166,17 @@ def role_criteria(role: str) -> str:
     return "\n\n".join(sections)
 
 
-def role_tail(role: str) -> str:
+def role_tail(role: str, last: bool = False) -> str:
     """Блоки промпта роли после протокола: связка, строка роли (spec/critic/judge),
-    критерии агента и строка ответа. Подстановки к ним не применяются."""
+    критерии агента, у `impl` при `last` (после неё ролей нет) — блок коммита, и строка
+    ответа. Подстановки к ним не применяются."""
     name, _ = ROLE_AGENTS[role]
     blocks = [_ROLE_BRIDGE.format(role=role, stem=name.removesuffix(".md"), name=name)]
     if role in _ROLE_NOTES:
         blocks.append(_ROLE_NOTES[role])
     blocks.append(role_criteria(role))
+    if last and role == "impl":
+        blocks.append(_LAST_IMPL_BLOCK)
     blocks.append(_JUDGE_ANSWER_LINE if role == "judge" else _ANSWER_LINE)
     return "\n\n".join(blocks)
 
@@ -506,7 +518,13 @@ def apply_outcome(conn: sqlite3.Connection, task_id: str, *, notify=None) -> Non
                                      checklist=single["checklist_path"],
                                      child_id=single["id"], actor=SWARM_ACTOR)
             nxt = next_stage_with_role(conn, record or {}, stage) if record else None
-            if nxt is not None:
+            if record and nxt is None and stage == "s3-impl" and role == "impl":
+                # Приёмки нет — закрывает Listik, коммит сделала роль (блок role_tail).
+                note = "рой: ответ «готово», ролей после s3-impl нет — карточка закрыта"
+                store.update_task(conn, task_id, actor=SWARM_ACTOR,
+                                  stage="done", status="done", holder="", note=note)
+                store.add_comment(conn, task_id, note, author=SWARM_ACTOR, kind="journal")
+            elif nxt is not None:
                 # Одним next_stage: handoff снимает держателя сам, а sticky
                 # (s3-impl→s4-judge) оставит — тогда снимаем отдельно.
                 store.next_stage(conn, task_id, to_stage=nxt, actor=SWARM_ACTOR,

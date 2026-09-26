@@ -41,14 +41,11 @@ LISTIK_BIN = REPO_DIR / "bin" / "listik"
 ROUTE_LEVEL_RE = re.compile(r"value: '([a-z0-9-]+)'")
 ROUTE_GLYPH_RE = re.compile(r"icon: '([a-z0-9-]+)'")
 
-DIRECT_KEYS = ["pi-glm", "pi-deepseek", "grok", "codex", "devin"]
-
 # Порядок записей в routes.json — он же порядок строк формы «Новая задача».
 EXPECTED_KEYS = [
     "xhigh-pipeline", "high-pipeline", "medium-pipeline", "low-pipeline", "xlow-pipeline",
     "nano-pipeline", "cross-pipeline", "opus-pipeline",
     "universal-pipeline",
-    *DIRECT_KEYS,
 ]
 
 # Таблицы маршрутов, зашитые в доске до шага 09, порции c: их заменил ответ API.
@@ -66,9 +63,16 @@ def pipeline_record() -> dict:
     }
 
 
-def direct_record() -> dict:
-    return {"key": "dsh", "kind": "direct", "harness": "dsh", "title": "dsh",
-            "hint": "", "visible": True}
+def swarm_record() -> dict:
+    return {"key": "dsh", "kind": "swarm", "title": "dsh", "hint": "", "visible": True,
+            "roles": {"impl": {"harness": "dsh"}}}
+
+
+def swarm_normalized(**over) -> dict:
+    """`swarm_record()` после `routes.validate`: у ключа `dsh` уровня нет."""
+    return {"key": "dsh", "kind": "swarm", "title": "dsh", "hint": "", "visible": True,
+            "icon": None, "roles": {"impl": {"harness": "dsh"}}, "driver": "swarm",
+            "command": None, **over}
 
 
 def document(*records) -> dict:
@@ -96,7 +100,7 @@ class RepoRoutesFileTests(unittest.TestCase):
 
     def test_has_sixteen_records_in_order(self) -> None:
         self.assertEqual(self.raw["version"], 1)
-        self.assertEqual(len(self.raw["routes"]), 14)
+        self.assertEqual(len(self.raw["routes"]), 9)
         self.assertEqual([r["key"] for r in self.raw["routes"]], EXPECTED_KEYS)
 
     def test_validates_and_every_record_is_visible(self) -> None:
@@ -107,17 +111,7 @@ class RepoRoutesFileTests(unittest.TestCase):
 
     def test_kinds_match_the_table(self) -> None:
         kinds = [r["kind"] for r in self.raw["routes"]]
-        self.assertEqual(kinds[:9], ["pipeline"] * 9)
-        self.assertEqual(kinds[9:], ["direct"] * 5)
-
-    def test_direct_records_are_exact(self) -> None:
-        normalized = routes_mod.validate(self.raw)
-        raw_by_key = {record["key"]: record for record in self.raw["routes"]}
-        for key, got in zip(DIRECT_KEYS, normalized[9:]):
-            self.assertEqual(got["title"], key)
-            self.assertEqual(got, {"key": key, "kind": "direct", "title": key, "hint": "",
-                                   "visible": True, "icon": "direct", "harness": key,
-                                   "command": raw_by_key[key]["command"]})
+        self.assertEqual(kinds, ["pipeline"] * 9)
 
     def test_icons_are_the_route_levels(self) -> None:
         normalized = {r["key"]: r["icon"] for r in routes_mod.validate(self.raw)}
@@ -128,14 +122,12 @@ class RepoRoutesFileTests(unittest.TestCase):
         self.assertEqual(normalized["xlow-pipeline"], "xlow")
         # Уровень nano из ключа не выводится — стоит явно, на ступени xlow.
         self.assertEqual(normalized["nano-pipeline"], "xlow")
-        for key in DIRECT_KEYS:
-            self.assertEqual(normalized[key], "direct")
         # У пресетов без уровня поля нет — иконка не выдумывается.
         for key in ("opus-pipeline",):
             self.assertIsNone(normalized[key])
 
     def test_repo_every_record_has_command(self) -> None:
-        """В образце у каждой записи есть argv автостарта: конвейер — claude, прямой — свой харнесс."""
+        """В образце у каждой записи есть argv автостарта: конвейер — claude."""
         normalized = {record["key"]: record for record in routes_mod.validate(self.raw)}
         pipeline_cmd = None
         for raw in self.raw["routes"]:
@@ -149,8 +141,6 @@ class RepoRoutesFileTests(unittest.TestCase):
                     pipeline_cmd = raw["command"]
                 else:
                     self.assertEqual(raw["command"], pipeline_cmd, raw["key"])
-            else:
-                self.assertNotEqual(raw["command"][0], "claude", raw["key"])
 
     def test_web_src_has_no_embedded_route_tables(self) -> None:
         offenders: list[str] = []
@@ -179,7 +169,7 @@ class ValidateTests(unittest.TestCase):
     # -- key ---------------------------------------------------------------
 
     def test_key_duplicate(self) -> None:
-        second = {**direct_record(), "key": "demo-pipeline"}
+        second = {**swarm_record(), "key": "demo-pipeline"}
         self.check_error(document(pipeline_record(), second), "routes[1].key", "дубликат")
 
     def test_key_uppercase(self) -> None:
@@ -231,20 +221,18 @@ class ValidateTests(unittest.TestCase):
     def test_icon_unknown_level_keeps_other_records(self) -> None:
         """Битая запись не мешает остальным: файл валиден целиком (приёмка 1)."""
         bad = {**pipeline_record(), "key": "bad-pipeline", "icon": "xhihg"}
-        good = {**direct_record(), "icon": "direct"}
+        good = {**swarm_record(), "icon": "direct"}
         normalized, warnings = self.validate_with_warnings(document(bad, good))
         self.assertEqual([r["key"] for r in normalized], ["bad-pipeline", "dsh"])
-        self.assertEqual(normalized[1], {"key": "dsh", "kind": "direct", "title": "dsh",
-                                         "hint": "", "visible": True, "icon": "direct",
-                                         "harness": "dsh", "command": None})
+        self.assertEqual(normalized[1], swarm_normalized(icon="direct"))
         self.assertEqual(len(warnings), 1)
         self.assertIn("routes[0].icon", warnings[0])
 
     def test_icon_unknown_levels_accumulate_warnings(self) -> None:
         first = {**pipeline_record(), "key": "xhigh-pipeline", "icon": "xhihg"}
-        second = {**direct_record(), "icon": "dirct"}
+        second = {**swarm_record(), "key": "low-solo", "icon": "dirct"}
         normalized, warnings = self.validate_with_warnings(document(first, second))
-        self.assertEqual([r["icon"] for r in normalized], ["xhigh", "direct"])
+        self.assertEqual([r["icon"] for r in normalized], ["xhigh", "low"])
         self.assertEqual(len(warnings), 2)
         self.assertIn("routes[0].icon", warnings[0])
         self.assertIn("routes[1].icon", warnings[1])
@@ -278,8 +266,15 @@ class ValidateTests(unittest.TestCase):
                 normalized = routes_mod.validate(document({**pipeline_record(), "key": key}))
                 self.assertEqual(normalized[0]["icon"], level)
 
-    def test_icon_falls_back_for_direct_by_kind(self) -> None:
-        self.assertEqual(routes_mod.validate(document(direct_record()))[0]["icon"], "direct")
+    def test_icon_fallback_ignores_kind(self) -> None:
+        """Уровень — только из префикса ключа, у обоих видов (listik-ar8v)."""
+        cases = (("xhigh-pipeline", "xhigh"), ("low-pipeline", "low"),
+                 ("opus-pipeline", None), ("pidi", None))
+        for kind in ("pipeline", "swarm"):
+            for key, level in cases:
+                with self.subTest(kind=kind, key=key):
+                    self.assertEqual(routes_mod.fallback_icon(kind, key), level)
+        self.assertIsNone(routes_mod.validate(document(swarm_record()))[0]["icon"])
 
     def test_icon_fallback_has_nothing_for_unknown_prefix(self) -> None:
         for key in ("universal-pipeline", "demo-pipeline"):
@@ -335,24 +330,20 @@ class ValidateTests(unittest.TestCase):
     # -- harness -----------------------------------------------------------
 
     def test_pipeline_with_harness(self) -> None:
-        self.check_error(document({**pipeline_record(), "harness": "dsh"}), "routes[0].harness")
+        message = self.check_error(document({**pipeline_record(), "harness": "dsh"}),
+                                   "routes[0].harness")
+        self.assertIn("лишнее поле", message)
 
-    def test_direct_with_roles(self) -> None:
-        self.check_error(document({**direct_record(), "roles": pipeline_record()["roles"]}),
-                         "routes[0].roles")
+    def test_swarm_with_harness_is_extra_field(self) -> None:
+        message = self.check_error(document({**swarm_record(), "harness": "dsh"}),
+                                   "routes[0].harness")
+        self.assertIn("лишнее поле", message)
 
-    def test_direct_without_harness(self) -> None:
-        record = direct_record()
-        del record["harness"]
-        self.check_error(document(record), "routes[0].harness")
-
-    def test_harness_any_key(self) -> None:
-        # listik-2gry: harness — любой ключ по форме (держатель agent:<key>),
-        # списком HARNESSES прямой маршрут больше не ограничен.
-        record = routes_mod.validate(document({**direct_record(), "harness": "human"}))[0]
-        self.assertEqual(record["harness"], "human")
-        self.check_error(document({**direct_record(), "harness": "Not A Key"}),
-                         "routes[0].harness")
+    def test_direct_kind_names_allowed_kinds(self) -> None:
+        record = {**swarm_record(), "kind": "direct"}
+        del record["roles"]
+        message = self.check_error(document(record), "routes[0].kind", '"pipeline"', '"swarm"')
+        self.assertNotIn('"direct"', message)
 
     # -- лишние поля --------------------------------------------------------
 
@@ -420,11 +411,10 @@ class ValidateTests(unittest.TestCase):
         self.assertNotIn("strip", normalized[0])
         self.assertEqual(warnings, [])
 
-    def test_valid_direct_record(self) -> None:
-        normalized = routes_mod.validate(document(direct_record()))
-        self.assertEqual(normalized[0]["command"], None)
-        self.assertNotIn("roles", normalized[0])
-        self.assertNotIn("strip", normalized[0])
+    def test_valid_swarm_record(self) -> None:
+        normalized = routes_mod.validate(document(swarm_record()))
+        self.assertEqual(normalized[0], swarm_normalized())
+        self.assertNotIn("harness", normalized[0])
 
     def test_hint_defaults_to_empty_string(self) -> None:
         record = pipeline_record()
@@ -574,7 +564,7 @@ class FileLoadTests(TempDbTestCase):
         self.assertTrue(state.ok)
         self.assertIsNone(state.error)
         self.assertEqual(state.path, str(self.source))
-        self.assertEqual(len(state.routes), 14)
+        self.assertEqual(len(state.routes), 9)
         self.assertEqual(sorted(state.by_key), sorted(r["key"] for r in state.routes))
         self.assertEqual(state.warnings, [])
 
@@ -591,13 +581,13 @@ class FileLoadTests(TempDbTestCase):
         посчитан фолбэк по ключу и есть `icon_error` для доски.
         """
         bad = {**pipeline_record(), "key": "xhigh-pipeline", "icon": "xhihg"}
-        path = self._write_routes([bad, direct_record()])
+        path = self._write_routes([bad, swarm_record()])
         with contextlib.redirect_stderr(io.StringIO()) as err:
             state = routes_mod.load(path)
         self.assertTrue(state.ok)
         self.assertIsNone(state.error)
         self.assertEqual([r["key"] for r in state.routes], ["xhigh-pipeline", "dsh"])
-        self.assertEqual([r["icon"] for r in state.routes], ["xhigh", "direct"])
+        self.assertEqual([r["icon"] for r in state.routes], ["xhigh", None])
         self.assertEqual(sorted(state.by_key), ["dsh", "xhigh-pipeline"])
         self.assertEqual(len(state.warnings), 1)
         self.assertIn("routes[0].icon", state.warnings[0])
@@ -615,18 +605,18 @@ class FileLoadTests(TempDbTestCase):
         self.source.write_text("{ битый", encoding="utf-8")
         current = routes_mod.state(self.conn)
         self.assertTrue(current.ok)
-        self.assertEqual(len(current.routes), 14)
+        self.assertEqual(len(current.routes), 9)
         self.assertEqual(current.path, str(paths.DB_PATH))
         self.assertEqual(current.warnings, [])
         with contextlib.redirect_stderr(io.StringIO()):
             self.assertTrue(routes_store.ensure_imported(self.conn).get("skipped"))
-        self.assertEqual(len(routes_mod.state(self.conn).routes), 14)
+        self.assertEqual(len(routes_mod.state(self.conn).routes), 9)
 
     def test_database_update_is_visible_immediately(self) -> None:
         routes_store.import_file(self.conn, self.source)
-        self.conn.execute("UPDATE routes SET title = ? WHERE key = 'pi-deepseek'", ("Проверка",))
+        self.conn.execute("UPDATE routes SET title = ? WHERE key = 'cross-pipeline'", ("Проверка",))
         self.conn.commit()
-        self.assertEqual(routes_mod.state(self.conn).by_key["pi-deepseek"]["title"], "Проверка")
+        self.assertEqual(routes_mod.state(self.conn).by_key["cross-pipeline"]["title"], "Проверка")
 
     def test_database_error_is_reported(self) -> None:
         with mock.patch.object(routes_store, "list_routes",
@@ -688,7 +678,7 @@ class RoutesApiTests(TempDbTestCase):
         self.assertTrue(data["ok"])
         self.assertIsNone(data["error"])
         self.assertEqual(data["path"], str(paths.DB_PATH))
-        self.assertEqual(len(data["routes"]), 14)
+        self.assertEqual(len(data["routes"]), 9)
         for record in data["routes"]:
             self.assertIn("command", record)
             self.assertNotIn("strip", record)
@@ -696,7 +686,7 @@ class RoutesApiTests(TempDbTestCase):
         icons = {record["key"]: record["icon"] for record in data["routes"]}
         self.assertEqual(icons["xhigh-pipeline"], "xhigh")
         self.assertEqual(icons["medium-pipeline"], "medium")
-        self.assertEqual(icons["pi-deepseek"], "direct")
+        self.assertEqual(icons["nano-pipeline"], "xlow")
         self.assertIsNone(icons["opus-pipeline"])
 
     def test_routes_with_bad_icon_import_fallback_and_keep_all_records(self) -> None:
@@ -704,7 +694,7 @@ class RoutesApiTests(TempDbTestCase):
         bad = {**pipeline_record(), "key": "xhigh-pipeline", "icon": "xhihg"}
         plain = {**pipeline_record(), "key": "universal-pipeline"}
         self.target.parent.mkdir(parents=True)
-        self.target.write_text(json.dumps({"version": 1, "routes": [bad, plain, direct_record()]},
+        self.target.write_text(json.dumps({"version": 1, "routes": [bad, plain, swarm_record()]},
                                           ensure_ascii=False), encoding="utf-8")
         with contextlib.redirect_stderr(io.StringIO()) as err:
             report = routes_store.import_file(self.conn, self.target)
@@ -722,7 +712,7 @@ class RoutesApiTests(TempDbTestCase):
         self.assertNotIn("icon_error", records["xhigh-pipeline"])
         self.assertIsNone(records["universal-pipeline"]["icon"])
         self.assertNotIn("icon_error", records["universal-pipeline"])
-        self.assertEqual(records["dsh"]["icon"], "direct")
+        self.assertIsNone(records["dsh"]["icon"])
         for record in records.values():
             self.assertIn("command", record)
             self.assertIsNone(record["command"])
@@ -738,7 +728,7 @@ class RoutesApiTests(TempDbTestCase):
         records = [
             {**pipeline_record(), "key": "low-pipeline"},
             {**pipeline_record(), "key": "universal-pipeline"},
-            direct_record(),
+            swarm_record(),
         ]
         self.target.parent.mkdir(parents=True)
         self.target.write_text(json.dumps({"version": 1, "routes": records}, ensure_ascii=False),
@@ -747,7 +737,7 @@ class RoutesApiTests(TempDbTestCase):
         status, payload = self._get("/api/routes", token=self.TOKEN)
         self.assertEqual(status, 200)
         icons = {record["key"]: record["icon"] for record in payload["data"]["routes"]}
-        self.assertEqual(icons, {"low-pipeline": "low", "universal-pipeline": None, "dsh": "direct"})
+        self.assertEqual(icons, {"low-pipeline": "low", "universal-pipeline": None, "dsh": None})
 
     def test_handle_routes_reports_database_error(self) -> None:
         with mock.patch.object(routes_store, "list_routes",
@@ -772,15 +762,15 @@ class RoutesApiTests(TempDbTestCase):
         self.assertEqual(status, 200)
         data = payload["data"]
         self.assertTrue(data["ok"])
-        self.assertEqual(len(data["routes"]), 14)
-        self.assertEqual([r["key"] for r in data["routes"]][-5:], DIRECT_KEYS)
+        self.assertEqual(len(data["routes"]), 9)
+        self.assertEqual([r["key"] for r in data["routes"]], EXPECTED_KEYS)
         self.assertTrue(all("command" in r for r in data["routes"]))
 
     def test_invisible_records_are_returned(self) -> None:
         hidden = {**pipeline_record(), "key": "hidden-pipeline", "visible": False,
                   "command": ["run", "{task_id}"]}
         self.target.parent.mkdir(parents=True)
-        self.target.write_text(json.dumps({"version": 1, "routes": [hidden, direct_record()]},
+        self.target.write_text(json.dumps({"version": 1, "routes": [hidden, swarm_record()]},
                                           ensure_ascii=False), encoding="utf-8")
         routes_store.import_file(self.conn, self.target)
         status, payload = self._get("/api/routes", token=self.TOKEN)
@@ -797,15 +787,15 @@ class RoutesApiTests(TempDbTestCase):
         status, payload = self._get("/api/routes", token=self.TOKEN)
         self.assertEqual(status, 200)
         self.assertTrue(payload["data"]["ok"])
-        self.assertEqual(len(payload["data"]["routes"]), 14)
+        self.assertEqual(len(payload["data"]["routes"]), 9)
 
     def test_database_change_reaches_live_http_without_restart(self) -> None:
         self._init_from_repo()
-        self.conn.execute("UPDATE routes SET title = ? WHERE key = ?", ("Проверка", "pi-deepseek"))
+        self.conn.execute("UPDATE routes SET title = ? WHERE key = ?", ("Проверка", "cross-pipeline"))
         self.conn.commit()
         status, payload = self._get("/api/routes", token=self.TOKEN)
         self.assertEqual(status, 200)
-        self.assertEqual(next(r for r in payload["data"]["routes"] if r["key"] == "pi-deepseek")
+        self.assertEqual(next(r for r in payload["data"]["routes"] if r["key"] == "cross-pipeline")
                          ["title"], "Проверка")
 
     def test_health_reports_routes(self) -> None:
@@ -817,7 +807,7 @@ class RoutesApiTests(TempDbTestCase):
         self.assertTrue(state["ok"])
         self.assertIsNone(state["error"])
         self.assertEqual(state["path"], str(paths.DB_PATH))
-        self.assertEqual(state["count"], 14)
+        self.assertEqual(state["count"], 9)
 
     def test_health_database_error_is_reported(self) -> None:
         with mock.patch.object(routes_store, "list_routes",

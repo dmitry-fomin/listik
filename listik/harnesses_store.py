@@ -8,7 +8,7 @@
 
 Источник правды — только таблица: сиды (`SEEDS`) ввозятся один раз при `db.init`
 (`INSERT … ON CONFLICT DO NOTHING` — правки человека не затираются). Читают
-каталог доска (`GET /api/harnesses`), прямой маршрут и рой (держатель `agent:<key>`)
+каталог доска (`GET /api/harnesses`), лаунчер роя (держатель `agent:<key>`)
 и `routes_store` при проверке ролей `kind=swarm`.
 """
 from __future__ import annotations
@@ -44,7 +44,8 @@ SWARM_PROMPT = (
     "на приёмке — «зелёный» или «красный» (список правок — строками выше)."
 )
 
-#: Промпт прямой выдачи по умолчанию — тот же, что у прямых маршрутов поставки.
+#: Промпт харнесса по умолчанию для самостоятельной работы по протоколу AGENTS.md;
+#: рой его не использует.
 DIRECT_PROMPT = (
     "Задача {task_id} (проект {project}) уже выдана тебе: Listik поставил этап "
     "s1-spec и держателя. Работай по протоколу из AGENTS.md. Первое действие, до "
@@ -65,7 +66,7 @@ def _prompt(template: str, harness: str) -> str:
 
 
 #: Поставка: ключи — имена держателей (`agent:<key>`), `argv`/`prompt` — шаблон
-#: по умолчанию для прямого маршрута и роли роя. `me` — человек: команды нет.
+#: харнесса по умолчанию. `me` — человек: команды нет.
 SEEDS: list[dict] = [
     {"key": "claude", "label": "claude", "hint": "Claude Code · claude -p",
      "icon": "claude",
@@ -161,7 +162,7 @@ def get(conn: sqlite3.Connection, key: str) -> dict:
 
 
 def by_key(conn: sqlite3.Connection, key: str | None) -> dict | None:
-    """Запись или None — для проверок ссылок (роль роя, держатель прямого)."""
+    """Запись или None — для проверок ссылок (роль роя)."""
     if not key:
         return None
     row = conn.execute(
@@ -176,15 +177,11 @@ def list_harnesses(conn: sqlite3.Connection) -> list[dict]:
 
 
 def used_by(conn: sqlite3.Connection, key: str) -> list[dict]:
-    """Где харнесс задействован: прямые маршруты и роли маршрутов роя."""
+    """Где харнесс задействован: роли маршрутов роя."""
     out: list[dict] = []
     for row in conn.execute(
-            "SELECT key, kind, harness, roles, driver FROM routes "
-            "WHERE harness = ? OR roles LIKE ?",
-            (key, f'%"{key}"%')).fetchall():
-        if row["kind"] == "direct" and row["harness"] == key:
-            out.append({"route": row["key"], "kind": "direct", "role": None})
-            continue
+            "SELECT key, kind, roles, driver FROM routes WHERE roles LIKE ?",
+            (f'%"{key}"%',)).fetchall():
         swarm = row["kind"] == "swarm" or row["driver"] == "swarm"
         if swarm and row["roles"]:
             try:

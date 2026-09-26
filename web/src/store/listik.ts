@@ -20,7 +20,6 @@ import type {
   BoardColumn,
   CommentKind,
   DepInfo,
-  DirectRouteCreate,
   Harness,
   HarnessCreate,
   HarnessPatch,
@@ -187,9 +186,8 @@ const routesSettingsError = ref<string | null>(null)
 const routeCreateConflict = ref(false)
 
 /**
- * Каталог харнессов (`GET /api/harnesses`, listik-2gry): держатели прямых
- * маршрутов и исполнители ролей роя. Грузится лениво (вкладка «Харнессы» в
- * настройках и пикер маршрутов в «Новой задаче»), своё состояние ошибки —
+ * Каталог харнессов (`GET /api/harnesses`, listik-2gry): исполнители ролей
+ * роя. Грузится лениво (вкладка «Харнессы» в настройках и пикер маршрутов в «Новой задаче»), своё состояние ошибки —
  * алерт вкладки не смешивается с `routesError`.
  */
 const harnesses = ref<Harness[]>([])
@@ -1085,14 +1083,13 @@ async function patchRoute(key: string, body: RoutePatch): Promise<RouteDef | nul
 }
 
 /**
- * Завести маршрут (`POST /api/routes`, `kind="direct"` или `kind="swarm"` —
- * listik-2gry). Ответ — созданная запись: в ней есть `key`, по которому список
- * выбирает и открывает новую карточку. Ошибка — `null`, текст в
- * `routesSettingsError`; `409` дополнительно отмечается в `routeCreateConflict`,
+ * Завести маршрут роя (`POST /api/routes`, `kind="swarm"`, listik-2gry).
+ * Ответ — созданная запись: в ней есть `key`, по которому список выбирает
+ * и открывает новую карточку. Ошибка — `null`, текст в `routesSettingsError`; `409` дополнительно отмечается в `routeCreateConflict`,
  * чтобы окно подсказало про поле «Ключ». Список перечитывается после успеха
  * (как у `patchRoute`): в ответе нет `skill_path`/`skill_missing`.
  */
-async function createRoute(body: DirectRouteCreate | SwarmRouteCreate): Promise<RouteDef | null> {
+async function createRoute(body: SwarmRouteCreate): Promise<RouteDef | null> {
   routeCreateConflict.value = false
   return withLoading(routesSettingsLoading, async () => {
     const created = await tryRequest(() => api.createRoute(body), (error) => {

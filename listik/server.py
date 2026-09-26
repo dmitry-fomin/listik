@@ -684,7 +684,7 @@ def handle(method: str, path: str, query: dict, body: dict, authed: bool = False
 
     if path == "/api/harnesses":
         # Каталог харнессов (listik-2gry): список, у каждого — «где используется»
-        # (прямые маршруты и роли маршрутов роя). Заведение — POST.
+        # (роли маршрутов роя). Заведение — POST.
         if method == "GET":
             harnesses = harnesses_store.list_harnesses(conn)
             for record in harnesses:
@@ -737,12 +737,11 @@ def handle(method: str, path: str, query: dict, body: dict, authed: bool = False
         if method == "GET":
             return 200, routes_store.routes_response(conn)
         if method == "POST":
-            # Три случая по полю `kind`: конвейер (нет поля или `"pipeline"`),
-            # прямой маршрут (`"direct"`) и рой (`"swarm"`). Всё остальное —
-            # довод запроса.
+            # Два случая по полю `kind`: конвейер (нет поля или `"pipeline"`) и
+            # рой (`"swarm"`). Всё остальное — довод запроса.
             kind = "pipeline" if "kind" not in body else body["kind"]
-            if not isinstance(kind, str) or kind not in ("pipeline", "direct", "swarm"):
-                raise ApiError(400, 'kind: допустимы "pipeline", "direct" или "swarm"',
+            if not isinstance(kind, str) or kind not in routes_mod.KINDS:
+                raise ApiError(400, 'kind: допустимы "pipeline" или "swarm"',
                                code=errors_mod.BAD_ARGUMENT)
             if kind == "swarm":
                 # Маршрут роя: без `command` (роет `stage_launch` по ролям), без
@@ -777,37 +776,6 @@ def handle(method: str, path: str, query: dict, body: dict, authed: bool = False
                                    code=errors_mod.BAD_ARGUMENT) from exc
                 publish("route", {"key": key, "action": "created"})
                 return 201, record
-            if kind == "direct":
-                unknown = [k for k in body
-                           if k not in ("kind", "key", "title", "hint", "icon",
-                                        "harness", "command", "visible")]
-                if unknown:
-                    raise ApiError(400, f"поле нельзя передать: {unknown[0]}",
-                                   code=errors_mod.BAD_ARGUMENT)
-                key = str(need(body, "key")).strip()
-                title = need(body, "title")
-                harness = need(body, "harness")
-                command = need(body, "command")
-                # `icon` нет в теле — уровень прямой записи; явный `null` — без иконки.
-                icon = body["icon"] if "icon" in body else "direct"
-                try:
-                    routes_store.get_route(conn, key)
-                except errors_mod.NotFound:
-                    pass
-                else:
-                    raise ApiError(409, f"маршрут {key!r} уже есть",
-                                   code=errors_mod.CONFLICT)
-                try:
-                    record = routes_store.create_route(
-                        conn, key=key, kind="direct", title=title,
-                        hint=body.get("hint", ""), icon=icon,
-                        visible=body.get("visible", False), harness=harness,
-                        command=command)
-                except ValueError as exc:
-                    raise ApiError(400, errors_mod.message_of(exc),
-                                   code=errors_mod.BAD_ARGUMENT) from exc
-                publish("route", {"key": key, "action": "created"})
-                return 201, record
             unknown = [k for k in body if k not in ("key", "roles", "kind")]
             if unknown:
                 raise ApiError(400, f"поле нельзя передать: {unknown[0]}",
@@ -835,7 +803,7 @@ def handle(method: str, path: str, query: dict, body: dict, authed: bool = False
                 record = routes_store.create_route(
                     conn, key=key, kind="pipeline", title=info["title"], hint=info["hint"],
                     icon=routes_mod.fallback_icon("pipeline", key), visible=False,
-                    harness=None, command=None, roles=roles)
+                    command=None, roles=roles)
             except ValueError as exc:
                 raise ApiError(400, errors_mod.message_of(exc),
                                code=errors_mod.BAD_ARGUMENT) from exc

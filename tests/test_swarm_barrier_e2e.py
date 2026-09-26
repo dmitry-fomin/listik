@@ -26,7 +26,7 @@ from pathlib import Path
 from listik import deps as deps_mod
 from listik import store
 from listik import worktree as worktree_mod
-from tests.test_swarm_e2e import LISTIK_BIN, REPO_DIR, SwarmE2ECase, _WORKER_SRC
+from tests.test_swarm_e2e import REPO_DIR, SwarmE2ECase, _WORKER_SRC
 
 FAKE_ARBITER = REPO_DIR / "swarm" / "test" / "fixtures" / "fake-arbiter.mjs"
 
@@ -40,8 +40,9 @@ GREEN_INTEGRATION = [[sys.executable, "-c", "raise SystemExit(0)"]]
 RED_INTEGRATION = [[sys.executable, "-c", "print('boom'); raise SystemExit(1)"]]
 ARBITER_CMD = ["node", str(FAKE_ARBITER), "{prompt}", "{files}", "m/{model}"]
 
-# Воркер сценария барьера: поведение `_WORKER_SRC` (9hcc.d) плюс перезапись
-# `shared.txt` единственной строкой `<id>`, когда в окружении `FAKE_SHARED=1` --
+# Воркер сценария барьера: поведение `_WORKER_SRC` (роли этапа, w7ge.d) плюс перезапись
+# `shared.txt` единственной строкой `<id>`, когда в окружении `FAKE_SHARED=1` -- только у
+# роли `impl` (единственная строка `git add -A` стоит после выхода остальных ролей) и
 # перед `git add -A`, чтобы попасть в тот же коммит.
 _BARRIER_WORKER_SRC = _WORKER_SRC.replace(
     'git("add", "-A")',
@@ -60,9 +61,7 @@ class SwarmBarrierE2ECase(SwarmE2ECase):
 
     def setUp(self) -> None:
         super().setUp()
-        self.worker_py.write_text(
-            _BARRIER_WORKER_SRC.replace("__LISTIK_BIN__", str(LISTIK_BIN).replace("\\", "\\\\")),
-            encoding="utf-8")
+        self.worker_py.write_text(_BARRIER_WORKER_SRC, encoding="utf-8")
 
     # ------------------------------------------------------------ уборка интеграции/арбитра
     #
@@ -245,6 +244,7 @@ class WaveMergesThenNextFromNewHeadTests(SwarmBarrierE2ECase):
             self.assertEqual(recs[tid]["files"], [f"{tid}.txt"], (tid, recs[tid]))
             self.assertEqual(recs[tid]["outside"], [], (tid, recs[tid]))
             row = self.row(tid)
+            self.assertEqual(row["generation"], 4, tid)  # spec, critic, impl, judge
             self.assertFalse(row["worktree"], tid)
             self.assertFalse(row["branch"], tid)
             self.assertFalse(self.branch_exists(f"task/{tid}"), tid)
@@ -302,6 +302,7 @@ class ArbiterResolvesConflictTests(SwarmBarrierE2ECase):
             else:
                 clean_side = tid
             self.assertFalse(self.row(tid)["needs_owner"], tid)
+            self.assertEqual(self.row(tid)["generation"], 4, tid)  # spec, critic, impl, judge
 
         self.assertIsNotNone(arbiter_side, "ни одна сторона не отмечена arbiter: true")
         self.assertIsNotNone(clean_side)
@@ -349,6 +350,7 @@ class RedIntegrationHaltThenResumeTests(SwarmBarrierE2ECase):
         for tid in (a["id"], b["id"]):
             row = self.row(tid)
             self.assertEqual(row["status"], "done", tid)
+            self.assertEqual(row["generation"], 4, tid)  # spec, critic, impl, judge
             self.assertEqual(len(self.marked_records(tid, MERGED_MARK)), 1, tid)
             self.assertTrue(row["worktree"], tid)
             self.assertTrue(self.branch_exists(f"task/{tid}"), tid)
@@ -397,6 +399,7 @@ class RedIntegrationHaltThenResumeTests(SwarmBarrierE2ECase):
 
         for tid in (a["id"], b["id"], c["id"]):
             row = self.row(tid)
+            self.assertEqual(row["generation"], 4, tid)  # spec, critic, impl, judge
             self.assertFalse(row["worktree"], tid)
             self.assertFalse(row["branch"], tid)
 
@@ -416,7 +419,7 @@ class UnfreezeAfterOwnerMergeTests(SwarmBarrierE2ECase):
     """п.6: разморозка открытой задачи после слияния владельца."""
 
     def test_unfreeze_after_owner_merge(self):
-        a_task = self.make_scenario_task("A", route=None)
+        a_task = self.make_scenario_task("A", route="fake-low")
         b_task = self.make_scenario_task("B", route="fake-low")
         store.update_task(self.conn, b_task["id"], write_scope=[f"{b_task['id']}.txt"])
         self.close_task_manually(a_task["id"], port_label="port:5170")
@@ -449,7 +452,10 @@ class UnfreezeAfterOwnerMergeTests(SwarmBarrierE2ECase):
         labels = json.loads(row_b["labels"] or "[]")
         self.assertFalse(any(l.startswith("frozen-by:") for l in labels), labels)
         self.assertEqual(row_b["status"], "done")
-        self.assertEqual(row_b["generation"], 1)
+        self.assertEqual(row_b["generation"], 4)  # spec, critic, impl, judge
+        self.assertEqual(self.launch_stages(b_id),
+                         ["s1-spec", "s2-review", "s3-impl", "s4-judge"], self.journal_texts(b_id))
+        self.assertEqual(len(self.events(b_id, "revoke")), 0)
 
         content_a = self.git("show", f"main:{a_task['id']}.txt").strip()
         self.assertEqual(content_a, a_task["id"])
@@ -477,7 +483,7 @@ class UnfreezeConflictThenArbiterOnMergeTests(SwarmBarrierE2ECase):
     при финальном слиянии закрытой задачи разруливает арбитр."""
 
     def test_unfreeze_conflict_then_arbiter_on_merge(self):
-        a_task = self.make_scenario_task("A", route=None)
+        a_task = self.make_scenario_task("A", route="fake-low")
         b_task = self.make_scenario_task("B", route="fake-low")
         store.update_task(self.conn, b_task["id"], write_scope=[f"{b_task['id']}.txt"])
 
@@ -514,7 +520,10 @@ class UnfreezeConflictThenArbiterOnMergeTests(SwarmBarrierE2ECase):
 
         row_b = self.row(b_id)
         self.assertEqual(row_b["status"], "done")
-        self.assertEqual(row_b["generation"], 1)
+        self.assertEqual(row_b["generation"], 4)  # spec, critic, impl, judge
+        self.assertEqual(self.launch_stages(b_id),
+                         ["s1-spec", "s2-review", "s3-impl", "s4-judge"], self.journal_texts(b_id))
+        self.assertEqual(len(self.events(b_id, "revoke")), 0)
 
         arb_records = self.marked_records(b_id, ARBITER_MARK)
         self.assertEqual(len(arb_records), 1, arb_records)
@@ -535,7 +544,7 @@ class DirtyClosedTreeGatesWithoutHaltTests(SwarmBarrierE2ECase):
     """п.8: грязное дерево закрытой задачи -- гейт запусков без карточки-стоп."""
 
     def test_dirty_closed_tree_gates_without_halt(self):
-        a_task = self.make_scenario_task("A", route=None)
+        a_task = self.make_scenario_task("A", route="fake-low")
         c_task = self.scenario_task("C", route="fake-low")
         store.add_dep(self.conn, c_task["id"], a_task["id"], dep_type="blocks", created_by="dmitry")
         self.close_task_manually(a_task["id"], port_label="port:5170", dirty=True)

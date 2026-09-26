@@ -97,13 +97,13 @@ Database migrations exist as two parallel mechanisms — don't confuse them:
   the "database swapped under a running server" case (`_db_replaced` in `/api/health` and
   `listik status`).
 - `listik/routes_store.py` (+ `listik/skills.py`) — the `routes` table backing task launch
-  presets: pipeline conveyor pipelines and direct harnesses, plus the command each launches.
+  presets: pipeline conveyor pipelines and swarm routes (the roles each launches).
   `routes.json` (root of the repo) is the install-time seed only — it fills an empty table once
   at `init`/serve, and nothing re-reads or reconciles it; the table is what both the server and
   CLI actually read and write (`GET/PATCH/POST/DELETE /api/routes`, `/api/routes/reorder`,
   `/api/routes/sync`, `/api/routes/launchers`, `listik routes`). Pipeline roles (`roles`) live in
   the db and are edited from the board's route settings and over HTTP (`PATCH`/`POST /api/routes`,
-  listik-syu8); `kind`/`key`/`harness`/`position` stay unwritable. A role cell is `{provider, label, title}`
+  listik-syu8); `kind`/`key`/`position` stay unwritable. A role cell is `{provider, label, title}`
   plus the optional `skill` (a launcher skill, `плагин:скил` — e.g. `pi:pi-delegate`) and its
   flat `params`; the same validation (`routes._validate_roles`) serves the seed file and the HTTP
   path. `listik/skills.py` is a

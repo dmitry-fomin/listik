@@ -1,4 +1,4 @@
-<!-- listik-protocol: 3 -->
+<!-- listik-protocol: 4 -->
 
 ## Listik — harness protocol
 
@@ -70,11 +70,6 @@ on an open blocker, another holder, or a busy worktree; `--force` can't take ano
 - **FAIL verdict return** keeps the holder: the judge claims `s4-judge` under its own name and writes
   the verdict itself; if it held the card under another name it does `release <id>` so the implementer
   can `claim`; in a single session just continue.
-
-**Direct autostart** (a `kind: direct` route launched by Listik): the server has already issued the card
-to you — stage `s1-spec`, holder = your harness. Your very first action is `claim <id> --holder <self>`,
-before reading code. Right before the first code edit run `stage <id> --to s3-impl` yourself; finish with
-`done`.
 
 **Revoked authority.** If any command answers with code `revoked`, stop immediately: don't commit,
 don't retry the command, don't `claim` again — Listik relaunched the card with a new generation and

@@ -81,11 +81,14 @@ const KEY_RE = /^[a-z0-9][a-z0-9-]*$/
 
 /**
  * Ключ харнесса держателя для глифа и подписи; `null` — держателя нет,
- * `'human'` — человек. Зеркалит `actors.resolve`: `agent:<key>` — агент с
- * ключом каталога (неизвестному — общий `bolt`, не «человек»); голое имя —
- * сначала подсказки `AGENT_HINTS`, потом ключ с фирменным глифом (`devin`,
- * `pi-glm`) или ключ уже загруженного каталога (`catalog`); остальное —
- * человек. `catalog` — ключи `GET /api/harnesses`, когда они уже есть в сторе.
+ * `'human'` — человек. Зеркалит `actors.resolve`, порядок разбора тот же:
+ * `me`/`human` — человек; затем подсказки `HINTS` (состав и порядок совпадают
+ * с серверным `AGENT_HINTS`) по любому ключу, включая `agent:<key>`; затем
+ * ветка `agent:<key>` — возвращает остаток как ключ каталога (пустой остаток
+ * или `me` — человек; неизвестному ключу — общий `bolt`, не «человек»);
+ * затем ключ с фирменным глифом (`devin`, `pi-glm`) или ключ уже загруженного
+ * каталога (`catalog`); остальное — человек. `catalog` — ключи
+ * `GET /api/harnesses`, когда они уже есть в сторе.
  */
 export function harnessOf(
   actor: string | null | undefined,
@@ -95,12 +98,12 @@ export function harnessOf(
   const key = actor.trim().toLowerCase()
   if (!key) return null
   if (key === 'me' || key === 'human') return 'human'
+  for (const [hint, harness] of HINTS) {
+    if (key.includes(hint)) return harness
+  }
   if (key.startsWith('agent:')) {
     const bare = key.slice(6)
     return bare && bare !== 'me' ? bare : 'human'
-  }
-  for (const [hint, harness] of HINTS) {
-    if (key.includes(hint)) return harness
   }
   const head = key.split('-', 1)[0]
   if (

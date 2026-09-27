@@ -19,7 +19,7 @@ import store from '@/store/listik'
 import type { Task } from '@/api/types'
 import { taskHealth } from '@/lib/health'
 import { stageCode } from '@/lib/stages'
-import { humanAge } from '@/lib/format'
+import { formatHours, humanAge } from '@/lib/format'
 import { markdownPlainText } from '@/lib/markdown'
 import { projectOf } from '@/lib/task-presentation'
 
@@ -120,7 +120,12 @@ function reasonText(task: Task): string {
     const by = task.holder_assigned_by_title ? ` (выдал ${task.holder_assigned_by_title})` : ''
     return `выдана ${task.holder_title}, но не взята ${task.assigned_age}${by}: claim от агента так и не пришёл — прогон не запустился?`
   }
-  return `держатель ${task.holder_title} без heartbeat ${task.idle_age} на ${code}; порог брошенности — 24 ч`
+  return `держатель ${task.holder_title} без heartbeat ${task.idle_age} на ${code}${staleTail()}`
+}
+
+function staleTail(): string {
+  const hours = store.stats.value?.stale_hours
+  return typeof hours === 'number' ? `; порог брошенности — ${formatHours(hours)}` : ''
 }
 
 function footerText(task: Task): string {

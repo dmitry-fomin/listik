@@ -6,8 +6,15 @@
  * всё, а не только доску, поэтому логично, что они рядом с маркой приложения,
  * а не в тулбаре конкретного вида (см. ProjectPicker.vue).
  */
+import { computed } from 'vue'
 import { UiChip } from '@zoloto585/facet'
 import store from '@/store/listik'
+import { formatHours } from '@/lib/format'
+
+const staleLabel = computed(() => {
+  const hours = store.stats.value?.stale_hours
+  return typeof hours === 'number' ? formatHours(hours) : 'порога'
+})
 
 function toggleHealth(value: 'dead' | 'at-risk', next: boolean): void {
   store.boardFilters.health = next ? value : ''
@@ -25,7 +32,7 @@ function toggleDeps(value: 'blocked' | 'ready', next: boolean): void {
         v-if="store.counts.value.dead > 0"
         size="sm"
         :label="`${store.counts.value.dead} брошена`"
-        hint="держатель молчит дольше суток или задача в работе без держателя"
+        :hint="`держатель молчит дольше ${staleLabel} или задача в работе без держателя`"
         :selected="store.boardFilters.health === 'dead'"
         @update:selected="(value) => toggleHealth('dead', value)"
       />

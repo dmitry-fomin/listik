@@ -39,8 +39,8 @@ const running = computed(() => stats.value?.running ?? [])
 
 const attention = computed(() => [
   { key: 'needs_owner', icon: 'user', label: 'Нужен автор', hint: 'ждут вашего решения', value: stats.value?.needs_owner ?? 0 },
-  { key: 'stale', icon: 'clock', label: 'Молчат > суток', hint: 'без событий 24 ч', value: stats.value?.stale ?? 0 },
-  { key: 'long_stage', icon: 'clock', label: 'Долго на этапе', hint: 'дольше 8 ч на этапе', value: stats.value?.long_stage ?? 0 },
+  { key: 'stale', icon: 'clock', label: `Молчат > ${formatHours(stats.value?.stale_hours)}`, hint: `без событий ${formatHours(stats.value?.stale_hours)}`, value: stats.value?.stale ?? 0 },
+  { key: 'long_stage', icon: 'clock', label: 'Долго на этапе', hint: `дольше ${formatHours(stats.value?.wip_warn_hours)} на этапе`, value: stats.value?.long_stage ?? 0 },
   { key: 'cycles', icon: 'refresh', label: 'Циклы блокеров', hint: 'задачи ждут друг друга', value: store.cycles.value.length },
 ])
 

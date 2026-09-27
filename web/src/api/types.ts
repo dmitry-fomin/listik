@@ -806,9 +806,13 @@ export interface Stats {
   closed_delta: number
   /** Закрытия по дням за 14 суток, от старых к свежим. */
   closed_by_day: { date: string; count: number }[]
-  /** В работе/на проверке дольше 8 ч на текущем этапе. */
+  /** В работе/на проверке дольше `wip_warn_hours` на текущем этапе. */
   long_stage: number
   running: Task[]
+  /** Порог брошенности, ч — из `config.toml [board]`. */
+  stale_hours: number
+  /** Порог «долго на этапе», ч — из `config.toml [board]`. */
+  wip_warn_hours: number
   generated_at: string
 }
 

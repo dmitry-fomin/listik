@@ -1998,6 +1998,9 @@ const server = createServer(async (request, response) => {
       by_orchestrator: [{ orchestrator: 'claude', title: 'claude', count: 2 }],
       stale: 1,
       needs_owner: 1,
+      long_stage: 0,
+      stale_hours: 24,
+      wip_warn_hours: 8,
       running: tasks.filter((item) => item.status === 'in_progress'),
       generated_at: new Date().toISOString(),
     })

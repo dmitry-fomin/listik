@@ -110,8 +110,8 @@ class GuardStillClosedTests(TempDbTestCase):
         task_id = store.create_task(self.conn, title="T", project="demo")["id"]
         before = self.conn.execute(
             "SELECT dispatch_id, generation FROM tasks WHERE id=?", (task_id,)).fetchone()
-        out = store.update_task(self.conn, task_id, generation=3, dispatch_id="d", actor="автор")
-        self.assertTrue(out["unchanged"])
+        with self.assertRaises(errors.BadArgument):
+            store.update_task(self.conn, task_id, generation=3, dispatch_id="d", actor="автор")
         after = self.conn.execute(
             "SELECT dispatch_id, generation FROM tasks WHERE id=?", (task_id,)).fetchone()
         self.assertEqual(before, after)
@@ -192,8 +192,9 @@ class HttpScopeTests(OwnerHttpCase):
         task = self.make_task(title="T")
         status, payload = self.api("PATCH", f"/api/tasks/{task['id']}",
                                    body={"generation": 9})
-        self.assertEqual(status, 200, payload)
-        self.assertEqual(payload["data"]["generation"], 0)
+        self.assertEqual(status, 400, payload)
+        self.assertEqual(payload["code"], "bad_argument")
+        self.assertEqual(self.get_task(task["id"])["generation"], 0)
 
 
 class McpScopeTests(TempDbTestCase):

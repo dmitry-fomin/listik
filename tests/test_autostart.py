@@ -665,14 +665,17 @@ class ServerPostTests(AutostartTestCase):
         self.join_tracker(task["id"])
         before = {name: self.row(task["id"])[name] for name in NINE}
 
-        with mock.patch.object(server, "publish"):
-            status, updated = server.handle(
-                "PATCH", f"/api/tasks/{task['id']}", {},
-                {"autostart": False, "launched_by": None,
-                 "launch_pid": 1, "launch_error": "подмена", "launch_exit_code": 42,
-                 "launch_log": "/tmp/подмена.log", "launch_finished_at": "2020-01-01T00:00:00Z",
-                 "launched_at": "2020-01-01T00:00:00Z"}, authed=True)
-        self.assertEqual(status, 200)
+        with self.assertRaises(server.ApiError) as ctx:
+            with mock.patch.object(server, "publish"):
+                server.handle(
+                    "PATCH", f"/api/tasks/{task['id']}", {},
+                    {"autostart": False, "launched_by": None,
+                     "launch_pid": 1, "launch_error": "подмена", "launch_exit_code": 42,
+                     "launch_log": "/tmp/подмена.log", "launch_finished_at": "2020-01-01T00:00:00Z",
+                     "launched_at": "2020-01-01T00:00:00Z"}, authed=True)
+        self.assertEqual(ctx.exception.status, 400)
+        self.assertEqual(ctx.exception.code, "bad_argument")
+        updated = self.row(task["id"])
         for name in NINE:
             self.assertEqual(updated[name], before[name], name)
 

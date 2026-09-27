@@ -146,6 +146,15 @@ class LocalModeErrorTests(CliErrorCase):
         self.assertIn("удерживается", err["message"])
         self.assert_clean_stderr(p)
 
+    def test_unknown_field_json(self) -> None:
+        # listik-3urk: опечатка в ключе правки — отказ, а не молчаливый no-op.
+        task = store.create_task(self.conn, title="проба", project="demo")["id"]
+        p = self.run_cli("set", task, "prority=1", "--json")
+        err = self.error_json(p)
+        self.assertEqual(err["code"], "bad_argument")
+        self.assertIn("prority", err["message"])
+        self.assertEqual(store.get_task(self.conn, task)["priority"], 2)
+
 
 class InternalErrorTests(CliErrorCase):
     """Пункт приёмки 3: непойманное исключение — JSON, трейсбек только в лог."""
@@ -229,6 +238,15 @@ class ApiErrorTests(TempDbTestCase):
         err = self.error_json(p)
         # HTTP-статус у claim — 400, но код сервер отдаёт по смыслу: conflict.
         self.assertEqual(err["code"], "conflict")
+
+    def test_unknown_field_from_api(self) -> None:
+        # listik-3urk: сервер отклоняет неизвестный ключ правки, а не отбрасывает его.
+        task = store.create_task(self.conn, title="проба", project="demo")["id"]
+        p = self.run_cli("set", task, "prority=1", "--json")
+        err = self.error_json(p)
+        self.assertEqual(err["code"], "bad_argument")
+        self.assertIn("prority", err["message"])
+        self.assertEqual(store.get_task(self.conn, task)["priority"], 2)
 
     def test_api_errors_carry_code(self) -> None:
         with self.assertRaises(server.ApiError) as ctx:

@@ -274,10 +274,11 @@ class RouteStoreTests(RoutesSeeded):
 
     def test_other_launch_fields_are_still_not_updatable(self) -> None:
         task = self.task(route="low-pipeline")
-        store.update_task(self.conn, task["id"], autostart=True, launched_by="listik",
-                          launch_pid=1, launch_error="подмена", launch_exit_code=42,
-                          launch_log="/tmp/подмена.log", launched_at="2020-01-01T00:00:00Z",
-                          launch_finished_at="2020-01-01T00:00:00Z")
+        with self.assertRaises(errors.BadArgument):
+            store.update_task(self.conn, task["id"], autostart=True, launched_by="listik",
+                              launch_pid=1, launch_error="подмена", launch_exit_code=42,
+                              launch_log="/tmp/подмена.log", launched_at="2020-01-01T00:00:00Z",
+                              launch_finished_at="2020-01-01T00:00:00Z")
         row = self.row(task["id"])
         for name in FROZEN_LAUNCH_FIELDS:
             if name == "autostart":
@@ -619,10 +620,13 @@ class RouteApiTests(RoutesSeeded):
         _, held = server.handle("GET", f"/api/tasks/{self.task['id']}", {}, {}, authed=True)
         self.assertIs(held["route_editable"], False)
 
-    def test_patch_still_ignores_other_launch_fields(self) -> None:
-        status, task = self.patch({"autostart": True, "launched_by": "listik", "launch_pid": 7,
-                                   "launch_error": "подмена"})
-        self.assertEqual(status, 200)
+    def test_patch_still_rejects_other_launch_fields(self) -> None:
+        with self.assertRaises(server.ApiError) as ctx:
+            self.patch({"autostart": True, "launched_by": "listik", "launch_pid": 7,
+                        "launch_error": "подмена"})
+        self.assertEqual(ctx.exception.status, 400)
+        self.assertEqual(ctx.exception.code, "bad_argument")
+        task = store.get_task(self.conn, self.task["id"])
         self.assertIs(task["autostart"], False)
         self.assertIsNone(task["launched_by"])
         self.assertIsNone(task["launch_pid"])

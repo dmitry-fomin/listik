@@ -11,6 +11,7 @@ import sqlite3
 
 from listik import db as db_mod
 from listik import deps as deps_mod
+from listik import errors
 from listik import store
 
 from tests.helpers import TempDbTestCase
@@ -122,9 +123,9 @@ class ScopeCardTests(TempDbTestCase):
 
     def test_fencing_fields_are_not_writable_via_update_task(self) -> None:
         task = store.create_task(self.conn, title="x", project="demo")
-        result = store.update_task(
-            self.conn, task["id"], generation=5, dispatch_id="x", actor="автор")
-        self.assertTrue(result.get("unchanged"))
+        with self.assertRaises(errors.BadArgument):
+            store.update_task(
+                self.conn, task["id"], generation=5, dispatch_id="x", actor="автор")
         row = self.conn.execute(
             "SELECT generation, dispatch_id FROM tasks WHERE id = ?",
             (task["id"],)).fetchone()

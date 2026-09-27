@@ -20,6 +20,7 @@ import unittest
 from unittest import mock
 
 from listik import db as db_mod
+from listik import errors
 from listik import import_writerllm
 from listik import mcp
 from listik import paths
@@ -229,19 +230,23 @@ class NoManualWriteTests(OrchestratorCase):
         patch.start()
         self.addCleanup(patch.stop)
 
-    def test_w1_update_task_ignores_field(self) -> None:
+    def test_w1_update_task_rejects_field(self) -> None:
         tid = self.new()
-        store.update_task(self.conn, tid, orchestrator="claude")
-        store.update_task(self.conn, tid, assignee="claude")
+        with self.assertRaises(errors.BadArgument):
+            store.update_task(self.conn, tid, orchestrator="claude")
+        with self.assertRaises(errors.BadArgument):
+            store.update_task(self.conn, tid, assignee="claude")
         self.assertIsNone(self.orchestrator(tid))
         self.assertNotIn("orchestrator", store.UPDATABLE)
         self.assertNotIn("assignee", store.UPDATABLE)
 
-    def test_w3_patch_ignores_field(self) -> None:
+    def test_w3_patch_rejects_field(self) -> None:
         tid = self.new()
         for body in ({"orchestrator": "claude"}, {"assignee": "claude"}):
-            status, _ = server.handle("PATCH", f"/api/tasks/{tid}", {}, body, authed=True)
-            self.assertEqual(status, 200, body)
+            with self.assertRaises(server.ApiError) as cm:
+                server.handle("PATCH", f"/api/tasks/{tid}", {}, body, authed=True)
+            self.assertEqual(cm.exception.status, 400, body)
+            self.assertEqual(cm.exception.code, "bad_argument", body)
             self.assertIsNone(self.orchestrator(tid), body)
 
     def test_w2_post_ignores_old_field(self) -> None:

@@ -1204,14 +1204,12 @@ def handle(method: str, path: str, query: dict, body: dict, authed: bool = False
                 fence_mod.guard(conn, tid, fence,
                                 op=fence_mod.OPS["http_route"]["PATCH/PUT /api/tasks/{id}"], args=body,
                                 actor=body.get("actor") or owner, harness=body.get("harness"))
-                # `route` — то же поле, что колонка `launch_route`: так маршрут
-                # называет создание задачи, доска шлёт его же. Смена разрешена
-                # только пока работа не началась — отказ даёт store (400).
-                fields = {k: v for k, v in body.items()
-                          if k in store.UPDATABLE or k == store.ROUTE_ALIAS}
-                if store.ROUTE_ALIAS in fields and store.ROUTE_FIELD not in fields:
-                    fields[store.ROUTE_FIELD] = fields.pop(store.ROUTE_ALIAS)
+                # Неизвестный ключ тела — 400 bad_argument до store; алиас `route`
+                # переводит в `launch_route` сама `update_task`.
                 try:
+                    store.check_update_fields(body, service=store.UPDATE_SERVICE_KEYS)
+                    fields = {k: v for k, v in body.items()
+                              if k not in store.UPDATE_SERVICE_KEYS}
                     task = store.update_task(conn, tid, actor=body.get("actor"),
                                              harness=body.get("harness"),
                                              note=body.get("note"), as_owner=owner,

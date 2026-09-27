@@ -472,6 +472,24 @@ UPDATABLE = {
 ROUTE_FIELD = "launch_route"
 ROUTE_ALIAS = "route"
 
+#: Служебные ключи тела PATCH и `listik set`: идут вместе с полями, но полями
+#: карточки не являются.
+UPDATE_SERVICE_KEYS = frozenset({"actor", "harness", "note"})
+
+
+def check_update_fields(keys, service=()) -> None:
+    """Отказ `BadArgument` на ключ правки вне `UPDATABLE | {ROUTE_ALIAS} | service`.
+
+    Одна проверка для store, сервера и MCP: неизвестный ключ (`prority=1`) не
+    отбрасывается молча, а возвращается агенту с перечнем допустимых.
+    """
+    allowed = UPDATABLE | {ROUTE_ALIAS} | set(service)
+    unknown = sorted(set(keys) - allowed)
+    if unknown:
+        raise errors_mod.BadArgument(
+            "неизвестное поле задачи: " + ", ".join(unknown)
+            + " (допустимые поля: " + ", ".join(sorted(allowed)) + ")")
+
 #: Хвост отказа — один и тот же у проверки до записи и у гонки на самой записи.
 ROUTE_LOCKED_TAIL = (". Его меняют у незакрытой задачи без держателя "
                      "и без запущенного процесса; этап не мешает")
@@ -750,6 +768,7 @@ def sync_epic(conn: sqlite3.Connection, task_id: str) -> None:
 def update_task(conn: sqlite3.Connection, task_id: str, *, actor: str | None = None,
                 harness: str | None = None, note: str | None = None,
                 as_owner: str | None = None, **fields) -> dict:
+    check_update_fields(fields)
     row = store_helpers.task_row(conn, task_id)
     # Владелец: в локальном режиме поле молча выбрасываем (карточка по нему не
     # меняется, события нет), в серверном — проверяем по `server.users`. Чужую

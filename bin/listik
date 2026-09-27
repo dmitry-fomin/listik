@@ -830,16 +830,9 @@ def cmd_new(args) -> int:
         "route": args.route,
         "parent": args.parent, "discovered_from": args.discovered_from,
     }
-    local = dict(body)
-    local.pop("type", None)
-    local.pop("actor", None)
-    local.pop("harness", None)
-    local["issue_type"] = args.type
-    local["created_by"] = actor_default(args)
-    local["parent"] = args.parent
-    local["discovered_from"] = args.discovered_from
-    # Подсказка «упомянутые id без связи» — и в локальном режиме тоже.
-    local["hints"] = True
+    # Подсказка «упомянутые id без связи» (`hints`) — и в локальном режиме тоже.
+    local = {k: v for k, v in body.items() if k not in ("type", "actor")}
+    local.update(issue_type=args.type, created_by=actor_default(args), hints=True)
     task = call("create", args, "/api/tasks", method="POST", body=body, local_kwargs=local)
     hint_lines = _link_hint_lines(task)
     emit(args, task, f"создана {task['id']}"
@@ -1026,11 +1019,7 @@ def cmd_set(args) -> int:
     if args.note:
         fields["note"] = args.note
     body = dict(fields)
-    local = dict(fields)
-    local.pop("actor", None)
-    local.pop("harness", None)
-    local["actor"] = fields["actor"]
-    local["task_id"] = args.task_id
+    local = dict(fields, task_id=args.task_id)
     task = call("update", args, f"/api/tasks/{args.task_id}", method="PATCH", body=body,
                 local_kwargs=local)
     emit(args, task, task_line(task))

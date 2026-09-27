@@ -9,17 +9,21 @@
  * Chrome через CDP.
  *
  * Сценарии: 1–2 — подвал карточки доски; 3–7 — блок «Кто держит» панели
- * (listik-6g0q). Строка «делает» — только когда этап делает не сам держатель,
- * без хвоста « · <label>»; строка «оркестратор» — всегда, когда поле заполнено:
- *   3. `listik-executor` — «делает» ровно «DeepSeek — код», держит Claude,
- *      оркестратор `claude` (совпадает с держателем, но строка есть);
+ * (listik-6g0q). Строка «делает» — только когда этап делает не сам держатель:
+ * title роли, а за ним через пробел серый `detail` (effort) — только если
+ * label ячейки не встречается словом в title (listik-erjx), без разделителя « · »;
+ * строка «оркестратор» — всегда, когда поле заполнено:
+ *   3. `listik-executor` — «делает» ровно «DeepSeek — код» без серого уточнения
+ *      (label «DeepSeek» уже в title), держит Claude, оркестратор `claude`
+ *      (совпадает с держателем, но строка есть);
  *   4. `listik-executor-same` — роль `spec` вендора `claude`, держит `claude`:
  *      «делает» нет; оркестратор `listik` — запасное значение при пустой подписи;
  *   5. `listik-routes-fresh` — оркестратора нет, строки «оркестратор» нет;
  *   6. `listik-executor-glm` — роль `critic` вендора `glm`, держит `agent:pi-glm`:
  *      «делает» нет, держит «pi · GLM»;
- *   7. `listik-executor-free` — роль `judge`, без держателя: «делает Проверка»,
- *      держит «никто».
+ *   7. `listik-executor-free` — роль `judge`, без держателя: «делает Проверка Судья»
+ *      («Судья» — серый `.listik-drawer__executor-detail`), держит «никто»,
+ *      тултип подвала «исполнитель этапа: Проверка (Судья)».
  *
  * Запуск: node scripts/verify-card-executor.mjs [url]
  *   Без аргумента сам поднимает мок и статику — нужен собранный `web/dist`
@@ -53,8 +57,9 @@ const GLM = 'listik-executor-glm'
 const GLM_TITLE = 'Критик GLM держит сам'
 const FREE = 'listik-executor-free'
 const FREE_TITLE = 'Этап без держателя'
-/** title роли `judge` в `low-pipeline` мока. */
+/** title и label роли `judge` в `low-pipeline` мока. */
 const JUDGE_TITLE = 'Проверка'
+const JUDGE_LABEL = 'Судья'
 
 /* ── Сценарии ───────────────────────────────────────────────────────────── */
 
@@ -78,14 +83,23 @@ const DRAWER_STATE = `(() => {
   const drawer = document.querySelector('.ui-drawer');
   if (!drawer) return { open: false };
   const rows = {};
+  let detail = null;
   for (const dt of drawer.querySelectorAll('.listik-dl dt')) {
     const dd = dt.nextElementSibling;
-    rows[dt.textContent.trim()] = dd ? dd.textContent.replace(/\\s+/g, ' ').trim() : null;
+    const key = dt.textContent.trim();
+    rows[key] = dd ? dd.textContent.replace(/\\s+/g, ' ').trim() : null;
+    if (key === 'делает' && dd) {
+      const el = dd.querySelector('.listik-drawer__executor-detail');
+      detail = el
+        ? { text: el.textContent.trim(), color: getComputedStyle(el).color, ddColor: getComputedStyle(dd).color }
+        : null;
+    }
   }
   return {
     open: true,
     id: drawer.querySelector('.listik-drawer__id .listik-mono')?.textContent?.trim() ?? null,
     rows,
+    detail,
   };
 })()`
 
@@ -153,7 +167,8 @@ try {
       const seen = await state()
       return seen.id === id && ready(seen.rows) ? seen : null
     })
-    return { clicked, drawer, rows: drawer?.rows ?? (await state()).rows ?? {} }
+    const last = drawer ?? (await state())
+    return { clicked, drawer, rows: last.rows ?? {}, detail: last.detail ?? null }
   }
 
   await send('Page.navigate', { url })
@@ -182,10 +197,10 @@ try {
       && foot.executor.startsWith('делает')
       && foot.holder.includes('держит Claude')
       && !foot.holder.startsWith('Claude')
-      && Boolean(foot.tooltip?.startsWith('исполнитель этапа:'))
+      && foot.tooltip === `исполнитель этапа: ${IMPL_TITLE}`
     return {
       ok,
-      expect: `«делает ${IMPL_TITLE}» + «· держит Claude» + тултип «исполнитель этапа: …»`,
+      expect: `«делает ${IMPL_TITLE}» + «· держит Claude» + тултип «исполнитель этапа: ${IMPL_TITLE}»`,
       got: foot ?? (await cardFoot(evaluate, CARD_TITLE)),
     }
   })
@@ -197,19 +212,21 @@ try {
     return { ok, expect: 'без держателя', got: foot }
   })
 
-  // 3. Панель задачи: строка «делает» ровно с title роли (без « · <label>»)
-  //    перед «держит»; оркестратор `claude` виден, хотя совпадает с держателем.
+  // 3. Панель задачи: строка «делает» ровно с title роли — label «DeepSeek» уже
+  //    словом в title, серого уточнения нет; перед «держит»; оркестратор `claude`
+  //    виден, хотя совпадает с держателем.
   await record('панель задачи: строка «делает» с исполнителем этапа', async () => {
-    const { clicked, drawer, rows } = await openDrawer(CARD_TITLE, CARD, (seen) => seen['делает'] && seen['оркестратор'])
+    const { clicked, drawer, rows, detail } = await openDrawer(CARD_TITLE, CARD, (seen) => seen['делает'] && seen['оркестратор'])
     const ok = Boolean(clicked)
       && Boolean(drawer)
       && rows['делает'] === IMPL_TITLE
+      && detail === null
       && Boolean(rows['держит']?.includes('Claude'))
       && rows['оркестратор'] === 'claude'
     return {
       ok,
-      expect: `делает «${IMPL_TITLE}», держит «Claude …», оркестратор «claude»`,
-      got: { clicked, делает: rows['делает'], держит: rows['держит'], оркестратор: rows['оркестратор'] },
+      expect: `делает «${IMPL_TITLE}» без .listik-drawer__executor-detail, держит «Claude …», оркестратор «claude»`,
+      got: { clicked, делает: rows['делает'], detail, держит: rows['держит'], оркестратор: rows['оркестратор'] },
     }
   })
 
@@ -254,17 +271,24 @@ try {
     }
   })
 
-  // 7. Этап без держателя — «делает» с title роли, «держит никто».
+  // 7. Этап без держателя — «делает» с title роли и серым label («Судья» нет
+  //    в «Проверка»), «держит никто»; тултип подвала с уточнением в скобках.
   await record('панель задачи: этап без держателя — «делает» видна', async () => {
-    const { clicked, drawer, rows } = await openDrawer(FREE_TITLE, FREE, (seen) => seen['делает'] && seen['держит'])
+    const foot = await cardFoot(evaluate, FREE_TITLE)
+    const { clicked, drawer, rows, detail } = await openDrawer(FREE_TITLE, FREE, (seen) => seen['делает'] && seen['держит'])
+    const tooltip = `исполнитель этапа: ${JUDGE_TITLE} (${JUDGE_LABEL})`
     const ok = Boolean(clicked)
       && Boolean(drawer)
-      && rows['делает'] === JUDGE_TITLE
+      && rows['делает'] === `${JUDGE_TITLE} ${JUDGE_LABEL}`
+      && detail?.text === JUDGE_LABEL
+      && Boolean(detail.color)
+      && detail.color !== detail.ddColor
       && Boolean(rows['держит']?.includes('никто'))
+      && foot?.tooltip === tooltip
     return {
       ok,
-      expect: `делает «${JUDGE_TITLE}», держит «никто»`,
-      got: { clicked, делает: rows['делает'], держит: rows['держит'] },
+      expect: `делает «${JUDGE_TITLE} ${JUDGE_LABEL}» (серый «${JUDGE_LABEL}»), держит «никто», тултип «${tooltip}»`,
+      got: { clicked, делает: rows['делает'], detail, держит: rows['держит'], tooltip: foot?.tooltip ?? null },
     }
   })
 

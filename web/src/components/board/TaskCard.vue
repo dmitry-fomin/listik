@@ -142,8 +142,8 @@ const executor = computed(() => stageExecutor(props.task, store.routes.value))
 const executorTooltip = computed(() => {
   const exec = executor.value
   if (!exec) return ''
-  const label = exec.label && exec.label !== exec.title ? ` (${exec.label})` : ''
-  return `исполнитель этапа: ${exec.title}${label}`
+  const detail = exec.detail ? ` (${exec.detail})` : ''
+  return `исполнитель этапа: ${exec.title}${detail}`
 })
 
 /** Держатель рядом с исполнителем — muted-хвост «· держит …». */

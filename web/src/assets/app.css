@@ -1000,6 +1000,10 @@ body .ui-drawer-backdrop.ui-drawer-backdrop--right .ui-drawer.ui-drawer--right.u
   column-gap: var(--space-6);
 }
 
+.listik-drawer__executor-detail {
+  color: var(--ink-3);
+}
+
 .listik-drawer__nowrap {
   flex-wrap: nowrap;
   min-width: 0;

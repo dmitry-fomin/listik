@@ -87,7 +87,8 @@ import {
   formatDuration,
   humanAge,
 } from '@/lib/format'
-import { PIPELINE, TRANSITIONS, stageCode, stageIndex, stageTitle, transitionOut, type TransitionKey } from '@/lib/stages'
+import { PIPELINE, stageCode, stageIndex, stageTitle } from '@/lib/stages'
+import { keepsHolder, projectTransitions, transitionOut } from '@/lib/projects'
 import { healthTone } from '@/lib/health'
 import {
   actorShort,
@@ -469,6 +470,9 @@ const sortedEvents = computed<TaskEvent[]>(() => {
   return [...events].sort((a, b) => Date.parse(a.ts) - Date.parse(b.ts))
 })
 
+/** Таблица переходов проекта задачи — с сервера (`/api/meta`); `null`, пока её нет. */
+const transitions = computed(() => projectTransitions(store.meta.value, props.task?.project ?? null))
+
 function findEnter(stageKey: string): TaskEvent | undefined {
   return sortedEvents.value.find((event) => event.kind === 'stage' && event.to_value === stageKey)
 }
@@ -483,7 +487,8 @@ function findExit(stageKey: string, afterIso?: string): TaskEvent | undefined {
 /**
  * «Кто работал» на пройденном этапе X — не актор события `stage` (его нет),
  * а держатель из последнего `claim`/`heartbeat` в окне этапа; при пустом окне
- * (переход в X был sticky) — унаследован у предыдущего этапа, для s1 —
+ * и переходе в X, сохраняющем держателя по таблице проекта, — унаследован у
+ * предыдущего этапа (таблицы нет — не наследуется), для s1 —
  * `actor` события `created`; нет ни входа, ни выхода из X, но у задачи вообще
  * есть события — окна для X просто нет, «кто работал» = «—»; событий нет
  * вовсе (сервер отдаёт последние 100, может не остаться ни одного) — `null`,
@@ -506,8 +511,7 @@ function workedByRaw(stageKey: PipelineStage, index: number): string | null {
   if (last) return actorShort(last.to_value)
   if (index > 0) {
     const prevKey = PIPELINE[index - 1].key
-    const key = `${prevKey}:${stageKey}` as TransitionKey
-    if (TRANSITIONS[key] === 'sticky') {
+    if (keepsHolder(transitionOut(transitions.value, prevKey))) {
       const inherited = workedByRaw(prevKey, index - 1)
       if (inherited !== null) return inherited
     }
@@ -525,8 +529,8 @@ function stepDuration(stageKey: PipelineStage): string | null {
 }
 
 function arrowLabel(stageKey: PipelineStage): string {
-  const transition = transitionOut(stageKey)
-  return transition ? `${transition} →` : '→'
+  const kind = transitionOut(transitions.value, stageKey)
+  return kind ? `${kind} →` : '→'
 }
 
 function pastDescription(stageKey: PipelineStage, index: number): string {
@@ -552,10 +556,8 @@ function describeStep(index: number, status: UiStepStatus): string | undefined {
     const who = executor.value?.title ?? (hasHolderTitle(task.holder_title) ? task.holder_title : 'без держателя')
     return `${who} · ${task.stage_age} · сейчас`
   }
-  const prevKey = index === 0 ? null : PIPELINE[index - 1].key
-  const key = prevKey ? (`${prevKey}:${step.key}` as TransitionKey) : null
-  const transitionIn = key ? TRANSITIONS[key] : undefined
-  return transitionIn === 'sticky' ? 'та же сессия' : 'новый держатель'
+  if (index > 0 && keepsHolder(transitionOut(transitions.value, PIPELINE[index - 1].key))) return 'та же сессия'
+  return 'новый держатель'
 }
 
 const steps = computed<UiStepItem[]>(() =>
@@ -587,11 +589,11 @@ const belowRowHint = computed(() => {
   if (!d.ready) {
     let text = `взять нельзя: ${reasons.value.join('; ')}`
     if (d.holder && task) {
-      const transition = transitionOut(task.stage)
-      if (transition === 'sticky') {
+      const kind = transitionOut(transitions.value, task.stage)
+      if (keepsHolder(kind)) {
         const code = stageCode(task.stage)
         const next = nextStageCode(task.stage)
-        text += `, переход ${code} → ${next} sticky — следующий этап идёт в той же сессии`
+        text += `, переход ${code} → ${next} ${kind} — следующий этап идёт в той же сессии`
       }
     }
     return text
@@ -748,10 +750,8 @@ function feedFilterCount(value: FeedFilterValue): number {
 }
 
 function stageEventTitle(event: TaskEvent): string {
-  let title = `stage ${event.from_value ?? '—'} → ${event.to_value}`
-  const match = event.note?.match(/\((sticky|handoff)\)/)
-  if (match) title += ` · ${match[1]}`
-  return title
+  const title = `stage ${event.from_value ?? '—'} → ${event.to_value}`
+  return event.transition ? `${title} · ${event.transition}` : title
 }
 
 function eventTitle(event: TaskEvent): string {

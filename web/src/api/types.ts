@@ -2,6 +2,7 @@
  * Типы ответов API Listik. Источник правды — docs/API.md и listik/store.py.
  */
 import type { RoleCell, RoleKey } from '@/lib/pipelines'
+import type { Transition } from '@/lib/stages'
 
 export type TaskStatus = 'open' | 'in_progress' | 'blocked' | 'review' | 'done' | 'cancelled'
 export type PipelineStage = 's1-spec' | 's2-review' | 's3-impl' | 's4-judge'
@@ -142,6 +143,12 @@ export interface TaskEvent {
   harness: string | null
   note: string | null
   duration_s: number | null
+  /**
+   * Тип перехода, который применил `stage`. `null` — событие не переход конвейера
+   * (переход в `done`, создание с этапом, правка `stage` через PATCH) или записано
+   * сервером старше этого поля. От `note` не зависит.
+   */
+  transition?: Transition | null
 }
 
 export interface TaskDetail extends Task {
@@ -382,6 +389,16 @@ export interface ProjectRow {
    * `null` — путь уже был корнем (или это не git-репозиторий).
    */
   path_adjusted_from?: string | null
+  /** Действующая таблица переходов проекта (общая плюс его переопределения): по ней сервер решает, снимать ли держателя. */
+  routing_effective?: ProjectRouting
+}
+
+/** Таблица переходов конвейера из `/api/meta`. */
+export interface ProjectRouting {
+  /** Ключ — `"<этап>:<этап|done>"`, например `"s1-spec:s2-review"`; значение — тип перехода. */
+  transitions: Record<string, Transition>
+  /** Окно возврата после красного вердикта, часы. */
+  return_window_hours: number
 }
 
 /**
@@ -752,6 +769,8 @@ export interface Meta {
   statuses: Record<string, string>
   stages: Record<string, string>
   priorities: Record<string, string>
+  /** Общая таблица переходов config.toml без переопределений проектов; у сервера старше этого поля нет. */
+  routing?: ProjectRouting
 }
 
 export interface StatsProject {

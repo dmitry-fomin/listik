@@ -63,6 +63,18 @@
  * (номера плейсхолдеров доходят до двузначных, listik-s0us), а остальные
  * текстовые поля пусты. По ней проверяется вывод markdown в панели задачи
  * (scripts/verify-markdown.mjs).
+ * Без флагов `/api/meta` отдаёт `routing` — общую таблицу переходов, как дефолт
+ * сервера (`listik/config.py`), — и `routing_effective` у каждой строки `projects`;
+ * у событий общего списка карточки есть `transition` (`handoff` у `stage`, `null` у
+ * `claim`). `--transitions` переопределяет у проекта `listik` переходы
+ * `s1-spec:s2-review` (`sticky`) и `s3-impl:s4-judge` (`handoff`) — общая таблица
+ * остаётся дефолтом, — даёт `listik-web-a1b2` ещё два события `stage`
+ * (`s4-judge → s3-impl` с `sticky-return` и старое `s1-spec → s2-review`, где тип
+ * только в заметке) и добавляет задачи `listik-transitions-plain` (проект `plain`,
+ * которого нет в `meta.projects`), `listik-transitions-worked`/`-worked-plain` (свои
+ * события под «кто работал») и `listik-transitions-hint` (держатель на s3-impl
+ * проекта `plain`). По ним проверяются подписи переходов на рельсе, в степпере и в
+ * заголовке события (scripts/verify-transitions.mjs).
  *
  * `--server-mode` включает серверный режим владельцев (шаг listik-xt69):
  * `/api/health` отдаёт `mode: 'server'`, `users: ['ann','bob']` и `owner` —
@@ -115,6 +127,7 @@ const coldMode = process.argv.slice(3).includes('--cold')
 const hintMode = process.argv.slice(3).includes('--hint')
 const epicMode = process.argv.slice(3).includes('--epic')
 const markdownMode = process.argv.slice(3).includes('--markdown')
+const transitionsMode = process.argv.slice(3).includes('--transitions')
 const serverMode = process.argv.slice(3).includes('--server-mode')
 const listSortMode = process.argv.slice(3).includes('--list-sort')
 /** `server.users` из config.toml — кем можно представиться в серверном режиме. */
@@ -695,6 +708,110 @@ if (epicMode) {
     child('listik-epic-work', 'Подзадача в работе', 'in_progress', 's3-impl'),
     child('listik-epic-done', 'Подзадача готова', 'done', 'done', { closed_at: iso(3), holder: null, holder_title: '' }),
     child('listik-epic-cancel', 'Подзадача отменена', 'cancelled', null, { closed_at: iso(4), holder: null, holder_title: '' }),
+  )
+}
+
+/**
+ * Таблица переходов — дефолт сервера (`listik/config.py`, `DEFAULTS["routing"]`):
+ * её отдаёт `meta.routing` и `routing_effective` проектов без переопределений.
+ * Под `--transitions` у проекта `listik` своя действующая таблица.
+ */
+const DEFAULT_ROUTING = {
+  transitions: {
+    's1-spec:s2-review': 'handoff',
+    's2-review:s3-impl': 'handoff',
+    's3-impl:s4-judge': 'sticky',
+    's4-judge:s3-impl': 'sticky-return',
+    's4-judge:done': 'handoff',
+  },
+  return_window_hours: 24,
+}
+const LISTIK_ROUTING = transitionsMode
+  ? {
+      ...DEFAULT_ROUTING,
+      transitions: { ...DEFAULT_ROUTING.transitions, 's1-spec:s2-review': 'sticky', 's3-impl:s4-judge': 'handoff' },
+    }
+  : DEFAULT_ROUTING
+
+/** Событие карточки в форме `TaskEvent` (для своих лент задач `--transitions`). */
+const event = (hoursAgo, kind, from_value, to_value, transition, extra = {}) => ({
+  ts: iso(hoursAgo),
+  kind,
+  from_value,
+  to_value,
+  actor: 'me',
+  harness: null,
+  note: null,
+  duration_s: null,
+  transition,
+  ...extra,
+})
+
+/**
+ * `--transitions`: собственные ленты событий задач «кто работал» — единственный
+ * claim в окне s1, дальше три перехода без claim/heartbeat между ними, так что
+ * «кто работал» на s2/s3 решает только наследование по таблице проекта.
+ */
+const workedEvents = (s1s2, s3s4) => [
+  event(10, 'claim', null, 'me', null),
+  event(8, 'stage', 's1-spec', 's2-review', s1s2),
+  event(6, 'stage', 's2-review', 's3-impl', 'handoff'),
+  event(4, 'stage', 's3-impl', 's4-judge', s3s4),
+]
+const OWN_EVENTS = transitionsMode
+  ? {
+      'listik-transitions-worked': workedEvents('sticky', 'handoff'),
+      'listik-transitions-worked-plain': workedEvents('handoff', 'sticky'),
+    }
+  : {}
+
+/** `--transitions`: ещё два события `stage` у `listik-web-a1b2` поверх общего списка. */
+const EXTRA_EVENTS = transitionsMode
+  ? {
+      'listik-web-a1b2': [
+        event(1, 'stage', 's4-judge', 's3-impl', 'sticky-return', { note: 'возврат после красного verdict' }),
+        event(5, 'stage', 's1-spec', 's2-review', null, { note: 'этап -> s2-review (sticky)' }),
+      ],
+    }
+  : {}
+
+if (transitionsMode) {
+  const noHolder = { holder: null, holder_title: '', holder_at: null, holder_age: '', holder_hours: null, holder_note: null }
+  tasks.push(
+    task({
+      id: 'listik-transitions-plain',
+      title: 'Задача проекта без строки в meta',
+      project: 'plain',
+      status: 'open',
+      status_title: STATUS_TITLES.open,
+      stage: 's1-spec',
+      stage_title: STAGE_TITLES['s1-spec'],
+      ...noHolder,
+    }),
+    task({
+      id: 'listik-transitions-worked',
+      title: 'Кто работал: проект с переопределением',
+      stage: 's4-judge',
+      stage_title: STAGE_TITLES['s4-judge'],
+      ...noHolder,
+    }),
+    task({
+      id: 'listik-transitions-worked-plain',
+      title: 'Кто работал: общая таблица',
+      project: 'plain',
+      stage: 's4-judge',
+      stage_title: STAGE_TITLES['s4-judge'],
+      ...noHolder,
+    }),
+    task({
+      id: 'listik-transitions-hint',
+      title: 'Подсказка перехода: общая таблица',
+      project: 'plain',
+      stage: 's3-impl',
+      stage_title: STAGE_TITLES['s3-impl'],
+      holder: 'agent:dsh',
+      holder_title: 'dsh',
+    }),
   )
 }
 
@@ -1288,7 +1405,8 @@ function details(id) {
     ],
     dependencies: dependenciesOf(id),
     dependents: dependentsOf(id),
-    events: [
+    events: OWN_EVENTS[id] ?? [
+      ...(EXTRA_EVENTS[id] ?? []),
       {
         ts: iso(2),
         kind: 'stage',
@@ -1298,6 +1416,7 @@ function details(id) {
         harness: 'dsh',
         note: 'перешёл к реализации',
         duration_s: 5400,
+        transition: 'handoff',
       },
       {
         ts: iso(3),
@@ -1308,6 +1427,7 @@ function details(id) {
         harness: 'dsh',
         note: null,
         duration_s: null,
+        transition: null,
       },
     ],
   }
@@ -1794,6 +1914,9 @@ const server = createServer(async (request, response) => {
         n_tasks: tasks.filter((item) => item.project === 'other').length,
       })
     }
+    for (const project of projects) {
+      project.routing_effective = project.slug === 'listik' ? LISTIK_ROUTING : DEFAULT_ROUTING
+    }
     return ok({
       projects,
       actors: [
@@ -1811,6 +1934,7 @@ const server = createServer(async (request, response) => {
       statuses: STATUS_TITLES,
       stages: STAGE_TITLES,
       priorities: PRIORITY_TITLES,
+      routing: DEFAULT_ROUTING,
     })
   }
 

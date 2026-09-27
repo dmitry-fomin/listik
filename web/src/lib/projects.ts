@@ -3,11 +3,42 @@
  * где нужен знак проекта. Ничего не запрашивает — список проектов передаётся
  * вызывающей стороной (`store.meta.value.projects`).
  */
-import type { ProjectRow } from '@/api/types'
+import type { Meta, ProjectRow, TaskStage } from '@/api/types'
+import { PIPELINE_STAGE_KEYS, type Transition } from '@/lib/stages'
 
 export function projectBySlug(projects: ProjectRow[] | null | undefined, slug: string | null | undefined): ProjectRow | null {
   if (!slug) return null
   return projects?.find((project) => project.slug === slug) ?? null
+}
+
+/**
+ * Таблица переходов для проекта `slug`: его `routing_effective` из `meta.projects`,
+ * а если проекта или поля нет — общая `meta.routing`. `null` — meta не загружена
+ * или сервер их не отдаёт; своей запасной таблицы у доски нет.
+ */
+export function projectTransitions(
+  meta: Meta | null | undefined,
+  slug: string | null | undefined,
+): Record<string, Transition> | null {
+  const project = projectBySlug(meta?.projects, slug)
+  return project?.routing_effective?.transitions ?? meta?.routing?.transitions ?? null
+}
+
+/**
+ * Вид перехода, которым этап `stage` закрывается в следующий этап конвейера
+ * (s1 → s2 → s3 → s4 → done). `null` — таблицы нет или `stage` не s1…s4. Ключа
+ * в таблице нет — `handoff`, как решает сервер.
+ */
+export function transitionOut(transitions: Record<string, Transition> | null, stage: TaskStage): Transition | null {
+  const index = stage ? PIPELINE_STAGE_KEYS.indexOf(stage) : -1
+  if (!transitions || index === -1) return null
+  const next = PIPELINE_STAGE_KEYS[index + 1] ?? 'done'
+  return transitions[`${stage}:${next}`] ?? 'handoff'
+}
+
+/** Сохраняет ли переход держателя: сервер снимает его только на `handoff`. */
+export function keepsHolder(kind: Transition | null): boolean {
+  return kind !== null && kind !== 'handoff'
 }
 
 export function projectTasksLabel(project: ProjectRow): string {

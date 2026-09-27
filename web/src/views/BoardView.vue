@@ -18,7 +18,8 @@ import ListikIcon from '@/components/ListikIcon.vue'
 import VoiceCapture from '@/components/VoiceCapture.vue'
 import store from '@/store/listik'
 import type { ProjectRow, TaskStage, VoiceDraft } from '@/api/types'
-import { PIPELINE_STAGE_KEYS, transitionOut } from '@/lib/stages'
+import { PIPELINE_STAGE_KEYS, type Transition } from '@/lib/stages'
+import { keepsHolder, projectTransitions, transitionOut } from '@/lib/projects'
 import { INTAKE_COLUMN_KEY } from '@/lib/dictionaries'
 
 const props = defineProps<{
@@ -85,16 +86,21 @@ const boardTracks = computed<string>(() => {
 
 interface RailCell {
   key: string
-  transition: { stage: TaskStage; kind: 'sticky' | 'handoff' } | null
+  transition: { stage: TaskStage; kind: Transition; keeps: boolean } | null
 }
 
-/** Ячейки рельсы переходов — линия и подпись только в ячейках s1–s4. */
+/**
+ * Ячейки рельсы переходов — линия и подпись только в ячейках s1–s4. Таблица —
+ * с сервера: на «Все проекты» общая, при выбранном проекте — его действующая.
+ * Нет таблицы (meta не загружена, сервер старый) — нет и подписей.
+ */
 const railCells = computed<RailCell[]>(() => {
+  const transitions = projectTransitions(store.meta.value, store.filters.project || null)
   const cells: RailCell[] = renderColumns.value.map((column) => {
     if (!PIPELINE_STAGE_KEYS.includes(column.key)) return { key: column.key, transition: null }
     const stage = column.key as TaskStage
-    const kind = transitionOut(stage)
-    return { key: column.key, transition: kind ? { stage, kind } : null }
+    const kind = transitionOut(transitions, stage)
+    return { key: column.key, transition: kind ? { stage, kind, keeps: keepsHolder(kind) } : null }
   })
   cells.push({ key: '__done-rail', transition: null })
   return cells
@@ -132,8 +138,8 @@ const gridStyle = computed(() => ({ gridTemplateColumns: boardTracks.value }))
         <div v-for="cell in railCells" :key="cell.key" class="listik-rail__cell">
           <template v-if="cell.transition">
             <span class="listik-rail__line" />
-            <span class="listik-rail__tr" :class="`is-${cell.transition.kind}`">
-              <ListikIcon :name="cell.transition.kind === 'sticky' ? 'refresh' : 'expand'" size="xs" />
+            <span class="listik-rail__tr" :class="cell.transition.keeps ? 'is-sticky' : 'is-handoff'">
+              <ListikIcon :name="cell.transition.keeps ? 'refresh' : 'expand'" size="xs" />
               {{ cell.transition.kind }}
             </span>
           </template>

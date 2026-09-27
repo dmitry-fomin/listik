@@ -1082,8 +1082,8 @@ def handle(method: str, path: str, query: dict, body: dict, authed: bool = False
 
     if path == "/api/deps/suggested":
         return 200, {
-            "items": deps_mod.suggested(conn, project=q1("project"),
-                                        limit=as_int(q1("limit"), 100) or 100),
+            **deps_mod.suggested_page(conn, project=q1("project"),
+                                      limit=as_int(q1("limit"), 100) or 100),
             "generated_at": store.now_iso(),
         }
 

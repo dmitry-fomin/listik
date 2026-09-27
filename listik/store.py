@@ -2972,7 +2972,11 @@ def remember(conn: sqlite3.Connection, text: str, *, key: str | None = None,
 
 def list_memories(conn: sqlite3.Connection, project: str | None = None,
                   limit: int = 20) -> list[dict]:
-    """Последние заметки памяти, свежие сверху; `project` — точный slug, пустой — все."""
+    """Последние заметки памяти, свежие сверху; `project` — точный slug, пустой — все.
+
+    `limit` 0/None — страница по умолчанию (20), как у `/api/memory`, а не `LIMIT 0`.
+    """
+    limit = limit or 20
     rows = conn.execute(
         "SELECT key, project, body, updated_at FROM memories "
         + ("WHERE project = ? " if project else "")

@@ -90,7 +90,8 @@ TOOLS: list[dict] = [
                 "type": {"type": "string"},
                 "text": {"type": "string"},
                 "include_closed": {"type": "boolean", "default": False},
-                "limit": {"type": "integer", "default": 50},
+                "limit": {"type": "integer", "default": 50,
+                          "description": "сколько задач; 0 — страница по умолчанию (200)"},
                 "order": {"type": "string", "enum": ["updated", "created", "priority", "stage"]},
             },
         },
@@ -430,7 +431,8 @@ TOOLS: list[dict] = [
             "type": "object",
             "properties": {"query": {"type": "string", "description": "что искать"},
                            "project": {"type": "string", "description": "точный slug проекта"},
-                           "limit": {"type": "integer", "default": 20}},
+                           "limit": {"type": "integer", "default": 20,
+                                     "description": "сколько заметок; 0 — страница по умолчанию (20)"}},
         },
     },
     {
@@ -473,7 +475,8 @@ TOOLS: list[dict] = [
         "inputSchema": {
             "type": "object",
             "properties": {"project": {"type": "string"},
-                           "limit": {"type": "integer", "default": 100}},
+                           "limit": {"type": "integer", "default": 100,
+                                     "description": "сколько предложений; 0 — страница по умолчанию (100)"}},
         },
     },
     {
@@ -579,7 +582,7 @@ def call_tool(name: str, args: dict, conn=None, owner=FROM_ENV, fence=FROM_ENV) 
             holder=args.get("holder"),
             needs_owner=bool(args.get("needs_owner")), issue_type=args.get("type"),
             text=args.get("text"), include_closed=bool(args.get("include_closed")),
-            limit=_int_arg(args, "limit", 50), order=args.get("order", "updated"),
+            limit=_int_arg(args, "limit", 50) or 200, order=args.get("order", "updated"),
             as_owner=owner)
     if name == "listik_show":
         task = store.get_task(conn, args["id"])
@@ -718,8 +721,8 @@ def call_tool(name: str, args: dict, conn=None, owner=FROM_ENV, fence=FROM_ENV) 
                              confirm=bool(args.get("confirm")))
     if name == "listik_deps_suggested":
         from . import deps as deps_mod
-        return {"items": deps_mod.suggested(conn, project=args.get("project"),
-                                            limit=_int_arg(args, "limit", 100))}
+        return deps_mod.suggested_page(conn, project=args.get("project"),
+                                       limit=_int_arg(args, "limit", 100))
     if name == "listik_cycles":
         from . import deps as deps_mod
         return {"cycles": deps_mod.cycles(conn)}

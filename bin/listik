@@ -1348,19 +1348,27 @@ def cmd_memory(args) -> int:
         else:
             search_mod.print_memories(items)
         return 0
-    rows = call("memory", args, "/api/memory",
-                query={"limit": args.limit, "project": args.project},
-                local_kwargs={"query": None, "limit": args.limit, "project": args.project})
+    def fetch(limit: int, **kw):
+        return call("memory", args, "/api/memory",
+                    query={"limit": limit, "project": args.project},
+                    local_kwargs={"query": None, "limit": limit, "project": args.project}, **kw)
+    rows = fetch(args.limit)
     if getattr(args, "json", False):
         emit(args, rows, "")
         return 0
     if not rows:
         print("памяти пока нет (появятся командой listik remember)")
         return 0
+    # /api/memory отдаёт голый список без total: полное число — вторым вызовом с лимитом,
+    # покрывающим всё, и только если страница заполнена (0 — страница 20, как у сервера).
+    total = len(rows)
+    if total == (args.limit or 20):
+        total = max(total, len(fetch(10**9, fallback_warning=False)))
     for r in rows:
         body = " ".join((r["body"] or "").split())
         print(f"● {r['key']}\n    {body[:220]}")
-    print(f"\nвсего: {len(rows)}")
+    print(f"\nпоказано {len(rows)} из {total}" if total > len(rows)
+          else f"\nвсего: {len(rows)}")
     return 0
 
 
@@ -2466,13 +2474,15 @@ def cmd_dep(args) -> int:
         if getattr(args, "json", False):
             emit(args, items, "")
             return 0
-        if not items:
+        total = out.get("total", len(items)) if isinstance(out, dict) else len(items)
+        if not total:
             print("предложений нет")
             return 0
         for it in items:
             print(f"  {it['issue_id']:34s} ждёт  {it['depends_on']} [{it['depends_on_status']}]  "
                   f"предложил {it.get('created_by') or '—'} {it.get('created_at')}")
-        print(f"\nвсего предложений: {len(items)}")
+        print(f"\nпоказано {len(items)} из {total} предложений" if total > len(items)
+              else f"\nвсего предложений: {len(items)}")
         return 0
     if args.action == "tree":
         if not args.issue_id:

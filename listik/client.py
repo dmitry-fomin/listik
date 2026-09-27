@@ -369,8 +369,8 @@ def _local_op(conn, op: str, fence: fence_mod.Token | dict | None, kwargs: dict)
                                 kwargs.get("dep_type"))
     if op == "dep_suggested":
         from . import deps as deps_mod
-        return {"items": deps_mod.suggested(conn, project=kwargs.get("project"),
-                                            limit=kwargs.get("limit", 100)),
+        return {**deps_mod.suggested_page(conn, project=kwargs.get("project"),
+                                          limit=kwargs.get("limit", 100)),
                 "generated_at": store.now_iso()}
     if op == "projects":
         return {"projects": store.list_all_projects(conn), "root": str(paths.PROJECTS_ROOT)}

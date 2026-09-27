@@ -191,7 +191,11 @@ def vector(conn: sqlite3.Connection, query: str, limit: int,
 
 def search_memories(conn: sqlite3.Connection, query: str, *, limit: int = 10,
                     project: str | None = None, mode: str = "hybrid") -> list[dict]:
-    """Поиск по долговременной памяти: заметки, не привязанные к задаче."""
+    """Поиск по долговременной памяти: заметки, не привязанные к задаче.
+
+    `limit` 0/None — страница по умолчанию (20), как у `/api/memory`, а не пусто.
+    """
+    limit = limit or 20
     scores: dict[str, float] = {}
     expr = textutil.fts_query(query)
     rows: list = []

@@ -679,6 +679,15 @@ def suggested(conn: sqlite3.Connection, *, project: str | None = None,
     return out
 
 
+def suggested_page(conn: sqlite3.Connection, *, project: str | None = None,
+                   limit: int | None = 100) -> dict:
+    """Страница предложений для API/CLI/MCP: `items` до `limit` и `total` — все прошедшие
+    фильтры. `limit` 0/None — страница по умолчанию (100); «все» — только `suggested(limit=0)`.
+    """
+    items = suggested(conn, project=project, limit=0)
+    return {"items": items[:limit or 100], "total": len(items)}
+
+
 def cycles(conn: sqlite3.Connection) -> list[list[str]]:
     """Циклы в жёстких зависимостях: задача, которая ждёт саму себя через других."""
     edges: dict[str, list[str]] = {}

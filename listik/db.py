@@ -11,7 +11,7 @@ from pathlib import Path
 
 from . import paths
 
-SCHEMA_VERSION = 13
+SCHEMA_VERSION = 14
 
 SCHEMA = """
 PRAGMA journal_mode = WAL;
@@ -140,7 +140,8 @@ CREATE TABLE IF NOT EXISTS events (
     actor      TEXT,
     harness    TEXT,
     note       TEXT,
-    duration_s INTEGER          -- сколько секунд занял закрытый этап/отрезок
+    duration_s INTEGER,         -- сколько секунд занял закрытый этап/отрезок
+    transition TEXT             -- тип перехода, применённый `stage`: sticky | handoff | sticky-return; NULL — не переход конвейера
 );
 CREATE INDEX IF NOT EXISTS idx_events_task ON events(task_id, ts DESC);
 CREATE INDEX IF NOT EXISTS idx_events_ts   ON events(ts DESC);
@@ -347,6 +348,7 @@ MIGRATIONS: list[tuple[str, str, str]] = [
     ("documents", "checked_at", "TEXT"),
     ("documents", "source", "TEXT NOT NULL DEFAULT 'file'"),
     ("documents", "content", "TEXT"),
+    ("events", "transition", "TEXT"),
 ]
 
 
@@ -388,6 +390,8 @@ def init(db_path: Path | None = None, *, verbose: bool = False) -> sqlite3.Conne
     rename_task_orchestrator(conn)
     conn.executescript(SCHEMA)
     applied = migrate(conn)
+    if "events.transition" in applied:
+        backfill_event_transition(conn)
     if verbose and applied:
         print(f"миграции: {', '.join(applied)}")
     conn.execute(
@@ -481,6 +485,28 @@ def rename_task_orchestrator(conn: sqlite3.Connection) -> bool:
     conn.execute("RELEASE task_orchestrator")
     conn.commit()
     return True
+
+
+#: Досыпка `events.transition` для истории до схемы 14 (listik-cvm8): тип перехода
+#: берётся из заметки по умолчанию `этап -> <to_value> (<тип>)`, которую писал
+#: `store.next_stage`. Переход в `done` не помечается — новый код его тоже не помечает.
+#: Тот же текст — у alembic-ревизии 0012_event_transition.
+BACKFILL_TRANSITION_SQL = tuple(
+    f"UPDATE events SET transition = '{kind}' "
+    "WHERE kind = 'stage' AND transition IS NULL AND to_value <> 'done' "
+    f"AND note = 'этап -> ' || to_value || ' ({kind})'"
+    for kind in ("sticky", "handoff", "sticky-return")
+)
+
+
+def backfill_event_transition(conn: sqlite3.Connection) -> None:
+    """Досыпать тип перехода старым событиям `stage`.
+
+    Зовёт только `init`, и только когда `migrate` в этом же вызове добавил колонку:
+    свежая база и повторный `init` досыпку не запускают.
+    """
+    for sql in BACKFILL_TRANSITION_SQL:
+        conn.execute(sql)
 
 
 def seed_actors(conn: sqlite3.Connection) -> None:

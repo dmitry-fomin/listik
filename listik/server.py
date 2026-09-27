@@ -912,6 +912,9 @@ def handle(method: str, path: str, query: dict, body: dict, authed: bool = False
             "statuses": store.STATUS_TITLES,
             "stages": store.STAGE_TITLES,
             "priorities": store.PRIORITY_TITLES,
+            # Общая таблица config.toml без переопределений проектов: доска
+            # берёт её для «все проекты» и для задачи, чьего проекта нет в `projects`.
+            "routing": config_mod.routing(),
         }
 
     # --- репозитории (проекты) для настроек доски: добавить, скрыть, убрать

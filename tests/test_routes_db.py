@@ -625,7 +625,7 @@ class SchemaUpgradeTests(unittest.TestCase):
             self.assertEqual(conn.execute("SELECT COUNT(*) FROM projects").fetchone()[0], 1)
             version = conn.execute(
                 "SELECT value FROM meta WHERE key = 'schema_version'").fetchone()[0]
-            self.assertEqual(version, "13")
+            self.assertEqual(version, "14")
         finally:
             conn.close()
 

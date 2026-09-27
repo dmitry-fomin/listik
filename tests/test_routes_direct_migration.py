@@ -105,7 +105,7 @@ class DirectMigrationTests(unittest.TestCase):
                     self.assertEqual(row[name], before[name], name)
         version = conn.execute(
             "SELECT value FROM meta WHERE key = 'schema_version'").fetchone()[0]
-        self.assertEqual(version, "13")
+        self.assertEqual(version, "14")
         self.assertEqual(conn.execute(
             "SELECT launch_route FROM tasks WHERE id = 't1'").fetchone()[0], "r-grok")
 

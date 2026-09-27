@@ -208,11 +208,13 @@ def gen_id(conn: sqlite3.Connection, project: str | None, *, prefix: str | None 
 
 def event(conn: sqlite3.Connection, task_id: str, kind: str, *, from_value=None, to_value=None,
           actor: str | None = None, harness: str | None = None, note: str | None = None,
-          duration_s: int | None = None, ts: str | None = None) -> None:
+          duration_s: int | None = None, ts: str | None = None,
+          transition: str | None = None) -> None:
     conn.execute(
-        "INSERT INTO events(task_id, ts, kind, from_value, to_value, actor, harness, note, duration_s) "
-        "VALUES(?,?,?,?,?,?,?,?,?)",
-        (task_id, ts or now_iso(), kind, from_value, to_value, actor, harness, note, duration_s),
+        "INSERT INTO events(task_id, ts, kind, from_value, to_value, actor, harness, note, "
+        "duration_s, transition) VALUES(?,?,?,?,?,?,?,?,?,?)",
+        (task_id, ts or now_iso(), kind, from_value, to_value, actor, harness, note, duration_s,
+         transition),
     )
 
 
@@ -766,7 +768,10 @@ def sync_epic(conn: sqlite3.Connection, task_id: str) -> None:
 
 def update_task(conn: sqlite3.Connection, task_id: str, *, actor: str | None = None,
                 harness: str | None = None, note: str | None = None,
-                as_owner: str | None = None, **fields) -> dict:
+                as_owner: str | None = None, transition: str | None = None,
+                **fields) -> dict:
+    # `transition` — служебный параметр, не поле задачи: тип перехода конвейера,
+    # который `next_stage` пишет в событие `stage` этого вызова (listik-cvm8).
     check_update_fields(fields)
     row = store_helpers.task_row(conn, task_id)
     # Владелец: в локальном режиме поле молча выбрасываем (карточка по нему не
@@ -887,7 +892,8 @@ def update_task(conn: sqlite3.Connection, task_id: str, *, actor: str | None = N
             sets.append("stage_at = ?")
             params.append(ts)
             event(conn, task_id, "stage", from_value=stage_old, to_value=new,
-                  actor=actor_key, harness=harness, note=note, duration_s=dur)
+                  actor=actor_key, harness=harness, note=note, duration_s=dur,
+                  transition=transition)
             if new in PIPELINE_STAGES:
                 # задача в конвейере — держателя не сбрасываем
                 pass
@@ -1396,7 +1402,8 @@ def next_stage(conn: sqlite3.Connection, task_id: str, *, holder: str | None = N
     elif holder:
         fields["holder"] = holder
     return update_task(conn, task_id, actor=actor, harness=harness,
-                       note=note or f"этап -> {nxt} ({transition})", **fields)
+                       note=note or f"этап -> {nxt} ({transition})", transition=transition,
+                       **fields)
 
 
 # ------------------------------------------------------------------ чтение
@@ -1431,8 +1438,8 @@ def get_task(conn: sqlite3.Connection, task_id: str, *, with_details: bool = Tru
         # Карантин (события `rejected`) сюда не попадает: агент не должен видеть
         # отвергнутые записи зомби нигде, кроме явного `with_rejected`/`?rejected=1`.
         out["events"] = store_helpers.dict_rows(conn.execute(
-            "SELECT ts, kind, from_value, to_value, actor, harness, note, duration_s "
-            "FROM events WHERE task_id = ? AND kind != ? ORDER BY ts DESC LIMIT 100",
+            "SELECT ts, kind, from_value, to_value, actor, harness, note, duration_s, "
+            "transition FROM events WHERE task_id = ? AND kind != ? ORDER BY ts DESC LIMIT 100",
             (task_id, fence_mod.REJECTED_KIND)))
     if with_rejected:
         out["rejected"] = fence_mod.list_rejected(conn, task_id)

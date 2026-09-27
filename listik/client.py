@@ -219,6 +219,8 @@ def local_call(op: str, *, fence: fence_mod.Token | dict | None = None, **kwargs
             "statuses": store.STATUS_TITLES,
             "stages": store.STAGE_TITLES,
             "priorities": store.PRIORITY_TITLES,
+            # Тот же ключ, что у `/api/meta`: общая таблица без переопределений проектов.
+            "routing": config_mod.routing(),
         }
     if op == "stats":
         return store.stats(conn, project=kwargs.get("project"))
@@ -250,6 +252,9 @@ def local_call(op: str, *, fence: fence_mod.Token | dict | None = None, **kwargs
         return store.create_task(conn, **kwargs)
     if op == "update":
         task_id = kwargs.pop("task_id")
+        # Как PATCH на сервере: неизвестный ключ — bad_argument до store. Иначе ключ
+        # `transition` ушёл бы в служебный параметр `update_task` (listik-cvm8).
+        store.check_update_fields(kwargs, service=store.UPDATE_SERVICE_KEYS | {"as_owner"})
         return store.update_task(conn, task_id, **kwargs)
     if op == "done":
         task_id = kwargs.pop("task_id")

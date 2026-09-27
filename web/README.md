@@ -290,8 +290,8 @@ node scripts/verify-cold-start.mjs
 заполненным) и что точка-статус — `UiStatusPill` кита; код возврата 1 при провале.
 
 Markdown-вывод описания карточки проверяется на моке `mock-api --markdown` (карточка
-`listik-markdown-case` с заголовком, списками, инлайн-кодом, блоком кода, ссылкой и
-HTML-строкой) и собранном `dist`:
+`listik-markdown-case` с заголовком, списками, инлайн-кодом, блоком кода, двенадцатью
+блоками кода подряд, ссылкой и HTML-строкой) и собранном `dist`:
 
 ```sh
 npx vite build --configLoader runner

@@ -5,6 +5,8 @@
  * и нумерованный списки, инлайн-код, блок в тройных кавычках и ссылка видны
  * разметкой; сырого markdown в видимом тексте не остаётся; HTML-вход экранирован
  * (нет элемента `script`, диалог не всплывал, угловые скобки видны как текст).
+ * Двенадцать блоков кода подряд рендерятся каждый своим текстом и по порядку
+ * (плейсхолдер блока 1 не задевает блоки 10+, listik-s0us).
  *
  * Поднимает `scripts/mock-api.mjs` в режиме `--markdown` (карточка
  * `listik-markdown-case` с фикстурой) и отдаёт собранный `web/dist`; сценарии
@@ -249,6 +251,26 @@ try {
       ok: Boolean(match && match.codeTag === 'code'),
       expect: `<pre><code> со строкой «${EXPECT.codeLine}»`,
       got: seen.pre,
+    }
+  })
+
+  await record('двенадцать блоков кода', async () => {
+    const seen = await state()
+    const codes = seen.pre.map((block) => block.code)
+    const expected = Array.from({ length: 12 }, (_, index) => `код блока ${String(index + 1).padStart(2, '0')}`)
+    // Строгое равенство, не includes: «…1» не должен совпасть с «…10».
+    const positions = expected.map((line) => codes.indexOf(line))
+    const checks = {
+      'ровно 13 pre': seen.pre.length === 13,
+      'каждый блок ровно один раз': expected.every((line) => codes.filter((code) => code === line).length === 1),
+      'блоки по порядку номеров': positions.every((pos, index) => index === 0 || pos > positions[index - 1]),
+      'у каждого блока code': positions.every((pos) => pos >= 0 && seen.pre[pos].codeTag === 'code'),
+      [`блок «${EXPECT.codeLine}» один`]: codes.filter((code) => code.includes(EXPECT.codeLine)).length === 1,
+    }
+    return {
+      ok: Object.values(checks).every(Boolean),
+      expect: `13 <pre><code>: один блок «${EXPECT.codeLine}» и «${expected[0]}» … «${expected[11]}» по одному, по порядку`,
+      got: codes,
     }
   })
 

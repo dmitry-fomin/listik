@@ -41,9 +41,11 @@ function escapeHtml(input: string): string {
  * Плейсхолдер — только латиница и цифры: рендер кита его не тронет (ни
  * экранирование, ни заголовки/списки/инлайн-разметка). Если такая строка уже
  * есть в исходном тексте, она удлиняется, чтобы подмена не задела чужой текст.
+ * Номер закрыт терминатором `Z`: без него плейсхолдер блока 1 (`…1`) —
+ * подстрока плейсхолдеров блоков 10–19 (`…10`), и замена портит их.
  */
 function placeholderFor(source: string, seq: number): string {
-  let candidate = `LKMDPHX${seq}`
+  let candidate = `LKMDPHX${seq}Z`
   while (source.includes(candidate)) candidate += 'X'
   return candidate
 }

@@ -9,14 +9,31 @@
  * и включает фильтры по одному. Мок новые параметры не применяет (см. его шапку), поэтому
  * ожидание — ответ мока на тот же запрос: если клиент досеет страницу сам, набор строк
  * разойдётся с ответом. Запросы списка берутся из `GET /__requests` (`list_queries`).
- * Шестой кейс `sort resets page` (шаг 2-p1l8) со второй страницы кликает сортировку
+ *
+ * Быстрые кнопки «Обновлена» (шаг listik-shf4): кейсы `updated_from` («сутки»),
+ * `updated_from week` («7 дн») и `updated_from month` («30 дн»). Сервер сравнивает
+ * `updated_from` с датой UTC из `updated_at`, поэтому кнопка «N дней» должна слать дату UTC
+ * момента «сейчас − N × 24 ч», а не локальную дату браузера. Ожидание считается здесь, в node,
+ * до и после клика (между ними могла пройти полночь UTC), `updated_to` в запросе нет; после
+ * загрузки подсвечена ровно нажатая кнопка группы «Диапазон обновления».
+ * Часовой пояс браузера подменяется (`Emulation.setTimezoneOverride`) до навигации: локальная
+ * дата и дата UTC расходятся только в часть суток, и без подмены ошибка ловилась бы не в любой
+ * час и не на любой машине. Пояс выбирается по часу UTC: ≥ 10 — `Pacific/Kiritimati`
+ * (UTC+14), иначе `Pacific/Pago_Pago` (UTC−11), летнего времени нет ни в одном; тогда
+ * локальная дата отличается от даты UTC. Каждый из трёх кейсов перед кликом проверяет это
+ * в странице (предусловие), без него кейс красный.
+ *
+ * Последний кейс `sort resets page` (шаг 2-p1l8) со второй страницы кликает сортировку
  * «Приоритет» и ждёт первую страницу: запросы только с `offset=0`, строки — ответ мока по порядку.
  *
  * Запуск: node scripts/verify-list-filters.mjs
  *   Нужен собранный `web/dist` (`npx vite build --configLoader runner`).
  *
- * Печатает JSON-отчёт: `cases[]` (имя кейса, ok, найденный запрос или все увиденные,
- * ожидание `{ total, ids }` и последний снимок `{ ids, hint }`) и `consoleErrors`.
+ * Печатает JSON-отчёт: `timezone` (подменённый пояс браузера), `cases[]` (имя кейса, ok,
+ * найденный запрос или все увиденные, ожидание `{ total, ids }` и последний снимок
+ * `{ ids, hint }`; у кейсов «Обновлена» ещё `expected_updated_from` — ожидание до и после
+ * клика, `local_date` — локальная дата из предусловия, `highlighted` — подсвеченные кнопки
+ * и `radios` — `aria-checked` всех кнопок группы) и `consoleErrors`.
  * Код возврата 1, если хоть один кейс не прошёл, есть `error` или в консоли были ошибки.
  */
 import { existsSync, mkdtempSync, rmSync } from 'node:fs'
@@ -62,6 +79,19 @@ const clickRadio = (group, label) => `(() => {
   return true;
 })()`
 
+/** Кнопки группы `[role="radiogroup"][aria-label=group]`: текст и `aria-checked`. */
+const radioStates = (group) => `(() => {
+  const box = [...document.querySelectorAll('[role="radiogroup"]')]
+    .find((item) => item.getAttribute('aria-label') === ${JSON.stringify(group)});
+  return [...(box?.querySelectorAll('[role="radio"]') ?? [])].map((item) => ({
+    label: item.textContent.trim(),
+    checked: item.getAttribute('aria-checked'),
+  }));
+})()`
+
+const UPDATED_GROUP = 'Диапазон обновления'
+const UPDATED_LABELS = ['всё время', 'сутки', '7 дн', '30 дн']
+
 const report = { cases: [], consoleErrors: [] }
 const record = (name, run) => recordCase(report, name, run)
 let mock = null
@@ -96,6 +126,8 @@ try {
   await ready
   await send('Runtime.enable')
   await send('Page.enable')
+  report.timezone = new Date().getUTCHours() >= 10 ? 'Pacific/Kiritimati' : 'Pacific/Pago_Pago'
+  await send('Emulation.setTimezoneOverride', { timezoneId: report.timezone })
 
   await send('Page.navigate', { url })
   const boardReady = await waitFor(
@@ -191,25 +223,71 @@ try {
   const radio = (group, label) => async () =>
     (await evaluate(clickRadio(group, label))) ? true : `нет радио «${label}» в группе «${group}»`
 
+  /**
+   * Быстрая кнопка «Обновлена» на N дней: предусловие в странице (локальная дата момента
+   * «сейчас − N × 24 ч» не равна его дате UTC), ожидание `updated_from` — дата UTC того же
+   * момента, посчитанная здесь до и после клика; после загрузки — подсветка ровно этой кнопки.
+   */
+  const quickUpdated = (name, label, days) => {
+    const expected = []
+    let precondition = null
+    const utcDaysAgo = () => new Date(Date.now() - days * 86400000).toISOString().slice(0, 10)
+    const act = async () => {
+      precondition = await evaluate(`(() => {
+        const date = new Date(Date.now() - ${days} * 86400000);
+        const pad = (value) => String(value).padStart(2, '0');
+        return {
+          local: date.getFullYear() + '-' + pad(date.getMonth() + 1) + '-' + pad(date.getDate()),
+          utc: date.toISOString().slice(0, 10),
+        };
+      })()`)
+      if (precondition.local === precondition.utc) {
+        return { reason: 'предусловие: локальная дата совпала с UTC', ...precondition }
+      }
+      expected.push(utcDaysAgo())
+      const clicked = await radio(UPDATED_GROUP, label)()
+      expected.push(utcDaysAgo())
+      return clicked
+    }
+    const check = (params) => expected.includes(params.get('updated_from')) && !params.has('updated_to')
+    const settle = async (result) => {
+      const radios = await evaluate(radioStates(UPDATED_GROUP))
+      const lit =
+        radios.length === UPDATED_LABELS.length &&
+        UPDATED_LABELS.every((text) =>
+          radios.some((item) => item.label === text && item.checked === (text === label ? 'true' : 'false')),
+        )
+      const highlighted = radios.filter((item) => item.checked === 'true').map((item) => item.label)
+      return {
+        ...result,
+        ok: result.ok && lit,
+        expected_updated_from: expected,
+        local_date: precondition.local,
+        highlighted,
+        radios,
+      }
+    }
+    return [name, act, check, settle]
+  }
+
   const CASES = [
     ['health=dead', radio('Фильтр по здоровью', 'брошены'), (params) => params.get('health') === 'dead'],
     ['deps=ready', radio('Фильтр по зависимостям', 'можно брать'), (params) => params.get('deps') === 'ready'],
     ['orchestrator=none', pickOrchestrator, (params) => params.get('orchestrator') === 'none'],
-    [
-      'updated_from',
-      radio('Диапазон обновления', 'сутки'),
-      (params) => /^\d{4}-\d{2}-\d{2}$/.test(params.get('updated_from') ?? '') && !params.has('updated_to'),
-    ],
+    quickUpdated('updated_from', 'сутки', 1),
+    quickUpdated('updated_from week', '7 дн', 7),
+    quickUpdated('updated_from month', '30 дн', 30),
   ]
 
   if (!report.error) {
-    for (const [name, act, check] of CASES) {
+    for (const [name, act, check, settle] of CASES) {
       await record(name, async () => {
         await resetFilters()
         await mockCall('/__requests', {})
         const acted = await act()
         if (acted !== true) return { ok: false, query: null, expect: null, got: acted }
-        return verify(check)
+        const result = await verify(check)
+        return settle ? settle(result) : result
       })
     }
   }

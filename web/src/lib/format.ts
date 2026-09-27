@@ -35,11 +35,12 @@ export function formatTime(
   return new Date(iso).toLocaleTimeString('ru-RU', options)
 }
 
-/** Дата фильтра «сегодня минус N дней» в формате YYYY-MM-DD. */
+/**
+ * Дата фильтра «сейчас минус N × 24 ч» в формате YYYY-MM-DD — дата UTC, как у фильтра
+ * `updated_from` на сервере (он сравнивает с датой UTC из `updated_at`), от пояса браузера не зависит.
+ */
 export function isoDateDaysAgo(days: number): string {
-  const date = new Date(Date.now() - days * 86400000)
-  const pad = (value: number): string => String(value).padStart(2, '0')
-  return `${date.getFullYear()}-${pad(date.getMonth() + 1)}-${pad(date.getDate())}`
+  return new Date(Date.now() - days * 86400000).toISOString().slice(0, 10)
 }
 
 /** Преобразование значения фильтра YYYY-MM-DD в Date для UiDatePicker. */

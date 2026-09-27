@@ -91,12 +91,11 @@ function patch(next: Partial<Filters>): void {
 
 const updateQuick = computed<string>({
   get() {
-    if (!props.filters.updatedFrom) return 'all'
-    const from = Date.parse(`${props.filters.updatedFrom}T00:00:00`)
-    const days = Math.round((Date.now() - from) / 86400000)
-    if (days <= 1) return 'day'
-    if (days <= 8) return 'week'
-    if (days <= 31) return 'month'
+    const from = props.filters.updatedFrom
+    if (!from) return 'all'
+    if (from === isoDateDaysAgo(1)) return 'day'
+    if (from === isoDateDaysAgo(7)) return 'week'
+    if (from === isoDateDaysAgo(30)) return 'month'
     return 'all'
   },
   set(value: string) {

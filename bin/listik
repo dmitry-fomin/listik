@@ -1755,6 +1755,12 @@ class _SwarmCards:
     Актор записей лестницы (`revoke`/`release`/`set_labels`) фиксирован —
     `agent:listik-swarm`: решение машинное, `--actor`/`LISTIK_OWNER` его не
     подменяют (лестница swarm-5, порция c).
+
+    Идентичность (владелец-человек): `release`/`set_labels` проверяют владельца
+    карточки, поэтому идут от имени владельца этой карточки — порт перед каждой
+    записью заново читает её `owner`; у ничьей карточки — от имени машины
+    (`--owner`/`LISTIK_OWNER`/`[auth] owner`). Остальные записи (`revoke`,
+    `comment`) — от имени машины (listik-dfjc).
     """
 
     ACTOR = "agent:listik-swarm"
@@ -1763,15 +1769,23 @@ class _SwarmCards:
         self._args = args
 
     def _guard(self, fn, *args, **kwargs):
-        """`ValueError`/`KeyError` порта (`store`/`launcher`) — в `ListikError`;
-        `errors.ListikError` (в том числе `unsupported` локального фолбэка на
-        `revoke`) уже в нужном виде и проходит как есть."""
+        """`ValueError`/`KeyError`/`errors.Forbidden` порта (`store`/`launcher`) —
+        в `ListikError`; `errors.ListikError` (в том числе `unsupported` локального
+        фолбэка на `revoke`) уже в нужном виде и проходит как есть."""
         try:
             return fn(*args, **kwargs)
         except errors.ListikError:
             raise
-        except (ValueError, KeyError) as exc:
+        except (ValueError, KeyError, errors.Forbidden) as exc:
             raise errors.as_error(exc) from exc
+
+    def _as_card_owner(self, task_id: str):
+        """`args` для записи от имени владельца карточки: копия `self._args` с его
+        `owner`; у ничьей карточки — `self._args` как есть. `self._args` не трогаем."""
+        owner = self._guard(call, "show", self._args, f"/api/tasks/{task_id}",
+                            query={"fields": "owner"},
+                            local_kwargs={"task_id": task_id, "fields": "owner"}).get("owner")
+        return argparse.Namespace(**{**vars(self._args), "owner": owner}) if owner else self._args
 
     def show(self, task_id: str) -> dict:
         return call("show", self._args, f"/api/tasks/{task_id}",
@@ -1791,12 +1805,14 @@ class _SwarmCards:
 
     def release(self, task_id: str, note: str) -> dict:
         body = {"actor": self.ACTOR, "note": note}
-        return self._guard(call, "release", self._args, f"/api/tasks/{task_id}/release",
+        return self._guard(call, "release", self._as_card_owner(task_id),
+                           f"/api/tasks/{task_id}/release",
                            method="POST", body=body, local_kwargs={"task_id": task_id, **body})
 
     def set_labels(self, task_id: str, labels: list[str]) -> dict:
         body = {"labels": labels, "actor": self.ACTOR}
-        return self._guard(call, "update", self._args, f"/api/tasks/{task_id}", method="PATCH",
+        return self._guard(call, "update", self._as_card_owner(task_id),
+                           f"/api/tasks/{task_id}", method="PATCH",
                            body=body,
                            local_kwargs={"task_id": task_id, "labels": labels,
                                          "actor": self.ACTOR})

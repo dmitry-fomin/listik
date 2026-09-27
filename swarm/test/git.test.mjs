@@ -300,3 +300,22 @@ suite("changedFiles", async () => {
   sh(tree, "commit", "-q", "-m", "two files");
   assert.deepEqual(await git.changedFiles(tree, base, "task/a"), ["one.txt", "two.txt"]);
 });
+
+suite("git-вызовы идут с LC_ALL=C даже при русской локали в env", async () => {
+  // runGit перекрывает LC_ALL → stderr всегда на C-локали. На машине без русских
+  // переводов git тест проходит тривиально — он страхует от потери env, а не от
+  // наличия локали.
+  const repo = initRepo();
+  const saved = {LANG: process.env.LANG, LC_ALL: process.env.LC_ALL};
+  process.env.LANG = "ru_RU.UTF-8";
+  process.env.LC_ALL = "ru_RU.UTF-8";
+  try {
+    const res = await git.removeWorktree(repo, join(repo, "нет-такого-дерева"));
+    assert.equal(res.ok, false);
+    assert.match(res.stderr, /not a working tree/i);
+  } finally {
+    for (const [k, v] of Object.entries(saved)) {
+      if (v === undefined) delete process.env[k]; else process.env[k] = v;
+    }
+  }
+});

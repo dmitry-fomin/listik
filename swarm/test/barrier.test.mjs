@@ -1283,6 +1283,75 @@ suite("барьер: каталог влитой убран вручную (rm -
   assert.equal(log.lines.some(l => l.includes("удаление ветки не удалось")), false);
 });
 
+suite("барьер: каталог убран вручную, remove отвечает ok:false по-русски — ветку убирают", async () => {
+  // Тот же сценарий «rm -rf», но removeWorktree заглушён отказом с локализованным
+  // stderr: решение обязано опираться на регистрацию/диск, а не на текст ошибки.
+  const repo = initRepo();
+  const treeT1 = addWorktree(repo, "t1");
+  writeFileSync(join(treeT1, "a.txt"), "a\n");
+  sh(treeT1, "add", "a.txt");
+  sh(treeT1, "commit", "-q", "-m", "t1");
+  sh(repo, "merge", "-q", "--ff-only", "task/t1");
+  nodeFs.rmSync(treeT1, {recursive: true, force: true});
+
+  const gitRu = {
+    ...git,
+    removeWorktree: async (repoPath, p) => {
+      // Регистрацию реально снимаем — иначе последующий `branch -d` откажет
+      // «used by worktree at …» по состоянию git, а не из-за текста stderr.
+      const real = await git.removeWorktree(repoPath, p);
+      if (!real.ok) sh(repoPath, "worktree", "prune", "--expire", "now");
+      return {ok: false, stderr: `fatal: '${p}' не является рабочим каталогом`};
+    },
+  };
+  const tasks = [{id: "t1", status: "done", worktree: treeT1, branch: "task/t1", labels: ["port:1"]}];
+  const listik = fakeListik({
+    t1: {id: "t1", comments: [], write_scope: []},
+  });
+  const log = makeLog();
+  const result = await runBarrier({
+    listik, git: gitRu, fs: nodeFs, config: {dryRun: false, project: "demo", logDir: tmpLogDir()},
+    swarmConfig: {integration: []}, log, tasks, projectPath: repo, now: new Date(),
+  });
+
+  assert.equal(result.integration, "green");
+  assert.deepEqual(result.cleaned, ["t1"]);
+  assert.equal(await git.branchExists(repo, "task/t1"), false);
+  const setT1 = listik.calls.set.find(c => c.id === "t1");
+  assert.deepEqual(setT1.fields, {worktree: "", branch: ""});
+});
+
+suite("барьер: remove не удался, каталог жив и зарегистрирован — ветку не трогают", async () => {
+  // stderr совпадает с бывшей «волшебной» строкой — раньше ветку бы удалили;
+  // теперь живое зарегистрированное дерево значит «руки прочь». Ветку вливает
+  // сам барьер (merge вручную + живой каталог дал бы «пустой дифф» и reject).
+  const repo = initRepo();
+  const treeT1 = addWorktree(repo, "t1");
+  writeFileSync(join(treeT1, "a.txt"), "a\n");
+  sh(treeT1, "add", "a.txt");
+  sh(treeT1, "commit", "-q", "-m", "t1");
+
+  const gitBad = {
+    ...git,
+    removeWorktree: async () => ({ok: false, stderr: "not a working tree"}),
+  };
+  const tasks = [{id: "t1", status: "done", worktree: treeT1, branch: "task/t1", labels: ["port:1"]}];
+  const listik = fakeListik({
+    t1: {id: "t1", comments: [], write_scope: []},
+  });
+  const log = makeLog();
+  const result = await runBarrier({
+    listik, git: gitBad, fs: nodeFs, config: {dryRun: false, project: "demo", logDir: tmpLogDir()},
+    swarmConfig: {integration: []}, log, tasks, projectPath: repo, now: new Date(),
+  });
+
+  assert.equal(result.integration, "green");
+  assert.deepEqual(result.cleaned, []);
+  assert.equal(nodeFs.existsSync(treeT1), true);
+  assert.equal(await git.branchExists(repo, "task/t1"), true);
+  assert.ok(log.lines.some(l => l === "t1: remove не удался, ветку не трогаю"));
+});
+
 suite("барьер: create отвечает ошибкой — деревья на месте, gate halt, без исключения", async () => {
   const {repo, treeT1, treeT2, tasks} = twoMergedSetup();
   const listik = fakeListik({

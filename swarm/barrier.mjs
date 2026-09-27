@@ -964,8 +964,30 @@ async function cleanupOne({listik, git, fs, log, id, candidateMap, projectPath})
   const dirExists = dirPath && fs.existsSync(dirPath);
   const rm = await git.removeWorktree(projectPath, dirPath);
   if (!rm.ok) {
-    const stderrText = rm.stderr || "";
-    if (!/not a working tree/i.test(stderrText)) {
+    // stderr не разбираем — он в локали пользователя. Смотрим регистрацию дерева в
+    // `git worktree list`: пути там реальные (macOS отдаёт /private/var/… вместо
+    // /var/…), поэтому сравниваем через resolve, а для существующих — realpathSync.
+    let registered = false;
+    try {
+      const want = path.resolve(dirPath);
+      let wantReal = null;
+      try {
+        wantReal = fs.realpathSync(dirPath);
+      } catch { /* каталога нет — реальный путь не выдумываем */ }
+      const entries = await git.worktreeList(projectPath);
+      registered = entries.some(e => {
+        if (path.resolve(e.path) === want) return true;
+        if (!wantReal) return false;
+        try {
+          return fs.realpathSync(e.path) === wantReal;
+        } catch {
+          return false;
+        }
+      });
+    } catch {
+      registered = null;
+    }
+    if (registered === null || (dirExists && registered)) {
       log.line(`${id}: remove не удался, ветку не трогаю`);
       return null;
     }

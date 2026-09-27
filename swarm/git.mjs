@@ -19,7 +19,8 @@ export class GitError extends Error {
 
 function runGit(repo, args) {
   return new Promise((res) => {
-    execFile("git", ["--no-optional-locks", "-C", repo, ...args], {maxBuffer: MAX_BUFFER},
+    execFile("git", ["--no-optional-locks", "-C", repo, ...args],
+      {env: {...process.env, LC_ALL: "C"}, maxBuffer: MAX_BUFFER},
       (err, stdout, stderr) => {
         const code = err ? (typeof err.code === "number" ? err.code : 1) : 0;
         res({code, stdout: stdout ?? "", stderr: stderr ?? ""});

@@ -206,24 +206,40 @@ mode_from_permission() {
   esac
 }
 
-# --- write в git worktree ---------------------------------------------------
-# В связанном worktree git-dir (<common>/worktrees/<имя>) и общие objects/refs/
-# logs лежат вне -C, и песочница workspace-write не даёт git add/commit.
-# Открываем ровно их: весь <common>, hooks и config — нет (записанный хук
-# потом выполнился бы без песочницы). Признак worktree — git-dir != common-dir
-# (у подмодуля они совпадают). Дописывает в массив args вызывающего; любая
-# ошибка git — просто без --add-dir.
-add_worktree_dirs() {
-  local mode="$1" workdir="$2" out gitdir common d
+# --- write в git: worktree и основная копия ----------------------------------
+# Песочница workspace-write держит <workdir>/.git только для чтения, а у
+# связанного worktree git-dir (<common>/worktrees/<имя>) и общие objects/refs/
+# logs вообще лежат вне -C — без --add-dir git add/commit падают.
+# Worktree (git-dir != common-dir): открываем git-dir и <common>/objects, refs,
+# logs. Основная копия (git-dir == common-dir == <toplevel>/.git): каталоги
+# objects, refs, logs и файлы index, index.lock, HEAD, HEAD.lock, COMMIT_EDITMSG
+# (lock-файлов до коммита нет — codex принимает и несуществующий путь).
+# Весь git-dir, hooks и config не открываем никогда: записанный из песочницы
+# хук или core.hooksPath потом выполнился бы без неё. Подмодуль (git-dir =
+# <super>/.git/modules/<имя>) не трогаем. Дописывает в массив args
+# вызывающего; любая ошибка git — просто без --add-dir.
+add_git_dirs() {
+  local mode="$1" workdir="$2" out gitdir common top rest d f
   [[ "$mode" == "workspace-write" ]] || return 0
   command -v git >/dev/null 2>&1 || return 0
-  out="$(git -C "$workdir" rev-parse --path-format=absolute --git-dir --git-common-dir 2>/dev/null)" || return 0
+  out="$(git -C "$workdir" rev-parse --path-format=absolute --git-dir --git-common-dir --show-toplevel 2>/dev/null)" || return 0
   gitdir="${out%%$'\n'*}"
-  common="${out#*$'\n'}"
-  [[ -n "$gitdir" && -n "$common" && "$gitdir" != "$out" && "$gitdir" != "$common" ]] || return 0
-  for d in "$gitdir" "$common/objects" "$common/refs" "$common/logs"; do
-    [[ -d "$d" ]] && args+=(--add-dir "$d")
-  done
+  rest="${out#*$'\n'}"
+  common="${rest%%$'\n'*}"
+  top="${rest#*$'\n'}"
+  [[ -n "$gitdir" && -n "$common" && "$gitdir" != "$out" ]] || return 0
+  if [[ "$gitdir" != "$common" ]]; then
+    for d in "$gitdir" "$common/objects" "$common/refs" "$common/logs"; do
+      [[ -d "$d" ]] && args+=(--add-dir "$d")
+    done
+  elif [[ -n "$top" && "$top" != "$rest" && "$gitdir" == "$top/.git" ]]; then
+    for d in objects refs logs; do
+      [[ -d "$gitdir/$d" ]] && args+=(--add-dir "$gitdir/$d")
+    done
+    for f in index index.lock HEAD HEAD.lock COMMIT_EDITMSG; do
+      args+=(--add-dir "$gitdir/$f")
+    done
+  fi
   return 0
 }
 
@@ -434,7 +450,7 @@ cmd_run() {
   # примером из --help.
   [[ -n "$effort" ]] && args+=(-c "model_reasoning_effort=\"$effort\"")
   [[ -n "$provider_opt" ]] && args+=(-c "model_provider=\"$provider_opt\"")
-  add_worktree_dirs "$mode" "$workdir"
+  add_git_dirs "$mode" "$workdir"
 
   if [[ $background -eq 1 ]]; then
     run_background "$bin" "$mode" "$workdir" "$timeout_s" "$prompt" \
@@ -1086,7 +1102,7 @@ cmd_resume() {
   [[ -n "$model" && "$model" != "—" ]] && args+=(-m "$model")
   [[ -n "$effort" && "$effort" != "—" ]] && args+=(-c "model_reasoning_effort=\"$effort\"")
   [[ -n "$provider" && "$provider" != "—" ]] && args+=(-c "model_provider=\"$provider\"")
-  add_worktree_dirs "$mode" "$workdir"
+  add_git_dirs "$mode" "$workdir"
   [[ -n "$label" ]] || label="resume $job_id"
 
   RESUME_SID="$sid"

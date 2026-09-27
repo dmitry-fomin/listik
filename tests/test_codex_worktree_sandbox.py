@@ -1,4 +1,5 @@
-"""codex-run.sh --write в git worktree: --add-dir на git-dir и objects/refs/logs (listik-51pz).
+"""codex-run.sh --write в git worktree: --add-dir на git-dir и objects/refs/logs (listik-51pz);
+в основной копии — objects/refs/logs и файлы index/HEAD/COMMIT_EDITMSG с lock-файлами (listik-lon8).
 
 Настоящий codex не вызывается: CODEX_BIN — фейк, который пишет argv по элементу на строку,
 блок на вызов. Git — настоящий, во временном каталоге.
@@ -129,9 +130,49 @@ class CodexWorktreeSandboxTests(unittest.TestCase):
         self.codex("run", "--permission", "read", "--cwd", str(self.wt))
         self.assertEqual(self.add_dirs(self.calls()[-1]), [])
 
+    def main_expected(self) -> list[str]:
+        g = git("rev-parse", "--path-format=absolute", "--git-dir", cwd=self.main)
+        self.g = g
+        return [f"{g}/objects", f"{g}/refs", f"{g}/logs",
+                f"{g}/index", f"{g}/index.lock", f"{g}/HEAD", f"{g}/HEAD.lock", f"{g}/COMMIT_EDITMSG"]
+
+    def assert_main_set(self, argv: list[str]) -> None:
+        self.assertEqual(self.add_dirs(argv), self.main_expected())
+        for bad in (self.g, f"{self.g}/hooks", f"{self.g}/config"):
+            self.assertNotIn(bad, argv)
+
     def test_write_in_main_copy(self) -> None:
         self.codex("run", "--permission", "write", "--cwd", str(self.main))
-        self.assertEqual(self.add_dirs(self.calls()[-1]), [])
+        self.assert_main_set(self.calls()[-1])
+
+    def test_write_in_main_copy_subdir(self) -> None:
+        sub = self.main / "a" / "b"
+        sub.mkdir(parents=True)
+        self.codex("run", "--permission", "write", "--cwd", str(sub))
+        self.assert_main_set(self.calls()[-1])
+
+    def test_write_in_main_copy_background(self) -> None:
+        job = self.codex("run", "--write", "--background", "--cwd", str(self.main)).stdout.split()[0]
+        self.wait(job)
+        self.assert_main_set(self.calls()[-1])
+
+    def test_read_only_in_main_copy(self) -> None:
+        self.codex("run", "--permission", "read", "--cwd", str(self.main))
+        argv = self.calls()[-1]
+        self.assertEqual(self.add_dirs(argv), [])
+        g = git("rev-parse", "--path-format=absolute", "--git-dir", cwd=self.main)
+        for bad in (g, f"{g}/hooks", f"{g}/config"):
+            self.assertNotIn(bad, argv)
+
+    def test_resume_write_of_read_only_run_in_main_copy(self) -> None:
+        job = self.codex("run", "--background", "--permission", "read", "--cwd", str(self.main)).stdout.split()[0]
+        self.wait(job)
+        self.codex("resume", job, "--write")
+        argv = self.calls()[-1]
+        self.assertIn("resume", argv)
+        self.assert_main_set(argv)
+        last_add = max(i for i, a in enumerate(argv) if a == "--add-dir")
+        self.assertLess(last_add, argv.index("resume"))
 
     def test_write_in_submodule(self) -> None:
         subsrc = self.root / "subsrc"

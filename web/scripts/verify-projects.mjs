@@ -17,6 +17,9 @@
  * (listik-l0it): 401 при удалении открывает окно «Нужен токен Listik», отказ сети
  * на тумблере поднимает плашку «Сервер Listik недоступен» на доске. 409/500 не дают
  * ни окна токена, ни общих алертов доски.
+ * Сбой перечитывания списка после удачного действия (GET /api/projects →
+ * подменный 500) не гасится: текст виден в алерте раздела, а повторное нажатие
+ * тумблера при живом чтении возвращает проект и сбрасывает алерт (listik-q1xh).
  * Работает с живой страницей (dev или прод) и настоящим API Listik, поэтому
  * трогает базу: используйте временный каталог и slug вида `listik-check-*`.
  *
@@ -167,6 +170,10 @@ const T409 = 'проверка listik-uq4f: у проекта есть зада�
 const T500 = 'проверка listik-uq4f: сбой сервера 500'
 const T500F = 'проверка listik-uq4f: сбой удаления с задачами 500'
 let stub = { code: 409, text: T409 }
+/** Подмена ответа на чтение списка (`GET /api/projects`, ровно путь списка):
+ *  не null только на время сценария listik-q1xh — действие над проектом идёт на
+ *  сервер, а перечитывание списка получает 500. */
+let listStub = null
 report.intercepted = []
 // обработчик — до `Fetch.enable`, иначе перехваченный запрос повиснет
 socket.addEventListener('message', (message) => {
@@ -177,6 +184,18 @@ socket.addEventListener('message', (message) => {
   if (stub.offline) {
     report.intercepted.push(`${request.method} ${request.url} → offline`)
     reply = send('Fetch.failRequest', { requestId, errorReason: 'ConnectionRefused' })
+  } else if (
+    listStub &&
+    request.method === 'GET' &&
+    new URL(request.url).pathname === '/api/projects'
+  ) {
+    report.intercepted.push(`GET ${request.url} → ${listStub.code}`)
+    reply = send('Fetch.fulfillRequest', {
+      requestId,
+      responseCode: listStub.code,
+      responseHeaders: [{ name: 'Content-Type', value: 'application/json; charset=utf-8' }],
+      body: Buffer.from(JSON.stringify({ ok: false, error: listStub.text })).toString('base64'),
+    })
   } else if (request.method === 'DELETE') {
     report.intercepted.push(`DELETE ${request.url} → ${stub.code}`)
     reply = send('Fetch.fulfillRequest', {
@@ -191,7 +210,11 @@ socket.addEventListener('message', (message) => {
   reply.catch((error) => console.error(`перехват ${request.url}: ${error.message}`))
 })
 await send('Fetch.enable', {
-  patterns: [{ urlPattern: `*/api/projects/${slug}*` }, { urlPattern: '*/api/health*' }],
+  patterns: [
+    { urlPattern: `*/api/projects/${slug}*` },
+    { urlPattern: '*/api/projects*' },
+    { urlPattern: '*/api/health*' },
+  ],
 })
 
 const openRemove = () => evaluate(`(() => {
@@ -213,6 +236,37 @@ const removeState = (text) => evaluate(`(() => {
     stillThere: [...document.querySelectorAll('.ui-entity-card__title')].some((el) => el.textContent.trim() === ${JSON.stringify(slug)}),
   };
 })()`)
+
+// listik-q1xh: удачное действие над проектом + сбой перечитывания списка
+// (`GET /api/projects` → подменный 500). Текст остаётся в алерте раздела;
+// повторное нажатие тумблера при живом чтении сбрасывает алерт и возвращает
+// проект в исходную видимость (свитч скрытой строки повторно шлёт archived=0).
+const TLIST = 'проверка listik-q1xh: сбой перечитывания 500'
+const clickSwitch = () => evaluate(`(() => {
+  const card = [...document.querySelectorAll('.ui-entity-card')]
+    .find((el) => el.querySelector('.ui-entity-card__title')?.textContent.trim() === ${JSON.stringify(slug)});
+  card?.querySelector('[role=switch]')?.click();
+})()`)
+const alertHas = (text) => evaluate(
+  `[...document.querySelectorAll('.listik-projects .ui-alert')].some((el) => el.textContent.includes(${JSON.stringify(text)}))`,
+)
+// прячем по-настоящему: подменяется чтение после «вернуть на доску»
+await clickSwitch()
+await sleep(3000)
+listStub = { code: 500, text: TLIST }
+await clickSwitch()
+await sleep(3000)
+report.refreshFail = {
+  alert: await alertHas(TLIST),
+  ...JSON.parse(await evaluate(boardState)),
+}
+listStub = null
+await clickSwitch()
+await sleep(3000)
+report.refreshRecovery = {
+  alertEmpty: await evaluate(`document.querySelectorAll('.listik-projects .ui-alert').length === 0`),
+  ...JSON.parse(await evaluate(boardState)),
+}
 
 // 1. 409 → второй диалог, «Оставить» закрывает его, проект на месте
 stub = { code: 409, text: T409 }

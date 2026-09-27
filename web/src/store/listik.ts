@@ -1330,7 +1330,12 @@ async function loadProjects(): Promise<void> {
   })
 }
 
-/** Действие над проектом: ошибки и действия, и перечитывания после него идут через `onProjectsError`. */
+/**
+ * Действие над проектом: ошибки и действия, и перечитывания после него идут
+ * через `onProjectsError`. `projectsError` здесь не обнуляем: успешное
+ * перечитывание сбрасывает его само (`loadProjects`), а стирание после
+ * `refresh()` гасило бы текст только что записанной ошибки списка (listik-q1xh).
+ */
 async function projectAction<T>(
   action: () => Promise<T>,
   refresh: () => Promise<void>,
@@ -1340,7 +1345,6 @@ async function projectAction<T>(
     if (result === null) return null
     try {
       await refresh()
-      projectsError.value = null
       return result
     } catch (error) {
       onProjectsError(error)

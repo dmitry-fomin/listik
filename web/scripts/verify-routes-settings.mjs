@@ -39,6 +39,21 @@
  * (ввод/клик), а `finalize()` страхует прямым PATCH (`harnessHintRestoreNeeded`/
  * `harnessEnabledRestoreNeeded`).
  *
+ * listik-iw75 (401 и отказ сети идут в общий `handleError`, как у проектов в
+ * listik-l0it): PATCH карточки маршрута и карточки харнесса перехватываются
+ * через CDP `Fetch` (обработчик `Fetch.requestPaused` — до `Fetch.enable`,
+ * подмена до сервера не доходит; `/api/health` в паттернах, чтобы плашку не
+ * гасил фоновый опрос здоровья). 401 на `PATCH /api/routes/<key>` открывает
+ * окно «Нужен токен Listik» — перезагрузка его снимает; отказ сети
+ * (`Fetch.failRequest`, `ConnectionRefused`) на `PATCH /api/harnesses/<key>`
+ * пишет текст в алерт раздела харнессов и поднимает плашку «Сервер Listik
+ * недоступен» на доске (переход роутером, без перезагрузки); 409 и 404 дают
+ * только текст в алерте раздела — на доске ни окна токена, ни плашки, ни
+ * алерта «Последняя операция завершилась ошибкой». От ложного pass: каждый
+ * подменённый запрос пишется в `report.iw75Intercepted` и ожидаемый PATCH
+ * обязан там быть; затронутые маршрут и харнесс читаются прямыми GET до и
+ * после блока и обязаны совпасть.
+ *
  * Работает с живой страницей (dev или прод) и настоящим API Listik, поэтому
  * трогает базу маршрутов: исходные значения полей возвращаются прямым `PATCH`
  * в `finalize()` и при успехе сценария, и при падении посреди него. Этот откат
@@ -352,6 +367,38 @@ const clickHarnessSwitch = `(() => {
 const harnessPatchCallsSince = (from) => `window.__harnessPatchCalls.slice(${from})`
 const harnessPatchCallsCount = `window.__harnessPatchCalls.length`
 const harnessSaveStatusText = `document.querySelector('.listik-harness-card .ui-save-status')?.textContent ?? ''`
+
+/* ── 401/отказ сети действий вкладок (listik-iw75) — по образцу listik-l0it ── */
+
+/** Алерт раздела «Маршруты» с конкретным текстом — прямой ребёнок корня (routesSettingsError). */
+const routesAlertHas = (text) => `(() => {
+  const alert = [...document.querySelectorAll('.listik-routes-settings > .ui-alert')]
+    .find((el) => (el.textContent || '').includes(${JSON.stringify(text)}));
+  return Boolean(alert);
+})()`
+
+/**
+ * Любой алерт внутри раздела «Харнессы» с текстом: ошибку PATCH показывает
+ * карточка своя плашкой (`serverError` в HarnessCard забирает harnessesError).
+ */
+const harnessAlertHas = (text) => `(() => {
+  const alert = [...document.querySelectorAll('.listik-harnesses .ui-alert')]
+    .find((el) => (el.textContent || '').includes(${JSON.stringify(text)}));
+  return Boolean(alert);
+})()`
+
+/** На доску роутером, без перезагрузки: состояние стора переживает переход. */
+const toBoard = `document.querySelector('a.listik-shell__brand-link')?.click()`
+const tokenAsked = `[...document.querySelectorAll('.ui-modal')].some((el) => el.textContent.includes('Нужен токен Listik'))`
+/** Общие сигналы доски: плашка отказа сети, алерт последней ошибки, окно токена. */
+const boardAlerts = `(() => {
+  const topAlert = (needle) => [...document.querySelectorAll('.listik-shell__top .ui-alert')].some((el) => el.textContent.includes(needle));
+  return {
+    plaque: topAlert('Запустите сервер командой'),
+    lastErrorAlert: topAlert('Последняя операция завершилась ошибкой'),
+    tokenAsked: ${tokenAsked},
+  };
+})()`
 
 /* ── удаление маршрута роя (порция `a`) ── */
 
@@ -955,6 +1002,149 @@ try {
     )
   harnessHintRestoreNeeded = !report.harnessUnmountRestored
 
+  /*
+   * ── 401 и отказ сети через handleError (listik-iw75) ──
+   * PATCH карточек маршрута и харнесса перехватывается CDP `Fetch` и получает
+   * подменные ответы, до сервера они не доходят. Записи до и после блока
+   * сверяются прямыми GET — подмена не должна была пройти на сервер.
+   */
+  const iw75RouteBefore = await evaluate(fetchRoute(cardKey))
+  const iw75HarnessResp = await evaluate(apiCall('GET', `/api/harnesses/${harnessCardKey}`))
+  const iw75HarnessBefore = iw75HarnessResp?.status === 200 ? iw75HarnessResp.data : null
+  report.iw75ReadBefore = { route: Boolean(iw75RouteBefore), harness: Boolean(iw75HarnessBefore) }
+  if (!iw75RouteBefore || !iw75HarnessBefore) {
+    throw new Error(`listik-iw75: не прочитались записи ${cardKey}/${harnessCardKey} до блока`)
+  }
+
+  const T409 = 'проверка listik-iw75: правка маршрута (409)'
+  const T404 = 'проверка listik-iw75: правка маршрута (404)'
+  const T401 = 'проверка listik-iw75: правка маршрута (401)'
+  let stub = { code: 409, text: T409 }
+  report.iw75Intercepted = []
+  // обработчик — до `Fetch.enable`, иначе перехваченный запрос повиснет
+  client.socket.addEventListener('message', (message) => {
+    const data = JSON.parse(message.data)
+    if (data.method !== 'Fetch.requestPaused') return
+    const { requestId, request } = data.params
+    let reply
+    if (stub === null) {
+      reply = send('Fetch.continueRequest', { requestId })
+    } else if (stub.offline) {
+      report.iw75Intercepted.push(`${request.method} ${request.url} → offline`)
+      reply = send('Fetch.failRequest', { requestId, errorReason: 'ConnectionRefused' })
+    } else if (request.method === 'PATCH') {
+      report.iw75Intercepted.push(`PATCH ${request.url} → ${stub.code}`)
+      reply = send('Fetch.fulfillRequest', {
+        requestId,
+        responseCode: stub.code,
+        responseHeaders: [{ name: 'Content-Type', value: 'application/json; charset=utf-8' }],
+        body: Buffer.from(JSON.stringify({ ok: false, error: stub.text })).toString('base64'),
+      })
+    } else {
+      reply = send('Fetch.continueRequest', { requestId })
+    }
+    reply.catch((error) => console.error(`перехват ${request.url}: ${error.message}`))
+  })
+  await send('Fetch.enable', {
+    patterns: [
+      { urlPattern: `*/api/routes/${cardKey}*` },
+      { urlPattern: `*/api/harnesses/${harnessCardKey}*` },
+      { urlPattern: '*/api/health*' },
+    ],
+  })
+  /** Число перехваченных PATCH на адрес `needle` со снимка `from` — защита от ложного pass. */
+  const iw75Calls = (from, needle) =>
+    report.iw75Intercepted
+      .slice(from)
+      .filter((line) => line.startsWith('PATCH') && line.includes(needle)).length
+
+  // раздел «Маршруты»: карточка того же конвейера, правка — тумблер «Показывать автору»
+  await send('Page.navigate', { url: routesUrl })
+  await sleep(4000)
+  const iw75Rows = (await evaluate(groupRows('Конвейеры'))) ?? []
+  const iw75Index = iw75Rows.findIndex((row) => row.key === cardKey)
+  report.iw75RowListed = iw75Index >= 0
+  if (iw75Index < 0) throw new Error(`listik-iw75: маршрут ${cardKey} не в группе «Конвейеры»`)
+  report.iw75RowClicked = await evaluate(clickRow('Конвейеры', iw75Index))
+  await sleep(500)
+
+  // 1) 409 на PATCH маршрута — текст только в алерте раздела
+  let iw75From = report.iw75Intercepted.length
+  await evaluate(clickSwitch)
+  report.iw75alert409 = Boolean(await until(routesAlertHas(T409)))
+  report.iw75calls409 = iw75Calls(iw75From, `/api/routes/${cardKey}`)
+
+  // 2) 404 на PATCH маршрута — другой орган (уровень-глиф): второй клик того же
+  //    тумблера вернул бы черновик к baseline, и diff ушёл бы пустым (без PATCH)
+  stub = { code: 404, text: T404 }
+  const iw75Level = await evaluate(levelState)
+  const iw75LevelTarget = iw75Level?.checked === 0 ? 1 : 0
+  iw75From = report.iw75Intercepted.length
+  await evaluate(clickLevel(iw75LevelTarget))
+  report.iw75alert404 = Boolean(await until(routesAlertHas(T404)))
+  report.iw75calls404 = iw75Calls(iw75From, `/api/routes/${cardKey}`)
+
+  // на доске (переход роутером) после 409/404 — ни плашки, ни алерта, ни окна токена
+  await evaluate(toBoard)
+  await sleep(1500)
+  report.iw75BoardAfterConflicts = await evaluate(boardAlerts)
+
+  // 3) 401 на PATCH маршрута — окно «Нужен токен Listik», перезагрузка снимает
+  await send('Page.navigate', { url: routesUrl })
+  await sleep(4000)
+  const iw75Rows2 = (await evaluate(groupRows('Конвейеры'))) ?? []
+  const iw75Index2 = iw75Rows2.findIndex((row) => row.key === cardKey)
+  if (iw75Index2 < 0) throw new Error(`listik-iw75: маршрут ${cardKey} пропал из «Конвейеры»`)
+  await evaluate(clickRow('Конвейеры', iw75Index2))
+  await sleep(500)
+  stub = { code: 401, text: T401 }
+  iw75From = report.iw75Intercepted.length
+  await evaluate(clickSwitch)
+  report.iw75alert401 = Boolean(await until(routesAlertHas(T401)))
+  report.iw75token401 = Boolean(await until(tokenAsked))
+  report.iw75calls401 = iw75Calls(iw75From, `/api/routes/${cardKey}`)
+  await send('Page.navigate', { url: routesUrl })
+  await sleep(4000)
+  report.iw75tokenAfterReload = await evaluate(tokenAsked)
+
+  // 4) отказ сети на PATCH харнесса — алерт раздела и плашка на доске (роутером)
+  await send('Page.navigate', { url: harnessesUrl })
+  await sleep(4000)
+  report.iw75HarnessRowClicked = await evaluate(clickHarnessRow(harnessCardKey))
+  report.iw75HarnessCardShown = Boolean(await until(`Boolean(document.querySelector('.listik-harness-card'))`))
+  /* Окно «сервер лежит»: паттерн расширяется до всего /api — иначе успешный
+   * refresh доски (loadHealth глотает свой отказ, остальные запросы проходят)
+   * гасил бы плашку раньше, чем её прочитает проверка. */
+  stub = { offline: true }
+  await send('Fetch.enable', { patterns: [{ urlPattern: '*/api/*' }] })
+  iw75From = report.iw75Intercepted.length
+  await evaluate(clickHarnessSwitch)
+  report.iw75HarnessOfflineAlert = Boolean(await until(harnessAlertHas('Сервер Listik недоступен')))
+  report.iw75callsOffline = iw75Calls(iw75From, `/api/harnesses/${harnessCardKey}`)
+  await evaluate(toBoard)
+  await sleep(1500)
+  report.iw75offlineBoard = await evaluate(boardAlerts)
+
+  stub = null
+  await send('Fetch.disable')
+
+  // контроль: подмена на сервер не дошла — теми же GET сверяем правимые поля
+  // (used_by/updated_at и прочее живое в сравнение не берём)
+  const iw75RouteAfter = await evaluate(fetchRoute(cardKey))
+  const iw75HarnessAfterResp = await evaluate(apiCall('GET', `/api/harnesses/${harnessCardKey}`))
+  const iw75HarnessAfter = iw75HarnessAfterResp?.status === 200 ? iw75HarnessAfterResp.data : null
+  report.iw75ReadAfter = { route: Boolean(iw75RouteAfter), harness: Boolean(iw75HarnessAfter) }
+  const routeProbe = (r) => r && { title: r.title, hint: r.hint, icon: r.icon, visible: r.visible }
+  const harnessProbe = (h) =>
+    h && {
+      label: h.label, hint: h.hint, icon: h.icon, enabled: h.enabled,
+      argv: h.argv, prompt: h.prompt, position: h.position,
+    }
+  report.iw75RouteSame =
+    JSON.stringify(routeProbe(iw75RouteBefore)) === JSON.stringify(routeProbe(iw75RouteAfter))
+  report.iw75HarnessSame =
+    JSON.stringify(harnessProbe(iw75HarnessBefore)) === JSON.stringify(harnessProbe(iw75HarnessAfter))
+
   report.consoleErrors = consoleErrors
   report.ok =
     report.settingsOpen === true &&
@@ -1043,6 +1233,32 @@ try {
     report.harnessOtherCardShown === true &&
     report.harnessBackClicked === true &&
     report.harnessUnmountRestored === true &&
+    /* 401/отказ сети вкладок через handleError (listik-iw75) */
+    report.iw75ReadBefore?.route === true &&
+    report.iw75ReadBefore?.harness === true &&
+    report.iw75RowListed === true &&
+    report.iw75RowClicked === true &&
+    report.iw75alert409 === true &&
+    report.iw75calls409 >= 1 &&
+    report.iw75alert404 === true &&
+    report.iw75calls404 >= 1 &&
+    report.iw75BoardAfterConflicts?.plaque === false &&
+    report.iw75BoardAfterConflicts?.lastErrorAlert === false &&
+    report.iw75BoardAfterConflicts?.tokenAsked === false &&
+    report.iw75alert401 === true &&
+    report.iw75token401 === true &&
+    report.iw75calls401 >= 1 &&
+    report.iw75tokenAfterReload === false &&
+    report.iw75HarnessRowClicked === true &&
+    report.iw75HarnessCardShown === true &&
+    report.iw75HarnessOfflineAlert === true &&
+    report.iw75callsOffline >= 1 &&
+    report.iw75offlineBoard?.plaque === true &&
+    report.iw75offlineBoard?.tokenAsked === false &&
+    report.iw75ReadAfter?.route === true &&
+    report.iw75ReadAfter?.harness === true &&
+    report.iw75RouteSame === true &&
+    report.iw75HarnessSame === true &&
     consoleErrors.length === 0
 } catch (error) {
   report.error = String(error?.stack ?? error)
@@ -1052,7 +1268,7 @@ try {
 
 console.log(JSON.stringify(report, null, 2))
 if (report.ok) {
-  console.error('ок: «Маршруты» — группы, выбор строки, автосохранение карточки и удаление маршрута роя; «Харнессы» — автосохранение карточки')
+  console.error('ок: «Маршруты» — группы, выбор строки, автосохранение карточки, удаление маршрута роя и 401/отказ сети через handleError; «Харнессы» — автосохранение карточки и отказ сети')
 } else {
   console.error(`ошибка: ${report.error ?? 'сценарий не прошёл — см. отчёт выше'}`)
   process.exitCode = 1

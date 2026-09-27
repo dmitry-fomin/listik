@@ -1051,10 +1051,20 @@ function ensureRoutes(): void {
 }
 
 /**
+ * Ошибка вкладки «Маршруты»: текст всегда в `routesSettingsError`; 401 открывает
+ * окно токена, отказ сети — плашку доски (через `handleError`), остальное остаётся разделу.
+ */
+function onRoutesSettingsError(error: unknown): void {
+  routesSettingsError.value = errorMessage(error)
+  if (isUnauthorized(error) || isOffline(error)) handleError(error)
+}
+
+/**
  * Вкладка «Маршруты» настроек: свежий список поверх общего `routes` — та же
  * иконка уровня и матрица маршрутов видят обновление сразу, но ошибка и флаг
  * загрузки отдельные (`routesSettingsError`/`routesSettingsLoading`), чтобы не
- * зажечь общий алерт формы «Новая задача».
+ * зажечь общий алерт формы «Новая задача». 401 и отказ сети дополнительно идут
+ * в общий `handleError` (listik-iw75).
  */
 async function reloadRoutes(): Promise<boolean> {
   return withLoading(routesSettingsLoading, async () => {
@@ -1068,18 +1078,19 @@ async function reloadRoutes(): Promise<boolean> {
       routesSettingsError.value = data.ok ? null : data.error
       return data.ok
     } catch (error) {
-      routesSettingsError.value = errorMessage(error)
+      onRoutesSettingsError(error)
       return false
     }
   })
 }
 
-/** Общая обёртка действий вкладки «Маршруты»: ошибка — в `routesSettingsError`. */
+/**
+ * Общая обёртка действий вкладки «Маршруты»: ошибка — в `routesSettingsError`;
+ * 401 и отказ сети дополнительно идут в `handleError` (listik-iw75).
+ */
 async function routesSettingsAction<T>(action: () => Promise<T>): Promise<T | null> {
   return withLoading(routesSettingsLoading, async () => {
-    const result = await tryRequest(action, (error) => {
-      routesSettingsError.value = errorMessage(error)
-    })
+    const result = await tryRequest(action, onRoutesSettingsError)
     if (result === null) return null
     routesSettingsError.value = null
     return result
@@ -1103,7 +1114,8 @@ async function patchRoute(key: string, body: RoutePatch): Promise<RouteDef | nul
  * сервер при DELETE шлёт только событие `route`, событий задач нет, поэтому
  * снятый с карточек `launch_route` без явного перечитывания доски не виден.
  * При `404` (маршрута уже нет) список тоже перечитывается — строка
- * удалённого пропадает. Ошибка — `null`, текст в `routesSettingsError`.
+ * удалённого пропадает. Ошибка — `null`, текст в `routesSettingsError`;
+ * 401 и отказ сети — ещё и `handleError` (listik-iw75).
  */
 async function removeRoute(key: string): Promise<RouteRemoved | null> {
   let gone = false
@@ -1152,7 +1164,8 @@ async function reloadAfterRouteRemove(): Promise<void> {
  * Завести маршрут роя (`POST /api/routes`, `kind="swarm"`, listik-2gry).
  * Ответ — созданная запись: в ней есть `key`, по которому список выбирает
  * и открывает новую карточку. Ошибка — `null`, текст в `routesSettingsError`; `409` дополнительно отмечается в `routeCreateConflict`,
- * чтобы окно подсказало про поле «Ключ». Список перечитывается после успеха
+ * чтобы окно подсказало про поле «Ключ», а 401 и отказ сети идут ещё и в
+ * `handleError` (listik-iw75). Список перечитывается после успеха
  * (как у `patchRoute`): в ответе нет `skill_path`/`skill_missing`.
  */
 async function createRoute(body: SwarmRouteCreate): Promise<RouteDef | null> {
@@ -1160,7 +1173,7 @@ async function createRoute(body: SwarmRouteCreate): Promise<RouteDef | null> {
   return withLoading(routesSettingsLoading, async () => {
     const created = await tryRequest(() => api.createRoute(body), (error) => {
       routeCreateConflict.value = error instanceof ApiError && error.status === 409
-      routesSettingsError.value = errorMessage(error)
+      onRoutesSettingsError(error)
     })
     if (created === null) return null
     routesSettingsError.value = null
@@ -1170,9 +1183,19 @@ async function createRoute(body: SwarmRouteCreate): Promise<RouteDef | null> {
 }
 
 /**
+ * Ошибка вкладки «Харнессы»: текст всегда в `harnessesError`; 401 открывает окно
+ * токена, отказ сети — плашку доски (через `handleError`), остальное остаётся разделу.
+ */
+function onHarnessesError(error: unknown): void {
+  harnessesError.value = errorMessage(error)
+  if (isUnauthorized(error) || isOffline(error)) handleError(error)
+}
+
+/**
  * Каталог харнессов — один запрос на сессию (`ensureHarnesses`), кнопка
  * «повторить» на вкладке — `loadHarnesses`. `used_by` приходит в каждой записи,
  * поэтому карточка «где используется» дополнительных запросов не делает.
+ * 401 и отказ сети дополнительно идут в общий `handleError` (listik-iw75).
  */
 async function loadHarnesses(): Promise<void> {
   if (harnessesLoading.value) return
@@ -1184,7 +1207,7 @@ async function loadHarnesses(): Promise<void> {
       swarmPrompt.value = data.swarm_prompt ?? ''
       harnessesError.value = null
     } catch (error) {
-      harnessesError.value = errorMessage(error)
+      onHarnessesError(error)
     }
   })
 }
@@ -1204,7 +1227,7 @@ async function createHarness(body: HarnessCreate): Promise<Harness | null> {
   const created = await withLoading(harnessesLoading, async () => {
     const result = await tryRequest(() => api.createHarness(body), (error) => {
       harnessCreateConflict.value = error instanceof ApiError && error.status === 409
-      harnessesError.value = errorMessage(error)
+      onHarnessesError(error)
     })
     if (result === null) return null
     harnessesError.value = null
@@ -1221,9 +1244,7 @@ async function createHarness(body: HarnessCreate): Promise<Harness | null> {
  */
 async function patchHarness(key: string, body: HarnessPatch): Promise<Harness | null> {
   const result = await withLoading(harnessesLoading, async () => {
-    const updated = await tryRequest(() => api.patchHarness(key, body), (error) => {
-      harnessesError.value = errorMessage(error)
-    })
+    const updated = await tryRequest(() => api.patchHarness(key, body), onHarnessesError)
     if (updated === null) return null
     harnessesError.value = null
     return updated

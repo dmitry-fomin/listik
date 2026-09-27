@@ -2391,6 +2391,16 @@ def _cmd_routes_list(args) -> int:
     return 0
 
 
+def _dep_add(args, issue_id, depends_on, dep_type, confirm):
+    """Одна связь через call(): сервер (fence, событие доске) или локальный фолбэк."""
+    return call("dep_add", args, f"/api/tasks/{issue_id}/deps", method="POST",
+                body={"depends_on": depends_on, "dep_type": dep_type, "confirm": confirm,
+                      "actor": actor_default(args)},
+                local_kwargs={"issue_id": issue_id, "depends_on": depends_on,
+                              "dep_type": dep_type, "confirm": confirm,
+                              "created_by": actor_default(args)})
+
+
 def cmd_dep(args) -> int:
     # add без явного типа — жёсткая блокировка; link (по упоминаниям) — мягкая связь;
     # rm без типа должен уйти как None (снимает и blocks, и suggested-blocks разом).
@@ -2439,41 +2449,56 @@ def cmd_dep(args) -> int:
         items = call("mentions", args, f"/api/tasks/{args.issue_id}/mentions", method="POST",
                      body={"limit": args.limit},
                      local_kwargs={"task_id": args.issue_id, "limit": args.limit})
-        if getattr(args, "json", False):
-            emit(args, items, "")
-        else:
-            if not items:
-                print(f"{args.issue_id}: неупомянутых несвязанных задач нет")
-            for x in items:
-                print(f"  {x['id']:34s} {x['status']:12s} {x['title'][:70]}")
-            if items:
-                print(f"\nсвязать как «relates-to» (не блокирует): "
-                      f"listik dep link {args.issue_id} [--dep-type blocks]")
-        if args.action == "link" and items:
-            conn = db.init()
-            made = 0
+        # link: сначала все связи, потом печать — с --json в stdout уходит ровно один
+        # документ: итог или (при общей ошибке) только JSON ошибки из main().
+        linked, skipped = [], []
+        if args.action == "link":
             for x in items:
                 if args.only and args.only != x["id"]:
                     continue
                 try:
-                    store.add_dep(conn, args.issue_id, x["id"], args.dep_type,
-                                  created_by=actor_default(args))
-                    made += 1
-                except errors.NotFound:
-                    # Связать можно только с существующей задачей: пропускаем
-                    # кандидата из поиска, которого уже нет.
+                    out = _dep_add(args, args.issue_id, x["id"], args.dep_type, False)
+                except (errors.ListikError, errors.NotFound, ValueError) as exc:
+                    err = errors.as_error(exc)
+                    # Кандидата уже нет, самосвязь, цикл жёстких связей — пропускаем
+                    # его одного. Остальное (revoked, bad_argument, отказ сервера)
+                    # касается всей команды и обрывает её.
+                    if err.code not in (errors.NOT_FOUND, errors.CONFLICT):
+                        raise
+                    skipped.append({"id": x["id"], "code": err.code, "message": err.message})
+                else:
+                    linked.append(out)
                     continue
-            print(f"создано связей: {made} (тип {args.dep_type})")
+                # ponytail: client.local_call не откатывает соединение, если store упал
+                # после записи (цикл: add_dep уже записал актора), а sqlite3.Connection
+                # держится циклом ссылок со своим кэшем запросов — блокировка записи
+                # живёт до сборки мусора, и следующий кандидат падал бы «database is
+                # locked». Место починки — rollback/close в local_call.
+                import gc
+                gc.collect()
+        if getattr(args, "json", False):
+            if args.action == "link":
+                emit(args, {"candidates": items, "linked": linked, "made": len(linked),
+                            "skipped": skipped}, "")
+            else:
+                emit(args, items, "")
+            return 0
+        if not items:
+            print(f"{args.issue_id}: неупомянутых несвязанных задач нет")
+        for x in items:
+            print(f"  {x['id']:34s} {x['status']:12s} {x['title'][:70]}")
+        if items:
+            print(f"\nсвязать как «relates-to» (не блокирует): "
+                  f"listik dep link {args.issue_id} [--dep-type blocks]")
+        if args.action == "link" and items:
+            for s in skipped:
+                print(f"  пропущена {s['id']}: {s['message']}")
+            print(f"создано связей: {len(linked)} (тип {args.dep_type})")
         return 0
     if args.action in ("add", "confirm"):
         dep_type = "blocks" if args.action == "confirm" else args.dep_type
         confirm = True if args.action == "confirm" else getattr(args, "confirm", False)
-        out = call("dep_add", args, f"/api/tasks/{args.issue_id}/deps", method="POST",
-                   body={"depends_on": args.depends_on, "dep_type": dep_type, "confirm": confirm,
-                         "actor": actor_default(args)},
-                   local_kwargs={"issue_id": args.issue_id, "depends_on": args.depends_on,
-                                 "dep_type": dep_type, "confirm": confirm,
-                                 "created_by": actor_default(args)})
+        out = _dep_add(args, args.issue_id, args.depends_on, dep_type, confirm)
         if out.get("suggested"):
             human = (f"предложение зависимости записано: {args.issue_id} ждёт {args.depends_on}; "
                      f"подтвердить: listik dep confirm {args.issue_id} {args.depends_on}")

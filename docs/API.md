@@ -2046,6 +2046,7 @@ listik watch --project X [--task id …] [--dry-run] [--json]   # наблюда
 listik tree <id>                    # дерево зависимостей задачи
 listik dep confirm <id> <блокер>    # подтвердить предложение агента → жёсткая связь
 listik dep suggested [--project]    # предложения агентов, ждущие подтверждения человеком
+listik dep link <id> [--only <id>] [--dep-type T] [--json]   # связать с упомянутыми в тексте (по умолчанию relates-to); --json — {candidates, linked, made, skipped}
 listik lint [--project X] [--suggested-hours N] [--json]   # код возврата 1 при находках
 listik portions sync <id> [--json]   # карточки порций шага по файлам <id>.<буква>.md, порядок — жёсткие blocks
 listik portions adopt <id> [--json]  # принять зависшую нарезку роя: порциям маршрут и этап родителя

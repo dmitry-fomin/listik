@@ -623,9 +623,8 @@ _PARENT_TYPES = ("parent-child", "parent")
 
 
 def _conflict(message: str, hint: str = "") -> errors_mod.ListikError:
-    """409: подсказка и в тексте (по HTTP `hint` не уходит), и в `hint`."""
-    text = f"{message}; {hint}" if hint else message
-    return errors_mod.ListikError(text, code=errors_mod.CONFLICT, hint=hint, status=409)
+    """409 `conflict`: подсказка — отдельным полем `hint`, в текст не входит."""
+    return errors_mod.ListikError(message, code=errors_mod.CONFLICT, hint=hint, status=409)
 
 
 def _started(child) -> bool:

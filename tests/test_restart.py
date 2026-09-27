@@ -8,6 +8,8 @@ import subprocess
 import sys
 import threading
 import unittest
+import urllib.error
+import urllib.request
 from unittest import mock
 
 from listik import errors, harnesses_store, paths, routes_store, server, stage_launch, store
@@ -216,16 +218,22 @@ class RestartStageTests(RestartCase):
         with self.assertRaises(errors.ListikError) as cm:
             stage_launch.restart_task(self.conn, tid, route="nope")
         self.assertEqual(cm.exception.status, 409)
-        self.assertIn("shiki-pow", cm.exception.message)
+        self.assertIn("shiki-pow", cm.exception.hint)
+        self.assertNotIn("shiki-pow", cm.exception.message)
 
 
 class RestartRefusalTests(RestartCase):
-    def assert_refused(self, tid: str, *, contains: str = "", **kwargs) -> str:
+    def assert_refused(self, tid: str, *, contains: str = "", hint: str = "",
+                       **kwargs) -> str:
+        """`hint` — подстрока подсказки: она в `hint` отказа и не в его тексте."""
         row, files = self.row(tid), self.files()
         with self.assertRaises(errors.ListikError) as cm:
             stage_launch.restart_task(self.conn, tid, **kwargs)
         self.assertEqual((cm.exception.status, cm.exception.code), (409, errors.CONFLICT))
         self.assertIn(contains, cm.exception.message)
+        if hint:
+            self.assertIn(hint, cm.exception.hint)
+            self.assertNotIn(hint, cm.exception.message)
         self.assertEqual(self.row(tid), row)
         self.assertEqual(self.files(), files)
         return cm.exception.message
@@ -249,7 +257,7 @@ class RestartRefusalTests(RestartCase):
         tid = self.new(stage="s3-impl")
         self.conn.execute("UPDATE tasks SET launched_by = 'agent:probe' WHERE id = ?", (tid,))
         self.conn.commit()
-        self.assert_refused(tid, contains=f"listik revoke {tid}")
+        self.assert_refused(tid, hint=f"listik revoke {tid}")
 
     def test_closed(self) -> None:
         for status in ("done", "cancelled"):
@@ -261,8 +269,7 @@ class RestartRefusalTests(RestartCase):
         routes_store.create_route(self.conn, key="nocritic", kind="swarm", title="Без критика",
                                   roles={r: c for r, c in ALL_ROLES.items() if r != "critic"})
         tid = self.new(route="nocritic", stage="s3-impl")
-        message = self.assert_refused(tid, stage="s2-review")
-        self.assertIn("s1-spec, s3-impl, s4-judge", message)
+        self.assert_refused(tid, stage="s2-review", hint="s1-spec, s3-impl, s4-judge")
 
     def test_epic_not_s1(self) -> None:
         pid = self.new(stage="s3-impl")
@@ -324,30 +331,83 @@ class RestartHttpTests(RestartCase):  # 9
         paths.DB_PATH, server._conn_made, server._conn_local = self._saved
         super().tearDown()
 
-    def post(self, tid: str) -> tuple[int, object, str]:
+    def post(self, tid: str) -> tuple[int, object, str, str]:
         self.conn.commit()
         try:
             status, data = server.handle("POST", f"/api/tasks/{tid}/restart", {},
                                          {"actor": "agent:t"}, authed=True)
-            return status, data, ""
+            return status, data, "", ""
         except Exception as exc:  # noqa: BLE001 — разбираем как сервер
-            status, message, code = server.error_response(exc)
-            return status, message, code
+            return server.error_response(exc)
 
     def test_http(self) -> None:
         tid = self.new(stage="s3-impl")
         self.finished_launch(tid)
-        status, data, _ = self.post(tid)
+        status, data, _, _ = self.post(tid)
         self.assertEqual(status, 200, data)
         self.assertEqual(data["restarted_from"], "s3-impl")
         self.conn.execute("UPDATE tasks SET launched_by = 'agent:probe' WHERE id = ?", (tid,))
-        status, message, code = self.post(tid)
+        status, message, code, hint = self.post(tid)
         self.assertEqual((status, code), (409, errors.CONFLICT), message)
-        self.assertIn("listik revoke", message)
+        self.assertIn("listik revoke", hint)
+        self.assertNotIn("listik revoke", message)
         self.assertEqual(self.post("proj-nope")[0], 404)
         routes_store.create_route(self.conn, key="skillish", kind="pipeline", title="Скил")
-        status, _message, code = self.post(self.new(route="skillish", swarm=False))
+        status, _message, code, _hint = self.post(self.new(route="skillish", swarm=False))
         self.assertEqual((status, code), (400, errors.BAD_ARGUMENT))
+
+
+class RestartRealHttpTests(RestartCase):
+    """Отказ restart по настоящему HTTP: подсказка — полем `hint` тела, как в local_call."""
+
+    TOKEN = "test-token"
+
+    def setUp(self) -> None:
+        super().setUp()
+        self._saved = (paths.DB_PATH, paths.CONFIG_PATH, server._conn_made, server._conn_local)
+        paths.DB_PATH = self.db_path
+        paths.CONFIG_PATH = self.tmp_path / "config.toml"
+        paths.CONFIG_PATH.write_text(f'[auth]\ntoken = "{self.TOKEN}"\n', encoding="utf-8")
+        server._conn_made = False
+        server._conn_local = threading.local()
+        self.srv = server.make_server("127.0.0.1", 0, quiet=True)
+        self.port = self.srv.server_address[1]
+        threading.Thread(target=self.srv.serve_forever, daemon=True).start()
+
+    def tearDown(self) -> None:
+        self.srv.shutdown()
+        self.srv.server_close()
+        conn = getattr(server._conn_local, "conn", None)
+        if conn is not None:
+            conn.close()
+        (paths.DB_PATH, paths.CONFIG_PATH, server._conn_made, server._conn_local) = self._saved
+        super().tearDown()
+
+    def test_live_launch_refusal_hint_is_a_field(self) -> None:
+        tid = self.new(stage="s3-impl")
+        self.conn.execute("UPDATE tasks SET launched_by = 'agent:probe', "
+                          "launch_finished_at = NULL WHERE id = ?", (tid,))
+        self.conn.commit()
+        before = self.row(tid)
+        req = urllib.request.Request(
+            f"http://127.0.0.1:{self.port}/api/tasks/{tid}/restart",
+            data=json.dumps({"actor": "agent:t"}).encode("utf-8"), method="POST",
+            headers={"Authorization": f"Bearer {self.TOKEN}",
+                     "Content-Type": "application/json"})
+        with self.assertRaises(urllib.error.HTTPError) as cm:
+            urllib.request.urlopen(req, timeout=10).close()
+        with cm.exception as resp:
+            status, body = resp.code, json.loads(resp.read().decode("utf-8"))
+        self.assertEqual(status, 409, body)
+        self.assertEqual(body["code"], errors.CONFLICT)
+        self.assertIn(f"listik revoke {tid}", body["hint"])
+        self.assertNotIn("listik revoke", body["error"])
+        self.assertEqual(self.row(tid), before)
+        # Паритет с локальным путём: тот же отказ, те же три поля.
+        with self.assertRaises(errors.ListikError) as local:
+            stage_launch.restart_task(self.conn, tid)
+        self.assertEqual((local.exception.message, local.exception.code, local.exception.hint),
+                         (body["error"], body["code"], body["hint"]))
 
 
 if __name__ == "__main__":

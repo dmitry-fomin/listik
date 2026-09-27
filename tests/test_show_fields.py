@@ -97,7 +97,7 @@ class ServerFieldsTests(TempDbTestCase):
         with self.assertRaises(errors.BadArgument):
             server.handle("GET", f"/api/tasks/{self.task_id}",
                           {"fields": ["nope"]}, {}, authed=True)
-        status, message, code = server.error_response(
+        status, message, code, _hint = server.error_response(
             errors.BadArgument("неизвестное поле карточки: nope"))
         self.assertEqual((status, code), (400, errors.BAD_ARGUMENT))
 

@@ -480,7 +480,7 @@ def as_int(value, default=None):
 
 
 class ApiError(Exception):
-    def __init__(self, status: int, message: str, code: str | None = None):
+    def __init__(self, status: int, message: str, code: str | None = None, hint: str = ""):
         super().__init__(message)
         self.status = status
         self.message = message
@@ -488,6 +488,8 @@ class ApiError(Exception):
         # а не по HTTP-статусу. Явный code важнее статуса: «задача уже удерживается» —
         # это 400 по контракту API, но по смыслу conflict.
         self.code = code or errors_mod.code_for_status(status)
+        # «Как исправить» — уходит в тело ответа полем `hint` (пустая строка — нет).
+        self.hint = hint
 
 
 def api_error(status: int, exc: BaseException) -> ApiError:
@@ -498,13 +500,19 @@ def api_error(status: int, exc: BaseException) -> ApiError:
     отдаст по ней 500/internal, а не «проверь идентификатор» (listik-xut1).
     """
     err = errors_mod.as_error(exc)
-    return ApiError(status, err.message, code=err.code)
+    return ApiError(status, err.message, code=err.code, hint=err.hint)
 
 
-def error_response(exc: BaseException) -> tuple[int, str, str]:
-    """HTTP-ответ по исключению обработчика: (статус, сообщение, код).
+def error_response(exc: BaseException) -> tuple[int, str, str, str]:
+    """HTTP-ответ по исключению обработчика: (статус, сообщение, код, подсказка).
 
-    ApiError отдаётся как есть. Ошибка базы — 503 и запись в health: подменённый
+    ApiError отдаётся как есть. `ListikError` (и подклассы: `Revoked`,
+    `swarm_llm.SwarmLlmError`, …), которую обработчик не перевёл сам, отвечает
+    своим `status`, а без него — 409 для `conflict` и 400 для прочих кодов; её
+    `hint` уходит в тело ответа отдельным полем, как в локальном режиме CLI.
+    У остальных веток подсказки нет — `hint` пустой.
+
+    Ошибка базы — 503 и запись в health: подменённый
     или повреждённый файл нельзя показывать как «ошибка операции» на доске
     (listik-cfzk), а закрытое соединение (`ProgrammingError` после переоткрытия)
     значит «повтори запрос». Нарушение ограничений (IntegrityError) — это логика
@@ -515,29 +523,41 @@ def error_response(exc: BaseException) -> tuple[int, str, str]:
     притворяется 404 («проверь идентификатор»), а честно отдаётся как 500/internal
     с текстом без кавычек (listik-xut1).
     """
-    if isinstance(exc, errors_mod.Revoked):
-        # Зомби: полномочия отозваны, событие доске (`publish`) не шлём.
-        return 409, exc.message, errors_mod.REVOKED
     if isinstance(exc, ApiError):
-        return exc.status, exc.message, exc.code
+        return exc.status, exc.message, exc.code, exc.hint
+    if isinstance(exc, errors_mod.ListikError):
+        # `Revoked` (зомби) — тоже здесь: 409/`revoked`, событие доске не шлём.
+        status = exc.status or (409 if exc.code == errors_mod.CONFLICT else 400)
+        return status, exc.message, exc.code, exc.hint
     if isinstance(exc, errors_mod.BadArgument):
         # Негодный аргумент — 400 даже там, где обработчик ValueError не ловит
         # (чтения: /api/tasks, /api/board, /api/ready с неизвестным владельцем).
-        return 400, str(exc), errors_mod.BAD_ARGUMENT
+        return 400, str(exc), errors_mod.BAD_ARGUMENT, ""
     if isinstance(exc, errors_mod.Forbidden):
         # Чужой владелец: обработчики её не ловят (это PermissionError, а не
         # KeyError/ValueError), и до 500 доходить она не должна.
-        return 403, str(exc), errors_mod.FORBIDDEN
+        return 403, str(exc), errors_mod.FORBIDDEN, ""
     if isinstance(exc, sqlite3.IntegrityError):
-        return 500, f"{type(exc).__name__}: {exc}", errors_mod.INTERNAL
+        return 500, f"{type(exc).__name__}: {exc}", errors_mod.INTERNAL, ""
     if isinstance(exc, (sqlite3.DatabaseError, sqlite3.ProgrammingError)):
         _background_db_error("http", exc)
         return 503, (f"база Listik недоступна ({type(exc).__name__}: {exc}); "
                      "соединения переоткрыты — повтори запрос, состояние: listik status"), \
-            errors_mod.SERVER_ERROR
+            errors_mod.SERVER_ERROR, ""
     # KeyError печатаем без кавычек: `str(KeyError("нет"))` даёт `"'нет'"`.
     text = errors_mod.message_of(exc) if isinstance(exc, KeyError) else str(exc)
-    return 500, f"{type(exc).__name__}: {text}", errors_mod.INTERNAL
+    return 500, f"{type(exc).__name__}: {text}", errors_mod.INTERNAL, ""
+
+
+def _publish_edge_changes(edges: dict | None) -> None:
+    """Событие `deps` доске — по разу на каждую карточку из добавленных/снятых рёбер."""
+    if not edges:
+        return
+    touched: set[str] = set()
+    for pair in (*(edges.get("added") or ()), *(edges.get("removed") or ())):
+        touched.update(pair)
+    for tid in touched:
+        publish("task", {"id": tid, "action": "deps"})
 
 
 def _check_role_launchers(roles) -> None:
@@ -612,8 +632,6 @@ def handle(method: str, path: str, query: dict, body: dict, authed: bool = False
             return 200, swarm_llm.judge_merge(body)
         except errors_mod.BadArgument as exc:
             raise ApiError(400, str(exc), code=errors_mod.BAD_ARGUMENT) from exc
-        except swarm_llm.SwarmLlmError as exc:
-            raise ApiError(exc.status, exc.message, code=exc.code) from exc
 
     conn = get_conn()
     parts = [p for p in path.strip("/").split("/") if p]
@@ -697,9 +715,6 @@ def handle(method: str, path: str, query: dict, body: dict, authed: bool = False
         if method == "POST":
             try:
                 record = harnesses_store.create(conn, body)
-            except errors_mod.ListikError as exc:
-                raise ApiError(exc.status or 400, exc.message,
-                               code=exc.code) from exc
             except ValueError as exc:
                 raise ApiError(400, errors_mod.message_of(exc),
                                code=errors_mod.BAD_ARGUMENT) from exc
@@ -721,9 +736,6 @@ def handle(method: str, path: str, query: dict, body: dict, authed: bool = False
                 record = harnesses_store.update(conn, key, body)
             except errors_mod.NotFound as exc:
                 raise api_error(404, exc) from exc
-            except errors_mod.ListikError as exc:
-                raise ApiError(exc.status or 400, exc.message,
-                               code=exc.code) from exc
             except ValueError as exc:
                 raise ApiError(400, errors_mod.message_of(exc),
                                code=errors_mod.BAD_ARGUMENT) from exc
@@ -997,16 +1009,8 @@ def handle(method: str, path: str, query: dict, body: dict, authed: bool = False
         # он всегда deps_mod.RESOURCE_BLOCK_AUTHOR — ребро машинное по построению.
         project = body.get("project") or ""
         stage = body.get("stage")
-        try:
-            out = deps_mod.apply_resource_blocks(conn, project=project, stage=stage)
-        except errors_mod.ListikError as exc:
-            status = exc.status or (409 if exc.code == errors_mod.CONFLICT else 400)
-            raise ApiError(status, exc.message, code=exc.code) from exc
-        touched: set[str] = set()
-        for pair in (*out["added"], *out["removed"]):
-            touched.update(pair)
-        for tid in touched:
-            publish("task", {"id": tid, "action": "deps"})
+        out = deps_mod.apply_resource_blocks(conn, project=project, stage=stage)
+        _publish_edge_changes(out)
         return 200, {**out, "generated_at": store.now_iso()}
 
     if path == "/api/waves":
@@ -1027,19 +1031,9 @@ def handle(method: str, path: str, query: dict, body: dict, authed: bool = False
         apply_ = bool(body.get("apply"))
         try:
             out = swarm_llm.plan(conn, project=project, stage=stage, apply=apply_)
-        except swarm_llm.SwarmLlmError as exc:
-            raise ApiError(exc.status, exc.message, code=exc.code) from exc
         except errors_mod.NotFound as exc:
             raise api_error(404, exc) from exc
-        except errors_mod.ListikError as exc:
-            raise ApiError(409 if exc.code == errors_mod.CONFLICT else 400, exc.message,
-                           code=exc.code) from exc
-        if out.get("applied"):
-            touched: set[str] = set()
-            for pair in (*out["applied"]["added"], *out["applied"]["removed"]):
-                touched.update(pair)
-            for tid in touched:
-                publish("task", {"id": tid, "action": "deps"})
+        _publish_edge_changes(out.get("applied"))
         return 200, {**out, "generated_at": store.now_iso()}
 
     if path == "/api/swarm/rescope":
@@ -1057,24 +1051,13 @@ def handle(method: str, path: str, query: dict, body: dict, authed: bool = False
         try:
             out = swarm_llm.rescope(conn, project=project, tasks=tasks, drift=drift,
                                     apply=apply_)
-        except swarm_llm.SwarmLlmError as exc:
-            raise ApiError(exc.status, exc.message, code=exc.code) from exc
         except errors_mod.NotFound as exc:
             raise api_error(404, exc) from exc
-        except errors_mod.ListikError as exc:
-            raise ApiError(409 if exc.code == errors_mod.CONFLICT else 400, exc.message,
-                           code=exc.code) from exc
         applied = out.get("applied")
         if applied:
             for tid in applied.get("scopes") or []:
                 publish("task", {"id": tid, "action": "updated"})
-            edges_applied = applied.get("edges")
-            if edges_applied:
-                touched: set[str] = set()
-                for pair in (*edges_applied["added"], *edges_applied["removed"]):
-                    touched.update(pair)
-                for tid in touched:
-                    publish("task", {"id": tid, "action": "deps"})
+            _publish_edge_changes(applied.get("edges"))
         return 200, {**out, "generated_at": store.now_iso()}
 
     if path == "/api/deps/suggested":
@@ -1275,16 +1258,10 @@ def handle(method: str, path: str, query: dict, body: dict, authed: bool = False
                                     args=body,
                                     actor=body.get("actor") or owner, harness=body.get("harness"))
                 if action == "claim":
-                    try:
-                        out = store.claim(conn, tid, holder=need(body, "holder"),
-                                          harness=body.get("harness"), note=body.get("note"),
-                                          actor=body.get("actor"), as_owner=owner,
-                                          force=as_bool(body.get("force", False)))
-                    except errors_mod.ListikError as exc:
-                        # Отказ эпику (`conflict`) — 409, как у `waves/apply`.
-                        if exc.code != errors_mod.CONFLICT:
-                            raise
-                        raise ApiError(409, exc.message, code=exc.code) from exc
+                    out = store.claim(conn, tid, holder=need(body, "holder"),
+                                      harness=body.get("harness"), note=body.get("note"),
+                                      actor=body.get("actor"), as_owner=owner,
+                                      force=as_bool(body.get("force", False)))
                 elif action == "heartbeat":
                     out = store.heartbeat(conn, tid, holder=need(body, "holder"),
                                           note=body.get("note"), harness=body.get("harness"),
@@ -1335,15 +1312,9 @@ def handle(method: str, path: str, query: dict, body: dict, authed: bool = False
                                               harness=body.get("harness"))
                 elif action == "portions/adopt":
                     from . import stage_launch
-                    try:
-                        out = stage_launch.adopt_portions(
-                            conn, tid, actor=body.get("actor") or owner,
-                            harness=body.get("harness"))
-                    except errors_mod.Revoked:
-                        raise
-                    except errors_mod.ListikError as exc:
-                        raise ApiError(409 if exc.code == errors_mod.CONFLICT else 400,
-                                       exc.message, code=exc.code) from exc
+                    out = stage_launch.adopt_portions(
+                        conn, tid, actor=body.get("actor") or owner,
+                        harness=body.get("harness"))
                 elif action == "revoke":
                     # `revoke` шлёт свой `publish("task", {..., "action": "revoke"})`
                     # изнутри (`notify=publish`) — второй раз ниже не шлём (см. пропуск
@@ -1353,19 +1324,13 @@ def handle(method: str, path: str, query: dict, body: dict, authed: bool = False
                         note=body.get("note"), kill=as_bool(body.get("kill", True)),
                         notify=publish)
                 elif action == "restart":
-                    # NotFound (404) и BadArgument (400) — общим `try` ниже: они не
-                    # ListikError; отказы по состоянию карточки — 409 conflict.
+                    # Отказы по состоянию карточки (`ListikError`, 409 conflict, с `hint`)
+                    # отдаёт `error_response`.
                     from . import stage_launch
-                    try:
-                        out = stage_launch.restart_task(
-                            conn, tid, stage=body.get("stage"), route=body.get("route"),
-                            note=body.get("note"), actor=body.get("actor") or owner,
-                            harness=body.get("harness"))
-                    except errors_mod.Revoked:
-                        raise
-                    except errors_mod.ListikError as exc:
-                        raise ApiError(409 if exc.code == errors_mod.CONFLICT else 400,
-                                       exc.message, code=exc.code) from exc
+                    out = stage_launch.restart_task(
+                        conn, tid, stage=body.get("stage"), route=body.get("route"),
+                        note=body.get("note"), actor=body.get("actor") or owner,
+                        harness=body.get("harness"))
                 elif action == "launch":
                     # Как `revoke`: `start` публикует свои кадры сам (`notify=publish`).
                     # `env` — только LISTIK_*, не зарезервированные (check_env в launcher);
@@ -1540,8 +1505,9 @@ class Handler(BaseHTTPRequestHandler):
         self._send(status, errors_mod.json_dumps(data).encode("utf-8"),
                    "application/json; charset=utf-8")
 
-    def _error(self, status: int, message: str, code: str | None = None) -> None:
-        self._json(status, errors_mod.http_error_body(status, message, code))
+    def _error(self, status: int, message: str, code: str | None = None,
+               hint: str = "") -> None:
+        self._json(status, errors_mod.http_error_body(status, message, code, hint))
 
     def _read_body(self) -> dict:
         length = int(self.headers.get("Content-Length") or 0)
@@ -1590,8 +1556,8 @@ class Handler(BaseHTTPRequestHandler):
                                       owner=self._owner(),
                                       fence=fence_mod.from_headers(self.headers))
             except Exception as exc:  # noqa: BLE001
-                status, message, code = error_response(exc)
-                return self._error(status, message, code)
+                status, message, code, hint = error_response(exc)
+                return self._error(status, message, code, hint)
             return self._json(status, {"ok": True, "data": data})
 
         return self._static(path, query)
@@ -1610,8 +1576,8 @@ class Handler(BaseHTTPRequestHandler):
                                   owner=self._owner(),
                                   fence=fence_mod.from_headers(self.headers))
         except Exception as exc:  # noqa: BLE001
-            status, message, code = error_response(exc)
-            return self._error(status, message, code)
+            status, message, code, hint = error_response(exc)
+            return self._error(status, message, code, hint)
         return self._json(status, {"ok": True, "data": data})
 
     def do_PATCH(self):  # noqa: N802
@@ -1638,8 +1604,8 @@ class Handler(BaseHTTPRequestHandler):
                                   owner=self._owner(),
                                   fence=fence_mod.from_headers(self.headers))
         except Exception as exc:  # noqa: BLE001
-            status, message, code = error_response(exc)
-            return self._error(status, message, code)
+            status, message, code, hint = error_response(exc)
+            return self._error(status, message, code, hint)
         return self._json(status, {"ok": True, "data": data})
 
     # --- MCP: минимальное подмножество транспорта Streamable HTTP
@@ -1700,7 +1666,7 @@ class Handler(BaseHTTPRequestHandler):
             response = mcp.handle(request, conn=get_conn(), owner=self._owner(),
                                   fence=fence_mod.from_headers(self.headers))
         except Exception as exc:  # noqa: BLE001
-            status, message, _code = error_response(exc)
+            status, message, _code, _hint = error_response(exc)
             return rpc_error(status, -32603, message, rid)
 
         # 7. Уведомление — отвечать нечем.

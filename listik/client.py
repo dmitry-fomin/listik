@@ -147,10 +147,15 @@ def request(method: str, path: str, *, query: dict | None = None, body: dict | N
             # Сервер отдаёт свой код (см. listik/errors.py): он точнее статуса —
             # «задача уже удерживается» это 400, но по смыслу conflict.
             code = payload.get("code") or code
-            # Подсказка по коду сильнее подсказки по статусу: 409 у `revoked` и у
-            # обычного `conflict` — один и тот же HTTP-статус с разным смыслом
-            # («посмотри состояние карточки…» зомби только сбило бы с толку).
-            hint = errors.HINT_BY_CODE.get(code) or hint
+            # Подсказка сервера (`hint` тела) сильнее всего; без неё — по коду, и
+            # только потом по статусу: 409 у `revoked` и у обычного `conflict` —
+            # один и тот же HTTP-статус с разным смыслом («посмотри состояние
+            # карточки…» зомби только сбило бы с толку).
+            body_hint = payload.get("hint")
+            if isinstance(body_hint, str) and body_hint:
+                hint = body_hint
+            else:
+                hint = errors.HINT_BY_CODE.get(code) or hint
         except json.JSONDecodeError:
             message = raw
         raise errors.ListikError(str(message).strip(), code=code, hint=hint,

@@ -241,9 +241,9 @@ class ClaimHttpTests(EpicCase):
     def test_claim_epic_is_409(self) -> None:  # 5
         x = self.new()
         child = self.new(parent=x)
-        with self.assertRaises(server.ApiError) as cm:
+        with self.assertRaises(errors.ListikError) as cm:
             server.handle("POST", f"/api/tasks/{x}/claim", {}, {"holder": "dsh"}, authed=True)
-        status, message, code = server.error_response(cm.exception)
+        status, message, code, _hint = server.error_response(cm.exception)
         self.assertEqual(status, 409)
         self.assertEqual(code, errors.CONFLICT)
         self.assertIn(child, message)

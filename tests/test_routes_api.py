@@ -442,7 +442,7 @@ class HarnessesApiTests(RoutesApiBase):
         with self.assertRaises(server.ApiError) as ctx:
             self.post("/api/harnesses", {"key": "Bad Key"})
         self.assertEqual(ctx.exception.status, 400)
-        with self.assertRaises(server.ApiError) as ctx:
+        with self.assertRaises(errors.ListikError) as ctx:
             self.post("/api/harnesses", {"key": "claude"})
         self.assertEqual(ctx.exception.status, 409)
 

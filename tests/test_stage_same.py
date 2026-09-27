@@ -149,7 +149,7 @@ class KeyErrorIsNotNotFoundTests(unittest.TestCase):
         self.assertEqual(errors.code_of(ValueError("занято")), errors.CONFLICT)
 
     def test_server_maps_bare_keyerror_to_500_internal(self) -> None:
-        status, message, code = server.error_response(KeyError("assignee_title"))
+        status, message, code, _hint = server.error_response(KeyError("assignee_title"))
         self.assertEqual((status, code), (500, errors.INTERNAL))
         self.assertEqual(message, "KeyError: assignee_title")
 

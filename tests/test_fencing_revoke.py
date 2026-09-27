@@ -269,7 +269,7 @@ class ZombieEndToEndTests(RevokeTestCase):
             with self.assertRaises(errors.Revoked) as ctx:
                 server.handle("POST", f"/api/tasks/{tid}/done", {}, {"result": "готово"},
                               authed=True, fence=token)
-        status, _message, code = server.error_response(ctx.exception)
+        status, _message, code, _hint = server.error_response(ctx.exception)
         self.assertEqual(status, 409)
         self.assertEqual(code, errors.REVOKED)
         self.assertNotEqual(self.row(tid)["status"], "done")

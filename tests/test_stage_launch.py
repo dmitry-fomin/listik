@@ -910,18 +910,21 @@ class AdoptPortionsTests(SwarmCase):
             self.conn.commit()
             try:
                 return server.handle("POST", f"/api/tasks/{tid}/portions/adopt", {},
-                                     {"actor": "agent:t"}, authed=True) + ("",)
+                                     {"actor": "agent:t"}, authed=True) + ("", "")
             except Exception as exc:  # noqa: BLE001 — разбираем как сервер
                 return server.error_response(exc)
 
         parent, a, b = self.stuck_parent()
-        status, data, _ = post(parent)
+        status, data, _, _ = post(parent)
         self.assertEqual(status, 200, data)
         self.assertEqual(data["adopted"], [a, b])
         other, _a, _b = self.stuck_parent()
         self.conn.execute("UPDATE tasks SET stage = 's3-impl' WHERE id = ?", (other,))
-        status, message, code = post(other)
+        status, message, code, hint = post(other)
         self.assertEqual((status, code), (409, errors.CONFLICT), message)
+        # Подсказка — отдельным полем, в текст отказа не входит (listik-l56q).
+        self.assertIn(f"listik restart {other} --stage s1-spec", hint)
+        self.assertNotIn(f"listik restart {other} --stage s1-spec", message)
 
 
 if __name__ == "__main__":

@@ -562,10 +562,30 @@ class HttpTests(OwnerHttpCase):
         status, _, payload = self.call("POST", "/api/waves/apply", AUTH, {"project": "demo"})
         self.assertEqual(status, 409)
         self.assertEqual(payload["code"], "dep_cycle")
+        self.assertEqual(payload["hint"], "разорви цикл: listik dep rm <id> <блокер>")
 
     def test_http_405_on_get(self) -> None:
         status, _, payload = self.call("GET", "/api/waves/apply?project=demo", AUTH)
         self.assertEqual(status, 405)
+
+
+class PublishEdgeChangesTests(unittest.TestCase):
+    """`server._publish_edge_changes`: событие `deps` — по разу на карточку (listik-l56q)."""
+
+    def test_once_per_id(self) -> None:
+        with mock.patch.object(server, "publish") as pub:
+            server._publish_edge_changes({"added": [["a", "b"]], "removed": [["b", "c"]]})
+        self.assertEqual(pub.call_count, 3)
+        self.assertEqual({c.args[1]["id"] for c in pub.call_args_list}, {"a", "b", "c"})
+        for c in pub.call_args_list:
+            self.assertEqual(c.args[0], "task")
+            self.assertEqual(c.args[1]["action"], "deps")
+
+    def test_nothing_on_empty(self) -> None:
+        for edges in (None, {}, {"added": [], "removed": []}):
+            with self.subTest(edges=edges), mock.patch.object(server, "publish") as pub:
+                server._publish_edge_changes(edges)
+            pub.assert_not_called()
 
 
 @unittest.skipIf(shutil.which("node") is None, "нет node в PATH: клиент роя swarm/listik.mjs не запустить")

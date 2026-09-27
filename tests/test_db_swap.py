@@ -317,7 +317,7 @@ class ReportTests(SwapStateCase):
 
     def test_http_database_error_is_loud_and_reopens(self) -> None:
         self.make_task("до ошибки")
-        status, message, code = server.error_response(
+        status, message, code, _hint = server.error_response(
             sqlite3.DatabaseError("database disk image is malformed"))
         self.assertEqual(status, 503)
         self.assertEqual(code, errors.SERVER_ERROR)
@@ -326,14 +326,14 @@ class ReportTests(SwapStateCase):
         self.assertEqual(server._db_generation, 1)
 
     def test_closed_connection_is_reported_as_retryable(self) -> None:
-        status, message, code = server.error_response(
+        status, message, code, _hint = server.error_response(
             sqlite3.ProgrammingError("Cannot operate on a closed database"))
         self.assertEqual(status, 503)
         self.assertEqual(code, errors.SERVER_ERROR)
         self.assertIn("повтори запрос", message)
 
     def test_integrity_error_is_not_a_db_failure(self) -> None:
-        status, _message, code = server.error_response(
+        status, _message, code, _hint = server.error_response(
             sqlite3.IntegrityError("UNIQUE constraint failed"))
         self.assertEqual((status, code), (500, errors.INTERNAL))
         self.assertIsNone(server._db_error)

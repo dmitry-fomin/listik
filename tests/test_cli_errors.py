@@ -19,7 +19,7 @@ import sys
 import threading
 import unittest
 
-from listik import paths, server, store
+from listik import errors, paths, server, store, swarm_llm
 from tests.helpers import TempDbTestCase
 from tests.test_claim import LISTIK_BIN
 
@@ -235,6 +235,42 @@ class ApiErrorTests(TempDbTestCase):
             server.handle("GET", "/api/tasks/demo-nope", {}, {}, authed=True)
         self.assertEqual(ctx.exception.status, 404)
         self.assertEqual(ctx.exception.code, "not_found")
+
+
+class HttpErrorHintTests(unittest.TestCase):
+    """`hint` в теле HTTP-ошибки и одна ветка `ListikError` в `error_response` (listik-l56q)."""
+
+    def test_http_error_body_hint(self) -> None:
+        self.assertEqual(errors.http_error_body(409, "m", "conflict", "h"),
+                         {"ok": False, "error": "m", "code": "conflict", "hint": "h"})
+        self.assertEqual(errors.http_error_body(409, "m", "conflict"),
+                         {"ok": False, "error": "m", "code": "conflict", "hint": ""})
+        self.assertEqual(errors.http_error_body(404, "m"),
+                         {"ok": False, "error": "m", "code": "not_found", "hint": ""})
+
+    def test_error_response_on_uncaught(self) -> None:
+        cases = [
+            (errors.ListikError("x", code=errors.CONFLICT), (409, "x", "conflict", "")),
+            (errors.ListikError("x", code=errors.BAD_ARGUMENT, hint="h"),
+             (400, "x", "bad_argument", "h")),
+            (errors.ListikError("x", code=errors.DEP_CYCLE, status=409, hint="h"),
+             (409, "x", "dep_cycle", "h")),
+            (errors.Revoked("x"), (409, "x", "revoked", errors.REVOKED_HINT)),
+            (server.ApiError(404, "x", hint="h"), (404, "x", "not_found", "h")),
+            (KeyError("k"), (500, "KeyError: k", "internal", "")),
+        ]
+        for exc, expected in cases:
+            with self.subTest(exc=repr(exc)):
+                self.assertEqual(server.error_response(exc), expected)
+        status, _message, code, _hint = server.error_response(
+            swarm_llm.SwarmLlmError("x", status=504))
+        self.assertEqual((status, code), (504, errors.SERVER_ERROR))
+
+    def test_api_error_keeps_hint(self) -> None:
+        exc = errors.NotFound("задача не найдена: x")
+        hint = server.api_error(404, exc).hint
+        self.assertTrue(hint)
+        self.assertEqual(hint, errors.hint_of(exc))
 
 
 if __name__ == "__main__":

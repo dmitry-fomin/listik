@@ -734,6 +734,25 @@ class ClientHeadersTests(unittest.TestCase):
         self.assertEqual(ctx.exception.code, "conflict")
         self.assertEqual(ctx.exception.hint, errors.hint_for_status(409))
 
+    def test_request_body_hint_wins_empty_falls_back(self):
+        # `hint` тела сильнее подсказки по коду/статусу; пустой — прежний порядок (listik-l56q).
+        def make_http_error(code, payload):
+            body = json.dumps(payload).encode("utf-8")
+            return urllib.error.HTTPError("http://x", code, "err", None, io.BytesIO(body))
+
+        for body_hint, expected in (("сделай так", "сделай так"),
+                                    ("", errors.hint_for_status(409))):
+            with self.subTest(body_hint=body_hint):
+                with mock.patch("urllib.request.urlopen",
+                                side_effect=make_http_error(
+                                    409, {"ok": False, "code": "conflict", "error": "занято",
+                                          "hint": body_hint})), \
+                     mock.patch.object(client, "token", return_value=""):
+                    with self.assertRaises(errors.ListikError) as ctx:
+                        client.request("POST", "/api/tasks/t1/comment", body={"text": "x"})
+                self.assertEqual(ctx.exception.code, "conflict")
+                self.assertEqual(ctx.exception.hint, expected)
+
 
 # ------------------------------------------------------------------ 10: from_env/headers
 

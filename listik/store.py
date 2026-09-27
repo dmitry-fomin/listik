@@ -1413,11 +1413,8 @@ def get_task(conn: sqlite3.Connection, task_id: str, *, with_details: bool = Tru
             with_rejected: bool = False) -> dict:
     row = store_helpers.task_row(conn, task_id)
     out = row_to_task(conn, row)
-    try:
-        from . import deps as deps_mod
-        out["deps_state"] = deps_mod.ready(conn, task_id)
-    except Exception:  # noqa: BLE001 — срез зависимостей не должен ломать карточку
-        out["deps_state"] = None
+    # Без перехвата: сбой базы должен дойти до 503, а не стать deps_state: null (listik-88ef).
+    out["deps_state"] = deps_mod.ready(conn, task_id)
     if with_details or with_rejected:
         from . import fence as fence_mod
     if with_details:

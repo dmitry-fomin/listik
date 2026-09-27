@@ -495,5 +495,42 @@ class DanglingDepsHttpTests(OwnerHttpCase):
         self.assertIs(data["deps_state"]["claimable"], False)
 
 
+class GetTaskDepsStateDbErrorTests(TempDbTestCase):
+    """Сбой базы в deps.ready доходит из get_task, а не становится deps_state: None (listik-88ef).
+
+    Ломается projects.path: его читает только deps.ready (через worktree_conflict), а deps.dep_type
+    уже раньше читает row_to_task, и такая поломка падала бы и до правки.
+    """
+
+    def setUp(self) -> None:
+        super().setUp()
+        self.task_id = store.create_task(self.conn, title="A", project="demo")["id"]
+        self.conn.execute("ALTER TABLE projects RENAME COLUMN path TO dir")
+        self.conn.commit()
+
+    def test_get_task_raises_operational_error(self) -> None:
+        for with_details in (True, False):
+            with self.subTest(with_details=with_details):
+                with self.assertRaises(sqlite3.OperationalError):
+                    store.get_task(self.conn, self.task_id, with_details=with_details)
+
+
+class GetTaskDepsStateDbErrorHttpTests(OwnerHttpCase):
+    """Сбой базы в deps.ready на PATCH задачи — 503 server_error, а не 200 с deps_state: null (listik-88ef)."""
+
+    config_text = LOCAL_CONFIG
+
+    def test_patch_task_reports_db_error(self) -> None:
+        a = self.make_task(title="A")["id"]
+        conn = db_mod.connect(self.db_path)
+        self.addCleanup(conn.close)
+        conn.execute("ALTER TABLE projects RENAME COLUMN path TO dir")
+        conn.commit()
+
+        status, payload = self.api("PATCH", f"/api/tasks/{a}", body={"title": "B"})
+        self.assertEqual(status, 503, payload)
+        self.assertEqual(payload["code"], "server_error")
+
+
 if __name__ == "__main__":
     unittest.main()

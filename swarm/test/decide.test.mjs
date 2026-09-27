@@ -263,7 +263,6 @@ test("надзор: режим роя молчит 30 мин — не stale; tim
   const quiet = decideRunning(swarm, {now});
   assert.deepEqual(quiet.restart, []);
   assert.deepEqual(quiet.giveUp, []);
-  assert.deepEqual(quiet.report.stale, []);
 
   const timed = decideRunning(swarm, {
     now, config: {...supConfig, timeoutMinutes: 20},
@@ -271,48 +270,26 @@ test("надзор: режим роя молчит 30 мин — не stale; tim
   assert.equal(timed.restart[0].reason, "timeout");
 });
 
-test("надзор: зависла (30 мин молчания > staleMinutes 20), port:5170, без revoke — restart stale", () => {
+test("надзор: бегущая карточка роя молчит 10 часов при timeoutMinutes 0 — restart/giveUp/stopOnly пусты, в report нет stale/silence", () => {
   const now = new Date();
   const t = runningTask("a", {
-    launched_at: minsAgo(now, 30), holder_at: minsAgo(now, 25), labels: ["port:5170"],
-  });
-  const res = decideRunning(t, {now});
-  assert.deepEqual(res.restart, [{id: "a", reason: "stale", restarts: 0, generation: undefined, port: 5170}]);
-  assert.deepEqual(res.report.stale, ["a"]);
-});
-
-test("надзор: та же, но holder_at 5 мин назад — не молчит, ничего", () => {
-  const now = new Date();
-  const t = runningTask("a", {
-    launched_at: minsAgo(now, 30), holder_at: minsAgo(now, 5), labels: ["port:5170"],
+    launch_driver: "swarm", launched_at: minsAgo(now, 600), labels: ["port:5170"],
   });
   const res = decideRunning(t, {now});
   assert.deepEqual(res.restart, []);
   assert.deepEqual(res.giveUp, []);
-  assert.deepEqual(res.report.stale, []);
+  assert.deepEqual(res.stopOnly, []);
+  assert.equal("stale" in res.report, false);
+  assert.equal("silence" in res.report, false);
 });
 
-test("надзор: событие от чужого актора 2 мин назад — не stale; то же от роя (revoke) — stale", () => {
+test("надзор: просрочена (30 мин > timeoutMinutes 20), port:5170, без revoke — restart timeout", () => {
   const now = new Date();
-  const base = {
-    launched_at: minsAgo(now, 30), holder_at: minsAgo(now, 30), labels: ["port:5170"],
-  };
-  const notStale = decideRunning(runningTask("a", base), {
-    now, events: {a: [{kind: "stage", actor: "agent:claude", ts: minsAgo(now, 2)}]},
+  const t = runningTask("a", {
+    launched_at: minsAgo(now, 30), holder_at: minsAgo(now, 25), labels: ["port:5170"],
   });
-  assert.equal(notStale.report.stale.includes("a"), false);
-
-  const stillStale = decideRunning(runningTask("a", base), {
-    now, events: {a: [{kind: "revoke", actor: "agent:listik-swarm", ts: minsAgo(now, 2), note: "рой: x"}]},
-  });
-  assert.equal(stillStale.report.stale.includes("a"), true);
-});
-
-test("надзор: holder_at пуст, launched_at 25 мин назад — stale", () => {
-  const now = new Date();
-  const t = runningTask("a", {launched_at: minsAgo(now, 25), labels: ["port:5170"]});
-  const res = decideRunning(t, {now});
-  assert.deepEqual(res.report.stale, ["a"]);
+  const res = decideRunning(t, {now, config: {...supConfig, timeoutMinutes: 20}});
+  assert.deepEqual(res.restart, [{id: "a", reason: "timeout", restarts: 0, generation: undefined, port: 5170}]);
 });
 
 test("надзор: timeoutMinutes 60, launched_at 61 мин назад, holder_at свежий — restart timeout", () => {
@@ -335,7 +312,7 @@ test("надзор: уже один revoke-перезапуск, maxRestarts 1 �
   });
   const events = {a: [{kind: "revoke", actor: "agent:listik-swarm", ts: minsAgo(now, 25),
     note: "рой: перезапуск — stale; запуск …, pid 1, процесс снят"}]};
-  const res = decideRunning(t, {now, events});
+  const res = decideRunning(t, {now, events, config: {...supConfig, timeoutMinutes: 20}});
   assert.deepEqual(res.restart, []);
   assert.equal(res.giveUp.length, 1);
   assert.match(res.giveUp[0].text, /listik release a/);
@@ -349,7 +326,8 @@ test("надзор: revoke с другой пометкой (предел/раз
   });
   for (const note of ["рой: stale, предел перезапусков", "рой: перезапуск разрешён человеком"]) {
     const res = decideRunning(t, {
-      now, events: {a: [{kind: "revoke", actor: "agent:listik-swarm", ts: minsAgo(now, 25), note}]},
+      now, config: {...supConfig, timeoutMinutes: 20},
+      events: {a: [{kind: "revoke", actor: "agent:listik-swarm", ts: minsAgo(now, 25), note}]},
     });
     assert.equal(res.restart.length, 1, note);
     assert.equal(res.giveUp.length, 0, note);
@@ -362,7 +340,8 @@ test("надзор: revoke от agent:claude — не считается в rest
     launched_at: minsAgo(now, 30), holder_at: minsAgo(now, 30), labels: ["port:5170"],
   });
   const res = decideRunning(t, {
-    now, events: {a: [{kind: "revoke", actor: "agent:claude", ts: minsAgo(now, 25),
+    now, config: {...supConfig, timeoutMinutes: 20},
+    events: {a: [{kind: "revoke", actor: "agent:claude", ts: minsAgo(now, 25),
       note: "рой: перезапуск — stale"}]},
   });
   assert.equal(res.restart[0].restarts, 0);
@@ -374,7 +353,7 @@ test("надзор: актор Agent:Listik-Swarm в конфиге сравни
     launched_at: minsAgo(now, 30), holder_at: minsAgo(now, 30), labels: ["port:5170"],
   });
   const res = decideRunning(t, {
-    now, config: {...supConfig, actor: "Agent:Listik-Swarm", maxRestarts: 1},
+    now, config: {...supConfig, actor: "Agent:Listik-Swarm", maxRestarts: 1, timeoutMinutes: 20},
     events: {a: [{kind: "revoke", actor: "agent:listik-swarm", ts: minsAgo(now, 25),
       note: "рой: перезапуск — stale"}]},
   });
@@ -382,33 +361,32 @@ test("надзор: актор Agent:Listik-Swarm в конфиге сравни
   assert.equal(res.giveUp.length, 1);
 });
 
-test("надзор: зависшая без метки порта — свободный порт есть → restart; свободных нет → giveUp no_port", () => {
+test("надзор: просроченная без метки порта — свободный порт есть → restart; свободных нет → giveUp no_port", () => {
   const now = new Date();
   const t = runningTask("a", {launched_at: minsAgo(now, 30), holder_at: minsAgo(now, 30)});
-  const resFree = decideRunning(t, {now});
+  const resFree = decideRunning(t, {now, config: {...supConfig, timeoutMinutes: 20}});
   assert.equal(resFree.restart[0].port, 5170);
 
   const full = [];
   for (let p = 5170; p < 5270; p++) full.push(task(`o${p}`, {labels: [`port:${p}`]}));
   const res = decide({
     plan: {waves: [[]], cycles: [], unroutable: [], unscoped: [], blocked: {}},
-    tasks: [t, ...full], routes: SWARM_ROUTES, config: supConfig, now,
+    tasks: [t, ...full], routes: SWARM_ROUTES, config: {...supConfig, timeoutMinutes: 20}, now,
   });
   assert.equal(res.restart.length, 0);
   assert.equal(res.giveUp.length, 1);
   assert.equal(res.giveUp[0].reason, "no_port");
 });
 
-test("надзор: needs_owner true у зависшей — ни restart, ни giveUp, report.stale тоже пуст", () => {
+test("надзор: needs_owner true у просроченной — ни restart, ни giveUp", () => {
   const now = new Date();
   const t = runningTask("a", {
     launched_at: minsAgo(now, 30), holder_at: minsAgo(now, 30), labels: ["port:5170"],
     needs_owner: true,
   });
-  const res = decideRunning(t, {now});
+  const res = decideRunning(t, {now, config: {...supConfig, timeoutMinutes: 20}});
   assert.deepEqual(res.restart, []);
   assert.deepEqual(res.giveUp, []);
-  assert.deepEqual(res.report.stale, []);
 });
 
 test("надзор: закрытая бегущая молчит час — restart/giveUp/crashed пусты; с timeout — stopOnly", () => {
@@ -528,20 +506,21 @@ test("гейт с ids: [] — то же поведение, report.reason = conf
   assert.equal(res.report.reason, "config");
 });
 
-test("гейт вместе с надзором: кандидат волны gated, stale running restart, crashed отдельно", () => {
+test("гейт вместе с надзором: кандидат волны gated, бегущая restart по timeout, crashed отдельно", () => {
   const now = new Date();
   const candidate = task("b", {launch_driver: "swarm"});
-  const stale = runningTask("a", {
+  const timed = runningTask("a", {
     launched_at: minsAgo(now, 30), holder_at: minsAgo(now, 30), labels: ["port:5170"],
   });
   const crashedTask = task("c", {
     launched_by: "agent:listik-swarm", launch_finished_at: "2026-01-01T00:00:00Z",
     launch_exit_code: 1, needs_owner: false, generation: 3, launch_log: "/logs/c.log",
   });
-  const tasks = [candidate, stale, crashedTask];
+  const tasks = [candidate, timed, crashedTask];
   const plan = {waves: [["b"]], cycles: [], unroutable: [], unscoped: [], blocked: {}};
   const gate = {reason: "unmerged", ids: []};
-  const res = decide({plan, tasks, routes: SWARM_ROUTES, config: supConfig, now, gate});
+  const res = decide({plan, tasks, routes: SWARM_ROUTES,
+    config: {...supConfig, timeoutMinutes: 20}, now, gate});
   assert.deepEqual(res.launch, []);
   assert.ok(res.skipped.some(s => s.id === "b" && s.reason === "gated"));
   assert.ok(res.restart.some(r => r.id === "a"));
@@ -667,17 +646,16 @@ test("openQuestion: вопрос; ответ закрывает; новый во
   ])).text, SOFT_Q);
 });
 
-test("надзор: бегущая с мягким вопросом, молчит 30 мин при staleMinutes 20 — restart stale", () => {
+test("надзор: бегущая с мягким вопросом, 30 мин при timeoutMinutes 20 — restart timeout", () => {
   const now = new Date();
   const t = runningTask("a", {
     launched_at: minsAgo(now, 30), holder_at: minsAgo(now, 30), labels: ["port:5170"],
     needs_owner: true,
   });
   const events = {a: [{kind: "question", actor: "agent:fake", ts: minsAgo(now, 30), note: SOFT_Q}]};
-  const res = decideRunning(t, {now, events});
+  const res = decideRunning(t, {now, events, config: {...supConfig, timeoutMinutes: 20}});
   assert.equal(res.restart.length, 1);
-  assert.equal(res.restart[0].reason, "stale");
-  assert.deepEqual(res.report.stale, ["a"]);
+  assert.equal(res.restart[0].reason, "timeout");
 });
 
 function crashedSoft(over = {}) {
@@ -836,21 +814,21 @@ test("бюджет: launchesLeft null и без поля — все три в la
   assert.deepEqual(resMissing.report.budget, {exhausted: false, launchesLeft: null});
 });
 
-test("бюджет: budgetExhausted + зависшая — restart пуст, giveUp budget, порт не выделялся", () => {
+test("бюджет: budgetExhausted + просроченная — restart пуст, giveUp budget, порт не выделялся", () => {
   const now = new Date();
   const t = runningTask("a", {
     launched_at: minsAgo(now, 30), holder_at: minsAgo(now, 30), labels: ["port:5170"],
     launch_log: "/logs/a.log",
   });
-  const res = decideRunning(t, {now, config: {...supConfig, budgetExhausted: true}});
+  const res = decideRunning(t, {now, config: {...supConfig, budgetExhausted: true, timeoutMinutes: 20}});
   assert.deepEqual(res.restart, []);
   assert.equal(res.giveUp.length, 1);
   assert.equal(res.giveUp[0].id, "a");
   assert.equal(res.giveUp[0].reason, "budget");
-  assert.equal(res.giveUp[0].cause, "stale");
+  assert.equal(res.giveUp[0].cause, "timeout");
   assert.equal(res.giveUp[0].port, undefined);
   assert.match(res.giveUp[0].text, /бюджет прогона исчерпан/);
-  assert.match(res.giveUp[0].text, /зависла/);
+  assert.match(res.giveUp[0].text, /таймаут/);
   assert.match(res.giveUp[0].text, /\/logs\/a\.log/);
   assert.deepEqual(res.report.budget, {exhausted: true, launchesLeft: null});
 });
@@ -913,14 +891,15 @@ test("бюджет: budgetExhausted не трогает dueDefaults", () => {
 test("бюджет: gate unmerged + budgetExhausted — report.reason unmerged", () => {
   const now = new Date();
   const candidate = task("b", {launch_driver: "swarm"});
-  const stale = runningTask("a", {
+  const timed = runningTask("a", {
     launched_at: minsAgo(now, 30), holder_at: minsAgo(now, 30), labels: ["port:5170"],
   });
-  const tasks = [candidate, stale];
+  const tasks = [candidate, timed];
   const plan = {waves: [["b"]], cycles: [], unroutable: [], unscoped: [], blocked: {}};
   const gate = {reason: "unmerged", ids: []};
   const res = decide({
-    plan, tasks, routes: SWARM_ROUTES, config: {...supConfig, budgetExhausted: true}, now, gate,
+    plan, tasks, routes: SWARM_ROUTES,
+    config: {...supConfig, budgetExhausted: true, timeoutMinutes: 20}, now, gate,
   });
   assert.deepEqual(res.launch, []);
   assert.ok(res.skipped.some(s => s.id === "b" && s.reason === "gated"));

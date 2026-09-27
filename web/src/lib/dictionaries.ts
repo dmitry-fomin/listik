@@ -90,14 +90,26 @@ export function stageIndex(stage: TaskStage): number {
 
 // ── Статус ──────────────────────────────────────────────────────────────────
 
-export const STATUSES: DictionaryItem<TaskStatus>[] = [
-  { value: 'open', label: 'открыта' },
-  { value: 'in_progress', label: 'в работе' },
-  { value: 'blocked', label: 'заблокирована' },
-  { value: 'review', label: 'на проверке' },
-  { value: 'done', label: 'готова' },
-  { value: 'cancelled', label: 'отменена' },
+export interface StatusItem extends DictionaryItem<TaskStatus> {
+  /** Имя иконки из `lib/icons.ts` — глиф статуса в выдаче поиска. */
+  icon: string
+  /** Цвет глифа — токен кита. */
+  color: string
+}
+
+export const STATUSES: StatusItem[] = [
+  { value: 'open', label: 'открыта', icon: 'status-open', color: 'var(--ink-3)' },
+  { value: 'in_progress', label: 'в работе', icon: 'status-progress', color: 'var(--info-500)' },
+  { value: 'blocked', label: 'заблокирована', icon: 'status-blocked', color: 'var(--danger-500)' },
+  { value: 'review', label: 'на проверке', icon: 'review', color: 'var(--warning-600)' },
+  { value: 'done', label: 'готова', icon: 'status-done', color: 'var(--success-500)' },
+  { value: 'cancelled', label: 'отменена', icon: 'status-cancelled', color: 'var(--ink-4)' },
 ]
+
+/** Незнакомый статус (старое импортированное значение) показываем как открытую задачу. */
+export function statusItem(value: string | null | undefined): StatusItem {
+  return STATUSES.find((item) => item.value === value) ?? STATUSES[0]
+}
 
 export function statusTitle(value: TaskStatus): string {
   return STATUSES.find((item) => item.value === value)?.label ?? value

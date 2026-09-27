@@ -11,6 +11,7 @@ import argparse
 import json
 import os
 import re
+import sqlite3
 import sys
 import traceback
 import urllib.parse
@@ -1347,7 +1348,16 @@ def cmd_memory(args) -> int:
 
 
 def cmd_remember(args) -> int:
-    out = store.remember(db.init(), args.text, key=args.key, project=args.project)
+    conn = db.init()
+    try:
+        out = store.remember(conn, args.text, key=args.key, project=args.project)
+    except Exception:
+        # Незакоммиченная запись упавшей операции держала бы блокировку (listik-mqr6).
+        try:
+            conn.rollback()
+        except sqlite3.Error:
+            pass
+        raise
     print(f"запомнено: {out['key']}")
     return 0
 
@@ -2360,8 +2370,17 @@ def _cmd_routes_reimport(args) -> int:
     else:
         if local:
             warn_local_bypass(args, writing=True)
+        conn = db.init()
         try:
-            data = routes_store.reimport(db.init(), source)
+            try:
+                data = routes_store.reimport(conn, source)
+            except Exception:
+                # Частичная запись упавшего ввоза держала бы блокировку (listik-mqr6).
+                try:
+                    conn.rollback()
+                except sqlite3.Error:
+                    pass
+                raise
         except ValueError as exc:
             hint = ("проверь файл --from" if source is not None
                     else "проверь routes.json установленной копии")

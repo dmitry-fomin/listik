@@ -546,6 +546,17 @@ def call_tool(name: str, args: dict, conn=None, owner=FROM_ENV, fence=FROM_ENV) 
     args = {k: v for k, v in args.items() if v is not None}
     if conn is None:
         conn = _conn()
+        try:
+            return call_tool(name, args, conn, owner, fence)
+        except Exception:
+            # Соединение открыл сам вызов: его незакоммиченная запись держала бы
+            # блокировку записи (listik-mqr6). Переданное снаружи откатывает
+            # вызывающий (`handle`), здесь оно доходит только с `conn=None`.
+            try:
+                conn.rollback()
+            except sqlite3.Error:
+                pass  # откат не удался — наружу исходная ошибка
+            raise
     if owner is FROM_ENV:
         owner = (os.environ.get("LISTIK_OWNER") or "").strip() or None
     if fence is FROM_ENV:

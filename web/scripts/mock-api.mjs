@@ -41,7 +41,8 @@
  * base64 в строку-маркер сценария: транскрипт — пустой при `silence`, HTTP 502 при
  * `transcribe-fail`, иначе непустой и содержит маркер; черновик — `project: null`
  * при `noproject`, `project: 'ghost-project'` (нет в `/api/meta`) при `badproject`,
- * `title: null` при `notitle`, HTTP 502 при `draft-fail`, иначе полный
+ * `title: null` при `notitle`, `type: 'feature'` (остальное — как у полного) при
+ * `feature`, HTTP 502 при `draft-fail`, иначе полный
  * (`project: 'listik'`, `type: 'task'`, видимый маршрут `low-pipeline`).
  * Только под `--voice` ручки голоса и живут.
  * `--cold` добавляет четыре задачи под строку «worktree · branch» блока
@@ -63,6 +64,12 @@
  * (номера плейсхолдеров доходят до двузначных, listik-s0us), а остальные
  * текстовые поля пусты. По ней проверяется вывод markdown в панели задачи
  * (scripts/verify-markdown.mjs).
+ * `/api/meta` отдаёт `issue_types` — набор типов сервера (`store.ISSUE_TYPES`, listik-7syz)
+ * в его порядке: `epic` «эпик», `task` «задача», `bug` «баг», `feature` «фича», `chore`
+ * «рутина», `decision` «решение», `question` «вопрос». `--types-short` заменяет его
+ * усечённым и переставленным `{question: 'вопрос', bug: 'баг', task: 'задача'}` — так
+ * «список из meta» отличается от «списка из справочника»; `--no-issue-types` убирает ключ
+ * `issue_types` вовсе, как у старого сервера (scripts/verify-list-filters.mjs).
  * Без флагов `/api/meta` отдаёт `routing` — общую таблицу переходов, как дефолт
  * сервера (`listik/config.py`), — и `routing_effective` у каждой строки `projects`;
  * у событий общего списка карточки есть `transition` (`handoff` у `stage`, `null` у
@@ -138,6 +145,18 @@ const markdownMode = process.argv.slice(3).includes('--markdown')
 const transitionsMode = process.argv.slice(3).includes('--transitions')
 const serverMode = process.argv.slice(3).includes('--server-mode')
 const listSortMode = process.argv.slice(3).includes('--list-sort')
+const typesShortMode = process.argv.slice(3).includes('--types-short')
+const noIssueTypesMode = process.argv.slice(3).includes('--no-issue-types')
+/** Набор типов сервера (`store.ISSUE_TYPES`) в его порядке. */
+const ISSUE_TYPES = {
+  epic: 'эпик',
+  task: 'задача',
+  bug: 'баг',
+  feature: 'фича',
+  chore: 'рутина',
+  decision: 'решение',
+  question: 'вопрос',
+}
 /** `server.users` из config.toml — кем можно представиться в серверном режиме. */
 const SERVER_USERS = ['ann', 'bob']
 const slowArg = process.argv.slice(3).find((arg) => arg.startsWith('--slow-ms='))
@@ -1079,7 +1098,7 @@ function voiceDraftOf(mode, text) {
   const title = mode === 'notitle' ? null : text.slice(0, 60)
   return {
     project,
-    type: 'task',
+    type: mode === 'feature' ? 'feature' : 'task',
     title,
     description: `Рассказ человека: ${text}`,
     acceptance: [...VOICE_DRAFT_ACCEPTANCE],
@@ -1986,6 +2005,9 @@ const server = createServer(async (request, response) => {
       stages: STAGE_TITLES,
       priorities: PRIORITY_TITLES,
       routing: DEFAULT_ROUTING,
+      ...(noIssueTypesMode
+        ? {}
+        : { issue_types: typesShortMode ? { question: 'вопрос', bug: 'баг', task: 'задача' } : ISSUE_TYPES }),
     })
   }
 
@@ -2123,7 +2145,9 @@ const server = createServer(async (request, response) => {
         ? 'noproject'
         : text.includes('notitle')
           ? 'notitle'
-          : 'full'
+          : text.includes('feature')
+            ? 'feature'
+            : 'full'
     return ok({ model: ASSISTANT_MODEL, draft: voiceDraftOf(mode, text) })
   }
 

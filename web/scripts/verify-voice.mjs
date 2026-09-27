@@ -8,13 +8,17 @@
  * Поднимает `scripts/mock-api.mjs` в двух режимах: без `--voice` (кнопки нет) и с
  * `--routes --assistant --voice` (полный голосовой поток, маркеры сценариев
  * `silence`, `transcribe-fail`, `draft-fail`, `noproject`, `notitle`,
- * `badproject` — неизвестный доске slug), отдаёт
+ * `badproject` — неизвестный доске slug, `feature` — черновик с `type: "feature"`), отдаёт
  * собранный `web/dist` и гоняет сценарии в headless Chrome по CDP. Телефон
  * эмулируется `Emulation.setDeviceMetricsOverride` (390×844, mobile) — порог
  * `PHONE_MAX_WIDTH = 767` переключает стор в `phone`. Микрофон
  * подменяется стабом, внедрённым до загрузки страницы
  * (`Page.addScriptToEvaluateOnNewDocument`): `navigator.mediaDevices.getUserMedia`,
  * `MediaRecorder` и счётчики `window.__listikVoiceStats`.
+ *
+ * Маркер `feature` (listik-7syz, порция b): тип черновика из набора `/api/meta` идёт
+ * как есть — создание одной кнопкой шлёт `type: "feature"` (`last_create`), а «Открыть
+ * форму» с тем же черновиком выбирает в форме тип с `aria-label` «фича».
  *
  * Счётчики запросов (transcribe/draft/create, last_create) — только через
  * служебную ручку мока `/__requests`: `scripts/lib/browser-harness.mjs` перехватывает
@@ -782,6 +786,38 @@ try {
         data.voice.create === 0,
       expect: 'текст «проект не распознан — откройте форму», кнопка disabled, POST /api/tasks не ушёл',
       got: { create: create ?? null, warn: seen.warn, counts: data.voice, last_create: data.last_create },
+    }
+  })
+
+  await record('feature: создание одной кнопкой шлёт type "feature"', async () => {
+    await resetUi()
+    await setCase('feature')
+    await resetRequests()
+    await goToDraft()
+    if (!(await clickPanelButton('Создать задачу'))) throw new Error('кнопка «Создать задачу» не найдена')
+    await waitFor(async () => (!(await state()).panelOpen ? true : null), 10000)
+    const data = await apiRequests()
+    return {
+      ok: data.voice.create === 1 && data.last_create?.type === 'feature',
+      expect: 'одна карточка, last_create.type === "feature"',
+      got: { counts: data.voice, last_create: data.last_create },
+    }
+  })
+
+  await record('feature: «Открыть форму» выбирает тип «фича»', async () => {
+    await resetUi()
+    await setCase('feature')
+    await resetRequests()
+    await goToDraft()
+    if (!(await clickPanelButton('Открыть форму'))) throw new Error('кнопка «Открыть форму» не найдена')
+    const opened = await waitFor(async () => {
+      const seen = await state()
+      return seen.modal ? seen : null
+    }, 5000)
+    return {
+      ok: Boolean(opened) && opened.modalType === 'фича',
+      expect: 'в форме «Новая задача» выбран тип с aria-label «фича»',
+      got: { modal: Boolean(opened), type: opened?.modalType ?? null },
     }
   })
 

@@ -12,7 +12,7 @@ export interface DictionaryItem<T extends string | number> {
 
 // ── Тип ─────────────────────────────────────────────────────────────────────
 
-export type IssueType = 'epic' | 'task' | 'bug'
+export type IssueType = 'epic' | 'task' | 'bug' | 'feature' | 'chore' | 'decision' | 'question'
 
 export interface TaskTypeItem extends DictionaryItem<IssueType> {
   /** Подпись с пояснением — в глифе и переключателе типа модалки. */
@@ -26,9 +26,13 @@ export const TASK_TYPES: TaskTypeItem[] = [
   { value: 'epic', label: 'эпик', hint: 'эпик · ТЗ', createLabel: 'Создать эпик', icon: 'epic', color: 'var(--chart-3)' },
   { value: 'task', label: 'задача', hint: 'задача', createLabel: 'Создать задачу', icon: 'task', color: 'var(--info-500)' },
   { value: 'bug', label: 'баг', hint: 'баг', createLabel: 'Создать баг', icon: 'bug', color: 'var(--danger-500)' },
+  { value: 'feature', label: 'фича', hint: 'фича', createLabel: 'Создать фичу', icon: 'bolt', color: 'var(--success-500)' },
+  { value: 'chore', label: 'рутина', hint: 'рутина', createLabel: 'Создать рутину', icon: 'gear', color: 'var(--ink-3)' },
+  { value: 'decision', label: 'решение', hint: 'решение', createLabel: 'Создать решение', icon: 'flag', color: 'var(--warning-600)' },
+  { value: 'question', label: 'вопрос', hint: 'вопрос', createLabel: 'Создать вопрос', icon: 'question', color: 'var(--info-500)' },
 ]
 
-/** Незнакомый тип (старые импорты: feature, chore…) показываем как обычную задачу. */
+/** Незнакомый тип (старые значения вне набора сервера, например docs) показываем как обычную задачу. */
 export function taskType(value: string | null | undefined): TaskTypeItem {
   return TASK_TYPES.find((item) => item.value === value) ?? TASK_TYPES[1]
 }

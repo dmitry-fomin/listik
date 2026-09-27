@@ -294,7 +294,7 @@ defineExpose({ reload: load })
       :status-options="statusOptions()"
       :stage-options="stageOptions()"
       :orchestrator-options="orchestratorOptions(store.meta.value)"
-      :type-options="typeOptions()"
+      :type-options="typeOptions(store.meta.value)"
       @update:filters="patchFilters"
       @reset="store.clearFilters()"
     />

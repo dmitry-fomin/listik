@@ -33,7 +33,8 @@ import AssistantField from '@/components/AssistantField.vue'
 import ProjectMark from '@/components/marks/ProjectMark.vue'
 import RoutePicker from '@/components/RoutePicker.vue'
 import TaskGlyph from '@/components/marks/TaskGlyph.vue'
-import { TASK_TYPES, priority } from '@/lib/dictionaries'
+import { priority, taskType } from '@/lib/dictionaries'
+import type { FacetsOption } from '@/lib/facets'
 import type {
   AssistantContext,
   AssistantField as AssistantFieldKey,
@@ -52,6 +53,8 @@ import store from '@/store/listik'
 
 const props = defineProps<{
   projects: ProjectRow[]
+  /** Типы задач доски (`issueTypes(meta)` из `lib/facets`) — в их порядке и составе. */
+  types: FacetsOption[]
   pending: boolean
   /**
    * Черновик голосового ввода (порция b): предзаполняет форму в момент открытия
@@ -85,10 +88,8 @@ const emit = defineEmits<{
 
 const isOpen = defineModel<boolean>({ default: false })
 
-const TYPE_OPTIONS: IconToggleOption<string>[] = TASK_TYPES.map((item) => ({ value: item.value, label: item.hint }))
-
-const CREATE_LABEL: Record<string, string> = Object.fromEntries(
-  TASK_TYPES.map((item) => [item.value, item.createLabel]),
+const typeOptions = computed<IconToggleOption<string>[]>(() =>
+  props.types.map((item) => ({ value: item.value, label: taskType(item.value).hint })),
 )
 
 function defaults() {
@@ -269,7 +270,7 @@ watch(
 /**
  * Черновик голосового ввода поверх умолчаний: пустые/нераспознанные поля не
  * трогаются, чтобы форма честно потребовала их выбрать. Тип — только из
- * `epic|task|bug`; проект — только если такой slug есть на доске; маршрут —
+ * списка типов доски (`types`); проект — только если такой slug есть на доске; маршрут —
  * только видимый и допустимый итоговому типу (применённый помечается
  * `routeTouched`, иначе смена типа в форме затрёт его умолчанием).
  */
@@ -278,7 +279,7 @@ function applyDraft(draft: VoiceDraft | null | undefined): void {
   if (draft.title) form.title = draft.title
   if (draft.description) form.description = draft.description
   if (draft.acceptance?.length) form.acceptance = draft.acceptance.join('\n')
-  if (draft.type === 'epic' || draft.type === 'task' || draft.type === 'bug') form.type = draft.type
+  if (draft.type && props.types.some((item) => item.value === draft.type)) form.type = draft.type
   if (draft.project && props.projects.some((project) => project.slug === draft.project)) {
     form.project = draft.project
   }
@@ -359,7 +360,7 @@ function cancel(): void {
     <div class="listik-stack listik-newtask">
       <div class="listik-newtask-row">
         <UiField label="Тип">
-          <IconToggle v-model="form.type" :options="TYPE_OPTIONS" ariaLabel="Тип задачи" size="md">
+          <IconToggle v-model="form.type" :options="typeOptions" ariaLabel="Тип задачи" size="md">
             <template #icon="{ option }">
               <TaskGlyph kind="type" :value="option.value" size="md" />
             </template>
@@ -505,7 +506,7 @@ function cancel(): void {
       <UiButton variant="ghost" size="md" @click="cancel">Отмена</UiButton>
       <UiButton variant="primary" size="md" :loading="props.pending" :disabled="createDisabled" @click="submit">
         <template #icon><ListikIcon name="plus" size="xs" /></template>
-        {{ CREATE_LABEL[form.type] ?? 'Создать задачу' }}
+        {{ taskType(form.type).createLabel }}
       </UiButton>
     </template>
   </UiDrawer>

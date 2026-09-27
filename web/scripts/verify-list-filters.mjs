@@ -26,6 +26,17 @@
  * Последний кейс `sort resets page` (шаг 2-p1l8) со второй страницы кликает сортировку
  * «Приоритет» и ждёт первую страницу: запросы только с `offset=0`, строки — ответ мока по порядку.
  *
+ * Типы из `/api/meta` (listik-7syz, порция b): кейс «фильтр типа из meta» — в «Фильтр по типу»
+ * 8 опций («любой тип» + 7 типов сервера, среди них «фича», «рутина», «решение», «вопрос»),
+ * клик по «фича» даёт запрос списка с `type=feature`; кейс «форма: типы и «Создать фичу»» —
+ * в форме «Новая задача» переключатель «Тип задачи» из 7 опций в порядке сервера (`aria-label`:
+ * у `epic` «эпик · ТЗ», у `feature` «фича»), клик по «фича» меняет кнопку на «Создать фичу»,
+ * отправка с заголовком и проектом Listik даёт `last_create.type === "feature"`.
+ * Затем тот же браузер открывает доску на втором моке `--types-short` (кейс «types-short:
+ * фильтр типа из meta» — ровно «любой тип», «вопрос», «баг», «задача» по порядку) и на третьем
+ * `--no-issue-types` (кейс «no-issue-types: фильтр типа из справочника» — «любой тип» + 7 типов
+ * справочника); у каждого мока свой порт и своя раздача `dist`, оба гасятся в `finally`.
+ *
  * Запуск: node scripts/verify-list-filters.mjs
  *   Нужен собранный `web/dist` (`npx vite build --configLoader runner`).
  *
@@ -96,6 +107,9 @@ const report = { cases: [], consoleErrors: [] }
 const record = (name, run) => recordCase(report, name, run)
 let mock = null
 let staticServer = null
+/** Дополнительные моки `--types-short`/`--no-issue-types` и их раздачи `dist`. */
+const extraMocks = []
+const extraServers = []
 let chrome = null
 
 try {
@@ -357,6 +371,148 @@ try {
     })
   }
 
+  /* ── типы из /api/meta (listik-7syz) ─────────────────────────────────── */
+
+  const TYPE_GROUP = 'Фильтр по типу'
+  /** `aria-label` опций группы `[role="radiogroup"][aria-label=group]` по порядку. */
+  const radioLabels = (group, scope = 'document') => `(() => {
+    const box = [...${scope}.querySelectorAll('[role="radiogroup"]')]
+      .find((item) => item.getAttribute('aria-label') === ${JSON.stringify(group)});
+    return [...(box?.querySelectorAll('[role="radio"]') ?? [])].map((item) => item.getAttribute('aria-label'));
+  })()`
+  const SERVER_TYPE_LABELS = ['эпик', 'задача', 'баг', 'фича', 'рутина', 'решение', 'вопрос']
+
+  await record('фильтр типа из meta', async () => {
+    await resetFilters()
+    const labels = await evaluate(radioLabels(TYPE_GROUP))
+    const shape =
+      labels.length === 8 &&
+      labels[0] === 'любой тип' &&
+      ['фича', 'рутина', 'решение', 'вопрос'].every((label) => labels.includes(label))
+    await mockCall('/__requests', {})
+    const clicked = await radio(TYPE_GROUP, 'фича')()
+    if (clicked !== true) return { ok: false, query: null, expect: null, got: { clicked, labels } }
+    const result = await verify((params) => params.get('type') === 'feature')
+    return { ...result, ok: result.ok && shape, labels }
+  })
+
+  /** Форма «Новая задача»: свежий открытый дровер ищется в странице по шапке. */
+  const DRAWER = `(() => {
+    const heading = (el) => (el.querySelector('.ui-drawer__header') ?? el.querySelector('.ui-drawer__title'))?.textContent ?? '';
+    const nodes = [...document.querySelectorAll('.ui-drawer')].filter((el) => heading(el).includes('Новая задача'));
+    return nodes[nodes.length - 1] ?? null;
+  })()`
+  const buttonByText = (scope, label) => `[...${scope}.querySelectorAll('button')]
+    .find((el) => el.textContent.replace(/\\s+/g, ' ').trim() === ${JSON.stringify(label)})`
+
+  await record('форма: типы и «Создать фичу»', async () => {
+    await resetFilters()
+    await mockCall('/__requests', {})
+    // Кнопка «Новая задача» живёт на вкладке «Доска».
+    await evaluate(`(() => {
+      const tab = [...document.querySelectorAll('.ui-tabs__list [role="tab"]')]
+        .find((item) => item.textContent.trim().startsWith('Доска'));
+      tab?.click();
+      return Boolean(tab);
+    })()`)
+    await waitFor(() => evaluate(`Boolean(${buttonByText('document', 'Новая задача')})`), 5000)
+    const opened = await evaluate(`(() => { const button = ${buttonByText('document', 'Новая задача')}; if (!button) return false; button.click(); return true; })()`)
+    if (!opened) return { ok: false, got: 'нет кнопки «Новая задача»' }
+    const labels = await waitFor(async () => {
+      const seen = await evaluate(`(() => { const drawer = ${DRAWER}; return drawer ? ${radioLabels('Тип задачи', 'drawer')} : []; })()`)
+      return seen.length > 0 ? seen : null
+    }, 5000)
+    const expectedLabels = ['эпик · ТЗ', 'задача', 'баг', 'фича', 'рутина', 'решение', 'вопрос']
+    const picked = await evaluate(`(() => {
+      const drawer = ${DRAWER};
+      const radio = drawer?.querySelector('[role="radiogroup"][aria-label="Тип задачи"] [role="radio"][aria-label="фича"]');
+      if (!radio) return false;
+      radio.click();
+      return true;
+    })()`)
+    const createLabel = await waitFor(
+      () => evaluate(`(() => { const drawer = ${DRAWER}; return ${buttonByText('drawer', 'Создать фичу')} ? 'Создать фичу' : null; })()`),
+      3000,
+    )
+    // Заголовок — через нативный сеттер и событие input, как ввод с клавиатуры.
+    await evaluate(`(() => {
+      const input = ${DRAWER}.querySelector('input.ui-input');
+      Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, 'value').set.call(input, 'Фича из проверки типов');
+      input.dispatchEvent(new Event('input', { bubbles: true }));
+      return true;
+    })()`)
+    const projectOpened = await evaluate(`(() => {
+      const trigger = ${DRAWER}.querySelector('.ui-select__trigger');
+      if (!trigger) return false;
+      trigger.click();
+      return true;
+    })()`)
+    const projectPicked =
+      projectOpened &&
+      (await waitFor(
+        () =>
+          evaluate(`(() => {
+            const option = [...document.querySelectorAll('[role="listbox"] [role="option"]')]
+              .find((el) => el.textContent.trim() === 'Listik');
+            if (!option) return false;
+            option.click();
+            return true;
+          })()`),
+        3000,
+      ))
+    await waitFor(() => evaluate(`(() => { const drawer = ${DRAWER}; const button = ${buttonByText('drawer', 'Создать фичу')}; return Boolean(button && !button.disabled); })()`), 3000)
+    await evaluate(`(() => { const drawer = ${DRAWER}; const button = ${buttonByText('drawer', 'Создать фичу')}; if (button) button.click(); return Boolean(button); })()`)
+    const created = await waitFor(async () => (await mockCall('/__requests')).last_create ?? null, 5000)
+    return {
+      ok:
+        JSON.stringify(labels) === JSON.stringify(expectedLabels) &&
+        picked === true &&
+        createLabel === 'Создать фичу' &&
+        Boolean(projectPicked) &&
+        created?.type === 'feature',
+      expect: { labels: expectedLabels, createLabel: 'Создать фичу', type: 'feature' },
+      got: { labels, picked, createLabel, projectPicked, last_create: created },
+    }
+  })
+
+  /** Доска на отдельном моке с флагом: вкладка «Список», подписи «Фильтр по типу». */
+  const typeFilterOn = async (flag) => {
+    const extraApi = await freePort()
+    const extraPage = await freePort()
+    extraMocks.push(await startMock(extraApi, root, [flag]))
+    extraServers.push(await serveDist(extraPage, extraApi, dist))
+    await send('Page.navigate', { url: `http://127.0.0.1:${extraPage}/?token=mock-token` })
+    const ready = await waitFor(
+      async () => ((await evaluate(`document.querySelectorAll('.listik-task-card').length`)) > 0 ? true : null),
+      15000,
+    )
+    if (!ready) return `доска на моке ${flag} не отрисовалась`
+    const tab = await evaluate(`(() => {
+      const tab = [...document.querySelectorAll('.ui-tabs__list [role="tab"]')]
+        .find((item) => item.textContent.trim().startsWith('Список'));
+      if (!tab) return false;
+      tab.click();
+      return true;
+    })()`)
+    if (!tab) return 'вкладки «Список» нет'
+    return waitFor(async () => {
+      const labels = await evaluate(radioLabels(TYPE_GROUP))
+      return labels.length > 0 ? labels : null
+    }, 10000)
+  }
+
+  await record('types-short: фильтр типа из meta', async () => {
+    const got = await typeFilterOn('--types-short')
+    const expect = ['любой тип', 'вопрос', 'баг', 'задача']
+    return { ok: JSON.stringify(got) === JSON.stringify(expect), expect, got }
+  })
+
+  await record('no-issue-types: фильтр типа из справочника', async () => {
+    const got = await typeFilterOn('--no-issue-types')
+    const expect = ['любой тип', ...SERVER_TYPE_LABELS]
+    return { ok: JSON.stringify(got) === JSON.stringify(expect), expect, got }
+  })
+
   report.consoleErrors = consoleErrors
   socket.close()
 } catch (error) {
@@ -365,6 +521,8 @@ try {
   chrome?.kill()
   staticServer?.close()
   mock?.kill()
+  for (const server of extraServers) server.close()
+  for (const extra of extraMocks) extra.kill()
   try {
     rmSync(profile, { recursive: true, force: true, maxRetries: 5, retryDelay: 100 })
   } catch {

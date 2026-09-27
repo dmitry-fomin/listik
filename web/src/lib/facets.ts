@@ -47,6 +47,17 @@ export function orchestratorOptions(meta: Meta | null): FacetsOption[] {
   })
 }
 
-export function typeOptions(): FacetsOption[] {
-  return TASK_TYPES.map(({ value, label }) => ({ value, label }))
+/**
+ * Типы задач доски: `meta.issue_types` в его порядке и составе (тип без записи в справочнике —
+ * с подписью из meta, оформление у него от `task`); без `issue_types` (meta не загружена,
+ * сервер старый) — справочник `TASK_TYPES`.
+ */
+export function issueTypes(meta: Meta | null | undefined): FacetsOption[] {
+  const fromMeta = meta?.issue_types
+  if (!fromMeta) return TASK_TYPES.map(({ value, label }) => ({ value, label }))
+  return Object.entries(fromMeta).map(([value, label]) => ({ value, label }))
+}
+
+export function typeOptions(meta: Meta | null): FacetsOption[] {
+  return issueTypes(meta)
 }

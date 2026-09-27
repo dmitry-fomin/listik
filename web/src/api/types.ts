@@ -771,6 +771,8 @@ export interface Meta {
   statuses: Record<string, string>
   stages: Record<string, string>
   priorities: Record<string, string>
+  /** Набор типов задач сервера (`значение → подпись`) в его порядке; у сервера старше этого поля нет. */
+  issue_types?: Record<string, string>
   /** Общая таблица переходов config.toml без переопределений проектов; у сервера старше этого поля нет. */
   routing?: ProjectRouting
 }

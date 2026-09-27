@@ -47,6 +47,7 @@ import type { CommentKind, Task, TaskPatch, VoiceDraft } from '@/api/types'
 import { formatTime, tasksCountLabel } from '@/lib/format'
 import { useIsPhone } from '@/lib/viewport'
 import { currentPath, settingsSectionOf } from '@/lib/router'
+import { issueTypes } from '@/lib/facets'
 
 const toast = useToast()
 
@@ -394,6 +395,7 @@ onBeforeUnmount(() => {
       <NewTaskModal
         v-model="createOpen"
         :projects="store.meta.value?.projects ?? []"
+        :types="issueTypes(store.meta.value)"
         :pending="store.pending.value === 'create'"
         :draft="voiceDraft"
         @submit="createTask"

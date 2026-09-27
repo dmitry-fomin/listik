@@ -24,6 +24,7 @@ import ProjectMark from '@/components/marks/ProjectMark.vue'
 import TaskGlyph from '@/components/marks/TaskGlyph.vue'
 import type { VoiceDraft } from '@/api/types'
 import { taskType } from '@/lib/dictionaries'
+import { issueTypes } from '@/lib/facets'
 import { projectBySlug } from '@/lib/projects'
 import { routeAllowedForType, visibleRoutesOf } from '@/lib/routes'
 import {
@@ -359,7 +360,9 @@ function buildCreateBody(): Record<string, unknown> {
   const source = draft.value
   // Неизвестный доске slug — как пустой: одной кнопкой такую задачу не создаём.
   if (!source || !source.title || !knownProject.value) return {}
-  const type = source.type === 'epic' || source.type === 'task' || source.type === 'bug' ? source.type : 'task'
+  // Тип из набора доски (`/api/meta`) идёт как есть, иначе — обычная задача.
+  const type =
+    source.type && issueTypes(store.meta.value).some((item) => item.value === source.type) ? source.type : 'task'
   const body: Record<string, unknown> = {
     title: source.title,
     project: source.project,

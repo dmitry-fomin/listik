@@ -39,6 +39,7 @@ from __future__ import annotations
 
 import re
 import sqlite3
+from collections.abc import Iterable
 
 from . import actors as actors_mod
 from . import errors as errors_mod
@@ -49,6 +50,7 @@ FINAL_STATUSES = ("done", "cancelled")
 
 # Типы связей, которые физически запрещают начинать/закрывать задачу
 HARD_BLOCKERS = ("blocks", "blocked-by", "waits-for", "conditional-blocks", "resource-blocks")
+_HARD_MARKS = ",".join("?" * len(HARD_BLOCKERS))
 # Типы связей, которые стоит прочитать, но они не запрещают работу
 SOFT_LINKS = ("parent-child", "relates-to", "related", "discovered-from", "duplicates",
               "supersedes", "parent", "replies-to", "suggested-blocks")
@@ -91,8 +93,35 @@ def _fetch(conn: sqlite3.Connection, sql: str, params: tuple = ()) -> list[sqlit
         return []
 
 
-def _statuses(conn: sqlite3.Connection) -> dict[str, str]:
-    return {r["id"]: r["status"] for r in _fetch(conn, "SELECT id, status FROM tasks")}
+def open_hard_edges(conn: sqlite3.Connection, *, issue_ids: Iterable[str] | None = None,
+                    depends_on: str | None = None) -> list[sqlite3.Row]:
+    """Незакрытые жёсткие рёбра (`issue_id`, `depends_on`, `dep_type`) — единственное
+    определение правила в модуле.
+
+    Ребро незакрыто, если его тип из `HARD_BLOCKERS`, а задача-блокер (`depends_on`) не
+    `done`/`cancelled`; отсутствующая задача-блокер (удалена, ребро осталось) считается
+    открытой. Статус ждущей задачи (`issue_id`) не учитывается. `issue_ids` — только рёбра
+    этих задач (пустой набор — `[]` без запроса), `depends_on` — только рёбра на этот блокер.
+    """
+    where = [f"d.dep_type IN ({_HARD_MARKS})",
+             f"coalesce(t.status, 'open') NOT IN ({','.join('?' * len(FINAL_STATUSES))})"]
+    params: list = [*HARD_BLOCKERS, *FINAL_STATUSES]
+    if issue_ids is not None:
+        ids = list(issue_ids)
+        if not ids:
+            return []
+        where.append(f"d.issue_id IN ({','.join('?' * len(ids))})")
+        params += ids
+    if depends_on is not None:
+        where.append("d.depends_on = ?")
+        params.append(depends_on)
+    return _fetch(
+        conn,
+        "SELECT d.issue_id AS issue_id, d.depends_on AS depends_on, d.dep_type AS dep_type "
+        "FROM deps d LEFT JOIN tasks t ON t.id = d.depends_on "
+        f"WHERE {' AND '.join(where)} ORDER BY d.issue_id, d.depends_on, d.dep_type",
+        tuple(params),
+    )
 
 
 def _tasks_by_id(conn: sqlite3.Connection, ids: list[str]) -> dict[str, sqlite3.Row]:
@@ -132,34 +161,17 @@ def _info(conn: sqlite3.Connection, task_id: str, dep_type: str) -> dict:
 
 def blockers(conn: sqlite3.Connection, task_id: str) -> list[dict]:
     """Незакрытые жёсткие блокеры задачи — то, из-за чего её нельзя брать."""
-    statuses = _statuses(conn)
-    rows = _fetch(
-        conn,
-        f"SELECT depends_on, dep_type FROM deps WHERE issue_id = ? AND dep_type IN "
-        f"({','.join('?' * len(HARD_BLOCKERS))})",
-        (task_id, *HARD_BLOCKERS),
-    )
-    out = []
-    for r in rows:
-        dep = r["depends_on"]
-        if statuses.get(dep, "open") in FINAL_STATUSES:
-            continue
-        out.append(_info(conn, dep, r["dep_type"]))
+    out = [_info(conn, r["depends_on"], r["dep_type"])
+           for r in open_hard_edges(conn, issue_ids=[task_id])]
     out.sort(key=lambda b: (b["status"] != "in_progress", b.get("holder_age") is None))
     return out
 
 
 def waiting_for(conn: sqlite3.Connection, task_id: str) -> list[dict]:
     """Что зависит от этой задачи: пока она не закрыта, эти задачи стоят."""
-    rows = _fetch(
-        conn,
-        f"SELECT issue_id, dep_type FROM deps WHERE depends_on = ? AND dep_type IN "
-        f"({','.join('?' * len(HARD_BLOCKERS))})",
-        (task_id, *HARD_BLOCKERS),
-    )
-    statuses = _statuses(conn)
-    out = [_info(conn, r["issue_id"], r["dep_type"]) for r in rows
-           if statuses.get(r["issue_id"], "open") not in FINAL_STATUSES]
+    out = [_info(conn, r["issue_id"], r["dep_type"])
+           for r in open_hard_edges(conn, depends_on=task_id)]
+    out = [w for w in out if w["status"] not in FINAL_STATUSES]
     out.sort(key=lambda b: b["status"] != "in_progress")
     return out
 
@@ -216,13 +228,9 @@ def refresh_blocked_column(conn: sqlite3.Connection) -> int:
     а не то, что кто-то проставил руками и забыл снять (так и появились 125-дневные
     задачи «в работе»).
     """
-    statuses = _statuses(conn)
     per_task: dict[str, list[str]] = {}
-    for r in _fetch(conn, "SELECT issue_id, depends_on, dep_type FROM deps WHERE dep_type IN "
-                          f"({','.join('?' * len(HARD_BLOCKERS))})",
-                    tuple(HARD_BLOCKERS)):
-        if statuses.get(r["depends_on"], "open") not in FINAL_STATUSES:
-            per_task.setdefault(r["issue_id"], []).append(r["depends_on"])
+    for r in open_hard_edges(conn):
+        per_task.setdefault(r["issue_id"], []).append(r["depends_on"])
     changed = 0
     for r in _fetch(conn, "SELECT id, blocked_by FROM tasks"):
         new = util.json_dumps(sorted(set(per_task.get(r["id"], []))))
@@ -239,18 +247,15 @@ def refresh_task(conn: sqlite3.Connection, task_id: str) -> int:
     денормализацию расходящейся нельзя: именно из-за этого раньше «заблокирована»
     переживала свой блокер на месяцы.
     """
-    statuses = _statuses(conn)
     targets = {task_id}
     targets |= {r["issue_id"] for r in _fetch(
         conn, "SELECT issue_id FROM deps WHERE depends_on = ?", (task_id,))}
+    per_task: dict[str, set[str]] = {}
+    for r in open_hard_edges(conn, issue_ids=targets):
+        per_task.setdefault(r["issue_id"], set()).add(r["depends_on"])
     changed = 0
-    marks = ",".join("?" * len(HARD_BLOCKERS))
     for tid in targets:
-        rows = _fetch(conn, f"SELECT depends_on FROM deps WHERE issue_id = ? AND dep_type IN "
-                            f"({marks})", (tid, *HARD_BLOCKERS))
-        fresh = util.json_dumps(sorted({r["depends_on"] for r in rows
-                                        if statuses.get(r["depends_on"], "open")
-                                        not in FINAL_STATUSES}))
+        fresh = util.json_dumps(sorted(per_task.get(tid, ())))
         row = _fetch(conn, "SELECT blocked_by FROM tasks WHERE id = ?", (tid,))
         if row and (row[0]["blocked_by"] or "[]") != fresh:
             conn.execute("UPDATE tasks SET blocked_by = ? WHERE id = ?", (fresh, tid))
@@ -443,13 +448,9 @@ def ready_tasks(conn: sqlite3.Connection, *, project: str | None = None,
     rows = _fetch(conn, f"SELECT t.* FROM tasks t WHERE {' AND '.join(where)} "
                         "ORDER BY t.priority ASC, t.updated_at DESC LIMIT ?",
                   (*params, limit * 3 if limit else 3000))
-    statuses = _statuses(conn)
-    hard_rows = _fetch(conn, "SELECT issue_id, depends_on FROM deps WHERE dep_type IN "
-                             f"({','.join('?' * len(HARD_BLOCKERS))})", tuple(HARD_BLOCKERS))
     blocked_by: dict[str, list[str]] = {}
-    for r in hard_rows:
-        if statuses.get(r["depends_on"], "open") not in FINAL_STATUSES:
-            blocked_by.setdefault(r["issue_id"], []).append(r["depends_on"])
+    for r in open_hard_edges(conn):
+        blocked_by.setdefault(r["issue_id"], []).append(r["depends_on"])
     out = []
     for row in rows:
         if blocked_by.get(row["id"]):
@@ -655,7 +656,7 @@ def cycles(conn: sqlite3.Connection) -> list[list[str]]:
     """Циклы в жёстких зависимостях: задача, которая ждёт саму себя через других."""
     edges: dict[str, list[str]] = {}
     for r in _fetch(conn, "SELECT issue_id, depends_on FROM deps WHERE dep_type IN "
-                          f"({','.join('?' * len(HARD_BLOCKERS))})", tuple(HARD_BLOCKERS)):
+                          f"({_HARD_MARKS})", tuple(HARD_BLOCKERS)):
         edges.setdefault(r["issue_id"], []).append(r["depends_on"])
     found: list[list[str]] = []
     state: dict[str, int] = {}

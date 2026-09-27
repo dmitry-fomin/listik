@@ -4,10 +4,14 @@
  * (`HarnessesSettings.vue`, правая панель). Раскладка — по макету
  * `docs/design/settings/Настройки · Харнессы-html/Harnesses.dc.html`.
  *
- * В отличие от карточек маршрутов здесь нет автосохранения: внизу кнопки
- * «Отмена/Сохранить» (макет), а `PATCH /api/harnesses/<key>` уходит дифом по
- * клику. Причина — у харнесса команда по умолчанию делится между ролями
- * маршрутов роя, и полуготовое состояние лучше не уносить на сервер.
+ * Сохранение автоматическое, как у карточек маршрутов: текстовые поля
+ * уходят через 600 мс после последней правки и сразу по потере фокуса,
+ * тумблер «В списках выбора» и иконка — сразу. `PATCH /api/harnesses/<key>`
+ * уходит дифом с сохранённой записью одним запросом на серию правок; пока
+ * один запрос в полёте, следующий ждёт в очереди (`inFlight/queued`).
+ * Черновик с ошибкой (пустое имя, битая команда) на сервер не уходит и сам
+ * не откатывается — причина стоит у поля. При размонтировании карточки
+ * отложенная годная правка досохраняется.
  *
  * Поля: имя, подпись, иконка (пикер глифов — `bolt`, если «общий глиф»), тумблер
  * «В списках выбора», у `kind=exec` — команда по умолчанию (argv по строкам +
@@ -18,15 +22,16 @@
  * `:key="harness.key"` у вызывающей стороны — часть контракта: другая запись =
  * заново созданная карточка со свежим черновиком.
  */
-import { computed, ref } from 'vue'
+import { computed, onBeforeUnmount, reactive, ref, watch } from 'vue'
 import {
   UiAlert,
-  UiButton,
   UiField,
   UiInput,
   UiRecordList,
+  UiSaveStatus,
   UiSwitch,
   UiTextarea,
+  type SaveStatusValue,
   type UiRecordListColumn,
 } from '@zoloto585/facet'
 import IconToggle, { type IconToggleOption } from './IconToggle.vue'
@@ -69,6 +74,7 @@ const iconOptions: IconToggleOption<string>[] = HARNESS_ICON_OPTIONS
 
 function onIcon(value: string): void {
   icon.value = value
+  scheduleFlush(true)
 }
 
 /* ── проверки ── */
@@ -88,66 +94,126 @@ const argv = computed<string[]>(() =>
   argRows.value.map((row) => row.value).filter((value) => value.trim() !== ''),
 )
 
-/** Годный ли черновик и отличается ли он от записи — кнопка «Сохранить». */
-const dirty = computed(() => {
-  if (label.value !== props.harness.label) return true
-  if (hint.value !== props.harness.hint) return true
-  if (icon.value !== (props.harness.icon ?? '')) return true
-  if (enabled.value !== props.harness.enabled) return true
-  if (!manual.value) {
-    const savedArgv = props.harness.argv ?? []
-    if (JSON.stringify(argv.value) !== JSON.stringify(savedArgv)) return true
-    if (prompt.value !== (props.harness.prompt ?? '')) return true
-  }
-  return false
+/* ── автосохранение: тот же порядок, что у карточек маршрутов ── */
+
+/** Последнее известное серверу состояние: с ним сравнивается черновик. */
+const baseline = reactive({
+  label: props.harness.label,
+  hint: props.harness.hint,
+  icon: props.harness.icon ?? '',
+  enabled: props.harness.enabled,
+  argv: [...(props.harness.argv ?? [])],
+  prompt: props.harness.prompt ?? '',
 })
 
-const canSave = computed(() => dirty.value && !labelError.value && !commandError.value && !saving.value)
-
-/* ── отправка ── */
-
-const saving = ref(false)
+const status = ref<SaveStatusValue>('idle')
 const serverError = ref<string | null>(null)
-const savedFlash = ref(false)
 
-function resetDraft(): void {
-  label.value = props.harness.label
-  hint.value = props.harness.hint
-  icon.value = props.harness.icon ?? ''
-  enabled.value = props.harness.enabled
-  argRows.value = argRowsOf(props.harness.argv ?? [])
-  prompt.value = props.harness.prompt ?? ''
-  serverError.value = null
-}
+let inFlight = false
+let queued = false
+let debounceTimer: ReturnType<typeof setTimeout> | null = null
 
-async function save(): Promise<void> {
-  if (!canSave.value) return
-  saving.value = true
-  serverError.value = null
+/** Диф черновика против сохранённой записи — прежние правила save(). */
+function diffPatch(): HarnessPatch {
   const patch: HarnessPatch = {}
-  if (label.value !== props.harness.label) patch.label = label.value.trim()
-  if (hint.value !== props.harness.hint) patch.hint = hint.value
-  if (icon.value !== (props.harness.icon ?? '')) {
+  if (label.value !== baseline.label) patch.label = label.value.trim()
+  if (hint.value !== baseline.hint) patch.hint = hint.value
+  if (icon.value !== baseline.icon) {
     patch.icon = icon.value.trim() === '' ? null : icon.value.trim()
   }
-  if (enabled.value !== props.harness.enabled) patch.enabled = enabled.value
+  if (enabled.value !== baseline.enabled) patch.enabled = enabled.value
   if (!manual.value) {
-    const savedArgv = props.harness.argv ?? []
-    if (JSON.stringify(argv.value) !== JSON.stringify(savedArgv)) patch.argv = argv.value
-    if (prompt.value !== (props.harness.prompt ?? '')) {
+    if (JSON.stringify(argv.value) !== JSON.stringify(baseline.argv)) patch.argv = argv.value
+    if (prompt.value !== baseline.prompt) {
       patch.prompt = prompt.value.trim() === '' ? null : prompt.value
     }
   }
-  const updated = await store.patchHarness(props.harness.key, patch)
-  saving.value = false
-  if (!updated) {
-    serverError.value = store.harnessesError.value ?? 'Сервер не принял правку'
-    store.harnessesError.value = null
+  return patch
+}
+
+async function flush(): Promise<void> {
+  // Черновик с ошибкой на сервер не уходит и не откатывается.
+  if (labelError.value || commandError.value) return
+  const patch = diffPatch()
+  if (Object.keys(patch).length === 0) return
+  if (inFlight) {
+    queued = true
     return
   }
-  savedFlash.value = true
-  setTimeout(() => (savedFlash.value = false), 2000)
+  inFlight = true
+  status.value = 'saving'
+  const updated = await store.patchHarness(props.harness.key, patch)
+  inFlight = false
+  if (updated) {
+    if (patch.label !== undefined) baseline.label = patch.label
+    if (patch.hint !== undefined) baseline.hint = patch.hint
+    if (patch.icon !== undefined) baseline.icon = patch.icon ?? ''
+    if (patch.enabled !== undefined) baseline.enabled = patch.enabled
+    if (patch.argv !== undefined) baseline.argv = [...(patch.argv ?? [])]
+    if (patch.prompt !== undefined) baseline.prompt = patch.prompt ?? ''
+    serverError.value = null
+    status.value = 'saved'
+  } else {
+    serverError.value = store.harnessesError.value ?? 'Сервер не принял правку'
+    store.harnessesError.value = null
+    status.value = 'error'
+    // Тумблер возвращается к сохранённому значению — как `visible` у маршрутов.
+    if (patch.enabled !== undefined) enabled.value = baseline.enabled
+  }
+  if (queued) {
+    queued = false
+    await flush()
+  }
 }
+
+function scheduleFlush(immediate: boolean): void {
+  if (debounceTimer) {
+    clearTimeout(debounceTimer)
+    debounceTimer = null
+  }
+  if (immediate) {
+    void flush()
+    return
+  }
+  debounceTimer = setTimeout(() => {
+    debounceTimer = null
+    void flush()
+  }, 600)
+}
+
+function onLabel(value: string): void {
+  label.value = value
+  scheduleFlush(false)
+}
+function onHint(value: string): void {
+  hint.value = value
+  scheduleFlush(false)
+}
+function onPrompt(value: string): void {
+  prompt.value = value
+  scheduleFlush(false)
+}
+function onBlurText(): void {
+  scheduleFlush(true)
+}
+function onEnabled(value: boolean): void {
+  if (value === enabled.value) return
+  enabled.value = value
+  scheduleFlush(true)
+}
+
+/* Список аргументов (ввод в строке, добавление, удаление, перестановка) — в общий дебаунс. */
+watch(argRows, () => scheduleFlush(false), { deep: true })
+
+/* Карточку сняли (выбор другого харнесса, уход со страницы) — отложенную
+   правку досохраняем; пустой диф и ошибки черновика flush() пропустит сам. */
+onBeforeUnmount(() => {
+  if (debounceTimer) {
+    clearTimeout(debounceTimer)
+    debounceTimer = null
+  }
+  void flush()
+})
 
 /* ── список аргументов и предпросмотр ── */
 
@@ -201,7 +267,7 @@ const usages = computed<UsageRow[]>(() =>
           <template v-else> · команда — шаблон, маршруты и роли берут её и правят под себя</template>
         </p>
       </div>
-      <UiSwitch v-model="enabled">В списках выбора</UiSwitch>
+      <UiSwitch :model-value="enabled" @update:model-value="onEnabled">В списках выбора</UiSwitch>
     </header>
 
     <UiAlert v-if="serverError" tone="danger" closable @close="serverError = null">
@@ -211,10 +277,19 @@ const usages = computed<UsageRow[]>(() =>
 
     <div class="listik-harness-card__fields">
       <UiField label="Имя" required :error="labelError">
-        <UiInput v-model="label" />
+        <UiInput
+          :model-value="label"
+          @update:model-value="onLabel"
+          v-bind="{ onBlur: onBlurText }"
+        />
       </UiField>
       <UiField label="Подпись">
-        <UiInput v-model="hint" placeholder="необязательно" />
+        <UiInput
+          :model-value="hint"
+          placeholder="необязательно"
+          @update:model-value="onHint"
+          v-bind="{ onBlur: onBlurText }"
+        />
       </UiField>
     </div>
 
@@ -257,6 +332,7 @@ const usages = computed<UsageRow[]>(() =>
                 :model-value="row.value"
                 :invalid="Boolean(argProblems[index])"
                 @update:model-value="(value: string) => update(value)"
+                v-bind="{ onBlur: onBlurText }"
               />
               <p v-if="argProblems[index]" class="listik-harness-card__problem">
                 {{ argProblems[index] }}
@@ -268,7 +344,13 @@ const usages = computed<UsageRow[]>(() =>
 
       <section class="listik-harness-card__section">
         <h4 class="listik-harness-card__section-title">Промпт по умолчанию — последний аргумент</h4>
-        <UiTextarea v-model="prompt" :rows="4" :invalid="Boolean(promptProblem)" />
+        <UiTextarea
+          :model-value="prompt"
+          :rows="4"
+          :invalid="Boolean(promptProblem)"
+          @update:model-value="onPrompt"
+          v-bind="{ onBlur: onBlurText }"
+        />
         <p v-if="promptProblem" class="listik-harness-card__problem">{{ promptProblem }}</p>
         <RouteSubstitutions :route-key="harness.key" :command="argv" />
       </section>
@@ -293,13 +375,7 @@ const usages = computed<UsageRow[]>(() =>
       <span class="listik-harness-card__actions-note">
         Правки применяются к следующему запуску. Уже запущенные задачи не трогаются.
       </span>
-      <span v-if="savedFlash" class="listik-harness-card__saved">
-        <ListikIcon name="check" size="sm" /> сохранено
-      </span>
-      <UiButton variant="secondary" :disabled="!dirty" @click="resetDraft">Отмена</UiButton>
-      <UiButton variant="primary" :disabled="!canSave" :loading="saving" @click="save">
-        Сохранить
-      </UiButton>
+      <UiSaveStatus :status="status" @retry="() => scheduleFlush(true)" />
     </div>
   </div>
 </template>
@@ -447,6 +523,8 @@ const usages = computed<UsageRow[]>(() =>
   color: var(--ink-2);
 }
 
+/* ── нижняя полоса: заметка + статус автосохранения ── */
+
 .listik-harness-card__actions {
   display: flex;
   align-items: center;
@@ -460,13 +538,5 @@ const usages = computed<UsageRow[]>(() =>
   flex: 1 1 auto;
   font-size: var(--text-xs);
   color: var(--ink-3);
-}
-
-.listik-harness-card__saved {
-  display: inline-flex;
-  align-items: center;
-  gap: var(--space-1);
-  font-size: var(--text-sm);
-  color: var(--success-600);
 }
 </style>

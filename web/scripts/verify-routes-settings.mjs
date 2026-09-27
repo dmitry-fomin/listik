@@ -28,6 +28,17 @@
  * исходному значению по ходу сценария тем же путём (ввод/клик), а не только
  * прямым PATCH — тем самым заодно проверяется round-trip.
  *
+ * Порция `b` (автосохранение карточки харнесса, `/settings/harnesses`):
+ * выбирается харнесс `kind=exec`, серия вводов в «Подпись» без потери фокуса
+ * даёт ровно один `PATCH /api/harnesses/<key>` с единственным ключом `hint`,
+ * статус «Сохранено», кнопки «Сохранить» нет, `GET` возвращает новое значение.
+ * Дальше три проверки — правка + blur без ожидания дебаунса уходит не позже
+ * 300 мс; клик по тумблеру «В списках выбора» — один PATCH с ключом `enabled`;
+ * правка + сразу выбор другого харнесса в списке — один PATCH на ключ первого
+ * (досохранение при размонтировании). Все значения возвращаются тем же путём
+ * (ввод/клик), а `finalize()` страхует прямым PATCH (`harnessHintRestoreNeeded`/
+ * `harnessEnabledRestoreNeeded`).
+ *
  * Работает с живой страницей (dev или прод) и настоящим API Listik, поэтому
  * трогает базу маршрутов: исходные значения полей возвращаются прямым `PATCH`
  * в `finalize()` и при успехе сценария, и при падении посреди него. Этот откат
@@ -72,15 +83,18 @@ await client.ready
 const { send, evaluate, consoleErrors } = client
 
 /* ── перехват fetch на странице: копится в window.__routesPatchCalls (тела
- * PATCH /api/routes/<key> — автосохранение карточки, порция `e`) и
+ * PATCH /api/routes/<key> — автосохранение карточки, порция `e`),
  * window.__routesDeleteCalls (DELETE /api/routes/<key> со статусом и
- * tasks_cleared из ответа — удаление маршрута, порция `a`), добавлен как
- * «скрипт на новый документ» — переживает Page.navigate сам, повторно
- * вставлять после перезагрузки не нужно. Прямые вызовы API сценария идут тем же
- * fetch и тоже считаются — поэтому подсчёт всегда «с момента» (снимок длины). */
+ * tasks_cleared из ответа — удаление маршрута, порция `a`) и
+ * window.__harnessPatchCalls (PATCH /api/harnesses/<key> с меткой `t` —
+ * автосохранение карточки харнесса, порция `b`), добавлен как «скрипт на новый
+ * документ» — переживает Page.navigate сам, повторно вставлять после
+ * перезагрузки не нужно. Прямые вызовы API сценария идут тем же fetch и тоже
+ * считаются — поэтому подсчёт всегда «с момента» (снимок длины). */
 const ROUTES_INTERCEPT = `(() => {
   window.__routesPatchCalls = window.__routesPatchCalls ?? [];
   window.__routesDeleteCalls = window.__routesDeleteCalls ?? [];
+  window.__harnessPatchCalls = window.__harnessPatchCalls ?? [];
   if (window.__routesFetchPatched) return;
   window.__routesFetchPatched = true;
   const original = window.fetch.bind(window);
@@ -95,6 +109,10 @@ const ROUTES_INTERCEPT = `(() => {
       if (routeMatch && init && init.method === 'DELETE') {
         del = { key: routeMatch[1], status: null, cleared: null };
         window.__routesDeleteCalls.push(del);
+      }
+      const harnessMatch = reqUrl.match(/\\/api\\/harnesses\\/([^/?]+)$/);
+      if (harnessMatch && init && init.method === 'PATCH' && typeof init.body === 'string') {
+        window.__harnessPatchCalls.push({ key: harnessMatch[1], body: JSON.parse(init.body), t: Date.now() });
       }
     } catch (_e) { /* тело не JSON — не мешаем запросу */ }
     const out = original(input, init);
@@ -115,6 +133,13 @@ const ROUTES_INTERCEPT = `(() => {
 const routesUrl = (() => {
   const target = new URL(url)
   target.pathname = '/settings/routes'
+  return target.toString()
+})()
+
+/** Адрес раздела «Харнессы» — карточка с автосохранением (порция `b`). */
+const harnessesUrl = (() => {
+  const target = new URL(url)
+  target.pathname = '/settings/harnesses'
   return target.toString()
 })()
 
@@ -245,6 +270,89 @@ const patchCallsSince = (from) => `window.__routesPatchCalls.slice(${from})`
 const patchCallsCount = `window.__routesPatchCalls.length`
 const saveStatusText = `document.querySelector('.listik-routes-settings__card .ui-save-status')?.textContent ?? ''`
 
+/* ── карточка харнесса (порция `b`): список слева, PATCH-перехват ── */
+
+/** Каталог харнессов со страницы (токен из localStorage, как у forcePatch). */
+const fetchHarnesses = `(async () => {
+  const token = localStorage.getItem('listik.token') ?? ''
+  try {
+    const response = await fetch('/api/harnesses', { headers: { Authorization: 'Bearer ' + token } })
+    if (!response.ok) return null
+    const payload = await response.json()
+    const data = payload.data ?? payload
+    return data.harnesses ?? null
+  } catch (_e) {
+    return null
+  }
+})()`
+
+/** Клик по строке харнесса в списке слева (data-key у кнопки строки). */
+const clickHarnessRow = (key) => `(() => {
+  const row = [...document.querySelectorAll('.listik-harnesses__row')]
+    .find((el) => el.querySelector('.listik-routes-row')?.getAttribute('data-key') === ${JSON.stringify(key)})
+  const btn = row?.querySelector('.listik-routes-row')
+  if (!btn) return false
+  btn.click()
+  return true
+})()`
+
+/**
+ * Та же посимвольная печать, что typeCardField, но для карточки харнесса:
+ * поля «Имя»/«Подпись» лежат в `.listik-harness-card__fields` (index 0/1).
+ */
+const typeHarnessField = (index, value) => `(async () => {
+  const input = document.querySelectorAll('.listik-harness-card .listik-harness-card__fields input')[${index}]
+  if (!input) return false
+  const setter = Object.getOwnPropertyDescriptor(window.HTMLInputElement.prototype, 'value').set
+  setter.call(input, '')
+  input.dispatchEvent(new Event('input', { bubbles: true }))
+  let acc = ''
+  for (const ch of ${JSON.stringify(value)}) {
+    acc += ch
+    setter.call(input, acc)
+    input.dispatchEvent(new Event('input', { bubbles: true }))
+    await new Promise((r) => setTimeout(r, 25))
+  }
+  return true
+})()`
+
+/**
+ * Печать в поле карточки и сразу blur, не дожидаясь дебаунса: возвращает
+ * { delay, calls } — задержку до ближайшего перехваченного PATCH (метка `t`
+ * в записи перехвата) и число вызовов за время ожидания.
+ */
+const typeHarnessFieldBlur = (index, value) => `(async () => {
+  const input = document.querySelectorAll('.listik-harness-card .listik-harness-card__fields input')[${index}]
+  if (!input) return null
+  const setter = Object.getOwnPropertyDescriptor(window.HTMLInputElement.prototype, 'value').set
+  let acc = ''
+  for (const ch of ${JSON.stringify(value)}) {
+    acc += ch
+    setter.call(input, acc)
+    input.dispatchEvent(new Event('input', { bubbles: true }))
+    await new Promise((r) => setTimeout(r, 15))
+  }
+  const before = window.__harnessPatchCalls.length
+  const t0 = Date.now()
+  input.dispatchEvent(new FocusEvent('blur'))
+  while (window.__harnessPatchCalls.length === before && Date.now() - t0 < 2000) {
+    await new Promise((r) => setTimeout(r, 10))
+  }
+  const calls = window.__harnessPatchCalls.slice(before)
+  return { delay: calls.length > 0 ? calls[0].t - t0 : -1, calls: calls.length }
+})()`
+
+const clickHarnessSwitch = `(() => {
+  const btn = document.querySelector('.listik-harness-card .ui-switch__track')
+  if (!btn) return false
+  btn.click()
+  return true
+})()`
+
+const harnessPatchCallsSince = (from) => `window.__harnessPatchCalls.slice(${from})`
+const harnessPatchCallsCount = `window.__harnessPatchCalls.length`
+const harnessSaveStatusText = `document.querySelector('.listik-harness-card .ui-save-status')?.textContent ?? ''`
+
 /* ── удаление маршрута роя (порция `a`) ── */
 
 /**
@@ -346,6 +454,11 @@ let cardOriginal = null
 let hintRestoreNeeded = false
 let visibleRestoreNeeded = false
 let iconRestoreNeeded = false
+/** Карточка харнесса (порция `b`) — свои флаги отката для finalize(). */
+let harnessCardKey = null
+let harnessCardOriginal = null
+let harnessHintRestoreNeeded = false
+let harnessEnabledRestoreNeeded = false
 /** Временные маршрут и задача порции `a` — убираются в finalize() при любом исходе. */
 let tmpRouteKey = null
 let tmpTaskId = null
@@ -391,6 +504,24 @@ async function finalize() {
     } catch (restoreError) {
       report.cardRestoreFallbackOk = false
       report.cardRestoreError = String(restoreError?.stack ?? restoreError)
+    }
+  }
+  // Страховка карточки харнесса (порция `b`): прямой PATCH исходных hint/enabled.
+  if ((harnessHintRestoreNeeded || harnessEnabledRestoreNeeded) && harnessCardKey && harnessCardOriginal) {
+    try {
+      await withTimeout(
+        (async () => {
+          const body = {}
+          if (harnessHintRestoreNeeded) body.hint = harnessCardOriginal.hint
+          if (harnessEnabledRestoreNeeded) body.enabled = harnessCardOriginal.enabled
+          report.harnessRestoreFallbackOk =
+            (await evaluate(apiCall('PATCH', `/api/harnesses/${harnessCardKey}`, body)))?.status === 200
+        })(),
+        10000,
+      )
+    } catch (restoreError) {
+      report.harnessRestoreFallbackOk = false
+      report.harnessRestoreError = String(restoreError?.stack ?? restoreError)
     }
   }
   try {
@@ -681,6 +812,149 @@ try {
       .filter((call) => call.key === tmpRouteKey)
   report.latePatchCount = latePatchCalls.length
 
+  /*
+   * ── карточка харнесса (порция `b`): автосохранение на /settings/harnesses ──
+   * Харнесс `kind=exec` — у него есть и текстовые поля, и командный блок;
+   * второй харнесс нужен, чтобы проверить досохранение при размонтировании.
+   * Перехват — тот же ROUTES_INTERCEPT, PATCH попадают в __harnessPatchCalls.
+   */
+  await send('Page.navigate', { url: harnessesUrl })
+  await sleep(4000)
+
+  const harnessesList = await evaluate(fetchHarnesses)
+  const execHarness = (harnessesList ?? []).find((item) => item.kind === 'exec')
+  const otherHarness = (harnessesList ?? []).find((item) => item.key !== execHarness?.key)
+  if (!execHarness || !otherHarness) {
+    throw new Error(`нужны харнесс kind=exec и ещё один: ${JSON.stringify(harnessesList)}`)
+  }
+  harnessCardKey = execHarness.key
+  harnessCardOriginal = execHarness
+
+  report.harnessRowClicked = await evaluate(clickHarnessRow(harnessCardKey))
+  report.harnessCardShown = Boolean(await until(`Boolean(document.querySelector('.listik-harness-card'))`))
+  report.harnessSaveButtonGone =
+    (await evaluate(`[...document.querySelectorAll('.listik-harness-card button')]
+      .every((b) => b.textContent.trim() !== 'Сохранить')`)) === true
+
+  // 1) «Подпись»: серия «нажатий» без blur — ровно один PATCH, только hint
+  const harnessHintProbe = `${harnessCardOriginal.hint} · автотест ${Date.now()}`
+  harnessHintRestoreNeeded = true
+  const hBeforeHint = (await evaluate(harnessPatchCallsCount)) ?? 0
+  report.harnessHintTyped = await evaluate(typeHarnessField(1, harnessHintProbe))
+  await sleep(1000)
+  const hHintCalls = ((await evaluate(harnessPatchCallsSince(hBeforeHint))) ?? []).filter(
+    (call) => call.key === harnessCardKey && 'hint' in call.body,
+  )
+  report.harnessHintCallsCount = hHintCalls.length
+  report.harnessHintSingleKey =
+    hHintCalls.length > 0 && Object.keys(hHintCalls[hHintCalls.length - 1].body).length === 1
+  report.harnessHintValueMatches = hHintCalls[hHintCalls.length - 1]?.body.hint === harnessHintProbe
+  report.harnessSavedShown = (await evaluate(harnessSaveStatusText)).includes('Сохранено')
+  const harnessReadBack = await evaluate(apiCall('GET', `/api/harnesses/${harnessCardKey}`))
+  report.harnessGetReturnsHint =
+    harnessReadBack?.status === 200 && harnessReadBack?.data?.hint === harnessHintProbe
+
+  // исходная подпись — тем же вводом
+  const hBeforeHintRestore = (await evaluate(harnessPatchCallsCount)) ?? 0
+  await evaluate(typeHarnessField(1, harnessCardOriginal.hint))
+  await sleep(1000)
+  report.harnessHintRestored =
+    ((await evaluate(harnessPatchCallsSince(hBeforeHintRestore))) ?? []).some(
+      (call) =>
+        call.key === harnessCardKey &&
+        call.body.hint === harnessCardOriginal.hint &&
+        Object.keys(call.body).length === 1,
+    )
+  harnessHintRestoreNeeded = !report.harnessHintRestored
+
+  // 2) правка «Подписи» и сразу blur — PATCH уходит не позже 300 мс
+  const harnessHintBlur = `${harnessCardOriginal.hint} · blur ${Date.now()}`
+  harnessHintRestoreNeeded = true
+  const hBeforeBlur = (await evaluate(harnessPatchCallsCount)) ?? 0
+  const blurProbe = await evaluate(typeHarnessFieldBlur(1, harnessHintBlur))
+  report.harnessBlurDelay = blurProbe?.delay ?? null
+  report.harnessBlurCallsInWait = blurProbe?.calls ?? null
+  await sleep(1000)
+  const hBlurCalls = ((await evaluate(harnessPatchCallsSince(hBeforeBlur))) ?? []).filter(
+    (call) => call.key === harnessCardKey,
+  )
+  report.harnessBlurCallsCount = hBlurCalls.length
+  report.harnessBlurSingleKey =
+    hBlurCalls.length > 0 && Object.keys(hBlurCalls[0].body).length === 1
+  report.harnessBlurValueMatches = hBlurCalls[0]?.body.hint === harnessHintBlur
+
+  const hBeforeBlurRestore = (await evaluate(harnessPatchCallsCount)) ?? 0
+  await evaluate(typeHarnessField(1, harnessCardOriginal.hint))
+  await sleep(1000)
+  report.harnessBlurRestored =
+    ((await evaluate(harnessPatchCallsSince(hBeforeBlurRestore))) ?? []).some(
+      (call) =>
+        call.key === harnessCardKey &&
+        call.body.hint === harnessCardOriginal.hint &&
+        Object.keys(call.body).length === 1,
+    )
+  harnessHintRestoreNeeded = !report.harnessBlurRestored
+
+  // 3) тумблер «В списках выбора» — сразу, PATCH с единственным ключом enabled
+  harnessEnabledRestoreNeeded = true
+  const hBeforeEnabled = (await evaluate(harnessPatchCallsCount)) ?? 0
+  report.harnessSwitchClicked = await evaluate(clickHarnessSwitch)
+  await sleep(700)
+  const hEnabledCalls = ((await evaluate(harnessPatchCallsSince(hBeforeEnabled))) ?? []).filter(
+    (call) => call.key === harnessCardKey && 'enabled' in call.body,
+  )
+  report.harnessEnabledCallsCount = hEnabledCalls.length
+  report.harnessEnabledSingleKey =
+    hEnabledCalls.length > 0 && Object.keys(hEnabledCalls[0].body).length === 1
+  report.harnessEnabledFlipped = hEnabledCalls[0]?.body.enabled === !harnessCardOriginal.enabled
+
+  const hBeforeEnabledRestore = (await evaluate(harnessPatchCallsCount)) ?? 0
+  await evaluate(clickHarnessSwitch)
+  await sleep(700)
+  report.harnessEnabledRestored =
+    ((await evaluate(harnessPatchCallsSince(hBeforeEnabledRestore))) ?? []).some(
+      (call) =>
+        call.key === harnessCardKey &&
+        call.body.enabled === harnessCardOriginal.enabled &&
+        Object.keys(call.body).length === 1,
+    )
+  harnessEnabledRestoreNeeded = !report.harnessEnabledRestored
+
+  // 4) правка «Подписи» и сразу выбор другого харнесса — досохранение при
+  //    размонтировании: ровно один PATCH на ключ первого харнесса
+  const harnessHintSwitch = `${harnessCardOriginal.hint} · уход ${Date.now()}`
+  harnessHintRestoreNeeded = true
+  await evaluate(typeHarnessField(1, harnessHintSwitch))
+  const hBeforeUnmount = (await evaluate(harnessPatchCallsCount)) ?? 0
+  report.harnessOtherClicked = await evaluate(clickHarnessRow(otherHarness.key))
+  await sleep(1000)
+  const hUnmountCallsAll = (await evaluate(harnessPatchCallsSince(hBeforeUnmount))) ?? []
+  const hUnmountCalls = hUnmountCallsAll.filter((call) => call.key === harnessCardKey)
+  report.harnessUnmountCallsCount = hUnmountCalls.length
+  report.harnessUnmountTotalCount = hUnmountCallsAll.length
+  report.harnessUnmountSingleKey =
+    hUnmountCalls.length > 0 && Object.keys(hUnmountCalls[0].body).length === 1
+  report.harnessUnmountValueMatches = hUnmountCalls[0]?.body.hint === harnessHintSwitch
+  report.harnessOtherCardShown =
+    (await evaluate(
+      `document.querySelector('.listik-harnesses .listik-routes-row.is-selected')?.getAttribute('data-key')`,
+    )) === otherHarness.key
+
+  // вернуть значение: выбрать первый харнесс снова и вернуть подпись вводом
+  report.harnessBackClicked = await evaluate(clickHarnessRow(harnessCardKey))
+  await sleep(700)
+  const hBeforeFinalRestore = (await evaluate(harnessPatchCallsCount)) ?? 0
+  await evaluate(typeHarnessField(1, harnessCardOriginal.hint))
+  await sleep(1000)
+  report.harnessUnmountRestored =
+    ((await evaluate(harnessPatchCallsSince(hBeforeFinalRestore))) ?? []).some(
+      (call) =>
+        call.key === harnessCardKey &&
+        call.body.hint === harnessCardOriginal.hint &&
+        Object.keys(call.body).length === 1,
+    )
+  harnessHintRestoreNeeded = !report.harnessUnmountRestored
+
   report.consoleErrors = consoleErrors
   report.ok =
     report.settingsOpen === true &&
@@ -738,6 +1012,37 @@ try {
     report.emptyPanelAfterDelete === true &&
     report.taskRouteCleared === true &&
     report.latePatchCount === 0 &&
+    /* карточка харнесса (порция `b`): автосохранение */
+    report.harnessRowClicked === true &&
+    report.harnessCardShown === true &&
+    report.harnessSaveButtonGone === true &&
+    report.harnessHintTyped === true &&
+    report.harnessHintCallsCount === 1 &&
+    report.harnessHintSingleKey === true &&
+    report.harnessHintValueMatches === true &&
+    report.harnessSavedShown === true &&
+    report.harnessGetReturnsHint === true &&
+    report.harnessHintRestored === true &&
+    report.harnessBlurDelay !== null &&
+    report.harnessBlurDelay >= 0 &&
+    report.harnessBlurDelay <= 300 &&
+    report.harnessBlurCallsCount === 1 &&
+    report.harnessBlurSingleKey === true &&
+    report.harnessBlurValueMatches === true &&
+    report.harnessBlurRestored === true &&
+    report.harnessSwitchClicked === true &&
+    report.harnessEnabledCallsCount === 1 &&
+    report.harnessEnabledSingleKey === true &&
+    report.harnessEnabledFlipped === true &&
+    report.harnessEnabledRestored === true &&
+    report.harnessOtherClicked === true &&
+    report.harnessUnmountCallsCount === 1 &&
+    report.harnessUnmountTotalCount === 1 &&
+    report.harnessUnmountSingleKey === true &&
+    report.harnessUnmountValueMatches === true &&
+    report.harnessOtherCardShown === true &&
+    report.harnessBackClicked === true &&
+    report.harnessUnmountRestored === true &&
     consoleErrors.length === 0
 } catch (error) {
   report.error = String(error?.stack ?? error)
@@ -747,7 +1052,7 @@ try {
 
 console.log(JSON.stringify(report, null, 2))
 if (report.ok) {
-  console.error('ок: раздел «Маршруты» — группы, выбор строки, автосохранение карточки и удаление маршрута роя работают')
+  console.error('ок: «Маршруты» — группы, выбор строки, автосохранение карточки и удаление маршрута роя; «Харнессы» — автосохранение карточки')
 } else {
   console.error(`ошибка: ${report.error ?? 'сценарий не прошёл — см. отчёт выше'}`)
   process.exitCode = 1

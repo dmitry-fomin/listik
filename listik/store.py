@@ -425,6 +425,9 @@ def create_task(
         try:
             from . import documents
             documents.index_task_documents(conn, tid)
+        except sqlite3.DatabaseError:
+            # Сбой базы — не проблема документа: до 503, без document_error (listik-fknd).
+            raise
         except Exception as exc:  # document availability must not break task creation
             event(conn, tid, "document_error", note=str(exc))
     conn.commit()
@@ -962,6 +965,9 @@ def update_task(conn: sqlite3.Connection, task_id: str, *, actor: str | None = N
         try:
             from . import documents
             documents.index_task_documents(conn, task_id)
+        except sqlite3.DatabaseError:
+            # Сбой базы — не проблема документа: до 503, без document_error (listik-fknd).
+            raise
         except Exception as exc:
             event(conn, task_id, "document_error", note=str(exc))
     conn.commit()
@@ -2226,6 +2232,9 @@ def board(conn: sqlite3.Connection, *, group_by: str = "status", project: str | 
         try:
             found = lint(conn, project)
             lint_result = {"count": found["count"], "items": found["items"]}
+        except sqlite3.DatabaseError:
+            # Сбой базы должен дойти до 503, а не стать пустым lint (listik-fknd).
+            raise
         except Exception:  # noqa: BLE001 — доска не должна падать из-за lint
             lint_result = {"count": 0, "items": []}
     lint_by_id: dict[str, list[str]] = {}
@@ -2300,6 +2309,9 @@ def board(conn: sqlite3.Connection, *, group_by: str = "status", project: str | 
         try:
             ready_list = deps_mod.ready_tasks(conn, project=project, limit=ready_limit,
                                               as_owner=as_owner)
+        except sqlite3.DatabaseError:
+            # Сбой базы должен дойти до 503, а не стать пустым «можно взять» (listik-fknd).
+            raise
         except Exception:  # noqa: BLE001 — доска не должна падать из-за графа
             ready_list = []
     # Правило то же, что у /api/blocked: незакрытая карточка с незакрытым жёстким

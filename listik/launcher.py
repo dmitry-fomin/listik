@@ -435,8 +435,15 @@ def _start_swarm(conn, task_id: str, row, record: dict, *, notify, log_dir,
     from . import stage_launch
 
     key = record["key"]
+    try:
+        sliced = stage_launch.has_portions(conn, task_id)
+        cancelled_only = not sliced and stage_launch.portions_cancelled_only(conn, row)
+    except Exception:  # noqa: BLE001 — захват не должен пережить сбой гейта (listik-ovmh)
+        _release(conn, task_id)
+        raise
+
     # Родитель с живыми порциями сам по ролям не идёт: бегут его дети.
-    if stage_launch.has_portions(conn, task_id):
+    if sliced:
         store.add_comment(conn, task_id,
                           "рой: родитель нарезан, запускаются порции",
                           author="agent:listik", kind="journal")
@@ -446,7 +453,7 @@ def _start_swarm(conn, task_id: str, row, record: dict, *, notify, log_dir,
 
     # Все порции отменены: `s1-spec` заново не запускаем. Вопрос ставит сервер
     # при отмене последнего ребёнка; здесь — только если его почему-то нет.
-    if stage_launch.portions_cancelled_only(conn, row):
+    if cancelled_only:
         if not row["needs_owner"]:
             store.set_needs_owner(
                 conn, task_id, value=True, actor="agent:listik",

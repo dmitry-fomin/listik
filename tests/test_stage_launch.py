@@ -7,6 +7,7 @@
 from __future__ import annotations
 
 import json
+import sqlite3
 import sys
 import unittest
 from pathlib import Path
@@ -87,6 +88,25 @@ class LaunchTests(SwarmCase):
         self.assertIsNone(task["launched_by"])
         self.assertEqual(task["launch_exit_code"], 0)
         self.assertTrue(any("готово" in t for t in self.comments(task_id)))
+
+    def test_failure_after_process_start_keeps_capture(self) -> None:
+        # Сбой после `Popen` захват не снимает: процесс уже идёт, и снятый захват
+        # позволил бы второй запуск на той же карточке (listik-ovmh).
+        self.add_route({"impl": {"harness": "probe"},
+                        "judge": {"harness": "probe"}})
+        task_id = self.add_task(stage="s3-impl")
+        self.conn.execute(
+            "CREATE TRIGGER fail_launch_pid BEFORE UPDATE OF launch_pid ON tasks "
+            "WHEN NEW.launch_pid IS NOT NULL "
+            "BEGIN SELECT RAISE(ABORT, 'сбой после Popen'); END")
+        self.conn.commit()
+        with self.assertRaises(sqlite3.IntegrityError):
+            launcher.start(self.conn, task_id, log_dir=str(self.tmp_path))
+        launcher._procs.pop(task_id).wait(timeout=30)
+        row = self.conn.execute("SELECT launched_by, dispatch_id FROM tasks WHERE id = ?",
+                                (task_id,)).fetchone()
+        self.assertEqual(row["launched_by"], "listik")
+        self.assertIsNotNone(row["dispatch_id"])
 
     def test_judge_green_closes_card(self) -> None:
         harnesses_store.update(self.conn, "probe", {"argv": script("зелёный")})
@@ -532,6 +552,21 @@ class SlicingTests(SwarmCase):
         self.assertTrue(any("родитель нарезан" in t
                             for t in self.comments(parent, "journal")))
 
+    def test_cancelled_only_parent_launch_is_noop(self) -> None:
+        # Все порции отменены — родитель не запускается, вопрос человеку
+        # (страховка перестановки гейта, listik-ovmh).
+        self.add_route()
+        parent = self.add_task(stage="s1-spec")
+        child_a = self.add_task(parent=parent, route="")
+        child_b = self.add_task(parent=parent, route="")
+        for child in (child_a, child_b):
+            store.update_task(self.conn, child, status="cancelled", actor="agent:listik")
+        result = self.start_and_wait(parent)
+        self.assertEqual(result, {"launched": False, "reason": "sliced"})
+        task = self.task(parent)
+        self.assertIsNone(task["launched_by"])
+        self.assertTrue(task["needs_owner"])
+
     def test_suggested_blockers_become_hard(self) -> None:
         self.add_route()
         parent = self.add_task()
@@ -925,6 +960,57 @@ class AdoptPortionsTests(SwarmCase):
         # Подсказка — отдельным полем, в текст отказа не входит (listik-l56q).
         self.assertIn(f"listik restart {other} --stage s1-spec", hint)
         self.assertNotIn(f"listik restart {other} --stage s1-spec", message)
+
+
+class PortionGateDbErrorTests(SwarmCase):
+    """Сбой SQL в чтении порций не открывает гейт нарезки (listik-ovmh): чтения
+    бросают `OperationalError`, `launcher.start` родителя роя падает с ним же,
+    а захват запуска снят, держателя, этапа и вопроса нет. Схема ломается
+    настоящим `ALTER TABLE`, без моков."""
+
+    def setUp(self) -> None:
+        super().setUp()
+        self.add_route({"spec": {"harness": "probe"},
+                        "impl": {"harness": "probe"},
+                        "judge": {"harness": "probe"}})
+        self.parent = self.add_task()
+        self.add_task(parent=self.parent, route="")
+        self.conn.execute("ALTER TABLE deps RENAME COLUMN dep_type TO dep_kind")
+        self.conn.commit()
+
+    def test_portion_reads_raise(self) -> None:
+        row = self.conn.execute("SELECT * FROM tasks WHERE id = ?",
+                                (self.parent,)).fetchone()
+        calls = {
+            "portions": lambda: stage_launch.portions(self.conn, self.parent),
+            "has_portions": lambda: stage_launch.has_portions(self.conn, self.parent),
+            "portion_statuses": lambda: stage_launch.portion_statuses(self.conn, self.parent),
+            "portions_cancelled_only":
+                lambda: stage_launch.portions_cancelled_only(self.conn, row),
+        }
+        for name, call in calls.items():
+            with self.subTest(name), self.assertRaises(sqlite3.OperationalError):
+                call()
+
+    def test_launch_raises_and_releases_capture(self) -> None:
+        with self.assertRaises(sqlite3.OperationalError):
+            launcher.start(self.conn, self.parent, log_dir=str(self.tmp_path))
+        # `get_task`/`self.task()` сами падают на `deps` — только сырой SQL.
+        row = self.conn.execute("SELECT * FROM tasks WHERE id = ?",
+                                (self.parent,)).fetchone()
+        for field in ("launched_by", "dispatch_id", "launch_pid", "launch_log"):
+            self.assertIsNone(row[field], field)
+        self.assertFalse(row["holder"])
+        self.assertEqual(row["status"], "open")
+        self.assertFalse(row["needs_owner"])
+        self.assertFalse(row["stage"])  # гейт остановил запуск до записи s1-spec
+        events = self.conn.execute(
+            "SELECT kind FROM events WHERE task_id = ? "
+            "AND kind IN ('claim', 'question', 'stage')", (self.parent,)).fetchall()
+        self.assertEqual([r["kind"] for r in events], [])
+        texts = [r["text"] for r in self.conn.execute(
+            "SELECT text FROM comments WHERE task_id = ?", (self.parent,))]
+        self.assertFalse([t for t in texts if "рой:" in t], texts)
 
 
 if __name__ == "__main__":

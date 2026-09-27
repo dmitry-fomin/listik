@@ -1624,14 +1624,11 @@ def _portion_flags(conn: sqlite3.Connection, task_id: str,
     `portions_stuck` — есть незакрытые дети, и ни у одного нет признака движения:
     маршрута вместе с этапом, держателя, запуска (`listik portions adopt`).
     """
-    try:
-        children = conn.execute(
-            "SELECT t.status, t.stage, t.holder, t.launched_by, t.launch_route "
-            "FROM deps d JOIN tasks t ON t.id = d.issue_id "
-            f"WHERE d.depends_on = ? AND d.dep_type IN ({','.join('?' * len(PARENT_TYPES))})",
-            (task_id, *PARENT_TYPES)).fetchall()
-    except sqlite3.OperationalError:
-        return False, False, False
+    children = conn.execute(
+        "SELECT t.status, t.stage, t.holder, t.launched_by, t.launch_route "
+        "FROM deps d JOIN tasks t ON t.id = d.issue_id "
+        f"WHERE d.depends_on = ? AND d.dep_type IN ({','.join('?' * len(PARENT_TYPES))})",
+        (task_id, *PARENT_TYPES)).fetchall()
     statuses = [r["status"] for r in children]
     has = any(status != "cancelled" for status in statuses)
     cancelled_only = (bool(statuses)
@@ -1817,14 +1814,11 @@ _CARD_LINK_KEYS = ("id", "project", "title", "status", "status_title", "stage", 
 
 def task_documents(conn: sqlite3.Connection, task_id: str) -> list[dict]:
     """Метаданные индексированных документов задачи (без чанков) — то же, что `show`."""
-    try:
-        return store_helpers.dict_rows(conn.execute(
-            "SELECT id, kind, path, revision, content_hash, title, updated_at, status, error, source, "
-            "(SELECT count(*) FROM document_chunks WHERE document_chunks.document_id = documents.id) "
-            "AS chunk_count FROM documents WHERE task_id=? ORDER BY kind, path",
-            (task_id,)))
-    except sqlite3.OperationalError:
-        return []
+    return store_helpers.dict_rows(conn.execute(
+        "SELECT id, kind, path, revision, content_hash, title, updated_at, status, error, source, "
+        "(SELECT count(*) FROM document_chunks WHERE document_chunks.document_id = documents.id) "
+        "AS chunk_count FROM documents WHERE task_id=? ORDER BY kind, path",
+        (task_id,)))
 
 
 def card_link(conn: sqlite3.Connection, task_id: str) -> dict | None:
@@ -1848,15 +1842,11 @@ def child_cards(conn: sqlite3.Connection, task_id: str) -> list[dict]:
 
     Именно так родитель-шаг видит все свои порции: `deps_state.children_open`
     перечисляет только незакрытых детей и нужен для `can_finish`."""
-    try:
-        rows = conn.execute(
-            "SELECT DISTINCT d.issue_id AS id, t.created_at, t.rowid FROM deps d "
-            "JOIN tasks t ON t.id = d.issue_id "
-            f"WHERE d.depends_on = ? AND d.dep_type IN ({','.join('?' * len(PARENT_TYPES))}) "
-            "ORDER BY t.created_at, t.rowid", (task_id, *PARENT_TYPES)).fetchall()
-    except sqlite3.OperationalError:
-        # База старой версии/битая: карточка всё равно должна открыться.
-        return []
+    rows = conn.execute(
+        "SELECT DISTINCT d.issue_id AS id, t.created_at, t.rowid FROM deps d "
+        "JOIN tasks t ON t.id = d.issue_id "
+        f"WHERE d.depends_on = ? AND d.dep_type IN ({','.join('?' * len(PARENT_TYPES))}) "
+        "ORDER BY t.created_at, t.rowid", (task_id, *PARENT_TYPES)).fetchall()
     out = []
     for r in rows:
         link = card_link(conn, r["id"])
@@ -1867,14 +1857,11 @@ def child_cards(conn: sqlite3.Connection, task_id: str) -> list[dict]:
 
 def parent_card(conn: sqlite3.Connection, task_id: str) -> dict | None:
     """Родительская карточка (связь `parent-child`, либо старое имя `parent`)."""
-    try:
-        row = conn.execute(
-            "SELECT depends_on FROM deps WHERE issue_id = ? "
-            f"AND dep_type IN ({','.join('?' * len(PARENT_TYPES))}) "
-            "ORDER BY depends_on LIMIT 1",
-            (task_id, *PARENT_TYPES)).fetchone()
-    except sqlite3.OperationalError:
-        return None
+    row = conn.execute(
+        "SELECT depends_on FROM deps WHERE issue_id = ? "
+        f"AND dep_type IN ({','.join('?' * len(PARENT_TYPES))}) "
+        "ORDER BY depends_on LIMIT 1",
+        (task_id, *PARENT_TYPES)).fetchone()
     return card_link(conn, row["depends_on"]) if row else None
 
 

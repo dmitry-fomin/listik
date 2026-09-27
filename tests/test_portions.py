@@ -12,6 +12,7 @@ from __future__ import annotations
 import json
 import os
 import pathlib
+import sqlite3
 import subprocess
 import sys
 import unittest
@@ -481,6 +482,36 @@ class PortionJournalTests(TempDbTestCase):
         )
         self.assertEqual(p.returncode, 0, p.stderr)
         self.assertEqual(json.loads(p.stdout)["journal_path"], self.P)
+
+
+class PortionReadsDbErrorTests(TempDbTestCase):
+    """Чтения порций, связей и документов в store не глотают ошибку SQL
+    (listik-ovmh): при сломанной схеме — `OperationalError`, а не пустое поле.
+    Схема ломается настоящим `ALTER TABLE`, без моков."""
+
+    def setUp(self) -> None:
+        super().setUp()
+        self.parent = store.create_task(self.conn, title="Шаг", project="listik")["id"]
+        self.portion = store.create_task(self.conn, title="Порция a", project="listik",
+                                         parent=self.parent)["id"]
+
+    def test_deps_reads_raise(self) -> None:
+        self.conn.execute("ALTER TABLE deps RENAME COLUMN dep_type TO dep_kind")
+        self.conn.commit()
+        calls = {
+            "_portion_flags": lambda: store._portion_flags(self.conn, self.parent, "s1-spec"),
+            "child_cards": lambda: store.child_cards(self.conn, self.parent),
+            "parent_card": lambda: store.parent_card(self.conn, self.portion),
+        }
+        for name, call in calls.items():
+            with self.subTest(name), self.assertRaises(sqlite3.OperationalError):
+                call()
+
+    def test_documents_read_raises(self) -> None:
+        self.conn.execute("ALTER TABLE documents RENAME COLUMN title TO doc_title")
+        self.conn.commit()
+        with self.assertRaises(sqlite3.OperationalError):
+            store.task_documents(self.conn, self.parent)
 
 
 if __name__ == "__main__":

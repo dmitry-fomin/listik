@@ -234,15 +234,12 @@ def has_roles(conn: sqlite3.Connection, record: dict) -> bool:
 def portions(conn: sqlite3.Connection, task_id: str) -> list:
     """Не отменённые дети по связи из `PARENT_TYPES` (`parent-child` или старое
     `parent`) — порции нарезки `s1-spec`."""
-    try:
-        return conn.execute(
-            "SELECT t.id, t.status, t.stage, t.holder, t.launched_by, t.launch_route "
-            "FROM deps d JOIN tasks t ON t.id = d.issue_id "
-            f"WHERE d.depends_on = ? AND d.dep_type IN ({','.join('?' * len(PARENT_TYPES))}) "
-            "AND t.status != 'cancelled' ORDER BY t.created_at, t.rowid",
-            (task_id, *PARENT_TYPES)).fetchall()
-    except sqlite3.OperationalError:
-        return []
+    return conn.execute(
+        "SELECT t.id, t.status, t.stage, t.holder, t.launched_by, t.launch_route "
+        "FROM deps d JOIN tasks t ON t.id = d.issue_id "
+        f"WHERE d.depends_on = ? AND d.dep_type IN ({','.join('?' * len(PARENT_TYPES))}) "
+        "AND t.status != 'cancelled' ORDER BY t.created_at, t.rowid",
+        (task_id, *PARENT_TYPES)).fetchall()
 
 
 def has_portions(conn: sqlite3.Connection, task_id: str) -> bool:
@@ -252,13 +249,10 @@ def has_portions(conn: sqlite3.Connection, task_id: str) -> bool:
 def portion_statuses(conn: sqlite3.Connection, task_id: str) -> list:
     """Статусы всех детей по связи из `PARENT_TYPES` (`parent-child` или старое
     `parent`), включая отменённых."""
-    try:
-        return [row["status"] for row in conn.execute(
-            "SELECT t.status FROM deps d JOIN tasks t ON t.id = d.issue_id "
-            f"WHERE d.depends_on = ? AND d.dep_type IN ({','.join('?' * len(PARENT_TYPES))})",
-            (task_id, *PARENT_TYPES)).fetchall()]
-    except sqlite3.OperationalError:
-        return []
+    return [row["status"] for row in conn.execute(
+        "SELECT t.status FROM deps d JOIN tasks t ON t.id = d.issue_id "
+        f"WHERE d.depends_on = ? AND d.dep_type IN ({','.join('?' * len(PARENT_TYPES))})",
+        (task_id, *PARENT_TYPES)).fetchall()]
 
 
 def portions_cancelled_only(conn: sqlite3.Connection, row) -> bool:

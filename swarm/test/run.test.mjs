@@ -8,6 +8,7 @@ import {execFileSync} from "node:child_process";
 import {EventEmitter} from "node:events";
 import {Writable} from "node:stream";
 import {Listik} from "../listik.mjs";
+import {restartNote, isCountedRestart} from "../decide.mjs";
 import {tick} from "../run.mjs";
 import {open as openLog} from "../log.mjs";
 import {acquireProjectLock, noteCycles, projectsDue, questionReason, waitingLine} from "../main.mjs";
@@ -349,7 +350,9 @@ test("надзор-тик: просрочена с меткой port:5170 — sh
   assert.deepEqual(calls().map(c => c.sub), ["status", "waves", "list", "routes", "show", "projects", "revoke", "launch"]);
   const revokeCall = calls().find(c => c.sub === "revoke");
   const noteIdx = revokeCall.argv.indexOf("--note");
-  assert.equal(revokeCall.argv[noteIdx + 1], "рой: перезапуск — timeout");
+  const restartNoteSent = revokeCall.argv[noteIdx + 1];
+  assert.equal(restartNoteSent, restartNote("timeout"));
+  assert.equal(isCountedRestart(restartNoteSent), true);
   const launchCall = calls().find(c => c.sub === "launch");
   const envIdx = launchCall.argv.indexOf("--env");
   assert.equal(launchCall.argv[envIdx + 1], "LISTIK_DEV_PORT=5170");
@@ -489,7 +492,9 @@ test("надзор-тик: упала с answer позже — revoke «пере
   assert.deepEqual(calls().map(c => c.sub), ["status", "waves", "list", "routes", "show", "projects", "revoke", "launch"]);
   const revokeCall = calls().find(c => c.sub === "revoke");
   const noteIdx = revokeCall.argv.indexOf("--note");
-  assert.equal(revokeCall.argv[noteIdx + 1], "рой: перезапуск разрешён человеком");
+  const answeredNote = revokeCall.argv[noteIdx + 1];
+  assert.equal(answeredNote, restartNote("answered"));
+  assert.equal(isCountedRestart(answeredNote), false);
 });
 
 test("надзор-тик: закрытая бежит дольше timeout — revoke «процесс закрытой задачи», launch/needs-owner нет", async () => {
@@ -581,7 +586,7 @@ test("надзор-тик: упавшая мягкая 40 мин — answer, п�
     "needs-owner", "a", "--clear", DEFAULT_ANSWER, "--json", "--actor", "agent:listik-swarm",
   ]);
   assert.equal(recorded[revokeIdx].argv[recorded[revokeIdx].argv.indexOf("--note") + 1],
-    "рой: перезапуск — ответ по умолчанию");
+    restartNote("defaulted"));
   assert.ok(!subs.includes("set"));
   assert.ok(!subs.includes("stage"));
   assert.deepEqual(result.defaults, ["a"]);
@@ -708,7 +713,7 @@ test("надзор-тик: упавшая, answer роя позже заверш
   const recorded = calls();
   const revokeCall = recorded.find(c => c.sub === "revoke");
   assert.equal(revokeCall.argv[revokeCall.argv.indexOf("--note") + 1],
-    "рой: перезапуск — ответ по умолчанию");
+    restartNote("defaulted"));
   const revokeIdx = recorded.findIndex(c => c.sub === "revoke");
   const launchIdx = recorded.findIndex(c => c.sub === "launch");
   assert.ok(revokeIdx >= 0 && launchIdx > revokeIdx);
@@ -1424,7 +1429,7 @@ gitTest("тик: барьер отклоняет единственную зак
     assert.ok(revokeCall);
     assert.equal(
       revokeCall.argv[revokeCall.argv.indexOf("--note") + 1],
-      "рой: перезапуск — не принята (верификатор)",
+      restartNote("rejected"),
     );
     assert.ok(subs.includes("launch"));
     assert.ok(!subs.includes("needs-owner"));

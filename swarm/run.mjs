@@ -2,7 +2,7 @@
 // действия, свести итог. Без состояния между тиками — всё читается заново.
 import path from "node:path";
 import fs from "node:fs";
-import {decide, swarmPlan, swarmTasks, portOf, allocatePort, isRunning, OPEN_STATUSES, dueDefaults, restartCauseRu} from "./decide.mjs";
+import {decide, swarmPlan, swarmTasks, portOf, allocatePort, isRunning, OPEN_STATUSES, dueDefaults, restartCauseRu, restartNote} from "./decide.mjs";
 import {runBarrier, haltCards, HALT_LABEL} from "./barrier.mjs";
 import {ConfigError, parseSwarmConfig, swarmConfigFor, DEFAULT_QUESTION_TIMEOUT} from "./config.mjs";
 import {limitText, rollbackVerdict} from "./rollback.mjs";
@@ -491,13 +491,7 @@ export async function tick(listik, config, log, runState = null) {
   // маршрутом (тот же актор перехватывает claim предшественника), если процесс подтверждённо снят.
   const restarted = [];
   for (const item of decision.restart) {
-    const note = item.reason === "answered"
-      ? "рой: перезапуск разрешён человеком"
-      : item.reason === "rejected"
-        ? "рой: перезапуск — не принята (верификатор)"
-        : item.reason === "defaulted"
-          ? "рой: перезапуск — ответ по умолчанию"
-          : `рой: перезапуск — ${item.reason}`;
+    const note = restartNote(item.reason);
     if (config.dryRun) {
       log.action(`[dry-run] revoke ${item.id}: ${note}`);
       log.action(`[dry-run] launch ${item.id} → порт ${item.port}`);

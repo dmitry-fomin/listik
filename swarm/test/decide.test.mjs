@@ -3,7 +3,8 @@ import assert from "node:assert/strict";
 import fs from "node:fs";
 import {fileURLToPath} from "node:url";
 import {decide, portOf, allocatePort, isFrozen, REJECTED_MARK, isSoftQuestion, defaultLine,
-  openQuestion, fromEvents, fromComments, dueDefaults} from "../decide.mjs";
+  openQuestion, fromEvents, fromComments, dueDefaults, restartNote, isCountedRestart,
+  restartCauseRu} from "../decide.mjs";
 import {textSlicedStuck} from "../decide.mjs";
 import {DEFAULT_QUESTION_TIMEOUT} from "../config.mjs";
 
@@ -332,6 +333,69 @@ test("надзор: revoke с другой пометкой (предел/раз
     assert.equal(res.restart.length, 1, note);
     assert.equal(res.giveUp.length, 0, note);
   }
+});
+
+test("надзор: restartNote причин timeout/rejected/defaulted считается, answered — нет", () => {
+  const now = new Date();
+  const t = runningTask("a", {
+    launched_at: minsAgo(now, 30), holder_at: minsAgo(now, 30), labels: ["port:5170"],
+  });
+  const cfg = {...supConfig, timeoutMinutes: 20};  // maxRestarts 1
+  for (const reason of ["timeout", "rejected", "defaulted"]) {
+    const res = decideRunning(t, {
+      now, config: cfg,
+      events: {a: [{kind: "revoke", actor: "agent:listik-swarm", ts: minsAgo(now, 25),
+        note: restartNote(reason)}]},
+    });
+    assert.deepEqual(res.restart, [], reason);
+    assert.equal(res.giveUp.length, 1, reason);
+  }
+  const res = decideRunning(t, {
+    now, config: cfg,
+    events: {a: [{kind: "revoke", actor: "agent:listik-swarm", ts: minsAgo(now, 25),
+      note: restartNote("answered")}]},
+  });
+  assert.equal(res.restart.length, 1);
+  assert.equal(res.giveUp.length, 0);
+});
+
+test("надзор: старая заметка «рой: перезапуск — timeout» при maxRestarts 1 — giveUp", () => {
+  const now = new Date();
+  const t = runningTask("a", {
+    launched_at: minsAgo(now, 30), holder_at: minsAgo(now, 30), labels: ["port:5170"],
+  });
+  const res = decideRunning(t, {
+    now, config: {...supConfig, timeoutMinutes: 20},
+    events: {a: [{kind: "revoke", actor: "agent:listik-swarm", ts: minsAgo(now, 25),
+      note: "рой: перезапуск — timeout"}]},
+  });
+  assert.deepEqual(res.restart, []);
+  assert.equal(res.giveUp.length, 1);
+});
+
+test("isCountedRestart: префикс «перезапуск —» считается, человеческая и не-строка нет", () => {
+  for (const note of [
+    "рой: перезапуск — timeout",
+    "рой: перезапуск — stale",
+    "рой: перезапуск — что-то новое",
+    restartNote("timeout"), restartNote("rejected"), restartNote("defaulted"),
+  ]) {
+    assert.equal(isCountedRestart(note), true, String(note));
+  }
+  for (const note of [
+    "рой: перезапуск разрешён человеком", restartNote("answered"),
+    "рой: stale, предел перезапусков", undefined, null, 42,
+  ]) {
+    assert.equal(isCountedRestart(note), false, String(note));
+  }
+});
+
+test("restartNote: точные тексты причин, неизвестная — через restartCauseRu", () => {
+  assert.equal(restartNote("answered"), "рой: перезапуск разрешён человеком");
+  assert.equal(restartNote("rejected"), "рой: перезапуск — не принята (верификатор)");
+  assert.equal(restartNote("defaulted"), "рой: перезапуск — ответ по умолчанию");
+  assert.equal(restartNote("timeout"), "рой: перезапуск — таймаут");
+  assert.equal(restartNote("stale"), "рой: перезапуск — " + restartCauseRu("stale"));
 });
 
 test("надзор: revoke от agent:claude — не считается в restarts", () => {

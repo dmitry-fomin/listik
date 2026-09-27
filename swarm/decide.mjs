@@ -166,6 +166,13 @@ function runningInfo(task, routeByKey) {
 // пробелов (полный alias-разбор — `listik/actors.py`, недоступен процессу роя).
 const REVOKE_RESTART_PREFIX = "рой: перезапуск —";
 
+// В счёт предела идёт заметка с тире-префиксом: так записаны и старые события базы
+// («— timeout», «— stale»). «Разрешён человеком» без тире в счёт не идёт — это
+// решение человека, а не зависание.
+export function isCountedRestart(note) {
+  return typeof note === "string" && note.startsWith(REVOKE_RESTART_PREFIX);
+}
+
 function normActor(raw) {
   return (raw || "").trim().toLowerCase().replace(/\s+/g, " ");
 }
@@ -189,7 +196,7 @@ function restartCount(taskEvents, actorNorm) {
   for (const ev of taskEvents || []) {
     if (ev.kind !== "revoke") continue;
     if (normActor(ev.actor) !== actorNorm) continue;
-    if (typeof ev.note === "string" && ev.note.startsWith(REVOKE_RESTART_PREFIX)) n++;
+    if (isCountedRestart(ev.note)) n++;
   }
   return n;
 }
@@ -223,6 +230,15 @@ const RESTART_CAUSE_RU = {
 
 export function restartCauseRu(reason) {
   return RESTART_CAUSE_RU[reason] || reason;
+}
+
+// Текст revoke-заметки перезапуска: answered без тире нарочно — в счёт предела
+// (isCountedRestart) идут только заметки с префиксом «рой: перезапуск —».
+export function restartNote(reason) {
+  if (reason === "answered") return "рой: перезапуск разрешён человеком";
+  if (reason === "rejected") return "рой: перезапуск — не принята (верификатор)";
+  if (reason === "defaulted") return "рой: перезапуск — ответ по умолчанию";
+  return `${REVOKE_RESTART_PREFIX} ${restartCauseRu(reason)}`;
 }
 
 function budgetGiveUpText(id, cause, launchLog) {

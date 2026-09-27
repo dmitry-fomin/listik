@@ -607,23 +607,25 @@ class VoiceApiTests(ConfigMixin, TempDbTestCase):
         opener = _Recorder()
         body = {"audio_base64": base64.b64encode(audio).decode("ascii"), "mime": "audio/webm"}
         with mock.patch.object(voice_mod.urllib.request, "urlopen", opener):
-            with self.assertRaises(server.ApiError) as ctx:
+            with self.assertRaises(assistant_mod.AssistantError) as ctx:
                 self._transcribe(body)
-        self.assertEqual(ctx.exception.status, 400)
-        self.assertEqual(ctx.exception.code, errors_mod.BAD_ARGUMENT)
-        self.assertIn("10 МБ", ctx.exception.message)
+        status, message, code, hint = server.error_response(ctx.exception)
+        self.assertEqual(status, 400)
+        self.assertEqual(code, errors_mod.BAD_ARGUMENT)
+        self.assertIn("10 МБ", message)
         self.assertEqual(opener.requests, [])
 
     def test_transcribe_without_deepgram_key_is_503(self) -> None:
         self.write_config(deepgram_key=None)
         opener = _Recorder()
         with mock.patch.object(voice_mod.urllib.request, "urlopen", opener):
-            with self.assertRaises(server.ApiError) as ctx:
+            with self.assertRaises(assistant_mod.AssistantError) as ctx:
                 self._transcribe({"audio_base64": base64.b64encode(AUDIO).decode("ascii"),
                                   "mime": "audio/webm"})
-        self.assertEqual(ctx.exception.status, 503)
-        self.assertEqual(ctx.exception.code, errors_mod.SERVER_ERROR)
-        self.assertIn("[deepgram]", ctx.exception.message)
+        status, message, code, hint = server.error_response(ctx.exception)
+        self.assertEqual(status, 503)
+        self.assertEqual(code, errors_mod.SERVER_ERROR)
+        self.assertIn("[deepgram]", message)
         self.assertEqual(opener.requests, [])
 
     def test_draft_takes_project_from_db_and_creates_nothing(self) -> None:
@@ -657,10 +659,11 @@ class VoiceApiTests(ConfigMixin, TempDbTestCase):
     def test_draft_empty_text_is_400(self) -> None:
         opener = _Recorder(payload=ds_reply(draft_json()))
         with mock.patch.object(assistant_mod.urllib.request, "urlopen", opener):
-            with self.assertRaises(server.ApiError) as ctx:
+            with self.assertRaises(assistant_mod.AssistantError) as ctx:
                 self._draft(text="   ")
-        self.assertEqual(ctx.exception.status, 400)
-        self.assertEqual(ctx.exception.code, errors_mod.BAD_ARGUMENT)
+        status, message, code, hint = server.error_response(ctx.exception)
+        self.assertEqual(status, 400)
+        self.assertEqual(code, errors_mod.BAD_ARGUMENT)
         self.assertEqual(opener.requests, [])
 
 

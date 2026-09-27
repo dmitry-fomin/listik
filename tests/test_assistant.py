@@ -398,12 +398,13 @@ class AssistantApiTests(TempDbTestCase):
 
     def test_suggest_without_key_is_503_with_code(self) -> None:
         self._no_key_config()
-        with self.assertRaises(server.ApiError) as ctx:
+        with self.assertRaises(assistant_mod.AssistantError) as ctx:
             server.handle("POST", "/api/assistant/suggest", {},
                           {"field": "title", "text": "сделать"}, authed=True)
-        self.assertEqual(ctx.exception.status, 503)
-        self.assertEqual(ctx.exception.code, errors_mod.SERVER_ERROR)
-        self.assertIn("api_key", ctx.exception.message)
+        status, message, code, hint = server.error_response(ctx.exception)
+        self.assertEqual(status, 503)
+        self.assertEqual(code, errors_mod.SERVER_ERROR)
+        self.assertIn("api_key", message)
 
     def test_suggest_with_mocked_http_returns_suggestion(self) -> None:
         opener = _Recorder()
@@ -421,11 +422,12 @@ class AssistantApiTests(TempDbTestCase):
     def test_suggest_with_upstream_error_is_mapped(self) -> None:
         opener = _Recorder(error=urllib.error.URLError("no route to host"))
         with mock.patch.object(assistant_mod.urllib.request, "urlopen", opener):
-            with self.assertRaises(server.ApiError) as ctx:
+            with self.assertRaises(assistant_mod.AssistantError) as ctx:
                 server.handle("POST", "/api/assistant/suggest", {},
                               {"field": "title", "text": "сделать"}, authed=True)
-        self.assertEqual(ctx.exception.status, 504)
-        self.assertEqual(ctx.exception.code, errors_mod.SERVER_ERROR)
+        status, message, code, hint = server.error_response(ctx.exception)
+        self.assertEqual(status, 504)
+        self.assertEqual(code, errors_mod.SERVER_ERROR)
 
     def test_upstream_401_key_not_in_api_error(self) -> None:
         error = urllib.error.HTTPError(
@@ -434,12 +436,20 @@ class AssistantApiTests(TempDbTestCase):
         opener = _Recorder(error=error)
         with self.assertLogs("listik.assistant", level="WARNING"):
             with mock.patch.object(assistant_mod.urllib.request, "urlopen", opener):
-                with self.assertRaises(server.ApiError) as ctx:
+                with self.assertRaises(assistant_mod.AssistantError) as ctx:
                     server.handle("POST", "/api/assistant/suggest", {},
                                   {"field": "title", "text": "сделать"}, authed=True)
-        self.assertEqual(ctx.exception.status, 502)
-        self.assertIn("[assistant]", ctx.exception.message)
-        self.assertNotIn(API_KEY, ctx.exception.message)
+        status, message, code, hint = server.error_response(ctx.exception)
+        self.assertEqual(status, 502)
+        self.assertIn("[assistant]", message)
+        self.assertNotIn(API_KEY, message)
+
+    def test_error_response_maps_assistant_error(self) -> None:
+        self.assertIsInstance(assistant_mod.AssistantError("x"), errors_mod.ListikError)
+        self.assertEqual(
+            server.error_response(assistant_mod.AssistantError(
+                "x", status=504, code=errors_mod.SERVER_ERROR)),
+            (504, "x", errors_mod.SERVER_ERROR, ""))
 
 
 class AssistantHttpTests(AssistantApiTests):

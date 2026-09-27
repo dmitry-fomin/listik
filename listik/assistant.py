@@ -91,15 +91,12 @@ SYSTEM_PROMPT = """\
 """
 
 
-class AssistantError(Exception):
+class AssistantError(errors_mod.ListikError):
     """Ошибка помощника: текст по-русски + HTTP-статус и машинный код для сервера."""
 
     def __init__(self, message: str, *, status: int = 502,
                  code: str = errors_mod.SERVER_ERROR):
-        super().__init__(message)
-        self.message = str(message)
-        self.status = status
-        self.code = code
+        super().__init__(message, code=code, status=status)
 
 
 def settings(cfg: dict | None = None) -> dict:

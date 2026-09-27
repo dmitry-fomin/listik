@@ -1415,12 +1415,9 @@ def handle(method: str, path: str, query: dict, body: dict, authed: bool = False
     if path == "/api/assistant/suggest" and method == "POST":
         # Помощник DeepSeek: ключ читается из config.toml на сервере и в браузер
         # не уходит. Маршрут предлагается только из записей таблицы `routes`.
-        try:
-            return 200, assistant_mod.suggest(
-                body.get("field"), body.get("text", ""), body.get("context"),
-                routes=routes_store.list_routes(conn))
-        except assistant_mod.AssistantError as exc:
-            raise ApiError(exc.status, exc.message, exc.code) from exc
+        return 200, assistant_mod.suggest(
+            body.get("field"), body.get("text", ""), body.get("context"),
+            routes=routes_store.list_routes(conn))
 
     if path == "/api/assistant/transcribe" and method == "POST":
         # Голос: запись приходит в JSON как base64 (сырые байты в JSON не влезают).
@@ -1434,20 +1431,14 @@ def handle(method: str, path: str, query: dict, body: dict, authed: bool = False
         except ValueError as exc:
             raise ApiError(400, f"невалидный base64: {exc}",
                            code=errors_mod.BAD_ARGUMENT) from exc
-        try:
-            return 200, voice_mod.transcribe(audio, body.get("mime") or "")
-        except assistant_mod.AssistantError as exc:
-            raise ApiError(exc.status, exc.message, exc.code) from exc
+        return 200, voice_mod.transcribe(audio, body.get("mime") or "")
 
     if path == "/api/assistant/draft" and method == "POST":
         # Черновик задачи из рассказа: проекты и маршруты сервер берёт сам из базы.
         # Ничего не создаётся: ответ — только черновик для формы.
-        try:
-            return 200, voice_mod.draft(body.get("text", ""),
-                                        projects=store.list_projects(conn),
-                                        routes=routes_store.list_routes(conn))
-        except assistant_mod.AssistantError as exc:
-            raise ApiError(exc.status, exc.message, exc.code) from exc
+        return 200, voice_mod.draft(body.get("text", ""),
+                                    projects=store.list_projects(conn),
+                                    routes=routes_store.list_routes(conn))
 
     if path == "/api/embed" and method == "POST":
         res = embed_mod.embed_pending(

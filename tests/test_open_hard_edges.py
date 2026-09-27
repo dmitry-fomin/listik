@@ -75,7 +75,8 @@ class OpenHardEdgesTests(TempDbTestCase):
         a = self._new("A")
         b = self._new("B")
         self._hard(a, b)
-        store.delete_task(self.conn, b)
+        self.conn.execute("DELETE FROM tasks WHERE id = ?", (b,))
+        self.conn.commit()
 
         self.assertEqual(_edges(deps.open_hard_edges(self.conn, issue_ids=[a])), [_edge(a, b)])
         deps.refresh_task(self.conn, a)
@@ -137,7 +138,8 @@ class OpenHardEdgesTests(TempDbTestCase):
         for b in (b4, b3, b2, b1):
             self._hard(a, b)
         store.update_task(self.conn, b2, status="in_progress")
-        store.delete_task(self.conn, b3)
+        self.conn.execute("DELETE FROM tasks WHERE id = ?", (b3,))
+        self.conn.commit()
 
         self.assertEqual([x["id"] for x in deps.blockers(self.conn, a)],
                          [b2] + sorted([b1, b4]) + [b3])
@@ -148,7 +150,8 @@ class OpenHardEdgesTests(TempDbTestCase):
         for w in (w5, w4, w3, w2, w1):
             self._hard(w, r)
         store.update_task(self.conn, w2, status="in_progress")
-        store.delete_task(self.conn, w3)
+        self.conn.execute("DELETE FROM tasks WHERE id = ?", (w3,))
+        self.conn.commit()
         store.update_task(self.conn, w5, status="cancelled")
 
         self.assertEqual([x["id"] for x in deps.waiting_for(self.conn, r)],
@@ -175,7 +178,8 @@ class OpenHardEdgesTests(TempDbTestCase):
 
         k, m = self._new("K"), self._new("M")
         self._hard(k, m)
-        store.delete_task(self.conn, m)
+        self.conn.execute("DELETE FROM tasks WHERE id = ?", (m,))
+        self.conn.commit()
 
         n = self._new("N")
         p = self._new("P", project="other")

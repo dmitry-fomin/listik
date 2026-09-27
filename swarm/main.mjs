@@ -7,7 +7,7 @@
 import fs from "node:fs";
 import path from "node:path";
 import {parseConfig, ConfigError, HelpRequested} from "./config.mjs";
-import {isSoftQuestion} from "./decide.mjs";
+import {isSoftQuestion, swarmTasks} from "./decide.mjs";
 import {Listik} from "./listik.mjs";
 import {tick} from "./run.mjs";
 import {open as openLog, skipLabel} from "./log.mjs";
@@ -154,9 +154,10 @@ const OPEN_FOR_SWARM = new Set(["open", "in_progress", "blocked", "review"]);
 
 // Проекты, которым нужен тик: открытая карточка, вопрос человеку или закрытая,
 // чьё дерево ещё не снято. Старые done без дерева рой не трогает.
-export function projectsDue(tasks) {
+// Считаются только карточки роя: проекту с одними человеческими тик не нужен.
+export function projectsDue(tasks, routes) {
   const slugs = new Set();
-  for (const t of tasks || []) {
+  for (const t of swarmTasks((tasks || []).filter(Boolean), routes)) {
     if (!t || typeof t.project !== "string" || !t.project) continue;
     if (OPEN_FOR_SWARM.has(t.status) || t.needs_owner || (t.status === "done" && t.worktree)) {
       slugs.add(t.project);
@@ -192,7 +193,10 @@ async function dueProjects(listik, log) {
     if (!Array.isArray(rows)) return [];
     return rows.map(p => p && p.slug).filter(s => typeof s === "string" && s).sort();
   }
-  return projectsDue([...(open && open.tasks || []), ...(closed && closed.tasks || [])]);
+  const tasks = [...(open && open.tasks || []), ...(closed && closed.tasks || [])];
+  if (!tasks.length) return [];
+  const routes = (await listik.routes()).routes || [];
+  return projectsDue(tasks, routes);
 }
 
 function scopedLog(log, slug) {

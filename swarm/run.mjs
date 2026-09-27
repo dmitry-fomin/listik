@@ -191,6 +191,8 @@ export async function tick(listik, config, log, runState = null) {
       let limitUncheckedLogged = false;
       for (const d of watched) {
         if (d.action !== "freeze" || d.ok === false) continue;
+        // Не карточка роя этого тика — предел откатов её не касается.
+        if (!tasks.some(t => t.id === d.task)) continue;
         let card;
         try {
           card = await listik.show(d.task);

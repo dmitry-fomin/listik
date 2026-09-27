@@ -125,7 +125,7 @@ class WavesHttpTests(OwnerHttpCase):
             task = store.create_task(conn, title="task a", project="demo", priority=2,
                                      as_owner="ann")
             tid = task["id"]
-            conn.execute("UPDATE tasks SET launch_route = 'nano' WHERE id = ?", (tid,))
+            conn.execute("UPDATE tasks SET launch_route = 'nano', launch_driver = 'swarm' WHERE id = ?", (tid,))
             store.update_task(conn, tid, write_scope=list(kwargs["scope"]), as_owner="ann")
             conn.commit()
             return tid

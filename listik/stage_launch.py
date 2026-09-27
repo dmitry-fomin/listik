@@ -390,6 +390,26 @@ def _single_fresh(conn: sqlite3.Connection, children: list):
     return row if (row["spec_path"] or "").strip() else None
 
 
+def in_swarm(task, routes_by_key: dict) -> bool:
+    """Карточка роя — чистое правило без базы, зеркало `isSwarmCard` в `swarm/decide.mjs`.
+
+    Пустой `launch_route` — не карточка роя; снимок `launch_driver == "swarm"` — карточка
+    роя; снимка нет — решает маршрут из `routes_by_key` (`routes.state(conn).by_key`):
+    `kind == "swarm"` или `driver == "swarm"`; снимок другой или маршрута нет — не рой.
+    `task` — `sqlite3.Row` или `dict` (отсутствующее поле — пустое). Отличие от клиента —
+    `strip` маршрута: пробельный маршрут здесь пуст (как в `is_swarm_task`).
+    """
+    keys = task.keys()
+    route_key = ((task["launch_route"] if "launch_route" in keys else None) or "").strip()
+    if not route_key:
+        return False
+    driver = (task["launch_driver"] if "launch_driver" in keys else None) or ""
+    if driver:
+        return driver == "swarm"
+    route = routes_by_key.get(route_key)
+    return bool(route) and (route.get("kind") == "swarm" or route.get("driver") == "swarm")
+
+
 def is_swarm_task(conn: sqlite3.Connection, row) -> bool:
     """Карточка едет роем: снимок `launch_driver`, а до первого запуска — живой
     `driver` её маршрута."""

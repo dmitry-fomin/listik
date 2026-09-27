@@ -3,8 +3,10 @@ from __future__ import annotations
 
 import json
 import sqlite3
+import sys
+from unittest import mock
 
-from listik import deps, errors, store
+from listik import deps, errors, harnesses_store, routes_store, stage_launch, store
 from tests.helpers import TempDbTestCase
 from tests.test_resource_blocks import _insert_resource_block
 
@@ -15,7 +17,9 @@ def _task(conn, key, *, project="demo", scope=None, route="nano", priority=2,
         scope = (f"pkg/{key}.py",)
     task = store.create_task(conn, title=f"task {key}", project=project, priority=priority)
     tid = task["id"]
-    conn.execute("UPDATE tasks SET launch_route = ? WHERE id = ?", (route, tid))
+    # Карточка роя: маршрут со снимком `launch_driver='swarm'` (маршрута `nano` в базе нет).
+    conn.execute("UPDATE tasks SET launch_route = ?, launch_driver = ? WHERE id = ?",
+                 (route, "swarm" if route else None, tid))
     if worktree is not None:
         conn.execute("UPDATE tasks SET worktree = ? WHERE id = ?", (worktree, tid))
     if stage is not None:
@@ -39,6 +43,27 @@ def _no_route(conn, key, **kwargs):
         conn.execute("UPDATE tasks SET created_at = ? WHERE id = ?", (kwargs["created_at"], tid))
     conn.commit()
     return tid
+
+
+def _skill_task(conn, key, **kwargs):
+    """Не-роевая карточка: маршрут режима скила (`skillish`, pipeline), без снимка."""
+    if not conn.execute("SELECT 1 FROM routes WHERE key = 'skillish'").fetchone():
+        routes_store.create_route(conn, key="skillish", kind="pipeline", title="Скил")
+    tid = _task(conn, key, **kwargs)
+    conn.execute("UPDATE tasks SET launch_route = 'skillish', launch_driver = NULL WHERE id = ?",
+                 (tid,))
+    conn.commit()
+    return tid
+
+
+def _mentioned(result: dict) -> set[str]:
+    """Все id в ответе `waves`, кроме значений `blocked`."""
+    ids = {tid for wave in result["waves"] for tid in wave}
+    ids |= {tid for cycle in result["cycles"] for tid in cycle}
+    ids |= {tid for pair in result["resource_blocks"] for tid in pair}
+    ids |= set(result["unroutable"]) | set(result["unscoped"])
+    ids |= set(result["blocked"]) | set(result["tasks"])
+    return ids
 
 
 class WavesTests(TempDbTestCase):
@@ -170,7 +195,7 @@ class WavesTests(TempDbTestCase):
         store.add_dep(self.conn, b, a, "blocks")
         result = deps.waves(self.conn, project="demo")
         self.assertEqual(result["waves"], [[c]])
-        self.assertEqual(result["unroutable"], [a])
+        self.assertEqual(result["unroutable"], [])
         self.assertEqual(result["blocked"], {b: a})
 
     def test_unscoped(self) -> None:
@@ -199,7 +224,7 @@ class WavesTests(TempDbTestCase):
         self.conn.execute("UPDATE tasks SET write_scope = '[]' WHERE id = ?", (a,))
         self.conn.commit()
         result = deps.waves(self.conn, project="demo")
-        self.assertEqual(result["unroutable"], [a])
+        self.assertEqual(result["unroutable"], [])
         self.assertEqual(result["unscoped"], [])
 
     def test_blocked_two_levels(self) -> None:
@@ -211,7 +236,7 @@ class WavesTests(TempDbTestCase):
         store.add_dep(self.conn, c, b, "blocks")
         result = deps.waves(self.conn, project="demo")
         self.assertEqual(result["waves"], [[d]])
-        self.assertEqual(result["unroutable"], [a])
+        self.assertEqual(result["unroutable"], [])
         self.assertEqual(result["blocked"], {b: a, c: b})
 
     def test_blocked_visible_immediately(self) -> None:
@@ -377,6 +402,80 @@ class WavesTests(TempDbTestCase):
             self.assertIn("title", info)
             self.assertIsInstance(info["write_scope"], list)
             self.assertEqual(info["launch_route"], "nano")
+
+
+class SwarmOnlyWavesTests(TempDbTestCase):
+    """Рабочее множество `waves` — только карточки роя (listik-w7ge)."""
+
+    def _blocks(self, issue: str, dep: str) -> None:
+        self.conn.execute("INSERT INTO deps(issue_id, depends_on, dep_type, created_by) "
+                          "VALUES(?, ?, 'blocks', 'human')", (issue, dep))
+        self.conn.commit()
+
+    def test_skill_cards_absent_everywhere(self) -> None:
+        c = _task(self.conn, "c", scope=("pkg/shared.py",), priority=0)
+        scoped = _skill_task(self.conn, "s1", scope=("pkg/shared.py",), priority=1)
+        unscoped = _skill_task(self.conn, "s2", scope=(), priority=2, stage="s3-impl")
+        result = deps.waves(self.conn, project="demo")
+        self.assertEqual(result["waves"], [[c]])
+        self.assertEqual(_mentioned(result) & {scoped, unscoped}, set())
+        self.assertEqual(result["unscoped"], [])
+        self.assertEqual(result["resource_blocks"], [])
+
+    def test_foreign_cycle_does_not_stop_swarm(self) -> None:
+        c = _task(self.conn, "c", scope=("pkg/c.py",), priority=0)
+        n1 = _skill_task(self.conn, "n1", priority=1)
+        n2 = _skill_task(self.conn, "n2", priority=2)
+        self._blocks(n1, n2)
+        self._blocks(n2, n1)
+        result = deps.waves(self.conn, project="demo")
+        self.assertEqual(result["cycles"], [])
+        self.assertEqual(result["waves"], [[c]])
+
+    def test_mixed_cycle_blocks_swarm_card(self) -> None:
+        a = _task(self.conn, "a", scope=("pkg/a.py",), priority=0)
+        n = _skill_task(self.conn, "n", priority=1)
+        self._blocks(a, n)
+        self._blocks(n, a)
+        result = deps.waves(self.conn, project="demo")
+        self.assertEqual(result["cycles"], [])
+        self.assertEqual(result["blocked"], {a: n})
+        self.assertEqual(result["waves"], [])
+
+    def test_swarm_cycle_still_stops(self) -> None:
+        a = _task(self.conn, "a", scope=("pkg/a.py",), priority=0)
+        b = _task(self.conn, "b", scope=("pkg/b.py",), priority=1)
+        self._blocks(a, b)
+        self._blocks(b, a)
+        result = deps.waves(self.conn, project="demo")
+        self.assertEqual(result["waves"], [])
+        self.assertEqual(result["cycles"], [[a, b]])
+
+    def test_unroutable_always_empty(self) -> None:
+        a = _no_route(self.conn, "a", priority=0)
+        b = _task(self.conn, "b", scope=("pkg/b.py",), priority=1)
+        result = deps.waves(self.conn, project="demo")
+        self.assertEqual(result["unroutable"], [])
+        self.assertNotIn(a, _mentioned(result))
+        self.assertEqual(result["waves"], [[b]])
+
+    def test_routes_unavailable(self) -> None:
+        harnesses_store.create(self.conn, {"key": "probe", "label": "probe",
+                                           "argv": [sys.executable, "-c", "print(1)"]})
+        routes_store.create_route(
+            self.conn, key="roy", kind="swarm", title="Рой",
+            roles={role: {"harness": "probe"} for _, role in stage_launch.STAGE_ROLES})
+        snap = _task(self.conn, "snap", scope=("pkg/snap.py",), priority=0)
+        live = _task(self.conn, "live", scope=("pkg/live.py",), priority=1, route="roy")
+        self.conn.execute("UPDATE tasks SET launch_driver = NULL WHERE id = ?", (live,))
+        self.conn.commit()
+        self.assertIn(live, deps.waves(self.conn, project="demo")["tasks"])
+
+        with mock.patch.object(routes_store, "list_routes",
+                               side_effect=sqlite3.DatabaseError("база недоступна")):
+            result = deps.waves(self.conn, project="demo")
+        self.assertIn(snap, result["tasks"])
+        self.assertNotIn(live, result["tasks"])
 
 
 if __name__ == "__main__":

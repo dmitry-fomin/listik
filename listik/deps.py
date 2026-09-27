@@ -757,6 +757,39 @@ def find_cycles(ids: list[str], incoming: dict[str, set[str]]) -> list[list[str]
     return _waves_find_cycles(rem, ids, incoming, order_index)
 
 
+def _waves_selection(conn: sqlite3.Connection, project: str,
+                     stage: str | None) -> tuple[list[sqlite3.Row], list[str]]:
+    """Выборка `waves`/`apply_resource_blocks`: открытые неархивные задачи проекта (без
+    эпиков с детьми, при `stage` — этого этапа) в порядке `priority, created_at, id`,
+    разделённые на карточки роя (`stage_launch.in_swarm`, строки) и остальные (id)."""
+    from . import routes as routes_mod
+    from . import stage_launch
+
+    where = ["archived = 0",
+             f"status IN ({','.join('?' * len(OPEN_STATUSES))})",
+             "project = ?",
+             not_epic_with_children_sql("tasks")]
+    params: list = [*OPEN_STATUSES, project]
+    if stage is not None:
+        where.append("stage = ?")
+        params.append(stage)
+    rows = _fetch(
+        conn,
+        f"SELECT * FROM tasks WHERE {' AND '.join(where)} "
+        "ORDER BY priority ASC, created_at ASC, id ASC",
+        tuple(params),
+    )
+    by_key = routes_mod.state(conn).by_key
+    swarm_rows: list[sqlite3.Row] = []
+    others: list[str] = []
+    for r in rows:
+        if stage_launch.in_swarm(r, by_key):
+            swarm_rows.append(r)
+        else:
+            others.append(r["id"])
+    return swarm_rows, others
+
+
 def waves(conn: sqlite3.Connection, *, project: str, stage: str | None = None) -> dict:
     """Волны планировщика роя: кто может бежать сейчас, кто ждёт, кто в конфликте.
 
@@ -775,7 +808,17 @@ def waves(conn: sqlite3.Connection, *, project: str, stage: str | None = None) -
     Старт ТЗ (пустой этап и `s1-spec`) и критика (`s2-review`) область не
     пишут и в волну входят без неё. `failed` не моделируется — задача с
     упавшим воркером просто остаётся открытой.
+
+    Рабочее множество — только карточки роя (`stage_launch.in_swarm`): остальные
+    задачи проекта в ответ не входят, их id бывает лишь причиной в `blocked`;
+    `unroutable` всегда пуст (ключ оставлен для совместимости).
     """
+    return _waves(conn, project=project, stage=stage)[0]
+
+
+def _waves(conn: sqlite3.Connection, *, project: str,
+           stage: str | None) -> tuple[dict, list[str]]:
+    """`waves` и id не-роевых задач той же выборки (их ресурсные рёбра снимает `apply`)."""
     from . import scope as scope_mod
     from . import store
     from . import store_helpers
@@ -783,20 +826,7 @@ def waves(conn: sqlite3.Connection, *, project: str, stage: str | None = None) -
     if not (project or "").strip():
         raise errors_mod.BadArgument("нужен проект: волны считаются по одному проекту")
 
-    order_sql = "priority ASC, created_at ASC, id ASC"
-    where = ["archived = 0",
-             f"status IN ({','.join('?' * len(OPEN_STATUSES))})",
-             "project = ?",
-             not_epic_with_children_sql("tasks")]
-    params: list = [*OPEN_STATUSES, project]
-    if stage is not None:
-        where.append("stage = ?")
-        params.append(stage)
-    rows = _fetch(
-        conn,
-        f"SELECT * FROM tasks WHERE {' AND '.join(where)} ORDER BY {order_sql}",
-        tuple(params),
-    )
+    rows, others = _waves_selection(conn, project, stage)
 
     ids = [r["id"] for r in rows]
     by_id = {r["id"]: r for r in rows}
@@ -808,10 +838,6 @@ def waves(conn: sqlite3.Connection, *, project: str, stage: str | None = None) -
     write_scopes: dict[str, list[str]] = {}
     for tid in ids:
         row = by_id[tid]
-        route = (row["launch_route"] or "").strip()
-        if not route:
-            unroutable.append(tid)
-            continue
         ws = store_helpers.json_list(row["write_scope"])
         # ТЗ и критика файлов не правят. Область нужна, чтобы развести
         # одновременную разработку и приёмку.
@@ -902,7 +928,7 @@ def waves(conn: sqlite3.Connection, *, project: str, stage: str | None = None) -
             "blocked": blocked,
             "resource_blocks": [],
             "tasks": tasks_view,
-        }
+        }, others
 
     resource_blocks: list[list[str]] = []
     resource_pairs: set[tuple[str, str]] = set()
@@ -962,7 +988,7 @@ def waves(conn: sqlite3.Connection, *, project: str, stage: str | None = None) -
         "blocked": blocked,
         "resource_blocks": resource_blocks,
         "tasks": tasks_view,
-    }
+    }, others
 
 
 def apply_resource_blocks(conn: sqlite3.Connection, *, project: str, stage: str | None = None) -> dict:
@@ -970,12 +996,13 @@ def apply_resource_blocks(conn: sqlite3.Connection, *, project: str, stage: str 
 
     Переписывает `resource-blocks` только у задач рабочего множества (`plan["tasks"]`):
     снимает устаревшие, ставит недостающие, смысловые рёбра (`SEMANTIC_HARD`,
-    `suggested-blocks`) не трогает. Автор ребра — всегда `RESOURCE_BLOCK_AUTHOR`, у функции
+    `suggested-blocks`) не трогает. У не-роевых задач той же выборки снимает все
+    `resource-blocks` (они тоже в `removed`). Автор ребра — всегда `RESOURCE_BLOCK_AUTHOR`, у функции
     нет параметра `actor`: подпись машиной нельзя переопределить ни с одного входа. Цикл в
     смысловых рёбрах — отказ (`errors.ListikError`, `code=errors.CONFLICT`), в базу ничего не
     пишется. Один `commit` в конце; исключение по дороге — `rollback`, база как до вызова.
     """
-    plan = waves(conn, project=project, stage=stage)
+    plan, others = _waves(conn, project=project, stage=stage)
     if plan["cycles"]:
         cycle = plan["cycles"][0]
         raise errors_mod.ListikError(
@@ -988,14 +1015,16 @@ def apply_resource_blocks(conn: sqlite3.Connection, *, project: str, stage: str 
     working = set(plan["tasks"].keys())
     desired = {(later, earlier) for earlier, later in plan["resource_blocks"]}
 
+    # Не-роевым задачам той же выборки ресурсные рёбра не положены: их снимаем все.
+    scope_ids = working | set(others)
     existing: set[tuple[str, str]] = set()
-    if working:
-        marks = ",".join("?" * len(working))
+    if scope_ids:
+        marks = ",".join("?" * len(scope_ids))
         rows = _fetch(
             conn,
             f"SELECT issue_id, depends_on FROM deps WHERE dep_type = 'resource-blocks' "
             f"AND issue_id IN ({marks})",
-            tuple(working),
+            tuple(scope_ids),
         )
         existing = {(r["issue_id"], r["depends_on"]) for r in rows}
 

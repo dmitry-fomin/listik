@@ -695,7 +695,7 @@ class JevCliTests(TempDbTestCase):
         self.assertNotIn("jev-test-key", result.stdout + result.stderr)
         text = self._run("plan", "--project", "demo", env_extra=env)
         self.assertEqual(text.returncode, 0, text.stderr)
-        self.assertIn("jev: пропущен — ошибка:", text.stdout)
+        self.assertIn("jev: ошибка:", text.stdout)
 
     def test_text_reports_checked_and_dropped_probabilities(self) -> None:
         import contextlib
@@ -715,6 +715,24 @@ class JevCliTests(TempDbTestCase):
         lines = stdout.getvalue().splitlines()
         self.assertEqual(lines[1], "jev: проверено рёбер 2, снято 1")
         self.assertEqual(lines[2], "снято jev: a → b (p=0.12)")
+
+    def test_text_prints_any_skip_reason_as_is(self) -> None:
+        import contextlib
+        import io
+        import runpy
+        from argparse import Namespace
+
+        cli = runpy.run_path(str(LISTIK_BIN))
+        result = {"tasks": {}, "model": "glm", "attempts": 1, "cycles": [],
+                  "jev": {"checked": 0, "dropped": [], "skipped": "новая причина"}}
+        stdout = io.StringIO()
+        with mock.patch.dict(cli["cmd_plan"].__globals__, {"call": mock.Mock(return_value=result)}), \
+                contextlib.redirect_stdout(stdout):
+            code = cli["cmd_plan"](Namespace(project="demo", stage=None, apply=False, json=False))
+        self.assertEqual(code, 0)
+        out = stdout.getvalue()
+        self.assertEqual(out.splitlines()[1], "jev: новая причина")
+        self.assertNotIn("проверено рёбер", out)
 
 
 class JevHttpTests(OwnerHttpCase):

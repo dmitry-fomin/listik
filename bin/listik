@@ -1460,15 +1460,8 @@ def cmd_waves(args) -> int:
         lines.append("волн нет")
 
     if apply_:
-        added = res.get("added") or []
-        removed = res.get("removed") or []
-        kept = res.get("kept") or 0
-        if added or removed:
-            lines.append("записано рёбер: %d (%s)" % (
-                len(added), ", ".join(f"{a} → {b}" for a, b in added)))
-            lines.append("снято: %d (%s)" % (
-                len(removed), ", ".join(f"{a} → {b}" for a, b in removed)))
-            lines.append("без изменений: %d" % kept)
+        if res.get("added") or res.get("removed"):
+            lines.extend(_edges_applied_lines(res, covered=False))
         else:
             lines.append("рёбра без изменений")
 
@@ -1558,6 +1551,46 @@ def cmd_arbiter_check(args) -> int:
     return 0 if res["ok"] else 1
 
 
+def _wait_lines(tasks: dict) -> list[str]:
+    """«<id> ждёт a, b — причина» для задач с непустым depends_on (plan, rescope)."""
+    return [f"{tid} ждёт {', '.join(info['depends_on'])} — {info.get('reason') or ''}"
+            for tid, info in tasks.items() if info.get("depends_on")]
+
+
+def _dropped_lines(dropped: list | None) -> list[str]:
+    """«отброшено: …» по res["dropped"] (plan, rescope)."""
+    lines = []
+    for item in dropped or []:
+        why = item.get("why")
+        if "depends_on" in item:
+            lines.append(f"отброшено: {item.get('id')} → {item.get('depends_on')} ({why})")
+        else:
+            lines.append(f"отброшено: {item.get('id')} ({why})")
+    return lines
+
+
+def _cycle_lines(cycles: list, cycles_from: str | None) -> list[str]:
+    """«цикл: a → b → a» и подсказка, если цикл уже в базе (plan, rescope)."""
+    lines = ["цикл: " + " → ".join([*cycle, cycle[0]]) for cycle in cycles]
+    if cycles and cycles_from == "db":
+        lines.append("цикл уже в базе: разорви listik dep rm <id> <блокер>")
+    return lines
+
+
+def _edges_applied_lines(applied: dict, covered: bool = True) -> list[str]:
+    """Итог записи рёбер: записано / снято / без изменений [/ уже есть смысловые]."""
+    added = applied.get("added") or []
+    removed = applied.get("removed") or []
+    lines = [
+        "записано рёбер: %d (%s)" % (len(added), ", ".join(f"{a} → {b}" for a, b in added)),
+        "снято: %d (%s)" % (len(removed), ", ".join(f"{a} → {b}" for a, b in removed)),
+        "без изменений: %d" % (applied.get("kept") or 0),
+    ]
+    if covered:
+        lines.append("уже есть смысловые: %d" % len(applied.get("covered") or []))
+    return lines
+
+
 def cmd_plan(args) -> int:
     """LLM-проход роя: грубые зависимости `blocks` между открытыми задачами проекта —
     какие ТЗ можно писать параллельно."""
@@ -1583,12 +1616,8 @@ def cmd_plan(args) -> int:
 
     jev = res.get("jev") or {}
     jev_skipped = jev.get("skipped")
-    if jev_skipped == "не настроен":
-        lines.append("jev: не настроен")
-    elif jev_skipped == "не вызывался":
-        lines.append("jev: не вызывался")
-    elif isinstance(jev_skipped, str) and jev_skipped.startswith("ошибка:"):
-        lines.append(f"jev: пропущен — {jev_skipped}")
+    if jev_skipped:
+        lines.append(f"jev: {jev_skipped}")
     else:
         jev_dropped = jev.get("dropped") or []
         lines.append(f"jev: проверено рёбер {jev.get('checked', 0)}, снято {len(jev_dropped)}")
@@ -1598,47 +1627,23 @@ def cmd_plan(args) -> int:
                 lines.append(f"снято jev: {edge[0]} → {edge[1]} (p={item.get('p', 0):g})")
 
     tasks = res.get("tasks") or {}
-    without_deps: list[str] = []
-    for tid, info in tasks.items():
-        depends_on = info.get("depends_on") or []
-        if depends_on:
-            reason = info.get("reason") or ""
-            lines.append(f"{tid} ждёт {', '.join(depends_on)} — {reason}")
-        else:
-            without_deps.append(tid)
+    lines.extend(_wait_lines(tasks))
+    without_deps = [tid for tid, info in tasks.items() if not info.get("depends_on")]
     if without_deps:
         if len(without_deps) == len(tasks):
             lines.append("все задачи без зависимостей")
         else:
             lines.append("без зависимостей: " + ", ".join(without_deps))
 
-    for item in res.get("dropped") or []:
-        why = item.get("why")
-        if "depends_on" in item:
-            lines.append(f"отброшено: {item.get('id')} → {item.get('depends_on')} ({why})")
-        else:
-            lines.append(f"отброшено: {item.get('id')} ({why})")
-
-    for cycle in cycles:
-        lines.append("цикл: " + " → ".join([*cycle, cycle[0]]))
-    if cycles and res.get("cycles_from") == "db":
-        lines.append("цикл уже в базе: разорви listik dep rm <id> <блокер>")
+    lines.extend(_dropped_lines(res.get("dropped")))
+    lines.extend(_cycle_lines(cycles, res.get("cycles_from")))
 
     if apply_:
         applied = res.get("applied")
         if cycles:
             lines.append("рёбра не записаны: цикл")
         elif applied:
-            added = applied.get("added") or []
-            removed = applied.get("removed") or []
-            kept = applied.get("kept") or 0
-            covered = applied.get("covered") or []
-            lines.append("записано рёбер: %d (%s)" % (
-                len(added), ", ".join(f"{a} → {b}" for a, b in added)))
-            lines.append("снято: %d (%s)" % (
-                len(removed), ", ".join(f"{a} → {b}" for a, b in removed)))
-            lines.append("без изменений: %d" % kept)
-            lines.append("уже есть смысловые: %d" % len(covered))
+            lines.extend(_edges_applied_lines(applied))
 
     print("\n".join(lines))
     return 1 if cycles else 0
@@ -1708,23 +1713,9 @@ def cmd_rescope(args) -> int:
     for tid, why in invalid.items():
         lines.append(f"негодный ответ: {tid} — {why}")
 
-    for tid, info in tasks_out.items():
-        depends_on = info.get("depends_on") or []
-        if depends_on:
-            reason = info.get("reason") or ""
-            lines.append(f"{tid} ждёт {', '.join(depends_on)} — {reason}")
-
-    for item in res.get("dropped") or []:
-        why = item.get("why")
-        if "depends_on" in item:
-            lines.append(f"отброшено: {item.get('id')} → {item.get('depends_on')} ({why})")
-        else:
-            lines.append(f"отброшено: {item.get('id')} ({why})")
-
-    for cycle in cycles:
-        lines.append("цикл: " + " → ".join([*cycle, cycle[0]]))
-    if cycles and res.get("cycles_from") == "db":
-        lines.append("цикл уже в базе: разорви listik dep rm <id> <блокер>")
+    lines.extend(_wait_lines(tasks_out))
+    lines.extend(_dropped_lines(res.get("dropped")))
+    lines.extend(_cycle_lines(cycles, res.get("cycles_from")))
 
     drift_info = res.get("drift") or {}
     lines.append("качество ТЗ: расхождений у %d из %d задач (%d файлов вне области, "
@@ -1742,16 +1733,7 @@ def cmd_rescope(args) -> int:
             if cycles or edges_applied is None:
                 lines.append("рёбра не записаны: цикл")
             else:
-                added = edges_applied.get("added") or []
-                removed = edges_applied.get("removed") or []
-                kept = edges_applied.get("kept") or 0
-                covered = edges_applied.get("covered") or []
-                lines.append("записано рёбер: %d (%s)" % (
-                    len(added), ", ".join(f"{a} → {b}" for a, b in added)))
-                lines.append("снято: %d (%s)" % (
-                    len(removed), ", ".join(f"{a} → {b}" for a, b in removed)))
-                lines.append("без изменений: %d" % kept)
-                lines.append("уже есть смысловые: %d" % len(covered))
+                lines.extend(_edges_applied_lines(edges_applied))
 
     print("\n".join(lines))
     return 1 if cycles else 0

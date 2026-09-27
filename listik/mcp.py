@@ -23,6 +23,7 @@ from __future__ import annotations
 
 import json
 import os
+import sqlite3
 import sys
 import threading
 import time
@@ -784,6 +785,13 @@ def handle(request: dict, conn=None, owner=FROM_ENV, fence=FROM_ENV) -> dict | N
         try:
             payload = call_tool(name, args, conn, owner, fence)
         except Exception as exc:  # noqa: BLE001
+            # Соединение живёт дольше вызова (stdio — процесс, HTTP — поток): частичная
+            # запись упавшего инструмента ушла бы в базу со следующим (listik-mqr6).
+            if conn is not None:
+                try:
+                    conn.rollback()
+                except sqlite3.Error:
+                    pass  # откат не удался — ответ всё равно про исходную ошибку
             return {"jsonrpc": "2.0", "id": rid,
                     "result": {"content": [{"type": "text",
                                             "text": errors_mod.mcp_error_text(exc)}],

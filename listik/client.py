@@ -9,6 +9,7 @@ from __future__ import annotations
 import json
 import os
 from pathlib import Path
+import sqlite3
 import urllib.error
 import urllib.parse
 import urllib.request
@@ -194,10 +195,24 @@ def local_call(op: str, *, fence: fence_mod.Token | dict | None = None, **kwargs
         from . import swarm_llm
         return swarm_llm.judge_merge(kwargs["payload"])
 
+    conn = db_mod.init()
+    try:
+        return _local_op(conn, op, fence, kwargs)
+    except Exception:
+        # Незакоммиченная запись упавшей операции держала бы блокировку записи (listik-mqr6).
+        # ponytail: только откат, без close() — тесты подменяют db_mod.init и читают соединение после вызова
+        try:
+            conn.rollback()
+        except sqlite3.Error:
+            pass  # откат не удался (соединение закрыто, файл подменён) — наружу исходная ошибка
+        raise
+
+
+def _local_op(conn, op: str, fence: fence_mod.Token | dict | None, kwargs: dict):
+    """Разбор `op` для `local_call` на уже открытом соединении: ограждение и вызов store."""
     from . import search as search_mod
     from . import store
 
-    conn = db_mod.init()
     id_key = FENCED_LOCAL_OPS.get(op)
     if id_key is not None:
         token = fence_mod.from_mapping(fence) if not isinstance(fence, fence_mod.Token) else fence

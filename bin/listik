@@ -2503,13 +2503,6 @@ def cmd_dep(args) -> int:
                 else:
                     linked.append(out)
                     continue
-                # ponytail: client.local_call не откатывает соединение, если store упал
-                # после записи (цикл: add_dep уже записал актора), а sqlite3.Connection
-                # держится циклом ссылок со своим кэшем запросов — блокировка записи
-                # живёт до сборки мусора, и следующий кандидат падал бы «database is
-                # locked». Место починки — rollback/close в local_call.
-                import gc
-                gc.collect()
         if getattr(args, "json", False):
             if args.action == "link":
                 emit(args, {"candidates": items, "linked": linked, "made": len(linked),

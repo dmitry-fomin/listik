@@ -121,6 +121,22 @@ def close_thread_conn() -> None:
     _refresh_wal()
 
 
+def _rollback_thread_conn() -> None:
+    """Откатить незакоммиченную запись упавшего запроса (listik-mqr6).
+
+    Соединение потока живёт, пока живёт keep-alive: без отката частичная запись
+    держала бы блокировку записи и ушла бы в базу со следующим успешным запросом.
+    Соединения у потока нет — откатывать нечего, новое ради отката не открываем.
+    """
+    conn = getattr(_conn_local, "conn", None)
+    if conn is None:
+        return
+    try:
+        conn.rollback()
+    except sqlite3.Error:
+        pass  # соединение закрыто или файл подменён — ответ всё равно про исходную ошибку
+
+
 # ------------------------------------------------------- подмена файла базы
 #
 # 13.09.2026 базу и WAL заменили (или удалили) под работающим сервером: соединения
@@ -1560,6 +1576,7 @@ class Handler(BaseHTTPRequestHandler):
                                       owner=self._owner(),
                                       fence=fence_mod.from_headers(self.headers))
             except Exception as exc:  # noqa: BLE001
+                _rollback_thread_conn()
                 status, message, code, hint = error_response(exc)
                 return self._error(status, message, code, hint)
             return self._json(status, {"ok": True, "data": data})
@@ -1580,6 +1597,7 @@ class Handler(BaseHTTPRequestHandler):
                                   owner=self._owner(),
                                   fence=fence_mod.from_headers(self.headers))
         except Exception as exc:  # noqa: BLE001
+            _rollback_thread_conn()
             status, message, code, hint = error_response(exc)
             return self._error(status, message, code, hint)
         return self._json(status, {"ok": True, "data": data})
@@ -1608,6 +1626,7 @@ class Handler(BaseHTTPRequestHandler):
                                   owner=self._owner(),
                                   fence=fence_mod.from_headers(self.headers))
         except Exception as exc:  # noqa: BLE001
+            _rollback_thread_conn()
             status, message, code, hint = error_response(exc)
             return self._error(status, message, code, hint)
         return self._json(status, {"ok": True, "data": data})

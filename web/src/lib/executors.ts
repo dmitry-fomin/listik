@@ -21,6 +21,19 @@ export interface StageExecutor {
   label: string
   /** полная (title ячейки роли / title записи маршрута) */
   title: string
+  /**
+   * Уточнение к `title` (effort ячейки роли) — `label`, если его нет словом в
+   * `title`; иначе и у роя — `null` (listik-erjx).
+   */
+  detail: string | null
+}
+
+/** `label`, если его нет целым словом в `title` (без учёта регистра), иначе `null`. */
+function executorDetail(label: string, title: string): string | null {
+  if (!label) return null
+  const needle = label.toLowerCase()
+  const words = title.toLowerCase().split(/[\s·—\-:,]+/)
+  return words.includes(needle) ? null : label
 }
 
 /**
@@ -41,9 +54,10 @@ export function stageExecutor(
   if (!cell) return null
   if (isSwarmCell(cell)) {
     const name = harnessTitle(cell.harness)
-    return { kind: 'swarm', harness: cell.harness, label: name, title: name }
+    return { kind: 'swarm', harness: cell.harness, label: name, title: name, detail: null }
   }
-  return { kind: 'role', provider: cell.provider, label: cell.label, title: cell.title || cell.label }
+  const title = cell.title || cell.label
+  return { kind: 'role', provider: cell.provider, label: cell.label, title, detail: executorDetail(cell.label, title) }
 }
 
 /** Харнессы держателя, которыми вендор ячейки роли исполняет этап. */

@@ -1293,6 +1293,7 @@ async function loadTree(): Promise<void> {
                 <ProviderIcon v-if="executorRow.provider" :provider="executorRow.provider" />
                 <HarnessIcon v-else-if="executorRow.harness" :harness="executorRow.harness" />
                 {{ executorRow.title }}
+                <span v-if="executorRow.detail" class="listik-drawer__executor-detail">{{ executorRow.detail }}</span>
               </dd>
             </template>
             <dt>держит</dt>

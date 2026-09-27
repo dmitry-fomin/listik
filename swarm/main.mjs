@@ -337,13 +337,13 @@ async function runAllLoop(listik, config, log, states, holdProject, signalExitOf
   }
 }
 
-export async function main(argv) {
+export async function main(argv, {out = process.stdout, signals = process} = {}) {
   let config;
   try {
     config = parseConfig(argv);
   } catch (err) {
     if (err instanceof HelpRequested) {
-      process.stdout.write(err.message);
+      out.write(err.message);
       return 0;
     }
     if (err instanceof ConfigError) {
@@ -353,11 +353,11 @@ export async function main(argv) {
     throw err;
   }
 
-  const log = openLog(config.logDir, config.project || "all");
-  process.stdout.on("error", (err) => {
+  const log = openLog(config.logDir, config.project || "all", out);
+  out.on("error", (err) => {
     if (err.code !== "EPIPE") throw err;
   });
-  process.stdout.write(`${log.path}\n`);
+  out.write(`${log.path}\n`);
   log.line(configLine(config));
 
   let releaseLock = () => {};
@@ -420,12 +420,12 @@ export async function main(argv) {
     log.line(`остановлен сигналом ${name}`);
     signalExit = code;
   };
-  process.once("SIGINT", onSignal("SIGINT", 130));
-  process.once("SIGTERM", onSignal("SIGTERM", 143));
+  signals.once("SIGINT", onSignal("SIGINT", 130));
+  signals.once("SIGTERM", onSignal("SIGTERM", 143));
   const onHangup = () => {
     log.line("SIGHUP — терминал закрыт, рой продолжает");
   };
-  process.on("SIGHUP", onHangup);
+  signals.on("SIGHUP", onHangup);
 
   const runState = {startedAt: new Date(), launches: 0};
 
@@ -534,7 +534,7 @@ export async function main(argv) {
     if (signalExit != null) return signalExit;
   }
   } finally {
-    process.removeListener("SIGHUP", onHangup);
+    signals.removeListener("SIGHUP", onHangup);
     releaseAll();
   }
 }

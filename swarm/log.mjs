@@ -29,7 +29,7 @@ export function needsOwnerLabel(n) {
   return Object.hasOwn(NEEDS_OWNER_LABELS, n.reason) ? NEEDS_OWNER_LABELS[n.reason] : n.reason;
 }
 
-export function open(dir, project) {
+export function open(dir, project, out = process.stdout) {
   fs.mkdirSync(dir, {recursive: true});
   const file = `swarm-${project}-${stampFile(new Date())}.log`;
   const logPath = path.join(dir, file);
@@ -43,7 +43,7 @@ export function open(dir, project) {
   // в файл с меткой времени, и то же — в stdout (без интерактива, читается из nohup).
   function action(text) {
     line(text);
-    process.stdout.write(text + "\n");
+    out.write(text + "\n");
   }
 
   function summaryLine(report) {
@@ -98,7 +98,7 @@ export function open(dir, project) {
       `стоп ${report.halt ?? "—"} · ` +
       `бюджет ${report.budget && report.budget.exhausted ? "исчерпан" : "есть"}`;
     fs.writeSync(fd, `[${stampLine(now)}] ${text}\n`);
-    process.stdout.write(text + "\n");
+    out.write(text + "\n");
     return text;
   }
 

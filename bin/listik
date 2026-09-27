@@ -340,13 +340,16 @@ def task_line(t: dict, *, width: int = 96) -> str:
     return f"{head}\n     {title}"
 
 
-def print_tasks(tasks: list[dict]) -> None:
+def print_tasks(tasks: list[dict], total: int | None = None) -> None:
     if not tasks:
         print("  пусто")
         return
     for t in tasks:
         print(task_line(t))
-    print(f"\nвсего: {len(tasks)}")
+    if total is not None and total > len(tasks):
+        print(f"\nпоказано {len(tasks)} из {total}")
+    else:
+        print(f"\nвсего: {len(tasks) if total is None else total}")
 
 
 def _soft_link_label(x: dict) -> str:
@@ -887,7 +890,7 @@ def cmd_list(args) -> int:
                query={k: (str(v).lower() if isinstance(v, bool) else v)
                       for k, v in kwargs.items() if v is not None},
                local_kwargs=kwargs)
-    emit(args, res, "") if getattr(args, "json", False) else print_tasks(res["tasks"])
+    emit(args, res, "") if getattr(args, "json", False) else print_tasks(res["tasks"], total=res.get("total"))
     return 0
 
 

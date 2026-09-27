@@ -1080,7 +1080,7 @@ def handle(method: str, path: str, query: dict, body: dict, authed: bool = False
             project=q1("project"), status=q1("status"), stage=q1("stage"),
             orchestrator=q1("orchestrator"), holder=q1("holder"),
             needs_owner=as_bool(q1("needs_owner", False)),
-            issue_type=q1("type"), label=q1("label"), text=q1("text"),
+            issue_type=q1("type") or q1("issue_type"), label=q1("label"), text=q1("text"),
             include_closed=as_bool(q1("include_closed", False)),
             include_archived=as_bool(q1("include_archived", False)),
             limit=as_int(q1("limit"), 200) or 200, offset=as_int(q1("offset"), 0) or 0,

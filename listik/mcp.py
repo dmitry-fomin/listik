@@ -657,13 +657,12 @@ def call_tool(name: str, args: dict, conn=None, owner=FROM_ENV, fence=FROM_ENV) 
         return store.set_needs_owner(conn, args["id"], value=bool(args.get("value", True)),
                                      text=args.get("text"), actor=actor)
     if name == "listik_done":
-        return store.update_task(conn, args["id"], actor=args.get("actor"), status="done",
-                                 stage="done", result=args.get("result", ""),
-                                 close_reason=args.get("reason") or args.get("result", ""),
-                                 note=args.get("note"))
+        return store.close_task(conn, args["id"], actor=args.get("actor"),
+                                note=args.get("note"), result=args.get("result"),
+                                reason=args.get("reason"), as_owner=owner)
     if name == "listik_release":
-        return store.update_task(conn, args["id"], actor=args.get("actor"), holder="",
-                                 note=args.get("note") or "освободил")
+        return store.release_task(conn, args["id"], actor=args.get("actor"),
+                                  note=args.get("note"), as_owner=owner)
     if name == "listik_inbox":
         res = store.board(conn, group_by="status", include_closed=False)
         items = res.get("needs_you") or []

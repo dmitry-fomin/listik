@@ -931,6 +931,28 @@ def update_task(conn: sqlite3.Connection, task_id: str, *, actor: str | None = N
     return get_task(conn, task_id)
 
 
+def close_task(conn: sqlite3.Connection, task_id: str, *, actor: str | None = None,
+               harness: str | None = None, note: str | None = None,
+               result: str | None = None, reason: str | None = None,
+               as_owner: str | None = None) -> dict:
+    """Закрыть задачу (`/done`, `listik_done`, `listik done`, `stage` в `done`).
+
+    Держателя снимает сам `update_task` (событие `release`); владелец проверяется
+    им же по правилу PATCH — чужому отказ до любой записи, даже на no-op.
+    """
+    return update_task(conn, task_id, actor=actor, harness=harness, note=note,
+                       as_owner=as_owner, status="done", stage="done", result=result,
+                       close_reason=reason or result or None)
+
+
+def release_task(conn: sqlite3.Connection, task_id: str, *, actor: str | None = None,
+                 harness: str | None = None, note: str | None = None,
+                 as_owner: str | None = None) -> dict:
+    """Снять держателя (`/release`, `listik_release`, `listik release`)."""
+    return update_task(conn, task_id, actor=actor, harness=harness,
+                       note=note or "освободил", as_owner=as_owner, holder="")
+
+
 def set_needs_owner(conn: sqlite3.Connection, task_id: str, *, value: bool,
                     text: str | None = None, actor: str | None = None,
                     harness: str | None = None) -> dict:
@@ -1312,9 +1334,9 @@ def next_stage(conn: sqlite3.Connection, task_id: str, *, holder: str | None = N
     if nxt == "done":
         # Этап done — это закрытие, как `listik done`: статус, closed_at и снятый
         # держатель; иначе карточка висела «в работе» на этапе done (listik-rku8).
-        return update_task(conn, task_id, actor=actor, harness=harness,
-                           note=note or f"этап -> done (закрыта из {cur or '—'})",
-                           stage="done", status="done", holder="")
+        # Владелец — как у `/done`: чужую задачу этапом не закрыть (listik-jaid).
+        return close_task(conn, task_id, actor=actor, harness=harness, as_owner=as_owner,
+                          note=note or f"этап -> done (закрыта из {cur or '—'})")
     transition = config_mod.transition_kind(row["project"], cur, nxt, conn=conn)
     # Handoff intentionally releases the previous writer so the next harness
     # must claim the stage.  Sticky transitions keep/optionally refresh holder.

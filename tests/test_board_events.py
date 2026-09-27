@@ -30,6 +30,7 @@ from tests.helpers import TempDbTestCase
 MUTATING_CALLS = frozenset({
     "create_task", "update_task", "claim", "heartbeat", "next_stage", "add_comment",
     "set_needs_owner", "add_dep", "remove_dep", "put_document", "remember",
+    "close_task", "release_task",
 })
 
 #: Пишущие инструменты MCP, которым событие доске не нужно: память на доске не видна.

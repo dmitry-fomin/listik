@@ -1321,14 +1321,14 @@ def handle(method: str, path: str, query: dict, body: dict, authed: bool = False
                                                 actor=body.get("actor") or owner,
                                                 harness=body.get("harness"))
                 elif action == "release":
-                    out = store.update_task(conn, tid, actor=body.get("actor"),
-                                            holder="", note=body.get("note") or "освободил")
+                    out = store.release_task(conn, tid, actor=body.get("actor"),
+                                             note=body.get("note"), harness=body.get("harness"),
+                                             as_owner=owner)
                 elif action == "done":
-                    out = store.update_task(conn, tid, actor=body.get("actor"),
-                                            status="done", stage="done",
-                                            result=body.get("result", ""),
-                                            close_reason=body.get("reason") or body.get("result"),
-                                            note=body.get("note"))
+                    out = store.close_task(conn, tid, actor=body.get("actor"),
+                                           note=body.get("note"), harness=body.get("harness"),
+                                           result=body.get("result"), reason=body.get("reason"),
+                                           as_owner=owner)
                 elif action == "portions/sync":
                     out = store.sync_portions(conn, tid, actor=body.get("actor") or owner,
                                               harness=body.get("harness"))

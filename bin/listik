@@ -197,7 +197,7 @@ def project_default(args) -> str | None:
 #: Операции `call()`, которым нужна идентичность: у остальных владелец ничего не
 #: решает, и `as_owner` им не передаётся (см. client.OWNER_LOCAL_OPS).
 OWNER_OPS = frozenset({"list", "board", "ready", "create", "claim", "heartbeat",
-                       "stage", "update"})
+                       "stage", "update", "done", "release"})
 
 
 #: Операции `call()`, которые пишут в базу, — только им терять событие доски
@@ -208,6 +208,7 @@ WRITE_OPS = frozenset({
     "needs-owner", "dep_add", "dep_remove", "project_add", "project_archive",
     "project_remove", "project_routing", "waves_apply", "revoke", "launch",
     "swarm_plan", "swarm_rescope", "portions_sync", "portions_adopt", "restart",
+    "done", "release",
 })
 
 #: `--local` при живом сервере обходит push доски так же молча, как фолбэк без
@@ -1168,10 +1169,9 @@ def cmd_needs_owner(args) -> int:
 
 def cmd_release(args) -> int:
     actor = actor_default(args)
-    body = {"actor": actor, "note": args.note}
-    task = call("update", args, f"/api/tasks/{args.task_id}/release", method="POST", body=body,
-                local_kwargs={"task_id": args.task_id, "holder": "", "actor": actor,
-                              "note": args.note or "освободил"})
+    body = {"actor": actor, "note": args.note, "harness": args.harness}
+    task = call("release", args, f"/api/tasks/{args.task_id}/release", method="POST", body=body,
+                local_kwargs={"task_id": args.task_id, **body})
     emit(args, task, f"освобождена: {task['id']}")
     return 0
 
@@ -1180,10 +1180,8 @@ def cmd_done(args) -> int:
     actor = actor_default(args)
     body = {"result": args.result, "reason": args.reason, "actor": actor,
             "note": args.note, "harness": args.harness}
-    task = call("update", args, f"/api/tasks/{args.task_id}/done", method="POST", body=body,
-                local_kwargs={"task_id": args.task_id, "status": "done", "stage": "done",
-                              "result": args.result or "", "actor": actor,
-                              "close_reason": args.reason or args.result})
+    task = call("done", args, f"/api/tasks/{args.task_id}/done", method="POST", body=body,
+                local_kwargs={"task_id": args.task_id, **body})
     emit(args, task, f"закрыта {task['id']}\n  результат: {args.result or '—'}")
     return 0
 
@@ -1795,10 +1793,8 @@ class _SwarmCards:
 
     def release(self, task_id: str, note: str) -> dict:
         body = {"actor": self.ACTOR, "note": note}
-        return self._guard(call, "update", self._args, f"/api/tasks/{task_id}/release",
-                           method="POST", body=body,
-                           local_kwargs={"task_id": task_id, "holder": "", "actor": self.ACTOR,
-                                         "note": note})
+        return self._guard(call, "release", self._args, f"/api/tasks/{task_id}/release",
+                           method="POST", body=body, local_kwargs={"task_id": task_id, **body})
 
     def set_labels(self, task_id: str, labels: list[str]) -> dict:
         body = {"labels": labels, "actor": self.ACTOR}

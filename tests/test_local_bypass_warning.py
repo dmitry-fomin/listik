@@ -120,6 +120,8 @@ class WriteCommandWarnsTests(LocalBypassWarningCase):
             ("heartbeat", task, "--holder", "dsh", "--note", "работаю"),
             ("set", task, "priority=P1"),
             ("stage", task),
+            ("release", task),
+            ("done", task),
         )
         for args in cases:
             with self.subTest(cmd=args[0]):

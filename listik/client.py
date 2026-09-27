@@ -65,7 +65,7 @@ def owner(explicit: str | None = None) -> str:
 #: Операции `local_call`, которые понимают `as_owner`. Остальным ключ не передаём:
 #: у их функций store такого аргумента нет и вызов упал бы TypeError.
 OWNER_LOCAL_OPS = frozenset({"list", "board", "ready", "create", "claim", "heartbeat",
-                             "stage", "update"})
+                             "stage", "update", "done", "release"})
 
 #: Тот же `owner()` под именем без конфликта: в `request()`/`health()` параметр
 #: называется `owner` и перекрывает имя функции.
@@ -179,7 +179,7 @@ FENCED_LOCAL_OPS = {
     "heartbeat": "task_id", "stage": "task_id", "comment": "task_id",
     "dep_add": "issue_id", "dep_remove": "issue_id", "portions_sync": "task_id",
     "portions_adopt": "task_id",
-    "restart": "task_id",
+    "restart": "task_id", "done": "task_id", "release": "task_id",
 }
 
 
@@ -246,6 +246,12 @@ def local_call(op: str, *, fence: fence_mod.Token | dict | None = None, **kwargs
     if op == "update":
         task_id = kwargs.pop("task_id")
         return store.update_task(conn, task_id, **kwargs)
+    if op == "done":
+        task_id = kwargs.pop("task_id")
+        return store.close_task(conn, task_id, **kwargs)
+    if op == "release":
+        task_id = kwargs.pop("task_id")
+        return store.release_task(conn, task_id, **kwargs)
     if op == "needs-owner":
         task_id = kwargs.pop("task_id")
         return store.set_needs_owner(conn, task_id, **kwargs)

@@ -49,13 +49,8 @@ export function open(dir, project, out = process.stdout) {
   function summaryLine(report) {
     const now = new Date();
     const hhmmss = now.toISOString().slice(11, 19);
-    const silenceById = new Map((report.silence || []).map(s => [s.id, s.minutes]));
     const runningDesc = (report.running || [])
-      .map(r => {
-        const base = `${r.id} ${r.route ?? "-"} ${r.worktree ?? "-"} :${r.port ?? "-"}`;
-        const mins = silenceById.get(r.id);
-        return mins != null ? `${base} молчит ${mins} мин` : base;
-      }).join(", ");
+      .map(r => `${r.id} ${r.route ?? "-"} ${r.worktree ?? "-"} :${r.port ?? "-"}`).join(", ");
     const launchedDesc = (report.launch || []).join(", ");
     const needsOwnerDesc = (report.needsOwner || [])
       .map(n => `${n.id} ${needsOwnerLabel(n)}`).join(", ");

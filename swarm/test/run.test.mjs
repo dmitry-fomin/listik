@@ -375,7 +375,7 @@ test("тик: launch отказ conflict с текстом «уже запуще
 
 // --- порция c: надзор — тик revoke/launch/needs-owner ---
 
-const supConfig = {...baseConfig, staleMinutes: 20, timeoutMinutes: 0, maxRestarts: 1};
+const supConfig = {...baseConfig, timeoutMinutes: 0, maxRestarts: 1};
 const minsAgo = (m) => new Date(Date.now() - m * 60000).toISOString();
 
 function runningTask(id, over = {}) {

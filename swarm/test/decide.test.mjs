@@ -241,7 +241,7 @@ test("порты: метка port:abc игнорируется", () => {
 // --- порция c: надзор за бегущими и упавшими ---
 
 const supConfig = {
-  ...config, actor: "agent:listik-swarm", staleMinutes: 20, timeoutMinutes: 0, maxRestarts: 1,
+  ...config, actor: "agent:listik-swarm", timeoutMinutes: 0, maxRestarts: 1,
   portBase: 5170, portCount: 100,
 };
 const minsAgo = (now, m) => new Date(now.getTime() - m * 60000).toISOString();

@@ -122,6 +122,16 @@ await sleep(800)
 // инлайновых форм в списке не осталось — поля есть только внутри окна
 report.inlineInputs = await evaluate(`document.querySelectorAll('.listik-projects input').length`)
 
+const boardState = `(() => {
+  const slug = ${JSON.stringify(slug)};
+  const inSection = (needle) => {
+    const section = [...document.querySelectorAll('.listik-projects__list')]
+      .find((el) => (el.querySelector('.listik-section__title')?.textContent || '').includes(needle));
+    if (!section) return false;
+    return [...section.querySelectorAll('.ui-entity-card__title')].some((el) => el.textContent.trim() === slug);
+  };
+  return JSON.stringify({ onBoard: inSection('На доске'), inHidden: inSection('Скрыты') });
+})()`
 // скрыть добавленный проект тумблером
 await evaluate(`(() => {
   const card = [...document.querySelectorAll('.ui-entity-card')]
@@ -129,10 +139,8 @@ await evaluate(`(() => {
   card?.querySelector('[role=switch]')?.click();
 })()`)
 await sleep(3000)
-report.afterHide = await evaluate(`JSON.stringify({
-  visible: [...document.querySelectorAll('.ui-entity-card__title')].map((el) => el.textContent.trim()).includes(${JSON.stringify(slug)}),
-  hiddenSection: [...document.querySelectorAll('.listik-section__title')].map((el) => el.textContent.trim()),
-})`)
+// проект ищется по секциям: у скрытого проекта заголовок тоже есть на странице (listik-q9yq)
+report.afterHide = await evaluate(boardState)
 
 // вернуть скрытый проект на доску тумблером в разделе «Скрыты с доски»
 report.hiddenSwitch = await evaluate(`(() => {
@@ -147,16 +155,6 @@ await evaluate(`(() => {
   card?.querySelector('[role=switch]')?.click();
 })()`)
 await sleep(3000)
-const boardState = `(() => {
-  const slug = ${JSON.stringify(slug)};
-  const inSection = (needle) => {
-    const section = [...document.querySelectorAll('.listik-projects__list')]
-      .find((el) => (el.querySelector('.listik-section__title')?.textContent || '').includes(needle));
-    if (!section) return false;
-    return [...section.querySelectorAll('.ui-entity-card__title')].some((el) => el.textContent.trim() === slug);
-  };
-  return JSON.stringify({ onBoard: inSection('На доске'), inHidden: inSection('Скрыты') });
-})()`
 report.afterRestore = await evaluate(boardState)
 
 // состояние возврата должно пережить перезагрузку: возврат — не только вид, но и база

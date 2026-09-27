@@ -237,7 +237,7 @@ class ValidationTests(Case):
         with mock.patch.object(server, "get_conn", return_value=self.conn):
             with self.assertRaises(errors.BadArgument) as ctx:
                 server.handle("GET", "/api/tasks", {"health": "bogus"}, {}, authed=True)
-        status, _, code = server.error_response(ctx.exception)
+        status, _, code, _hint = server.error_response(ctx.exception)
         self.assertEqual((status, code), (400, "bad_argument"))
 
 

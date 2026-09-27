@@ -152,14 +152,16 @@ export function acquireDispatcherLock(logDir) {
 
 const OPEN_FOR_SWARM = new Set(["open", "in_progress", "blocked", "review"]);
 
-// Проекты, которым нужен тик: открытая карточка, вопрос человеку или закрытая,
-// чьё дерево ещё не снято. Старые done без дерева рой не трогает.
+// Проекты, которым нужен тик: открытая карточка (с вопросом человеку или без) или
+// done, чьё дерево ещё не снято. Вопрос сам по себе проект не держит: закрытая
+// карточка с вопросом без дерева, cancelled и старые done без дерева рой не трогает.
 // Считаются только карточки роя: проекту с одними человеческими тик не нужен.
 export function projectsDue(tasks, routes) {
   const slugs = new Set();
   for (const t of swarmTasks((tasks || []).filter(Boolean), routes)) {
     if (!t || typeof t.project !== "string" || !t.project) continue;
-    if (OPEN_FOR_SWARM.has(t.status) || t.needs_owner || (t.status === "done" && t.worktree)) {
+    const tree = typeof t.worktree === "string" && t.worktree.trim() !== "";
+    if (OPEN_FOR_SWARM.has(t.status) || (t.status === "done" && tree)) {
       slugs.add(t.project);
     }
   }

@@ -184,21 +184,6 @@ function fmtMin(n) {
   return String(Math.round(n * 10) / 10);
 }
 
-function lastActivityMs(task, taskEvents, actorNorm, launchedAtMs) {
-  const times = [];
-  if (launchedAtMs != null) times.push(launchedAtMs);
-  const holderAtMs = tsMs(task.holder_at);
-  if (holderAtMs != null) times.push(holderAtMs);
-  for (const ev of taskEvents || []) {
-    const evTs = tsMs(ev.ts);
-    if (evTs == null) continue;
-    if (launchedAtMs != null && !(evTs > launchedAtMs)) continue;
-    if (normActor(ev.actor) === actorNorm) continue;
-    times.push(evTs);
-  }
-  return times.length ? Math.max(...times) : null;
-}
-
 function restartCount(taskEvents, actorNorm) {
   let n = 0;
   for (const ev of taskEvents || []) {
@@ -215,11 +200,8 @@ function noPortText(id) {
     `listik release ${id}; listik needs-owner ${id} --clear "…"`;
 }
 
-function giveUpLimitText(id, reason, staleMinutes, timeoutMinutes, silenceMin, runMin, restarts, launchLog) {
-  const cause = reason === "timeout"
-    ? `бежит дольше ${fmtMin(runMin)} мин`
-    : `нет активности ${fmtMin(silenceMin)} мин`;
-  return `рой: задача зависла (${cause}) после ${restarts} перезапусков — процесс снят, больше ` +
+function giveUpLimitText(id, runMin, restarts, launchLog) {
+  return `рой: задача зависла (бежит дольше ${fmtMin(runMin)} мин) после ${restarts} перезапусков — процесс снят, больше ` +
     `не перезапускаю. Разбери лог ${launchLog ?? ""}; чтобы рой взял её снова: ` +
     `listik release ${id} (держатель остаётся после отзыва), затем listik needs-owner ${id} ` +
     `--clear "…" — тогда она вернётся в партию.`;
@@ -233,7 +215,6 @@ function crashedText(id, exitCode, generation, launchLog) {
 }
 
 const RESTART_CAUSE_RU = {
-  stale: "зависла",
   timeout: "таймаут",
   answered: "ответ",
   defaulted: "ответ",
@@ -260,23 +241,20 @@ function budgetFields(config) {
 
 function superviseRunning({running, open, openById, events, tasks, config, now}) {
   const actorNorm = normActor(config.actor);
-  const staleMinutes = config.staleMinutes ?? 20;
   const timeoutMinutes = config.timeoutMinutes ?? 0;
   const maxRestarts = config.maxRestarts ?? 1;
 
   const restart = [];
   const giveUp = [];
   const stopOnly = [];
-  const stale = [];
   const skipped = [];
-  const silence = [];
 
   for (const t of running) {
     const taskEvents = (events || {})[t.id] || [];
     const launchedAtMs = tsMs(t.launched_at);
 
     if (!openById.has(t.id)) {
-      // Закрытая бегущая (п.4): только timeout, никогда stale, никогда restart/giveUp.
+      // Закрытая бегущая (п.4): только timeout, никогда restart/giveUp.
       if (launchedAtMs == null) continue;
       const runMin = minutesSince(now, launchedAtMs);
       if (timeoutMinutes > 0 && runMin > timeoutMinutes) {
@@ -291,21 +269,11 @@ function superviseRunning({running, open, openById, events, tasks, config, now})
       continue;
     }
 
-    const lastAct = lastActivityMs(t, taskEvents, actorNorm, launchedAtMs);
-    const silenceMin = minutesSince(now, lastAct);
     const runMin = minutesSince(now, launchedAtMs);
-    // Режим роя: харнесс heartbeat не пишет, жизнь этапа — сам процесс.
-    // Молчание карточки его не снимает. Заданный timeoutMinutes остаётся.
-    const swarmStage = t.launch_driver === "swarm";
-    if (!swarmStage && silenceMin > staleMinutes * 3 / 4) {
-      silence.push({id: t.id, minutes: Math.round(silenceMin * 10) / 10});
-    }
-    const isStale = !swarmStage && silenceMin > staleMinutes;
-    const isTimeout = timeoutMinutes > 0 && runMin > timeoutMinutes;
-    if (isStale) stale.push(t.id);
-    if (!isStale && !isTimeout) continue;
+    // Бегущие здесь — только режима роя (swarmTasks + снимок launch_driver
+    // лаунчера): жизнь этапа — сам процесс, снимает его только timeoutMinutes.
+    if (!(timeoutMinutes > 0 && runMin > timeoutMinutes)) continue;
 
-    const reason = isTimeout ? "timeout" : "stale";
     const restarts = restartCount(taskEvents, actorNorm);
     const port = portOf(t) ?? allocatePort(tasks, t, config.portBase, config.portCount);
     if (port == null) {
@@ -313,15 +281,14 @@ function superviseRunning({running, open, openById, events, tasks, config, now})
       continue;
     }
     if (restarts < maxRestarts) {
-      restart.push({id: t.id, reason, restarts, generation: t.generation, port});
+      restart.push({id: t.id, reason: "timeout", restarts, generation: t.generation, port});
     } else {
-      const text = giveUpLimitText(t.id, reason, staleMinutes, timeoutMinutes, silenceMin, runMin,
-        restarts, t.launch_log);
-      giveUp.push({id: t.id, reason, restarts, text});
+      const text = giveUpLimitText(t.id, runMin, restarts, t.launch_log);
+      giveUp.push({id: t.id, reason: "timeout", restarts, text});
     }
   }
 
-  return {restart, giveUp, stopOnly, stale, skipped, silence};
+  return {restart, giveUp, stopOnly, skipped};
 }
 
 function superviseCrashed({open, events, tasks, config}) {
@@ -336,6 +303,8 @@ function superviseCrashed({open, events, tasks, config}) {
     // stage_launch по `.out` (следующий этап, вопрос, возврат на s3-impl).
     // Запись ещё не разобрана (launched_by ещё на месте) — пропускаем тик,
     // «завершённый, но не done» здесь не значит «сбой режима скила».
+    // До ветки ниже доходит не-рой, у которого после завершённого запуска
+    // скила сменили маршрут на маршрут роя (launch_driver обнулён).
     if (t.launch_driver === "swarm") continue;
     const taskEvents = (events || {})[t.id] || [];
     // метки секундные: ответ в ту же секунду, что финиш запуска, считается ответом после него
@@ -562,8 +531,6 @@ export function decide({plan, tasks, routes, config, now, events, gate = null}) 
     giveUp: giveUp.map(g => g.id),
     crashed: crashed.map(c => c.id),
     stopOnly: stopOnly.map(s => s.id),
-    stale: runningSup.stale,
-    silence: runningSup.silence,
     budget: budgetFields(config),
   };
 

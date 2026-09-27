@@ -324,7 +324,7 @@ function runningTask(id, over = {}) {
   return task(id, {launched_by: "agent:listik-swarm", launch_finished_at: null, ...over});
 }
 
-test("надзор-тик: зависла с меткой port:5170 — show, revoke, launch (без set)", async () => {
+test("надзор-тик: просрочена с меткой port:5170 — show, revoke, launch (без set)", async () => {
   const tasks = [runningTask("a", {
     launched_at: minsAgo(30), holder_at: minsAgo(30), labels: ["port:5170"],
   })];
@@ -342,19 +342,19 @@ test("надзор-тик: зависла с меткой port:5170 — show, re
   const {calls} = setupFake(responses);
   const listik = new Listik({bin: FAKE_BIN, actor: "agent:listik-swarm", cliTimeout: 5});
   const log = makeLog();
-  const result = await tick(listik, supConfig, log);
+  const result = await tick(listik, {...supConfig, timeoutMinutes: 20}, log);
 
   assert.deepEqual(calls().map(c => c.sub), ["status", "waves", "list", "routes", "show", "projects", "revoke", "launch"]);
   const revokeCall = calls().find(c => c.sub === "revoke");
   const noteIdx = revokeCall.argv.indexOf("--note");
-  assert.equal(revokeCall.argv[noteIdx + 1], "рой: перезапуск — stale");
+  assert.equal(revokeCall.argv[noteIdx + 1], "рой: перезапуск — timeout");
   const launchCall = calls().find(c => c.sub === "launch");
   const envIdx = launchCall.argv.indexOf("--env");
   assert.equal(launchCall.argv[envIdx + 1], "LISTIK_DEV_PORT=5170");
   assert.deepEqual(result.restarted, ["a"]);
 });
 
-test("надзор-тик: зависла без метки — show, revoke, show, set, launch", async () => {
+test("надзор-тик: просрочена без метки — show, revoke, show, set, launch", async () => {
   const tasks = [runningTask("a", {launched_at: minsAgo(30), holder_at: minsAgo(30)})];
   const plan = {project: "proj", waves: [[]], cycles: [], unroutable: [], unscoped: [], blocked: {}};
   const responses = {
@@ -374,7 +374,7 @@ test("надзор-тик: зависла без метки — show, revoke, sh
   const {calls} = setupFake(responses);
   const listik = new Listik({bin: FAKE_BIN, actor: "agent:listik-swarm", cliTimeout: 5});
   const log = makeLog();
-  await tick(listik, supConfig, log);
+  await tick(listik, {...supConfig, timeoutMinutes: 20}, log);
 
   assert.deepEqual(calls().map(c => c.sub),
     ["status", "waves", "list", "routes", "show", "projects", "revoke", "show", "set", "launch"]);
@@ -401,7 +401,7 @@ test("надзор-тик: revoke отвечает пустым launch_finished_
   const {calls} = setupFake(responses);
   const listik = new Listik({bin: FAKE_BIN, actor: "agent:listik-swarm", cliTimeout: 5});
   const log = makeLog();
-  await tick(listik, supConfig, log);
+  await tick(listik, {...supConfig, timeoutMinutes: 20}, log);
 
   assert.deepEqual(calls().map(c => c.sub), ["status", "waves", "list", "routes", "show", "projects", "revoke", "needs-owner"]);
   const noCall = calls().find(c => c.sub === "launch");
@@ -430,12 +430,12 @@ test("надзор-тик: revoke-перезапуск уже есть — revok
   const {calls} = setupFake(responses);
   const listik = new Listik({bin: FAKE_BIN, actor: "agent:listik-swarm", cliTimeout: 5});
   const log = makeLog();
-  await tick(listik, supConfig, log);
+  await tick(listik, {...supConfig, timeoutMinutes: 20}, log);
 
   assert.deepEqual(calls().map(c => c.sub), ["status", "waves", "list", "routes", "show", "projects", "revoke", "needs-owner"]);
   const revokeCall = calls().find(c => c.sub === "revoke");
   const noteIdx = revokeCall.argv.indexOf("--note");
-  assert.equal(revokeCall.argv[noteIdx + 1], "рой: stale, предел перезапусков");
+  assert.equal(revokeCall.argv[noteIdx + 1], "рой: timeout, предел перезапусков");
   assert.ok(log.stdout.some(l => l.startsWith("needs-owner a:")));
 });
 
@@ -712,7 +712,7 @@ test("надзор-тик: упавшая, answer роя позже заверш
   assert.ok(revokeIdx >= 0 && launchIdx > revokeIdx);
 });
 
-test("надзор-тик: --dry-run на зависла — ни revoke, ни launch (событие всё же читаем show)", async () => {
+test("надзор-тик: --dry-run на просроченной — ни revoke, ни launch (событие всё же читаем show)", async () => {
   const tasks = [runningTask("a", {
     launched_at: minsAgo(30), holder_at: minsAgo(30), labels: ["port:5170"], generation: 4,
   })];
@@ -728,7 +728,7 @@ test("надзор-тик: --dry-run на зависла — ни revoke, ни l
   const {calls} = setupFake(responses);
   const listik = new Listik({bin: FAKE_BIN, actor: "agent:listik-swarm", cliTimeout: 5});
   const log = makeLog();
-  const result = await tick(listik, {...supConfig, dryRun: true}, log);
+  const result = await tick(listik, {...supConfig, dryRun: true, timeoutMinutes: 20}, log);
 
   const subs = calls().map(c => c.sub);
   assert.ok(!subs.includes("revoke"));
@@ -737,7 +737,7 @@ test("надзор-тик: --dry-run на зависла — ни revoke, ни l
 
   // регрессия: в dry-run `restart[]` должен нести {id, reason, generation}, как в рабочей
   // ветке — иначе сводка (log.mjs) печатает "undefined undefined → поколение undefined".
-  assert.deepEqual(result.report.restart, [{id: "a", reason: "stale", generation: 4}]);
+  assert.deepEqual(result.report.restart, [{id: "a", reason: "timeout", generation: 4}]);
 
   // Прогоняем report через настоящий log.mjs (не через фейковый makeLog, который лишь
   // JSON.stringify'ит отчёт) — так регрессия форматирования действительно ловится.
@@ -745,7 +745,7 @@ test("надзор-тик: --dry-run на зависла — ни revoke, ни l
   const realLog = openLog(logDir, "proj");
   const summaryText = realLog.summary(result.report);
   realLog.close();
-  assert.match(summaryText, /перезапущено 1 \(a stale → поколение 4\)/);
+  assert.match(summaryText, /перезапущено 1 \(a timeout → поколение 4\)/);
   assert.ok(!summaryText.includes("undefined undefined"));
 });
 
@@ -1575,7 +1575,7 @@ test("бюджет-тик: maxLaunches 2, launches 1, три кандидата 
   assert.equal(calls().filter(c => c.sub === "launch").length, 1);
 });
 
-test("бюджет-тик: exhausted + зависшая с портом — revoke бюджет, needs-owner, launch нет", async () => {
+test("бюджет-тик: exhausted + просроченная с портом — revoke бюджет, needs-owner, launch нет", async () => {
   const tasks = [runningTask("a", {
     launched_at: minsAgo(30), holder_at: minsAgo(30), labels: ["port:5170"],
     launch_log: "/logs/a.log",
@@ -1596,14 +1596,14 @@ test("бюджет-тик: exhausted + зависшая с портом — revo
   const listik = new Listik({bin: FAKE_BIN, actor: "agent:listik-swarm", cliTimeout: 5});
   const log = makeLog();
   const runState = {startedAt: new Date(), launches: 1};
-  await tick(listik, {...supConfig, maxLaunches: 1}, log, runState);
+  await tick(listik, {...supConfig, maxLaunches: 1, timeoutMinutes: 20}, log, runState);
   const recorded = calls();
   assert.ok(!recorded.some(c => c.sub === "launch"));
   const revokeCall = recorded.find(c => c.sub === "revoke");
   assert.ok(revokeCall);
   assert.equal(
     revokeCall.argv[revokeCall.argv.indexOf("--note") + 1],
-    "рой: бюджет прогона исчерпан — процесс снят (зависла)",
+    "рой: бюджет прогона исчерпан — процесс снят (таймаут)",
   );
   const noCall = recorded.find(c => c.sub === "needs-owner");
   assert.ok(noCall);

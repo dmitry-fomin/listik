@@ -331,7 +331,8 @@ class CliDepTests(TempDbTestCase):
     def test_show_and_tree_survive_dangling_soft_link(self) -> None:
         x = store.create_task(self.conn, title="X", project="demo")["id"]
         store.add_dep(self.conn, self.b, x, "relates-to", created_by="me")
-        store.delete_task(self.conn, x)
+        self.conn.execute("DELETE FROM tasks WHERE id = ?", (x,))
+        self.conn.commit()
         p = self._run("show", self.b)
         self.assertEqual(p.returncode, 0, p.stderr)
         self.assertNotIn("Traceback", p.stdout)
@@ -344,7 +345,8 @@ class CliDepTests(TempDbTestCase):
         """graph() used b[k]/w[k] for a dict without holder_title on a missing blocker."""
         x = store.create_task(self.conn, title="X", project="demo")["id"]
         store.add_dep(self.conn, self.b, x, "blocks", created_by="me", confirm=True)
-        store.delete_task(self.conn, x)
+        self.conn.execute("DELETE FROM tasks WHERE id = ?", (x,))
+        self.conn.commit()
         p = self._run("dep", "tree", self.b)
         self.assertEqual(p.returncode, 0, p.stderr)
         self.assertNotIn("Traceback", p.stdout)

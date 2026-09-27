@@ -8,7 +8,7 @@ import tempfile
 import unittest
 
 from listik import db as db_mod
-from listik import documents, store
+from listik import documents, errors, store
 from tests.helpers import TempDbTestCase
 
 
@@ -180,6 +180,124 @@ class DeleteTaskTests(TempDbTestCase):
             self.conn.execute("SELECT id FROM tasks WHERE id=?", (task_id,)).fetchone()
         )
 
+    # --- listik-zs89: удаление уносит deps/events/chunks, ждущие освобождаются ---
+
+    def _task_with_rows(self, title: str) -> str:
+        """Задача со всеми производными строками: документ с фрагментами,
+        комментарий, вектор, событие `created`."""
+        spec_path = self.fixture_copy("long-spec.md")
+        task_id = store.create_task(self.conn, title=title, project=None,
+                                    spec_path=str(spec_path))["id"]
+        store.add_comment(self.conn, task_id, f"комментарий к {title}", author="me")
+        self.conn.execute(
+            "INSERT INTO embeddings(doc_id, doc_kind, task_id, project, model, dim, vec, text_hash, embedded_at) "
+            "VALUES(?,?,?,?,?,?,?,?,?)",
+            (task_id, "task", task_id, None, "test-model", 1, b"\x00", "hash", store.now_iso()),
+        )
+        self.conn.commit()
+        return task_id
+
+    def _row_counts(self, task_id: str) -> dict[str, int]:
+        by_task = ("task_fts", "comment_fts", "document_chunk_fts", "embeddings",
+                   "documents", "comments", "events")
+        counts = {t: self.conn.execute(f"SELECT count(*) FROM {t} WHERE task_id=?",
+                                       (task_id,)).fetchone()[0] for t in by_task}
+        counts["document_chunks"] = self.conn.execute(
+            "SELECT count(*) FROM document_chunks WHERE document_id IN "
+            "(SELECT id FROM documents WHERE task_id=?)", (task_id,)).fetchone()[0]
+        counts["deps"] = self.conn.execute(
+            "SELECT count(*) FROM deps WHERE issue_id=? OR depends_on=?",
+            (task_id, task_id)).fetchone()[0]
+        counts["tasks"] = self.conn.execute(
+            "SELECT count(*) FROM tasks WHERE id=?", (task_id,)).fetchone()[0]
+        return counts
+
+    def _blocked_by(self, conn, task_id: str) -> list[str]:
+        raw = conn.execute("SELECT blocked_by FROM tasks WHERE id=?", (task_id,)).fetchone()[0]
+        return json.loads(raw or "[]")
+
+    def test_delete_frees_waiting_task(self) -> None:
+        a = store.create_task(self.conn, title="A", project=None)["id"]
+        b = store.create_task(self.conn, title="B", project=None)["id"]
+        store.add_dep(self.conn, b, a, "blocks", created_by="me", confirm=True)
+        self.assertEqual(self._blocked_by(self.conn, b), [a])
+
+        store.delete_task(self.conn, a)
+
+        other = db_mod.connect(self.db_path)
+        try:
+            self.assertEqual(self._blocked_by(other, b), [])
+        finally:
+            other.close()
+        store.claim(self.conn, b, holder="tester")
+
+    def test_delete_leaves_no_rows_of_task(self) -> None:
+        a = self._task_with_rows("A")
+        waiter = store.create_task(self.conn, title="waiter", project=None)["id"]
+        other = store.create_task(self.conn, title="other", project=None)["id"]
+        store.add_dep(self.conn, waiter, a, "blocks", created_by="me", confirm=True)
+        store.add_dep(self.conn, a, other, "blocks", created_by="me", confirm=True)
+        before = self._row_counts(a)
+        self.assertEqual(len(before), 10)
+        for table, count in before.items():
+            self.assertGreater(count, 0, f"{table}: у A нет строк до удаления")
+
+        store.delete_task(self.conn, a)
+
+        for table, count in self._row_counts(a).items():
+            self.assertEqual(count, 0, f"{table}: строки A остались после удаления")
+
+    def test_delete_removes_chunks_without_foreign_keys(self) -> None:
+        spec_path = self.fixture_copy("long-spec.md")
+        task_id = store.create_task(self.conn, title="no fk", project=None,
+                                    spec_path=str(spec_path))["id"]
+        self.conn.execute("PRAGMA foreign_keys = OFF")
+        chunks_sql = ("SELECT count(*) FROM document_chunks WHERE document_id IN "
+                      "(SELECT id FROM documents WHERE task_id=?)")
+        doc_ids = [r[0] for r in self.conn.execute(
+            "SELECT id FROM documents WHERE task_id=?", (task_id,))]
+        self.assertGreater(self.conn.execute(chunks_sql, (task_id,)).fetchone()[0], 0)
+
+        store.delete_task(self.conn, task_id)
+
+        left = self.conn.execute(
+            "SELECT count(*) FROM document_chunks WHERE document_id IN (%s)"
+            % ",".join("?" * len(doc_ids)), doc_ids).fetchone()[0]
+        self.assertEqual(left, 0)
+
+    def test_delete_keeps_rows_of_other_tasks(self) -> None:
+        a = store.create_task(self.conn, title="A", project=None)["id"]
+        c = store.create_task(self.conn, title="C", project=None)["id"]
+        b = self._task_with_rows("B")
+        store.add_dep(self.conn, b, a, "blocks", created_by="me", confirm=True)
+        store.add_dep(self.conn, b, c, "blocks", created_by="me", confirm=True)
+        tables = ("task_fts", "comment_fts", "document_chunk_fts", "embeddings",
+                  "documents", "document_chunks", "comments", "events")
+        before = {t: n for t, n in self._row_counts(b).items() if t in tables}
+        self.assertEqual(len(before), 8)
+        for table, count in before.items():
+            self.assertGreater(count, 0, f"{table}: у B нет строк до удаления")
+
+        store.delete_task(self.conn, a)
+
+        after = self._row_counts(b)
+        for table in tables:
+            if table == "events":
+                self.assertGreaterEqual(after[table], before[table])
+            else:
+                self.assertEqual(after[table], before[table], f"{table}: строки B изменились")
+        pair = "SELECT count(*) FROM deps WHERE issue_id=? AND depends_on=?"
+        self.assertEqual(self.conn.execute(pair, (b, c)).fetchone()[0], 1)
+        self.assertEqual(self.conn.execute(pair, (b, a)).fetchone()[0], 0)
+        with self.assertRaises(ValueError) as ctx:
+            store.claim(self.conn, b, holder="tester")
+        self.assertIn("заблокирована", str(ctx.exception))
+        self.assertEqual(self._blocked_by(self.conn, b), [c])
+
+    def test_delete_missing_task_raises_not_found(self) -> None:
+        with self.assertRaises(errors.NotFound):
+            store.delete_task(self.conn, "nope-0000")
+
 
 class RemoveProjectTests(TempDbTestCase):
     def test_force_remove_cleans_document_and_embedding_rows(self) -> None:
@@ -206,6 +324,30 @@ class RemoveProjectTests(TempDbTestCase):
                 (task_id,),
             ).fetchone()[0]
             self.assertEqual(count, 0, f"{table} should have no rows left for {task_id}")
+
+    def test_force_remove_cleans_chunks_deps_events_without_foreign_keys(self) -> None:
+        store.upsert_project(self.conn, "todelete")
+        spec_path = self.fixture_copy("long-spec.md")
+        task_id = store.create_task(self.conn, title="in doomed project", project="todelete",
+                                    spec_path=str(spec_path))["id"]
+        outside = store.create_task(self.conn, title="outside", project=None)["id"]
+        store.add_dep(self.conn, outside, task_id, "blocks", created_by="me", confirm=True)
+        doc_ids = [r[0] for r in self.conn.execute(
+            "SELECT id FROM documents WHERE task_id=?", (task_id,))]
+        chunks_sql = ("SELECT count(*) FROM document_chunks WHERE document_id IN (%s)"
+                      % ",".join("?" * len(doc_ids)))
+        deps_sql = "SELECT count(*) FROM deps WHERE issue_id=? OR depends_on=?"
+        events_sql = "SELECT count(*) FROM events WHERE task_id=?"
+        self.conn.execute("PRAGMA foreign_keys = OFF")
+        self.assertGreater(self.conn.execute(chunks_sql, doc_ids).fetchone()[0], 0)
+        self.assertGreater(self.conn.execute(deps_sql, (task_id, task_id)).fetchone()[0], 0)
+        self.assertGreater(self.conn.execute(events_sql, (task_id,)).fetchone()[0], 0)
+
+        store.remove_project(self.conn, "todelete", force=True)
+
+        self.assertEqual(self.conn.execute(chunks_sql, doc_ids).fetchone()[0], 0)
+        self.assertEqual(self.conn.execute(deps_sql, (task_id, task_id)).fetchone()[0], 0)
+        self.assertEqual(self.conn.execute(events_sql, (task_id,)).fetchone()[0], 0)
 
 
 class MigrationTests(unittest.TestCase):

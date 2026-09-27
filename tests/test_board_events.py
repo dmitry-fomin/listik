@@ -145,6 +145,15 @@ class TaskWriteEvents(BoardEventsCase):
                           action="updated", task_id=task_id)
         self.expect_event("DELETE", f"/api/tasks/{task_id}", action="deleted", task_id=task_id)
 
+    def test_delete_missing_task_is_404_without_event(self) -> None:
+        path = "/api/tasks/nope-0000"
+        self.drain()
+        with self.assertRaises(server.ApiError) as ctx:
+            self.call("DELETE", path)
+        self.assertEqual(ctx.exception.status, 404)
+        self.assertEqual(ctx.exception.code, "not_found")
+        self._assert_no_event("DELETE", path)
+
     def test_deps_add_and_remove_publish(self) -> None:
         first = store.create_task(self.conn, title="A")["id"]
         second = store.create_task(self.conn, title="B")["id"]

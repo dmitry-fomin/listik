@@ -347,6 +347,7 @@ class UnaffectedRequestsTests(FencingHttpCase):
             ("PATCH", "/api/tasks/nope", {"title": "x"}),
             ("PUT", "/api/tasks/nope/documents/spec", {"content": "x"}),
             ("POST", "/api/tasks/nope/comment", {"text": "x"}),
+            ("DELETE", "/api/tasks/nope", {}),
         ):
             with self.subTest(method=method, path=path):
                 status_tok, payload_tok = self.api(

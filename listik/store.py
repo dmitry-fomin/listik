@@ -621,19 +621,40 @@ def autostart_reset(conn: sqlite3.Connection, task_id: str, row) -> tuple[list[s
     return sets, notes
 
 
-def delete_task(conn: sqlite3.Connection, task_id: str) -> None:
-    """Remove a task and every derived row: FTS entries, embeddings and indexed
-    documents/chunks. ``documents``/``document_chunks`` also cascade via the foreign
-    key on ``task_id``, but they are cleared explicitly here so removal does not
+def _purge_task(conn: sqlite3.Connection, task_id: str) -> None:
+    """Delete every row of one task: FTS entries, embeddings, documents with their
+    chunks, comments, ``deps`` rows on either side, events and the task itself.
+    No commit, no existence check, no recalculation of other tasks — the caller
+    decides that. Chunks go explicitly, before ``documents``, so removal does not
     depend on ``PRAGMA foreign_keys`` staying on for a given connection."""
-    conn.execute("DELETE FROM task_fts WHERE task_id=?", (task_id,))
-    conn.execute("DELETE FROM comment_fts WHERE task_id=?", (task_id,))
-    conn.execute("DELETE FROM document_chunk_fts WHERE task_id=?", (task_id,))
-    conn.execute("DELETE FROM embeddings WHERE task_id=?", (task_id,))
-    conn.execute("DELETE FROM documents WHERE task_id=?", (task_id,))
-    conn.execute("DELETE FROM comments WHERE task_id=?", (task_id,))
+    conn.execute("DELETE FROM task_fts WHERE task_id = ?", (task_id,))
+    conn.execute("DELETE FROM comment_fts WHERE task_id = ?", (task_id,))
+    conn.execute("DELETE FROM document_chunk_fts WHERE task_id = ?", (task_id,))
+    conn.execute("DELETE FROM embeddings WHERE task_id = ?", (task_id,))
+    conn.execute("DELETE FROM document_chunks WHERE document_id IN "
+                 "(SELECT id FROM documents WHERE task_id = ?)", (task_id,))
+    conn.execute("DELETE FROM documents WHERE task_id = ?", (task_id,))
+    conn.execute("DELETE FROM comments WHERE task_id = ?", (task_id,))
+    conn.execute("DELETE FROM deps WHERE issue_id = ? OR depends_on = ?", (task_id, task_id))
+    conn.execute("DELETE FROM events WHERE task_id = ?", (task_id,))
+    conn.execute("DELETE FROM tasks WHERE id = ?", (task_id,))
+
+
+def delete_task(conn: sqlite3.Connection, task_id: str) -> None:
+    """Remove a task with every row of it (``_purge_task``: FTS entries, embeddings,
+    documents and chunks, comments, ``deps`` rows on either side, events).
+
+    A missing id raises ``errors.NotFound`` before anything is written. Tasks that
+    waited for this one get ``blocked_by`` recalculated in the same transaction, so
+    the deleted task no longer blocks them; epic parents are re-synced after commit.
+    """
+    store_helpers.task_row(conn, task_id)
     parents = _parent_ids(conn, task_id)
-    conn.execute("DELETE FROM tasks WHERE id=?", (task_id,))
+    waiters = [r[0] for r in conn.execute(
+        "SELECT DISTINCT issue_id FROM deps WHERE depends_on = ?", (task_id,))]
+    _purge_task(conn, task_id)
+    for waiter in waiters:
+        deps_mod.refresh_task(conn, waiter)
     conn.commit()
     for parent_id in parents:
         sync_epic(conn, parent_id)
@@ -2499,16 +2520,7 @@ def remove_project(conn: sqlite3.Connection, slug: str, *, force: bool = False) 
     if n_tasks:
         ids = [r[0] for r in conn.execute("SELECT id FROM tasks WHERE project = ?", (slug,))]
         for task_id in ids:
-            conn.execute("DELETE FROM task_fts WHERE task_id = ?", (task_id,))
-            conn.execute("DELETE FROM comment_fts WHERE task_id = ?", (task_id,))
-            conn.execute("DELETE FROM document_chunk_fts WHERE task_id = ?", (task_id,))
-            conn.execute("DELETE FROM embeddings WHERE task_id = ?", (task_id,))
-            conn.execute("DELETE FROM documents WHERE task_id = ?", (task_id,))
-            conn.execute("DELETE FROM comments WHERE task_id = ?", (task_id,))
-            conn.execute("DELETE FROM deps WHERE issue_id = ? OR depends_on = ?",
-                         (task_id, task_id))
-            conn.execute("DELETE FROM events WHERE task_id = ?", (task_id,))
-            conn.execute("DELETE FROM tasks WHERE id = ?", (task_id,))
+            _purge_task(conn, task_id)
             removed_tasks += 1
     conn.execute("DELETE FROM projects WHERE slug = ?", (slug,))
     conn.commit()

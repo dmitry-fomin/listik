@@ -1244,7 +1244,10 @@ def handle(method: str, path: str, query: dict, body: dict, authed: bool = False
                 fence_mod.guard(conn, tid, fence,
                                 op=fence_mod.OPS["http_route"]["DELETE /api/tasks/{id}"], args=body,
                                 actor=body.get("actor") or owner, harness=body.get("harness"))
-                store.delete_task(conn, tid)
+                try:
+                    store.delete_task(conn, tid)
+                except errors_mod.NotFound as exc:
+                    raise api_error(404, exc) from exc
                 publish("task", {"id": tid, "action": "deleted"})
                 return 200, {"deleted": tid}
         if len(parts) == 5 and parts[3] == "portions" and parts[4] in ("sync", "adopt") \

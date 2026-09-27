@@ -18,12 +18,13 @@
  *
  * Автосохранение шапки: текстовые поля — debounce 600мс после последней
  * клавиши плюс сброс по потере фокуса, переключатель и иконка — сразу.
- * `flush()` шлёт диф (`draft` против `baseline`, обновлённого только по
- * ключам последнего успешного PATCH) одним `PATCH /api/routes/<key>`; запрос
- * уже в пути — новый вызов лишь помечает `queued`, а не летит вторым сразу,
- * и после ответа первого перезапускает себя тем же `flush()`, забирая самое
- * свежее значение полей. `store.patchRoute` после успеха перечитывает список,
- * поэтому тумблер сам гасит строку в списке слева.
+ * Машина живёт в `useAutosave` (`@/lib/autosave`): диф `draft` против
+ * `baseline` (обновлённого только по ключам последнего успешного PATCH) уходит
+ * одним `PATCH /api/routes/<key>`, повторные вызовы во время запроса
+ * досылаются следом со свежими полями. При размонтировании (выбор другого
+ * маршрута) недосохранённая правка уходит, при ошибке PATCH тумблер
+ * «В меню» откатывается к принятому сервером положению. `store.patchRoute`
+ * после успеха перечитывает список, поэтому тумблер сам гасит строку слева.
  *
  * `:key="route.key"` у вызывающей стороны — часть контракта: при выборе
  * другого маршрута компонент должен пересоздаться заново (свежие `draft`/
@@ -39,7 +40,6 @@ import {
   UiInput,
   UiSaveStatus,
   UiSwitch,
-  type SaveStatusValue,
 } from '@zoloto585/facet'
 import IconToggle, { type IconToggleOption } from './IconToggle.vue'
 import ListikIcon from './ListikIcon.vue'
@@ -48,6 +48,7 @@ import RouteIcon from './marks/RouteIcon.vue'
 import RouteSubstitutions from './RouteSubstitutions.vue'
 import store from '@/store/listik'
 import type { PipelineRouteDef, RouteIconKey, RoutePatch } from '@/api/types'
+import { useAutosave } from '@/lib/autosave'
 import { PIPELINE_STAGES, ROUTE_ICONS } from '@/lib/dictionaries'
 import {
   isProviderCell,
@@ -79,13 +80,8 @@ const baseline = reactive<HeaderDraft>(draftOf(props.route))
 /** Текущий ввод автора — то, что показывают поля. */
 const draft = reactive<HeaderDraft>(draftOf(props.route))
 
-const status = ref<SaveStatusValue>('idle')
 const saveError = ref<string | null>(null)
 const errorFields = ref<string[]>([])
-
-let inFlight = false
-let queued = false
-let debounceTimer: ReturnType<typeof setTimeout> | null = null
 
 function diffPatch(): RoutePatch {
   const patch: RoutePatch = {}
@@ -96,63 +92,38 @@ function diffPatch(): RoutePatch {
   return patch
 }
 
-async function flush(): Promise<void> {
-  const patch = diffPatch()
-  const keys = Object.keys(patch) as (keyof RoutePatch)[]
-  if (keys.length === 0) return
-  if (inFlight) {
-    queued = true
-    return
-  }
-  inFlight = true
-  status.value = 'saving'
-  const result = await store.patchRoute(props.route.key, patch)
-  inFlight = false
-  if (result) {
-    for (const key of keys) (baseline as Record<string, unknown>)[key] = patch[key]
+const { status, schedule } = useAutosave<RoutePatch>({
+  diff: diffPatch,
+  send: async (patch) => (await store.patchRoute(props.route.key, patch)) !== null,
+  onSaved: (patch) => {
+    for (const key of Object.keys(patch) as (keyof RoutePatch)[]) {
+      (baseline as Record<string, unknown>)[key] = patch[key]
+    }
     saveError.value = null
     errorFields.value = []
-    status.value = 'saved'
-  } else {
+  },
+  onFailed: (patch) => {
     saveError.value = store.routesSettingsError.value
-    errorFields.value = keys
-    status.value = 'error'
-  }
-  if (queued) {
-    queued = false
-    await flush()
-  }
-}
-
-function scheduleFlush(immediate: boolean): void {
-  if (debounceTimer) {
-    clearTimeout(debounceTimer)
-    debounceTimer = null
-  }
-  if (immediate) {
-    void flush()
-    return
-  }
-  debounceTimer = setTimeout(() => {
-    debounceTimer = null
-    void flush()
-  }, 600)
-}
+    errorFields.value = Object.keys(patch)
+    if ('visible' in patch) draft.visible = baseline.visible
+  },
+})
 
 function onTitle(value: string): void {
   draft.title = value
-  scheduleFlush(false)
+  schedule(false)
 }
 function onHint(value: string): void {
   draft.hint = value
-  scheduleFlush(false)
+  schedule(false)
 }
 function onBlurText(): void {
-  scheduleFlush(true)
+  schedule(true)
 }
 function onVisible(value: boolean): void {
+  if (value === draft.visible) return
   draft.visible = value
-  scheduleFlush(true)
+  schedule(true)
 }
 
 function errorFor(field: string): string | undefined {
@@ -173,7 +144,7 @@ function glyphFor(value: string): string | null {
 
 function onIcon(value: string): void {
   draft.icon = value === '' ? null : (value as RouteIconKey)
-  scheduleFlush(true)
+  schedule(true)
 }
 
 /* ── состав конвейера: только показ ── */
@@ -336,7 +307,7 @@ function braced(name: string): string {
           </UiCopyButton>
         </template>
       </div>
-      <UiSaveStatus :status="status" @retry="() => scheduleFlush(true)" />
+      <UiSaveStatus :status="status" @retry="() => schedule(true)" />
     </footer>
   </div>
 </template>

@@ -54,6 +54,16 @@
  * обязан там быть; затронутые маршрут и харнесс читаются прямыми GET до и
  * после блока и обязаны совпасть.
  *
+ * listik-ptq9 (`useAutosave` в карточке маршрута) добавляет два сценария
+ * карточки конвейера: правка «Подписи» и сразу выбор другого конвейера —
+ * ровно один PATCH с единственным ключом `hint` на ключ ушедшей карточки и ни
+ * одного на новую (досохранение при размонтировании); отказ PATCH
+ * (`window.__failRoutesPatch` — перехват отвечает 500, не пуская запрос на
+ * сервер) при клике по тумблеру «В меню „Запустить“» — один PATCH с ключом
+ * `visible`, тумблер возвращается в исходное положение, статус «Не сохранено»,
+ * `GET` отдаёт прежний `visible`. `finalize()` снимает флаг отказа первым
+ * действием на странице, до прямых PATCH отката.
+ *
  * Работает с живой страницей (dev или прод) и настоящим API Listik, поэтому
  * трогает базу маршрутов: исходные значения полей возвращаются прямым `PATCH`
  * в `finalize()` и при успехе сценария, и при падении посреди него. Этот откат
@@ -120,6 +130,12 @@ const ROUTES_INTERCEPT = `(() => {
       const routeMatch = reqUrl.match(/\\/api\\/routes\\/([^/?]+)$/);
       if (routeMatch && init && init.method === 'PATCH' && typeof init.body === 'string') {
         window.__routesPatchCalls.push({ key: routeMatch[1], body: JSON.parse(init.body) });
+        if (window.__failRoutesPatch) {
+          return Promise.resolve(new Response(JSON.stringify({ ok: false, error: 'verify: отказ PATCH' }), {
+            status: 500,
+            headers: { 'Content-Type': 'application/json' },
+          }));
+        }
       }
       if (routeMatch && init && init.method === 'DELETE') {
         del = { key: routeMatch[1], status: null, cleared: null };
@@ -260,6 +276,9 @@ const typeCardField = (index, value) => `(async () => {
   }
   return true
 })()`
+
+/** Положение тумблера карточки — `aria-checked` у `button[role=switch]` `UiSwitch`. */
+const switchState = `document.querySelector('.listik-routes-settings__card .ui-switch__track')?.getAttribute('aria-checked') ?? null`
 
 const clickSwitch = `(() => {
   const btn = document.querySelector('.listik-routes-settings__card .ui-switch__track')
@@ -520,6 +539,12 @@ let finalized = false
 async function finalize() {
   if (finalized) return
   finalized = true
+  // Режим отказа PATCH (listik-ptq9) снимается первым: иначе откат ниже сам получит 500.
+  try {
+    await withTimeout(evaluate('window.__failRoutesPatch = false'), 5000)
+  } catch {
+    /* страница уже недоступна — откатывать через неё всё равно нечем */
+  }
   // Временные маршрут и задача убираются первыми — пока страница и сокет живы.
   if (tmpRouteKey || tmpTaskId) {
     try {
@@ -729,6 +754,49 @@ try {
   iconRestoreNeeded = !report.iconRestored
   const levelAfterRestore = await evaluate(levelState)
   report.levelRestoredChecked = levelAfterRestore?.checked === report.levelInitialChecked
+
+  // 4) правка «Подписи» и сразу выбор другого конвейера — досохранение при
+  //    размонтировании (listik-ptq9): один PATCH на ушедшую карточку, на новую — ни одного
+  const hintLeave = `${cardOriginal.hint} · уход ${Date.now()}`
+  hintRestoreNeeded = true
+  report.leaveHintTyped = await evaluate(typeCardField(1, hintLeave))
+  const callsBeforeLeave = (await evaluate(patchCallsCount)) ?? 0
+  report.leaveOtherClicked = await evaluate(clickRow('Конвейеры', 0))
+  await sleep(1000)
+  const leaveCallsAll = (await evaluate(patchCallsSince(callsBeforeLeave))) ?? []
+  const leaveCalls = leaveCallsAll.filter((call) => call.key === cardKey && 'hint' in call.body)
+  report.leaveCallsCount = leaveCalls.length
+  report.leaveCallSingleKey = leaveCalls.length > 0 && Object.keys(leaveCalls[0].body).length === 1
+  report.leaveCallValueMatches = leaveCalls[0]?.body.hint === hintLeave
+  report.leaveOtherCallsCount = leaveCallsAll.filter((call) => call.key === pipelineBefore[0].key).length
+
+  report.leaveBackClicked = await evaluate(clickRow('Конвейеры', 1))
+  await sleep(700)
+  const callsBeforeLeaveRestore = (await evaluate(patchCallsCount)) ?? 0
+  await evaluate(typeCardField(1, cardOriginal.hint))
+  await sleep(1000)
+  report.leaveRestored = ((await evaluate(patchCallsSince(callsBeforeLeaveRestore))) ?? []).some(
+    (call) => call.key === cardKey && call.body.hint === cardOriginal.hint && Object.keys(call.body).length === 1,
+  )
+  hintRestoreNeeded = !report.leaveRestored
+
+  // 5) ошибка PATCH откатывает тумблер «В меню „Запустить“» (listik-ptq9)
+  const switchBefore = await evaluate(switchState)
+  report.failSwitchInitial = switchBefore
+  await evaluate('window.__failRoutesPatch = true')
+  const callsBeforeFail = (await evaluate(patchCallsCount)) ?? 0
+  report.failSwitchClicked = await evaluate(clickSwitch)
+  await sleep(500)
+  const failCalls = ((await evaluate(patchCallsSince(callsBeforeFail))) ?? []).filter(
+    (call) => call.key === cardKey,
+  )
+  report.failCallsCount = failCalls.length
+  report.failCallVisibleOnly =
+    failCalls.length === 1 && Object.keys(failCalls[0].body).length === 1 && 'visible' in failCalls[0].body
+  report.failSwitchReverted = switchBefore !== null && (await evaluate(switchState)) === switchBefore
+  report.failStatusShown = (await evaluate(saveStatusText)).includes('Не сохранено')
+  report.failServerUnchanged = (await evaluate(fetchRoute(cardKey)))?.visible === cardOriginal.visible
+  await evaluate('window.__failRoutesPatch = false')
 
   /*
    * ── удаление маршрута роя (порция `a`) ──
@@ -1171,6 +1239,21 @@ try {
     report.iconCallSingleKey === true &&
     report.iconRestored === true &&
     report.levelRestoredChecked === true &&
+    /* listik-ptq9: досохранение при уходе и откат тумблера при ошибке */
+    report.leaveHintTyped === true &&
+    report.leaveOtherClicked === true &&
+    report.leaveCallsCount === 1 &&
+    report.leaveCallSingleKey === true &&
+    report.leaveCallValueMatches === true &&
+    report.leaveOtherCallsCount === 0 &&
+    report.leaveBackClicked === true &&
+    report.leaveRestored === true &&
+    report.failSwitchClicked === true &&
+    report.failCallsCount === 1 &&
+    report.failCallVisibleOnly === true &&
+    report.failSwitchReverted === true &&
+    report.failStatusShown === true &&
+    report.failServerUnchanged === true &&
     /* удаление маршрута роя (порция `a`) */
     report.tempSetup?.routeStatus === 201 &&
     report.tempSetup?.taskStatus === 201 &&

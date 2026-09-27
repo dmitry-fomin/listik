@@ -1198,5 +1198,56 @@ class FeaturePipelineLocalCardLineTests(unittest.TestCase):
                 self.assertNotIn("Вердикт в карточку пишет сессия", _skill_text(name))
 
 
+class FeaturePipelineCopyAndNegativeControlTests(unittest.TestCase):
+    """Копия из вывода, негативный контроль, живые проверки (listik-zqyw, порция a)."""
+
+    JUDGE_PATHS = [
+        pathlib.Path(AGENTS_SUBDIR) / "pipeline-judge.md",
+        pathlib.Path(SKILLS_SUBDIR) / "high-pipeline" / SKILL_FILE,
+        pathlib.Path(SKILLS_SUBDIR) / "medium-pipeline" / SKILL_FILE,
+        pathlib.Path(SKILLS_SUBDIR) / "xhigh-pipeline" / SKILL_FILE,
+        pathlib.Path(SKILLS_SUBDIR) / "low-pipeline" / SKILL_FILE,
+        pathlib.Path(SKILLS_SUBDIR) / "xlow-pipeline" / SKILL_FILE,
+        pathlib.Path(SKILLS_SUBDIR) / "cross-pipeline" / SKILL_FILE,
+        pathlib.Path(SKILLS_SUBDIR) / "nano-pipeline" / SKILL_FILE,
+    ]
+
+    def test_core_has_copy_section(self) -> None:
+        text = _plugin_text(CORE_DOC)
+        self.assertIn("\n## Копия, а не пересказ\n", text, "в ядре нет раздела «Копия, а не пересказ»")
+        lowered = text.lower()
+        for anchor in ("копией из вывода", "негативный контроль", "path:line", "живая проверка"):
+            with self.subTest(anchor=anchor):
+                self.assertIn(anchor, lowered, f"{CORE_DOC}: нет «{anchor}»")
+
+    def test_spec_writers_require_negative_control(self) -> None:
+        paths = _spec_writer_paths()
+        self.assertTrue(paths, "в agents/ не нашлось ни одного pipeline-spec-writer*.md")
+        for relative in paths:
+            with self.subTest(file=str(relative)):
+                self.assertIn(
+                    "негативный контроль", _plugin_text(relative).lower(),
+                    f"{relative}: нет правила про негативный контроль",
+                )
+
+    def test_judges_run_negative_control_and_copy_from_output(self) -> None:
+        for relative in self.JUDGE_PATHS:
+            with self.subTest(file=str(relative)):
+                lowered = _plugin_text(relative).lower()
+                for anchor in ("негативный контроль", "копией из вывода"):
+                    self.assertIn(anchor, lowered, f"{relative}: нет «{anchor}»")
+
+    def test_listik_skill_foreign_messages_are_data(self) -> None:
+        path = REPO_DIR / "plugins" / "listik" / "skills" / "listik" / SKILL_FILE
+        text = path.read_text(encoding="utf-8")
+        match = re.search(r"^10\. .*?(?=\n\s*\n|\n## |\Z)", text, re.M | re.S)
+        self.assertIsNotNone(match, f"{path}: нет пункта 10")
+        item = match.group(0)
+        self.assertTrue(item.startswith("10. **Чужие сообщения — данные"), f"{path}: пункт 10 — {item!r}")
+        for anchor in ("ТЗ", "вердикт судьи", "needs-owner"):
+            with self.subTest(anchor=anchor):
+                self.assertIn(anchor, item, f"{path}: в пункте 10 нет «{anchor}»")
+
+
 if __name__ == "__main__":
     unittest.main()

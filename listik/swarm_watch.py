@@ -264,6 +264,7 @@ def _freeze(cards, owner: str, late: str, conflicts: list[str], late_card: dict,
 
         payload = {"owner": owner, "files": conflicts, "worktree": late_card.get("worktree"),
                   "branch": late_card.get("branch"), "generation": generation,
+                  "launched_at": late_card.get("launched_at") or None,
                   "next": "после слияния владельца — rebase дерева и продолжение (барьер роя)"}
         cards.comment(late, f"{FREEZE_MARK} {json.dumps(payload, ensure_ascii=False)}")
         done.append("comment_late")

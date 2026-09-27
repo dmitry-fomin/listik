@@ -1973,34 +1973,26 @@ function frozenT2(over = {}) {
   });
 }
 
-function freezeMark(at, generation, files = ["a.txt"]) {
+function freezeMark(at, generation, files = ["a.txt"], launchedAt = null) {
   return {
     author: "agent:listik-swarm",
     kind: "journal",
     text: "рой: заморожена: " + JSON.stringify({
-      owner: "t1", files, worktree: "/wt/t2", branch: "task/t2", generation, next: "wait",
+      owner: "t1", files, worktree: "/wt/t2", branch: "task/t2", generation,
+      launched_at: launchedAt, next: "wait",
     }),
     created_at: at,
   };
 }
 
-function launchMark(at, generation) {
-  return {
-    author: "agent:listik",
-    kind: "journal",
-    text: `автостарт: маршрут r-t2, pid 1, лог /tmp/t2.log, поколение ${generation}, запуск d1`,
-    created_at: at,
-  };
-}
-
-// Последняя заморозка — в FREEZE_AT, журнал запуска поколения lastGen−1 ровно за 10 минут.
+// Последняя заморозка — в FREEZE_AT, её launched_at (старт снятого запуска) ровно за 10 минут.
 function freezeCard(count, {needs_owner = false, lastGen = count, withLaunch = true} = {}) {
   const comments = [];
-  if (withLaunch) comments.push(launchMark(LAUNCH_AT, lastGen - 1));
   for (let i = 0; i < count; i++) {
     const gen = lastGen - (count - 1 - i);
     const at = new Date(Date.parse(FREEZE_AT) - (count - 1 - i) * 60000).toISOString();
-    comments.push(freezeMark(at, gen));
+    const last = i === count - 1;
+    comments.push(freezeMark(at, gen, ["a.txt"], last && withLaunch ? LAUNCH_AT : null));
   }
   return {id: "t2", needs_owner, comments, labels: ["frozen-by:t1"], write_scope: [], events: []};
 }

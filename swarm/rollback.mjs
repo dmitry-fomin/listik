@@ -6,10 +6,6 @@ import {parseMarked, SWARM_AUTHOR} from "./barrier.mjs";
 export const FREEZE_MARK = "рой: заморожена:";
 export const SCOPE_MARK = "рой: вне write_scope:";
 export const LIMIT_PREFIX = "рой: предел откатов";
-export const LAUNCH_AUTHOR = "agent:listik";
-export const LAUNCH_PREFIX = "автостарт: маршрут ";
-
-const GENERATION_RE = /поколение (\d+),/;
 
 function plain(data) {
   return data && typeof data === "object" && !Array.isArray(data) ? data : {};
@@ -19,32 +15,18 @@ function asArray(value) {
   return Array.isArray(value) ? value : [];
 }
 
-// Старт снятого поколения — журнал `agent:listik` с «поколение <generation−1>,».
-// Из нескольких подходящих берём самый ранний не позже заморозки.
-function launchMinutes(comments, generation, at) {
-  if (typeof generation !== "number" || !Number.isInteger(generation)) return null;
-  const want = generation - 1;
-  if (want < 0) return null;
-  const atMs = Date.parse(at);
-  if (!Number.isFinite(atMs)) return null;
-  let best = null;
-  for (const c of comments || []) {
-    if (c.author !== LAUNCH_AUTHOR || c.kind !== "journal") continue;
-    const text = c.text;
-    if (typeof text !== "string" || !text.startsWith(LAUNCH_PREFIX)) continue;
-    const match = GENERATION_RE.exec(text);
-    if (!match || Number(match[1]) !== want) continue;
-    const ms = Date.parse(c.created_at);
-    if (!Number.isFinite(ms) || ms > atMs) continue;
-    if (best == null || ms < best) best = ms;
-  }
-  if (best == null) return null;
-  return Math.max(0, Math.round((atMs - best) / 60000));
+// Минуты отката — от `launched_at` в самой метке (старт снятого запуска) до
+// времени метки; нет `launched_at`, дата не разбирается или старт позже — null.
+function freezeMinutes(launchedAt, at) {
+  if (typeof launchedAt !== "string") return null;
+  const start = Date.parse(launchedAt);
+  const end = Date.parse(at);
+  if (!Number.isFinite(start) || !Number.isFinite(end) || start > end) return null;
+  return Math.max(0, Math.round((end - start) / 60000));
 }
 
 export function freezeHistory(card) {
-  const comments = (card || {}).comments;
-  return parseMarked(comments, FREEZE_MARK).map(rec => {
+  return parseMarked((card || {}).comments, FREEZE_MARK).map(rec => {
     const data = plain(rec.data);
     const generation = data.generation;
     return {
@@ -52,7 +34,7 @@ export function freezeHistory(card) {
       files: asArray(data.files),
       generation,
       at: rec.created_at,
-      minutes: launchMinutes(comments, generation, rec.created_at),
+      minutes: freezeMinutes(data.launched_at, rec.created_at),
     };
   });
 }

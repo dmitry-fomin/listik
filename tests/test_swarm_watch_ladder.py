@@ -293,6 +293,9 @@ class SameFunctionBothRunningTests(LadderCase):
         self.assertIn("worktree", payload)
         self.assertIn("branch", payload)
         self.assertEqual(payload["generation"], after2["generation"])
+        self.assertIsInstance(payload["launched_at"], str)
+        self.assertTrue(payload["launched_at"])
+        self.assertEqual(payload["launched_at"], before2["launched_at"])
 
         om = self.own_marks(t1)
         self.assertEqual(len(om), 1)
@@ -652,7 +655,9 @@ class RevokeErrorTests(LadderCase):
 class ErrorAfterRevokeResumeTests(LadderCase):
     def test_labels_failure_then_resumed_then_idempotent(self) -> None:
         t1, t2 = self._setup_conflict_pair()
-        gen_before = self.card(t2)["generation"]
+        before2 = self.card(t2)
+        gen_before = before2["generation"]
+        self.assertTrue(before2["launched_at"])
 
         failing_port = _FailingLabelsPort(self.conn)
         out1 = self.scan(port=failing_port)
@@ -680,7 +685,10 @@ class ErrorAfterRevokeResumeTests(LadderCase):
         after_resumed = self.card(t2)
         self.assertEqual(after_resumed["generation"], after_fail["generation"])
         self.assertTrue(any(l == f"frozen-by:{t1}" for l in after_resumed["labels"]))
-        self.assertEqual(len(self.freeze_marks(t2)), 1)
+        marks = self.freeze_marks(t2)
+        self.assertEqual(len(marks), 1)
+        payload = json.loads(marks[0]["text"][len(swarm_watch.FREEZE_MARK):].strip())
+        self.assertEqual(payload["launched_at"], before2["launched_at"])
         self.assertEqual(len(self.own_marks(t1)), 1)
         revoke_count_after = len([e for e in after_resumed["events"] if e["kind"] == "revoke"])
         self.assertEqual(revoke_count_after, 1)

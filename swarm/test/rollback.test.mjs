@@ -1,7 +1,7 @@
 import {test} from "node:test";
 import assert from "node:assert/strict";
 import {
-  FREEZE_MARK, SCOPE_MARK, LIMIT_PREFIX, LAUNCH_AUTHOR, LAUNCH_PREFIX,
+  FREEZE_MARK, SCOPE_MARK, LIMIT_PREFIX,
   freezeHistory, scopeDrift, rollbackVerdict, limitText,
 } from "../rollback.mjs";
 
@@ -11,22 +11,14 @@ function at(hms) {
   return `2026-09-21T${hms}Z`;
 }
 
-function freeze(hms, owner, files, generation = 2) {
+function freeze(hms, owner, files, generation = 2, launchedAt) {
   const payload = {owner, generation};
   if (files !== undefined) payload.files = files;
+  if (launchedAt !== undefined) payload.launched_at = launchedAt;
   return {
     author: SWARM,
     kind: "journal",
     text: `${FREEZE_MARK} ${JSON.stringify(payload)}`,
-    created_at: at(hms),
-  };
-}
-
-function launch(hms, generation) {
-  return {
-    author: LAUNCH_AUTHOR,
-    kind: "journal",
-    text: `${LAUNCH_PREFIX}r, pid 1, лог /l, поколение ${generation}, запуск abc`,
     created_at: at(hms),
   };
 }
@@ -38,12 +30,10 @@ function ownersCard(owners) {
   };
 }
 
-test("маркеры совпадают со swarm_watch и журналом запуска", () => {
+test("маркеры совпадают со swarm_watch", () => {
   assert.equal(FREEZE_MARK, "рой: заморожена:");
   assert.equal(SCOPE_MARK, "рой: вне write_scope:");
   assert.equal(LIMIT_PREFIX, "рой: предел откатов");
-  assert.equal(LAUNCH_AUTHOR, "agent:listik");
-  assert.equal(LAUNCH_PREFIX, "автостарт: маршрут ");
 });
 
 test("пустая карточка: нет истории, вердикт нулевой, declared = write_scope", () => {
@@ -65,15 +55,11 @@ test("freezeHistory: 7.5 мин округляются до 8, все пять �
   const card = {
     comments: [
       {
-        author: "agent:listik",
-        kind: "journal",
-        text: "автостарт: маршрут r, pid 1, лог /l, поколение 1, запуск abc",
-        created_at: "2026-09-21T10:00:00Z",
-      },
-      {
         author: SWARM,
         kind: "journal",
-        text: `${FREEZE_MARK} ${JSON.stringify({owner: "t1", files: ["a.txt"], generation: 2})}`,
+        text: `${FREEZE_MARK} ${JSON.stringify({
+          owner: "t1", files: ["a.txt"], generation: 2, launched_at: "2026-09-21T10:00:00Z",
+        })}`,
         created_at: "2026-09-21T10:07:30Z",
       },
     ],
@@ -87,7 +73,7 @@ test("freezeHistory: 7.5 мин округляются до 8, все пять �
   }]);
 });
 
-test("freezeHistory: нет журнала запуска — minutes null, сумма вердикта 0", () => {
+test("freezeHistory: нет launched_at — minutes null, сумма вердикта 0", () => {
   const card = {comments: [freeze("10:07:30", "t1", ["a.txt"], 2)]};
   const history = freezeHistory(card);
   assert.equal(history.length, 1);
@@ -116,8 +102,7 @@ test("rollbackVerdict: порог, сумма только известных м
 
   const mixed = {
     comments: [
-      launch("10:00:00", 1),
-      freeze("10:07:30", "t1", ["a.txt"], 2),
+      freeze("10:07:30", "t1", ["a.txt"], 2, at("10:00:00")),
       freeze("10:20:00", "t2", ["b.txt"], 9),
     ],
   };
@@ -242,4 +227,47 @@ test("limitText: заморозка без файлов", () => {
   const card = {comments: [freeze("10:00:00", "t1", [], 2)]};
   const text = limitText("t9", rollbackVerdict(card, 0), 0);
   assert.ok(text.includes("t1: (файлы не записаны)"));
+});
+
+test("карточка роя: журнал `рой: этап …` не мешает, минуты из launched_at метки", () => {
+  const card = {
+    comments: [
+      {
+        author: "agent:listik",
+        kind: "journal",
+        text: "рой: этап s3-impl, роль impl, держатель claude, pid 1, лог /l, поколение 1, " +
+          "запуск abc — карточку взял Listik",
+        created_at: at("10:00:00"),
+      },
+      freeze("10:12:00", "t1", ["a.txt"], 2, at("10:00:00")),
+    ],
+  };
+  assert.equal(freezeHistory(card)[0].minutes, 12);
+  const verdict = rollbackVerdict(card, 2);
+  assert.equal(verdict.minutes, 12);
+  assert.ok(limitText("t2", verdict, 2).includes("~12 мин"));
+});
+
+test("метка без launched_at: журнал `автостарт: маршрут …` больше не считается", () => {
+  const card = {
+    comments: [
+      {
+        author: "agent:listik",
+        kind: "journal",
+        text: "автостарт: маршрут r, pid 1, лог /l, поколение 1, запуск abc",
+        created_at: at("10:00:00"),
+      },
+      freeze("10:07:30", "t1", ["a.txt"], 2),
+    ],
+  };
+  assert.equal(freezeHistory(card)[0].minutes, null);
+});
+
+test("launched_at позже метки или неразборный — minutes null", () => {
+  const later = {comments: [freeze("10:07:30", "t1", ["a.txt"], 2, at("10:08:00"))]};
+  assert.equal(freezeHistory(later)[0].minutes, null);
+  const broken = {comments: [freeze("10:07:30", "t1", ["a.txt"], 2, "не дата")]};
+  assert.equal(freezeHistory(broken)[0].minutes, null);
+  const notString = {comments: [freeze("10:07:30", "t1", ["a.txt"], 2, 12345)]};
+  assert.equal(freezeHistory(notString)[0].minutes, null);
 });

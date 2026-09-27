@@ -2099,6 +2099,7 @@ listik projects <slug> [--routing '<json>']   # показать/задать м
 listik list --mine --json
 listik list --orchestrator listik   # карточки, которые ведёт Listik (запуск сервером или роем); claude — сессия Claude Code
 listik list --stale [-n N] [--status in_progress|review] [--json]   # брошенные (health=dead) отбираются до -n, --json — только они; другой --status — bad_argument
+listik list [-n N] [--offset K]   # листание: итог — «всего: N» или «показано M из N» по полному числу; -n 0 — страница по умолчанию (200) и через сервер, и с --local; отрицательный --offset — bad_argument
 listik show <id> [--json]          # полная карточка задачи; у шага — порции с их документами
 listik show <id> --fields launch_route,labels   # только эти поля (фильтрует сервер или локальная база); повторяемо или через запятую
 listik context <id> --stage s1-spec|s2-review|s3-impl|s4-judge [--portion "текст"] [--max-chars N] [--format text|json]  # на s3/s4 порция ищется среди дочерних карточек, иначе — раздел ТЗ

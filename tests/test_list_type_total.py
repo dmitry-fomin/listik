@@ -102,10 +102,19 @@ class PrintTasksTotalTests(TempDbTestCase):
         self.assertEqual(self.last_line(self.tasks, total=2), "всего: 2")
 
     def test_empty_with_total(self) -> None:
+        # Пустая страница при известном полном числе (--offset за концом выборки):
+        # «пусто» соврало бы, задачи есть — listik-n1aw.
         out = self.output([], total=3)
-        self.assertIn("пусто", out)
+        self.assertNotIn("пусто", out)
         self.assertNotIn("всего", out)
-        self.assertNotIn("показано", out)
+        self.assertEqual(self.last_line([], total=3), "показано 0 из 3")
+
+    def test_empty_no_total(self) -> None:
+        for total in (None, 0):
+            with self.subTest(total=total):
+                out = self.output([], total=total)
+                self.assertIn("пусто", out)
+                self.assertNotIn("показано", out)
 
 
 class ListTypeHttpTests(TempDbTestCase):

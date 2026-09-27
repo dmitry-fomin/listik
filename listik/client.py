@@ -231,7 +231,8 @@ def local_call(op: str, *, fence: fence_mod.Token | dict | None = None, **kwargs
                            limit_per_column=kwargs.get("limit", 300),
                            as_owner=kwargs.get("as_owner"))
     if op == "list":
-        return store.list_tasks(conn, **kwargs)
+        # Как сервер (`limit … or 200`): 0/None — страница по умолчанию, не LIMIT 0.
+        return store.list_tasks(conn, **{**kwargs, "limit": kwargs.get("limit") or 200})
     if op == "show":
         task = store.get_task(conn, kwargs["task_id"],
                               with_rejected=bool(kwargs.get("rejected", False)))

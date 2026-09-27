@@ -341,7 +341,7 @@ def task_line(t: dict, *, width: int = 96) -> str:
 
 
 def print_tasks(tasks: list[dict], total: int | None = None) -> None:
-    if not tasks:
+    if not tasks and not total:
         print("  пусто")
         return
     for t in tasks:
@@ -871,8 +871,13 @@ def cmd_list(args) -> int:
         "project": args.project, "status": args.status, "stage": args.stage,
         "orchestrator": args.orchestrator, "holder": args.holder, "issue_type": args.type,
         "needs_owner": args.needs_owner, "include_closed": args.all,
-        "limit": args.limit, "order": args.order,
+        "limit": args.limit, "offset": args.offset, "order": args.order,
     }
+    if args.offset < 0:
+        raise errors.ListikError(
+            f"--offset не бывает отрицательным: {args.offset}",
+            code=errors.BAD_ARGUMENT, exit_code=2,
+            hint="--offset K пропускает K задач от начала выборки: 0 или больше")
     if args.mine:
         kwargs["holder"] = kwargs["holder"] or actor_default(args)
     if args.stale:
@@ -1362,16 +1367,23 @@ def store_now() -> str:
 
 def cmd_ready(args) -> int:
     """Что можно взять прямо сейчас: без незакрытых блокеров и без держателя."""
-    res = call("ready", args, "/api/ready",
-               query={"project": args.project, "stage": args.stage,
-                      "include_occupied": str(args.with_occupied).lower(),
-                      "limit": args.limit},
-               local_kwargs={"project": args.project, "stage": args.stage,
-                             "include_occupied": args.with_occupied, "limit": args.limit})
+    def fetch(limit: int, **kw):
+        return call("ready", args, "/api/ready",
+                    query={"project": args.project, "stage": args.stage,
+                           "include_occupied": str(args.with_occupied).lower(),
+                           "limit": limit},
+                    local_kwargs={"project": args.project, "stage": args.stage,
+                                  "include_occupied": args.with_occupied, "limit": limit}, **kw)
+    res = fetch(args.limit)
     tasks = res["tasks"]
     if getattr(args, "json", False):
         emit(args, res, "")
         return 0
+    # Ответ режется по -n, а total в нём нет: полное число — вторым вызовом без
+    # ограничения, только если страница заполнена (listik-n1aw).
+    total = len(tasks)
+    if 0 < args.limit <= total:
+        total = max(total, len(fetch(0, fallback_warning=False)["tasks"]))
     if not tasks:
         print("нечего брать: у всех задач есть незакрытые блокеры или держатель")
     for t in tasks:
@@ -1382,7 +1394,8 @@ def cmd_ready(args) -> int:
         print(f"     {t['title'][:110]}")
     if res.get("cycles"):
         print(f"\n! циклы в зависимостях: {len(res['cycles'])} — см. listik dep cycles")
-    print(f"\nвсего готовых: {len(tasks)}")
+    print(f"\nпоказано {len(tasks)} из {total} готовых" if total > len(tasks)
+          else f"\nвсего готовых: {len(tasks)}")
     return 0
 
 
@@ -1939,13 +1952,19 @@ def cmd_watch(args) -> int:
 
 def cmd_blocked(args) -> int:
     """Кто кого ждёт: незакрытые блокеры и что из-за них стоит."""
-    res = call("blocked", args, "/api/blocked",
-               query={"project": args.project, "limit": args.limit},
-               local_kwargs={"project": args.project, "limit": args.limit})
+    def fetch(limit: int, **kw):
+        return call("blocked", args, "/api/blocked",
+                    query={"project": args.project, "limit": limit},
+                    local_kwargs={"project": args.project, "limit": limit}, **kw)
+    res = fetch(args.limit)
     tasks = res["tasks"]
     if getattr(args, "json", False):
         emit(args, res, "")
         return 0
+    # Как у ready: полное число — вторым вызовом без ограничения (listik-n1aw).
+    total = len(tasks)
+    if 0 < args.limit <= total:
+        total = max(total, len(fetch(0, fallback_warning=False)["tasks"]))
     for t in tasks:
         print(f"■ {t['id']:38s} [{t['project'] or '—'}]  {t['title'][:80]}")
         for b in t["blockers"]:
@@ -1960,7 +1979,8 @@ def cmd_blocked(args) -> int:
             print(f"      ← ждёт {b['id']:32s} {b['status']:12s} {who}")
         if t.get("blocked_by_stale"):
             print("      !!! все блокеры стоят без движения — возможно, пора вмешаться")
-    print(f"\nвсего ждущих: {len(tasks)}")
+    print(f"\nпоказано {len(tasks)} из {total} ждущих" if total > len(tasks)
+          else f"\nвсего ждущих: {len(tasks)}")
     return 0
 
 
@@ -2744,7 +2764,10 @@ def build_parser() -> argparse.ArgumentParser:
                     help="только брошенные (stale/abandoned), отбор до --limit; "
                          "--status — только in_progress|review")
     sp.add_argument("-a", "--all", action="store_true", help="включая закрытые")
-    sp.add_argument("-n", "--limit", type=int, default=60)
+    sp.add_argument("-n", "--limit", type=int, default=60,
+                    help="сколько задач показать; 0 — страница по умолчанию (200)")
+    sp.add_argument("--offset", type=int, default=0,
+                    help="сколько задач пропустить от начала выборки; листать вместе с -n")
     sp.add_argument("--order", default="updated",
                     choices=["updated", "created", "priority", "stage"])
 

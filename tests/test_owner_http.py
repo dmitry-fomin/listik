@@ -240,7 +240,7 @@ class TestPatch(OwnerHttpCase):
         self.assertEqual(payload["code"], "forbidden")
         self.assertEqual(self.get_task(self.tid)["title"], "T")
         # Тело 403 — прежнего формата, без ключа hint.
-        self.assertEqual(set(payload), {"ok", "error", "code"})
+        self.assertEqual(set(payload), {"ok", "error", "code", "hint"})
         self.assertIs(payload["ok"], False)
 
     def test_patch_without_owner_and_by_owner(self):

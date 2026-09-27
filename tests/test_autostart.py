@@ -530,6 +530,93 @@ class LaunchTests(AutostartTestCase):
         self.join_tracker(task["id"])
 
 
+class CaptureReleaseOnErrorTests(AutostartTestCase):
+    """Режим скила (listik-ohhl): исключение после захвата, но до `Popen`, снимает
+    захват этого запуска и уходит наружу как есть; после `Popen` захват остаётся."""
+
+    def prepare(self, command):
+        proj_dir = self.tmp_path / "proj"
+        proj_dir.mkdir(exist_ok=True)
+        self.make_project("proj", path=proj_dir)
+        self.set_routes(pipeline_record("low-pipeline", command=command))
+        return self.make_task(project="proj", autostart=True, route="low-pipeline")
+
+    def assert_released(self, conn, task_id) -> None:
+        row = conn.execute("SELECT * FROM tasks WHERE id = ?", (task_id,)).fetchone()
+        for field in ("launched_by", "launched_at", "dispatch_id", "launch_pid",
+                      "launch_error"):
+            self.assertIsNone(row[field], field)
+        self.assertEqual(row["needs_owner"], 0)
+        self.assertEqual(row["generation"], 1)
+        self.assertEqual(row["orchestrator"], "listik")
+
+    def foreign_capture_notify(self, task_id):
+        def notify(*_args) -> None:
+            self.conn.execute("UPDATE tasks SET launched_by = 'listik', "
+                              "dispatch_id = 'чужой-запуск' WHERE id = ?", (task_id,))
+            self.conn.commit()
+            raise RuntimeError("notify")
+        return notify
+
+    def test_popen_value_error_releases_capture(self) -> None:
+        task = self.prepare([sys.executable, "-c", "pass"])
+        comments = len(self.comments(task["id"]))
+        with mock.patch.object(launcher_mod.subprocess, "Popen",
+                               side_effect=ValueError("embedded null byte")), \
+                contextlib.redirect_stderr(io.StringIO()), \
+                self.assertRaises(ValueError) as ctx:
+            launcher_mod.start(self.conn, task["id"], notify=self.notify_cb,
+                               log_dir=self.log_dir)
+        self.assertEqual(str(ctx.exception), "embedded null byte")
+        self.assert_released(self.conn, task["id"])
+        fresh = sqlite3.connect(self.db_path)
+        fresh.row_factory = sqlite3.Row
+        self.addCleanup(fresh.close)
+        self.assert_released(fresh, task["id"])
+        self.assertEqual(len(self.comments(task["id"])), comments)
+        self.assertEqual(self.notify, [])
+
+    def test_workdir_error_releases_capture(self) -> None:
+        task = self.prepare([sys.executable, "-c", "pass"])
+        comments = len(self.comments(task["id"]))
+        with mock.patch.object(launcher_mod, "_workdir",
+                               side_effect=RuntimeError("boom")), \
+                contextlib.redirect_stderr(io.StringIO()), \
+                self.assertRaises(RuntimeError) as ctx:
+            self.launch(task["id"])
+        self.assertEqual(str(ctx.exception), "boom")
+        self.assert_released(self.conn, task["id"])
+        self.assertEqual(len(self.comments(task["id"])), comments)
+
+    def test_failure_after_process_start_keeps_capture(self) -> None:
+        # Страж: после `Popen` процесс уже идёт — снятый захват позволил бы второй.
+        task = self.prepare([sys.executable, "-c", "pass"])
+        self.conn.execute(
+            "CREATE TRIGGER fail_launch_pid BEFORE UPDATE OF launch_pid ON tasks "
+            "WHEN NEW.launch_pid IS NOT NULL "
+            "BEGIN SELECT RAISE(ABORT, 'сбой после Popen'); END")
+        self.conn.commit()
+        with contextlib.redirect_stderr(io.StringIO()), \
+                self.assertRaises(sqlite3.IntegrityError):
+            self.launch(task["id"])
+        launcher_mod._procs.pop(task["id"]).wait(timeout=30)
+        row = self.row(task["id"])
+        self.assertEqual(row["launched_by"], "listik")
+        self.assertIsNotNone(row["dispatch_id"])
+
+    def test_foreign_capture_kept_on_late_error(self) -> None:
+        # Страж: `_fail` снял захват, `notify` в `refuse` бросает, а захват к этому
+        # времени взял другой запуск — путь исключения его не снимает.
+        self.set_routes(pipeline_record("low-pipeline", command=None))
+        task = self.make_task(project=None, autostart=True, route="low-pipeline")
+        with contextlib.redirect_stderr(io.StringIO()), \
+                self.assertRaises(RuntimeError):
+            self.launch(task["id"], notify=self.foreign_capture_notify(task["id"]))
+        row = self.row(task["id"])
+        self.assertEqual(row["launched_by"], "listik")
+        self.assertEqual(row["dispatch_id"], "чужой-запуск")
+
+
 class ServerPostTests(AutostartTestCase):
     """Пункты 4–6, 10, 14, 18–20, 23 чек-листа: поведение POST /api/tasks."""
 

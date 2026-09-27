@@ -1106,5 +1106,144 @@ class PortionGateDbErrorTests(SwarmCase):
         self.assertFalse([t for t in texts if "рой:" in t], texts)
 
 
+class CaptureReleaseOnErrorTests(SwarmCase):
+    """Исключение после захвата, но до `Popen` (listik-ohhl): незакоммиченное
+    откатывается, захват этого запуска (после `claim` — и держатель) снимается,
+    исключение уходит наружу как есть; ни вопроса, ни журнала, ни notify."""
+
+    IMPL_JUDGE = {"impl": {"harness": "probe"}, "judge": {"harness": "probe"}}
+
+    def fresh(self) -> sqlite3.Connection:
+        conn = sqlite3.connect(self.db_path)
+        conn.row_factory = sqlite3.Row
+        self.addCleanup(conn.close)
+        return conn
+
+    def comment_count(self, task_id: str) -> int:
+        return self.conn.execute("SELECT COUNT(*) FROM comments WHERE task_id = ?",
+                                 (task_id,)).fetchone()[0]
+
+    def holder_events(self, conn, task_id: str) -> list[str]:
+        return [r[0] for r in conn.execute(
+            "SELECT kind FROM events WHERE task_id = ? AND kind IN ('claim', 'release') "
+            "ORDER BY rowid", (task_id,))]
+
+    def assert_released_untouched(self, conn, task_id: str) -> None:
+        row = conn.execute("SELECT * FROM tasks WHERE id = ?", (task_id,)).fetchone()
+        for field in ("launched_by", "launched_at", "dispatch_id", "launch_error"):
+            self.assertIsNone(row[field], field)
+        self.assertEqual(row["generation"], 1)
+        self.assertEqual(row["orchestrator"], "listik")
+        self.assertFalse(row["holder"])
+        self.assertFalse(row["needs_owner"])
+        self.assertEqual(self.holder_events(conn, task_id), [])
+
+    def test_resolve_role_error_releases_capture(self) -> None:
+        self.add_route(self.IMPL_JUDGE)
+        task_id = self.add_task(stage="s3-impl")
+        comments = self.comment_count(task_id)
+        with mock.patch.object(stage_launch, "resolve_role",
+                               side_effect=RuntimeError("boom")):
+            with self.assertRaises(RuntimeError) as ctx:
+                launcher.start(self.conn, task_id, log_dir=str(self.tmp_path))
+        self.assertEqual(str(ctx.exception), "boom")
+        self.assert_released_untouched(self.conn, task_id)
+        self.assert_released_untouched(self.fresh(), task_id)
+        self.assertEqual(self.comment_count(task_id), comments)
+
+    def test_next_stage_with_role_error_releases_capture(self) -> None:
+        self.add_route(self.IMPL_JUDGE)
+        task_id = self.add_task()
+        comments = self.comment_count(task_id)
+        with mock.patch.object(stage_launch, "next_stage_with_role",
+                               side_effect=RuntimeError("boom")):
+            with self.assertRaises(RuntimeError) as ctx:
+                launcher.start(self.conn, task_id, log_dir=str(self.tmp_path))
+        self.assertEqual(str(ctx.exception), "boom")
+        self.assert_released_untouched(self.conn, task_id)
+        self.assertEqual(self.comment_count(task_id), comments)
+        stage = self.conn.execute("SELECT stage FROM tasks WHERE id = ?",
+                                  (task_id,)).fetchone()[0]
+        self.assertFalse(stage)
+
+    def test_next_stage_write_error_rolls_back_and_releases(self) -> None:
+        # Событие `stage` вставляется до `UPDATE tasks`: без отката оно осталось бы
+        # в транзакции или закоммитилось бы снятием захвата.
+        self.add_route(self.IMPL_JUDGE)
+        task_id = self.add_task()
+        self.conn.execute(
+            "CREATE TRIGGER fail_stage BEFORE UPDATE OF stage ON tasks "
+            "WHEN NEW.stage = 's3-impl' "
+            "BEGIN SELECT RAISE(ABORT, 'сбой записи этапа'); END")
+        self.conn.commit()
+        with self.assertRaises(sqlite3.IntegrityError):
+            launcher.start(self.conn, task_id, log_dir=str(self.tmp_path))
+        row = self.conn.execute("SELECT * FROM tasks WHERE id = ?", (task_id,)).fetchone()
+        self.assertIsNone(row["launched_by"])
+        self.assertIsNone(row["dispatch_id"])
+        self.assertFalse(row["stage"])
+        kinds = [r[0] for r in self.conn.execute(
+            "SELECT kind FROM events WHERE task_id = ? AND kind IN ('stage', 'release')",
+            (task_id,))]
+        self.assertEqual(kinds, [])
+
+    def test_role_tail_error_releases_capture(self) -> None:
+        self.add_route({"judge": {"harness": "probe"}})
+        task_id = self.add_task(stage="s4-judge")
+        comments = self.comment_count(task_id)
+        with mock.patch.object(stage_launch, "role_tail",
+                               side_effect=RuntimeError("boom")):
+            with self.assertRaises(RuntimeError) as ctx:
+                launcher.start(self.conn, task_id, log_dir=str(self.tmp_path))
+        self.assertEqual(str(ctx.exception), "boom")
+        self.assert_released_untouched(self.conn, task_id)
+        self.assertEqual(self.comment_count(task_id), comments)
+        stage = self.conn.execute("SELECT stage FROM tasks WHERE id = ?",
+                                  (task_id,)).fetchone()[0]
+        self.assertEqual(stage, "s4-judge")
+
+    def test_popen_error_after_claim_releases_holder_and_capture(self) -> None:
+        self.add_route(self.IMPL_JUDGE)
+        task_id = self.add_task(stage="s3-impl")
+        calls: list = []
+        with mock.patch.object(launcher.subprocess, "Popen",
+                               side_effect=ValueError("embedded null byte")):
+            with self.assertRaises(ValueError) as ctx:
+                launcher.start(self.conn, task_id, log_dir=str(self.tmp_path),
+                               notify=lambda *args: calls.append(args))
+        self.assertEqual(str(ctx.exception), "embedded null byte")
+        for conn in (self.conn, self.fresh()):
+            row = conn.execute("SELECT * FROM tasks WHERE id = ?", (task_id,)).fetchone()
+            for field in ("launched_by", "launched_at", "dispatch_id", "launch_pid"):
+                self.assertIsNone(row[field], field)
+            self.assertFalse(row["holder"])
+            self.assertFalse(row["needs_owner"])
+            # `claim` закоммитил сам `store.claim` — откат его не трогает.
+            events = self.holder_events(conn, task_id)
+            self.assertIn("claim", events)
+            self.assertEqual(events[-1], "release")
+        self.assertEqual(calls, [])
+
+    def test_foreign_capture_kept_on_late_error(self) -> None:
+        # Страж: `_notify` после `_release` бросает, а захват к этому времени
+        # взял другой запуск — путь исключения его не снимает.
+        self.add_route(self.IMPL_JUDGE)
+        task_id = self.add_task()
+
+        def notify(*_args) -> None:
+            self.conn.execute("UPDATE tasks SET launched_by = 'listik', "
+                              "dispatch_id = 'чужой-запуск' WHERE id = ?", (task_id,))
+            self.conn.commit()
+            raise RuntimeError("notify")
+
+        with self.assertRaises(RuntimeError) as ctx:
+            launcher.start(self.conn, task_id, log_dir=str(self.tmp_path), notify=notify)
+        self.assertEqual(str(ctx.exception), "notify")
+        row = self.conn.execute("SELECT launched_by, dispatch_id FROM tasks WHERE id = ?",
+                                (task_id,)).fetchone()
+        self.assertEqual(row["launched_by"], "listik")
+        self.assertEqual(row["dispatch_id"], "чужой-запуск")
+
+
 if __name__ == "__main__":
     unittest.main()

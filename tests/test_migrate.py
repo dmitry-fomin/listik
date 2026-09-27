@@ -150,6 +150,16 @@ class UpsertTests(unittest.TestCase):
         self.assertEqual(result, "removed")
         self.assertEqual(target.read_text(encoding="utf-8"), original)
 
+    def test_current_block_at_eof_without_trailing_newline_is_unchanged(self) -> None:
+        target = self.tmp_path / "AGENTS.md"
+        body = "<!-- listik-protocol: 5 -->\n\nтекст протокола\n"
+        text = "# Project\n\n" + migrate.block(body)
+        self.assertTrue(text.endswith(migrate.END + "\n"))
+        target.write_text(text[:-1], encoding="utf-8")  # файл кончается ровно на END
+        before = target.read_bytes()
+        self.assertEqual(migrate.upsert(target, body=body), "unchanged")
+        self.assertEqual(target.read_bytes(), before)
+
 
 class AgentsMdTests(unittest.TestCase):
     def test_agents_md_carries_current_block(self) -> None:

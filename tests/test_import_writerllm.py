@@ -422,6 +422,42 @@ class ImportWriterllmCliTests(unittest.TestCase):
         self.assertEqual(result.returncode, 0)
 
 
+class ImportWriterllmCommentKindTests(TempDbTestCase):
+    """kind из выгрузки проверяется на допустимость; пустой выводится по [listik]."""
+
+    def _import(self, comments: list) -> dict:
+        src = self.tmp_path / "kinds.jsonl"
+        record = {"_type": "issue", "id": "WL-k1", "title": "Комментарии с видами",
+                  "comments": comments}
+        src.write_text(json.dumps(record, ensure_ascii=False) + "\n", encoding="utf-8")
+        return import_writerllm.import_file(self.conn, src)
+
+    def _kinds(self) -> dict:
+        return {c["text"]: c["kind"]
+                for c in store.get_task(self.conn, "WL-k1")["comments"]}
+
+    def test_unknown_kind_becomes_comment_with_warning(self) -> None:
+        report = self._import([{"text": "привет", "kind": "bogus"}])
+        self.assertEqual(self._kinds()["привет"], "comment")
+        warnings = [w for w in report["warnings"] if w["field"] == "comment.kind"]
+        self.assertEqual(warnings, [{"external_ref": "WL-k1", "field": "comment.kind",
+                                     "value": "bogus", "used": "comment"}])
+
+    def test_known_kind_is_kept(self) -> None:
+        report = self._import([{"text": "замечание", "kind": "review"}])
+        self.assertEqual(self._kinds()["замечание"], "review")
+        self.assertEqual(report["warnings"], [])
+
+    def test_listik_marker_counts_only_at_line_start(self) -> None:
+        self._import([
+            {"text": "[listik] stage=done"},
+            {"text": "упоминание [listik] в середине"},
+        ])
+        kinds = self._kinds()
+        self.assertEqual(kinds["[listik] stage=done"], "journal")
+        self.assertEqual(kinds["упоминание [listik] в середине"], "comment")
+
+
 class ImportWriterllmSourceErrorTests(TempDbTestCase):
     def test_12_directory_and_markdown_are_rejected_as_source(self) -> None:
         report = import_writerllm.import_file(self.conn, self.tmp_path)

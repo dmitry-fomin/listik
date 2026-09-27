@@ -112,7 +112,8 @@ def _compute_body(project_dir: Path | None = None) -> str:
 
 
 def body(project_dir: Path | None = None) -> str:
-    """Собирает блок для AGENTS.md/CLAUDE.md: вводный абзац + канонический протокол.
+    """Текст протокола для блока: `docs/harness-protocol.md` проекта, если он есть,
+    иначе протокол этой копии Listik.
 
     Читает docs/harness-protocol.md в момент вызова (не на импорте), чтобы правки
     протокола подхватывались без перезапуска.
@@ -144,7 +145,7 @@ def upsert(path: Path, *, dry_run: bool = False, body: str | None = None,
     found = _find_block(text)
     if found is not None:
         start, end = found
-        if text[start:end + 1] == new_block:
+        if text[start:end] == new_block[:-1]:
             return "unchanged"
         if not force and protocol_version(text[start:end]) > protocol_version(body):
             return "skipped-newer"

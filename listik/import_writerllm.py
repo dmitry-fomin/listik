@@ -4,7 +4,8 @@
 (JSON-массив без `comments`/`_type`). Ключ идемпотентности —
 `(tasks.source='writerllm', tasks.project, tasks.external_ref)`: повторный запуск на
 том же файле не создаёт дублей задач, дописывает недостающие связи и комментарии, но
-не переписывает уже импортированные поля (`--update` появится отдельной порцией).
+не переписывает уже импортированные поля. `--update` применяет различия полей
+содержания к задаче и пишет diff в её журнал.
 
 `dry_run=True` не должен приводить ни к одной записи в базу — см. `import_file` и
 комментарии по коду: любой SQL кроме `SELECT` и любой вызов `store.*`, который сам
@@ -27,7 +28,11 @@ from typing import Any
 from . import actors as actors_mod
 from . import store
 
-logger = logging.getLogger("listik.import_writerllm")
+logger = logging.getLogger(__name__)
+
+#: Источник импортируемых записей — часть ключа идемпотентности (source, project,
+#: external_ref). Не путать со slug'ом проекта по умолчанию в `import_file`.
+SOURCE = "writerllm"
 
 _STATUS_MAP = {
     "open": "open",
@@ -41,6 +46,9 @@ _STATUS_MAP = {
 }
 
 _PRIORITY_NAMES = {"urgent": 0, "critical": 0, "high": 1, "normal": 2, "medium": 2, "low": 3}
+
+#: Допустимые виды comments.kind: всё остальное из выгрузки падает в "comment" с warning.
+_COMMENT_KINDS = {"comment", "journal", "question", "answer", "review", "verdict"}
 
 # Поля содержания, которые сравниваются в режиме --update, и сырые ключи, по наличию
 # которых в исходной записи определяется, участвует ли поле в сравнении вообще
@@ -149,7 +157,7 @@ def _hash_external_ref(source_path: Path, raw: dict) -> str:
     title = str(_first_nonempty(raw, "title", "name", default="") or "")
     norm_title = re.sub(r"\s+", " ", title.strip()).lower()
     digest = hashlib.sha256((norm_path + "\0" + norm_title).encode("utf-8")).hexdigest()
-    return "writerllm:" + digest[:24]
+    return SOURCE + ":" + digest[:24]
 
 
 def _map_status(raw_value: Any) -> tuple[str, bool]:
@@ -204,7 +212,14 @@ def _parse_dependency_item(item: Any) -> tuple[str | None, str, str | None]:
     return target, str(dep_type), created_by
 
 
-def _parse_comment_item(item: Any) -> dict | None:
+def _parse_comment_item(item: Any) -> tuple[dict | None, Any]:
+    """Один комментарий выгрузки → (comment, bad_kind).
+
+    `comment` — None, если у записи нет текста. `bad_kind` — исходный `kind`, когда
+    он непуст и не из `_COMMENT_KINDS` (в комментарий пишется "comment", а исходное
+    значение уходит в warning через `_build_record`). Без `kind` вид выводится по
+    тексту: `[listik]` в начале строки — `journal`, иначе `comment`.
+    """
     if isinstance(item, str):
         text, author, created_at, cid, raw_kind = item, None, None, None, None
     elif isinstance(item, dict):
@@ -214,13 +229,19 @@ def _parse_comment_item(item: Any) -> dict | None:
         cid = _first_nonempty(item, "id")
         raw_kind = item.get("kind")
     else:
-        return None
+        return None, None
     if not text:
-        return None
+        return None, None
     text = str(text)
-    kind = str(raw_kind) if raw_kind else ("journal" if "[listik]" in text else "comment")
-    return {"id": str(cid).strip() if cid else None, "author": author, "text": text,
-            "created_at": created_at, "kind": kind}
+    bad_kind = None
+    if raw_kind:
+        kind = str(raw_kind)
+        if kind not in _COMMENT_KINDS:
+            kind, bad_kind = "comment", raw_kind
+    else:
+        kind = "journal" if text.lstrip().startswith("[listik]") else "comment"
+    return ({"id": str(cid).strip() if cid else None, "author": author, "text": text,
+             "created_at": created_at, "kind": kind}, bad_kind)
 
 
 def _resolve_actor(conn: sqlite3.Connection, raw_value: Any, dry_run: bool) -> str | None:
@@ -292,7 +313,10 @@ def _build_record(raw: dict, line: int, source_path: Path, conn: sqlite3.Connect
     comments: list[dict] = []
     for item in _as_list(_first_nonempty(raw, "comments", "journal_entries", "history",
                                           default=[])):
-        parsed = _parse_comment_item(item)
+        parsed, bad_kind = _parse_comment_item(item)
+        if bad_kind is not None:
+            warnings.append({"external_ref": external_ref, "field": "comment.kind",
+                             "value": bad_kind, "used": "comment"})
         if parsed:
             comments.append(parsed)
 
@@ -446,13 +470,20 @@ def _add_example(report: dict, action: str, payload: dict) -> None:
 
 def _push_error(report: dict, entry: dict) -> None:
     report["errors"].append(entry)
-    logger.error("writerllm import: %s: %s (external_ref=%s, line=%s)",
-                entry["where"], entry["error"], entry["external_ref"], entry["line"])
+    logger.error("%s import: %s: %s (external_ref=%s, line=%s)",
+                SOURCE, entry["where"], entry["error"], entry["external_ref"], entry["line"])
     _add_example(report, "error", {"external_ref": entry["external_ref"], "where": entry["where"],
                                     "error": entry["error"]})
 
 
 # ------------------------------------------------------------------ основной вход
+
+def _find_imported(conn: sqlite3.Connection, project: str, external_ref: str):
+    """Уже импортированная задача по ключу (source, project, external_ref) или None."""
+    return conn.execute(
+        "SELECT * FROM tasks WHERE source=? AND project=? AND external_ref=?",
+        (SOURCE, project, external_ref)).fetchone()
+
 
 def import_file(conn: sqlite3.Connection, path: str | Path, *, project: str | None = None,
                 dry_run: bool = False, update: bool = False) -> dict:
@@ -507,9 +538,7 @@ def import_file(conn: sqlite3.Connection, path: str | Path, *, project: str | No
             _push_error(report, entry)
 
         ext = record["external_ref"]
-        existing = conn.execute(
-            "SELECT * FROM tasks WHERE source='writerllm' AND project=? AND external_ref=?",
-            (slug, ext)).fetchone()
+        existing = _find_imported(conn, slug, ext)
 
         if existing:
             tid = existing["id"]
@@ -564,7 +593,7 @@ def import_file(conn: sqlite3.Connection, path: str | Path, *, project: str | No
 
         try:
             store.create_task(
-                conn, task_id=tid, project=slug, source="writerllm", external_ref=ext,
+                conn, task_id=tid, project=slug, source=SOURCE, external_ref=ext,
                 created_at=record["created_at"], created_by=record["created_by"],
                 title=record["title"], description=record["description"],
                 acceptance=record["acceptance"], design=record["design"], notes=record["notes"],
@@ -600,7 +629,7 @@ def import_file(conn: sqlite3.Connection, path: str | Path, *, project: str | No
             conn.execute("UPDATE tasks SET updated_at = ? WHERE id = ?", (record["updated_at"], tid))
         store._index_task(conn, tid)  # noqa: SLF001 — импорт идёт мимо обычного API
         store.event(conn, tid, "import", actor=record["created_by"],
-                   note=f"writerllm {ext} из {source_path}",
+                   note=f"{SOURCE} {ext} из {source_path}",
                    ts=record["updated_at"] or record["created_at"])
         conn.commit()
         prepared.append({"record": record, "task_id": tid})
@@ -613,9 +642,7 @@ def import_file(conn: sqlite3.Connection, path: str | Path, *, project: str | No
             dep_ext, dep_type, dep_created_by = dep["target"], dep["dep_type"], dep["created_by"]
             target = mapping.get(dep_ext)
             if not target:
-                row = conn.execute(
-                    "SELECT id FROM tasks WHERE source='writerllm' AND project=? AND external_ref=?",
-                    (slug, dep_ext)).fetchone()
+                row = _find_imported(conn, slug, dep_ext)
                 target = row["id"] if row else None
             if not target:
                 _push_error(report, {"where": "dependency", "line": record["line"],

@@ -237,10 +237,6 @@ def split_markdown(content: str, limit: int = MAX_CHARS) -> list[dict]:
     return out
 
 
-# Backwards-compatible alias: existing callers used the private name.
-_split_markdown = split_markdown
-
-
 def _document_title(content: str, path: str) -> str:
     return content.splitlines()[0].lstrip("# ") if content else path
 

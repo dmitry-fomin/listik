@@ -1438,6 +1438,88 @@ gitTest("тик: барьер отклоняет единственную зак
     assert.deepEqual(result.barrier.rejected, ["t1"]);
   });
 
+// listik-qf51: отклонённая барьером карточка режима роя — план волн перечитывается.
+function rejectRereadScenario(secondWaves) {
+  const repo = initRepo();
+  const treeT1 = addWorktree(repo, "t1");
+  fs.writeFileSync(path.join(treeT1, "a.txt"), "a\n");
+  sh(treeT1, "add", "a.txt");
+  sh(treeT1, "commit", "-q", "-m", "t1");
+  const common = {worktree: treeT1, branch: "task/t1", labels: ["port:5170"], launch_driver: "swarm"};
+  const doneTask = task("t1", {...common, status: "done"});
+  const openTask = task("t1", {...common, status: "open", stage: "s3-impl"});
+  const wavesOut = (w) => ({stdout: JSON.stringify({
+    waves: {project: "proj", waves: w, cycles: [], unroutable: [], unscoped: [], blocked: {}},
+    added: [], removed: [], kept: 0})});
+  const dataDir = fs.mkdtempSync(path.join(os.tmpdir(), "listik-swarm-data-"));
+  fs.writeFileSync(path.join(dataDir, "swarm.json"), JSON.stringify({
+    integration: [],
+    verify: [[process.execPath, "-e", "process.exit(1)"]],
+  }));
+  const logDir = fs.mkdtempSync(path.join(os.tmpdir(), "listik-swarm-verify-log-"));
+  const responses = {
+    status: statusFor(dataDir),
+    waves: [wavesOut([[]]), secondWaves ?? wavesOut([["t1"]])],
+    list: [
+      {stdout: JSON.stringify({total: 1, limit: 1000, offset: 0, tasks: [doneTask]})},
+      {stdout: JSON.stringify({total: 1, limit: 1000, offset: 0, tasks: [openTask]})},
+    ],
+    routes: {stdout: JSON.stringify({ok: true, routes: [{key: "r-t1", kind: "swarm", icon: "low"}]})},
+    projects: {stdout: JSON.stringify([{slug: "proj", path: repo}])},
+    watch: {stdout: JSON.stringify({tasks: {}, decisions: [], probes: []})},
+    show: {stdout: JSON.stringify({id: "t1", comments: [], write_scope: [], labels: ["port:5170"]})},
+    comment: {stdout: JSON.stringify({id: "t1"})},
+    worktree: {stdout: JSON.stringify({path: treeT1, branch: "task/t1", status: "exists"})},
+    set: {stdout: JSON.stringify({id: "t1", labels: []})},
+    launch: {stdout: JSON.stringify({id: "t1", generation: 1})},
+  };
+  return {responses, logDir};
+}
+
+gitTest("тик: барьер отклоняет карточку роя — waves перечитан до второго list, t1 запущена",
+  async () => {
+    const {responses, logDir} = rejectRereadScenario();
+    const {calls} = setupFake(responses);
+    const listik = new Listik({bin: FAKE_BIN, actor: "agent:listik-swarm", cliTimeout: 5});
+    const log = makeLog();
+    const result = await tick(listik, {...baseConfig, logDir}, log);
+
+    const all = calls();
+    const wavesIdx = all.map((c, i) => c.sub === "waves" ? i : -1).filter(i => i >= 0);
+    assert.equal(wavesIdx.length, 2);
+    for (const i of wavesIdx) assert.ok(all[i].argv.includes("--apply"));
+    const iReject = all.findIndex(c => c.sub === "set" && c.argv.includes("status=open"));
+    const listIdx = all.map((c, i) => c.sub === "list" ? i : -1).filter(i => i >= 0);
+    assert.ok(iReject >= 0, "ожидался set отклонения");
+    assert.ok(listIdx.length >= 2, "ожидался второй list");
+    assert.ok(iReject < wavesIdx[1], "второй waves после set отклонения");
+    assert.ok(wavesIdx[1] < listIdx[1], "второй waves раньше второго list");
+    assert.deepEqual(result.barrier.rejected, ["t1"]);
+    assert.ok(result.launched.includes("t1"));
+    for (const sub of ["revoke", "needs-owner"]) {
+      assert.equal(all.filter(c => c.sub === sub).length, 0, sub);
+    }
+  });
+
+gitTest("тик: барьер отклоняет карточку роя — ошибка waves не роняет тик, list перечитан",
+  async () => {
+    const {responses, logDir} = rejectRereadScenario(
+      {exitCode: 1, stdout: JSON.stringify({error: {code: "cli", message: "boom"}})});
+    const {calls} = setupFake(responses);
+    const listik = new Listik({bin: FAKE_BIN, actor: "agent:listik-swarm", cliTimeout: 5});
+    const log = makeLog();
+    const result = await tick(listik, {...baseConfig, logDir}, log);
+
+    const all = calls();
+    const wavesIdx = all.map((c, i) => c.sub === "waves" ? i : -1).filter(i => i >= 0);
+    const listIdx = all.map((c, i) => c.sub === "list" ? i : -1).filter(i => i >= 0);
+    assert.equal(wavesIdx.length, 2);
+    assert.ok(log.lines.some(l => l.startsWith("waves после отклонения ошибка:")));
+    assert.ok(listIdx.length >= 2 && wavesIdx[1] < listIdx[1], "второй list после упавшего waves");
+    assert.ok(result.open.includes("t1"));
+    assert.deepEqual(result.barrier.rejected, ["t1"]);
+  });
+
 gitTest("надзор-тик: swarm.json question_timeout 5, вопрос 6 мин — текст 5 мин", async () => {
   const repo = initRepo();
   const qEvent = {kind: "question", actor: "agent:fake", ts: minsAgo(6), note: SOFT_Q};

@@ -522,9 +522,9 @@ def _conn():
     return db_mod.init()
 
 
-def _limit(args: dict, default: int) -> int:
-    """`limit` инструмента: `null` — как отсутствие ключа, `0` — без ограничения."""
-    value = args.get("limit")
+def _int_arg(args: dict, key: str, default: int) -> int:
+    """Числовой аргумент инструмента: `null` — то же, что ключ не передан."""
+    value = args.get(key)
     return default if value is None else int(value)
 
 
@@ -555,7 +555,7 @@ def call_tool(name: str, args: dict, conn=None, owner=FROM_ENV, fence=FROM_ENV) 
         fence_mod.guard(conn, args.get("id"), fence, op=fence_mod.OPS["mcp"][fenced], args=args,
                         actor=args.get("actor") or owner, harness=args.get("harness"))
     if name == "listik_search":
-        return search_mod.search(conn, args["query"], limit=int(args.get("limit", 10)),
+        return search_mod.search(conn, args["query"], limit=_int_arg(args, "limit", 10),
                                  project=args.get("project"), status=args.get("status"),
                                  stage=args.get("stage"), mode=args.get("mode", "hybrid"))
     if name == "listik_list":
@@ -565,7 +565,7 @@ def call_tool(name: str, args: dict, conn=None, owner=FROM_ENV, fence=FROM_ENV) 
             holder=args.get("holder"),
             needs_owner=bool(args.get("needs_owner")), issue_type=args.get("type"),
             text=args.get("text"), include_closed=bool(args.get("include_closed")),
-            limit=int(args.get("limit", 50)), order=args.get("order", "updated"),
+            limit=_int_arg(args, "limit", 50), order=args.get("order", "updated"),
             as_owner=owner)
     if name == "listik_show":
         from . import deps as deps_mod
@@ -576,7 +576,7 @@ def call_tool(name: str, args: dict, conn=None, owner=FROM_ENV, fence=FROM_ENV) 
         return store.create_task(
             conn, title=args["title"], project=args.get("project"),
             description=args.get("description", ""), acceptance=args.get("acceptance", ""),
-            issue_type=args.get("type", "task"), priority=int(args.get("priority", 2)),
+            issue_type=args.get("type", "task"), priority=_int_arg(args, "priority", 2),
             stage=args.get("stage"),
             labels=args.get("labels") or [], spec_path=args.get("spec_path"),
             checklist_path=args.get("checklist_path"), review_path=args.get("review_path"),
@@ -613,12 +613,12 @@ def call_tool(name: str, args: dict, conn=None, owner=FROM_ENV, fence=FROM_ENV) 
         return {"tasks": deps_mod.ready_tasks(
                     conn, project=args.get("project"), stage=args.get("stage"),
                     include_occupied=bool(args.get("include_occupied")),
-                    limit=_limit(args, 30), as_owner=owner),
+                    limit=_int_arg(args, "limit", 30), as_owner=owner),
                 "cycles": deps_mod.cycles(conn)}
     if name == "listik_blocked":
         from . import deps as deps_mod
         return {"tasks": deps_mod.blocked_tasks(conn, project=args.get("project"),
-                                                limit=_limit(args, 50))}
+                                                limit=_int_arg(args, "limit", 50))}
     if name == "listik_can_take":
         from . import deps as deps_mod
         state = deps_mod.ready(conn, args["id"])
@@ -627,7 +627,7 @@ def call_tool(name: str, args: dict, conn=None, owner=FROM_ENV, fence=FROM_ENV) 
                                       "holder_age", "stale_holder", "blocked_by", "children_open")}
     if name == "listik_dep_tree":
         from . import deps as deps_mod
-        return deps_mod.graph(conn, args["id"], depth=int(args.get("depth", 3)))
+        return deps_mod.graph(conn, args["id"], depth=_int_arg(args, "depth", 3))
     if name == "listik_heartbeat":
         return store.heartbeat(conn, args["id"], holder=_norm_actor(args["holder"]),
                                note=args.get("note"), harness=args.get("harness"),
@@ -665,7 +665,7 @@ def call_tool(name: str, args: dict, conn=None, owner=FROM_ENV, fence=FROM_ENV) 
                 "dropped": [t for t in items if not t.get("needs_owner")]}
     if name == "listik_memory":
         query = args.get("query")
-        limit = int(args.get("limit", 20))
+        limit = _int_arg(args, "limit", 20)
         project = args.get("project")
         if query:
             return {"items": search_mod.search_memories(conn, query, limit=limit,
@@ -692,7 +692,7 @@ def call_tool(name: str, args: dict, conn=None, owner=FROM_ENV, fence=FROM_ENV) 
     if name == "listik_actors":
         return {"actors": store.list_actors(conn)}
     if name == "listik_timeline":
-        return {"items": store.task_timeline(conn, limit=int(args.get("limit", 100)))}
+        return {"items": store.task_timeline(conn, limit=_int_arg(args, "limit", 100))}
     if name == "listik_deps":
         # Автор — см. `_mcp_actor`.
         actor = _mcp_actor(args.get("author"), args.get("actor"))
@@ -705,7 +705,7 @@ def call_tool(name: str, args: dict, conn=None, owner=FROM_ENV, fence=FROM_ENV) 
     if name == "listik_deps_suggested":
         from . import deps as deps_mod
         return {"items": deps_mod.suggested(conn, project=args.get("project"),
-                                            limit=int(args.get("limit", 100)))}
+                                            limit=_int_arg(args, "limit", 100))}
     if name == "listik_cycles":
         from . import deps as deps_mod
         return {"cycles": deps_mod.cycles(conn)}

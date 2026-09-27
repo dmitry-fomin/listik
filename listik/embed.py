@@ -13,7 +13,13 @@ import sqlite3
 import urllib.error
 import urllib.request
 
-from . import paths, store, textutil
+from . import config, paths, store, textutil
+
+
+def settings() -> dict:
+    """Модель и URL ollama из `[embed]` config.toml (по умолчанию — из paths/окружения)."""
+    cfg = config.load()["embed"]
+    return {"model": cfg["model"], "url": str(cfg["url"]).rstrip("/")}
 
 
 def vec_to_blob(vec: list[float]) -> bytes:
@@ -27,10 +33,12 @@ def blob_to_vec(blob: bytes) -> array.array:
     return a
 
 
-def ollama_embed(texts: list[str], model: str = paths.EMBED_MODEL) -> list[list[float]]:
+def ollama_embed(texts: list[str], model: str | None = None) -> list[list[float]]:
+    conf = settings()
+    model = model or conf["model"]
     payload = json.dumps({"model": model, "input": texts}).encode("utf-8")
     req = urllib.request.Request(
-        f"{paths.OLLAMA_URL}/api/embed", data=payload,
+        f"{conf['url']}/api/embed", data=payload,
         headers={"Content-Type": "application/json"},
     )
     with urllib.request.urlopen(req, timeout=300) as resp:
@@ -41,9 +49,11 @@ def ollama_embed(texts: list[str], model: str = paths.EMBED_MODEL) -> list[list[
     return embs
 
 
-def health(model: str = paths.EMBED_MODEL) -> dict:
+def health(model: str | None = None) -> dict:
+    conf = settings()
+    model = model or conf["model"]
     try:
-        with urllib.request.urlopen(f"{paths.OLLAMA_URL}/api/tags", timeout=5) as resp:
+        with urllib.request.urlopen(f"{conf['url']}/api/tags", timeout=5) as resp:
             tags = json.loads(resp.read().decode("utf-8"))
         names = [m.get("name", "") for m in tags.get("models", [])]
         ok = any(n.split(":")[0] == model.split(":")[0] for n in names)
@@ -71,28 +81,34 @@ def comment_doc(row: sqlite3.Row) -> str:
     return f"[{row['project']}] {row['title']} — комментарий {row['author'] or '?'}:\n{body}"
 
 
-def pending(conn: sqlite3.Connection, kinds: tuple[str, ...] = ("task", "comment")) -> list[dict]:
-    """Документы, требующие эмбеддинга (нет вектора или текст изменился)."""
+def pending(conn: sqlite3.Connection, kinds: tuple[str, ...] = ("task", "comment"),
+            model: str | None = None) -> list[dict]:
+    """Документы, требующие эмбеддинга (нет вектора, текст изменился или модель другая)."""
+    model = model or settings()["model"]
+
+    def stale(row: sqlite3.Row, h: str) -> bool:
+        return row["old_hash"] != h or row["old_model"] != model
+
     out: list[dict] = []
     if "task" in kinds:
         for row in conn.execute(
             """
             SELECT t.id, t.project, t.title, t.description, t.acceptance, t.notes, t.issue_type,
-                   e.text_hash AS old_hash
+                   e.text_hash AS old_hash, e.model AS old_model
             FROM tasks t
             LEFT JOIN embeddings e ON e.doc_id = t.id AND e.doc_kind = 'task'
             """
         ):
             doc = task_doc(row)
             h = textutil.text_hash(doc)
-            if row["old_hash"] != h:
+            if stale(row, h):
                 out.append({"doc_id": row["id"], "kind": "task", "task_id": row["id"],
                             "project": row["project"], "text": doc, "hash": h})
     if "comment" in kinds:
         for row in conn.execute(
             """
             SELECT c.id, c.task_id, t.project AS project, c.text, c.author, t.title,
-                   e.text_hash AS old_hash
+                   e.text_hash AS old_hash, e.model AS old_model
             FROM comments c
             JOIN tasks t ON t.id = c.task_id
             LEFT JOIN embeddings e ON e.doc_id = c.id AND e.doc_kind = 'comment'
@@ -100,14 +116,14 @@ def pending(conn: sqlite3.Connection, kinds: tuple[str, ...] = ("task", "comment
         ):
             doc = comment_doc(row)
             h = textutil.text_hash(doc)
-            if row["old_hash"] != h:
+            if stale(row, h):
                 out.append({"doc_id": row["id"], "kind": "comment", "task_id": row["task_id"],
                             "project": row["project"], "text": doc, "hash": h})
     if "chunk" in kinds:
         try:
             rows = conn.execute(
-                """SELECT c.id, c.task_id, t.project, t.title, c.heading, c.breadcrumb, c.text,
-                          e.text_hash AS old_hash
+                """SELECT c.id, d.task_id, t.project, t.title, c.heading, c.breadcrumb, c.text,
+                          e.text_hash AS old_hash, e.model AS old_model
                    FROM document_chunks c JOIN documents d ON d.id=c.document_id
                    JOIN tasks t ON t.id=d.task_id
                    LEFT JOIN embeddings e ON e.doc_id=c.id AND e.doc_kind='chunk'"""
@@ -115,7 +131,7 @@ def pending(conn: sqlite3.Connection, kinds: tuple[str, ...] = ("task", "comment
             for row in rows:
                 doc = f"[{row['project']}] {row['title']} — {row['breadcrumb'] or row['heading'] or ''}\n{row['text']}"
                 h = textutil.text_hash(doc)
-                if row["old_hash"] != h:
+                if stale(row, h):
                     out.append({"doc_id": row["id"], "kind": "chunk", "task_id": row["task_id"],
                                 "project": row["project"], "text": textutil.clip(doc, paths.EMBED_MAX_CHARS - 100), "hash": h})
         except sqlite3.OperationalError:
@@ -123,14 +139,14 @@ def pending(conn: sqlite3.Connection, kinds: tuple[str, ...] = ("task", "comment
     if "memory" in kinds:
         for row in conn.execute(
             """
-            SELECT m.key, m.project, m.body, e.text_hash AS old_hash
+            SELECT m.key, m.project, m.body, e.text_hash AS old_hash, e.model AS old_model
             FROM memories m
             LEFT JOIN memory_embeddings e ON e.memory_key = m.key
             """
         ):
             doc = f"[{row['project'] or 'память'}] {row['body']}".strip()
             h = textutil.text_hash(doc)
-            if row["old_hash"] != h:
+            if stale(row, h):
                 out.append({"doc_id": row["key"], "kind": "memory", "task_id": row["key"],
                             "project": row["project"], "text": doc, "hash": h})
     return out
@@ -140,12 +156,13 @@ def embed_pending(
     conn: sqlite3.Connection,
     *,
     limit: int = 0,
-    kinds: str = "task,comment,chunk",
-    model: str = paths.EMBED_MODEL,
+    kinds: str = "task,comment,chunk,memory",
+    model: str | None = None,
     verbose: bool = True,
 ) -> dict:
     kind_tuple = tuple(k.strip() for k in kinds.split(",") if k.strip())
-    work = pending(conn, kind_tuple)
+    model = model or settings()["model"]
+    work = pending(conn, kind_tuple, model)
     if limit:
         work = work[:limit]
     if not work:

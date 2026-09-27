@@ -9,7 +9,7 @@ from __future__ import annotations
 import re
 import sqlite3
 
-from . import actors, embed, paths, store, textutil, util
+from . import actors, embed, store, textutil, util
 
 RRF_K = 60
 SNIPPET_CHARS = 220
@@ -164,8 +164,9 @@ def invalidate_vectors() -> None:
 
 
 def vector(conn: sqlite3.Connection, query: str, limit: int,
-           model: str = paths.EMBED_MODEL) -> list[dict]:
+           model: str | None = None) -> list[dict]:
     """Косинусная близость по всем векторам (индекс маленький — считаем в памяти)."""
+    model = model or embed.settings()["model"]
     rows = _vectors(conn, model)
     if not rows:
         return []
@@ -205,14 +206,19 @@ def search_memories(conn: sqlite3.Connection, query: str, *, limit: int = 10,
         scores[r["key"]] = scores.get(r["key"], 0.0) + 1.0 / (RRF_K + rank)
 
     if mode in ("hybrid", "vector"):
-        try:
-            qvec = embed.ollama_embed([query])[0]
-        except Exception:  # noqa: BLE001 — векторная ветка не должна ломать поиск
-            qvec = None
+        model = embed.settings()["model"]
+        mem_rows = conn.execute(
+            "SELECT memory_key, vec FROM memory_embeddings WHERE model = ?", (model,)).fetchall()
+        qvec = None
+        if mem_rows:
+            try:
+                qvec = embed.ollama_embed([query], model=model)[0]
+            except Exception:  # noqa: BLE001 — векторная ветка не должна ломать поиск
+                qvec = None
         if qvec:
             qnorm = sum(x * x for x in qvec) ** 0.5
             vec_rows = []
-            for r in conn.execute("SELECT * FROM memory_embeddings"):
+            for r in mem_rows:
                 vec = embed.blob_to_vec(r["vec"])
                 if len(vec) != len(qvec):
                     continue

@@ -696,7 +696,7 @@ def handle(method: str, path: str, query: dict, body: dict, authed: bool = False
                 "db": str(paths.DB_PATH),
                 "runtime": runtime_info(),
                 "counts": db_mod.counts(conn),
-                "embed": embed_mod.health(cfg["embed"]["model"]),
+                "embed": embed_mod.health(),
                 "routes": {
                     "ok": routes_state.ok,
                     "error": routes_state.error,
@@ -1452,11 +1452,9 @@ def handle(method: str, path: str, query: dict, body: dict, authed: bool = False
             raise ApiError(exc.status, exc.message, exc.code) from exc
 
     if path == "/api/embed" and method == "POST":
-        cfg = config_mod.load()
         res = embed_mod.embed_pending(
             conn, limit=as_int(body.get("limit"), 0) or 0,
-            kinds=body.get("kinds", "task,comment,chunk"),
-            model=cfg["embed"]["model"], verbose=False,
+            kinds=body.get("kinds") or "task,comment,chunk,memory", verbose=False,
         )
         return 200, res
 

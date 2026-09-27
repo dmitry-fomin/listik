@@ -300,8 +300,8 @@ test("waves --apply конфликт цикла — cycles, пишущих вы�
     projects: {stdout: JSON.stringify([{slug: "proj", path: ""}])},
     waves: [
       {exitCode: 1, stdout: JSON.stringify({error: {
-        code: "conflict",
-        message: "ресурсные рёбра не записаны: в зависимостях цикл a → b → a",
+        code: "dep_cycle",
+        message: "любой текст: код решает, а не сообщение",
       }})},
       {stdout: JSON.stringify({cycles: [["a", "b"]], waves: [], unroutable: [], unscoped: [], blocked: {}})},
     ],

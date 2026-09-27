@@ -999,7 +999,7 @@ def apply_resource_blocks(conn: sqlite3.Connection, *, project: str, stage: str 
     `suggested-blocks`) не трогает. У не-роевых задач той же выборки снимает все
     `resource-blocks` (они тоже в `removed`). Автор ребра — всегда `RESOURCE_BLOCK_AUTHOR`, у функции
     нет параметра `actor`: подпись машиной нельзя переопределить ни с одного входа. Цикл в
-    смысловых рёбрах — отказ (`errors.ListikError`, `code=errors.CONFLICT`), в базу ничего не
+    смысловых рёбрах — отказ (`errors.ListikError`, `code=errors.DEP_CYCLE`), в базу ничего не
     пишется. Один `commit` в конце; исключение по дороге — `rollback`, база как до вызова.
     """
     plan, others = _waves(conn, project=project, stage=stage)
@@ -1008,8 +1008,9 @@ def apply_resource_blocks(conn: sqlite3.Connection, *, project: str, stage: str 
         raise errors_mod.ListikError(
             "ресурсные рёбра не записаны: в зависимостях цикл "
             + " → ".join(cycle) + " → " + cycle[0],
-            code=errors_mod.CONFLICT,
+            code=errors_mod.DEP_CYCLE,
             hint="разорви цикл: listik dep rm <id> <блокер>",
+            status=409,
         )
 
     working = set(plan["tasks"].keys())

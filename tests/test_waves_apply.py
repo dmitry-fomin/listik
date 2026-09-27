@@ -8,9 +8,11 @@ from __future__ import annotations
 
 import json
 import os
+import shutil
 import subprocess
 import sys
 import threading
+import unittest
 from pathlib import Path
 from unittest import mock
 
@@ -292,7 +294,7 @@ class CycleTests(TempDbTestCase):
 
         with self.assertRaises(errors.ListikError) as cm:
             deps.apply_resource_blocks(self.conn, project="demo")
-        self.assertEqual(cm.exception.code, errors.CONFLICT)
+        self.assertEqual(cm.exception.code, errors.DEP_CYCLE)
         self.assertTrue(any(x in str(cm.exception) for x in (a, b, c)))
         self.assertEqual(_all_deps_rows(self.conn), before)
 
@@ -364,7 +366,7 @@ class NonSwarmCardsTests(TempDbTestCase):
 
         with self.assertRaises(errors.ListikError) as cm:
             deps.apply_resource_blocks(self.conn, project="demo")
-        self.assertEqual(cm.exception.code, errors.CONFLICT)
+        self.assertEqual(cm.exception.code, errors.DEP_CYCLE)
         self.assertEqual(_deps_dump(self.conn), before)
 
     def test_non_swarm_cycle_not_refused(self) -> None:
@@ -459,7 +461,7 @@ class CliTests(TempDbTestCase):
         self.conn.commit()
         p = self._run("waves", "--project", "demo", "--apply", "--json")
         self.assertNotEqual(p.returncode, 0)
-        self.assertIn("conflict", p.stdout)
+        self.assertEqual(json.loads(p.stdout)["error"]["code"], "dep_cycle")
 
 
 class CliLiveServerBypassTests(TempDbTestCase):
@@ -501,6 +503,23 @@ class CliLiveServerBypassTests(TempDbTestCase):
         self.assertIn("доска не получит событие", p.stderr)
 
 
+def _seed_cycle(db_path: Path) -> tuple[str, str, str]:
+    """Три карточки роя проекта `demo` с циклом `blocks` a→c, b→a, c→b."""
+    conn = db_mod.init(db_path)
+    try:
+        a = _task(conn, "a", scope=("pkg/a.py",), priority=0)
+        b = _task(conn, "b", scope=("pkg/b.py",), priority=1)
+        c = _task(conn, "c", scope=("pkg/c.py",), priority=2)
+        for issue, dep in ((a, c), (b, a), (c, b)):
+            conn.execute(
+                "INSERT INTO deps(issue_id, depends_on, dep_type, created_by) "
+                "VALUES(?, ?, 'blocks', 'human')", (issue, dep))
+        conn.commit()
+        return a, b, c
+    finally:
+        conn.close()
+
+
 class HttpTests(OwnerHttpCase):
     config_text = LOCAL_CONFIG
 
@@ -539,25 +558,52 @@ class HttpTests(OwnerHttpCase):
         self.assertEqual(payload2["code"], "bad_argument")
 
     def test_http_409_on_cycle(self) -> None:
-        conn = db_mod.init(self.db_path)
-        try:
-            a = _task(conn, "a", scope=("pkg/a.py",), priority=0)
-            b = _task(conn, "b", scope=("pkg/b.py",), priority=1)
-            c = _task(conn, "c", scope=("pkg/c.py",), priority=2)
-            for issue, dep in ((a, c), (b, a), (c, b)):
-                conn.execute(
-                    "INSERT INTO deps(issue_id, depends_on, dep_type, created_by) "
-                    "VALUES(?, ?, 'blocks', 'human')", (issue, dep))
-            conn.commit()
-        finally:
-            conn.close()
+        _seed_cycle(self.db_path)
         status, _, payload = self.call("POST", "/api/waves/apply", AUTH, {"project": "demo"})
         self.assertEqual(status, 409)
-        self.assertEqual(payload["code"], "conflict")
+        self.assertEqual(payload["code"], "dep_cycle")
 
     def test_http_405_on_get(self) -> None:
         status, _, payload = self.call("GET", "/api/waves/apply?project=demo", AUTH)
         self.assertEqual(status, 405)
+
+
+@unittest.skipIf(shutil.which("node") is None, "нет node в PATH: клиент роя swarm/listik.mjs не запустить")
+class SwarmClientCycleE2ETests(OwnerHttpCase):
+    """Клиент роя `swarm/listik.mjs` против живого сервера: отказ `dep_cycle` → план без `--apply`.
+
+    `bin/listik` этого дерева ходит по HTTP в тестовый сервер. `LISTIK_DB` в окружении node —
+    отдельный несуществующий файл: тихий уход CLI в локальный режим дал бы пустую базу без
+    цикла, и тест упал бы.
+    """
+
+    config_text = LOCAL_CONFIG
+
+    def test_apply_cycle_falls_back_to_plan(self) -> None:
+        ids = _seed_cycle(self.db_path)
+        module_url = (REPO_ROOT / "swarm" / "listik.mjs").as_uri()
+        script = (
+            f"const {{Listik}} = await import({json.dumps(module_url)});\n"
+            f"const listik = new Listik({{bin: {json.dumps(str(LISTIK_BIN))}, host: '127.0.0.1', "
+            f"port: {self.port}, actor: 'agent:listik-swarm', cliTimeout: 30}});\n"
+            "try {\n"
+            "  process.stdout.write(JSON.stringify(await listik.waves('demo', {apply: true})));\n"
+            "} catch (err) {\n"
+            "  process.stderr.write(`${err.code}: ${err.message}\\n`);\n"
+            "  process.exit(1);\n"
+            "}\n"
+        )
+        env = {**os.environ,
+               "LISTIK_CONFIG": str(paths.CONFIG_PATH),
+               "LISTIK_DB": str(Path(self._tmp.name) / "node-cli-empty.db")}
+        env.pop("LISTIK_PROJECT", None)
+        p = subprocess.run(["node", "--input-type=module", "-e", script],
+                           capture_output=True, text=True, env=env, cwd=str(REPO_ROOT), timeout=60)
+        self.assertEqual(p.returncode, 0, p.stderr)
+        plan = json.loads(p.stdout)
+        self.assertTrue(plan["cycles"], plan)
+        self.assertEqual(set(plan["cycles"][0]), set(ids))
+        self.assertEqual(plan["waves"], [])
 
 
 class McpTests(TempDbTestCase):

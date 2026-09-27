@@ -1000,8 +1000,8 @@ def handle(method: str, path: str, query: dict, body: dict, authed: bool = False
         try:
             out = deps_mod.apply_resource_blocks(conn, project=project, stage=stage)
         except errors_mod.ListikError as exc:
-            raise ApiError(409 if exc.code == errors_mod.CONFLICT else 400, exc.message,
-                           code=exc.code) from exc
+            status = exc.status or (409 if exc.code == errors_mod.CONFLICT else 400)
+            raise ApiError(status, exc.message, code=exc.code) from exc
         touched: set[str] = set()
         for pair in (*out["added"], *out["removed"]):
             touched.update(pair)

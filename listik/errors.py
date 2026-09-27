@@ -23,6 +23,7 @@
     unsupported         локальный режим не умеет эту операцию
     internal            непойманное исключение: трейсбек только в listik.log
     revoked             полномочия на задачу отозваны: запуск устарел, у задачи новое поколение
+    dep_cycle           в смысловых зависимостях цикл — waves --apply ничего не записал
 """
 from __future__ import annotations
 
@@ -40,6 +41,7 @@ HTTP_ERROR = "http_error"
 UNSUPPORTED = "unsupported"
 INTERNAL = "internal"
 REVOKED = "revoked"
+DEP_CYCLE = "dep_cycle"
 
 #: HTTP-статус → код. Нужен, когда сервер ответил без поля `code` (старая версия,
 #: прокси, ошибка вне обработчика) — код всё равно должен быть машинным.

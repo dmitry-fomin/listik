@@ -81,9 +81,8 @@ export class Listik {
       plan.applyResult = {added: res.added || [], removed: res.removed || [], kept: res.kept || 0};
       return plan;
     } catch (err) {
-      if (err instanceof ListikError && err.code === "conflict" &&
-          typeof err.message === "string" &&
-          err.message.startsWith("ресурсные рёбра не записаны: в зависимостях цикл")) {
+      // Код — errors.DEP_CYCLE из listik/errors.py: цикл, `--apply` ничего не записал.
+      if (err instanceof ListikError && err.code === "dep_cycle") {
         return this._call(["waves", "--project", project]);
       }
       throw err;

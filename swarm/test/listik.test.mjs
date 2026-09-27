@@ -73,12 +73,12 @@ test("waves без --apply при цикле (ненулевой код) — у�
   assert.deepEqual(plan.cycles, [["a", "b"]]);
 });
 
-test("waves --apply конфликт цикла — второй вызов без --apply, план из него", async () => {
+test("waves --apply отказ dep_cycle — второй вызов без --apply, план из него", async () => {
   const {calls} = setupFake({
     waves: [
       {exitCode: 1, stdout: JSON.stringify({error: {
-        code: "conflict",
-        message: "ресурсные рёбра не записаны: в зависимостях цикл a → b → a",
+        code: "dep_cycle",
+        message: "любой текст: код решает, а не сообщение",
       }})},
       {stdout: JSON.stringify({cycles: [["a", "b"]], waves: []})},
     ],
@@ -91,6 +91,35 @@ test("waves --apply конфликт цикла — второй вызов бе
   assert.ok(argvs[0].includes("--apply"));
   assert.ok(!argvs[1].includes("--apply"));
 });
+
+// Прежний текст отказа по циклу из listik/deps.py. Собран из частей, чтобы в дереве
+// фраза стояла одной строкой — в deps.py, а swarm/ её буквально не содержал.
+const OLD_CYCLE_TEXT = ["ресурсные рёбра", "не записаны: в зависимостях цикл"].join(" ");
+
+// Запасной путь требует именно dep_cycle: ни conflict со старым текстом про цикл,
+// ни другой код не дают второго вызова — ошибка уходит наверх.
+for (const [code, message] of [
+  ["conflict", `${OLD_CYCLE_TEXT} a → b → a`],
+  ["bad_argument", "project: не задан"],
+]) {
+  test(`waves --apply отказ ${code} — проброс ListikError, вызов один`, async () => {
+    const {calls} = setupFake({
+      waves: [
+        {exitCode: 1, stdout: JSON.stringify({error: {code, message}})},
+        {stdout: JSON.stringify({cycles: [["a", "b"]], waves: []})},
+      ],
+    });
+    const listik = new Listik({bin: FAKE_BIN, cliTimeout: 5});
+    await assert.rejects(() => listik.waves("proj", {apply: true}), (err) => {
+      assert.ok(err instanceof ListikError);
+      assert.equal(err.code, code);
+      return true;
+    });
+    const argvs = calls();
+    assert.equal(argvs.length, 1);
+    assert.ok(argvs[0].includes("--apply"));
+  });
+}
 
 test("projects: без --actor, возвращает массив с slug/path", async () => {
   const {calls} = setupFake({

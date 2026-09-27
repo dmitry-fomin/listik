@@ -629,7 +629,7 @@ class LaunchMissingTaskTests(RevokeTestCase):
         finally:
             # addCleanup не годится: он идёт после tearDown, а тот закрывает conn.
             self.conn.execute("DROP TRIGGER IF EXISTS roty_drop_on_capture")
-        release.assert_called_once_with(self.conn, tid)
+        release.assert_called_once_with(self.conn, tid, dispatch_id=mock.ANY)
         self.assertNotIn(tid, launcher_mod._procs)
         self.assertEqual(self.log_files(), [])
 

@@ -344,8 +344,7 @@ def start(conn, task_id: str, notify=None, *, log_dir=None, env=None) -> str | N
         # Перечитываем карточку после захвата: `generation`/`dispatch_id`/снимок
         # `launch_driver` в `row` уже этого запуска.
         row = conn.execute("SELECT * FROM tasks WHERE id = ?", (task_id,)).fetchone()
-        if row is None:  # задачу удалили между захватом и чтением
-            _release(conn, task_id)
+        if row is None:  # задачу удалили между захватом и чтением; захват снимет except
             raise errors_mod.NotFound(f"задача не найдена: {task_id}")
 
         # После снимка способ читается с карточки: правка `routes.driver` начатый

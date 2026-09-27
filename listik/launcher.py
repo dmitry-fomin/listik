@@ -65,7 +65,8 @@ def check_env(env) -> dict[str, str]:
 
     `None` → `{}`. Ключи — только `LISTIK_[A-Z0-9_]+`, не из `RESERVED_ENV`. Значения —
     строка или число (приводится к строке); `None`/`bool`/список/словарь и строки
-    длиннее 512 символов — отказ. Не больше 20 ключей. Возвращает новый словарь
+    длиннее 512 символов или с символом NUL (`\x00`: его не примет `Popen`, а
+    отказ должен прийти до захвата) — отказ. Не больше 20 ключей. Возвращает новый словарь
     `{str: str}`; вход не меняется.
     """
     if env is None:
@@ -89,6 +90,8 @@ def check_env(env) -> dict[str, str]:
         text = value if isinstance(value, str) else str(value)
         if len(text) > 512:
             raise errors_mod.BadArgument(f"значение окружения `{key}` длиннее 512 символов")
+        if "\x00" in text:
+            raise errors_mod.BadArgument(f"значение окружения `{key}` содержит символ NUL")
         result[key] = text
     return result
 
@@ -229,6 +232,53 @@ def _start_tracker(conn, task_id: str, pid: int, proc: subprocess.Popen, notify,
     return thread
 
 
+def _after_popen(conn, task_id: str, proc: subprocess.Popen, notify, *, log_path,
+                 journal: str, dispatch_id: str | None, generation: int) -> None:
+    """Общий хвост `start`/`_start_swarm` после `Popen`: процесс всегда под слежением.
+
+    Поля `launch_*` и журнал запуска пишутся одной транзакцией (`add_comment`
+    коммитит и UPDATE). Сбой записи — откат и повтор одного UPDATE `launch_*` по
+    `dispatch_id` этого запуска (без журнала), чтобы `recover` нашёл процесс; сбой
+    повтора — строка в stderr. Сбой `notify` запоминается. Слежение стартует всегда
+    и после записи (она обнуляет `launch_exit_code`/`launch_finished_at`), затем
+    первое исключение уходит наружу как есть. Захват не снимается (listik-ovmh).
+    """
+    pid = proc.pid
+    # `revoke` (порция c) дожидается смерти через `proc.poll()`, пока сервер тот же
+    # процесс, что запустил Popen; ключ — task_id, повторный `start` затирает
+    # запись прежнего запуска (реестр не индексирован по dispatch_id).
+    with _trackers_lock:
+        _procs[task_id] = proc
+    first: BaseException | None = None
+    fields = ("UPDATE tasks SET launch_pid = ?, launch_log = ?, launch_error = NULL, "
+              "launch_exit_code = NULL, launch_finished_at = NULL, updated_at = ? "
+              "WHERE id = ?")
+    try:
+        conn.execute(fields, (pid, str(log_path), store.now_iso(), task_id))
+        # add_comment коммитит и UPDATE выше — запуск пишется одной транзакцией.
+        store.add_comment(conn, task_id, journal, author="agent:listik", kind="journal")
+    except Exception as exc:  # noqa: BLE001 — пробросим после старта слежения
+        first = exc
+        conn.rollback()
+        try:
+            conn.execute(fields + " AND dispatch_id = ?",
+                         (pid, str(log_path), store.now_iso(), task_id, dispatch_id))
+            conn.commit()
+        except Exception as retry_exc:  # noqa: BLE001 — единственный глушимый сбой
+            conn.rollback()
+            print(f"autostart {task_id}: не записал запуск процесса {pid}: {retry_exc}",
+                  file=sys.stderr, flush=True)
+    try:
+        _notify(notify, task_id)
+    except Exception as exc:  # noqa: BLE001 — пробросим после старта слежения
+        if first is None:
+            first = exc
+    _start_tracker(conn, task_id, pid, proc, notify,
+                   dispatch_id=dispatch_id, generation=generation)
+    if first is not None:
+        raise first
+
+
 def _track(conn, db_path, task_id: str, pid: int, proc: subprocess.Popen, notify,
            dispatch_id: str | None, generation: int) -> None:
     code = proc.wait()
@@ -291,6 +341,9 @@ def start(conn, task_id: str, notify=None, *, log_dir=None, env=None) -> str | N
     сначала снимается) — `errors.NotFound`, а не строка. Исключение после захвата, но до
     старта процесса откатывает незакоммиченное, снимает захват этого запуска (у роя после
     `claim` — и держателя) и пробрасывается как есть; после `Popen` захват не снимается.
+    После `Popen` слежение стартует всегда (`_after_popen`): сбой записи `launch_*`/
+    журнала/`notify` не оставляет процесс без слежения — `launch_pid` пишется повторной
+    записью, слежение запускается, затем первое исключение уходит наружу.
 
     `env` — дополнительное окружение процесса (см. `check_env`): подмешивается поверх
     унаследованного окружения сервера, но под штатными пятью переменными; в карточку не
@@ -401,30 +454,17 @@ def start(conn, task_id: str, notify=None, *, log_dir=None, env=None) -> str | N
                             log_dir=log_dir, extra=extra, dispatch_id=dispatch_id)
 
     pid = proc.pid
-    # `revoke` (порция c) дожидается смерти через `proc.poll()`, пока сервер тот же
-    # процесс, что запустил Popen; ключ — task_id, повторный `start` затирает
-    # запись прежнего запуска (реестр не индексирован по dispatch_id).
-    with _trackers_lock:
-        _procs[task_id] = proc
-    ts = store.now_iso()
     dispatch_id = row["dispatch_id"]
-    conn.execute("UPDATE tasks SET launch_pid = ?, launch_log = ?, launch_error = NULL, "
-                 "launch_exit_code = NULL, launch_finished_at = NULL, updated_at = ? "
-                 "WHERE id = ?", (pid, str(log_path), ts, task_id))
     # Хвост с окружением — только если `extra` непуст (порция a листик-9hcc); ключи
     # в алфавитном порядке, значения дословно (журнал виден на доске, не редактируется —
     # секреты через `env` не передавать, см. docs/API.md).
     env_tail = ""
     if extra:
         env_tail = ", окружение " + ", ".join(f"{k}={v}" for k, v in sorted(extra.items()))
-    # add_comment коммитит и UPDATE выше — запуск пишется одной транзакцией.
-    store.add_comment(conn, task_id,
-                      f"автостарт: маршрут {key}, pid {pid}, лог {log_path}, "
-                      f"поколение {generation}, запуск {dispatch_id}{env_tail}",
-                      author="agent:listik", kind="journal")
-    _notify(notify, task_id)
-    _start_tracker(conn, task_id, pid, proc, notify,
-                   dispatch_id=dispatch_id, generation=generation)
+    _after_popen(conn, task_id, proc, notify, log_path=log_path,
+                 journal=f"автостарт: маршрут {key}, pid {pid}, лог {log_path}, "
+                         f"поколение {generation}, запуск {dispatch_id}{env_tail}",
+                 dispatch_id=dispatch_id, generation=generation)
     return None
 
 
@@ -456,7 +496,9 @@ def _start_swarm(conn, task_id: str, row, record: dict, *, notify, log_dir,
 
     Исключение до старта процесса (`Popen` не вернул его) откатывает незакоммиченное,
     снимает захват этого запуска, а если `claim` уже прошёл — и держателя, и
-    пробрасывается как есть (listik-ohhl); после `Popen` захват не снимается.
+    пробрасывается как есть (listik-ohhl); после `Popen` захват не снимается, слежение
+    стартует всегда, а сбой записи/журнала/`notify` уходит наружу после него
+    (`_after_popen`). Файлы `.out`/`.log` закрываются при любом исходе.
     """
     from . import stage_launch
 
@@ -604,22 +646,20 @@ def _start_swarm(conn, task_id: str, row, record: dict, *, notify, log_dir,
                             "LISTIK_HARNESS": harness}
         try:
             log_dir.mkdir(parents=True, exist_ok=True)
-            out_file = open(out_path, "wb")
-            log_file = open(log_path, "wb")
-            # Шапка лога — чем запущен этап: без неё разбор «что было в промпте» невозможен.
-            log_file.write(
-                f"рой: этап {stage}, роль {role}, харнесс {harness}\n"
-                f"рой: argv {json.dumps(argv[:-1] if prompt is not None else argv, ensure_ascii=False)}\n"
-                f"рой: промпт (sha256 {hashlib.sha256((prompt or '').encode()).hexdigest()[:16]}):\n"
-                f"{prompt or '—'}\nрой: конец промпта\n".encode())
-            log_file.flush()
-            try:
+            # Оба файла закрываются при любом исходе; после `Popen` процесс держит
+            # свои дескрипторы.
+            with open(out_path, "wb") as out_file, open(log_path, "wb") as log_file:
+                # Шапка лога — чем запущен этап: без неё разбор «что было в промпте»
+                # невозможен.
+                log_file.write(
+                    f"рой: этап {stage}, роль {role}, харнесс {harness}\n"
+                    f"рой: argv {json.dumps(argv[:-1] if prompt is not None else argv, ensure_ascii=False)}\n"
+                    f"рой: промпт (sha256 {hashlib.sha256((prompt or '').encode()).hexdigest()[:16]}):\n"
+                    f"{prompt or '—'}\nрой: конец промпта\n".encode())
+                log_file.flush()
                 proc = subprocess.Popen(argv, cwd=str(cwd), stdin=subprocess.DEVNULL,
                                         stdout=out_file, stderr=log_file,
                                         start_new_session=True, env=proc_env)
-            finally:
-                out_file.close()
-                log_file.close()
         except OSError as exc:
             # Процесса нет — держателя и захват снять, вопрос человеку.
             store.update_task(conn, task_id, actor="agent:listik", holder="",
@@ -639,24 +679,15 @@ def _start_swarm(conn, task_id: str, row, record: dict, *, notify, log_dir,
         raise
 
     pid = proc.pid
-    with _trackers_lock:
-        _procs[task_id] = proc
-    ts = store.now_iso()
     dispatch_id = row["dispatch_id"]
-    conn.execute("UPDATE tasks SET launch_pid = ?, launch_log = ?, launch_error = NULL, "
-                 "launch_exit_code = NULL, launch_finished_at = NULL, updated_at = ? "
-                 "WHERE id = ?", (pid, str(log_path), ts, task_id))
     env_tail = ""
     if extra:
         env_tail = ", окружение " + ", ".join(f"{k}={v}" for k, v in sorted(extra.items()))
-    store.add_comment(conn, task_id,
-                      f"рой: этап {stage}, роль {role}, держатель {harness}, "
-                      f"pid {pid}, лог {log_path}, поколение {generation}, "
-                      f"запуск {dispatch_id}{env_tail} — карточку взял Listik",
-                      author="agent:listik", kind="journal")
-    _notify(notify, task_id)
-    _start_tracker(conn, task_id, pid, proc, notify,
-                   dispatch_id=dispatch_id, generation=generation)
+    _after_popen(conn, task_id, proc, notify, log_path=log_path,
+                 journal=f"рой: этап {stage}, роль {role}, держатель {harness}, "
+                         f"pid {pid}, лог {log_path}, поколение {generation}, "
+                         f"запуск {dispatch_id}{env_tail} — карточку взял Listik",
+                 dispatch_id=dispatch_id, generation=generation)
     return None
 
 

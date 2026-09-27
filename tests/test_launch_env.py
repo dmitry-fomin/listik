@@ -88,6 +88,36 @@ class CheckEnvTests(AutostartTestCase):
         with self.assertRaises(errors.BadArgument):
             launcher_mod.check_env(env)
 
+    def test_nul_in_value_is_bad_argument(self) -> None:
+        with self.assertRaises(errors.BadArgument) as ctx:
+            launcher_mod.check_env({"LISTIK_X": "a\x00b"})
+        self.assertIn("LISTIK_X", str(ctx.exception))
+
+    def test_nul_value_refused_before_capture(self) -> None:
+        # listik-mnw5: NUL в значении — отказ до захвата, карточка не меняется.
+        proj_dir = self.tmp_path / "proj"
+        proj_dir.mkdir(exist_ok=True)
+        self.make_project("proj", path=proj_dir)
+        self.set_routes(pipeline_record("low-pipeline",
+                                        command=[sys.executable, "-c", "pass"]))
+        task_id = self.make_task(project="proj", autostart=True,
+                                 route="low-pipeline")["id"]
+        fields = "generation, dispatch_id, launched_by, orchestrator"
+
+        def snapshot():
+            row = self.conn.execute(f"SELECT {fields} FROM tasks WHERE id = ?",
+                                    (task_id,)).fetchone()
+            count = lambda table: self.conn.execute(  # noqa: E731
+                f"SELECT COUNT(*) FROM {table} WHERE task_id = ?", (task_id,)).fetchone()[0]
+            return tuple(row), count("comments"), count("events")
+
+        before = snapshot()
+        with self.assertRaises(errors.BadArgument):
+            launcher_mod.start(self.conn, task_id, log_dir=self.log_dir,
+                               env={"LISTIK_X": "a\x00b"})
+        self.assertEqual(snapshot(), before)
+        self.assertIsNone(launcher_mod.tracker(task_id))
+
 
 class ReservedEnvGuardTests(AutostartTestCase):
     """RESERVED_ENV не должен отставать от того, что Listik реально читает/выдаёт."""

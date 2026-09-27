@@ -95,18 +95,23 @@ class LaunchTests(SwarmCase):
         self.add_route({"impl": {"harness": "probe"},
                         "judge": {"harness": "probe"}})
         task_id = self.add_task(stage="s3-impl")
+        # Процесс живёт дольше проверок: после его выхода слежение разберёт исход и
+        # снимет захват штатно (listik-mnw5), а проверяется путь исключения.
+        harnesses_store.update(self.conn, "probe", {
+            "argv": [sys.executable, "-c", "import time; time.sleep(1); print('готово')"]})
         self.conn.execute(
             "CREATE TRIGGER fail_launch_pid BEFORE UPDATE OF launch_pid ON tasks "
             "WHEN NEW.launch_pid IS NOT NULL "
             "BEGIN SELECT RAISE(ABORT, 'сбой после Popen'); END")
         self.conn.commit()
-        with self.assertRaises(sqlite3.IntegrityError):
+        with mock.patch("sys.stderr"), self.assertRaises(sqlite3.IntegrityError):
             launcher.start(self.conn, task_id, log_dir=str(self.tmp_path))
-        launcher._procs.pop(task_id).wait(timeout=30)
         row = self.conn.execute("SELECT launched_by, dispatch_id FROM tasks WHERE id = ?",
                                 (task_id,)).fetchone()
         self.assertEqual(row["launched_by"], "listik")
         self.assertIsNotNone(row["dispatch_id"])
+        launcher._procs.pop(task_id).wait(timeout=30)
+        launcher.tracker(task_id).join(timeout=30)
 
     def test_judge_green_closes_card(self) -> None:
         harnesses_store.update(self.conn, "probe", {"argv": script("зелёный")})
@@ -1201,6 +1206,128 @@ class CaptureReleaseOnErrorTests(SwarmCase):
         stage = self.conn.execute("SELECT stage FROM tasks WHERE id = ?",
                                   (task_id,)).fetchone()[0]
         self.assertEqual(stage, "s4-judge")
+
+    def test_journal_error_after_popen_still_tracks(self) -> None:
+        # listik-mnw5: сбой журнала запуска после `Popen` — launch_pid записан
+        # повтором, слежение стартовало, исход разобран, исключение наружу.
+        self.add_route(self.IMPL_JUDGE)
+        task_id = self.add_task(stage="s3-impl")
+        real = store.add_comment
+        failed = []
+
+        def flaky(*args, **kwargs):
+            if not failed and "pid" in (args[2] if len(args) > 2 else ""):
+                failed.append(1)
+                raise RuntimeError("журнал")
+            return real(*args, **kwargs)
+
+        with mock.patch.object(store, "add_comment", side_effect=flaky), \
+                mock.patch("sys.stderr"):
+            with self.assertRaises(RuntimeError) as ctx:
+                launcher.start(self.conn, task_id, log_dir=str(self.tmp_path))
+            self.assertEqual(str(ctx.exception), "журнал")
+            pid = launcher._procs[task_id].pid
+            row = self.fresh().execute("SELECT * FROM tasks WHERE id = ?",
+                                       (task_id,)).fetchone()
+            self.assertEqual(row["launch_pid"], pid)
+            self.assertEqual(row["launched_by"], "listik")
+            thread = launcher.tracker(task_id)
+            self.assertIsNotNone(thread)
+            thread.join(timeout=30)
+        self.assertFalse(thread.is_alive())
+        self.assertIsNone(self.task(task_id)["launched_by"])
+
+    def test_notify_error_after_popen_still_tracks(self) -> None:
+        self.add_route(self.IMPL_JUDGE)
+        task_id = self.add_task(stage="s3-impl")
+        calls: list = []
+
+        def notify(*args) -> None:
+            calls.append(args)
+            if len(calls) == 1:
+                raise RuntimeError("notify")
+
+        with self.assertRaises(RuntimeError) as ctx:
+            launcher.start(self.conn, task_id, log_dir=str(self.tmp_path), notify=notify)
+        self.assertEqual(str(ctx.exception), "notify")
+        thread = launcher.tracker(task_id)
+        self.assertIsNotNone(thread)
+        thread.join(timeout=30)
+        self.assertFalse(thread.is_alive())
+        task = self.task(task_id)
+        self.assertIsNotNone(task["launch_pid"])
+        self.assertTrue(any(t.startswith("рой: этап s3-impl") and "pid" in t
+                            for t in self.comments(task_id, "journal")))
+        self.assertIsNone(task["launched_by"])
+
+    def open_spy(self, fail):
+        """Обёртка `open` в launcher: запоминает файлы, `fail(n, fh)` роняет n-й."""
+        opened: list = []
+
+        def spy(path, mode="r", *args, **kwargs):
+            fail(len(opened) + 1)
+            fh = open(path, mode, *args, **kwargs)
+            opened.append(fh)
+            return fh
+        return opened, spy
+
+    def assert_swarm_os_error_path(self, task_id: str, opened: list) -> None:
+        self.assertTrue(opened)
+        for fh in opened:
+            self.assertTrue(fh.closed, fh.name)
+        task = self.task(task_id)
+        self.assertFalse(task["holder"])
+        self.assertIsNone(task["launched_by"])
+        self.assertTrue(task["needs_owner"])
+        self.assertIsNone(launcher.tracker(task_id))
+
+    def test_second_open_error_closes_first_file(self) -> None:
+        self.add_route(self.IMPL_JUDGE)
+        task_id = self.add_task(stage="s3-impl")
+
+        def fail(n):
+            if n == 2:
+                raise OSError("второй open")
+        opened, spy = self.open_spy(fail)
+        with mock.patch("listik.launcher.open", create=True, side_effect=spy), \
+                mock.patch("sys.stderr"):
+            result = launcher.start(self.conn, task_id, log_dir=str(self.tmp_path))
+        self.assertEqual(result, {"launched": False, "needs_owner": True})
+        self.assertEqual(len(opened), 1)
+        self.assert_swarm_os_error_path(task_id, opened)
+
+    def test_log_write_error_closes_both_files(self) -> None:
+        self.add_route(self.IMPL_JUDGE)
+        task_id = self.add_task(stage="s3-impl")
+        opened: list = []
+
+        class Broken:
+            def __init__(self, fh):
+                self.fh = fh
+
+            def __enter__(self):
+                return self
+
+            def __exit__(self, *exc):
+                self.fh.close()
+
+            def write(self, _data):
+                raise OSError("запись шапки")
+
+            def __getattr__(self, name):
+                return getattr(self.fh, name)
+
+        def spy(path, mode="r", *args, **kwargs):
+            fh = open(path, mode, *args, **kwargs)
+            opened.append(fh)
+            return Broken(fh) if len(opened) == 2 else fh
+
+        with mock.patch("listik.launcher.open", create=True, side_effect=spy), \
+                mock.patch("sys.stderr"):
+            result = launcher.start(self.conn, task_id, log_dir=str(self.tmp_path))
+        self.assertEqual(result, {"launched": False, "needs_owner": True})
+        self.assertEqual(len(opened), 2)
+        self.assert_swarm_os_error_path(task_id, opened)
 
     def test_popen_error_after_claim_releases_holder_and_capture(self) -> None:
         self.add_route(self.IMPL_JUDGE)

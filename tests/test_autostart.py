@@ -600,9 +600,64 @@ class CaptureReleaseOnErrorTests(AutostartTestCase):
                 self.assertRaises(sqlite3.IntegrityError):
             self.launch(task["id"])
         launcher_mod._procs.pop(task["id"]).wait(timeout=30)
+        self.join_tracker(task["id"])
         row = self.row(task["id"])
         self.assertEqual(row["launched_by"], "listik")
         self.assertIsNotNone(row["dispatch_id"])
+
+    def fresh_row(self, task_id):
+        fresh = sqlite3.connect(self.db_path)
+        fresh.row_factory = sqlite3.Row
+        self.addCleanup(fresh.close)
+        return fresh.execute("SELECT * FROM tasks WHERE id = ?", (task_id,)).fetchone()
+
+    def test_journal_error_after_popen_still_tracks(self) -> None:
+        # listik-mnw5: сбой журнала запуска после `Popen` — launch_pid записан
+        # повтором, слежение стартовало и записало завершение, исключение наружу.
+        task = self.prepare([sys.executable, "-c", "pass"])
+        real = store.add_comment
+        calls = []
+
+        def flaky(*args, **kwargs):
+            calls.append(1)
+            if len(calls) == 1:
+                raise RuntimeError("журнал")
+            return real(*args, **kwargs)
+
+        with mock.patch.object(store, "add_comment", side_effect=flaky), \
+                contextlib.redirect_stderr(io.StringIO()):
+            with self.assertRaises(RuntimeError) as ctx:
+                self.launch(task["id"])
+            self.assertEqual(str(ctx.exception), "журнал")
+            pid = launcher_mod._procs[task["id"]].pid
+            row = self.fresh_row(task["id"])
+            self.assertEqual(row["launch_pid"], pid)
+            self.assertEqual(row["launched_by"], "listik")
+            self.join_tracker(task["id"])
+        row = self.row(task["id"])
+        self.assertIsNotNone(row["launch_finished_at"])
+        self.assertEqual(row["launch_exit_code"], 0)
+
+    def test_notify_error_after_popen_still_tracks(self) -> None:
+        task = self.prepare([sys.executable, "-c", "pass"])
+        calls = []
+
+        def notify(*args) -> None:
+            calls.append(args)
+            if len(calls) == 1:
+                raise RuntimeError("notify")
+
+        with contextlib.redirect_stderr(io.StringIO()), \
+                self.assertRaises(RuntimeError) as ctx:
+            self.launch(task["id"], notify=notify)
+        self.assertEqual(str(ctx.exception), "notify")
+        self.join_tracker(task["id"])
+        row = self.row(task["id"])
+        self.assertIsNotNone(row["launch_pid"])
+        self.assertTrue(any(c["text"].startswith("автостарт: маршрут")
+                            for c in self.comments(task["id"], "journal")))
+        self.assertIsNotNone(row["launch_finished_at"])
+        self.assertEqual(row["launch_exit_code"], 0)
 
     def test_foreign_capture_kept_on_late_error(self) -> None:
         # Страж: `_fail` снял захват, `notify` в `refuse` бросает, а захват к этому

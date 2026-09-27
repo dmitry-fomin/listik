@@ -1262,6 +1262,14 @@ def parse_verdict(text: str | None) -> bool:
     raise ValueError(f"bad verdict format: {VERDICT_FORMAT}")
 
 
+def verdict_value(text: str | None) -> str | None:
+    """'fail' / 'pass' by `parse_verdict`; None for text not in the format (old verdicts)."""
+    try:
+        return "fail" if parse_verdict(text) else "pass"
+    except ValueError:
+        return None
+
+
 def stage_unchanged(conn: sqlite3.Connection, task_id: str, *, stage: str | None,
                     note: str | None = None, harness: str | None = None,
                     actor: str | None = None, holder: str | None = None) -> dict:
@@ -1394,6 +1402,10 @@ def get_task(conn: sqlite3.Connection, task_id: str, *, with_details: bool = Tru
         out["comments"] = store_helpers.dict_rows(conn.execute(
             "SELECT id, author, kind, text, created_at FROM comments WHERE task_id = ? "
             "ORDER BY created_at", (task_id,)))
+        # Доске нужен цвет вердикта: машинное поле только у kind=verdict.
+        for c in out["comments"]:
+            if c["kind"] == "verdict":
+                c["verdict"] = verdict_value(c["text"])
         out["dependencies"] = store_helpers.dict_rows(conn.execute(
             "SELECT depends_on, dep_type, created_at FROM deps WHERE issue_id = ?", (task_id,)))
         out["dependents"] = store_helpers.dict_rows(conn.execute(

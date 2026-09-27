@@ -797,13 +797,13 @@ interface FeedRow extends UiTimelineItem {
   sortKey: string
 }
 
-/** Маркер комментария: иконка/цвет — из COMMENT_KINDS, у `verdict` — по тексту (verdictMark). */
-function commentMark(kind: string, text: string): FeedMarker {
-  if (kind === 'verdict') {
-    const mark = verdictMark(text)
+/** Маркер комментария: иконка/цвет — из COMMENT_KINDS, у `verdict` — по полю `verdict`, фолбэк текст (verdictMark). */
+function commentMark(comment: TaskComment): FeedMarker {
+  if (comment.kind === 'verdict') {
+    const mark = verdictMark(comment)
     return { ...mark, hint: commentKindTitle('verdict') }
   }
-  const item = commentKind(kind)
+  const item = commentKind(comment.kind)
   return { icon: item.icon, bg: item.markerBg, color: item.markerColor, hint: item.label }
 }
 
@@ -813,7 +813,7 @@ function commentTime(iso: string): string {
 
 function answerRow(comment: TaskComment): FeedAnswer {
   return {
-    ...commentMark(comment.kind, comment.text),
+    ...commentMark(comment),
     author: comment.author || 'без автора',
     time: commentTime(comment.created_at),
     text: comment.text,
@@ -824,7 +824,7 @@ function commentRow(comment: TaskComment, answer: TaskComment | null): FeedRow {
   return {
     id: `c-${comment.id}`,
     title: '',
-    marker: commentMark(comment.kind, comment.text),
+    marker: commentMark(comment),
     authorLine: `${comment.author || 'без автора'} · ${commentTime(comment.created_at)}`,
     text: comment.text,
     markdown: true,

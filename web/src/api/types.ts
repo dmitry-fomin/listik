@@ -118,6 +118,8 @@ export interface TaskComment {
   kind: string
   text: string
   created_at: string
+  /** Только у `kind=verdict`: по первой строке `VERDICT: PASS/FAIL`; `null` — старый текст не в формате. */
+  verdict?: 'pass' | 'fail' | null
 }
 
 export interface TaskDep {

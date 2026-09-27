@@ -3,7 +3,7 @@
  * где перечислены ключи, подписи, иконки и цвета: фильтры, модалка создания,
  * глифы, доска и витрина берут значения отсюда, а не держат свои копии.
  */
-import type { AssistantComplexityLevel, CommentKind, PipelineStage, RouteIconKey, TaskStage, TaskStatus } from '@/api/types'
+import type { AssistantComplexityLevel, CommentKind, PipelineStage, RouteIconKey, TaskComment, TaskStage, TaskStatus } from '@/api/types'
 
 export interface DictionaryItem<T extends string | number> {
   value: T
@@ -308,8 +308,8 @@ export const ROUTE_ICON_UNKNOWN = {
 
 export interface CommentKindItem extends DictionaryItem<CommentKind> {
   /** Имя иконки из `lib/icons.ts` — в фильтре, композере и маркере ленты. У
-   *  `verdict` в ленте иконку/цвет маркера переопределяет `verdictMark` —
-   *  здесь только композерная иконка (`flag`). */
+   *  `verdict` в ленте иконку/цвет маркера переопределяет `verdictMark` (по полю
+   *  `verdict`, фолбэк — текст) — здесь только композерная иконка (`flag`). */
   icon: string
   /** Placeholder поля композера для этого вида. */
   placeholder: string
@@ -329,7 +329,7 @@ export const COMMENT_KINDS: CommentKindItem[] = [
   { value: 'question', label: 'вопрос', icon: 'question', placeholder: 'вопрос человеку', markerBg: 'var(--warning-50)', markerColor: 'var(--warning-700)' },
   { value: 'answer', label: 'ответ', icon: 'answer', placeholder: 'ответ на вопрос', markerBg: 'var(--info-50)', markerColor: 'var(--info-700)' },
   { value: 'review', label: 'ревью', icon: 'review', placeholder: 'замечание ревью', markerBg: 'var(--surface-2)', markerColor: 'var(--ink-3)' },
-  // Маркер вердикта в ленте считает verdictMark по тексту — markerBg/markerColor
+  // Маркер вердикта в ленте считает verdictMark по полю verdict (фолбэк — текст) — markerBg/markerColor
   // здесь не используются (композеру и фильтру хватает иконки flag).
   { value: 'verdict', label: 'вердикт', icon: 'flag', placeholder: 'вердикт судьи', markerBg: 'var(--surface-2)', markerColor: 'var(--ink-3)' },
 ]
@@ -346,14 +346,18 @@ export interface FeedMark {
 }
 
 /**
- * Вид вердикта по тексту — перенос логики прежнего `TaskDrawer.commentTone`:
- * текст обрезается по краям и приводится к нижнему регистру, начинается на
- * «красн», «red» или «fail» → иконка `close` и danger-токены, иначе `check`
- * и success-токены.
+ * Вид вердикта. Решает поле `verdict` от сервера (`VERDICT: FAIL` → `fail`):
+ * `fail` → иконка `close` и danger-токены, `pass` → `check` и success-токены.
+ * Поля нет или оно `null` (старый текст не в формате) — фолбэк по тексту,
+ * логика прежнего `TaskDrawer.commentTone`: текст обрезается по краям и
+ * приводится к нижнему регистру, начинается на «красн», «red» или «fail» →
+ * danger, иначе success.
  */
-export function verdictMark(text: string): FeedMark {
-  const trimmed = text.trim().toLowerCase()
-  const danger = trimmed.startsWith('красн') || trimmed.startsWith('red') || trimmed.startsWith('fail')
+export function verdictMark(comment: Pick<TaskComment, 'text' | 'verdict'>): FeedMark {
+  const trimmed = comment.text.trim().toLowerCase()
+  const danger = comment.verdict
+    ? comment.verdict === 'fail'
+    : trimmed.startsWith('красн') || trimmed.startsWith('red') || trimmed.startsWith('fail')
   return danger
     ? { icon: 'close', bg: 'var(--danger-50)', color: 'var(--danger-700)' }
     : { icon: 'check', bg: 'var(--success-50)', color: 'var(--success-700)' }

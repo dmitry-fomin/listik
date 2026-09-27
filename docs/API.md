@@ -110,7 +110,9 @@ users = ["ann", "bob"]   # люди, которые работают с этим
 индекс `idx_tasks_orchestrator`, `SCHEMA_VERSION` 13, alembic `0011_task_orchestrator`.
 
 `GET /api/tasks/{id}` при `details=1` (по умолчанию включено) добавляет: `comments[]`
-(`id, author, kind, text, created_at`), `dependencies[]`, `dependents[]`, `events[]`
+(`id, author, kind, text, created_at`; у `kind=verdict` ещё `verdict`: `pass` / `fail` по первой
+строке `VERDICT: PASS` / `VERDICT: FAIL`, `null` — текст не в этом формате, старые вердикты; у
+других видов поля нет), `dependencies[]`, `dependents[]`, `events[]`
 (`ts, kind, from_value, to_value, actor, harness, note, duration_s`), `documents[]` — по одной
 записи на каждый индексируемый документ задачи (`spec_path`/`checklist_path`/`review_path`/
 `decision_path`/`journal_path`), с полями `id, kind, path, source, revision, content_hash, title,

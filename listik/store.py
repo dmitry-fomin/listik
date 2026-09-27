@@ -1435,9 +1435,11 @@ def get_task(conn: sqlite3.Connection, task_id: str, *, with_details: bool = Tru
             "SELECT issue_id, dep_type FROM deps WHERE depends_on = ?", (task_id,)))
         # Карантин (события `rejected`) сюда не попадает: агент не должен видеть
         # отвергнутые записи зомби нигде, кроме явного `with_rejected`/`?rejected=1`.
+        # Ограничения числа нет: старые события (`created`, первые этапы, `revoke`)
+        # читают доска (лента и шаги конвейера) и рой (listik-pzpd).
         out["events"] = store_helpers.dict_rows(conn.execute(
             "SELECT ts, kind, from_value, to_value, actor, harness, note, duration_s, "
-            "transition FROM events WHERE task_id = ? AND kind != ? ORDER BY ts DESC LIMIT 100",
+            "transition FROM events WHERE task_id = ? AND kind != ? ORDER BY ts DESC",
             (task_id, fence_mod.REJECTED_KIND)))
     if with_rejected:
         out["rejected"] = fence_mod.list_rejected(conn, task_id)

@@ -116,6 +116,8 @@ users = ["ann", "bob"]   # люди, которые работают с этим
 (`id, author, kind, text, created_at`; у `kind=verdict` ещё `verdict`: `pass` / `fail` по первой
 строке `VERDICT: PASS` / `VERDICT: FAIL`, `null` — текст не в этом формате, старые вердикты; у
 других видов поля нет), `dependencies[]`, `dependents[]`, `events[]`
+— все события задачи, кроме карантина (`rejected`), без ограничения числа, от новых к старым
+по `ts`; порядок событий одной секунды не задан
 (`ts, kind, from_value, to_value, actor, harness, note, duration_s, transition`; `transition` —
 тип перехода, применённый `stage`: `sticky`/`handoff`/`sticky-return`; `null` — переход в `done`,
 создание с этапом, правка `stage` через `PATCH`, а также события старше этой версии, заметку

@@ -62,14 +62,16 @@ const typeToggleOptions = computed<IconToggleOption<string>[]>(() => [
   ...typeOptions.value,
 ])
 
-/** Здоровье по heartbeat/держателю — тот же клиентский признак, что чипы тулбара. */
+/** Здоровье по heartbeat/держателю: список фильтрует на сервере (`GET /api/tasks`,
+ * параметр `health`), доска применяет то же правило на клиенте. */
 const healthOptions: IconToggleOption<string>[] = [
   { value: '', label: 'все' },
   { value: 'dead', label: 'брошены' },
   { value: 'at-risk', label: 'под угрозой' },
 ]
 
-/** Слой зависимостей: данные приходят из /api/ready и /api/blocked. */
+/** Слой зависимостей: список фильтрует на сервере (`GET /api/tasks`, параметр `deps`),
+ * доска применяет те же правила на клиенте. */
 const depsOptions: IconToggleOption<string>[] = [
   { value: 'all', label: 'все' },
   { value: 'ready', label: 'можно брать' },

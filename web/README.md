@@ -107,6 +107,7 @@ scripts/
   verify-markdown.mjs  markdown-вывод описания карточки на моке `--markdown`
   verify-voice.mjs  голосовой ввод задачи: десктоп и телефон на моке `--voice`
   verify-list-sort.mjs  сортировка вида «Список» на моке `--list-sort`
+  verify-list-filters.mjs  фильтры вида «Список» уходят на сервер, страница — как ответ, на моке `--fill=40`
   verify-phone-queue.mjs  очередь телефона: смена проекта и запоздавшие ответы на моке `--slow-list`
   patch-facet.mjs  убирает неиспользуемый импорт в исходнике кита (postinstall)
 ```

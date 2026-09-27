@@ -10,6 +10,7 @@ import { ApiError, api, subscribeStream } from '@/api/client'
 import { readStoredOwner, readStoredToken, writeStoredOwner, writeStoredToken } from '@/api/config'
 import { AT_RISK_IDLE_HOURS, taskHealth } from '@/lib/health'
 import { INTAKE_COLUMN_KEY, PIPELINE_STAGE_KEYS, STAGES } from '@/lib/dictionaries'
+import { NO_VALUE } from '@/lib/facets'
 import { tryRequest, withLoading } from './helpers'
 import type {
   AssistantSuggestRequest,
@@ -254,24 +255,33 @@ function handleError(error: unknown): void {
   connectionLost.value = false
 }
 
+function byHealth(task: Task, value: Filters['health']): boolean {
+  return value === '' || taskHealth(task) === value
+}
+
+function byDeps(task: Task, mode: DepsFilter): boolean {
+  if (mode === 'blocked') return (depsSummary.value[task.id]?.blockedBy.length ?? 0) > 0
+  // «готовые к работе» — ровно то, что вернул /api/ready (нет блокеров и держателя)
+  if (mode === 'ready') return readyTasks.value.some((item) => item.id === task.id)
+  return true
+}
+
+/** Дата обновления (UTC, `ГГГГ-ММ-ДД`) в границах включительно — то же правило, что у сервера. */
+function byUpdated(task: Task, from: string, to: string): boolean {
+  const day = task.updated_at.slice(0, 10)
+  return (!from || day >= from) && (!to || day <= to)
+}
+
 function matchesFilters(task: Task, f: Filters, board: BoardFilters = { health: '', deps: 'all' }): boolean {
   if (f.needsOwner && !task.needs_owner) return false
-  if (f.health === 'dead' && taskHealth(task) !== 'dead') return false
-  if (f.health === 'at-risk' && taskHealth(task) !== 'at-risk') return false
-  if (board.health === 'dead' && taskHealth(task) !== 'dead') return false
-  if (board.health === 'at-risk' && taskHealth(task) !== 'at-risk') return false
+  if (!byHealth(task, f.health) || !byHealth(task, board.health)) return false
   if (f.type && task.issue_type !== f.type) return false
   if (f.orchestrator) {
-    const target = f.orchestrator === '—' ? null : f.orchestrator
-    if ((task.orchestrator ?? null) !== target) return false
+    const matched = f.orchestrator === NO_VALUE ? !task.orchestrator : task.orchestrator === f.orchestrator
+    if (!matched) return false
   }
-  if (f.updatedFrom && task.updated_at < `${f.updatedFrom}T00:00:00`) return false
-  if (f.updatedTo && task.updated_at > `${f.updatedTo}T23:59:59`) return false
-  if (f.deps === 'blocked' && !(depsSummary.value[task.id]?.blockedBy.length ?? 0)) return false
-  // «готовые к работе» — ровно то, что вернул /api/ready (нет блокеров и держателя)
-  if (f.deps === 'ready' && !readyTasks.value.some((item) => item.id === task.id)) return false
-  if (board.deps === 'blocked' && !(depsSummary.value[task.id]?.blockedBy.length ?? 0)) return false
-  if (board.deps === 'ready' && !readyTasks.value.some((item) => item.id === task.id)) return false
+  if (!byUpdated(task, f.updatedFrom, f.updatedTo)) return false
+  if (!byDeps(task, f.deps) || !byDeps(task, board.deps)) return false
   return true
 }
 
@@ -1389,9 +1399,13 @@ async function loadListTasks(params: {
         project: filters.project || undefined,
         status: filters.status || undefined,
         stage: filters.stage || undefined,
-        orchestrator: filters.orchestrator || undefined,
+        orchestrator: filters.orchestrator === NO_VALUE ? 'none' : filters.orchestrator || undefined,
         needs_owner: filters.needsOwner || undefined,
         type: filters.type || undefined,
+        deps: filters.deps === 'all' ? undefined : filters.deps,
+        health: filters.health || undefined,
+        updated_from: filters.updatedFrom || undefined,
+        updated_to: filters.updatedTo || undefined,
         limit: params.limit,
         offset: params.offset,
         order: params.order ?? 'updated',
@@ -1401,11 +1415,8 @@ async function loadListTasks(params: {
   if (page === null) {
     return { tasks: [], total: 0 }
   }
-  let tasks = page.tasks
-  if (filters.health) tasks = tasks.filter((task) => taskHealth(task) === filters.health)
-  if (filters.updatedFrom) tasks = tasks.filter((task) => task.updated_at >= `${filters.updatedFrom}T00:00:00`)
-  if (filters.updatedTo) tasks = tasks.filter((task) => task.updated_at <= `${filters.updatedTo}T23:59:59`)
-  return { tasks, total: page.total }
+  // Фильтрует сервер, до пагинации: отсеянная на клиенте страница разошлась бы с `total`.
+  return { tasks: page.tasks, total: page.total }
 }
 
 function init(): void {

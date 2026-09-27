@@ -859,6 +859,7 @@ export interface TaskQuery {
   project?: string
   status?: string
   stage?: string
+  /** `'none'` — задачи без оркестратора. */
   orchestrator?: string
   holder?: string
   needs_owner?: boolean
@@ -867,6 +868,10 @@ export interface TaskQuery {
   text?: string
   include_closed?: boolean
   include_archived?: boolean
+  deps?: 'ready' | 'blocked'
+  health?: 'dead' | 'at-risk'
+  updated_from?: string
+  updated_to?: string
   limit?: number
   offset?: number
   order?: 'updated' | 'created' | 'priority' | 'stage'

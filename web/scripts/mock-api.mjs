@@ -94,7 +94,10 @@
  * отдаёт `voice: {transcribe, draft, create}` — сколько раз пришли
  * `POST /api/assistant/transcribe`, `POST /api/assistant/draft`, `POST /api/tasks`, —
  * и `last_create` (тело последнего `POST /api/tasks` или `null`); `POST /__requests`
- * обнуляет эти счётчики вместе с прежними.
+ * обнуляет эти счётчики вместе с прежними. `list_queries` — `url.search` каждого
+ * `GET /api/tasks` (списка) по порядку, `POST /__requests` его очищает; фильтры
+ * `deps`/`health`/`updated_*`/`orchestrator` мок не применяет — список должен показать
+ * ответ как есть (scripts/verify-list-filters.mjs).
  *
  * Формы ответов повторяют docs/API.md и listik/store.py 1:1 — это заглушка
  * транспорта, а не второй контракт.
@@ -925,6 +928,8 @@ const VOICE_DRAFT_ACCEPTANCE = [
 const voiceCounters = { transcribe: 0, draft: 0, create: 0 }
 /** Тело последнего `POST /api/tasks` — для скриптовых проверок порций b/c. */
 let lastCreate = null
+/** `url.search` каждого `GET /api/tasks` (списка) по порядку прихода — `GET /__requests`. */
+const listQueries = []
 /** id созданных моком карточек: `mock-1`, `mock-2`, … */
 let nextMockId = 1
 
@@ -1695,11 +1700,13 @@ const server = createServer(async (request, response) => {
       voiceCounters.draft = 0
       voiceCounters.create = 0
       lastCreate = null
+      listQueries.length = 0
       return ok({
         detail_reads: {},
         streams: streamClients.size,
         voice: { transcribe: 0, draft: 0, create: 0 },
         last_create: null,
+        list_queries: [],
       })
     }
     return ok({
@@ -1707,6 +1714,7 @@ const server = createServer(async (request, response) => {
       streams: streamClients.size,
       voice: { ...voiceCounters },
       last_create: lastCreate,
+      list_queries: [...listQueries],
     })
   }
 
@@ -1942,6 +1950,7 @@ const server = createServer(async (request, response) => {
   }
 
   if (url.pathname === '/api/tasks') {
+    if (request.method === 'GET') listQueries.push(url.search)
     if (viewerBad) return unknownViewer()
     if (request.method === 'POST') {
       const body = await readJsonBody(request)

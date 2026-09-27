@@ -5,6 +5,12 @@
 import type { Meta } from '@/api/types'
 import { STAGES, STATUSES, TASK_TYPES } from './dictionaries'
 
+/**
+ * Заглушка «нет значения»: ею сервер (`store.facet_values`) обозначает пустое поле
+ * в фасетах `/api/meta` — например, задачи без оркестратора.
+ */
+export const NO_VALUE = '—'
+
 export interface FacetsOption {
   value: string
   label: string

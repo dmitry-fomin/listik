@@ -166,16 +166,6 @@ function depsCell(id: string): DepsCell {
   return depsCells.value[id] ?? { blocked: 0, waiting: 0, stale: false }
 }
 
-const filteredRows = computed<Task[]>(() =>
-  rows.value
-    .filter((row) => {
-      const mode = store.filters.deps
-      if (mode === 'blocked' && depsCell(row.id).blocked === 0) return false
-      if (mode === 'ready' && !store.readyTasks.value.some((item) => item.id === row.id)) return false
-      return true
-    }),
-)
-
 /**
  * Колонки, которые сортируются числом, а не подписью ячейки: «ключ колонки → значение
  * строки». Возраст — чем моложе, тем меньше; `null` — значения нет, такие строки в конце.
@@ -197,10 +187,10 @@ const NUMERIC_SORT: Record<string, (row: Task) => number | null> = {
 // серверный `order` (без направления). Равные строки остаются в порядке сервера.
 const sortedRows = computed<Task[]>(() => {
   const active = sort.value
-  if (!active) return filteredRows.value
+  if (!active) return rows.value
   const direction = active.direction === 'asc' ? 1 : -1
   const numeric = NUMERIC_SORT[active.key]
-  return filteredRows.value.slice().sort((a, b) => {
+  return rows.value.slice().sort((a, b) => {
     if (numeric) {
       const leftValue = numeric(a)
       const rightValue = numeric(b)
@@ -359,8 +349,6 @@ defineExpose({ reload: load })
       <div class="listik-row">
         <span class="listik-section__hint">
           выбрано {{ selected.length }} из {{ total }}
-          <template v-if="store.filters.deps === 'ready'">· готовых к работе: {{ sortedRows.length }}</template>
-          <template v-else-if="store.filters.deps === 'blocked'">· блокированных: {{ sortedRows.length }}</template>
         </span>
         <UiButton size="sm" variant="secondary" :disabled="selected.length === 0" @click="bulkOpen = true">
           <template #icon><ListikIcon name="list" size="xs" /></template>

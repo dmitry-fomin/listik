@@ -10,7 +10,9 @@
  * (`opus-pipeline` и подобные) — не рисуем ничего. Если сервер не принял
  * явный `icon` записи и уровня в ключе не нашлось (`icon: null` + `icon_error`),
  * рисуем серый кружок с крестиком: так видно, что иконка недоступна из-за
- * опечатки в `routes.json`, а не просто не задана (`ROUTE_ICON_UNKNOWN`).
+ * неверного `icon`, а не просто не задана (`ROUTE_ICON_UNKNOWN`). Текущий
+ * сервер `icon_error` не отдаёт — неверный `icon` в таблицу `routes` не
+ * попадает, — ветка оставлена для совместимости и сейчас не срабатывает.
  *
  * Подсказка — нативным `title`, а не `UiTooltip`: иконка стоит и внутри
  * строки-кнопки выбора маршрута, у которой уже есть свой `title`, — второй слой
@@ -33,7 +35,10 @@ const props = withDefaults(
 )
 
 const item = computed(() => routeIcon(props.route?.icon))
-/** Причина, по которой явный `icon` записи не принят, — только когда уровня нет вовсе. */
+/**
+ * Причина, по которой явный `icon` записи не принят, — только когда уровня
+ * нет вовсе. Текущий сервер `icon_error` не отдаёт, ветка для совместимости.
+ */
 const unavailable = computed(() => (!item.value ? (props.route?.icon_error ?? null) : null))
 const glyph = computed(
   () => item.value?.icon ?? (unavailable.value ? ROUTE_ICON_UNKNOWN.icon : null),

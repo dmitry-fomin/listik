@@ -97,9 +97,9 @@ const blockedCount = computed(() => blockedBy.value.length || props.task.blocked
 const waitingForCount = computed(() => props.deps?.waitingForCount ?? 0)
 
 /**
- * Маршрут разработки задачи: `launch_route` — ключ записи `routes.json`, которую
- * список отдаёт `GET /api/routes` (грузятся при старте доски). Задача заведена
- * без маршрута или запись из файла убрали — иконки нет.
+ * Маршрут разработки задачи: `launch_route` — ключ записи таблицы `routes`,
+ * которую список отдаёт `GET /api/routes` (грузятся при старте доски). Задача
+ * заведена без маршрута или запись из таблицы убрали — иконки нет.
  */
 const taskRoute = computed(() => routeByKey(props.task.launch_route, store.routes.value))
 

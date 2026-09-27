@@ -1,7 +1,7 @@
 /**
  * Словарь ролей конвейера для таблицы маршрутов «Новой задачи». Сами маршруты
  * (пресеты конвейеров и маршруты роя) в коде не зашиты: их отдаёт сервер —
- * `GET /api/routes`, файл `routes.json` (см. `RouteDef` в `api/types.ts`).
+ * `GET /api/routes` (таблица `routes`; см. `RouteDef` в `api/types.ts`).
  * Здесь остаются только роли и вендоры, которыми размечены ячейки таблицы.
  */
 import type { PipelineStage, SwarmRoleCell } from '@/api/types'

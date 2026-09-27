@@ -426,10 +426,10 @@ export interface ProjectRemoved {
   removed_tasks: number
 }
 
-// ── маршруты запуска: routes.json, GET /api/routes (см. docs/API.md) ─────────────
+// ── маршруты запуска: таблица `routes`, GET /api/routes (см. docs/API.md) ────────
 
 /**
- * Уровень маршрута — значение поля `icon` записи `routes.json`. Набор уровней и
+ * Уровень маршрута — значение поля `icon` записи таблицы `routes`. Набор уровней и
  * правила фолбэка по ключу — `listik/routes.py` (`ROUTE_ICONS`, `fallback_icon`),
  * подписи и иконки — `lib/dictionaries.ts` (`ROUTE_ICONS`).
  */
@@ -452,8 +452,10 @@ interface RouteBase {
   icon?: RouteIconKey | null
   /**
    * Явный `icon` записи не принят сервером (`listik/routes.py`): уровень взят по
-   * ключу, а здесь — причина. Поле есть только у таких записей; `icon: null`
-   * вместе с ним значит «иконки нет» — доска рисует серый кружок с крестиком.
+   * ключу, а здесь — причина. Текущий сервер поле не отдаёт — неверный `icon`
+   * в таблицу `routes` не попадает; тип и ветки с ним оставлены для
+   * совместимости и сейчас не срабатывают. `icon: null` вместе с ним значило
+   * бы «иконки нет» — доска рисовала бы серый кружок с крестиком.
    */
   icon_error?: string | null
   /** Порядок записи (сквозной по всей таблице `routes`), серверный; из доски не меняется. */
@@ -651,7 +653,7 @@ export interface AssistantContext {
   spec_path?: string
 }
 
-/** Предложенный маршрут: только из видимых записей `routes.json` (проверяет сервер). */
+/** Предложенный маршрут: только из видимых записей таблицы `routes` (проверяет сервер). */
 export interface AssistantRoute {
   key: string
   kind: RouteDef['kind'] | null
@@ -707,7 +709,7 @@ export interface VoiceDraftRequest {
   text: string
 }
 
-/** Маршрут черновика: только видимая запись `routes.json` (проверяет сервер). */
+/** Маршрут черновика: только видимая запись таблицы `routes` (проверяет сервер). */
 export interface VoiceDraftRoute {
   key: string
   kind: string | null

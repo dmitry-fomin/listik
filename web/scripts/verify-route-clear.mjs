@@ -1,7 +1,7 @@
 /**
  * Проверка пункта «без маршрута» в панели задачи (`web/src/components/TaskDrawer.vue`).
  *
- * Поднимает mock-api в режиме `--routes` (записи `routes.json` и карточка
+ * Поднимает mock-api в режиме `--routes` (записи маршрутов и карточка
  * `listik-routes-error` с отказавшим автостартом: `launch_error`, флаг «нужен
  * человек», метки `harness:`/`process:`), отдаёт собранный `web/dist` и гоняет
  * сценарий в headless Chrome через CDP.

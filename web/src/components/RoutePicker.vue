@@ -58,7 +58,8 @@ const pipelineRows = computed(() => pipelineRowsOf(shownRoutes.value))
 const swarmRoutes = computed(() => swarmRoutesOf(shownRoutes.value))
 
 /**
- * Текущий ключ есть на карточке, а записи в `routes.json` уже нет — рисуем
+ * Текущий ключ есть на карточке, а записи в таблице маршрутов
+ * (`GET /api/routes`) уже нет — рисуем
  * отдельную отключённую кнопку, чтобы выбор не выглядел пустым.
  */
 const orphanKey = computed(() => {

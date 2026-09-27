@@ -30,7 +30,7 @@
  * `AssistantSuggestResponse` из `web/src/api/types.ts`. Ответ подбирается по
  * тексту поля `text` из тела: `full` — переписанный текст, два критерия,
  * сложность с причиной и видимый маршрут из `--routes`; `same` — текст равен
- * входному; `blocked` — маршрут не из `routes.json`; `noroute` — `route: null`;
+ * входному; `blocked` — маршрут не из таблицы маршрутов; `noroute` — `route: null`;
  * `noacc` — пустой список критериев; `error` — запросы чередуются: нечётный
  * отвечает ошибкой (HTTP 500), чётный — как `full`; любой другой текст — как
  * `full`. Без флага ручек помощника нет, как и раньше
@@ -910,7 +910,7 @@ if (markdownMode) {
 }
 
 /**
- * `--routes`: записи `routes.json` и карточка с отказавшим автостартом. Маршрут
+ * `--routes`: записи таблицы маршрутов и карточка с отказавшим автостартом. Маршрут
  * `low-pipeline` у неё есть, а запуск не удался — `launch_error`, флаг «нужен
  * человек» и метки маршрута стоят ровно так, как их пишет `launcher.refuse`.
  * Панель задачи по `route_editable: true` показывает ту же матрицу маршрутов,
@@ -998,14 +998,14 @@ function assistantRouteOf() {
   return visible.find((route) => route.key !== 'low-pipeline') ?? visible[0] ?? null
 }
 
-/** Поле `route` ответа: `noroute` — null, `blocked` — ключ, которого нет в routes. */
+/** Поле `route` ответа: `noroute` — null, `blocked` — ключ, которого нет в таблице маршрутов. */
 function assistantRouteFor(mode) {
   if (mode === 'noroute') return null
   if (mode === 'blocked') {
     return {
       key: 'ghost-pipeline',
       kind: 'pipeline',
-      title: 'Маршрут, которого нет в routes.json',
+      title: 'Маршрут, которого нет в базе',
       hint: 'появится после правки файла',
       reason: 'модель предложила ключ, которого доска не знает',
     }
@@ -1156,7 +1156,7 @@ if (routesMode) {
       orchestrator_title: '',
       autostart: true,
       launch_route: 'low-pipeline',
-      launch_error: 'маршрута low-pipeline нет в routes.json',
+      launch_error: 'маршрута low-pipeline нет в базе',
       needs_owner: true,
       labels: ['harness:claude', 'process:low-pipeline', 'frontend'],
       stale: false,
@@ -1480,7 +1480,7 @@ function applyPatch(id, body) {
   // Метки маршрута (`harness:`/`process:`) переписывает сервер, а не доска:
   // `store.labels_after_route_change` — старые метки маршрута снимаются, метки
   // нового встают на их место, чужие метки задачи остаются. Неизвестный непустой
-  // ключ (устаревший `routes.json`) метки не трогает; пустой — убирает.
+  // ключ, которого нет в таблице маршрутов, метки не трогает; пустой — убирает.
   if (routeChanged) {
     const keep = (found.labels ?? []).filter((label) => !ROUTE_LABEL_RE.test(label))
     const fresh = routeLabelsOf(found.launch_route)
@@ -2047,12 +2047,12 @@ const server = createServer(async (request, response) => {
   }
 
   if (url.pathname === '/api/routes') {
-    // Форма ответа — как у сервера: ошибка файла приезжает `ok:false` с текстом,
+    // Форма ответа — как у сервера: ошибка базы приезжает `ok:false` с текстом,
     // `command` наружу не отдаётся (маршруты есть только в режиме `--routes`).
     return ok({
       ok: routesMode,
-      error: routesMode ? null : 'routes.json не читался: мок запущен без --routes',
-      path: '~/.config/listik/routes.json',
+      error: routesMode ? null : 'маршруты не читаются: мок запущен без --routes',
+      path: '~/.listik/listik.db',
       routes: routesMode ? ROUTES : [],
     })
   }

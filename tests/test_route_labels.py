@@ -99,6 +99,13 @@ class LabelRuleTests(RoutesStateMixin, TempDbTestCase):
             self.assertEqual(routes_mod.labels_for(self.conn, PIPELINE), [])
         self.assertIn("база недоступна", err.getvalue())
 
+    def test_bare_key_error_is_not_swallowed(self) -> None:
+        """listik-4eoi: «маршрута нет» — только errors.NotFound; голый KeyError — баг, не []."""
+        with mock.patch.object(routes_store, "get_route", side_effect=KeyError("kind")):
+            with self.assertRaises(KeyError) as ctx:
+                routes_mod.labels_for(self.conn, PIPELINE)
+        self.assertNotIsInstance(ctx.exception, errors.NotFound)
+
 
 class StoreLabelTests(RoutesStateMixin, TempDbTestCase):
     """store: создание задачи с маршрутом и смена маршрута у заведённой."""

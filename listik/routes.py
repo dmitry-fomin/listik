@@ -50,7 +50,7 @@ import sqlite3
 import sys
 from dataclasses import dataclass, field
 
-from . import paths, util
+from . import errors, paths, util
 
 SOURCE_PATH = paths.ROOT_DIR / "routes.json"
 
@@ -506,7 +506,8 @@ def labels_for(conn, route_key: str | None) -> list[str]:
     Пустой или неизвестный ключ — пустой список: метки не выдумываем. Недоступная
     база (`sqlite3.DatabaseError`) тоже даёт пустой список и строку в stderr: метки —
     вспомогательные данные, из-за базы ни `claim`, ни создание задачи падать не должны,
-    а пустой список по правилу «чужие метки не трогаем» ничего не портит.
+    а пустой список по правилу «чужие метки не трогаем» ничего не портит. Голый
+    `KeyError` (баг в коде, не «маршрута нет») не глотается.
     """
     from . import routes_store  # цикл: routes_store импортирует routes
     key = (route_key or "").strip()
@@ -517,7 +518,7 @@ def labels_for(conn, route_key: str | None) -> list[str]:
     except sqlite3.DatabaseError as exc:
         print(f"routes: метки недоступны: {_describe(exc)}", file=sys.stderr, flush=True)
         return []
-    except KeyError:  # errors.NotFound — маршрута нет: метки не выдумываем
+    except errors.NotFound:  # маршрута нет: метки не выдумываем
         return []
     if record["kind"] == "swarm":
         # Рой ведёт сам Listik, харнесс меняется по этапам — общего исполнителя

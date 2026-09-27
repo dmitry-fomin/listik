@@ -225,6 +225,41 @@ class RoutingTests(TempDbTestCase):
         self.assertEqual(after["title"], before["title"])
         self.assertEqual(after["routing"], before["routing"])
 
+    # listik-4eoi: archived, который не приводится к целому, — bad_argument, а не conflict/500.
+    BAD_ARCHIVED = ("abc", "", "true", [1], {})
+
+    def test_update_project_non_integer_archived_is_bad_argument(self) -> None:
+        for value in self.BAD_ARCHIVED:
+            with self.subTest(archived=value):
+                with self.assertRaises(errors.BadArgument) as ctx:
+                    store.update_project(self.conn, "demo", archived=value)
+                self.assertIn("archived", str(ctx.exception))
+
+    def test_http_patch_non_integer_archived_is_400_bad_argument(self) -> None:
+        for value in self.BAD_ARCHIVED:
+            with self.subTest(archived=value):
+                with self.assertRaises(server.ApiError) as ctx:
+                    self._patch("demo", {"archived": value})
+                self.assertEqual(ctx.exception.status, 400)
+                self.assertEqual(ctx.exception.code, errors.BAD_ARGUMENT)
+
+    def test_http_patch_bad_archived_writes_nothing(self) -> None:
+        before = dict(store.project_row(self.conn, "demo"))
+        with self.assertRaises(server.ApiError) as ctx:
+            self._patch("demo", {"title": "Новое имя", "archived": "abc"})
+        self.assertEqual(ctx.exception.status, 400)
+        self.assertEqual(ctx.exception.code, errors.BAD_ARGUMENT)
+        after = store.project_row(self.conn, "demo")
+        self.assertEqual(after["title"], before["title"])
+        self.assertEqual(after["archived"], before["archived"])
+
+    def test_http_patch_valid_archived_is_200(self) -> None:
+        for value, stored in ((1, 1), (0, 0), (True, 1)):
+            with self.subTest(archived=value):
+                status, _ = self._patch("demo", {"archived": value})
+                self.assertEqual(status, 200)
+                self.assertEqual(store.project_row(self.conn, "demo")["archived"], stored)
+
     def test_http_patch_valid_routing_is_200(self) -> None:
         status, project = self._patch("demo", {"routing": {"return_window_hours": 5}})
         self.assertEqual(status, 200)

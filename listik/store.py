@@ -2584,14 +2584,21 @@ def update_project(conn: sqlite3.Connection, slug: str, **fields) -> dict:
     `routing`: словарь — валидируется (`config.validate_routing`) и пишется как JSON;
     пустой словарь сбрасывает переопределение (колонка становится NULL); строка
     разбирается как JSON и дальше обрабатывается как словарь (невалидный JSON —
-    ``errors.BadArgument``).
+    ``errors.BadArgument``). `archived`, который не приводится к целому, — тоже
+    ``errors.BadArgument``, до записи: проект не меняется ни в одном поле.
     """
     project_row(conn, slug)
     if fields.get("path"):
         fields["path"] = resolve_project_path(fields["path"])
     routing_value = fields.pop("routing", None)
+    if fields.get("archived") is not None:
+        try:
+            fields["archived"] = int(fields["archived"])
+        except (TypeError, ValueError) as exc:
+            raise errors_mod.BadArgument(
+                f"archived: не приводится к целому: {fields['archived']!r}") from exc
     changes: dict[str, object] = {
-        k: (int(v) if k == "archived" else v) for k, v in fields.items()
+        k: v for k, v in fields.items()
         if v is not None and k in ("title", "path", "git_remote", "git_branch",
                                     "color", "archived", "kind")
     }

@@ -269,10 +269,9 @@ class ValidateTests(unittest.TestCase):
         """Уровень — только из префикса ключа, у обоих видов (listik-ar8v)."""
         cases = (("xhigh-pipeline", "xhigh"), ("low-pipeline", "low"),
                  ("opus-pipeline", None), ("pidi", None))
-        for kind in ("pipeline", "swarm"):
-            for key, level in cases:
-                with self.subTest(kind=kind, key=key):
-                    self.assertEqual(routes_mod.fallback_icon(kind, key), level)
+        for key, level in cases:
+            with self.subTest(key=key):
+                self.assertEqual(routes_mod.fallback_icon(key), level)
         self.assertIsNone(routes_mod.validate(document(swarm_record()))[0]["icon"])
 
     def test_icon_fallback_has_nothing_for_unknown_prefix(self) -> None:
@@ -308,7 +307,13 @@ class ValidateTests(unittest.TestCase):
         self.check_error(document(record), "routes[0].roles")
 
     def test_roles_empty(self) -> None:
-        self.check_error(document({**pipeline_record(), "roles": {}}), "routes[0].roles")
+        """Пустой расклад — хранимое состояние конвейера (listik-1lbn), у роя — ошибка."""
+        for extra in ({}, {"driver": "swarm"}):
+            with self.subTest(**extra):
+                normalized = routes_mod.validate(
+                    document({**pipeline_record(), "roles": {}, **extra}))
+                self.assertEqual(normalized[0]["roles"], {})
+        self.check_error(document({**swarm_record(), "roles": {}}), "routes[0].roles")
 
     def test_role_unknown(self) -> None:
         record = pipeline_record()

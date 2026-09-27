@@ -23,7 +23,9 @@
   * `visible` — именно JSON `true`/`false`;
   * `roles` — обязателен: ключи только из `spec`/`critic`/`impl`/`judge`; у `pipeline`
     режима скила значение — `{provider, label, title}` из непустых строк (провайдер —
-    `claude`/`glm`/`openai`/`grok`/`deepseek`), у роя — `{harness, argv?, prompt?}`;
+    `claude`/`glm`/`openai`/`grok`/`deepseek`/`devin`), у роя — `{harness, argv?, prompt?}`;
+    у `pipeline` допустим пустой объект `{}` (конвейер без раскладки, как его заводит
+    `POST /api/routes` без `roles`), у `swarm` нужна хотя бы одна роль;
   * `icon` — необязательный уровень маршрута для иконки на доске, одно из
     `xhigh`/`high`/`medium`/`low`/`xlow`/`direct`. Если поля нет, уровень выводится из самой
     ключа (`fallback_icon`): часть ключа до первого `-`, если она из того же набора
@@ -36,7 +38,7 @@
 
 Лишние поля на любом уровне — ошибка (защита от опечаток вроде `visble`).
 В `command` допустимы только подстановки `{task_id}`, `{project}`, `{route}`, `{cwd}`,
-`{worktree}`, `{branch}`; любая другая фигурная скобка (включая `{{`) — ошибка.
+`{worktree}`, `{branch}`, `{stage}`, `{role}`, `{harness}`; любая другая фигурная скобка (включая `{{`) — ошибка.
 Подставляет значения `launcher`: целиком в элемент массива, без shell и без повторной
 подстановки внутри значения.
 
@@ -286,30 +288,22 @@ def validate_command(value, where: str) -> list[str]:
         item_where = f"{where}[{i}]"
         if not isinstance(element, str) or not element:
             raise _err(item_where, "непустая строка")
-        rest = PLACEHOLDER_RE.sub("", element)
-        if "{" in rest or "}" in rest:
-            raise _err(item_where, "фигурные скобки допустимы только в подстановках "
-                                   + ", ".join("{" + name + "}" for name in PLACEHOLDERS))
-        for name in PLACEHOLDER_RE.findall(element):
-            if name not in PLACEHOLDERS:
-                raise _err(item_where, f"неизвестная подстановка {{{name}}}, допустимы: "
-                                       + ", ".join("{" + n + "}" for n in PLACEHOLDERS))
-        command.append(element)
+        command.append(check_placeholders(element, item_where))
     return command
 
 
-def fallback_icon(kind: str, key: str) -> str | None:
+def fallback_icon(key: str) -> str | None:
     """Уровень маршрута для записи без поля `icon`.
 
     Берётся часть ключа до первого `-` (`xhigh-pipeline` → `xhigh`), но только
     если она из `ROUTE_ICONS`: у `opus-pipeline` или `pidi` уровня нет, и иконка
-    не выдумывается (`None`). `kind` на уровень не влияет.
+    не выдумывается (`None`).
     """
     prefix = key.split("-", 1)[0]
     return prefix if prefix in ROUTE_ICONS else None
 
 
-def _validate_icon(item: dict, kind: str, key: str, where: str,
+def _validate_icon(item: dict, key: str, where: str,
                    warnings: list[str] | None = None) -> tuple[str | None, str | None]:
     """Поле `icon`: явный уровень, иначе фолбэк по записи; `None` — иконки нет.
 
@@ -319,13 +313,13 @@ def _validate_icon(item: dict, kind: str, key: str, where: str,
     (его отдаёт `GET /api/routes` — доска помечает такую иконку как недоступную).
     """
     if "icon" not in item:
-        return fallback_icon(kind, key), None
+        return fallback_icon(key), None
     value = item["icon"]
     if value is None:
         return None, None  # явный null — иконки нет (так пишет бэкап маршрутов)
     if value in ROUTE_ICONS:
         return value, None
-    fallback = fallback_icon(kind, key)
+    fallback = fallback_icon(key)
     error = (f"неизвестный уровень {value!r}, допустимы: " + ", ".join(ROUTE_ICONS))
     if fallback is not None:
         warning = f"{where}.icon: {error}; беру уровень из ключа {key!r}: {fallback!r}"
@@ -365,7 +359,7 @@ def _validate_route(item, where: str, warnings: list[str] | None = None) -> dict
     if not isinstance(visible, bool):
         raise _err(f"{where}.visible", "должно быть true или false, не строка и не число")
 
-    icon, icon_error = _validate_icon(item, kind, key, where, warnings)
+    icon, icon_error = _validate_icon(item, key, where, warnings)
     record = {"key": key, "kind": kind, "title": title, "hint": hint, "visible": visible,
               "icon": icon}
     # Поле появляется только у записи с непринятым `icon`: у остальных записей
@@ -378,7 +372,11 @@ def _validate_route(item, where: str, warnings: list[str] | None = None) -> dict
             raise _err(f"{where}.roles", "обязательно для pipeline")
         # Пайплайн роя (`driver: swarm`) хранит ячейки роя `{harness, argv?, prompt?}`,
         # как `kind: swarm`, — так его и проверяем, иначе бэкап таблицы не читается.
-        if driver == "swarm":
+        # Пустой расклад `{}` — хранимое состояние конвейера, заведённого без ролей
+        # (`POST /api/routes` без `roles`): бэкап такой записи должен читаться обратно.
+        if item["roles"] == {}:
+            record["roles"] = {}
+        elif driver == "swarm":
             record["roles"] = validate_swarm_roles(item["roles"], f"{where}.roles")
         else:
             record["roles"] = _validate_roles(item["roles"], f"{where}.roles")
@@ -510,6 +508,7 @@ def labels_for(conn, route_key: str | None) -> list[str]:
     `KeyError` (баг в коде, не «маршрута нет») не глотается.
     """
     from . import routes_store  # цикл: routes_store импортирует routes
+    from . import stage_launch  # цикл: stage_launch → store → routes
     key = (route_key or "").strip()
     if not key:
         return []
@@ -520,8 +519,8 @@ def labels_for(conn, route_key: str | None) -> list[str]:
         return []
     except errors.NotFound:  # маршрута нет: метки не выдумываем
         return []
-    if record["kind"] == "swarm":
-        # Рой ведёт сам Listik, харнесс меняется по этапам — общего исполнителя
-        # в метке нет, только ключ маршрута.
+    if record["kind"] == "swarm" or stage_launch.is_swarm(record):
+        # Рой (по `kind` или по `driver`) ведёт сам Listik, харнесс меняется по
+        # этапам — общего исполнителя в метке нет, только ключ маршрута.
         return [f"process:{record['key']}"]
     return ["harness:claude", f"process:{record['key']}"]

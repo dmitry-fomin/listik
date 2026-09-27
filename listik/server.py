@@ -830,7 +830,7 @@ def handle(method: str, path: str, query: dict, body: dict, authed: bool = False
             try:
                 record = routes_store.create_route(
                     conn, key=key, kind="pipeline", title=info["title"], hint=info["hint"],
-                    icon=routes_mod.fallback_icon("pipeline", key), visible=False,
+                    icon=routes_mod.fallback_icon(key), visible=False,
                     command=None, roles=roles)
             except ValueError as exc:
                 raise ApiError(400, errors_mod.message_of(exc),

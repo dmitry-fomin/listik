@@ -319,6 +319,18 @@ class ReimportKeepsUserRoutesTests(RoutesDbTestCase):
         self.assertEqual(backup.parent, self.data_dir)
         self.assertRegex(backup.name, "^" + self.BACKUP_RE + "$")
 
+    def test_backup_of_pipeline_without_roles_reads_back(self) -> None:
+        """listik-1lbn: конвейер без раскладки не ломает бэкап и `reimport` из него."""
+        routes_store.create_route(self.conn, key="bare-pipeline", kind="pipeline", title="Голый")
+        path = routes_store._write_backup(self.conn)
+        with contextlib.redirect_stderr(io.StringIO()):
+            state = routes_mod.load(path)
+        self.assertTrue(state.ok, state.error)
+        self.reimport(path)
+        record = routes_store.get_route(self.conn, "bare-pipeline")
+        self.assertEqual(record["kind"], "pipeline")
+        self.assertEqual(record["roles"], {})
+
     def test_backup_is_loadable_and_complete(self) -> None:
         report = self.reimport()
         with contextlib.redirect_stderr(io.StringIO()):

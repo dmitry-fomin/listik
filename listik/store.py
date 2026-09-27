@@ -2364,12 +2364,6 @@ def stats(conn: sqlite3.Connection, project: str | None = None) -> dict:
         f"SELECT coalesce(orchestrator,'—') orchestrator, count(*) n FROM tasks {where} AND "
         f"status IN ({OPEN_STATUSES_SQL}) GROUP BY orchestrator ORDER BY n DESC",
         params))
-    stale = conn.execute(
-        f"SELECT count(*) FROM tasks {where} AND status IN ('in_progress','review') "
-        "AND ((holder IS NULL AND (started_at IS NULL OR "
-        "      julianday('now') - julianday(started_at) > 1)) "
-        "  OR (holder IS NOT NULL AND holder_at IS NOT NULL "
-        "      AND julianday('now') - julianday(holder_at) > 1))", params).fetchone()[0]
     closed_7d = conn.execute(
         f"SELECT count(*) FROM tasks {where} AND status = 'done' AND closed_at IS NOT NULL "
         "AND julianday('now') - julianday(closed_at) <= 7", params).fetchone()[0]
@@ -2386,15 +2380,16 @@ def stats(conn: sqlite3.Connection, project: str | None = None) -> dict:
     closed_by_day = [
         {"date": (d := (today - timedelta(days=offset)).isoformat()), "count": closed_days.get(d, 0)}
         for offset in range(13, -1, -1)]
-    long_stage = conn.execute(
-        f"SELECT count(*) FROM tasks {where} AND status IN ('in_progress','review') "
-        "AND stage_at IS NOT NULL AND julianday('now') - julianday(stage_at) > 0.33",
-        params).fetchone()[0]
     needs_owner = conn.execute(
         f"SELECT count(*) FROM tasks {where} AND needs_owner = 1", params).fetchone()[0]
-    running = list(conn.execute(
-        f"SELECT * FROM tasks {where} AND status = 'in_progress' "
-        "ORDER BY stage_at ASC", params))
+    # Счётчики — из флагов карточек `row_to_task`, чтобы совпадать с доской по
+    # построению (пороги `board.*`, активность детей, задачи без держателя).
+    active = [row_to_task(conn, r) for r in conn.execute(
+        f"SELECT * FROM tasks {where} AND status IN ('in_progress','review') "
+        "ORDER BY stage_at ASC", params)]
+    stale = sum(1 for t in active if t["stale"])
+    long_stage = sum(1 for t in active if t["stage_warn"])
+    board_cfg = config_mod.load().get("board") or {}
     return {
         "by_status": by_status,
         "by_stage": by_stage,
@@ -2413,7 +2408,9 @@ def stats(conn: sqlite3.Connection, project: str | None = None) -> dict:
         "closed_delta": closed_7d - closed_prev_7d,
         "closed_by_day": closed_by_day,
         "long_stage": long_stage,
-        "running": [row_to_task(conn, r) for r in running],
+        "running": [t for t in active if t["status"] == "in_progress"],
+        "stale_hours": float(board_cfg.get("stale_hours", 24)),
+        "wip_warn_hours": float(board_cfg.get("wip_warn_hours", 8)),
         "generated_at": now_iso(),
     }
 

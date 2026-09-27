@@ -206,6 +206,27 @@ mode_from_permission() {
   esac
 }
 
+# --- write в git worktree ---------------------------------------------------
+# В связанном worktree git-dir (<common>/worktrees/<имя>) и общие objects/refs/
+# logs лежат вне -C, и песочница workspace-write не даёт git add/commit.
+# Открываем ровно их: весь <common>, hooks и config — нет (записанный хук
+# потом выполнился бы без песочницы). Признак worktree — git-dir != common-dir
+# (у подмодуля они совпадают). Дописывает в массив args вызывающего; любая
+# ошибка git — просто без --add-dir.
+add_worktree_dirs() {
+  local mode="$1" workdir="$2" out gitdir common d
+  [[ "$mode" == "workspace-write" ]] || return 0
+  command -v git >/dev/null 2>&1 || return 0
+  out="$(git -C "$workdir" rev-parse --path-format=absolute --git-dir --git-common-dir 2>/dev/null)" || return 0
+  gitdir="${out%%$'\n'*}"
+  common="${out#*$'\n'}"
+  [[ -n "$gitdir" && -n "$common" && "$gitdir" != "$out" && "$gitdir" != "$common" ]] || return 0
+  for d in "$gitdir" "$common/objects" "$common/refs" "$common/logs"; do
+    [[ -d "$d" ]] && args+=(--add-dir "$d")
+  done
+  return 0
+}
+
 mode_label() {
   case "$1" in
     workspace-write) echo "workspace-write (edits inside --cwd allowed)" ;;
@@ -413,6 +434,7 @@ cmd_run() {
   # примером из --help.
   [[ -n "$effort" ]] && args+=(-c "model_reasoning_effort=\"$effort\"")
   [[ -n "$provider_opt" ]] && args+=(-c "model_provider=\"$provider_opt\"")
+  add_worktree_dirs "$mode" "$workdir"
 
   if [[ $background -eq 1 ]]; then
     run_background "$bin" "$mode" "$workdir" "$timeout_s" "$prompt" \
@@ -1064,6 +1086,7 @@ cmd_resume() {
   [[ -n "$model" && "$model" != "—" ]] && args+=(-m "$model")
   [[ -n "$effort" && "$effort" != "—" ]] && args+=(-c "model_reasoning_effort=\"$effort\"")
   [[ -n "$provider" && "$provider" != "—" ]] && args+=(-c "model_provider=\"$provider\"")
+  add_worktree_dirs "$mode" "$workdir"
   [[ -n "$label" ]] || label="resume $job_id"
 
   RESUME_SID="$sid"

@@ -44,7 +44,7 @@ Options for `run`:
 | `--label <text>` | none | short tag; the only way jobs differ on sight in `status` |
 | `--permission <read\|bash\|write>` | `read` | permission mode in one flag |
 | `--write` | off | alias for `--permission write`, kept for Listik routes and pipeline presets |
-| `--cwd <dir>` | current | working directory of the run and the sandbox boundary (`-C`) |
+| `--cwd <dir>` | current | working directory of the run and the sandbox boundary (`-C`); in a git worktree `write` adds its git dirs (see Permissions) |
 | `--timeout <s>` | 540 foreground, 7200 background | `0` removes the limit |
 | `--model <id>` | user's `~/.codex/config.toml` | full model id (`-m`) |
 | `--effort <level>` | user's setting | `model_reasoning_effort`; not validated — valid values are model-dependent |
@@ -59,6 +59,16 @@ codex has no per-tool allowlist: its boundary is the filesystem sandbox passed a
 | `read` | `read-only` | default; commands still run, writes are denied |
 | `bash` | `read-only` | accepted for parity with the other bridges — the same sandbox as `read`, because running commands is already allowed there |
 | `write` | `workspace-write` | file edits inside `--cwd` |
+
+**`write` in a git worktree.** When `--cwd` is inside a linked git worktree, `write` also
+opens for writing the worktree's own git dir (`<common>/worktrees/<name>`) and the shared
+`objects`, `refs` and `logs` of the common git dir (one `--add-dir` each, passed before
+`resume` too), so `git add`/`git commit` work. `hooks` and `config` stay closed — a hook
+written from the sandbox would later run outside it. Each commit still prints a harmless
+`error: Unable to create '.../packed-refs.lock': Operation not permitted` and exits 0;
+`git pack-refs`, `git gc` and deleting a packed branch do not work inside the sandbox. In a
+main checkout (not a worktree) a commit under `write` fails, because codex itself protects
+the `.git` of the working directory; the bridge does not change that.
 
 Add `write` only when the human asked for a change in this message; never infer it from a
 task merely looking like implementation. A background write job keeps editing files while

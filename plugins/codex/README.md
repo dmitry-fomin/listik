@@ -141,7 +141,7 @@ EOF
 | `--model <name>` | user's setting | manual use, and `feature-pipeline` presets, which pin it on purpose (`-m`) |
 | `--effort <level>` | user's setting | manual use and `feature-pipeline` presets; not validated against a fixed list — valid values are model-dependent (`-c model_reasoning_effort="<level>"`) |
 | `--provider <route>` | user's setting | manual use only — switch `[model_providers.<name>]` route for one run (`-c model_provider="<route>"`) |
-| `--cwd <dir>` | current directory | working directory and sandbox boundary (`-C`) |
+| `--cwd <dir>` | current directory | working directory and sandbox boundary (`-C`); in a git worktree `write` adds its git dirs (see Permissions) |
 | `--timeout <sec>` | 540 foreground, 7200 background | `0` removes the limit entirely |
 | `--background` | off | detach, print a job id |
 | `--label <text>` | none | short note so the job is recognisable in `status` |
@@ -171,6 +171,16 @@ process is actually alive. Trust the second one.
 
 `--write` remains as an alias for `--permission write`, because Listik routes and
 `feature-pipeline` presets already send it.
+
+**`write` in a git worktree.** When `--cwd` is inside a linked git worktree, `write` also
+opens for writing the worktree's own git dir (`<common>/worktrees/<name>`) and the shared
+`objects`, `refs` and `logs` of the common git dir (one `--add-dir` each, passed before
+`resume` too), so `git add`/`git commit` work. `hooks` and `config` stay closed — a hook
+written from the sandbox would later run outside it. Each commit still prints a harmless
+`error: Unable to create '.../packed-refs.lock': Operation not permitted` and exits 0;
+`git pack-refs`, `git gc` and deleting a packed branch do not work inside the sandbox. In a
+main checkout (not a worktree) a commit under `write` fails, because codex itself protects
+the `.git` of the working directory; the bridge does not change that.
 
 ## What it looks like
 

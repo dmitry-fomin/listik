@@ -344,7 +344,7 @@ class ApiDiscoveredFromTests(TempDbTestCase):
                 self.post(title="x")
         self.assertNotIsInstance(ctx.exception, errors.NotFound)
         self.assertNotIsInstance(ctx.exception, server.ApiError)
-        status, _message, code = server.error_response(ctx.exception)
+        status, _message, code, _hint = server.error_response(ctx.exception)
         self.assertEqual(status, 500)
         self.assertEqual(code, errors.INTERNAL)
 

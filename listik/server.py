@@ -1411,10 +1411,8 @@ def handle(method: str, path: str, query: dict, body: dict, authed: bool = False
                 conn, q, limit=as_int(q1("limit"), 20) or 20, project=q1("project"),
                 mode=q1("mode", "hybrid") or "hybrid")
             return 200, items
-        rows = conn.execute(
-            "SELECT key, project, body, updated_at FROM memories "
-            "ORDER BY updated_at DESC LIMIT ?", (as_int(q1("limit"), 50) or 50,)).fetchall()
-        return 200, [dict(r) for r in rows]
+        return 200, store.list_memories(conn, project=q1("project"),
+                                        limit=as_int(q1("limit"), 20) or 20)
 
     if path == "/api/assistant/suggest" and method == "POST":
         # Помощник DeepSeek: ключ читается из config.toml на сервере и в браузер

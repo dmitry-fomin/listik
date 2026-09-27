@@ -1330,14 +1330,11 @@ def cmd_memory(args) -> int:
         else:
             search_mod.print_memories(items)
         return 0
-    conn = db.init()
-    rows = conn.execute(
-        "SELECT key, project, body, updated_at FROM memories "
-        + ("WHERE project LIKE ? " if args.project else "")
-        + "ORDER BY updated_at DESC LIMIT ?",
-        ([f"%{args.project}%"] if args.project else []) + [args.limit]).fetchall()
+    rows = call("memory", args, "/api/memory",
+                query={"limit": args.limit, "project": args.project},
+                local_kwargs={"query": None, "limit": args.limit, "project": args.project})
     if getattr(args, "json", False):
-        emit(args, [dict(r) for r in rows], "")
+        emit(args, rows, "")
         return 0
     if not rows:
         print("памяти пока нет (появятся командой listik remember)")

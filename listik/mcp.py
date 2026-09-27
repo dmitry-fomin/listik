@@ -673,12 +673,7 @@ def call_tool(name: str, args: dict, conn=None, owner=FROM_ENV, fence=FROM_ENV) 
         if query:
             return {"items": search_mod.search_memories(conn, query, limit=limit,
                                                         project=project)}
-        rows = conn.execute(
-            "SELECT key, project, body, updated_at FROM memories "
-            + ("WHERE project = ? " if project else "")
-            + "ORDER BY updated_at DESC LIMIT ?",
-            ([project] if project else []) + [limit]).fetchall()
-        return {"items": [dict(r) for r in rows]}
+        return {"items": store.list_memories(conn, project=project, limit=limit)}
     if name == "listik_remember":
         return store.remember(conn, args["text"], key=args.get("key"),
                               project=args.get("project"))

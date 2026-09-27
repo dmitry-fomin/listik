@@ -351,6 +351,9 @@ def _local_op(conn, op: str, fence: fence_mod.Token | dict | None, kwargs: dict)
         return {"items": store.task_timeline(conn, limit=kwargs.get("limit", 100),
                                              project=kwargs.get("project"))}
     if op == "memory":
+        if not kwargs.get("query"):
+            return store.list_memories(conn, project=kwargs.get("project"),
+                                       limit=kwargs.get("limit", 20))
         return search_mod.search_memories(conn, kwargs["query"], limit=kwargs.get("limit", 20),
                                           project=kwargs.get("project"))
     if op == "embed":

@@ -2943,6 +2943,17 @@ def remember(conn: sqlite3.Connection, text: str, *, key: str | None = None,
     return {"key": key, "project": project}
 
 
+def list_memories(conn: sqlite3.Connection, project: str | None = None,
+                  limit: int = 20) -> list[dict]:
+    """Последние заметки памяти, свежие сверху; `project` — точный slug, пустой — все."""
+    rows = conn.execute(
+        "SELECT key, project, body, updated_at FROM memories "
+        + ("WHERE project = ? " if project else "")
+        + "ORDER BY updated_at DESC LIMIT ?",
+        ([project] if project else []) + [limit]).fetchall()
+    return [dict(r) for r in rows]
+
+
 def _lint_steps_files(cache: dict, steps_dir: str | None) -> list[str]:
     """Имена файлов каталога шагов, один `listdir` на каталог за вызов lint."""
     if not steps_dir:

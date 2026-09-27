@@ -29,6 +29,7 @@ import type {
   ProjectRow,
   RouteDef,
   RoutePatch,
+  RouteRemoved,
   SearchMode,
   ReadyTask,
   SearchResponse,
@@ -1083,6 +1084,57 @@ async function patchRoute(key: string, body: RoutePatch): Promise<RouteDef | nul
 }
 
 /**
+ * Удалить маршрут (`DELETE /api/routes/{key}`, listik-4ky0). После успеха
+ * список перечитывается (`reloadRoutes`), а доска — `refresh({silent:true})`:
+ * сервер при DELETE шлёт только событие `route`, событий задач нет, поэтому
+ * снятый с карточек `launch_route` без явного перечитывания доски не виден.
+ * При `404` (маршрута уже нет) список тоже перечитывается — строка
+ * удалённого пропадает. Ошибка — `null`, текст в `routesSettingsError`.
+ */
+async function removeRoute(key: string): Promise<RouteRemoved | null> {
+  let gone = false
+  const result = await routesSettingsAction(async () => {
+    try {
+      return await api.removeRoute(key)
+    } catch (error) {
+      gone = error instanceof ApiError && error.status === 404
+      throw error
+    }
+  })
+  if (result === null) {
+    if (gone) {
+      // Перечитываем список — строка пропадёт и у автора. `reloadRoutes` гасит
+      // `routesSettingsError` на успехе — возвращаем текст исходной 404: это
+      // ответ на действие автора и он должен остаться в алерте раздела.
+      const message = routesSettingsError.value
+      await reloadRoutes()
+      if (message !== null && routesSettingsError.value === null) {
+        routesSettingsError.value = message
+      }
+    }
+    return null
+  }
+  /* Ответ возвращается до перечитывания списка: карточка успевает эмитить
+   * `removed`, пока смонтирована — Vue роняет emit у уже размонтированного
+   * компонента (`isUnmounted`), а снимает её именно обновление `routes`.
+   * Перечитывание списка и доски идёт фоном следом; оба шага сами ловят свои
+   * ошибки (`reloadRoutes` — в `routesSettingsError`, `refresh` — handleError). */
+  void reloadAfterRouteRemove()
+  return result
+}
+
+/** Перечитывание после удаления маршрута: список, затем доска (`refresh`). */
+async function reloadAfterRouteRemove(): Promise<void> {
+  try {
+    await reloadRoutes()
+    await refresh({ silent: true })
+  } catch (error) {
+    // Оба шага сами ловят свои ошибки; страховка — не уйти в unhandled rejection.
+    handleError(error)
+  }
+}
+
+/**
  * Завести маршрут роя (`POST /api/routes`, `kind="swarm"`, listik-2gry).
  * Ответ — созданная запись: в ней есть `key`, по которому список выбирает
  * и открывает новую карточку. Ошибка — `null`, текст в `routesSettingsError`; `409` дополнительно отмечается в `routeCreateConflict`,
@@ -1480,6 +1532,7 @@ export function useListikStore() {
     reloadRoutes,
     patchRoute,
     createRoute,
+    removeRoute,
     loadHarnesses,
     ensureHarnesses,
     createHarness,

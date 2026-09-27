@@ -13,6 +13,10 @@
  * ответ 409 открывает второй диалог «Удалить вместе с задачами?», а ответ 500 —
  * и на первом запросе после 409, и на удалении с задачами — его не открывает и
  * закрывает подтверждение, текст ошибки виден в алерте раздела.
+ * Отказ сети и 401 в действиях раздела доходят до общего обработчика доски
+ * (listik-l0it): 401 при удалении открывает окно «Нужен токен Listik», отказ сети
+ * на тумблере поднимает плашку «Сервер Listik недоступен» на доске. 409/500 не дают
+ * ни окна токена, ни общих алертов доски.
  * Работает с живой страницей (dev или прод) и настоящим API Listik, поэтому
  * трогает базу: используйте временный каталог и slug вида `listik-check-*`.
  *
@@ -172,7 +176,10 @@ socket.addEventListener('message', (message) => {
   if (data.method !== 'Fetch.requestPaused') return
   const { requestId, request } = data.params
   let reply
-  if (request.method === 'DELETE') {
+  if (stub.offline) {
+    report.intercepted.push(`${request.method} ${request.url} → offline`)
+    reply = send('Fetch.failRequest', { requestId, errorReason: 'ConnectionRefused' })
+  } else if (request.method === 'DELETE') {
     report.intercepted.push(`DELETE ${request.url} → ${stub.code}`)
     reply = send('Fetch.fulfillRequest', {
       requestId,
@@ -185,7 +192,9 @@ socket.addEventListener('message', (message) => {
   }
   reply.catch((error) => console.error(`перехват ${request.url}: ${error.message}`))
 })
-await send('Fetch.enable', { patterns: [{ urlPattern: `*/api/projects/${slug}*` }] })
+await send('Fetch.enable', {
+  patterns: [{ urlPattern: `*/api/projects/${slug}*` }, { urlPattern: '*/api/health*' }],
+})
 
 const openRemove = () => evaluate(`(() => {
   const card = [...document.querySelectorAll('.ui-entity-card')]
@@ -244,7 +253,71 @@ await clickButton('Удалить с задачами')
 await sleep(2000)
 report.forceFail500 = { forceBefore, ...(await removeState(T500F)) }
 
+// listik-l0it: 401 и отказ сети в действиях раздела доходят до общего обработчика доски
+const T401 = 'проверка listik-l0it: нужен токен (401)'
+/** На доску роутером, без перезагрузки: состояние стора переживает переход. */
+const toBoard = () => evaluate(`document.querySelector('a.listik-shell__brand-link')?.click()`)
+const tokenAsked = `[...document.querySelectorAll('.ui-modal')].some((el) => el.textContent.includes('Нужен токен Listik'))`
+/** Общие сигналы доски: плашка отказа сети, алерт последней ошибки, окно токена. */
+const boardAlerts = () => evaluate(`(() => {
+  const topAlert = (needle) => [...document.querySelectorAll('.listik-shell__top .ui-alert')].some((el) => el.textContent.includes(needle));
+  return {
+    plaque: topAlert('Запустите сервер командой'),
+    lastErrorAlert: topAlert('Последняя операция завершилась ошибкой'),
+    tokenAsked: ${tokenAsked},
+  };
+})()`)
+
+// 4. после 409/500 шагов 1–3 на доске нет ни плашки, ни алерта ошибки, ни окна токена
+await toBoard()
+await sleep(1500)
+report.boardAfterConflicts = await boardAlerts()
+await send('Page.navigate', { url: settingsUrl })
+await sleep(4000)
+
+// 5. 401 на удалении: окно токена, диалоги закрыты, проект на месте; перезагрузка снимает окно
+stub = { code: 401, text: T401 }
+await openRemove()
+await sleep(1200)
+await clickButton('Убрать')
+await sleep(2000)
+report.remove401 = { ...(await removeState(T401)), tokenAsked: await evaluate(tokenAsked) }
+await send('Page.navigate', { url: settingsUrl })
+await sleep(4000)
+report.afterTokenReload = {
+  tokenAsked: await evaluate(tokenAsked),
+  stillThere: await evaluate(
+    `[...document.querySelectorAll('.ui-entity-card__title')].some((el) => el.textContent.trim() === ${JSON.stringify(slug)})`,
+  ),
+}
+
+// 6. отказ сети на тумблере «скрыть»: проект на доске, алерт раздела, плашка на доске
+stub = { offline: true }
+await evaluate(`(() => {
+  const card = [...document.querySelectorAll('.ui-entity-card')]
+    .find((el) => el.querySelector('.ui-entity-card__title')?.textContent.trim() === ${JSON.stringify(slug)});
+  card?.querySelector('[role=switch]')?.click();
+})()`)
+await sleep(2000)
+report.archiveOffline = {
+  alert: await evaluate(
+    `[...document.querySelectorAll('.listik-projects .ui-alert')].some((el) => el.textContent.includes('Сервер Listik недоступен'))`,
+  ),
+  ...JSON.parse(await evaluate(boardState)),
+}
+await toBoard()
+await sleep(1500)
+report.offlineBoard = await boardAlerts()
+stub = { code: 409, text: T409 }
+
 await send('Fetch.disable')
+
+// после снятия отказа и перезагрузки на доске нет ни плашки, ни алерта, ни окна токена
+await send('Page.navigate', { url })
+await sleep(4000)
+report.boardAfterRecovery = await boardAlerts()
+await send('Page.navigate', { url: settingsUrl })
+await sleep(4000)
 
 // удалить: подтверждение → убрать
 await evaluate(`(() => {

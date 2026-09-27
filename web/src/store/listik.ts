@@ -1287,36 +1287,42 @@ async function draftVoice(body: VoiceDraftRequest): Promise<VoiceDraftResponse> 
 }
 
 /**
+ * Ошибка раздела «Репозитории»: текст всегда в `projectsError`; 401 открывает окно
+ * токена, отказ сети — плашку доски (через `handleError`), остальное остаётся разделу.
+ */
+function onProjectsError(error: unknown): void {
+  projectsError.value = errorMessage(error)
+  if (isUnauthorized(error) || isOffline(error)) handleError(error)
+}
+
+/**
  * Репозитории доски (проекты). Доска показывает ровно те, что лежат в таблице
  * `projects` и не скрыты, поэтому «добавить репозиторий» и «убрать с доски» —
  * это операции над проектом, а не фильтр по задачам.
  */
 async function loadProjects(): Promise<void> {
   await withLoading(projectsLoading, async () => {
-    const data = await tryRequest(() => api.projects(), (error) => {
-      projectsError.value = errorMessage(error)
-    })
+    const data = await tryRequest(() => api.projects(), onProjectsError)
     if (data === null) return
     projects.value = data.projects
     projectsError.value = null
   })
 }
 
+/** Действие над проектом: ошибки и действия, и перечитывания после него идут через `onProjectsError`. */
 async function projectAction<T>(
   action: () => Promise<T>,
   refresh: () => Promise<void>,
 ): Promise<T | null> {
   return withLoading(projectsLoading, async () => {
-    const result = await tryRequest(action, (error) => {
-      projectsError.value = errorMessage(error)
-    })
+    const result = await tryRequest(action, onProjectsError)
     if (result === null) return null
     try {
       await refresh()
       projectsError.value = null
       return result
     } catch (error) {
-      projectsError.value = errorMessage(error)
+      onProjectsError(error)
       return null
     }
   })

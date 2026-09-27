@@ -55,11 +55,18 @@ CODE_BY_STATUS = {
     429: RATE_LIMITED,
 }
 
+#: Подсказка к `Forbidden`: про владельца, а не про токен — он к «чужой задаче»
+#: отношения не имеет.
+OWNER_HINT = "задачу держит другой владелец; смена владельца — listik set <id> owner=<кто>"
+
 #: HTTP-статус → «как исправить». Подсказка общая: конкретику обычно несёт message.
 #: У 400 подсказки нет намеренно: сервер в тексте уже пишет, что именно не так и
 #: какие есть варианты, а общее «проверь аргументы» только сбивало бы с толку.
 HINT_BY_STATUS = {
     401: "проверь токен: listik token (и config.toml, [auth].token)",
+    # 403 сервер отдаёт только за чужого владельца: за непринятый токен `_authed`
+    # отвечает 401, поэтому прежняя подсказка про токен была мёртвой.
+    403: OWNER_HINT,
     404: "проверь идентификатор: listik list (проекты: listik projects)",
     405: "этот метод у эндпоинта не поддерживается",
     409: "посмотри состояние карточки: listik show <id>",
@@ -116,15 +123,6 @@ class BadArgument(ValueError):
 
 class Forbidden(PermissionError):
     """«Чужая задача»: владелец задачи не тот, от чьего имени пришёл запрос."""
-
-
-#: Подсказка к `Forbidden`: про владельца, а не про токен — он к «чужой задаче»
-#: отношения не имеет.
-OWNER_HINT = "задачу держит другой владелец; смена владельца — listik set <id> owner=<кто>"
-
-#: 403 сервер отдаёт только за чужого владельца: за непринятый токен `_authed`
-#: отвечает 401, поэтому прежняя подсказка про токен была мёртвой.
-HINT_BY_STATUS[403] = OWNER_HINT
 
 
 class Revoked(ListikError):
@@ -204,7 +202,7 @@ def hint_of(exc: BaseException) -> str:
     if isinstance(exc, Forbidden):
         return OWNER_HINT
     if code_of(exc) == NOT_FOUND:
-        return "проверь идентификатор: listik list (проекты: listik projects)"
+        return HINT_BY_STATUS[404]
     return ""
 
 
@@ -259,14 +257,23 @@ def http_error_body(status: int, message: str, code: str | None = None) -> dict:
     return {"ok": False, "error": message, "code": code or code_for_status(status)}
 
 
+#: Код → подпись в тексте ошибки инструмента MCP. Код, которого здесь нет,
+#: подписывается сам собой: агент ветвится по нему так же, как по `code` у CLI.
+MCP_LABEL_BY_CODE = {
+    REVOKED: "полномочия отозваны",
+    NOT_FOUND: "не найдено",
+    FORBIDDEN: "нельзя",
+}
+
+
 def mcp_error_text(exc: BaseException) -> str:
-    """Текст ошибки инструмента MCP в совместимом с прежним API виде."""
-    if isinstance(exc, Revoked):
-        return f"полномочия отозваны: {exc.message} — {exc.hint}"
-    if isinstance(exc, NotFound):
-        return f"не найдено: {exc}"
-    if isinstance(exc, Forbidden):
-        # Имя класса здесь ничего не объясняет, а причина («задача принадлежит …»)
-        # — объясняет: MCP-клиент видит её текстом.
-        return f"нельзя: {exc}"
-    return f"ошибка {type(exc).__name__}: {exc}"
+    """Текст ошибки инструмента MCP одной строкой: «<подпись>: <что> — <как исправить>».
+
+    `code`/`message`/`hint` — из `as_error`, те же, что у CLI; подпись — из
+    `MCP_LABEL_BY_CODE`, иначе сам код. Хвост « — …» есть, только если есть подсказка.
+    """
+    err = as_error(exc)
+    first, rest = _split(err.message)
+    hint = err.hint or rest
+    text = f"{MCP_LABEL_BY_CODE.get(err.code, err.code)}: {first}"
+    return f"{text} — {hint}" if hint else text

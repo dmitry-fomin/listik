@@ -776,10 +776,6 @@ def handle(request: dict, conn=None, owner=FROM_ENV, fence=FROM_ENV) -> dict | N
         args = params.get("arguments") or {}
         try:
             payload = call_tool(name, args, conn, owner, fence)
-        except errors_mod.NotFound as exc:
-            return {"jsonrpc": "2.0", "id": rid,
-                    "result": {"content": [{"type": "text", "text": errors_mod.mcp_error_text(exc)}],
-                               "isError": True}}
         except Exception as exc:  # noqa: BLE001
             return {"jsonrpc": "2.0", "id": rid,
                     "result": {"content": [{"type": "text",

@@ -197,6 +197,25 @@ class WavesMcpTests(TempDbTestCase):
         self.assertTrue(resp["result"]["isError"])
         self.assertIn("нужен проект", resp["result"]["content"][0]["text"])
 
+    def test_mcp_apply_cycle_shows_code_and_hint(self) -> None:
+        """listik-qfm1: цикл при `apply` — `dep_cycle` и подсказка в тексте ошибки MCP."""
+        a = _task(self.conn, "a", scope=("pkg/a.py",), priority=0)
+        b = _task(self.conn, "b", scope=("pkg/b.py",), priority=1)
+        c = _task(self.conn, "c", scope=("pkg/c.py",), priority=2)
+        for issue, dep in ((a, c), (b, a), (c, b)):
+            self.conn.execute(
+                "INSERT INTO deps(issue_id, depends_on, dep_type, created_by) "
+                "VALUES(?, ?, 'blocks', 'human')", (issue, dep))
+        self.conn.commit()
+        resp = mcp.handle({"jsonrpc": "2.0", "id": 1, "method": "tools/call",
+                           "params": {"name": "listik_waves",
+                                      "arguments": {"project": "demo", "apply": True}}},
+                          conn=self.conn)
+        self.assertTrue(resp["result"]["isError"])
+        text = resp["result"]["content"][0]["text"]
+        self.assertIn("dep_cycle", text)
+        self.assertIn("разорви цикл: listik dep rm <id> <блокер>", text)
+
     def test_mcp_not_a_write_tool(self) -> None:
         self.assertNotIn("listik_waves", mcp.WRITE_TOOLS)
 

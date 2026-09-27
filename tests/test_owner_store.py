@@ -162,6 +162,38 @@ class ErrorsCase(unittest.TestCase):
         self.assertIn("чужая", text)
         self.assertNotIn("Forbidden", text)
 
+    def test_mcp_error_text_by_code(self) -> None:
+        """listik-qfm1: подпись по коду, «что» — первая строка, « — » только с подсказкой."""
+        cases = [
+            (errors_mod.Revoked("запуск устарел"),
+             f"полномочия отозваны: запуск устарел — {errors_mod.REVOKED_HINT}"),
+            (errors_mod.NotFound("задача не найдена: X"),
+             f"не найдено: задача не найдена: X — {errors_mod.HINT_BY_STATUS[404]}"),
+            (errors_mod.Forbidden("задача принадлежит ann"),
+             f"нельзя: задача принадлежит ann — {errors_mod.OWNER_HINT}"),
+            (errors_mod.BadArgument("плохой флаг"), "bad_argument: плохой флаг"),
+            (errors_mod.ListikError("цикл a → b → a", code=errors_mod.DEP_CYCLE, hint="разорви"),
+             "dep_cycle: цикл a → b → a — разорви"),
+            (ValueError("первая\nвторая\nтретья"), "conflict: первая — вторая третья"),
+            (RuntimeError("boom"), "internal: RuntimeError: boom"),
+        ]
+        for exc, expected in cases:
+            with self.subTest(exc=repr(exc)):
+                self.assertEqual(errors_mod.mcp_error_text(exc), expected)
+
+    def test_mcp_error_text_multiline_once(self) -> None:
+        text = errors_mod.mcp_error_text(ValueError("первая\nвторая\nтретья"))
+        self.assertEqual(text.count("вторая"), 1)
+
+    def test_mcp_error_text_no_dash_without_hint(self) -> None:
+        text = errors_mod.mcp_error_text(errors_mod.BadArgument("плохой флаг"))
+        self.assertNotIn(" — ", text)
+
+    def test_hint_constants(self) -> None:
+        self.assertEqual(errors_mod.HINT_BY_STATUS[403], errors_mod.OWNER_HINT)
+        self.assertEqual(errors_mod.hint_of(errors_mod.NotFound("x")),
+                         errors_mod.HINT_BY_STATUS[404])
+
 
 class OwnerStoreCase(TempDbTestCase):
     """База + подменённый config.toml; режим выбирает сам тест."""

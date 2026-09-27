@@ -18,6 +18,7 @@ import sys
 import unittest
 from unittest import mock
 
+from listik import errors as errors_mod
 from listik import mcp
 from listik import store
 from tests.helpers import TempDbTestCase
@@ -154,6 +155,15 @@ class McpToolsTests(TempDbTestCase):
         self.assertIn("пустой текст заметки", result["content"][0]["text"])
         rows = self.conn.execute("SELECT count(*) n FROM memories").fetchone()
         self.assertEqual(rows["n"], 0)
+
+    # ---- listik-qfm1: «не найдено» с подсказкой
+    def test_show_unknown_id_is_tool_error_with_hint(self) -> None:
+        result = _call_error(self.conn, "listik_show", {"id": "listik-nope"})
+        self.assertTrue(result["isError"])
+        text = result["content"][0]["text"]
+        self.assertTrue(text.startswith("не найдено: "), text)
+        self.assertIn("listik-nope", text)
+        self.assertIn(errors_mod.HINT_BY_STATUS[404], text)
 
     # ---- 10. actors, timeline, cycles
     def test_actors_timeline_cycles_shapes(self) -> None:

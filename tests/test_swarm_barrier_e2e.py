@@ -197,13 +197,11 @@ class SwarmBarrierE2ECase(SwarmE2ECase):
     def marked_records(self, task_id: str, mark: str) -> list[dict]:
         return [json.loads(c["text"][len(mark):].strip()) for c in self.marked_comments(task_id, mark)]
 
-    OPEN_STATUSES = {"open", "in_progress", "blocked", "review"}
-
     def halt_card_ids(self) -> list[str]:
         out = []
         for tid in self._all_task_ids_in_project():
             row = self.row(tid)
-            if row is None or row["status"] not in self.OPEN_STATUSES:
+            if row is None or row["status"] not in store.OPEN_STATUSES:
                 continue
             if HALT_LABEL in json.loads(row["labels"] or "[]"):
                 out.append(tid)

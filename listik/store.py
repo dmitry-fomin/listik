@@ -26,7 +26,8 @@ from . import scope as scope_mod
 from . import store_helpers
 from . import textutil
 from .deps import PARENT_TYPES
-from .statuses import FINAL_STATUSES, OPEN_STATUSES, OPEN_STATUSES_SQL
+from .statuses import (DONE, FINAL_STATUSES, IN_PROGRESS, OPEN_STATUSES,
+                       OPEN_STATUSES_SQL, RUNNING_STATUSES_SQL)
 
 PIPELINE_STAGES = ("s1-spec", "s2-review", "s3-impl", "s4-judge")
 #: Сколько часов предложенная связь (`suggested-blocks`) ждёт без замечания `listik lint`.
@@ -695,8 +696,8 @@ def delete_task(conn: sqlite3.Connection, task_id: str) -> None:
 EPIC_ACTOR = "agent:listik"
 _EPIC_TYPE_NOTE = "подзадачи"
 _EPIC_TYPE_BACK_NOTE = "подзадач не осталось"
-#: Статусы ребёнка, при которых эпик «в работе».
-_EPIC_ACTIVE = ("in_progress", "blocked", "review")
+#: Статусы ребёнка, при которых эпик «в работе»: все открытые, кроме `open`.
+_EPIC_ACTIVE = tuple(s for s in OPEN_STATUSES if s != "open")
 
 
 def _parent_ids(conn: sqlite3.Connection, task_id: str) -> list[str]:
@@ -2352,7 +2353,7 @@ def stats(conn: sqlite3.Connection, project: str | None = None) -> dict:
         f"({OPEN_STATUSES_SQL}) GROUP BY stage", params)}
     by_project_rows = list(conn.execute(
         f"SELECT coalesce(project,'—') project, count(*) n, "
-        f"sum(CASE WHEN status='in_progress' THEN 1 ELSE 0 END) wip, "
+        f"sum(CASE WHEN status='{IN_PROGRESS}' THEN 1 ELSE 0 END) wip, "
         f"sum(CASE WHEN needs_owner=1 THEN 1 ELSE 0 END) waiting "
         f"FROM tasks {where} AND status IN ({OPEN_STATUSES_SQL}) "
         "GROUP BY project ORDER BY n DESC", params))
@@ -2365,15 +2366,15 @@ def stats(conn: sqlite3.Connection, project: str | None = None) -> dict:
         f"status IN ({OPEN_STATUSES_SQL}) GROUP BY orchestrator ORDER BY n DESC",
         params))
     closed_7d = conn.execute(
-        f"SELECT count(*) FROM tasks {where} AND status = 'done' AND closed_at IS NOT NULL "
+        f"SELECT count(*) FROM tasks {where} AND status = '{DONE}' AND closed_at IS NOT NULL "
         "AND julianday('now') - julianday(closed_at) <= 7", params).fetchone()[0]
     closed_prev_7d = conn.execute(
-        f"SELECT count(*) FROM tasks {where} AND status = 'done' AND closed_at IS NOT NULL "
+        f"SELECT count(*) FROM tasks {where} AND status = '{DONE}' AND closed_at IS NOT NULL "
         "AND julianday('now') - julianday(closed_at) > 7 "
         "AND julianday('now') - julianday(closed_at) <= 14", params).fetchone()[0]
     # Закрытия по дням за 14 суток (старые → свежие) — спарклайн «Закрыто за 7 дней».
     closed_days = {r["d"]: r["n"] for r in conn.execute(
-        f"SELECT date(closed_at) d, count(*) n FROM tasks {where} AND status = 'done' "
+        f"SELECT date(closed_at) d, count(*) n FROM tasks {where} AND status = '{DONE}' "
         "AND closed_at IS NOT NULL AND date(closed_at) > date('now', '-14 days') "
         "GROUP BY d", params)}
     today = datetime.now(timezone.utc).date()
@@ -2385,7 +2386,7 @@ def stats(conn: sqlite3.Connection, project: str | None = None) -> dict:
     # Счётчики — из флагов карточек `row_to_task`, чтобы совпадать с доской по
     # построению (пороги `board.*`, активность детей, задачи без держателя).
     active = [row_to_task(conn, r) for r in conn.execute(
-        f"SELECT * FROM tasks {where} AND status IN ('in_progress','review') "
+        f"SELECT * FROM tasks {where} AND status IN ({RUNNING_STATUSES_SQL}) "
         "ORDER BY stage_at ASC", params)]
     stale = sum(1 for t in active if t["stale"])
     long_stage = sum(1 for t in active if t["stage_warn"])
@@ -2512,7 +2513,7 @@ def list_projects(conn: sqlite3.Connection, include_archived: bool = False) -> l
               (SELECT count(*) FROM tasks t WHERE t.project = p.slug AND t.archived = 0
                  AND t.status IN ({OPEN_STATUSES_SQL})) n_open,
               (SELECT count(*) FROM tasks t WHERE t.project = p.slug AND t.archived = 0
-                 AND t.status = 'in_progress') n_wip
+                 AND t.status = '{IN_PROGRESS}') n_wip
             FROM projects p {where} ORDER BY n_open DESC, p.slug""").fetchall()
     return [_project_with_routing(conn, dict(r)) for r in rows]
 

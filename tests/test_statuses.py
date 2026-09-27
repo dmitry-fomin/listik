@@ -9,11 +9,10 @@ import sqlite3
 import unittest
 from pathlib import Path
 
-from listik import deps, documents, statuses, store, swarm_watch
+from listik import deps, documents, mcp, statuses, store, swarm_watch
 from tests.helpers import TempDbTestCase
 
 ROOT = Path(__file__).resolve().parents[1]
-ALL_STATUSES = ("open", "in_progress", "blocked", "review", "done", "cancelled")
 
 
 class SingleDeclarationTests(unittest.TestCase):
@@ -26,16 +25,39 @@ class SingleDeclarationTests(unittest.TestCase):
     def test_claimable_is_open_without_blocked(self) -> None:
         self.assertEqual(deps.CLAIMABLE_STATUSES, ("open", "in_progress", "review"))
 
+    def test_all_statuses_is_open_plus_final(self) -> None:
+        self.assertEqual(statuses.ALL_STATUSES,
+                         ("open", "in_progress", "blocked", "review", "done", "cancelled"))
+        self.assertEqual(statuses.ALL_STATUSES,
+                         statuses.OPEN_STATUSES + statuses.FINAL_STATUSES)
+
+    def test_running_and_scalars_come_from_declared_sets(self) -> None:
+        self.assertLessEqual(set(statuses.RUNNING_STATUSES), set(statuses.OPEN_STATUSES))
+        self.assertIn(statuses.IN_PROGRESS, statuses.OPEN_STATUSES)
+        self.assertIn(statuses.DONE, statuses.FINAL_STATUSES)
+
+    def test_epic_active_is_open_without_open(self) -> None:
+        self.assertEqual(store._EPIC_ACTIVE, ("in_progress", "blocked", "review"))
+
+    def test_mcp_status_enum_is_all_statuses(self) -> None:
+        tool = next(t for t in mcp.TOOLS if t["name"] == "listik_list")
+        enum = tool["inputSchema"]["properties"]["status"]["enum"]
+        self.assertEqual(enum, list(statuses.ALL_STATUSES))
+
 
 class SqlFragmentTests(unittest.TestCase):
     def _matching(self, fragment: str) -> tuple[str, ...]:
         conn = sqlite3.connect(":memory:")
         self.addCleanup(conn.close)
-        return tuple(s for s in ALL_STATUSES
+        return tuple(s for s in statuses.ALL_STATUSES
                      if conn.execute(f"SELECT ? IN ({fragment})", (s,)).fetchone()[0])
 
     def test_open_sql_matches_tuple(self) -> None:
         self.assertEqual(self._matching(statuses.OPEN_STATUSES_SQL), statuses.OPEN_STATUSES)
+
+    def test_running_sql_matches_tuple(self) -> None:
+        self.assertEqual(self._matching(statuses.RUNNING_STATUSES_SQL),
+                         statuses.RUNNING_STATUSES)
 
     def test_claimable_sql_matches_tuple(self) -> None:
         self.assertEqual(self._matching(deps.CLAIMABLE_STATUSES_SQL), deps.CLAIMABLE_STATUSES)
@@ -78,9 +100,13 @@ class StatusLiteralGrepTests(unittest.TestCase):
         hits = self._hits(re.compile(r"'done'\s*,\s*'cancelled'"))
         self.assertEqual(hits, [], "литерал финального набора в SQL:\n" + self._fmt(hits))
 
+    def test_no_running_statuses_literal(self) -> None:
+        hits = self._hits(re.compile(r"'in_progress'\s*,\s*'review'"))
+        self.assertEqual(hits, [], "литерал рабочего набора в SQL:\n" + self._fmt(hits))
+
     def test_sets_declared_only_in_statuses_module(self) -> None:
         expected = ROOT / "listik" / "statuses.py"
-        for name in ("OPEN_STATUSES", "FINAL_STATUSES"):
+        for name in ("OPEN_STATUSES", "FINAL_STATUSES", "ALL_STATUSES", "RUNNING_STATUSES"):
             hits = self._hits(re.compile(rf"^{name}\s*=(?!=)"))
             self.assertEqual({p for p, _, _ in hits}, {expected},
                              f"объявления {name}:\n" + self._fmt(hits))

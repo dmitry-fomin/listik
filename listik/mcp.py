@@ -36,6 +36,7 @@ from . import errors as errors_mod
 from . import fence as fence_mod
 from . import search as search_mod
 from . import store
+from .statuses import ALL_STATUSES
 
 PROTOCOL_VERSION = "2025-06-18"
 SUPPORTED_PROTOCOL_VERSIONS = ("2025-06-18", "2025-03-26", "2024-11-05")
@@ -78,8 +79,7 @@ TOOLS: list[dict] = [
             "type": "object",
             "properties": {
                 "project": {"type": "string"},
-                "status": {"type": "string",
-                           "enum": ["open", "in_progress", "blocked", "review", "done", "cancelled"]},
+                "status": {"type": "string", "enum": list(ALL_STATUSES)},
                 "stage": {"type": "string",
                           "enum": ["s1-spec", "s2-review", "s3-impl", "s4-judge", "done"]},
                 "orchestrator": {"type": "string",

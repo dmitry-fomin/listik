@@ -24,9 +24,7 @@
 from __future__ import annotations
 
 import logging
-import urllib.error
 import urllib.parse
-import urllib.request
 
 from . import assistant as assistant_mod
 from . import errors as errors_mod
@@ -141,45 +139,15 @@ def transcribe(audio: bytes, mime: str, *, cfg: dict | None = None, opener=None,
             "запись не похожа на аудио: mime должен начинаться с audio/",
             status=400, code=errors_mod.BAD_ARGUMENT)
 
-    request = urllib.request.Request(
-        listen_url(cfg_settings), data=bytes(audio),
-        headers={
+    data = assistant_mod.post_json(
+        listen_url(cfg_settings), bytes(audio),
+        {
             "Authorization": f"Token {cfg_settings['api_key']}",
             "Content-Type": content_type,
         },
-        method="POST")
-    open_url = opener or urllib.request.urlopen
-    try:
-        with open_url(request, timeout=timeout) as response:
-            raw = response.read().decode("utf-8", "replace")
-    except urllib.error.HTTPError as exc:
-        try:
-            detail = exc.read().decode("utf-8", "replace")
-        except Exception:  # noqa: BLE001 — тело ошибки уже не важно
-            detail = ""
-        assistant_mod.log_upstream(f"Deepgram ответил HTTP {exc.code}", detail,
-                                   cfg_settings["api_key"], target=logger)
-        if exc.code in (401, 403):
-            message = ("Deepgram отклонил ключ (HTTP %d): проверьте [deepgram].api_key "
-                       "в config.toml" % exc.code)
-        else:
-            message = f"Deepgram ответил ошибкой HTTP {exc.code}"
-        raise assistant_mod.AssistantError(message, status=502) from exc
-    except urllib.error.URLError as exc:
-        raise assistant_mod.AssistantError(
-            f"Deepgram недоступен ({cfg_settings['base_url']}): {exc.reason}",
-            status=504) from exc
-    except TimeoutError as exc:
-        raise assistant_mod.AssistantError(
-            f"Deepgram не ответил за {timeout:.0f} с ({cfg_settings['base_url']})",
-            status=504) from exc
-
-    try:
-        data = util.json_loads(raw)
-    except util.JSONDecodeError as exc:
-        assistant_mod.log_upstream("ответ Deepgram не JSON", raw, cfg_settings["api_key"],
-                                   target=logger)
-        raise assistant_mod.AssistantError("ответ Deepgram не JSON", status=502) from exc
+        api_key=cfg_settings["api_key"], provider="Deepgram",
+        key_setting="[deepgram].api_key", error_cls=assistant_mod.AssistantError,
+        logger=logger, opener=opener, timeout=timeout)
 
     transcript = None
     try:
@@ -190,8 +158,8 @@ def transcribe(audio: bytes, mime: str, *, cfg: dict | None = None, opener=None,
         pass
     if transcript is None:
         assistant_mod.log_upstream(
-            "в ответе Deepgram нет results.channels[0].alternatives[0].transcript", raw,
-            cfg_settings["api_key"], target=logger)
+            "в ответе Deepgram нет results.channels[0].alternatives[0].transcript",
+            util.json_dumps(data), cfg_settings["api_key"], target=logger)
         raise assistant_mod.AssistantError(
             "в ответе Deepgram нет results.channels[0].alternatives[0].transcript",
             status=502)

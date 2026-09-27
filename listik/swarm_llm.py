@@ -24,10 +24,7 @@ from __future__ import annotations
 import logging
 import os
 import re
-import http.client
 import subprocess
-import urllib.error
-import urllib.request
 
 from . import assistant
 from . import deps
@@ -221,53 +218,16 @@ def _via_http(messages: list[dict], schema: dict, *, name: str, cfg_settings: di
         "Accept": "application/json",
         "Authorization": f"Bearer {api_key}",
     }
-    url = assistant.endpoint(cfg_settings["base_url"])
-    request = urllib.request.Request(
-        url, data=util.json_dumps(payload).encode("utf-8"), headers=headers, method="POST")
-    open_url = opener or urllib.request.urlopen
-    try:
-        with open_url(request, timeout=timeout) as response:
-            raw = response.read().decode("utf-8", "replace")
-    except urllib.error.HTTPError as exc:
-        try:
-            detail = exc.read().decode("utf-8", "replace")
-        except Exception:  # noqa: BLE001 — тело ошибки уже не важно
-            detail = ""
-        assistant.log_upstream(f"модель роя ответила HTTP {exc.code}", detail, api_key,
-                               target=logger)
-        if exc.code in (401, 403):
-            raise SwarmLlmError(
-                f"модель роя отклонила ключ (HTTP {exc.code}): проверь [swarm].api_key",
-                status=502) from exc
-        raise SwarmLlmError(f"модель роя ответила ошибкой HTTP {exc.code}", status=502) from exc
-    except urllib.error.URLError as exc:
-        raise SwarmLlmError(
-            f"модель роя недоступна ({cfg_settings['base_url']}): {exc.reason}",
-            status=504) from exc
-    except http.client.HTTPException as exc:
-        # Раньше `OSError`: `RemoteDisconnected` — и `HTTPException`, и `ConnectionResetError`.
-        raise SwarmLlmError(
-            f"модель роя оборвала ответ ({cfg_settings['base_url']}): "
-            f"{type(exc).__name__}: {exc}", status=502) from exc
-    except TimeoutError as exc:
-        raise SwarmLlmError(
-            f"модель роя не ответила за {timeout:.0f} с ({cfg_settings['base_url']})",
-            status=504) from exc
-    except OSError as exc:
-        raise SwarmLlmError(
-            f"модель роя недоступна ({cfg_settings['base_url']}): {type(exc).__name__}: {exc}",
-            status=504) from exc
-
-    try:
-        data = util.json_loads(raw)
-    except util.JSONDecodeError as exc:
-        assistant.log_upstream("ответ модели роя не JSON", raw, api_key, target=logger)
-        raise SwarmLlmError("ответ модели роя не JSON", status=502) from exc
+    data = assistant.post_json(
+        assistant.endpoint(cfg_settings["base_url"]), util.json_dumps(payload).encode("utf-8"),
+        headers, api_key=api_key, provider="провайдер модели роя",
+        key_setting="[swarm].api_key", error_cls=SwarmLlmError, logger=logger,
+        opener=opener, timeout=timeout)
     try:
         content = data["choices"][0]["message"]["content"]
     except (KeyError, IndexError, TypeError) as exc:
-        assistant.log_upstream("в ответе модели роя нет choices[0].message.content", raw,
-                               api_key, target=logger)
+        assistant.log_upstream("в ответе модели роя нет choices[0].message.content",
+                               util.json_dumps(data), api_key, target=logger)
         raise SwarmLlmError(
             "в ответе модели роя нет choices[0].message.content", status=502) from exc
     return parse_json(content)
@@ -309,34 +269,11 @@ def decide(state, questions: dict, *, cfg_settings: dict, opener=None,
                "state": state, "questions": questions}
     headers = {"Content-Type": "application/json", "Accept": "application/json",
                "Authorization": f"Bearer {api_key}"}
-    request = urllib.request.Request(
-        url,
-        data=util.json_dumps(payload).encode("utf-8"), headers=headers, method="POST")
-    open_url = opener or urllib.request.urlopen
-    try:
-        with open_url(request, timeout=timeout) as response:
-            raw = response.read().decode("utf-8", "replace")
-    except urllib.error.HTTPError as exc:
-        try:
-            raw = exc.read().decode("utf-8", "replace")
-        except Exception:  # noqa: BLE001 — тело ошибки может быть недоступно
-            raw = ""
-        if exc.code in (401, 403):
-            raise _jev_error(
-                raw, api_key,
-                f"jev отклонил ключ (HTTP {exc.code}): проверь [swarm].jev_api_key") from exc
-        raise _jev_error(raw, api_key, f"jev ответил ошибкой HTTP {exc.code}") from exc
-    except urllib.error.URLError as exc:
-        detail = f"jev недоступен ({url}): {exc.reason}".replace(api_key, "***")
-        raise SwarmLlmError(
-            detail, status=504) from exc
-    except TimeoutError as exc:
-        raise SwarmLlmError(f"jev не ответил за {timeout:.0f} с", status=504) from exc
-
-    try:
-        data = util.json_loads(raw)
-    except util.JSONDecodeError as exc:
-        raise _jev_error(raw, api_key, "jev ответил не JSON") from exc
+    data = assistant.post_json(
+        url, util.json_dumps(payload).encode("utf-8"), headers, api_key=api_key,
+        provider="jev", key_setting="[swarm].jev_api_key", error_cls=SwarmLlmError,
+        logger=logger, opener=opener, timeout=timeout)
+    raw = util.json_dumps(data)
     if not isinstance(data, dict) or not isinstance(data.get("answers"), dict):
         raise _jev_error(raw, api_key, "jev: в ответе нет answers")
 

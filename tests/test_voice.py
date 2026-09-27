@@ -338,6 +338,14 @@ class TranscribeTests(VoiceConfigTestCase):
         self.assertEqual(ctx.exception.status, 504)
         self.assertIn("недоступен", ctx.exception.message)
 
+    def test_remote_disconnected_is_502(self) -> None:
+        opener = _Recorder(error=http.client.RemoteDisconnected("closed"))
+        with self.assertRaises(assistant_mod.AssistantError) as ctx:
+            voice_mod.transcribe(AUDIO, "audio/webm", opener=opener)
+        self.assertEqual(ctx.exception.status, 502)
+        self.assertIn("RemoteDisconnected", ctx.exception.message)
+        self.assertNotIn(DEEPGRAM_KEY, ctx.exception.message)
+
     def test_timeout_is_504(self) -> None:
         opener = _Recorder(error=TimeoutError("timed out"))
         with self.assertRaises(assistant_mod.AssistantError) as ctx:

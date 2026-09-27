@@ -14,6 +14,7 @@ import pathlib
 import tempfile
 import threading
 import unittest
+import http.client
 import urllib.error
 from unittest import mock
 
@@ -321,6 +322,35 @@ class AssistantSuggestTests(AssistantConfigTestCase):
                                   opener=opener)
         self.assertEqual(ctx.exception.status, 504)
         self.assertIn("недоступен", ctx.exception.message)
+
+    def test_remote_disconnected_is_502_without_key(self) -> None:
+        opener = _Recorder(error=http.client.RemoteDisconnected("closed"))
+        with self.assertRaises(assistant_mod.AssistantError) as ctx:
+            assistant_mod.suggest("title", "заголовок", {}, routes=route_records(),
+                                  opener=opener)
+        self.assertEqual(ctx.exception.status, 502)
+        self.assertIn("RemoteDisconnected", ctx.exception.message)
+        self.assertNotIn(API_KEY, ctx.exception.message)
+
+    def test_connection_reset_is_504(self) -> None:
+        opener = _Recorder(error=ConnectionResetError(54, "reset"))
+        with self.assertRaises(assistant_mod.AssistantError) as ctx:
+            assistant_mod.suggest("title", "заголовок", {}, routes=route_records(),
+                                  opener=opener)
+        self.assertEqual(ctx.exception.status, 504)
+        self.assertIn("ConnectionResetError", ctx.exception.message)
+
+    def test_post_json_masks_key_in_url_error_reason(self) -> None:
+        opener = _Recorder(error=urllib.error.URLError(f"bad host ?key={API_KEY}"))
+        with self.assertRaises(assistant_mod.AssistantError) as ctx:
+            assistant_mod.post_json(
+                f"https://x/v1?key={API_KEY}", b"{}", {}, api_key=API_KEY,
+                provider="DeepSeek", key_setting="[assistant].api_key",
+                error_cls=assistant_mod.AssistantError, logger=assistant_mod.logger,
+                opener=opener, timeout=5)
+        self.assertEqual(ctx.exception.status, 504)
+        self.assertNotIn(API_KEY, ctx.exception.message)
+        self.assertIn("***", ctx.exception.message)
 
     def test_endpoint_appends_chat_completions(self) -> None:
         self.assertEqual(assistant_mod.endpoint("https://api.deepseek.com"),

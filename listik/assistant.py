@@ -30,6 +30,7 @@ OpenAI-совместимому `chat/completions`. Ключ никогда не
 """
 from __future__ import annotations
 
+import http.client
 import logging
 import re
 import urllib.error
@@ -160,6 +161,62 @@ def log_upstream(what: str, body: str, api_key: str = "",
     (target or logger).warning("%s: %s", what, _clip(text, MAX_LOGGED_ERROR_CHARS))
 
 
+def post_json(url: str, data: bytes, headers: dict, *, api_key: str, provider: str,
+              key_setting: str, error_cls, logger: logging.Logger, opener=None,
+              timeout: float):
+    """POST `data` на `url` и разобрать JSON-ответ; общий транспорт помощника,
+    роя, jev и расшифровки речи.
+
+    Любой сетевой сбой (HTTP-ошибка, недоступность, обрыв ответа, таймаут, не JSON)
+    поднимается как `error_cls(message, status=502|504)`. Тело ответа провайдера
+    уходит только в `logger` через `log_upstream`, в `message` — никогда; непустой
+    `api_key` в URL и тексте исключения внутри `message` заменяется на `***`. `opener` — шов для тестов, по
+    умолчанию `urllib.request.urlopen` (берётся в момент вызова).
+    """
+    def mask(text) -> str:
+        # Маскируются только изменчивые части (URL, текст исключения): шаблон сообщения
+        # с `key_setting` — константа кода, а короткий ключ совпал бы с его буквами.
+        text = str(text)
+        return text.replace(api_key, "***") if api_key else text
+
+    where = mask(url)
+    request = urllib.request.Request(url, data=data, headers=headers, method="POST")
+    open_url = opener or urllib.request.urlopen
+    try:
+        with open_url(request, timeout=timeout) as response:
+            raw = response.read().decode("utf-8", "replace")
+    except urllib.error.HTTPError as exc:
+        try:
+            detail = exc.read().decode("utf-8", "replace")
+        except Exception:  # noqa: BLE001 — тело ошибки уже не важно
+            detail = ""
+        log_upstream(f"{provider} ответил HTTP {exc.code}", detail, api_key, target=logger)
+        if exc.code in (401, 403):
+            message = (f"{provider} отклонил ключ (HTTP {exc.code}): проверьте "
+                       f"{key_setting} в config.toml")
+        else:
+            message = f"{provider} ответил ошибкой HTTP {exc.code}"
+        raise error_cls(message, status=502) from exc
+    except urllib.error.URLError as exc:
+        raise error_cls(f"{provider} недоступен ({where}): {mask(exc.reason)}",
+                        status=504) from exc
+    except http.client.HTTPException as exc:
+        # Раньше `OSError`: `RemoteDisconnected` — и `HTTPException`, и `ConnectionResetError`.
+        raise error_cls(f"{provider} оборвал ответ ({where}): "
+                        f"{type(exc).__name__}: {mask(exc)}", status=502) from exc
+    except TimeoutError as exc:
+        raise error_cls(f"{provider} не ответил за {timeout:.0f} с ({where})",
+                        status=504) from exc
+    except OSError as exc:
+        raise error_cls(f"{provider} недоступен ({where}): {type(exc).__name__}: {mask(exc)}",
+                        status=504) from exc
+    try:
+        return util.json_loads(raw)
+    except util.JSONDecodeError as exc:
+        log_upstream(f"{provider} ответил не JSON", raw, api_key, target=logger)
+        raise error_cls(f"{provider} ответил не JSON", status=502) from exc
+
+
 def _clean_context(context) -> dict:
     """Контекст карточки: только известные ключи, каждый — обрезанная строка."""
     if not isinstance(context, dict):
@@ -244,46 +301,16 @@ def chat(messages: list[dict], cfg_settings: dict, *, opener=None,
         "Accept": "application/json",
         "Authorization": f"Bearer {cfg_settings['api_key']}",
     }
-    url = endpoint(cfg_settings["base_url"])
-    request = urllib.request.Request(
-        url, data=util.json_dumps(payload).encode("utf-8"),
-        headers=headers, method="POST")
-    open_url = opener or urllib.request.urlopen
-    try:
-        with open_url(request, timeout=timeout) as response:
-            raw = response.read().decode("utf-8", "replace")
-    except urllib.error.HTTPError as exc:
-        try:
-            detail = exc.read().decode("utf-8", "replace")
-        except Exception:  # noqa: BLE001 — тело ошибки уже не важно
-            detail = ""
-        log_upstream(f"DeepSeek ответил HTTP {exc.code}", detail,
-                     cfg_settings["api_key"])
-        if exc.code in (401, 403):
-            message = ("DeepSeek отклонил ключ (HTTP %d): проверьте [assistant].api_key "
-                       "в config.toml" % exc.code)
-        else:
-            message = f"DeepSeek ответил ошибкой HTTP {exc.code}"
-        raise AssistantError(message, status=502) from exc
-    except urllib.error.URLError as exc:
-        raise AssistantError(
-            f"DeepSeek недоступен ({cfg_settings['base_url']}): {exc.reason}",
-            status=504) from exc
-    except TimeoutError as exc:
-        raise AssistantError(
-            f"DeepSeek не ответил за {timeout:.0f} с ({cfg_settings['base_url']})",
-            status=504) from exc
-
-    try:
-        data = util.json_loads(raw)
-    except util.JSONDecodeError as exc:
-        log_upstream("ответ DeepSeek не JSON", raw, cfg_settings["api_key"])
-        raise AssistantError("ответ DeepSeek не JSON", status=502) from exc
+    data = post_json(
+        endpoint(cfg_settings["base_url"]), util.json_dumps(payload).encode("utf-8"),
+        headers, api_key=cfg_settings["api_key"], provider="DeepSeek",
+        key_setting="[assistant].api_key", error_cls=AssistantError, logger=logger,
+        opener=opener, timeout=timeout)
     try:
         return data["choices"][0]["message"]["content"]
     except (KeyError, IndexError, TypeError) as exc:
-        log_upstream("в ответе DeepSeek нет choices[0].message.content", raw,
-                     cfg_settings["api_key"])
+        log_upstream("в ответе DeepSeek нет choices[0].message.content",
+                     util.json_dumps(data), cfg_settings["api_key"])
         raise AssistantError(
             "в ответе DeepSeek нет choices[0].message.content", status=502) from exc
 

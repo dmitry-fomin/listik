@@ -3,6 +3,7 @@ from __future__ import annotations
 
 import contextlib
 import copy
+import http.client
 import io
 import json
 import os
@@ -257,6 +258,15 @@ class JudgeTests(unittest.TestCase):
             out = swarm_llm.judge_merge(payload(), cfg_settings=CFG)
         self.assertEqual(out, {"ok": True, "model": CFG["jev_model"],
                                "skipped": "ошибка: timeout", "files": []})
+
+    def test_broken_connection_is_skip_not_crash(self):
+        def opener(request, timeout=None):
+            raise http.client.RemoteDisconnected("closed")
+        with self.assertLogs("listik.swarm_llm", level="WARNING"):
+            out = swarm_llm.judge_merge(payload(), cfg_settings=CFG, opener=opener)
+        self.assertIs(out["ok"], True)
+        self.assertTrue(out["skipped"].startswith("ошибка: "))
+        self.assertIn("RemoteDisconnected", out["skipped"])
 
     def test_disabled_and_settings_fallback(self):
         with mock.patch.object(swarm_llm, "settings", return_value=DISABLED) as settings, \

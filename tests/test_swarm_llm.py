@@ -198,6 +198,29 @@ class DecideTests(unittest.TestCase):
                                                 "state": self.state, "questions": questions})
         self.assertEqual(out, {k: payload[k] for k in ("answers", "usage", "model")})
 
+    def test_broken_connection_is_502_without_key(self) -> None:
+        for error in (http.client.RemoteDisconnected("closed"),
+                      http.client.IncompleteRead(b"x", 5)):
+            with self.subTest(error=type(error).__name__), \
+                    self.assertRaises(swarm_llm.SwarmLlmError) as ctx:
+                swarm_llm.decide(self.state, self.question, cfg_settings=self._settings(),
+                                 opener=_Opener(error=error))
+            self.assertEqual(ctx.exception.status, 502)
+            self.assertIn(type(error).__name__, ctx.exception.message)
+            self.assertNotIn("secret-key", ctx.exception.message)
+
+    def test_check_plan_edges_skips_on_broken_connection(self) -> None:
+        card = {"title": "t", "description": "", "acceptance": ""}
+        edges = [["a", "b"]]
+        with self.assertLogs("listik.swarm_llm", level="WARNING"):
+            kept, info = swarm_llm.check_plan_edges(
+                edges, fixed=[], by_id={"a": card, "b": card}, tasks_view={},
+                cfg_settings=self._settings(),
+                opener=_Opener(error=http.client.RemoteDisconnected("closed")))
+        self.assertEqual(kept, [["a", "b"]])
+        self.assertTrue(info["skipped"].startswith("ошибка: "))
+        self.assertIn("RemoteDisconnected", info["skipped"])
+
     def test_optional_metadata_and_probability_endpoints(self) -> None:
         for value in (0, 1, 0.0, 1.0):
             answers = {"needed": {"type": "noul", "noul": value}}
@@ -224,7 +247,7 @@ class DecideTests(unittest.TestCase):
 
     def test_transport_errors_are_504(self) -> None:
         cases = [(urllib.error.URLError("boom"), "jev недоступен (https://x/d): boom"),
-                 (TimeoutError(), "jev не ответил за 7 с")]
+                 (TimeoutError(), "jev не ответил за 7 с (https://x/d)")]
         for error, message in cases:
             with self.subTest(error=error), self.assertRaises(swarm_llm.SwarmLlmError) as ctx:
                 swarm_llm.decide(self.state, self.question, cfg_settings=self._settings(),
@@ -380,7 +403,7 @@ class HttpErrorTests(unittest.TestCase):
     def test_remote_disconnected_is_502(self) -> None:
         exc = self._raise(http.client.RemoteDisconnected("closed"))
         self.assertEqual(exc.status, 502)
-        self.assertIn("оборвала ответ", exc.message)
+        self.assertIn("оборвал ответ", exc.message)
         self.assertIn("RemoteDisconnected", exc.message)
 
     def test_incomplete_read_is_502(self) -> None:
@@ -395,12 +418,12 @@ class HttpErrorTests(unittest.TestCase):
     def test_connection_reset_is_504(self) -> None:
         exc = self._raise(ConnectionResetError(54, "reset"))
         self.assertEqual(exc.status, 504)
-        self.assertIn("недоступна", exc.message)
+        self.assertIn("недоступен", exc.message)
 
     def test_timeout_still_timeout_text(self) -> None:
         exc = self._raise(TimeoutError("timed out"))
         self.assertEqual(exc.status, 504)
-        self.assertIn("не ответила", exc.message)
+        self.assertIn("не ответил", exc.message)
 
     def test_body_not_json_is_502(self) -> None:
         opener = _Opener(payload="не json")

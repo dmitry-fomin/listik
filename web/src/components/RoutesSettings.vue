@@ -14,7 +14,7 @@
  * группы «Рой»: оба сразу открывают `NewSwarmRouteModal`. Заводится только
  * рой — у «Конвейеров» кнопки нет: конвейер приходит из поставки сам.
  */
-import { computed, onBeforeUnmount, onMounted, ref } from 'vue'
+import { computed, onBeforeUnmount, onMounted, ref, watch } from 'vue'
 import {
   UiAlert,
   UiBadge,
@@ -31,7 +31,7 @@ import NewSwarmRouteModal from './NewSwarmRouteModal.vue'
 import ListikIcon from './ListikIcon.vue'
 import RouteIcon from './marks/RouteIcon.vue'
 import store from '@/store/listik'
-import type { PipelineRouteDef, RouteDef, SwarmLikeRoute } from '@/api/types'
+import type { PipelineRouteDef, RouteDef, RouteRemoved, SwarmLikeRoute } from '@/api/types'
 import { pipelineRowsOf, swarmRoutesOf } from '@/lib/routes'
 import { ROLE_KEYS, ROLE_STAGE } from '@/lib/pipelines'
 import { PIPELINE_STAGES } from '@/lib/dictionaries'
@@ -68,6 +68,11 @@ function pipelineMeta(route: PipelineRouteDef): string {
 function rolesBadge(route: SwarmLikeRoute): string {
   const count = filledRoles(route)
   return `${count} ${rolesWord(count)}`
+}
+
+/** «карточки» в родительном единственном (1, 21, 101…), иначе «карточек». */
+function cardsWord(count: number): string {
+  return count % 10 === 1 && count % 100 !== 11 ? 'карточки' : 'карточек'
 }
 
 /**
@@ -172,6 +177,31 @@ function leaveGuard(): boolean | Promise<boolean> {
 
 let unregisterLeaveGuard: (() => void) | null = null
 
+/**
+ * Выбранная запись пропала из списка — её удалили (здесь или снаружи; `404`
+ * при DELETE снимает выбор той же дорогой). Выбор снимаем сами: `selectedKey`
+ * с ключом-призраком не давал бы `selectRoute` заново выбрать строку, если
+ * маршрут заведут под тем же ключом. Заодно гасим флаг несохранённой правки —
+ * карточки, которой правка принадлежала, больше нет.
+ */
+watch(selected, (route) => {
+  if (route !== null) return
+  selectedKey.value = null
+  cardDirty.value = false
+})
+
+/**
+ * Карточка роя удалила свой маршрут (`RouteSwarmCard` → emit `removed` с
+ * ответом сервера): выбор снят, справа снова «Выбери маршрут слева», автору —
+ * короткое сообщение с числом карточек, с которых сервер снял маршрут.
+ */
+const removedNote = ref<string | null>(null)
+
+function onRouteRemoved(result: RouteRemoved): void {
+  removedNote.value =
+    `Маршрут «${result.removed}» удалён, снят у ${result.tasks_cleared} ${cardsWord(result.tasks_cleared)}`
+}
+
 /*
  * Заведение маршрута роя: «Завести маршрут» в шапке страницы и «+» группы
  * «Рой» открывают окно сразу (`v-if` — каждый раз пустой черновик).
@@ -213,6 +243,10 @@ onBeforeUnmount(() => {
     >
       <template #title>Не получилось</template>
       {{ store.routesSettingsError.value }}
+    </UiAlert>
+
+    <UiAlert v-if="removedNote" tone="success" closable @close="removedNote = null">
+      {{ removedNote }}
     </UiAlert>
 
     <div class="listik-routes-settings__layout">
@@ -331,6 +365,7 @@ onBeforeUnmount(() => {
             :key="selectedSwarm.key"
             :route="selectedSwarm"
             @update:dirty="(value: boolean) => (cardDirty = value)"
+            @removed="onRouteRemoved"
           />
           <RouteCard v-else-if="selectedPipeline" :key="selectedPipeline.key" :route="selectedPipeline" />
         </div>
@@ -376,11 +411,11 @@ onBeforeUnmount(() => {
 }
 
 /* Ширину стоит отдавать редактору argv, плиткам состава и блоку команды —
-   карточка растёт на `1fr`. Списку хватает 320px: суженная колонка разделов
-   отдала место и ему — в строке помещаются ключ и бейджи состава. */
+   карточка растёт на `1fr`. Списку хватает 240px — той же меры, что у списка
+   в «Исполнителях» (`HarnessesSettings.vue`). */
 .listik-routes-settings__layout {
   display: grid;
-  grid-template-columns: minmax(0, 320px) minmax(0, 1fr);
+  grid-template-columns: minmax(0, 240px) minmax(0, 1fr);
   gap: var(--space-4);
   align-items: start;
 }

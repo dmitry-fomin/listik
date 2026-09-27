@@ -22,6 +22,7 @@ import type {
   ReadyResponse,
   RouteDef,
   RoutePatch,
+  RouteRemoved,
   RoutesResponse,
   SearchMode,
   SearchResponse,
@@ -144,6 +145,15 @@ export const api = {
    */
   createRoute: (body: SwarmRouteCreate) =>
     post<RouteDef>('/api/routes', body),
+
+  /**
+   * Удалить маршрут (`DELETE /api/routes/{key}`): у всех задач с этим
+   * `launch_route` сервер снимает маршрут и его метки `harness:`/`process:`,
+   * сами задачи остаются. Ответ — `{"removed": key, "tasks_cleared": N}`;
+   * нет ключа — `404`.
+   */
+  removeRoute: (key: string) =>
+    request<RouteRemoved>('DELETE', `/api/routes/${encodeURIComponent(key)}`),
 
   /** Каталог харнесов (`GET /api/harnesses`, listik-2gry): исполнители ролей роя. */
   harnesses: () => get<HarnessesResponse>('/api/harnesses'),

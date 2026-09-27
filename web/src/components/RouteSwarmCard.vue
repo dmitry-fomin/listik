@@ -25,6 +25,8 @@
 import { computed, onBeforeUnmount, onMounted, reactive, ref, watch } from 'vue'
 import {
   UiAlert,
+  UiButton,
+  UiConfirmDialog,
   UiCopyButton,
   UiField,
   UiInput,
@@ -44,7 +46,7 @@ import RouteIcon from './marks/RouteIcon.vue'
 import RouteCommandText from './RouteCommandText.vue'
 import RouteSubstitutions from './RouteSubstitutions.vue'
 import store from '@/store/listik'
-import type { RouteIconKey, RoutePatch, SwarmLikeRoute, SwarmRoles } from '@/api/types'
+import type { RouteIconKey, RoutePatch, RouteRemoved, SwarmLikeRoute, SwarmRoles } from '@/api/types'
 import { PIPELINE_STAGES, ROUTE_ICONS } from '@/lib/dictionaries'
 import { harnessTitle, runnableHarness } from '@/lib/harness'
 import { isSwarmCell, ROLE_KEYS, ROLE_STAGE, ROLE_TITLES, type RoleKey } from '@/lib/pipelines'
@@ -58,7 +60,11 @@ import {
 } from '@/lib/routes'
 
 const props = defineProps<{ route: SwarmLikeRoute }>()
-const emit = defineEmits<{ 'update:dirty': [value: boolean] }>()
+const emit = defineEmits<{
+  'update:dirty': [value: boolean]
+  /** Маршрут удалён на сервере — разделу пригодится ответ (число снятых карточек). */
+  removed: [result: RouteRemoved]
+}>()
 
 /* ── черновик: шапка + расклад ролей ── */
 
@@ -305,6 +311,8 @@ function diffPatch(): RoutePatch {
 }
 
 async function flush(): Promise<void> {
+  // Маршрут уже удалён — PATCH на него некуда и незачем (гонка с queued-правкой).
+  if (routeRemoved || !routeStillListed()) return
   const patch = diffPatch()
   if (Object.keys(patch).length === 0) return
   if (inFlight) {
@@ -366,12 +374,53 @@ function onVisible(value: boolean): void {
   scheduleFlush(true)
 }
 
-/* Карточку сняли — досохраняем то, что ещё лежит в дебаунсе. */
+/* ── удаление маршрута (кнопка — только у `kind=swarm`, конвейеры не удаляются) ── */
+
+const removeOpen = ref(false)
+const removeBusy = ref(false)
+/**
+ * Маршрута на сервере больше нет (DELETE ответил 200, либо 404 — записи и так
+ * не было): при размонтировании PATCH на удалённый ключ не посылаем. Флага
+ * мало — размонтирование от перечитанного в `removeRoute` списка может
+ * опередить возврат `await`, — поэтому сторожа сверяются и со свежим списком
+ * стора: ключа в нём нет ⇔ запись удалена.
+ */
+let routeRemoved = false
+const routeStillListed = () => store.routes.value.some((item) => item.key === props.route.key)
+
+async function confirmRemove(): Promise<void> {
+  if (removeBusy.value) return
+  removeBusy.value = true
+  // Отложенному автосохранению писать больше некуда — дебаунс гасим до запроса.
+  if (debounceTimer) {
+    clearTimeout(debounceTimer)
+    debounceTimer = null
+  }
+  try {
+    const result = await store.removeRoute(props.route.key)
+    removeOpen.value = false
+    if (result === null) {
+      // Текст ошибки показывает алерт раздела (`routesSettingsError`). При 404
+      // стор уже перечитал список и карточка размонтируется — досохранение
+      // выключаем; при прочих ошибках запись на месте, ничего не меняем.
+      if (!routeStillListed()) routeRemoved = true
+      return
+    }
+    routeRemoved = true
+    emit('removed', result)
+  } finally {
+    removeBusy.value = false
+  }
+}
+
+/* Карточку сняли — досохраняем то, что ещё лежит в дебаунсе. Маршрут удалён —
+   досохранять некуда: PATCH ушёл бы на удалённый ключ и вернул бы 404. */
 onBeforeUnmount(() => {
   if (debounceTimer) {
     clearTimeout(debounceTimer)
     debounceTimer = null
   }
+  if (routeRemoved || !routeStillListed()) return
   void flush()
 })
 
@@ -695,11 +744,31 @@ const roleInherits = computed(() => {
         Правки применятся к следующему запуску. Уже запущенные задачи не трогаются.
       </span>
       <UiSaveStatus :status="status" @retry="() => scheduleFlush(true)" />
+      <!-- Удаляются только записи роя: у конвейера с driver=swarm кнопки нет. -->
+      <UiButton
+        v-if="route.kind === 'swarm'"
+        variant="danger"
+        size="sm"
+        @click="removeOpen = true"
+      >
+        Удалить маршрут
+      </UiButton>
       <p v-if="rolesAllSkipped" class="listik-route-swarm__reason is-problem">
         все роли пропущены — такой расклад сервер не примет
       </p>
       <p v-else-if="roleBlock" class="listik-route-swarm__reason is-problem">{{ roleBlock }}</p>
     </div>
+
+    <UiConfirmDialog
+      v-model="removeOpen"
+      tone="danger"
+      :title="`Удалить маршрут «${route.title}»?`"
+      :description="`Маршрут ${route.key} будет удалён. У карточек с этим маршрутом он будет снят — сами карточки останутся.`"
+      confirm-label="Удалить"
+      cancel-label="Отмена"
+      :loading="removeBusy"
+      @confirm="confirmRemove"
+    />
   </div>
 </template>
 

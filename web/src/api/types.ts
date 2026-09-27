@@ -533,6 +533,15 @@ export interface RoutePatch {
   driver?: RouteDriver
 }
 
+/**
+ * Ответ `DELETE /api/routes/{key}`: ключ удалённой записи и число задач,
+ * с которых сервер снял этот `launch_route` (сами задачи остаются).
+ */
+export interface RouteRemoved {
+  removed: string
+  tasks_cleared: number
+}
+
 // ── каталог харнессов: GET/POST /api/harnesses, GET/PATCH /api/harnesses/{key} ──
 // (см. docs/API.md «Харнессы», listik-2gry)
 

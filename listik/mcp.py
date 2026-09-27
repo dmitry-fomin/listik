@@ -287,7 +287,11 @@ TOOLS: list[dict] = [
         "name": "listik_comment",
         "description": ("Добавить запись в журнал задачи. kind: comment — обычный комментарий, "
                         "journal — строка журнала конвейера, question — вопрос, answer — ответ, "
-                        "review — замечания ревью, verdict — вердикт судьи."),
+                        "review — замечания ревью, verdict — вердикт судьи. Без author автором "
+                        "считается агент (LISTIK_ACTOR, иначе agent:mcp); владелец транспорта "
+                        "(X-Listik-Owner/LISTIK_OWNER) автором не становится. verdict от агента "
+                        "принимается только на этапе s4-judge, на другом этапе сохраняется "
+                        "обычным комментарием с verdict_accepted=false."),
         "inputSchema": {
             "type": "object",
             "properties": {"id": TASK_ID, "text": {"type": "string"},
@@ -632,17 +636,12 @@ def call_tool(name: str, args: dict, conn=None, owner=FROM_ENV, fence=FROM_ENV) 
                                 actor=args.get("actor"), as_owner=owner)
     if name == "listik_comment":
         return store.add_comment(conn, args["id"], args["text"],
-                                 author=args.get("author"), kind=args.get("kind", "comment"),
+                                 author=_mcp_actor(args.get("author"), args.get("actor")),
+                                 kind=args.get("kind", "comment"),
                                  harness=args.get("harness"))
     if name == "listik_needs_owner":
-        # Без явного actor вопрос/ответ не должен остаться без автора: MCP —
-        # транспорт агентов, поэтому имя берём у того, кто представился
-        # транспортом (owner: X-Listik-Owner у HTTP, LISTIK_OWNER у stdio), затем
-        # из LISTIK_ACTOR и, наконец, агентским фолбэком — как у listik_deps.
-        # `_norm_actor` приводит имя к каноническому ключу, чтобы комментарий и
-        # событие question/answer подписывались одним и тем же актором.
-        actor = _norm_actor(args.get("actor") or owner
-                            or os.environ.get("LISTIK_ACTOR") or "agent:mcp")
+        # Автор — см. `_mcp_actor`.
+        actor = _mcp_actor(args.get("actor"), owner)
         return store.set_needs_owner(conn, args["id"], value=bool(args.get("value", True)),
                                      text=args.get("text"), actor=actor)
     if name == "listik_done":
@@ -688,9 +687,8 @@ def call_tool(name: str, args: dict, conn=None, owner=FROM_ENV, fence=FROM_ENV) 
     if name == "listik_timeline":
         return {"items": store.task_timeline(conn, limit=int(args.get("limit", 100)))}
     if name == "listik_deps":
-        # MCP — транспорт только для агентов: без явного actor вызов всё равно
-        # должен считаться агентским, а не тихо превращаться в «человека».
-        actor = args.get("actor") or os.environ.get("LISTIK_ACTOR") or "agent:mcp"
+        # Автор — см. `_mcp_actor`.
+        actor = _mcp_actor(args.get("author"), args.get("actor"))
         if args.get("action") == "rm":
             return store.remove_dep(conn, args["id"], args["depends_on"],
                                     args.get("dep_type"))
@@ -719,6 +717,22 @@ def _norm_actor(value: str | None) -> str | None:
     from . import actors as actors_mod
     key, _ = actors_mod.resolve(value, None)
     return key
+
+
+def _mcp_actor(*candidates: str | None) -> str:
+    """Автор записи по MCP: первый непустой из `candidates`, затем `LISTIK_ACTOR`,
+    затем `agent:mcp` — в каноническом ключе (`claude` → `agent:claude`).
+
+    MCP — транспорт агентов: вызов без автора не должен стать «человеческим»
+    (иначе агентский verdict проходит мимо s4-judge, связь — мимо suggested-blocks).
+    Владелец (`X-Listik-Owner`/`LISTIK_OWNER`) — это «на кого работает агент»
+    (видимость задач, проверки claim), а не автор записи, поэтому кандидатом его
+    передаёт только `listik_needs_owner`: вопрос к человеку подписывается тем, от
+    чьего имени идёт работа. `listik_comment`/`listik_deps` его не передают.
+    """
+    for value in (*candidates, os.environ.get("LISTIK_ACTOR"), "agent:mcp"):
+        if value and value.strip():
+            return _norm_actor(value)
 
 
 def _result(payload: object) -> dict:

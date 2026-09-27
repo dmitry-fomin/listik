@@ -1679,6 +1679,13 @@ JSON-RPC-сообщение, ответ — обычный JSON (`Content-Type: 
 чужая задача) — обычная ошибка инструмента: HTTP 200 и `result.isError: true` с текстом
 причины. В локальном режиме всё это игнорируется.
 
+Автор записи по MCP: у `listik_comment` и `listik_deps` — `author`, затем `actor`, затем
+`LISTIK_ACTOR`, затем `agent:mcp`; владелец (`X-Listik-Owner`/`LISTIK_OWNER`) автором там не
+становится, так что вызов без автора остаётся агентским (вердикт вне `s4-judge` не принимается,
+жёсткая связь пишется как `suggested-blocks`). У `listik_needs_owner` — `actor`, затем владелец,
+затем `LISTIK_ACTOR`, затем `agent:mcp`. Имя приводится к каноническому ключу, например
+`claude` → `agent:claude`.
+
 **Авторизация.** Тот же токен, что у доски и API (`[auth] token` в `config.toml`): заголовок
 `Authorization: Bearer <token>` или `X-Listik-Token: <token>`. `?token=` в строке запроса здесь
 не принимается (в отличие от `/api/*`). Если токен в конфиге пуст, проверка не применяется — так

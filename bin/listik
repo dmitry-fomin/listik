@@ -2856,7 +2856,8 @@ def build_parser() -> argparse.ArgumentParser:
     sp = add("ready", cmd_ready, help="что можно взять прямо сейчас (нет блокеров)")
     sp.add_argument("-p", "--project")
     sp.add_argument("--stage")
-    sp.add_argument("-n", "--limit", type=int, default=40)
+    sp.add_argument("-n", "--limit", type=int, default=40,
+                    help="сколько задач показать; 0 — без ограничения")
     sp.add_argument("--with-occupied", action="store_true", help="включая занятые кем-то")
 
     sp = add("blocked", cmd_blocked, help="кто кого ждёт: незакрытые блокеры задач")

@@ -2,16 +2,19 @@
 
 Ребро незакрыто, если его тип из `HARD_BLOCKERS`, а задача-блокер не `done`/`cancelled`;
 отсутствующая задача-блокер считается открытой. На этом правиле стоят гейт `claim`/`ready`,
-денормализованный `blocked_by` и выборка `ready_tasks` — тесты ниже держат их вместе.
+денормализованный `blocked_by`, выборка `ready_tasks` и рёбра волн (`deps.waves`) — тесты
+ниже держат их вместе.
 """
 from __future__ import annotations
 
 import unittest
+from unittest import mock
 
 from listik import deps
 from listik import store
 from tests.helpers import TempDbTestCase
 from tests.test_resource_blocks import _insert_resource_block
+from tests.test_waves import _task
 
 
 def _edges(rows) -> list[dict]:
@@ -252,6 +255,56 @@ class OpenHardEdgesTests(TempDbTestCase):
         self.conn.execute("DELETE FROM tasks WHERE id = ?", (b,))
         self.conn.commit()
         self.assertNotIn(a, [t["id"] for t in deps.ready_tasks(self.conn, project="demo")])
+
+
+class WavesOpenHardEdgesTests(TempDbTestCase):
+    """Рёбра `deps.waves` — по тому же правилу, только смысловые типы (`SEMANTIC_HARD`)."""
+
+    def _other(self, title: str) -> str:
+        return store.create_task(self.conn, title=title, project="other")["id"]
+
+    def _waves(self) -> dict:
+        return deps.waves(self.conn, project="demo")
+
+    def test_every_semantic_type_blocks_until_blocker_closes(self) -> None:
+        for dep_type in deps.SEMANTIC_HARD:
+            with self.subTest(dep_type=dep_type):
+                b = _task(self.conn, f"b-{dep_type}")
+                x = self._other(f"X {dep_type}")
+                store.add_dep(self.conn, b, x, dep_type, created_by="me")
+
+                res = self._waves()
+                self.assertEqual(res["blocked"][b], x)
+                self.assertFalse(any(b in wave for wave in res["waves"]))
+
+                final = "cancelled" if dep_type == "waits-for" else "done"
+                store.update_task(self.conn, x, status=final)
+                res = self._waves()
+                self.assertNotIn(b, res["blocked"])
+                self.assertTrue(any(b in wave for wave in res["waves"]))
+
+    def test_missing_blocker_still_blocks(self) -> None:
+        b = _task(self.conn, "b")
+        x = self._other("X")
+        store.add_dep(self.conn, b, x, "blocks", created_by="me")
+        self.conn.execute("DELETE FROM tasks WHERE id = ?", (x,))
+        self.conn.commit()
+
+        self.assertEqual(self._waves()["blocked"][b], x)
+
+    def test_rule_comes_from_open_hard_sql(self) -> None:
+        b = _task(self.conn, "b")
+        x = self._other("X")
+        store.add_dep(self.conn, b, x, "blocks", created_by="me")
+        self.assertEqual(self._waves()["blocked"][b], x)
+
+        def never_open(edge: str = "d", blocker: str = "t") -> tuple[str, list]:
+            return "0", []
+
+        with mock.patch.object(deps, "_open_hard_sql", never_open):
+            res = self._waves()
+        self.assertNotIn(b, res["blocked"])
+        self.assertIn(b, res["waves"][0])
 
 
 if __name__ == "__main__":

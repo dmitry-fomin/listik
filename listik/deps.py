@@ -856,22 +856,11 @@ def _waves(conn: sqlite3.Connection, *, project: str,
         write_scopes[tid] = ws
         p_ids.append(tid)
 
-    # Рёбра: смысловые жёсткие, issue_id из P, вместе со статусом depends_on —
-    # один запрос (LEFT JOIN, как `blockers()` считает отсутствующую задачу открытой).
+    # Рёбра: незакрытые жёсткие с issue_id из P — правило из `open_hard_edges`; в волны
+    # идут только смысловые типы (`SEMANTIC_HARD`), записанные `resource-blocks` — нет.
     edges: dict[str, list[str]] = {}
-    if p_ids:
-        marks = ",".join("?" * len(p_ids))
-        edge_rows = _fetch(
-            conn,
-            "SELECT d.issue_id AS issue_id, d.depends_on AS depends_on, "
-            "t.status AS dep_status FROM deps d LEFT JOIN tasks t ON t.id = d.depends_on "
-            f"WHERE d.dep_type IN ({','.join('?' * len(SEMANTIC_HARD))}) "
-            f"AND d.issue_id IN ({marks})",
-            (*SEMANTIC_HARD, *p_ids),
-        )
-        for r in edge_rows:
-            if (r["dep_status"] or "") in FINAL_STATUSES:
-                continue
+    for r in open_hard_edges(conn, issue_ids=p_ids):
+        if r["dep_type"] in SEMANTIC_HARD:
             edges.setdefault(r["issue_id"], []).append(r["depends_on"])
 
     def reason_sort_key(dep: str):

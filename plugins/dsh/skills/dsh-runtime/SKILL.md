@@ -57,6 +57,12 @@ allowlist:
 | `bash` | `read-only` | dsh has no separate bash tier — accepted so one flag spelling works across harnesses |
 | `write` | `workspace-write` | edits inside the working directory |
 
+**`write` cannot commit outside the working directory.** The sandbox allows writes only
+under the working directory, `/tmp` and the temp dir. In a linked worktree, a repo
+subdirectory or a submodule the git dir is outside, so `git add`/`git commit` in the run fail
+(file edits work); there is no `--add-dir` in dsh. With git >= 2.31 the wrapper prints a
+`warning:` line on stderr (older git: no check). Commit yourself, outside the run.
+
 **Escalation from inside a run is impossible.** The headless profile has no approval
 channel: a permission request is declined, not queued. Rerun with `--permission write` —
 and only when the human asked for a change, never because the task looks like
@@ -135,6 +141,7 @@ and a growing elapsed time.
 | `MISSING_CREDENTIAL` | `apiKeyEnv` names a variable missing from the environment Claude Code started in; the human restarts from a fresh terminal |
 | status `orphaned` | the worker died with the machine or session; relaunch, no answer is coming |
 | the run asks for approval and fails | a write attempt in read-only mode; rerun with `--permission write` if the edit was actually requested |
+| in a worktree the commit inside the run failed | git dir is outside the `workspace-write` boundary (see `warning:` on stderr); keep the edits, commit from the caller outside the run |
 | `prompt is ... bytes - too long for argv` | material pasted into the task; put it in a file and point at it |
 
 ## Red lines (apply inside every dsh run)

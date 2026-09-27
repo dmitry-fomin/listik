@@ -154,7 +154,7 @@ EOF
 | `--model pro\|flash\|vision\|<name>` | user's setting | manual use only — the skills never pass it |
 | `--effort low\|medium\|high\|xhigh\|max` | user's setting | manual use only; works with or without `--model` |
 | `--provider <route>` | user's setting, else `deepseek-official` | manual use only — switch route for one run |
-| `--cwd <dir>` | current directory | working directory and sandbox boundary |
+| `--cwd <dir>` | current directory | working directory and sandbox boundary; see "`write` in a git worktree" below |
 | `--timeout <sec>` | 540 foreground, 7200 background | `0` removes the limit entirely |
 | `--background` | off | detach, print a job id |
 | `--label <text>` | none | short note so the job is recognisable in `status` |
@@ -173,6 +173,15 @@ Permission modes map onto the harness's own sandbox:
 `--write` remains as an alias, because Listik routes and pipeline presets already send it.
 **Read-only is enforced by the sandbox, not by a tool allowlist:** a run asked to write
 gets `file access denied under read-only mode` from the system and says so in its answer.
+
+**`write` in a git worktree.** Under `workspace-write` dsh can write only under the working
+directory, `/tmp` and the user's temporary directory. In a linked worktree, a subdirectory of
+a repository or a submodule the git dir lies outside that boundary, so `git add`/`git commit`
+inside the run fail; editing files works. dsh cannot be given an extra writable directory
+(codex does it with `--add-dir`, dsh has no equivalent). The wrapper warns with a
+`warning:` line on stderr when git is 2.31 or newer (with older git the check is silently
+skipped); the caller commits, outside the run. At the root of the main checkout the commit
+goes through.
 
 Exit codes: `0` success · `1` `check` not ready / no jobs · `2` bad invocation · `5` job
 still running · `6` timeout, cancelled, non-zero exit, or empty answer.

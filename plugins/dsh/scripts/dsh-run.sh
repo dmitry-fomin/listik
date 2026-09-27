@@ -368,6 +368,27 @@ write_from_permission() {
 }
 
 # --- run --------------------------------------------------------------------
+# Песочница workspace-write пускает запись только под рабочим каталогом
+# (пути канонические). В linked worktree, подкаталоге или подмодуле git-dir
+# лежит снаружи — git add/commit в прогоне упадут. Только предупреждаем:
+# расширять песочницу нельзя (открыло бы .git/hooks и .git/config).
+warn_gitdir_outside() {
+  local wd dirs git_dir common_dir d
+  wd="$(cd "$1" 2>/dev/null && pwd -P)" || return 0
+  dirs="$(git -C "$1" rev-parse --path-format=absolute --git-dir --git-common-dir 2>/dev/null)" || return 0
+  git_dir="$(printf '%s\n' "$dirs" | sed -n 1p)"
+  common_dir="$(printf '%s\n' "$dirs" | sed -n 2p)"
+  for d in "$git_dir" "$common_dir"; do
+    [[ -n "$d" ]] || continue
+    d="$(cd "$d" 2>/dev/null && pwd -P)" || continue
+    if [[ "$d" != "$wd" && "$d" != "$wd/"* ]]; then
+      printf 'warning: git dir %s is outside the working directory; under workspace-write dsh cannot write there, so git add/git commit inside the run will fail (editing files works) - commit from the caller, outside the run\n' "$d" >&2
+      return 0
+    fi
+  done
+  return 0
+}
+
 cmd_run() {
   local write=0 model="" effort="" workdir="" timeout_s="" background=0 label="" provider_opt=""
   while [[ $# -gt 0 ]]; do
@@ -416,6 +437,7 @@ cmd_run() {
 
   local mode="read-only"
   [[ $write -eq 1 ]] && mode="workspace-write"
+  [[ "$mode" == "workspace-write" ]] && warn_gitdir_outside "$workdir"
 
   local tmpdir=""
   local args=(--profile headless)

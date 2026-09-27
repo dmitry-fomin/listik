@@ -867,12 +867,31 @@ export interface TimelineItem {
   age: string
 }
 
+/** Задача из GET /api/tasks: несёт число ждущих, как задача /api/ready. */
+export interface ListedTask extends Task {
+  /** Сколько незакрытых задач ждёт её; у закрытой 0. */
+  waiting_for_count: number
+}
+
 export interface TasksPage {
   total: number
   limit: number
   offset: number
-  tasks: Task[]
+  tasks: ListedTask[]
 }
+
+/** Поле `sort` GET /api/tasks: сортирует весь отфильтрованный набор, до `limit`/`offset`. */
+export type TaskSortField =
+  | 'id'
+  | 'title'
+  | 'project'
+  | 'status_title'
+  | 'priority'
+  | 'holder_hours'
+  | 'stage_hours'
+  | 'updated_at'
+  | 'blocked_count'
+  | 'waiting_for_count'
 
 export interface TaskQuery {
   project?: string
@@ -894,6 +913,10 @@ export interface TaskQuery {
   limit?: number
   offset?: number
   order?: 'updated' | 'created' | 'priority' | 'stage'
+  /** С `sort` сервер не учитывает `order`. */
+  sort?: TaskSortField
+  /** Направление `sort`, по умолчанию `asc`. */
+  dir?: 'asc' | 'desc'
 }
 
 /** Поля, которые принимает PATCH /api/tasks/{id} (store.UPDATABLE). */

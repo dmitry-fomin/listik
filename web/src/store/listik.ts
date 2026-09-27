@@ -25,6 +25,7 @@ import type {
   HarnessCreate,
   HarnessPatch,
   Health,
+  ListedTask,
   Meta,
   ProjectPatch,
   ProjectRow,
@@ -40,6 +41,7 @@ import type {
   Task,
   TaskDetail,
   TaskPatch,
+  TaskSortField,
   TasksPage,
   TimelineItem,
   VoiceDraftRequest,
@@ -1392,7 +1394,9 @@ async function loadListTasks(params: {
   limit: number
   offset: number
   order?: 'updated' | 'created' | 'priority' | 'stage'
-}): Promise<{ tasks: Task[]; total: number }> {
+  sort?: TaskSortField
+  dir?: 'asc' | 'desc'
+}): Promise<{ tasks: ListedTask[]; total: number }> {
   const page = await tryRequest(
     () =>
       api.tasks({
@@ -1409,6 +1413,8 @@ async function loadListTasks(params: {
         limit: params.limit,
         offset: params.offset,
         order: params.order ?? 'updated',
+        sort: params.sort,
+        dir: params.dir,
       }),
     handleError,
   )

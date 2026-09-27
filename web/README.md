@@ -106,8 +106,8 @@ scripts/
   verify-detail-sse.mjs  открытая карточка и события SSE на моке (`__event`/`__requests`)
   verify-markdown.mjs  markdown-вывод описания карточки на моке `--markdown`
   verify-voice.mjs  голосовой ввод задачи: десктоп и телефон на моке `--voice`
-  verify-list-sort.mjs  сортировка вида «Список» на моке `--list-sort`
-  verify-list-filters.mjs  фильтры вида «Список» уходят на сервер, страница — как ответ, на моке `--fill=40`
+  verify-list-sort.mjs  сортировка вида «Список» уходит на сервер (`sort`/`dir`), на моке `--list-sort`
+  verify-list-filters.mjs  фильтры вида «Список» уходят на сервер, страница — как ответ, и сброс страницы при смене сортировки, на моке `--fill=40`
   verify-phone-queue.mjs  очередь телефона: смена проекта и запоздавшие ответы на моке `--slow-list`
   verify-transitions.mjs  подписи переходов (рельса, степпер, заголовок события) из routing сервера на моке --transitions
   patch-facet.mjs  убирает неиспользуемый импорт в исходнике кита (postinstall)

@@ -25,7 +25,7 @@ import ListikIcon from '@/components/ListikIcon.vue'
 import TaskFilters from '@/components/TaskFilters.vue'
 import TaskGlyph from '@/components/marks/TaskGlyph.vue'
 import store, { type Filters } from '@/store/listik'
-import type { Task, TaskPatch } from '@/api/types'
+import type { ListedTask, Task, TaskPatch, TaskSortField } from '@/api/types'
 import { formatDateTime, humanAge } from '@/lib/format'
 import { orchestratorOptions, stageOptions, statusOptions, typeOptions } from '@/lib/facets'
 
@@ -94,7 +94,7 @@ function readSettings(): UiColumnSettingOption[] {
 const settings = ref<UiColumnSettingOption[]>(readSettings())
 const page = ref(1)
 const pageSize = ref(25)
-const rows = ref<Task[]>([])
+const rows = ref<ListedTask[]>([])
 const total = ref(0)
 const loadingRows = ref(false)
 const sort = ref<UiDataTableSort | null>({ key: 'updated_at', direction: 'desc' })
@@ -137,89 +137,40 @@ const tableColumns = computed<UiDataTableColumn[]>(() => [
   ...visibleColumns.value,
 ])
 
-/**
- * Числа зависимостей по id задачи: колонки «ждёт» / «её ждут» берут их отсюда.
- * Отдельным словарём, а не полями строки: `UiDataTable` — generic по типу строки,
- * и его слоты ячеек типизированы `Task`, так что поля-надстройки всё равно
- * пришлось бы кастовать.
- */
-interface DepsCell {
-  blocked: number
-  waiting: number
-  stale: boolean
+// Порядок строк — ответ сервера: сортировка уходит параметрами `sort`/`dir` и
+// охватывает весь набор, а не загруженную страницу; на клиенте строки не переставляются.
+const SERVER_SORT: Record<string, { field: TaskSortField; reverse?: true }> = {
+  id: { field: 'id' },
+  title: { field: 'title' },
+  project: { field: 'project' },
+  status_title: { field: 'status_title' },
+  priority_title: { field: 'priority' },
+  holder_age: { field: 'holder_hours' },
+  stage_age: { field: 'stage_hours' },
+  // «Обновлена» — возраст: при `asc` сверху свежая задача, то есть метка `updated_at` по убыванию.
+  updated_age: { field: 'updated_at', reverse: true },
+  blocked_count: { field: 'blocked_count' },
+  waiting_count: { field: 'waiting_for_count' },
+  updated_at: { field: 'updated_at' }, // начальное значение `sort`, не колонка
 }
 
-const depsCells = computed<Record<string, DepsCell>>(() => {
-  const out: Record<string, DepsCell> = {}
-  for (const task of rows.value) {
-    const summary = store.depsFor(task.id)
-    out[task.id] = {
-      blocked: summary?.blockedBy.length ?? task.blocked_by.length,
-      waiting: summary?.waitingForCount ?? 0,
-      stale: summary?.blockedByStale ?? false,
-    }
-  }
-  return out
-})
-
-function depsCell(id: string): DepsCell {
-  return depsCells.value[id] ?? { blocked: 0, waiting: 0, stale: false }
+function serverSort(value: UiDataTableSort | null): { sort?: TaskSortField; dir?: 'asc' | 'desc' } {
+  const target = value ? SERVER_SORT[value.key] : undefined
+  if (!value || !target) return {}
+  const reversed = value.direction === 'asc' ? 'desc' : 'asc'
+  return { sort: target.field, dir: target.reverse ? reversed : value.direction }
 }
-
-/**
- * Колонки, которые сортируются числом, а не подписью ячейки: «ключ колонки → значение
- * строки». Возраст — чем моложе, тем меньше; `null` — значения нет, такие строки в конце.
- */
-const NUMERIC_SORT: Record<string, (row: Task) => number | null> = {
-  holder_age: (row) => row.holder_hours,
-  stage_age: (row) => row.stage_hours,
-  // тот же момент, от которого считает ячейка (`humanAge(row.updated_at)`)
-  updated_age: (row) => {
-    const time = Date.parse(row.updated_at)
-    return Number.isNaN(time) ? null : -time
-  },
-  priority_title: (row) => row.priority,
-  blocked_count: (row) => depsCell(row.id).blocked,
-  waiting_count: (row) => depsCell(row.id).waiting,
-}
-
-// Сортируется только загруженная страница; какие задачи на неё попали, решает
-// серверный `order` (без направления). Равные строки остаются в порядке сервера.
-const sortedRows = computed<Task[]>(() => {
-  const active = sort.value
-  if (!active) return rows.value
-  const direction = active.direction === 'asc' ? 1 : -1
-  const numeric = NUMERIC_SORT[active.key]
-  return rows.value.slice().sort((a, b) => {
-    if (numeric) {
-      const leftValue = numeric(a)
-      const rightValue = numeric(b)
-      if (leftValue === null || rightValue === null) return Number(leftValue === null) - Number(rightValue === null)
-      return (leftValue - rightValue) * direction
-    }
-    const left = a[active.key as keyof Task]
-    const right = b[active.key as keyof Task]
-    if (typeof left === 'number' && typeof right === 'number') return (left - right) * direction
-    return String(left ?? '').localeCompare(String(right ?? ''), 'ru') * direction
-  })
-})
 
 const allSelected = computed(
-  () => sortedRows.value.length > 0 && selected.value.length === sortedRows.value.length,
+  () => rows.value.length > 0 && selected.value.length === rows.value.length,
 )
 
 async function load(): Promise<void> {
   loadingRows.value = true
-  const orderMap: Record<string, 'updated' | 'created' | 'priority' | 'stage'> = {
-    updated_age: 'updated',
-    stage_age: 'stage',
-    priority_title: 'priority',
-    id: 'created',
-  }
   const result = await store.loadListTasks({
     limit: pageSize.value,
     offset: (page.value - 1) * pageSize.value,
-    order: (sort.value && orderMap[sort.value.key]) || 'updated',
+    ...serverSort(sort.value),
   })
   rows.value = result.tasks
   total.value = result.total
@@ -245,7 +196,7 @@ watch(
 )
 
 function toggleAll(value: boolean): void {
-  selected.value = value ? sortedRows.value.map((row) => row.id) : []
+  selected.value = value ? rows.value.map((row) => row.id) : []
 }
 
 const filtersModel = computed<Filters>(() => ({ ...store.filters }))
@@ -265,7 +216,7 @@ function openRow(id: string): void {
  * `TaskDrawer`, что и на доске. У `UiDataTable` события клика по строке нет
  * (таблица только для чтения), а `tr` не несёт ни id, ни data-атрибутов,
  * поэтому ловим клик делегированием с обёртки: позиция строки в `tbody`
- * совпадает с позицией в `sortedRows` (скелетон отсекает `loadingRows`, строку
+ * совпадает с позицией в `rows` (скелетон отсекает `loadingRows`, строку
  * пустого состояния — отсутствие задачи по индексу). Клик по интерактиву в
  * ячейке (чекбокс выбора, кнопка-id) открытие не дублирует — у него свой
  * обработчик.
@@ -279,7 +230,7 @@ function onTableClick(event: MouseEvent): void {
   const row = target.closest('tr')
   const body = row?.parentElement
   if (!row || !body || body.tagName !== 'TBODY') return
-  const task = sortedRows.value[Array.from(body.children).indexOf(row)]
+  const task = rows.value[Array.from(body.children).indexOf(row)]
   if (task) openRow(task.id)
 }
 
@@ -327,7 +278,10 @@ async function submitBulk(changes: Record<string, unknown>): Promise<void> {
 
 function setSort(value: UiDataTableSort | null): void {
   sort.value = value
-  if (value) void load()
+  if (!value) return
+  // Новая сортировка — с первой страницы; со второй и дальше грузит наблюдатель `page`.
+  if (page.value === 1) void load()
+  else page.value = 1
 }
 
 defineExpose({ reload: load })
@@ -380,10 +334,10 @@ defineExpose({ reload: load })
     >
       <UiDataTable
         :columns="tableColumns"
-        :rows="sortedRows"
+        :rows="rows"
         :loading="loadingRows"
         :sort="sort"
-        :row-key="(row: Task) => row.id"
+        :row-key="(row: ListedTask) => row.id"
         density="compact"
         empty-title="Задач не найдено"
         empty-description="Измените фильтры или снимите «нужен ты» / «только брошенные»."
@@ -411,21 +365,21 @@ defineExpose({ reload: load })
         </template>
         <template #cell-blocked_count="{ row }">
           <UiTooltip
-            v-if="depsCell(row.id).blocked > 0"
-            :text="`ждёт ${depsCell(row.id).blocked}: ${row.blocked_by.join(', ')}`"
+            v-if="row.blocked_by.length > 0"
+            :text="`ждёт ${row.blocked_by.length}: ${row.blocked_by.join(', ')}`"
           >
-            <UiBadge :tone="depsCell(row.id).stale ? 'danger' : 'warning'" size="sm">
-              ждёт {{ depsCell(row.id).blocked }}
+            <UiBadge :tone="store.depsFor(row.id)?.blockedByStale ? 'danger' : 'warning'" size="sm">
+              ждёт {{ row.blocked_by.length }}
             </UiBadge>
           </UiTooltip>
           <span v-else class="listik-mono">—</span>
         </template>
         <template #cell-waiting_count="{ row }">
           <UiTooltip
-            v-if="depsCell(row.id).waiting > 0"
+            v-if="row.waiting_for_count > 0"
             text="пока эта задача не закрыта, эти задачи стоят"
           >
-            <UiBadge tone="accent" size="sm">её ждут {{ depsCell(row.id).waiting }}</UiBadge>
+            <UiBadge tone="accent" size="sm">её ждут {{ row.waiting_for_count }}</UiBadge>
           </UiTooltip>
           <span v-else class="listik-mono">—</span>
         </template>

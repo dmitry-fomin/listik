@@ -97,6 +97,14 @@
  * приоритеты P0…P4, `alfa` ждёт `fox`, `delta` — `fox` и `charlie`
  * (scripts/verify-list-sort.mjs).
  *
+ * `GET /api/tasks` понимает `sort` (десять полей `LIST_SORTS`, как на сервере) и `dir`
+ * (`asc` по умолчанию, неизвестное — тоже `asc`): сортирует весь отфильтрованный набор
+ * до `limit`/`offset`, пустые `holder_at`/`stage_at`/`project` — в конце, равные —
+ * `updated_at` по убыванию, затем `id`; `order` при этом не учитывается. Без `sort` или с
+ * незнакомым `sort` — порядок по `order`, как раньше, без 400. Каждая задача ответа несёт
+ * `waiting_for_count` — сколько незакрытых задач её ждут (у закрытой 0), фикстуры поле не
+ * получают (scripts/verify-list-sort.mjs, scripts/verify-list-filters.mjs).
+ *
  * Служебные ручки для скриптов проверки (в docs/API.md их нет — это не контракт, а
  * ручки управления моком, как `__token`): `POST /__event` рассылает кадр в
  * открытые `/api/stream` (тело `{kind, payload, patch?, comment?}`, patch/comment
@@ -1503,6 +1511,25 @@ const ORDER_KEYS = {
   stage: (item) => item.stage_at,
 }
 
+/**
+ * Поля `sort` списка, как `LIST_SORTS` в listik/store.py: `[ключ, обратный ли]`, `null` —
+ * пусто (в конце при любом `dir`). Часы растут, когда метка убывает, поэтому
+ * `holder_hours`/`stage_hours` — обратные ключи по метке.
+ */
+const LIST_SORTS = {
+  id: [(item) => item.id],
+  title: [(item) => item.title.replace(/[A-Z]/g, (char) => char.toLowerCase())],
+  project: [(item) => item.project || null],
+  status_title: [(item) => item.status_title],
+  priority: [(item) => item.priority],
+  holder_hours: [(item) => item.holder_at || null, true],
+  stage_hours: [(item) => item.stage_at || null, true],
+  updated_at: [(item) => item.updated_at],
+  blocked_count: [(item) => (item.blocked_by ?? []).length],
+  waiting_for_count: [(item) => item.waiting_for_count],
+}
+const compareKeys = (left, right) => (left < right ? -1 : left > right ? 1 : 0)
+
 /** `GET /api/tasks`: фильтры/сортировка/пагинация как в listik/store.py list_tasks. */
 function listTasks(params, source = tasks) {
   const project = params.get('project')
@@ -1510,12 +1537,18 @@ function listTasks(params, source = tasks) {
   const includeClosed = ['1', 'true'].includes(params.get('include_closed') ?? '')
   const needsOwner = ['1', 'true'].includes(params.get('needs_owner') ?? '')
   const order = params.get('order') ?? 'updated'
+  const sort = params.get('sort') ?? ''
+  const sortDir = params.get('dir') === 'desc' ? -1 : 1
   let limit = Number.parseInt(params.get('limit') ?? '', 10)
   if (!Number.isFinite(limit) || limit < 0) limit = 200
   let offset = Number.parseInt(params.get('offset') ?? '', 10)
   if (!Number.isFinite(offset) || offset < 0) offset = 0
 
-  let filtered = source.slice()
+  // Копии: `waiting_for_count` не должен протечь в фикстуры.
+  let filtered = source.map((item) => ({
+    ...item,
+    waiting_for_count: FINAL.includes(item.status) ? 0 : waitingForOf(item.id).length,
+  }))
   if (project) filtered = filtered.filter((item) => item.project === project)
   if (status) {
     filtered = filtered.filter((item) => item.status === status)
@@ -1523,6 +1556,24 @@ function listTasks(params, source = tasks) {
     filtered = filtered.filter((item) => OPEN_STATUSES.includes(item.status))
   }
   if (needsOwner) filtered = filtered.filter((item) => item.needs_owner === true)
+
+  if (Object.hasOwn(LIST_SORTS, sort)) {
+    const [keyOf, reverse] = LIST_SORTS[sort]
+    const direction = reverse ? -sortDir : sortDir
+    filtered.sort((a, b) => {
+      const av = keyOf(a)
+      const bv = keyOf(b)
+      if (av === null || bv === null) {
+        if (av !== bv) return av === null ? 1 : -1
+      } else {
+        const cmp = compareKeys(av, bv) * direction
+        if (cmp !== 0) return cmp
+      }
+      return compareKeys(b.updated_at, a.updated_at) || compareKeys(a.id, b.id)
+    })
+    const total = filtered.length
+    return { total, limit, offset, tasks: filtered.slice(offset, offset + limit) }
+  }
 
   const orderKey = ORDER_KEYS[order] ? order : 'updated'
   const keyFn = ORDER_KEYS[orderKey]

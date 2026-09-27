@@ -9,6 +9,8 @@
  * и включает фильтры по одному. Мок новые параметры не применяет (см. его шапку), поэтому
  * ожидание — ответ мока на тот же запрос: если клиент досеет страницу сам, набор строк
  * разойдётся с ответом. Запросы списка берутся из `GET /__requests` (`list_queries`).
+ * Шестой кейс `sort resets page` (шаг 2-p1l8) со второй страницы кликает сортировку
+ * «Приоритет» и ждёт первую страницу: запросы только с `offset=0`, строки — ответ мока по порядку.
  *
  * Запуск: node scripts/verify-list-filters.mjs
  *   Нужен собранный `web/dist` (`npx vite build --configLoader runner`).
@@ -210,6 +212,71 @@ try {
         return verify(check)
       })
     }
+  }
+
+  /** Запросы списка страницы (`limit=25`, любой `offset`) и подпись активной страницы. */
+  const listQueries = async () =>
+    (await mockCall('/__requests')).list_queries.filter(
+      (search) => new URLSearchParams(search).get('limit') === String(PAGE_SIZE),
+    )
+  const PAGED = `({
+    snap: ${SNAPSHOT},
+    page: document.querySelector('button.ui-paginator__page[aria-current="page"]')?.getAttribute('aria-label') ?? null,
+  })`
+  const snapshot = async () => {
+    const { snap, page } = await evaluate(PAGED)
+    return { ids: snap.ids, page, skeleton: snap.skeleton }
+  }
+
+  if (!report.error) {
+    await record('sort resets page', async () => {
+      await resetFilters()
+      const paged = await evaluate(`(() => {
+        const button = document.querySelector('button.ui-paginator__page[aria-label="Страница 2"]');
+        if (!button) return false;
+        button.click();
+        return true;
+      })()`)
+      if (!paged) return { ok: false, query: null, expect: null, got: 'нет кнопки «Страница 2»' }
+      const onSecond = await waitFor(async () => {
+        const second = (await listQueries()).some((search) => new URLSearchParams(search).get('offset') === String(PAGE_SIZE))
+        const snap = await snapshot()
+        return second && !snap.skeleton && snap.page === 'Страница 2'
+      }, 5000)
+      if (!onSecond) return { ok: false, query: await listQueries(), expect: null, got: 'не перешли на «Страницу 2»' }
+
+      await mockCall('/__requests', {})
+      const sorted = await evaluate(`(() => {
+        const button = [...document.querySelectorAll('.listik-list__table th > button.ui-data-table__sort-btn')]
+          .find((item) => item.textContent.replace(/\\s+/g, ' ').trim() === 'Приоритет');
+        if (!button) return false;
+        button.click();
+        return true;
+      })()`)
+      if (!sorted) return { ok: false, query: null, expect: null, got: 'нет кнопки сортировки «Приоритет»' }
+
+      let seen = []
+      const query = await waitFor(async () => {
+        seen = await listQueries()
+        return seen.find((search) => {
+          const params = new URLSearchParams(search)
+          return params.get('sort') === 'priority' && params.get('dir') === 'asc'
+        }) ?? null
+      }, 5000)
+      if (!query) {
+        const { ids, page } = await snapshot()
+        return { ok: false, query: seen, expect: null, got: { ids, page } }
+      }
+      const expect = (await mockCall(`/api/tasks${query}`)).tasks.map((task) => task.id)
+      let got = null
+      const ok = await waitFor(async () => {
+        const allFirst = (await listQueries()).every((search) => new URLSearchParams(search).get('offset') === '0')
+        const { ids, page, skeleton } = await snapshot()
+        got = { ids, page }
+        return allFirst && page === 'Страница 1' && !skeleton && sameIds(ids, expect)
+      }, 5000)
+      return { ok: Boolean(ok), query, expect, got }
+    })
   }
 
   report.consoleErrors = consoleErrors

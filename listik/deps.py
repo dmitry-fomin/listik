@@ -91,19 +91,32 @@ def _fetch(conn: sqlite3.Connection, sql: str, params: tuple = ()) -> list[sqlit
     return conn.execute(sql, params).fetchall()
 
 
+def _open_hard_sql(edge: str = "d", blocker: str = "t") -> tuple[str, list]:
+    """SQL-фрагмент «жёсткое ребро незакрыто» и его параметры — единственная запись правила.
+
+    `edge` — алиас строки `deps`, `blocker` — алиас задачи-блокера, присоединённой
+    `LEFT JOIN tasks <blocker> ON <blocker>.id = <edge>.depends_on`. Ребро незакрыто, если его
+    тип из `HARD_BLOCKERS`, а блокер не `done`/`cancelled`; отсутствующий блокер (удалён,
+    ребро осталось) считается открытым.
+    """
+    return (f"{edge}.dep_type IN ({_HARD_MARKS}) AND coalesce({blocker}.status, 'open') "
+            f"NOT IN ({','.join('?' * len(FINAL_STATUSES))})",
+            [*HARD_BLOCKERS, *FINAL_STATUSES])
+
+
 def open_hard_edges(conn: sqlite3.Connection, *, issue_ids: Iterable[str] | None = None,
                     depends_on: str | None = None) -> list[sqlite3.Row]:
-    """Незакрытые жёсткие рёбра (`issue_id`, `depends_on`, `dep_type`) — единственное
-    определение правила в модуле.
+    """Незакрытые жёсткие рёбра (`issue_id`, `depends_on`, `dep_type`).
 
-    Ребро незакрыто, если его тип из `HARD_BLOCKERS`, а задача-блокер (`depends_on`) не
-    `done`/`cancelled`; отсутствующая задача-блокер (удалена, ребро осталось) считается
-    открытой. Статус ждущей задачи (`issue_id`) не учитывается. `issue_ids` — только рёбра
-    этих задач (пустой набор — `[]` без запроса), `depends_on` — только рёбра на этот блокер.
+    Правило записано один раз — в `_open_hard_sql`; им пользуются эта функция и фильтр
+    `ready_tasks`. Ребро незакрыто, если его тип из `HARD_BLOCKERS`, а задача-блокер
+    (`depends_on`) не `done`/`cancelled`; отсутствующая задача-блокер (удалена, ребро
+    осталось) считается открытой. Статус ждущей задачи (`issue_id`) не учитывается.
+    `issue_ids` — только рёбра этих задач (пустой набор — `[]` без запроса), `depends_on` —
+    только рёбра на этот блокер.
     """
-    where = [f"d.dep_type IN ({_HARD_MARKS})",
-             f"coalesce(t.status, 'open') NOT IN ({','.join('?' * len(FINAL_STATUSES))})"]
-    params: list = [*HARD_BLOCKERS, *FINAL_STATUSES]
+    rule, params = _open_hard_sql()
+    where = [rule]
     if issue_ids is not None:
         ids = list(issue_ids)
         if not ids:
@@ -421,14 +434,17 @@ def ready_tasks(conn: sqlite3.Connection, *, project: str | None = None,
     """Задачи, которые можно взять прямо сейчас (нет незакрытых блокеров).
 
     `as_owner` — кто спрашивает (серверный режим): в ответ идут его задачи и общий
-    пул (без владельца). В локальном режиме аргумент игнорируется.
+    пул (без владельца). В локальном режиме аргумент игнорируется. `limit=0` — без
+    ограничения.
     """
     from . import config as config_mod
     from . import store
     expire_return_handoffs(conn)
+    rule, params = _open_hard_sql("bd", "bt")
     where = ["t.archived = 0", "t.status IN ('open','in_progress','review')",
-             not_epic_with_children_sql("t")]
-    params: list = []
+             not_epic_with_children_sql("t"),
+             "NOT EXISTS (SELECT 1 FROM deps bd LEFT JOIN tasks bt ON bt.id = bd.depends_on "
+             f"WHERE bd.issue_id = t.id AND {rule})"]
     owner_cfg = config_mod.load()
     if config_mod.is_server_mode(owner_cfg):
         owner_value = config_mod.check_owner(as_owner, owner_cfg)
@@ -445,19 +461,12 @@ def ready_tasks(conn: sqlite3.Connection, *, project: str | None = None,
         where.append("(t.holder IS NULL OR t.holder = '')")
     rows = _fetch(conn, f"SELECT t.* FROM tasks t WHERE {' AND '.join(where)} "
                         "ORDER BY t.priority ASC, t.updated_at DESC LIMIT ?",
-                  (*params, limit * 3 if limit else 3000))
-    blocked_by: dict[str, list[str]] = {}
-    for r in open_hard_edges(conn):
-        blocked_by.setdefault(r["issue_id"], []).append(r["depends_on"])
+                  (*params, limit or -1))
     out = []
     for row in rows:
-        if blocked_by.get(row["id"]):
-            continue
         task = store.row_to_task(conn, row)
         task["waiting_for_count"] = len(waiting_for(conn, row["id"]))
         out.append(task)
-        if limit and len(out) >= limit:
-            break
     return out
 
 

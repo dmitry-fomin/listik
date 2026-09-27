@@ -195,6 +195,64 @@ class OpenHardEdgesTests(TempDbTestCase):
                 self.assertEqual(got, want)
                 self.assertEqual(got, sorted({bl["id"] for bl in deps.blockers(self.conn, tid)}))
 
+    def _blocked_above_free(self) -> tuple[str, list[str]]:
+        """Блокер X в `other`, десять задач `demo` с priority=0 ждут X, три свободные F1..F3."""
+        x = self._new("X", project="other")
+        for i in range(10):
+            w = store.create_task(self.conn, title=f"W{i}", project="demo", priority=0)["id"]
+            self._hard(w, x)
+        free = [store.create_task(self.conn, title=f"F{p}", project="demo", priority=p)["id"]
+                for p in (1, 2, 3)]
+        return x, free
+
+    def test_ready_tasks_limit_skips_blocked_above(self) -> None:
+        _, (f1, f2, _f3) = self._blocked_above_free()
+        got = deps.ready_tasks(self.conn, project="demo", limit=2)
+        self.assertEqual([t["id"] for t in got], [f1, f2])
+
+    def test_ready_tasks_waiting_for_count(self) -> None:
+        x, (f1, _f2, _f3) = self._blocked_above_free()
+        other = {t["id"]: t for t in deps.ready_tasks(self.conn, project="other")}
+        self.assertEqual(other[x]["waiting_for_count"], 10)
+        demo = {t["id"]: t for t in deps.ready_tasks(self.conn, project="demo", limit=2)}
+        self.assertEqual(demo[f1]["waiting_for_count"], 0)
+
+    def test_ready_tasks_limit_zero_is_unlimited(self) -> None:
+        _, free = self._blocked_above_free()
+        got = [t["id"] for t in deps.ready_tasks(self.conn, project="demo", limit=0)]
+        self.assertEqual(len(got), 3)
+        self.assertEqual(set(got), set(free))
+
+    def test_ready_tasks_uses_live_rule_not_column(self) -> None:
+        a = self._new("A")
+        b = self._new("B")
+        self.conn.execute("INSERT INTO deps(issue_id, depends_on, dep_type, created_by) "
+                          "VALUES(?, ?, 'blocks', ?)", (a, b, "me"))
+        self.conn.commit()
+        self.assertEqual(self._blocked_by(a), [])
+
+        self.assertNotIn(a, [t["id"] for t in deps.ready_tasks(self.conn, project="demo")])
+        self.assertFalse(deps.ready(self.conn, a)["claimable"])
+
+    def test_ready_tasks_every_hard_type_and_missing_blocker(self) -> None:
+        for dep_type in deps.HARD_BLOCKERS:
+            with self.subTest(dep_type=dep_type):
+                a = self._new(f"A {dep_type}")
+                b = self._new(f"B {dep_type}")
+                self._hard(a, b, dep_type)
+                self.assertNotIn(a, [t["id"] for t in deps.ready_tasks(self.conn, project="demo")])
+
+                final = "cancelled" if dep_type == "waits-for" else "done"
+                store.update_task(self.conn, b, status=final)
+                self.assertIn(a, [t["id"] for t in deps.ready_tasks(self.conn, project="demo")])
+
+        a = self._new("A missing")
+        b = self._new("B missing")
+        self._hard(a, b)
+        self.conn.execute("DELETE FROM tasks WHERE id = ?", (b,))
+        self.conn.commit()
+        self.assertNotIn(a, [t["id"] for t in deps.ready_tasks(self.conn, project="demo")])
+
 
 if __name__ == "__main__":
     unittest.main()

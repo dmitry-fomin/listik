@@ -323,7 +323,7 @@ watch(
   { immediate: true },
 )
 
-/** Ошибка файла (`ok:false`) или самого запроса — выбирать не из чего. */
+/** Ошибка чтения таблицы `routes` в базе (`ok:false`) или самого запроса — выбирать не из чего. */
 const routesFailed = computed(() => store.routesRequestFailed.value || !store.routesOk.value)
 
 const routesAlert = computed(() =>

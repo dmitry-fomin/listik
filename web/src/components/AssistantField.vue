@@ -85,7 +85,7 @@ const textChanged = computed(() => {
   return Boolean(next) && next !== props.text.trim()
 })
 
-/** Запись `routes.json`, которую предложил DeepSeek: только видимая и знакомая доске. */
+/** Запись маршрута (таблица `routes`, `GET /api/routes`), которую предложил DeepSeek: только видимая и знакомая доске. */
 const suggestedRoute = computed(() => {
   const key = suggestion.value?.route?.key
   if (!key) return null
@@ -96,12 +96,12 @@ const routeSelected = computed(
   () => Boolean(suggestion.value?.route?.key) && suggestion.value?.route?.key === props.selectedRouteKey,
 )
 
-/** Почему предложенный маршрут нельзя выбрать: нет в файле или закрыт для эпика. */
+/** Почему предложенный маршрут нельзя выбрать: нет среди видимых маршрутов или закрыт для эпика. */
 const routeBlockedReason = computed(() => {
   const route = suggestion.value?.route
   if (!route) return null
   const record = suggestedRoute.value
-  if (!record) return 'этого маршрута нет среди видимых записей routes.json'
+  if (!record) return 'этого маршрута нет среди видимых маршрутов'
   const type = props.context.type ?? 'task'
   const allowed = routeAllowedForType(record, type)
   if (!allowed) return 'эпик идёт только через пресеты с этапом ТЗ — этот маршрут ему недоступен'

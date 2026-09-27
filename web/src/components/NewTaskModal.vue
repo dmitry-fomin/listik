@@ -9,8 +9,8 @@
  * Тип → Приоритет → Проект (в прототипе Проект второй) и подсказка приоритета
  * тултипом UiTooltip на контроле, а не строкой под ним. Блок «Маршрут» —
  * общий `RoutePicker` (кит такого контрола не знает): записи (пресеты
- * конвейера и маршруты роя) отдаёт сервер — `GET /api/routes`, файл
- * `routes.json`; грузятся один раз за сессию доски, логика выбора —
+ * конвейера и маршруты роя) отдаёт сервер — `GET /api/routes`, таблица
+ * `routes` в базе; грузятся один раз за сессию доски, логика выбора —
  * `lib/routes.ts`. Выбранный ключ уходит на сервер полем `route`; метки
  * `harness:<x>`/`process:<y>` сервер ставит по нему сам (`routes.labels_for`)
  * — доска их не считает, они для человека и поиска.
@@ -70,7 +70,7 @@ const emit = defineEmits<{
       description: string
       acceptance: string
       spec_path?: string
-      /** Ключ маршрута из routes.json; нет — задача создаётся без маршрута. */
+      /** Ключ маршрута из таблицы `routes` (`GET /api/routes`); нет — задача создаётся без маршрута. */
       route?: string
       /**
        * Владелец задачи (серверный режим): ключ есть, только если он отличается
@@ -100,7 +100,7 @@ function defaults() {
     description: '',
     acceptance: '',
     specPath: '',
-    /** Ключ выбранной записи `routes.json`; null — маршрут не выбран. */
+    /** Ключ выбранной записи таблицы `routes`; null — маршрут не выбран. */
     routeKey: null as string | null,
     /** Владелец задачи в серверном режиме; по умолчанию — тот, кто представился. */
     owner: store.owner.value,
@@ -235,9 +235,9 @@ function applyAssistantRoute(key: string): void {
   onPickRoute(key)
 }
 
-// ── маршрут: записи из routes.json (`GET /api/routes`), правила — lib/routes.ts ──
+// ── маршрут: записи таблицы `routes` в базе (`GET /api/routes`), правила — lib/routes.ts ──
 
-/** Ошибка файла (`ok:false`) или самого запроса — таблицу и ряд «Отдельно» не рисуем. */
+/** Ошибка чтения таблицы `routes` в базе (`ok:false`) или самого запроса — таблицу и ряд «Отдельно» не рисуем. */
 const routesFailed = computed(() => store.routesRequestFailed.value || !store.routesOk.value)
 
 const visibleRoutes = computed<RouteDef[]>(() =>
@@ -306,10 +306,8 @@ function onPickRoute(key: string): void {
 const routesAlert = computed(() => routesAlertText(store.routesRequestFailed.value, store.routesError.value))
 
 /**
- * Замечания проверки файла (`warnings` ответа) — неизвестный `icon` записи.
- * Маршруты при этом работают: у записи посчитан фолбэк по ключу. Это не ошибка,
- * а предупреждение автору `routes.json`; запись без фолбэка доска помечает
- * серым кружком с крестиком (`RouteIcon`).
+ * Предупреждения ответа (`warnings`): у конвейера нет каталога скила, и этот
+ * маршрут скрыт. Это не ошибка — остальные маршруты работают.
  */
 const routesWarnings = computed(() => store.routesWarnings.value)
 
@@ -486,7 +484,7 @@ function cancel(): void {
 
         <template v-else>
           <UiAlert v-if="routesWarnings.length" tone="warning">
-            <template #title>routes.json: предупреждения</template>
+            <template #title>Маршруты: предупреждения</template>
             <div v-for="warning in routesWarnings" :key="warning" class="listik-mono">
               {{ warning }}
             </div>

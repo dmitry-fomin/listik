@@ -1,6 +1,6 @@
 /**
- * Правила маршрута — поверх данных `GET /api/routes` (записи `routes.json`,
- * тип `RouteDef`). Сами маршруты, их порядок, роли и иконки в коде не зашиты:
+ * Правила маршрута — поверх данных `GET /api/routes` (записи таблицы `routes`
+ * в базе, тип `RouteDef`). Сами маршруты, их порядок, роли и иконки в коде не зашиты:
  * здесь только выбор по умолчанию, доступность по типу задачи, группировка
  * для матрицы (`RoutePicker`) и поиск записи по ключу. Метки
  * `harness:<x>`/`process:<y>` доска не считает: их выводит сервер из маршрута
@@ -44,13 +44,13 @@ export function routeAllowedForType(route: RouteDef, type: string): boolean {
 }
 
 /**
- * Текст алерта «маршруты недоступны»: отказ запроса и ошибка самого файла
- * (`ok:false`) звучат по-разному, потому что причины разные.
+ * Текст алерта «маршруты недоступны»: отказ запроса и ошибка чтения таблицы
+ * `routes` в базе (sqlite, `ok:false`) звучат по-разному, потому что причины разные.
  */
 export function routesAlertText(requestFailed: boolean, error: string | null): string {
   const reason = error ?? 'неизвестная ошибка'
   if (requestFailed) return `${reason} — нужен ты`
-  return `routes.json с ошибкой: ${reason} — нужен ты`
+  return `маршруты недоступны (база): ${reason}`
 }
 
 /**
@@ -70,8 +70,8 @@ export function defaultPipelineFor(type: string, routes: RouteDef[]): PipelineRo
 
 /**
  * Запись маршрута по ключу задачи (`launch_route`): иконку уровня и подпись
- * карточка берёт из неё. Ключа нет или записи в списке нет (маршрут убрали из
- * `routes.json` после заведения задачи) — `null`, иконка не рисуется.
+ * карточка берёт из неё. Ключа нет или записи в списке нет (маршрут удалили
+ * после заведения задачи) — `null`, иконка не рисуется.
  */
 export function routeByKey(key: string | null | undefined, routes: RouteDef[]): RouteDef | null {
   if (!key) return null

@@ -92,28 +92,6 @@ export function commentKindTitle(kind: string): string {
   return COMMENT_KINDS.find((item) => item.value === kind)?.label ?? kind
 }
 
-const EVENT_KIND_TITLES: Record<string, string> = {
-  create: 'создана',
-  created: 'создана',
-  status: 'статус',
-  stage: 'этап',
-  claim: 'взял в работу',
-  release: 'освободил',
-  heartbeat: 'heartbeat',
-  comment: 'комментарий',
-  question: 'нужен человек',
-  answer: 'ответ автора',
-  note: 'заметка',
-  done: 'закрыта',
-  dep: 'связь',
-  route: 'маршрут',
-  embed: 'вектор',
-}
-
-export function eventKindTitle(kind: string): string {
-  return EVENT_KIND_TITLES[kind] ?? kind
-}
-
 /** Строка-подпись статуса/этапа задачи для компактных мест интерфейса. */
 export function taskStageLabel(task: Task): string {
   return task.stage_title || task.status_title

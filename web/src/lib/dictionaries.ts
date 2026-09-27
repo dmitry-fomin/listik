@@ -3,7 +3,7 @@
  * где перечислены ключи, подписи, иконки и цвета: фильтры, модалка создания,
  * глифы, доска и витрина берут значения отсюда, а не держат свои копии.
  */
-import type { AssistantComplexityLevel, CommentKind, PipelineStage, RouteIconKey, TaskComment, TaskStage, TaskStatus } from '@/api/types'
+import type { AssistantComplexityLevel, CommentKind, PipelineStage, RouteIconKey, TaskComment, TaskEvent, TaskStage, TaskStatus } from '@/api/types'
 
 export interface DictionaryItem<T extends string | number> {
   value: T
@@ -366,28 +366,79 @@ export function verdictMark(comment: Pick<TaskComment, 'text' | 'verdict'>): Fee
 export interface FeedEventKindItem {
   /** Ключ события (`TaskEvent.kind`). */
   value: string
-  /** Подпись — подсказка иконки-маркера в ленте. */
+  /** Подпись — начало строки события и подсказка иконки-маркера в ленте. */
   label: string
   /** Имя иконки из `lib/icons.ts`. */
   icon: string
+  /** Событие показывается в ленте под фильтром «все». */
+  feed: boolean
 }
 
-/** Иконки и подписи событий ленты; незнакомое событие — иконка `dot`. */
+/**
+ * Полный набор видов событий, которые пишет сервер (`store.event` в `listik/`): новый вид
+ * на сервере — новая строка здесь. `feed` решает, попадает ли событие в ленту под фильтром
+ * «все»; у `question`/`answer` сверх него действует правило о `note` из `feedEvents`.
+ */
 export const FEED_EVENT_KINDS: FeedEventKindItem[] = [
-  { value: 'created', label: 'создана', icon: 'plus' },
-  { value: 'stage', label: 'этап', icon: 'play' },
-  { value: 'claim', label: 'взял в работу', icon: 'hand' },
-  { value: 'heartbeat', label: 'heartbeat', icon: 'heart' },
-  { value: 'release', label: 'освободил', icon: 'user' },
-  { value: 'done', label: 'закрыта', icon: 'check' },
-  { value: 'route', label: 'маршрут', icon: 'route-direct' },
-  { value: 'document_error', label: 'ошибка документа', icon: 'warning' },
-  { value: 'document_restored', label: 'документ восстановлен', icon: 'check' },
+  { value: 'created', label: 'создана', icon: 'plus', feed: true },
+  { value: 'stage', label: 'этап', icon: 'play', feed: true },
+  { value: 'status', label: 'статус', icon: 'columns', feed: true },
+  { value: 'claim', label: 'взял в работу', icon: 'hand', feed: true },
+  { value: 'heartbeat', label: 'heartbeat', icon: 'heart', feed: true },
+  { value: 'release', label: 'освободил', icon: 'user', feed: true },
+  { value: 'route', label: 'маршрут', icon: 'route-direct', feed: true },
+  { value: 'question', label: 'нужен человек', icon: 'question', feed: true },
+  { value: 'answer', label: 'вопрос снят', icon: 'answer', feed: true },
+  { value: 'document_error', label: 'ошибка документа', icon: 'warning', feed: true },
+  { value: 'document_restored', label: 'документ восстановлен', icon: 'check', feed: true },
+  { value: 'comment', label: 'комментарий', icon: 'comment', feed: false },
+  { value: 'note', label: 'заметка', icon: 'edit', feed: false },
+  { value: 'type_change', label: 'смена типа', icon: 'task', feed: false },
+  { value: 'document_uploaded', label: 'документ загружен', icon: 'copy', feed: false },
+  { value: 'swarm_parent_error', label: 'ошибка пересчёта эпика', icon: 'warning', feed: false },
+  { value: 'revoke', label: 'отзыв запуска', icon: 'close', feed: false },
+  { value: 'import', label: 'импорт', icon: 'refresh', feed: false },
+  { value: 'rejected', label: 'карантин', icon: 'lock', feed: false },
 ]
 
-/** Иконка и подпись события; незнакомый `kind` — иконка `dot`, подпись — сам ключ. */
+/** Строка справочника события; незнакомый `kind` — иконка `dot`, подпись — сам ключ, вне ленты «все». */
 export function feedEventMark(kind: string): FeedEventKindItem {
-  return FEED_EVENT_KINDS.find((item) => item.value === kind) ?? { value: kind, label: kind, icon: 'dot' }
+  return FEED_EVENT_KINDS.find((item) => item.value === kind) ?? { value: kind, label: kind, icon: 'dot', feed: false }
+}
+
+/**
+ * События ленты под фильтром. `'all'` — виды с `feed` из справочника, кроме `question`/`answer`
+ * с непустым после trim `note`: `set_needs_owner` пишет с тем же текстом комментарий, и событие
+ * было бы его дублем. Без текста событие — единственный след поднятого/снятого флага, оно
+ * остаётся. События из `update_task` (`set needs_owner=…` с `--note`) комментария не имеют,
+ * но тоже скрываются — принятая потеря. `'journal'` — только `stage`; прочие фильтры — без событий.
+ */
+export function feedEvents(filter: FeedFilterValue, events: TaskEvent[]): TaskEvent[] {
+  if (filter === 'all') {
+    return events.filter((event) => {
+      if ((event.kind === 'question' || event.kind === 'answer') && (event.note ?? '').trim()) return false
+      return feedEventMark(event.kind).feed
+    })
+  }
+  if (filter === 'journal') return events.filter((event) => event.kind === 'stage')
+  return []
+}
+
+/** Текст строки события; подпись вида — из справочника, `null` в значениях — прочерк. */
+export function feedEventTitle(event: TaskEvent): string {
+  const label = feedEventMark(event.kind).label
+  const value = (v: string | null): string => v ?? '—'
+  const status = (v: string | null): string => (v === null ? '—' : statusTitle(v as TaskStatus))
+  if (event.kind === 'stage') {
+    const title = `${label} ${value(event.from_value)} → ${value(event.to_value)}`
+    return event.transition ? `${title} · ${event.transition}` : title
+  }
+  if (event.kind === 'status') return `${label} ${status(event.from_value)} → ${status(event.to_value)}`
+  if (event.kind === 'claim' || event.kind === 'release' || event.kind === 'heartbeat') {
+    return `${label} · ${value(event.actor)}`
+  }
+  if (event.kind === 'route') return `${label} ${value(event.from_value)} → ${value(event.to_value)}`
+  return label
 }
 
 export type FeedFilterValue = 'all' | 'journal' | 'question' | 'review' | 'verdict'

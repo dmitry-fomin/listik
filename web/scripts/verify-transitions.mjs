@@ -185,16 +185,16 @@ try {
 
   await record('event-titles', async () => {
     const find = (title) => web.feed.find((row) => row.text === title) ?? null
-    const review = find('stage s2-review → s3-impl · handoff')
-    const judge = find('stage s4-judge → s3-impl · sticky-return')
-    const legacy = find('stage s1-spec → s2-review')
+    const review = find('этап s2-review → s3-impl · handoff')
+    const judge = find('этап s4-judge → s3-impl · sticky-return')
+    const legacy = find('этап s1-spec → s2-review')
     const ok = review?.subtext === 'перешёл к реализации' && Boolean(judge) && Boolean(legacy)
     return {
       ok,
       expect: [
-        { text: 'stage s2-review → s3-impl · handoff', subtext: 'перешёл к реализации' },
-        { text: 'stage s4-judge → s3-impl · sticky-return' },
-        { text: 'stage s1-spec → s2-review' },
+        { text: 'этап s2-review → s3-impl · handoff', subtext: 'перешёл к реализации' },
+        { text: 'этап s4-judge → s3-impl · sticky-return' },
+        { text: 'этап s1-spec → s2-review' },
       ],
       got: web.feed.filter((row) => row.text?.startsWith('stage ')),
     }

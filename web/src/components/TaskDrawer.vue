@@ -54,6 +54,8 @@ import {
   DEP_SUMMARY,
   FEED_FILTERS,
   feedEventMark,
+  feedEvents,
+  feedEventTitle,
   linkType,
   linkTypeLabel,
   priority,
@@ -82,7 +84,6 @@ import type {
 import {
   commentKindTitle,
   datetimeAttr,
-  eventKindTitle,
   formatDateTime,
   formatDuration,
   humanAge,
@@ -682,20 +683,6 @@ const holderBlock = computed(() => (props.task ? desktopHolderPresentation(props
 // #content своими средствами на токенах кита. Порядок в ленте — по `sortKey`
 // (ISO-время), а не по built-in `datetime`, ровно по той же причине.
 
-const ALL_EVENT_KINDS = new Set([
-  'stage',
-  'claim',
-  'release',
-  'heartbeat',
-  'question',
-  'answer',
-  'done',
-  'created',
-  'route',
-  'document_error',
-  'document_restored',
-])
-
 const feedFilter = ref<FeedFilterValue>('all')
 
 function setFeedFilter(value: FeedFilterValue): void {
@@ -710,12 +697,6 @@ function matchesCommentFilter(kind: string, filter: FeedFilterValue): boolean {
   return kind === 'verdict'
 }
 
-function eventsForFilter(filter: FeedFilterValue, events: TaskEvent[]): TaskEvent[] {
-  if (filter === 'all') return events.filter((event) => ALL_EVENT_KINDS.has(event.kind))
-  if (filter === 'journal') return events.filter((event) => event.kind === 'stage')
-  return []
-}
-
 /** Счётчики фильтра — по «сырым» записям (включая ответы, вложенные в вопросы
  *  ниже), поэтому видимых записей верхнего уровня после сборки в вопрос может
  *  быть меньше счётчика. */
@@ -725,8 +706,8 @@ const feedCounts = computed<Record<FeedFilterValue, number>>(() => {
   const countComments = (filter: FeedFilterValue): number =>
     comments.filter((comment) => matchesCommentFilter(comment.kind, filter)).length
   return {
-    all: countComments('all') + eventsForFilter('all', events).length,
-    journal: countComments('journal') + eventsForFilter('journal', events).length,
+    all: countComments('all') + feedEvents('all', events).length,
+    journal: countComments('journal') + feedEvents('journal', events).length,
     question: countComments('question'),
     review: countComments('review'),
     verdict: countComments('verdict'),
@@ -747,22 +728,6 @@ function feedFilterIcon(value: FeedFilterValue): string | null {
 
 function feedFilterCount(value: FeedFilterValue): number {
   return feedCounts.value[value]
-}
-
-function stageEventTitle(event: TaskEvent): string {
-  const title = `stage ${event.from_value ?? '—'} → ${event.to_value}`
-  return event.transition ? `${title} · ${event.transition}` : title
-}
-
-function eventTitle(event: TaskEvent): string {
-  if (event.kind === 'stage') return stageEventTitle(event)
-  if (event.kind === 'heartbeat') return `heartbeat · ${event.actor ?? '—'}`
-  if (event.kind === 'claim') return `взял в работу · ${event.actor ?? '—'}`
-  if (event.kind === 'release') return `освободил · ${event.actor ?? '—'}`
-  if (event.kind === 'route') {
-    return `маршрут ${event.from_value ?? '—'} → ${event.to_value ?? '—'}`
-  }
-  return eventKindTitle(event.kind)
 }
 
 function eventDescription(event: TaskEvent): string | undefined {
@@ -839,7 +804,7 @@ function eventRow(event: TaskEvent, index: number): FeedRow {
     id: `e-${event.ts}-${index}`,
     title: '',
     marker: { icon: mark.icon, bg: 'var(--surface-2)', color: 'var(--ink-3)', hint: mark.label },
-    text: eventTitle(event),
+    text: feedEventTitle(event),
     subtext: eventDescription(event),
     answer: null,
     sortKey: datetimeAttr(event.ts) ?? '',
@@ -885,7 +850,7 @@ const feed = computed<FeedRow[]>(() => {
     .filter((comment) => matchesCommentFilter(comment.kind, filter))
     .filter((comment) => !answeredCommentIds.has(comment.id))
     .map((comment) => commentRow(comment, comment.kind === 'question' ? answers.get(comment.id) ?? null : null))
-  const eventRows = eventsForFilter(filter, task.events).map((event, index) => eventRow(event, index))
+  const eventRows = feedEvents(filter, task.events).map((event, index) => eventRow(event, index))
   const all = [...commentRows, ...eventRows]
   all.sort((a, b) => b.sortKey.localeCompare(a.sortKey))
   return all

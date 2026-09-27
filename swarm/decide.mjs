@@ -423,42 +423,38 @@ export function decide({plan, tasks, routes, config, now, events, gate = null}) 
   let launch = [];
   let reason;
 
+  // Общие отсевы первой волны для гейта и запуска: карточка, прошедшая фильтр,
+  // возвращается; frozen/held записаны в skipped, остальные пропущены молча.
+  const wave0 = (plan.waves && plan.waves[0]) || [];
+  const wave0Eligible = (id) => {
+    if (handled.has(id)) return null;
+    const t = openById.get(id);
+    if (!t) return null;
+    if (t.launched_by) return null;
+    if (t.needs_owner) return null;
+    if (isFrozen(t)) {
+      skipped.push({id, reason: "frozen"});
+      return null;
+    }
+    if (t.holder) {
+      skipped.push({id, reason: "held"});
+      return null;
+    }
+    return t;
+  };
+
   if (gate != null) {
-    const wave0 = (plan.waves && plan.waves[0]) || [];
     for (const id of wave0) {
-      if (handled.has(id)) continue;
-      const t = openById.get(id);
-      if (!t) continue;
-      if (t.launched_by) continue;
-      if (t.needs_owner) continue;
-      const frozenBy = isFrozen(t);
-      if (frozenBy) {
-        skipped.push({id, reason: "frozen"});
-        continue;
-      }
-      skipped.push({id, reason: "gated"});
+      if (wave0Eligible(id)) skipped.push({id, reason: "gated"});
     }
     reason = gate.reason;
   } else if (running.length) {
     reason = "batch_running";
   } else {
-    const wave0 = (plan.waves && plan.waves[0]) || [];
     const candidates = [];
     for (const id of wave0) {
-      if (handled.has(id)) continue;
-      const t = openById.get(id);
+      const t = wave0Eligible(id);
       if (!t) continue;
-      if (t.launched_by) continue;
-      if (t.needs_owner) continue;
-      const frozenBy = isFrozen(t);
-      if (frozenBy) {
-        skipped.push({id, reason: "frozen"});
-        continue;
-      }
-      if (t.holder) {
-        skipped.push({id, reason: "held"});
-        continue;
-      }
       if (!t.launch_route) {
         skipped.push({id, reason: "unroutable"});
         continue;

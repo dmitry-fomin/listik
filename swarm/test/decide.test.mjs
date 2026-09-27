@@ -570,6 +570,28 @@ test("гейт с ids: [] — то же поведение, report.reason = conf
   assert.equal(res.report.reason, "config");
 });
 
+test("гейт: карточка с holder — held, свободная — gated; launch пуст", () => {
+  const held = task("h", {holder: "claude"});
+  const free = task("f");
+  const plan = {waves: [["h", "f"]], cycles: [], unroutable: [], unscoped: [], blocked: {}};
+  const gate = {reason: "config", ids: []};
+  const res = decide({plan, tasks: [held, free], routes: routesFor(["h", "f"]), config,
+    now: new Date(), gate});
+  assert.deepEqual(res.launch, []);
+  assert.deepEqual(res.skipped, [{id: "h", reason: "held"}, {id: "f", reason: "gated"}]);
+});
+
+test("бегущая без гейта: wave0 не обходится — карточка с holder не в skipped", () => {
+  const now = new Date();
+  const running = runningTask("a", {launched_at: now.toISOString()});
+  const held = task("h", {holder: "claude"});
+  const plan = {waves: [["h"]], cycles: [], unroutable: [], unscoped: [], blocked: {}};
+  const res = decide({plan, tasks: [running, held], routes: routesFor(["a", "h"]), config, now});
+  assert.deepEqual(res.launch, []);
+  assert.equal(res.report.reason, "batch_running");
+  assert.deepEqual(res.skipped, []);
+});
+
 test("гейт вместе с надзором: кандидат волны gated, бегущая restart по timeout, crashed отдельно", () => {
   const now = new Date();
   const candidate = task("b", {launch_driver: "swarm"});

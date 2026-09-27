@@ -8,7 +8,7 @@
  * уходят через 600 мс после последней правки и сразу по потере фокуса,
  * тумблер «В списках выбора» и иконка — сразу. `PATCH /api/harnesses/<key>`
  * уходит дифом с сохранённой записью одним запросом на серию правок; пока
- * один запрос в полёте, следующий ждёт в очереди (`inFlight/queued`).
+ * один запрос в полёте, следующий ждёт в очереди (`useAutosave`, `@/lib/autosave`).
  * Черновик с ошибкой (пустое имя, битая команда) на сервер не уходит и сам
  * не откатывается — причина стоит у поля. При размонтировании карточки
  * отложенная годная правка досохраняется.
@@ -22,7 +22,7 @@
  * `:key="harness.key"` у вызывающей стороны — часть контракта: другая запись =
  * заново созданная карточка со свежим черновиком.
  */
-import { computed, onBeforeUnmount, reactive, ref, watch } from 'vue'
+import { computed, reactive, ref, watch } from 'vue'
 import {
   UiAlert,
   UiField,
@@ -31,7 +31,6 @@ import {
   UiSaveStatus,
   UiSwitch,
   UiTextarea,
-  type SaveStatusValue,
   type UiRecordListColumn,
 } from '@zoloto585/facet'
 import IconToggle, { type IconToggleOption } from './IconToggle.vue'
@@ -39,6 +38,7 @@ import ListikIcon from './ListikIcon.vue'
 import HarnessIcon from './marks/HarnessIcon.vue'
 import RouteSubstitutions from './RouteSubstitutions.vue'
 import store from '@/store/listik'
+import { useAutosave } from '@/lib/autosave'
 import type { Harness, HarnessPatch } from '@/api/types'
 import { ROLE_STAGE, type RoleKey } from '@/lib/pipelines'
 import { PIPELINE_STAGES } from '@/lib/dictionaries'
@@ -74,7 +74,7 @@ const iconOptions: IconToggleOption<string>[] = HARNESS_ICON_OPTIONS
 
 function onIcon(value: string): void {
   icon.value = value
-  scheduleFlush(true)
+  schedule(true)
 }
 
 /* ── проверки ── */
@@ -106,15 +106,11 @@ const baseline = reactive({
   prompt: props.harness.prompt ?? '',
 })
 
-const status = ref<SaveStatusValue>('idle')
 const serverError = ref<string | null>(null)
 
-let inFlight = false
-let queued = false
-let debounceTimer: ReturnType<typeof setTimeout> | null = null
-
-/** Диф черновика против сохранённой записи — прежние правила save(). */
-function diffPatch(): HarnessPatch {
+/** Диф черновика против сохранённой записи; `null` — черновик с ошибкой не уходит и не откатывается. */
+function diffPatch(): HarnessPatch | null {
+  if (labelError.value || commandError.value) return null
   const patch: HarnessPatch = {}
   if (label.value !== baseline.label) patch.label = label.value.trim()
   if (hint.value !== baseline.hint) patch.hint = hint.value
@@ -131,20 +127,10 @@ function diffPatch(): HarnessPatch {
   return patch
 }
 
-async function flush(): Promise<void> {
-  // Черновик с ошибкой на сервер не уходит и не откатывается.
-  if (labelError.value || commandError.value) return
-  const patch = diffPatch()
-  if (Object.keys(patch).length === 0) return
-  if (inFlight) {
-    queued = true
-    return
-  }
-  inFlight = true
-  status.value = 'saving'
-  const updated = await store.patchHarness(props.harness.key, patch)
-  inFlight = false
-  if (updated) {
+const { status, schedule } = useAutosave<HarnessPatch>({
+  diff: diffPatch,
+  send: async (patch) => (await store.patchHarness(props.harness.key, patch)) !== null,
+  onSaved: (patch) => {
     if (patch.label !== undefined) baseline.label = patch.label
     if (patch.hint !== undefined) baseline.hint = patch.hint
     if (patch.icon !== undefined) baseline.icon = patch.icon ?? ''
@@ -152,68 +138,38 @@ async function flush(): Promise<void> {
     if (patch.argv !== undefined) baseline.argv = [...(patch.argv ?? [])]
     if (patch.prompt !== undefined) baseline.prompt = patch.prompt ?? ''
     serverError.value = null
-    status.value = 'saved'
-  } else {
+  },
+  onFailed: (patch) => {
     serverError.value = store.harnessesError.value ?? 'Сервер не принял правку'
     store.harnessesError.value = null
-    status.value = 'error'
     // Тумблер возвращается к сохранённому значению — как `visible` у маршрутов.
     if (patch.enabled !== undefined) enabled.value = baseline.enabled
-  }
-  if (queued) {
-    queued = false
-    await flush()
-  }
-}
-
-function scheduleFlush(immediate: boolean): void {
-  if (debounceTimer) {
-    clearTimeout(debounceTimer)
-    debounceTimer = null
-  }
-  if (immediate) {
-    void flush()
-    return
-  }
-  debounceTimer = setTimeout(() => {
-    debounceTimer = null
-    void flush()
-  }, 600)
-}
+  },
+})
 
 function onLabel(value: string): void {
   label.value = value
-  scheduleFlush(false)
+  schedule(false)
 }
 function onHint(value: string): void {
   hint.value = value
-  scheduleFlush(false)
+  schedule(false)
 }
 function onPrompt(value: string): void {
   prompt.value = value
-  scheduleFlush(false)
+  schedule(false)
 }
 function onBlurText(): void {
-  scheduleFlush(true)
+  schedule(true)
 }
 function onEnabled(value: boolean): void {
   if (value === enabled.value) return
   enabled.value = value
-  scheduleFlush(true)
+  schedule(true)
 }
 
 /* Список аргументов (ввод в строке, добавление, удаление, перестановка) — в общий дебаунс. */
-watch(argRows, () => scheduleFlush(false), { deep: true })
-
-/* Карточку сняли (выбор другого харнесса, уход со страницы) — отложенную
-   правку досохраняем; пустой диф и ошибки черновика flush() пропустит сам. */
-onBeforeUnmount(() => {
-  if (debounceTimer) {
-    clearTimeout(debounceTimer)
-    debounceTimer = null
-  }
-  void flush()
-})
+watch(argRows, () => schedule(false), { deep: true })
 
 /* ── список аргументов и предпросмотр ── */
 
@@ -375,7 +331,7 @@ const usages = computed<UsageRow[]>(() =>
       <span class="listik-harness-card__actions-note">
         Правки применяются к следующему запуску. Уже запущенные задачи не трогаются.
       </span>
-      <UiSaveStatus :status="status" @retry="() => scheduleFlush(true)" />
+      <UiSaveStatus :status="status" @retry="() => schedule(true)" />
     </div>
   </div>
 </template>

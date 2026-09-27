@@ -22,7 +22,7 @@
  * `:key="route.key"` у вызывающей стороны — часть контракта: другой маршрут =
  * заново созданная карточка со свежим черновиком.
  */
-import { computed, onBeforeUnmount, onMounted, reactive, ref, watch } from 'vue'
+import { computed, onMounted, reactive, ref, watch } from 'vue'
 import {
   UiAlert,
   UiButton,
@@ -35,7 +35,6 @@ import {
   UiSelect,
   UiSwitch,
   UiTextarea,
-  type SaveStatusValue,
   type UiRecordListColumn,
   type UiSelectOption,
 } from '@zoloto585/facet'
@@ -46,6 +45,7 @@ import RouteIcon from './marks/RouteIcon.vue'
 import RouteCommandText from './RouteCommandText.vue'
 import RouteSubstitutions from './RouteSubstitutions.vue'
 import store from '@/store/listik'
+import { useAutosave } from '@/lib/autosave'
 import type { RouteIconKey, RoutePatch, RouteRemoved, SwarmLikeRoute, SwarmRoles } from '@/api/types'
 import { PIPELINE_STAGES, ROUTE_ICONS } from '@/lib/dictionaries'
 import { harnessTitle, runnableHarness } from '@/lib/harness'
@@ -151,7 +151,6 @@ function rolesJson(source: RolesDraft): string {
   return JSON.stringify(out)
 }
 
-const status = ref<SaveStatusValue>('idle')
 const saveError = ref<string | null>(null)
 
 /** Роль, чья команда раскрыта ниже списка; пропущенная — без редактора. */
@@ -221,7 +220,7 @@ function onRoleHarness(role: RoleKey, value: string | null): void {
     const previous = roles[role]
     roles[role] = { harness: value, argv: previous?.argv ?? null, prompt: previous?.prompt ?? '' }
   }
-  scheduleFlush(true)
+  schedule(true)
 }
 
 /** Аргументы раскрытой роли — `UiRecordList` живёт по строкам с устойчивым id. */
@@ -252,7 +251,7 @@ watch([roleArgs, rolePrompt], () => {
   const argv = roleArgs.value.map((row) => row.value)
   cell.argv = argv.length > 0 ? argv : null
   cell.prompt = rolePrompt.value
-  scheduleFlush(false)
+  schedule(false)
 }, { deep: true })
 
 /* ── проверки ролей: команда уходит на сервер только годная ── */
@@ -292,13 +291,13 @@ const rolesAllSkipped = computed(() => ROLE_KEYS.every((role) => !roles[role]))
 const unsaved = computed(() => rolesChanged.value && (rolesAllSkipped.value || roleBlock.value !== null))
 watch(unsaved, (value) => emit('update:dirty', value), { immediate: true })
 
-/* ── автосохранение: тот же порядок, что у карточки прямой выдачи ── */
+/* ── автосохранение: машина — `useAutosave`, здесь только диф (с guard
+   удалённого маршрута) и откат тумблера при ошибке ── */
 
-let inFlight = false
-let queued = false
-let debounceTimer: ReturnType<typeof setTimeout> | null = null
-
-function diffPatch(): RoutePatch {
+function diffPatch(): RoutePatch | null {
+  // Маршрут уже удалён — PATCH на него некуда и незачем (очередь в полёте или
+  // досохранение при размонтировании вернули бы 404).
+  if (routeRemoved || !routeStillListed()) return null
   const patch: RoutePatch = {}
   if (draft.title !== baseline.title) patch.title = draft.title
   if (draft.hint !== baseline.hint) patch.hint = draft.hint
@@ -310,68 +309,40 @@ function diffPatch(): RoutePatch {
   return patch
 }
 
-async function flush(): Promise<void> {
-  // Маршрут уже удалён — PATCH на него некуда и незачем (гонка с queued-правкой).
-  if (routeRemoved || !routeStillListed()) return
-  const patch = diffPatch()
-  if (Object.keys(patch).length === 0) return
-  if (inFlight) {
-    queued = true
-    return
-  }
-  inFlight = true
-  status.value = 'saving'
-  const result = await store.patchRoute(props.route.key, patch)
-  inFlight = false
-  if (result) {
+const { status, schedule, cancel } = useAutosave<RoutePatch>({
+  diff: diffPatch,
+  send: async (patch) => (await store.patchRoute(props.route.key, patch)) !== null,
+  onSaved: (patch) => {
     if (patch.title !== undefined) baseline.title = patch.title
     if (patch.hint !== undefined) baseline.hint = patch.hint
     if (patch.visible !== undefined) baseline.visible = patch.visible
-    if (patch.icon !== undefined) patch.icon === null ? (baseline.icon = null) : (baseline.icon = patch.icon)
-    if (patch.roles !== undefined) baseline.roles = rolesJson(roles)
+    if (patch.icon !== undefined) baseline.icon = patch.icon ?? null
+    // Из отправленного patch, а не из черновика: правка ролей, сделанная, пока
+    // PATCH летел, иначе сочлась бы сохранённой и досылка её не отправила бы.
+    if (patch.roles !== undefined) baseline.roles = JSON.stringify(patch.roles)
     saveError.value = null
-    status.value = 'saved'
-  } else {
+  },
+  onFailed: (patch) => {
     saveError.value = store.routesSettingsError.value
-    status.value = 'error'
     if (patch.visible !== undefined) draft.visible = baseline.visible
-  }
-  if (queued) {
-    queued = false
-    await flush()
-  }
-}
-
-function scheduleFlush(immediate: boolean): void {
-  if (debounceTimer) {
-    clearTimeout(debounceTimer)
-    debounceTimer = null
-  }
-  if (immediate) {
-    void flush()
-    return
-  }
-  debounceTimer = setTimeout(() => {
-    debounceTimer = null
-    void flush()
-  }, 600)
-}
+  },
+})
 
 function onTitle(value: string): void {
   draft.title = value
-  scheduleFlush(false)
+  schedule(false)
 }
 function onHint(value: string): void {
   draft.hint = value
-  scheduleFlush(false)
+  schedule(false)
 }
 function onBlurText(): void {
-  scheduleFlush(true)
+  schedule(true)
 }
 function onVisible(value: boolean): void {
   if (value === draft.visible) return
   draft.visible = value
-  scheduleFlush(true)
+  schedule(true)
 }
 
 /* ── удаление маршрута (кнопка — только у `kind=swarm`, конвейеры не удаляются) ── */
@@ -392,10 +363,7 @@ async function confirmRemove(): Promise<void> {
   if (removeBusy.value) return
   removeBusy.value = true
   // Отложенному автосохранению писать больше некуда — дебаунс гасим до запроса.
-  if (debounceTimer) {
-    clearTimeout(debounceTimer)
-    debounceTimer = null
-  }
+  cancel()
   try {
     const result = await store.removeRoute(props.route.key)
     removeOpen.value = false
@@ -413,17 +381,6 @@ async function confirmRemove(): Promise<void> {
   }
 }
 
-/* Карточку сняли — досохраняем то, что ещё лежит в дебаунсе. Маршрут удалён —
-   досохранять некуда: PATCH ушёл бы на удалённый ключ и вернул бы 404. */
-onBeforeUnmount(() => {
-  if (debounceTimer) {
-    clearTimeout(debounceTimer)
-    debounceTimer = null
-  }
-  if (routeRemoved || !routeStillListed()) return
-  void flush()
-})
-
 /* ── иконка: семь кнопок-глифов, как у остальных карточек ── */
 
 const iconOptions = computed<IconToggleOption<string>[]>(() => [
@@ -438,7 +395,7 @@ function glyphFor(value: string): string | null {
 
 function onIcon(value: string): void {
   draft.icon = value === '' ? null : (value as RouteIconKey)
-  scheduleFlush(true)
+  schedule(true)
 }
 
 /* ── список ролей и редактор раскрытой ── */
@@ -743,7 +700,7 @@ const roleInherits = computed(() => {
       <span class="listik-route-swarm__actions-note">
         Правки применятся к следующему запуску. Уже запущенные задачи не трогаются.
       </span>
-      <UiSaveStatus :status="status" @retry="() => scheduleFlush(true)" />
+      <UiSaveStatus :status="status" @retry="() => schedule(true)" />
       <!-- Удаляются только записи роя: у конвейера с driver=swarm кнопки нет. -->
       <UiButton
         v-if="route.kind === 'swarm'"

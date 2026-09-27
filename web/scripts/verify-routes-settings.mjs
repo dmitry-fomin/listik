@@ -63,6 +63,9 @@
  * `visible`, тумблер возвращается в исходное положение, статус «Не сохранено»,
  * `GET` отдаёт прежний `visible`. `finalize()` снимает флаг отказа первым
  * действием на странице, до прямых PATCH отката.
+ * Порция `b` добавляет карточку роя: на временном маршруте удаления перед
+ * успешным удалением серия вводов в «Подпись» без blur — через 300 мс PATCH
+ * ещё нет, через 1000 мс ровно один с единственным ключом `hint`.
  *
  * Работает с живой страницей (dev или прод) и настоящим API Listik, поэтому
  * трогает базу маршрутов: исходные значения полей возвращаются прямым `PATCH`
@@ -902,6 +905,27 @@ try {
   }
   await evaluate(clickRow('Рой', swarmIndex2))
   await sleep(500)
+
+  //    до удаления — автосохранение карточки роя (listik-ptq9 порция b): серия
+  //    вводов в «Подпись» без blur; через 300 мс PATCH ещё нет (дебаунс), через
+  //    1000 мс — ровно один, с единственным ключом hint. Откат не нужен: маршрут
+  //    удаляется ниже и в finalize().
+  const swarmHintProbe = `рой автотест ${Date.now()}`
+  const swarmBeforeHint = (await evaluate(patchCallsCount)) ?? 0
+  report.swarmHintTyped = await evaluate(typeCardField(1, swarmHintProbe))
+  await sleep(300)
+  report.swarmHintCallsEarly = ((await evaluate(patchCallsSince(swarmBeforeHint))) ?? []).filter(
+    (call) => call.key === tmpRouteKey,
+  ).length
+  await sleep(700)
+  const swarmHintCalls = ((await evaluate(patchCallsSince(swarmBeforeHint))) ?? []).filter(
+    (call) => call.key === tmpRouteKey,
+  )
+  report.swarmHintCallsCount = swarmHintCalls.length
+  report.swarmHintSingleKey =
+    swarmHintCalls.length === 1 && Object.keys(swarmHintCalls[0].body).join() === 'hint'
+  report.swarmHintValueMatches = swarmHintCalls[0]?.body.hint === swarmHintProbe
+
   const patchBeforeDelete = (await evaluate(patchCallsCount)) ?? 0
   const deletesBeforeOk = (await evaluate(`window.__routesDeleteCalls.length`)) ?? 0
   await evaluate(clickRemoveRoute)
@@ -1275,6 +1299,12 @@ try {
     report.tempRouteRecreated === true &&
     report.taskRouteRestored === true &&
     report.recreatedRowListed === true &&
+    /* listik-ptq9 порция b: автосохранение карточки роя */
+    report.swarmHintTyped === true &&
+    report.swarmHintCallsEarly === 0 &&
+    report.swarmHintCallsCount === 1 &&
+    report.swarmHintSingleKey === true &&
+    report.swarmHintValueMatches === true &&
     report.removeDialogOpened2 === true &&
     report.removeConfirmClicked === true &&
     report.deleteOkCount === 1 &&

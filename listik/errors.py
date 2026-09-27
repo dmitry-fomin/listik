@@ -24,6 +24,7 @@
     internal            непойманное исключение: трейсбек только в listik.log
     revoked             полномочия на задачу отозваны: запуск устарел, у задачи новое поколение
     dep_cycle           в смысловых зависимостях цикл — waves --apply ничего не записал
+    already_launched    задача уже запущена: процесс идёт, второй запуск не нужен
 """
 from __future__ import annotations
 
@@ -42,6 +43,7 @@ UNSUPPORTED = "unsupported"
 INTERNAL = "internal"
 REVOKED = "revoked"
 DEP_CYCLE = "dep_cycle"
+ALREADY_LAUNCHED = "already_launched"
 
 #: HTTP-статус → код. Нужен, когда сервер ответил без поля `code` (старая версия,
 #: прокси, ошибка вне обработчика) — код всё равно должен быть машинным.
@@ -147,7 +149,10 @@ REVOKED_HINT = ("остановись: ничего не коммить, не п
 #: («посмотри состояние карточки…») зомби только сбил бы с толку. Когда в теле
 #: ответа `hint` пустой (ошибка без подсказки, старый сервер), `client.request`
 #: подставляет подсказку по этому словарю, а уже потом — по статусу.
-HINT_BY_CODE = {REVOKED: REVOKED_HINT}
+HINT_BY_CODE = {
+    REVOKED: REVOKED_HINT,
+    ALREADY_LAUNCHED: "задача уже запущена; состояние: listik show <id>",
+}
 
 
 def message_of(exc: BaseException) -> str:

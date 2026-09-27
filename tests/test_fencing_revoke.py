@@ -552,7 +552,7 @@ class HttpTests(RevokeTestCase):
         self.assertNotEqual(data["launch_log"], first_log)
         self.assertTrue(pathlib.Path(first_log).exists(), "лог первого запуска пропал")
 
-    def test_launch_on_running_task_is_409_conflict(self):
+    def test_launch_on_running_task_is_409_already_launched(self):
         out = self.tmp_path / "out.json"
         task = self.prepare(self.worker_command(out))
         tid = task["id"]
@@ -564,7 +564,7 @@ class HttpTests(RevokeTestCase):
         with self.assertRaises(server.ApiError) as ctx:
             self.post(f"/api/tasks/{tid}/launch")
         self.assertEqual(ctx.exception.status, 409)
-        self.assertEqual(ctx.exception.code, errors.CONFLICT)
+        self.assertEqual(ctx.exception.code, errors.ALREADY_LAUNCHED)
         self.assertEqual(dict(self.row(tid)), before)
         # Пункт 14 чек-листа: ALREADY_STARTED не создаёт второй процесс и второй
         # лог-файл — в подменённом `LOGS_DIR` остаётся ровно один, от первого запуска.

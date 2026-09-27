@@ -1366,7 +1366,12 @@ def handle(method: str, path: str, query: dict, body: dict, authed: bool = False
                         out = store.get_task(conn, tid)
                         out.update(result)
                     elif result is not None:
-                        raise ApiError(409, result, code=errors_mod.CONFLICT)
+                        # «Уже запущена» — штатный отказ (гонка двух роёв), свой код:
+                        # клиент ветвится по нему, а не по тексту сообщения.
+                        code = (errors_mod.ALREADY_LAUNCHED
+                                if result == launcher_mod.ALREADY_STARTED
+                                else errors_mod.CONFLICT)
+                        raise ApiError(409, result, code=code)
                     else:
                         out = store.get_task(conn, tid)
                         out["launched"] = True

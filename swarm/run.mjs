@@ -626,7 +626,7 @@ export async function tick(listik, config, log, runState = null) {
       launched.push(item.id);
       task.launched_by = config.actor;
     } catch (err) {
-      if (typeof err.message === "string" && err.message.includes("уже запущена")) {
+      if (err.code === "already_launched") {
         log.action(`уже запущена (параллельный рой?): ${item.id}`);
       } else {
         log.line(`launch ${item.id} ошибка: ${errText(err)}`);

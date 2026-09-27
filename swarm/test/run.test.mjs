@@ -318,6 +318,61 @@ test("waves --apply конфликт цикла — cycles, пишущих вы�
   assert.deepEqual(writeSubs, []);
 });
 
+test("тик: launch отказ already_launched — штатная строка, id не в launched", async () => {
+  const tasks = [task("t1")];
+  const plan = {
+    project: "proj", waves: [["t1"]], cycles: [], unroutable: [], unscoped: [], blocked: {},
+  };
+  const responses = {
+    status: statusUp,
+    projects: {stdout: JSON.stringify([{slug: "proj", path: ""}])},
+    waves: {stdout: JSON.stringify({waves: plan, added: [], removed: [], kept: 0})},
+    list: {stdout: JSON.stringify({total: tasks.length, limit: 1000, offset: 0, tasks})},
+    routes: {stdout: JSON.stringify({ok: true, routes: SWARM_ROUTES})},
+    worktree: {stdout: JSON.stringify({path: "/wt/t1", branch: "b", status: "created"})},
+    show: {stdout: JSON.stringify({id: "t1", labels: []})},
+    set: {stdout: JSON.stringify({id: "t1", labels: []})},
+    // Код решает, а не текст: message нарочно без слов «запущена», «запуск», «Listik».
+    launch: {exitCode: 1, stdout: JSON.stringify({error: {
+      code: "already_launched", message: "произвольный текст", hint: ""}})},
+  };
+  setupFake(responses);
+  const listik = new Listik({bin: FAKE_BIN, actor: "agent:listik-swarm", cliTimeout: 5});
+  const log = makeLog();
+  const result = await tick(listik, baseConfig, log);
+
+  assert.deepEqual(result.launched, []);
+  assert.ok(log.lines.includes("уже запущена (параллельный рой?): t1"));
+  assert.ok(!log.lines.some(l => l.startsWith("launch t1 ошибка")));
+});
+
+test("тик: launch отказ conflict с текстом «уже запущена» — обычная строка ошибки", async () => {
+  const tasks = [task("t1")];
+  const plan = {
+    project: "proj", waves: [["t1"]], cycles: [], unroutable: [], unscoped: [], blocked: {},
+  };
+  const responses = {
+    status: statusUp,
+    projects: {stdout: JSON.stringify([{slug: "proj", path: ""}])},
+    waves: {stdout: JSON.stringify({waves: plan, added: [], removed: [], kept: 0})},
+    list: {stdout: JSON.stringify({total: tasks.length, limit: 1000, offset: 0, tasks})},
+    routes: {stdout: JSON.stringify({ok: true, routes: SWARM_ROUTES})},
+    worktree: {stdout: JSON.stringify({path: "/wt/t1", branch: "b", status: "created"})},
+    show: {stdout: JSON.stringify({id: "t1", labels: []})},
+    set: {stdout: JSON.stringify({id: "t1", labels: []})},
+    launch: {exitCode: 1, stdout: JSON.stringify({error: {
+      code: "conflict", message: "уже запущена посторонним процессом", hint: ""}})},
+  };
+  setupFake(responses);
+  const listik = new Listik({bin: FAKE_BIN, actor: "agent:listik-swarm", cliTimeout: 5});
+  const log = makeLog();
+  const result = await tick(listik, baseConfig, log);
+
+  assert.deepEqual(result.launched, []);
+  assert.ok(log.lines.some(l => l.startsWith("launch t1 ошибка")));
+  assert.ok(!log.lines.some(l => l.startsWith("уже запущена (параллельный рой?)")));
+});
+
 // --- порция c: надзор — тик revoke/launch/needs-owner ---
 
 const supConfig = {...baseConfig, staleMinutes: 20, timeoutMinutes: 0, maxRestarts: 1};

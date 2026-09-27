@@ -571,9 +571,7 @@ def call_tool(name: str, args: dict, conn=None, owner=FROM_ENV, fence=FROM_ENV) 
             limit=_int_arg(args, "limit", 50), order=args.get("order", "updated"),
             as_owner=owner)
     if name == "listik_show":
-        from . import deps as deps_mod
         task = store.get_task(conn, args["id"])
-        task["deps_state"] = deps_mod.ready(conn, args["id"])
         return store.select_task_fields(task, args.get("fields"))
     if name == "listik_create":
         return store.create_task(

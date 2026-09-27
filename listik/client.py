@@ -8,7 +8,6 @@ from __future__ import annotations
 
 import json
 import os
-from pathlib import Path
 import sqlite3
 import urllib.error
 import urllib.parse
@@ -425,95 +424,4 @@ def list_projects(*, host: str | None = None, port: int | None = None,
         remote=lambda: request("GET", "/api/projects", host=host, port=port),
         local_call=lambda: {"projects": store.list_all_projects(db_mod.init()),
                             "root": str(paths.PROJECTS_ROOT)},
-    )
-
-
-def add_project(*, path: str | None = None, slug: str | None = None, title: str | None = None,
-                kind: str = "native", host: str | None = None, port: int | None = None,
-                local: bool = False) -> dict:
-    """Добавить репозиторий (каталог) на доску.
-
-    Относительный путь разрешается здесь, в cwd вызывающего: сервер относительный
-    `path` отклоняет 400 (`bad_argument`) — у него свой рабочий каталог, поэтому
-    в API уходит уже абсолютный путь.
-    """
-    if path:
-        path = str(Path(path).expanduser().resolve())
-    body = {"path": path, "slug": slug, "title": title, "kind": kind}
-    from . import store
-    def local_add():
-        try:
-            return store.add_project(db_mod.init(), **body)
-        except ValueError as exc:
-            raise errors.ListikError(errors.message_of(exc),
-                                     code=errors.BAD_ARGUMENT) from exc
-    return _remote_or_local(
-        local=local, host=host, port=port,
-        remote=lambda: request("POST", "/api/projects", body=body, host=host, port=port),
-        local_call=local_add,
-    )
-
-
-def set_project_archived(slug: str, archived: bool, *, host: str | None = None,
-                         port: int | None = None, local: bool = False) -> dict:
-    """Скрыть проект с доски (`archived=True`) или вернуть обратно."""
-    from . import store
-    def local_archive():
-        try:
-            return store.update_project(db_mod.init(), slug, archived=1 if archived else 0)
-        except errors.NotFound as exc:
-            raise errors.ListikError(errors.message_of(exc), code=errors.NOT_FOUND,
-                                     hint="список проектов: listik projects") from exc
-    return _remote_or_local(
-        local=local, host=host, port=port,
-        remote=lambda: request("PATCH", f"/api/projects/{urllib.parse.quote(slug, safe='')}",
-                               body={"archived": 1 if archived else 0}, host=host, port=port),
-        local_call=local_archive,
-    )
-
-
-def remove_project(slug: str, *, force: bool = False, host: str | None = None,
-                   port: int | None = None, local: bool = False) -> dict:
-    """Убрать проект из Listik. Проект с задачами — только с `force`."""
-    from . import store
-    def local_remove():
-        try:
-            return store.remove_project(db_mod.init(), slug, force=force)
-        except errors.NotFound as exc:
-            raise errors.ListikError(errors.message_of(exc), code=errors.NOT_FOUND,
-                                     hint="список проектов: listik projects") from exc
-        except ValueError as exc:
-            # Как 409 у сервера: проект с задачами сначала скрывают.
-            raise errors.ListikError(errors.message_of(exc), code=errors.CONFLICT) from exc
-    return _remote_or_local(
-        local=local, host=host, port=port,
-        remote=lambda: request("DELETE", f"/api/projects/{urllib.parse.quote(slug, safe='')}",
-                               query={"force": "1"} if force else None, host=host, port=port),
-        local_call=local_remove,
-    )
-
-
-def set_project_routing(slug: str, routing: dict, *, local: bool = False,
-                        host: str | None = None, port: int | None = None) -> dict:
-    """Установить (или сбросить, `{}`) переопределение маршрутизации проекта.
-
-    Возвращает словарь проекта из `store._project_with_routing` (с `routing_effective`),
-    чтобы вызывающий код не перечитывал проект отдельно.
-    """
-    from . import store
-    def local_routing():
-        try:
-            return store.update_project(db_mod.init(), slug, routing=routing)
-        except errors.NotFound as exc:
-            raise errors.ListikError(
-                f"проект не найден: {slug}", code=errors.NOT_FOUND,
-                hint="добавьте его: listik projects --add <путь> [--slug …]") from exc
-        except ValueError as exc:
-            raise errors.ListikError(errors.message_of(exc),
-                                     code=errors.BAD_ARGUMENT) from exc
-    return _remote_or_local(
-        local=local, host=host, port=port,
-        remote=lambda: request("PATCH", f"/api/projects/{urllib.parse.quote(slug, safe='')}",
-                               body={"routing": routing}, host=host, port=port),
-        local_call=local_routing,
     )

@@ -338,9 +338,9 @@ class RoutingTests(TempDbTestCase):
              mock.patch.object(client, "is_up", return_value=True) as is_up_mock, \
              mock.patch.object(client, "request") as request_mock:
             client.list_projects(local=True)
-            client.add_project(path=None, slug="another", local=True)
-            client.set_project_archived("demo", False, local=True)
-            client.set_project_routing("demo", {}, local=True)
+            client.local_call("project_add", slug="another")
+            client.local_call("project_archive", slug="demo", archived=False)
+            client.local_call("project_routing", slug="demo", routing={})
 
         is_up_mock.assert_not_called()
         request_mock.assert_not_called()

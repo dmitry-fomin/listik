@@ -1083,6 +1083,8 @@ def handle(method: str, path: str, query: dict, body: dict, authed: bool = False
             limit=as_int(q1("limit"), 200) or 200, offset=as_int(q1("offset"), 0) or 0,
             order=q1("order", "updated") or "updated",
             as_owner=owner,
+            deps=q1("deps"), health=q1("health"),
+            updated_from=q1("updated_from"), updated_to=q1("updated_to"),
         )
 
     if path == "/api/tasks" and method == "POST":

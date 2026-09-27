@@ -82,7 +82,8 @@ TOOLS: list[dict] = [
                 "stage": {"type": "string",
                           "enum": ["s1-spec", "s2-review", "s3-impl", "s4-judge", "done"]},
                 "orchestrator": {"type": "string",
-                                 "description": "кто ведёт карточку по маршруту: listik | claude"},
+                                 "description": "кто ведёт карточку по маршруту: listik | claude"
+                                                " | none (без оркестратора)"},
                 "holder": {"type": "string"},
                 "needs_owner": {"type": "boolean"},
                 "type": {"type": "string"},

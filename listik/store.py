@@ -1984,12 +1984,58 @@ def sync_portions(conn: sqlite3.Connection, task_id: str, *, actor: str | None =
             "unchanged": unchanged, "linked": linked, "portions": portions, "merged": False}
 
 
+# Молчание дольше этого (часов, 15 мин) переводит задачу в at-risk — см. `task_health`.
+AT_RISK_IDLE_HOURS = 0.25
+
+
+def task_health(task: dict) -> str:
+    """Здоровье карточки из `row_to_task`: healthy | at-risk | dead | unknown.
+
+    Правило обязано совпадать с `web/src/lib/health.ts` (`taskHealth`,
+    `AT_RISK_IDLE_HOURS`) — менять их вместе. Первая сработавшая проверка решает.
+    """
+    if task["status"] in FINAL_STATUSES:
+        return "healthy"
+    if task["stale"] or task["abandoned"]:
+        return "dead"
+    if not task["holder"]:
+        return "unknown"
+    if task["not_taken_warn"]:
+        return "at-risk"
+    if task["stage_warn"] or (task["idle_hours"] is not None
+                              and task["idle_hours"] >= AT_RISK_IDLE_HOURS):
+        return "at-risk"
+    return "healthy"
+
+
+def _check_choice(name: str, value: str | None, allowed: tuple[str, ...]) -> None:
+    if value and value not in allowed:
+        raise errors_mod.BadArgument(f"{name}: допустимо {' | '.join(allowed)}, получено {value!r}")
+
+
+def _check_date(name: str, value: str | None) -> None:
+    if not value:
+        return
+    try:
+        if not re.fullmatch(r"[0-9]{4}-[0-9]{2}-[0-9]{2}", value):
+            raise ValueError
+        datetime.strptime(value, "%Y-%m-%d")
+    except ValueError:
+        raise errors_mod.BadArgument(
+            f"{name}: нужна существующая дата ГГГГ-ММ-ДД, получено {value!r}") from None
+
+
 def list_tasks(conn: sqlite3.Connection, *, project: str | None = None, status: str | None = None,
                stage: str | None = None, orchestrator: str | None = None, holder: str | None = None,
                needs_owner: bool = False, issue_type: str | None = None, label: str | None = None,
                text: str | None = None, include_closed: bool = False, include_archived: bool = False,
                limit: int = 200, offset: int = 0, order: str = "updated",
-               as_owner: str | None = None) -> dict:
+               as_owner: str | None = None, deps: str | None = None, health: str | None = None,
+               updated_from: str | None = None, updated_to: str | None = None) -> dict:
+    _check_choice("deps", deps, ("all", "ready", "blocked"))
+    _check_choice("health", health, ("dead", "at-risk"))
+    _check_date("updated_from", updated_from)
+    _check_date("updated_to", updated_to)
     where, params = [], []
     owner_cfg = server_cfg()
     if owner_cfg is not None:
@@ -2010,12 +2056,33 @@ def list_tasks(conn: sqlite3.Connection, *, project: str | None = None, status: 
     if stage:
         where.append("stage = ?")
         params.append(stage)
-    if orchestrator:
+    if orchestrator == "none":
+        where.append("(orchestrator IS NULL OR orchestrator = '')")
+    elif orchestrator:
         where.append("orchestrator = ?")
         params.append(orchestrator)
     if holder:
         where.append("holder = ?")
         params.append(holder)
+    if deps == "blocked":
+        # Правило `blocked_count` доски: незакрытая задача с незакрытым жёстким блокером.
+        where.append(f"status IN ({','.join('?' * len(OPEN_STATUSES))})")
+        params.extend(OPEN_STATUSES)
+        where.append("coalesce(blocked_by, '[]') NOT IN ('', '[]')")
+    elif deps == "ready":
+        # «Можно брать» — повторяет `deps.ready_tasks` (там же ленивое истечение окна
+        # возврата); менять вместе.
+        deps_mod.expire_return_handoffs(conn)
+        where.append("status IN ('open','in_progress','review')")
+        where.append("(holder IS NULL OR holder = '')")
+        where.append("coalesce(blocked_by, '[]') IN ('', '[]')")
+        where.append(deps_mod.not_epic_with_children_sql("tasks"))
+    if updated_from:
+        where.append("substr(updated_at, 1, 10) >= ?")
+        params.append(updated_from)
+    if updated_to:
+        where.append("substr(updated_at, 1, 10) <= ?")
+        params.append(updated_to)
     if needs_owner:
         where.append("needs_owner = 1")
     if issue_type:
@@ -2029,6 +2096,10 @@ def list_tasks(conn: sqlite3.Connection, *, project: str | None = None, status: 
         params.extend([f"%{text}%", f"%{text}%"])
     if not include_archived:
         where.append("archived = 0")
+    if health:
+        # dead/at-risk у закрытой не бывает: `task_health` закрытую считает healthy.
+        where.append(f"status NOT IN ({','.join('?' * len(FINAL_STATUSES))})")
+        params.extend(FINAL_STATUSES)
     sql_where = ("WHERE " + " AND ".join(where)) if where else ""
     order_sql = {
         "updated": "updated_at DESC",
@@ -2036,6 +2107,14 @@ def list_tasks(conn: sqlite3.Connection, *, project: str | None = None, status: 
         "priority": "priority ASC, updated_at DESC",
         "stage": "stage_at ASC",
     }.get(order, "updated_at DESC")
+    if health:
+        # ponytail: row_to_task по всей выборке — O(n) запросов, терпимо при сотнях
+        # открытых задач; больше — хранить здоровье в колонке.
+        rows = conn.execute(f"SELECT * FROM tasks {sql_where} ORDER BY {order_sql}",
+                            params).fetchall()
+        matched = [t for t in (row_to_task(conn, r) for r in rows) if task_health(t) == health]
+        return {"total": len(matched), "limit": limit, "offset": offset,
+                "tasks": matched[offset:offset + limit]}
     total = conn.execute(f"SELECT count(*) FROM tasks {sql_where}", params).fetchone()[0]
     rows = conn.execute(
         f"SELECT * FROM tasks {sql_where} ORDER BY {order_sql} LIMIT ? OFFSET ?",

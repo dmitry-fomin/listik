@@ -2709,7 +2709,8 @@ def build_parser() -> argparse.ArgumentParser:
     sp.add_argument("-p", "--project")
     sp.add_argument("--status")
     sp.add_argument("--stage")
-    sp.add_argument("--orchestrator", help="кто ведёт карточку по маршруту: listik | claude")
+    sp.add_argument("--orchestrator",
+                    help="кто ведёт карточку по маршруту: listik | claude | none (без оркестратора)")
     sp.add_argument("--holder")
     sp.add_argument("-t", "--type")
     sp.add_argument("--needs-owner", action="store_true")

@@ -233,6 +233,7 @@ def _local_op(conn, op: str, fence: fence_mod.Token | dict | None, kwargs: dict)
             "statuses": store.STATUS_TITLES,
             "stages": store.STAGE_TITLES,
             "priorities": store.PRIORITY_TITLES,
+            "issue_types": store.ISSUE_TYPES,
             # Тот же ключ, что у `/api/meta`: общая таблица без переопределений проектов.
             "routing": config_mod.routing(),
         }

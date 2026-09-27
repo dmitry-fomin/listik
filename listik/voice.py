@@ -28,6 +28,7 @@ import urllib.parse
 
 from . import assistant as assistant_mod
 from . import errors as errors_mod
+from . import store
 from . import util
 
 DEFAULT_BASE_URL = "https://api.deepgram.com"
@@ -42,7 +43,7 @@ MAX_TEXT_CHARS = 8000
 #: Сколько проектов максимум уходит в промпт (у маршрутов свой лимит в assistant).
 MAX_PROJECTS = 100
 #: Типы задач, которые принимает трекер.
-TYPES = ("epic", "task", "bug")
+TYPES = tuple(store.ISSUE_TYPES)
 
 logger = logging.getLogger("listik.voice")
 
@@ -53,7 +54,7 @@ DRAFT_SYSTEM_PROMPT = """\
 Ответь строго одним JSON-объектом, без markdown и пояснений:
 {
   "project": "slug проекта из списка projects или null",
-  "type": "epic|task|bug или null",
+  "type": \"""" + "|".join(TYPES) + """ или null",
   "title": "короткий заголовок задачи или null",
   "description": "описание · ТЗ или null",
   "acceptance": ["проверяемый критерий приёмки"],

@@ -464,7 +464,7 @@ class DraftTests(VoiceConfigTestCase):
                 self.assertIsNone(self._draft(opener)["draft"]["project"])
 
     def test_unknown_type_becomes_null(self) -> None:
-        opener = _Recorder(payload=ds_reply(draft_json(type="feature")))
+        opener = _Recorder(payload=ds_reply(draft_json(type="docs")))
         self.assertIsNone(self._draft(opener)["draft"]["type"])
 
     def test_acceptance_is_cleaned_and_truncated(self) -> None:

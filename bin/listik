@@ -2693,7 +2693,7 @@ def build_parser() -> argparse.ArgumentParser:
     sp = add("new", cmd_new, help="создать задачу")
     sp.add_argument("title")
     sp.add_argument("-p", "--project")
-    sp.add_argument("-t", "--type", default="task")
+    sp.add_argument("-t", "--type", default="task", choices=list(store.ISSUE_TYPES))
     sp.add_argument("--priority", type=priority_value, default=2,
                     help="приоритет: 0–4 или P0–P4 (по умолчанию 2)")
     sp.add_argument("-d", "--description")

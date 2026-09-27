@@ -55,6 +55,16 @@ STATUS_ICON = {
     "open": "○", "in_progress": "▶", "blocked": "■", "review": "◐", "done": "✓",
     "cancelled": "✕",
 }
+# Набор типов задачи (docs/API.md, поле `issue_type`): единственный на бэкенде.
+ISSUE_TYPES = {
+    "epic": "эпик",
+    "task": "задача",
+    "bug": "баг",
+    "feature": "фича",
+    "chore": "рутина",
+    "decision": "решение",
+    "question": "вопрос",
+}
 PRIORITY_TITLES = {0: "P0 срочно", 1: "P1 высокий", 2: "P2 обычный", 3: "P3 низкий", 4: "P4 потом"}
 
 # `worktree` хранит либо путь к отдельному рабочему дереву, либо маркер основной
@@ -335,6 +345,7 @@ def create_task(
     parent: str | None = None,
     discovered_from: str | None = None,
     hints: bool = False,
+    allow_legacy_type: bool = False,
 ) -> dict:
     """Создать задачу. `autostart`/`route` только сохраняются: процесс запускает
     не эта функция, а `listik/launcher.py` (сервер — сразу после создания, CLI
@@ -357,9 +368,14 @@ def create_task(
 
     `hints=True` добавляет в результат `link_hints` — упоминания чужих карточек
     в тексте, с которыми связи нет (подсказка «поставь `dep link`»). Импортёрам
-    это не нужно, поэтому по умолчанию выключено."""
+    это не нужно, поэтому по умолчанию выключено.
+
+    `allow_legacy_type` отключает проверку `issue_type` по `ISSUE_TYPES` — только
+    для внутренних писателей (импорт), из API его не передать."""
     if not title.strip():
         raise ValueError("title не может быть пустым")
+    if not allow_legacy_type:
+        _check_issue_type(issue_type)
     # Владелец-человек: явный `owner` сильнее того, кто представился (`as_owner`).
     # В локальном режиме поле не пишется вовсе и оба аргумента игнорируются.
     owner_value = None
@@ -741,7 +757,7 @@ def sync_epic(conn: sqlite3.Connection, task_id: str) -> None:
                 and last["from_value"]:
             back = last["from_value"]
             update_task(conn, task_id, actor=EPIC_ACTOR, issue_type=back,
-                        note=_EPIC_TYPE_BACK_NOTE)
+                        note=_EPIC_TYPE_BACK_NOTE, allow_legacy_type=True)
             add_comment(conn, task_id, f"тип: epic → {back} ({_EPIC_TYPE_BACK_NOTE})",
                         author=EPIC_ACTOR, kind="journal")
     if not children:
@@ -782,11 +798,16 @@ def sync_epic(conn: sqlite3.Connection, task_id: str) -> None:
 def update_task(conn: sqlite3.Connection, task_id: str, *, actor: str | None = None,
                 harness: str | None = None, note: str | None = None,
                 as_owner: str | None = None, transition: str | None = None,
-                **fields) -> dict:
+                allow_legacy_type: bool = False, **fields) -> dict:
     # `transition` — служебный параметр, не поле задачи: тип перехода конвейера,
     # который `next_stage` пишет в событие `stage` этого вызова (listik-cvm8).
+    # `allow_legacy_type` — тоже служебный: снимает проверку нового `issue_type`
+    # для внутренних писателей (`sync_epic`, импорт); в UPDATABLE его нет.
     check_update_fields(fields)
     row = store_helpers.task_row(conn, task_id)
+    new_type = fields.get("issue_type")
+    if not allow_legacy_type and new_type is not None and new_type != row["issue_type"]:
+        _check_issue_type(new_type)
     # Владелец: в локальном режиме поле молча выбрасываем (карточка по нему не
     # меняется, события нет), в серверном — проверяем по `server.users`. Чужую
     # задачу нельзя править, но сменить или снять у неё владельца можно: иначе
@@ -2024,6 +2045,13 @@ def task_health(task: dict) -> str:
 def _check_choice(name: str, value: str | None, allowed: tuple[str, ...]) -> None:
     if value and value not in allowed:
         raise errors_mod.BadArgument(f"{name}: допустимо {' | '.join(allowed)}, получено {value!r}")
+
+
+def _check_issue_type(value: str | None) -> None:
+    """Тип задачи из `ISSUE_TYPES`; пустое значение — тоже ошибка."""
+    if value not in ISSUE_TYPES:
+        raise errors_mod.BadArgument(
+            f"issue_type: допустимо {' | '.join(ISSUE_TYPES)}, получено {value!r}")
 
 
 def _check_date(name: str, value: str | None) -> None:

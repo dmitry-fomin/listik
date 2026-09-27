@@ -521,7 +521,8 @@ def import_file(conn: sqlite3.Connection, path: str | Path, *, project: str | No
                     try:
                         fields = {field: new for field, (_old, new) in diff.items()}
                         store.update_task(conn, tid, actor=record["created_by"],
-                                          note="импорт WriterLLM --update", **fields)
+                                          note="импорт WriterLLM --update",
+                                          allow_legacy_type=True, **fields)
                         store.add_comment(conn, tid, _journal_text(diff),
                                          author=record["created_by"], kind="journal")
                     except Exception as exc:  # noqa: BLE001 — импорт продолжается
@@ -571,6 +572,7 @@ def import_file(conn: sqlite3.Connection, path: str | Path, *, project: str | No
                 issue_type=record["issue_type"],
                 labels=record["labels"], spec_path=record["spec_path"],
                 journal_path=record["journal_path"], checklist_path=record["checklist_path"],
+                allow_legacy_type=True,
             )
             direct_updates = {k: record[k] for k in
                               ("started_at", "closed_at", "close_reason", "holder",

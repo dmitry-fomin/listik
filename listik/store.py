@@ -25,6 +25,7 @@ from . import routes as routes_mod
 from . import scope as scope_mod
 from . import store_helpers
 from . import textutil
+from .deps import PARENT_TYPES
 from .statuses import FINAL_STATUSES, OPEN_STATUSES, OPEN_STATUSES_SQL
 
 PIPELINE_STAGES = ("s1-spec", "s2-review", "s3-impl", "s4-judge")
@@ -681,8 +682,6 @@ def delete_task(conn: sqlite3.Connection, task_id: str) -> None:
 
 #: Автор автоматических записей эпика (`sync_epic`): тип, статус, журнал.
 EPIC_ACTOR = "agent:listik"
-#: Типы связи «ребёнок → родитель»; `parent` — старое имя `parent-child`.
-PARENT_TYPES = ("parent-child", "parent")
 _EPIC_TYPE_NOTE = "подзадачи"
 _EPIC_TYPE_BACK_NOTE = "подзадач не осталось"
 #: Статусы ребёнка, при которых эпик «в работе».
@@ -691,7 +690,8 @@ _EPIC_ACTIVE = ("in_progress", "blocked", "review")
 
 def _parent_ids(conn: sqlite3.Connection, task_id: str) -> list[str]:
     return [r["depends_on"] for r in conn.execute(
-        "SELECT DISTINCT depends_on FROM deps WHERE issue_id = ? AND dep_type IN (?,?)",
+        "SELECT DISTINCT depends_on FROM deps WHERE issue_id = ? "
+        f"AND dep_type IN ({','.join('?' * len(PARENT_TYPES))})",
         (task_id, *PARENT_TYPES))]
 
 
@@ -701,7 +701,8 @@ def epic_children(conn: sqlite3.Connection, task_id: str) -> list:
     return conn.execute(
         "SELECT DISTINCT t.id, t.status, t.created_at, t.rowid FROM deps d "
         "JOIN tasks t ON t.id = d.issue_id "
-        "WHERE d.depends_on = ? AND d.dep_type IN (?,?) ORDER BY t.created_at, t.rowid",
+        f"WHERE d.depends_on = ? AND d.dep_type IN ({','.join('?' * len(PARENT_TYPES))}) "
+        "ORDER BY t.created_at, t.rowid",
         (task_id, *PARENT_TYPES)).fetchall()
 
 
@@ -1570,7 +1571,8 @@ def worked_by_actors(conn: sqlite3.Connection, task_id: str) -> list[str]:
 def _open_children_activity(conn: sqlite3.Connection, task_id: str) -> tuple[datetime | None, str | None]:
     """Самая свежая метка простоя среди открытых прямых детей задачи.
 
-    Ребёнок — строка `deps(dep_type='parent-child', depends_on=task_id)`, его
+    Ребёнок — строка `deps` с `depends_on=task_id` и типом из `PARENT_TYPES`
+    (`parent-child` или старое `parent`), его
     метка — `holder_at`, иначе `started_at`; ребёнок без обеих меток ничего не
     даёт. Смотрятся только прямые дети (один нерекурсивный запрос; внуки и
     другие типы связей не важны), статус ребёнка — из `OPEN_STATUSES`.
@@ -1579,9 +1581,9 @@ def _open_children_activity(conn: sqlite3.Connection, task_id: str) -> tuple[dat
     placeholders = ", ".join("?" for _ in OPEN_STATUSES)
     rows = conn.execute(
         "SELECT t.holder_at, t.started_at FROM deps d JOIN tasks t ON t.id = d.issue_id "
-        f"WHERE d.dep_type = 'parent-child' AND d.depends_on = ? "
+        f"WHERE d.dep_type IN ({','.join('?' * len(PARENT_TYPES))}) AND d.depends_on = ? "
         f"AND t.status IN ({placeholders})",
-        (task_id, *OPEN_STATUSES)).fetchall()
+        (*PARENT_TYPES, task_id, *OPEN_STATUSES)).fetchall()
     latest_ts: datetime | None = None
     latest_label: str | None = None
     for r in rows:
@@ -1614,7 +1616,8 @@ def _portion_flags(conn: sqlite3.Connection, task_id: str,
                    stage: str | None) -> tuple[bool, bool, bool]:
     """`(has_portions, portions_cancelled_only, portions_stuck)` — вычисляемые поля нарезки.
 
-    `has_portions` — есть хотя бы один не отменённый ребёнок `parent-child`
+    `has_portions` — есть хотя бы один не отменённый ребёнок по связи из
+    `PARENT_TYPES` (`parent-child` или старое `parent`)
     (закрытые `done` тоже считаются: до закрытия родителя они ещё часть
     нарезки). `portions_cancelled_only` — дети есть, каждый `cancelled`, и
     этап родителя ещё пустой или `s1-spec` (docs/specs/swarm-stage-launch.md).
@@ -1625,8 +1628,8 @@ def _portion_flags(conn: sqlite3.Connection, task_id: str,
         children = conn.execute(
             "SELECT t.status, t.stage, t.holder, t.launched_by, t.launch_route "
             "FROM deps d JOIN tasks t ON t.id = d.issue_id "
-            "WHERE d.depends_on = ? AND d.dep_type IN ('parent-child','parent')",
-            (task_id,)).fetchall()
+            f"WHERE d.depends_on = ? AND d.dep_type IN ({','.join('?' * len(PARENT_TYPES))})",
+            (task_id, *PARENT_TYPES)).fetchall()
     except sqlite3.OperationalError:
         return False, False, False
     statuses = [r["status"] for r in children]
@@ -1840,15 +1843,17 @@ def card_link(conn: sqlite3.Connection, task_id: str) -> dict | None:
 
 
 def child_cards(conn: sqlite3.Connection, task_id: str) -> list[dict]:
-    """Все дочерние карточки (`parent-child`), включая закрытые, по порядку создания.
+    """Все дочерние карточки (связь из `PARENT_TYPES`: `parent-child` или старое
+    `parent`), включая закрытые, по порядку создания; каждый ребёнок — один раз.
 
     Именно так родитель-шаг видит все свои порции: `deps_state.children_open`
     перечисляет только незакрытых детей и нужен для `can_finish`."""
     try:
         rows = conn.execute(
-            "SELECT d.issue_id AS id FROM deps d JOIN tasks t ON t.id = d.issue_id "
-            "WHERE d.depends_on = ? AND d.dep_type = 'parent-child' "
-            "ORDER BY t.created_at, t.rowid", (task_id,)).fetchall()
+            "SELECT DISTINCT d.issue_id AS id, t.created_at, t.rowid FROM deps d "
+            "JOIN tasks t ON t.id = d.issue_id "
+            f"WHERE d.depends_on = ? AND d.dep_type IN ({','.join('?' * len(PARENT_TYPES))}) "
+            "ORDER BY t.created_at, t.rowid", (task_id, *PARENT_TYPES)).fetchall()
     except sqlite3.OperationalError:
         # База старой версии/битая: карточка всё равно должна открыться.
         return []
@@ -1865,8 +1870,9 @@ def parent_card(conn: sqlite3.Connection, task_id: str) -> dict | None:
     try:
         row = conn.execute(
             "SELECT depends_on FROM deps WHERE issue_id = ? "
-            "AND dep_type IN ('parent-child','parent') ORDER BY depends_on LIMIT 1",
-            (task_id,)).fetchone()
+            f"AND dep_type IN ({','.join('?' * len(PARENT_TYPES))}) "
+            "ORDER BY depends_on LIMIT 1",
+            (task_id, *PARENT_TYPES)).fetchone()
     except sqlite3.OperationalError:
         return None
     return card_link(conn, row["depends_on"]) if row else None
@@ -2944,8 +2950,9 @@ def lint(conn: sqlite3.Connection, project: str | None, *,
                     {"missing": missing})
         children = conn.execute(
             "SELECT t.id, t.status, t.stage FROM deps d JOIN tasks t ON t.id = d.issue_id "
-            "WHERE d.depends_on = ? AND d.dep_type = 'parent-child' AND t.archived = 0",
-            (t["id"],)).fetchall()
+            f"WHERE d.depends_on = ? AND d.dep_type IN ({','.join('?' * len(PARENT_TYPES))}) "
+            "AND t.archived = 0",
+            (t["id"], *PARENT_TYPES)).fetchall()
         if not children:
             spec = (t["spec_path"] or "").strip()
             steps_dir = os.path.dirname(spec) if spec else project_steps

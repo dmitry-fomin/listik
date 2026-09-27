@@ -52,6 +52,8 @@ _HARD_MARKS = ",".join("?" * len(HARD_BLOCKERS))
 # Типы связей, которые стоит прочитать, но они не запрещают работу
 SOFT_LINKS = ("parent-child", "relates-to", "related", "discovered-from", "duplicates",
               "supersedes", "parent", "replies-to", "suggested-blocks")
+# Типы связи «ребёнок → родитель»; `parent` — старое имя `parent-child`.
+PARENT_TYPES = ("parent-child", "parent")
 
 # Ресурсный блокер: жёсткий, но машинный — ставит только планировщик роя, через `dep add`
 # не принимается (см. `store.add_dep`).
@@ -186,14 +188,15 @@ def waiting_for(conn: sqlite3.Connection, task_id: str) -> list[dict]:
 
 
 def children(conn: sqlite3.Connection, task_id: str) -> list[dict]:
-    rows = _fetch(conn, "SELECT issue_id FROM deps WHERE depends_on = ? AND dep_type = "
-                        "'parent-child'", (task_id,))
-    return [_info(conn, r["issue_id"], "parent-child") for r in rows]
+    rows = _fetch(conn, "SELECT issue_id FROM deps WHERE depends_on = ? AND dep_type IN "
+                        f"({','.join('?' * len(PARENT_TYPES))})", (task_id, *PARENT_TYPES))
+    # Ребёнок по обоим типам сразу — один раз, в прежнем порядке строк.
+    return [_info(conn, i, "parent-child") for i in dict.fromkeys(r["issue_id"] for r in rows)]
 
 
 def parent(conn: sqlite3.Connection, task_id: str) -> dict | None:
     rows = _fetch(conn, "SELECT depends_on FROM deps WHERE issue_id = ? AND dep_type IN "
-                        "('parent-child','parent')", (task_id,))
+                        f"({','.join('?' * len(PARENT_TYPES))})", (task_id, *PARENT_TYPES))
     if not rows:
         return None
     return _info(conn, rows[0]["depends_on"], "parent-child")
@@ -420,9 +423,11 @@ def expire_return_handoffs(conn: sqlite3.Connection, *, task_id: str | None = No
 def not_epic_with_children_sql(alias: str = "") -> str:
     """SQL-условие «не эпик с детьми»: эпик в работу не берётся (docs/API.md, «Эпик»)."""
     a = f"{alias}." if alias else ""
+    # Литералы из констант модуля, не ввод: строка остаётся без параметров.
+    types = ",".join(f"'{t}'" for t in PARENT_TYPES)
     return (f"NOT ({a}issue_type = 'epic' AND EXISTS (SELECT 1 FROM deps ed "
             f"JOIN tasks ec ON ec.id = ed.issue_id WHERE ed.depends_on = {a}id "
-            "AND ed.dep_type IN ('parent-child','parent')))")
+            f"AND ed.dep_type IN ({types})))")
 
 
 #: «Можно брать» — открытый набор без `blocked`. Статус `blocked` ставят руками задаче,

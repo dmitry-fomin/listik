@@ -17,6 +17,7 @@ from . import harnesses_store
 from . import paths
 from . import store
 from . import store_helpers
+from .deps import PARENT_TYPES
 
 #: Этап → роль в раскладе маршрута. Порядок списка — порядок прохода карточки.
 STAGE_ROLES: tuple[tuple[str, str], ...] = (
@@ -231,14 +232,15 @@ def has_roles(conn: sqlite3.Connection, record: dict) -> bool:
 # ------------------------------------------------------------------ порции
 
 def portions(conn: sqlite3.Connection, task_id: str) -> list:
-    """Не отменённые дети по `parent-child` — порции нарезки `s1-spec`."""
+    """Не отменённые дети по связи из `PARENT_TYPES` (`parent-child` или старое
+    `parent`) — порции нарезки `s1-spec`."""
     try:
         return conn.execute(
             "SELECT t.id, t.status, t.stage, t.holder, t.launched_by, t.launch_route "
             "FROM deps d JOIN tasks t ON t.id = d.issue_id "
-            "WHERE d.depends_on = ? AND d.dep_type IN ('parent-child','parent') "
+            f"WHERE d.depends_on = ? AND d.dep_type IN ({','.join('?' * len(PARENT_TYPES))}) "
             "AND t.status != 'cancelled' ORDER BY t.created_at, t.rowid",
-            (task_id,)).fetchall()
+            (task_id, *PARENT_TYPES)).fetchall()
     except sqlite3.OperationalError:
         return []
 
@@ -248,12 +250,13 @@ def has_portions(conn: sqlite3.Connection, task_id: str) -> bool:
 
 
 def portion_statuses(conn: sqlite3.Connection, task_id: str) -> list:
-    """Статусы всех детей `parent-child`, включая отменённых."""
+    """Статусы всех детей по связи из `PARENT_TYPES` (`parent-child` или старое
+    `parent`), включая отменённых."""
     try:
         return [row["status"] for row in conn.execute(
             "SELECT t.status FROM deps d JOIN tasks t ON t.id = d.issue_id "
-            "WHERE d.depends_on = ? AND d.dep_type IN ('parent-child','parent')",
-            (task_id,)).fetchall()]
+            f"WHERE d.depends_on = ? AND d.dep_type IN ({','.join('?' * len(PARENT_TYPES))})",
+            (task_id, *PARENT_TYPES)).fetchall()]
     except sqlite3.OperationalError:
         return []
 
@@ -297,8 +300,7 @@ def _slice_parent(conn: sqlite3.Connection, task_id: str, record: dict,
         # Уже начатую порцию (этап — любой, включая `s1-spec`, держатель или
         # запуск) не переписываем (docs/specs/swarm-stage-launch.md): маршрут
         # карточке с этапом уже не записать (`route_change_denied`).
-        if row["status"] != "open" or (row["stage"] or "").strip() \
-                or (row["holder"] or "").strip() or (row["launched_by"] or "").strip():
+        if _started(row):
             continue
         # Маршрут меняется, только пока карточка «просто заведена» (без этапа,
         # держателя и запуска) — поэтому до записи этапа и отдельной правкой.
@@ -372,7 +374,7 @@ def merge_single_portion(conn: sqlite3.Connection, parent_id: str, *, file: str,
     if child is None:
         return
     # Сначала связь: `sync_epic` вернёт тип родителя до отмены ребёнка.
-    for dep_type in _PARENT_TYPES:
+    for dep_type in PARENT_TYPES:
         store.remove_dep(conn, child["id"], parent_id, dep_type)
     store.add_dep(conn, child["id"], parent_id, "discovered-from", created_by=actor)
     if child["status"] not in store.FINAL_STATUSES:
@@ -619,7 +621,6 @@ LAUNCH_FIELDS = ("launched_by", "launch_pid", "launched_at", "launch_log",
 _PORTION_PATHS = ("spec_path", "checklist_path", "decision_path")
 #: Собственные пути родителя: их файлы не переносятся, даже если имя подходит.
 _OWN_PATHS = ("spec_path", "checklist_path", "decision_path", "journal_path", "review_path")
-_PARENT_TYPES = ("parent-child", "parent")
 
 
 def _conflict(message: str, hint: str = "") -> errors_mod.ListikError:
@@ -628,7 +629,8 @@ def _conflict(message: str, hint: str = "") -> errors_mod.ListikError:
 
 
 def _started(child) -> bool:
-    """Порция начата — как в `_slice_parent`; `cancelled` начатой не считается."""
+    """Порция начата: статус не `open`, есть этап, держатель или `launched_by`;
+    `cancelled` начатой не считается."""
     if child["status"] == "cancelled":
         return False
     return bool(child["status"] != "open" or (child["stage"] or "").strip()
@@ -669,18 +671,20 @@ def _step_files(step_dir: Path, task_id: str, own: set, base: str, child) -> lis
 
 def _children(conn: sqlite3.Connection, row, step_dir: Path | None, own: set,
               base: str) -> tuple[list, list]:
-    """`(дети по parent-child/parent, осиротевшие порции)` в порядке создания.
+    """`(дети по связи из PARENT_TYPES, осиротевшие порции)` в порядке создания.
 
     Осиротевшие — дети по `discovered-from` с файлом порции этого шага (закрытые —
     только с путём ещё в каталоге шага): прошлый перезапуск упал после смены связей
     (идемпотентность).
-    Без каталога шага их не узнать — тогда только дети по `parent-child`.
+    Без каталога шага их не узнать — тогда только дети по связи из `PARENT_TYPES`
+    (`parent-child` или старое `parent`).
     """
     task_id = row["id"]
     linked = conn.execute(
         "SELECT DISTINCT t.*, t.rowid AS rid FROM deps d JOIN tasks t ON t.id = d.issue_id "
-        "WHERE d.depends_on = ? AND d.dep_type IN (?,?) ORDER BY t.created_at, t.rowid",
-        (task_id, *_PARENT_TYPES)).fetchall()
+        f"WHERE d.depends_on = ? AND d.dep_type IN ({','.join('?' * len(PARENT_TYPES))}) "
+        "ORDER BY t.created_at, t.rowid",
+        (task_id, *PARENT_TYPES)).fetchall()
     orphans = []
     if step_dir is not None:
         ids = {child["id"] for child in linked}
@@ -852,7 +856,7 @@ def restart_task(conn: sqlite3.Connection, task_id: str, *, stage: str | None = 
         # пока остаются незакрытые, эпик не отменится и при частичном снятии.
         for child in sorted(children, key=lambda c: c["status"] not in store.FINAL_STATUSES):
             store.add_dep(conn, child["id"], task_id, "discovered-from", created_by=actor)
-            for dep_type in _PARENT_TYPES:
+            for dep_type in PARENT_TYPES:
                 if conn.execute("SELECT 1 FROM deps WHERE issue_id = ? AND depends_on = ? "
                                 "AND dep_type = ?", (child["id"], task_id, dep_type)).fetchone():
                     store.remove_dep(conn, child["id"], task_id, dep_type)

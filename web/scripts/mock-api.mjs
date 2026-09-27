@@ -1,6 +1,6 @@
 /**
  * Фейковый API Listik для разработки фронтенда без сервера (и в тестах).
- * Запуск: node scripts/mock-api.mjs [port] [--fill=N] [--links] [--cold] [--slow-ms=N]
+ * Запуск: node scripts/mock-api.mjs [port] [--fill=N] [--links] [--cold] [--slow-ms=N] [--slow-list=<slug>]
  *   → порт по умолчанию 8788.
  * Затем: VITE_API_BASE=http://127.0.0.1:8788 npm run dev
  * `--fill=N` (в любом месте после порта) добавляет N сгенерированных задач
@@ -9,6 +9,11 @@
  * задача, чужой проект, id в другом регистре, взаимные ссылки); `--slow-ms=N`
  * задерживает отдачу карточки `listik-links-slow` — так воспроизводится гонка
  * двух открытий задачи (scripts/verify-deps-links.mjs).
+ * `--slow-list=<slug>` в паре с `--slow-ms=N` задерживает на N мс список
+ * `GET /api/tasks` с `project=<slug>`; ответ вычисляется в момент прихода запроса,
+ * поэтому правка заглушки за время задержки в него не попадает — так «старый»
+ * ответ отличается от «свежего». Без `--slow-ms`, с другим проектом или без
+ * него задержки нет (scripts/verify-phone-queue.mjs).
  * `--routes` добавляет `GET /api/routes` и карточку `listik-routes-error` с
  * отказавшим автостартом (`launch_error`, флаг «нужен человек», метки маршрута) —
  * так проверяется пункт «без маршрута» в панели задачи
@@ -113,6 +118,8 @@ const listSortMode = process.argv.slice(3).includes('--list-sort')
 const SERVER_USERS = ['ann', 'bob']
 const slowArg = process.argv.slice(3).find((arg) => arg.startsWith('--slow-ms='))
 const slowMs = slowArg ? Number.parseInt(slowArg.slice('--slow-ms='.length), 10) : 0
+const slowListArg = process.argv.slice(3).find((arg) => arg.startsWith('--slow-list='))
+const slowList = slowListArg ? slowListArg.slice('--slow-list='.length) : ''
 const now = Date.now()
 const iso = (hoursAgo) => new Date(now - hoursAgo * 3600_000).toISOString()
 
@@ -1952,7 +1959,15 @@ const server = createServer(async (request, response) => {
       return ok(created)
     }
     // Без серверного режима visibleTasks() — это весь `tasks`, фильтр включается с «я — …».
-    return ok(listTasks(url.searchParams, visibleTasks()))
+    const listed = listTasks(url.searchParams, visibleTasks())
+    // `--slow-list`: список проекта отдаётся с задержкой, но снимок сделан сейчас —
+    // гонка «смена проекта / событие во время чтения» очереди телефона.
+    if (slowMs > 0 && slowList && request.method === 'GET' && url.searchParams.get('project') === slowList) {
+      const snapshot = structuredClone(listed)
+      await new Promise((resolve) => setTimeout(resolve, slowMs))
+      return ok(snapshot)
+    }
+    return ok(listed)
   }
 
   if (url.pathname.startsWith('/api/tasks/')) {

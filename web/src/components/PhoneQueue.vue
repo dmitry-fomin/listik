@@ -46,7 +46,15 @@ const total = ref(0)
 const loaded = ref(false)
 const loading = ref(false)
 const loadingMore = ref(false)
+/**
+ * Номер набора: растёт только при смене проекта. Ответ `reload`/«Показать ещё»,
+ * запрошенный с прежним номером, — это задачи прежнего проекта, его не применяем.
+ * `reload`, вызванный во время чтения, не теряется, а откладывается и выполняется
+ * один раз после него: иначе смена проекта или обновление очереди пропали бы.
+ */
+let requestSeq = 0
 let inFlight = false
+let reloadPending = false
 
 function setProject(value: unknown): void {
   store.filters.project = String(value ?? '')
@@ -69,14 +77,18 @@ function mergeById(existing: Task[], incoming: Task[]): Task[] {
 
 /** Перечитывание: заменяет список ответом, сохраняя число загруженных строк. */
 async function reload(): Promise<void> {
-  if (inFlight) return
+  if (inFlight) {
+    reloadPending = true
+    return
+  }
   inFlight = true
+  const seq = requestSeq
   const limit = Math.min(200, Math.max(PHONE_PAGE, tasks.value.length))
   const isFirstLoad = tasks.value.length === 0
   if (isFirstLoad) loading.value = true
   try {
     const page = await store.loadQueuePage({ limit, offset: 0 })
-    if (page) {
+    if (page && seq === requestSeq) {
       tasks.value = page.tasks
       total.value = page.total
       loaded.value = true
@@ -84,14 +96,19 @@ async function reload(): Promise<void> {
   } finally {
     loading.value = false
     inFlight = false
+    if (reloadPending) {
+      reloadPending = false
+      void reload()
+    }
   }
 }
 
 async function loadMore(): Promise<void> {
+  const seq = requestSeq
   loadingMore.value = true
   try {
     const page = await store.loadQueuePage({ limit: PHONE_PAGE, offset: tasks.value.length })
-    if (page) {
+    if (page && seq === requestSeq) {
       tasks.value = mergeById(tasks.value, page.tasks)
       total.value = page.total
     }
@@ -108,6 +125,7 @@ watch(
 watch(
   () => store.filters.project,
   () => {
+    requestSeq += 1
     tasks.value = []
     total.value = 0
     void reload()

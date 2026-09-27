@@ -11,6 +11,7 @@ from __future__ import annotations
 
 import json
 import os
+import sqlite3
 import subprocess
 import sys
 import unittest
@@ -61,6 +62,28 @@ class ClaimBlockerTests(TempDbTestCase):
         self.assertEqual(out["holder"], "dsh")
         notes = [e["note"] or "" for e in _events(self.conn, self.b, "note")]
         self.assertTrue(any("ЗАПУСК БЕЗ РАЗРЕШЕНИЯ БЛОКЕРОВ" in n for n in notes))
+
+
+class ClaimBrokenDepsSchemaTests(TempDbTestCase):
+    """Сбой SQL в проверке блокеров роняет claim до записи: держателя нет, статус open,
+    события claim нет — гейт не открывается при сбое (listik-nvro)."""
+
+    def setUp(self) -> None:
+        super().setUp()
+        self.blocker = store.create_task(self.conn, title="Блокер", project="demo")["id"]
+        self.task = store.create_task(self.conn, title="Задача", project="demo")["id"]
+        store.add_dep(self.conn, self.task, self.blocker, dep_type="blocks", created_by="автор")
+        self.conn.execute("ALTER TABLE deps RENAME COLUMN dep_type TO dep_kind")
+        self.conn.commit()
+
+    def test_claim_fails_before_writing_holder(self) -> None:
+        with self.assertRaises(sqlite3.OperationalError):
+            store.claim(self.conn, self.task, holder="dsh")
+        row = self.conn.execute("SELECT holder, status FROM tasks WHERE id = ?",
+                                (self.task,)).fetchone()
+        self.assertIn(row["holder"], (None, ""))
+        self.assertEqual(row["status"], "open")
+        self.assertEqual(_events(self.conn, self.task, "claim"), [])
 
 
 class ClaimIdempotencyTests(TempDbTestCase):

@@ -9,6 +9,7 @@ from __future__ import annotations
 import json
 import os
 import pathlib
+import sqlite3
 import subprocess
 import sys
 import unittest
@@ -351,6 +352,14 @@ class CliDepTests(TempDbTestCase):
         self.assertEqual(p.returncode, 0, p.stderr)
         self.assertNotIn("Traceback", p.stdout)
         self.assertIn(x, p.stdout)
+
+
+class FetchPropagatesErrorsTests(TempDbTestCase):
+    """`_fetch` не глотает ошибку SQL: иначе гейты claim/ready открываются при сбое (listik-nvro)."""
+
+    def test_missing_table_raises(self) -> None:
+        with self.assertRaises(sqlite3.OperationalError):
+            deps_mod._fetch(self.conn, "SELECT * FROM no_such_table")
 
 
 if __name__ == "__main__":

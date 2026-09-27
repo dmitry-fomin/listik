@@ -86,11 +86,9 @@ DEP_TITLES = {
 
 
 def _fetch(conn: sqlite3.Connection, sql: str, params: tuple = ()) -> list[sqlite3.Row]:
-    try:
-        return conn.execute(sql, params).fetchall()
-    except sqlite3.OperationalError:
-        # база старой версии без новых колонок — не роняем чтение
-        return []
+    """Ошибки SQL не глотаются: через `_fetch` идут гейты claim/ready/write lock,
+    и пустой ответ при сбое открыл бы их (listik-nvro)."""
+    return conn.execute(sql, params).fetchall()
 
 
 def open_hard_edges(conn: sqlite3.Connection, *, issue_ids: Iterable[str] | None = None,

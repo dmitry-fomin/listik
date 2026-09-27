@@ -488,7 +488,10 @@ def ready_tasks(conn: sqlite3.Connection, *, project: str | None = None,
 
 def blocked_tasks(conn: sqlite3.Connection, *, project: str | None = None,
                   limit: int = 100) -> list[dict]:
-    """Задачи, которые стоят из-за других задач, с объяснением — из-за кого."""
+    """Задачи, которые стоят из-за других задач, с объяснением — из-за кого.
+
+    `limit=0` — без ограничения.
+    """
     from . import store
     where = ["t.archived = 0", f"t.status IN ({OPEN_STATUSES_SQL})"]
     params: list = []

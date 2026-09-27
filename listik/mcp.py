@@ -522,6 +522,12 @@ def _conn():
     return db_mod.init()
 
 
+def _limit(args: dict, default: int) -> int:
+    """`limit` инструмента: `null` — как отсутствие ключа, `0` — без ограничения."""
+    value = args.get("limit")
+    return default if value is None else int(value)
+
+
 def call_tool(name: str, args: dict, conn=None, owner=FROM_ENV, fence=FROM_ENV) -> object:
     """`owner` — владелец-человек, от чьего имени идёт вызов (серверный режим).
 
@@ -607,12 +613,12 @@ def call_tool(name: str, args: dict, conn=None, owner=FROM_ENV, fence=FROM_ENV) 
         return {"tasks": deps_mod.ready_tasks(
                     conn, project=args.get("project"), stage=args.get("stage"),
                     include_occupied=bool(args.get("include_occupied")),
-                    limit=int(args.get("limit", 30)), as_owner=owner),
+                    limit=_limit(args, 30), as_owner=owner),
                 "cycles": deps_mod.cycles(conn)}
     if name == "listik_blocked":
         from . import deps as deps_mod
         return {"tasks": deps_mod.blocked_tasks(conn, project=args.get("project"),
-                                                limit=int(args.get("limit", 50)))}
+                                                limit=_limit(args, 50))}
     if name == "listik_can_take":
         from . import deps as deps_mod
         state = deps_mod.ready(conn, args["id"])

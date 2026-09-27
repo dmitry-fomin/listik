@@ -65,6 +65,16 @@ class ReadyLimitPathsTests(TempDbTestCase):
                 self.assertEqual(len(got), want)
                 self.assertLessEqual(set(got), self.free)
 
+    def test_mcp_null_limit_as_absent(self) -> None:
+        null = _ids(mcp.call_tool("listik_ready", {"project": "demo", "limit": None},
+                                  conn=self.conn))
+        absent = _ids(mcp.call_tool("listik_ready", {"project": "demo"}, conn=self.conn))
+        self.assertEqual(len(null), 30)
+        self.assertEqual(len(absent), 30)
+        self.assertLessEqual(set(null), self.free)
+        self.assertNotIn(self.w, null)
+        self.assertEqual(set(null), set(absent))
+
 
 class ReadyLimitCliTests(LocalBypassWarningCase):
     def test_cli_n_zero_both_paths(self) -> None:

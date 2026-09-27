@@ -990,7 +990,7 @@ def handle(method: str, path: str, query: dict, body: dict, authed: bool = False
     if path == "/api/blocked":
         return 200, {
             "tasks": deps_mod.blocked_tasks(
-                conn, project=q1("project"), limit=as_int(q1("limit"), 100) or 100),
+                conn, project=q1("project"), limit=as_int(q1("limit"), 100)),
             "generated_at": store.now_iso(),
         }
 

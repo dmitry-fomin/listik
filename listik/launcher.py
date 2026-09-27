@@ -279,7 +279,8 @@ def start(conn, task_id: str, notify=None, *, log_dir=None, env=None) -> str | N
     проверка маршрутов в базе, наличия маршрута и `command`; рабочий каталог; наконец
     `Popen`. Любой отказ после захвата снимает его и уходит в `refuse` (launch_error +
     needs_owner), поэтому «уже запущена» — единственный отказ, который состояние задачи
-    не меняет.
+    не меняет. Нет задачи (или её удалили к перечитыванию после захвата — тогда захват
+    сначала снимается) — `errors.NotFound`, а не строка.
 
     `env` — дополнительное окружение процесса (см. `check_env`): подмешивается поверх
     унаследованного окружения сервера, но под штатными пятью переменными; в карточку не
@@ -292,7 +293,7 @@ def start(conn, task_id: str, notify=None, *, log_dir=None, env=None) -> str | N
     row = conn.execute("SELECT * FROM tasks WHERE id = ?", (task_id,)).fetchone()
     if row is None:
         print(f"autostart {task_id}: задача не найдена", file=sys.stderr, flush=True)
-        return "задача не найдена"
+        raise errors_mod.NotFound(f"задача не найдена: {task_id}")
 
     state = routes_mod.state(conn)
     key = row["launch_route"] or ""
@@ -330,7 +331,7 @@ def start(conn, task_id: str, notify=None, *, log_dir=None, env=None) -> str | N
     row = conn.execute("SELECT * FROM tasks WHERE id = ?", (task_id,)).fetchone()
     if row is None:  # задачу удалили между захватом и чтением
         _release(conn, task_id)
-        return "задача не найдена"
+        raise errors_mod.NotFound(f"задача не найдена: {task_id}")
 
     # После снимка способ читается с карточки: правка `routes.driver` начатый
     # прогон не переводит в другой способ.

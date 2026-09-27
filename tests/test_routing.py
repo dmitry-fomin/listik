@@ -16,7 +16,9 @@ from unittest import mock
 
 from listik import config as config_mod
 from listik import db as db_mod
+from listik import errors
 from listik import paths
+from listik import server
 from listik import store
 from tests.helpers import TempDbTestCase
 
@@ -183,6 +185,56 @@ class RoutingTests(TempDbTestCase):
         self.assertIsNone(out["routing"])
         row = store.project_row(self.conn, "demo")
         self.assertIsNone(row["routing"])
+
+    def test_validate_routing_bad_shapes_are_bad_argument(self) -> None:
+        """Негодный routing — довод запроса: bad_argument, а не conflict (listik-roty)."""
+        for bad in ([], {"transitions": []}, {"transitions": {"bad": "sticky"}},
+                    {"transitions": {"s1-spec:nope": "sticky"}},
+                    {"transitions": {"s1-spec:s2-review": "magic"}},
+                    {"return_window_hours": 0}, {"return_window_hours": True},
+                    {"return_window_hours": "5"}, {"bad": 1}):
+            with self.subTest(routing=bad):
+                with self.assertRaises(errors.BadArgument):
+                    config_mod.validate_routing(bad)
+
+    def test_update_project_invalid_json_is_bad_argument(self) -> None:
+        with self.assertRaises(errors.BadArgument):
+            store.update_project(self.conn, "demo", routing="{не json")
+
+    # -- HTTP: PATCH /api/projects/{slug} -----------------------------------------
+
+    def _patch(self, slug: str, body: dict):
+        with mock.patch.object(server, "get_conn", return_value=self.conn):
+            return server.handle("PATCH", f"/api/projects/{slug}", {}, body, authed=True)
+
+    def test_http_patch_bad_routing_is_400_bad_argument(self) -> None:
+        for routing in ({"bad": 1}, "{не json"):
+            with self.subTest(routing=routing):
+                with self.assertRaises(server.ApiError) as ctx:
+                    self._patch("demo", {"routing": routing})
+                self.assertEqual(ctx.exception.status, 400)
+                self.assertEqual(ctx.exception.code, errors.BAD_ARGUMENT)
+
+    def test_http_patch_bad_routing_writes_nothing(self) -> None:
+        before = dict(store.project_row(self.conn, "demo"))
+        with self.assertRaises(server.ApiError) as ctx:
+            self._patch("demo", {"title": "Новое имя", "routing": {"bad": 1}})
+        self.assertEqual(ctx.exception.status, 400)
+        self.assertEqual(ctx.exception.code, errors.BAD_ARGUMENT)
+        after = store.project_row(self.conn, "demo")
+        self.assertEqual(after["title"], before["title"])
+        self.assertEqual(after["routing"], before["routing"])
+
+    def test_http_patch_valid_routing_is_200(self) -> None:
+        status, project = self._patch("demo", {"routing": {"return_window_hours": 5}})
+        self.assertEqual(status, 200)
+        self.assertEqual(project["routing"], {"return_window_hours": 5})
+
+    def test_http_patch_unknown_project_is_404_not_found(self) -> None:
+        with self.assertRaises(server.ApiError) as ctx:
+            self._patch("nope", {"routing": {}})
+        self.assertEqual(ctx.exception.status, 404)
+        self.assertEqual(ctx.exception.code, errors.NOT_FOUND)
 
     # -- 8. форма ответа: routing / routing_effective / routing_source -----------
 

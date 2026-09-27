@@ -413,14 +413,15 @@ def validate_routing(obj: Any) -> dict:
     """Проверить и нормализовать переопределение маршрутизации проекта.
 
     Принимает словарь с любым подмножеством ключей `transitions`,
-    `return_window_hours`. Поднимает ``ValueError`` с текстом на русском, если
-    форма не соответствует ожидаемой. Пустой словарь — валиден (значит «нет
+    `return_window_hours`. Поднимает ``errors.BadArgument`` (подкласс
+    ``ValueError``) с текстом на русском, если форма не соответствует
+    ожидаемой. Пустой словарь — валиден (значит «нет
     переопределений»). Устаревшие ключи (`default_process`, `harnesses`) молча
     игнорируются: старые переопределения проектов не должны ломать ни чтение,
     ни перезапись.
     """
     if not isinstance(obj, dict):
-        raise ValueError("routing: ожидается объект (словарь)")
+        raise errors_mod.BadArgument("routing: ожидается объект (словарь)")
     from . import store as store_mod
     stages = set(store_mod.PIPELINE_STAGES)
 
@@ -430,24 +431,24 @@ def validate_routing(obj: Any) -> dict:
             continue
         if key == "transitions":
             if not isinstance(value, dict):
-                raise ValueError("routing: transitions должен быть словарём")
+                raise errors_mod.BadArgument("routing: transitions должен быть словарём")
             transitions: dict[str, str] = {}
             for tkey, tval in value.items():
                 if not isinstance(tkey, str) or ":" not in tkey:
-                    raise ValueError(f"routing: неверный ключ перехода: {tkey}")
+                    raise errors_mod.BadArgument(f"routing: неверный ключ перехода: {tkey}")
                 left, right = tkey.split(":", 1)
                 if left not in stages or (right != "done" and right not in stages):
-                    raise ValueError(f"routing: неизвестный этап в переходе: {tkey}")
+                    raise errors_mod.BadArgument(f"routing: неизвестный этап в переходе: {tkey}")
                 if tval not in _TRANSITION_KINDS:
-                    raise ValueError(f"routing: неизвестный вид перехода {tkey}: {tval}")
+                    raise errors_mod.BadArgument(f"routing: неизвестный вид перехода {tkey}: {tval}")
                 transitions[tkey] = tval
             out["transitions"] = transitions
         elif key == "return_window_hours":
             if isinstance(value, bool) or not isinstance(value, (int, float)) or value <= 0:
-                raise ValueError("routing: return_window_hours должен быть числом > 0")
+                raise errors_mod.BadArgument("routing: return_window_hours должен быть числом > 0")
             out["return_window_hours"] = value
         else:
-            raise ValueError(f"routing: неизвестный ключ {key}")
+            raise errors_mod.BadArgument(f"routing: неизвестный ключ {key}")
     return out
 
 def transition_kind(project: str | None, from_stage: str | None, to_stage: str | None, conn=None) -> str:

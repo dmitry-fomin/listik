@@ -582,6 +582,58 @@ class HttpTests(RevokeTestCase):
         self.assertEqual(row["needs_owner"], 1)
 
 
+    def test_launch_missing_task_is_404_not_found(self):
+        with self.assertRaises(server.ApiError) as ctx:
+            self.post("/api/tasks/proj-zzzz/launch")
+        self.assertEqual(ctx.exception.status, 404)
+        self.assertEqual(ctx.exception.code, errors.NOT_FOUND)
+
+    def test_launch_deleted_task_is_404_not_found(self):
+        task = self.prepare(self.worker_command(self.tmp_path / "out.json"))
+        tid = task["id"]
+        store.delete_task(self.conn, tid)
+        with self.assertRaises(server.ApiError) as ctx:
+            self.post(f"/api/tasks/{tid}/launch")
+        self.assertEqual(ctx.exception.status, 404)
+        self.assertEqual(ctx.exception.code, errors.NOT_FOUND)
+
+
+# ------------------------------------------------------------------ 9b: нет задачи
+
+class LaunchMissingTaskTests(RevokeTestCase):
+    """Нет задачи — `start` бросает NotFound, а не отдаёт строку (listik-roty)."""
+
+    def test_start_missing_task_raises_not_found(self):
+        with self.assertRaises(errors.NotFound) as ctx:
+            launcher_mod.start(self.conn, "proj-zzzz", log_dir=self.log_dir)
+        self.assertIn("proj-zzzz", str(ctx.exception))
+
+    def test_bad_env_is_checked_before_task_lookup(self):
+        with self.assertRaises(errors.BadArgument):
+            launcher_mod.start(self.conn, "proj-zzzz", env={"PATH": "x"},
+                               log_dir=self.log_dir)
+
+    def test_task_deleted_after_capture_raises_not_found(self):
+        task = self.prepare(self.worker_command(self.tmp_path / "out.json"))
+        tid = task["id"]
+        # Удалить строку прямо в захвате: перечитывание после него не найдёт задачу.
+        self.conn.execute(
+            "CREATE TEMP TRIGGER roty_drop_on_capture AFTER UPDATE OF launched_by ON tasks "
+            "WHEN NEW.launched_by = 'listik' "
+            "BEGIN DELETE FROM tasks WHERE id = NEW.id; END")
+        try:
+            with mock.patch.object(launcher_mod, "_release",
+                                   wraps=launcher_mod._release) as release:
+                with self.assertRaises(errors.NotFound):
+                    launcher_mod.start(self.conn, tid, log_dir=self.log_dir)
+        finally:
+            # addCleanup не годится: он идёт после tearDown, а тот закрывает conn.
+            self.conn.execute("DROP TRIGGER IF EXISTS roty_drop_on_capture")
+        release.assert_called_once_with(self.conn, tid)
+        self.assertNotIn(tid, launcher_mod._procs)
+        self.assertEqual(self.log_files(), [])
+
+
 # ------------------------------------------------------------------ 10: CLI
 
 class CliRevokeLaunchTests(RevokeTestCase):

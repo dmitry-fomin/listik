@@ -1153,8 +1153,9 @@ def handle(method: str, path: str, query: dict, body: dict, authed: bool = False
                 # Подсказка «упомянутые id без связи» нужна тому, кто завёл карточку.
                 hints=True,
             )
-        except KeyError as exc:  # NotFound — подкласс KeyError
+        except errors_mod.NotFound as exc:
             # Указан несуществующий parent/discovered_from: задача не создана.
+            # Голый KeyError — баг, он уходит мимо в error_response (500/internal).
             raise api_error(404, exc) from exc
         except ValueError as exc:
             raise api_error(400, exc) from exc
@@ -1369,6 +1370,8 @@ def handle(method: str, path: str, query: dict, body: dict, authed: bool = False
                     # Как `revoke`: `start` публикует свои кадры сам (`notify=publish`).
                     # `env` — только LISTIK_*, не зарезервированные (check_env в launcher);
                     # BadArgument уходит в except ValueError ниже как 400 bad_argument.
+                    # Нет задачи (в том числе удалили после захвата) — start бросает
+                    # NotFound: except ниже отвечает 404 not_found.
                     # Режим роя может ответить без процесса (пропуск роли, нарезка,
                     # «роль не взяла»): это dict {"launched": False, ...} — не отказ,
                     # HTTP 200 с карточкой и исходом (docs/specs/swarm-stage-launch.md).

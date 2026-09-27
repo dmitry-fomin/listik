@@ -370,7 +370,7 @@ def create_task(
             journal_path = parent_row["journal_path"]
     source_id = (discovered_from or "").strip() or None
     if source_id is not None and not store_helpers.task_exists(conn, source_id):
-        raise KeyError(f"задача не найдена: {source_id}")
+        raise errors_mod.NotFound(f"задача не найдена: {source_id}")
     if not project and parent_project:
         project = parent_project
     # Маршрут помечает карточку теми же метками, что и форма «Новая задача» на доске:
@@ -2487,7 +2487,7 @@ def update_project(conn: sqlite3.Connection, slug: str, **fields) -> dict:
     `routing`: словарь — валидируется (`config.validate_routing`) и пишется как JSON;
     пустой словарь сбрасывает переопределение (колонка становится NULL); строка
     разбирается как JSON и дальше обрабатывается как словарь (невалидный JSON —
-    ``ValueError``).
+    ``errors.BadArgument``).
     """
     project_row(conn, slug)
     if fields.get("path"):
@@ -2504,7 +2504,7 @@ def update_project(conn: sqlite3.Connection, slug: str, **fields) -> dict:
             try:
                 parsed = json.loads(parsed)
             except json.JSONDecodeError as exc:
-                raise ValueError(f"routing: невалидный JSON: {exc}") from exc
+                raise errors_mod.BadArgument(f"routing: невалидный JSON: {exc}") from exc
         validated = config_mod.validate_routing(parsed)
         changes["routing"] = json.dumps(validated, ensure_ascii=False) if validated else None
     if changes:

@@ -25,7 +25,7 @@ import sys
 import threading
 from unittest import mock
 
-from listik import deps, mcp, migrate, paths, server, store
+from listik import deps, errors, mcp, migrate, paths, server, store
 from tests.helpers import TempDbTestCase
 
 LISTIK_BIN = pathlib.Path(__file__).resolve().parent.parent / "bin" / "listik"
@@ -85,7 +85,7 @@ class CreateWithDiscoveredFromTests(TempDbTestCase):
 
     def test_missing_source_raises_before_insert(self) -> None:
         before = self.conn.execute("SELECT count(*) FROM tasks").fetchone()[0]
-        with self.assertRaises(KeyError):
+        with self.assertRaises(errors.NotFound):
             store.create_task(self.conn, title="Плохая", discovered_from="demo-zzzz")
         after = self.conn.execute("SELECT count(*) FROM tasks").fetchone()[0]
         self.assertEqual(after, before, "карточка создана, хотя источник не найден")
@@ -247,6 +247,18 @@ class CliDiscoveredFromTests(TempDbTestCase):
         after = self.conn.execute("SELECT count(*) FROM tasks").fetchone()[0]
         self.assertEqual(after, before, "карточка создана, хотя источник не найден")
 
+    def test_new_with_missing_source_json_is_not_found(self) -> None:
+        """Опечатка в --discovered-from без сервера — код not_found, а не internal."""
+        before = self.conn.execute("SELECT count(*) FROM tasks").fetchone()[0]
+        p = self._run("new", "Плохая", "-p", "demo", "--discovered-from", "demo-zzzz", "--json")
+        self.assertNotEqual(p.returncode, 0)
+        err = json.loads(p.stdout)["error"]
+        self.assertEqual(err["code"], "not_found")
+        self.assertIn("задача не найдена: demo-zzzz", err["message"])
+        self.assertNotIn("KeyError", err["message"])
+        after = self.conn.execute("SELECT count(*) FROM tasks").fetchone()[0]
+        self.assertEqual(after, before, "карточка создана, хотя источник не найден")
+
     def test_new_warns_about_unlinked_mention(self) -> None:
         p = self._run("new", "С упоминанием", "-p", "demo", "-d", f"упирается в {self.source}")
         self.assertEqual(p.returncode, 0, p.stderr)
@@ -321,8 +333,20 @@ class ApiDiscoveredFromTests(TempDbTestCase):
         with self.assertRaises(server.ApiError) as ctx:
             self.post(title="Плохая", discovered_from="demo-zzzz")
         self.assertEqual(ctx.exception.status, 404)
+        self.assertEqual(ctx.exception.code, errors.NOT_FOUND)
         after = self.conn.execute("SELECT count(*) FROM tasks").fetchone()[0]
         self.assertEqual(after, before)
+
+    def test_post_bare_key_error_is_not_404(self) -> None:
+        """Голый KeyError из create_task — баг: мимо 404, в error_response как 500/internal."""
+        with mock.patch.object(store, "create_task", side_effect=KeyError("assignee_title")):
+            with self.assertRaises(KeyError) as ctx:
+                self.post(title="x")
+        self.assertNotIsInstance(ctx.exception, errors.NotFound)
+        self.assertNotIsInstance(ctx.exception, server.ApiError)
+        status, _message, code = server.error_response(ctx.exception)
+        self.assertEqual(status, 500)
+        self.assertEqual(code, errors.INTERNAL)
 
     def test_post_non_string_source_is_400(self) -> None:
         with self.assertRaises(server.ApiError) as ctx:
@@ -373,9 +397,24 @@ class McpDiscoveredFromTests(TempDbTestCase):
 
     def test_create_missing_source_does_not_create(self) -> None:
         before = self.conn.execute("SELECT count(*) FROM tasks").fetchone()[0]
-        with self.assertRaises(KeyError):
+        with self.assertRaises(errors.NotFound):
             mcp.call_tool("listik_create", {"title": "Плохая",
                                             "discovered_from": "demo-zzzz"}, conn=self.conn)
+        after = self.conn.execute("SELECT count(*) FROM tasks").fetchone()[0]
+        self.assertEqual(after, before)
+
+    def test_create_missing_source_over_handle_is_not_found(self) -> None:
+        before = self.conn.execute("SELECT count(*) FROM tasks").fetchone()[0]
+        resp = mcp.handle({"jsonrpc": "2.0", "id": 1, "method": "tools/call",
+                           "params": {"name": "listik_create",
+                                      "arguments": {"title": "Плохая",
+                                                    "discovered_from": "demo-zzzz"}}},
+                          conn=self.conn)
+        result = resp["result"]
+        self.assertTrue(result["isError"])
+        text = result["content"][0]["text"]
+        self.assertTrue(text.startswith("не найдено:"), text)
+        self.assertIn("demo-zzzz", text)
         after = self.conn.execute("SELECT count(*) FROM tasks").fetchone()[0]
         self.assertEqual(after, before)
 

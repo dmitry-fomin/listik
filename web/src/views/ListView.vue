@@ -176,11 +176,37 @@ const filteredRows = computed<Task[]>(() =>
     }),
 )
 
+/**
+ * Колонки, которые сортируются числом, а не подписью ячейки: «ключ колонки → значение
+ * строки». Возраст — чем моложе, тем меньше; `null` — значения нет, такие строки в конце.
+ */
+const NUMERIC_SORT: Record<string, (row: Task) => number | null> = {
+  holder_age: (row) => row.holder_hours,
+  stage_age: (row) => row.stage_hours,
+  // тот же момент, от которого считает ячейка (`humanAge(row.updated_at)`)
+  updated_age: (row) => {
+    const time = Date.parse(row.updated_at)
+    return Number.isNaN(time) ? null : -time
+  },
+  priority_title: (row) => row.priority,
+  blocked_count: (row) => depsCell(row.id).blocked,
+  waiting_count: (row) => depsCell(row.id).waiting,
+}
+
+// Сортируется только загруженная страница; какие задачи на неё попали, решает
+// серверный `order` (без направления). Равные строки остаются в порядке сервера.
 const sortedRows = computed<Task[]>(() => {
   const active = sort.value
   if (!active) return filteredRows.value
   const direction = active.direction === 'asc' ? 1 : -1
+  const numeric = NUMERIC_SORT[active.key]
   return filteredRows.value.slice().sort((a, b) => {
+    if (numeric) {
+      const leftValue = numeric(a)
+      const rightValue = numeric(b)
+      if (leftValue === null || rightValue === null) return Number(leftValue === null) - Number(rightValue === null)
+      return (leftValue - rightValue) * direction
+    }
     const left = a[active.key as keyof Task]
     const right = b[active.key as keyof Task]
     if (typeof left === 'number' && typeof right === 'number') return (left - right) * direction

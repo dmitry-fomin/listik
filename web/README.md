@@ -106,6 +106,7 @@ scripts/
   verify-detail-sse.mjs  открытая карточка и события SSE на моке (`__event`/`__requests`)
   verify-markdown.mjs  markdown-вывод описания карточки на моке `--markdown`
   verify-voice.mjs  голосовой ввод задачи: десктоп и телефон на моке `--voice`
+  verify-list-sort.mjs  сортировка вида «Список» на моке `--list-sort`
   patch-facet.mjs  убирает неиспользуемый импорт в исходнике кита (postinstall)
 ```
 

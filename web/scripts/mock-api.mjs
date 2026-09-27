@@ -72,6 +72,14 @@
  * Без флага `/api/health` отдаёт `mode: 'local'`, `users: []`, `owner: null`,
  * а всё остальное — как раньше.
  *
+ * `--list-sort` заменяет весь набор (как `--server-mode`) семью задачами
+ * `listik-sort-*` для сортировки вида «Список»: у пяти `in_progress` есть
+ * держатель, `fox` и `charlie` открыты без держателя, у `fox` нет и этапа.
+ * `holder_age`/`stage_age`/`updated_age` — литералы, как их отдал бы серверный
+ * `human_age` (без держателя/этапа — `'—'` и `null` в `*_at`/`*_hours`),
+ * приоритеты P0…P4, `alfa` ждёт `fox`, `delta` — `fox` и `charlie`
+ * (scripts/verify-list-sort.mjs).
+ *
  * Служебные ручки для скриптов проверки (в docs/API.md их нет — это не контракт, а
  * ручки управления моком, как `__token`): `POST /__event` рассылает кадр в
  * открытые `/api/stream` (тело `{kind, payload, patch?, comment?}`, patch/comment
@@ -100,6 +108,7 @@ const hintMode = process.argv.slice(3).includes('--hint')
 const epicMode = process.argv.slice(3).includes('--epic')
 const markdownMode = process.argv.slice(3).includes('--markdown')
 const serverMode = process.argv.slice(3).includes('--server-mode')
+const listSortMode = process.argv.slice(3).includes('--list-sort')
 /** `server.users` из config.toml — кем можно представиться в серверном режиме. */
 const SERVER_USERS = ['ann', 'bob']
 const slowArg = process.argv.slice(3).find((arg) => arg.startsWith('--slow-ms='))
@@ -343,6 +352,74 @@ if (serverMode) {
     ownerTask('listik-owner-bob2', 'Bob: вторая задача', 'bob', 2),
     ownerTask('listik-owner-free1', 'Ничья задача раз', null, 2),
     ownerTask('listik-owner-free2', 'Ничья задача два', null, 3),
+  )
+}
+
+/**
+ * `--list-sort`: задача набора сортировки. `holder` — `[часы, возраст]` или `null`
+ * (держателя нет), `stage` — `[этап, часы, возраст]` или `null` (этапа нет),
+ * `updated` — `[часы, возраст]`; часы — «сколько назад», аргумент `iso`.
+ */
+function sortTask(index, name, holder, stage, updated, priority, blockedBy = []) {
+  const status = holder ? 'in_progress' : 'open'
+  const holderFields = holder
+    ? {
+        holder_at: iso(holder[0]),
+        holder_hours: holder[0],
+        holder_age: holder[1],
+        idle_hours: holder[0],
+        idle_age: holder[1],
+      }
+    : {
+        holder: null,
+        holder_title: '',
+        holder_note: null,
+        holder_at: null,
+        holder_hours: null,
+        holder_age: '—',
+        idle_hours: null,
+        idle_age: '',
+      }
+  return task({
+    id: `listik-sort-${name}`,
+    title: `Сортировка списка: ${name}`,
+    status,
+    status_title: STATUS_TITLES[status],
+    ...holderFields,
+    stage: stage ? stage[0] : null,
+    stage_title: stage ? STAGE_TITLES[stage[0]] : null,
+    stage_at: stage ? iso(stage[1]) : null,
+    stage_hours: stage ? stage[1] : null,
+    stage_age: stage ? stage[2] : '—',
+    updated_at: iso(updated[0]),
+    updated_age: updated[1],
+    created_at: iso(100 + index),
+    priority,
+    priority_title: PRIORITY_TITLES[priority],
+    blocked_by: blockedBy,
+    stage_warn: false,
+    needs_owner: false,
+    stale: false,
+    abandoned: false,
+    labels: [],
+    parent: null,
+    soft_links: [],
+  })
+}
+
+if (listSortMode) {
+  tasks.length = 0
+  tasks.push(
+    sortTask(0, 'echo', [0.15, '9 мин'], ['s3-impl', 0.2, '12 мин'], [0.2, '12 мин'], 3),
+    sortTask(1, 'golf', [0.2, '12 мин'], ['s4-judge', 50, '2 дн'], [3, '3 ч'], 0),
+    sortTask(2, 'alfa', [3, '3 ч'], ['s3-impl', 40, '40 ч'], [0.15, '9 мин'], 2, ['listik-sort-fox']),
+    sortTask(3, 'delta', [40, '40 ч'], ['s2-review', 3, '3 ч'], [50, '2 дн'], 4, [
+      'listik-sort-fox',
+      'listik-sort-charlie',
+    ]),
+    sortTask(4, 'bravo', [50, '2 дн'], ['s3-impl', 0.15, '9 мин'], [40, '40 ч'], 2),
+    sortTask(5, 'fox', null, null, [1, '1 ч'], 1),
+    sortTask(6, 'charlie', null, ['s1-spec', 30, '30 ч'], [5, '5 ч'], 1),
   )
 }
 

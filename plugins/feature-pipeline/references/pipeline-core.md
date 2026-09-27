@@ -752,7 +752,7 @@ listik claim <id> --holder claude --actor agent:claude --harness claude
 `xlow-pipeline` и `nano-pipeline`. Если `issue_type == "epic"`, а пресет из этого списка:
 
 ```
-listik needs-owner <id> "эпик нельзя вести пресетом без писателя ТЗ: порции и дочерние карточки заводит только писатель ТЗ. Выберите пресет с писателем ТЗ — xhigh-pipeline, high-pipeline, medium-pipeline, low-pipeline, cross-pipeline или universal-pipeline — либо заведите обычную задачу." --actor agent:claude --harness claude
+listik needs-owner <id> "эпик нельзя вести пресетом без писателя ТЗ: порции и дочерние карточки заводит только писатель ТЗ. Выберите пресет с писателем ТЗ — xhigh-pipeline, high-pipeline, medium-pipeline, low-pipeline или cross-pipeline — либо заведите обычную задачу." --actor agent:claude --harness claude
 ```
 
 Вопрос — дословно в чат, дальше стоп: этапы не начинаются.

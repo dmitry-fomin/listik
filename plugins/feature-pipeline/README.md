@@ -19,7 +19,6 @@
 | `nano-pipeline` | то же, дешевле; при пустом `write_scope` сперва ход на чтении за границами правки | — | — | devin SWE-2 high (`devin:devin-delegate --thinking high`) | GLM 5.3 Flash (`pi:pi-delegate --channel glm`) |
 | `cross-pipeline` | автор ТЗ и исполнитель на разных вендорах: Devin пишет ТЗ, GLM в pi — код | Devin (SWE-2, max) | Grok 4.7 xhigh, без записи | GLM 5.3 Flash в pi | Grok 4.7 xhigh |
 | `opus-pipeline` | понятная работа в один заход, приёмка не нужна; $0 внешних | — | — | Opus medium (`pipeline-implementer-solo`, `model: opus`), сам коммитит | — |
-| `universal-pipeline` | роли читаются из `routes.roles` маршрута карточки; по каждой роли зовётся её скил-запускатор, отсутствующие роли — пропущенные этапы | из маршрута | из маршрута | из маршрута | из маршрута |
 
 ## Агенты
 
@@ -28,16 +27,16 @@
 
 | Агент | Модель / effort | Роль | Где используется (перебивка model) |
 | --- | --- | --- | --- |
-| `pipeline-spec-writer` | opus / high | ТЗ шага, порции, чек-листы; только каталог шагов, неясное — вопросом автору | `universal-pipeline`; `high-pipeline` — **`model: opus`** |
+| `pipeline-spec-writer` | opus / high | ТЗ шага, порции, чек-листы; только каталог шагов, неясное — вопросом автору | `high-pipeline` — **`model: opus`** |
 | `pipeline-spec-writer-xhigh` | opus / xhigh | то же | `xhigh-pipeline` — **`model: opus`** |
 | `pipeline-spec-writer-medium` | opus / medium | то же | `medium-pipeline` — **`model: opus`** |
 | `pipeline-spec-writer-low` | opus / low | то же | `low-pipeline` — **`model: opus`** |
 | `pipeline-critic` | opus / high | критика ТЗ и чек-листа до реализации, репозиторий только на чтение, ничего не правит | не зовётся ни одним скилом |
-| `pipeline-implementer` | sonnet / medium | реализует одну порцию, не коммитит | `universal-pipeline`; `medium-pipeline` — **`model: opus`** |
+| `pipeline-implementer` | sonnet / medium | реализует одну порцию, не коммитит | `medium-pipeline` — **`model: opus`** |
 | `pipeline-implementer-high` | sonnet / high | то же для неочевидных порций | `high-pipeline` — **`model: opus`** |
 | `pipeline-implementer-xhigh` | opus / xhigh | то же на максимальном усилии | `xhigh-pipeline` |
 | `pipeline-implementer-solo` | sonnet / medium | задача в один проход и сам коммитит | `opus-pipeline` — **`model: opus`** |
-| `pipeline-judge` | opus / high | приёмка: чек-лист, срезанные углы в диффе, вердикт, при зелёном — коммит; код не правит | `universal-pipeline` |
+| `pipeline-judge` | opus / high | приёмка: чек-лист, срезанные углы в диффе, вердикт, при зелёном — коммит; код не правит | не зовётся ни одним скилом |
 
 Исполнители и судья преднагружают скил `listik:listik` (поле `skills:`) и при названном в задаче id (`Listik, карточка <id>`) ведут карточку сами — раздел «Карточка Listik» в теле агента.
 

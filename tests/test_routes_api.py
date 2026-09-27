@@ -4,7 +4,7 @@
 Прогоняется через `server.handle(...)`, как соседние тесты ручек (`test_route_change.py`,
 `test_projects_add.py`): `get_conn` подменяется на временное соединение, ошибки — это
 `server.ApiError`, пойманный `assertRaises`. Скилы читаются из настоящего
-`plugins/feature-pipeline/skills/*` репозитория (там ровно те 9 ключей, что и в образце
+`plugins/feature-pipeline/skills/*` репозитория (там ровно те 8 ключей, что и в образце
 `routes.json`) — кроме тестов, которые явно подменяют `skills.SKILLS_DIR` на пустой/чужой
 каталог.
 """
@@ -30,7 +30,6 @@ ROUTES_JSON = REPO_DIR / "routes.json"
 EXPECTED_KEYS = [
     "xhigh-pipeline", "high-pipeline", "medium-pipeline", "low-pipeline", "xlow-pipeline",
     "nano-pipeline", "cross-pipeline", "opus-pipeline",
-    "universal-pipeline",
 ]
 
 

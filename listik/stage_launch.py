@@ -408,7 +408,8 @@ def in_swarm(task, routes_by_key: dict) -> bool:
 
 def is_swarm_task(conn: sqlite3.Connection, row) -> bool:
     """Карточка едет роем: снимок `launch_driver`, а до первого запуска — живой
-    `driver` её маршрута."""
+    `driver` её маршрута. Маршрута нет в базе — не рой, прочие ошибки чтения
+    пробрасываются."""
     snapshot = row["launch_driver"] if "launch_driver" in row.keys() else None
     if snapshot:
         return snapshot == "swarm"
@@ -418,7 +419,7 @@ def is_swarm_task(conn: sqlite3.Connection, row) -> bool:
     try:
         from . import routes_store
         return is_swarm(routes_store.get_route(conn, route_key))
-    except Exception:  # noqa: BLE001 — маршрут могли удалить: считаем не-роем
+    except errors_mod.NotFound:  # маршрута нет — не рой
         return False
 
 
@@ -505,13 +506,13 @@ def apply_outcome(conn: sqlite3.Connection, task_id: str, *, notify=None) -> Non
     tail = tail[-TAIL_LIMIT:]
     route_key = (row["launch_route"] or "").strip()
     record = None
-    if route_key:
-        try:
-            from . import routes_store
-            record = routes_store.get_route(conn, route_key)
-        except Exception:  # noqa: BLE001 — маршрут могли удалить
-            record = None
     try:
+        if route_key:
+            try:
+                from . import routes_store
+                record = routes_store.get_route(conn, route_key)
+            except errors_mod.NotFound:  # маршрута нет — разбираем без него
+                record = None
         if role is None:
             # Этап без роли (done и т.п.) — разбирать нечего.
             store.add_comment(conn, task_id,

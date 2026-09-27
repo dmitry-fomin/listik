@@ -643,6 +643,99 @@ class SlicingTests(SwarmCase):
         self.assertFalse(task["needs_owner"])
 
 
+class RouteReadErrorTests(SwarmCase):
+    """listik-c7ug: «маршрута нет» — только `errors.NotFound`; прочие ошибки
+    чтения маршрута не превращаются в «не рой»."""
+
+    fake_finish = SlicingTests.fake_finish
+
+    def setUp(self) -> None:
+        super().setUp()
+        self.add_route({"spec": {"harness": "probe"}, "impl": {"harness": "probe"},
+                        "judge": {"harness": "probe"}})
+        self.task_id = self.add_task()
+
+    def row(self):
+        return self.conn.execute("SELECT * FROM tasks WHERE id = ?",
+                                 (self.task_id,)).fetchone()
+
+    def broken_route(self, exc: BaseException):
+        return mock.patch.object(routes_store, "get_route", side_effect=exc)
+
+    def drop_route(self) -> None:
+        self.conn.execute("UPDATE tasks SET launch_route = 'gone' WHERE id = ?",
+                          (self.task_id,))
+        self.conn.commit()
+
+    def test_bare_keyerror_propagates(self) -> None:  # T1
+        from listik import errors
+        row = self.row()
+        with self.broken_route(KeyError("boom")), \
+                self.assertRaises(KeyError) as caught:
+            stage_launch.is_swarm_task(self.conn, row)
+        self.assertIs(type(caught.exception), KeyError)
+        self.assertNotIsInstance(caught.exception, errors.NotFound)
+        self.assertEqual(errors.code_of(caught.exception), errors.INTERNAL)
+
+    def test_database_error_propagates(self) -> None:  # T2
+        import sqlite3
+        row = self.row()
+        with self.broken_route(sqlite3.OperationalError("database is locked")), \
+                self.assertRaises(sqlite3.OperationalError) as caught:
+            stage_launch.is_swarm_task(self.conn, row)
+        self.assertIs(type(caught.exception), sqlite3.OperationalError)
+
+    def test_missing_route_is_not_swarm(self) -> None:  # T3
+        self.drop_route()
+        self.assertFalse(stage_launch.is_swarm_task(self.conn, self.row()))
+
+    def test_restart_and_adopt_propagate_keyerror(self) -> None:  # T4
+        from listik import errors
+        store.update_task(self.conn, self.task_id, stage="s1-spec",
+                          holder="agent:x", actor="agent:t")
+        before = self.task(self.task_id)
+        calls = (lambda: stage_launch.restart_task(self.conn, self.task_id),
+                 lambda: stage_launch.adopt_portions(self.conn, self.task_id,
+                                                     actor="agent:t"))
+        for call in calls:
+            with self.broken_route(KeyError("boom")), \
+                    self.assertRaises(KeyError) as caught:
+                call()
+            self.assertIs(type(caught.exception), KeyError)
+            self.assertNotIsInstance(caught.exception, errors.ListikError)
+            self.assertNotIsInstance(caught.exception, errors.BadArgument)
+            self.assertNotIsInstance(caught.exception, errors.NotFound)
+            after = self.task(self.task_id)
+            self.assertEqual(after["stage"], before["stage"])
+            self.assertEqual(after["holder"], before["holder"])
+
+    def test_outcome_with_broken_route_asks_owner(self) -> None:  # T5
+        with self.broken_route(KeyError("boom")):
+            self.fake_finish(self.task_id, "s4-judge", "зелёный")
+        task = self.task(self.task_id)
+        self.assertEqual(task["status"], "open")
+        self.assertEqual(task["stage"], "s4-judge")
+        self.assertEqual(self.comments(self.task_id, "verdict"), [])
+        self.assertTrue(task["needs_owner"])
+        self.assertIn("рой: не разобрал исход этапа: boom",
+                      self.comments(self.task_id, "question"))
+        row = self.row()
+        self.assertIsNone(row["launched_by"])
+        self.assertIsNone(row["dispatch_id"])
+
+    def test_outcome_with_missing_route_asks_owner(self) -> None:  # T6
+        self.drop_route()
+        self.fake_finish(self.task_id, "s3-impl", "готово")
+        task = self.task(self.task_id)
+        self.assertTrue(task["needs_owner"])
+        self.assertTrue(any(t.startswith("рой: после s3-impl роли нет")
+                            for t in self.comments(self.task_id, "question")))
+        self.assertEqual(task["stage"], "s3-impl")
+        row = self.row()
+        self.assertIsNone(row["launched_by"])
+        self.assertIsNone(row["dispatch_id"])
+
+
 class HelpersTests(SwarmCase):
     def test_out_path_and_answer_line(self) -> None:
         out = stage_launch.out_path_of("/tmp/launch-x.log")

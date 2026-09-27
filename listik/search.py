@@ -9,7 +9,7 @@ from __future__ import annotations
 import re
 import sqlite3
 
-from . import actors, embed, paths, textutil, util
+from . import actors, embed, paths, store, textutil, util
 
 RRF_K = 60
 SNIPPET_CHARS = 220
@@ -33,7 +33,7 @@ def _filters_sql(project: str | None, status: str | None) -> tuple[str, list]:
 def _row_filter(row: sqlite3.Row, stage: str | None, actor: str | None, needs_owner: bool) -> bool:
     if stage:
         st = (row["stage"] or "")
-        if not (st == stage or st.startswith(stage) or stage in st):
+        if not (st == stage or st.startswith(stage)):
             return False
     if actor and (row["orchestrator"] or "") != actor and (row["holder"] or "") != actor:
         return False
@@ -180,15 +180,10 @@ def vector(conn: sqlite3.Connection, query: str, limit: int,
     for doc_id, doc_kind, task_id, vec in rows:
         if len(vec) != len(qvec):
             continue
-        dot = 0.0
-        nv = 0.0
-        for x, y in zip(qvec, vec):
-            dot += x * y
-            nv += y * y
-        nv = nv ** 0.5
+        nv = sum(y * y for y in vec) ** 0.5
         if not nv:
             continue
-        scored.append((dot / (qnorm * nv), doc_id, doc_kind, task_id))
+        scored.append((embed.cosine(qvec, vec, na=qnorm, nb=nv), doc_id, doc_kind, task_id))
     scored.sort(reverse=True)
     return [{"kind": k, "doc_id": d, "task_id": t, "score": s} for s, d, k, t in scored[:limit]]
 
@@ -221,10 +216,9 @@ def search_memories(conn: sqlite3.Connection, query: str, *, limit: int = 10,
                 vec = embed.blob_to_vec(r["vec"])
                 if len(vec) != len(qvec):
                     continue
-                dot = sum(x * y for x, y in zip(qvec, vec))
                 nv = sum(y * y for y in vec) ** 0.5
                 if qnorm and nv:
-                    vec_rows.append((dot / (qnorm * nv), r["memory_key"]))
+                    vec_rows.append((embed.cosine(qvec, vec, na=qnorm, nb=nv), r["memory_key"]))
             vec_rows.sort(reverse=True)
             for rank, (_, key) in enumerate(vec_rows[: limit * 4], start=1):
                 scores[key] = scores.get(key, 0.0) + 1.0 / (RRF_K + rank)
@@ -467,7 +461,7 @@ def search(
         if not snippet:
             snippet = _snippet(row["description"] or row["title"], query.split())
         rrf_results.append(_card(row, snippet=snippet, score=round(entry["score"], 6),
-                                 hits=entry["hits"][:4], best_hit=best_hit))
+                                 hits=sorted_hits[:4], best_hit=best_hit))
     rrf_results.sort(key=lambda r: -r["score"])
 
     # id-совпадения — строго первыми и с score выше любого RRF: RRF задачи это сумма
@@ -502,14 +496,6 @@ def search(
     }
 
 
-STATUS_ICON = {
-    "open": "○", "in_progress": "▶", "blocked": "■", "deferred": "◌", "closed": "✓",
-}
-STAGE_ICON = {
-    "s1-spec": "ТЗ", "s2-review": "крит", "s3-impl": "код", "s4-judge": "судья", "done": "готово",
-}
-
-
 def print_results(res: dict) -> None:
     print(f"запрос: {res['query']!r}  режим: {res['mode']}  "
           f"найдено: {res['count']}  за {res['took_ms']} мс "
@@ -524,8 +510,8 @@ def print_results(res: dict) -> None:
             print(f"  ● {m['key']}  [{m['project'] or '—'}]  {body[:160]}")
         print()
     for i, r in enumerate(res["results"], start=1):
-        st = STATUS_ICON.get(r["status"], "?")
-        stage = STAGE_ICON.get(r["stage"] or "", r["stage"] or "")
+        st = store.STATUS_ICON.get(r["status"], "?")
+        stage = store.STAGE_ICON.get(r["stage"] or "", r["stage"] or "")
         flags = []
         if r["needs_owner"]:
             flags.append("НУЖЕН ТЫ")

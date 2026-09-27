@@ -12,13 +12,8 @@ import json
 import sqlite3
 import urllib.error
 import urllib.request
-from datetime import datetime, timezone
 
-from . import paths, textutil
-
-
-def now_iso() -> str:
-    return datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
+from . import paths, store, textutil
 
 
 def vec_to_blob(vec: list[float]) -> bytes:
@@ -159,7 +154,7 @@ def embed_pending(
     done = 0
     total = len(work)
     batch = max(1, paths.EMBED_BATCH)
-    ts = now_iso()
+    ts = store.now_iso()
     for start in range(0, total, batch):
         chunk = work[start:start + batch]
         try:

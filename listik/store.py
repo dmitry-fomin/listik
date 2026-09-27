@@ -38,6 +38,10 @@ STAGE_TITLES = {
     "s4-judge": "4. Проверка и коммит",
     "done": "готово",
 }
+STAGE_ICON = {
+    "s1-spec": "ТЗ", "s2-review": "крит", "s3-impl": "код", "s4-judge": "судья",
+    "done": "готово",
+}
 STATUS_TITLES = {
     "open": "открыта",
     "in_progress": "в работе",
@@ -45,6 +49,10 @@ STATUS_TITLES = {
     "review": "на проверке",
     "done": "готова",
     "cancelled": "отменена",
+}
+STATUS_ICON = {
+    "open": "○", "in_progress": "▶", "blocked": "■", "review": "◐", "done": "✓",
+    "cancelled": "✕",
 }
 PRIORITY_TITLES = {0: "P0 срочно", 1: "P1 высокий", 2: "P2 обычный", 3: "P3 низкий", 4: "P4 потом"}
 

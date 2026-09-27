@@ -25,11 +25,6 @@ from listik import routes_store  # noqa: E402
 from listik import swarm_watch  # noqa: E402
 from listik import worktree as worktree_mod  # noqa: E402
 
-STATUS_ICON = {"open": "○", "in_progress": "▶", "blocked": "■", "review": "◐",
-               "done": "✓", "cancelled": "✕"}
-STAGE_SHORT = {"s1-spec": "ТЗ", "s2-review": "крит", "s3-impl": "код", "s4-judge": "судья",
-               "done": "готово"}
-
 # ------------------------------------------------------------------ ошибки
 #
 # Любая ошибка выходит в одном формате (см. listik/errors.py): человеку — одна-две
@@ -303,8 +298,8 @@ def label_of(t: dict, title_key: str, raw_key: str, fallback: str = "—") -> st
 
 
 def task_line(t: dict, *, width: int = 96) -> str:
-    icon = STATUS_ICON.get(t.get("status"), "?")
-    stage = STAGE_SHORT.get(t.get("stage") or "", t.get("stage") or "")
+    icon = store.STATUS_ICON.get(t.get("status"), "?")
+    stage = store.STAGE_ICON.get(t.get("stage") or "", t.get("stage") or "")
     bits = [f"{icon} {t.get('id')}"]
     if t.get("project"):
         bits.append(f"[{t['project']}]")
@@ -361,7 +356,7 @@ def _soft_link_label(x: dict) -> str:
 
 
 def show_task(t: dict) -> None:
-    print(f"{STATUS_ICON.get(t.get('status'), '?')} {t.get('id')}")
+    print(f"{store.STATUS_ICON.get(t.get('status'), '?')} {t.get('id')}")
     print(f"  заголовок:   {t.get('title')}")
     print(f"  проект:      {t.get('project') or '—'}   тип: {t.get('issue_type') or '—'}   "
           f"приоритет: {label_of(t, 'priority_title', 'priority')}")
@@ -1389,7 +1384,7 @@ def cmd_ready(args) -> int:
     for t in tasks:
         occ = f" (уже держит {t['holder_title']})" if t.get("holder") else ""
         wait = f"  [за ней ждут {t['waiting_for_count']}]" if t.get("waiting_for_count") else ""
-        print(f"{STATUS_ICON.get(t['status'], '?')} {t['id']:38s} P{t['priority']} "
+        print(f"{store.STATUS_ICON.get(t['status'], '?')} {t['id']:38s} P{t['priority']} "
               f"[{t['project'] or '—'}]{occ}{wait}")
         print(f"     {t['title'][:110]}")
     if res.get("cycles"):
@@ -2185,7 +2180,7 @@ def cmd_stats(args) -> int:
     if res["running"]:
         print("\nчто в работе:")
         for t in res["running"][:25]:
-            print(f"  {STATUS_ICON.get(t['status'], '?')} {t['id']:38s} "
+            print(f"  {store.STATUS_ICON.get(t['status'], '?')} {t['id']:38s} "
                   f"этап {t['stage_age']:>6s}  держит {t['holder_title']}  {t['title'][:60]}")
     return 0
 

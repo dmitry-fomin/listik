@@ -873,15 +873,21 @@ def cmd_list(args) -> int:
     if args.mine:
         kwargs["holder"] = kwargs["holder"] or actor_default(args)
     if args.stale:
-        kwargs["status"] = "in_progress"
+        # Повторяет `running` из `store.row_to_task`: брошенной бывает только такая задача.
+        stale_statuses = ("in_progress", "review")
+        if args.status and args.status not in stale_statuses:
+            raise errors.ListikError(
+                f"--stale ищет брошенные только среди задач в работе и на проверке; "
+                f"--status {args.status} с ним несовместим",
+                code=errors.BAD_ARGUMENT, exit_code=2,
+                hint="убери --status или укажи --status in_progress|review")
+        # health=dead ≡ stale|abandoned; источник фильтрует до LIMIT (listik-8lpa).
+        kwargs["health"] = "dead"
     res = call("list", args, "/api/tasks",
                query={k: (str(v).lower() if isinstance(v, bool) else v)
                       for k, v in kwargs.items() if v is not None},
                local_kwargs=kwargs)
-    tasks = res["tasks"]
-    if args.stale:
-        tasks = [t for t in tasks if t.get("stale") or t.get("abandoned")]
-    emit(args, res, "") if getattr(args, "json", False) else print_tasks(tasks)
+    emit(args, res, "") if getattr(args, "json", False) else print_tasks(res["tasks"])
     return 0
 
 
@@ -2715,7 +2721,9 @@ def build_parser() -> argparse.ArgumentParser:
     sp.add_argument("-t", "--type")
     sp.add_argument("--needs-owner", action="store_true")
     sp.add_argument("--mine", action="store_true", help="только мои (по --actor)")
-    sp.add_argument("--stale", action="store_true", help="только брошенные")
+    sp.add_argument("--stale", action="store_true",
+                    help="только брошенные (stale/abandoned), отбор до --limit; "
+                         "--status — только in_progress|review")
     sp.add_argument("-a", "--all", action="store_true", help="включая закрытые")
     sp.add_argument("-n", "--limit", type=int, default=60)
     sp.add_argument("--order", default="updated",

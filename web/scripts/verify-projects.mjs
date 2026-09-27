@@ -8,6 +8,11 @@
  * Добавление и правка живут в одном окне (listik-zmos): его открывают кнопкой
  * «Добавить репозиторий» и действием правки у строки — инлайновых форм в списке
  * больше нет, поэтому поля скрипт ищет внутри формы окна, а не в списке.
+ * Перед настоящим удалением DELETE проекта перехватывается через CDP `Fetch` и
+ * получает подменный ответ, до сервера эти ответы не доходят (listik-uq4f):
+ * ответ 409 открывает второй диалог «Удалить вместе с задачами?», а ответ 500 —
+ * и на первом запросе после 409, и на удалении с задачами — его не открывает и
+ * закрывает подтверждение, текст ошибки виден в алерте раздела.
  * Работает с живой страницей (dev или прод) и настоящим API Listik, поэтому
  * трогает базу: используйте временный каталог и slug вида `listik-check-*`.
  *
@@ -154,6 +159,92 @@ report.afterRestore = await evaluate(boardState)
 await send('Page.navigate', { url: settingsUrl })
 await sleep(4000)
 report.afterReload = await evaluate(boardState)
+
+// отказ удаления (listik-uq4f): DELETE проекта получает подменный ответ, до сервера не доходит
+const T409 = 'проверка listik-uq4f: у проекта есть задачи (409)'
+const T500 = 'проверка listik-uq4f: сбой сервера 500'
+const T500F = 'проверка listik-uq4f: сбой удаления с задачами 500'
+let stub = { code: 409, text: T409 }
+report.intercepted = []
+// обработчик — до `Fetch.enable`, иначе перехваченный запрос повиснет
+socket.addEventListener('message', (message) => {
+  const data = JSON.parse(message.data)
+  if (data.method !== 'Fetch.requestPaused') return
+  const { requestId, request } = data.params
+  let reply
+  if (request.method === 'DELETE') {
+    report.intercepted.push(`DELETE ${request.url} → ${stub.code}`)
+    reply = send('Fetch.fulfillRequest', {
+      requestId,
+      responseCode: stub.code,
+      responseHeaders: [{ name: 'Content-Type', value: 'application/json; charset=utf-8' }],
+      body: Buffer.from(JSON.stringify({ ok: false, error: stub.text })).toString('base64'),
+    })
+  } else {
+    reply = send('Fetch.continueRequest', { requestId })
+  }
+  reply.catch((error) => console.error(`перехват ${request.url}: ${error.message}`))
+})
+await send('Fetch.enable', { patterns: [{ urlPattern: `*/api/projects/${slug}*` }] })
+
+const openRemove = () => evaluate(`(() => {
+  const card = [...document.querySelectorAll('.ui-entity-card')]
+    .find((el) => el.querySelector('.ui-entity-card__title')?.textContent.trim() === ${JSON.stringify(slug)});
+  const btn = [...(card?.querySelectorAll('button') ?? [])].find((b) => (b.getAttribute('aria-label') || '').startsWith('Удалить проект'));
+  btn?.click();
+})()`)
+const clickButton = (label) => evaluate(
+  `[...document.querySelectorAll('button')].find((b) => b.textContent.trim() === ${JSON.stringify(label)})?.click()`,
+)
+/** Состояние раздела после шага; `alert` — есть ли в алерте раздела текст заглушки шага. */
+const removeState = (text) => evaluate(`(() => {
+  const dialogOpen = (needle) => [...document.querySelectorAll('[role=alertdialog], .ui-modal')].some((el) => el.textContent.includes(needle));
+  return {
+    forceShown: dialogOpen('Удалить вместе с задачами'),
+    confirmOpen: dialogOpen('Убрать репозиторий'),
+    alert: [...document.querySelectorAll('.listik-projects .ui-alert')].some((el) => el.textContent.includes(${JSON.stringify(text)})),
+    stillThere: [...document.querySelectorAll('.ui-entity-card__title')].some((el) => el.textContent.trim() === ${JSON.stringify(slug)}),
+  };
+})()`)
+
+// 1. 409 → второй диалог, «Оставить» закрывает его, проект на месте
+stub = { code: 409, text: T409 }
+await openRemove()
+await sleep(1200)
+await clickButton('Убрать')
+await sleep(2000)
+{
+  const { forceShown } = await removeState(T409)
+  report.remove409 = { forceShown }
+}
+await clickButton('Оставить')
+await sleep(1500)
+{
+  const { forceShown, stillThere } = await removeState(T409)
+  report.after409Keep = { forceShown, stillThere }
+}
+
+// 2. 500 сразу после попытки с 409: второй диалог не открывается, подтверждение закрыто
+stub = { code: 500, text: T500 }
+await openRemove()
+await sleep(1200)
+await clickButton('Убрать')
+await sleep(2000)
+report.remove500 = await removeState(T500)
+
+// 3. 409 → второй диалог, 500 на «Удалить с задачами» закрывает его
+stub = { code: 409, text: T409 }
+await openRemove()
+await sleep(1200)
+await clickButton('Убрать')
+await sleep(2000)
+const forceBefore = (await removeState(T409)).forceShown
+stub = { code: 500, text: T500F }
+await clickButton('Удалить с задачами')
+await sleep(2000)
+report.forceFail500 = { forceBefore, ...(await removeState(T500F)) }
+
+await send('Fetch.disable')
 
 // удалить: подтверждение → убрать
 await evaluate(`(() => {

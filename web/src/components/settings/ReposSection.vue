@@ -237,10 +237,15 @@ async function confirmRemove(force: boolean): Promise<void> {
   if (ok) {
     removeTarget.value = null
     forceOpen.value = false
-  } else {
-    // сервер объяснил, почему нельзя (409: у проекта есть задачи) —
-    // предлагаем осознанный второй шаг вместо молчаливой ошибки
+  } else if (store.projectRemoveConflict.value) {
+    // 409: у проекта есть задачи — предлагаем осознанный второй шаг,
+    // удалить их вместе с проектом
     forceOpen.value = true
+  } else {
+    // любой другой отказ (500, 404, 401, сеть) — закрываем оба диалога,
+    // текст ошибки показывает алерт раздела (`store.projectsError`)
+    removeTarget.value = null
+    forceOpen.value = false
   }
 }
 

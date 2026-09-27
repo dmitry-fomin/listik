@@ -157,6 +157,8 @@ const pending = ref<string | null>(null)
 const projects = ref<ProjectRow[]>([])
 const projectsLoading = ref(false)
 const projectsError = ref<string | null>(null)
+/** Последнее удаление проекта упало на `409`: у проекта есть задачи — раздел предлагает удалить их вместе с ним. */
+const projectRemoveConflict = ref(false)
 
 /**
  * Маршруты запуска (`GET /api/routes`, записи таблицы `routes` в базе): грузятся
@@ -1351,10 +1353,22 @@ async function setProjectArchived(slug: string, archived: boolean): Promise<bool
   return result !== null
 }
 
-/** Убрать репозиторий совсем. Задачи уносит только `force` — сервер иначе откажет. */
+/**
+ * Убрать репозиторий совсем. Задачи уносит только `force` — сервер иначе откажет.
+ * Ошибка — `false`, текст в `projectsError`; `409` (у проекта есть задачи)
+ * дополнительно отмечается в `projectRemoveConflict`.
+ */
 async function removeProject(slug: string, force = false): Promise<boolean> {
+  projectRemoveConflict.value = false
   const result = await projectAction(
-    () => api.removeProject(slug, force),
+    async () => {
+      try {
+        return await api.removeProject(slug, force)
+      } catch (error) {
+        projectRemoveConflict.value = error instanceof ApiError && error.status === 409
+        throw error
+      }
+    },
     () => Promise.all([loadProjects(), loadMeta(), loadBoard(), loadStats()]).then(() => undefined),
   )
   return result !== null
@@ -1454,6 +1468,7 @@ export function useListikStore() {
     projects,
     projectsLoading,
     projectsError,
+    projectRemoveConflict,
     routes,
     routesOk,
     routesError,

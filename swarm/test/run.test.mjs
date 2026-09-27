@@ -2406,14 +2406,28 @@ gitTest("rescope (и): dry-run — не зовётся", async () => {
   assert.equal(result.rescope, null);
 });
 
-test("projectsDue: открытые, вопрос и дерево закрытой; старый done мимо", () => {
+test("projectsDue: открытые и дерево закрытой; вопрос на закрытой и старый done мимо", () => {
   assert.deepEqual(projectsDue([
     {id: "a", project: "alpha", status: "open", launch_route: "r-a"},
     {id: "b", project: "beta", status: "done", needs_owner: true, launch_route: "r-b"},
     {id: "c", project: "gamma", status: "done", worktree: "/wt/c", launch_route: "r-c"},
     {id: "d", project: "delta", status: "done", worktree: "", launched_by: "listik", launch_route: "r-d"},
     {id: "e", project: "", status: "open", launch_route: "r-e"},
-  ], SWARM_ROUTES), ["alpha", "beta", "gamma"]);
+  ], SWARM_ROUTES), ["alpha", "gamma"]);
+});
+
+// listik-k3d6: needs_owner сам по себе проекта не даёт — только открытая карточка
+// или done с неснятым (непустым после trim) деревом.
+test("projectsDue: вопрос человеку не держит проект без открытой карточки или дерева", () => {
+  assert.deepEqual(projectsDue([
+    {id: "f", project: "p-open", status: "open", launch_route: "r-f"},
+    {id: "g", project: "p-progress-q", status: "in_progress", needs_owner: true, launch_route: "r-g"},
+    {id: "h", project: "p-done-q-tree", status: "done", needs_owner: true, worktree: "/wt/x", launch_route: "r-h"},
+    {id: "i", project: "p-done-q", status: "done", needs_owner: true, launch_route: "r-i"},
+    {id: "j", project: "p-cancelled-q", status: "cancelled", needs_owner: true, launch_route: "r-j"},
+    {id: "k", project: "p-cancelled-tree", status: "cancelled", worktree: "/wt/y", launch_route: "r-k"},
+    {id: "l", project: "p-done-blank", status: "done", worktree: "   ", launch_route: "r-l"},
+  ], SWARM_ROUTES), ["p-done-q-tree", "p-open", "p-progress-q"]);
 });
 
 test("main: без --project тикает каждый проект с работой и выходит по --once", async () => {

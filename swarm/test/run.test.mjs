@@ -5,6 +5,8 @@ import os from "node:os";
 import path from "node:path";
 import {fileURLToPath} from "node:url";
 import {execFileSync} from "node:child_process";
+import {EventEmitter} from "node:events";
+import {Writable} from "node:stream";
 import {Listik} from "../listik.mjs";
 import {tick} from "../run.mjs";
 import {open as openLog} from "../log.mjs";
@@ -752,7 +754,6 @@ test("надзор-тик: --dry-run на просроченной — ни revo
 // --- порция c: выход цикла (main.mjs) при needs_owner: true ---
 
 test("main: карточка needs_owner true с «рой: процесс задачи завершился…» — один show при выходе, «a — упала» в логе", async () => {
-  const {main} = await import("../main.mjs");
   const tasks = [task("a", {needs_owner: true})];
   const plan = {project: "proj", waves: [[]], cycles: [], unroutable: [], unscoped: [], blocked: {}};
   const responses = {
@@ -770,16 +771,9 @@ test("main: карточка needs_owner true с «рой: процесс зад
   };
   const {calls} = setupFake(responses);
   const logDir = fs.mkdtempSync(path.join(os.tmpdir(), "listik-swarm-log-"));
-  const chunks = [];
-  const origWrite = process.stdout.write.bind(process.stdout);
-  process.stdout.write = (chunk, ...rest) => { chunks.push(String(chunk)); return true; };
-  let code;
-  try {
-    code = await main(["--project", "proj", "--listik", FAKE_BIN, "--log-dir", logDir,
+  const {code, chunks} = await runMain(
+    ["--project", "proj", "--listik", FAKE_BIN, "--log-dir", logDir,
       "--interval", "1", "--exit-when-idle"]);
-  } finally {
-    process.stdout.write = origWrite;
-  }
   assert.equal(code, 2);
   assert.equal(calls().filter(c => c.sub === "show").length, 1);
   const logPath = chunks[0].trim();
@@ -1757,17 +1751,13 @@ function mainArgv(logDir, extra) {
     ...extra];
 }
 
-async function runMain(argv) {
+async function runMain(argv, opts = {}) {
   const {main} = await import("../main.mjs");
   const chunks = [];
-  const origWrite = process.stdout.write.bind(process.stdout);
-  process.stdout.write = (chunk, ...rest) => { chunks.push(String(chunk)); return true; };
-  let code;
-  try {
-    code = await main(argv);
-  } finally {
-    process.stdout.write = origWrite;
-  }
+  const out = new Writable({
+    write(chunk, enc, cb) { chunks.push(String(chunk)); cb(); },
+  });
+  const code = await main(argv, {out, ...opts});
   return {code, chunks};
 }
 
@@ -2791,17 +2781,19 @@ test("main: цикл четыре тика подряд — «циклы:» од
       routes: {stdout: JSON.stringify({ok: true, routes: SWARM_ROUTES})},
     });
     const logDir = fs.mkdtempSync(path.join(os.tmpdir(), "listik-swarm-cycles-"));
+    const signals = new EventEmitter();
     const stopper = setInterval(() => {
       let n = 0;
       try {
         n = calls().filter(c => c.sub === "waves").length;
       } catch { /* файла ещё нет */ }
-      if (n >= 6) process.emit("SIGINT");
+      if (n >= 6) signals.emit("SIGINT");
     }, 100);
     let code, chunks;
     try {
       ({code, chunks} = await runMain(
-        ["--project", "proj", "--listik", FAKE_BIN, "--log-dir", logDir, "--interval", "1"]));
+        ["--project", "proj", "--listik", FAKE_BIN, "--log-dir", logDir, "--interval", "1"],
+        {signals}));
     } finally {
       clearInterval(stopper);
     }

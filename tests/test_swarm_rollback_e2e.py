@@ -6,7 +6,9 @@
 (`max_freezes: 0`), либо после разморозки перезапускает (дефолт 2). Кто из пары
 владелец, тест не предполагает: замороженную находит по `рой: заморожена:`.
 
-Обвязка (`SwarmBarrierE2ECase`) не копируется и не меняется.
+Обвязка (`SwarmBarrierE2ECase`) не копируется и не меняется. Режим роя (listik-w7ge,
+порция f): каждый этап — отдельный запуск роли, `generation` +1 на запуск и +1 на
+`revoke` (заморозка — `revoke`).
 """
 from __future__ import annotations
 
@@ -22,35 +24,13 @@ from tests.test_swarm_barrier_e2e import (
     UNFROZEN_MARK,
     SwarmBarrierE2ECase,
 )
-from tests.test_swarm_e2e import LISTIK_BIN, _WORKER_SRC
 
 FREEZE_MARK = "рой: заморожена:"
 
-# Перед сном: если id задачи в `FAKE_SHARED_EARLY`, пишем `shared.txt` одной строкой
-# `<id>`. Дальше шаблон прежний — сон, `<id>.txt`, `git add -A` (подхватит и
-# `shared.txt`), commit, done. Новых `FAKE_*`, кроме `FAKE_SHARED_EARLY`, нет.
-_SLEEP_LINE = 'time.sleep(float(os.environ.get("FAKE_WORKER_SLEEP", "0") or "0"))'
-_ROLLBACK_WORKER_SRC = _WORKER_SRC.replace(
-    _SLEEP_LINE,
-    'early = [item.strip() for item in os.environ.get("FAKE_SHARED_EARLY", "").split(",") if item.strip()]\n'
-    'if task_id in early:\n'
-    '    with open("shared.txt", "w", encoding="utf-8") as fh:\n'
-    '        fh.write(task_id + "\\n")\n'
-    '\n'
-    + _SLEEP_LINE,
-    1,
-)
-assert _ROLLBACK_WORKER_SRC != _WORKER_SRC
-
 
 class RollbackLimitE2ETests(SwarmBarrierE2ECase):
-    """Парковка по пределу и штатный перезапуск после той же заморозки."""
-
-    def setUp(self) -> None:
-        super().setUp()
-        self.worker_py.write_text(
-            _ROLLBACK_WORKER_SRC.replace("__LISTIK_BIN__", str(LISTIK_BIN).replace("\\", "\\\\")),
-            encoding="utf-8")
+    """Парковка по пределу и штатный перезапуск после той же заморозки. Воркер —
+    унаследованный: `FAKE_SHARED_EARLY` у роли `impl` пишет `shared.txt` до сна."""
 
     def _log_messages(self, proc) -> list[str]:
         messages = []
@@ -118,7 +98,7 @@ class RollbackLimitE2ETests(SwarmBarrierE2ECase):
         row_f = self.row(frozen)
         self.assertIn(row_f["status"], ("open", "in_progress"), row_f["status"])
         self.assertEqual(row_f["needs_owner"], 1)
-        self.assertEqual(row_f["generation"], 2)
+        self.assertEqual(row_f["generation"], 4)  # spec, critic, impl, revoke заморозки
         labels = json.loads(row_f["labels"] or "[]")
         self.assertFalse(
             any(isinstance(label, str) and label.startswith("frozen-by:") for label in labels),
@@ -127,7 +107,8 @@ class RollbackLimitE2ETests(SwarmBarrierE2ECase):
         self.assertEqual(len(unfrozen), 1, unfrozen)
         self.assertIs(unfrozen[0]["rebased"], False, unfrozen[0])
         self.assertEqual(unfrozen[0]["conflicts"], ["shared.txt"], unfrozen[0])
-        self.assertEqual(len(self.journal_texts(frozen)), 1, self.journal_texts(frozen))
+        self.assertEqual(self.launch_stages(frozen), ["s1-spec", "s2-review", "s3-impl"],
+                         self.journal_texts(frozen))
         self.assertTrue(self._worktree(frozen).is_dir(), frozen)
 
         questions = self.question_texts(frozen)
@@ -156,7 +137,12 @@ class RollbackLimitE2ETests(SwarmBarrierE2ECase):
             f"откатов 1 (на откаты 0 мин), по пределу 1 ({frozen}), оставлено человеку 1",
             itog)
         self.assertIn(f"{frozen} — предел откатов", log_text)
-        self.assertEqual(sum(line.count(f"запуск {frozen}") for line in messages), 1, log_text)
+        # Три запуска (s1–s3), все — до парковки по пределу; после неё — ни одного.
+        launch_lines = [i for i, line in enumerate(messages) if f"запуск {frozen}" in line]
+        self.assertEqual(len(launch_lines), 3, log_text)
+        parked = next(i for i, line in enumerate(messages)
+                      if f"needs-owner {frozen}: freeze_limit" in line)
+        self.assertTrue(all(i < parked for i in launch_lines), log_text)
 
     def test_default_limit_relaunches_after_unfreeze(self):
         a = self.scenario_task("A", route="fake-low")
@@ -177,9 +163,11 @@ class RollbackLimitE2ETests(SwarmBarrierE2ECase):
         self.assertFalse(
             any("рой: предел откатов" in text for text in self.question_texts(frozen)),
             self.question_texts(frozen))
-        self.assertEqual(len(self.journal_texts(frozen)), 2, self.journal_texts(frozen))
+        journals = self.journal_texts(frozen)
+        self.assertEqual(len(journals), 5, journals)
+        self.assertEqual(self.launch_stages(frozen).count("s3-impl"), 2, journals)
         row_f = self.row(frozen)
-        self.assertEqual(row_f["generation"], 3)
+        self.assertEqual(row_f["generation"], 6)  # spec, critic, impl, revoke, impl, judge
         self.assertEqual(row_f["status"], "done")
         merged = self.marked_records(frozen, MERGED_MARK)
         self.assertEqual(len(merged), 1, merged)

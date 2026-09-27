@@ -56,7 +56,11 @@ _MISSING_TOOL = _missing_tool()
 # (зависание | падение при первом запуске `impl` карточки) | сон FAKE_WORKER_SLEEP ->
 # файл <id>.txt с портом -> git commit -> «готово». «Первый запуск» — по файлу-метке в
 # FAKE_MARK_DIR (вне дерева задачи: `git add -A` метку не закоммитит). Ошибка git --
-# вывод в stderr и выход 1.
+# вывод в stderr и выход 1. Флаги сценариев автономности/откатов (w7ge.f), только у `impl`:
+# FAKE_QUESTION_ONCE=1 — первый `impl` задаёт мягкий вопрос («по умолчанию: JSON») и
+# отвечает «вопрос»; FAKE_EMPTY_ONCE=1 — первый `impl` сдаёт «готово» без коммита;
+# FAKE_BAD_ONCE=1 — первый `impl` коммитит ещё и `bad.txt`, следующие его удаляют;
+# FAKE_SHARED_EARLY=<id,id> — до сна пишет `shared.txt` строкой `<id>`.
 _WORKER_SRC = r'''
 import os
 import subprocess
@@ -95,7 +99,29 @@ if first_impl and os.environ.get("FAKE_HANG_ONCE") == "1":
 if first_impl and os.environ.get("FAKE_CRASH_ONCE") == "1":
     sys.exit(1)
 
+if first_impl and os.environ.get("FAKE_QUESTION_ONCE") == "1":
+    print("Какой формат?")
+    print("по умолчанию: JSON")
+    print("вопрос")
+    sys.exit(0)
+
+if first_impl and os.environ.get("FAKE_EMPTY_ONCE") == "1":
+    print("готово")
+    sys.exit(0)
+
+early = [item.strip() for item in os.environ.get("FAKE_SHARED_EARLY", "").split(",")]
+if task_id in early:
+    with open("shared.txt", "w", encoding="utf-8") as fh:
+        fh.write(task_id + "\n")
+
 time.sleep(float(os.environ.get("FAKE_WORKER_SLEEP", "0") or "0"))
+
+if os.environ.get("FAKE_BAD_ONCE") == "1":
+    if first_impl:
+        with open("bad.txt", "w", encoding="utf-8") as fh:
+            fh.write("bad\n")
+    elif os.path.exists("bad.txt"):
+        os.remove("bad.txt")
 
 with open(task_id + ".txt", "w", encoding="utf-8") as fh:
     fh.write(port)

@@ -251,6 +251,13 @@ export async function tick(listik, config, log, runState = null) {
         gate = barrierResult.gate;
 
         if (!config.dryRun && barrierResult.rejected && barrierResult.rejected.length) {
+          // Переоткрытой карточки нет в плане начала тика (waves не включает закрытые).
+          try {
+            plan = await listik.waves(config.project, {apply: true});
+            logWavesApply(plan);
+          } catch (err) {
+            log.line(`waves после отклонения ошибка: ${errText(err)}`);
+          }
           try {
             const relist = await listik.list(config.project);
             allTasks = relist.tasks || [];

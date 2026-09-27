@@ -35,9 +35,6 @@ class SwarmAutonomyE2ECase(SwarmBarrierE2ECase):
 class RedVerifyReopensTests(SwarmAutonomyE2ECase):
     """Сценарий 1: красный верификатор переоткрывает, рой снова запускает и вливает."""
 
-    # Дефект боевого кода run.mjs: waves не перечитывается после отклонения барьером —
-    # listik-qf51; снять декоратор с правкой.
-    @unittest.expectedFailure
     def test_red_verify_reopens_relaunches_and_merges(self):
         a = self.scenario_task("A", route="fake-low")
         aid = a["id"]
@@ -102,9 +99,6 @@ class RedVerifyReopensTests(SwarmAutonomyE2ECase):
 class EmptyDiffRejectedTests(SwarmAutonomyE2ECase):
     """Сценарий 2: пустой дифф отклоняется, следующий запуск `impl` вливается."""
 
-    # Дефект боевого кода run.mjs: waves не перечитывается после отклонения барьером —
-    # listik-qf51; снять декоратор с правкой.
-    @unittest.expectedFailure
     def test_empty_diff_rejected_then_fixed(self):
         a = self.scenario_task("A", route="fake-low")
         aid = a["id"]

@@ -44,9 +44,7 @@ from collections.abc import Iterable
 from . import actors as actors_mod
 from . import errors as errors_mod
 from . import util
-
-OPEN_STATUSES = ("open", "in_progress", "blocked", "review")
-FINAL_STATUSES = ("done", "cancelled")
+from .statuses import FINAL_STATUSES, OPEN_STATUSES, OPEN_STATUSES_SQL
 
 # Типы связей, которые физически запрещают начинать/закрывать задачу
 HARD_BLOCKERS = ("blocks", "blocked-by", "waits-for", "conditional-blocks", "resource-blocks")
@@ -301,7 +299,7 @@ def worktree_conflict(conn: sqlite3.Connection, row: sqlite3.Row,
     candidates = _fetch(
         conn,
         "SELECT * FROM tasks WHERE coalesce(project,'') = ? AND id != ? AND archived = 0 "
-        "AND status IN ('open','in_progress','review','blocked') "
+        f"AND status IN ({OPEN_STATUSES_SQL}) "
         "AND holder IS NOT NULL AND holder != '' "
         "AND coalesce(stage,'') IN ('', 's3-impl', 's4-judge') ORDER BY id",
         (project, row["id"]),
@@ -427,6 +425,14 @@ def not_epic_with_children_sql(alias: str = "") -> str:
             "AND ed.dep_type IN ('parent-child','parent')))")
 
 
+#: «Можно брать» — открытый набор без `blocked`. Статус `blocked` ставят руками задаче,
+#: которая стоит: `claim` её не запрещает, но в «можно брать» она не выводится, хотя
+#: остальные выборки открытых задач её включают. Набор общий для `ready_tasks` и
+#: `store.list_tasks(deps="ready")`.
+CLAIMABLE_STATUSES = tuple(s for s in OPEN_STATUSES if s != "blocked")
+CLAIMABLE_STATUSES_SQL = ", ".join(f"'{s}'" for s in CLAIMABLE_STATUSES)
+
+
 def ready_tasks(conn: sqlite3.Connection, *, project: str | None = None,
                 stage: str | None = None,
                 include_occupied: bool = False,
@@ -441,7 +447,7 @@ def ready_tasks(conn: sqlite3.Connection, *, project: str | None = None,
     from . import store
     expire_return_handoffs(conn)
     rule, params = _open_hard_sql("bd", "bt")
-    where = ["t.archived = 0", "t.status IN ('open','in_progress','review')",
+    where = ["t.archived = 0", f"t.status IN ({CLAIMABLE_STATUSES_SQL})",
              not_epic_with_children_sql("t"),
              "NOT EXISTS (SELECT 1 FROM deps bd LEFT JOIN tasks bt ON bt.id = bd.depends_on "
              f"WHERE bd.issue_id = t.id AND {rule})"]
@@ -474,7 +480,7 @@ def blocked_tasks(conn: sqlite3.Connection, *, project: str | None = None,
                   limit: int = 100) -> list[dict]:
     """Задачи, которые стоят из-за других задач, с объяснением — из-за кого."""
     from . import store
-    where = ["t.archived = 0", "t.status IN ('open','in_progress','review','blocked')"]
+    where = ["t.archived = 0", f"t.status IN ({OPEN_STATUSES_SQL})"]
     params: list = []
     if project:
         where.append("t.project = ?")

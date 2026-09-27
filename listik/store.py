@@ -25,9 +25,8 @@ from . import routes as routes_mod
 from . import scope as scope_mod
 from . import store_helpers
 from . import textutil
+from .statuses import FINAL_STATUSES, OPEN_STATUSES, OPEN_STATUSES_SQL
 
-OPEN_STATUSES = ("open", "in_progress", "blocked", "review")
-FINAL_STATUSES = ("done", "cancelled")
 PIPELINE_STAGES = ("s1-spec", "s2-review", "s3-impl", "s4-judge")
 #: Сколько часов предложенная связь (`suggested-blocks`) ждёт без замечания `listik lint`.
 LINT_SUGGESTED_HOURS = 24.0
@@ -2052,7 +2051,7 @@ def list_tasks(conn: sqlite3.Connection, *, project: str | None = None, status: 
         where.append("status = ?")
         params.append(status)
     elif not include_closed:
-        where.append("status IN ('open','in_progress','blocked','review')")
+        where.append(f"status IN ({OPEN_STATUSES_SQL})")
     if stage:
         where.append("stage = ?")
         params.append(stage)
@@ -2071,9 +2070,9 @@ def list_tasks(conn: sqlite3.Connection, *, project: str | None = None, status: 
         where.append("coalesce(blocked_by, '[]') NOT IN ('', '[]')")
     elif deps == "ready":
         # «Можно брать» — повторяет `deps.ready_tasks` (там же ленивое истечение окна
-        # возврата); менять вместе.
+        # возврата); менять вместе. Набор статусов общий — `deps.CLAIMABLE_STATUSES`.
         deps_mod.expire_return_handoffs(conn)
-        where.append("status IN ('open','in_progress','review')")
+        where.append(f"status IN ({deps_mod.CLAIMABLE_STATUSES_SQL})")
         where.append("(holder IS NULL OR holder = '')")
         where.append("coalesce(blocked_by, '[]') IN ('', '[]')")
         where.append(deps_mod.not_epic_with_children_sql("tasks"))
@@ -2171,7 +2170,7 @@ def board(conn: sqlite3.Connection, *, group_by: str = "status", project: str | 
         where.append("project = ?")
         params.append(project)
     if not include_closed:
-        where.append("status IN ('open','in_progress','blocked','review')")
+        where.append(f"status IN ({OPEN_STATUSES_SQL})")
     where.append("archived = 0")
     sql_where = "WHERE " + " AND ".join(where)
     rows = conn.execute(
@@ -2287,20 +2286,20 @@ def stats(conn: sqlite3.Connection, project: str | None = None) -> dict:
         f"SELECT status, count(*) n FROM tasks {where} GROUP BY status", params)}
     by_stage = {r["stage"] or "none": r["n"] for r in conn.execute(
         f"SELECT stage, count(*) n FROM tasks {where} AND status IN "
-        "('open','in_progress','blocked','review') GROUP BY stage", params)}
+        f"({OPEN_STATUSES_SQL}) GROUP BY stage", params)}
     by_project_rows = list(conn.execute(
         f"SELECT coalesce(project,'—') project, count(*) n, "
         f"sum(CASE WHEN status='in_progress' THEN 1 ELSE 0 END) wip, "
         f"sum(CASE WHEN needs_owner=1 THEN 1 ELSE 0 END) waiting "
-        f"FROM tasks {where} AND status IN ('open','in_progress','blocked','review') "
+        f"FROM tasks {where} AND status IN ({OPEN_STATUSES_SQL}) "
         "GROUP BY project ORDER BY n DESC", params))
     by_holder = list(conn.execute(
         f"SELECT coalesce(holder,'—') holder, count(*) n FROM tasks {where} AND "
-        "status IN ('open','in_progress','blocked','review') GROUP BY holder ORDER BY n DESC",
+        f"status IN ({OPEN_STATUSES_SQL}) GROUP BY holder ORDER BY n DESC",
         params))
     by_orchestrator = list(conn.execute(
         f"SELECT coalesce(orchestrator,'—') orchestrator, count(*) n FROM tasks {where} AND "
-        "status IN ('open','in_progress','blocked','review') GROUP BY orchestrator ORDER BY n DESC",
+        f"status IN ({OPEN_STATUSES_SQL}) GROUP BY orchestrator ORDER BY n DESC",
         params))
     stale = conn.execute(
         f"SELECT count(*) FROM tasks {where} AND status IN ('in_progress','review') "
@@ -2451,7 +2450,7 @@ def list_projects(conn: sqlite3.Connection, include_archived: bool = False) -> l
         f"""SELECT p.*,
               (SELECT count(*) FROM tasks t WHERE t.project = p.slug AND t.archived = 0) n_tasks,
               (SELECT count(*) FROM tasks t WHERE t.project = p.slug AND t.archived = 0
-                 AND t.status IN ('open','in_progress','blocked','review')) n_open,
+                 AND t.status IN ({OPEN_STATUSES_SQL})) n_open,
               (SELECT count(*) FROM tasks t WHERE t.project = p.slug AND t.archived = 0
                  AND t.status = 'in_progress') n_wip
             FROM projects p {where} ORDER BY n_open DESC, p.slug""").fetchall()
@@ -2639,10 +2638,10 @@ def remove_project(conn: sqlite3.Connection, slug: str, *, force: bool = False) 
 
 def list_actors(conn: sqlite3.Connection) -> list[dict]:
     rows = conn.execute(
-        """SELECT a.*, (SELECT count(*) FROM tasks t WHERE t.orchestrator = a.key
-                        AND t.status IN ('open','in_progress','blocked','review')) n_tasks,
+        f"""SELECT a.*, (SELECT count(*) FROM tasks t WHERE t.orchestrator = a.key
+                        AND t.status IN ({OPEN_STATUSES_SQL})) n_tasks,
                          (SELECT count(*) FROM tasks t WHERE t.holder = a.key
-                        AND t.status IN ('open','in_progress','blocked','review')) n_held
+                        AND t.status IN ({OPEN_STATUSES_SQL})) n_held
            FROM actors a ORDER BY n_tasks DESC""").fetchall()
     return store_helpers.dict_rows(rows)
 

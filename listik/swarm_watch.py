@@ -19,6 +19,7 @@ from datetime import datetime, timezone
 from . import errors
 from . import scope as scope_mod
 from . import worktree
+from .statuses import OPEN_STATUSES
 
 #: Маркер «работа в основной ветке» — своя копия `store.MAIN_WORKTREE_MARKERS`:
 #: этот модуль не импортирует `store` (см. докстрингу модуля), поэтому набор
@@ -48,11 +49,6 @@ FREEZE_NOTE = "рой: заморожена — пробное слияние с
 #: Актор всех записей заморозки — решение машинное, не подписывается человеком:
 #: `--actor`/`LISTIK_OWNER` его не подменяют (см. `_SwarmCards` в `bin/listik`).
 SWARM_ACTOR = "agent:listik-swarm"
-
-#: Открытые статусы — своя копия `store.OPEN_STATUSES`: этот модуль `store` не
-#: импортирует (см. докстрингу модуля и `MAIN_MARKERS` выше). Наборы обязаны
-#: совпадать — правка одного требует правки другого.
-OPEN_STATUSES = ("open", "in_progress", "blocked", "review")
 
 #: Автор/дата снимка — фиксированные, чтобы `snapshot` неизменного грязного
 #: дерева был детерминированным (см. `snapshot`).

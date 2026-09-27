@@ -8,6 +8,7 @@ import sqlite3
 from . import deps as deps_mod
 from . import errors as errors_mod
 from . import paths, search, store, textutil, util
+from .statuses import FINAL_STATUSES
 
 MAX_CHARS = 6000
 OVERLAP = 240
@@ -485,9 +486,9 @@ def refresh_all(conn: sqlite3.Connection) -> dict:
     """
     checked = reindexed = missing = 0
     task_ids = [r["id"] for r in conn.execute(
-        """
+        f"""
         SELECT id FROM tasks
-        WHERE status NOT IN ('done','cancelled','closed')
+        WHERE status NOT IN ({','.join('?' * len(FINAL_STATUSES))})
           AND (
                 (spec_path IS NOT NULL AND spec_path != '') OR
                 (checklist_path IS NOT NULL AND checklist_path != '') OR
@@ -495,7 +496,7 @@ def refresh_all(conn: sqlite3.Connection) -> dict:
                 (decision_path IS NOT NULL AND decision_path != '') OR
                 (journal_path IS NOT NULL AND journal_path != '')
               )
-        """
+        """, FINAL_STATUSES
     ).fetchall()]
     for task_id in task_ids:
         checked += 1

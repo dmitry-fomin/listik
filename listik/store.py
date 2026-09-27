@@ -2037,17 +2037,50 @@ def _check_date(name: str, value: str | None) -> None:
             f"{name}: нужна существующая дата ГГГГ-ММ-ДД, получено {value!r}") from None
 
 
+# Поля `sort` списка: (ключ SQL, условие «пусто» или None, обратный ли ключ). Значения `sort`
+# и `dir` в SQL не попадают — по ним выбирается готовое выражение отсюда. Часы у
+# `holder_hours`/`stage_hours` растут, когда метка убывает, поэтому ключ обратный.
+# Пустые ключи сведены к NULL: среди них решает только `updated_at DESC, id`.
+LIST_SORTS = {
+    "id": ("id", None, False),
+    "title": ("title COLLATE NOCASE", None, False),
+    "project": ("nullif(project, '')", "coalesce(project, '') = ''", False),
+    "status_title": ("CASE status " + " ".join(
+        f"WHEN '{code}' THEN '{title}'" for code, title in STATUS_TITLES.items())
+        + " ELSE status END", None, False),
+    "priority": ("priority", None, False),
+    "holder_hours": ("nullif(holder_at, '')", "coalesce(holder_at, '') = ''", True),
+    "stage_hours": ("nullif(stage_at, '')", "coalesce(stage_at, '') = ''", True),
+    "updated_at": ("updated_at", None, False),
+    "blocked_count": ("json_array_length(coalesce(nullif(blocked_by, ''), '[]'))", None, False),
+    "waiting_for_count": ("waiting_for_count", None, False),
+}
+
+
+def _waiting_for_count_sql() -> tuple[str, list]:
+    # Повторяет `len(deps.waiting_for(...))`: незакрытые жёсткие рёбра на задачу, ждущая не закрыта.
+    rule, params = deps_mod._open_hard_sql("wd", "tasks")
+    final = ",".join("?" * len(FINAL_STATUSES))
+    return (f"(SELECT count(*) FROM deps wd LEFT JOIN tasks ww ON ww.id = wd.issue_id "
+            f"WHERE wd.depends_on = tasks.id AND {rule} "
+            f"AND coalesce(ww.status, 'missing') NOT IN ({final})) AS waiting_for_count",
+            [*params, *FINAL_STATUSES])
+
+
 def list_tasks(conn: sqlite3.Connection, *, project: str | None = None, status: str | None = None,
                stage: str | None = None, orchestrator: str | None = None, holder: str | None = None,
                needs_owner: bool = False, issue_type: str | None = None, label: str | None = None,
                text: str | None = None, include_closed: bool = False, include_archived: bool = False,
                limit: int = 200, offset: int = 0, order: str = "updated",
                as_owner: str | None = None, deps: str | None = None, health: str | None = None,
-               updated_from: str | None = None, updated_to: str | None = None) -> dict:
+               updated_from: str | None = None, updated_to: str | None = None,
+               sort: str | None = None, sort_dir: str | None = None) -> dict:
     _check_choice("deps", deps, ("all", "ready", "blocked"))
     _check_choice("health", health, ("dead", "at-risk"))
     _check_date("updated_from", updated_from)
     _check_date("updated_to", updated_to)
+    _check_choice("sort", sort, tuple(LIST_SORTS))
+    _check_choice("dir", sort_dir, ("asc", "desc"))
     where, params = [], []
     owner_cfg = server_cfg()
     if owner_cfg is not None:
@@ -2119,21 +2152,32 @@ def list_tasks(conn: sqlite3.Connection, *, project: str | None = None, status: 
         "priority": "priority ASC, updated_at DESC",
         "stage": "stage_at ASC",
     }.get(order, "updated_at DESC")
+    if sort:
+        key, empty, reverse = LIST_SORTS[sort]
+        direction = "DESC" if (sort_dir == "desc") != reverse else "ASC"
+        order_sql = ", ".join(([f"{empty} ASC"] if empty else [])
+                              + [f"{key} {direction}", "updated_at DESC", "id ASC"])
+    # Параметры выражения в списке SELECT связываются раньше параметров WHERE.
+    wf_sql, wf_params = _waiting_for_count_sql()
+
+    def to_task(r: sqlite3.Row) -> dict:
+        return {**row_to_task(conn, r), "waiting_for_count": r["waiting_for_count"]}
+
     if health:
         # ponytail: row_to_task по всей выборке — O(n) запросов, терпимо при сотнях
         # открытых задач; больше — хранить здоровье в колонке.
-        rows = conn.execute(f"SELECT * FROM tasks {sql_where} ORDER BY {order_sql}",
-                            params).fetchall()
-        matched = [t for t in (row_to_task(conn, r) for r in rows) if task_health(t) == health]
+        rows = conn.execute(f"SELECT *, {wf_sql} FROM tasks {sql_where} ORDER BY {order_sql}",
+                            [*wf_params, *params]).fetchall()
+        matched = [t for t in (to_task(r) for r in rows) if task_health(t) == health]
         return {"total": len(matched), "limit": limit, "offset": offset,
                 "tasks": matched[offset:offset + limit]}
     total = conn.execute(f"SELECT count(*) FROM tasks {sql_where}", params).fetchone()[0]
     rows = conn.execute(
-        f"SELECT * FROM tasks {sql_where} ORDER BY {order_sql} LIMIT ? OFFSET ?",
-        [*params, limit, offset],
+        f"SELECT *, {wf_sql} FROM tasks {sql_where} ORDER BY {order_sql} LIMIT ? OFFSET ?",
+        [*wf_params, *params, limit, offset],
     ).fetchall()
     return {"total": total, "limit": limit, "offset": offset,
-            "tasks": [row_to_task(conn, r) for r in rows]}
+            "tasks": [to_task(r) for r in rows]}
 
 
 def task_timeline(conn: sqlite3.Connection, limit: int = 100, *,

@@ -490,7 +490,9 @@ def blocked_tasks(conn: sqlite3.Connection, *, project: str | None = None,
                   limit: int = 100) -> list[dict]:
     """Задачи, которые стоят из-за других задач, с объяснением — из-за кого.
 
-    `limit=0` — без ограничения.
+    `limit` ≤ 0 (ноль или отрицательное) — без ограничения. Срез по `limit` — после
+    сортировки: сначала задачи, у которых все блокеры стоят (`blocked_by_stale`), дальше
+    по `priority`.
     """
     from . import store
     where = ["t.archived = 0", f"t.status IN ({OPEN_STATUSES_SQL})"]
@@ -517,10 +519,8 @@ def blocked_tasks(conn: sqlite3.Connection, *, project: str | None = None,
         task["blocked_by_stale"] = task["blockers_idle"]
         task["blocked_by_holder"] = next((b["holder_title"] for b in info if b["holder"]), None)
         out.append(task)
-        if limit and len(out) >= limit:
-            break
     out.sort(key=lambda t: (not t["blocked_by_stale"], t["priority"]))
-    return out
+    return out[:limit] if limit > 0 else out
 
 
 def graph(conn: sqlite3.Connection, task_id: str, depth: int = 3) -> dict:

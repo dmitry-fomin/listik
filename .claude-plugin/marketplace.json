@@ -10,30 +10,30 @@
       "name": "listik",
       "source": "./plugins/listik",
       "description": "Работа с задачами в Listik: очередь, этапы конвейера, heartbeat, зависимости, вопросы человеку и журнал.",
-      "version": "0.9.1"
+      "version": "0.9.2"
     },
     {
       "name": "feature-pipeline",
       "source": "./plugins/feature-pipeline",
-      "version": "0.18.0",
+      "version": "0.18.1",
       "description": "Конвейер ТЗ → критика → реализация → приёмка: скилы-пресеты, которые ведут задачу через четыре этапа силами субагентов и внешних агентных харнессов."
     },
     {
       "name": "dsh",
       "source": "./plugins/dsh",
-      "version": "0.6.0",
+      "version": "0.6.1",
       "description": "Отдать задачу DeepSeek Harness (dsh) из Claude Code: второй агент сам ходит по коду, по умолчанию только читает."
     },
     {
       "name": "codex",
       "source": "./plugins/codex",
-      "version": "0.2.0",
+      "version": "0.2.1",
       "description": "Отдать задачу OpenAI Codex CLI из Claude Code: второй агент сам ходит по коду, по умолчанию только читает."
     },
     {
       "name": "opencode",
       "source": "./plugins/opencode",
-      "version": "0.1.0",
+      "version": "0.1.1",
       "description": "Мост в opencode CLI: делегирование задач в GLM 5.3 Flash и DeepSeek v4.1 Flash с фоновыми задачами и продолжением сессии"
     },
     {
@@ -45,13 +45,13 @@
     {
       "name": "devin",
       "source": "./plugins/devin",
-      "version": "0.1.0",
+      "version": "0.1.1",
       "description": "Мост в терминальный агент devin (Cognition): делегирование задач в SWE-2 с фоновыми задачами, уровнями усилия и продолжением сессии"
     },
     {
       "name": "second-opinion",
       "source": "./plugins/second-opinion",
-      "version": "0.4.0",
+      "version": "0.4.1",
       "description": "Проверить гипотезу у независимой LLM — DeepSeek, Gemini, GPT, Grok или любая модель на OpenRouter."
     }
   ]

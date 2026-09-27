@@ -2123,24 +2123,15 @@ def board(conn: sqlite3.Connection, *, group_by: str = "status", project: str | 
     # Что можно взять прямо сейчас: без незакрытых блокеров и без держателя.
     # Считается по графу зависимостей, поэтому ограничено сверху.
     ready_list: list[dict] = []
-    blocked_count = 0
     if ready_limit:
         try:
             ready_list = deps_mod.ready_tasks(conn, project=project, limit=ready_limit,
                                               as_owner=as_owner)
         except Exception:  # noqa: BLE001 — доска не должна падать из-за графа
             ready_list = []
-    try:
-        statuses = {t["id"]: t["status"] for t in tasks}
-        blocked_ids = set()
-        for r in conn.execute(
-                "SELECT issue_id, depends_on FROM deps WHERE dep_type IN "
-                "('blocks','blocked-by','waits-for','conditional-blocks')"):
-            if statuses.get(r["depends_on"], "open") not in FINAL_STATUSES:
-                blocked_ids.add(r["issue_id"])
-        blocked_count = len(blocked_ids & set(statuses))
-    except Exception:  # noqa: BLE001
-        blocked_count = 0
+    # Правило то же, что у /api/blocked: незакрытая карточка с незакрытым жёстким
+    # блокером; считается по денормализованному blocked_by.
+    blocked_count = sum(1 for t in tasks if t["blocked_by"] and t["status"] in OPEN_STATUSES)
 
     return {
         "group_by": group_by,

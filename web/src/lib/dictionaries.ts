@@ -213,6 +213,7 @@ export const LINK_TYPES: LinkTypeItem[] = [
   { value: 'blocks', label: 'блокирует', icon: 'lock' },
   { value: 'blocked-by', label: 'заблокирована', icon: 'lock' },
   { value: 'waits-for', label: 'ждёт', icon: 'clock' },
+  { value: 'conditional-blocks', label: 'блокирует условно', icon: 'lock' },
   { value: 'parent-child', label: 'родитель', icon: 'branch' },
   { value: 'parent', label: 'родитель', icon: 'branch' },
   { value: 'relates-to', label: 'связана', icon: 'link' },
@@ -222,6 +223,7 @@ export const LINK_TYPES: LinkTypeItem[] = [
   { value: 'supersedes', label: 'заменяет', icon: 'refresh' },
   { value: 'replies-to', label: 'ответ на', icon: 'timeline' },
   { value: 'suggested-blocks', label: 'предложенный блокер', icon: 'warning' },
+  { value: 'resource-blocks', label: 'ресурсный блокер', icon: 'lock' },
 ]
 
 /** Незнакомый тип: подпись равна самому ключу, иконка — звено цепи. */

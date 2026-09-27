@@ -15,9 +15,11 @@ import sys
 import unittest
 from unittest import mock
 
+from listik import db as db_mod
 from listik import deps as deps_mod
 from listik import store
 from tests.helpers import TempDbTestCase
+from tests.test_owner_http import LOCAL_CONFIG, OwnerHttpCase
 
 LISTIK_BIN = pathlib.Path(__file__).resolve().parent.parent / "bin" / "listik"
 
@@ -360,6 +362,137 @@ class FetchPropagatesErrorsTests(TempDbTestCase):
     def test_missing_table_raises(self) -> None:
         with self.assertRaises(sqlite3.OperationalError):
             deps_mod._fetch(self.conn, "SELECT * FROM no_such_table")
+
+
+class DanglingDepsTests(TempDbTestCase):
+    """Висячая строка deps (задачи нет в tasks) не роняет ready/claim/blocked (listik-my65)."""
+
+    def _new(self, title: str) -> str:
+        return store.create_task(self.conn, title=title, project="demo")["id"]
+
+    def _drop(self, task_id: str) -> None:
+        self.conn.execute("DELETE FROM tasks WHERE id = ?", (task_id,))
+        self.conn.commit()
+
+    def _events(self, task_id: str, kind: str) -> list:
+        return self.conn.execute("SELECT * FROM events WHERE task_id = ? AND kind = ? ORDER BY id",
+                                 (task_id, kind)).fetchall()
+
+    def _dangling_blocker(self) -> tuple[str, str]:
+        a, b = self._new("A"), self._new("B")
+        store.add_dep(self.conn, a, b, "blocks", created_by="me", confirm=True)
+        self._drop(b)
+        return a, b
+
+    def test_s1_ready_reports_missing_blocker(self) -> None:
+        a, b = self._dangling_blocker()
+        state = deps_mod.ready(self.conn, a)
+        self.assertIs(state["ready"], False)
+        self.assertIs(state["claimable"], False)
+        self.assertEqual(state["verdict"], "нельзя: ждёт другие задачи")
+        self.assertEqual(len(state["blocked_by"]), 1)
+        blocker = state["blocked_by"][0]
+        self.assertEqual(blocker["id"], b)
+        self.assertIs(blocker["missing"], True)
+        self.assertEqual(blocker["status"], "missing")
+        self.assertIsNone(blocker["holder"])
+        self.assertIsNone(blocker["holder_title"])
+        self.assertEqual(blocker["idle_age"], "—")
+        self.assertIs(blocker["stale"], False)
+        self.assertNotIn("holder_age", blocker)
+        self.assertIn(f"ждёт завершения: {b} (missing, —)", state["reasons"])
+
+    def test_s2_claim_refuses_without_writing(self) -> None:
+        a, b = self._dangling_blocker()
+        with self.assertRaises(ValueError) as ctx:
+            store.claim(self.conn, a, holder="dsh")
+        text = str(ctx.exception)
+        for part in (b, "(задача не найдена)", "Варианты", "--force"):
+            self.assertIn(part, text)
+        self.assertNotIn("держит", text)
+        task = store.get_task(self.conn, a)
+        self.assertFalse(task["holder"])
+        self.assertEqual(task["status"], "open")
+        self.assertEqual(self._events(a, "claim"), [])
+
+    def test_s3_force_claim_leaves_note(self) -> None:
+        a, b = self._dangling_blocker()
+        task = store.claim(self.conn, a, holder="dsh", force=True)
+        self.assertEqual(task["holder"], "dsh")
+        notes = [e["note"] or "" for e in self._events(a, "note")]
+        self.assertTrue(any("ЗАПУСК БЕЗ РАЗРЕШЕНИЯ БЛОКЕРОВ" in n and b in n for n in notes), notes)
+
+    def test_s4_blocked_tasks_lists_task(self) -> None:
+        a, b = self._dangling_blocker()
+        tasks = {t["id"]: t for t in deps_mod.blocked_tasks(self.conn, project="demo")}
+        self.assertIn(a, tasks)
+        task = tasks[a]
+        self.assertEqual([x["id"] for x in task["blockers"]], [b])
+        self.assertEqual(task["blocked_by"], [b])
+        self.assertIs(task["blockers_idle"], True)
+        self.assertIsNone(task["blocked_by_holder"])
+
+    def test_s5_get_task_has_deps_state(self) -> None:
+        a, b = self._dangling_blocker()
+        state = store.get_task(self.conn, a)["deps_state"]
+        self.assertIsNotNone(state)
+        self.assertIs(state["claimable"], False)
+        self.assertEqual(state["blocked_by"][0]["id"], b)
+
+    def test_s6_epic_with_only_dangling_child(self) -> None:
+        p, c = self._new("P"), self._new("C")
+        store.add_dep(self.conn, c, p, "parent-child", created_by="me")
+        self._drop(c)
+        self.assertEqual(deps_mod.children(self.conn, p), [])
+        state = deps_mod.ready(self.conn, p)
+        self.assertEqual(state["children_open"], [])
+        self.assertIs(state["can_finish"], True)
+        self.assertEqual(store.claim(self.conn, p, holder="dsh")["holder"], "dsh")
+
+    def test_s7_live_children_kept_in_deps_order(self) -> None:
+        # Карточки создаются в одном порядке, связи — в другом: порядок детей — по строкам deps.
+        p = self._new("P")
+        d = self._new("D")
+        c2 = self._new("C2")
+        x = self._new("X")
+        c1 = self._new("C1")
+        for child in (c1, x, c2, d):
+            store.add_dep(self.conn, child, p, "parent-child", created_by="me")
+        store.update_task(self.conn, d, status="done")
+        self._drop(x)
+        self.assertEqual([c["id"] for c in deps_mod.children(self.conn, p)], [c1, c2, d])
+        state = deps_mod.ready(self.conn, p)
+        self.assertEqual([c["id"] for c in state["children_open"]], [c1, c2])
+        self.assertIs(state["can_finish"], False)
+
+
+class DanglingDepsHttpTests(OwnerHttpCase):
+    """Сценарий 8 listik-my65: висячий блокер через живой сервер — отказ 400, а не 500."""
+
+    config_text = LOCAL_CONFIG
+
+    def test_s8_http_endpoints_survive_missing_blocker(self) -> None:
+        a = self.make_task(title="A")["id"]
+        b = self.make_task(title="B")["id"]
+        conn = db_mod.connect(self.db_path)
+        self.addCleanup(conn.close)
+        store.add_dep(conn, a, b, "blocks", created_by="me", confirm=True)
+        conn.execute("DELETE FROM tasks WHERE id = ?", (b,))
+        conn.commit()
+
+        status, payload = self.api("POST", f"/api/tasks/{a}/claim", body={"holder": "agent:dsh"})
+        self.assertEqual(status, 400, payload)
+        self.assertEqual(payload["code"], "conflict")
+        self.assertIn(b, payload["hint"])
+
+        data = self.data(*self.api("POST", f"/api/tasks/{a}/ready", body={}))
+        self.assertIs(data["claimable"], False)
+
+        data = self.data(*self.api("GET", "/api/blocked"))
+        self.assertIn(a, [t["id"] for t in data["tasks"]])
+
+        data = self.data(*self.api("GET", f"/api/tasks/{a}"))
+        self.assertIs(data["deps_state"]["claimable"], False)
 
 
 if __name__ == "__main__":

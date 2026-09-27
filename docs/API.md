@@ -2035,9 +2035,9 @@ stage/status/holder/needs_owner/route) — доска узнаёт из `publish
 | `can_finish` | можно ли закрывать: все дети эпика закрыты |
 | `verdict` | готовая строка: «можно брать» / «занята другим» / «нельзя: ждёт другие задачи» / «уже завершена» |
 | `reasons[]` | почему нельзя, человеческими словами |
-| `blocked_by[]` | незакрытые жёсткие блокеры: `id, title, status, holder_title, holder_age, idle_age, stale, missing, dep_title` |
+| `blocked_by[]` | незакрытые жёсткие блокеры: `id, title, status, holder_title, holder_age, idle_age, stale, missing, dep_title`; отсутствующий блокер (задача удалена, строка `deps` осталась) остаётся в списке и блокирует: `missing: true`, `status: "missing"`, `title` «(задача не найдена)», `holder` и `holder_title` — `null`, `idle_age` — «—», `stale: false`, полей `holder_age` и `dep_title` нет |
 | `waiting_for[]` | незакрытые задачи, которые ждут эту задачу жёсткой связью; у закрытой задачи список пуст — её закрытие уже отпустило ждущих |
-| `children_open[]` | незакрытые дети (для эпика); все дети, включая закрытых, — в `children[]` карточки (`show`/`context`) |
+| `children_open[]` | незакрытые дети (для эпика); все дети, включая закрытых, — в `children[]` карточки (`show`/`context`); висячая строка `deps` без задачи-ребёнка ребёнком не считается |
 | `parent` | родитель, если есть |
 | `soft_links[]` | мягкие связи с типом |
 | `worktree_busy` | `null`, или (если дерево этой задачи занято другой пишущей задачей) `{id, title, holder, holder_title, holder_age, stale, worktree}` (последнее — сырое значение `worktree` занявшей задачи); дерево сравнивается по каноническому ключу, см. «Работа в основной ветке: `worktree=main`». На `ready`/`claimable` не влияет, но добавляет строку в `reasons` |

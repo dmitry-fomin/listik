@@ -148,8 +148,10 @@ def _info(conn: sqlite3.Connection, task_id: str, dep_type: str) -> dict:
     from . import store  # локальный импорт: store сам зовёт deps.*
     row = _tasks_by_id(conn, [task_id]).get(task_id)
     if row is None:
+        # Без holder_age: по его отсутствию сортировка blockers() ставит пропавший блокер последним.
         return {"id": task_id, "dep_type": dep_type, "missing": True,
-                "title": "(задача не найдена)", "status": "missing"}
+                "title": "(задача не найдена)", "status": "missing",
+                "holder": None, "holder_title": None, "idle_age": "—", "stale": False}
     task = store.row_to_task(conn, row)
     return {
         "id": task_id,
@@ -188,8 +190,11 @@ def waiting_for(conn: sqlite3.Connection, task_id: str) -> list[dict]:
 
 
 def children(conn: sqlite3.Connection, task_id: str) -> list[dict]:
-    rows = _fetch(conn, "SELECT issue_id FROM deps WHERE depends_on = ? AND dep_type IN "
-                        f"({','.join('?' * len(PARENT_TYPES))})", (task_id, *PARENT_TYPES))
+    """Дети по PARENT_TYPES, каждый один раз; висячие строки deps без задачи не в счёт."""
+    rows = _fetch(conn, "SELECT d.issue_id FROM deps d JOIN tasks t ON t.id = d.issue_id "
+                        "WHERE d.depends_on = ? AND d.dep_type IN "
+                        f"({','.join('?' * len(PARENT_TYPES))}) ORDER BY d.rowid",
+                  (task_id, *PARENT_TYPES))
     # Ребёнок по обоим типам сразу — один раз, в прежнем порядке строк.
     return [_info(conn, i, "parent-child") for i in dict.fromkeys(r["issue_id"] for r in rows)]
 

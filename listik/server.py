@@ -1171,7 +1171,8 @@ def handle(method: str, path: str, query: dict, body: dict, authed: bool = False
                 content = body.get("content")
                 if not isinstance(content, str):
                     raise ApiError(400, "не передан обязательный параметр: content")
-                fence_mod.guard(conn, tid, fence, op="document",
+                fence_mod.guard(conn, tid, fence,
+                                op=fence_mod.OPS["http_route"]["PUT /api/tasks/{id}/documents/{kind}"],
                                 args={**body, "kind": kind},
                                 actor=body.get("actor") or owner, harness=body.get("harness"))
                 try:
@@ -1194,7 +1195,8 @@ def handle(method: str, path: str, query: dict, body: dict, authed: bool = False
             raise ApiError(405, "метод не поддерживается")
         if len(parts) == 5 and parts[3] == "deps" and method == "DELETE":
             tid, dep_id = parts[2], urllib.parse.unquote(parts[4])
-            fence_mod.guard(conn, tid, fence, op="dep_remove",
+            fence_mod.guard(conn, tid, fence,
+                            op=fence_mod.OPS["http_route"]["DELETE /api/tasks/{id}/deps/{dep}"],
                             args={"depends_on": dep_id, "dep_type": q1("dep_type")},
                             actor=body.get("actor") or owner, harness=body.get("harness"))
             out = store.remove_dep(conn, tid, dep_id, dep_type=q1("dep_type"))
@@ -1215,7 +1217,8 @@ def handle(method: str, path: str, query: dict, body: dict, authed: bool = False
                 except errors_mod.NotFound as exc:
                     raise api_error(404, exc) from exc
             if method in ("PATCH", "PUT"):
-                fence_mod.guard(conn, tid, fence, op="update", args=body,
+                fence_mod.guard(conn, tid, fence,
+                                op=fence_mod.OPS["http_route"]["PATCH/PUT /api/tasks/{id}"], args=body,
                                 actor=body.get("actor") or owner, harness=body.get("harness"))
                 # `route` — то же поле, что колонка `launch_route`: так маршрут
                 # называет создание задачи, доска шлёт его же. Смена разрешена
@@ -1238,7 +1241,8 @@ def handle(method: str, path: str, query: dict, body: dict, authed: bool = False
                 publish("task", {"id": tid, "action": "updated"})
                 return 200, task
             if method == "DELETE":
-                fence_mod.guard(conn, tid, fence, op="delete", args=body,
+                fence_mod.guard(conn, tid, fence,
+                                op=fence_mod.OPS["http_route"]["DELETE /api/tasks/{id}"], args=body,
                                 actor=body.get("actor") or owner, harness=body.get("harness"))
                 store.delete_task(conn, tid)
                 publish("task", {"id": tid, "action": "deleted"})
@@ -1261,17 +1265,10 @@ def handle(method: str, path: str, query: dict, body: dict, authed: bool = False
             try:
                 # Ограждение по поколению — перед store, для всех пишущих действий
                 # кроме чтений (`ready`, `mentions`, `deps` без `depends_on`).
-                _guard_op = {"claim": "claim", "heartbeat": "heartbeat", "stage": "stage",
-                            "comment": "comment", "needs-owner": "needs-owner",
-                            "release": "release", "done": "done",
-                            "revoke": "revoke", "launch": "launch",
-                            "portions/sync": "portions_sync",
-                            "portions/adopt": "portions_adopt",
-                            "restart": "restart"}.get(action)
-                if _guard_op is None and action == "deps" and body.get("depends_on"):
-                    _guard_op = "dep_add"
-                if _guard_op is not None:
-                    fence_mod.guard(conn, tid, fence, op=_guard_op, args=body,
+                if action in fence_mod.OPS["http_action"] and (
+                        action != "deps" or body.get("depends_on")):
+                    fence_mod.guard(conn, tid, fence, op=fence_mod.OPS["http_action"][action],
+                                    args=body,
                                     actor=body.get("actor") or owner, harness=body.get("harness"))
                 if action == "claim":
                     try:

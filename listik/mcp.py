@@ -517,17 +517,6 @@ def _conn():
     return db_mod.init()
 
 
-#: Инструменты, ограждаемые по поколению запуска (см. `listik/fence.py`): `guard`
-#: зовётся до store, `op` — имя инструмента без префикса `listik_`. `listik_deps`
-#: ограждается отдельно (см. ниже) с `op="deps"` — и добавление, и удаление связи.
-FENCED_TOOLS = {
-    "listik_update": "update", "listik_claim": "claim", "listik_heartbeat": "heartbeat",
-    "listik_stage": "stage", "listik_comment": "comment",
-    "listik_needs_owner": "needs_owner", "listik_done": "done",
-    "listik_release": "release", "listik_put_document": "put_document",
-}
-
-
 def call_tool(name: str, args: dict, conn=None, owner=FROM_ENV, fence=FROM_ENV) -> object:
     """`owner` — владелец-человек, от чьего имени идёт вызов (серверный режим).
 
@@ -548,11 +537,11 @@ def call_tool(name: str, args: dict, conn=None, owner=FROM_ENV, fence=FROM_ENV) 
         owner = (os.environ.get("LISTIK_OWNER") or "").strip() or None
     if fence is FROM_ENV:
         fence = fence_mod.from_env()
-    guard_op = FENCED_TOOLS.get(name)
-    if guard_op is None and name == "listik_deps":
-        guard_op = "deps"
-    if guard_op is not None:
-        fence_mod.guard(conn, args.get("id"), fence, op=guard_op, args=args,
+    # Ограждаемые инструменты и имена их операций — `fence.OPS["mcp"]`; `guard` до store.
+    # `listik_deps` ограждён и добавлением, и удалением связи (`("listik_deps", "rm")`).
+    fenced = (name, "rm") if name == "listik_deps" and args.get("action") == "rm" else name
+    if fenced in fence_mod.OPS["mcp"]:
+        fence_mod.guard(conn, args.get("id"), fence, op=fence_mod.OPS["mcp"][fenced], args=args,
                         actor=args.get("actor") or owner, harness=args.get("harness"))
     if name == "listik_search":
         return search_mod.search(conn, args["query"], limit=int(args.get("limit", 10)),

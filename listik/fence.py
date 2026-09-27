@@ -29,6 +29,47 @@ HEADER_DISPATCH = "X-Listik-Dispatch"
 #: Единственный вид события карантина — им же и фильтруются ленты/`get_task`.
 REJECTED_KIND = "rejected"
 
+#: Имена операций карантина (`op` в `note` события `rejected`) — единственное место,
+#: где они записаны. Значение — каноническое имя, одно для HTTP, MCP и локального
+#: фолбэка; ключ — имя операции у транспорта. Транспорты разведены по разделам: ключ
+#: одного раздела не делает ограждаемым вызов другого (`POST …/update` или
+#: `…/listik_done` — не HTTP-действия, `guard` их не ограждает). Какие операции
+#: ограждаются, решает транспорт; отсюда берётся только имя.
+OPS = {
+    # POST /api/tasks/{id}/{action}; `deps` — только с непустым `depends_on`.
+    "http_action": {
+        "claim": "claim", "heartbeat": "heartbeat", "stage": "stage", "comment": "comment",
+        "needs-owner": "needs-owner", "release": "release", "done": "done",
+        "revoke": "revoke", "launch": "launch", "restart": "restart",
+        "portions/sync": "portions_sync", "portions/adopt": "portions_adopt",
+        "deps": "dep_add",
+    },
+    # Прочие HTTP-запросы по карточке: «метод путь».
+    "http_route": {
+        "PATCH/PUT /api/tasks/{id}": "update",
+        "DELETE /api/tasks/{id}": "delete",
+        "PUT /api/tasks/{id}/documents/{kind}": "document",
+        "DELETE /api/tasks/{id}/deps/{dep}": "dep_remove",
+    },
+    # Инструменты MCP; ключ-кортеж `("listik_deps", "rm")` — `listik_deps` с
+    # `action: "rm"` (кортеж не совпадёт ни с каким именем инструмента).
+    "mcp": {
+        "listik_update": "update", "listik_claim": "claim", "listik_heartbeat": "heartbeat",
+        "listik_stage": "stage", "listik_comment": "comment",
+        "listik_needs_owner": "needs-owner", "listik_done": "done",
+        "listik_release": "release", "listik_put_document": "document",
+        "listik_deps": "dep_add", ("listik_deps", "rm"): "dep_remove",
+    },
+    # op `client.local_call`.
+    "local": {
+        "update": "update", "needs-owner": "needs-owner", "claim": "claim",
+        "heartbeat": "heartbeat", "stage": "stage", "comment": "comment",
+        "dep_add": "dep_add", "dep_remove": "dep_remove", "portions_sync": "portions_sync",
+        "portions_adopt": "portions_adopt", "restart": "restart", "done": "done",
+        "release": "release",
+    },
+}
+
 
 @dataclass(frozen=True)
 class Token:

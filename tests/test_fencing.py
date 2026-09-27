@@ -591,7 +591,7 @@ class McpDepsRemoveTests(TempDbTestCase):
         self.assertEqual(self._deps(self.tid), 1)
         rejected = fence.list_rejected(self.conn, self.tid)
         self.assertEqual(len(rejected), 1, rejected)
-        self.assertEqual(rejected[0]["op"], "deps")
+        self.assertEqual(rejected[0]["op"], "dep_remove")
 
     def test_current_token_removes(self):
         self._rm(self.tid, fence.Token(self.tid, 2, "cur"))
@@ -830,6 +830,216 @@ class CliErrorBothPathsTests(FencingHttpCase):
         payload = json.loads(out)
         self.assertEqual(payload["error"]["code"], "revoked")
         self.assertIn("остановись", payload["error"]["hint"])
+
+
+
+# ------------------------------------------------------------------ 12: одно имя op (listik-jaid b)
+
+STALE = {"generation": 1, "dispatch_id": "old"}
+
+
+def seed_neighbours(conn, task_id: str, blocker: str) -> None:
+    """Комментарий, связь и документ карточки — отказ не должен тронуть ни одного."""
+    from listik import documents
+    store.add_comment(conn, task_id, "живой", author="agent:x", kind="journal")
+    conn.execute("INSERT INTO deps(issue_id, depends_on, dep_type) VALUES (?,?,?)",
+                 (task_id, blocker, "blocks"))
+    conn.commit()
+    documents.put_document(conn, task_id, "spec", "живая спека")
+
+
+def snapshot(conn, task_id: str) -> dict:
+    """Карточка и всё, что к ней привязано, — сравнивается до и после отказа."""
+    def rows(sql: str, *params) -> list[dict]:
+        return [dict(r) for r in conn.execute(sql, params).fetchall()]
+    return {
+        "task": rows("SELECT * FROM tasks WHERE id = ?", task_id),
+        "comments": rows("SELECT * FROM comments WHERE task_id = ? ORDER BY rowid", task_id),
+        "deps": rows("SELECT * FROM deps WHERE issue_id = ? OR depends_on = ? ORDER BY rowid",
+                     task_id, task_id),
+        "documents": rows("SELECT * FROM documents WHERE task_id = ? ORDER BY rowid", task_id),
+    }
+
+
+def rejected_ops(conn, task_id: str) -> list[str]:
+    return [item["op"] for item in fence.list_rejected(conn, task_id)]
+
+
+class HttpMoreGuardedTests(FencingHttpCase):
+    """Ограждённые HTTP-операции без прежних тестов: `delete`, `launch`, `restart`,
+    `portions_sync`, `portions_adopt`."""
+
+    def setUp(self) -> None:
+        super().setUp()
+        self.tid = self.make_task()["id"]
+        seed_neighbours(self.conn, self.tid, self.make_task(title="блокер")["id"])
+        self.seed(self.tid, generation=2, dispatch_id="cur")
+        self.before = snapshot(self.conn, self.tid)
+
+    def stale(self, method: str, path: str, body: dict | None = None):
+        return self.api(method, path, fence_headers=self.token_headers(self.tid, 1, "old"),
+                        body=body)
+
+    def assert_revoked(self, status: int, payload: dict, op: str) -> None:
+        self.assertEqual(status, 409, payload)
+        self.assertEqual(payload["code"], "revoked")
+        self.assertEqual(rejected_ops(self.conn, self.tid), [op])
+        self.assertEqual(snapshot(self.conn, self.tid), self.before)
+
+    def test_delete(self):
+        status, payload = self.stale("DELETE", f"/api/tasks/{self.tid}")
+        self.assert_revoked(status, payload, "delete")
+        self.assertEqual(len(self.before["task"]), 1)
+
+    def test_launch(self):
+        status, payload = self.stale("POST", f"/api/tasks/{self.tid}/launch", {})
+        self.assert_revoked(status, payload, "launch")
+        row = self.row(self.tid)
+        self.assertEqual((row["generation"], row["dispatch_id"]), (2, "cur"))
+
+    def test_restart(self):
+        status, payload = self.stale("POST", f"/api/tasks/{self.tid}/restart",
+                                     {"note": "зомби"})
+        self.assert_revoked(status, payload, "restart")
+
+    def test_portions_sync(self):
+        status, payload = self.stale("POST", f"/api/tasks/{self.tid}/portions/sync", {})
+        self.assert_revoked(status, payload, "portions_sync")
+
+    def test_portions_adopt(self):
+        status, payload = self.stale("POST", f"/api/tasks/{self.tid}/portions/adopt", {})
+        self.assert_revoked(status, payload, "portions_adopt")
+
+
+class HttpUnguardedTests(FencingHttpCase):
+    """Чтения и неизвестные действия устаревшему токену отвечают как без токена."""
+
+    def setUp(self) -> None:
+        super().setUp()
+        self.tid = self.make_task()["id"]
+        seed_neighbours(self.conn, self.tid, self.make_task(title="блокер")["id"])
+        self.seed(self.tid, generation=2, dispatch_id="cur")
+        self.before = snapshot(self.conn, self.tid)
+
+    def check(self, method: str, path: str, body: dict | None, expected: int) -> dict:
+        status, payload = self.api(method, path, body=body,
+                                   fence_headers=self.token_headers(self.tid, 1, "old"))
+        plain_status, _ = self.api(method, path, body=body)
+        self.assertEqual(status, expected, payload)
+        self.assertEqual(plain_status, expected)
+        self.assertEqual(self.events(self.tid, "rejected"), [])
+        self.assertEqual(snapshot(self.conn, self.tid), self.before)
+        return payload
+
+    def test_reads_are_not_guarded(self):
+        for method, action, body in (("POST", "deps", {}), ("POST", "ready", {}),
+                                     ("POST", "mentions", {}), ("GET", "context", None)):
+            with self.subTest(action=action):
+                self.check(method, f"/api/tasks/{self.tid}/{action}", body, 200)
+
+    def test_unknown_actions_are_not_guarded(self):
+        for action in ("update", "dep_add", "listik_done"):
+            with self.subTest(action=action):
+                payload = self.check("POST", f"/api/tasks/{self.tid}/{action}",
+                                     {"title": "зомби", "depends_on": "x"}, 404)
+                self.assertIn("неизвестное действие", payload["error"])
+
+
+class McpCanonicalOpTests(TempDbTestCase):
+    """Каждый ограждённый MCP-инструмент пишет в карантин имя операции HTTP."""
+
+    CASES = (
+        ("listik_update", {"title": "зомби"}, "update"),
+        ("listik_claim", {"holder": "agent:zombie"}, "claim"),
+        ("listik_heartbeat", {"holder": "agent:zombie"}, "heartbeat"),
+        ("listik_stage", {"to": "s3-impl"}, "stage"),
+        ("listik_comment", {"text": "зомби"}, "comment"),
+        ("listik_needs_owner", {"text": "вопрос зомби"}, "needs-owner"),
+        ("listik_done", {"result": "зомби"}, "done"),
+        ("listik_release", {}, "release"),
+        ("listik_put_document", {"kind": "spec", "content": "зомби-спека"}, "document"),
+        ("listik_deps", {"depends_on": "OTHER"}, "dep_add"),
+        ("listik_deps", {"action": "add", "depends_on": "OTHER"}, "dep_add"),
+        ("listik_deps", {"action": "rm", "depends_on": "BLOCKER"}, "dep_remove"),
+    )
+
+    def stale_task(self) -> tuple[str, dict]:
+        tid = store.create_task(self.conn, title="T")["id"]
+        ids = {"BLOCKER": store.create_task(self.conn, title="блокер")["id"],
+               "OTHER": store.create_task(self.conn, title="другая")["id"]}
+        seed_neighbours(self.conn, tid, ids["BLOCKER"])
+        self.conn.execute("UPDATE tasks SET generation = 2, dispatch_id = 'cur' WHERE id = ?",
+                          (tid,))
+        self.conn.commit()
+        return tid, ids
+
+    def test_stale_token_quarantines_canonical_op(self):
+        for name, extra, op in self.CASES:
+            with self.subTest(tool=name, args=extra):
+                tid, ids = self.stale_task()
+                args = {"id": tid, **{k: ids.get(v, v) for k, v in extra.items()}}
+                before = snapshot(self.conn, tid)
+                with self.assertRaises(errors.Revoked):
+                    mcp.call_tool(name, args, conn=self.conn, owner=None,
+                                  fence=fence.Token(tid, **STALE))
+                self.assertEqual(rejected_ops(self.conn, tid), [op])
+                self.assertEqual(snapshot(self.conn, tid), before)
+
+    def test_show_is_not_guarded(self):
+        tid, _ = self.stale_task()
+        card = mcp.call_tool("listik_show", {"id": tid}, conn=self.conn, owner=None,
+                             fence=fence.Token(tid, **STALE))
+        self.assertEqual(card["id"], tid)
+        self.assertEqual(rejected_ops(self.conn, tid), [])
+
+
+class LocalCanonicalOpTests(TempDbTestCase):
+    """Каждый ограждённый op `client.local_call` пишет в карантин имя операции HTTP."""
+
+    #: op `local_call` → имя той же операции у HTTP и её аргументы.
+    CASES = {
+        "update": ("update", {"title": "зомби"}),
+        "needs-owner": ("needs-owner", {"text": "вопрос зомби"}),
+        "claim": ("claim", {"holder": "agent:zombie"}),
+        "heartbeat": ("heartbeat", {"holder": "agent:zombie"}),
+        "stage": ("stage", {"to_stage": "s3-impl"}),
+        "comment": ("comment", {"text": "зомби", "author": "agent:zombie"}),
+        "dep_add": ("dep_add", {"depends_on": "OTHER"}),
+        "dep_remove": ("dep_remove", {"depends_on": "BLOCKER"}),
+        "portions_sync": ("portions_sync", {}),
+        "portions_adopt": ("portions_adopt", {}),
+        "restart": ("restart", {"note": "зомби"}),
+        "done": ("done", {"result": "зомби"}),
+        "release": ("release", {}),
+    }
+
+    def setUp(self) -> None:
+        super().setUp()
+        for patch in (mock.patch.object(paths, "DB_PATH", self.db_path),
+                      mock.patch.object(db_mod, "init", return_value=self.conn)):
+            patch.start()
+            self.addCleanup(patch.stop)
+
+    def test_cases_cover_every_fenced_op(self):
+        self.assertEqual(set(self.CASES), set(client.FENCED_LOCAL_OPS))
+
+    def test_stale_token_quarantines_http_name(self):
+        for op, (http_op, extra) in self.CASES.items():
+            with self.subTest(op=op):
+                tid = store.create_task(self.conn, title="T")["id"]
+                ids = {"BLOCKER": store.create_task(self.conn, title="блокер")["id"],
+                       "OTHER": store.create_task(self.conn, title="другая")["id"]}
+                seed_neighbours(self.conn, tid, ids["BLOCKER"])
+                self.conn.execute(
+                    "UPDATE tasks SET generation = 2, dispatch_id = 'cur' WHERE id = ?", (tid,))
+                self.conn.commit()
+                kwargs = {client.FENCED_LOCAL_OPS[op]: tid,
+                          **{k: ids.get(v, v) for k, v in extra.items()}}
+                before = snapshot(self.conn, tid)
+                with self.assertRaises(errors.Revoked):
+                    client.local_call(op, fence={"task_id": tid, **STALE}, **kwargs)
+                self.assertEqual(rejected_ops(self.conn, tid), [http_op])
+                self.assertEqual(snapshot(self.conn, tid), before)
 
 
 if __name__ == "__main__":

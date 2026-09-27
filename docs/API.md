@@ -798,7 +798,13 @@ CLI (`bin/listik`) читает окружение один раз в `call()` �
 сохранение — один вызов убрать оттуда): `from_value`/`to_value` — старое и текущее
 поколение, `note` — JSON `{"op", "dispatch_id", "current_dispatch_id", "args"}`, где `args`
 — тело операции без `None`/служебных `as_owner`/`fence` (текстовые поля `text`/`result`/
-`note`/`content` сохраняются целиком — ради этого карантин и нужен).
+`note`/`content` сохраняются целиком — ради этого карантин и нужен). `op` — одно имя
+операции для HTTP, MCP и локального фолбэка, каким бы транспортом она ни пришла (словарь
+`fence.OPS` — единственное место, где имена записаны): `update`, `delete`, `document`,
+`dep_add`, `dep_remove`, `claim`, `heartbeat`, `stage`, `comment`, `needs-owner`, `release`,
+`done`, `revoke`, `launch`, `restart`, `portions_sync`, `portions_adopt`. Так,
+`listik_needs_owner` пишет `needs-owner`, `listik_put_document` — `document`, `listik_deps` —
+`dep_add`, а с `action: "rm"` — `dep_remove`.
 
 **Кто видит карантин.** Агент — никогда: `events[]` в `GET /api/tasks/{id}` без флага,
 `documents.context`, `listik_show`, `listik show` без `--rejected` и лента

@@ -198,7 +198,7 @@ def local_call(op: str, *, fence: fence_mod.Token | dict | None = None, **kwargs
         token = fence_mod.from_mapping(fence) if not isinstance(fence, fence_mod.Token) else fence
         if token is not None:
             task_id = kwargs.get(id_key)
-            fence_mod.guard(conn, task_id, token, op=op, args=kwargs,
+            fence_mod.guard(conn, task_id, token, op=fence_mod.OPS["local"][op], args=kwargs,
                             actor=kwargs.get("actor") or kwargs.get("author")
                             or kwargs.get("created_by"),
                             harness=kwargs.get("harness"))

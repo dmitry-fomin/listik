@@ -543,6 +543,8 @@ def call_tool(name: str, args: dict, conn=None, owner=FROM_ENV, fence=FROM_ENV) 
     (может быть `None`, если их нет). `listik_show` карантин не отдаёт никогда —
     для него ограждение не нужно, у чтения нечего отвергать.
     """
+    # `null` в аргументе = ключ не передан (listik-ds5l, listik-ngm2)
+    args = {k: v for k, v in args.items() if v is not None}
     if conn is None:
         conn = _conn()
     if owner is FROM_ENV:

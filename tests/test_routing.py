@@ -6,8 +6,11 @@
 """
 from __future__ import annotations
 
+import contextlib
+import io
 import json
 import os
+import sqlite3
 import pathlib
 import subprocess
 import sys
@@ -81,6 +84,61 @@ class RoutingTests(TempDbTestCase):
         projects2 = store.list_all_projects(self.conn)
         demo2 = next(p for p in projects2 if p["slug"] == "demo")
         self.assertEqual(demo2["routing_source"], "config+db")
+
+    def test_db_override_is_deep_merged_with_toml_override(self) -> None:
+        self._config_path.write_text(
+            '[routing.projects.demo.transitions]\n'
+            '"s3-impl:s4-judge" = "handoff"\n',
+            encoding="utf-8",
+        )
+        store.update_project(self.conn, "demo",
+                             routing={"transitions": {"s1-spec:s2-review": "sticky"}})
+        effective = config_mod.routing("demo", conn=self.conn)
+        self.assertEqual(effective["transitions"]["s3-impl:s4-judge"], "handoff")
+        self.assertEqual(effective["transitions"]["s1-spec:s2-review"], "sticky")
+
+    def _routing_with_stderr(self, conn) -> tuple[dict, str]:
+        err = io.StringIO()
+        with contextlib.redirect_stderr(err):
+            effective = config_mod.routing("demo", conn=conn)
+        return effective, err.getvalue()
+
+    def _set_raw_routing(self, value) -> None:
+        self.conn.execute("UPDATE projects SET routing = ? WHERE slug = 'demo'", (value,))
+        self.conn.commit()
+
+    def test_broken_db_json_warns_and_is_ignored(self) -> None:
+        self._set_raw_routing("{не json")
+        try:
+            json.loads("{не json")
+        except ValueError as exc:
+            json_error = str(exc)
+        effective, err = self._routing_with_stderr(self.conn)
+        self.assertEqual(effective, config_mod.routing())
+        self.assertIn("demo", err)
+        self.assertIn(json_error, err)
+
+    def test_sql_error_warns_and_is_ignored(self) -> None:
+        conn = mock.Mock()
+        conn.execute.side_effect = sqlite3.OperationalError("база недоступна")
+        effective, err = self._routing_with_stderr(conn)
+        self.assertEqual(effective, config_mod.routing())
+        self.assertIn("demo", err)
+        self.assertIn("база недоступна", err)
+
+    def test_non_object_db_json_warns_and_is_ignored(self) -> None:
+        self._set_raw_routing("[1]")
+        effective, err = self._routing_with_stderr(self.conn)
+        self.assertEqual(effective, config_mod.routing())
+        self.assertIn("demo", err)
+
+    def test_null_and_empty_db_routing_are_silent(self) -> None:
+        for value in (None, ""):
+            with self.subTest(value=value):
+                self._set_raw_routing(value)
+                effective, err = self._routing_with_stderr(self.conn)
+                self.assertEqual(effective, config_mod.routing())
+                self.assertEqual(err, "")
 
     # -- 4. claim больше не ограничен списком харнессов этапа --------------------
 

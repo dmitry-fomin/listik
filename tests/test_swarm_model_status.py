@@ -66,6 +66,15 @@ class HealthModelTests(TempDbTestCase):
         self.assertEqual(set(body["swarm"]), {"enabled", "running"})
         self.assertNotIn("secret-swarm", json.dumps(body))
 
+    def test_invalid_swarm_config_error_only_for_authorized(self) -> None:
+        self.config.write_text('[auth]\ntoken = "test"\n[swarm]\nenabled = "да"\n',
+                               encoding="utf-8")
+        swarm = self.health()["swarm"]
+        self.assertFalse(swarm["enabled"])
+        self.assertTrue(swarm["error"])
+        body = self.health(authed=False)
+        self.assertEqual(set(body["swarm"]), {"enabled", "running"})
+
 
 class StatusModelTests(unittest.TestCase):
     def setUp(self) -> None:
@@ -151,6 +160,38 @@ class StatusModelTests(unittest.TestCase):
         self.assertNotIn("модель", swarm_line)
         self.assertNotIn("secret-swarm", result.stdout)
 
+
+    def test_server_error_prints_like_local_status(self) -> None:
+        cli = self.cli_module()
+        health = {"swarm": {"enabled": False, "running": False, "pid": None,
+                            "error": "enabled должно быть булевым"}}
+        self.assertEqual(cli._swarm_view(health)["error"], "enabled должно быть булевым")
+        output = io.StringIO()
+        with contextlib.redirect_stdout(output):
+            cli._print_swarm(health)
+        self.assertIn("рой:    конфиг: enabled должно быть булевым", output.getvalue())
+
+    def test_local_view_without_health_uses_runtime(self) -> None:
+        cli = self.cli_module()
+        from listik import swarm_proc
+        self.addCleanup(setattr, swarm_proc, "_current", swarm_proc._current)
+        swarm_proc._current = None
+        logs = self.home / "logs"
+        logs.mkdir()
+        with mock.patch.object(paths, "CONFIG_PATH", self.config), \
+                mock.patch.object(paths, "LOGS_DIR", logs):
+            self.write_config('[swarm]\nenabled = "да"\n')
+            info = cli._swarm_view(None)
+            self.assertTrue(info["error"])
+            self.assertIn("model", info)
+            self.assertFalse(info["enabled"])
+
+            self.write_config("[swarm]\nenabled = true\n")
+            (logs / "swarm.pid").write_text(f"{os.getpid()}\n", encoding="utf-8")
+            info = cli._swarm_view(None)
+            self.assertTrue(info["running"])
+            self.assertEqual(info["pid"], os.getpid())
+            self.assertNotIn("error", info)
 
 if __name__ == "__main__":
     unittest.main()

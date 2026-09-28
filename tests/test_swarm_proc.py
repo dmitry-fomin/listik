@@ -179,5 +179,15 @@ class RuntimePidTests(unittest.TestCase):
         self.assertEqual(info["pid"], os.getpid())
 
 
+    def test_invalid_enabled_reports_error(self) -> None:
+        swarm_proc._current = None
+        self.config_path.write_text('[swarm]\nenabled = "да"\n', encoding="utf-8")
+        info = swarm_proc.runtime()
+        self.assertFalse(info["enabled"])
+        self.assertTrue(info["error"])
+
+        self.config_path.write_text("[swarm]\nenabled = true\n", encoding="utf-8")
+        self.assertNotIn("error", swarm_proc.runtime())
+
 if __name__ == "__main__":
     unittest.main()

@@ -78,16 +78,21 @@ def runtime() -> dict:
     бы как «наш рой работает». Без супервизора (команда `status` с другой
     стороны) живой pid из файла — это и есть запущенный рой.
     """
+    error = None
     try:
         enabled = config_mod.swarm_enabled()
-    except ValueError:
-        enabled = False
+    except ValueError as exc:
+        enabled, error = False, str(exc)
     sup = _current
     if sup is not None:
         running = sup.running()
-        return {"enabled": enabled, "running": running, "pid": sup.pid() if running else None}
-    pid = dispatcher_pid() if enabled else None
-    return {"enabled": enabled, "running": pid is not None, "pid": pid}
+        out = {"enabled": enabled, "running": running, "pid": sup.pid() if running else None}
+    else:
+        pid = dispatcher_pid() if enabled else None
+        out = {"enabled": enabled, "running": pid is not None, "pid": pid}
+    if error is not None:
+        out["error"] = error
+    return out
 
 
 def _log(text: str) -> None:

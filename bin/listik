@@ -1503,13 +1503,9 @@ def _swarm_view(health: dict | None) -> dict:
     from listik import swarm_llm, swarm_proc
     if health and isinstance(health.get("swarm"), dict):
         return health["swarm"]
-    try:
-        enabled = client.config_mod.swarm_enabled()
-    except ValueError as exc:
-        return {"enabled": False, "running": False, "pid": None, "error": str(exc)}
-    pid = swarm_proc.dispatcher_pid()
-    return {"enabled": enabled, "running": pid is not None, "pid": pid,
-            "model": swarm_llm.model_name()}
+    info = swarm_proc.runtime()
+    info["model"] = swarm_llm.model_name()
+    return info
 
 
 def _print_swarm(health: dict | None) -> None:

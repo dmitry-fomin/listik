@@ -10,6 +10,8 @@ import json
 import os
 import re
 import secrets
+import sqlite3
+import sys
 import tempfile
 import tomllib
 from pathlib import Path
@@ -386,19 +388,19 @@ def routing(project: str | None = None, conn=None) -> dict:
     if project and conn is not None:
         try:
             row = conn.execute("SELECT routing FROM projects WHERE slug = ?", (project,)).fetchone()
-            if row and row[0]:
-                import json
-                db_override = json.loads(row[0]) if isinstance(row[0], str) else row[0]
-                if isinstance(db_override, dict):
-                    override = {**(override or {}), **db_override}
-        except Exception:
-            pass
+            raw = row[0] if row else None
+            db_override = json.loads(raw) if raw else None
+        except (sqlite3.Error, ValueError) as exc:
+            print(f"routing {project}: переопределение из базы не прочитано: {exc}",
+                  file=sys.stderr)
+            db_override = None
+        if db_override is not None and not isinstance(db_override, dict):
+            print(f"routing {project}: переопределение из базы не объект: {db_override!r}",
+                  file=sys.stderr)
+        elif db_override is not None:
+            override = _merge(override if isinstance(override, dict) else {}, db_override)
     if project and isinstance(override, dict):
-        for key, value in override.items():
-            if isinstance(value, dict) and isinstance(base.get(key), dict):
-                merged = dict(base[key]); merged.update(value); base[key] = merged
-            else:
-                base[key] = value
+        base = _merge(base, override)
     # Устаревшие ключи выкидываем в самом конце: они могли прийти и из config.toml,
     # и из переопределения проекта — наружу действующая таблица уходит уже без них.
     return without_legacy_routing(base)

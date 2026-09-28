@@ -1019,9 +1019,24 @@ async function bulkPatch(ids: string[], changes: TaskPatch): Promise<void> {
 }
 
 /**
+ * Ошибка запроса маршрутов: текст всегда в `routesError` (алерт формы
+ * «Новая задача»/панели задачи); 401 открывает окно токена, отказ сети —
+ * плашку доски (через `handleError`), остальное остаётся алерту.
+ */
+function onRoutesError(error: unknown): void {
+  routesOk.value = false
+  routesError.value = errorMessage(error)
+  routesRequestFailed.value = true
+  routesWarnings.value = []
+  routes.value = []
+  if (isUnauthorized(error) || isOffline(error)) handleError(error)
+}
+
+/**
  * Запрос маршрутов — ровно один на вызов. Старт доски (`init`) и первое открытие
  * формы зовут `ensureRoutes`, кнопка «повторить» — `loadRoutes`; результат (в том
  * числе ошибка) кешируется, повторный вызов запрос не повторяет.
+ * 401 и отказ сети дополнительно идут в `handleError` (listik-ia2x).
  */
 async function loadRoutes(): Promise<void> {
   if (routesLoading.value) return
@@ -1035,11 +1050,7 @@ async function loadRoutes(): Promise<void> {
       routesWarnings.value = data.warnings ?? []
       routes.value = data.routes ?? []
     } catch (error) {
-      routesOk.value = false
-      routesError.value = errorMessage(error)
-      routesRequestFailed.value = true
-      routesWarnings.value = []
-      routes.value = []
+      onRoutesError(error)
     }
   })
 }

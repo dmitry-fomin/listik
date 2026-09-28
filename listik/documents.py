@@ -267,6 +267,23 @@ def _drop_chunks(conn: sqlite3.Connection, doc_id: str) -> None:
     search.invalidate_vectors()
 
 
+def _doc_id(task_id: str, kind: str, path: str) -> str:
+    return hashlib.sha256(f"{task_id}:{kind}:{path}".encode()).hexdigest()[:24]
+
+
+def _doc_path(task: sqlite3.Row, kind: str) -> str | None:
+    """Путь документа вида `kind` из карточки; `journal_path` — старое имя `decision`,
+    берётся, только когда `decision_path` пуст. Пусто — None, "" или одни пробелы."""
+    for value in (task[DOC_FIELDS[kind]], task["journal_path"] if kind == "decision" else None):
+        if value and str(value).strip():
+            return value
+    return None
+
+
+def _ordered_chunks(doc: dict) -> list[dict]:
+    return sorted(doc.get("chunks", []), key=lambda c: (c.get("ordinal", 0), c.get("id", "")))
+
+
 def index_document(conn: sqlite3.Connection, task_id: str, path: str, *, kind: str = "spec") -> dict:
     task = conn.execute("SELECT * FROM tasks WHERE id = ?", (task_id,)).fetchone()
     if task is None:
@@ -274,8 +291,8 @@ def index_document(conn: sqlite3.Connection, task_id: str, path: str, *, kind: s
     row = conn.execute("SELECT * FROM documents WHERE task_id=? AND kind=? AND path=?",
                        (task_id, kind, path)).fetchone()
     now = store.now_iso()
-    prev_status = row["status"] if row is not None and "status" in row.keys() else "ok"
-    if row is not None and "source" in row.keys() and row["source"] == "upload":
+    prev_status = row["status"] if row is not None else "ok"
+    if row is not None and row["source"] == "upload":
         # Текст загруженного документа лежит в базе: на диск не ходим вообще.
         content = row["content"] or ""
     else:
@@ -285,7 +302,7 @@ def index_document(conn: sqlite3.Connection, task_id: str, path: str, *, kind: s
         except (OSError, UnicodeError) as exc:
             error_text = str(exc)
             if row is None:
-                doc_id = hashlib.sha256(f"{task_id}:{kind}:{path}".encode()).hexdigest()[:24]
+                doc_id = _doc_id(task_id, kind, path)
                 conn.execute(
                     "INSERT INTO documents(id,task_id,kind,path,revision,content_hash,title,"
                     "created_at,updated_at,status,error,checked_at) VALUES(?,?,?,?,?,?,?,?,?,?,?,?)",
@@ -329,7 +346,7 @@ def index_document(conn: sqlite3.Connection, task_id: str, path: str, *, kind: s
         _drop_chunks(conn, doc_id)
         _insert_chunks(conn, task_id, doc_id, content)
     else:
-        doc_id = hashlib.sha256(f"{task_id}:{kind}:{path}".encode()).hexdigest()[:24]
+        doc_id = _doc_id(task_id, kind, path)
         conn.execute(
             "INSERT INTO documents(id,task_id,kind,path,revision,content_hash,title,created_at,"
             "updated_at,status,error,checked_at) VALUES(?,?,?,?,?,?,?,?,?,?,?,?)",
@@ -368,16 +385,14 @@ def put_document(conn: sqlite3.Connection, task_id: str, kind: str, content: str
         raise ValueError("path должен быть строкой")
 
     field = DOC_FIELDS[kind]
-    current = task[field] if field in task.keys() else None
-    journal = task["journal_path"] if "journal_path" in task.keys() else None
+    current = task[field]
     # explicit: путь выбран явным параметром (4.1) или синтетическим fallback (4.4) —
     # только тогда он дописывается в карточку задачи.
+    stored = _doc_path(task, kind)
     if path is not None and path.strip():
         eff_path, explicit = path.strip(), True
-    elif current and str(current).strip():
-        eff_path, explicit = current, False
-    elif kind == "decision" and journal and str(journal).strip():
-        eff_path, explicit = journal, False
+    elif stored is not None:
+        eff_path, explicit = stored, False
     else:
         eff_path, explicit = f"listik://{task_id}/{kind}.md", True
 
@@ -386,7 +401,7 @@ def put_document(conn: sqlite3.Connection, task_id: str, kind: str, content: str
     row = conn.execute("SELECT * FROM documents WHERE task_id=? AND kind=? AND path=?",
                        (task_id, kind, eff_path)).fetchone()
     if row is None:
-        doc_id = hashlib.sha256(f"{task_id}:{kind}:{eff_path}".encode()).hexdigest()[:24]
+        doc_id = _doc_id(task_id, kind, eff_path)
         revision = 1
         conn.execute(
             "INSERT INTO documents(id,task_id,kind,path,revision,content_hash,title,created_at,"
@@ -429,15 +444,12 @@ def get_document(conn: sqlite3.Connection, task_id: str, kind: str) -> dict:
     if task is None:
         raise errors_mod.NotFound(f"задача не найдена: {task_id}")
     _check_kind(kind)
-    field = DOC_FIELDS[kind]
-    path = task[field] if field in task.keys() else None
-    if not path and kind == "decision" and "journal_path" in task.keys():
-        path = task["journal_path"]
+    path = _doc_path(task, kind)
     if not path:
         raise errors_mod.NotFound(f"у задачи {task_id} нет документа {kind}")
     row = conn.execute("SELECT * FROM documents WHERE task_id=? AND kind=? AND path=?",
                        (task_id, kind, path)).fetchone()
-    if row is not None and "source" in row.keys() and row["source"] == "upload":
+    if row is not None and row["source"] == "upload":
         return {"task_id": task_id, "kind": kind, "path": path, "source": "upload",
                 "revision": row["revision"], "content_hash": row["content_hash"],
                 "status": "ok", "error": None, "content": row["content"] or ""}
@@ -456,20 +468,10 @@ def index_task_documents(conn: sqlite3.Connection, task_id: str) -> list[dict]:
     task = conn.execute("SELECT * FROM tasks WHERE id=?", (task_id,)).fetchone()
     if not task:
         raise errors_mod.NotFound(f"задача не найдена: {task_id}")
-    paths_to_index: list[tuple[str, str]] = []
-    if task["spec_path"]:
-        paths_to_index.append(("spec", task["spec_path"]))
-    if "checklist_path" in task.keys() and task["checklist_path"]:
-        paths_to_index.append(("checklist", task["checklist_path"]))
-    # A journal path is a first-class document when explicitly supplied.
-    # Explicit review/decision files are first class.  journal_path predates these
-    # fields and remains an alias for a decision document.
-    for key, kind in (("review_path", "review"), ("decision_path", "decision"),
-                      ("journal_path", "decision")):
-        value = task[key] if key in task.keys() else None
-        if value and (kind, value) not in paths_to_index:
-            paths_to_index.append((kind, value))
-    return [index_document(conn, task_id, path, kind=kind) for kind, path in paths_to_index]
+    # One document per kind; journal_path (the old name of decision) is used only when
+    # decision_path is empty — see _doc_path.
+    return [index_document(conn, task_id, path, kind=kind)
+            for kind in DOC_FIELDS if (path := _doc_path(task, kind))]
 
 
 def refresh_all(conn: sqlite3.Connection) -> dict:
@@ -516,10 +518,10 @@ def document_json(conn: sqlite3.Connection, doc_id: str) -> dict:
     if not row:
         raise errors_mod.NotFound(f"документ не найден: {doc_id}")
     chunks = [dict(r) for r in conn.execute("SELECT * FROM document_chunks WHERE document_id=? ORDER BY ordinal", (doc_id,))]
-    status = row["status"] if "status" in row.keys() else "ok"
-    error = row["error"] if "error" in row.keys() else None
+    status = row["status"]
+    error = row["error"]
     return {"id": row["id"], "task_id": row["task_id"], "kind": row["kind"], "path": row["path"],
-            "source": row["source"] if "source" in row.keys() else "file",
+            "source": row["source"],
             "revision": row["revision"], "content_hash": row["content_hash"], "title": row["title"],
             "created_at": row["created_at"], "updated_at": row["updated_at"], "chunks": chunks,
             "chunk_count": len(chunks), "status": status, "error": error, "ok": status == "ok"}
@@ -645,7 +647,7 @@ def _full_doc_chunks(docs: list[dict], stage: str, kinds: tuple[str, ...]) -> li
     selected = []
     for doc in sorted((d for d in docs if d["kind"] in kinds),
                       key=lambda d: (_DOC_KIND_ORDER.get(d["kind"], 9), d.get("path", ""))):
-        chunks = sorted(doc.get("chunks", []), key=lambda c: (c.get("ordinal", 0), c.get("id", "")))
+        chunks = _ordered_chunks(doc)
         for chunk in chunks:
             reason = f"полный документ {doc['kind']} для этапа {stage}"
             selected.append({**chunk, "document_id": doc["id"], "kind": doc["kind"],
@@ -717,7 +719,7 @@ def _layered_chunks(conn: sqlite3.Connection, task_id: str, task: dict, docs: li
 
     # Layer 1: checklist, whole.
     for doc in sorted(by_kind.get("checklist", []), key=lambda d: d.get("path", "")):
-        for chunk in sorted(doc.get("chunks", []), key=lambda c: (c.get("ordinal", 0), c.get("id", ""))):
+        for chunk in _ordered_chunks(doc):
             add(chunk, doc, "чек-лист целиком")
 
     spec_decision_docs = sorted(
@@ -729,7 +731,7 @@ def _layered_chunks(conn: sqlite3.Connection, task_id: str, task: dict, docs: li
     needle = (portion or "").strip().lower()
     if needle:
         for doc in spec_decision_docs:
-            for chunk in sorted(doc.get("chunks", []), key=lambda c: (c.get("ordinal", 0), c.get("id", ""))):
+            for chunk in _ordered_chunks(doc):
                 heading = (chunk.get("heading") or "").lower()
                 breadcrumb = (chunk.get("breadcrumb") or "").lower()
                 if needle in heading or needle in breadcrumb:
@@ -766,7 +768,7 @@ def _layered_chunks(conn: sqlite3.Connection, task_id: str, task: dict, docs: li
     has_spec_chunk = any(c["kind"] == "spec" for c in selected)
     if not has_spec_chunk:
         for doc in sorted(by_kind.get("spec", []), key=lambda d: d.get("path", "")):
-            for chunk in sorted(doc.get("chunks", []), key=lambda c: (c.get("ordinal", 0), c.get("id", ""))):
+            for chunk in _ordered_chunks(doc):
                 add(chunk, doc, "начало документа: совпадений по порции и лексике нет")
 
     return selected

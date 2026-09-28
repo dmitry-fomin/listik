@@ -123,7 +123,8 @@ users = ["ann", "bob"]   # люди, которые работают с этим
 создание с этапом, правка `stage` через `PATCH`, а также события старше этой версии, заметку
 которых досыпка не распознала), `documents[]` — по одной
 записи на каждый индексируемый документ задачи (`spec_path`/`checklist_path`/`review_path`/
-`decision_path`/`journal_path`), с полями `id, kind, path, source, revision, content_hash, title,
+`decision_path`/`journal_path`; `journal_path` индексируется, только когда `decision_path` пуст),
+с полями `id, kind, path, source, revision, content_hash, title,
 updated_at, status, error, chunk_count`, — и `children[]` — все дочерние карточки связи
 `parent-child` (порции шага), включая закрытые, со своими путями к документам и таким же
 `documents[]` (см. «Карточка-порция»). Колонка `checked_at` (время последней фоновой

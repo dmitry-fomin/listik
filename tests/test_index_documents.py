@@ -109,5 +109,38 @@ class CreateTaskIndexesDocumentsTests(TempDbTestCase):
             self.assertGreater(chunks, 0)
 
 
+class JournalPathDecisionTests(TempDbTestCase):
+    """journal_path — старое имя decision: индексируется, только когда decision_path пуст."""
+
+    def _write(self, name: str) -> str:
+        path = self.tmp_path / name
+        path.write_text(f"# {name}\n\nТекст {name}.\n", encoding="utf-8")
+        return str(path)
+
+    def test_decision_path_wins_over_journal_path(self) -> None:
+        decision, journal = self._write("decision.md"), self._write("journal.md")
+        task = store.create_task(self.conn, title="decision и journal", project=None,
+                                 decision_path=decision, journal_path=journal)
+
+        docs = documents.index_task_documents(self.conn, task["id"])
+
+        decisions = [d for d in docs if d["kind"] == "decision"]
+        self.assertEqual([d["path"] for d in decisions], [decision])
+        rows = self.conn.execute(
+            "SELECT count(*) FROM documents WHERE task_id=? AND kind='decision'",
+            (task["id"],)).fetchone()[0]
+        self.assertEqual(rows, 1)
+
+    def test_journal_path_alone_is_the_decision_document(self) -> None:
+        journal = self._write("journal.md")
+        task = store.create_task(self.conn, title="только journal", project=None,
+                                 journal_path=journal)
+
+        docs = documents.index_task_documents(self.conn, task["id"])
+
+        decisions = [d for d in docs if d["kind"] == "decision"]
+        self.assertEqual([d["path"] for d in decisions], [journal])
+
+
 if __name__ == "__main__":
     unittest.main()

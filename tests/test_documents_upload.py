@@ -331,6 +331,13 @@ class PutDocumentTests(TempDbTestCase):
         self.assertEqual(got["path"], "j.md")
         self.assertEqual(got["content"], "x")
 
+    def test_explicit_path_equal_to_journal_path_is_written_to_decision_path(self) -> None:
+        task_id = store.create_task(self.conn, title="Задача", journal_path="j.md")["id"]
+
+        documents.put_document(self.conn, task_id, "decision", "x", path="j.md")
+
+        self.assertEqual(store.get_task(self.conn, task_id)["decision_path"], "j.md")
+
     # ---- 15. явный путь
     def test_explicit_path_updates_card_without_disk_probe(self) -> None:
         task_id = store.create_task(self.conn, title="Задача")["id"]

@@ -11,7 +11,7 @@ import { readStoredOwner, readStoredToken, writeStoredOwner, writeStoredToken } 
 import { AT_RISK_IDLE_HOURS, taskHealth } from '@/lib/health'
 import { DONE_STAGE, DONE_STATUS, INTAKE_COLUMN_KEY, PIPELINE_STAGE_KEYS, STAGES } from '@/lib/dictionaries'
 import { NO_VALUE } from '@/lib/facets'
-import { tryRequest, withLoading } from './helpers'
+import { tryRequest, withLoading, type ErrorHandler, type LoadingState } from './helpers'
 import type {
   AssistantSuggestRequest,
   AssistantSuggestResponse,
@@ -1109,17 +1109,54 @@ async function reloadRoutes(): Promise<boolean> {
   })
 }
 
+/** Раздел настроек для `settingsAction`: свой флаг загрузки, текст ошибки и обработчик. */
+interface SettingsSection {
+  loading: LoadingState
+  error: { value: string | null }
+  onError: ErrorHandler
+}
+
 /**
- * Общая обёртка действий вкладки «Маршруты»: ошибка — в `routesSettingsError`;
- * 401 и отказ сети дополнительно идут в `handleError` (listik-iw75).
+ * Флаг конфликта для действия: без флага — обработчик раздела как есть; с флагом —
+ * флаг сбрасывается в `false` сразу (до запроса), а на ошибке становится
+ * «статус 409?» до вызова обработчика раздела. Успех или ошибка с другим
+ * статусом оставляют `false`. Общий для `settingsAction` и `projectAction`.
  */
-async function routesSettingsAction<T>(action: () => Promise<T>): Promise<T | null> {
-  return withLoading(routesSettingsLoading, async () => {
-    const result = await tryRequest(action, onRoutesSettingsError)
+function conflictHandler(onError: ErrorHandler, conflict?: { value: boolean }): ErrorHandler {
+  if (!conflict) return onError
+  conflict.value = false
+  return (error) => {
+    conflict.value = error instanceof ApiError && error.status === 409
+    onError(error)
+  }
+}
+
+/**
+ * Общая обёртка действий вкладок «Маршруты» и «Харнессы». Действие идёт под флагом
+ * загрузки раздела; ошибка — `null`, текст в ошибке раздела, 401 открывает окно
+ * токена, отказ сети — плашку доски (обработчик раздела → `handleError`,
+ * listik-iw75), 409 и 500 остаются разделу. Успех гасит ошибку раздела.
+ * Необязательный `conflict` — флаг «ключ занят» (см. `conflictHandler`).
+ * Перечитывание списка после успеха — забота вызывающего, вне флага загрузки.
+ */
+async function settingsAction<T>(
+  section: SettingsSection,
+  action: () => Promise<T>,
+  conflict?: { value: boolean },
+): Promise<T | null> {
+  const onError = conflictHandler(section.onError, conflict)
+  return withLoading(section.loading, async () => {
+    const result = await tryRequest(action, onError)
     if (result === null) return null
-    routesSettingsError.value = null
+    section.error.value = null
     return result
   })
+}
+
+const routesSettings: SettingsSection = {
+  loading: routesSettingsLoading,
+  error: routesSettingsError,
+  onError: onRoutesSettingsError,
 }
 
 /**
@@ -1128,7 +1165,7 @@ async function routesSettingsAction<T>(action: () => Promise<T>): Promise<T | nu
  * после успеха список перечитывается целиком, а не патчится точечно.
  */
 async function patchRoute(key: string, body: RoutePatch): Promise<RouteDef | null> {
-  const result = await routesSettingsAction(() => api.patchRoute(key, body))
+  const result = await settingsAction(routesSettings, () => api.patchRoute(key, body))
   if (result) await reloadRoutes()
   return result
 }
@@ -1139,12 +1176,11 @@ async function patchRoute(key: string, body: RoutePatch): Promise<RouteDef | nul
  * сервер при DELETE шлёт только событие `route`, событий задач нет, поэтому
  * снятый с карточек `launch_route` без явного перечитывания доски не виден.
  * При `404` (маршрута уже нет) список тоже перечитывается — строка
- * удалённого пропадает. Ошибка — `null`, текст в `routesSettingsError`;
- * 401 и отказ сети — ещё и `handleError` (listik-iw75).
+ * удалённого пропадает. Ошибки — по `settingsAction`.
  */
 async function removeRoute(key: string): Promise<RouteRemoved | null> {
   let gone = false
-  const result = await routesSettingsAction(async () => {
+  const result = await settingsAction(routesSettings, async () => {
     try {
       return await api.removeRoute(key)
     } catch (error) {
@@ -1188,23 +1224,14 @@ async function reloadAfterRouteRemove(): Promise<void> {
 /**
  * Завести маршрут роя (`POST /api/routes`, `kind="swarm"`, listik-2gry).
  * Ответ — созданная запись: в ней есть `key`, по которому список выбирает
- * и открывает новую карточку. Ошибка — `null`, текст в `routesSettingsError`; `409` дополнительно отмечается в `routeCreateConflict`,
- * чтобы окно подсказало про поле «Ключ», а 401 и отказ сети идут ещё и в
- * `handleError` (listik-iw75). Список перечитывается после успеха
- * (как у `patchRoute`): в ответе нет `skill_path`/`skill_missing`.
+ * и открывает новую карточку. Ошибки — по `settingsAction`, `409` ставит
+ * `routeCreateConflict` (окно подсказывает про поле «Ключ»). Список
+ * перечитывается после успеха (как у `patchRoute`): в ответе нет `skill_path`/`skill_missing`.
  */
 async function createRoute(body: SwarmRouteCreate): Promise<RouteDef | null> {
-  routeCreateConflict.value = false
-  return withLoading(routesSettingsLoading, async () => {
-    const created = await tryRequest(() => api.createRoute(body), (error) => {
-      routeCreateConflict.value = error instanceof ApiError && error.status === 409
-      onRoutesSettingsError(error)
-    })
-    if (created === null) return null
-    routesSettingsError.value = null
-    await reloadRoutes()
-    return created
-  })
+  const created = await settingsAction(routesSettings, () => api.createRoute(body), routeCreateConflict)
+  if (created) await reloadRoutes()
+  return created
 }
 
 /**
@@ -1214,6 +1241,12 @@ async function createRoute(body: SwarmRouteCreate): Promise<RouteDef | null> {
 function onHarnessesError(error: unknown): void {
   harnessesError.value = errorMessage(error)
   if (isUnauthorized(error) || isOffline(error)) handleError(error)
+}
+
+const harnessesSettings: SettingsSection = {
+  loading: harnessesLoading,
+  error: harnessesError,
+  onError: onHarnessesError,
 }
 
 /**
@@ -1248,19 +1281,10 @@ function ensureHarnesses(): void {
 /**
  * Завести харнесс (`POST /api/harnesses`). Ответ — созданная запись, по её `key`
  * комбобокс выбирает нового держателя. `409` — ключ занят (`harnessCreateConflict`).
+ * Перечитывание — после снятия флага: `loadHarnesses` отказывается работать под ним.
  */
 async function createHarness(body: HarnessCreate): Promise<Harness | null> {
-  harnessCreateConflict.value = false
-  const created = await withLoading(harnessesLoading, async () => {
-    const result = await tryRequest(() => api.createHarness(body), (error) => {
-      harnessCreateConflict.value = error instanceof ApiError && error.status === 409
-      onHarnessesError(error)
-    })
-    if (result === null) return null
-    harnessesError.value = null
-    return result
-  })
-  // Перечитывание после снятия флага: `loadHarnesses` отказывается работать под ним.
+  const created = await settingsAction(harnessesSettings, () => api.createHarness(body), harnessCreateConflict)
   if (created) await loadHarnesses()
   return created
 }
@@ -1270,12 +1294,7 @@ async function createHarness(body: HarnessCreate): Promise<Harness | null> {
  * enabled`). `used_by` в ответе не приходит свежим — список перечитывается.
  */
 async function patchHarness(key: string, body: HarnessPatch): Promise<Harness | null> {
-  const result = await withLoading(harnessesLoading, async () => {
-    const updated = await tryRequest(() => api.patchHarness(key, body), onHarnessesError)
-    if (updated === null) return null
-    harnessesError.value = null
-    return updated
-  })
+  const result = await settingsAction(harnessesSettings, () => api.patchHarness(key, body))
   if (result) await loadHarnesses()
   return result
 }
@@ -1357,21 +1376,32 @@ async function loadProjects(): Promise<void> {
   })
 }
 
+/** Перечитать проекты, meta и доску параллельно; `withStats` — ещё и статистику. */
+async function reloadProjectsAndBoard(withStats: boolean): Promise<void> {
+  await Promise.all([loadProjects(), loadMeta(), loadBoard(), ...(withStats ? [loadStats()] : [])])
+}
+
 /**
- * Действие над проектом: ошибки и действия, и перечитывания после него идут
- * через `onProjectsError`. `projectsError` здесь не обнуляем: успешное
- * перечитывание сбрасывает его само (`loadProjects`), а стирание после
- * `refresh()` гасило бы текст только что записанной ошибки списка (listik-q1xh).
+ * Действие над проектом под `projectsLoading`: ошибки и действия, и
+ * перечитывания после него (`reloadProjectsAndBoard(withStats)`) идут через
+ * `onProjectsError` — текст в `projectsError`, 401 открывает окно токена, отказ
+ * сети — плашку доски; итог при ошибке — `null`. Необязательный `conflict`
+ * отмечает `409` самого действия (см. `conflictHandler`). `projectsError` здесь
+ * не обнуляем: успешное перечитывание сбрасывает его само (`loadProjects`), а
+ * стирание после перечитывания гасило бы текст только что записанной ошибки
+ * списка (listik-q1xh).
  */
 async function projectAction<T>(
   action: () => Promise<T>,
-  refresh: () => Promise<void>,
+  withStats: boolean,
+  conflict?: { value: boolean },
 ): Promise<T | null> {
+  const onError = conflictHandler(onProjectsError, conflict)
   return withLoading(projectsLoading, async () => {
-    const result = await tryRequest(action, onProjectsError)
+    const result = await tryRequest(action, onError)
     if (result === null) return null
     try {
-      await refresh()
+      await reloadProjectsAndBoard(withStats)
       return result
     } catch (error) {
       onProjectsError(error)
@@ -1395,7 +1425,7 @@ async function addProject(body: { path: string; slug?: string; title?: string })
         slug: body.slug || undefined,
         title: body.title || undefined,
       }),
-    () => Promise.all([loadProjects(), loadMeta(), loadBoard()]).then(() => undefined),
+    false,
   )
 }
 
@@ -1404,44 +1434,23 @@ async function addProject(body: { path: string; slug?: string; title?: string })
  *
  * Возвращает сохранённый проект, а не просто «получилось»: на ответе форма
  * показывает, что именно записалось, и видит `path_exists` — каталог мог
- * исчезнуть, тогда доска пометит проект «нет каталога». Ошибка — null,
- * текст в `projectsError`.
+ * исчезнуть, тогда доска пометит проект «нет каталога». Ошибка — null.
  */
 async function updateProject(slug: string, body: ProjectPatch): Promise<ProjectRow | null> {
-  return projectAction(
-    () => api.updateProject(slug, body),
-    () => Promise.all([loadProjects(), loadMeta(), loadBoard()]).then(() => undefined),
-  )
+  return projectAction(() => api.updateProject(slug, body), false)
 }
 
 /** Скрыть репозиторий с доски или вернуть обратно: задачи при этом не теряются. */
 async function setProjectArchived(slug: string, archived: boolean): Promise<boolean> {
-  const result = await projectAction(
-    () => api.setProjectArchived(slug, archived),
-    () => Promise.all([loadProjects(), loadMeta(), loadBoard(), loadStats()]).then(() => undefined),
-  )
-  return result !== null
+  return (await projectAction(() => api.setProjectArchived(slug, archived), true)) !== null
 }
 
 /**
  * Убрать репозиторий совсем. Задачи уносит только `force` — сервер иначе откажет.
- * Ошибка — `false`, текст в `projectsError`; `409` (у проекта есть задачи)
- * дополнительно отмечается в `projectRemoveConflict`.
+ * Ошибка — `false`; `409` (у проекта есть задачи) ставит `projectRemoveConflict`.
  */
 async function removeProject(slug: string, force = false): Promise<boolean> {
-  projectRemoveConflict.value = false
-  const result = await projectAction(
-    async () => {
-      try {
-        return await api.removeProject(slug, force)
-      } catch (error) {
-        projectRemoveConflict.value = error instanceof ApiError && error.status === 409
-        throw error
-      }
-    },
-    () => Promise.all([loadProjects(), loadMeta(), loadBoard(), loadStats()]).then(() => undefined),
-  )
-  return result !== null
+  return (await projectAction(() => api.removeProject(slug, force), true, projectRemoveConflict)) !== null
 }
 
 async function importEmbeddings(): Promise<void> {

@@ -970,6 +970,10 @@ def cmd_context(args) -> int:
         head = ("последний красный вердикт — сначала закрой каждый его пункт"
                 if out["stage"] == "s3-impl" else "verdict")
         print(f"\n{head}: {out['verdict'].get('author')}: {out['verdict'].get('text')}\n")
+    if out.get("questions"):
+        print("вопросы и ответы:")
+        for q in out["questions"]:
+            print(f"  - {q.get('created_at')} [{q.get('kind')}] {q.get('author')}: {q.get('text')}")
     if out.get("portion"):
         portion_card = out.get("portion_card")
         if portion_card:

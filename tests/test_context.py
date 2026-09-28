@@ -305,6 +305,55 @@ class ContextContractTests(TempDbTestCase):
 
     # ------------------------------------------------------------ no documents
 
+    # ---------------------------------------------------------------- questions (listik-bbzx)
+
+    def _ask_and_answer(self, task_id: str) -> None:
+        store.set_needs_owner(self.conn, task_id, value=True, text="вопрос судьи: какой вариант?")
+        time.sleep(0.005)
+        store.set_needs_owner(self.conn, task_id, value=False, text="ответ: вариант А")
+
+    def test_questions_on_s3_s4_only(self) -> None:
+        self._ask_and_answer(self.tid)
+        for stage in ("s3-impl", "s4-judge"):
+            out = self.ctx(stage)
+            qs = out["questions"]
+            self.assertEqual([q["kind"] for q in qs], ["question", "answer"], stage)
+            self.assertEqual([q["text"] for q in qs],
+                             ["вопрос судьи: какой вариант?", "ответ: вариант А"], stage)
+            self.assertEqual(set(qs[0]), {"id", "author", "kind", "text", "created_at"})
+            blocks = [r["block"] for r in out["reasons"]]
+            self.assertIn("questions", blocks, stage)
+            self.assertIn("chunk", blocks, stage)
+            self.assertLess(blocks.index("questions"), blocks.index("chunk"), stage)
+        for stage in ("s1-spec", "s2-review", "s9-unknown"):
+            out = self.ctx(stage)
+            self.assertEqual(out["questions"], [], stage)
+            self.assertNotIn("questions", [r["block"] for r in out["reasons"]], stage)
+
+    def test_questions_ignore_max_chars(self) -> None:
+        self._ask_and_answer(self.tid)
+        out = self.ctx("s4-judge", max_chars=1)
+        self.assertEqual([q["text"] for q in out["questions"]],
+                         ["вопрос судьи: какой вариант?", "ответ: вариант А"])
+        self.assertEqual(out["limits"]["applies_to"], "chunks")
+
+    def test_needs_owner_without_text_adds_no_question(self) -> None:
+        store.set_needs_owner(self.conn, self.tid, value=True)
+        store.set_needs_owner(self.conn, self.tid, value=False)
+        self.assertEqual(self.ctx("s4-judge")["questions"], [])
+
+    def test_questions_come_from_resolved_portion_card(self) -> None:
+        parent = store.create_task(self.conn, title="Шаг: вопросы", project="listik")
+        child = store.create_task(self.conn, title="Шаг: вопросы, порция a", project="listik",
+                                  parent=parent["id"])
+        store.set_needs_owner(self.conn, parent["id"], value=True, text="вопрос родителя")
+        store.set_needs_owner(self.conn, child["id"], value=True, text="вопрос порции")
+        out = documents.context(self.conn, parent["id"], "s4-judge", portion=child["id"])
+        self.assertEqual((out["portion_card"] or {}).get("id"), child["id"])
+        self.assertEqual([q["text"] for q in out["questions"]], ["вопрос порции"])
+        own = documents.context(self.conn, parent["id"], "s4-judge")
+        self.assertEqual([q["text"] for q in own["questions"]], ["вопрос родителя"])
+
     def test_task_without_documents_returns_empty_chunks_and_documents(self) -> None:
         task = store.create_task(self.conn, title="без документов", project="listik")
         for stage in STAGES:
@@ -347,6 +396,22 @@ class TextFormatCliTests(TempDbTestCase):
         self.assertEqual(p.returncode, 0, p.stderr)
         self.assertIn("предложенные блокеры", p.stdout)
         self.assertIn(blocker, p.stdout)
+
+
+    def test_questions_are_printed_at_s4(self) -> None:
+        task = store.create_task(self.conn, title="s4 questions", project="listik")
+        p = self._run("context", task["id"], "--stage", "s4-judge")
+        self.assertEqual(p.returncode, 0, p.stderr)
+        self.assertNotIn("вопросы и ответы:", p.stdout)
+        store.set_needs_owner(self.conn, task["id"], value=True, text="какой формат?")
+        store.set_needs_owner(self.conn, task["id"], value=False, text="формат JSON")
+        p = self._run("context", task["id"], "--stage", "s4-judge")
+        self.assertEqual(p.returncode, 0, p.stderr)
+        self.assertIn("вопросы и ответы:", p.stdout)
+        self.assertIn("[question]", p.stdout)
+        self.assertIn("какой формат?", p.stdout)
+        self.assertIn("[answer]", p.stdout)
+        self.assertIn("формат JSON", p.stdout)
 
 
 if __name__ == "__main__":

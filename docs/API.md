@@ -1564,8 +1564,9 @@ id не подмешивается: там только векторная бл�
 состояние `ready/claimable/can_finish/verdict` и т. д.), `children[]` (все дочерние карточки
 запрошенной карточки со своими документами), `portion_card` (дочерняя карточка, в которую
 разрешился `portion`, или `null`), `parent` (родитель карточки, по которой построен контекст,
-или `null`), `reviews[]`, `verdict`, `journal[]`,
-`worktree`, `limits` (`max_chars, default_for_stage, used_chars, truncated, truncated_chunks[],
+или `null`), `reviews[]`, `verdict`, `journal[]`, `questions[]` (вопросы и ответы
+`needs-owner` карточки, по которой построен контекст; поля как у `reviews[]`, лимит `max_chars`
+на них не действует), `worktree`, `limits` (`max_chars, default_for_stage, used_chars, truncated, truncated_chunks[],
 dropped_chunks, reason`), `reasons[]` (по одному пункту на каждый включённый блок и чанк),
 `generated_at` (не время вызова, а `updated_at` задачи — тоже ради стабильности).
 
@@ -1573,7 +1574,8 @@ dropped_chunks, reason`), `reasons[]` (по одному пункту на ка�
 
 - **s1-spec / s2-review** — в контекст целиком входят все документы задачи (`spec`, `checklist`,
   `review`, `decision`), по порядку spec→checklist→review→decision; `reviews[]` пуст на s1-spec
-  и содержит все ревью-комментарии на s2-review; `verdict`, `journal`, `worktree` не заполняются.
+  и содержит все ревью-комментарии на s2-review; `verdict`, `journal`, `worktree` не заполняются,
+  `questions[]` пуст.
 - **s3-impl** — чек-лист входит целиком первым слоем; дальше — либо `portion`, разрешённый в
   дочернюю карточку-порцию (тогда контекст построен по ней — см. «Карточка-порция»), либо
   совпадение `portion` по заголовку/breadcrumb в spec/decision, либо (если `portion` не задан
@@ -1581,12 +1583,14 @@ dropped_chunks, reason`), `reasons[]` (по одному пункту на ка�
   не попал ни одним из способов — в контекст добавляется начало spec-документа. `reviews[]` —
   последний ревью-комментарий; `verdict` — последний комментарий `kind=verdict`, только если он
   красный (`VERDICT: FAIL`, возврат с приёмки), иначе `null`; текстовый вывод `listik context`
-  печатает его первым блоком. `journal`, `worktree` не заполняются. Рой при запуске s3-impl
+  печатает его первым блоком. `questions[]` — все комментарии `kind=question`/`kind=answer`
+  карточки по времени (в том числе ответ роя по умолчанию); текстовый вывод печатает их блоком
+  `вопросы и ответы:` сразу после вердикта. `journal`, `worktree` не заполняются. Рой при запуске s3-impl
   после красного вердикта ставит его правки первым блоком промпта роли, а промпт запуска
   (argv, sha256, текст) пишет шапкой в `launch_log`.
 - **s4-judge** — тот же слоёный отбор чанков, что на s3; дополнительно заполняются `verdict`
   (последний комментарий `kind=verdict`), `journal[]` (комментарии `kind=journal` вперемешку с
-  событиями перехода этапов, по времени) и `worktree` (путь рабочего дерева, ветка, HEAD, `git
+  событиями перехода этапов, по времени), `questions[]` (как на s3-impl) и `worktree` (путь рабочего дерева, ветка, HEAD, `git
   status --porcelain`/`git diff --stat` с обрезкой при превышении лимита — если `worktree` в
   карточке не задан или каталог/репозиторий недоступны, в ответе только `exists: false` и `reason`).
   У блока всегда есть `mode` (`worktree` — обычное дерево, `main` — маркер «работа в основной

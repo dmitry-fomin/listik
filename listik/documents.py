@@ -831,7 +831,8 @@ def context(conn: sqlite3.Connection, task_id: str, stage: str, *, portion: str 
     # from document chunks so callers can distinguish a decision from source material.
     comments = [dict(r) for r in conn.execute(
         "SELECT id, author, kind, text, created_at FROM comments WHERE task_id=? "
-        "AND kind IN ('review','verdict','journal') ORDER BY created_at, id", (task_id,))]
+        "AND kind IN ('review','verdict','journal','question','answer') "
+        "ORDER BY created_at, id", (task_id,))]
     reviews_all = [c for c in comments if c["kind"] == "review"]
     verdicts_all = [c for c in comments if c["kind"] == "verdict"]
     journals_all = [c for c in comments if c["kind"] == "journal"]
@@ -888,6 +889,10 @@ def context(conn: sqlite3.Connection, task_id: str, stage: str, *, portion: str 
     else:
         verdict = None
     journal = _journal_items(conn, task_id, journals_all) if stage == "s4-judge" else []
+    # Вопросы человеку и ответы needs-owner (в т.ч. ответ роя по умолчанию) — только
+    # исполнителю и судье; лимит max_chars на них не действует (listik-bbzx).
+    questions = ([c for c in comments if c["kind"] in ("question", "answer")]
+                 if stage in ("s3-impl", "s4-judge") else [])
     worktree = _worktree(task, conn) if stage == "s4-judge" else None
 
     stable_task = _stable(task)
@@ -913,6 +918,8 @@ def context(conn: sqlite3.Connection, task_id: str, stage: str, *, portion: str 
     if verdict is not None:
         reasons.append({"block": "verdict", "reason": "последний вердикт судьи" if stage == "s4-judge"
                         else "последний красный вердикт: сначала его пункты"})
+    if questions:
+        reasons.append({"block": "questions", "reason": "вопросы и ответы needs-owner"})
     if journal:
         reasons.append({"block": "journal", "reason": "журнал решений и переходов"})
     if worktree is not None:
@@ -937,6 +944,7 @@ def context(conn: sqlite3.Connection, task_id: str, stage: str, *, portion: str 
         "reviews": reviews,
         "verdict": verdict,
         "journal": journal,
+        "questions": questions,
         "worktree": worktree,
         "limits": {"max_chars": effective_max, "default_for_stage": default_for_stage,
                    "used_chars": used, "truncated": truncated, "applies_to": "chunks",

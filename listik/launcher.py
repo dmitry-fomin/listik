@@ -45,9 +45,10 @@ _SUBST_RE = re.compile(r"\{(" + "|".join(routes_mod.PLACEHOLDERS) + r")\}")
 ALREADY_STARTED = "уже запущена Listik"
 
 # Переменные LISTIK_*, которые сам Listik читает или выдаёт (см. listik/paths.py,
-# bin/listik, listik/client.py, listik/cwd_project.py, listik/fence.py и штатные пять
-# ниже в `start`) — их нельзя переопределить через `env` запуска. Переменные, которые
-# читает только install.sh, сюда не входят (см. docs/API.md, «Отзыв и перезапуск»).
+# bin/listik, listik/client.py, listik/cwd_project.py, listik/fence.py, штатные пять
+# и три роя из `_launch_env`) — их нельзя переопределить через `env` запуска.
+# Переменные, которые читает только install.sh, сюда не входят (см. docs/API.md,
+# «Отзыв и перезапуск»).
 RESERVED_ENV = frozenset({
     "LISTIK_HOME", "LISTIK_DB", "LISTIK_CONFIG", "LISTIK_LOG", "LISTIK_PORT",
     "LISTIK_PROJECTS_ROOT", "LISTIK_OLLAMA_URL", "LISTIK_EMBED_MODEL", "LISTIK_EMBED_DIM",
@@ -234,10 +235,48 @@ def _start_tracker(conn, task_id: str, pid: int, proc: subprocess.Popen, notify,
     return thread
 
 
-def _after_popen(conn, task_id: str, proc: subprocess.Popen, notify, *, log_path,
-                 journal: str, dispatch_id: str | None, generation: int) -> None:
+def _launch_values(task_id: str, row, key: str, cwd: Path, **more) -> dict:
+    """Подстановки команды запуска: `task_id/project/route/cwd/worktree/branch` и `more`.
+
+    `{worktree}` — колонка `tasks.worktree`, но пустое значение и маркер основной
+    ветки (`main`/`master`) указывают не на дерево, а на каталог проекта: подставляем
+    `cwd`, чтобы значение всегда указывало на реальное дерево. `{branch}` пуст —
+    пустая строка. Замена однопроходная (см. `_SUBST_RE`).
+    """
+    worktree = (row["worktree"] or "").strip()
+    if not worktree or store.is_main_worktree(worktree):
+        worktree = str(cwd)
+    return {"task_id": task_id, "project": row["project"] or "", "route": key,
+            "cwd": str(cwd), "worktree": worktree, "branch": row["branch"] or "", **more}
+
+
+def _log_path(task_id: str, log_dir) -> Path:
+    """Файл лога запуска: `log_dir` (иначе `paths.LOGS_DIR` на момент вызова) +
+    `launch-<task_id>-<UTC>.log`. Каталог не создаётся — это дело вызывающего внутри
+    того же `try`, что и `Popen`: `OSError` там — отказ, а не исключение наружу."""
+    directory = Path(log_dir) if log_dir is not None else paths.LOGS_DIR
+    stamp = datetime.now(timezone.utc).strftime("%Y%m%dT%H%M%SZ")
+    return directory / f"launch-{task_id}-{stamp}.log"
+
+
+def _launch_env(task_id: str, key: str, row, extra: dict, **more: str) -> dict:
+    """Окружение процесса: `os.environ | extra | штатные`; `extra` штатные не перекрывает.
+
+    Штатные — пять переменных запуска и `more` (у роя `LISTIK_STAGE`/`LISTIK_ROLE`/
+    `LISTIK_HARNESS`) в том же последнем слое.
+    """
+    return os.environ | extra | {"LISTIK_TASK_ID": task_id, "LISTIK_ROUTE": key,
+                                 "LISTIK_LAUNCHED_BY": "listik",
+                                 "LISTIK_GENERATION": str(int(row["generation"] or 0)),
+                                 "LISTIK_DISPATCH_ID": row["dispatch_id"] or "", **more}
+
+
+def _record_started(conn, task_id: str, row, proc: subprocess.Popen, notify, *,
+                    extra: dict, log_path, head: str, tail: str = "") -> None:
     """Общий хвост `start`/`_start_swarm` после `Popen`: процесс всегда под слежением.
 
+    Журнал запуска — `head` + `pid …, лог …, поколение …, запуск …` + хвост
+    «, окружение K=V, …» (только при непустом `extra`) + `tail`.
     Поля `launch_*` и журнал запуска пишутся одной транзакцией (`add_comment`
     коммитит и UPDATE). Сбой записи — откат и повтор одного UPDATE `launch_*` по
     `dispatch_id` этого запуска (без журнала), чтобы `recover` нашёл процесс; сбой
@@ -246,6 +285,16 @@ def _after_popen(conn, task_id: str, proc: subprocess.Popen, notify, *, log_path
     первое исключение уходит наружу как есть. Захват не снимается (listik-ovmh).
     """
     pid = proc.pid
+    dispatch_id = row["dispatch_id"]
+    generation = int(row["generation"] or 0)
+    # Хвост с окружением — только если `extra` непуст (порция a листик-9hcc); ключи
+    # в алфавитном порядке, значения дословно (журнал виден на доске, не редактируется —
+    # секреты через `env` не передавать, см. docs/API.md).
+    env_tail = ""
+    if extra:
+        env_tail = ", окружение " + ", ".join(f"{k}={v}" for k, v in sorted(extra.items()))
+    journal = (f"{head}pid {pid}, лог {log_path}, поколение {generation}, "
+               f"запуск {dispatch_id}{env_tail}{tail}")
     # `revoke` (порция c) дожидается смерти через `proc.poll()`, пока сервер тот же
     # процесс, что запустил Popen; ключ — task_id, повторный `start` затирает
     # запись прежнего запуска (реестр не индексирован по dispatch_id).
@@ -343,13 +392,14 @@ def start(conn, task_id: str, notify=None, *, log_dir=None, env=None) -> str | N
     сначала снимается) — `errors.NotFound`, а не строка. Исключение после захвата, но до
     старта процесса откатывает незакоммиченное, снимает захват этого запуска (у роя после
     `claim` — и держателя) и пробрасывается как есть; после `Popen` захват не снимается.
-    После `Popen` слежение стартует всегда (`_after_popen`): сбой записи `launch_*`/
+    После `Popen` слежение стартует всегда (`_record_started`): сбой записи `launch_*`/
     журнала/`notify` не оставляет процесс без слежения — `launch_pid` пишется повторной
     записью, слежение запускается, затем первое исключение уходит наружу.
 
     `env` — дополнительное окружение процесса (см. `check_env`): подмешивается поверх
-    унаследованного окружения сервера, но под штатными пятью переменными; в карточку не
-    пишется и следующим `launch`/`recover` не наследуется.
+    унаследованного окружения сервера, но под штатными пятью переменными
+    (`_launch_env`); в карточку не пишется и следующим `launch`/`recover` не
+    наследуется.
 
     `log_dir` — только для тестов, по умолчанию `logs/` в корне репозитория.
     Поток слежения доступен через `tracker(task_id)`.
@@ -417,27 +467,13 @@ def start(conn, task_id: str, notify=None, *, log_dir=None, env=None) -> str | N
                              f"нет рабочего каталога (worktree или path проекта {project})",
                              notify)
 
-            # `{worktree}` — колонка `tasks.worktree`, но пустое значение и маркер основной
-            # ветки (`main`/`master`) указывают не на дерево, а на каталог проекта:
-            # подставляем `cwd`, чтобы значение всегда указывало на реальное дерево.
-            # `{branch}` пуст — пустая строка. Замена однопроходная (см. `_SUBST_RE`).
-            worktree = (row["worktree"] or "").strip()
-            if not worktree or store.is_main_worktree(worktree):
-                worktree = str(cwd)
-            values = {"task_id": task_id, "project": row["project"] or "", "route": key,
-                      "cwd": str(cwd), "worktree": worktree, "branch": row["branch"] or ""}
+            values = _launch_values(task_id, row, key, cwd)
             argv = [_substitute(element, values) for element in command]
 
-            log_dir = Path(log_dir) if log_dir is not None else paths.LOGS_DIR
-            stamp = datetime.now(timezone.utc).strftime("%Y%m%dT%H%M%SZ")
-            log_path = log_dir / f"launch-{task_id}-{stamp}.log"
-            generation = int(row["generation"] or 0)
-            proc_env = os.environ | extra | {"LISTIK_TASK_ID": task_id, "LISTIK_ROUTE": key,
-                                "LISTIK_LAUNCHED_BY": "listik",
-                                "LISTIK_GENERATION": str(generation),
-                                "LISTIK_DISPATCH_ID": row["dispatch_id"] or ""}
+            log_path = _log_path(task_id, log_dir)
+            proc_env = _launch_env(task_id, key, row, extra)
             try:
-                log_dir.mkdir(parents=True, exist_ok=True)
+                log_path.parent.mkdir(parents=True, exist_ok=True)
                 with open(log_path, "wb") as log:
                     # Без shell: argv уходит процессу как есть, ничего из задачи не
                     # расширяется.
@@ -455,18 +491,8 @@ def start(conn, task_id: str, notify=None, *, log_dir=None, env=None) -> str | N
         return _start_swarm(conn, task_id, row, record, notify=notify,
                             log_dir=log_dir, extra=extra, dispatch_id=dispatch_id)
 
-    pid = proc.pid
-    dispatch_id = row["dispatch_id"]
-    # Хвост с окружением — только если `extra` непуст (порция a листик-9hcc); ключи
-    # в алфавитном порядке, значения дословно (журнал виден на доске, не редактируется —
-    # секреты через `env` не передавать, см. docs/API.md).
-    env_tail = ""
-    if extra:
-        env_tail = ", окружение " + ", ".join(f"{k}={v}" for k, v in sorted(extra.items()))
-    _after_popen(conn, task_id, proc, notify, log_path=log_path,
-                 journal=f"автостарт: маршрут {key}, pid {pid}, лог {log_path}, "
-                         f"поколение {generation}, запуск {dispatch_id}{env_tail}",
-                 dispatch_id=dispatch_id, generation=generation)
+    _record_started(conn, task_id, row, proc, notify, extra=extra, log_path=log_path,
+                    head=f"автостарт: маршрут {key}, ")
     return None
 
 
@@ -500,7 +526,9 @@ def _start_swarm(conn, task_id: str, row, record: dict, *, notify, log_dir,
     снимает захват этого запуска, а если `claim` уже прошёл — и держателя, и
     пробрасывается как есть (listik-ohhl); после `Popen` захват не снимается, слежение
     стартует всегда, а сбой записи/журнала/`notify` уходит наружу после него
-    (`_after_popen`). Файлы `.out`/`.log` закрываются при любом исходе.
+    (`_record_started`). Подстановки, лог и окружение — общие со `start`
+    (`_launch_values`, `_log_path`, `_launch_env`). Файлы `.out`/`.log` закрываются
+    при любом исходе.
     """
     from . import stage_launch
 
@@ -610,12 +638,8 @@ def _start_swarm(conn, task_id: str, row, record: dict, *, notify, log_dir,
         claimed = True
 
         # Подстановки те же, что у команды маршрута, плюс `{stage}`/`{role}`/`{harness}`.
-        worktree = (row["worktree"] or "").strip()
-        if not worktree or store.is_main_worktree(worktree):
-            worktree = str(cwd)
-        values = {"task_id": task_id, "project": row["project"] or "", "route": key,
-                  "cwd": str(cwd), "worktree": worktree, "branch": row["branch"] or "",
-                  "stage": stage, "role": role or "", "harness": harness}
+        values = _launch_values(task_id, row, key, cwd,
+                                stage=stage, role=role or "", harness=harness)
         argv = [_substitute(element, values) for element in resolved["argv"]]
         prompt = _substitute(resolved["prompt"], values) if resolved.get("prompt") else None
         if prompt is not None and tail is not None:
@@ -633,21 +657,14 @@ def _start_swarm(conn, task_id: str, row, record: dict, *, notify, log_dir,
         if prompt is not None:
             argv.append(prompt)
 
-        log_dir = Path(log_dir) if log_dir is not None else paths.LOGS_DIR
-        stamp = datetime.now(timezone.utc).strftime("%Y%m%dT%H%M%SZ")
-        log_path = log_dir / f"launch-{task_id}-{stamp}.log"
+        log_path = _log_path(task_id, log_dir)
         # У роя потоки разделены: stdout (ответ — последней строкой) — в `.out`,
         # stderr — в `launch_log` (docs/specs/swarm-stage-launch.md).
         out_path = stage_launch.out_path_of(str(log_path))
-        generation = int(row["generation"] or 0)
-        proc_env = os.environ | extra | {"LISTIK_TASK_ID": task_id, "LISTIK_ROUTE": key,
-                            "LISTIK_LAUNCHED_BY": "listik",
-                            "LISTIK_GENERATION": str(generation),
-                            "LISTIK_DISPATCH_ID": row["dispatch_id"] or "",
-                            "LISTIK_STAGE": stage, "LISTIK_ROLE": role or "",
-                            "LISTIK_HARNESS": harness}
+        proc_env = _launch_env(task_id, key, row, extra, LISTIK_STAGE=stage,
+                               LISTIK_ROLE=role or "", LISTIK_HARNESS=harness)
         try:
-            log_dir.mkdir(parents=True, exist_ok=True)
+            log_path.parent.mkdir(parents=True, exist_ok=True)
             # Оба файла закрываются при любом исходе; после `Popen` процесс держит
             # свои дескрипторы.
             with open(out_path, "wb") as out_file, open(log_path, "wb") as log_file:
@@ -680,16 +697,9 @@ def _start_swarm(conn, task_id: str, row, record: dict, *, notify, log_dir,
         _release(conn, task_id, dispatch_id=dispatch_id)
         raise
 
-    pid = proc.pid
-    dispatch_id = row["dispatch_id"]
-    env_tail = ""
-    if extra:
-        env_tail = ", окружение " + ", ".join(f"{k}={v}" for k, v in sorted(extra.items()))
-    _after_popen(conn, task_id, proc, notify, log_path=log_path,
-                 journal=f"рой: этап {stage}, роль {role}, держатель {harness}, "
-                         f"pid {pid}, лог {log_path}, поколение {generation}, "
-                         f"запуск {dispatch_id}{env_tail} — карточку взял Listik",
-                 dispatch_id=dispatch_id, generation=generation)
+    _record_started(conn, task_id, row, proc, notify, extra=extra, log_path=log_path,
+                    head=f"рой: этап {stage}, роль {role}, держатель {harness}, ",
+                    tail=" — карточку взял Listik")
     return None
 
 

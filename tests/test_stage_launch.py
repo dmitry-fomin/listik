@@ -1395,5 +1395,57 @@ class CaptureReleaseOnErrorTests(SwarmCase):
         self.assertEqual(row["dispatch_id"], "чужой-запуск")
 
 
+class SwarmStartPinTests(SwarmCase):
+    """Закрепка старта роя (listik-rttz): окружение процесса, журнал старта целиком,
+    имя лога и `.out` рядом — до и после выноса общих хелперов из `launcher`."""
+
+    def test_swarm_start_env_journal_and_log_name(self) -> None:
+        import re
+
+        env_file = self.tmp_path / "env.json"
+        harnesses_store.update(self.conn, "probe", {"argv": [
+            sys.executable, "-c",
+            "import json, os, sys; "
+            # Без фигурных скобок: в argv они — подстановки маршрута.
+            f"open({str(env_file)!r}, 'w').write(json.dumps("
+            "dict((k, v) for k, v in os.environ.items() if k.startswith('LISTIK_')))); "
+            "print('готово')"]})
+        self.add_route({"impl": {"harness": "probe"}, "judge": {"harness": "probe"}})
+        task_id = self.add_task(stage="s3-impl")
+        log_dir = self.tmp_path / "logs"
+        result = launcher.start(self.conn, task_id, log_dir=str(log_dir),
+                                env={"LISTIK_Z": "1"})
+        self.assertIsNone(result)
+        launcher.tracker(task_id).join(timeout=30)
+
+        task = self.task(task_id)
+        env = json.loads(env_file.read_text(encoding="utf-8"))
+        self.assertEqual(env["LISTIK_Z"], "1")
+        self.assertEqual(env["LISTIK_TASK_ID"], task_id)
+        self.assertEqual(env["LISTIK_ROUTE"], "roy")
+        self.assertEqual(env["LISTIK_LAUNCHED_BY"], "listik")
+        self.assertEqual(env["LISTIK_GENERATION"], str(task["generation"]))
+        self.assertRegex(env["LISTIK_DISPATCH_ID"], r"^[0-9a-f]{32}$")
+        self.assertEqual(env["LISTIK_STAGE"], "s3-impl")
+        self.assertEqual(env["LISTIK_ROLE"], "impl")
+        self.assertEqual(env["LISTIK_HARNESS"], "probe")
+
+        log = Path(task["launch_log"])
+        self.assertEqual(log.parent, log_dir)
+        self.assertRegex(log.name, rf"^launch-{re.escape(task_id)}-\d{{8}}T\d{{6}}Z\.log$")
+        self.assertTrue(stage_launch.out_path_of(str(log)).is_file())
+
+        starts = [t for t in self.comments(task_id, "journal")
+                  if t.startswith("рой: этап s3-impl, роль impl, держатель probe, pid ")]
+        self.assertEqual(len(starts), 1, self.comments(task_id, "journal"))
+        pattern = (
+            f"рой: этап s3-impl, роль impl, держатель probe, pid {task['launch_pid']}, "
+            f"лог {re.escape(task['launch_log'])}, поколение {task['generation']}, "
+            "запуск [0-9a-f]{32}, окружение LISTIK_Z=1 — карточку взял Listik")
+        self.assertIsNotNone(re.fullmatch(pattern, starts[0]), starts[0])
+        self.assertEqual(env["LISTIK_DISPATCH_ID"],
+                         re.search(r"запуск ([0-9a-f]{32})", starts[0]).group(1))
+
+
 if __name__ == "__main__":
     unittest.main()

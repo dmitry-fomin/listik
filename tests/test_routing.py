@@ -132,6 +132,23 @@ class RoutingTests(TempDbTestCase):
         self.assertEqual(effective, config_mod.routing())
         self.assertIn("demo", err)
 
+    def test_non_object_db_json_warning_names_type_not_value(self) -> None:
+        marker = "SECRET-MARKER-7d0f"
+        cases = {
+            "list": [marker], "str": marker, "int": 70123457,
+            "float": 7.0123457, "bool": True,
+        }
+        for type_name, value in cases.items():
+            with self.subTest(type=type_name):
+                self._set_raw_routing(json.dumps(value))
+                effective, err = self._routing_with_stderr(self.conn)
+                self.assertEqual(effective, config_mod.routing())
+                self.assertIn("demo", err)
+                self.assertIn(type_name, err)
+                self.assertNotIn(marker, err)
+                self.assertNotIn(str(value), err)
+                self.assertNotIn(repr(value), err)
+
     def test_null_and_empty_db_routing_are_silent(self) -> None:
         for value in (None, ""):
             with self.subTest(value=value):

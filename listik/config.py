@@ -400,7 +400,7 @@ def routing(project: str | None = None, conn=None) -> dict:
                   file=sys.stderr)
             db_override = None
         if db_override is not None and not isinstance(db_override, dict):
-            print(f"routing {project}: переопределение из базы не объект: {db_override!r}",
+            print(f"routing {project}: переопределение из базы не объект, а {type(db_override).__name__}",
                   file=sys.stderr)
         elif db_override is not None:
             override = _merge(override if isinstance(override, dict) else {}, db_override)

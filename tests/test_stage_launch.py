@@ -346,7 +346,7 @@ class LaunchTests(SwarmCase):
                   "вердикт (-k verdict) ты не делаешь — карточку ведёт Listik; оркестратора и "
                   "дампов диффа нет, всё нужное — в listik context.")
         criteria = ("## Что тебе запрещено\n- не трогай {task_id}\n\n"
-                    "## Работа   \n1. шаг\n### подраздел\n2. ещё\n\n"
+                    "## Работа\n1. шаг\n### подраздел\n2. ещё\n\n"
                     "## Коммит при зелёном вердикте\nкоммить")
         self.assertEqual(prompt, "\n\n".join(
             [protocol, bridge, self.JUDGE_NOTE, criteria, self.JUDGE_LAST]))
@@ -373,6 +373,29 @@ class LaunchTests(SwarmCase):
         question = self.assert_refused(task_id, self.start_and_wait(task_id))
         self.assertEqual(question, "рой: нет критериев роли judge (этап s4-judge): "
                                    f"нет файла {agents}/pipeline-judge.md")
+
+    def test_non_utf8_agent_file_is_refusal(self) -> None:
+        agents = self.tmp_path / "agents"
+        agents.mkdir()
+        (agents / "pipeline-judge.md").write_bytes(b"\xff\xfe")
+        self.patch_agents_dir(agents)
+        self.add_route({"judge": {"harness": "probe"}})
+        task_id = self.add_task(stage="s4-judge")
+        question = self.assert_refused(task_id, self.start_and_wait(task_id))
+        self.assertEqual(question, "рой: нет критериев роли judge (этап s4-judge): "
+                                   f"файл {agents}/pipeline-judge.md не в UTF-8")
+
+    def test_unreadable_agent_file_is_refusal(self) -> None:
+        agents = self.tmp_path / "agents"
+        (agents / "pipeline-judge.md").mkdir(parents=True)
+        self.patch_agents_dir(agents)
+        self.add_route({"judge": {"harness": "probe"}})
+        task_id = self.add_task(stage="s4-judge")
+        question = self.assert_refused(task_id, self.start_and_wait(task_id))
+        prefix = ("рой: нет критериев роли judge (этап s4-judge): "
+                  f"не читается файл {agents}/pipeline-judge.md: ")
+        self.assertTrue(question.startswith(prefix), question)
+        self.assertGreater(len(question), len(prefix))
 
     def test_missing_agent_section_is_refusal(self) -> None:
         agents = self.tmp_path / "agents"

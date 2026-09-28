@@ -156,6 +156,11 @@ def role_criteria(role: str) -> str:
         lines = path.read_text(encoding="utf-8").splitlines()
     except FileNotFoundError:
         raise CriteriaError(f"нет файла {path.absolute()}") from None
+    except OSError as exc:
+        reason = exc.strerror or type(exc).__name__
+        raise CriteriaError(f"не читается файл {path.absolute()}: {reason}") from None
+    except UnicodeDecodeError:
+        raise CriteriaError(f"файл {path.absolute()} не в UTF-8") from None
     sections = []
     for title in titles:
         head = f"## {title}"
@@ -164,7 +169,7 @@ def role_criteria(role: str) -> str:
             raise CriteriaError(f"в {name} нет раздела «{title}»")
         end = next((i for i in range(start + 1, len(lines))
                     if lines[i].startswith("## ")), len(lines))
-        body = lines[start:end]
+        body = [head] + lines[start + 1:end]
         while body and not body[-1].strip():
             body.pop()
         sections.append("\n".join(body))
@@ -184,6 +189,20 @@ def role_tail(role: str, last: bool = False) -> str:
         blocks.append(_LAST_IMPL_BLOCK)
     blocks.append(_JUDGE_ANSWER_LINE if role == "judge" else _ANSWER_LINE)
     return "\n\n".join(blocks)
+
+
+def swarm_role_tails() -> tuple[dict, dict]:
+    """Хвосты промпта ролей роя для доски: `(tails, errors)` по ключам
+    spec/critic/impl/impl_last/judge; `CriteriaError` роли уходит в `errors`."""
+    tails, errs = {}, {}
+    for key, role, last in (("spec", "spec", False), ("critic", "critic", False),
+                            ("impl", "impl", False), ("impl_last", "impl", True),
+                            ("judge", "judge", False)):
+        try:
+            tails[key] = role_tail(role, last=last)
+        except CriteriaError as exc:
+            errs[key] = str(exc)
+    return tails, errs
 
 
 def resolve_role(conn: sqlite3.Connection, record: dict, role: str | None) -> dict | None:

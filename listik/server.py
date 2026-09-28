@@ -723,11 +723,16 @@ def handle(method: str, path: str, query: dict, body: dict, authed: bool = False
             harnesses = harnesses_store.list_harnesses(conn)
             for record in harnesses:
                 record["used_by"] = harnesses_store.used_by(conn, record["key"])
-            # `swarm_prompt` — протокол роли роя: лаунчер подставляет его
-            # последним аргументом при пустом `prompt` ячейки, доска показывает
-            # его в предпросмотре команды роли.
+            # `swarm_prompt` — только протокол роли роя (без критериев): лаунчер
+            # подставляет его при пустом `prompt` ячейки и дописывает через пустую
+            # строку хвост роли — он в `swarm_role_tails` (`CriteriaError` роли —
+            # в `swarm_role_errors`); доска собирает из них предпросмотр команды роли.
+            from . import stage_launch
+            tails, role_errors = stage_launch.swarm_role_tails()
             return 200, {"harnesses": harnesses,
-                         "swarm_prompt": harnesses_store.SWARM_PROMPT}
+                         "swarm_prompt": harnesses_store.SWARM_PROMPT,
+                         "swarm_role_tails": tails,
+                         "swarm_role_errors": role_errors}
         if method == "POST":
             try:
                 record = harnesses_store.create(conn, body)

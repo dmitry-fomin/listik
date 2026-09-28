@@ -21,6 +21,7 @@ from listik import harnesses_store
 from listik import routes_store
 from listik import server
 from listik import skills as skills_mod
+from listik import stage_launch
 from listik import store
 from tests.helpers import TempDbTestCase
 
@@ -418,6 +419,32 @@ class HarnessesApiTests(RoutesApiBase):
         # Протокол роя приходит с каталогом — доска показывает его в
         # предпросмотре команды роли при пустом `prompt` ячейки.
         self.assertEqual(data["swarm_prompt"], harnesses_store.SWARM_PROMPT)
+
+    def test_list_returns_swarm_role_tails(self) -> None:
+        status, data = self.get("/api/harnesses")
+        self.assertEqual(status, 200)
+        self.assertEqual(data["swarm_prompt"], harnesses_store.SWARM_PROMPT)
+        self.assertEqual(data["swarm_role_errors"], {})
+        self.assertEqual(data["swarm_role_tails"], {
+            "spec": stage_launch.role_tail("spec"),
+            "critic": stage_launch.role_tail("critic"),
+            "impl": stage_launch.role_tail("impl"),
+            "impl_last": stage_launch.role_tail("impl", last=True),
+            "judge": stage_launch.role_tail("judge"),
+        })
+
+    def test_list_without_agent_files_reports_role_errors(self) -> None:
+        agents = self.tmp_path / "agents"
+        agents.mkdir()
+        with mock.patch.object(stage_launch, "AGENTS_DIR", agents):
+            status, data = self.get("/api/harnesses")
+        self.assertEqual(status, 200)
+        self.assertEqual(data["swarm_prompt"], harnesses_store.SWARM_PROMPT)
+        self.assertEqual(data["swarm_role_tails"], {})
+        self.assertEqual(set(data["swarm_role_errors"]),
+                         {"spec", "critic", "impl", "impl_last", "judge"})
+        self.assertEqual(data["swarm_role_errors"]["judge"],
+                         f"нет файла {agents}/pipeline-judge.md")
 
     def test_create_get_patch(self) -> None:
         status, record = self.post("/api/harnesses", {

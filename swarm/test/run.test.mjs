@@ -2884,6 +2884,77 @@ test("main --once: цикл — строка «циклы:» и код 1", {time
   assert.ok(logText.includes("циклы: a → b → a"));
 });
 
+// listik-dbih: main() снимает слушатели SIGINT/SIGTERM/SIGHUP на выходе.
+
+test("main --once: один проект — слушатели сигналов сняты", {timeout: 15000}, async () => {
+  setupFake({
+    status: statusUp,
+    projects: {stdout: JSON.stringify([{slug: "proj", path: ""}])},
+    waves: {stdout: JSON.stringify({waves: CYCLE_PLAN, added: [], removed: [], kept: 0})},
+    list: {stdout: JSON.stringify({total: 0, limit: 1000, offset: 0, tasks: [{id: "a", status: "open", launch_route: "r-a", launch_driver: "swarm"}, {id: "b", status: "open", launch_route: "r-b", launch_driver: "swarm"}]})},
+    routes: {stdout: JSON.stringify({ok: true, routes: SWARM_ROUTES})},
+  });
+  const logDir = fs.mkdtempSync(path.join(os.tmpdir(), "listik-swarm-signals-once-"));
+  const signals = new EventEmitter();
+  const {code} = await runMain(
+    ["--project", "proj", "--listik", FAKE_BIN, "--log-dir", logDir, "--once"], {signals});
+  assert.equal(code, 1);
+  for (const name of ["SIGINT", "SIGTERM", "SIGHUP"]) assert.equal(signals.listenerCount(name), 0, name);
+});
+
+test("main --once: без --project — слушатели сигналов сняты", async () => {
+  const emptyPlan = {waves: [[]], cycles: [], unroutable: [], unscoped: [], blocked: {}};
+  setupFake({
+    status: statusUp,
+    projects: {stdout: JSON.stringify([{slug: "alpha", path: ""}, {slug: "beta", path: ""}])},
+    waves: {stdout: JSON.stringify({waves: emptyPlan, added: [], removed: [], kept: 0})},
+    list: [
+      {stdout: JSON.stringify({total: 2, limit: 1000, offset: 0, tasks: [
+        {id: "a", project: "alpha", status: "open", launch_route: "r-a"},
+        {id: "b", project: "beta", status: "in_progress", launch_route: "r-b"},
+      ]})},
+      {stdout: JSON.stringify({total: 0, limit: 1000, offset: 0, tasks: []})},
+      {stdout: JSON.stringify({total: 0, limit: 1000, offset: 0, tasks: []})},
+    ],
+    routes: {stdout: JSON.stringify({ok: true, routes: SWARM_ROUTES})},
+  });
+  const logDir = fs.mkdtempSync(path.join(os.tmpdir(), "listik-swarm-signals-all-"));
+  const signals = new EventEmitter();
+  const {code} = await runMain(["--listik", FAKE_BIN, "--log-dir", logDir, "--once"], {signals});
+  assert.equal(code, 0);
+  for (const name of ["SIGINT", "SIGTERM", "SIGHUP"]) assert.equal(signals.listenerCount(name), 0, name);
+});
+
+test("main: выход по SIGINT — слушатели сигналов сняты", {timeout: 15000}, async () => {
+  const empty = {project: "proj", waves: [[]], cycles: [], unroutable: [], unscoped: [], blocked: {}};
+  const {calls} = setupFake({
+    status: statusUp,
+    projects: {stdout: JSON.stringify([{slug: "proj", path: ""}])},
+    waves: {stdout: JSON.stringify({waves: empty, added: [], removed: [], kept: 0})},
+    list: {stdout: JSON.stringify({total: 0, limit: 1000, offset: 0, tasks: [task("a")]})},
+    routes: {stdout: JSON.stringify({ok: true, routes: SWARM_ROUTES})},
+  });
+  const logDir = fs.mkdtempSync(path.join(os.tmpdir(), "listik-swarm-signals-int-"));
+  const signals = new EventEmitter();
+  const stopper = setInterval(() => {
+    let n = 0;
+    try {
+      n = calls().filter(c => c.sub === "waves").length;
+    } catch { /* файла ещё нет */ }
+    if (n >= 1) signals.emit("SIGINT");
+  }, 100);
+  let code;
+  try {
+    ({code} = await runMain(
+      ["--project", "proj", "--listik", FAKE_BIN, "--log-dir", logDir, "--interval", "1"],
+      {signals}));
+  } finally {
+    clearInterval(stopper);
+  }
+  assert.equal(code, 130);
+  for (const name of ["SIGINT", "SIGTERM", "SIGHUP"]) assert.equal(signals.listenerCount(name), 0, name);
+});
+
 test("questionReason: зависшая нарезка → порции не запускаются", async () => {
   const {questionReason} = await import("../main.mjs");
   const {textSlicedStuck} = await import("../decide.mjs");

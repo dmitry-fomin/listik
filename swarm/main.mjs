@@ -396,8 +396,10 @@ export async function main(argv, {out = process.stdout, signals = process} = {})
     log.line(`остановлен сигналом ${name}`);
     signalExit = code;
   };
-  signals.once("SIGINT", onSignal("SIGINT", 130));
-  signals.once("SIGTERM", onSignal("SIGTERM", 143));
+  const onInt = onSignal("SIGINT", 130);
+  const onTerm = onSignal("SIGTERM", 143);
+  signals.once("SIGINT", onInt);
+  signals.once("SIGTERM", onTerm);
   const onHangup = () => {
     log.line("SIGHUP — терминал закрыт, рой продолжает");
   };
@@ -510,6 +512,8 @@ export async function main(argv, {out = process.stdout, signals = process} = {})
     if (signalExit != null) return signalExit;
   }
   } finally {
+    signals.removeListener("SIGINT", onInt);
+    signals.removeListener("SIGTERM", onTerm);
     signals.removeListener("SIGHUP", onHangup);
     releaseAll();
   }

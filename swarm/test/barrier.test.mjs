@@ -1,7 +1,8 @@
+import {gitAvailable, sh, initRepo, addWorktree} from "./fixtures/git-env.mjs";
 import {test} from "node:test";
 import assert from "node:assert/strict";
 import {execFileSync} from "node:child_process";
-import {mkdtempSync, writeFileSync, mkdirSync, readdirSync, readFileSync} from "node:fs";
+import {mkdtempSync, writeFileSync, readdirSync, readFileSync} from "node:fs";
 import nodeFs from "node:fs";
 import {tmpdir} from "node:os";
 import {join, resolve, dirname} from "node:path";
@@ -137,51 +138,11 @@ test('tailLines("a\\nb\\nc\\n", 2) === "b\\nc"', () => {
 // --------------------------------------------------------- runBarrier ---
 
 // `git` может отсутствовать на машине судьи — тогда блок пропускается целиком.
-let gitAvailable = true;
-try {
-  execFileSync("git", ["--version"], {stdio: "ignore"});
-} catch {
-  gitAvailable = false;
-}
-
-const emptyConfig = gitAvailable ? join(mkdtempSync(join(tmpdir(), "swarm-barrier-cfg-")), "gitconfig") : null;
-if (gitAvailable) writeFileSync(emptyConfig, "");
-if (gitAvailable) {
-  Object.assign(process.env, {
-    GIT_CONFIG_GLOBAL: emptyConfig,
-    GIT_CONFIG_NOSYSTEM: "1",
-    GIT_EDITOR: "true",
-    GIT_TERMINAL_PROMPT: "0",
-  });
-}
-
 let git;
 let GitError;
 if (gitAvailable) {
   git = await import("../git.mjs");
   ({GitError} = git);
-}
-
-function sh(cwd, ...args) {
-  return execFileSync("git", args, {cwd, encoding: "utf8"});
-}
-
-function initRepo() {
-  const repo = mkdtempSync(join(tmpdir(), "swarm-barrier-repo-"));
-  sh(repo, "init", "-q", "-b", "main");
-  sh(repo, "config", "user.name", "Test");
-  sh(repo, "config", "user.email", "test@example.com");
-  writeFileSync(join(repo, "README.md"), "start\n");
-  sh(repo, "add", "README.md");
-  sh(repo, "commit", "-q", "-m", "start");
-  return repo;
-}
-
-function addWorktree(repo, id) {
-  const path = join(repo, ".worktrees", id);
-  mkdirSync(join(repo, ".worktrees"), {recursive: true});
-  sh(repo, "worktree", "add", "-q", "-b", `task/${id}`, path, "HEAD");
-  return path;
 }
 
 function makeLog() {
@@ -266,7 +227,7 @@ function tmpLogDir() {
 }
 
 suite("barrier 1: порядок по первой правке, HEAD линейный, MERGED_MARK у обеих", async () => {
-  const repo = initRepo();
+  const repo = initRepo("swarm-barrier-repo-");
   const treeT1 = addWorktree(repo, "t1");
   const treeT2 = addWorktree(repo, "t2");
   writeFileSync(join(treeT1, "a.txt"), "a\n");
@@ -314,7 +275,7 @@ suite("barrier 1: порядок по первой правке, HEAD линей
 });
 
 suite("barrier 2: грязное дерево не вливается, чистая вливается, gate unmerged", async () => {
-  const repo = initRepo();
+  const repo = initRepo("swarm-barrier-repo-");
   const treeT1 = addWorktree(repo, "t1");
   const treeT2 = addWorktree(repo, "t2");
   writeFileSync(join(treeT1, "a.txt"), "a\n");
@@ -350,7 +311,7 @@ suite("barrier 2: грязное дерево не вливается, чист�
 });
 
 suite("barrier 3: конфликт — первая по порядку влита, вторая needs-owner, откат полный", async () => {
-  const repo = initRepo();
+  const repo = initRepo("swarm-barrier-repo-");
   writeFileSync(join(repo, "f.txt"), "base\n");
   sh(repo, "add", "f.txt");
   sh(repo, "commit", "-q", "-m", "f base");
@@ -388,7 +349,7 @@ suite("barrier 3: конфликт — первая по порядку влит
 });
 
 suite("barrier 4: needs_owner:true и жёсткий вопрос — show один раз, unmerged, needs-owner пуст", async () => {
-  const repo = initRepo();
+  const repo = initRepo("swarm-barrier-repo-");
   const tree = addWorktree(repo, "t1");
   const tasks = [{id: "t1", status: "done", worktree: tree, branch: "task/t1", labels: ["port:1"], needs_owner: true}];
   const listik = fakeListik({
@@ -408,7 +369,7 @@ suite("barrier 4: needs_owner:true и жёсткий вопрос — show од�
 });
 
 suite("barrier: закрытая с мягким вопросом и коммитом — влита, show один раз, answer не вызывался", async () => {
-  const repo = initRepo();
+  const repo = initRepo("swarm-barrier-repo-");
   const tree = addWorktree(repo, "t1");
   writeFileSync(join(tree, "a.txt"), "a\n");
   sh(tree, "add", "a.txt");
@@ -432,7 +393,7 @@ suite("barrier: закрытая с мягким вопросом и комми�
 });
 
 suite("barrier: закрытая с needs_owner, вопрос уже отвечен — unmerged как жёсткий", async () => {
-  const repo = initRepo();
+  const repo = initRepo("swarm-barrier-repo-");
   const tree = addWorktree(repo, "t1");
   const tasks = [{id: "t1", status: "done", worktree: tree, branch: "task/t1", labels: ["port:1"], needs_owner: true}];
   const listik = fakeListik({
@@ -452,7 +413,7 @@ suite("barrier: закрытая с needs_owner, вопрос уже отвеч�
 });
 
 suite("barrier: ошибка show у кандидата с needs_owner — unmerged, без needs-owner", async () => {
-  const repo = initRepo();
+  const repo = initRepo("swarm-barrier-repo-");
   const tree = addWorktree(repo, "t1");
   const tasks = [{id: "t1", status: "done", worktree: tree, branch: "task/t1", labels: ["port:1"], needs_owner: true}];
   const listik = fakeListik({t1: new Error("show fail")});
@@ -467,7 +428,7 @@ suite("barrier: ошибка show у кандидата с needs_owner — unmer
 });
 
 suite("barrier 5: повтор после влития — идемпотентно, comment не пишется", async () => {
-  const repo = initRepo();
+  const repo = initRepo("swarm-barrier-repo-");
   const tree = addWorktree(repo, "t1");
   writeFileSync(join(tree, "a.txt"), "a\n");
   sh(tree, "add", "a.txt");
@@ -494,7 +455,7 @@ suite("barrier 5: повтор после влития — идемпотент�
 });
 
 suite("barrier 6: открытая halt-карточка — гейт halt, слияний нет", async () => {
-  const repo = initRepo();
+  const repo = initRepo("swarm-barrier-repo-");
   const tree = addWorktree(repo, "t1");
   writeFileSync(join(tree, "a.txt"), "a\n");
   sh(tree, "add", "a.txt");
@@ -517,7 +478,7 @@ suite("barrier 6: открытая halt-карточка — гейт halt, сл
 });
 
 suite("barrier 7: detached HEAD — слияний нет, unmerged оба, needs-owner не вызван", async () => {
-  const repo = initRepo();
+  const repo = initRepo("swarm-barrier-repo-");
   const t1 = addWorktree(repo, "t1");
   const t2 = addWorktree(repo, "t2");
   sh(repo, "checkout", "-q", "--detach", "HEAD");
@@ -538,7 +499,7 @@ suite("barrier 7: detached HEAD — слияний нет, unmerged оба, need
 });
 
 suite("barrier 8: dryRun — HEAD не меняется, ни comment ни needs-owner, лог [dry-run] влить", async () => {
-  const repo = initRepo();
+  const repo = initRepo("swarm-barrier-repo-");
   const tree = addWorktree(repo, "t1");
   writeFileSync(join(tree, "a.txt"), "a\n");
   sh(tree, "add", "a.txt");
@@ -559,7 +520,7 @@ suite("barrier 8: dryRun — HEAD не меняется, ни comment ни needs
 });
 
 suite("barrier 9: ветка удалена, каталога нет — пропуск молча", async () => {
-  const repo = initRepo();
+  const repo = initRepo("swarm-barrier-repo-");
   const tasks = [{id: "t1", status: "done", worktree: join(repo, ".worktrees", "gone"), branch: "task/gone", labels: ["port:1"]}];
   const listik = fakeListik({});
   const log = makeLog();
@@ -574,7 +535,7 @@ suite("barrier 9: ветка удалена, каталога нет — про�
 });
 
 suite("barrier 10: каталога нет, ветка впереди HEAD — needs-owner missing_tree", async () => {
-  const repo = initRepo();
+  const repo = initRepo("swarm-barrier-repo-");
   const tree = addWorktree(repo, "t1");
   writeFileSync(join(tree, "a.txt"), "a\n");
   sh(tree, "add", "a.txt");
@@ -594,7 +555,7 @@ suite("barrier 10: каталога нет, ветка впереди HEAD — n
 });
 
 suite("barrier 11: aheadCount 0 без записи MERGED_MARK — comment пишется один раз, в merged", async () => {
-  const repo = initRepo();
+  const repo = initRepo("swarm-barrier-repo-");
   addWorktree(repo, "t1"); // ветка = HEAD, ahead 0
   const fakePath = join(repo, ".worktrees", "missing-t1");
   const tasks = [{id: "t1", status: "done", worktree: fakePath, branch: "task/t1", labels: ["port:1"]}];
@@ -610,7 +571,7 @@ suite("barrier 11: aheadCount 0 без записи MERGED_MARK — comment пи
 });
 
 suite("barrier 12: GitError при rebase без начатого ребейза — rebase_error, HEAD прежний", async () => {
-  const repo = initRepo();
+  const repo = initRepo("swarm-barrier-repo-");
   const tree = addWorktree(repo, "t1");
   writeFileSync(join(tree, "a.txt"), "a\n");
   sh(tree, "add", "a.txt");
@@ -630,7 +591,7 @@ suite("barrier 12: GitError при rebase без начатого ребейза
 });
 
 suite("barrier 13: mergeFfOnly ok:false — ff_failed, HEAD прежний для этого кандидата", async () => {
-  const repo = initRepo();
+  const repo = initRepo("swarm-barrier-repo-");
   const tree = addWorktree(repo, "t1");
   writeFileSync(join(tree, "a.txt"), "a\n");
   sh(tree, "add", "a.txt");
@@ -650,7 +611,7 @@ suite("barrier 13: mergeFfOnly ok:false — ff_failed, HEAD прежний дл�
 });
 
 suite("barrier 14: открытая задача и закрытая без port: — git не трогают", async () => {
-  const repo = initRepo();
+  const repo = initRepo("swarm-barrier-repo-");
   const treeOpen = addWorktree(repo, "open1");
   writeFileSync(join(treeOpen, "x.txt"), "x\n");
   sh(treeOpen, "add", "x.txt");
@@ -674,7 +635,7 @@ suite("barrier 14: открытая задача и закрытая без port
 });
 
 suite("barrier 15: show бросает для одного — needs-owner, следующий кандидат влит", async () => {
-  const repo = initRepo();
+  const repo = initRepo("swarm-barrier-repo-");
   const treeT1 = addWorktree(repo, "t1");
   writeFileSync(join(treeT1, "a.txt"), "a\n");
   sh(treeT1, "add", "a.txt");
@@ -712,7 +673,7 @@ function readLog(dir) {
 // Репо с двумя влитыми не конфликтующими кандидатами (как barrier 1) — общая заготовка
 // для тестов шагов 8–9.
 function twoMergedSetup() {
-  const repo = initRepo();
+  const repo = initRepo("swarm-barrier-repo-");
   const treeT1 = addWorktree(repo, "t1");
   const treeT2 = addWorktree(repo, "t2");
   writeFileSync(join(treeT1, "a.txt"), "a\n");
@@ -872,7 +833,7 @@ suite("барьер шаг 9: таймаут команды — красная, 
 });
 
 suite("барьер шаг 8: нечего проверять — merged пуст, маркер не выполнялся, new не вызывался", async () => {
-  const repo = initRepo();
+  const repo = initRepo("swarm-barrier-repo-");
   const marker = join(repo, "marker.txt");
   const listik = fakeListik({});
   const log = makeLog();
@@ -911,7 +872,7 @@ suite("барьер шаг 8: вторая команда после красн�
 
 // Репо с влитым t1 (единственный кандидат) — заготовка для тестов разморозки.
 function frozenSetup() {
-  const repo = initRepo();
+  const repo = initRepo("swarm-barrier-repo-");
   const treeT1 = addWorktree(repo, "t1");
   writeFileSync(join(treeT1, "a.txt"), "a\n");
   sh(treeT1, "add", "a.txt");
@@ -970,7 +931,7 @@ suite("барьер шаг 7: разморозка чистая — снимок
 });
 
 suite("барьер шаг 7: разморозка с конфликтом — откат, метка снята, next с git rebase", async () => {
-  const repo = initRepo();
+  const repo = initRepo("swarm-barrier-repo-");
   writeFileSync(join(repo, "f.txt"), "base\n");
   sh(repo, "add", "f.txt");
   sh(repo, "commit", "-q", "-m", "f base");
@@ -1011,7 +972,7 @@ suite("барьер шаг 7: разморозка с конфликтом — �
 });
 
 suite("барьер шаг 7: владелец не влит (грязное дерево) — замороженная не тронута", async () => {
-  const repo = initRepo();
+  const repo = initRepo("swarm-barrier-repo-");
   const treeT1 = addWorktree(repo, "t1");
   writeFileSync(join(treeT1, "a.txt"), "a\n");
   sh(treeT1, "add", "a.txt");
@@ -1226,7 +1187,7 @@ suite("барьер: dryRun — разморозка и снос только л
 });
 
 suite("барьер: ветка не предок HEAD — не удалять (подложенный MERGED_MARK без слияния)", async () => {
-  const repo = initRepo();
+  const repo = initRepo("swarm-barrier-repo-");
   const treeT3 = addWorktree(repo, "t3"); // ветка на HEAD, ни разу не вливалась по-настоящему
   const tasks = [{id: "t3", status: "done", worktree: treeT3, branch: "task/t3", labels: ["port:1"]}];
   const record = {sha: "deadbeef", branch: "task/t3", base: "deadbeef", files: [], declared: [], outside: []};
@@ -1256,7 +1217,7 @@ suite("барьер: каталог влитой убран вручную (rm -
   // зарегистрированным (prunable) — `branch -d` без предварительного `worktree remove
   // --force` отказывает «used by worktree at …». cleanupOne обязан звать remove всегда,
   // не только когда каталог физически существует.
-  const repo = initRepo();
+  const repo = initRepo("swarm-barrier-repo-");
   const treeT1 = addWorktree(repo, "t1");
   writeFileSync(join(treeT1, "a.txt"), "a\n");
   sh(treeT1, "add", "a.txt");
@@ -1286,7 +1247,7 @@ suite("барьер: каталог влитой убран вручную (rm -
 suite("барьер: каталог убран вручную, remove отвечает ok:false по-русски — ветку убирают", async () => {
   // Тот же сценарий «rm -rf», но removeWorktree заглушён отказом с локализованным
   // stderr: решение обязано опираться на регистрацию/диск, а не на текст ошибки.
-  const repo = initRepo();
+  const repo = initRepo("swarm-barrier-repo-");
   const treeT1 = addWorktree(repo, "t1");
   writeFileSync(join(treeT1, "a.txt"), "a\n");
   sh(treeT1, "add", "a.txt");
@@ -1325,7 +1286,7 @@ suite("барьер: remove не удался, каталог жив и заре
   // stderr совпадает с бывшей «волшебной» строкой — раньше ветку бы удалили;
   // теперь живое зарегистрированное дерево значит «руки прочь». Ветку вливает
   // сам барьер (merge вручную + живой каталог дал бы «пустой дифф» и reject).
-  const repo = initRepo();
+  const repo = initRepo("swarm-barrier-repo-");
   const treeT1 = addWorktree(repo, "t1");
   writeFileSync(join(treeT1, "a.txt"), "a\n");
   sh(treeT1, "add", "a.txt");
@@ -1381,7 +1342,7 @@ suite("барьер: create отвечает ошибкой — деревья �
 // Тот же конфликт одного файла, что в сценарии "barrier 3": t1 вливается первой, t2
 // конфликтует на rebase.
 function conflictSetup() {
-  const repo = initRepo();
+  const repo = initRepo("swarm-barrier-repo-");
   writeFileSync(join(repo, "f.txt"), "base\n");
   sh(repo, "add", "f.txt");
   sh(repo, "commit", "-q", "-m", "f base");
@@ -1555,7 +1516,7 @@ suite("барьер dryRun с настроенным арбитром: пром�
 });
 
 suite("барьер: разморозка с конфликтом + арбитр настроен — арбитр не зовётся (только для закрытых)", async () => {
-  const repo = initRepo();
+  const repo = initRepo("swarm-barrier-repo-");
   writeFileSync(join(repo, "f.txt"), "base\n");
   sh(repo, "add", "f.txt");
   sh(repo, "commit", "-q", "-m", "f base");
@@ -1587,7 +1548,7 @@ suite("барьер: разморозка с конфликтом + арбитр
 });
 
 suite("каталог есть, ветки нет — GitError не вылетает, needs-owner, сосед влит", async () => {
-  const repo = initRepo();
+  const repo = initRepo("swarm-barrier-repo-");
   const treeT1 = addWorktree(repo, "t1");
   const treeT2 = addWorktree(repo, "t2");
   writeFileSync(join(treeT1, "a.txt"), "a\n");
@@ -1618,7 +1579,7 @@ suite("каталог есть, ветки нет — GitError не вылета
 });
 
 suite("разморозка при rebase in progress — abort до снимка, untracked не теряется", async () => {
-  const repo = initRepo();
+  const repo = initRepo("swarm-barrier-repo-");
   writeFileSync(join(repo, "f.txt"), "base\n");
   sh(repo, "add", "f.txt");
   sh(repo, "commit", "-q", "-m", "f base");
@@ -1743,7 +1704,7 @@ suite("comment маркера падает дважды — ровно один 
 });
 
 suite("changedFiles бросает до слияния — needs-owner diff_error, не empty", async () => {
-  const repo = initRepo();
+  const repo = initRepo("swarm-barrier-repo-");
   const tree = addWorktree(repo, "t1");
   commitFile(tree, "t1.txt", "a\n", "t1");
   const tasks = [doneTask("t1", tree)];
@@ -1767,7 +1728,7 @@ suite("changedFiles бросает до слияния — needs-owner diff_erro
 });
 
 suite("changedFiles бросает после слияния — маркер с files_error, задача влита", async () => {
-  const repo = initRepo();
+  const repo = initRepo("swarm-barrier-repo-");
   const tree = addWorktree(repo, "t1");
   commitFile(tree, "t1.txt", "a\n", "t1");
   const tasks = [doneTask("t1", tree)];
@@ -1837,7 +1798,7 @@ suite("resolveWithArbiter бросает — тик барьера не пада
 });
 
 suite("rebase in progress у закрытой — abort до isDirty, не dirty_tree", async () => {
-  const repo = initRepo();
+  const repo = initRepo("swarm-barrier-repo-");
   writeFileSync(join(repo, "f.txt"), "base\n");
   sh(repo, "add", "f.txt");
   sh(repo, "commit", "-q", "-m", "f base");
@@ -1901,7 +1862,7 @@ suite("таймаут: лидер умер от SIGTERM, потомок игно
 });
 
 suite("rebase бросает при начатом конфликтном ребейзе — abort, HEAD дерева прежний", async () => {
-  const repo = initRepo();
+  const repo = initRepo("swarm-barrier-repo-");
   writeFileSync(join(repo, "f.txt"), "base\n");
   sh(repo, "add", "f.txt");
   sh(repo, "commit", "-q", "-m", "f base");
@@ -1938,7 +1899,7 @@ suite("rebase бросает при начатом конфликтном реб
 });
 
 suite("cleanupOne: branch с пробелами — trim, дерево убирают", async () => {
-  const repo = initRepo();
+  const repo = initRepo("swarm-barrier-repo-");
   const tree = addWorktree(repo, "t1");
   writeFileSync(join(tree, "a.txt"), "a\n");
   sh(tree, "add", "a.txt");
@@ -1964,7 +1925,7 @@ suite("cleanupOne: branch с пробелами — trim, дерево убир�
 });
 
 suite("лог кандидатов N вычитает needs_owner, missing_branch, ahead_error", async () => {
-  const repo = initRepo();
+  const repo = initRepo("swarm-barrier-repo-");
   const treeOk = addWorktree(repo, "tok");
   writeFileSync(join(treeOk, "ok.txt"), "ok\n");
   sh(treeOk, "add", "ok.txt");
@@ -2038,7 +1999,7 @@ function doneTask(id, worktree, over = {}) {
 }
 
 suite("верификатор: красный → rejected, HEAD прежний, set open/s3-impl", async () => {
-  const repo = initRepo();
+  const repo = initRepo("swarm-barrier-repo-");
   const tree = addWorktree(repo, "t1");
   commitFile(tree, "t1.txt", "a\n", "t1");
   const tasks = [doneTask("t1", tree)];
@@ -2075,7 +2036,7 @@ suite("верификатор: красный → rejected, HEAD прежний,
 });
 
 suite("верификатор: verifyRetries 0 → человеку, set не вызван, unmerged", async () => {
-  const repo = initRepo();
+  const repo = initRepo("swarm-barrier-repo-");
   const tree = addWorktree(repo, "t1");
   commitFile(tree, "t1.txt", "a\n", "t1");
   const tasks = [doneTask("t1", tree)];
@@ -2104,7 +2065,7 @@ suite("верификатор: verifyRetries 0 → человеку, set не в
 });
 
 suite("верификатор: уже один REJECTED_MARK роя и verifyRetries 1 → человеку", async () => {
-  const repo = initRepo();
+  const repo = initRepo("swarm-barrier-repo-");
   const tree = addWorktree(repo, "t1");
   commitFile(tree, "t1.txt", "a\n", "t1");
   const tasks = [doneTask("t1", tree)];
@@ -2130,7 +2091,7 @@ suite("верификатор: уже один REJECTED_MARK роя и verifyRet
 });
 
 suite("верификатор: тот же маркер от другого автора не считается → воркеру", async () => {
-  const repo = initRepo();
+  const repo = initRepo("swarm-barrier-repo-");
   const tree = addWorktree(repo, "t1");
   commitFile(tree, "t1.txt", "a\n", "t1");
   const tasks = [doneTask("t1", tree)];
@@ -2156,7 +2117,7 @@ suite("верификатор: тот же маркер от другого ав
 });
 
 suite("пустой дифф: дерево есть, ветка = HEAD, без MERGED_MARK → rejected empty", async () => {
-  const repo = initRepo();
+  const repo = initRepo("swarm-barrier-repo-");
   const tree = addWorktree(repo, "t1");
   const tasks = [doneTask("t1", tree)];
   const listik = fakeListik({t1: {id: "t1", comments: [], write_scope: []}});
@@ -2176,7 +2137,7 @@ suite("пустой дифф: дерево есть, ветка = HEAD, без M
 });
 
 suite("верификатор: verify [] и красная integration → команд верификатора нет, задача влита", async () => {
-  const repo = initRepo();
+  const repo = initRepo("swarm-barrier-repo-");
   const tree = addWorktree(repo, "t1");
   commitFile(tree, "t1.txt", "a\n", "t1");
   const tasks = [doneTask("t1", tree)];
@@ -2196,7 +2157,7 @@ suite("верификатор: verify [] и красная integration → ко�
 });
 
 suite("верификатор: команда в cwd дерева (t1.txt есть)", async () => {
-  const repo = initRepo();
+  const repo = initRepo("swarm-barrier-repo-");
   const tree = addWorktree(repo, "t1");
   commitFile(tree, "t1.txt", "a\n", "t1");
   const tasks = [doneTask("t1", tree)];
@@ -2219,7 +2180,7 @@ suite("верификатор: команда в cwd дерева (t1.txt ест
 });
 
 suite("верификатор: LISTIK_DEV_PORT из метки; без метки на карточке — unset", async () => {
-  const repo = initRepo();
+  const repo = initRepo("swarm-barrier-repo-");
   const treeA = addWorktree(repo, "ta");
   const treeB = addWorktree(repo, "tb");
   commitFile(treeA, "a.txt", "a\n", "ta");
@@ -2256,7 +2217,7 @@ suite("верификатор: LISTIK_DEV_PORT из метки; без метк�
 });
 
 suite("верификатор: dryRun — ни comment ни set, команда не запускалась, лог проверить", async () => {
-  const repo = initRepo();
+  const repo = initRepo("swarm-barrier-repo-");
   const tree = addWorktree(repo, "t1");
   commitFile(tree, "t1.txt", "a\n", "t1");
   const marker = join(tree, "ran.txt");
@@ -2276,7 +2237,7 @@ suite("верификатор: dryRun — ни comment ни set, команда 
 });
 
 suite("верификатор: две задачи — первая отклонена, вторая влита", async () => {
-  const repo = initRepo();
+  const repo = initRepo("swarm-barrier-repo-");
   const treeT1 = addWorktree(repo, "t1");
   const treeT2 = addWorktree(repo, "t2");
   commitFile(treeT1, "fail.txt", "x\n", "t1");
@@ -2306,7 +2267,7 @@ suite("верификатор: две задачи — первая отклон
 });
 
 suite("пустой дифф: коммит + revert → empty", async () => {
-  const repo = initRepo();
+  const repo = initRepo("swarm-barrier-repo-");
   const tree = addWorktree(repo, "t1");
   commitFile(tree, "gone.txt", "x\n", "add");
   sh(tree, "revert", "--no-edit", "HEAD");
@@ -2325,7 +2286,7 @@ suite("пустой дифф: коммит + revert → empty", async () => {
 });
 
 suite("верификатор: первая красная — вторая не запускается, в логе одна строка $", async () => {
-  const repo = initRepo();
+  const repo = initRepo("swarm-barrier-repo-");
   const tree = addWorktree(repo, "t1");
   commitFile(tree, "t1.txt", "a\n", "t1");
   const marker = join(tree, "second.txt");
@@ -2351,7 +2312,7 @@ suite("верификатор: первая красная — вторая не
 });
 
 suite("верификатор: таймаут sleep 10 при verifyTimeout 1 → red timed_out, не ждёт 10с", async () => {
-  const repo = initRepo();
+  const repo = initRepo("swarm-barrier-repo-");
   const tree = addWorktree(repo, "t1");
   commitFile(tree, "t1.txt", "a\n", "t1");
   const tasks = [doneTask("t1", tree)];
@@ -2372,7 +2333,7 @@ suite("верификатор: таймаут sleep 10 при verifyTimeout 1 �
 });
 
 suite("верификатор: отклонённая t1 не размораживает frozen-by:t1", async () => {
-  const repo = initRepo();
+  const repo = initRepo("swarm-barrier-repo-");
   const treeT1 = addWorktree(repo, "t1");
   const treeT2 = addWorktree(repo, "t2");
   commitFile(treeT1, "t1.txt", "a\n", "t1");
@@ -2398,7 +2359,7 @@ suite("верификатор: отклонённая t1 не разморажи
 });
 
 suite("верификатор: отказ set → без исключения, unmerged содержит id", async () => {
-  const repo = initRepo();
+  const repo = initRepo("swarm-barrier-repo-");
   const tree = addWorktree(repo, "t1");
   commitFile(tree, "t1.txt", "a\n", "t1");
   const tasks = [doneTask("t1", tree)];
@@ -2418,7 +2379,7 @@ suite("верификатор: отказ set → без исключения, u
 });
 
 suite("верификатор не задан, integration красная → в дереве ничего не запускалось", async () => {
-  const repo = initRepo();
+  const repo = initRepo("swarm-barrier-repo-");
   const tree = addWorktree(repo, "t1");
   commitFile(tree, "t1.txt", "a\n", "t1");
   const tasks = [doneTask("t1", tree)];
@@ -2526,7 +2487,7 @@ suite("jev 4: вызов бросил — обе влиты, jev error, в ве�
 const HAND_MERGED_LINE = "t1 ветка уже в HEAD, дерева нет — считаю влитой, вопрос не снимаю";
 
 function hardQuestionSetup({merge}) {
-  const repo = initRepo();
+  const repo = initRepo("swarm-barrier-repo-");
   const tree = addWorktree(repo, "t1");
   writeFileSync(join(tree, "a.txt"), "a\n");
   sh(tree, "add", "a.txt");

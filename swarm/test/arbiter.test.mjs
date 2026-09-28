@@ -1,7 +1,7 @@
+import {gitAvailable, sh, initRepo as initRepoBase, addWorktree} from "./fixtures/git-env.mjs";
 import {test} from "node:test";
 import assert from "node:assert/strict";
-import {execFileSync} from "node:child_process";
-import {mkdtempSync, writeFileSync, mkdirSync, readdirSync, readFileSync} from "node:fs";
+import {mkdtempSync, writeFileSync, readdirSync, readFileSync} from "node:fs";
 import nodeFs from "node:fs";
 import {tmpdir} from "node:os";
 import {join, resolve, dirname} from "node:path";
@@ -14,50 +14,13 @@ const HERE = dirname(fileURLToPath(import.meta.url));
 const FIXTURE = resolve(HERE, "fixtures/fake-arbiter.mjs");
 
 // `git` может отсутствовать на машине судьи — тогда блок пропускается целиком.
-let gitAvailable = true;
-try {
-  execFileSync("git", ["--version"], {stdio: "ignore"});
-} catch {
-  gitAvailable = false;
-}
-
-const emptyConfig = gitAvailable ? join(mkdtempSync(join(tmpdir(), "swarm-arbiter-cfg-")), "gitconfig") : null;
-if (gitAvailable) writeFileSync(emptyConfig, "");
-if (gitAvailable) {
-  Object.assign(process.env, {
-    GIT_CONFIG_GLOBAL: emptyConfig,
-    GIT_CONFIG_NOSYSTEM: "1",
-    GIT_EDITOR: "true",
-    GIT_TERMINAL_PROMPT: "0",
-  });
-}
-
 let git;
 if (gitAvailable) {
   git = await import("../git.mjs");
 }
 
-function sh(cwd, ...args) {
-  return execFileSync("git", args, {cwd, encoding: "utf8"});
-}
-
 function initRepo() {
-  const repo = mkdtempSync(join(tmpdir(), "swarm-arbiter-repo-"));
-  sh(repo, "init", "-q", "-b", "main");
-  sh(repo, "config", "user.name", "Test");
-  sh(repo, "config", "user.email", "test@example.com");
-  writeFileSync(join(repo, "f.txt"), "base\n");
-  writeFileSync(join(repo, "g.txt"), "base\n");
-  sh(repo, "add", "f.txt", "g.txt");
-  sh(repo, "commit", "-q", "-m", "f base");
-  return repo;
-}
-
-function addWorktree(repo, id) {
-  const path = join(repo, ".worktrees", id);
-  mkdirSync(join(repo, ".worktrees"), {recursive: true});
-  sh(repo, "worktree", "add", "-q", "-b", `task/${id}`, path, "HEAD");
-  return path;
+  return initRepoBase("swarm-arbiter-repo-", {"f.txt": "base\n", "g.txt": "base\n"}, "f base");
 }
 
 function makeLog() {

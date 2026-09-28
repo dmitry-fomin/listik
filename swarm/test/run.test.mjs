@@ -1,10 +1,10 @@
+import {gitAvailable, sh, initRepo, addWorktree} from "./fixtures/git-env.mjs";
 import {test} from "node:test";
 import assert from "node:assert/strict";
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import {fileURLToPath} from "node:url";
-import {execFileSync} from "node:child_process";
 import {EventEmitter} from "node:events";
 import {Writable} from "node:stream";
 import {Listik} from "../listik.mjs";
@@ -17,46 +17,6 @@ import {acquireProjectLock, noteCycles, projectsDue, questionReason, waitingLine
 const SWARM_ROUTES = [..."abcdefghijklmnopqrstuvwxyz".split(""), ...Array.from({length: 21}, (_, i) => "t" + i), "nr", "ns", "frozen", "canc", "cand", "done-plain", "done-port", "done1", "halt1", "n1", "new", "running1"].map(id => ({key: "r-" + id, driver: "swarm", icon: "low"}));
 
 // `git` может отсутствовать на машине судьи — тогда блок watch+barrier пропускается целиком.
-let gitAvailable = true;
-try {
-  execFileSync("git", ["--version"], {stdio: "ignore"});
-} catch {
-  gitAvailable = false;
-}
-const gitConfigDir = gitAvailable ? fs.mkdtempSync(path.join(os.tmpdir(), "swarm-run-gitcfg-")) : null;
-if (gitAvailable) {
-  const gitConfigFile = path.join(gitConfigDir, "gitconfig");
-  fs.writeFileSync(gitConfigFile, "");
-  Object.assign(process.env, {
-    GIT_CONFIG_GLOBAL: gitConfigFile,
-    GIT_CONFIG_NOSYSTEM: "1",
-    GIT_EDITOR: "true",
-    GIT_TERMINAL_PROMPT: "0",
-  });
-}
-
-function sh(cwd, ...args) {
-  return execFileSync("git", args, {cwd, encoding: "utf8"});
-}
-
-function initRepo() {
-  const repo = fs.mkdtempSync(path.join(os.tmpdir(), "swarm-run-repo-"));
-  sh(repo, "init", "-q", "-b", "main");
-  sh(repo, "config", "user.name", "Test");
-  sh(repo, "config", "user.email", "test@example.com");
-  fs.writeFileSync(path.join(repo, "README.md"), "start\n");
-  sh(repo, "add", "README.md");
-  sh(repo, "commit", "-q", "-m", "start");
-  return repo;
-}
-
-function addWorktree(repo, id) {
-  const wtPath = path.join(repo, ".worktrees", id);
-  fs.mkdirSync(path.join(repo, ".worktrees"), {recursive: true});
-  sh(repo, "worktree", "add", "-q", "-b", `task/${id}`, wtPath, "HEAD");
-  return wtPath;
-}
-
 const gitTest = gitAvailable ? test : test.skip;
 
 const here = path.dirname(fileURLToPath(import.meta.url));
@@ -921,7 +881,7 @@ for (const [label, swarm, expected] of [
 }
 
 gitTest("watch+barrier (а): running пуст — watch раньше comment MERGED_MARK, партия после слияния", async () => {
-  const repo = initRepo();
+  const repo = initRepo("swarm-run-repo-");
   const treeT1 = addWorktree(repo, "t1");
   fs.writeFileSync(path.join(treeT1, "a.txt"), "a\n");
   sh(treeT1, "add", "a.txt");
@@ -968,7 +928,7 @@ gitTest("watch+barrier (а): running пуст — watch раньше comment MER
 
 gitTest("watch+barrier (л): разморозка в тике — comment UNFROZEN_MARK, worktree, launch по порядку",
   async () => {
-    const repo = initRepo();
+    const repo = initRepo("swarm-run-repo-");
     const treeT1 = addWorktree(repo, "t1");
     fs.writeFileSync(path.join(treeT1, "a.txt"), "a\n");
     sh(treeT1, "add", "a.txt");
@@ -1032,7 +992,7 @@ gitTest("watch+barrier (л): разморозка в тике — comment UNFROZ
   });
 
 gitTest("watch+barrier (б): running непуст — барьер не зовётся, comment нет, HEAD не менялся", async () => {
-  const repo = initRepo();
+  const repo = initRepo("swarm-run-repo-");
   const before = sh(repo, "rev-parse", "HEAD").trim();
 
   const tasks = [runningTask("running1", {
@@ -1061,7 +1021,7 @@ gitTest("watch+barrier (б): running непуст — барьер не зовё
 });
 
 gitTest("watch+barrier (в): swarm.json с ошибкой — лог = err.message, launch не вызван, reason config", async () => {
-  const repo = initRepo();
+  const repo = initRepo("swarm-run-repo-");
   const dataDir = fs.mkdtempSync(path.join(os.tmpdir(), "listik-swarm-data-"));
   fs.writeFileSync(path.join(dataDir, "swarm.json"), "{не json");
 
@@ -1089,7 +1049,7 @@ gitTest("watch+barrier (в): swarm.json с ошибкой — лог = err.messa
 });
 
 gitTest("watch+barrier (г): gate unmerged — launch не вызван, report.unmerged длины 1", async () => {
-  const repo = initRepo();
+  const repo = initRepo("swarm-run-repo-");
   const tree = addWorktree(repo, "t1");
   fs.writeFileSync(path.join(tree, "a.txt"), "a\n");
   sh(tree, "add", "a.txt");
@@ -1170,7 +1130,7 @@ test("watch+barrier (е): пустой path проекта — в argv нет wa
 });
 
 gitTest("watch+barrier (ж): dryRun непустой path — watch с --dry-run, лог watch:", async () => {
-  const repo = initRepo();
+  const repo = initRepo("swarm-run-repo-");
   const tasks = [task("t1")];
   const plan = {project: "proj", waves: [[]], cycles: [], unroutable: [], unscoped: [], blocked: {}};
   const dataDir = fs.mkdtempSync(path.join(os.tmpdir(), "listik-swarm-data-"));
@@ -1193,7 +1153,7 @@ gitTest("watch+barrier (ж): dryRun непустой path — watch с --dry-run
 });
 
 gitTest("watch+barrier (з): watch бросает ListikError — лог watch ошибка:, тик не падает, партия всё ещё запускается", async () => {
-  const repo = initRepo();
+  const repo = initRepo("swarm-run-repo-");
   const tasks = [task("t1")];
   const plan = {project: "proj", waves: [["t1"]], cycles: [], unroutable: [], unscoped: [], blocked: {}};
   const routes = SWARM_ROUTES;
@@ -1221,7 +1181,7 @@ gitTest("watch+barrier (з): watch бросает ListikError — лог watch �
 });
 
 gitTest("watch+barrier (и): freeze ok:true — повторный list, t2 не в launch, в skipped frozen", async () => {
-  const repo = initRepo();
+  const repo = initRepo("swarm-run-repo-");
   const tasksInitial = [task("t1", {}), task("t2", {})];
   const tasksAfter = [task("t1", {}), task("t2", {labels: ["frozen-by:t1"], launched_by: ""})];
   const plan = {project: "proj", waves: [["t1", "t2"]], cycles: [], unroutable: [], unscoped: [], blocked: {}};
@@ -1258,7 +1218,7 @@ gitTest("watch+barrier (и): freeze ok:true — повторный list, t2 не
 });
 
 gitTest("watch+barrier (к): decisions ok:false без top-level error — не бросает, launch не гейтится", async () => {
-  const repo = initRepo();
+  const repo = initRepo("swarm-run-repo-");
   const tasks = [task("t1")];
   const plan = {project: "proj", waves: [["t1"]], cycles: [], unroutable: [], unscoped: [], blocked: {}};
   const routes = SWARM_ROUTES;
@@ -1287,7 +1247,7 @@ gitTest("watch+barrier (к): decisions ok:false без top-level error — не 
 });
 
 gitTest("watch+barrier: второй list после freeze бросает — тик не падает", async () => {
-  const repo = initRepo();
+  const repo = initRepo("swarm-run-repo-");
   const tasksInitial = [task("t1", {}), task("t2", {})];
   const plan = {project: "proj", waves: [["t1", "t2"]], cycles: [], unroutable: [], unscoped: [], blocked: {}};
   const routes = SWARM_ROUTES;
@@ -1318,7 +1278,7 @@ gitTest("watch+barrier: второй list после freeze бросает — �
 });
 
 gitTest("watch+barrier: running + swarm:halt — report.halt id, launch нет", async () => {
-  const repo = initRepo();
+  const repo = initRepo("swarm-run-repo-");
   const dataDir = fs.mkdtempSync(path.join(os.tmpdir(), "listik-swarm-data-"));
   fs.writeFileSync(path.join(dataDir, "swarm.json"), JSON.stringify({integration: []}));
   const tasks = [
@@ -1420,7 +1380,7 @@ test("waitingLine: frozen → заморожена, gated → гейт, held п�
 
 gitTest("тик: барьер отклоняет единственную закрытую — list+show после comment, revoke+launch в том же тике",
   async () => {
-    const repo = initRepo();
+    const repo = initRepo("swarm-run-repo-");
     const treeT1 = addWorktree(repo, "t1");
     fs.writeFileSync(path.join(treeT1, "a.txt"), "a\n");
     sh(treeT1, "add", "a.txt");
@@ -1494,7 +1454,7 @@ gitTest("тик: барьер отклоняет единственную зак
 
 // listik-qf51: отклонённая барьером карточка режима роя — план волн перечитывается.
 function rejectRereadScenario(secondWaves) {
-  const repo = initRepo();
+  const repo = initRepo("swarm-run-repo-");
   const treeT1 = addWorktree(repo, "t1");
   fs.writeFileSync(path.join(treeT1, "a.txt"), "a\n");
   sh(treeT1, "add", "a.txt");
@@ -1575,7 +1535,7 @@ gitTest("тик: барьер отклоняет карточку роя — о�
   });
 
 gitTest("надзор-тик: swarm.json question_timeout 5, вопрос 6 мин — текст 5 мин", async () => {
-  const repo = initRepo();
+  const repo = initRepo("swarm-run-repo-");
   const qEvent = {kind: "question", actor: "agent:fake", ts: minsAgo(6), note: SOFT_Q};
   const answerText = "рой: ответа не было 5 мин — действует вариант по умолчанию: JSON";
   const aEvent = {kind: "answer", actor: "agent:listik-swarm", ts: minsAgo(0), note: answerText};
@@ -1750,7 +1710,7 @@ test("бюджет-тик: exhausted + просроченная с портом 
 });
 
 gitTest("бюджет-тик: exhausted + закрытая с деревом — барьер вливает, launch нет", async () => {
-  const repo = initRepo();
+  const repo = initRepo("swarm-run-repo-");
   const treeT1 = addWorktree(repo, "t1");
   fs.writeFileSync(path.join(treeT1, "a.txt"), "a\n");
   sh(treeT1, "add", "a.txt");
@@ -2010,7 +1970,7 @@ function showOut(card) {
 }
 
 function prepareRollback({json, tasks, plan, routes = SWARM_ROUTES, watch, show, list, dryRun = false, extra = {}}) {
-  const repo = initRepo();
+  const repo = initRepo("swarm-run-repo-");
   const dataDir = fs.mkdtempSync(path.join(os.tmpdir(), "listik-swarm-data-"));
   fs.writeFileSync(path.join(dataDir, "swarm.json"), typeof json === "string" ? json : JSON.stringify(json));
   const wavesBody = dryRun ? plan : {waves: plan, added: [], removed: [], kept: 0};
@@ -2244,7 +2204,7 @@ gitTest("предел (з): ошибка show — тик не падает, па
 
 gitTest("предел (и): main на двух тиках — код 2, один needs-owner, итог с откатами",
   {timeout: 20000}, async () => {
-    const repo = initRepo();
+    const repo = initRepo("swarm-run-repo-");
     const dataDir = fs.mkdtempSync(path.join(os.tmpdir(), "listik-swarm-data-"));
     fs.writeFileSync(path.join(dataDir, "swarm.json"),
       JSON.stringify({integration: [], max_freezes: 2}));
@@ -2328,7 +2288,7 @@ const RESCOPE_OK = {project: "proj", extracted: 1, tasks: {}, unspecced: {},
 // Кейс watch+barrier (а) с реальным слиянием t1; `merge: false` — t1 открыта без дерева.
 function rescopeScenario({swarmJson = {integration: []}, rescope, merge = true, extraTasks = [],
   waves = null} = {}) {
-  const repo = initRepo();
+  const repo = initRepo("swarm-run-repo-");
   let t1 = task("t1", {});
   if (merge) {
     const treeT1 = addWorktree(repo, "t1");
@@ -2677,7 +2637,7 @@ function errOut(message) {
 
 gitTest("К1: барьер поставил needs-owner поверх просроченного мягкого вопроса — show заново, автоответа нет",
   async () => {
-    const repo = initRepo();
+    const repo = initRepo("swarm-run-repo-");
     const tree = addWorktree(repo, "t1");
     fs.writeFileSync(path.join(tree, "a.txt"), "a\n");
     sh(tree, "add", "a.txt");

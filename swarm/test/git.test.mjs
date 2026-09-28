@@ -1,62 +1,19 @@
+import {gitAvailable, sh, initRepo, addWorktree} from "./fixtures/git-env.mjs";
 import {test} from "node:test";
 import assert from "node:assert/strict";
-import {execFileSync} from "node:child_process";
-import {mkdtempSync, writeFileSync, mkdirSync, existsSync, readFileSync} from "node:fs";
-import {tmpdir} from "node:os";
+import {writeFileSync, existsSync, readFileSync} from "node:fs";
 import {join} from "node:path";
 
 // `git` может отсутствовать на машине судьи — тогда файл пропускается целиком.
-let gitAvailable = true;
-try {
-  execFileSync("git", ["--version"], {stdio: "ignore"});
-} catch {
-  gitAvailable = false;
-}
-
-// Прод без TTY не должен вставать на `vi` — окружение субпроцессов воспроизводит это:
-// приёмка не зависит от `EDITOR`/`GIT_EDITOR` машины судьи.
-const emptyConfig = gitAvailable ? join(mkdtempSync(join(tmpdir(), "swarm-git-cfg-")), "gitconfig") : null;
-if (gitAvailable) writeFileSync(emptyConfig, "");
-if (gitAvailable) {
-  Object.assign(process.env, {
-    GIT_CONFIG_GLOBAL: emptyConfig,
-    GIT_CONFIG_NOSYSTEM: "1",
-    GIT_EDITOR: "true",
-    GIT_TERMINAL_PROMPT: "0",
-  });
-}
-
 let git;
 if (gitAvailable) {
   git = await import("../git.mjs");
 }
 
-function sh(cwd, ...args) {
-  return execFileSync("git", args, {cwd, encoding: "utf8"});
-}
-
-function initRepo() {
-  const repo = mkdtempSync(join(tmpdir(), "swarm-git-repo-"));
-  sh(repo, "init", "-q", "-b", "main");
-  sh(repo, "config", "user.name", "Test");
-  sh(repo, "config", "user.email", "test@example.com");
-  writeFileSync(join(repo, "README.md"), "start\n");
-  sh(repo, "add", "README.md");
-  sh(repo, "commit", "-q", "-m", "start");
-  return repo;
-}
-
-function addWorktree(repo, id) {
-  const path = join(repo, ".worktrees", id);
-  mkdirSync(join(repo, ".worktrees"), {recursive: true});
-  sh(repo, "worktree", "add", "-q", "-b", `task/${id}`, path, "HEAD");
-  return path;
-}
-
 const suite = gitAvailable ? test : test.skip;
 
 suite("headSha / currentBranch (detached → null)", async () => {
-  const repo = initRepo();
+  const repo = initRepo("swarm-git-repo-");
   const sha = await git.headSha(repo);
   assert.match(sha, /^[0-9a-f]{40}$/);
   assert.equal(await git.currentBranch(repo), "main");
@@ -65,7 +22,7 @@ suite("headSha / currentBranch (detached → null)", async () => {
 });
 
 suite("aheadCount 0 и 2", async () => {
-  const repo = initRepo();
+  const repo = initRepo("swarm-git-repo-");
   const tree = addWorktree(repo, "a");
   assert.equal(await git.aheadCount(repo, "main", "task/a"), 0);
   writeFileSync(join(tree, "f1.txt"), "1\n");
@@ -78,7 +35,7 @@ suite("aheadCount 0 и 2", async () => {
 });
 
 suite("isAncestor: предок → true, сиблинг → false", async () => {
-  const repo = initRepo();
+  const repo = initRepo("swarm-git-repo-");
   const base = await git.headSha(repo);
   const treeA = addWorktree(repo, "a");
   writeFileSync(join(treeA, "a.txt"), "a\n");
@@ -93,14 +50,14 @@ suite("isAncestor: предок → true, сиблинг → false", async () =>
 });
 
 suite("isDirty на неотслеживаемом файле", async () => {
-  const repo = initRepo();
+  const repo = initRepo("swarm-git-repo-");
   assert.equal(await git.isDirty(repo), false);
   writeFileSync(join(repo, "untracked.txt"), "x\n");
   assert.equal(await git.isDirty(repo), true);
 });
 
 suite("rebase чистый — правки разных файлов, aheadCount сохранён", async () => {
-  const repo = initRepo();
+  const repo = initRepo("swarm-git-repo-");
   const tree = addWorktree(repo, "a");
   writeFileSync(join(tree, "task.txt"), "task\n");
   sh(tree, "add", "task.txt");
@@ -115,7 +72,7 @@ suite("rebase чистый — правки разных файлов, aheadCoun
 });
 
 suite("rebase с конфликтом одной строки", async () => {
-  const repo = initRepo();
+  const repo = initRepo("swarm-git-repo-");
   writeFileSync(join(repo, "f.txt"), "one\n");
   sh(repo, "add", "f.txt");
   sh(repo, "commit", "-q", "-m", "f base");
@@ -139,7 +96,7 @@ suite("rebase с конфликтом одной строки", async () => {
 });
 
 suite("rebase на несуществующий onto бросает GitError", async () => {
-  const repo = initRepo();
+  const repo = initRepo("swarm-git-repo-");
   const tree = addWorktree(repo, "a");
   await assert.rejects(git.rebase(tree, "does-not-exist"), (err) => {
     assert.equal(err.constructor.name, "GitError");
@@ -152,7 +109,7 @@ suite("rebase на несуществующий onto бросает GitError", a
 });
 
 suite("rebaseAbort — дерево байт-в-байт как до ребейза", async () => {
-  const repo = initRepo();
+  const repo = initRepo("swarm-git-repo-");
   writeFileSync(join(repo, "f.txt"), "one\n");
   sh(repo, "add", "f.txt");
   sh(repo, "commit", "-q", "-m", "f base");
@@ -176,7 +133,7 @@ suite("rebaseAbort — дерево байт-в-байт как до ребей�
 });
 
 suite("разрешение руками + add + rebaseContinue", async () => {
-  const repo = initRepo();
+  const repo = initRepo("swarm-git-repo-");
   writeFileSync(join(repo, "f.txt"), "one\n");
   sh(repo, "add", "f.txt");
   sh(repo, "commit", "-q", "-m", "f base");
@@ -196,7 +153,7 @@ suite("разрешение руками + add + rebaseContinue", async () => {
 });
 
 suite("ребейз двух коммитов, конфликтует каждый — второй rebaseContinue снова {ok:false}", async () => {
-  const repo = initRepo();
+  const repo = initRepo("swarm-git-repo-");
   writeFileSync(join(repo, "f.txt"), "one\n");
   writeFileSync(join(repo, "g.txt"), "one\n");
   sh(repo, "add", "f.txt", "g.txt");
@@ -224,7 +181,7 @@ suite("ребейз двух коммитов, конфликтует кажды
 });
 
 suite("snapshotCommit грязное → sha, чистое → null", async () => {
-  const repo = initRepo();
+  const repo = initRepo("swarm-git-repo-");
   assert.equal(await git.snapshotCommit(repo, "рой: снимок"), null);
   writeFileSync(join(repo, "dirty.txt"), "x\n");
   const sha = await git.snapshotCommit(repo, "рой: снимок");
@@ -235,7 +192,7 @@ suite("snapshotCommit грязное → sha, чистое → null", async () =
 });
 
 suite("mergeFfOnly после ребейза → ok, HEAD совпадают", async () => {
-  const repo = initRepo();
+  const repo = initRepo("swarm-git-repo-");
   const tree = addWorktree(repo, "a");
   writeFileSync(join(tree, "task.txt"), "task\n");
   sh(tree, "add", "task.txt");
@@ -250,7 +207,7 @@ suite("mergeFfOnly после ребейза → ok, HEAD совпадают", a
 });
 
 suite("mergeFfOnly расходящейся ветки → ok false, HEAD не изменился", async () => {
-  const repo = initRepo();
+  const repo = initRepo("swarm-git-repo-");
   const tree = addWorktree(repo, "a");
   writeFileSync(join(tree, "task.txt"), "task\n");
   sh(tree, "add", "task.txt");
@@ -265,7 +222,7 @@ suite("mergeFfOnly расходящейся ветки → ok false, HEAD не �
 });
 
 suite("removeWorktree + deleteBranch влитой — каталога и ветки нет", async () => {
-  const repo = initRepo();
+  const repo = initRepo("swarm-git-repo-");
   const tree = addWorktree(repo, "a");
   writeFileSync(join(tree, "task.txt"), "task\n");
   sh(tree, "add", "task.txt");
@@ -280,7 +237,7 @@ suite("removeWorktree + deleteBranch влитой — каталога и вет
 });
 
 suite("deleteBranch невлитой → ok false, ветка на месте", async () => {
-  const repo = initRepo();
+  const repo = initRepo("swarm-git-repo-");
   const tree = addWorktree(repo, "a");
   writeFileSync(join(tree, "task.txt"), "task\n");
   sh(tree, "add", "task.txt");
@@ -291,7 +248,7 @@ suite("deleteBranch невлитой → ok false, ветка на месте", 
 });
 
 suite("changedFiles", async () => {
-  const repo = initRepo();
+  const repo = initRepo("swarm-git-repo-");
   const base = await git.headSha(repo);
   const tree = addWorktree(repo, "a");
   writeFileSync(join(tree, "one.txt"), "1\n");
@@ -305,7 +262,7 @@ suite("git-вызовы идут с LC_ALL=C даже при русской ло
   // runGit перекрывает LC_ALL → stderr всегда на C-локали. На машине без русских
   // переводов git тест проходит тривиально — он страхует от потери env, а не от
   // наличия локали.
-  const repo = initRepo();
+  const repo = initRepo("swarm-git-repo-");
   const saved = {LANG: process.env.LANG, LC_ALL: process.env.LC_ALL};
   process.env.LANG = "ru_RU.UTF-8";
   process.env.LC_ALL = "ru_RU.UTF-8";

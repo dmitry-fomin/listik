@@ -1249,5 +1249,75 @@ class FeaturePipelineCopyAndNegativeControlTests(unittest.TestCase):
                 self.assertIn(anchor, item, f"{path}: в пункте 10 нет «{anchor}»")
 
 
+#: Критика ТЗ (listik-jmxl): две модели в pi, одно задание на обе, сводка оркестратора.
+CRITIQUE_CORE_REQUIRED = (
+    "## Критика ТЗ — две модели в pi",
+    "--channel glm",
+    "--channel deepseek",
+    "--permission read",
+    "review-<X>.glm.md",
+    "review-<X>.deepseek.md",
+    "Границы и ценность:",
+    "Сверка с кодом:",
+    "стоп: критик — pi <канал> недоступен: <причина>",
+    "по умолчанию: принять все блокирующие",
+)
+CRITIQUE_PRESETS = ("xhigh-pipeline", "high-pipeline", "medium-pipeline", "low-pipeline",
+                    "cross-pipeline")
+CRITIQUE_PRESET_REQUIRED = ("pi:pi-delegate", "pi:pi-jobs", "`pipeline-core.md`, «Критика ТЗ»",
+                            "$STEPS/$BASE.review-<X>.md")
+CRITIQUE_PRESET_FORBIDDEN = ("second-opinion:ask", "--no-system")
+CRITIQUE_STAGE2_FORBIDDEN = ("--write", "--permission write")
+NO_CRITIQUE_PRESETS = ("xlow-pipeline", "nano-pipeline", "opus-pipeline")
+NO_CRITIQUE_FORBIDDEN = ("review-<X>.glm.md", "«Критика ТЗ»")
+
+
+def _stage2_section(text: str) -> str:
+    """Строки от начинающейся с `### 2.` до начинающейся с `### 3.` (без неё)."""
+    lines = text.splitlines()
+    start = next((i for i, line in enumerate(lines) if line.startswith("### 2.")), None)
+    if start is None:
+        return ""
+    end = next((i for i in range(start + 1, len(lines)) if lines[i].startswith("### 3.")),
+               len(lines))
+    return "\n".join(lines[start:end])
+
+
+class FeaturePipelineCritiqueTests(unittest.TestCase):
+    """Этап 2 всех пресетов с критикой — GLM и DeepSeek в pi по ядру (listik-jmxl)."""
+
+    def test_core_defines_critique(self) -> None:
+        text = _plugin_text(CORE_DOC)
+        for needle in CRITIQUE_CORE_REQUIRED:
+            with self.subTest(required=needle):
+                self.assertIn(needle, text, f"{CORE_DOC}: нет {needle!r}")
+
+    def test_critique_presets_point_to_core(self) -> None:
+        for name in CRITIQUE_PRESETS:
+            text = _skill_text(name)
+            for needle in CRITIQUE_PRESET_REQUIRED:
+                with self.subTest(skill=name, required=needle):
+                    self.assertIn(needle, text, f"{name}/{SKILL_FILE}: нет {needle!r}")
+            for needle in CRITIQUE_PRESET_FORBIDDEN:
+                with self.subTest(skill=name, forbidden=needle):
+                    self.assertNotIn(needle, text, f"{name}/{SKILL_FILE}: осталось {needle!r}")
+
+    def test_critique_stage2_has_no_write(self) -> None:
+        for name in CRITIQUE_PRESETS:
+            section = _stage2_section(_skill_text(name))
+            with self.subTest(skill=name, check="раздел есть"):
+                self.assertTrue(section, f"{name}/{SKILL_FILE}: нет раздела «### 2.»")
+            for needle in CRITIQUE_STAGE2_FORBIDDEN:
+                with self.subTest(skill=name, forbidden=needle):
+                    self.assertNotIn(needle, section, f"{name}/{SKILL_FILE}: в этапе 2 есть {needle!r}")
+
+    def test_presets_without_critique_stay_clean(self) -> None:
+        for name in NO_CRITIQUE_PRESETS:
+            text = _skill_text(name)
+            for needle in NO_CRITIQUE_FORBIDDEN:
+                with self.subTest(skill=name, forbidden=needle):
+                    self.assertNotIn(needle, text, f"{name}/{SKILL_FILE}: есть {needle!r}")
+
+
 if __name__ == "__main__":
     unittest.main()

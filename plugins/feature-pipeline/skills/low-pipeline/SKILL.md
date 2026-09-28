@@ -17,7 +17,7 @@ license: MIT
 на порцию, журнал и общие грабли. Ниже — только то, чем low-pipeline отличается: кто делает каждый этап и как его
 позвать. Скил запускается только по явному имени — маршрутом карточки Listik (`launch_route` или метка
 `process:low-pipeline`) или человеком (`/feature-pipeline:low-pipeline`); по сходству задачи сам его не подхватывай, и запуск скила — согласие автора
-на отправку **ТЗ, чек-листа, кода и диффа порции** наружу: критикам — ТЗ и чек-лист, код на чтение, исполнителю — рабочий
+на отправку **ТЗ, чек-листа, кода и диффа порции** наружу: критикам — шаг, ТЗ и чек-лист, код на чтение, исполнителю — рабочий
 каталог целиком (devin ходит по коду сам), судье — дифф. Секреты в ТЗ не пропускает этап 1, в дифф — границы
 правки порции; все команды — из корня основного дерева.
 
@@ -26,7 +26,7 @@ license: MIT
 | Этап | Кто | Модель и усилие | Первая строка отчёта |
 | --- | --- | --- | --- |
 | 1. ТЗ и чек-листы | субагент `feature-pipeline:pipeline-spec-writer-low` | **`model: opus` в вызове** (frontmatter — opus, effort low) → Opus low | `готово` или `вопрос` |
-| 2. Критика ТЗ | скил `pi:pi-delegate`, две фоновые задачи одним сообщением | каналы `glm` (GLM 5.3 Flash) и `deepseek` (DeepSeek V4.1 Flash), `--permission read` | сводка `review-<X>.md` с разделами «Блокирующие» и «Существенные» |
+| 2. Критика ТЗ | скил `pi:pi-delegate`, две фоновые задачи одним сообщением | каналы `glm` (GLM 5.3 Flash) и `deepseek` (DeepSeek V4.1 Flash), `--permission read` | по файлу на модель, потом твоя сводка `review-<X>.md` с разделами «Блокирующие» и «Существенные» |
 | 3. Реализация | скил `devin:devin-delegate`, фоновой задачей, с `--write` | `--thinking max` (модель `swe-2-max`) | `готово`, `не смог` или `вопрос` |
 | 4. Приёмка и коммит | `/grok:delegate`, фоновой задачей | `--model grok-4.7 --effort high` | `зелёный` с хешем или `красный` |
 
@@ -48,7 +48,7 @@ license: MIT
 
 Стоп, если нет хотя бы одного — раздел «Внешние скилы» `pipeline-core.md`. Скрипты из кэша не зови.
 
-- [`pi:pi-delegate`](../../../pi/skills/pi-delegate/SKILL.md) (`plugins/pi/skills/pi-delegate/SKILL.md`) — критика ТЗ, каналы `glm` и `deepseek`; [`pi:pi-check`](../../../pi/skills/pi-check/SKILL.md) — готовность обоих;
+- [`pi:pi-delegate`](../../../pi/skills/pi-delegate/SKILL.md) (`plugins/pi/skills/pi-delegate/SKILL.md`) — критика ТЗ, каналы `glm` и `deepseek`; [`pi:pi-check`](../../../pi/skills/pi-check/SKILL.md) — готовность обоих; [`pi:pi-jobs`](../../../pi/skills/pi-jobs/SKILL.md) — забор ответов; [`pi:pi-runtime`](../../../pi/skills/pi-runtime/SKILL.md) — контракт;
 - [`devin:devin-delegate`](../../../devin/skills/devin-delegate/SKILL.md) (`plugins/devin/skills/devin-delegate/SKILL.md`) — этап 3 (`--write` и `--thinking max` обязательны); [`devin:devin-check`](../../../devin/skills/devin-check/SKILL.md) — готовность; [`devin:devin-jobs`](../../../devin/skills/devin-jobs/SKILL.md) — ход и забор; [`devin:devin-runtime`](../../../devin/skills/devin-runtime/SKILL.md) — контракт и продолжение сессии;
 - `/grok:delegate` — этап 4 и предполётный прогон судьи; `/grok:setup` — готовность, если прогон упал не на балансе; `/grok:status` и `/grok:result` — ход и забор; `grok:grok-cli-runtime` — контракт;
 - [`listik:listik`](../../../listik/skills/listik/SKILL.md) (`plugins/listik/skills/listik/SKILL.md`) — карточка, этапы, журнал, вопросы автору.
@@ -95,11 +95,13 @@ WT=.             # в треке — абсолютный путь дерева 
 
 **Стоп-фактор.** Харнесс этапа недоступен (запуск упал, не залогинен, ответила не та модель) — конвейер стоит: журнал `стоп: <роль> — <харнесс> недоступен: <причина>`, `needs-owner` и тот же вопрос в чат; подмены другим харнессом, моделью или локальным субагентом нет (`pipeline-core.md`, «Стоп-фактор»).
 
-Две критики сразу — `pi:pi-delegate` каналами `glm` и `deepseek` одним сообщением, — потом сводка в
-`$STEPS/$BASE.review-<X>.md`. Запуск, задание, забор и правила сведения — `pipeline-core.md`, «Критика ТЗ».
+Две критики сразу — `pi:pi-delegate` каналами `glm` и `deepseek` одним сообщением, с одним заданием: каждая
+модель отвечает на все вопросы — и про границы и ценность порции, и про сверку с кодом. Сырые ответы —
+выводом `result` через `pi:pi-jobs`, потом ты сводишь их по смыслу в `$STEPS/$BASE.review-<X>.md`.
+Проверка на секреты, запуск, задание, забор, повтор и правила сведения — `pipeline-core.md`, «Критика ТЗ».
 
 Нет блокирующих — строка в журнал и этап 3. Есть — покажи автору сводку как есть и спроси `AskUserQuestion` с
-`multiSelect`, каждый блокирующий пункт отдельным вариантом дословно. Решения — в журнал и **автору ТЗ**:
+`multiSelect`, каждый блокирующий пункт отдельным вариантом дословно (в headless — решение по умолчанию из ядра). Решения — в журнал и **автору ТЗ**:
 возобнови `pipeline-spec-writer-low` через `SendMessage` с путём к `$STEPS/$BASE.review-<X>.md` и решениями; после `/clear` — новый
 запуск в режиме правки (`model: opus`, пути к порции, чек-листу и `$STEPS/$BASE.review-<X>.md`, решения). Критика одна на порцию.
 

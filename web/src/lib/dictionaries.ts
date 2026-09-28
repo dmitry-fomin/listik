@@ -119,6 +119,17 @@ export function statusTitle(value: TaskStatus): string {
   return STATUSES.find((item) => item.value === value)?.label ?? value
 }
 
+/**
+ * Финальные статусы — зеркало `FINAL_STATUSES` из `listik/statuses.py` (общего
+ * объявления у TS и Python нет); расхождение ловит `tests/test_statuses.py`.
+ */
+export const FINAL_STATUSES: readonly TaskStatus[] = ['done', 'cancelled']
+
+/** «Задача закрыта» — ровно статус из FINAL_STATUSES; пустое и незнакомое значение — нет. */
+export function isClosedStatus(status: string | null | undefined): boolean {
+  return (FINAL_STATUSES as readonly string[]).includes(status ?? '')
+}
+
 // ── Рабочее дерево (строка «worktree · branch» блока «Холодный старт») ──────
 
 export type WorktreeStateValue = 'worktree' | 'main' | 'missing'

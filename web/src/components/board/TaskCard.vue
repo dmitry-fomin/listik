@@ -17,7 +17,7 @@ import ListikIcon from '../ListikIcon.vue'
 import type { ProjectRow, Task } from '@/api/types'
 import store, { type DepsSummary } from '@/store/listik'
 import { AT_RISK_IDLE_HOURS, taskHealth, healthReason, healthTone } from '@/lib/health'
-import { statusTitle } from '@/lib/dictionaries'
+import { isClosedStatus, statusTitle } from '@/lib/dictionaries'
 import { routeByKey } from '@/lib/routes'
 import { stageExecutor } from '@/lib/executors'
 import { hasHolderTitle } from '@/lib/task-presentation'
@@ -120,7 +120,7 @@ const blockedTooltip = computed(() => {
  * и «без держателя» в этой ветке не показываются.
  */
 const workedBy = computed<{ label: string; title: string; actor: string } | null>(() => {
-  const isClosed = props.task.status === 'done' || props.task.status === 'cancelled'
+  const isClosed = isClosedStatus(props.task.status)
   const keys = props.task.worked_by ?? []
   if (!isClosed || keys.length === 0) return null
   return {

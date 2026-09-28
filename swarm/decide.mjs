@@ -3,6 +3,8 @@ import {DEFAULT_QUESTION_TIMEOUT} from "./config.mjs";
 // Решения роя — чистые функции, ни одного вызова наружу (spawn/fs/Date.now()):
 // время приходит аргументом `now`, вход/выход — обычные объекты.
 
+// Открытые статусы — зеркало OPEN_STATUSES из listik/statuses.py (у Node и Python
+// общего объявления нет); расхождение ловит tests/test_statuses.py.
 export const OPEN_STATUSES = new Set(["open", "in_progress", "blocked", "review"]);
 export const REJECTED_MARK = "рой: не принята:";
 export const SOFT_DEFAULT_RE = /^по умолчанию:\s*(\S.*)$/mu;

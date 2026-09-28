@@ -3,6 +3,7 @@
  * на сервере. Правила и пороги — легенда верха `CardStates.dc.html`.
  */
 import type { Task } from '@/api/types'
+import { isClosedStatus } from '@/lib/dictionaries'
 
 export type Health = 'healthy' | 'at-risk' | 'dead' | 'unknown'
 
@@ -56,7 +57,7 @@ export const HEALTH_TITLES: Record<Health, string> = {
  * 6. иначе healthy.
  */
 export function taskHealth(task: Task): Health {
-  if (task.status === 'done' || task.status === 'cancelled') return 'healthy'
+  if (isClosedStatus(task.status)) return 'healthy'
   if (task.stale || task.abandoned) return 'dead'
   if (!task.holder) return 'unknown'
   if (task.not_taken_warn) return 'at-risk'
@@ -68,7 +69,7 @@ export function taskHealth(task: Task): Health {
 
 /** Короткая подпись для тултипа/бейджа — тем же порядком проверок, что taskHealth. */
 export function healthReason(task: Task): string {
-  if (task.status === 'done' || task.status === 'cancelled') return 'закрыта'
+  if (isClosedStatus(task.status)) return 'закрыта'
   if (task.stale) return `брошена ${task.idle_age}`
   if (task.abandoned && !task.holder) return 'брошена · без держателя'
   if (task.abandoned) return 'брошена'

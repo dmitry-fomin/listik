@@ -157,5 +157,59 @@ class StatusScalarGrepTests(unittest.TestCase):
                          "coalesce(…, 'open') в deps.py:\n" + "\n".join(hits))
 
 
+def _declared_statuses(text: str, declaration: re.Pattern) -> set[str]:
+    """Строковые литералы тела объявления (группа 1 паттерна); объявление обязано найтись."""
+    m = declaration.search(text)
+    assert m, f"объявление не найдено: {declaration.pattern}"
+    return set(re.findall(r"[\"']([^\"']+)[\"']", m.group(1)))
+
+
+def _swarm_open_statuses(text: str) -> set[str]:
+    """Набор из `export const OPEN_STATUSES = new Set([...])` в тексте decide.mjs."""
+    return _declared_statuses(text, re.compile(
+        r"export const OPEN_STATUSES\s*=\s*new Set\(\[([^\]]*)\]"))
+
+
+def _task_status_union(text: str) -> set[str]:
+    """Набор из union `export type TaskStatus = ...` в тексте types.ts."""
+    return _declared_statuses(text, re.compile(r"export type TaskStatus\s*=\s*([^\n;]+)"))
+
+
+def _web_final_statuses(text: str) -> set[str]:
+    """Набор из `export const FINAL_STATUSES ... = [...]` в тексте dictionaries.ts."""
+    return _declared_statuses(text, re.compile(
+        r"export const FINAL_STATUSES\b[^=\n]*=\s*\[([^\]]*)\]"))
+
+
+class JsStatusCopyTests(unittest.TestCase):
+    """Порция listik-9ate.b: JS-копии наборов статусов (общего объявления с Python у них
+    нет) сверяются с `listik/statuses.py` regex-разбором текста файла. Мутационные
+    прогоны подменяют строку в памяти — сами файлы не трогаются."""
+
+    def _text(self, rel: str) -> str:
+        return (ROOT / rel).read_text(encoding="utf-8")
+
+    def test_swarm_open_statuses_match(self) -> None:
+        declared = _swarm_open_statuses(self._text("swarm/decide.mjs"))
+        self.assertEqual(declared, set(statuses.OPEN_STATUSES))
+
+    def test_task_status_union_matches_all(self) -> None:
+        declared = _task_status_union(self._text("web/src/api/types.ts"))
+        self.assertEqual(declared, set(statuses.ALL_STATUSES))
+
+    def test_web_final_statuses_match(self) -> None:
+        declared = _web_final_statuses(self._text("web/src/lib/dictionaries.ts"))
+        self.assertEqual(declared, set(statuses.FINAL_STATUSES))
+
+    def test_mutation_decide_without_review(self) -> None:
+        declared = _swarm_open_statuses(self._text("swarm/decide.mjs").replace('"review"', ""))
+        self.assertNotEqual(declared, set(statuses.OPEN_STATUSES))
+
+    def test_mutation_types_without_cancelled(self) -> None:
+        declared = _task_status_union(
+            self._text("web/src/api/types.ts").replace("'cancelled'", ""))
+        self.assertNotEqual(declared, set(statuses.ALL_STATUSES))
+
+
 if __name__ == "__main__":  # pragma: no cover
     unittest.main()

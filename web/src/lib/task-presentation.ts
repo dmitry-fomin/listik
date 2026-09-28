@@ -2,7 +2,7 @@ import type { DepInfo, ProjectRow, RouteDef, Task, TaskComment, TaskDetail } fro
 import { formatDateTime, humanAge } from './format'
 import { harnessOf, harnessTitle } from './harness'
 import { HEALTH_TITLES, healthReason, taskHealth } from './health'
-import { worktreeState, worktreeValue } from './dictionaries'
+import { isClosedStatus, worktreeState, worktreeValue } from './dictionaries'
 import { executorIsHolder, stageExecutor } from './executors'
 
 /** Общие представления задачи для настольной и телефонной карточек. */
@@ -32,7 +32,7 @@ export function actorShort(key: string | null | undefined): string {
 
 /** Пилюля здоровья без дублирования подписи статуса задачи. */
 export function healthPillText(task: TaskDetail): string {
-  if (task.status === 'done' || task.status === 'cancelled') return 'закрыта'
+  if (isClosedStatus(task.status)) return 'закрыта'
   const health = taskHealth(task)
   if (health === 'dead' || health === 'unknown') return healthReason(task)
   return `${HEALTH_TITLES[health]} · ${healthReason(task)}`
@@ -108,7 +108,7 @@ export interface DesktopHolderPresentation {
 /** Значения блока «Кто держит» в настольной карточке. Разметка остаётся в TaskDrawer. */
 export function desktopHolderPresentation(task: TaskDetail): DesktopHolderPresentation {
   const hasTitle = hasHolderTitle(task.holder_title)
-  const isClosed = task.status === 'done' || task.status === 'cancelled'
+  const isClosed = isClosedStatus(task.status)
   const workedKeys = task.worked_by ?? []
   return {
     workedBy: isClosed && workedKeys.length > 0

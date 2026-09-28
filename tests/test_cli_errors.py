@@ -12,12 +12,16 @@
 """
 from __future__ import annotations
 
+import contextlib
+import io
 import json
 import os
+import socket
 import subprocess
 import sys
 import threading
 import unittest
+from unittest import mock
 
 from listik import errors, paths, server, store, swarm_llm
 from tests.helpers import TempDbTestCase
@@ -289,6 +293,79 @@ class HttpErrorHintTests(unittest.TestCase):
         hint = server.api_error(404, exc).hint
         self.assertTrue(hint)
         self.assertEqual(hint, errors.hint_of(exc))
+
+
+class ClosedStdoutTests(CliErrorCase):
+    """listik-g7zp: читатель закрыл stdout (`| head`) — команда доходит до конца, код
+    возврата тот же, что при живом stdout, в stderr и listik.log об обрыве ни слова."""
+
+    cli_bin = LISTIK_BIN
+
+    def run_closed(self, *args):
+        # Порт без сервера: иначе живой сервер разработчика на 8787 добавит в stderr
+        # законное предупреждение «--local … минуя сервер», и «stderr пуст» не проверить.
+        with socket.socket() as sock:
+            sock.bind(("127.0.0.1", 0))
+            free_port = str(sock.getsockname()[1])
+        env = {**os.environ, "LISTIK_DB": str(self.db_path),
+               "LISTIK_LOG": str(self.tmp_path / "listik.log"), "LISTIK_PORT": free_port}
+        read_fd, write_fd = os.pipe()
+        os.close(read_fd)  # читатель ушёл до запуска: любая запись сразу получает EPIPE
+        try:
+            proc = subprocess.Popen([sys.executable, str(self.cli_bin), "--local", *args],
+                                    stdout=write_fd, stderr=subprocess.PIPE, text=True,
+                                    env=env, cwd=str(LISTIK_BIN.parent.parent))
+        finally:
+            os.close(write_fd)
+        _, err = proc.communicate(timeout=60)
+        return proc.returncode, err
+
+    def assert_quiet(self, code, err, expected_code=0):
+        self.assertEqual(code, expected_code, err)
+        self.assertEqual(err, "")
+        log = self.log_text()
+        self.assertNotIn("BrokenPipeError", log)
+        self.assertNotIn("Traceback", log)
+
+    def assert_held(self, task_id):
+        task = store.get_task(self.conn, task_id)
+        self.assertEqual(task["holder"], "claude")
+        return task
+
+    def test_small_text_output(self) -> None:
+        task_id = store.create_task(self.conn, title="проба", project="demo")["id"]
+        code, err = self.run_closed("--actor", "agent:claude", "claim", task_id,
+                                    "--holder", "claude")
+        self.assert_quiet(code, err)
+        self.assertEqual(self.assert_held(task_id)["status"], "in_progress")
+
+    def test_json_output_larger_than_buffer(self) -> None:
+        task_id = store.create_task(self.conn, title="проба", project="demo",
+                                    description="д" * 25000)["id"]
+        code, err = self.run_closed("--actor", "agent:claude", "claim", task_id,
+                                    "--holder", "claude", "--json")
+        self.assert_quiet(code, err)
+        self.assert_held(task_id)
+
+    def test_error_keeps_exit_code(self) -> None:
+        live = self.run_cli("show", "нет-такой", "--json")
+        self.assertNotEqual(live.returncode, 0)
+        code, err = self.run_closed("show", "нет-такой", "--json")
+        self.assert_quiet(code, err, expected_code=live.returncode)
+
+    def test_in_process_wrapper_removes_itself(self) -> None:
+        from tests.test_autostart import _load_cli
+        cli = _load_cli()
+        with mock.patch.object(paths, "DB_PATH", self.db_path), \
+                mock.patch.object(paths, "LOG_PATH", self.tmp_path / "listik.log"), \
+                mock.patch.object(cli.client, "is_up", return_value=False):
+            for _ in range(2):
+                out = io.StringIO()
+                with contextlib.redirect_stdout(out):
+                    code = cli.main(["--local", "show", "нет-такой", "--json"])
+                    self.assertIs(sys.stdout, out)
+                self.assertEqual(code, 1)
+                self.assertEqual(json.loads(out.getvalue())["error"]["code"], "not_found")
 
 
 if __name__ == "__main__":

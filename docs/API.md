@@ -2191,6 +2191,10 @@ listik restore <копия> [--stop] [--force]  # восстановление; 
 | локальный режим (`client.local_call`) | `errors.NotFound` → `not_found`, `errors.BadArgument` → `bad_argument`, `errors.Forbidden` → `forbidden`, прочий `ValueError` → `conflict` | то же без запущенного сервера |
 | непойманное исключение | `internal`, трейсбек пишется только в `listik.log` | сломанная база |
 
+Если читатель закрыл stdout раньше конца вывода (`listik claim X --json | head -3`), команда
+всё равно выполняется до конца, а её вывод выбрасывается. Код возврата тот же, что при живом
+stdout, а в stderr и `listik.log` об обрыве ничего не пишется (listik-g7zp).
+
 «Не найдено» поднимают только `errors.NotFound` (store/documents/deps) — это осознанный ответ
 «такой задачи/проекта/документа нет». Голый `KeyError` (обращение к отсутствующему ключу
 словаря: нет поля у карточки) — это `internal`: сервер отдаёт по нему 500 с текстом

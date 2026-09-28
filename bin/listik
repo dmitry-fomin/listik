@@ -3074,7 +3074,59 @@ def build_parser() -> argparse.ArgumentParser:
     return p
 
 
+class _ClosedPipeSafeStdout:
+    """sys.stdout на время команды: читатель закрыл трубу (`| head`) — вывод
+    выбрасывается, команда доходит до конца с тем же кодом возврата (listik-g7zp)."""
+
+    def __init__(self, stream):
+        self._stream = stream
+        self._gone = False
+
+    def _reader_gone(self) -> None:
+        self._gone = True
+        try:
+            fd = self._stream.fileno()
+        except (AttributeError, OSError, ValueError):
+            return  # StringIO и т. п.: дескриптора нет, запись просто отбрасываем
+        # Иначе финальный сброс буфера на выходе интерпретатора снова упадёт в EPIPE.
+        devnull = os.open(os.devnull, os.O_WRONLY)
+        try:
+            os.dup2(devnull, fd)
+        finally:
+            os.close(devnull)
+
+    def write(self, text):
+        if self._gone:
+            return len(text)
+        try:
+            return self._stream.write(text)
+        except BrokenPipeError:
+            self._reader_gone()
+            return len(text)
+
+    def flush(self) -> None:
+        if self._gone:
+            return
+        try:
+            self._stream.flush()
+        except BrokenPipeError:
+            self._reader_gone()
+
+    def __getattr__(self, name):
+        return getattr(self._stream, name)
+
+
 def main(argv: list[str] | None = None) -> int:
+    saved = sys.stdout
+    guard = sys.stdout = _ClosedPipeSafeStdout(saved)
+    try:
+        return _main(argv)
+    finally:
+        guard.flush()
+        sys.stdout = saved
+
+
+def _main(argv: list[str] | None) -> int:
     raw = list(sys.argv[1:] if argv is None else argv)
     # --json может стоять и до подкоманды, и после: ошибка разбора аргументов
     # случается раньше, чем флаг попадёт в args, поэтому смотрим сам argv.

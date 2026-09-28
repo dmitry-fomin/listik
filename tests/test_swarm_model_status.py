@@ -160,6 +160,18 @@ class StatusModelTests(unittest.TestCase):
         self.assertNotIn("модель", swarm_line)
         self.assertNotIn("secret-swarm", result.stdout)
 
+    def test_swarm_status_json_keeps_error(self) -> None:
+        self.write_config('[swarm]\nenabled = "да"\napi_key = "secret-swarm"\n')
+        result = self.run_cli("swarm", "status", "--json")
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertTrue(json.loads(result.stdout)["error"])
+        self.assertNotIn("secret-swarm", result.stdout)
+
+        self.write_config("[swarm]\nenabled = false\n")
+        result = self.run_cli("swarm", "status", "--json")
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertNotIn("error", json.loads(result.stdout))
+
 
     def test_server_error_prints_like_local_status(self) -> None:
         cli = self.cli_module()

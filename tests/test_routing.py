@@ -404,6 +404,79 @@ class RoutingTests(TempDbTestCase):
         request_mock.assert_not_called()
 
 
+    # -- 10. routing_error: нечитаемое переопределение не молчит (listik-km4b) --
+
+    _BAD_TOML = 'api_key = "SECRET-MARKER" [\n'
+
+    def _demo(self) -> dict:
+        err = io.StringIO()
+        with contextlib.redirect_stderr(err):
+            projects = store.list_all_projects(self.conn)
+        return next(p for p in projects if p["slug"] == "demo")
+
+    def test_routing_error_none_without_errors(self) -> None:
+        demo = self._demo()
+        self.assertIn("routing_error", demo)
+        self.assertIsNone(demo["routing_error"])
+
+    def test_routing_error_broken_db_json(self) -> None:
+        self.conn.execute("UPDATE projects SET routing = '{broken' WHERE slug = 'demo'")
+        self.conn.commit()
+        demo = self._demo()
+        self.assertTrue(demo["routing_error"].startswith("projects.routing:"))
+        self.assertNotIn("broken", demo["routing_error"])
+        self.assertIsNone(demo["routing"])
+        self.assertEqual(demo["routing_source"], "default")
+        self.assertIsInstance(demo["routing_effective"], dict)
+
+    def test_routing_error_non_object_db_json(self) -> None:
+        self._set_raw_routing("[1]")
+        demo = self._demo()
+        self.assertTrue(demo["routing_error"].startswith("projects.routing:"))
+        self.assertIn("list", demo["routing_error"])
+        self.assertNotIn("[1]", demo["routing_error"])
+
+    def test_routing_error_unreadable_config(self) -> None:
+        self._config_path.write_text(self._BAD_TOML, encoding="utf-8")
+        demo = self._demo()
+        self.assertTrue(demo["routing_error"].startswith("config.toml:"))
+        self.assertIsNone(demo["routing_effective"])
+        self.assertNotIn("SECRET-MARKER", demo["routing_error"])
+        self.assertNotIn("api_key", demo["routing_error"])
+
+    def test_routing_error_both_sources(self) -> None:
+        self._set_raw_routing("{broken")
+        self._config_path.write_text(self._BAD_TOML, encoding="utf-8")
+        text = self._demo()["routing_error"]
+        self.assertIn("projects.routing:", text)
+        self.assertIn("config.toml:", text)
+        self.assertLess(text.index("projects.routing:"), text.index("config.toml:"))
+        self.assertEqual(text.count("config.toml:"), 1)
+
+    def test_routing_error_in_update_project_response(self) -> None:
+        self._config_path.write_text(self._BAD_TOML, encoding="utf-8")
+        out = store.update_project(self.conn, "demo", title="Демо")
+        self.assertTrue(out["routing_error"].startswith("config.toml:"))
+
+    def test_cli_warns_on_broken_db_json(self) -> None:
+        self._set_raw_routing("{broken")
+        p = self._cli("--local", "projects", "demo")
+        self.assertEqual(p.returncode, 0, p.stderr)
+        self.assertIn("ВНИМАНИЕ: маршрутизация прочитана не полностью", p.stdout)
+        self.assertIn("projects.routing", p.stdout)
+        p = self._cli("--local", "projects", "demo", "--json")
+        self.assertEqual(p.returncode, 0, p.stderr)
+        demo = next(r for r in json.loads(p.stdout) if r["slug"] == "demo")
+        self.assertTrue(demo["routing_error"])
+
+    def test_cli_routing_warns_on_unreadable_config(self) -> None:
+        self._config_path.write_text(self._BAD_TOML, encoding="utf-8")
+        p = self._cli("--local", "projects", "demo", "--routing", '{"return_window_hours": 2}')
+        self.assertEqual(p.returncode, 0, p.stderr)
+        self.assertIn("ВНИМАНИЕ: маршрутизация прочитана не полностью", p.stdout)
+        self.assertIn("config.toml:", p.stdout)
+        self.assertNotIn("SECRET-MARKER", p.stdout)
+
 class TransitionKindEmptyFromStageTests(unittest.TestCase):
     """A task with no stage yet is not "handing off" to itself: `f"{from_stage}:{to_stage}"`
     with `from_stage=None` used to miss every entry in `transitions` and silently fall back

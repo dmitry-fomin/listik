@@ -2510,25 +2510,34 @@ def _project_with_routing(conn: sqlite3.Connection, row: dict) -> dict:
     slug = row.get("slug")
     raw = row.get("routing")
     parsed = None
+    errors: list[str] = []
     if raw:
         try:
             parsed = json.loads(raw) if isinstance(raw, str) else raw
-        except (TypeError, ValueError):
+        except (TypeError, ValueError) as exc:
+            # Только имя класса: текст исключения может цитировать само значение.
+            errors.append(f"projects.routing: невалидный JSON ({type(exc).__name__})")
             parsed = None
+        if parsed is not None and not isinstance(parsed, dict):
+            errors.append(f"projects.routing: ожидается объект, а не {type(parsed).__name__}")
     out = dict(row)
     cleaned = config_mod.without_legacy_routing(parsed) if isinstance(parsed, dict) else None
     out["routing"] = cleaned or None
-    out["routing_effective"] = config_mod.routing(slug, conn=conn)
     has_db = bool(out["routing"])
     has_config = False
     try:
+        out["routing_effective"] = config_mod.routing(slug, conn=conn)
         # config.load() уже вычистил устаревшие ключи (см. config.LEGACY_ROUTING_KEYS):
         # переопределение, в котором остался только такой ключ, сюда приходит пустым.
         cfg = config_mod.load()
         projects_cfg = (cfg.get("routing") or {}).get("projects") or {}
         has_config = bool(slug and isinstance(projects_cfg, dict) and projects_cfg.get(slug))
-    except Exception:  # noqa: BLE001 — конфиг не должен ронять показ проекта
+    except Exception as exc:  # noqa: BLE001 — конфиг не должен ронять показ проекта
+        # Только имя класса: сообщение парсера TOML может цитировать ключи и токены.
+        out["routing_effective"] = None
         has_config = False
+        errors.append(f"config.toml: не читается ({type(exc).__name__})")
+    out["routing_error"] = "; ".join(errors) or None
     if has_config and has_db:
         out["routing_source"] = "config+db"
     elif has_db:

@@ -33,26 +33,13 @@ import RouteIcon from './marks/RouteIcon.vue'
 import store from '@/store/listik'
 import type { PipelineRouteDef, RouteDef, RouteRemoved, SwarmLikeRoute } from '@/api/types'
 import { pipelineRowsOf, swarmRoutesOf } from '@/lib/routes'
-import { ROLE_KEYS, ROLE_STAGE } from '@/lib/pipelines'
-import { PIPELINE_STAGES } from '@/lib/dictionaries'
+import { ROLE_KEYS, roleStage } from '@/lib/pipelines'
+import { plural } from '@/lib/format'
 import { registerLeaveGuard } from '@/lib/router'
 
 /** Источник списка — сам `store.routes`, без местных копий. */
 const pipelineRoutes = computed<PipelineRouteDef[]>(() => pipelineRowsOf(store.routes.value))
 const swarmRoutes = computed<SwarmLikeRoute[]>(() => swarmRoutesOf(store.routes.value))
-
-/**
- * Полное склонение слова «роль» по числу: 1 роль, 2 роли, 5 ролей, 11 ролей,
- * 21 роль. Исключение 11–14 перебивает правило последней цифры.
- */
-function rolesWord(count: number): string {
-  const lastTwo = count % 100
-  if (lastTwo >= 11 && lastTwo <= 14) return 'ролей'
-  const last = count % 10
-  if (last === 1) return 'роль'
-  if (last >= 2 && last <= 4) return 'роли'
-  return 'ролей'
-}
 
 /** Непустые ячейки `route.roles`: ключ со значением `null`/`undefined` не считается. */
 function filledRoles(route: SwarmLikeRoute): number {
@@ -67,12 +54,7 @@ function pipelineMeta(route: PipelineRouteDef): string {
 /** Текст пилюли состава — `N ролей` со склонением. */
 function rolesBadge(route: SwarmLikeRoute): string {
   const count = filledRoles(route)
-  return `${count} ${rolesWord(count)}`
-}
-
-/** «карточки» в родительном единственном (1, 21, 101…), иначе «карточек». */
-function cardsWord(count: number): string {
-  return count % 10 === 1 && count % 100 !== 11 ? 'карточки' : 'карточек'
+  return `${count} ${plural(count, 'роль', 'роли', 'ролей')}`
 }
 
 /**
@@ -82,8 +64,7 @@ function cardsWord(count: number): string {
  */
 function swarmMeta(route: SwarmLikeRoute): string {
   const skipped = ROLE_KEYS.filter((role) => !route.roles[role]).map((role) => {
-    const stage = PIPELINE_STAGES.find((item) => item.value === ROLE_STAGE[role])
-    return stage?.code ?? role
+    return roleStage(role)?.code ?? role
   })
   const tail = skipped.length > 0 ? ` · ${skipped.join(', ')} пропущен` : ''
   return `${route.key}${tail}`
@@ -199,7 +180,7 @@ const removedNote = ref<string | null>(null)
 
 function onRouteRemoved(result: RouteRemoved): void {
   removedNote.value =
-    `Маршрут «${result.removed}» удалён, снят у ${result.tasks_cleared} ${cardsWord(result.tasks_cleared)}`
+    `Маршрут «${result.removed}» удалён, снят у ${result.tasks_cleared} ${plural(result.tasks_cleared, 'карточки', 'карточек', 'карточек')}`
 }
 
 /*

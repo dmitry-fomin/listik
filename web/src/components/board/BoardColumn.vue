@@ -16,6 +16,7 @@ import store from '@/store/listik'
 import { taskHealth, healthReason } from '@/lib/health'
 import { harnessOf, harnessTitle } from '@/lib/harness'
 import { stageCode, stageTitle } from '@/lib/stages'
+import { DONE_STAGE, INTAKE_COLUMN_KEY, INTAKE_STAGE } from '@/lib/dictionaries'
 import { projectOf } from '@/lib/task-presentation'
 
 /** Сколько карточек колонка показывает сразу: 300 карточек в DOM — это лишние тысячи узлов. */
@@ -56,8 +57,8 @@ const columnStage = computed<TaskStage>(() => props.column.key as TaskStage)
 const isStageColumn = computed(() => stageCode(columnStage.value) !== null)
 
 const headTitle = computed(() => {
-  if (props.column.key === 'none') return 'Заведена'
-  if (isStageColumn.value || props.column.key === 'done') return stageTitle(columnStage.value) ?? props.column.title
+  if (props.column.key === INTAKE_COLUMN_KEY) return INTAKE_STAGE.label
+  if (isStageColumn.value || props.column.key === DONE_STAGE.value) return stageTitle(columnStage.value) ?? props.column.title
   return props.column.title
 })
 
@@ -74,7 +75,7 @@ onMounted(() => store.ensureHarnesses())
 
 /** Уникальные харнессы держателей задач колонки, без `human` и без пустых. */
 const harnesses = computed(() => {
-  if (props.column.key === 'none') return []
+  if (props.column.key === INTAKE_COLUMN_KEY) return []
   const seen = new Set<string>()
   const list: { key: string; title: string }[] = []
   for (const task of props.column.tasks) {
@@ -130,7 +131,7 @@ const healthOverflow = computed(() => Math.max(0, props.column.tasks.length - MA
       </div>
       <div class="listik-column__meta">
         <p class="listik-column__harness">
-          <template v-if="column.key === 'none'">без этапа</template>
+          <template v-if="column.key === INTAKE_COLUMN_KEY">без этапа</template>
           <template v-else>
             <template v-for="(harness, index) in harnesses" :key="harness.key">
               <span v-if="index > 0" aria-hidden="true"> · </span>

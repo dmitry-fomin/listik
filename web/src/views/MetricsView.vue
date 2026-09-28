@@ -28,7 +28,7 @@ import {
 import ListikIcon from '@/components/ListikIcon.vue'
 import store from '@/store/listik'
 import type { Task } from '@/api/types'
-import { INTAKE_COLUMN_KEY, PIPELINE_STAGES, priority, statusTitle } from '@/lib/dictionaries'
+import { DONE_STAGE, INTAKE_COLUMN_KEY, INTAKE_STAGE, PIPELINE_STAGES, priority, statusTitle } from '@/lib/dictionaries'
 import { formatHours, formatTime } from '@/lib/format'
 import { stageCode as stageCodeFor, stageTitle } from '@/lib/stages'
 
@@ -71,7 +71,7 @@ const flow = computed(() => {
     wipByStage.set(key, (wipByStage.get(key) ?? 0) + 1)
   }
   const open = [
-    { key: INTAKE_COLUMN_KEY, code: '—', label: 'Заведена' },
+    { key: INTAKE_COLUMN_KEY, code: '—', label: INTAKE_STAGE.label },
     ...PIPELINE_STAGES.map((step) => ({ key: step.value as string, code: step.code as string, label: step.label })),
   ]
   const max = Math.max(1, ...open.map((step) => byStage[step.key] ?? 0))
@@ -89,7 +89,7 @@ const flow = computed(() => {
   })
   const closed = stats.value?.closed_7d ?? 0
   steps.push({
-    key: 'done', code: '✓', label: 'Готово', count: closed, done: true,
+    key: DONE_STAGE.value, code: '✓', label: DONE_STAGE.label, count: closed, done: true,
     wipWidth: closed ? '100%' : '0%', waitWidth: '0%', note: 'за 7 дней',
   })
   return steps
@@ -370,7 +370,7 @@ function openTask(id: string): void {
           </template>
           <template #cell-stage="{ row }">
             <span class="listik-metrics__stage">
-              <span class="listik-flow__code">{{ stageCodeFor((row as Task).stage) ?? '—' }}</span>{{ stageTitle((row as Task).stage === 'done' ? null : (row as Task).stage) ?? ((row as Task).stage_title || 'без этапа') }}
+              <span class="listik-flow__code">{{ stageCodeFor((row as Task).stage) ?? '—' }}</span>{{ stageTitle((row as Task).stage === DONE_STAGE.value ? null : (row as Task).stage) ?? ((row as Task).stage_title || 'без этапа') }}
             </span>
           </template>
           <template #cell-holder="{ row }">

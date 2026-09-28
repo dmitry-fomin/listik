@@ -5,6 +5,7 @@
  * Здесь остаются только роли и вендоры, которыми размечены ячейки таблицы.
  */
 import type { PipelineStage, SwarmRoleCell } from '@/api/types'
+import { PIPELINE_STAGES, type PipelineStep } from '@/lib/dictionaries'
 
 export type RoleKey = 'spec' | 'critic' | 'impl' | 'judge'
 
@@ -28,6 +29,15 @@ export const ROLE_STAGE: Record<RoleKey, PipelineStage> = {
   critic: 's2-review',
   impl: 's3-impl',
   judge: 's4-judge',
+}
+
+/**
+ * Этап конвейера (код `s1`…, подпись) для роли; `null` — `role` не ключ `ROLE_STAGE`.
+ */
+export function roleStage(role: string | null | undefined): PipelineStep | null {
+  if (!role || !Object.prototype.hasOwnProperty.call(ROLE_STAGE, role)) return null
+  const stage = ROLE_STAGE[role as RoleKey]
+  return PIPELINE_STAGES.find((item) => item.value === stage) ?? null
 }
 
 /**

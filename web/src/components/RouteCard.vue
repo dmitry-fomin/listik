@@ -49,11 +49,11 @@ import RouteSubstitutions from './RouteSubstitutions.vue'
 import store from '@/store/listik'
 import type { PipelineRouteDef, RouteIconKey, RoutePatch } from '@/api/types'
 import { useAutosave } from '@/lib/autosave'
-import { PIPELINE_STAGES, ROUTE_ICON_OPTIONS, routeIconGlyph } from '@/lib/dictionaries'
+import { ROUTE_ICON_OPTIONS, routeIconGlyph } from '@/lib/dictionaries'
 import {
   isProviderCell,
   ROLE_KEYS,
-  ROLE_STAGE,
+  roleStage,
   type ProviderKey,
   type RoleCell,
   type RoleKey,
@@ -158,7 +158,7 @@ interface RoleTile {
 const roleTiles = computed<RoleTile[]>(() =>
   ROLE_KEYS.filter((role) => isProviderCell(props.route.roles[role])).map((role) => {
     const cell = props.route.roles[role] as RoleCell
-    const stage = PIPELINE_STAGES.find((item) => item.value === ROLE_STAGE[role])
+    const stage = roleStage(role)
     return {
       role,
       stageCode: stage?.code ?? '',

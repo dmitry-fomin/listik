@@ -46,9 +46,9 @@ import RouteSubstitutions from './RouteSubstitutions.vue'
 import store from '@/store/listik'
 import { useAutosave } from '@/lib/autosave'
 import type { RouteIconKey, RoutePatch, RouteRemoved, SwarmLikeRoute, SwarmRoles } from '@/api/types'
-import { PIPELINE_STAGES, ROUTE_ICON_OPTIONS, routeIconGlyph } from '@/lib/dictionaries'
+import { ROUTE_ICON_OPTIONS, routeIconGlyph } from '@/lib/dictionaries'
 import { harnessTitle, runnableHarness } from '@/lib/harness'
-import { isSwarmCell, ROLE_KEYS, ROLE_STAGE, ROLE_TITLES, type RoleKey } from '@/lib/pipelines'
+import { isSwarmCell, ROLE_KEYS, roleStage, ROLE_TITLES, type RoleKey } from '@/lib/pipelines'
 import {
   ARG_COLUMNS,
   type ArgRow,
@@ -400,13 +400,13 @@ interface RoleTile {
 }
 
 function stageCodeOf(role: RoleKey): string {
-  return PIPELINE_STAGES.find((item) => item.value === ROLE_STAGE[role])?.code ?? ''
+  return roleStage(role)?.code ?? ''
 }
 
 const roleTiles = computed<RoleTile[]>(() =>
   ROLE_KEYS.map((role, index) => {
     const cell = roles[role]
-    const stage = PIPELINE_STAGES.find((item) => item.value === ROLE_STAGE[role])
+    const stage = roleStage(role)
     const harness = cell
       ? store.harnesses.value.find((item) => item.key === cell.harness)
       : undefined

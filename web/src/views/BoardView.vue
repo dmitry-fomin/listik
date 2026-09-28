@@ -20,7 +20,7 @@ import store from '@/store/listik'
 import type { ProjectRow, TaskStage, VoiceDraft } from '@/api/types'
 import { PIPELINE_STAGE_KEYS, type Transition } from '@/lib/stages'
 import { keepsHolder, projectTransitions, transitionOut } from '@/lib/projects'
-import { INTAKE_COLUMN_KEY } from '@/lib/dictionaries'
+import { DONE_STAGE, INTAKE_COLUMN_KEY } from '@/lib/dictionaries'
 
 const props = defineProps<{
   projects?: ProjectRow[]
@@ -73,7 +73,7 @@ function toggleColumn(key: string): void {
 }
 
 /** Колонки ряда («Готово» — всегда рельса, не колонка). */
-const renderColumns = computed(() => store.columns.value.filter((column) => column.key !== 'done'))
+const renderColumns = computed(() => store.columns.value.filter((column) => column.key !== DONE_STAGE.value))
 
 /** Дорожки `grid-template-columns`, общие для рельсы и ряда колонок; последняя — рельса «Готово». */
 const boardTracks = computed<string>(() => {

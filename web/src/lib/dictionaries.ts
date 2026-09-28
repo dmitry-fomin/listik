@@ -79,13 +79,19 @@ export const PIPELINE_STAGES: PipelineStep[] = [
 
 export const DONE_STAGE: DictionaryItem<'done'> = { value: 'done', label: 'Готово' }
 
+/** Задача без этапа: колонка доски «Заведена» и первый шаг конвейера в метриках. */
+export const INTAKE_STAGE: DictionaryItem<'none'> = { value: 'none', label: 'Заведена' }
+
 /** Все этапы, которые может иметь задача: s1…s4 и «Готово». */
 export const STAGES: DictionaryItem<PipelineStage | 'done'>[] = [...PIPELINE_STAGES, DONE_STAGE]
 
 export const PIPELINE_STAGE_KEYS: string[] = PIPELINE_STAGES.map((step) => step.value)
 
-/** Колонка доски для задач без этапа. */
-export const INTAKE_COLUMN_KEY = 'none'
+/**
+ * Колонка доски для задач без этапа. Тип `string` — как у прежнего литерала,
+ * который в массивах расширялся до `string` (`STAGE_COLUMN_ORDER` в сторе).
+ */
+export const INTAKE_COLUMN_KEY: string = INTAKE_STAGE.value
 
 export function stageIndex(stage: TaskStage): number {
   const at = STAGES.findIndex((item) => item.value === stage)

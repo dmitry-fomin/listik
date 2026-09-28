@@ -39,8 +39,7 @@ import RouteSubstitutions from './RouteSubstitutions.vue'
 import store from '@/store/listik'
 import { useAutosave } from '@/lib/autosave'
 import type { Harness, HarnessPatch } from '@/api/types'
-import { ROLE_STAGE, type RoleKey } from '@/lib/pipelines'
-import { PIPELINE_STAGES } from '@/lib/dictionaries'
+import { roleStage } from '@/lib/pipelines'
 import { HARNESS_ICON_OPTIONS } from '@/lib/harness'
 import {
   ARG_COLUMNS,
@@ -177,8 +176,7 @@ const preview = computed(() => previewCommand(withPrompt(argv.value, prompt.valu
 
 /** Код этапа роли роя для строки использования (`s1`…`s4`). */
 function roleCode(role: string | null): string {
-  const stage = PIPELINE_STAGES.find((item) => item.value === ROLE_STAGE[role as RoleKey])
-  return stage?.code ?? role ?? ''
+  return roleStage(role)?.code ?? role ?? ''
 }
 
 interface UsageRow {

@@ -30,10 +30,10 @@ import ListikIcon from './ListikIcon.vue'
 import HarnessIcon from './marks/HarnessIcon.vue'
 import store from '@/store/listik'
 import type { RouteIconKey, SwarmRoleCell, SwarmRoles, SwarmRouteDef } from '@/api/types'
-import { PIPELINE_STAGES, ROUTE_ICON_OPTIONS, routeIconGlyph } from '@/lib/dictionaries'
+import { ROUTE_ICON_OPTIONS, routeIconGlyph } from '@/lib/dictionaries'
 import { bindSubmitDisabled } from '@/lib/form-modal'
 import { keyProblem, runnableHarness, slugifyKey } from '@/lib/harness'
-import { ROLE_KEYS, ROLE_STAGE, ROLE_TITLES, type RoleKey } from '@/lib/pipelines'
+import { ROLE_KEYS, roleStage, ROLE_TITLES, type RoleKey } from '@/lib/pipelines'
 
 const emit = defineEmits<{ created: [route: SwarmRouteDef]; close: [] }>()
 
@@ -187,7 +187,7 @@ const ROLE_NOTES: Record<RoleKey, string> = {
 
 const roleRows = computed<RoleRow[]>(() =>
   ROLE_KEYS.map((role) => {
-    const stage = PIPELINE_STAGES.find((item) => item.value === ROLE_STAGE[role])
+    const stage = roleStage(role)
     return {
       role,
       stageCode: stage?.code ?? '',

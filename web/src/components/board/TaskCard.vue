@@ -17,10 +17,10 @@ import ListikIcon from '../ListikIcon.vue'
 import type { ProjectRow, Task } from '@/api/types'
 import store, { type DepsSummary } from '@/store/listik'
 import { AT_RISK_IDLE_HOURS, taskHealth, healthReason, healthTone } from '@/lib/health'
-import { isClosedStatus, statusTitle } from '@/lib/dictionaries'
+import { statusTitle } from '@/lib/dictionaries'
 import { routeByKey } from '@/lib/routes'
 import { stageExecutor } from '@/lib/executors'
-import { hasHolderTitle } from '@/lib/task-presentation'
+import { hasHolderTitle, workedByOf } from '@/lib/task-presentation'
 
 const props = defineProps<{
   task: Task
@@ -119,16 +119,7 @@ const blockedTooltip = computed(() => {
  * держатель у неё уже ничего не держит — поэтому «держит …», «выдана, не взята …»
  * и «без держателя» в этой ветке не показываются.
  */
-const workedBy = computed<{ label: string; title: string; actor: string } | null>(() => {
-  const isClosed = isClosedStatus(props.task.status)
-  const keys = props.task.worked_by ?? []
-  if (!isClosed || keys.length === 0) return null
-  return {
-    label: keys.length > 1 ? 'выполняли' : 'выполнял',
-    title: props.task.worked_by_title,
-    actor: keys[0],
-  }
-})
+const workedBy = computed(() => workedByOf(props.task))
 
 /**
  * Плановый исполнитель текущего этапа из ролей маршрута (`lib/executors.ts`):

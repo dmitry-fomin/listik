@@ -9,6 +9,7 @@ import json
 import os
 import random
 import re
+import secrets
 import sqlite3
 import string
 import subprocess
@@ -538,11 +539,13 @@ ROUTE_GUARD_SQL = (
 #: (закрытие, держатель): их новые значения учитывает проверка (см. `route_card_after`).
 ROUTE_STARTING_FIELDS = ("status", "holder")
 
-#: Отказ автостарта: автор вопроса «нужен человек» и начало его текста. Одни и те же
-#: константы у `launcher.refuse` (пишет вопрос) и у `update_task` (узнаёт по истории,
-#: что флаг поднят именно отказом автостарта, — см. `autostart_reset`).
+#: Отказ автостарта: автор вопроса «нужен человек», начало его текста и машинный маркер.
+#: `launcher.refuse` пишет вопрос с `harness = AUTOSTART_HARNESS`; `update_task` узнаёт
+#: по истории, что флаг поднят именно отказом автостарта, — по маркеру, а старые события
+#: без маркера — по автору и префиксу текста (см. `autostart_flag_raised`).
 AUTOSTART_ACTOR = "agent:listik"
 AUTOSTART_QUESTION_PREFIX = "автостарт не выполнен"
+AUTOSTART_HARNESS = "autostart"  # маркер `events.harness` у вопроса отказа автостарта
 
 
 def route_change_denied(row) -> str | None:
@@ -631,26 +634,35 @@ def autostart_flag_raised(conn: sqlite3.Connection, task_id: str) -> bool:
 
     Ошибка запуска (`launch_error`) и флаг ставятся одной транзакцией
     (`launcher.refuse` → `set_needs_owner`), поэтому смотрим последний
-    вопрос/ответ в истории: если это вопрос от `agent:listik` с текстом
-    «автостарт не выполнен: …» — флаг принадлежит отказу. Вопрос, заданный
-    человеком уже после отказа, — чужой: смена маршрута его не отменяет.
+    вопрос/ответ в истории: если это вопрос с маркером `harness = "autostart"`
+    (`AUTOSTART_HARNESS`, его ставит `launcher.refuse`; текст и автор не важны) —
+    флаг принадлежит отказу. Старые события без маркера (`harness` пуст)
+    распознаются по-прежнему: вопрос от `agent:listik` с текстом
+    «автостарт не выполнен: …». Любой другой вопрос или ответ, заданный уже
+    после отказа, — чужой: смена маршрута его не отменяет.
 
     Истории вопросов нет вовсе (задача поднята из фикстуры/импорта), но
     `launch_error` стоит — считаем, что флаг пришёл вместе с ошибкой.
     """
     last = conn.execute(
-        "SELECT kind, actor, note FROM events WHERE task_id = ? "
+        "SELECT kind, actor, harness, note FROM events WHERE task_id = ? "
         "AND kind IN ('question', 'answer') ORDER BY rowid DESC LIMIT 1",
         (task_id,)).fetchone()
     if last is None:
         return True
-    return bool(last["kind"] == "question"
-                and (last["actor"] or "") == AUTOSTART_ACTOR
+    if last["kind"] != "question":
+        return False
+    harness = last["harness"] or ""
+    if harness:
+        return harness == AUTOSTART_HARNESS
+    return bool((last["actor"] or "") == AUTOSTART_ACTOR
                 and (last["note"] or "").startswith(AUTOSTART_QUESTION_PREFIX))
 
 
-def autostart_reset(conn: sqlite3.Connection, task_id: str, row) -> tuple[list[str], list[str]]:
-    """Что снимает смена маршрута: присваивания для UPDATE и пояснения к событию.
+def autostart_reset(conn: sqlite3.Connection, task_id: str,
+                    row) -> tuple[dict[str, str], list[str]]:
+    """Что снимает смена маршрута: присваивания для UPDATE («колонка → SQL») и
+    пояснения к событию.
 
     Маршрут — это «тип запуска»: прежний отказ автостарта к новому маршруту не
     относится, поэтому `launch_error` снимается при любой смене (и при снятии
@@ -661,11 +673,11 @@ def autostart_reset(conn: sqlite3.Connection, task_id: str, row) -> tuple[list[s
     """
     error = (row["launch_error"] or "").strip()
     if not error:
-        return [], []
-    sets = ["launch_error = NULL"]
+        return {}, []
+    sets = {"launch_error": "launch_error = NULL"}
     notes = [f"снята ошибка автостарта: {error}"]
     if row["needs_owner"] and autostart_flag_raised(conn, task_id):
-        sets.append("needs_owner = 0")
+        sets["needs_owner"] = "needs_owner = 0"
         notes.append("снят флаг «нужен человек»")
     return sets, notes
 
@@ -898,8 +910,8 @@ def update_task(conn: sqlite3.Connection, task_id: str, *, actor: str | None = N
                 # Явный `needs_owner` в том же вызове сильнее: его оставляем как есть.
                 reset_sets, reset_notes = autostart_reset(conn, task_id, row)
                 if "needs_owner" in fields:
-                    reset_sets = [s for s in reset_sets if not s.startswith("needs_owner")]
-                sets.extend(reset_sets)
+                    reset_sets.pop("needs_owner", None)
+                sets.extend(reset_sets.values())
         old = row[key]
         if str(old) == str(value):
             continue
@@ -1273,19 +1285,13 @@ def add_comment(conn: sqlite3.Connection, task_id: str, text: str, *, author: st
     if author:
         actors_mod.remember(conn, author, actor_key, actor_kind)
     ts = created_at or now_iso()
-    # Two comments in the same millisecond collide on the 3-digit suffix: retry with a new one.
-    for attempt in range(10):
-        cid = f"{task_id}:{int(datetime.now().timestamp() * 1000)}:{random.randint(100, 999)}"
-        try:
-            conn.execute(
-                "INSERT INTO comments(id, task_id, author, kind, text, created_at) "
-                "VALUES(?,?,?,?,?,?)",
-                (cid, task_id, author, kind, text, ts),
-            )
-            break
-        except sqlite3.IntegrityError as exc:
-            if "comments.id" not in str(exc) or attempt == 9:
-                raise
+    # 32 random bits in the suffix make a same-millisecond collision negligible.
+    cid = f"{task_id}:{int(datetime.now().timestamp() * 1000)}:{secrets.token_hex(4)}"
+    conn.execute(
+        "INSERT INTO comments(id, task_id, author, kind, text, created_at) "
+        "VALUES(?,?,?,?,?,?)",
+        (cid, task_id, author, kind, text, ts),
+    )
     conn.execute("UPDATE tasks SET updated_at = ? WHERE id = ?", (ts, task_id))
     event(conn, task_id, "comment", to_value=kind, actor=actor_key, harness=harness,
           note=text[:200], ts=ts)

@@ -169,16 +169,18 @@ def refuse(conn, task_id: str, reason: str, notify=None) -> str:
     Всё пишется в одной транзакции: `set_needs_owner` коммитит и `launch_error`,
     выставленный перед ним. Возвращает причину, чтобы вызывающий вернул её наружу.
 
-    Текст вопроса — из `store.AUTOSTART_QUESTION_PREFIX`: по нему смена маршрута
-    узнаёт, что флаг «нужен человек» поднят именно отказом автостарта, и снимает
-    его вместе с `launch_error` (см. `store.autostart_reset`).
+    Вопрос пишется с маркером `harness=store.AUTOSTART_HARNESS`: по нему смена
+    маршрута узнаёт, что флаг «нужен человек» поднят именно отказом автостарта, и
+    снимает его вместе с `launch_error` (см. `store.autostart_flag_raised`). Текст
+    по-прежнему начинается с `store.AUTOSTART_QUESTION_PREFIX` — его читает человек,
+    а старые события без маркера распознаются по нему и по автору.
     """
     ts = store.now_iso()
     conn.execute("UPDATE tasks SET launch_error = ?, updated_at = ? WHERE id = ?",
                  (reason, ts, task_id))
     store.set_needs_owner(conn, task_id, value=True,
                           text=f"{store.AUTOSTART_QUESTION_PREFIX}: {reason} — нужен ты",
-                          actor=store.AUTOSTART_ACTOR)
+                          actor=store.AUTOSTART_ACTOR, harness=store.AUTOSTART_HARNESS)
     print(f"autostart {task_id}: {reason}", file=sys.stderr, flush=True)
     _notify(notify, task_id)
     return reason
@@ -471,9 +473,9 @@ def start(conn, task_id: str, notify=None, *, log_dir=None, env=None) -> str | N
 def _swarm_refuse(conn, task_id: str, text: str, notify) -> dict:
     """Отказ режима роя: захват снять, вопрос человеку, HTTP 200 `launched: false`.
 
-    От `refuse` отличается двумя вещами: `launch_error` и префикс
-    `автостарт не выполнен` не ставятся — этим префиксом пользуется сброс
-    маршрута (`store.autostart_reset`), а исход роя — не отказ автостарта.
+    От `refuse` отличается двумя вещами: не ставит `launch_error` и не передаёт
+    `harness=store.AUTOSTART_HARNESS` — исход роя не отказ автостарта, и смена
+    маршрута (`store.autostart_flag_raised`) не должна принимать его вопрос за отказ.
     """
     _release(conn, task_id)
     store.set_needs_owner(conn, task_id, value=True, text=text,

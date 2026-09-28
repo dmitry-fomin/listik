@@ -531,6 +531,87 @@ class RouteAutostartResetTests(RoutesSeeded):
         self.assertIsNone(updated["launch_error"])
         self.assertIs(updated["needs_owner"], False)
 
+    def last_question(self, task_id: str):
+        return self.conn.execute(
+            "SELECT actor, harness, note FROM events WHERE task_id = ? AND kind = 'question' "
+            "ORDER BY rowid DESC LIMIT 1", (task_id,)).fetchone()
+
+    def routed_task_with_error(self, *, needs_owner: bool = False) -> dict:
+        """Задача с маршрутом и `launch_error`, выставленным напрямую (старые данные)."""
+        task = store.create_task(self.conn, title="проба", project="listik",
+                                 route="low-pipeline")
+        self.conn.execute("UPDATE tasks SET launch_error = ?, needs_owner = ? WHERE id = ?",
+                          ("старый отказ", 1 if needs_owner else 0, task["id"]))
+        self.conn.commit()
+        return task
+
+    def test_refuse_marks_question_with_autostart_harness(self) -> None:
+        task = self.refused_task()
+        last = self.last_question(task["id"])
+        self.assertEqual(last["harness"], "autostart")
+        self.assertEqual(last["actor"], "agent:listik")
+
+    def test_legacy_question_without_harness_is_recognized(self) -> None:
+        task = self.routed_task_with_error()
+        store.set_needs_owner(self.conn, task["id"], value=True, actor="agent:listik",
+                              text="автостарт не выполнен: старый отказ — нужен ты")
+        updated = store.update_task(self.conn, task["id"], route="high-pipeline")
+        self.assertIsNone(updated["launch_error"])
+        self.assertIs(updated["needs_owner"], False)
+
+    def test_prefix_question_with_foreign_harness_keeps_flag(self) -> None:
+        task = self.refused_task()
+        store.set_needs_owner(self.conn, task["id"], value=True, actor="agent:listik",
+                              harness="claude", text="автостарт не выполнен: другое")
+        updated = store.update_task(self.conn, task["id"], route="high-pipeline")
+        self.assertIsNone(updated["launch_error"])
+        self.assertIs(updated["needs_owner"], True)
+        self.assertEqual(self.row(task["id"])["needs_owner"], 1)
+
+    def test_autostart_harness_with_any_text_clears_flag(self) -> None:
+        task = self.refused_task()
+        store.set_needs_owner(self.conn, task["id"], value=True, actor="agent:dsh",
+                              harness="autostart", text="произвольный текст")
+        updated = store.update_task(self.conn, task["id"], route="high-pipeline")
+        self.assertIsNone(updated["launch_error"])
+        self.assertIs(updated["needs_owner"], False)
+
+    def test_explicit_needs_owner_in_same_update_wins(self) -> None:
+        task = self.refused_task()
+        updated = store.update_task(self.conn, task["id"], route="high-pipeline",
+                                    needs_owner=True)
+        self.assertIsNone(updated["launch_error"])
+        self.assertEqual(self.row(task["id"])["launch_error"], None)
+        self.assertEqual(self.row(task["id"])["needs_owner"], 1)
+
+    def test_legacy_question_with_empty_harness_is_recognized(self) -> None:
+        task = self.routed_task_with_error(needs_owner=True)
+        store.event(self.conn, task["id"], "question", from_value=0, to_value=1,
+                    actor="agent:listik", harness="",
+                    note="автостарт не выполнен: старый отказ — нужен ты")
+        self.conn.commit()
+        updated = store.update_task(self.conn, task["id"], route="high-pipeline")
+        self.assertIsNone(updated["launch_error"])
+        self.assertIs(updated["needs_owner"], False)
+
+    def test_last_answer_keeps_flag(self) -> None:
+        task = self.refused_task()
+        store.set_needs_owner(self.conn, task["id"], value=False, text="ответил",
+                              actor="agent:dsh")
+        self.conn.execute("UPDATE tasks SET needs_owner = 1 WHERE id = ?", (task["id"],))
+        self.conn.commit()
+        updated = store.update_task(self.conn, task["id"], route="high-pipeline")
+        self.assertIsNone(updated["launch_error"])
+        self.assertEqual(self.row(task["id"])["needs_owner"], 1)
+
+    def test_foreign_author_with_prefix_without_harness_keeps_flag(self) -> None:
+        task = self.refused_task()
+        store.set_needs_owner(self.conn, task["id"], value=True, actor="agent:dsh",
+                              text="автостарт не выполнен: чужой вопрос")
+        updated = store.update_task(self.conn, task["id"], route="high-pipeline")
+        self.assertIsNone(updated["launch_error"])
+        self.assertEqual(self.row(task["id"])["needs_owner"], 1)
+
 
 class RouteApiTests(RoutesSeeded):
     """PATCH /api/tasks/{id}: `route`/`launch_route`, отказы и неизвестный ключ."""

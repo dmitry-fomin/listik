@@ -16,8 +16,9 @@
         },
         "critic": {
           "provider": "glm",
-          "label": "GLM",
-          "title": "GLM 5.3 flash"
+          "label": "GLM+DS",
+          "title": "pi: GLM 5.3 + DeepSeek 4.1 flash",
+          "skill": "pi:pi-delegate"
         },
         "impl": {
           "provider": "claude",
@@ -52,8 +53,9 @@
         },
         "critic": {
           "provider": "glm",
-          "label": "GLM",
-          "title": "GLM 5.3 flash"
+          "label": "GLM+DS",
+          "title": "pi: GLM 5.3 + DeepSeek 4.1 flash",
+          "skill": "pi:pi-delegate"
         },
         "impl": {
           "provider": "claude",
@@ -88,8 +90,9 @@
         },
         "critic": {
           "provider": "glm",
-          "label": "GLM",
-          "title": "GLM 5.3 flash"
+          "label": "GLM+DS",
+          "title": "pi: GLM 5.3 + DeepSeek 4.1 flash",
+          "skill": "pi:pi-delegate"
         },
         "impl": {
           "provider": "claude",
@@ -124,8 +127,9 @@
         },
         "critic": {
           "provider": "glm",
-          "label": "GLM",
-          "title": "GLM 5.3 flash"
+          "label": "GLM+DS",
+          "title": "pi: GLM 5.3 + DeepSeek 4.1 flash",
+          "skill": "pi:pi-delegate"
         },
         "impl": {
           "provider": "devin",
@@ -217,7 +221,7 @@
       "key": "cross-pipeline",
       "kind": "pipeline",
       "title": "cross",
-      "hint": "Devin ТЗ · Grok критика · GLM код · Grok приёмка",
+      "hint": "Devin ТЗ · GLM+DS критика · GLM код · Grok приёмка",
       "visible": true,
       "icon": "xhigh",
       "roles": {
@@ -231,9 +235,10 @@
           }
         },
         "critic": {
-          "provider": "grok",
-          "label": "xhigh",
-          "title": "Grok 4.7"
+          "provider": "glm",
+          "label": "GLM+DS",
+          "title": "pi: GLM 5.3 + DeepSeek 4.1 flash",
+          "skill": "pi:pi-delegate"
         },
         "impl": {
           "provider": "glm",

@@ -111,8 +111,8 @@ MCP-инструментами `listik_*` или командой `listik new`. 
 /plugin install feature-pipeline@listik   # пресеты конвейера и агенты pipeline-*
 /plugin install dsh@listik                # DeepSeek Harness
 /plugin install codex@listik              # OpenAI Codex CLI
-/plugin install pi@listik                 # pi CLI (GLM 5.3 Flash, DeepSeek v4.1 Flash)
-/plugin install second-opinion@listik     # независимая критика ТЗ
+/plugin install pi@listik                 # pi CLI (GLM 5.3 Flash, DeepSeek v4.1 Flash); критика ТЗ в конвейерах
+/plugin install second-opinion@listik     # второе мнение другой LLM
 /plugin install devin@listik              # devin (SWE-2)
 /plugin install opencode@listik           # opencode CLI
 # обновить уже стоящие: /plugin marketplace update listik, затем /plugin update <имя>@listik

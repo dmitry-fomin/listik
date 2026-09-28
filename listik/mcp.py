@@ -159,7 +159,8 @@ TOOLS: list[dict] = [
                         "spec_path, checklist_path, review_path, decision_path, journal_path, "
                         "worktree, branch, result, read_scope, write_scope (списки "
                         "относительных путей от корня проекта, без .., абсолютных путей "
-                        "и шаблонов) и т.д."),
+                        "и шаблонов) и т.д. Значение null в fields — ошибка "
+                        "(bad_argument); очистить поле — пустой строкой \"\"."),
         "inputSchema": {
             "type": "object",
             "properties": {
@@ -599,6 +600,13 @@ def call_tool(name: str, args: dict, conn=None, owner=FROM_ENV, fence=FROM_ENV) 
         fields = args.get("fields") or {}
         # actor/harness/note — аргументы инструмента, внутри `fields` это ошибка.
         store.check_update_fields(fields)
+        # Вложенный null — отказ до записи: по контракту HTTP он значит «поле не
+        # передано», и `{"spec_path": null}` был бы молчаливым no-op (listik-8w15).
+        null_keys = sorted(k for k, v in fields.items() if v is None)
+        if null_keys:
+            raise errors_mod.BadArgument(
+                "null в fields не поддерживается: " + ", ".join(null_keys)
+                + " (очистить строковое поле можно пустой строкой \"\")")
         return store.update_task(conn, args["id"], actor=args.get("actor"),
                                  harness=args.get("harness"), note=args.get("note"),
                                  as_owner=owner, **fields)

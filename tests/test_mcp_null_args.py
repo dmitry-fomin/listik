@@ -2,14 +2,16 @@
 
 Числовые читает `_int_arg` (listik-ds5l); остальные ключи верхнего уровня со
 значением `None` отбрасывает нормализация в начале `mcp.call_tool`
-(listik-ngm2). Вложенные значения (внутри `fields` у `listik_update`) доходят
-до store как есть — их смысл определяет store, а не транспорт.
+(listik-ngm2). Вложенный `null` в `fields` у `listik_update` — отказ
+`bad_argument` (listik-8w15): иначе `{"spec_path": null}` был бы молчаливым
+no-op, неотличимым от успеха; очистить строковое поле можно пустой строкой.
 """
 from __future__ import annotations
 
 import unittest
 from unittest import mock
 
+from listik import errors
 from listik import mcp
 from listik import search as search_mod
 from listik import store
@@ -185,10 +187,29 @@ class McpNullArgsTests(TempDbTestCase):
         task = store.create_task(self.conn, title="T", project="demo",
                                  spec_path="/x/spec.md")
         with mock.patch.object(store, "update_task", wraps=store.update_task) as spy:
-            _call(self.conn, "listik_update",
-                  {"id": task["id"], "fields": {"spec_path": None}})
-        self.assertIsNone(spy.call_args.kwargs["spec_path"])
+            with self.assertRaises(errors.BadArgument) as ctx:
+                _call(self.conn, "listik_update",
+                      {"id": task["id"], "fields": {"spec_path": None}})
+        spy.assert_not_called()
+        self.assertIn("spec_path", str(ctx.exception))
         self.assertEqual(store.get_task(self.conn, task["id"])["spec_path"], "/x/spec.md")
+
+    def test_update_null_fields_no_partial_write(self) -> None:
+        task = store.create_task(self.conn, title="T", project="demo",
+                                 spec_path="/x/spec.md")
+        with self.assertRaises(errors.BadArgument):
+            _call(self.conn, "listik_update",
+                  {"id": task["id"], "fields": {"title": "Новое", "spec_path": None}})
+        row = store.get_task(self.conn, task["id"])
+        self.assertEqual(row["title"], "T")
+        self.assertEqual(row["spec_path"], "/x/spec.md")
+
+    def test_update_empty_string_clears_field(self) -> None:
+        task = store.create_task(self.conn, title="T", project="demo",
+                                 spec_path="/x/spec.md")
+        _call(self.conn, "listik_update",
+              {"id": task["id"], "fields": {"spec_path": ""}})
+        self.assertEqual(store.get_task(self.conn, task["id"])["spec_path"], "")
 
     def test_args_dict_not_mutated(self) -> None:
         task = store.create_task(self.conn, title="T", project="demo")

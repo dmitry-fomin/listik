@@ -192,7 +192,7 @@ function footerText(task: Task): string {
           <p class="listik-inbox-card__q">
             <template v-if="branchOf(task) === 'needs_owner'">
               <HarnessIcon :actor="task.holder" />
-              <strong>{{ task.holder_title || 'агент' }} спрашивает:</strong>
+              <strong>{{ task.holder ? task.holder_title : 'агент' }} спрашивает:</strong>
               {{ reasonText(task) }}
             </template>
             <template v-else>{{ reasonText(task) }}</template>

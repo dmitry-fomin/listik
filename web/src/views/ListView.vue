@@ -390,7 +390,7 @@ defineExpose({ reload: load })
           <UiBadge v-if="row.not_taken" tone="warning" size="sm">
             выдана, не взята {{ row.assigned_age }}
           </UiBadge>
-          <template v-else>{{ row.holder_title || '—' }}</template>
+          <template v-else>{{ row.holder ? row.holder_title : '—' }}</template>
         </template>
         <template #cell-labels="{ row }">
           <span class="listik-mono">{{ row.labels.join(', ') || '—' }}</span>

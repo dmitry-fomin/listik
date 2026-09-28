@@ -374,7 +374,7 @@ function openTask(id: string): void {
             </span>
           </template>
           <template #cell-holder="{ row }">
-            <span v-if="(row as Task).holder_title && (row as Task).holder_title !== '—'">
+            <span v-if="(row as Task).holder">
               {{ (row as Task).holder_title }}
             </span>
             <UiStatusPill v-else tone="dead" size="sm">держателя нет</UiStatusPill>

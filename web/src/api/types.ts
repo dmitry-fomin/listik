@@ -3,6 +3,7 @@
  */
 import type { RoleCell, RoleKey } from '@/lib/pipelines'
 import type { Transition } from '@/lib/stages'
+import type { IssueType } from '@/lib/dictionaries'
 
 export type TaskStatus = 'open' | 'in_progress' | 'blocked' | 'review' | 'done' | 'cancelled'
 export type PipelineStage = 's1-spec' | 's2-review' | 's3-impl' | 's4-judge'
@@ -717,7 +718,7 @@ export interface VoiceDraftRoute {
  */
 export interface VoiceDraft {
   project: string | null
-  type: 'epic' | 'task' | 'bug' | null
+  type: IssueType | null
   title: string | null
   description: string | null
   acceptance: string[] | null

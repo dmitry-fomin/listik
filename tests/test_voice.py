@@ -467,6 +467,17 @@ class DraftTests(VoiceConfigTestCase):
         opener = _Recorder(payload=ds_reply(draft_json(type="docs")))
         self.assertIsNone(self._draft(opener)["draft"]["type"])
 
+    def test_every_issue_type_passes_as_is(self) -> None:
+        for issue_type in store.ISSUE_TYPES:
+            with self.subTest(type=issue_type):
+                opener = _Recorder(payload=ds_reply(draft_json(type=issue_type)))
+                self.assertEqual(self._draft(opener)["draft"]["type"], issue_type)
+
+    def test_prompt_lists_every_issue_type(self) -> None:
+        for issue_type in store.ISSUE_TYPES:
+            with self.subTest(type=issue_type):
+                self.assertIn(f'"{issue_type}"', voice_mod.DRAFT_SYSTEM_PROMPT)
+
     def test_acceptance_is_cleaned_and_truncated(self) -> None:
         opener = _Recorder(payload=ds_reply(draft_json(
             acceptance=["- первый", "первый", "", "  ", "второй", 42, "• третий", "* третий"])))

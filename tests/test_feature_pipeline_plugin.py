@@ -1319,5 +1319,121 @@ class FeaturePipelineCritiqueTests(unittest.TestCase):
                     self.assertNotIn(needle, text, f"{name}/{SKILL_FILE}: есть {needle!r}")
 
 
+#: Приёмка линзами (listik-3exw, порция a): раздел ядра, его место и дословные строки.
+LENS_HEADING = "## Приёмка линзами"
+LENS_AFTER_HEADING = "## Коммит порции приёмкой"
+LENS_BEFORE_HEADING = "## Пределы на порцию"
+LENS_JOURNAL_LINES = (
+    "порция <X>: отпечаток до линз <sha>",
+    "порция <X>: отпечаток после линз <sha>",
+    "порция <X>: pi-glm job <id> (линза <имя>)",
+    "порция <X>: pi-glm повтор линзы <имя> — <причина>",
+    "порция <X>: в диффе похоже на секрет — стоп",
+    "порция <X>: линза изменила дерево — стоп",
+    "порция <X>: линзы — чисто, коммит <hash7>",
+    "порция <X>: линзы — находки <N>, судья",
+    "порция <X>: вынесено <id> — <заголовок>",
+)
+LENS_SECTION_REQUIRED = (
+    "«сборка и границы»", "«технические дыры»", "«соответствие намерению»",
+    "$STEPS/$BASE.lens-<X>.scope.md", "$STEPS/$BASE.lens-<X>.holes.md",
+    "$STEPS/$BASE.lens-<X>.intent.md",
+    "--channel glm", "--permission bash", "--permission read",
+    '--label "$BASE <X>: линза <имя>"',
+    "Границы правки", "Проверки порции", "негативный контроль вне «Проверок порции»",
+    "Код читай в дереве работы", "чисто", "находки", "## Критичные инварианты",
+    "вынести:", "отбросить:", "чинить", "--discovered-from <P>",
+    "<id> (порция <X>): <суть порции>", "находки 0", "Находки линз — не красное",
+    "стоп: линза <линза> — pi glm недоступен: <причина>",
+    "порция <X>: готово (коммит <hash7>)",
+    *LENS_JOURNAL_LINES,
+)
+LENS_SECTION_FORBIDDEN = ("--permission write", "--write", "--channel deepseek")
+LENS_PAPER_NAMES = ("<id>.lens-<X>.scope.md", "<id>.lens-<X>.holes.md", "<id>.lens-<X>.intent.md")
+HEADLESS_PARAGRAPH_START = "Что не дефолтится и в headless"
+
+
+def _text_section(text: str, heading: str) -> str:
+    """Раздел `text` от строки `heading` до следующей строки, начинающейся с `## `; пусто — нет."""
+    lines = text.splitlines()
+    start = next((i for i, line in enumerate(lines) if line == heading), None)
+    if start is None:
+        return ""
+    end = next((i for i in range(start + 1, len(lines)) if lines[i].startswith("## ")), len(lines))
+    return "\n".join(lines[start:end])
+
+
+def _text_block(text: str, start_prefix: str, stop) -> str:
+    """Строки `text` от начинающейся с `start_prefix` до первой, где `stop(line)` истинно."""
+    lines = text.splitlines()
+    start = next((i for i, line in enumerate(lines) if line.startswith(start_prefix)), None)
+    if start is None:
+        return ""
+    end = next((i for i in range(start + 1, len(lines)) if stop(lines[i])), len(lines))
+    return "\n".join(lines[start:end])
+
+
+def _lens_core_problems(text: str) -> list[str]:
+    """Проблемы «Приёмки линзами» в тексте ядра; пустой список — всё на месте."""
+    problems: list[str] = []
+    lines = text.splitlines()
+    headings = [line for line in lines if line.startswith("## ")]
+    section = _text_section(text, LENS_HEADING)
+    if not section:
+        problems.append(f"нет раздела {LENS_HEADING!r}")
+    else:
+        for neighbour in (LENS_AFTER_HEADING, LENS_BEFORE_HEADING):
+            if neighbour not in headings:
+                problems.append(f"нет раздела {neighbour!r}")
+        if LENS_AFTER_HEADING in headings and LENS_BEFORE_HEADING in headings:
+            index = headings.index(LENS_HEADING)
+            if not headings.index(LENS_AFTER_HEADING) < index < headings.index(LENS_BEFORE_HEADING):
+                problems.append(f"{LENS_HEADING!r} стоит не между {LENS_AFTER_HEADING!r} "
+                                f"и {LENS_BEFORE_HEADING!r}")
+        problems.extend(f"в разделе нет {needle!r}" for needle in LENS_SECTION_REQUIRED
+                        if needle not in section)
+        problems.extend(f"в разделе есть {needle!r}" for needle in LENS_SECTION_FORBIDDEN
+                        if needle in section)
+    journal = _text_section(text, "## Журнал")
+    problems.extend(f"в «Журнал» нет {line!r}" for line in LENS_JOURNAL_LINES if line not in journal)
+    rules = _text_section(text, "## Жёсткие правила")
+    first_rule = _text_block(rules, "- ", lambda line: line.startswith("- ") or not line.strip())
+    if "«Приёмка линзами»" not in first_rule:
+        problems.append("первый пункт «Жёсткие правила» не называет «Приёмка линзами»")
+    names_rule = _text_block(_text_section(text, "## Имена бумаг и деревьев"), "1. ",
+                             lambda line: line.startswith("2. "))
+    problems.extend(f"правило 1 «Имена бумаг и деревьев» не называет {name!r}"
+                    for name in LENS_PAPER_NAMES if name not in names_rule)
+    headless = _text_block(text, HEADLESS_PARAGRAPH_START, lambda line: not line.strip())
+    problems.extend(f"абзац {HEADLESS_PARAGRAPH_START!r} не называет {needle!r}"
+                    for needle in ("секрет", "линз") if needle not in headless)
+    return problems
+
+
+class FeaturePipelineLensAcceptanceTests(unittest.TestCase):
+    """Приёмка линзами в ядре (listik-3exw, порция a): три линзы GLM перед судьёй."""
+
+    def test_core_defines_lens_acceptance(self) -> None:
+        self.assertEqual(_lens_core_problems(_plugin_text(CORE_DOC)), [])
+
+    def test_lens_check_rejects_broken_core(self) -> None:
+        text = _plugin_text(CORE_DOC)
+        section = _text_section(text, LENS_HEADING)
+        self.assertTrue(section, f"{CORE_DOC}: нет раздела {LENS_HEADING!r}")
+        broken = {
+            "без заголовка": text.replace(LENS_HEADING + "\n", "", 1),
+            "--permission write": text.replace(
+                section, section + "\nлинза scope: --permission write\n", 1),
+            "--channel deepseek": text.replace(
+                section, section + "\nлинза intent: --channel deepseek\n", 1),
+            "без «Находки линз — не красное»": text.replace(
+                section, section.replace("Находки линз — не красное", ""), 1),
+        }
+        for case, mutated in broken.items():
+            with self.subTest(case=case):
+                self.assertNotEqual(mutated, text, "изменение не применилось")
+                self.assertNotEqual(_lens_core_problems(mutated), [])
+
+
 if __name__ == "__main__":
     unittest.main()

@@ -39,7 +39,6 @@ export function swarmPlan(plan, tasks, routes) {
     ...plan,
     waves: Array.isArray(plan.waves) ? plan.waves.map(keep).filter(w => w.length) : [],
     cycles: (plan.cycles || []).filter(c => c.every(id => ours.has(id))),
-    unroutable: [],
     unscoped: keep(plan.unscoped),
     blocked: Object.fromEntries(Object.entries(plan.blocked || {}).filter(([id]) => ours.has(id))),
   };
@@ -159,7 +158,7 @@ function iconFor(task, routeByKey) {
   return route ? (route.icon ?? null) : null;
 }
 
-function runningInfo(task, routeByKey) {
+function runningInfo(task) {
   return {id: task.id, route: task.launch_route, worktree: task.worktree, port: portOf(task)};
 }
 
@@ -257,7 +256,7 @@ function budgetFields(config) {
   };
 }
 
-function superviseRunning({running, open, openById, events, tasks, config, now}) {
+function superviseRunning({running, openById, events, tasks, config, now}) {
   const actorNorm = normActor(config.actor);
   const timeoutMinutes = config.timeoutMinutes ?? 0;
   const maxRestarts = config.maxRestarts ?? 1;
@@ -382,10 +381,10 @@ export function decide({plan, tasks, routes, config, now, events, gate = null}) 
   if (cycles.length) {
     const report = {
       project: config.project, waveSize, wavesLeft,
-      running: running.map(t => runningInfo(t, routeByKey)),
+      running: running.map(t => runningInfo(t)),
       launch: [], needsOwner: [], skipped: [],
       blocked: blockedCount,
-      unroutable: plan.unroutable || [], unscoped: plan.unscoped || [],
+      unscoped: plan.unscoped || [],
       reason: "cycle",
       budget: budgetFields(config),
     };
@@ -395,8 +394,7 @@ export function decide({plan, tasks, routes, config, now, events, gate = null}) 
     };
   }
 
-  // Карточку без маршрута рой не берёт и не спрашивает о ней: маршрут выбирает
-  // человек, пока его нет — задача не для роя.
+  // Вопрос по карточке без write_scope.
   const needsOwner = [];
   for (const id of plan.unscoped || []) {
     const t = openById.get(id);
@@ -412,7 +410,6 @@ export function decide({plan, tasks, routes, config, now, events, gate = null}) 
   const handled = new Set();
   for (const t of open) {
     if (!t.portions_stuck || t.needs_owner || t.holder || t.launched_by) continue;
-    if (!isSwarmCard(t, routeByKey)) continue;
     handled.add(t.id);
     if (asked.has(t.id)) continue;
     if (running.length === 0) {
@@ -457,16 +454,12 @@ export function decide({plan, tasks, routes, config, now, events, gate = null}) 
     for (const id of wave0) {
       const t = wave0Eligible(id);
       if (!t) continue;
-      if (!t.launch_route) {
-        skipped.push({id, reason: "unroutable"});
-        continue;
-      }
-      // Родитель нарезки сам по ролям не идёт — бегут его порции. Пропуск
-      // только у режима роя: снимок launch_driver, а до первого запуска —
-      // driver/kind маршрута; карточку режима скила дети не прячут
-      // (docs/specs/swarm-stage-launch.md). Родитель, у которого все порции
-      // отменены, тоже не запускается — на нём уже вопрос человеку.
-      if ((t.has_portions || t.portions_cancelled_only) && isSwarmCard(t, routeByKey)) {
+      // Родитель нарезки сам по ролям не идёт — бегут его порции. До decide
+      // доходят только карточки роя (отбор — swarmTasks), поэтому отдельной
+      // проверки режима здесь нет; карточку режима скила дети не прячут
+      // (docs/specs/swarm-stage-launch.md) — потому отбор и важен. Родитель,
+      // у которого все порции отменены, тоже не запускается — на нём уже вопрос человеку.
+      if (t.has_portions || t.portions_cancelled_only) {
         skipped.push({id, reason: "sliced"});
         continue;
       }
@@ -508,7 +501,7 @@ export function decide({plan, tasks, routes, config, now, events, gate = null}) 
     }
   }
 
-  const runningSup = superviseRunning({running, open, openById, events, tasks: portTasks, config, now});
+  const runningSup = superviseRunning({running, openById, events, tasks: portTasks, config, now});
   const crashedSup = superviseCrashed({open, events, tasks: portTasks, config});
   let restart = [...runningSup.restart, ...crashedSup.restart];
   const giveUp = [...runningSup.giveUp, ...crashedSup.giveUp];
@@ -533,12 +526,12 @@ export function decide({plan, tasks, routes, config, now, events, gate = null}) 
 
   const report = {
     project: config.project, waveSize, wavesLeft,
-    running: running.map(t => runningInfo(t, routeByKey)),
+    running: running.map(t => runningInfo(t)),
     launch: launch.map(l => l.id),
     needsOwner: needsOwner.map(n => ({id: n.id, reason: n.reason})),
     skipped,
     blocked: blockedCount,
-    unroutable: plan.unroutable || [], unscoped: plan.unscoped || [],
+    unscoped: plan.unscoped || [],
     reason: reason ?? null,
     gate: gate ?? null,
     restart: restart.map(r => r.id),

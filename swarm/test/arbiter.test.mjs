@@ -160,7 +160,7 @@ function setupSingleConflict() {
 
 function baseCardAndTasks() {
   return {
-    card: {id: "task1", title: "T title", description: "T desc", acceptance: "T acc", spec_path: null},
+    card: {id: "task1", title: "T title", description: "T desc", acceptance: "T acc", spec_path: null, branch: "task/task1"},
     tasks: [{id: "task1"}, {id: "other1"}],
   };
 }
@@ -179,7 +179,7 @@ suite("resolveWithArbiter 5: ok, конфликт одной строки — у
   const logDir = tmpLogDir();
   const result = await resolveWithArbiter({
     git, listik, fs: nodeFs, config: {logDir}, swarmConfig: {arbiter: ["node", FIXTURE, "{prompt}", "{files}"], arbiterTimeout: 30},
-    log, projectPath: repo, task: {id: "task1", branch: "task/task1"}, card, worktree, base, tasks,
+    log, projectPath: repo, task: card, worktree, base, tasks,
     now: new Date(),
   });
 
@@ -230,7 +230,7 @@ suite("resolveWithArbiter 6: цепочка из двух конфликтующ
   const logDir = tmpLogDir();
   const result = await resolveWithArbiter({
     git, listik, fs: nodeFs, config: {logDir}, swarmConfig: {arbiter: ["node", FIXTURE, "{prompt}", "{files}"], arbiterTimeout: 30},
-    log, projectPath: repo, task: {id: "task1", branch: "task/task1"}, card, worktree, base, tasks,
+    log, projectPath: repo, task: card, worktree, base, tasks,
     now: new Date(),
   });
 
@@ -256,7 +256,7 @@ suite("resolveWithArbiter 7: leave — маркеры остались, отка
   const result = await resolveWithArbiter({
     git, listik, fs: nodeFs, config: {logDir: tmpLogDir()},
     swarmConfig: {arbiter: ["node", FIXTURE, "{prompt}", "{files}"], arbiterTimeout: 30},
-    log, projectPath: repo, task: {id: "task1", branch: "task/task1"}, card, worktree, base, tasks,
+    log, projectPath: repo, task: card, worktree, base, tasks,
     now: new Date(),
   });
   delete process.env.FAKE_ARBITER_MODE;
@@ -278,7 +278,7 @@ suite("resolveWithArbiter 8: fail → код 1; hang+timeout:1 → таймау�
   let result = await resolveWithArbiter({
     git, listik, fs: nodeFs, config: {logDir: tmpLogDir()},
     swarmConfig: {arbiter: ["node", FIXTURE, "{prompt}", "{files}"], arbiterTimeout: 30},
-    log: makeLog(), projectPath: repoA, task: {id: "task1", branch: "task/task1"}, card, worktree: wtA, base: baseA,
+    log: makeLog(), projectPath: repoA, task: card, worktree: wtA, base: baseA,
     tasks, now: new Date(),
   });
   assert.equal(result.ok, false);
@@ -292,7 +292,7 @@ suite("resolveWithArbiter 8: fail → код 1; hang+timeout:1 → таймау�
   result = await resolveWithArbiter({
     git, listik, fs: nodeFs, config: {logDir: tmpLogDir()},
     swarmConfig: {arbiter: ["node", FIXTURE, "{prompt}", "{files}"], arbiterTimeout: 1},
-    log: makeLog(), projectPath: repoB, task: {id: "task1", branch: "task/task1"}, card, worktree: wtB, base: baseB,
+    log: makeLog(), projectPath: repoB, task: card, worktree: wtB, base: baseB,
     tasks, now: new Date(),
   });
   delete process.env.FAKE_ARBITER_MODE;
@@ -311,7 +311,7 @@ suite("resolveWithArbiter 9: режим git — «арбитр тронул git�
   const result = await resolveWithArbiter({
     git, listik, fs: nodeFs, config: {logDir: tmpLogDir()},
     swarmConfig: {arbiter: ["node", FIXTURE, "{prompt}", "{files}"], arbiterTimeout: 30},
-    log: makeLog(), projectPath: repo, task: {id: "task1", branch: "task/task1"}, card, worktree, base, tasks,
+    log: makeLog(), projectPath: repo, task: card, worktree, base, tasks,
     now: new Date(),
   });
   delete process.env.FAKE_ARBITER_MODE;
@@ -332,7 +332,7 @@ suite("resolveWithArbiter: окружение арбитра без LISTIK_TASK_
   const result = await resolveWithArbiter({
     git, listik, fs: nodeFs, config: {logDir: tmpLogDir()},
     swarmConfig: {arbiter: ["node", FIXTURE, "{prompt}", "{files}"], arbiterTimeout: 30},
-    log: makeLog(), projectPath: repo, task: {id: "task1", branch: "task/task1"}, card, worktree, base, tasks,
+    log: makeLog(), projectPath: repo, task: card, worktree, base, tasks,
     now: new Date(),
   });
   delete process.env.FAKE_ARBITER_ENV_FILE;
@@ -402,7 +402,7 @@ suite("resolveWithArbiter: предел 10 остановок — отказ, re
   const result = await resolveWithArbiter({
     git: stub, listik, fs: nodeFs, config: {logDir: tmpLogDir()},
     swarmConfig: {arbiter: ["node", FIXTURE, "{prompt}", "{files}"], arbiterTimeout: 30},
-    log: makeLog(), projectPath: repo, task: {id: "task1", branch: "task/task1"}, card,
+    log: makeLog(), projectPath: repo, task: card,
     worktree, base, tasks, now: new Date(),
   });
   delete process.env.FAKE_ARBITER_MODE;

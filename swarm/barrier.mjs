@@ -495,7 +495,7 @@ export async function runBarrier({listik, git, fs, config, swarmConfig, log, tas
       let arbRes;
       try {
         arbRes = await resolveWithArbiter({
-          git, listik, fs, config, swarmConfig, log, projectPath, task: entry, card: entry,
+          git, listik, fs, config, swarmConfig, log, projectPath, task: entry,
           worktree: entry.worktree, base, tasks, now, model: swarmModel,
         });
       } catch (err) {
@@ -760,7 +760,7 @@ export async function runBarrier({listik, git, fs, config, swarmConfig, log, tas
       integration = null;
       gate = await createHaltCard({
         listik, log, tasks, config, mergedNow, pending, kind: "not-configured", swarmJsonPath,
-      }) ?? gate;
+      });
     } else if (!integrationCmds.length) {
       log.line("интеграция: команды не заданы (пустой список) — считаю зелёными");
       integration = "green";
@@ -791,7 +791,7 @@ export async function runBarrier({listik, git, fs, config, swarmConfig, log, tas
         gate = await createHaltCard({
           listik, log, tasks, config, mergedNow, pending, kind: "red", failed, logPath, logText,
           git: git, projectPath,
-        }) ?? gate;
+        });
       }
     }
 
@@ -840,7 +840,7 @@ function runIntegrationCommand(argv, cwd, logFd, timeoutSec, env = process.env) 
 }
 
 // Карточка-стоп (красная интеграция или «не настроена»): `create` → текст → `needsOwner`.
-// Возвращает новый `gate`, либо `null`, если `create` отказал (вызывающий держит старый gate).
+// Всегда возвращает gate стопа; если `create` или `needsOwner` отказал — `{reason: "halt", ids: []}`.
 async function createHaltCard({listik, log, tasks, config, mergedNow, pending, kind, swarmJsonPath,
   failed, logPath, logText, git, projectPath}) {
   const title = kind === "red"

@@ -13,11 +13,11 @@ function stampLine(d) {
 
 // Подписи причин — одна таблица для сводки тика и строки `ждут:` (main.mjs).
 const SKIP_LABELS = {
-  frozen: "заморожена", gated: "гейт", budget: "бюджет", unroutable: "без маршрута",
+  frozen: "заморожена", gated: "гейт", budget: "бюджет",
   sliced: "нарезана, ждёт порции", capacity: "не влезла в партию",
 };
 const NEEDS_OWNER_LABELS = {
-  unroutable: "без маршрута", unscoped: "без области", sliced_stuck: "порции не запускаются",
+  unscoped: "без области", sliced_stuck: "порции не запускаются",
 };
 
 export function skipLabel(s) {

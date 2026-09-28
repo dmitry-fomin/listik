@@ -53,8 +53,8 @@ export const HELP_TEXT = `listik-swarm — каркас роя: план, needs-
   --listik-port <port>        --port для вызовов listik
   --cli-timeout <сек>         предел одного вызова listik (по умолчанию 120)
   --log-dir <путь>            каталог лога роя
-  --timeout-minutes <N>       (порция c) по умолчанию 0
-  --max-restarts <N>          (порция c) по умолчанию 1
+  --timeout-minutes <N>       предел времени процесса закрытой задачи в минутах (по умолчанию 0 — без предела)
+  --max-restarts <N>          перезапусков одной задачи до вопроса человеку (по умолчанию 1)
   --budget-minutes <N>        стенное время прогона в минутах (по умолчанию 0 — без предела)
   --max-launches <N>          запуски + перезапуски за прогон (по умолчанию 0 — без предела)
   --config <путь>              swarm.json (по умолчанию <data_dir>/swarm.json)
@@ -152,7 +152,7 @@ export function parseConfig(argv) {
 }
 
 // --- swarm.json (барьер: тесты интеграции + арбитр слияния) ---
-// Читается в тике (порция c) — здесь только чистый разбор текста.
+// Читается в тике — здесь только чистый разбор текста.
 
 const SWARM_TOP_KEYS = new Set(["integration", "arbiter", "integration_timeout", "arbiter_timeout",
   "verify", "verify_timeout", "verify_retries", "question_timeout", "projects"]);

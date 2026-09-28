@@ -211,14 +211,14 @@ async function abortIfInProgress(git, worktree) {
 // Вызывается только из шага 5 `runBarrier`, когда `rebase` вернул `{ok: false}` и
 // `swarmConfig.arbiter` непуст. Цикл не более `MAX_STOPS` остановок ребейза.
 export async function resolveWithArbiter({git, listik, fs, config, swarmConfig, log, projectPath, task,
-  card, worktree, base, tasks, now, model}) {
+  worktree, base, tasks, now, model}) {
   if (needsModel(swarmConfig.arbiter) && (typeof model !== "string" || !model)) {
     await abortIfInProgress(git, worktree);
     return {ok: false, reason: "модель роя неизвестна: в arbiter есть {model}, а listik status не отдал swarm.model"};
   }
   const branch = (task.branch || "").trim() || `task/${task.id}`;
   const knownIds = (tasks || []).map(t => t.id);
-  const specText = loadSpec(fs, projectPath, card.spec_path);
+  const specText = loadSpec(fs, projectPath, task.spec_path);
 
   let mb, mainSubjects, taskLog;
   try {
@@ -276,7 +276,7 @@ export async function resolveWithArbiter({git, listik, fs, config, swarmConfig, 
     const logPath = path.resolve(config.logDir, `arbiter-${task.id}-${stamp}-${n}.log`);
 
     const prompt = buildPrompt({
-      task: {id: task.id, title: card.title, description: card.description, acceptance: card.acceptance},
+      task: {id: task.id, title: task.title, description: task.description, acceptance: task.acceptance},
       others, conflicts, base, worktree, specText, otherSpecs, taskLog, mainLog: mainSubjects, stopSubject,
     });
     fs.writeFileSync(promptPath, prompt, "utf8");
@@ -329,7 +329,7 @@ export async function resolveWithArbiter({git, listik, fs, config, swarmConfig, 
 
     // Проверка слияния (jev) — строго между «маркеров нет» и `git add`.
     const {payload, unreadable} = buildCheckPayload({
-      task: {id: task.id, title: card.title, description: card.description, acceptance: card.acceptance},
+      task: {id: task.id, title: task.title, description: task.description, acceptance: task.acceptance},
       others, conflicts, before,
       readAfter: f => fs.readFileSync(path.join(worktree, f), "utf8"),
     });

@@ -186,6 +186,7 @@ test("9: cycles непуст — launch и needsOwner пусты", () => {
   assert.deepEqual(res.cycles, [["a", "b"]]);
   assert.deepEqual(res.launch, []);
   assert.deepEqual(res.needsOwner, []);
+  assert.equal("unroutable" in res.report, false);
 });
 
 test("10: задача из waves[0], которой нет в tasks — пропускается без ошибки", () => {
@@ -1117,7 +1118,7 @@ test("рой берёт только маршруты роя: пайплайн �
   assert.deepEqual(res.launch.map(l => l.id), ["a"]);
   assert.deepEqual(res.skipped, []);
   assert.deepEqual(res.needsOwner, []);
-  assert.deepEqual(res.report.unroutable, []);
+  assert.equal("unroutable" in res.report, false);
   assert.deepEqual(res.report.unscoped, []);
   assert.equal(res.report.blocked, 0);
 });

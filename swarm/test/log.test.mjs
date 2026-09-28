@@ -20,7 +20,7 @@ test("skipLabel: подписи причин пропуска", () => {
     [{reason: "frozen"}, "заморожена"],
     [{reason: "gated"}, "гейт"],
     [{reason: "budget"}, "бюджет"],
-    [{reason: "unroutable"}, "без маршрута"],
+    [{reason: "unroutable"}, "unroutable"],
   ];
   for (const [s, want] of cases) assert.equal(skipLabel(s), want, s.reason);
 });
@@ -28,7 +28,7 @@ test("skipLabel: подписи причин пропуска", () => {
 test("needsOwnerLabel: подписи причин вопроса", () => {
   assert.equal(needsOwnerLabel({reason: "sliced_stuck"}), "порции не запускаются");
   assert.equal(needsOwnerLabel({reason: "unscoped"}), "без области");
-  assert.equal(needsOwnerLabel({reason: "unroutable"}), "без маршрута");
+  assert.equal(needsOwnerLabel({reason: "unroutable"}), "unroutable");
   assert.equal(needsOwnerLabel({reason: "bar"}), "bar");
 });
 

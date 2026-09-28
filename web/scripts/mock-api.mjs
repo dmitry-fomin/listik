@@ -115,7 +115,9 @@
  * Служебные ручки для скриптов проверки (в docs/API.md их нет — это не контракт, а
  * ручки управления моком, как `__token`): `POST /__event` рассылает кадр в
  * открытые `/api/stream` (тело `{kind, payload, patch?, comment?}`, patch/comment
- * сперва меняют заглушку — так проверяется, что доска увидела запись), а
+ * сперва меняют заглушку — так проверяется, что доска увидела запись; необязательное
+ * `routing: {slug, transitions}` до рассылки сливает `transitions` в действующую таблицу
+ * проекта, которую отдаёт `routing_effective` в `/api/meta` — scripts/verify-transitions.mjs), а
  * `GET /__requests` и `POST /__requests/reset` считают чтения карточек
  * `GET /api/tasks/{id}` (scripts/verify-detail-sse.mjs). `GET /__requests` дополнительно
  * отдаёт `voice: {transcribe, draft, create}` — сколько раз пришли
@@ -759,6 +761,20 @@ const LISTIK_ROUTING = transitionsMode
       transitions: { ...DEFAULT_ROUTING.transitions, 's1-spec:s2-review': 'sticky', 's3-impl:s4-judge': 'handoff' },
     }
   : DEFAULT_ROUTING
+
+/** Копия таблицы вместе с вложенным `transitions`: правка записи не портит источник. */
+const copyRouting = (routing) => ({ ...routing, transitions: { ...routing.transitions } })
+
+/**
+ * Действующие таблицы проектов (`routing_effective`), одна на процесс: флаги запуска
+ * уже учтены в `LISTIK_ROUTING`, остальные проекты получают дефолт при первом
+ * обращении. `POST /__event` с полем `routing` правит запись до рассылки кадра.
+ */
+const projectRouting = new Map([['listik', copyRouting(LISTIK_ROUTING)]])
+const routingOf = (slug) => {
+  if (!projectRouting.has(slug)) projectRouting.set(slug, copyRouting(DEFAULT_ROUTING))
+  return projectRouting.get(slug)
+}
 
 /** Событие карточки в форме `TaskEvent` (для своих лент задач `--transitions`). */
 const event = (hoursAgo, kind, from_value, to_value, transition, extra = {}) => ({
@@ -1924,6 +1940,13 @@ const server = createServer(async (request, response) => {
       })
       extraComments.set(id, list)
     }
+    if (body.routing?.slug) {
+      const current = routingOf(body.routing.slug)
+      projectRouting.set(body.routing.slug, {
+        ...current,
+        transitions: { ...current.transitions, ...body.routing.transitions },
+      })
+    }
     const frame = `data: ${JSON.stringify({
       kind: body.kind ?? 'task',
       at: new Date().toISOString(),
@@ -1985,7 +2008,7 @@ const server = createServer(async (request, response) => {
       })
     }
     for (const project of projects) {
-      project.routing_effective = project.slug === 'listik' ? LISTIK_ROUTING : DEFAULT_ROUTING
+      project.routing_effective = routingOf(project.slug)
     }
     return ok({
       projects,

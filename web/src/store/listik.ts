@@ -695,6 +695,14 @@ async function loadQueuePage(params: { limit: number; offset: number }): Promise
  */
 let streamTouched = new Set<string>()
 
+/**
+ * За окно дебаунса пришёл кадр `project`: проект создан, удалён или изменён —
+ * в том числе его routing через `listik projects <slug> --routing`. `refresh()`
+ * перечитывает meta только при первой загрузке, поэтому подписи переходов
+ * (`routing_effective`) обновляем по этому флагу — один `/api/meta` на окно.
+ */
+let streamMeta = false
+
 function scheduleRefresh(event?: StreamEvent): void {
   const id = event?.payload?.id
   const action = event?.payload?.action
@@ -704,11 +712,15 @@ function scheduleRefresh(event?: StreamEvent): void {
     closeTask()
   }
   if (typeof id === 'string' && id) streamTouched.add(id)
+  if (event?.kind === 'project') streamMeta = true
   if (sseTimer) clearTimeout(sseTimer)
   sseTimer = setTimeout(() => {
     sseTimer = null
     const touched = streamTouched
     streamTouched = new Set()
+    const metaChanged = streamMeta
+    streamMeta = false
+    if (metaChanged) loadMeta().catch(handleError)
     refresh({ silent: true }).catch(handleError)
     const open = openTaskId.value
     if (open && touched.has(open)) void reloadDetailQuiet(open)

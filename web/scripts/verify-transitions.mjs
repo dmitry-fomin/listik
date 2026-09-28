@@ -16,6 +16,8 @@
  *   Без аргумента сам поднимает мок и статику — нужен собранный `web/dist`
  *   (`npx vite build --configLoader runner`). С аргументом работает с уже
  *   отданной страницей (и предполагает, что её API отвечает как мок `--transitions`).
+ *   Кейс `sse-project-routing` правит routing через ручку своего мока, поэтому с
+ *   аргументом не запускается и в `cases` не попадает.
  *
  * Печатает JSON-отчёт: `cases[]` (имя кейса, ok, что ждали и что увидели),
  * `consoleErrors` и `error` — только при исключении в самом скрипте. Код возврата 1,
@@ -78,6 +80,18 @@ const workedPart = (desc) => (desc == null ? null : desc.split(' · ')[0])
 
 const same = (a, b) => JSON.stringify(a) === JSON.stringify(b)
 
+/** Дефолт сервера (`listik/config.py`): его отдают `meta.routing` и мок без переопределений. */
+const DEFAULT_ROUTING = {
+  transitions: {
+    's1-spec:s2-review': 'handoff',
+    's2-review:s3-impl': 'handoff',
+    's3-impl:s4-judge': 'sticky',
+    's4-judge:s3-impl': 'sticky-return',
+    's4-judge:done': 'handoff',
+  },
+  return_window_hours: 24,
+}
+
 const report = { cases: [], consoleErrors: [] }
 const record = (name, run) => recordCase(report, name, run)
 let mock = null
@@ -85,13 +99,15 @@ let staticServer = null
 let chrome = null
 const page = process.argv[2] ?? null
 
+let apiPort = null
+
 try {
   let url = page
   if (!url) {
     if (!existsSync(join(dist, 'index.html'))) {
       throw new Error('нет web/dist — соберите: npx vite build --configLoader runner')
     }
-    const apiPort = await freePort()
+    apiPort = await freePort()
     const pagePort = await freePort()
     mock = await startMock(apiPort, root, ['--transitions'])
     staticServer = await serveDist(pagePort, apiPort, dist)
@@ -256,6 +272,55 @@ try {
     const got = rail ?? (await evaluate(RAIL)).map((item) => item.text)
     return { ok: Boolean(chip && picked) && same(got, expect), expect, got: { chip, picked: Boolean(picked), texts: got } }
   })
+
+  // Кадр `project` после смены routing (как `listik projects listik --routing`):
+  // доска перечитывает meta без перезагрузки. Только со своим моком.
+  if (apiPort !== null) {
+    await record('sse-project-routing', async () => {
+      await evaluate('window.__hnp5 = 1')
+      const response = await fetch(`http://127.0.0.1:${apiPort}/__event`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          kind: 'project',
+          payload: { slug: 'listik', action: 'updated' },
+          routing: { slug: 'listik', transitions: { 's1-spec:s2-review': 'handoff', 's3-impl:s4-judge': 'sticky' } },
+        }),
+      })
+      const clients = (await response.json()).data?.clients ?? 0
+      const railExpect = ['handoff', 'handoff', 'sticky', 'handoff']
+      const railSeen = await waitFor(async () => {
+        const texts = (await evaluate(RAIL)).map((item) => item.text)
+        return same(texts, railExpect) ? texts : null
+      }, 10000)
+      const rail = railSeen ?? (await evaluate(RAIL)).map((item) => item.text)
+      const marker = await evaluate('window.__hnp5')
+      const drawer = await openDrawer(TASKS.api)
+      const upcoming = ['s2', 's3', 's4'].map((code) => stepDesc(drawer, code))
+      const upcomingExpect = ['новый держатель', 'новый держатель', 'та же сессия']
+      const meta = (await (await fetch(`http://127.0.0.1:${apiPort}/api/meta`)).json()).data
+      const listik = meta?.projects?.find((project) => project.slug === 'listik')?.routing_effective ?? null
+      const checks = {
+        clients: { expect: '>= 1', got: clients, ok: clients >= 1 },
+        rail: { expect: railExpect, got: rail, ok: same(rail, railExpect) },
+        noReload: { expect: 1, got: marker, ok: marker === 1 },
+        upcoming: { expect: upcomingExpect, got: upcoming, ok: same(upcoming, upcomingExpect) },
+        metaRouting: { expect: DEFAULT_ROUTING, got: meta?.routing ?? null, ok: same(meta?.routing, DEFAULT_ROUTING) },
+        listikTransitions: {
+          expect: DEFAULT_ROUTING.transitions,
+          got: listik?.transitions ?? null,
+          ok: same(listik?.transitions, DEFAULT_ROUTING.transitions),
+        },
+        listikWindow: { expect: 24, got: listik?.return_window_hours ?? null, ok: listik?.return_window_hours === 24 },
+      }
+      const ok = Object.values(checks).every((check) => check.ok)
+      return {
+        ok,
+        expect: Object.fromEntries(Object.entries(checks).map(([key, check]) => [key, check.expect])),
+        got: Object.fromEntries(Object.entries(checks).map(([key, check]) => [key, check.got])),
+      }
+    })
+  }
 
   report.consoleErrors = consoleErrors
   socket.close()

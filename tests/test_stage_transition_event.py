@@ -7,6 +7,11 @@
 """
 from __future__ import annotations
 
+import argparse
+import contextlib
+import importlib.machinery
+import importlib.util
+import io
 import os
 import pathlib
 import shutil
@@ -328,6 +333,98 @@ class MetaRoutingTests(TempDbTestCase):
             local = client.local_call("meta")
         self.assertEqual(local["routing"], self._meta()["routing"])
         self.assertEqual(local["routing"]["transitions"]["s3-impl:s4-judge"], "handoff")
+
+
+def _load_cli():
+    """Загрузить `bin/listik` как модуль — у файла нет расширения `.py`."""
+    loader = importlib.machinery.SourceFileLoader("listik_cli_transition_test",
+                                                  str(REPO_DIR / "bin" / "listik"))
+    spec = importlib.util.spec_from_loader(loader.name, loader)
+    module = importlib.util.module_from_spec(spec)
+    loader.exec_module(module)
+    return module
+
+
+class TimelineTransitionTests(TempDbTestCase):
+    """listik-hnp5, порция a: `transition` в ленте, `listik show` и `listik timeline`."""
+
+    def setUp(self) -> None:
+        super().setUp()
+        self._config_path = self.tmp_path / "config.toml"
+        patch = mock.patch.object(paths, "CONFIG_PATH", self._config_path)
+        patch.start()
+        self.addCleanup(patch.stop)
+        store.upsert_project(self.conn, "demo")
+        self.tid = store.create_task(self.conn, title="t", project="demo", stage="s1-spec")["id"]
+        store.claim(self.conn, self.tid, holder="agent:x")
+        store.next_stage(self.conn, self.tid, note="своя заметка")
+
+    @staticmethod
+    def _stage_item(items: list) -> dict:
+        found = [e for e in items if e["kind"] == "stage" and e["from_value"] == "s1-spec"]
+        assert len(found) == 1, found
+        return found[0]
+
+    def test_store_timeline_carries_transition(self) -> None:
+        items = store.task_timeline(self.conn)
+        stage = self._stage_item(items)
+        self.assertEqual(stage["transition"], "handoff")
+        self.assertEqual(stage["note"], "своя заметка")
+        others = [e for e in items if e["kind"] != "stage"]
+        self.assertTrue(others)
+        for ev in others:
+            self.assertIn("transition", ev)
+            self.assertIsNone(ev["transition"], ev)
+
+    def test_http_timeline_carries_transition(self) -> None:
+        with mock.patch.object(server, "get_conn", return_value=self.conn):
+            status, data = server.handle("GET", "/api/timeline", {}, {}, authed=True)
+        self.assertEqual(status, 200)
+        self.assertEqual(self._stage_item(data["items"])["transition"], "handoff")
+
+    def test_local_timeline_carries_transition(self) -> None:
+        with mock.patch.object(db_mod, "init", return_value=self.conn):
+            out = client.local_call("timeline", limit=100, project=None)
+        self.assertEqual(self._stage_item(out["items"])["transition"], "handoff")
+
+    def test_show_task_prints_transition(self) -> None:
+        cli = _load_cli()
+        task = {"id": self.tid, "title": "t", "events": [
+            {"ts": "2026-09-28T10:00:00Z", "kind": "stage", "from_value": "s1-spec",
+             "to_value": "s2-review", "duration_s": 300, "note": "своя заметка",
+             "transition": "handoff"},
+            {"ts": "2026-09-28T09:00:00Z", "kind": "stage", "from_value": None,
+             "to_value": "s1-spec", "duration_s": None, "note": None, "transition": None},
+        ]}
+        buf = io.StringIO()
+        with contextlib.redirect_stdout(buf):
+            cli.show_task(task)
+        lines = buf.getvalue().splitlines()
+        first = next(line for line in lines if "2026-09-28T10:00:00Z" in line)
+        second = next(line for line in lines if "2026-09-28T09:00:00Z" in line)
+        self.assertIn("s1-spec → s2-review · handoff", first)
+        self.assertTrue(first.endswith(" — своя заметка"), first)
+        self.assertNotIn(" · ", second)
+
+    def test_cmd_timeline_prints_transition(self) -> None:
+        cli = _load_cli()
+        items = [
+            {"ts": "2026-09-28T10:00:00Z", "kind": "stage", "task_id": self.tid,
+             "from_value": "s3-impl", "to_value": "s4-judge", "actor_title": "a",
+             "note": "n", "transition": "sticky"},
+            {"ts": "2026-09-28T09:00:00Z", "kind": "stage", "task_id": self.tid,
+             "from_value": "s4-judge", "to_value": "done", "actor_title": "a",
+             "note": "n", "transition": None},
+        ]
+        args = argparse.Namespace(limit=10, project=None, json=False)
+        buf = io.StringIO()
+        with mock.patch.object(cli, "call", return_value={"items": items}), \
+                contextlib.redirect_stdout(buf):
+            self.assertEqual(cli.cmd_timeline(args), 0)
+        lines = buf.getvalue().splitlines()
+        self.assertEqual(len(lines), 2)
+        self.assertIn("s3-impl → s4-judge · sticky", lines[0])
+        self.assertNotIn(" · ", lines[1])
 
 
 if __name__ == "__main__":

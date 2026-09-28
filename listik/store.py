@@ -2207,7 +2207,8 @@ def task_timeline(conn: sqlite3.Connection, limit: int = 100, *,
                   project: str | None = None) -> list[dict]:
     from . import fence as fence_mod
     sql = """SELECT e.ts, e.kind, e.from_value, e.to_value, e.actor, e.harness, e.note,
-                    e.duration_s, e.task_id, t.title, t.project, t.stage, t.status
+                    e.duration_s, e.transition, e.task_id, t.title, t.project, t.stage,
+                    t.status
              FROM events e LEFT JOIN tasks t ON t.id = e.task_id
              WHERE e.kind != ?"""
     params: list = [fence_mod.REJECTED_KIND]

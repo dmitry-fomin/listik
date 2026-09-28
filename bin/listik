@@ -500,7 +500,9 @@ def show_task(t: dict) -> None:
             arrow = ""
             if e.get("from_value") or e.get("to_value"):
                 arrow = f" {e.get('from_value') or '—'} → {e.get('to_value')}"
-            dur = f" ({_dur(e['duration_s'])})" if e.get("duration_s") else ""
+            if e.get("transition"):
+                arrow += f" · {e['transition']}"
+            dur =f" ({_dur(e['duration_s'])})" if e.get("duration_s") else ""
             print(f"    [{e['ts']}] {e['kind']}{arrow}{dur}"
                   + (f" — {e['note']}" if e.get("note") else ""))
     if "rejected" in t:
@@ -2211,6 +2213,8 @@ def cmd_timeline(args) -> int:
         arrow = ""
         if e.get("from_value") or e.get("to_value"):
             arrow = f" {e.get('from_value') or '—'} → {e.get('to_value')}"
+        if e.get("transition"):
+            arrow += f" · {e['transition']}"
         actor = e.get("actor_title")
         print(f"[{e['ts']}] {e['kind']:9s} {e['task_id']:38s}{arrow}"
               + (f"  {actor}" if e.get("actor") else "")

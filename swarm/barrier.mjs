@@ -9,6 +9,7 @@ import {stampFile} from "./log.mjs";
 import {OPEN_STATUSES, isFrozen, portOf, REJECTED_MARK, isSoftQuestion, openQuestion,
   fromComments, FROZEN_LABEL} from "./decide.mjs";
 import {resolveWithArbiter} from "./arbiter.mjs";
+import {errText, isMainWorktree, taskBranch} from "./util.mjs";
 
 export {REJECTED_MARK};
 
@@ -18,8 +19,6 @@ export const FIRST_CHANGE_MARK = "рой: первая правка замече
 export const HALT_LABEL = "swarm:halt";
 export const SWARM_AUTHOR = "agent:listik-swarm";
 export const ARBITER_MARK = "рой: арбитр:";
-
-const MAIN_WORKTREE_MARKERS = new Set(["main", "master"]);
 
 // `path == entry` или лежит в его поддереве — семантика `listik/scope.py:covers`.
 export function covers(entry, path) {
@@ -95,7 +94,7 @@ export function isSwarmTask(task) {
 export function mergeCandidates(tasks) {
   return (tasks || [])
     .filter(t => t.status === "done" && (t.worktree || "").trim() &&
-      !MAIN_WORKTREE_MARKERS.has((t.worktree || "").trim().toLowerCase()) && isSwarmTask(t))
+      !isMainWorktree(t.worktree) && isSwarmTask(t))
     .map(t => ({id: t.id, worktree: t.worktree, branch: t.branch, needs_owner: t.needs_owner}));
 }
 
@@ -135,10 +134,6 @@ function headLines(text, n) {
   return lines.slice(0, n).join("\n");
 }
 
-function listikErrText(err) {
-  return `${err.code ?? "error"}/${err.message ?? err}/${err.hint ?? ""}`;
-}
-
 function hintFor(id) {
   return `после исправления: listik needs-owner ${id} --clear "…" — рой вольёт на следующем тике`;
 }
@@ -151,7 +146,7 @@ async function needsOwnerSafe(listik, log, id, text) {
   try {
     await listik.needsOwner(id, text);
   } catch (err) {
-    log.line(`needs-owner ${id} ошибка: ${listikErrText(err)}`);
+    log.line(`needs-owner ${id} ошибка: ${errText(err)}`);
   }
 }
 
@@ -214,7 +209,7 @@ export async function runBarrier({listik, git, fs, config, swarmConfig, log, tas
   // Шаг 3: живость кандидата (каталог/ветка), needs_owner (мягкий — show один раз) и missing_tree.
   // Жёсткий вопрос, но каталога нет, а ветка целиком в HEAD — влита руками: идёт в live, вопрос не трогаем.
   for (const c of candidates) {
-    const cbranch = (c.branch || "").trim() || `task/${c.id}`;
+    const cbranch = taskBranch(c);
     let shown = null;
     if (c.needs_owner) {
       try {
@@ -299,12 +294,12 @@ export async function runBarrier({listik, git, fs, config, swarmConfig, log, tas
       try {
         card = await listik.show(entry.id);
       } catch (err) {
-        log.line(`show ${entry.id} ошибка: ${listikErrText(err)}`);
+        log.line(`show ${entry.id} ошибка: ${errText(err)}`);
         if (!dryRun) {
           unmerged.push(entry.id);
           log.action(`needs-owner ${entry.id}: show_error`);
           await needsOwnerSafe(listik, log, entry.id,
-            withHint(entry.id, `рой не смог прочитать карточку: ${listikErrText(err)}.`));
+            withHint(entry.id, `рой не смог прочитать карточку: ${errText(err)}.`));
         }
         continue;
       }
@@ -336,7 +331,7 @@ export async function runBarrier({listik, git, fs, config, swarmConfig, log, tas
         try {
           sha = await git.mergeBase(projectPath, "HEAD", entry.branch);
         } catch (err) {
-          log.line(`mergeBase ${entry.id} ошибка: ${listikErrText(err)}`);
+          log.line(`mergeBase ${entry.id} ошибка: ${errText(err)}`);
           continue;
         }
         const record = {
@@ -347,7 +342,7 @@ export async function runBarrier({listik, git, fs, config, swarmConfig, log, tas
           await listik.comment(entry.id, `${MERGED_MARK} ${JSON.stringify(record)}`);
           pending.push(entry.id);
         } catch (err) {
-          log.line(`comment ${entry.id} ошибка: ${listikErrText(err)}`);
+          log.line(`comment ${entry.id} ошибка: ${errText(err)}`);
         }
       }
       continue;
@@ -396,7 +391,7 @@ export async function runBarrier({listik, git, fs, config, swarmConfig, log, tas
     try {
       await listik.comment(entry.id, `${REJECTED_MARK} ${JSON.stringify(record)}`);
     } catch (err) {
-      log.line(`comment ${entry.id} ошибка: ${listikErrText(err)}`);
+      log.line(`comment ${entry.id} ошибка: ${errText(err)}`);
     }
 
     if (toHuman) {
@@ -415,7 +410,7 @@ export async function runBarrier({listik, git, fs, config, swarmConfig, log, tas
       await listik.set(entry.id, {status: "open", stage: "s3-impl"});
       rejected.push(entry.id);
     } catch (err) {
-      log.line(`set ${entry.id} ошибка: ${listikErrText(err)}`);
+      log.line(`set ${entry.id} ошибка: ${errText(err)}`);
       unmerged.push(entry.id);
     }
   }
@@ -582,7 +577,7 @@ export async function runBarrier({listik, git, fs, config, swarmConfig, log, tas
       files = await git.changedFiles(projectPath, base, sha);
     } catch (err) {
       filesError = err.message ?? String(err);
-      log.line(`changedFiles ${entry.id} ошибка: ${listikErrText(err)}`);
+      log.line(`changedFiles ${entry.id} ошибка: ${errText(err)}`);
     }
     const declared = entry.write_scope || [];
     const outside = outsideScope(files, declared);
@@ -603,7 +598,7 @@ export async function runBarrier({listik, git, fs, config, swarmConfig, log, tas
         break;
       } catch (err) {
         markErr = err;
-        log.line(`comment ${entry.id} ошибка: ${listikErrText(err)}`);
+        log.line(`comment ${entry.id} ошибка: ${errText(err)}`);
       }
     }
     if (markErr) {
@@ -647,7 +642,7 @@ export async function runBarrier({listik, git, fs, config, swarmConfig, log, tas
     try {
       card = await listik.show(f);
     } catch (err) {
-      log.line(`show ${f} ошибка: ${listikErrText(err)}`);
+      log.line(`show ${f} ошибка: ${errText(err)}`);
       continue;
     }
     const marked = parseMarked(card.comments, UNFROZEN_MARK).filter(m => m.data && m.data.owner === owner);
@@ -663,7 +658,7 @@ export async function runBarrier({listik, git, fs, config, swarmConfig, log, tas
       try {
         await listik.setLabels(f, newLabels);
       } catch (err) {
-        log.line(`setLabels ${f} ошибка: ${listikErrText(err)}`);
+        log.line(`setLabels ${f} ошибка: ${errText(err)}`);
         continue;
       }
       const t = tasksById.get(f);
@@ -680,7 +675,7 @@ export async function runBarrier({listik, git, fs, config, swarmConfig, log, tas
     try {
       base = await git.headSha(projectPath);
     } catch (err) {
-      log.line(`headSha ${projectPath} ошибка: ${listikErrText(err)}`);
+      log.line(`headSha ${projectPath} ошибка: ${errText(err)}`);
       continue;
     }
 
@@ -698,13 +693,13 @@ export async function runBarrier({listik, git, fs, config, swarmConfig, log, tas
       try {
         if (await git.rebaseInProgress(worktree)) await git.rebaseAbort(worktree);
       } catch (err) {
-        log.line(`rebaseAbort ${f} ошибка: ${listikErrText(err)}`);
+        log.line(`rebaseAbort ${f} ошибка: ${errText(err)}`);
         continue;
       }
       try {
         snapshot = await git.snapshotCommit(worktree, "рой: снимок незакоммиченных правок перед rebase");
       } catch (err) {
-        log.line(`snapshot ${f} ошибка: ${listikErrText(err)}`);
+        log.line(`snapshot ${f} ошибка: ${errText(err)}`);
         continue;
       }
       let r;
@@ -733,13 +728,13 @@ export async function runBarrier({listik, git, fs, config, swarmConfig, log, tas
     try {
       await listik.comment(f, `${UNFROZEN_MARK} ${JSON.stringify(record)}`);
     } catch (err) {
-      log.line(`comment ${f} ошибка: ${listikErrText(err)}`);
+      log.line(`comment ${f} ошибка: ${errText(err)}`);
       continue;
     }
     try {
       await listik.setLabels(f, newLabels);
     } catch (err) {
-      log.line(`setLabels ${f} ошибка: ${listikErrText(err)}`);
+      log.line(`setLabels ${f} ошибка: ${errText(err)}`);
       continue;
     }
     if (task) task.labels = newLabels;
@@ -853,7 +848,7 @@ async function createHaltCard({listik, log, tasks, config, mergedNow, pending, k
       discoveredFrom: mergedNow[0] ?? pending[0],
     });
   } catch (err) {
-    log.line(`создание карточки-стоп ошибка: ${listikErrText(err)}`);
+    log.line(`создание карточки-стоп ошибка: ${errText(err)}`);
     return {reason: "halt", ids: []};
   }
 
@@ -882,7 +877,7 @@ async function createHaltCard({listik, log, tasks, config, mergedNow, pending, k
   try {
     await listik.needsOwner(haltCard.id, text);
   } catch (err) {
-    log.line(`needs-owner ${haltCard.id} ошибка: ${listikErrText(err)}`);
+    log.line(`needs-owner ${haltCard.id} ошибка: ${errText(err)}`);
     return {reason: "halt", ids: []};
   }
   log.action(`стоп: карточка ${haltCard.id} (${kind === "red" ? "интеграция красная" : "не настроена"})`);
@@ -896,7 +891,7 @@ async function createHaltCard({listik, log, tasks, config, mergedNow, pending, k
 async function cleanupOne({listik, git, fs, log, id, candidateMap, projectPath}) {
   const cand = candidateMap.get(id);
   if (!cand) return null;
-  const branchName = (cand.branch || "").trim() || `task/${id}`;
+  const branchName = taskBranch(cand);
 
   try {
     const exists = await git.branchExists(projectPath, branchName);
@@ -966,7 +961,7 @@ async function cleanupOne({listik, git, fs, log, id, candidateMap, projectPath})
   try {
     await listik.set(id, {worktree: "", branch: ""});
   } catch (err) {
-    log.line(`set ${id} ошибка: ${listikErrText(err)}`);
+    log.line(`set ${id} ошибка: ${errText(err)}`);
     return null;
   }
   log.action(`убрано дерево ${id}`);

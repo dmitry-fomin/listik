@@ -14,6 +14,7 @@ import path from "node:path";
 import {ARBITER_MARK} from "./barrier.mjs";
 import {runWithTimeout} from "./proc.mjs";
 import {stampFile} from "./log.mjs";
+import {taskBranch} from "./util.mjs";
 
 const SPEC_LIMIT = 20000;
 const OUTPUT_TAIL_BYTES = 64 * 1024;
@@ -216,7 +217,7 @@ export async function resolveWithArbiter({git, listik, fs, config, swarmConfig, 
     await abortIfInProgress(git, worktree);
     return {ok: false, reason: "модель роя неизвестна: в arbiter есть {model}, а listik status не отдал swarm.model"};
   }
-  const branch = (task.branch || "").trim() || `task/${task.id}`;
+  const branch = taskBranch(task);
   const knownIds = (tasks || []).map(t => t.id);
   const specText = loadSpec(fs, projectPath, task.spec_path);
 

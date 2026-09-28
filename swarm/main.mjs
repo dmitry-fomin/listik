@@ -11,6 +11,7 @@ import {isSoftQuestion, OPEN_STATUSES, SWARM_PREFIX, swarmTasks} from "./decide.
 import {Listik} from "./listik.mjs";
 import {tick} from "./run.mjs";
 import {open as openLog, skipLabel} from "./log.mjs";
+import {errText, budgetBound, spentShown, cyclesDesc, tokenRejectedText} from "./util.mjs";
 
 function sleep(ms) {
   return new Promise(resolve => setTimeout(resolve, ms));
@@ -64,7 +65,7 @@ async function reportWaiting(listik, config, log, result) {
       const last = questions[questions.length - 1];
       log.line(`${id} — ${questionReason(last && last.text)}`);
     } catch (err) {
-      log.line(`${id} — ждёт человека (show ошибка: ${err.code ?? "error"}/${err.message ?? err})`);
+      log.line(`${id} — ждёт человека (show ошибка: ${errText(err)})`);
     }
   }
   log.line(waitingLine(result));
@@ -74,17 +75,9 @@ async function runOneTick(listik, config, log, runState) {
   try {
     return await tick(listik, config, log, runState);
   } catch (err) {
-    log.line(`ошибка тика: ${err.code ?? "error"}/${err.message ?? err}/${err.hint ?? ""}`);
+    log.line(`ошибка тика: ${errText(err)}`);
     return {error: true};
   }
-}
-
-function budgetBound(n) {
-  return n > 0 ? String(n) : "∞";
-}
-
-function spentShown(n) {
-  return String(Math.round(n * 10) / 10);
 }
 
 function readLockPid(lockPath) {
@@ -175,8 +168,7 @@ async function dueProjects(listik, log) {
   const status = await listik.status();
   if (!status || status.server !== "up") {
     if (status && status.server === "unauthorized") {
-      log.line(`сервер отвечает, но токен CLI не принят — проверь, какой listik и какой ` +
-        `каталог данных: ${status.bin_path}, ${status.data_dir}`);
+      log.line(tokenRejectedText(status));
     } else {
       log.line(`сервер: ${status ? status.server : "down"}`);
     }
@@ -208,10 +200,6 @@ function scopedLog(log, slug) {
     summary: (report) => log.summary(report),
     close() {},
   };
-}
-
-function cyclesDesc(cycles) {
-  return cycles.map(c => [...c, c[0]].join(" → ")).join("; ");
 }
 
 // «циклы: …» — когда набор циклов сменился с прошлого тика проекта. `last` — null в
@@ -249,7 +237,7 @@ async function tickDue(listik, config, log, states, holdProject, lastCycles = nu
   try {
     slugs = await dueProjects(listik, log);
   } catch (err) {
-    log.line(`ошибка списка проектов: ${err.code ?? "error"}/${err.message ?? err}`);
+    log.line(`ошибка списка проектов: ${errText(err)}`);
     return {error: true, results: []};
   }
   if (slugs == null) return {serverDown: true, results: []};

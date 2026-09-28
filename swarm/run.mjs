@@ -7,12 +7,7 @@ import {runBarrier, haltCards, HALT_LABEL} from "./barrier.mjs";
 import {ConfigError, parseSwarmConfig, swarmConfigFor, DEFAULT_QUESTION_TIMEOUT} from "./config.mjs";
 import {limitText, rollbackVerdict} from "./rollback.mjs";
 import * as git from "./git.mjs";
-
-const MAIN_WORKTREE_MARKERS = new Set(["main", "master"]);
-
-function errText(err) {
-  return `${err.code ?? "error"}/${err.message ?? err}/${err.hint ?? ""}`;
-}
+import {errText, budgetBound, spentShown, cyclesDesc, isMainWorktree, tokenRejectedText} from "./util.mjs";
 
 // Карточки, за которыми тик обязан посмотреть `show` перед `decide` (п.6): бегущие
 // открытые и упавшие открытые без флага; плюс задачи роя с `needs_owner` (открытые
@@ -27,20 +22,33 @@ function needsEventsFetch(t) {
   return !!t.launched_by && !!t.launch_finished_at;
 }
 
-function budgetBound(n) {
-  return n > 0 ? String(n) : "∞";
-}
-
-function spentShown(n) {
-  return String(Math.round(n * 10) / 10);
+// Выдать карточке метку `port:<port>`, если её нет. false — show/set упал (строка в логе).
+async function ensurePortLabel(listik, task, id, port, log) {
+  if (portOf(task) != null) return true;
+  let fresh;
+  try {
+    fresh = await listik.show(id);
+  } catch (err) {
+    log.line(`show ${id} ошибка: ${errText(err)}`);
+    return false;
+  }
+  const labels = [...(fresh.labels || []), `port:${port}`];
+  try {
+    await listik.setLabels(id, labels);
+  } catch (err) {
+    log.line(`set ${id} ошибка: ${errText(err)}`);
+    return false;
+  }
+  task.labels = labels;
+  log.action(`set ${id} labels += port:${port}`);
+  return true;
 }
 
 export async function tick(listik, config, log, runState = null) {
   const status = await listik.status();
   if (status.server !== "up") {
     if (status.server === "unauthorized") {
-      log.line(`сервер отвечает, но токен CLI не принят — проверь, какой listik и какой ` +
-        `каталог данных: ${status.bin_path}, ${status.data_dir}`);
+      log.line(tokenRejectedText(status));
     } else {
       log.line(`сервер: ${status.server}`);
     }
@@ -90,6 +98,21 @@ export async function tick(listik, config, log, runState = null) {
   let rescopeResult = null;
   let questionTimeout = DEFAULT_QUESTION_TIMEOUT;
   const rollbacks = [];
+  const needsOwnerDone = [];
+  // needs-owner с записью в needsOwnerDone и флагом у карточки текущего `tasks`.
+  const park = async (id, text, tag) => {
+    try {
+      await listik.needsOwner(id, text);
+    } catch (err) {
+      log.line(`needs-owner ${id} ошибка: ${errText(err)}`);
+      return false;
+    }
+    log.action(`needs-owner ${id}: ${tag}`);
+    needsOwnerDone.push(id);
+    const t = tasks.find(x => x.id === id);
+    if (t) t.needs_owner = true;
+    return true;
+  };
   const cyclesPending = !!swarmPlan(plan, tasks, routes).cycles.length;
 
   if (!cyclesPending) {
@@ -226,15 +249,7 @@ export async function tick(listik, config, log, runState = null) {
         if (v.exceeded && card.needs_owner) {
           log.line(`по пределу ${d.task}: needs_owner уже стоит`);
         } else if (v.exceeded) {
-          try {
-            await listik.needsOwner(d.task, limitText(d.task, v, maxFreezes));
-            log.action(`needs-owner ${d.task}: freeze_limit`);
-            entry.parked = true;
-            const parkedTask = tasks.find(t => t.id === d.task);
-            if (parkedTask) parkedTask.needs_owner = true;
-          } catch (err) {
-            log.line(`needs-owner ${d.task} ошибка: ${errText(err)}`);
-          }
+          entry.parked = await park(d.task, limitText(d.task, v, maxFreezes), "freeze_limit");
         }
         rollbacks.push(entry);
       }
@@ -303,7 +318,7 @@ export async function tick(listik, config, log, runState = null) {
               `${drift.tasks_with_drift ?? 0} из ${drift.tasks_total ?? 0} задач ` +
               `(${drift.outside_files ?? 0} файлов вне области)`);
             if (cycles.length) {
-              const desc = cycles.map(c => [...c, c[0]].join(" → ")).join("; ");
+              const desc = cyclesDesc(cycles);
               log.line(`rescope: цикл ${desc} — рёбра не записаны`);
             }
             if (unspecced.length) log.line(`rescope: без ТЗ: ${unspecced.join(", ")}`);
@@ -404,21 +419,12 @@ export async function tick(listik, config, log, runState = null) {
 
   const taskById = new Map(tasks.map(t => [t.id, t]));
 
-  const needsOwnerDone = rollbacks.filter(r => r.parked).map(r => r.id);
   for (const item of decision.needsOwner) {
     if (config.dryRun) {
       log.action(`[dry-run] needs-owner ${item.id}: ${item.text}`);
       continue;
     }
-    try {
-      await listik.needsOwner(item.id, item.text);
-      log.action(`needs-owner ${item.id}: ${item.reason}`);
-      needsOwnerDone.push(item.id);
-      const t = taskById.get(item.id);
-      if (t) t.needs_owner = true;
-    } catch (err) {
-      log.line(`needs-owner ${item.id} ошибка: ${errText(err)}`);
-    }
+    await park(item.id, item.text, item.reason);
   }
 
   // п.6.2: упавшие открытые без разрешения человека — needs-owner, revoke/launch не зовутся.
@@ -427,15 +433,7 @@ export async function tick(listik, config, log, runState = null) {
       log.action(`[dry-run] needs-owner ${item.id}: ${item.text}`);
       continue;
     }
-    try {
-      await listik.needsOwner(item.id, item.text);
-      log.action(`needs-owner ${item.id}: crashed`);
-      needsOwnerDone.push(item.id);
-      const t = taskById.get(item.id);
-      if (t) t.needs_owner = true;
-    } catch (err) {
-      log.line(`needs-owner ${item.id} ошибка: ${errText(err)}`);
-    }
+    await park(item.id, item.text, "crashed");
   }
 
   // п.6.3: закрытые бегущие дольше timeoutMinutes — только снять процесс.
@@ -476,15 +474,7 @@ export async function tick(listik, config, log, runState = null) {
     } catch (err) {
       log.line(`revoke ${item.id} ошибка: ${errText(err)}`);
     }
-    try {
-      await listik.needsOwner(item.id, item.text);
-      log.action(`needs-owner ${item.id}: give_up`);
-      needsOwnerDone.push(item.id);
-      const t = taskById.get(item.id);
-      if (t) t.needs_owner = true;
-    } catch (err) {
-      log.line(`needs-owner ${item.id} ошибка: ${errText(err)}`);
-    }
+    await park(item.id, item.text, "give_up");
   }
 
   // п.6.5: зависшие/просроченные/разрешённые человеком — revoke, затем launch тем же
@@ -507,29 +497,15 @@ export async function tick(listik, config, log, runState = null) {
       continue;
     }
     if (!revoked.launch_finished_at) {
-      try {
-        await listik.needsOwner(item.id, `рой: полномочия отозваны, но процесс ` +
-          `${revoked.launch_pid ?? "—"} не снят — сними его сам (kill), затем ` +
-          `listik release ${item.id} и listik needs-owner ${item.id} --clear "…"`);
-        log.action(`needs-owner ${item.id}: process_not_stopped`);
-        needsOwnerDone.push(item.id);
-        const t = taskById.get(item.id);
-        if (t) t.needs_owner = true;
-      } catch (err) {
-        log.line(`needs-owner ${item.id} ошибка: ${errText(err)}`);
-      }
+      await park(item.id, `рой: полномочия отозваны, но процесс ` +
+        `${revoked.launch_pid ?? "—"} не снят — сними его сам (kill), затем ` +
+        `listik release ${item.id} и listik needs-owner ${item.id} --clear "…"`, "process_not_stopped");
       continue;
     }
     const task = taskById.get(item.id);
     const port = item.port;
+    if (task && !(await ensurePortLabel(listik, task, item.id, port, log))) continue;
     try {
-      if (task && portOf(task) == null) {
-        const fresh = await listik.show(item.id);
-        const labels = [...(fresh.labels || []), `port:${port}`];
-        await listik.setLabels(item.id, labels);
-        if (task) task.labels = labels;
-        log.action(`set ${item.id} labels += port:${port}`);
-      }
       const result = await listik.launch(item.id, {LISTIK_DEV_PORT: String(port)});
       if (result && result.launched === false) {
         // Режим роя: процесс не поднялся, но это не сбой запуска — исход
@@ -550,8 +526,7 @@ export async function tick(listik, config, log, runState = null) {
     const task = taskById.get(item.id);
     if (!task) continue;
 
-    const marker = (task.worktree || "").trim().toLowerCase();
-    if (MAIN_WORKTREE_MARKERS.has(marker)) {
+    if (isMainWorktree(task.worktree)) {
       if (config.dryRun) log.action(`[dry-run] worktree ${item.id}: пропущен, дерево main/master`);
     } else if (config.dryRun) {
       log.action(`[dry-run] worktree ${item.id}`);
@@ -563,14 +538,7 @@ export async function tick(listik, config, log, runState = null) {
       } catch (err) {
         log.line(`worktree ${item.id} ошибка: ${errText(err)}`);
         if (!task.needs_owner) {
-          try {
-            await listik.needsOwner(item.id, `рой: не удалось завести рабочее дерево: ${err.message}`);
-            log.action(`needs-owner ${item.id}: worktree_failed`);
-            needsOwnerDone.push(item.id);
-            task.needs_owner = true;
-          } catch (err2) {
-            log.line(`needs-owner ${item.id} ошибка: ${errText(err2)}`);
-          }
+          await park(item.id, `рой: не удалось завести рабочее дерево: ${err.message}`, "worktree_failed");
         }
         continue;
       }
@@ -586,23 +554,8 @@ export async function tick(listik, config, log, runState = null) {
       if (config.dryRun) {
         log.action(`[dry-run] set ${item.id} labels += port:${port}`);
         task.labels = [...(task.labels || []), `port:${port}`];
-      } else {
-        let fresh;
-        try {
-          fresh = await listik.show(item.id);
-        } catch (err) {
-          log.line(`show ${item.id} ошибка: ${errText(err)}`);
-          continue;
-        }
-        const labels = [...(fresh.labels || []), `port:${port}`];
-        try {
-          await listik.setLabels(item.id, labels);
-        } catch (err) {
-          log.line(`set ${item.id} ошибка: ${errText(err)}`);
-          continue;
-        }
-        task.labels = labels;
-        log.action(`set ${item.id} labels += port:${port}`);
+      } else if (!(await ensurePortLabel(listik, task, item.id, port, log))) {
+        continue;
       }
     }
 

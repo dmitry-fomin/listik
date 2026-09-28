@@ -403,6 +403,49 @@ test("надзор-тик: просрочена без метки — show, revo
   assert.equal(launchCall.argv[envIdx + 1], "LISTIK_DEV_PORT=5170");
 });
 
+function restartPortFailResponses(failing) {
+  const tasks = [runningTask("a", {launched_at: minsAgo(30), holder_at: minsAgo(30)})];
+  const plan = {project: "proj", waves: [[]], cycles: [], unroutable: [], unscoped: [], blocked: {}};
+  return {
+    status: statusUp,
+    projects: {stdout: JSON.stringify([{slug: "proj", path: ""}])},
+    waves: {stdout: JSON.stringify({waves: plan, added: [], removed: [], kept: 0})},
+    list: {stdout: JSON.stringify({total: 1, limit: 1000, offset: 0, tasks})},
+    routes: {stdout: JSON.stringify({ok: true, routes: SWARM_ROUTES})},
+    show: [
+      {stdout: JSON.stringify({id: "a", events: []})},
+      failing === "show" ? errOut("boom") : {stdout: JSON.stringify({id: "a", labels: []})},
+    ],
+    revoke: {stdout: JSON.stringify({id: "a", launch_finished_at: "2026-01-01T00:00:00Z", launch_pid: 1, generation: 5})},
+    set: failing === "set" ? errOut("boom") : {stdout: JSON.stringify({id: "a", labels: ["port:5170"]})},
+    launch: {stdout: JSON.stringify({id: "a", generation: 6})},
+  };
+}
+
+test("надзор-тик: перезапуск без метки, show для метки падает — строка show, launch не зовётся", async () => {
+  const {calls} = setupFake(restartPortFailResponses("show"));
+  const listik = new Listik({bin: FAKE_BIN, actor: "agent:listik-swarm", cliTimeout: 5});
+  const log = makeLog();
+  const result = await tick(listik, {...supConfig, timeoutMinutes: 20}, log);
+
+  assert.ok(log.lines.some(l => l.startsWith("show a ошибка:")), log.lines.join("\n"));
+  assert.ok(!log.lines.some(l => l.startsWith("launch a ошибка:")), log.lines.join("\n"));
+  assert.ok(!calls().some(c => c.sub === "launch"));
+  assert.deepEqual(result.restarted, []);
+});
+
+test("надзор-тик: перезапуск без метки, set метки падает — строка set, launch не зовётся", async () => {
+  const {calls} = setupFake(restartPortFailResponses("set"));
+  const listik = new Listik({bin: FAKE_BIN, actor: "agent:listik-swarm", cliTimeout: 5});
+  const log = makeLog();
+  const result = await tick(listik, {...supConfig, timeoutMinutes: 20}, log);
+
+  assert.ok(log.lines.some(l => l.startsWith("set a ошибка:")), log.lines.join("\n"));
+  assert.ok(!log.lines.some(l => l.startsWith("launch a ошибка:")), log.lines.join("\n"));
+  assert.ok(!calls().some(c => c.sub === "launch"));
+  assert.deepEqual(result.restarted, []);
+});
+
 test("надзор-тик: revoke отвечает пустым launch_finished_at — launch не зовётся, needs-owner «процесс не снят»", async () => {
   const tasks = [runningTask("a", {
     launched_at: minsAgo(30), holder_at: minsAgo(30), labels: ["port:5170"],

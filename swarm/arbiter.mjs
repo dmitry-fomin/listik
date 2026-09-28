@@ -2,16 +2,18 @@
 // место, где модель участвует в фазе слияния, и только для закрытой задачи, исполнителя
 // у которой уже нет — открытые замороженные задачи конфликт разрешают сами (шаг 7,
 // не здесь). Чистое (`renderArgv`…`buildPrompt`) — только обычные объекты внутрь и
-// наружу; `runArbiter`/`resolveWithArbiter` — оркестрация: `spawn` прямой импорт (как
-// `runIntegrationCommand` в `barrier.mjs`), git/listik/fs приходят параметрами. Плейсхолдер
+// наружу; `runArbiter`/`resolveWithArbiter` — оркестрация: процесс запускает
+// `runWithTimeout` из `proc.mjs` (как `runIntegrationCommand` в `barrier.mjs`),
+// git/listik/fs приходят параметрами. Плейсхолдер
 // `{model}` — имя из `[swarm].model`, полученное через `listik status`; префикс провайдера
 // пользователь пишет в шаблоне. Результат арбитра проверяет jev — только через
 // `listik arbiter-check` (`listik.arbiterCheck`): рой к jev и к HTTP сам не ходит, ключа
 // jev не видит; `reject` — тот же отказ, что «арбитр не справился».
-import {spawn, execFileSync} from "node:child_process";
 import {openSync, closeSync, readFileSync as readFileSyncNode} from "node:fs";
 import path from "node:path";
 import {ARBITER_MARK} from "./barrier.mjs";
+import {runWithTimeout} from "./proc.mjs";
+import {stampFile} from "./log.mjs";
 
 const SPEC_LIMIT = 20000;
 const OUTPUT_TAIL_BYTES = 64 * 1024;
@@ -172,60 +174,21 @@ function tailOutput(logPath) {
   }
 }
 
-// `spawn` группы, stdout+stderr сразу в fd `logPath` (не pipe — длинный вывод иначе
-// дедлочит). Таймаут: `SIGTERM` группе, через 5 с `SIGKILL` группе. Окружение —
-// `process.env` без изменений (арбитр не воркер этой карточки, никаких `LISTIK_*`).
-function killGroup(pid, signal) {
-  if (!pid) return;
-  try { process.kill(-pid, signal); } catch { /* лидер мог уже выйти */ }
+// Запуск — `runWithTimeout` (`proc.mjs`): группа процессов, stdout+stderr в fd `logPath`,
+// таймаут `SIGTERM` группе, через 5 с `SIGKILL`. Лог открывает и закрывает эта обёртка.
+// Окружение — `process.env` без изменений (арбитр не воркер этой карточки, никаких `LISTIK_*`).
+export async function runArbiter({argv, cwd, timeoutSec, logPath}) {
+  const logFd = openSync(logPath, "a");
+  let res;
   try {
-    execFileSync("kill", ["-s", signal === "SIGKILL" ? "KILL" : "TERM", `-${pid}`],
-      {stdio: "ignore", timeout: 2000});
-  } catch { /* группы уже нет */ }
-}
-
-export function runArbiter({argv, cwd, timeoutSec, logPath}) {
-  return new Promise((resolvePromise) => {
-    const logFd = openSync(logPath, "a");
-    const child = spawn(argv[0], argv.slice(1), {
-      cwd, env: process.env, detached: true, stdio: ["ignore", logFd, logFd],
-    });
-    let settled = false;
-    let timedOut = false;
-    let killTimer = null;
-    const finish = (code) => {
-      if (settled) return;
-      settled = true;
-      clearTimeout(termTimer);
-      if (killTimer) clearTimeout(killTimer);
-      try { closeSync(logFd); } catch { /* уже закрыт */ }
-      resolvePromise({code: timedOut ? null : code, timedOut, output: tailOutput(logPath), pid: child.pid});
-    };
-    const termTimer = setTimeout(() => {
-      timedOut = true;
-      killGroup(child.pid, "SIGTERM");
-      killTimer = setTimeout(() => {
-        killGroup(child.pid, "SIGKILL");
-        finish(null);
-      }, 5000);
-    }, timeoutSec * 1000);
-
-    child.on("exit", (code) => {
-      if (timedOut) return;
-      finish(code);
-    });
-    child.on("error", () => {
-      if (timedOut) return;
-      finish(1);
-    });
-  });
+    res = await runWithTimeout({argv, cwd, env: process.env, logFd, timeoutSec});
+  } finally {
+    try { closeSync(logFd); } catch { /* уже закрыт */ }
+  }
+  return {code: res.code, timedOut: res.timedOut, output: tailOutput(logPath), pid: res.pid};
 }
 
 // ------------------------------------------------------------------- оркестрация ---
-
-function stampFile(d) {
-  return d.toISOString().replace(/[-:]/g, "").replace(/\.\d{3}Z$/, "Z");
-}
 
 function loadSpec(fs, projectPath, specPath) {
   if (!specPath) return "ТЗ недоступно";

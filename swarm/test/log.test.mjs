@@ -3,7 +3,11 @@ import assert from "node:assert/strict";
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
-import {open, skipLabel, needsOwnerLabel} from "../log.mjs";
+import {open, skipLabel, needsOwnerLabel, stampFile} from "../log.mjs";
+
+test("stampFile: имя лога без разделителей и миллисекунд", () => {
+  assert.equal(stampFile(new Date("2026-09-28T10:20:30.456Z")), "20260928T102030Z");
+});
 
 test("skipLabel: подписи причин пропуска", () => {
   const cases = [

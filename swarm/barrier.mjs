@@ -1,10 +1,11 @@
 // Барьер волны роя. Хелперы ниже (`covers`…`tailLines`) — чистая часть: ни `spawn`,
 // ни `fs`, ни `Date.now()`, только обычные объекты внутрь и наружу; порции c–e зовут
 // их по имени и не имеют права менять. `runBarrier` и его частные хелперы (шаги 7–9,
-// интеграция) — оркестрация: git/listik/fs приходят параметрами, `spawn` — прямой
-// импорт (команды интеграции, порция d).
-import {spawn, execFileSync} from "node:child_process";
+// интеграция) — оркестрация: git/listik/fs приходят параметрами, команды интеграции
+// (порция d) запускает `runWithTimeout` из `proc.mjs`.
 import path from "node:path";
+import {runWithTimeout} from "./proc.mjs";
+import {stampFile} from "./log.mjs";
 import {OPEN_STATUSES, isFrozen, portOf, REJECTED_MARK, isSoftQuestion, openQuestion,
   fromComments} from "./decide.mjs";
 import {resolveWithArbiter} from "./arbiter.mjs";
@@ -824,20 +825,6 @@ function collectFrozenCandidates(tasks, unmerged, rejected) {
   return out;
 }
 
-function stampFile(d) {
-  return d.toISOString().replace(/[-:]/g, "").replace(/\.\d{3}Z$/, "Z");
-}
-
-// Одна команда интеграции: группа процессов, SIGTERM по таймауту, SIGKILL через 5с.
-function killGroup(pid, signal) {
-  if (!pid) return;
-  try { process.kill(-pid, signal); } catch { /* лидер мог уже выйти */ }
-  try {
-    execFileSync("kill", ["-s", signal === "SIGKILL" ? "KILL" : "TERM", `-${pid}`],
-      {stdio: "ignore", timeout: 2000});
-  } catch { /* группы уже нет */ }
-}
-
 function envForVerify(task) {
   const env = {...process.env};
   const port = portOf(task);
@@ -846,39 +833,10 @@ function envForVerify(task) {
   return env;
 }
 
+// Одна команда интеграции/верификатора: группа процессов, SIGTERM по таймауту, SIGKILL
+// через 5 с (`proc.mjs`). `logFd` открывает и закрывает вызывающий.
 function runIntegrationCommand(argv, cwd, logFd, timeoutSec, env = process.env) {
-  return new Promise((resolvePromise) => {
-    const start = Date.now();
-    const child = spawn(argv[0], argv.slice(1), {
-      cwd, env, detached: true, stdio: ["ignore", logFd, logFd],
-    });
-    let settled = false;
-    let timedOut = false;
-    let killTimer = null;
-    const finish = (result) => {
-      if (settled) return;
-      settled = true;
-      clearTimeout(termTimer);
-      if (killTimer) clearTimeout(killTimer);
-      resolvePromise({...result, ms: Date.now() - start});
-    };
-    const termTimer = setTimeout(() => {
-      timedOut = true;
-      killGroup(child.pid, "SIGTERM");
-      killTimer = setTimeout(() => {
-        killGroup(child.pid, "SIGKILL");
-        finish({code: null, timedOut: true});
-      }, 5000);
-    }, timeoutSec * 1000);
-    child.on("exit", (code) => {
-      if (timedOut) return;
-      finish({code, timedOut: false});
-    });
-    child.on("error", () => {
-      if (timedOut) return;
-      finish({code: 1, timedOut: false});
-    });
-  });
+  return runWithTimeout({argv, cwd, env, logFd, timeoutSec});
 }
 
 // Карточка-стоп (красная интеграция или «не настроена»): `create` → текст → `needsOwner`.

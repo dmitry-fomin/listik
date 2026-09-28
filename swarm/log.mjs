@@ -3,7 +3,7 @@
 import fs from "node:fs";
 import path from "node:path";
 
-function stampFile(d) {
+export function stampFile(d) {
   return d.toISOString().replace(/[-:]/g, "").replace(/\.\d{3}Z$/, "Z");
 }
 

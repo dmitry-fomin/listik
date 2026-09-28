@@ -69,7 +69,7 @@ export function holderStatusText(task: TaskDetail, routes: RouteDef[] = []): str
   const executor = stageExecutor(task, routes)
   if (executor && !executorIsHolder(executor, task.holder)) {
     const parts = [executor.title]
-    if (hasHolderTitle(task.holder_title)) parts.push(`держит ${task.holder_title}`)
+    if (task.holder) parts.push(`держит ${task.holder_title}`)
     if (task.holder_age) parts.push(task.holder_age)
     return parts.join(' · ')
   }
@@ -123,12 +123,12 @@ export function workedByOf(
 
 /** Значения блока «Кто держит» в настольной карточке. Разметка остаётся в TaskDrawer. */
 export function desktopHolderPresentation(task: TaskDetail): DesktopHolderPresentation {
-  const hasTitle = hasHolderTitle(task.holder_title)
+  const hasHolder = Boolean(task.holder)
   return {
     workedBy: workedByOf(task),
-    holder: hasTitle ? task.holder_title : 'никто',
-    holderHasTitle: hasTitle,
-    holderAge: hasTitle ? task.holder_age : null,
+    holder: hasHolder ? task.holder_title : 'никто',
+    holderHasTitle: hasHolder,
+    holderAge: hasHolder ? task.holder_age : null,
     notTaken: task.not_taken,
     assigned: `выдана, не взята ${task.assigned_age}`,
     assignedBy: task.holder_assigned_by_title,

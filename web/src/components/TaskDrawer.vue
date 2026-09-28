@@ -557,7 +557,7 @@ function describeStep(index: number, status: UiStepStatus): string | undefined {
   if (status === 'current') {
     // Известен исполнитель этапа — он и есть «кто делает»; держатель при этом
     // остаётся в блоке «Кто держит» ниже.
-    const who = executor.value?.title ?? (hasHolderTitle(task.holder_title) ? task.holder_title : 'без держателя')
+    const who = executor.value?.title ?? (task.holder ? task.holder_title : 'без держателя')
     return `${who} · ${task.stage_age} · сейчас`
   }
   if (index > 0 && keepsHolder(transitionOut(transitions.value, PIPELINE[index - 1].key))) return 'та же сессия'

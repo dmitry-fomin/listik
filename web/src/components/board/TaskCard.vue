@@ -20,7 +20,7 @@ import { AT_RISK_IDLE_HOURS, taskHealth, healthReason, healthTone } from '@/lib/
 import { CANCELLED_STATUS, DONE_STAGE, DONE_STATUS, statusTitle } from '@/lib/dictionaries'
 import { routeByKey } from '@/lib/routes'
 import { stageExecutor } from '@/lib/executors'
-import { hasHolderTitle, workedByOf } from '@/lib/task-presentation'
+import { workedByOf } from '@/lib/task-presentation'
 
 const props = defineProps<{
   task: Task
@@ -138,7 +138,7 @@ const executorTooltip = computed(() => {
 })
 
 /** Держатель рядом с исполнителем — muted-хвост «· держит …». */
-const holderTail = computed(() => Boolean(props.task.holder) && hasHolderTitle(props.task.holder_title))
+const holderTail = computed(() => Boolean(props.task.holder))
 
 const stageAgeClass = computed(() => {
   if (!props.task.stage_warn) return null

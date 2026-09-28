@@ -123,10 +123,22 @@ export function connect(url) {
   const consoleErrors = []
   const events = []
   let nextId = 1
+  let closedReason = null
   const ready = new Promise((resolve, reject) => {
     socket.addEventListener('open', resolve, { once: true })
     socket.addEventListener('error', reject, { once: true })
   })
+  const failAll = (reason) => {
+    closedReason ??= reason
+    for (const { method, reject } of pending.values()) {
+      reject(new Error(`${closedReason} — ${method} не получил ответа`))
+    }
+    pending.clear()
+  }
+  socket.addEventListener('close', (event) => failAll(`CDP-сокет закрыт (код ${event.code})`))
+  socket.addEventListener('error', (event) =>
+    failAll(`ошибка CDP-сокета, сокет закрыт${event.message ? ` (${event.message})` : ''}`),
+  )
   socket.addEventListener('message', (message) => {
     const data = JSON.parse(message.data)
     if (data.method) events.push(data)
@@ -145,9 +157,18 @@ export function connect(url) {
   })
   const send = (method, params = {}) =>
     new Promise((resolve, reject) => {
+      if (closedReason || socket.readyState >= WebSocket.CLOSING) {
+        reject(new Error(`${closedReason ?? 'CDP-сокет закрыт'} — ${method} не отправлен`))
+        return
+      }
       const id = nextId++
-      pending.set(id, { resolve, reject })
-      socket.send(JSON.stringify({ id, method, params }))
+      pending.set(id, { method, resolve, reject })
+      try {
+        socket.send(JSON.stringify({ id, method, params }))
+      } catch (error) {
+        pending.delete(id)
+        reject(error)
+      }
     })
   const evaluate = async (expression) => {
     const result = await send('Runtime.evaluate', { expression, returnByValue: true, awaitPromise: true })

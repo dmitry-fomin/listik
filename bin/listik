@@ -754,20 +754,28 @@ def cmd_init_projects(args) -> int:
     и строку .worktrees/ в их .gitignore."""
     from listik import migrate
     conn = db.init()
-    rows = conn.execute(
-        "SELECT slug, path FROM projects WHERE path IS NOT NULL AND archived = 0 ORDER BY slug"
-    ).fetchall()
-    dirs = []
-    for r in rows:
-        if args.only and args.only not in r["slug"]:
-            continue
-        candidate = Path(r["path"])
-        if candidate.is_dir():
-            dirs.append(candidate)
-    print(f"проектов к обработке: {len(dirs)}"
-          + (" (dry-run, ничего не записано)" if args.dry_run else ""))
-    report = migrate.migrate_all(dirs, dry_run=args.dry_run, remove_block=args.remove,
-                                 verbose=not args.quiet, force=args.force)
+    try:
+        rows = conn.execute(
+            "SELECT slug, path FROM projects WHERE path IS NOT NULL AND archived = 0 ORDER BY slug"
+        ).fetchall()
+        dirs = []
+        for r in rows:
+            if args.only and args.only not in r["slug"]:
+                continue
+            candidate = Path(r["path"])
+            if candidate.is_dir():
+                dirs.append(candidate)
+        print(f"проектов к обработке: {len(dirs)}"
+              + (" (dry-run, ничего не записано)" if args.dry_run else ""))
+        report = migrate.migrate_all(dirs, dry_run=args.dry_run, remove_block=args.remove,
+                                     verbose=not args.quiet, force=args.force)
+    except Exception:
+        # Незакоммиченная запись упавшей операции держала бы блокировку (listik-mqr6).
+        try:
+            conn.rollback()
+        except sqlite3.Error:
+            pass
+        raise
     c = {k: len(v) for k, v in report.items()}
     print(f"\nдобавлено: {c['added']}, обновлено: {c['updated']}, без изменений: {c['unchanged']}, "
           f"удалено блоков: {c['removed']}, пропущено: {c['skipped']}, "
@@ -780,8 +788,16 @@ def cmd_init_projects(args) -> int:
 def cmd_import_from_bd(args) -> int:
     from listik import import_writerllm
     conn = db.init()
-    report = import_writerllm.import_file(conn, args.source, project=args.project,
-                                          dry_run=args.dry_run, update=args.update)
+    try:
+        report = import_writerllm.import_file(conn, args.source, project=args.project,
+                                              dry_run=args.dry_run, update=args.update)
+    except Exception:
+        # Незакоммиченная запись упавшей операции держала бы блокировку (listik-mqr6).
+        try:
+            conn.rollback()
+        except sqlite3.Error:
+            pass
+        raise
     if getattr(args, "json", False):
         emit(args, report, "")
         return 0 if report["ok"] else 1
@@ -2084,7 +2100,15 @@ def cmd_dep_tree(args) -> int:
 def cmd_dep_cycles(args) -> int:
     conn = db.init()
     from listik import deps as deps_mod
-    found = deps_mod.cycles(conn)
+    try:
+        found = deps_mod.cycles(conn)
+    except Exception:
+        # Незакоммиченная запись упавшей операции держала бы блокировку (listik-mqr6).
+        try:
+            conn.rollback()
+        except sqlite3.Error:
+            pass
+        raise
     if getattr(args, "json", False):
         emit(args, found, "")
         return 0

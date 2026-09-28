@@ -21,7 +21,7 @@ from contextlib import redirect_stdout
 from pathlib import Path
 from unittest import mock
 
-from listik import client, errors, fence, mcp, routes_store, store
+from listik import client, deps, errors, fence, import_writerllm, mcp, migrate, routes_store, store
 from listik import db as db_mod
 from tests.helpers import TempDbTestCase
 from tests.test_local_bypass_warning import LocalBypassWarningCase
@@ -265,7 +265,8 @@ class CallToolOwnConnRollbackTests(CycleFixture, TempDbTestCase):
 
 
 class CliRollbackTests(CycleFixture, TempDbTestCase):
-    """`cmd_remember` и reimport в `cmd_routes`: `db.init()` своё — откат свой."""
+    """Команды со своим `db.init()`: `cmd_remember`, reimport в `cmd_routes`,
+    `cmd_import_from_bd`, `cmd_init_projects`, `cmd_dep_cycles` — откат свой."""
 
     def setUp(self) -> None:
         super().setUp()
@@ -344,6 +345,56 @@ class CliRollbackTests(CycleFixture, TempDbTestCase):
                                   side_effect=self.write_then_raise(RuntimeError("boom"))):
             with self.assertRaises(RuntimeError) as ctx:
                 CLI.cmd_routes(self.routes_args())
+        self.assertEqual(str(ctx.exception), "boom")
+        self.second_writer_commits(self.a)
+        [conn] = self.opened
+        self.assertEqual(probe_aliases(conn), 0)
+        self.assertFalse(conn.in_transaction)
+
+    def test_import_from_bd_error_rolls_back(self):
+        self.no_gc()
+        args = argparse.Namespace(source="in.jsonl", project="demo", dry_run=False,
+                                  update=False, json=False)
+        with mock.patch.object(db_mod, "init", side_effect=self.open_conn), \
+                mock.patch.object(import_writerllm, "import_file",
+                                  side_effect=self.write_then_raise(RuntimeError("boom"))):
+            with self.assertRaises(RuntimeError) as ctx:
+                CLI.cmd_import_from_bd(args)
+        self.assertEqual(str(ctx.exception), "boom")
+        self.second_writer_commits(self.a)
+        [conn] = self.opened
+        self.assertEqual(probe_aliases(conn), 0)
+        self.assertFalse(conn.in_transaction)
+
+    def test_init_projects_error_rolls_back(self):
+        self.no_gc()
+
+        def migrate_boom(*_args, **_kwargs):
+            self.opened[0].execute(
+                "INSERT INTO actor_aliases(raw, actor) VALUES(?, ?)", (PROBE, PROBE))
+            raise RuntimeError("boom")
+
+        args = argparse.Namespace(only=None, dry_run=True, remove=False, quiet=True,
+                                  force=False)
+        with mock.patch.object(db_mod, "init", side_effect=self.open_conn), \
+                mock.patch.object(migrate, "migrate_all", side_effect=migrate_boom), \
+                redirect_stdout(io.StringIO()):
+            with self.assertRaises(RuntimeError) as ctx:
+                CLI.cmd_init_projects(args)
+        self.assertEqual(str(ctx.exception), "boom")
+        self.second_writer_commits(self.a)
+        [conn] = self.opened
+        self.assertEqual(probe_aliases(conn), 0)
+        self.assertFalse(conn.in_transaction)
+
+    def test_dep_cycles_error_rolls_back(self):
+        self.no_gc()
+        args = argparse.Namespace(json=False)
+        with mock.patch.object(db_mod, "init", side_effect=self.open_conn), \
+                mock.patch.object(deps, "cycles",
+                                  side_effect=self.write_then_raise(RuntimeError("boom"))):
+            with self.assertRaises(RuntimeError) as ctx:
+                CLI.cmd_dep_cycles(args)
         self.assertEqual(str(ctx.exception), "boom")
         self.second_writer_commits(self.a)
         [conn] = self.opened

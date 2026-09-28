@@ -225,11 +225,10 @@ def decide(state, questions: dict, *, cfg_settings: dict, opener=None,
     answers = data["answers"]
     for name, question in questions.items():
         answer = answers.get(name)
-        safe_name = name.replace(api_key, "***")
         detail = "нет ответа" if answer is None else "неверная форма"
         if not isinstance(answer, dict):
             raise _jev_error(raw, api_key,
-                             f"jev: негодный ответ на {safe_name}: {detail}")
+                             f"jev: негодный ответ на {name}: {detail}")
         expected_type = question.get("type") if isinstance(question, dict) else None
         if answer.get("type") != expected_type:
             detail = f"type должен быть {expected_type!r}"
@@ -250,7 +249,7 @@ def decide(state, questions: dict, *, cfg_settings: dict, opener=None,
                 continue
         else:
             detail = "неподдерживаемый type"
-        raise _jev_error(raw, api_key, f"jev: негодный ответ на {safe_name}: {detail}")
+        raise _jev_error(raw, api_key, f"jev: негодный ответ на {name}: {detail}")
 
     usage = data.get("usage")
     if not isinstance(usage, dict):
@@ -596,6 +595,40 @@ def normalize_graph(data: dict, ids: list[str]) -> tuple[dict, list[list[str]], 
     return tasks_view, edges, dropped
 
 
+def _incoming(pairs) -> dict[str, set[str]]:
+    """`[раньше, позже]` → `{позже: {раньше, …}}`."""
+    incoming: dict[str, set[str]] = {}
+    for earlier, later in pairs:
+        incoming.setdefault(later, set()).add(earlier)
+    return incoming
+
+
+def _db_cycles(ids: list[str], fixed: list[list[str]]) -> list[list[str]]:
+    return deps.find_cycles(ids, _incoming(fixed))
+
+
+def _messages_checked(prompt: str, payload, hint: str) -> list[dict]:
+    """Сообщения system+user; больше `MAX_TOTAL_CHARS` символов — `BadArgument`."""
+    messages = [{"role": "system", "content": prompt},
+                {"role": "user", "content": util.json_dumps(payload)}]
+    total_chars = sum(len(m["content"]) for m in messages)
+    if total_chars > MAX_TOTAL_CHARS:
+        raise errors.BadArgument(
+            f"слишком много текста для одного вызова модели: {total_chars} символов — "
+            f"ограничь {hint}")
+    return messages
+
+
+def _card_fields(row) -> dict:
+    return {"title": row["title"],
+            "description": _clip(row["description"] or "", MAX_FIELD_CHARS),
+            "acceptance": _clip(row["acceptance"] or "", MAX_FIELD_CHARS)}
+
+
+def _jev_skipped(reason: str) -> dict:
+    return {"model": None, "checked": 0, "dropped": [], "skipped": reason}
+
+
 def _group_by_later(pairs: list[list[str]], ids: list[str]) -> list[dict]:
     """`[раньше, позже]` → `[{"id": позже, "depends_on": [раньше, …]}]`, в порядке `ids`."""
     order_index = {tid: i for i, tid in enumerate(ids)}
@@ -621,10 +654,7 @@ def _graph_pass(messages: list[dict], schema: dict, *, name: str, ids: list[str]
         data = complete_json(messages, schema, name=name, cfg_settings=cfg_settings,
                              opener=opener, runner=runner, timeout=timeout)
         tasks_view, model_edges, dropped = normalize_graph(data, ids)
-        incoming: dict[str, set[str]] = {}
-        for earlier, later in (*fixed, *model_edges):
-            incoming.setdefault(later, set()).add(earlier)
-        cycles = deps.find_cycles(ids, incoming)
+        cycles = deps.find_cycles(ids, _incoming((*fixed, *model_edges)))
         if not cycles:
             break
         if attempts < MAX_ATTEMPTS:
@@ -645,9 +675,7 @@ JEV_EDGE_FALSE = ("общая тема, общий родитель, сосед�
 
 def _jev_card(task_id: str, by_id: dict) -> dict:
     row = by_id[task_id]
-    return {"id": task_id, "title": row["title"],
-            "description": _clip(row["description"] or "", MAX_FIELD_CHARS),
-            "acceptance": _clip(row["acceptance"] or "", MAX_FIELD_CHARS)}
+    return {"id": task_id, **_card_fields(row)}
 
 
 def check_plan_edges(model_edges: list[list[str]], *, fixed: list[list[str]], by_id: dict,
@@ -681,9 +709,9 @@ def check_plan_edges(model_edges: list[list[str]], *, fixed: list[list[str]], by
         message = f"ошибка: {exc.message}"
         logger.warning(message)
         return [list(edge) for edge in model_edges], {
-            "model": cfg_settings.get("jev_model") or JEV_DEFAULT_MODEL,
+            "model": cfg_settings["jev_model"],
             "checked": checked, "dropped": [], "skipped": message}
-    return kept, {"model": cfg_settings.get("jev_model") or JEV_DEFAULT_MODEL,
+    return kept, {"model": cfg_settings["jev_model"],
                   "checked": checked, "dropped": dropped, "skipped": None}
 
 
@@ -702,53 +730,33 @@ def plan(conn, *, project: str, stage: str | None = None, apply: bool = False,
     by_id = {r["id"]: r for r in rows}
     cfg_settings = settings(cfg)
 
+    base = {"project": project, "stage": stage, "model": cfg_settings["model"],
+            "attempts": 0, "tasks": {}, "edges": [], "fixed": [], "previous": [],
+            "dropped": [], "cycles": [], "cycles_from": None, "applied": None,
+            "jev": _jev_skipped("не вызывался")}
     if not ids:
-        return {"project": project, "stage": stage, "model": cfg_settings["model"],
-                "attempts": 0, "tasks": {}, "edges": [], "fixed": [], "previous": [],
-                "dropped": [], "cycles": [], "cycles_from": None, "applied": None,
-                "jev": {"model": None, "checked": 0, "dropped": [],
-                        "skipped": "не вызывался"}}
+        return base
 
     fixed, previous = fixed_edges(conn, ids)
-    incoming_fixed: dict[str, set[str]] = {}
-    for earlier, later in fixed:
-        incoming_fixed.setdefault(later, set()).add(earlier)
-    db_cycles = deps.find_cycles(ids, incoming_fixed)
+    base.update(fixed=fixed, previous=previous)
+    db_cycles = _db_cycles(ids, fixed)
     if db_cycles:
-        return {"project": project, "stage": stage, "model": cfg_settings["model"],
-                "attempts": 0,
+        return {**base,
                 "tasks": {tid: {"title": by_id[tid]["title"], "depends_on": [], "reason": ""}
                          for tid in ids},
-                "edges": [], "fixed": fixed, "previous": previous, "dropped": [],
-                "cycles": db_cycles, "cycles_from": "db", "applied": None,
-                "jev": {"model": None, "checked": 0, "dropped": [],
-                        "skipped": "не вызывался"}}
+                "cycles": db_cycles, "cycles_from": "db"}
 
-    payload_tasks = []
-    for tid in ids:
-        row = by_id[tid]
-        payload_tasks.append({
-            "id": tid,
-            "title": row["title"],
-            "description": _clip(row["description"] or "", MAX_FIELD_CHARS),
-            "acceptance": _clip(row["acceptance"] or "", MAX_FIELD_CHARS),
-            "stage": row["stage"],
-            "labels": store_helpers_mod.json_list(row["labels"]),
-        })
+    payload_tasks = [{"id": tid, **_card_fields(by_id[tid]),
+                      "stage": by_id[tid]["stage"],
+                      "labels": store_helpers_mod.json_list(by_id[tid]["labels"])}
+                     for tid in ids]
     payload = {
         "project": project,
         "tasks": payload_tasks,
         "fixed": _group_by_later(fixed, ids),
         "previous": _group_by_later(previous, ids),
     }
-
-    messages = [{"role": "system", "content": PLAN_PROMPT},
-               {"role": "user", "content": util.json_dumps(payload)}]
-    total_chars = sum(len(m["content"]) for m in messages)
-    if total_chars > MAX_TOTAL_CHARS:
-        raise errors.BadArgument(
-            f"слишком много текста для одного вызова модели: {total_chars} символов — "
-            "ограничь --stage")
+    messages = _messages_checked(PLAN_PROMPT, payload, "--stage")
 
     tasks_view, model_edges, dropped, cycles, attempts = _graph_pass(
         messages, PLAN_SCHEMA, name="swarm_plan", ids=ids, fixed=fixed,
@@ -760,14 +768,10 @@ def plan(conn, *, project: str, stage: str | None = None, apply: bool = False,
              "reason": tasks_view.get(tid, {}).get("reason", "")}
         for tid in ids
     }
+    base.update(attempts=attempts, tasks=tasks_out, dropped=dropped)
 
     if cycles:
-        return {"project": project, "stage": stage, "model": cfg_settings["model"],
-                "attempts": attempts, "tasks": tasks_out, "edges": [], "fixed": fixed,
-                "previous": previous, "dropped": dropped, "cycles": cycles,
-                "cycles_from": "model", "applied": None,
-                "jev": {"model": None, "checked": 0, "dropped": [],
-                        "skipped": "не вызывался"}}
+        return {**base, "cycles": cycles, "cycles_from": "model"}
 
     if jev_enabled(cfg_settings):
         model_edges, jev = check_plan_edges(
@@ -779,16 +783,13 @@ def plan(conn, *, project: str, stage: str | None = None, apply: bool = False,
             tasks_out[tid]["depends_on"] = [
                 earlier for earlier in original if (earlier, tid) in remaining]
     else:
-        jev = {"model": None, "checked": 0, "dropped": [], "skipped": "не настроен"}
+        jev = _jev_skipped("не настроен")
 
     applied = None
     if apply:
         applied = deps.apply_planned_blocks(conn, working=ids, edges=model_edges)
 
-    return {"project": project, "stage": stage, "model": cfg_settings["model"],
-            "attempts": attempts, "tasks": tasks_out, "edges": model_edges, "fixed": fixed,
-            "previous": previous, "dropped": dropped, "cycles": [], "cycles_from": None,
-            "applied": applied, "jev": jev}
+    return {**base, "edges": model_edges, "applied": applied, "jev": jev}
 
 
 # --- проход `listik rescope`: области read_scope/write_scope из ТЗ + уточнение графа ------
@@ -964,10 +965,7 @@ def rescope(conn, *, project: str, tasks: list[str] | None = None, drift: list |
         own.setdefault(rec["task"], []).append(rec)
 
     fixed, previous = fixed_edges(conn, ids)
-    incoming_fixed: dict[str, set[str]] = {}
-    for earlier, later in fixed:
-        incoming_fixed.setdefault(later, set()).add(earlier)
-    db_cycles = deps.find_cycles(ids, incoming_fixed)
+    db_cycles = _db_cycles(ids, fixed)
 
     # --- фаза 1: извлечение областей из ТЗ, по одной задаче за вызов ---------------
 
@@ -993,10 +991,7 @@ def rescope(conn, *, project: str, tasks: list[str] | None = None, drift: list |
 
         own_records = own.get(tid, [])
         user_payload = {
-            "task": {"id": tid, "title": row["title"],
-                     "description": _clip(row["description"] or "", MAX_FIELD_CHARS),
-                     "acceptance": _clip(row["acceptance"] or "", MAX_FIELD_CHARS),
-                     "spec_path": row["spec_path"]},
+            "task": {"id": tid, **_card_fields(row), "spec_path": row["spec_path"]},
             "spec": (doc.get("content") or "")[:MAX_SPEC_CHARS],
             "drift": [{"touched": r["touched"], "declared": r["declared"],
                       "outside": r["outside"], "source": r["source"]} for r in own_records],
@@ -1089,13 +1084,7 @@ def rescope(conn, *, project: str, tasks: list[str] | None = None, drift: list |
         payload = {"project": project, "tasks": payload_tasks,
                   "fixed": _group_by_later(fixed, ids),
                   "previous": _group_by_later(previous, ids), "drift": drift_payload}
-        messages = [{"role": "system", "content": GRAPH_PROMPT},
-                   {"role": "user", "content": util.json_dumps(payload)}]
-        total_chars = sum(len(m["content"]) for m in messages)
-        if total_chars > MAX_TOTAL_CHARS:
-            raise errors.BadArgument(
-                f"слишком много текста для одного вызова модели: {total_chars} "
-                "символов — ограничь --task")
+        messages = _messages_checked(GRAPH_PROMPT, payload, "--task")
         tasks_graph, edges, dropped, cycles, attempts = _graph_pass(
             messages, PLAN_SCHEMA, name="swarm_rescope_graph", ids=ids, fixed=fixed,
             cfg_settings=cfg_settings, opener=opener, runner=runner, timeout=timeout)

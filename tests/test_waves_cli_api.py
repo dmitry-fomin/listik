@@ -216,8 +216,8 @@ class WavesMcpTests(TempDbTestCase):
         self.assertIn("dep_cycle", text)
         self.assertIn("разорви цикл: listik dep rm <id> <блокер>", text)
 
-    def test_mcp_not_a_write_tool(self) -> None:
-        self.assertNotIn("listik_waves", mcp.WRITE_TOOLS)
+    def test_mcp_is_a_write_tool(self) -> None:
+        self.assertIn("listik_waves", mcp.WRITE_TOOLS)
 
     def test_mcp_tools_list_has_waves(self) -> None:
         resp = mcp.handle({"jsonrpc": "2.0", "id": 1, "method": "tools/list"}, conn=self.conn)

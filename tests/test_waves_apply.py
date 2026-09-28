@@ -646,8 +646,8 @@ class McpTests(TempDbTestCase):
             "SELECT 1 FROM deps WHERE dep_type='resource-blocks'").fetchone()
         self.assertIsNone(row)
 
-    def test_not_a_write_tool(self) -> None:
-        self.assertNotIn("listik_waves", mcp.WRITE_TOOLS)
+    def test_is_a_write_tool(self) -> None:
+        self.assertIn("listik_waves", mcp.WRITE_TOOLS)
 
     def test_schema_no_actor_required_project(self) -> None:
         tool = next(t for t in mcp.TOOLS if t["name"] == "listik_waves")

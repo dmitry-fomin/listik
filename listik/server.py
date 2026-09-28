@@ -1692,9 +1692,7 @@ class Handler(BaseHTTPRequestHandler):
 
         # 9. Событие доске — уже после ответа; любой сбой здесь на ответ не влияет.
         try:
-            event = mcp.notify_event(request, response)
-            if event is not None:
-                task_id, action = event
+            for task_id, action in mcp.notify_event(request, response):
                 publish("task", {"id": task_id, "action": action})
         except Exception:  # noqa: BLE001 — событие не влияет на ответ MCP
             pass

@@ -106,7 +106,11 @@ class StdioNotifyCase(McpHttpCase):
 
     def run_stdio(self, requests: list[dict]) -> str:
         """Прогнать запросы через stdio-цикл так, как это делает `bin/listik mcp`."""
-        text = "".join(json.dumps(r, ensure_ascii=False) + "\n" for r in requests)
+        return self.run_stdio_text(
+            "".join(json.dumps(r, ensure_ascii=False) + "\n" for r in requests))
+
+    def run_stdio_text(self, text: str) -> str:
+        """То же, что `run_stdio`, но stdin — готовый текст (в том числе битый JSON)."""
         out = io.StringIO()
         with mock.patch.object(sys, "stdin", io.StringIO(text)), \
                 mock.patch.object(sys, "stdout", out):
@@ -354,6 +358,104 @@ class StdioProcessEndToEnd(StdioNotifyCase):
         rows = self.conn.execute("SELECT text FROM comments WHERE task_id = ?",
                                  (task_id,)).fetchall()
         self.assertEqual([r["text"] for r in rows], ["через процесс"])
+
+
+class WavesApplyNotify(StdioNotifyCase):
+    """`listik_waves` с `apply` будит доску кадром `deps` по каждой задаче рёбер (listik-p2ot)."""
+
+    def make_overlap(self) -> tuple[str, str]:
+        from tests.test_waves import _task
+        a = _task(self.conn, "a", scope=("pkg/alpha.py",), priority=0)
+        c = _task(self.conn, "c", scope=("pkg/alpha.py",), priority=2)
+        return a, c
+
+    def frames(self, q: queue.Queue) -> list[dict]:
+        got = []
+        while True:
+            try:
+                got.append(json.loads(q.get(timeout=0.5)))
+            except queue.Empty:
+                return got
+
+    def assert_deps_frames(self, q: queue.Queue, ids: set[str]) -> None:
+        payloads = [f["payload"] for f in self.frames(q) if f["kind"] == "task"]
+        self.assertCountEqual(payloads, [{"id": tid, "action": "deps"} for tid in ids])
+
+    def test_stdio_apply_notifies_each_task(self) -> None:
+        a, c = self.make_overlap()
+        q = self.subscribe()
+        out = self.run_stdio([tool_call("listik_waves", {"project": "demo", "apply": True})])
+        payload = json.loads(rpc_reply(out)["result"]["content"][0]["text"])
+        self.assertEqual(payload["added"], [[a, c]], out)
+        self.assert_deps_frames(q, {a, c})
+
+    def test_http_apply_notifies_each_task(self) -> None:
+        a, c = self.make_overlap()
+        q = self.subscribe()
+        payload = self.tool_payload("listik_waves", {"project": "demo", "apply": True})
+        self.assertEqual(payload["added"], [[a, c]])
+        self.assert_deps_frames(q, {a, c})
+
+    def test_stdio_waves_without_apply_is_silent(self) -> None:
+        self.make_overlap()
+        q = self.subscribe()
+        out = self.run_stdio([tool_call("listik_waves", {"project": "demo"})])
+        self.assertFalse(rpc_reply(out)["result"].get("isError"), out)
+        self.assert_silent(q)
+
+
+class StdioParseError(StdioNotifyCase):
+    """Битая строка в stdin — ответ -32700 с `id: null`, цикл читает дальше."""
+
+    def test_invalid_json_answers_and_continues(self) -> None:
+        q = self.subscribe()
+        ping = json.dumps({"jsonrpc": "2.0", "id": 2, "method": "ping"})
+        out = self.run_stdio_text("{не json\n\n" + ping + "\n")
+        replies = [json.loads(line) for line in out.splitlines()
+                   if line.strip().startswith("{")]
+        error = next(r for r in replies if "error" in r)
+        self.assertIsNone(error["id"])
+        self.assertEqual(error["error"]["code"], -32700)
+        self.assertIn("невалидный JSON", error["error"]["message"])
+        self.assertEqual(rpc_reply(out, rid=2)["result"], {})
+        self.assert_silent(q)
+
+
+class NotifyEventUnit(unittest.TestCase):
+    """`notify_event` — список событий, без сервера."""
+
+    @staticmethod
+    def ok(payload: dict) -> dict:
+        return {"jsonrpc": "2.0", "id": 1,
+                "result": {"content": [{"type": "text", "text": json.dumps(payload)}]}}
+
+    def test_waves_apply_events(self) -> None:
+        request = tool_call("listik_waves", {"project": "demo", "apply": True})
+        response = self.ok({"added": [["a", "b"]], "removed": [["b", "c"]]})
+        self.assertEqual(mcp.notify_event(request, response),
+                         [("a", "deps"), ("b", "deps"), ("c", "deps")])
+
+    def test_waves_apply_bad_shape_is_empty(self) -> None:
+        request = tool_call("listik_waves", {"apply": True})
+        for payload in ({}, {"added": "ab", "removed": []}, {"added": [], "removed": []}):
+            with self.subTest(payload=payload):
+                self.assertEqual(mcp.notify_event(request, self.ok(payload)), [])
+        broken = {"result": {"content": [{"type": "text", "text": "не json"}]}}
+        self.assertEqual(mcp.notify_event(request, broken), [])
+
+    def test_waves_read_is_empty(self) -> None:
+        request = tool_call("listik_waves", {"project": "demo"})
+        response = self.ok({"added": [["a", "b"]], "removed": []})
+        self.assertEqual(mcp.notify_event(request, response), [])
+
+    def test_comment_is_one_event(self) -> None:
+        request = tool_call("listik_comment", {"id": "t-1", "text": "x"})
+        self.assertEqual(mcp.notify_event(request, self.ok({"id": 5})),
+                         [("t-1", "listik_comment")])
+
+    def test_read_tool_is_empty(self) -> None:
+        request = tool_call("listik_show", {"id": "t-1"})
+        self.assertEqual(mcp.notify_event(request, self.ok({"id": "t-1"})), [])
 
 
 if __name__ == "__main__":

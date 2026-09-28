@@ -46,7 +46,7 @@ SERVER_INFO = {"name": "listik", "version": __version__}
 WRITE_TOOLS = frozenset({
     "listik_create", "listik_update", "listik_claim", "listik_heartbeat", "listik_stage",
     "listik_comment", "listik_needs_owner", "listik_done", "listik_release", "listik_deps",
-    "listik_put_document",
+    "listik_put_document", "listik_waves",
 })
 
 TASK_ID = {"type": "string", "description": "ID задачи, например zoloto585-search-a1b2"}
@@ -655,14 +655,10 @@ def call_tool(name: str, args: dict, conn=None, owner=FROM_ENV, fence=FROM_ENV) 
                                note=args.get("note"), harness=args.get("harness"),
                                actor=args.get("actor"), as_owner=owner)
     if name == "listik_stage":
-        if args.get("to"):
-            return store.next_stage(conn, args["id"], holder=_norm_actor(args.get("holder")),
-                                    harness=args.get("harness"), note=args.get("note"),
-                                    actor=args.get("actor"), as_owner=owner,
-                                    to_stage=args["to"])
         return store.next_stage(conn, args["id"], holder=_norm_actor(args.get("holder")),
-                                note=args.get("note"), harness=args.get("harness"),
-                                actor=args.get("actor"), as_owner=owner)
+                                harness=args.get("harness"), note=args.get("note"),
+                                actor=args.get("actor"), as_owner=owner,
+                                to_stage=args.get("to") or None)
     if name == "listik_comment":
         return store.add_comment(conn, args["id"], args["text"],
                                  author=_mcp_actor(args.get("author"), args.get("actor")),
@@ -830,25 +826,42 @@ def _result_id(result: dict) -> str | None:
     return task_id if isinstance(task_id, str) and task_id else None
 
 
-def notify_event(request: dict, response: dict | None) -> tuple[str, str] | None:
-    """Событие доске по вызову инструмента — `(task_id, action)` или None.
+def _waves_ids(result: dict) -> list[str]:
+    """Уникальные id задач из пар `added`/`removed` ответа `listik_waves` apply."""
+    try:
+        payload = errors_mod.json_loads(result["content"][0]["text"])
+        pairs = payload["added"] + payload["removed"]
+        if not all(isinstance(pair, list) for pair in pairs):
+            return []
+        ids = {tid for pair in pairs for tid in pair}
+    except Exception:  # noqa: BLE001 — ответ не той формы: событий не будет
+        return []
+    return sorted(tid for tid in ids if isinstance(tid, str) and tid)
+
+
+def notify_event(request: dict, response: dict | None) -> list[tuple[str, str]]:
+    """События доске по вызову инструмента — список `(task_id, action)`, пустой — событий нет.
 
     Правила те же, что у HTTP-транспорта (`server.Handler._mcp`): пишущий
-    инструмент из `WRITE_TOOLS`, успешный ответ и известный id задачи. Чтения и
-    ответы `isError` доску не будят.
+    инструмент из `WRITE_TOOLS`, успешный ответ и известный id задачи — одно
+    событие с `action` = имя инструмента. `listik_waves` с `apply` — по событию
+    `deps` на каждый id из `added`/`removed` (как `POST /api/waves/apply`), без
+    `apply` это чтение. Чтения и ответы `isError` доску не будят.
     """
     if not isinstance(request, dict) or request.get("method") != "tools/call":
-        return None
+        return []
     _method, _rid, params = request_parts(request)
     name = params.get("name")
     if name not in WRITE_TOOLS:
-        return None
+        return []
     result = (response or {}).get("result") or {}
     if result.get("isError"):
-        return None
+        return []
     args = params.get("arguments") or {}
+    if name == "listik_waves":
+        return [(tid, "deps") for tid in _waves_ids(result)] if args.get("apply") else []
     task_id = _result_id(result) if name == "listik_create" else args.get("id")
-    return (task_id, name) if isinstance(task_id, str) and task_id else None
+    return [(task_id, name)] if isinstance(task_id, str) and task_id else []
 
 
 #: Сколько ждём сервер, пока сообщаем ему о записи. Ответ инструмента этой
@@ -895,15 +908,13 @@ def notify_board(request: dict, response: dict | None) -> None:
     подписчикам SSE (`GET /api/stream`), и доска перечитает карточку без
     перезагрузки. Сервера нет, запрос не прошёл — инструмент всё равно ответил.
     """
-    event = notify_event(request, response)
-    if event is None:
-        return
-    thread = threading.Thread(target=_post_notify, args=event, name="listik-notify",
-                              daemon=True)
-    with _pending_lock:
-        _pending[:] = [t for t in _pending if t.is_alive()]
-        _pending.append(thread)
-    thread.start()
+    for event in notify_event(request, response):
+        thread = threading.Thread(target=_post_notify, args=event, name="listik-notify",
+                                  daemon=True)
+        with _pending_lock:
+            _pending[:] = [t for t in _pending if t.is_alive()]
+            _pending.append(thread)
+        thread.start()
 
 
 def wait_pending_notifies(timeout: float = NOTIFY_TIMEOUT + 0.5) -> None:
@@ -938,7 +949,10 @@ def run() -> int:
             continue
         try:
             request = errors_mod.json_loads(line)
-        except json.JSONDecodeError:
+        except json.JSONDecodeError as exc:
+            sys.stdout.write(errors_mod.json_dumps(
+                rpc_error(None, -32700, f"невалидный JSON: {exc}")) + "\n")
+            sys.stdout.flush()
             continue
         response = handle(request, conn=conn)
         if response is None:

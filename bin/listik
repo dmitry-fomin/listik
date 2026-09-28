@@ -2075,10 +2075,7 @@ def cmd_dep_tree(args) -> int:
         for i, node in enumerate(nodes):
             last = i == len(nodes) - 1
             branch = "└─ " if last else "├─ "
-            # deps.graph() ключа holder не отдаёт — тогда судим по holder_title.
-            held = (node.get("holder") if "holder" in node
-                    else node.get("holder_title") not in (None, "", "—"))
-            who = f", держит {node['holder_title']} {node['idle_age']}" if held else ""
+            who = f", держит {node['holder_title']} {node['idle_age']}" if node.get("holder") else ""
             print(f"{prefix}{branch}{arrow} {node['id']} [{node['status']}{who}] {node['title'][:70]}")
             draw(node.get("up") or node.get("down") or [], prefix + ("   " if last else "│  "), arrow)
 

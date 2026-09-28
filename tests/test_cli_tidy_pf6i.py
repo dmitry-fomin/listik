@@ -60,19 +60,19 @@ class ServerOutputTest(TempDbTestCase):
         self.assertNotIn("держит", free)
         self.assertIn("держит Икс 5 мин", held)
 
-    def test_dep_tree_holder_title_when_graph_has_no_holder_key(self):
-        # Форма узла deps.graph(): holder_title есть, ключа holder нет.
+    def test_dep_tree_holder_only_by_raw_field(self):
+        # Держатель — только по ключу holder; holder_title без holder не значит «держит».
         node = {"status": "in_progress", "title": "T", "idle_age": "5 мин"}
         tree = {"task": {"id": "root", "title": "R", "status": "open"},
-                "waits_for": [{**node, "id": "free", "holder_title": "—"},
-                              {**node, "id": "held", "holder_title": "grok"}],
+                "waits_for": [{**node, "id": "nokey", "holder_title": "grok"},
+                              {**node, "id": "none", "holder": None, "holder_title": "—"}],
                 "waited_by": []}
         code, out, _ = run(["dep", "tree", "root"], tree)
         self.assertEqual(code, 0)
-        free = next(l for l in out.splitlines() if " free " in l)
-        held = next(l for l in out.splitlines() if " held " in l)
-        self.assertNotIn("держит", free)
-        self.assertIn("держит grok 5 мин", held)
+        nokey = next(l for l in out.splitlines() if " nokey " in l)
+        none = next(l for l in out.splitlines() if " none " in l)
+        self.assertNotIn("держит", nokey)
+        self.assertNotIn("держит", none)
 
     def test_timeline_actor_by_raw_field(self):
         base = {"ts": "2026-09-28T00:00:00Z", "kind": "stage", "task_id": "t-1"}

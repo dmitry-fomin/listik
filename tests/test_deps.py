@@ -379,6 +379,54 @@ class CliDepTests(TempDbTestCase):
         self.assertNotIn("Traceback", p.stdout)
         self.assertIn(x, p.stdout)
 
+    def test_dep_tree_marks_only_claimed_blocker(self) -> None:
+        free = store.create_task(self.conn, title="Free", project="demo")["id"]
+        store.add_dep(self.conn, self.b, self.a, "blocks", created_by="me", confirm=True)
+        store.add_dep(self.conn, self.b, free, "blocks", created_by="me", confirm=True)
+        store.claim(self.conn, self.a, holder="dsh")
+        p = self._run("dep", "tree", self.b)
+        self.assertEqual(p.returncode, 0, p.stderr)
+        held = next(l for l in p.stdout.splitlines() if f" {self.a} " in l)
+        loose = next(l for l in p.stdout.splitlines() if f" {free} " in l)
+        self.assertIn("держит", held)
+        self.assertNotIn("держит", loose)
+
+
+
+class GraphHolderTests(TempDbTestCase):
+    """Узлы deps.graph() несут сырой holder (listik-g77p)."""
+
+    def _new(self, title: str) -> str:
+        return store.create_task(self.conn, title=title, project="demo")["id"]
+
+    def test_up_and_down_nodes_carry_holder(self) -> None:
+        held, free, root, waiter_free = (self._new(t) for t in ("H", "F", "R", "WF"))
+        # Другой проект: второй claim в том же (project, worktree) упрётся в замок дерева.
+        waiter_held = store.create_task(self.conn, title="WH", project="other")["id"]
+        for issue, dep in ((root, held), (root, free), (waiter_held, root), (waiter_free, root)):
+            store.add_dep(self.conn, issue, dep, "blocks", created_by="me", confirm=True)
+        store.claim(self.conn, held, holder="dsh")
+        store.claim(self.conn, waiter_held, holder="grok", force=True)
+        g = deps_mod.graph(self.conn, root)
+        up = {n["id"]: n for n in g["waits_for"]}
+        down = {n["id"]: n for n in g["waited_by"]}
+        for node in (*up.values(), *down.values()):
+            self.assertIn("holder", node)
+        self.assertEqual(up[held]["holder"], "dsh")
+        self.assertFalse(up[free]["holder"])
+        self.assertEqual(down[waiter_held]["holder"], "grok")
+        self.assertFalse(down[waiter_free]["holder"])
+
+    def test_missing_blocker_node_has_none_holder(self) -> None:
+        a, x = self._new("A"), self._new("X")
+        store.add_dep(self.conn, a, x, "blocks", created_by="me", confirm=True)
+        self.conn.execute("DELETE FROM tasks WHERE id = ?", (x,))
+        self.conn.commit()
+        node = deps_mod.graph(self.conn, a)["waits_for"][0]
+        self.assertTrue(node["missing"])
+        self.assertIn("holder", node)
+        self.assertIsNone(node["holder"])
+
 
 class FetchPropagatesErrorsTests(TempDbTestCase):
     """`_fetch` не глотает ошибку SQL: иначе гейты claim/ready открываются при сбое (listik-nvro)."""

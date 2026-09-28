@@ -562,8 +562,9 @@ def graph(conn: sqlite3.Connection, task_id: str, depth: int = 3) -> dict:
         seen_up.add(tid)
         out = []
         for b in blockers(conn, tid):
-            out.append({**{k: b.get(k) for k in ("id", "title", "status", "holder_title",
-                                                  "idle_age", "dep_type", "missing")},
+            out.append({**{k: b.get(k) for k in ("id", "title", "status", "holder",
+                                                  "holder_title", "idle_age", "dep_type",
+                                                  "missing")},
                         "up": up(b["id"], level - 1)})
         return out
 
@@ -573,8 +574,9 @@ def graph(conn: sqlite3.Connection, task_id: str, depth: int = 3) -> dict:
         seen_down.add(tid)
         out = []
         for w in waiting_for(conn, tid):
-            out.append({**{k: w.get(k) for k in ("id", "title", "status", "holder_title",
-                                                  "idle_age", "dep_type", "missing")},
+            out.append({**{k: w.get(k) for k in ("id", "title", "status", "holder",
+                                                  "holder_title", "idle_age", "dep_type",
+                                                  "missing")},
                         "down": down(w["id"], level - 1)})
         return out
 

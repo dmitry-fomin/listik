@@ -253,7 +253,13 @@ class LaunchTests(SwarmCase):
               "нужное — в listik context.")
     JUDGE_NOTE = ("Красные пункты пиши строками над последней строкой «красный» — Listik "
                   "переносит их в VERDICT: FAIL дословно. При зелёном коммит делаешь ты, до "
-                  "ответа «зелёный».")
+                  "ответа «зелёный». Перед работой смотри `listik show <id задачи>`: был ли "
+                  "твой прошлый вопрос по этой карточке и ответ на него — ответ по умолчанию "
+                  "от роя тоже считается ответом. Этот ответ — решение: выбран вариант "
+                  "закрыть или принять — коммитишь, если есть что коммитить, и отвечаешь "
+                  "«зелёный»; выбран вариант с правками — отвечаешь «красный» и перечисляешь "
+                  "правки. Уже отвеченный вопрос повторно не задают: «вопрос» — только о "
+                  "новом обстоятельстве, которого не было в прошлом вопросе.")
     JUDGE_LAST = ("Последняя строка вывода — одно слово: «зелёный», «красный», «вопрос» "
                   "или «не смог».")
     ROLE_CASES = (("spec", "s1-spec", "pipeline-spec-writer",
@@ -350,6 +356,18 @@ class LaunchTests(SwarmCase):
                     "## Коммит при зелёном вердикте\nкоммить")
         self.assertEqual(prompt, "\n\n".join(
             [protocol, bridge, self.JUDGE_NOTE, criteria, self.JUDGE_LAST]))
+
+    def test_judge_note_binds_answer_to_verdict(self) -> None:
+        # listik-5szy: заметка судьи обязует читать ответ на свой прошлый вопрос
+        # (ответ по умолчанию от роя — тоже ответ) и исполнять его, а не спрашивать заново.
+        tail = stage_launch.role_tail("judge")
+        self.assertIn("listik show", tail)
+        self.assertIn("ответ по умолчанию", tail)
+        self.assertIn("закрыть или принять", tail)
+        self.assertIn("«зелёный»", tail)
+        self.assertIn("вариант с правками", tail)
+        self.assertIn("«красный»", tail)
+        self.assertIn("только о новом обстоятельстве", tail)
 
     def assert_refused(self, task_id: str, result) -> str:
         self.assertEqual(result, {"launched": False, "needs_owner": True})

@@ -253,7 +253,8 @@ class LaunchTests(SwarmCase):
               "нужное — в listik context.")
     JUDGE_NOTE = ("Красные пункты пиши строками над последней строкой «красный» — Listik "
                   "переносит их в VERDICT: FAIL дословно. При зелёном коммит делаешь ты, до "
-                  "ответа «зелёный». Перед работой смотри `listik show <id задачи>`: был ли "
+                  "ответа «зелёный». Перед работой смотри `listik context <id задачи> --stage "
+                  "s4-judge`, блок «вопросы и ответы» (в `--json` — поле `questions`): был ли "
                   "твой прошлый вопрос по этой карточке и ответ на него — ответ по умолчанию "
                   "от роя тоже считается ответом. Этот ответ — решение: выбран вариант "
                   "закрыть или принять — коммитишь, если есть что коммитить, и отвечаешь "
@@ -360,8 +361,10 @@ class LaunchTests(SwarmCase):
     def test_judge_note_binds_answer_to_verdict(self) -> None:
         # listik-5szy: заметка судьи обязует читать ответ на свой прошлый вопрос
         # (ответ по умолчанию от роя — тоже ответ) и исполнять его, а не спрашивать заново.
+        # listik-z4qg: читать — в `listik context --stage s4-judge`, не в `listik show`.
         tail = stage_launch.role_tail("judge")
-        self.assertIn("listik show", tail)
+        self.assertIn("listik context <id задачи> --stage s4-judge", tail)
+        self.assertNotIn("listik show", tail)
         self.assertIn("ответ по умолчанию", tail)
         self.assertIn("закрыть или принять", tail)
         self.assertIn("«зелёный»", tail)

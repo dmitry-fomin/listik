@@ -412,9 +412,6 @@ class ClaimCliTests(TempDbTestCase):
         self.assertIn("worktree_busy", task["deps_state"])
 
 
-if __name__ == "__main__":
-    unittest.main()
-
 
 class HolderNoteResetTest(TempDbTestCase):
     """listik-8d9y: «что делает» не переходит к новому держателю."""
@@ -550,3 +547,6 @@ class ClaimAfterIssueStatusTests(TempDbTestCase):
         self.assertIn("claim", kinds)
         self.assertIn("status", kinds)
 
+
+if __name__ == "__main__":
+    unittest.main()

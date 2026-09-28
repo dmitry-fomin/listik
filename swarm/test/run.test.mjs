@@ -2537,7 +2537,7 @@ test("projectsDue: открытые и дерево закрытой; вопро
   assert.deepEqual(projectsDue([
     {id: "a", project: "alpha", status: "open", launch_route: "r-a"},
     {id: "b", project: "beta", status: "done", needs_owner: true, launch_route: "r-b"},
-    {id: "c", project: "gamma", status: "done", worktree: "/wt/c", launch_route: "r-c"},
+    {id: "c", project: "gamma", status: "done", worktree: "/wt/c", labels: ["port:5170"], launch_route: "r-c"},
     {id: "d", project: "delta", status: "done", worktree: "", launched_by: "listik", launch_route: "r-d"},
     {id: "e", project: "", status: "open", launch_route: "r-e"},
   ], SWARM_ROUTES), ["alpha", "gamma"]);
@@ -2549,7 +2549,7 @@ test("projectsDue: вопрос человеку не держит проект 
   assert.deepEqual(projectsDue([
     {id: "f", project: "p-open", status: "open", launch_route: "r-f"},
     {id: "g", project: "p-progress-q", status: "in_progress", needs_owner: true, launch_route: "r-g"},
-    {id: "h", project: "p-done-q-tree", status: "done", needs_owner: true, worktree: "/wt/x", launch_route: "r-h"},
+    {id: "h", project: "p-done-q-tree", status: "done", needs_owner: true, worktree: "/wt/x", labels: ["port:5170"], launch_route: "r-h"},
     {id: "i", project: "p-done-q", status: "done", needs_owner: true, launch_route: "r-i"},
     {id: "j", project: "p-cancelled-q", status: "cancelled", needs_owner: true, launch_route: "r-j"},
     {id: "k", project: "p-cancelled-tree", status: "cancelled", worktree: "/wt/y", launch_route: "r-k"},
@@ -2592,8 +2592,19 @@ test("projectsDue: проекты только с не-роевыми карто
     {id: "h3", project: "snap", status: "open", launch_route: "r-a", launch_driver: "skill"},
     {id: "a", project: "route", status: "open", launch_route: "r-a"},
     {id: "x", project: "snapped", status: "open", launch_route: "r-skill", launch_driver: "swarm"},
-    {id: "c", project: "tree", status: "done", worktree: "/wt/c", launch_route: "r-c"},
+    {id: "c", project: "tree", status: "done", worktree: "/wt/c", labels: ["port:5170"], launch_route: "r-c"},
   ], routes), ["route", "snapped", "tree"]);
+});
+
+// listik-6tm3: закрытая карточка роя держит проект деревом, только если у неё есть
+// метка port:<число> — без порта барьер её не вольёт и дерево не снимет.
+test("projectsDue: закрытая карточка с деревом без port: проект не держит", () => {
+  assert.deepEqual(projectsDue([
+    {id: "a", project: "no-port", status: "done", worktree: "/wt/a", launch_route: "r-a"},
+    {id: "b", project: "with-port", status: "done", worktree: "/wt/b", labels: ["port:5171"], launch_route: "r-b"},
+    {id: "c", project: "bad-port", status: "done", worktree: "/wt/c", labels: ["port:abc"], launch_route: "r-c"},
+    {id: "d", project: "open-no-port", status: "open", launch_route: "r-d"},
+  ], SWARM_ROUTES), ["open-no-port", "with-port"]);
 });
 
 test("main: без --project проект только с не-роевыми карточками не тикается", async () => {

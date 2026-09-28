@@ -56,6 +56,7 @@ import {
   feedEventMark,
   feedEvents,
   feedEventTitle,
+  isClosedStatus,
   linkType,
   linkTypeLabel,
   priority,
@@ -286,8 +287,7 @@ const canFinish = computed(() => deps.value?.can_finish !== false)
  */
 const childrenBlockClose = computed(
   () =>
-    props.task?.status !== 'done' &&
-    props.task?.status !== 'cancelled' &&
+    !isClosedStatus(props.task?.status) &&
     childrenOpen.value.some((dep) => dep.status !== 'done'),
 )
 const reasons = computed<string[]>(() => deps.value?.reasons ?? [])

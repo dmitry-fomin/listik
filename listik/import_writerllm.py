@@ -247,9 +247,9 @@ def _parse_comment_item(item: Any) -> tuple[dict | None, Any]:
 def _resolve_actor(conn: sqlite3.Connection, raw_value: Any, dry_run: bool) -> str | None:
     if not raw_value:
         return None
-    key, kind = actors_mod.resolve(raw_value, conn)
+    key, _ = actors_mod.resolve(raw_value, conn)
     if not dry_run:
-        actors_mod.remember(conn, raw_value, key, kind)
+        actors_mod.remember(conn, raw_value, key)
     return key
 
 

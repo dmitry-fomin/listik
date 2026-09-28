@@ -297,7 +297,7 @@ def register_holder(conn: sqlite3.Connection, key: str) -> None:
     if not key or key == "me":
         return
     actor = f"agent:{key}"
-    actors_mod.remember(conn, key, actor, "agent")
+    actors_mod.remember(conn, key, actor)
     conn.execute(
         "INSERT INTO actors(key, title, kind, kind_hint) VALUES(?,?,?,?) "
         "ON CONFLICT(key) DO NOTHING",

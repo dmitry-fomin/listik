@@ -959,9 +959,9 @@ def revoke(conn, task_id: str, *, actor: str | None = None, harness: str | None 
         conn.execute("UPDATE tasks SET launch_finished_at = ? WHERE id = ?",
                      (store.now_iso(), task_id))
 
-    actor_key, actor_kind = actors_mod.resolve(actor, conn)
+    actor_key, _ = actors_mod.resolve(actor, conn)
     if actor:
-        actors_mod.remember(conn, actor, actor_key, actor_kind)
+        actors_mod.remember(conn, actor, actor_key)
     store.event(conn, task_id, "revoke", from_value=str(old), to_value=str(old + 1),
                actor=actor_key, harness=harness,
                note=f"{note or 'полномочия отозваны'}; запуск {dispatch_id or '—'}, "

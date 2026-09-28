@@ -411,9 +411,9 @@ def create_task(
     if source_id is not None and source_id == tid:
         raise ValueError(f"задача не может быть найдена при самой себе: {tid}")
     ts = created_at or now_iso()
-    actor_key, kind = actors_mod.resolve(created_by, conn)
+    actor_key, _ = actors_mod.resolve(created_by, conn)
     if created_by:
-        actors_mod.remember(conn, created_by, actor_key, kind)
+        actors_mod.remember(conn, created_by, actor_key)
     conn.execute(
         """
         INSERT INTO tasks(id, project, title, description, acceptance, design, notes, result, status, stage,
@@ -1135,9 +1135,9 @@ def claim(conn: sqlite3.Connection, task_id: str, *, holder: str, harness: str |
                 # первый claim самого агента — то самое доказательство запуска,
                 # по которому доска отличает «выдана» от «взята». Повторные claim
                 # того же держателя события не плодят.
-                actor_key, a_kind = actors_mod.resolve(actor, conn)
+                actor_key, _ = actors_mod.resolve(actor, conn)
                 if actor:
-                    actors_mod.remember(conn, actor, actor_key, a_kind)
+                    actors_mod.remember(conn, actor, actor_key)
                 event(conn, task_id, "claim", from_value=current_holder,
                       to_value=current_holder, actor=actor_key, harness=harness,
                       note=note or "взял задачу, которую выдали")
@@ -1225,9 +1225,9 @@ def heartbeat(conn: sqlite3.Connection, task_id: str, *, holder: str, note: str 
         raise errors_mod.NotFound(f"задача не найдена: {task_id}")
     check_task_owner(row, as_owner, task_id=task_id)
     ts = now_iso()
-    actor_key, a_kind = actors_mod.resolve(actor, conn)
+    actor_key, _ = actors_mod.resolve(actor, conn)
     if actor:
-        actors_mod.remember(conn, actor, actor_key, a_kind)
+        actors_mod.remember(conn, actor, actor_key)
     # «Что делает» принадлежит тому, кто её написал: heartbeat, сменивший держателя
     # без claim, не наследует чужую заметку — остаётся только переданная явно.
     # Смена держателя — это смена актора, а не написания: heartbeat того же агента
@@ -1279,7 +1279,7 @@ def add_comment(conn: sqlite3.Connection, task_id: str, text: str, *, author: st
             verdict_accepted = True
     failed = parse_verdict(text) if kind == "verdict" else False
     if author:
-        actors_mod.remember(conn, author, actor_key, actor_kind)
+        actors_mod.remember(conn, author, actor_key)
     ts = created_at or now_iso()
     # 32 random bits in the suffix make a same-millisecond collision negligible.
     cid = f"{task_id}:{int(datetime.now().timestamp() * 1000)}:{secrets.token_hex(4)}"
@@ -1357,9 +1357,9 @@ def stage_unchanged(conn: sqlite3.Connection, task_id: str, *, stage: str | None
         raise errors_mod.NotFound(f"задача не найдена: {task_id}")
     old_holder = (row["holder"] or "").strip()
     target = (holder or "").strip()
-    actor_key, a_kind = actors_mod.resolve(actor, conn)
+    actor_key, _ = actors_mod.resolve(actor, conn)
     if actor:
-        actors_mod.remember(conn, actor, actor_key, a_kind)
+        actors_mod.remember(conn, actor, actor_key)
     ts = now_iso()
     if note:
         event(conn, task_id, "note", actor=actor_key, harness=harness, note=note)
@@ -2780,9 +2780,7 @@ def add_dep(conn: sqlite3.Connection, issue_id: str, depends_on: str, dep_type: 
             "ставится, смысловую зависимость ставь типом blocks")
     actor_key, actor_kind = actors_mod.resolve(created_by, conn)
     if created_by:
-        actors_mod.remember(conn, created_by, actor_key, actor_kind)
-    # Правило префикса надёжнее actors.resolve: незнакомое имя вида agent:mcp
-    # тот вернёт как kind human, а вызов всё равно от агента.
+        actors_mod.remember(conn, created_by, actor_key)
     is_agent = actor_kind == "agent" or (created_by or "").strip().lower().startswith("agent:")
 
     requested_dep_type = dep_type

@@ -1,7 +1,13 @@
 """Нормализация исполнителей: Фомин Дмитрий / Dmitriy Fomin / user.email -> один актор.
 
-Правило: слияние только по явному списку алиасов (exact match по нормализованной
-строке). Никакой нечёткой склейки — иначе Виталий и Водолазкин станут одним человеком.
+Порядок `resolve` по нормализованной строке:
+1. явные алиасы — `ALIASES`, затем таблица `actor_aliases` (точное совпадение);
+   явный алиас выигрывает у подсказок агентов;
+2. подсказки агентов `AGENT_HINTS` — только целым токеном (границы: начало/конец
+   строки или пробел или один из `:/_-`), не подстрокой: `Podshivalov` не станет `dsh`,
+   `Claudia` — не `claude`;
+3. `agent:<имя>` — агент как есть; всё остальное — человек как есть.
+Никакой нечёткой склейки — иначе Виталий и Водолазкин станут одним человеком.
 """
 from __future__ import annotations
 
@@ -52,6 +58,11 @@ AGENT_HINTS = (
 )
 
 _WS_RE = re.compile(r"\s+")
+# Точка границей не считается, поэтому не `\b`: `dsh.` — не подсказка `dsh`.
+_HINT_RES = tuple(
+    (re.compile(r"(?:^|[\s:/_-])" + re.escape(hint) + r"(?:$|[\s:/_-])"), key)
+    for hint, key in AGENT_HINTS
+)
 
 
 def norm(raw: str | None) -> str:
@@ -65,15 +76,12 @@ def norm(raw: str | None) -> str:
 def resolve(raw: str | None, conn: sqlite3.Connection | None = None) -> tuple[str | None, str]:
     """Возвращает (actor_key, kind). kind: human|agent|unknown.
 
-    Неизвестный `agent:<имя>` (нет в подсказках и в actor_aliases) — агент.
+    Порядок: `ALIASES`, `actor_aliases`, подсказки агентов по токенам, `agent:<имя>`.
+    Неизвестный `agent:<имя>` (нет в алиасах и подсказках) — агент.
     """
     n = norm(raw)
     if not n:
         return None, "unknown"
-
-    for hint, key in AGENT_HINTS:
-        if hint in n:
-            return key, "agent"
 
     if n in ALIASES:
         return ALIASES[n], "human"
@@ -88,6 +96,10 @@ def resolve(raw: str | None, conn: sqlite3.Connection | None = None) -> tuple[st
             kind = "agent" if actor.startswith("agent:") else "human"
             return actor, kind
 
+    for rx, key in _HINT_RES:
+        if rx.search(n):
+            return key, "agent"
+
     if n.startswith("agent:") and len(n) > len("agent:"):
         return n, "agent"
 
@@ -101,7 +113,8 @@ def same_actor(a: str | None, b: str | None, conn: sqlite3.Connection | None = N
 
     Единственное правило тождества держателей в Listik: `claude`/`agent:claude`/
     `sonnet-judge` — один актор, `dsh`/`agent:dsh`/`dsh/deepseek-flash` — один,
-    `alice` и `alicia` — разные. Ничего сверх того, что уже даёт `resolve`
+    `alice` и `alicia` — разные, `Podshivalov` и `dsh` — разные (подсказка агента
+    совпадает только целым токеном). Ничего сверх того, что уже даёт `resolve`
     (алиасы, подсказки агентов, `actor_aliases`, нормализация `norm`).
 
     Пустая строка (и `None`) не тождественна ничему, включая другую пустую:
@@ -113,18 +126,15 @@ def same_actor(a: str | None, b: str | None, conn: sqlite3.Connection | None = N
     return resolve(a, conn)[0] == resolve(b, conn)[0]
 
 
-def remember(conn: sqlite3.Connection, raw: str | None, actor: str | None, kind: str, note: str = "") -> None:
+def remember(conn: sqlite3.Connection, raw: str | None, actor: str | None) -> None:
     n = norm(raw)
     if not n or not actor:
         return
-    try:
-        conn.execute(
-            "INSERT INTO actor_aliases(raw, actor) VALUES(?,?) "
-            "ON CONFLICT(raw) DO UPDATE SET actor=excluded.actor",
-            (n, actor),
-        )
-    except sqlite3.OperationalError:
-        pass
+    conn.execute(
+        "INSERT INTO actor_aliases(raw, actor) VALUES(?,?) "
+        "ON CONFLICT(raw) DO UPDATE SET actor=excluded.actor",
+        (n, actor),
+    )
 
 
 def display(actor: str | None) -> str:

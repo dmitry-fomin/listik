@@ -320,6 +320,17 @@ export function routeIcon(value: string | null | undefined): RouteIconItem | nul
   return ROUTE_ICONS.find((item) => item.value === value) ?? null
 }
 
+/** Варианты пикера иконки маршрута: шесть `ROUTE_ICONS` (подпись — `hint`) и «Без иконки». */
+export const ROUTE_ICON_OPTIONS: { value: string; label: string }[] = [
+  ...ROUTE_ICONS.map((item) => ({ value: item.value as string, label: item.hint })),
+  { value: '', label: 'Без иконки' },
+]
+
+/** Имя иконки уровня для кнопки пикера; пусто или незнакомо — `null`. */
+export function routeIconGlyph(value: string): string | null {
+  return routeIcon(value)?.icon ?? null
+}
+
 // ── Вид записи ленты (секция «Журнал и вердикты» панели задачи) ─────────────
 
 export interface CommentKindItem extends DictionaryItem<CommentKind> {

@@ -7,6 +7,7 @@
  * (`routes.labels_for`) и он же переписывает при смене — они для человека и
  * поиска, а кто реально допущен до этапа, решает routing проекта.
  */
+import type { UiRecordListColumn } from '@zoloto585/facet'
 import type {
   PipelineRouteDef,
   RouteDef,
@@ -363,3 +364,33 @@ export function previewCommand(argv: string[], routeKey: string): string {
     })
     .join(' ')
 }
+
+/** Промпт — последним элементом команды, если он не пустой после `trim()`. */
+export function withPrompt(argv: string[], prompt: string): string[] {
+  return prompt.trim() === '' ? argv : [...argv, prompt]
+}
+
+// ── строки аргументов команды (редактор argv в `UiRecordList`) ──────────────
+
+/** Строка редактора аргументов: `id` — ключ строки списка, `value` — один элемент argv. */
+export interface ArgRow extends Record<string, unknown> {
+  id: string
+  value: string
+}
+
+/** Счётчик на модуль: id `arg-<N>` не повторяются в пределах страницы. */
+let rowSeq = 0
+
+export function argRowsOf(values: string[]): ArgRow[] {
+  return values.map((value) => ({ id: `arg-${(rowSeq += 1)}`, value }))
+}
+
+export function createArgRow(): ArgRow {
+  return { id: `arg-${(rowSeq += 1)}`, value: '' }
+}
+
+export function rowKeyOf(row: ArgRow): string {
+  return row.id
+}
+
+export const ARG_COLUMNS: UiRecordListColumn[] = [{ key: 'value', label: 'Аргумент', type: 'custom' }]

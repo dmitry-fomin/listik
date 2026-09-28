@@ -41,7 +41,7 @@ import {
   UiSaveStatus,
   UiSwitch,
 } from '@zoloto585/facet'
-import IconToggle, { type IconToggleOption } from './IconToggle.vue'
+import IconToggle from './IconToggle.vue'
 import ListikIcon from './ListikIcon.vue'
 import ProviderIcon from './marks/ProviderIcon.vue'
 import RouteIcon from './marks/RouteIcon.vue'
@@ -49,7 +49,7 @@ import RouteSubstitutions from './RouteSubstitutions.vue'
 import store from '@/store/listik'
 import type { PipelineRouteDef, RouteIconKey, RoutePatch } from '@/api/types'
 import { useAutosave } from '@/lib/autosave'
-import { PIPELINE_STAGES, ROUTE_ICONS } from '@/lib/dictionaries'
+import { PIPELINE_STAGES, ROUTE_ICON_OPTIONS, routeIconGlyph } from '@/lib/dictionaries'
 import {
   isProviderCell,
   ROLE_KEYS,
@@ -132,15 +132,7 @@ function errorFor(field: string): string | undefined {
 
 /* ── иконка: семь кнопок-глифов (шесть ROUTE_ICONS + «Без иконки») ── */
 
-const iconOptions = computed<IconToggleOption<string>[]>(() => [
-  ...ROUTE_ICONS.map((item) => ({ value: item.value as string, label: item.hint })),
-  { value: '', label: 'Без иконки' },
-])
 const iconValue = computed(() => draft.icon ?? '')
-
-function glyphFor(value: string): string | null {
-  return ROUTE_ICONS.find((item) => item.value === value)?.icon ?? null
-}
 
 function onIcon(value: string): void {
   draft.icon = value === '' ? null : (value as RouteIconKey)
@@ -233,13 +225,13 @@ function braced(name: string): string {
       <h4 class="listik-route-card__label">Иконка в списках и на карточке</h4>
       <IconToggle
         :model-value="iconValue"
-        :options="iconOptions"
+        :options="ROUTE_ICON_OPTIONS"
         ariaLabel="Иконка маршрута"
         @update:model-value="onIcon"
       >
         <template #icon="{ option }">
           <span v-if="option.value === ''" class="listik-route-card__icon-none">Без иконки</span>
-          <ListikIcon v-else :name="glyphFor(option.value) ?? ''" size="sm" />
+          <ListikIcon v-else :name="routeIconGlyph(option.value) ?? ''" size="sm" />
         </template>
       </IconToggle>
     </section>

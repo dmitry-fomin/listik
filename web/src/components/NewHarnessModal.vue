@@ -13,7 +13,7 @@
  * (список уже перечитан стором), ошибка остаётся в окне. При `409` к тексту
  * добавляется строка про занятый ключ.
  */
-import { computed, onMounted, ref, watch } from 'vue'
+import { computed, ref, watch } from 'vue'
 import {
   UiAlert,
   UiField,
@@ -22,15 +22,26 @@ import {
   UiRecordList,
   UiSwitch,
   UiTextarea,
-  type UiRecordListColumn,
 } from '@zoloto585/facet'
 import IconToggle, { type IconToggleOption } from './IconToggle.vue'
 import ListikIcon from './ListikIcon.vue'
 import HarnessIcon from './marks/HarnessIcon.vue'
 import store from '@/store/listik'
 import type { Harness, HarnessCreate } from '@/api/types'
-import { HARNESS_ICON_OPTIONS } from '@/lib/harness'
-import { ROUTE_PLACEHOLDERS, braced, commandProblemText, previewCommand } from '@/lib/routes'
+import { bindSubmitDisabled } from '@/lib/form-modal'
+import { HARNESS_ICON_OPTIONS, keyProblem, slugifyKey } from '@/lib/harness'
+import {
+  ARG_COLUMNS,
+  type ArgRow,
+  ROUTE_PLACEHOLDERS,
+  argRowsOf,
+  braced,
+  commandProblemText,
+  createArgRow,
+  previewCommand,
+  rowKeyOf,
+  withPrompt,
+} from '@/lib/routes'
 
 const emit = defineEmits<{ created: [harness: Harness]; close: [] }>()
 
@@ -52,30 +63,12 @@ const iconOptions: IconToggleOption<string>[] = HARNESS_ICON_OPTIONS
 const manual = ref(false)
 const prompt = ref('')
 
-interface ArgRow extends Record<string, unknown> {
-  id: string
-  value: string
-}
-
-let rowSeq = 0
-function argRowsOf(values: string[]): ArgRow[] {
-  return values.map((value) => ({ id: `arg-${(rowSeq += 1)}`, value }))
-}
-
 /** Аргументы команды по умолчанию: строка — один аргумент, кавычки не нужны. */
 const argRows = ref<ArgRow[]>(argRowsOf(['']))
 
-/** Тот же ключ, что проверяет сервер (`listik/routes.py KEY_RE`). */
-const KEY_RE = /^[a-z0-9][a-z0-9-]*$/
-
-function draftKeyFromLabel(value: string): string {
-  return value.toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^-+|-+$/g, '')
-}
-
 watch(label, (value) => {
   if (keyTouched.value) return
-  const draft = draftKeyFromLabel(value)
-  key.value = KEY_RE.test(draft) ? draft : ''
+  key.value = slugifyKey(value)
 })
 
 function onKeyInput(value: string): void {
@@ -87,14 +80,7 @@ function onKeyInput(value: string): void {
 
 const labelError = computed(() => (label.value.trim() === '' ? 'имя не заполнено' : null))
 
-const keyError = computed(() => {
-  const value = key.value
-  if (!value) return 'ключ не заполнен'
-  if (!KEY_RE.test(value)) {
-    return 'ключ: строчные латинские буквы, цифры и дефис, начинается с буквы или цифры'
-  }
-  return null
-})
+const keyError = computed(() => keyProblem(key.value))
 
 const argProblems = computed(() => argRows.value.map((row) => commandProblemText(row.value)))
 const promptProblem = computed(() => commandProblemText(prompt.value))
@@ -126,35 +112,11 @@ const canSubmit = computed(
  */
 const submitDisabled = computed(() => !canSubmit.value)
 
-function syncSubmitDisabled(): void {
-  const anchor = document.querySelector('.listik-new-harness__anchor')
-  const form = anchor?.closest('form') ?? null
-  if (!form) return
-  const button = document.querySelector<HTMLButtonElement>(`button[form="${form.id}"]`)
-  if (!button) return
-  if (submitDisabled.value) button.setAttribute('submit-disabled', '')
-  else button.removeAttribute('submit-disabled')
-}
+bindSubmitDisabled('.listik-new-harness__anchor', submitDisabled)
 
-onMounted(syncSubmitDisabled)
-watch(submitDisabled, syncSubmitDisabled, { flush: 'post' })
+/* ── предпросмотр ── */
 
-/* ── список аргументов и предпросмотр ── */
-
-const argColumns: UiRecordListColumn[] = [{ key: 'value', label: 'Аргумент', type: 'custom' }]
-
-function createArgRow(): ArgRow {
-  return { id: `arg-${(rowSeq += 1)}`, value: '' }
-}
-
-function rowKeyOf(row: ArgRow): string {
-  return row.id
-}
-
-const preview = computed(() => {
-  const parts = prompt.value.trim() === '' ? argv.value : [...argv.value, prompt.value]
-  return previewCommand(parts, key.value || 'route')
-})
+const preview = computed(() => previewCommand(withPrompt(argv.value, prompt.value), key.value || 'route'))
 
 /* ── отправка ── */
 
@@ -257,7 +219,7 @@ async function submit(): Promise<void> {
       >
         <UiRecordList
           v-model="argRows"
-          :columns="argColumns"
+          :columns="ARG_COLUMNS"
           :row-key="rowKeyOf"
           :create-row="createArgRow"
           add-label="Добавить аргумент"

@@ -31,7 +31,6 @@ import {
   UiSaveStatus,
   UiSwitch,
   UiTextarea,
-  type UiRecordListColumn,
 } from '@zoloto585/facet'
 import IconToggle, { type IconToggleOption } from './IconToggle.vue'
 import ListikIcon from './ListikIcon.vue'
@@ -43,21 +42,20 @@ import type { Harness, HarnessPatch } from '@/api/types'
 import { ROLE_STAGE, type RoleKey } from '@/lib/pipelines'
 import { PIPELINE_STAGES } from '@/lib/dictionaries'
 import { HARNESS_ICON_OPTIONS } from '@/lib/harness'
-import { commandProblemText, previewCommand } from '@/lib/routes'
+import {
+  ARG_COLUMNS,
+  type ArgRow,
+  argRowsOf,
+  commandProblemText,
+  createArgRow,
+  previewCommand,
+  rowKeyOf,
+  withPrompt,
+} from '@/lib/routes'
 
 const props = defineProps<{ harness: Harness }>()
 
 /* ── черновик ── */
-
-interface ArgRow extends Record<string, unknown> {
-  id: string
-  value: string
-}
-
-let rowSeq = 0
-function argRowsOf(values: string[]): ArgRow[] {
-  return values.map((value) => ({ id: `arg-${(rowSeq += 1)}`, value }))
-}
 
 const label = ref(props.harness.label)
 const hint = ref(props.harness.hint)
@@ -173,20 +171,7 @@ watch(argRows, () => schedule(false), { deep: true })
 
 /* ── список аргументов и предпросмотр ── */
 
-const argColumns: UiRecordListColumn[] = [{ key: 'value', label: 'Аргумент', type: 'custom' }]
-
-function createArgRow(): ArgRow {
-  return { id: `arg-${(rowSeq += 1)}`, value: '' }
-}
-
-function rowKeyOf(row: ArgRow): string {
-  return row.id
-}
-
-const preview = computed(() => {
-  const parts = prompt.value.trim() === '' ? argv.value : [...argv.value, prompt.value]
-  return previewCommand(parts, props.harness.key)
-})
+const preview = computed(() => previewCommand(withPrompt(argv.value, prompt.value), props.harness.key))
 
 /* ── «Где используется» ── */
 
@@ -274,7 +259,7 @@ const usages = computed<UsageRow[]>(() =>
         </div>
         <UiRecordList
           v-model="argRows"
-          :columns="argColumns"
+          :columns="ARG_COLUMNS"
           :row-key="rowKeyOf"
           :create-row="createArgRow"
           add-label="Добавить аргумент"

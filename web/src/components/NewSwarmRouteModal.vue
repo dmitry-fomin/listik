@@ -25,13 +25,14 @@ import {
   UiSwitch,
   type UiSelectOption,
 } from '@zoloto585/facet'
-import IconToggle, { type IconToggleOption } from './IconToggle.vue'
+import IconToggle from './IconToggle.vue'
 import ListikIcon from './ListikIcon.vue'
 import HarnessIcon from './marks/HarnessIcon.vue'
 import store from '@/store/listik'
 import type { RouteIconKey, SwarmRoleCell, SwarmRoles, SwarmRouteDef } from '@/api/types'
-import { PIPELINE_STAGES, ROUTE_ICONS } from '@/lib/dictionaries'
-import { runnableHarness } from '@/lib/harness'
+import { PIPELINE_STAGES, ROUTE_ICON_OPTIONS, routeIconGlyph } from '@/lib/dictionaries'
+import { bindSubmitDisabled } from '@/lib/form-modal'
+import { keyProblem, runnableHarness, slugifyKey } from '@/lib/harness'
 import { ROLE_KEYS, ROLE_STAGE, ROLE_TITLES, type RoleKey } from '@/lib/pipelines'
 
 const emit = defineEmits<{ created: [route: SwarmRouteDef]; close: [] }>()
@@ -126,16 +127,9 @@ const hint = ref('')
 const icon = ref<RouteIconKey | null>('medium')
 const visible = ref(true)
 
-const KEY_RE = /^[a-z0-9][a-z0-9-]*$/
-
-function draftKeyFromTitle(value: string): string {
-  return value.toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^-+|-+$/g, '')
-}
-
 watch(title, (value) => {
   if (keyTouched.value) return
-  const draft = draftKeyFromTitle(value)
-  key.value = KEY_RE.test(draft) ? draft : ''
+  key.value = slugifyKey(value)
 })
 
 function onKeyInput(value: string): void {
@@ -147,14 +141,7 @@ function onKeyInput(value: string): void {
 
 const titleError = computed(() => (title.value.trim() === '' ? 'название не заполнено' : null))
 
-const keyError = computed(() => {
-  const value = key.value
-  if (!value) return 'ключ не заполнен'
-  if (!KEY_RE.test(value)) {
-    return 'ключ: строчные латинские буквы, цифры и дефис, начинается с буквы или цифры'
-  }
-  return null
-})
+const keyError = computed(() => keyProblem(key.value))
 
 const rolesError = computed(() =>
   ROLE_KEYS.every((role) => roleHarness[role] === SKIP)
@@ -171,30 +158,11 @@ const canSubmit = computed(
 
 const submitDisabled = computed(() => !canSubmit.value)
 
-function syncSubmitDisabled(): void {
-  const anchor = document.querySelector('.listik-new-swarm__anchor')
-  const form = anchor?.closest('form') ?? null
-  if (!form) return
-  const button = document.querySelector<HTMLButtonElement>(`button[form="${form.id}"]`)
-  if (!button) return
-  if (submitDisabled.value) button.setAttribute('submit-disabled', '')
-  else button.removeAttribute('submit-disabled')
-}
-
-onMounted(syncSubmitDisabled)
-watch(submitDisabled, syncSubmitDisabled, { flush: 'post' })
+bindSubmitDisabled('.listik-new-swarm__anchor', submitDisabled)
 
 /* ── иконка ── */
 
-const iconOptions = computed<IconToggleOption<string>[]>(() => [
-  ...ROUTE_ICONS.map((item) => ({ value: item.value as string, label: item.hint })),
-  { value: '', label: 'Без иконки' },
-])
 const iconValue = computed(() => icon.value ?? '')
-
-function glyphFor(value: string): string | null {
-  return ROUTE_ICONS.find((item) => item.value === value)?.icon ?? null
-}
 
 function onIcon(value: string): void {
   icon.value = value === '' ? null : (value as RouteIconKey)
@@ -316,13 +284,13 @@ async function submit(): Promise<void> {
     <UiField label="Иконка">
       <IconToggle
         :model-value="iconValue"
-        :options="iconOptions"
+        :options="ROUTE_ICON_OPTIONS"
         ariaLabel="Иконка маршрута"
         @update:model-value="onIcon"
       >
         <template #icon="{ option }">
           <span v-if="option.value === ''" class="listik-new-swarm__icon-none">Без иконки</span>
-          <ListikIcon v-else :name="glyphFor(option.value) ?? ''" size="sm" />
+          <ListikIcon v-else :name="routeIconGlyph(option.value) ?? ''" size="sm" />
         </template>
       </IconToggle>
     </UiField>

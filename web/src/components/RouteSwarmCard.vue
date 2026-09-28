@@ -35,10 +35,9 @@ import {
   UiSelect,
   UiSwitch,
   UiTextarea,
-  type UiRecordListColumn,
   type UiSelectOption,
 } from '@zoloto585/facet'
-import IconToggle, { type IconToggleOption } from './IconToggle.vue'
+import IconToggle from './IconToggle.vue'
 import ListikIcon from './ListikIcon.vue'
 import HarnessIcon from './marks/HarnessIcon.vue'
 import RouteIcon from './marks/RouteIcon.vue'
@@ -47,14 +46,19 @@ import RouteSubstitutions from './RouteSubstitutions.vue'
 import store from '@/store/listik'
 import { useAutosave } from '@/lib/autosave'
 import type { RouteIconKey, RoutePatch, RouteRemoved, SwarmLikeRoute, SwarmRoles } from '@/api/types'
-import { PIPELINE_STAGES, ROUTE_ICONS } from '@/lib/dictionaries'
+import { PIPELINE_STAGES, ROUTE_ICON_OPTIONS, routeIconGlyph } from '@/lib/dictionaries'
 import { harnessTitle, runnableHarness } from '@/lib/harness'
 import { isSwarmCell, ROLE_KEYS, ROLE_STAGE, ROLE_TITLES, type RoleKey } from '@/lib/pipelines'
 import {
+  ARG_COLUMNS,
+  type ArgRow,
+  argRowsOf,
   braced,
   commandProblemText,
+  createArgRow,
   previewChunks,
   previewCommand,
+  rowKeyOf,
   unknownPlaceholders,
   type PlaceholderChunk,
 } from '@/lib/routes'
@@ -82,16 +86,6 @@ interface RoleDraft {
   /** Свой argv; `null` — роль берёт команду по умолчанию харнесса. */
   argv: string[] | null
   prompt: string
-}
-
-interface ArgRow extends Record<string, unknown> {
-  id: string
-  value: string
-}
-
-let rowSeq = 0
-function argRowsOf(values: string[]): ArgRow[] {
-  return values.map((value) => ({ id: `arg-${(rowSeq += 1)}`, value }))
 }
 
 function headerOf(route: SwarmLikeRoute): HeaderDraft {
@@ -383,15 +377,7 @@ async function confirmRemove(): Promise<void> {
 
 /* ── иконка: семь кнопок-глифов, как у остальных карточек ── */
 
-const iconOptions = computed<IconToggleOption<string>[]>(() => [
-  ...ROUTE_ICONS.map((item) => ({ value: item.value as string, label: item.hint })),
-  { value: '', label: 'Без иконки' },
-])
 const iconValue = computed(() => draft.icon ?? '')
-
-function glyphFor(value: string): string | null {
-  return ROUTE_ICONS.find((item) => item.value === value)?.icon ?? null
-}
 
 function onIcon(value: string): void {
   draft.icon = value === '' ? null : (value as RouteIconKey)
@@ -451,16 +437,6 @@ const roleTiles = computed<RoleTile[]>(() =>
 
 function selectRole(role: RoleKey): void {
   openRole.value = role
-}
-
-const argColumns: UiRecordListColumn[] = [{ key: 'value', label: 'Аргумент', type: 'custom' }]
-
-function createArgRow(): ArgRow {
-  return { id: `arg-${(rowSeq += 1)}`, value: '' }
-}
-
-function rowKeyOf(row: ArgRow): string {
-  return row.id
 }
 
 function hasBraces(value: string): boolean {
@@ -544,13 +520,13 @@ const roleInherits = computed(() => {
       <h4 class="listik-route-swarm__label">Иконка в списках и на карточке</h4>
       <IconToggle
         :model-value="iconValue"
-        :options="iconOptions"
+        :options="ROUTE_ICON_OPTIONS"
         ariaLabel="Иконка маршрута"
         @update:model-value="onIcon"
       >
         <template #icon="{ option }">
           <span v-if="option.value === ''" class="listik-route-swarm__icon-none">Без иконки</span>
-          <ListikIcon v-else :name="glyphFor(option.value) ?? ''" size="sm" />
+          <ListikIcon v-else :name="routeIconGlyph(option.value) ?? ''" size="sm" />
         </template>
       </IconToggle>
     </section>
@@ -617,7 +593,7 @@ const roleInherits = computed(() => {
         </div>
         <UiRecordList
           v-model="roleArgs"
-          :columns="argColumns"
+          :columns="ARG_COLUMNS"
           :row-key="rowKeyOf"
           :create-row="createArgRow"
           add-label="Добавить аргумент"

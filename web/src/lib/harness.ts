@@ -79,7 +79,23 @@ export const HARNESS_ICON_OPTIONS: { value: string; label: string }[] = [
   { value: '', label: 'общий глиф' },
 ]
 
-const KEY_RE = /^[a-z0-9][a-z0-9-]*$/
+/** Тот же ключ, что проверяет сервер (`listik/routes.py KEY_RE`). */
+export const KEY_RE = /^[a-z0-9][a-z0-9-]*$/
+
+/** Черновик ключа из имени/названия: годный по `KEY_RE` или `''`. */
+export function slugifyKey(value: string): string {
+  const draft = value.toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^-+|-+$/g, '')
+  return KEY_RE.test(draft) ? draft : ''
+}
+
+/** Причина, по которой ключ не годится; `null` — годится. */
+export function keyProblem(value: string): string | null {
+  if (!value) return 'ключ не заполнен'
+  if (!KEY_RE.test(value)) {
+    return 'ключ: строчные латинские буквы, цифры и дефис, начинается с буквы или цифры'
+  }
+  return null
+}
 
 /**
  * Ключ харнесса держателя для глифа и подписи; `null` — держателя нет,

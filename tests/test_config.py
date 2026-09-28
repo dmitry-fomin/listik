@@ -333,5 +333,13 @@ class DefaultsIsolationTests(unittest.TestCase):
         self.assertEqual(config_mod.DEFAULTS, before)
 
 
+class AuthTokenTests(unittest.TestCase):
+    def test_auth_token(self) -> None:
+        self.assertEqual(config_mod.auth_token({"auth": {"token": "t"}}), "t")
+        for cfg in ({}, {"auth": None}, {"auth": {}}, {"auth": {"token": ""}}):
+            with self.subTest(cfg=cfg):
+                self.assertEqual(config_mod.auth_token(cfg), "")
+
+
 if __name__ == "__main__":
     unittest.main()

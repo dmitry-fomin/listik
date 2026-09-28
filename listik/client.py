@@ -40,8 +40,7 @@ def base_url(host: str | None = None, port: int | None = None) -> str:
 
 
 def token() -> str:
-    cfg = config_mod.load()
-    return (cfg.get("auth") or {}).get("token", "")
+    return config_mod.auth_token(config_mod.load())
 
 
 def owner(explicit: str | None = None) -> str:
@@ -106,8 +105,7 @@ def _query_string(query: dict) -> str:
         if value is None:
             continue
         text = str(value)
-        safe = ",/" if ("/" in text or "," in text) else ","
-        parts.append(f"{urllib.parse.quote(str(key))}={urllib.parse.quote(text, safe=safe)}")
+        parts.append(f"{urllib.parse.quote(str(key))}={urllib.parse.quote(text, safe=',/')}")
     return "&".join(parts)
 
 

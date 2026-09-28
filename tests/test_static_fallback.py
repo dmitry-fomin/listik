@@ -10,6 +10,7 @@ Safari, попросивший `/favicon.ico` и получивший HTML-ст�
 """
 from __future__ import annotations
 
+import html
 import pathlib
 import struct
 import tempfile
@@ -94,6 +95,20 @@ class StaticFallbackTest(StaticCase):
                 self.assertEqual(status, 200)
                 self.assertIn("text/html", headers["Content-Type"])
                 self.assertEqual(body.decode("utf-8"), INDEX)
+
+    def test_board_not_built_shows_actual_web_dir(self):
+        """Без dist/index.html страница-заглушка называет настоящий каталог фронта.
+
+        Маршрут без расширения: `/` превращается в `index.html` и при отсутствии файла
+        получает 404 как ассет (поведение с listik-5cb0, в этой правке не меняется).
+        """
+        (self.dist / "index.html").unlink()
+        status, headers, body = self.get("/board")
+        self.assertEqual(status, 200)
+        self.assertIn("text/html", headers["Content-Type"])
+        text = body.decode("utf-8")
+        self.assertIn(f"cd {html.escape(str(paths.WEB_DIR))}\n", text)
+        self.assertNotIn("~/Projects/Listik/web", text)
 
 
 class FaviconAssetsTest(unittest.TestCase):

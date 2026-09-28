@@ -892,7 +892,7 @@ def _post_notify(task_id: str, action: str) -> None:
             f"http://{host}:{int(cfg['server']['port'])}/api/notify",
             data=body, method="POST")
         req.add_header("Content-Type", "application/json")
-        token = (cfg.get("auth") or {}).get("token") or ""
+        token = config_mod.auth_token(cfg)
         if token:
             req.add_header("Authorization", f"Bearer {token}")
         with urllib.request.urlopen(req, timeout=NOTIFY_TIMEOUT):

@@ -89,30 +89,29 @@ def _parse_generation(value) -> int | None:
     return gen if gen >= 0 else None
 
 
+def _token(task_id, generation, dispatch_id) -> Token | None:
+    """Общие правила разбора: пустая задача или негодное поколение — `None`."""
+    task_id = str(task_id or "").strip()
+    if not task_id:
+        return None
+    generation = _parse_generation(generation)
+    if generation is None:
+        return None
+    dispatch_id = str(dispatch_id or "").strip() or None
+    return Token(task_id=task_id, generation=generation, dispatch_id=dispatch_id)
+
+
 def from_env(environ=None) -> Token | None:
     """Токен процесса — окружение, выданное лаунчером. `None`, если его нет."""
     import os
     env = environ if environ is not None else os.environ
-    task_id = (env.get(ENV_TASK) or "").strip()
-    if not task_id:
-        return None
-    generation = _parse_generation(env.get(ENV_GENERATION))
-    if generation is None:
-        return None
-    dispatch_id = (env.get(ENV_DISPATCH) or "").strip() or None
-    return Token(task_id=task_id, generation=generation, dispatch_id=dispatch_id)
+    return _token(env.get(ENV_TASK), env.get(ENV_GENERATION), env.get(ENV_DISPATCH))
 
 
 def from_headers(headers) -> Token | None:
     """Токен из HTTP-заголовков — те же правила, что и у `from_env`."""
-    task_id = (headers.get(HEADER_TASK) or "").strip()
-    if not task_id:
-        return None
-    generation = _parse_generation(headers.get(HEADER_GENERATION))
-    if generation is None:
-        return None
-    dispatch_id = (headers.get(HEADER_DISPATCH) or "").strip() or None
-    return Token(task_id=task_id, generation=generation, dispatch_id=dispatch_id)
+    return _token(headers.get(HEADER_TASK), headers.get(HEADER_GENERATION),
+                  headers.get(HEADER_DISPATCH))
 
 
 def to_headers(token: Token) -> dict[str, str]:
@@ -130,29 +129,20 @@ def from_mapping(value) -> Token | None:
     """
     if value is None or isinstance(value, Token):
         return value
-    task_id = str(value.get("task_id") or "").strip()
-    if not task_id:
-        return None
-    generation = _parse_generation(value.get("generation"))
-    if generation is None:
-        return None
-    dispatch_id = value.get("dispatch_id")
-    dispatch_id = str(dispatch_id).strip() if dispatch_id else None
-    return Token(task_id=task_id, generation=generation, dispatch_id=dispatch_id or None)
+    return _token(value.get("task_id"), value.get("generation"), value.get("dispatch_id"))
 
 
-def matches(token: Token, row) -> bool:
+def matches(token: Token, current_generation: int, current_dispatch: str | None) -> bool:
     """Токен совпадает с текущим состоянием карточки: поколение и запуск сходятся.
 
     Поколение должно совпасть строго; запуск (`dispatch_id`) допускает пустоту с
     любой стороны — иначе запуски до появления поколений (`dispatch_id IS NULL`)
     отвергались бы всегда. Поколение из токена больше текущего — тоже несовпадение:
-    такого токена сервер никогда не выдавал.
+    такого токена сервер никогда не выдавал. Текущие значения уже нормализованы
+    вызывающим (`guard`).
     """
-    current_generation = int(row["generation"] or 0)
     if token.generation != current_generation:
         return False
-    current_dispatch = row["dispatch_id"] or None
     if not token.dispatch_id or not current_dispatch:
         return True
     return token.dispatch_id == current_dispatch
@@ -204,10 +194,10 @@ def guard(conn, task_id: str, token: Token | None, *, op: str, args: dict,
                        (task_id,)).fetchone()
     if row is None:
         return
-    if matches(token, row):
-        return
     current_generation = int(row["generation"] or 0)
     current_dispatch = row["dispatch_id"] or None
+    if matches(token, current_generation, current_dispatch):
+        return
     quarantine(conn, task_id, token, op=op, args=args,
               current_generation=current_generation, current_dispatch=current_dispatch,
               actor=actor, harness=harness)

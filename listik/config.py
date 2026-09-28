@@ -214,10 +214,15 @@ def save(cfg: dict, path: Path | None = None) -> Path:
     return _atomic_write(cfg_path, _dump(cfg))
 
 
+def auth_token(cfg: dict) -> str:
+    """Токен из `[auth] token`; нет раздела, ключа или значение пустое — пустая строка."""
+    return (cfg.get("auth") or {}).get("token") or ""
+
+
 def ensure_token(cfg: dict | None = None) -> tuple[dict, str]:
     """Возвращает (cfg, token), создавая файл конфига и токен при необходимости."""
     cfg = cfg or load()
-    token = (cfg.get("auth") or {}).get("token") or ""
+    token = auth_token(cfg)
     if not token:
         token = secrets.token_urlsafe(24)
         cfg.setdefault("auth", {})["token"] = token

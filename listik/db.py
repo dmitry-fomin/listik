@@ -356,8 +356,10 @@ MIGRATIONS: list[tuple[str, str, str]] = [
 def connect(db_path: Path | None = None) -> sqlite3.Connection:
     path = Path(db_path or paths.DB_PATH)
     path.parent.mkdir(parents=True, exist_ok=True)
-    # check_same_thread=False: сервер Listik многопоточный (ThreadingHTTPServer),
-    # а доступ к базе сериализуется блокировкой вокруг соединения.
+    # check_same_thread=False: у сервера одно соединение на поток (threading.local);
+    # флаг нужен, чтобы соединение можно было закрыть из другого потока — надзор за
+    # файлами базы закрывает чужие соединения при подмене файла
+    # (server._invalidate_connections).
     conn = sqlite3.connect(path, timeout=30.0, check_same_thread=False)
     conn.row_factory = sqlite3.Row
     conn.execute("PRAGMA journal_mode = WAL")

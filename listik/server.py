@@ -7,6 +7,7 @@
 from __future__ import annotations
 
 import base64
+import html
 import json
 import mimetypes
 import os
@@ -208,21 +209,29 @@ def _fingerprint_diff(before: dict, after: dict, open_conns: int) -> dict | None
     последним соединением, значит, его удалил кто-то извне).
     """
     changes: list[str] = []
+    db_changed = wal_changed = False
     db_before, db_after = before.get("db"), after.get("db")
     wal_before, wal_after = before.get("wal"), after.get("wal")
     if db_before and not db_after:
         changes.append("файл базы исчез")
+        db_changed = True
     elif db_before and db_after and db_before != db_after:
         changes.append("файл базы заменён")
+        db_changed = True
     if wal_before and wal_after and wal_before != wal_after:
         changes.append("файл WAL заменён")
+        wal_changed = True
     elif wal_before and not wal_after and open_conns > 0:
         changes.append("файл WAL исчез")
+        wal_changed = True
     if not changes:
         return None
-    kind = "db" if changes[0].startswith("файл базы") else "wal"
-    if len(changes) > 1:
+    if db_changed and wal_changed:
         kind = "db+wal"
+    elif db_changed:
+        kind = "db"
+    else:
+        kind = "wal"
     return {
         "kind": kind,
         "at": store.now_iso(),
@@ -1484,15 +1493,15 @@ class Handler(BaseHTTPRequestHandler):
 
     # --- helpers
     def _token(self) -> str:
-        cfg = config_mod.load()
-        return (cfg.get("auth") or {}).get("token", "")
+        # Конфиг читается на каждый запрос: токен на диске может смениться.
+        return config_mod.auth_token(config_mod.load())
 
     def _owner(self) -> str | None:
         """Идентичность запроса: `X-Listik-Owner` после strip; пустой заголовок — None."""
         value = (self.headers.get("X-Listik-Owner") or "").strip()
         return value or None
 
-    def _authed(self, query: dict) -> bool:
+    def _authed(self, query: dict, allow_query_token: bool = True) -> bool:
         token = self._token()
         if not token:
             return True
@@ -1501,6 +1510,8 @@ class Handler(BaseHTTPRequestHandler):
             return True
         if self.headers.get("X-Listik-Token") == token:
             return True
+        if not allow_query_token:
+            return False
         return bool(query.get("token") and query["token"][0] == token)
 
     def _send(self, status: int, payload: bytes, ctype: str, extra: dict | None = None) -> None:
@@ -1649,15 +1660,11 @@ class Handler(BaseHTTPRequestHandler):
             return plain(403, "запросы с Origin к /mcp запрещены", {"Connection": "close"})
 
         # 2. Своя авторизация: ?token= в строке запроса здесь не принимается.
-        token = self._token()
-        if token:
-            auth = self.headers.get("Authorization", "")
-            bearer = auth.startswith("Bearer ") and auth[7:].strip() == token
-            if not bearer and self.headers.get("X-Listik-Token") != token:
-                self.close_connection = True
-                return plain(401, "нужен токен: Authorization: Bearer <token>",
-                             {"WWW-Authenticate": 'Bearer realm="listik"',
-                              "Connection": "close"})
+        if not self._authed({}, allow_query_token=False):
+            self.close_connection = True
+            return plain(401, "нужен токен: Authorization: Bearer <token>",
+                         {"WWW-Authenticate": 'Bearer realm="listik"',
+                          "Connection": "close"})
 
         # 3. Тело больше 5 МБ не читаем, а соединение закрываем: непрочитанное тело
         # испортило бы следующий запрос на keep-alive.
@@ -1727,19 +1734,21 @@ class Handler(BaseHTTPRequestHandler):
         self._send(200, payload, ctype, {"Cache-Control": cache})
 
     def _board_not_built(self) -> None:
-        html = """<!doctype html><html lang="ru"><meta charset="utf-8">
+        # paths.WEB_DIR читается на каждый запрос: тесты подменяют его на временный каталог.
+        page = """<!doctype html><html lang="ru"><meta charset="utf-8">
 <title>Listik — доска не собрана</title>
 <style>body{font:15px/1.6 -apple-system,system-ui,sans-serif;max-width:720px;margin:12vh auto;padding:0 24px;color:#1c1c1e}
 code{background:#f2f2f7;padding:2px 6px;border-radius:4px}pre{background:#f2f2f7;padding:12px;border-radius:8px;overflow:auto}</style>
 <h1>API работает, доска ещё не собрана</h1>
 <p>Сервер Listik отвечает (проверить: <code>/api/health</code>), но собранного фронта нет.</p>
-<pre>cd ~/Projects/Listik/web
+<pre>cd {web_dir}
 npm install
 npm run build</pre>
 <p>Для разработки доски можно поднять vite: <code>npm run dev</code> → <code>http://127.0.0.1:5173</code>
 (запросы к <code>/api</code> проксируются на этот сервер).</p>
-<p>Ссылка с токеном: <code>listik token</code></p></html>"""
-        self._send(200, html.encode("utf-8"), "text/html; charset=utf-8", {"Cache-Control": "no-store"})
+<p>Ссылка с токеном: <code>listik token</code></p></html>""".replace(
+            "{web_dir}", html.escape(str(paths.WEB_DIR)))
+        self._send(200, page.encode("utf-8"), "text/html; charset=utf-8", {"Cache-Control": "no-store"})
 
     # --- SSE
     def _stream(self) -> None:
@@ -1892,7 +1901,7 @@ def _start_swarm(host: str, port: int) -> None:
         print(f"рой: {exc}", flush=True)
         on = False
     if on:
-        print("рой: включён, проекты проверяются каждые 30 с", flush=True)
+        print(f"рой: включён, проекты проверяются каждые {swarm_proc.TICK_SECONDS} с", flush=True)
     else:
         print("рой: выключен (listik swarm on)", flush=True)
     swarm_proc.Supervisor(host, port).start()
@@ -1941,6 +1950,34 @@ def _exit_on_sigterm() -> None:
         pass  # не главный поток — оставляем поведение по умолчанию
 
 
+def _start_runtime(httpd, host: str, port: int, no_embed: bool) -> None:
+    """Соединение, восстановление запусков, надзор за базой, индексация и рой.
+
+    Имена берутся из модуля в момент вызова: тесты подменяют их `mock.patch.object`.
+    """
+    conn = get_conn()
+    routes_store.ensure_imported(conn)
+    launcher_mod.recover(conn, notify=publish)
+    # Надзор за файлами базы — до фоновой индексации: подмену нужно заметить,
+    # даже если ollama нет и векторы не считаются (listik-cfzk).
+    start_db_watch()
+    if not no_embed:
+        start_embed_worker()
+    # Рой — поток: в фоновом режиме заводится только после daemonize.
+    _start_swarm(host, _swarm_port(httpd, port))
+
+
+def _shutdown(httpd) -> None:
+    """Остановить рой и надзор, закрыть сокет, убрать pid-файл."""
+    _stop_swarm()
+    stop_db_watch()
+    httpd.server_close()
+    try:
+        pid_file().unlink()
+    except OSError:
+        pass
+
+
 def serve(host: str | None = None, port: int | None = None, quiet: bool = False,
           background: bool = False, no_embed: bool = False) -> None:
     # Сервер поднимают и фоновым запуском: без этого SIGHUP от закрытия терминала
@@ -1950,7 +1987,7 @@ def serve(host: str | None = None, port: int | None = None, quiet: bool = False,
     except (AttributeError, ValueError):
         pass
     cfg = config_mod.load()
-    token = (cfg.get("auth") or {}).get("token") or ""
+    token = config_mod.auth_token(cfg)
     if not token:
         cfg, token = config_mod.ensure_token(cfg)
     host = host or cfg["server"]["host"]
@@ -1971,38 +2008,18 @@ def serve(host: str | None = None, port: int | None = None, quiet: bool = False,
         daemonize()
         _exit_on_sigterm()
         write_pid()
-        conn = get_conn()
-        # После daemonize: сообщение о неудачном ввозе маршрутов должно попасть в listik.log.
-        routes_store.ensure_imported(conn)
-        launcher_mod.recover(conn, notify=publish)
-        # Надзор за файлами базы — до фоновой индексации: подмену нужно заметить,
-        # даже если ollama нет и векторы не считаются (listik-cfzk).
-        start_db_watch()
-        if not no_embed:
-            start_embed_worker()
-        # Рой — после daemonize: до fork поток нельзя заводить.
-        _start_swarm(host, _swarm_port(httpd, port))
+        # Соединение, потоки и рой — только после daemonize: до fork их заводить нельзя,
+        # а сообщение о неудачном ввозе маршрутов должно попасть в listik.log.
+        _start_runtime(httpd, host, port, no_embed)
         try:
             httpd.serve_forever()
         finally:
-            _stop_swarm()
-            stop_db_watch()
-            httpd.server_close()
-            try:
-                pid_file().unlink()
-            except OSError:
-                pass
+            _shutdown(httpd)
         return
 
     # Порт занимаем первым: при занятом порте не трогаем launcher и не заводим потоки.
     httpd = bind_or_explain(host, port, quiet=quiet)
-    conn = get_conn()
-    routes_store.ensure_imported(conn)
-    launcher_mod.recover(conn, notify=publish)
-    start_db_watch()
-    if not no_embed:
-        start_embed_worker()
-    _start_swarm(host, _swarm_port(httpd, port))
+    _start_runtime(httpd, host, port, no_embed)
     url = f"http://{host}:{port}/?token={token}"
     print(f"Listik слушает http://{host}:{port}")
     print(f"доска:          {url}")
@@ -2016,10 +2033,4 @@ def serve(host: str | None = None, port: int | None = None, quiet: bool = False,
     except KeyboardInterrupt:
         print("\nостановлен")
     finally:
-        _stop_swarm()
-        stop_db_watch()
-        httpd.server_close()
-        try:
-            pid_file().unlink()
-        except OSError:
-            pass
+        _shutdown(httpd)

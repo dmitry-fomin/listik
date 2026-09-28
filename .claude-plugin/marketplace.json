@@ -51,7 +51,7 @@
     {
       "name": "second-opinion",
       "source": "./plugins/second-opinion",
-      "version": "0.4.1",
+      "version": "0.5.0",
       "description": "Проверить гипотезу у независимой LLM — DeepSeek, Gemini, GPT, Grok или любая модель на OpenRouter."
     }
   ]

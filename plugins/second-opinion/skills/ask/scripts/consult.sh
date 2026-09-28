@@ -7,6 +7,9 @@
 # Все провайдеры — OpenAI-совместимый /chat/completions; список провайдеров и их
 # url/переменная-токена/модель-по-умолчанию — в providers.conf рядом со скриптом.
 # Чтобы добавить нового провайдера, правь только providers.conf.
+# Ответ HTTP-провайдеров запрашивается и читается потоком (`stream: true`, SSE).
+# Таймауты: SECOND_OPINION_MAX_TIME — общий потолок запроса (по умолчанию 1800 с),
+# SECOND_OPINION_IDLE_TIME — сколько секунд можно не получать данных (по умолчанию 180 с).
 set -euo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
@@ -344,8 +347,25 @@ usage_model="$model"
 require_env "$token_env"
 token_val="${!token_env}"
 
+# Два предела вместо одного max-time: общий потолок и порог тишины. Поток
+# шлёт байты (в т.ч. reasoning_content) непрерывно, поэтому длинный, но живой
+# ответ упирается только в потолок, а зависший — отваливается по тишине.
+# Проверка здесь, после guard'а и разбора провайдера, но до любого запроса.
+check_positive_int() {
+  local name="$1" val="$2"
+  [[ "$val" =~ ^[0-9]+$ ]] && (( 10#$val > 0 )) && return 0
+  die 2 "$name должна быть целым числом секунд > 0, сейчас: '$val'"
+}
+max_time="${SECOND_OPINION_MAX_TIME:-1800}"
+idle_time="${SECOND_OPINION_IDLE_TIME:-180}"
+check_positive_int SECOND_OPINION_MAX_TIME "$max_time"
+check_positive_int SECOND_OPINION_IDLE_TIME "$idle_time"
+max_time=$((10#$max_time))
+idle_time=$((10#$idle_time))
+
 HTTP_CODE=""
 RESP_FILE=""
+REQ_START=""
 
 # Перевод строки внутри значения curl-конфига (`key = "value"`, см. `man
 # curl` → -K/--config) переносит следующий кусок на новую директиву —
@@ -389,23 +409,35 @@ post_json() {
     printf 'output = "%s"\n' "$(curl_cfg_escape "$resp_file")"
     printf 'silent\n'
     printf 'show-error\n'
-    # 600s, не 60 — у reasoning-моделей скрытый chain-of-thought при нынешнем
-    # max_tokens регулярно занимает больше минуты, а kimi-k3 на длинном разборе
-    # не укладывался и в 300с: ответ шёл, но обрывался таймаутом на полпути.
-    printf 'max-time = 600\n'
+    # Общий потолок и порог тишины (меньше 1 байта/с дольше idle_time) —
+    # см. check_positive_int выше.
+    printf 'max-time = %s\n' "$max_time"
+    printf 'speed-limit = 1\n'
+    printf 'speed-time = %s\n' "$idle_time"
   } > "$cfg_file"
   # Отдельная ветка на сетевую ошибку/таймаут curl: под `set -e` голое
   # присваивание из command substitution валит скрипт сырым кодом curl
   # (6/28/...) без понятного сообщения — перехватываем через `||`, не `!`,
   # чтобы $? остался реальным кодом curl, а не схлопнутым до 0/1.
+  # started — секунды от старта процесса на момент запроса: в сообщениях
+  # нужно время самого запроса, а не всего скрипта.
+  local started=$SECONDS
   HTTP_CODE="$(curl -K "$cfg_file" -w '%{http_code}' "$url")" || {
     local rc=$?
-    if [[ "$rc" == "28" ]]; then
-      die 6 "$who: таймаут запроса (600с) — модель отвечает слишком долго, попробуй короче промпт или другого провайдера (kimi-k3 на развёрнутых разборах не укладывается и в 600с)"
-    fi
-    die 6 "$who: сетевая ошибка при обращении к API (curl exit $rc) — проверь соединение или base_url в providers.conf"
+    local took=$((SECONDS - started))
+    case "$rc" in
+      16|18|52|55|56|92)
+        die 6 "$who: соединение оборвано (curl exit $rc) через $took с — шлюз или сеть разорвали поток; повтори запрос, а если обрыв повторяется на длинном промпте — сократи промпт или возьми другого провайдера" ;;
+      28)
+        die 6 "$who: таймаут (curl exit 28) через $took с — данных не было дольше SECOND_OPINION_IDLE_TIME=$idle_time с или запрос превысил SECOND_OPINION_MAX_TIME=$max_time с; подними эти переменные, сократи промпт или возьми другого провайдера" ;;
+      6|7)
+        die 6 "$who: не удалось соединиться (curl exit $rc) через $took с — проверь сеть и base_url в providers.conf" ;;
+      *)
+        die 6 "$who: сетевая ошибка (curl exit $rc) через $took с" ;;
+    esac
   }
   RESP_FILE="$resp_file"
+  REQ_START="$started"
 }
 
 handle_common_errors() {
@@ -444,6 +476,64 @@ parse_openai_style() {
   printf '%s\n' "$text"
 }
 
+# Разбор SSE-потока chat/completions. Весь поток сворачивается в сводку одним
+# вызовом jq (не jq на строку — кусков бывают десятки тысяч), дальше —
+# несколько jq по маленькой сводке. Учитываются только строки `data:`;
+# комментарии (`: keep-alive`) и пустые строки отбрасываются.
+parse_sse_stream() {
+  local who="$1"
+  local summary_file bad err text finish done_mark took
+  summary_file="$(mktemp)"
+  chmod 600 "$summary_file"
+  tmp_files+=("$summary_file")
+  jq -R -s -c '
+    [split("\n")[] | rtrimstr("\r") | select(startswith("data:"))
+      | ltrimstr("data:") | ltrimstr(" ")] as $lines
+    | [$lines[] | select(. != "[DONE]") | . as $raw
+        | try {v: fromjson} catch {bad: $raw}] as $items
+    | [$items[] | select(has("v")) | .v | select(type == "object")] as $objs
+    | ([$objs[] | select(.error) | .error] | first) as $err
+    | ([$objs[] | select(.usage != null) | .usage] | last) as $usage
+    | {
+        bad: ([$items[] | select(has("bad")) | .bad] | first),
+        error: (if $err == null then null else ($err.message? // ($err | tostring)) end),
+        text: ([$objs[] | .choices[0]?.delta?.content? | strings] | join("")),
+        finish: ([$objs[] | .choices[0]?.finish_reason? | strings | select(. != "")] | last),
+        done: ($lines | any(. == "[DONE]")),
+        tin: ($usage.prompt_tokens? // 0),
+        tout: ($usage.completion_tokens? // 0)
+      }' "$RESP_FILE" > "$summary_file" \
+    || die 6 "$who: не удалось разобрать поток ответа (jq упал) — начало тела: $(head -c 300 "$RESP_FILE")"
+
+  usage_tokens_in="$(jq -r '.tin' "$summary_file" 2>/dev/null || echo 0)"
+  usage_tokens_out="$(jq -r '.tout' "$summary_file" 2>/dev/null || echo 0)"
+  [[ "$usage_tokens_in" =~ ^[0-9]+$ ]] || usage_tokens_in=0
+  [[ "$usage_tokens_out" =~ ^[0-9]+$ ]] || usage_tokens_out=0
+
+  bad="$(jq -r '.bad // empty' "$summary_file")"
+  if [[ -n "$bad" ]]; then
+    die 6 "$who: кусок потока не похож на JSON (сломанный API/прокси?) — начало куска: $(head -c 300 <<<"$bad")"
+  fi
+  err="$(jq -r '.error // empty' "$summary_file")"
+  [[ -n "$err" ]] && die 6 "$who: $err"
+
+  finish="$(jq -r '.finish // empty' "$summary_file")"
+  done_mark="$(jq -r '.done' "$summary_file")"
+  if [[ -z "$finish" && "$done_mark" != "true" ]]; then
+    took=$((SECONDS - REQ_START))
+    die 6 "$who: поток оборвался через $took с — ответ пришёл не целиком (нет finish_reason и [DONE]); повтори запрос, сократи промпт или возьми другого провайдера"
+  fi
+
+  text="$(jq -r '.text' "$summary_file")"
+  if [[ -z "$text" ]]; then
+    if [[ "$finish" == "length" ]]; then
+      die 6 "$who: ответ обрезан лимитом max_tokens (finish_reason=length) — сократи запрос или подними max_tokens в consult.sh"
+    fi
+    die 6 "$who: пустой ответ (finish_reason=${finish:-неизвестно})"
+  fi
+  printf '%s\n' "$text"
+}
+
 # max_tokens с запасом: у reasoning-моделей в этот лимит считается и скрытый
 # chain-of-thought, поэтому маленький лимит обрезает ответ до финального текста.
 # 65536, а не 32768: на 32k kimi-k3 выбирал весь бюджет рассуждением и падал с
@@ -451,18 +541,33 @@ parse_openai_style() {
 # провайдерам — у gemini-3.7-flash это потолок вывода, остальные в реестре
 # принимают больше (gpt-5.6 — 128k, deepseek-v4-pro — 384k).
 # Платим по факту использования, так что запас сам по себе ничего не стоит.
+# stream: true — потому что не-потоковый ответ reasoning-модели молчит, пока
+# она рассуждает (glm на промпте в 35 КБ — 10+ минут), и шлюз B.AI рвёт
+# молчащий HTTP/2-поток примерно через 340 с (curl exit 16). Потоковый ответ
+# на том же промпте шёл 748 с и дошёл целиком. include_usage — чтобы в
+# последнем куске пришли токены для журнала.
 if [[ $use_system -eq 1 ]]; then
   payload="$(jq -n --arg m "$model" --arg s "$SYSTEM_PROMPT" --arg c "$prompt" \
-    '{model:$m, messages:[{role:"system",content:$s},{role:"user",content:$c}], max_tokens:65536}')" \
+    '{model:$m, messages:[{role:"system",content:$s},{role:"user",content:$c}], max_tokens:65536,
+      stream:true, stream_options:{include_usage:true}}')" \
     || die 6 "$provider: не удалось собрать JSON-запрос (jq упал) — промпт мог содержать некорректный UTF-8"
 else
   payload="$(jq -n --arg m "$model" --arg c "$prompt" \
-    '{model:$m, messages:[{role:"user",content:$c}], max_tokens:65536}')" \
+    '{model:$m, messages:[{role:"user",content:$c}], max_tokens:65536,
+      stream:true, stream_options:{include_usage:true}}')" \
     || die 6 "$provider: не удалось собрать JSON-запрос (jq упал) — промпт мог содержать некорректный UTF-8"
 fi
 
 post_json "$provider" "${base_url%/}/chat/completions" "Authorization: Bearer ${token_val}" "$payload"
 handle_common_errors "$provider"
+
+# Провайдер ответил потоком — разбираем SSE. Нет ни одной строки `data:` —
+# он проигнорировал stream и прислал обычный JSON, разбор как раньше.
+# grep -q по файлу, не в пайпе: досрочный выход grep тут никому не рвёт канал.
+if grep -q '^data:' "$RESP_FILE"; then
+  parse_sse_stream "$provider"
+  exit 0
+fi
 
 # Токены для журнала — из .usage ответа. Поле необязательное и у части
 # провайдеров отсутствует, поэтому любое неудачное чтение молча даёт 0:

@@ -216,6 +216,30 @@ class ReadyTasksTests(TempDbTestCase):
         self.assertIn(b, ready_ids)
 
 
+class ReadyVerdictTests(TempDbTestCase):
+    """Приоритет вердикта `ready`: блокер → завершена → занята → можно брать."""
+
+    def _task(self, *, status: str = "open", holder: str | None = None) -> str:
+        tid = store.create_task(self.conn, title="T", project="demo")["id"]
+        self.conn.execute("UPDATE tasks SET status=?, holder=? WHERE id=?", (status, holder, tid))
+        self.conn.commit()
+        return tid
+
+    def test_verdict_priority(self) -> None:
+        blocker = self._task()
+        done_blocked = self._task(status="done", holder="dsh")
+        store.add_dep(self.conn, done_blocked, blocker, "blocks", created_by="me")
+        cases = {
+            done_blocked: "нельзя: ждёт другие задачи",
+            self._task(status="done", holder="dsh"): "уже завершена",
+            self._task(holder="dsh"): "занята другим",
+            self._task(): "можно брать",
+        }
+        for tid, verdict in cases.items():
+            with self.subTest(verdict=verdict):
+                self.assertEqual(deps_mod.ready(self.conn, tid)["verdict"], verdict)
+
+
 class RemoveDepTests(TempDbTestCase):
     def setUp(self) -> None:
         super().setUp()
@@ -429,7 +453,7 @@ class DanglingDepsTests(TempDbTestCase):
         task = tasks[a]
         self.assertEqual([x["id"] for x in task["blockers"]], [b])
         self.assertEqual(task["blocked_by"], [b])
-        self.assertIs(task["blockers_idle"], True)
+        self.assertIs(task["blocked_by_stale"], True)
         self.assertIsNone(task["blocked_by_holder"])
 
     def test_s5_get_task_has_deps_state(self) -> None:

@@ -1994,16 +1994,9 @@ def sync_portions(conn: sqlite3.Connection, task_id: str, *, actor: str | None =
 
     # Порядок — после всех созданий: ошибка связи не оставит порцию без parent-child.
     linked: list[list[str]] = []
-    hard = ",".join("?" * len(deps_mod.SEMANTIC_HARD))
     for prev, cur in zip(portions, portions[1:]):
         pair = (cur["id"], prev["id"])
-        has_hard = conn.execute(
-            f"SELECT 1 FROM deps WHERE issue_id=? AND depends_on=? AND dep_type IN ({hard})",
-            (*pair, *deps_mod.SEMANTIC_HARD)).fetchone()
-        has_suggested = conn.execute(
-            "SELECT 1 FROM deps WHERE issue_id=? AND depends_on=? AND dep_type='suggested-blocks'",
-            pair).fetchone()
-        if has_hard and not has_suggested:
+        if deps_mod.hard_link(conn, *pair) and not deps_mod.has_suggested(conn, *pair):
             continue
         # add_dep с confirm сам снимает suggested-blocks той же пары.
         add_dep(conn, *pair, "blocks", created_by=actor, confirm=True)
@@ -2786,27 +2779,20 @@ def add_dep(conn: sqlite3.Connection, issue_id: str, depends_on: str, dep_type: 
     created = False
 
     if dep_type in deps_mod.HARD_BLOCKERS:
+        existing_hard = deps_mod.hard_link(conn, issue_id, depends_on)
+        had_suggestion = deps_mod.has_suggested(conn, issue_id, depends_on)
         if is_agent and not confirm:
             # Агент может записать гипотезу, но не может сам сделать её жёсткой:
             # это меняло бы готовность задач без участия человека.
             requested_dep_type = dep_type
             actual_type = "suggested-blocks"
-            existing_hard = conn.execute(
-                "SELECT dep_type FROM deps WHERE issue_id=? AND depends_on=? AND dep_type IN (%s)"
-                % ",".join("?" * len(deps_mod.SEMANTIC_HARD)),
-                (issue_id, depends_on, *deps_mod.SEMANTIC_HARD),
-            ).fetchone()
             if existing_hard:
                 # Жёсткая связь важнее предложения — уже подтверждено, ничего не пишем.
-                actual_type = existing_hard["dep_type"]
+                actual_type = existing_hard
                 confirmed = True
             else:
                 suggested = True
-                exists = conn.execute(
-                    "SELECT 1 FROM deps WHERE issue_id=? AND depends_on=? AND dep_type='suggested-blocks'",
-                    (issue_id, depends_on),
-                ).fetchone()
-                created = not exists
+                created = not had_suggestion
                 conn.execute(
                     "INSERT INTO deps(issue_id, depends_on, dep_type, created_by) VALUES(?,?,?,?) "
                     "ON CONFLICT(issue_id, depends_on, dep_type) DO NOTHING",
@@ -2821,16 +2807,7 @@ def add_dep(conn: sqlite3.Connection, issue_id: str, depends_on: str, dep_type: 
                     "created_by": actor_key or created_by}
 
         # Жёсткая связь: человек, unknown, агент с --confirm.
-        already_hard = conn.execute(
-            "SELECT dep_type FROM deps WHERE issue_id=? AND depends_on=? AND dep_type IN (%s)"
-            % ",".join("?" * len(deps_mod.SEMANTIC_HARD)),
-            (issue_id, depends_on, *deps_mod.SEMANTIC_HARD),
-        ).fetchone()
-        had_suggestion = conn.execute(
-            "SELECT 1 FROM deps WHERE issue_id=? AND depends_on=? AND dep_type='suggested-blocks'",
-            (issue_id, depends_on),
-        ).fetchone()
-        if not already_hard:
+        if not existing_hard:
             # Проверка цикла: есть ли путь от depends_on обратно к issue_id по жёстким рёбрам.
             parents: dict[str, str | None] = {depends_on: None}
             frontier = [depends_on]
@@ -2866,21 +2843,16 @@ def add_dep(conn: sqlite3.Connection, issue_id: str, depends_on: str, dep_type: 
                 (issue_id, depends_on, dep_type, actor_key or created_by),
             )
             created = True
-            promoted = bool(had_suggestion)
-            if had_suggestion:
-                conn.execute(
-                    "DELETE FROM deps WHERE issue_id=? AND depends_on=? AND dep_type='suggested-blocks'",
-                    (issue_id, depends_on),
-                )
+            promoted = had_suggestion
             actual_type = dep_type
         else:
-            actual_type = already_hard["dep_type"]
+            actual_type = existing_hard
             created = False
-            if had_suggestion:
-                conn.execute(
-                    "DELETE FROM deps WHERE issue_id=? AND depends_on=? AND dep_type='suggested-blocks'",
-                    (issue_id, depends_on),
-                )
+        if had_suggestion:
+            conn.execute(
+                "DELETE FROM deps WHERE issue_id=? AND depends_on=? AND dep_type='suggested-blocks'",
+                (issue_id, depends_on),
+            )
         confirmed = True
         deps_mod.refresh_task(conn, issue_id)
         deps_mod.refresh_task(conn, depends_on)

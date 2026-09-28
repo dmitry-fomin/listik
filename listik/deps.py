@@ -44,7 +44,7 @@ from collections.abc import Iterable
 from . import actors as actors_mod
 from . import errors as errors_mod
 from . import util
-from .statuses import (BLOCKED, DONE, FINAL_STATUSES, IN_PROGRESS, OPEN,
+from .statuses import (BLOCKED, FINAL_STATUSES, IN_PROGRESS, OPEN,
                        OPEN_STATUSES, OPEN_STATUSES_SQL)
 
 # Типы связей, которые физически запрещают начинать/закрывать задачу
@@ -61,6 +61,8 @@ PARENT_TYPES = ("parent-child", "parent")
 RESOURCE_BLOCK = "resource-blocks"
 # Жёсткие типы, которые может поставить человек/агент по смыслу задачи (все, кроме ресурсного).
 SEMANTIC_HARD = tuple(t for t in HARD_BLOCKERS if t != RESOURCE_BLOCK)
+# Пишущие этапы: на них действует блокировка рабочего дерева ('' — задача без этапа).
+WRITE_STAGES = ("", "s3-impl", "s4-judge")
 
 # Автор ресурсного ребра на всех путях записи (локальный фолбэк, HTTP, MCP): ребро машинное
 # по построению, его ставит только планировщик, подпись человеком была бы ложью; префикс
@@ -281,6 +283,26 @@ def refresh_task(conn: sqlite3.Connection, task_id: str) -> int:
     return changed
 
 
+def hard_link(conn: sqlite3.Connection, issue_id: str, depends_on: str) -> str | None:
+    """`dep_type` смыслового жёсткого ребра `issue_id → depends_on` (`SEMANTIC_HARD`), иначе `None`."""
+    rows = _fetch(
+        conn,
+        f"SELECT dep_type FROM deps WHERE issue_id=? AND depends_on=? "
+        f"AND dep_type IN ({','.join('?' * len(SEMANTIC_HARD))}) LIMIT 1",
+        (issue_id, depends_on, *SEMANTIC_HARD),
+    )
+    return rows[0]["dep_type"] if rows else None
+
+
+def has_suggested(conn: sqlite3.Connection, issue_id: str, depends_on: str) -> bool:
+    """Есть ли предложенный блокер (`suggested-blocks`) `issue_id → depends_on`."""
+    return bool(_fetch(
+        conn,
+        "SELECT 1 FROM deps WHERE issue_id=? AND depends_on=? AND dep_type='suggested-blocks' LIMIT 1",
+        (issue_id, depends_on),
+    ))
+
+
 def worktree_conflict(conn: sqlite3.Connection, row: sqlite3.Row,
                       holder: str | None = None) -> sqlite3.Row | None:
     """First other task holding the same project tree write lock, if any.
@@ -299,7 +321,7 @@ def worktree_conflict(conn: sqlite3.Connection, row: sqlite3.Row,
     "project main tree" and therefore conflict with each other.
     """
     stage = (row["stage"] or "").strip()
-    if stage not in ("", "s3-impl", "s4-judge"):
+    if stage not in WRITE_STAGES:
         return None
     from . import store  # store импортирует deps на уровне модуля — импорт отложенный
     project = row["project"] or ""
@@ -310,8 +332,8 @@ def worktree_conflict(conn: sqlite3.Connection, row: sqlite3.Row,
         "SELECT * FROM tasks WHERE coalesce(project,'') = ? AND id != ? AND archived = 0 "
         f"AND status IN ({OPEN_STATUSES_SQL}) "
         "AND holder IS NOT NULL AND holder != '' "
-        "AND coalesce(stage,'') IN ('', 's3-impl', 's4-judge') ORDER BY id",
-        (project, row["id"]),
+        f"AND coalesce(stage,'') IN ({','.join('?' * len(WRITE_STAGES))}) ORDER BY id",
+        (project, row["id"], *WRITE_STAGES),
     )
     for cand in candidates:
         # Исключение «тот же держатель» — по актору, а не по строке: судья
@@ -328,7 +350,7 @@ def ready(conn: sqlite3.Connection, task_id: str) -> dict:
     """Можно ли брать задачу: короткий ответ и причины.
 
     `ready` — не занята другим держателем и нет незакрытых жёстких блокеров.
-    `claimable` — то же плюс задача ещё в очереди (open/in_progress).
+    `claimable` — то же, но занятость другим держателем не мешает.
     """
     from . import store
     row = _tasks_by_id(conn, [task_id]).get(task_id)
@@ -365,7 +387,7 @@ def ready(conn: sqlite3.Connection, task_id: str) -> dict:
         "stage": task["stage"],
         "ready": not finished and not hard and not occupied,
         "claimable": not finished and not hard,
-        "can_finish": not finished and not [c for c in children_open if c["status"] != DONE],
+        "can_finish": not finished and not children_open,
         "blocked_by": hard,
         "waiting_for": waiting_for(conn, task_id),
         "children_open": children_open,
@@ -376,10 +398,9 @@ def ready(conn: sqlite3.Connection, task_id: str) -> dict:
         "holder_age": task["holder_age"],
         "stale_holder": bool(task["stale"]),
         "reasons": reasons,
-        "verdict": ("можно брать" if not finished and not hard and not occupied else
-                    "занята другим" if occupied and not hard and not finished else
-                    "нельзя: ждёт другие задачи" if hard else
-                    "уже завершена" if finished else "можно брать"),
+        "verdict": ("нельзя: ждёт другие задачи" if hard else
+                    "уже завершена" if finished else
+                    "занята другим" if occupied else "можно брать"),
         "worktree_busy": worktree_busy,
     }
 
@@ -516,8 +537,7 @@ def blocked_tasks(conn: sqlite3.Connection, *, project: str | None = None,
         task["children_open"] = [c for c in children(conn, row["id"]) if not c["closed"]]
         # «Блокеры стоят»: ни один из них никто не двигает. Открытая задача без держателя
         # тоже стоит — её просто никто не взял, и ждать её молча бессмысленно.
-        task["blockers_idle"] = all(b["missing"] or b["stale"] or not b["holder"] for b in info)
-        task["blocked_by_stale"] = task["blockers_idle"]
+        task["blocked_by_stale"] = all(b["missing"] or b["stale"] or not b["holder"] for b in info)
         task["blocked_by_holder"] = next((b["holder_title"] for b in info if b["holder"]), None)
         out.append(task)
     out.sort(key=lambda t: (not t["blocked_by_stale"], t["priority"]))
@@ -963,7 +983,7 @@ def _waves(conn: sqlite3.Connection, *, project: str,
     def tree_of(tid: str) -> str | None:
         row = by_id[tid]
         stage_v = (row["stage"] or "").strip()
-        if stage_v not in ("", "s3-impl", "s4-judge"):
+        if stage_v not in WRITE_STAGES:
             return None
         wt = (row["worktree"] or "").strip()
         if not wt:
@@ -1015,6 +1035,21 @@ def _waves(conn: sqlite3.Connection, *, project: str,
         "resource_blocks": resource_blocks,
         "tasks": tasks_view,
     }, others
+
+
+def _refresh_touched(conn: sqlite3.Connection, *pairs: tuple[str, str]) -> None:
+    """`refresh_task` по разу на каждый id из обоих концов пар `(issue_id, depends_on)`."""
+    for tid in {tid for pair in pairs for tid in pair}:
+        refresh_task(conn, tid)
+
+
+def _sorted_removed(to_remove: Iterable[tuple[str, str]], order: Iterable[str]) -> list[list[str]]:
+    """Снятые пары `(later, earlier)` как `[earlier, later]` в порядке прохода `order`."""
+    order_index = {tid: i for i, tid in enumerate(order)}
+    return sorted(
+        ([earlier, later] for later, earlier in to_remove),
+        key=lambda pair: (order_index.get(pair[1], len(order_index)), pair[0]),
+    )
 
 
 def apply_resource_blocks(conn: sqlite3.Connection, *, project: str, stage: str | None = None) -> dict:
@@ -1071,24 +1106,15 @@ def apply_resource_blocks(conn: sqlite3.Connection, *, project: str, stage: str 
                 "VALUES(?,?,'resource-blocks',?)",
                 (issue_id, depends_on, RESOURCE_BLOCK_AUTHOR),
             )
-        touched: set[str] = set()
-        for issue_id, depends_on in (*to_remove, *to_add):
-            touched.add(issue_id)
-            touched.add(depends_on)
-        for tid in touched:
-            refresh_task(conn, tid)
+        _refresh_touched(conn, *to_remove, *to_add)
     except Exception:
         conn.rollback()
         raise
     conn.commit()
 
-    order_index = {tid: i for i, tid in enumerate(plan["tasks"].keys())}
     added = [[earlier, later] for earlier, later in plan["resource_blocks"]
              if (later, earlier) in to_add]
-    removed = sorted(
-        ([earlier, later] for later, earlier in to_remove),
-        key=lambda pair: (order_index.get(pair[1], len(order_index)), pair[0]),
-    )
+    removed = _sorted_removed(to_remove, plan["tasks"].keys())
 
     return {
         "project": project,
@@ -1220,23 +1246,14 @@ def apply_planned_blocks(conn: sqlite3.Connection, *, working: list[str],
                 "VALUES(?,?,'blocks',?)",
                 (issue_id, depends_on, PLANNED_BLOCK_AUTHOR),
             )
-        touched: set[str] = set()
-        for issue_id, depends_on in (*to_remove, *to_add):
-            touched.add(issue_id)
-            touched.add(depends_on)
-        for tid in touched:
-            refresh_task(conn, tid)
+        _refresh_touched(conn, *to_remove, *to_add)
     except Exception:
         conn.rollback()
         raise
     conn.commit()
 
-    order_index = {tid: i for i, tid in enumerate(working_list)}
     added = [[earlier, later] for earlier, later in validated if (later, earlier) in to_add]
-    removed = sorted(
-        ([earlier, later] for later, earlier in to_remove),
-        key=lambda pair: (order_index.get(pair[1], len(order_index)), pair[0]),
-    )
+    removed = _sorted_removed(to_remove, working_list)
     covered_pairs = [[earlier, later] for earlier, later in validated
                      if (later, earlier) in covered]
 

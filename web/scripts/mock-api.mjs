@@ -2053,7 +2053,6 @@ const server = createServer(async (request, response) => {
           ...item,
           blockers,
           blocked_by: blockers.map((b) => b.id),
-          blockers_idle: idle,
           blocked_by_stale: idle,
           blocked_by_holder: blockers.find((b) => b.holder)?.holder_title ?? null,
         }

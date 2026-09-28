@@ -1,5 +1,5 @@
 // Тонкий слой над git для барьера роя. Каждая экспортируемая функция — ровно одна
-// git-команда из списка, разрешённого порцией b (docs/specs/steps/listik-dzf0.b.md).
+// git-команда из закрытого списка (listik-dzf0).
 // Никакого общего `git(repo, ...args)`: набор команд, которые рой может выполнить в
 // чужом репозитории, читается только здесь. `--no-optional-locks` — как в
 // `listik/worktree.py`, чтобы опрос чужого дерева не срывал коммит воркера в нём.
@@ -144,7 +144,7 @@ export async function mergeBase(repo, a, b) {
 }
 
 // Темы коммитов (`git log --format=%s`) для произвольного `rev` (диапазон, ref, ...);
-// пустой вывод → [] (порция e: арбитр).
+// пустой вывод → [] (нужно арбитру).
 export async function logSubjects(repo, rev) {
   const out = await mustOk(repo, ["log", "--format=%s", rev]);
   return out.split("\n").map(l => l.trim()).filter(Boolean);

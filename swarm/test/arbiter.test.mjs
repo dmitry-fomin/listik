@@ -205,8 +205,8 @@ suite("resolveWithArbiter 5: ok, конфликт одной строки — у
 suite("resolveWithArbiter 6: цепочка из двух конфликтующих коммитов — два промпта, stops:2", async () => {
   const repo = initRepo();
   const worktree = addWorktree(repo, "task1");
-  // `rebaseContinue` не передаёт `-c merge.conflictStyle=diff3` (порция b: "маркеры уже
-  // в файлах" — верно только для первой остановки), поэтому для второй остановки этой
+  // `rebaseContinue` не передаёт `-c merge.conflictStyle=diff3` (маркеры уже
+  // в файлах — верно только для первой остановки), поэтому для второй остановки этой
   // цепочки диффолт задаём в конфиге дерева, как в репозитории, где diff3 настроен глобально.
   sh(worktree, "config", "merge.conflictStyle", "diff3");
   writeFileSync(join(worktree, "f.txt"), "task-f\n");
@@ -415,7 +415,7 @@ suite("resolveWithArbiter: предел 10 остановок — отказ, re
   assert.equal(listik.calls.comment.length, 0);
 });
 
-// ------------------------------------------------ порция f: проверка слияния ---
+// ------------------------------------------------ проверка слияния ---
 
 test("jevSummary: error > skipped > ok, пусто — skipped", () => {
   assert.equal(jevSummary(["ok", "ok"]), "ok");

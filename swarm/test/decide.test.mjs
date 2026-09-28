@@ -239,7 +239,7 @@ test("порты: метка port:abc игнорируется", () => {
   assert.equal(portOf(t), null);
 });
 
-// --- порция c: надзор за бегущими и упавшими ---
+// --- надзор за бегущими и упавшими ---
 
 const supConfig = {
   ...config, actor: "agent:listik-swarm", timeoutMinutes: 0, maxRestarts: 1,
@@ -530,7 +530,7 @@ test("надзор: упавшая с answer раньше launch_finished_at —
   assert.match(res.crashed[0].text, /код неизвестен/);
 });
 
-// --- порция a: заморозка (frozen-by:) и гейт ---
+// --- заморозка (frozen-by:) и гейт ---
 
 test("isFrozen: первая метка frozen-by: → значение, иначе null", () => {
   assert.equal(isFrozen(task("a", {labels: ["frozen-by:t1"]})), "t1");
@@ -687,7 +687,7 @@ test("надзор: needs_owner true с REJECTED_MARK — ни restart, ни cra
   assert.deepEqual(res.crashed, []);
 });
 
-// --- порция b: мягкий вопрос ---
+// --- мягкий вопрос ---
 
 const SOFT_Q = "Какой формат?\nпо умолчанию: JSON";
 
@@ -857,7 +857,7 @@ test("dueDefaults без questionTimeout использует DEFAULT_QUESTION_T
   assert.doesNotMatch(src, /questionTimeout[^\n]*=[^\n]*30/);
 });
 
-// --- порция d: бюджет прогона ---
+// --- бюджет прогона ---
 
 test("бюджет: launchesLeft 1, три кандидата веса 1 — один launch, два skipped budget", () => {
   const ids = ["a", "b", "c"];

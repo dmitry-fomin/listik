@@ -1,8 +1,8 @@
 // Барьер волны роя. Хелперы ниже (`covers`…`tailLines`) — чистая часть: ни `spawn`,
-// ни `fs`, ни `Date.now()`, только обычные объекты внутрь и наружу; порции c–e зовут
-// их по имени и не имеют права менять. `runBarrier` и его частные хелперы (шаги 7–9,
+// ни `fs`, ни `Date.now()`, только обычные объекты внутрь и наружу; `runBarrier` зовёт
+// их по имени, их контракт ради него не меняется. `runBarrier` и его частные хелперы (шаги 7–9,
 // интеграция) — оркестрация: git/listik/fs приходят параметрами, команды интеграции
-// (порция d) запускает `runWithTimeout` из `proc.mjs`.
+// запускает `runWithTimeout` из `proc.mjs`.
 import path from "node:path";
 import {runWithTimeout} from "./proc.mjs";
 import {stampFile} from "./log.mjs";
@@ -90,7 +90,7 @@ export function isSwarmTask(task) {
 }
 
 // Задачи проекта, готовые к слиянию: закрыты (`done`), дерево не пусто и не `main`/
-// `master`, порт роя есть. Живость каталога/ветки — не здесь, её проверяет порция c.
+// `master`, порт роя есть. Живость каталога/ветки — не здесь, её проверяет `runBarrier`.
 export function mergeCandidates(tasks) {
   return (tasks || [])
     .filter(t => t.status === "done" && (t.worktree || "").trim() &&
@@ -163,7 +163,7 @@ async function abortQuiet(git, worktree) {
 
 
 // Оркестрация барьера волны: rebase → ff-merge по одной, запись факта, гейт.
-// Порция c — конфликт ребейза здесь всегда отказ (`rebaseAbort`), без арбитра.
+// Конфликт ребейза без настроенного арбитра — отказ (`rebaseAbort`), с ним — шаг 5 (`resolveWithArbiter`).
 export async function runBarrier({listik, git, fs, config, swarmConfig, log, tasks, projectPath, now,
   swarmJsonPath, swarmModel}) {
   const dryRun = !!(config && config.dryRun);

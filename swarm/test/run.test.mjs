@@ -333,7 +333,7 @@ test("тик: launch отказ conflict с текстом «уже запуще
   assert.ok(!log.lines.some(l => l.startsWith("уже запущена (параллельный рой?)")));
 });
 
-// --- порция c: надзор — тик revoke/launch/needs-owner ---
+// --- надзор — тик revoke/launch/needs-owner ---
 
 const supConfig = {...baseConfig, timeoutMinutes: 0, maxRestarts: 1};
 const minsAgo = (m) => new Date(Date.now() - m * 60000).toISOString();
@@ -814,7 +814,7 @@ test("надзор-тик: --dry-run на просроченной — ни revo
   assert.ok(!summaryText.includes("undefined undefined"));
 });
 
-// --- порция c: выход цикла (main.mjs) при needs_owner: true ---
+// --- выход цикла (main.mjs) при needs_owner: true ---
 
 test("main: карточка needs_owner true с «рой: процесс задачи завершился…» — один show при выходе, «a — упала» в логе", async () => {
   const tasks = [task("a", {needs_owner: true})];
@@ -891,7 +891,7 @@ test("acquireProjectLock: живой pid отказывает, мёртвый з
   assert.equal(fs.existsSync(lockPath), false);
 });
 
-// --- порция c: наблюдатель (watch) + барьер (runBarrier) внутри тика ---
+// --- наблюдатель (watch) + барьер (runBarrier) внутри тика ---
 
 function statusFor(dataDir) {
   return {stdout: JSON.stringify({
@@ -1353,7 +1353,7 @@ gitTest("watch+barrier: running + swarm:halt — report.halt id, launch нет",
   assert.deepEqual(result.barrier.halt, ["halt1"]);
 });
 
-// --- порция a: сводка барьера, questionReason, waitingLine ---
+// --- сводка барьера, questionReason, waitingLine ---
 
 function summaryOf(report) {
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), "listik-swarm-summary-only-"));
@@ -1612,7 +1612,7 @@ gitTest("надзор-тик: swarm.json question_timeout 5, вопрос 6 ми
   assert.equal(answerCall.argv[answerCall.argv.indexOf("--clear") + 1], answerText);
 });
 
-// --- порция d: бюджет прогона ---
+// --- бюджет прогона ---
 
 test("бюджет-тик: без runState — launch как раньше, budget.exhausted false", async () => {
   const tasks = [task("t1")];
@@ -1960,7 +1960,7 @@ test("questionReason: предел откатов", () => {
   );
 });
 
-// --- порция b: предел откатов в тике ---
+// --- предел откатов в тике ---
 
 const FREEZE_AT = "2026-01-01T00:10:00.000Z";
 const LAUNCH_AT = "2026-01-01T00:00:00.000Z";

@@ -168,8 +168,8 @@ export class Listik {
     return this._call(argv, {write: !dryRun});
   }
 
-  // Пересчёт скоупов и ресурсных рёбер проекта: зовётся барьером после влитой волны
-  // (порция b), таймаут — из `swarm.json: rescope_timeout`. Всегда `--apply`: без записи
+  // Пересчёт скоупов и ресурсных рёбер проекта: зовётся барьером после влитой волны,
+  // таймаут — из `swarm.json: rescope_timeout`. Всегда `--apply`: без записи
   // рой проход не зовёт (модель платная). Цикл (код 1, JSON без error) — объект от _call.
   rescope(project, {timeoutSec = null} = {}) {
     return this._call(["rescope", "--project", project, "--apply"], {write: true, timeoutSec});

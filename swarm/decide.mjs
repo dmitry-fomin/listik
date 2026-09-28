@@ -144,7 +144,7 @@ export function dueDefaults({tasks, events, config, now}) {
   return out;
 }
 
-// Заморозка барьера (порции b–d): метка `frozen-by:<x>` на задаче. Первая найденная.
+// Заморозка барьера: метка `frozen-by:<x>` на задаче. Первая найденная.
 export function isFrozen(task) {
   const labels = task.labels || [];
   for (const label of labels) {
@@ -164,7 +164,7 @@ function runningInfo(task) {
   return {id: task.id, route: task.launch_route, worktree: task.worktree, port: portOf(task)};
 }
 
-// Надзор (порция c): по одному и тому же актору «свой» и «чужой» revoke различаются
+// Надзор: по одному и тому же актору «свой» и «чужой» revoke различаются
 // только нормализованным написанием — здесь достаточно нижнего регистра и схлопнутых
 // пробелов (полный alias-разбор — `listik/actors.py`, недоступен процессу роя).
 const REVOKE_RESTART_PREFIX = "рой: перезапуск —";

@@ -49,6 +49,9 @@ VERSION = (REPO_ROOT / "VERSION").read_text(encoding="utf-8").strip()
 _major, _minor, _patch = VERSION.split(".")
 NEXT_VERSION = f"{_major}.{_minor}.{int(_patch) + 1}"
 
+#: Число маршрутов в routes.json дерева — ожидаемое «ввезено N» при реимпорте.
+ROUTES_COUNT = len(json.loads((REPO_ROOT / "routes.json").read_text(encoding="utf-8"))["routes"])
+
 SH = shutil.which("sh")
 TAR = shutil.which("tar")
 
@@ -792,7 +795,7 @@ class InstallScriptTests(unittest.TestCase):
         result = self.install(archive, "--routes-reimport", "yes")
         self.assertEqual(self.installed_route_title(), "low")
         self.assertIn("маршруты: перезаписаны", result.stdout)
-        self.assertIn("ввезено 9", result.stdout)
+        self.assertRegex(result.stdout, rf"ввезено {ROUTES_COUNT}(?!\d)")
 
     def test_routes_reimport_env_yes(self) -> None:
         archive = self.make_archive(VERSION)

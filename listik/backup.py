@@ -13,8 +13,10 @@
 после подмены файла продолжал бы писать в удалённый inode. Остановить его можно
 флагом `--stop` — тогда restore сам погасит демон и дождётся, пока тот отпустит
 базу. Перед восстановлением текущая база копируется в
-`listik.db.bak-pre-restore-<время>`, а старые -wal/-shm удаляются: они принадлежат
-прежнему файлу и после подмены превратились бы в «malformed».
+`listik.db.bak-pre-restore-<время>` (свободного имени нет — отказ, старые копии не
+перезаписываются). Перед подменой журнал текущей базы вливается в неё checkpoint'ом,
+а потом старые -wal/-shm удаляются: они принадлежат прежнему файлу и после подмены
+превратились бы в «malformed».
 """
 from __future__ import annotations
 
@@ -67,7 +69,30 @@ def _unique_path(path: Path) -> Path:
         candidate = path.with_name(f"{path.name}-{n}")
         if not candidate.exists():
             return candidate
-    return path
+    raise errors.ListikError(
+        f"нет свободного имени для предохранительной копии: {path} и {path.name}-2 … "
+        f"{path.name}-999 заняты",
+        code=errors.CONFLICT,
+        hint="убери или перенеси старые копии listik.db.bak-pre-restore-* из каталога базы")
+
+
+def _checkpoint(db: Path) -> str | None:
+    """Влить журнал WAL в файл базы. None — удалось, иначе причина неудачи.
+
+    Обычное соединение, а не `db_mod.connect`: тот меняет режим и схему базы.
+    База не в режиме WAL — PRAGMA отвечает busy = 0, это успех.
+    """
+    try:
+        conn = sqlite3.connect(db, timeout=30.0)
+        try:
+            row = conn.execute("PRAGMA wal_checkpoint(TRUNCATE)").fetchone()
+        finally:
+            conn.close()
+    except sqlite3.Error as exc:
+        return f"{type(exc).__name__}: {exc}"
+    if row and row[0] != 0:
+        return "база занята другим соединением (busy)"
+    return None
 
 
 def same_file(left, right) -> bool:
@@ -424,8 +449,21 @@ def restore(backup_path: Path | str, db_path: Path | str | None = None, *,
             hint="останови сервер: listik stop; "
                  "или повтори с --force, если сервер точно не должен работать")
 
-    # 6. Подмена: сначала убираем -wal/-shm прежней базы (после подмены они
-    #    превратились бы в «malformed»), затем атомарный os.replace.
+    # 6. Подмена: сначала вливаем журнал текущей базы в неё checkpoint'ом (иначе
+    #    свежие транзакции пропали бы вместе с -wal), убираем -wal/-shm прежней базы
+    #    (после подмены они превратились бы в «malformed»), затем атомарный os.replace.
+    if db.exists():
+        reason = _checkpoint(db)
+        if reason:
+            lost = (f"транзакции из её журнала WAL сохранены только в предохранительной "
+                    f"копии {safety}" if safety else
+                    "транзакции из её журнала WAL будут потеряны "
+                    "(предохранительной копии нет)")
+            note = f"checkpoint текущей базы не удался ({reason}); {lost}"
+            report["warning"] = f"{report['warning']}; {note}" if report["warning"] else note
+    copy_note = (f"предохранительная копия прежней базы: {safety}; "
+                 f"вернуть её: listik restore {safety}" if safety
+                 else "предохранительной копии нет")
     removed = []
     for side in sidecar_paths(db):
         if side.exists():
@@ -437,14 +475,15 @@ def restore(backup_path: Path | str, db_path: Path | str | None = None, *,
                 raise errors.ListikError(
                     f"не удалось убрать старый журнал {side.name}: {exc}",
                     code=errors.SERVER_ERROR,
-                    hint="останови сервер и проверь права на каталог базы") from exc
+                    hint=f"останови сервер и проверь права на каталог базы; "
+                         f"{copy_note}") from exc
     try:
         os.replace(tmp, db)
     except OSError as exc:
         tmp.unlink(missing_ok=True)
         raise errors.ListikError(
             f"не удалось подменить файл базы: {exc}", code=errors.SERVER_ERROR,
-            hint="текущая база не тронута; проверь права на каталог базы") from exc
+            hint=f"проверь права на каталог базы; {copy_note}") from exc
     _fsync_dir(db.parent)
 
     # 7. Проверяем то, что реально лежит на месте базы.

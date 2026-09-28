@@ -204,6 +204,46 @@ class RestoreTests(TempDbTestCase):
         self.assertIsNone(report["safety_copy"])
         self.assertEqual(_titles(self.db_path), ["первая"])
 
+    def test_replace_failure_keeps_wal_transactions(self) -> None:
+        """os.replace упал после удаления -wal: журнал уже влит в базу, подсказка честная."""
+        with mock.patch.object(backup_mod.os, "replace", side_effect=OSError("нет прав")):
+            with self.assertRaises(errors.ListikError) as ctx:
+                backup_mod.restore(self.copy, self.db_path, force=True)
+        exc = ctx.exception
+        self.assertEqual(exc.code, errors.SERVER_ERROR)
+        self.assertNotIn("не тронута", exc.message + (exc.hint or ""))
+        safety = list(self.tmp_path.glob("*.bak-pre-restore-*"))
+        self.assertEqual(len(safety), 1)
+        self.assertTrue(safety[0].is_file())
+        self.assertIn(str(safety[0]), exc.hint)
+        self.assertIn("listik restore", exc.hint)
+        self.assertEqual(list(self.tmp_path.glob("*.restore-*")), [])
+        self.assertEqual(sorted(_titles(self.db_path)), ["вторая", "первая"])
+
+    def test_checkpoint_failure_is_a_warning(self) -> None:
+        with mock.patch.object(backup_mod, "_checkpoint", return_value="причина-теста"):
+            report = backup_mod.restore(self.copy, self.db_path, force=True)
+        self.assertEqual(_titles(self.db_path), ["первая"])
+        self.assertIn("причина-теста", report["warning"])
+        self.assertIn("предохранительной копии", report["warning"])
+        self.assertTrue(pathlib.Path(report["safety_copy"]).is_file())
+
+    def test_no_free_safety_name_refuses(self) -> None:
+        stamp = "2026-09-28-000000"
+        base = self.tmp_path / f"{self.db_path.name}.bak-pre-restore-{stamp}"
+        taken = [base] + [base.with_name(f"{base.name}-{n}") for n in range(2, 1000)]
+        for path in taken:
+            path.touch()
+        with mock.patch.object(backup_mod, "_stamp", return_value=stamp):
+            with self.assertRaises(errors.ListikError) as ctx:
+                backup_mod.restore(self.copy, self.db_path, force=True)
+        self.assertEqual(ctx.exception.code, errors.CONFLICT)
+        self.assertEqual(sorted(_titles(self.db_path)), ["вторая", "первая"])
+        self.assertTrue(pathlib.Path(str(self.db_path) + "-wal").exists())
+        self.assertTrue(all(path.stat().st_size == 0 for path in taken))
+        self.assertEqual(sorted(self.tmp_path.glob("*.bak-pre-restore-*")), sorted(taken))
+        self.assertEqual(list(self.tmp_path.glob("*.restore-*")), [])
+
 
 class _FakeHealthServer:
     """Мини-сервер Listik: отвечает на /api/health и называет свою базу.

@@ -309,19 +309,6 @@ export function routeIcon(value: string | null | undefined): RouteIconItem | nul
   return ROUTE_ICONS.find((item) => item.value === value) ?? null
 }
 
-/**
- * Замена иконки записи, у которой явный `icon` не принят сервером: серый
- * кружок с крестиком — «иконка недоступна». Такие записи отличало бы поле
- * `icon_error` из `GET /api/routes`, но текущий сервер его не отдаёт (неверный
- * `icon` в таблицу `routes` не попадает) — ветка оставлена для совместимости
- * и сейчас не срабатывает. Уровень, выведенный по ключу, рисуется обычной
- * иконкой из `ROUTE_ICONS`, крестик же значит, что уровня нет вовсе.
- */
-export const ROUTE_ICON_UNKNOWN = {
-  label: 'иконка недоступна',
-  icon: 'route-unknown',
-} as const
-
 // ── Вид записи ленты (секция «Журнал и вердикты» панели задачи) ─────────────
 
 export interface CommentKindItem extends DictionaryItem<CommentKind> {

@@ -470,47 +470,17 @@ class RouteIconDictionaryTests(unittest.TestCase):
             self.assertIn(glyph, known)
 
 
-class RouteIconUnknownBoardTests(unittest.TestCase):
-    """Маркер недоступной иконки: сервер и доска не разъезжаются (listik-itg8).
+class RouteBoardWarningsTests(unittest.TestCase):
+    """`warnings` ответа `GET /api/routes` доезжают до доски (listik-itg8).
 
-    Неизвестный `icon` записи сервер отдаёт полем `icon_error` в `GET /api/routes`,
-    а доска рисует по нему серый кружок с крестиком из `ROUTE_ICON_UNKNOWN`. Здесь
-    читаются исходники доски — так же, как в `RouteIconDictionaryTests`, без сборки.
+    Читаются исходники доски без сборки — так же, как в `RouteIconDictionaryTests`.
     """
 
     def setUp(self) -> None:
-        self.dictionaries_path = DICTIONARIES_TS
-        text = DICTIONARIES_TS.read_text(encoding="utf-8")
-        marker = "export const ROUTE_ICON_UNKNOWN"
-        self.assertTrue(marker in text, "в dictionaries.ts нет ROUTE_ICON_UNKNOWN")
-        self.unknown_block = text.split(marker, 1)[1].split("\n}", 1)[0]
-        self.route_icon = (REPO_DIR / "web" / "src" / "components" / "marks"
-                           / "RouteIcon.vue").read_text(encoding="utf-8")
         self.types = (REPO_DIR / "web" / "src" / "api" / "types.ts").read_text(encoding="utf-8")
         self.store = (REPO_DIR / "web" / "src" / "store" / "listik.ts").read_text(encoding="utf-8")
         self.modal = (REPO_DIR / "web" / "src" / "components"
                       / "NewTaskModal.vue").read_text(encoding="utf-8")
-
-    def test_marker_glyph_exists_in_icons_ts(self) -> None:
-        glyphs = ROUTE_GLYPH_RE.findall(self.unknown_block)
-        self.assertEqual(len(glyphs), 1, self.unknown_block)
-        self.assertIn(glyphs[0], board_icon_names())
-
-    def test_marker_is_not_a_route_level(self) -> None:
-        """Крестик не уровень маршрута: в `ROUTE_ICONS` его быть не должно."""
-        self.assertEqual(ROUTE_LEVEL_RE.findall(self.unknown_block), [])
-        block = (self.dictionaries_path.read_text(encoding="utf-8")
-                 .split("export const ROUTE_ICONS", 1)[1].split("\n]", 1)[0])
-        self.assertEqual(ROUTE_LEVEL_RE.findall(block), list(routes_mod.ROUTE_ICONS))
-        marker_glyphs = ROUTE_GLYPH_RE.findall(self.unknown_block)
-        for glyph in ROUTE_GLYPH_RE.findall(block):
-            self.assertNotIn(glyph, marker_glyphs)
-
-    def test_component_marks_the_record_by_icon_error(self) -> None:
-        """Крестик рисуется по `icon_error` ответа, а не по отсутствию уровня вообще."""
-        self.assertIn("ROUTE_ICON_UNKNOWN", self.route_icon)
-        self.assertIn("icon_error", self.route_icon)
-        self.assertIn("icon_error", self.types)
 
     def test_board_shows_file_warnings(self) -> None:
         """`warnings` ответа доезжают до формы «Новая задача»."""

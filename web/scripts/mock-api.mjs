@@ -1025,7 +1025,7 @@ function assistantRouteFor(mode) {
       key: 'ghost-pipeline',
       kind: 'pipeline',
       title: 'Маршрут, которого нет в базе',
-      hint: 'появится после правки файла',
+      hint: 'такого ключа нет в таблице маршрутов',
       reason: 'модель предложила ключ, которого доска не знает',
     }
   }

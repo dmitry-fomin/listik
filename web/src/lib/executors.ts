@@ -11,6 +11,7 @@ import type { RouteDef, Task } from '@/api/types'
 import { harnessOf, harnessTitle, type HarnessKey } from './harness'
 import { isSwarmCell, STAGE_ROLE, type ProviderKey } from './pipelines'
 import { routeByKey } from './routes'
+import { DONE_STAGE } from './dictionaries'
 
 export interface StageExecutor {
   kind: 'role' | 'swarm'
@@ -49,7 +50,7 @@ export function stageExecutor(
 ): StageExecutor | null {
   const route = routeByKey(task.launch_route, routes)
   if (!route) return null
-  if (!task.stage || task.stage === 'done') return null
+  if (!task.stage || task.stage === DONE_STAGE.value) return null
   const cell = route.roles[STAGE_ROLE[task.stage]]
   if (!cell) return null
   if (isSwarmCell(cell)) {

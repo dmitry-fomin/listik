@@ -125,6 +125,11 @@ export function statusTitle(value: TaskStatus): string {
   return STATUSES.find((item) => item.value === value)?.label ?? value
 }
 
+/** Статус «готова» — задача закрыта выполненной. */
+export const DONE_STATUS: TaskStatus = 'done'
+/** Статус «отменена» — задача закрыта без выполнения. */
+export const CANCELLED_STATUS: TaskStatus = 'cancelled'
+
 /**
  * Финальные статусы — зеркало `FINAL_STATUSES` из `listik/statuses.py` (общего
  * объявления у TS и Python нет); расхождение ловит `tests/test_statuses.py`.

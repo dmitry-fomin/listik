@@ -5,6 +5,7 @@
  */
 import type { Meta, ProjectRow, TaskStage } from '@/api/types'
 import { PIPELINE_STAGE_KEYS, type Transition } from '@/lib/stages'
+import { DONE_STAGE } from '@/lib/dictionaries'
 
 export function projectBySlug(projects: ProjectRow[] | null | undefined, slug: string | null | undefined): ProjectRow | null {
   if (!slug) return null
@@ -32,7 +33,7 @@ export function projectTransitions(
 export function transitionOut(transitions: Record<string, Transition> | null, stage: TaskStage): Transition | null {
   const index = stage ? PIPELINE_STAGE_KEYS.indexOf(stage) : -1
   if (!transitions || index === -1) return null
-  const next = PIPELINE_STAGE_KEYS[index + 1] ?? 'done'
+  const next = PIPELINE_STAGE_KEYS[index + 1] ?? DONE_STAGE.value
   return transitions[`${stage}:${next}`] ?? 'handoff'
 }
 

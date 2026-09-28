@@ -17,7 +17,7 @@ import ListikIcon from '../ListikIcon.vue'
 import type { ProjectRow, Task } from '@/api/types'
 import store, { type DepsSummary } from '@/store/listik'
 import { AT_RISK_IDLE_HOURS, taskHealth, healthReason, healthTone } from '@/lib/health'
-import { statusTitle } from '@/lib/dictionaries'
+import { CANCELLED_STATUS, DONE_STAGE, DONE_STATUS, statusTitle } from '@/lib/dictionaries'
 import { routeByKey } from '@/lib/routes'
 import { stageExecutor } from '@/lib/executors'
 import { hasHolderTitle, workedByOf } from '@/lib/task-presentation'
@@ -86,9 +86,9 @@ const stateBadge = computed<{ tone: 'accent' | 'danger' | 'warning' | 'success';
 
 /** Бейдж статуса — независимо от ветки состояния (закрыта / отменена / после s4). */
 const statusBadge = computed<{ tone: 'success' | 'neutral' | 'info'; text: string } | null>(() => {
-  if (props.task.status === 'done') return { tone: 'success', text: 'закрыта' }
-  if (props.task.status === 'cancelled') return { tone: 'neutral', text: statusTitle('cancelled') }
-  if (props.task.stage === 'done') return { tone: 'info', text: 'после s4' }
+  if (props.task.status === DONE_STATUS) return { tone: 'success', text: 'закрыта' }
+  if (props.task.status === CANCELLED_STATUS) return { tone: 'neutral', text: statusTitle(CANCELLED_STATUS) }
+  if (props.task.stage === DONE_STAGE.value) return { tone: 'info', text: 'после s4' }
   return null
 })
 

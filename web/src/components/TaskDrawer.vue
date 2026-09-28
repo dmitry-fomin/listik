@@ -50,8 +50,11 @@ import RoutePicker from './RoutePicker.vue'
 import TaskGlyph from './marks/TaskGlyph.vue'
 import {
   commentKind,
+  CANCELLED_STATUS,
   COMMENT_KINDS,
   DEP_SUMMARY,
+  DONE_STAGE,
+  DONE_STATUS,
   FEED_FILTERS,
   feedEventMark,
   feedEvents,
@@ -202,7 +205,7 @@ const childCards = computed<Omit<ChildCard, 'linked'>[]>(() => {
 })
 
 /** «Готово» — только `status === 'done'`: отменённый ребёнок входит во «всего», но не сюда. */
-const childrenDone = computed(() => childCards.value.filter((child) => child.status === 'done').length)
+const childrenDone = computed(() => childCards.value.filter((child) => child.status === DONE_STATUS).length)
 const childrenTotal = computed(() => childCards.value.length)
 
 /**
@@ -288,7 +291,7 @@ const canFinish = computed(() => deps.value?.can_finish !== false)
 const childrenBlockClose = computed(
   () =>
     !isClosedStatus(props.task?.status) &&
-    childrenOpen.value.some((dep) => dep.status !== 'done'),
+    childrenOpen.value.some((dep) => dep.status !== DONE_STATUS),
 )
 const reasons = computed<string[]>(() => deps.value?.reasons ?? [])
 /** Блокеры стоят без движения: ни держателя, ни свежего heartbeat. */
@@ -299,9 +302,9 @@ const blockersIdle = computed(
 const statusTone = computed<StatusPillTone>(() => {
   const status = props.task?.status
   if (status === 'blocked') return 'dead'
-  if (status === 'done') return 'success'
+  if (status === DONE_STATUS) return 'success'
   if (status === 'in_progress') return 'info'
-  if (status === 'cancelled') return 'unknown'
+  if (status === CANCELLED_STATUS) return 'unknown'
   return 'healthy'
 })
 
@@ -449,7 +452,7 @@ defineExpose({ focusComment, focusAnswer })
 
 // ── «Где стоит процесс»: степпер и подписи шагов ─────────────────────────
 
-const STEP_LABELS = [...PIPELINE.map((step) => `${step.code} · ${step.title}`), 'done']
+const STEP_LABELS = [...PIPELINE.map((step) => `${step.code} · ${step.title}`), DONE_STAGE.value]
 
 const currentIndex = computed(() => {
   const task = props.task
@@ -461,7 +464,7 @@ function statusOfIndex(index: number): UiStepStatus {
   const cur = currentIndex.value
   if (cur === -1) return 'upcoming'
   if (index < cur) return 'done'
-  if (index === cur) return props.task?.stage === 'done' ? 'done' : 'current'
+  if (index === cur) return props.task?.stage === DONE_STAGE.value ? 'done' : 'current'
   return 'upcoming'
 }
 
@@ -576,11 +579,11 @@ const processHint = computed(() => {
   return `на ${code} ${task.stage_age}${task.stage_warn ? ' · дольше порога' : ''}`
 })
 
-function nextStageCode(stage: PipelineStage | 'done' | null): string | null {
-  if (!stage || stage === 'done') return null
+function nextStageCode(stage: TaskStage): string | null {
+  if (!stage || stage === DONE_STAGE.value) return null
   const index = PIPELINE.findIndex((step) => step.key === stage)
   if (index === -1) return null
-  return index + 1 < PIPELINE.length ? PIPELINE[index + 1].code : 'done'
+  return index + 1 < PIPELINE.length ? PIPELINE[index + 1].code : DONE_STAGE.value
 }
 
 const belowRowHint = computed(() => {
@@ -861,7 +864,7 @@ const feedEmptyState = computed<{ title: string; description?: string }>(() => {
   if (feedFilter.value === 'question') return { title: 'Вопросов нет' }
   if (feedFilter.value !== 'verdict') return { title: 'Записей нет' }
   const task = props.task
-  const reachedJudge = task?.stage === 's4-judge' || task?.stage === 'done'
+  const reachedJudge = task?.stage === 's4-judge' || task?.stage === DONE_STAGE.value
   if (!reachedJudge) {
     const code = stageCode('s4-judge')
     const title = stageTitle('s4-judge')
@@ -1098,7 +1101,7 @@ async function loadTree(): Promise<void> {
               size="sm"
               variant="secondary"
               ariaLabel="Следующий этап"
-              :disabled="task.stage === 'done'"
+              :disabled="task.stage === DONE_STAGE.value"
               :loading="pending === 'stage'"
               @click="submitStage"
             >

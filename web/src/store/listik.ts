@@ -9,7 +9,7 @@ import { computed, reactive, ref, shallowRef } from 'vue'
 import { ApiError, api, subscribeStream } from '@/api/client'
 import { readStoredOwner, readStoredToken, writeStoredOwner, writeStoredToken } from '@/api/config'
 import { AT_RISK_IDLE_HOURS, taskHealth } from '@/lib/health'
-import { INTAKE_COLUMN_KEY, PIPELINE_STAGE_KEYS, STAGES } from '@/lib/dictionaries'
+import { DONE_STAGE, DONE_STATUS, INTAKE_COLUMN_KEY, PIPELINE_STAGE_KEYS, STAGES } from '@/lib/dictionaries'
 import { NO_VALUE } from '@/lib/facets'
 import { tryRequest, withLoading } from './helpers'
 import type {
@@ -354,7 +354,7 @@ const columns = computed<BoardColumn[]>(() => {
     // счётчик за 7 дней (`doneWeekCount`): два разных числа за одной и той же
     // подписью, путаница из-за которой и заведён этот пункт.
     return source.map((column) => {
-      const tasks = column.key === 'done' ? column.tasks.filter(isRecentlyDone) : column.tasks
+      const tasks = column.key === DONE_STAGE.value ? column.tasks.filter(isRecentlyDone) : column.tasks
       return { ...column, tasks, ...columnCounter(tasks) }
     })
   }
@@ -365,7 +365,7 @@ const columns = computed<BoardColumn[]>(() => {
     .map((column) => {
       const tasks = column.tasks
         .filter((task) => matchesFilters(task, filters, boardFilters))
-        .filter((task) => column.key !== 'done' || isRecentlyDone(task))
+        .filter((task) => column.key !== DONE_STAGE.value || isRecentlyDone(task))
       return { ...column, tasks, ...columnCounter(tasks) }
     })
     .filter((column) => column.tasks.length > 0 || keepEmpty.includes(column.key))
@@ -581,7 +581,7 @@ async function loadDoneWeek(): Promise<void> {
   const page = await tryRequest(
     () =>
       api.tasks({
-        status: 'done',
+        status: DONE_STATUS,
         include_closed: true,
         order: 'updated',
         limit: 200,
@@ -765,7 +765,7 @@ async function setView(next: ViewKey): Promise<void> {
 
 /** Клик по рельсе «Готово»: не колонка на доске, а список закрытых задач. */
 async function openDoneList(): Promise<void> {
-  filters.status = 'done'
+  filters.status = DONE_STATUS
   await setView('list')
 }
 

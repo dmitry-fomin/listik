@@ -161,7 +161,7 @@ const gridStyle = computed(() => ({ gridTemplateColumns: boardTracks.value }))
 
         <aside
           class="listik-done-rail"
-          data-stage="done"
+          :data-stage="DONE_STAGE.value"
           role="button"
           tabindex="0"
           :aria-label="`Готово за 7 дней, ${store.doneWeekCount.value} задач — открыть список готовых`"

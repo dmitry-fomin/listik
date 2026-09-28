@@ -510,23 +510,11 @@ function isTypingOrDialog(): boolean {
   return false
 }
 
-/** Открытая «Новая задача» (дровер) — глобальный V не должен писать поверх формы. */
-function formOpen(): boolean {
-  for (const drawer of document.querySelectorAll('.ui-drawer')) {
-    const backdrop = drawer.closest('.ui-drawer-backdrop')
-    const closing =
-      drawer.classList.toString().includes('leave') ||
-      Boolean(backdrop && backdrop.classList.toString().includes('leave'))
-    if (!closing) return true
-  }
-  return false
-}
-
 function onKeydown(event: KeyboardEvent): void {
   if (event.code === 'KeyV') {
     if (event.repeat) return
     if (event.ctrlKey || event.altKey || event.metaKey || event.shiftKey) return
-    if (!voiceEnabled.value || isTypingOrDialog() || formOpen()) return
+    if (!voiceEnabled.value || isTypingOrDialog() || store.createFormOpen.value) return
     if (voiceKeyHeld) return
     voiceKeyHeld = true
     event.preventDefault()

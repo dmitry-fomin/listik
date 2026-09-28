@@ -611,6 +611,74 @@ try {
     }
   })
 
+  await record('V при открытой «Новой задаче» не пишет', async () => {
+    await resetUi()
+    await setCase('ok')
+    await resetRequests()
+    const clicked = await evaluate(`(() => {
+      const button = [...document.querySelectorAll('button')]
+        .find((el) => el.textContent.replace(/\\s+/g, ' ').trim() === 'Новая задача');
+      if (!button) return false;
+      button.click();
+      return true;
+    })()`)
+    const opened = await waitFor(async () => ((await state()).modal ? true : null), 5000)
+    // Без фокуса в поле — чтобы сработала проверка формы, а не isTypingOrDialog.
+    await evaluate('document.activeElement && document.activeElement.blur && document.activeElement.blur()')
+    const before = await voiceStats()
+    await keyDownV()
+    await sleep(1000)
+    const seen = await state()
+    const after = await voiceStats()
+    await keyUpV()
+    await resetUi()
+    return {
+      ok:
+        clicked &&
+        Boolean(opened) &&
+        seen.stage !== 'recording' &&
+        !seen.panelOpen &&
+        after.getUserMedia === before.getUserMedia &&
+        after.started === before.started,
+      expect: 'форма «Новая задача» открыта, V не начинает запись: панели нет, getUserMedia/MediaRecorder не вызывались',
+      got: { clicked, opened: Boolean(opened), stage: seen.stage, panelOpen: seen.panelOpen, before, after },
+    }
+  })
+
+  await record('V при открытой панели задачи пишет', async () => {
+    await resetUi()
+    await setCase('ok')
+    await resetRequests()
+    const clicked = await evaluate(`(() => {
+      const card = document.querySelector('.listik-task-card');
+      if (!card) return false;
+      card.click();
+      return true;
+    })()`)
+    const opened = await waitFor(
+      async () =>
+        (await evaluate(`[...document.querySelectorAll('.ui-drawer')].some((el) =>
+          el.querySelector('.listik-drawer__head') &&
+          ![...el.classList, ...(el.closest('.ui-drawer-backdrop')?.classList ?? [])].some((cls) => cls.includes('leave')))`))
+          ? true
+          : null,
+      5000,
+    )
+    await evaluate('document.activeElement && document.activeElement.blur && document.activeElement.blur()')
+    await keyDownV()
+    const held = await waitFor(async () => ((await state()).stage === 'recording' ? true : null), 3000)
+    await tapKey('Escape', 'Escape', 27)
+    await keyUpV()
+    await sleep(400)
+    const data = await apiRequests()
+    await resetUi()
+    return {
+      ok: clicked && Boolean(opened) && Boolean(held) && data.voice.transcribe === 0 && data.voice.draft === 0,
+      expect: 'панель задачи открыта, удержание V начинает запись, Esc отменяет без запросов',
+      got: { clicked, opened: Boolean(opened), held: Boolean(held), counts: data.voice },
+    }
+  })
+
   await record('отпускание V до выдачи потока: запись заканчивается сама, дорожка погашена', async () => {
     await resetUi()
     await setCase('ok')

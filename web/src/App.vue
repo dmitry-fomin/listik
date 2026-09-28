@@ -56,7 +56,7 @@ const tokenError = ref<string | null>(null)
 const drawerRef = ref<InstanceType<typeof TaskDrawer> | null>(null)
 const drawerOpen = ref(false)
 
-const createOpen = ref(false)
+const createOpen = store.createFormOpen
 
 /** Черновик голосового ввода: живёт от «Открыть форму» до закрытия/успеха «Новой задачи». */
 const voiceDraft = ref<VoiceDraft | null>(null)

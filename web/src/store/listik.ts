@@ -222,6 +222,8 @@ const assistantModel = ref('')
  * запроса — «выключено».
  */
 const voiceEnabled = ref(false)
+/** Открыта ли форма «Новая задача»; пишет только `App.vue` (её `v-model`). */
+const createFormOpen = ref(false)
 const assistantLoading = ref(false)
 let assistantRequested = false
 
@@ -1562,6 +1564,7 @@ export function useListikStore() {
     assistantModel,
     assistantLoading,
     voiceEnabled,
+    createFormOpen,
     inboxQuestions,
     // производные
     isServerMode,

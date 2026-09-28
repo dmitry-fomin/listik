@@ -191,12 +191,6 @@ def project_default(args) -> str | None:
     return slug
 
 
-#: Операции `call()`, которым нужна идентичность: у остальных владелец ничего не
-#: решает, и `as_owner` им не передаётся (см. client.OWNER_LOCAL_OPS).
-OWNER_OPS = frozenset({"list", "board", "ready", "create", "claim", "heartbeat",
-                       "stage", "update", "done", "release"})
-
-
 #: Операции `call()`, которые пишут в базу, — только им терять событие доски
 #: (listik-f6kt). Список по операциям, а не по HTTP-методу: `dep_tree` и
 #: `mentions` шлют POST, но это чтения графа, событий они не создают.
@@ -242,7 +236,7 @@ def call(op: str, args, path: str, *, query: dict | None = None, body: dict | No
     # фолбэк — аргументом as_owner, и оба пути должны видеть одно имя.
     owner = owner_default(args)
     local_kwargs = dict(local_kwargs or {})
-    if owner and op in OWNER_OPS:
+    if owner:
         local_kwargs["as_owner"] = owner
     # Токен поколения запуска — из окружения, выданного лаунчером (никакого флага
     # командной строки для него нет): сравнивает сервер/store, здесь только читаем
@@ -255,13 +249,34 @@ def call(op: str, args, path: str, *, query: dict | None = None, body: dict | No
         return client.request(method, path, query=query, body=body,
                               host=args.host, port=args.port, timeout=timeout,
                               owner=owner or None, fence=token)
-    if not getattr(args, "local", False) and fallback_warning:
+    if fallback_warning:
         print("! сервер Listik не отвечает — команда выполнена напрямую по базе "
               "(доска не получит событие; подними сервер: listik serve)", file=sys.stderr)
     # Метки `harness:`/`process:` считает серверная логика (store + routes.labels_for),
     # и у `new --route`/`set route=` они те же, что у формы на доске: маршруты обе
     # стороны берут из таблицы `routes`, файл в обход ввоза не читает никто.
     return client.local_call(op, fence=token, **local_kwargs)
+
+
+def _reraise_bad_argument(exc: BaseException):
+    """Из `except`: `bad_argument` — заново с кодом выхода 2, прочее — как было."""
+    err = errors.as_error(exc)
+    if err.code != errors.BAD_ARGUMENT:
+        raise exc
+    raise errors.ListikError(err.message, code=err.code, hint=err.hint,
+                             exit_code=2, status=err.status) from exc
+
+
+def _project_path(args, slug: str) -> str:
+    """Путь проекта `slug` из `/api/projects`; пустой — `bad_argument`."""
+    res = call("projects", args, "/api/projects", local_kwargs={}, fallback_warning=False)
+    project = next((p for p in (res.get("projects") or []) if p.get("slug") == slug), None)
+    path = ((project or {}).get("path") or "").strip()
+    if not path:
+        raise errors.ListikError(f"у проекта {slug or '—'} не указан путь",
+                                 code=errors.BAD_ARGUMENT,
+                                 hint="listik projects --add <каталог>")
+    return path
 
 
 def emit(args, payload, human: str, *, force_json: bool = False, indent: int | None = 2) -> None:
@@ -1074,14 +1089,7 @@ def cmd_worktree(args) -> int:
     track = getattr(args, "track", None)
     name = worktree_mod.worktree_name(task_id, track)
 
-    slug = task.get("project") or ""
-    res = call("projects", args, "/api/projects", local_kwargs={}, fallback_warning=False)
-    project = next((p for p in (res.get("projects") or []) if p.get("slug") == slug), None)
-    project_path = ((project or {}).get("path") or "").strip()
-    if not project_path:
-        raise errors.ListikError(f"у проекта {slug or '—'} не указан путь",
-                                 code=errors.BAD_ARGUMENT,
-                                 hint="listik projects --add <каталог>")
+    project_path = _project_path(args, task.get("project") or "")
 
     out = worktree_mod.ensure(project_path, name,
                               card_path=None if track else task.get("worktree"),
@@ -1227,11 +1235,7 @@ def cmd_portions(args) -> int:
                    local_kwargs={"task_id": args.task_id, "actor": actor, "harness": harness})
     except (errors.ListikError, ValueError) as exc:
         # Нет spec_path/каталога шага — неверный аргумент: код 2, как у прочих bad_argument.
-        err = errors.as_error(exc)
-        if err.code != errors.BAD_ARGUMENT:
-            raise
-        raise errors.ListikError(err.message, code=err.code, hint=err.hint,
-                                 exit_code=2, status=err.status) from exc
+        _reraise_bad_argument(exc)
     if getattr(args, "json", False):
         emit(args, res, "")
         return 0
@@ -1256,11 +1260,11 @@ def cmd_revoke(args) -> int:
                               "note": args.note, "kill": kill})
     emit(args, task, f"полномочия отозваны: {task['id']} — поколение {task.get('generation')}")
     if not getattr(args, "json", False):
-        journal = [c for c in (task.get("comments") or [])
-                  if c.get("author") == "agent:listik" and c.get("kind") == "journal"
-                  and "отозваны" in (c.get("text") or "")]
-        if journal:
-            print(f"  {journal[-1]['text']}")
+        gen = str(task.get("generation"))
+        ev = next((e for e in (task.get("events") or [])
+                   if e.get("kind") == "revoke" and e.get("to_value") == gen), None)
+        if ev:
+            print(f"  {ev.get('note') or ''}")
     return 0
 
 
@@ -1274,12 +1278,8 @@ def cmd_restart(args) -> int:
                     body=fields, local_kwargs={"task_id": args.task_id, **fields})
     except (errors.ListikError, ValueError) as exc:
         # Неверный этап, карточка не роя — неверный аргумент: код 2, как у `portions`.
-        err = errors.as_error(exc)
-        if err.code != errors.BAD_ARGUMENT:
-            raise
-        raise errors.ListikError(err.message, code=err.code, hint=err.hint,
-                                 exit_code=2, status=err.status) from exc
-    lines = [f"перезапущена: {task['id']} с {task['restarted_from']}"]
+        _reraise_bad_argument(exc)
+    lines =[f"перезапущена: {task['id']} с {task['restarted_from']}"]
     if "route_from" in task:
         lines.append(f"маршрут: {task['route_from'] or '—'} → {task.get('launch_route')}")
     if task.get("detached"):
@@ -1385,11 +1385,6 @@ def cmd_remember(args) -> int:
         raise
     print(f"запомнено: {out['key']}")
     return 0
-
-
-def store_now() -> str:
-    from datetime import datetime, timezone
-    return datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
 
 
 def cmd_ready(args) -> int:
@@ -1850,12 +1845,7 @@ def cmd_watch(args) -> int:
             "нужен проект: наблюдение считается по одному проекту", code=errors.BAD_ARGUMENT,
             hint="listik watch --project <slug>")
 
-    res = call("projects", args, "/api/projects", local_kwargs={}, fallback_warning=False)
-    proj = next((p for p in (res.get("projects") or []) if p.get("slug") == project), None)
-    project_path = ((proj or {}).get("path") or "").strip()
-    if not project_path:
-        raise errors.ListikError(f"у проекта {project} не указан путь",
-                                 code=errors.BAD_ARGUMENT, hint="listik projects --add <каталог>")
+    project_path = _project_path(args, project)
     worktree_mod.check_repo(project_path)
 
     list_res = call("list", args, "/api/tasks",
@@ -2087,7 +2077,10 @@ def cmd_dep_tree(args) -> int:
         for i, node in enumerate(nodes):
             last = i == len(nodes) - 1
             branch = "└─ " if last else "├─ "
-            who = f", держит {node['holder_title']} {node['idle_age']}" if node.get("holder_title") and node["holder_title"] != "—" else ""
+            # deps.graph() ключа holder не отдаёт — тогда судим по holder_title.
+            held = (node.get("holder") if "holder" in node
+                    else node.get("holder_title") not in (None, "", "—"))
+            who = f", держит {node['holder_title']} {node['idle_age']}" if held else ""
             print(f"{prefix}{branch}{arrow} {node['id']} [{node['status']}{who}] {node['title'][:70]}")
             draw(node.get("up") or node.get("down") or [], prefix + ("   " if last else "│  "), arrow)
 
@@ -2220,7 +2213,7 @@ def cmd_timeline(args) -> int:
             arrow = f" {e.get('from_value') or '—'} → {e.get('to_value')}"
         actor = e.get("actor_title")
         print(f"[{e['ts']}] {e['kind']:9s} {e['task_id']:38s}{arrow}"
-              + (f"  {actor}" if actor and actor != "—" else "")
+              + (f"  {actor}" if e.get("actor") else "")
               + (f"  — {e['note'][:70]}" if e.get("note") else ""))
     return 0
 
@@ -2489,7 +2482,6 @@ def cmd_dep(args) -> int:
             raise errors.ListikError("нужен ID задачи", code=errors.BAD_ARGUMENT,
                                      hint="listik dep tree <id>")
         args.task_id = args.issue_id
-        args.depth = getattr(args, "depth", 3)
         return cmd_dep_tree(args)
     if args.action == "cycles":
         return cmd_dep_cycles(args)
@@ -2752,7 +2744,7 @@ def build_parser() -> argparse.ArgumentParser:
                     help="приоритет: 0–4 или P0–P4 (по умолчанию 2)")
     sp.add_argument("-d", "--description")
     sp.add_argument("-a", "--acceptance")
-    sp.add_argument("--stage", choices=["s1-spec", "s2-review", "s3-impl", "s4-judge"])
+    sp.add_argument("--stage", choices=store.PIPELINE_STAGES)
     sp.add_argument("-l", "--label", action="append")
     sp.add_argument("--spec")
     sp.add_argument("--checklist")
@@ -2802,7 +2794,7 @@ def build_parser() -> argparse.ArgumentParser:
 
     sp = add("context", cmd_context, help="компактный контекст задачи для этапа")
     add_task_id(sp)
-    sp.add_argument("--stage", required=True, choices=["s1-spec", "s2-review", "s3-impl", "s4-judge"])
+    sp.add_argument("--stage", required=True, choices=store.PIPELINE_STAGES)
     sp.add_argument("--portion")
     sp.add_argument("--max-chars", type=int, default=None)
     sp.add_argument("--format", choices=["text", "json"], default="text")
@@ -2857,7 +2849,7 @@ def build_parser() -> argparse.ArgumentParser:
     add_holder(sp, help_text="кому выдать карточку: держатель ставится и пишется назначение; "
                             "без него на handoff держателя снимает, на том же этапе — тихий no-op")
     add_note(sp)
-    sp.add_argument("--to", choices=["s1-spec", "s2-review", "s3-impl", "s4-judge", "done"],
+    sp.add_argument("--to", choices=(*store.PIPELINE_STAGES, "done"),
                     help="явный этап; совпал с текущим — карточка не меняется, "
                          "заметка уходит в историю")
 

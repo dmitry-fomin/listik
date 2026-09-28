@@ -2607,6 +2607,17 @@ test("projectsDue: закрытая карточка с деревом без po
   ], SWARM_ROUTES), ["open-no-port", "with-port"]);
 });
 
+// listik-ufgb: дерево-маркер main/master барьер не вливает и не снимает — закрытая
+// карточка с таким деревом проект не держит; открытая держит по-прежнему.
+test("projectsDue: закрытая карточка с деревом main/master проект не держит", () => {
+  assert.deepEqual(projectsDue([
+    {id: "a", project: "done-main", status: "done", worktree: "main", labels: ["port:5170"], launch_route: "r-a"},
+    {id: "b", project: "done-master", status: "done", worktree: " Master ", labels: ["port:5170"], launch_route: "r-b"},
+    {id: "c", project: "done-tree", status: "done", worktree: "/wt/x", labels: ["port:5170"], launch_route: "r-c"},
+    {id: "d", project: "open-main", status: "open", worktree: "main", launch_route: "r-d"},
+  ], SWARM_ROUTES), ["done-tree", "open-main"]);
+});
+
 test("main: без --project проект только с не-роевыми карточками не тикается", async () => {
   const emptyPlan = {waves: [[]], cycles: [], unroutable: [], unscoped: [], blocked: {}};
   const responses = {

@@ -11,7 +11,7 @@ import {isSoftQuestion, OPEN_STATUSES, portOf, SWARM_PREFIX, swarmTasks} from ".
 import {Listik} from "./listik.mjs";
 import {tick} from "./run.mjs";
 import {open as openLog, skipLabel, questionCode, QUESTION_REASONS} from "./log.mjs";
-import {errText, budgetBound, spentShown, cyclesDesc, tokenRejectedText} from "./util.mjs";
+import {errText, budgetBound, spentShown, cyclesDesc, tokenRejectedText, isMainWorktree} from "./util.mjs";
 
 function sleep(ms) {
   return new Promise(resolve => setTimeout(resolve, ms));
@@ -136,12 +136,13 @@ export function acquireDispatcherLock(logDir) {
 // done, чьё дерево ещё не снято. Вопрос сам по себе проект не держит: закрытая
 // карточка с вопросом без дерева, cancelled и старые done без дерева рой не трогает.
 // Считаются только карточки роя: проекту с одними человеческими тик не нужен.
-// Закрытая карточка держит проект, только если у неё есть дерево и метка port: (иначе барьер её не вольёт).
+// Закрытая карточка держит проект, только если у неё есть дерево (не main/master) и метка port:
+// (иначе барьер её не вольёт).
 export function projectsDue(tasks, routes) {
   const slugs = new Set();
   for (const t of swarmTasks((tasks || []).filter(Boolean), routes)) {
     if (!t || typeof t.project !== "string" || !t.project) continue;
-    const tree = typeof t.worktree === "string" && t.worktree.trim() !== "";
+    const tree = typeof t.worktree === "string" && t.worktree.trim() !== "" && !isMainWorktree(t.worktree);
     if (OPEN_STATUSES.has(t.status) || (t.status === "done" && tree && portOf(t) != null)) {
       slugs.add(t.project);
     }

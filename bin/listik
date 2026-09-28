@@ -23,6 +23,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 from listik import __version__, client, cwd_project, db, errors, paths, store  # noqa: E402
 from listik import fence as fence_mod  # noqa: E402
 from listik import routes_store  # noqa: E402
+from listik import statuses  # noqa: E402
 from listik import swarm_watch  # noqa: E402
 from listik import worktree as worktree_mod  # noqa: E402
 
@@ -878,7 +879,7 @@ def cmd_list(args) -> int:
         kwargs["holder"] = kwargs["holder"] or actor_default(args)
     if args.stale:
         # Повторяет `running` из `store.row_to_task`: брошенной бывает только такая задача.
-        stale_statuses = ("in_progress", "review")
+        stale_statuses = statuses.RUNNING_STATUSES
         if args.status and args.status not in stale_statuses:
             raise errors.ListikError(
                 f"--stale ищет брошенные только среди задач в работе и на проверке; "
@@ -1956,7 +1957,7 @@ def cmd_blocked(args) -> int:
                 who = "задача не найдена"
             elif b["holder"]:
                 who = f"держит {b['holder_title']} {b['idle_age']}"
-            elif b["status"] in ("in_progress", "review"):
+            elif b["status"] in statuses.RUNNING_STATUSES:
                 who = f"в работе, но никто не держит ({b['idle_age']})"
             else:
                 who = "никто не взял"

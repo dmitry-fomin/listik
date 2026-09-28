@@ -16,10 +16,21 @@ ALL_STATUSES = OPEN_STATUSES + FINAL_STATUSES
 #: «Задача в работе у исполнителя/судьи» — подмножество OPEN_STATUSES.
 RUNNING_STATUSES = ("in_progress", "review")
 
+#: Одиночное значение из OPEN_STATUSES для сравнений `status = '…'` в коде и SQL.
+OPEN = "open"
+#: Одиночное значение из OPEN_STATUSES для сравнений `status = '…'` в коде и SQL.
+BLOCKED = "blocked"
+#: Одиночное значение из OPEN_STATUSES и RUNNING_STATUSES для сравнений `status = '…'`.
+REVIEW = "review"
 #: Одиночное значение для SQL-сравнений `status = '…'`; строка из OPEN_STATUSES.
 IN_PROGRESS = "in_progress"
 #: Одиночное значение для SQL-сравнений `status = '…'`; строка из FINAL_STATUSES.
 DONE = "done"
+#: Одиночное значение из FINAL_STATUSES для сравнений `status = '…'` в коде и SQL.
+CANCELLED = "cancelled"
+
+#: Порядок колонок доски по статусу; перестановка OPEN_STATUSES.
+BOARD_STATUS_ORDER = (IN_PROGRESS, REVIEW, OPEN, BLOCKED)
 
 #: Открытый набор как список SQL-литералов без скобок: `status IN ({OPEN_STATUSES_SQL})`.
 #: Литералы, а не плейсхолдеры: значения — константы модуля, а не ввод, и фрагмент встаёт

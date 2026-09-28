@@ -44,7 +44,8 @@ from collections.abc import Iterable
 from . import actors as actors_mod
 from . import errors as errors_mod
 from . import util
-from .statuses import FINAL_STATUSES, OPEN_STATUSES, OPEN_STATUSES_SQL
+from .statuses import (BLOCKED, DONE, FINAL_STATUSES, IN_PROGRESS, OPEN,
+                       OPEN_STATUSES, OPEN_STATUSES_SQL)
 
 # Типы связей, которые физически запрещают начинать/закрывать задачу
 HARD_BLOCKERS = ("blocks", "blocked-by", "waits-for", "conditional-blocks", "resource-blocks")
@@ -99,7 +100,7 @@ def _open_hard_sql(edge: str = "d", blocker: str = "t") -> tuple[str, list]:
     тип из `HARD_BLOCKERS`, а блокер не `done`/`cancelled`; отсутствующий блокер (удалён,
     ребро осталось) считается открытым.
     """
-    return (f"{edge}.dep_type IN ({_HARD_MARKS}) AND coalesce({blocker}.status, 'open') "
+    return (f"{edge}.dep_type IN ({_HARD_MARKS}) AND coalesce({blocker}.status, '{OPEN}') "
             f"NOT IN ({','.join('?' * len(FINAL_STATUSES))})",
             [*HARD_BLOCKERS, *FINAL_STATUSES])
 
@@ -176,7 +177,7 @@ def blockers(conn: sqlite3.Connection, task_id: str) -> list[dict]:
     """Незакрытые жёсткие блокеры задачи — то, из-за чего её нельзя брать."""
     out = [_info(conn, r["depends_on"], r["dep_type"])
            for r in open_hard_edges(conn, issue_ids=[task_id])]
-    out.sort(key=lambda b: (b["status"] != "in_progress", b.get("holder_age") is None))
+    out.sort(key=lambda b: (b["status"] != IN_PROGRESS, b.get("holder_age") is None))
     return out
 
 
@@ -185,7 +186,7 @@ def waiting_for(conn: sqlite3.Connection, task_id: str) -> list[dict]:
     out = [_info(conn, r["issue_id"], r["dep_type"])
            for r in open_hard_edges(conn, depends_on=task_id)]
     out = [w for w in out if w["status"] not in FINAL_STATUSES]
-    out.sort(key=lambda b: b["status"] != "in_progress")
+    out.sort(key=lambda b: b["status"] != IN_PROGRESS)
     return out
 
 
@@ -364,7 +365,7 @@ def ready(conn: sqlite3.Connection, task_id: str) -> dict:
         "stage": task["stage"],
         "ready": not finished and not hard and not occupied,
         "claimable": not finished and not hard,
-        "can_finish": not finished and not [c for c in children_open if c["status"] != "done"],
+        "can_finish": not finished and not [c for c in children_open if c["status"] != DONE],
         "blocked_by": hard,
         "waiting_for": waiting_for(conn, task_id),
         "children_open": children_open,
@@ -439,7 +440,7 @@ def not_epic_with_children_sql(alias: str = "") -> str:
 #: которая стоит: `claim` её не запрещает, но в «можно брать» она не выводится, хотя
 #: остальные выборки открытых задач её включают. Набор общий для `ready_tasks` и
 #: `store.list_tasks(deps="ready")`.
-CLAIMABLE_STATUSES = tuple(s for s in OPEN_STATUSES if s != "blocked")
+CLAIMABLE_STATUSES = tuple(s for s in OPEN_STATUSES if s != BLOCKED)
 CLAIMABLE_STATUSES_SQL = ", ".join(f"'{s}'" for s in CLAIMABLE_STATUSES)
 
 

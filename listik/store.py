@@ -26,8 +26,9 @@ from . import scope as scope_mod
 from . import store_helpers
 from . import textutil
 from .deps import PARENT_TYPES
-from .statuses import (DONE, FINAL_STATUSES, IN_PROGRESS, OPEN_STATUSES,
-                       OPEN_STATUSES_SQL, RUNNING_STATUSES_SQL)
+from .statuses import (BOARD_STATUS_ORDER, CANCELLED, DONE, FINAL_STATUSES,
+                       IN_PROGRESS, OPEN, OPEN_STATUSES, OPEN_STATUSES_SQL,
+                       RUNNING_STATUSES, RUNNING_STATUSES_SQL)
 
 PIPELINE_STAGES = ("s1-spec", "s2-review", "s3-impl", "s4-judge")
 #: Сколько часов предложенная связь (`suggested-blocks`) ждёт без замечания `listik lint`.
@@ -322,7 +323,7 @@ def create_task(
     notes: str = "",
     result: str = "",
     issue_type: str = "task",
-    status: str = "open",
+    status: str = OPEN,
     priority: int = 2,
     owner: str | None = None,
     as_owner: str | None = None,
@@ -713,7 +714,7 @@ EPIC_ACTOR = "agent:listik"
 _EPIC_TYPE_NOTE = "подзадачи"
 _EPIC_TYPE_BACK_NOTE = "подзадач не осталось"
 #: Статусы ребёнка, при которых эпик «в работе»: все открытые, кроме `open`.
-_EPIC_ACTIVE = tuple(s for s in OPEN_STATUSES if s != "open")
+_EPIC_ACTIVE = tuple(s for s in OPEN_STATUSES if s != OPEN)
 
 
 def _parent_ids(conn: sqlite3.Connection, task_id: str) -> list[str]:
@@ -767,21 +768,21 @@ def sync_epic(conn: sqlite3.Connection, task_id: str) -> None:
     fields: dict = {}
     reason = None
     if any(s in _EPIC_ACTIVE for s in statuses):
-        fields["status"] = "in_progress"
-    elif "open" in statuses:
-        fields["status"] = "open"
+        fields["status"] = IN_PROGRESS
+    elif OPEN in statuses:
+        fields["status"] = OPEN
     elif all(s in FINAL_STATUSES for s in statuses):
-        if "done" in statuses:
-            fields.update(status="done", stage="done")
+        if DONE in statuses:
+            fields.update(status=DONE, stage="done")
             reason = f"подзадачи закрыты: {ids}"
         else:
-            fields["status"] = "cancelled"
+            fields["status"] = CANCELLED
             reason = f"подзадачи отменены: {ids}"
     else:
         return  # статус ребёнка вне словаря — эпик не трогаем
     row = store_helpers.task_row(conn, task_id)
     if row["status"] == fields["status"] and (
-            fields["status"] != "done" or row["stage"] == "done"):
+            fields["status"] != DONE or row["stage"] == "done"):
         return
     if row["status"] in FINAL_STATUSES and fields["status"] not in FINAL_STATUSES \
             and row["stage"] == "done":
@@ -934,13 +935,13 @@ def update_task(conn: sqlite3.Connection, task_id: str, *, actor: str | None = N
         elif key == "status":
             event(conn, task_id, "status", from_value=old, to_value=new,
                   actor=actor_key, harness=harness, note=note)
-            if new == "in_progress" and not row["started_at"]:
+            if new == IN_PROGRESS and not row["started_at"]:
                 sets.append("started_at = ?")
                 params.append(ts)
             if new in FINAL_STATUSES and not row["closed_at"]:
                 sets.append("closed_at = ?")
                 params.append(ts)
-                if new == "done" and not row["started_at"]:
+                if new == DONE and not row["started_at"]:
                     sets.append("started_at = ?")
                     params.append(ts)
             if new not in FINAL_STATUSES and row["closed_at"]:
@@ -1023,7 +1024,7 @@ def close_task(conn: sqlite3.Connection, task_id: str, *, actor: str | None = No
     им же по правилу PATCH — чужому отказ до любой записи, даже на no-op.
     """
     return update_task(conn, task_id, actor=actor, harness=harness, note=note,
-                       as_owner=as_owner, status="done", stage="done", result=result,
+                       as_owner=as_owner, status=DONE, stage="done", result=result,
                        close_reason=reason or result or None)
 
 
@@ -1178,8 +1179,8 @@ def claim(conn: sqlite3.Connection, task_id: str, *, holder: str, harness: str |
               harness=harness,
               note=f"ЗАПУСК БЕЗ РАЗРЕШЕНИЯ БЛОКЕРОВ: {', '.join(b['id'] for b in state['blocked_by'])}")
     extra = {}
-    if row["status"] == "open":
-        extra["status"] = "in_progress"
+    if row["status"] == OPEN:
+        extra["status"] = IN_PROGRESS
     # Идентичность берущего пишем в событие даже без явного `--harness`: сам вызов
     # `claim` означает «беру я», поэтому держатель и есть автор. Без этого события
     # старых клиентов выглядели бы как «выдана, но не взята».
@@ -1665,9 +1666,9 @@ def _portion_flags(conn: sqlite3.Connection, task_id: str,
         f"WHERE d.depends_on = ? AND d.dep_type IN ({','.join('?' * len(PARENT_TYPES))})",
         (task_id, *PARENT_TYPES)).fetchall()
     statuses = [r["status"] for r in children]
-    has = any(status != "cancelled" for status in statuses)
+    has = any(status != CANCELLED for status in statuses)
     cancelled_only = (bool(statuses)
-                      and all(status == "cancelled" for status in statuses)
+                      and all(status == CANCELLED for status in statuses)
                       and (stage or "").strip() in ("", "s1-spec"))
     live = [r for r in children if r["status"] not in FINAL_STATUSES]
     stuck = bool(live) and not any(
@@ -1690,7 +1691,7 @@ def row_to_task(conn: sqlite3.Connection, row: sqlite3.Row) -> dict:
     # Задача считается идущей, если статус «в работе» или «на проверке».
     # Открытая (никем не взятая) и заблокированная — это очередь, а не движение,
     # поэтому в «брошенные» они не попадают: иначе весь бэклог висит в линии «нужен ты».
-    running = row["status"] in ("in_progress", "review")
+    running = row["status"] in RUNNING_STATUSES
     # «в работе», но держателя нет — типичный след брошенной задачи (и всех
     # импортированных: там статус ставили руками и не снимали).
     orphan = bool(running and not row["holder"])
@@ -2303,13 +2304,13 @@ def board(conn: sqlite3.Connection, *, group_by: str = "status", project: str | 
             col = columns.setdefault(key, {"key": key, "title": title, "tasks": []})
             col["tasks"].append(t)
     else:
-        order = ["in_progress", "review", "open", "blocked"]
+        order = list(BOARD_STATUS_ORDER)
         if include_closed:
             order += list(FINAL_STATUSES)
         for key in order:
             columns[key] = {"key": key, "title": STATUS_TITLES.get(key, key), "tasks": []}
         for t in tasks:
-            key = t["status"] if t["status"] in columns else "open"
+            key = t["status"] if t["status"] in columns else OPEN
             columns[key]["tasks"].append(t)
 
     for col in columns.values():
@@ -2322,7 +2323,7 @@ def board(conn: sqlite3.Connection, *, group_by: str = "status", project: str | 
         else:
             col["tasks"].sort(key=lambda t: (not t["needs_owner"], t["priority"], t["updated_at"] or ""))
         col["count"] = len(col["tasks"])
-        col["wip"] = sum(1 for t in col["tasks"] if t["status"] == "in_progress")
+        col["wip"] = sum(1 for t in col["tasks"] if t["status"] == IN_PROGRESS)
         col["needs_owner"] = sum(1 for t in col["tasks"] if t["needs_owner"])
         col["stale"] = sum(1 for t in col["tasks"] if t["stale"])
         col["not_taken"] = sum(1 for t in col["tasks"] if t["not_taken_warn"])
@@ -2437,7 +2438,7 @@ def stats(conn: sqlite3.Connection, project: str | None = None) -> dict:
         "closed_delta": closed_7d - closed_prev_7d,
         "closed_by_day": closed_by_day,
         "long_stage": long_stage,
-        "running": [t for t in active if t["status"] == "in_progress"],
+        "running": [t for t in active if t["status"] == IN_PROGRESS],
         "stale_hours": float(board_cfg.get("stale_hours", 24)),
         "wip_warn_hours": float(board_cfg.get("wip_warn_hours", 8)),
         "generated_at": now_iso(),
@@ -3022,7 +3023,7 @@ def lint(conn: sqlite3.Connection, project: str | None, *,
     for t in tasks:
         holder = (t["holder"] or "").strip()
         is_open = t["status"] not in FINAL_STATUSES
-        if t["status"] == "in_progress" and not holder:
+        if t["status"] == IN_PROGRESS and not holder:
             add(t, "in_progress_no_holder", "в работе без держателя",
                 {"released_at": _last_release_ts(conn, t["id"])})
         if not is_open and holder:

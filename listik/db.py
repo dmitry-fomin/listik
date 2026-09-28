@@ -44,6 +44,7 @@ CREATE TABLE IF NOT EXISTS tasks (
     notes        TEXT NOT NULL DEFAULT '',
     result       TEXT NOT NULL DEFAULT '',  -- чем кончилось
     status       TEXT NOT NULL DEFAULT 'open',   -- open|in_progress|blocked|review|done|cancelled
+                                                 -- (наборы и порядок доски — listik/statuses.py)
     stage        TEXT,                   -- s1-spec|s2-review|s3-impl|s4-judge|done (этап конвейера)
     priority     INTEGER NOT NULL DEFAULT 2,
     issue_type   TEXT NOT NULL DEFAULT 'task',   -- task|bug|feature|epic|chore|decision|question

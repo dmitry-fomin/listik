@@ -18,6 +18,7 @@ from . import paths
 from . import store
 from . import store_helpers
 from .deps import PARENT_TYPES
+from .statuses import CANCELLED, DONE, OPEN
 
 #: Этап → роль в раскладе маршрута. Порядок списка — порядок прохода карточки.
 STAGE_ROLES: tuple[tuple[str, str], ...] = (
@@ -238,7 +239,7 @@ def portions(conn: sqlite3.Connection, task_id: str) -> list:
         "SELECT t.id, t.status, t.stage, t.holder, t.launched_by, t.launch_route "
         "FROM deps d JOIN tasks t ON t.id = d.issue_id "
         f"WHERE d.depends_on = ? AND d.dep_type IN ({','.join('?' * len(PARENT_TYPES))}) "
-        "AND t.status != 'cancelled' ORDER BY t.created_at, t.rowid",
+        f"AND t.status != '{CANCELLED}' ORDER BY t.created_at, t.rowid",
         (task_id, *PARENT_TYPES)).fetchall()
 
 
@@ -261,7 +262,7 @@ def portions_cancelled_only(conn: sqlite3.Connection, row) -> bool:
     на нём вопрос человеку. Признак гаснет, как только родитель ушёл с
     `s1-spec` (этап позже — значит, нарезку уже разобрали)."""
     statuses = portion_statuses(conn, row["id"])
-    if not statuses or not all(status == "cancelled" for status in statuses):
+    if not statuses or not all(status == CANCELLED for status in statuses):
         return False
     return (row["stage"] or "").strip() in ("", "s1-spec")
 
@@ -373,7 +374,7 @@ def merge_single_portion(conn: sqlite3.Connection, parent_id: str, *, file: str,
     store.add_dep(conn, child["id"], parent_id, "discovered-from", created_by=actor)
     if child["status"] not in store.FINAL_STATUSES:
         store.update_task(conn, child["id"], actor=actor, harness=harness,
-                          status="cancelled", close_reason="слита в родителя",
+                          status=CANCELLED, close_reason="слита в родителя",
                           note=f"одна порция: слита в {parent_id}")
 
 
@@ -539,7 +540,7 @@ def apply_outcome(conn: sqlite3.Connection, task_id: str, *, notify=None) -> Non
                 # Приёмки нет — закрывает Listik, коммит сделала роль (блок role_tail).
                 note = "рой: ответ «готово», ролей после s3-impl нет — карточка закрыта"
                 store.update_task(conn, task_id, actor=SWARM_ACTOR,
-                                  stage="done", status="done", holder="", note=note)
+                                  stage="done", status=DONE, holder="", note=note)
                 store.add_comment(conn, task_id, note, author=SWARM_ACTOR, kind="journal")
             elif nxt is not None:
                 # Одним next_stage: handoff снимает держателя сам, а sticky
@@ -562,7 +563,7 @@ def apply_outcome(conn: sqlite3.Connection, task_id: str, *, notify=None) -> Non
             store.add_comment(conn, task_id, "VERDICT: PASS", author=SWARM_ACTOR,
                               kind="verdict")
             store.update_task(conn, task_id, actor=SWARM_ACTOR,
-                              stage="done", status="done", holder="",
+                              stage="done", status=DONE, holder="",
                               note="рой: ответ «зелёный», карточка закрыта")
             store.add_comment(conn, task_id,
                               "рой: ответ «зелёный», карточка закрыта",
@@ -626,9 +627,9 @@ def _conflict(message: str, hint: str = "") -> errors_mod.ListikError:
 def _started(child) -> bool:
     """Порция начата: статус не `open`, есть этап, держатель или `launched_by`;
     `cancelled` начатой не считается."""
-    if child["status"] == "cancelled":
+    if child["status"] == CANCELLED:
         return False
-    return bool(child["status"] != "open" or (child["stage"] or "").strip()
+    return bool(child["status"] != OPEN or (child["stage"] or "").strip()
                 or (child["holder"] or "").strip() or (child["launched_by"] or "").strip())
 
 
@@ -866,7 +867,7 @@ def restart_task(conn: sqlite3.Connection, task_id: str, *, stage: str | None = 
                                  (child["id"],)).fetchone()
             if fresh["status"] not in store.FINAL_STATUSES:
                 store.update_task(conn, child["id"], actor=actor, harness=harness,
-                                  status="cancelled", close_reason=reason, note=reason)
+                                  status=CANCELLED, close_reason=reason, note=reason)
         if parent_spec is None:
             store.add_comment(conn, task_id, "архив не сделан: у родителя нет spec_path",
                               author=actor, kind="journal", harness=harness)

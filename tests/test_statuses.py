@@ -36,6 +36,16 @@ class SingleDeclarationTests(unittest.TestCase):
         self.assertIn(statuses.IN_PROGRESS, statuses.OPEN_STATUSES)
         self.assertIn(statuses.DONE, statuses.FINAL_STATUSES)
 
+    def test_scalars_and_board_status_order(self) -> None:
+        self.assertEqual(statuses.BOARD_STATUS_ORDER,
+                         ("in_progress", "review", "open", "blocked"))
+        self.assertEqual(sorted(statuses.BOARD_STATUS_ORDER),
+                         sorted(statuses.OPEN_STATUSES))
+        for scalar in (statuses.OPEN, statuses.BLOCKED, statuses.REVIEW):
+            self.assertIn(scalar, statuses.OPEN_STATUSES)
+        self.assertIn(statuses.REVIEW, statuses.RUNNING_STATUSES)
+        self.assertIn(statuses.CANCELLED, statuses.FINAL_STATUSES)
+
     def test_epic_active_is_open_without_open(self) -> None:
         self.assertEqual(store._EPIC_ACTIVE, ("in_progress", "blocked", "review"))
 
@@ -110,6 +120,41 @@ class StatusLiteralGrepTests(unittest.TestCase):
             hits = self._hits(re.compile(rf"^{name}\s*=(?!=)"))
             self.assertEqual({p for p, _, _ in hits}, {expected},
                              f"объявления {name}:\n" + self._fmt(hits))
+
+
+class StatusScalarGrepTests(unittest.TestCase):
+    """Гард порции listik-9ate.a: литералы статусов в логике заменены константами
+    `listik/statuses.py` (остатки белого списка — словари отображения и ключи ответов —
+    проверяются инвентарём чек-листа, а не этим гардом)."""
+
+    _SOURCES = ("listik/store.py", "listik/deps.py", "listik/stage_launch.py",
+                "bin/listik")
+
+    @staticmethod
+    def _hits(pattern: re.Pattern, files: tuple[str, ...]) -> list[str]:
+        out = []
+        for rel in files:
+            for n, line in enumerate(
+                    (ROOT / rel).read_text(encoding="utf-8").splitlines(), 1):
+                if pattern.search(line):
+                    out.append(f"{rel}:{n}: {line.strip()}")
+        return out
+
+    def test_no_running_tuple_literal(self) -> None:
+        hits = self._hits(re.compile(r"[\"']in_progress[\"']\s*,\s*[\"']review[\"']"),
+                          self._SOURCES)
+        self.assertEqual(hits, [],
+                         "кортеж ('in_progress', 'review') литералом:\n" + "\n".join(hits))
+
+    def test_no_single_quoted_cancelled_in_stage_launch(self) -> None:
+        hits = self._hits(re.compile(r"'cancelled'"), ("listik/stage_launch.py",))
+        self.assertEqual(hits, [],
+                         "'cancelled' одинарными кавычками:\n" + "\n".join(hits))
+
+    def test_no_coalesce_open_default_in_deps(self) -> None:
+        hits = self._hits(re.compile(r"coalesce\([^)]*'open'"), ("listik/deps.py",))
+        self.assertEqual(hits, [],
+                         "coalesce(…, 'open') в deps.py:\n" + "\n".join(hits))
 
 
 if __name__ == "__main__":  # pragma: no cover

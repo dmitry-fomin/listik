@@ -13,7 +13,6 @@ import type {
   HarnessPatch,
   Health,
   DepTree,
-  DepsState,
   Meta,
   ProjectPatch,
   ProjectRemoved,
@@ -230,9 +229,6 @@ export const api = {
   blocked: (params: { project?: string; limit?: number } = {}) =>
     get<BlockedResponse>(`/api/blocked${buildQuery({ ...params })}`),
 
-  /** Вердикт по задаче отдельным запросом (то же, что `deps_state` в карточке). */
-  taskReady: (id: string) => post<DepsState>(taskPath(id, '/ready'), {}),
-
   /** Дерево зависимостей: `deps` без `depends_on`. */
   depTree: (id: string, depth = 3) =>
     post<DepTree>(taskPath(id, '/deps'), { depth }),
@@ -244,14 +240,11 @@ export const api = {
 
   removeTask: (id: string) => request<{ deleted: string }>('DELETE', taskPath(id)),
 
-  claim: (id: string, holder: string, note?: string, harness?: string, force = false) =>
-    post<Task>(taskPath(id, '/claim'), { holder, note, harness, force }),
-
   heartbeat: (id: string, holder: string, note?: string) =>
     post<Task>(taskPath(id, '/heartbeat'), { holder, note }),
 
-  nextStage: (id: string, holder?: string, note?: string, harness?: string) =>
-    post<Task>(taskPath(id, '/stage'), { holder, note, harness }),
+  nextStage: (id: string, holder?: string, note?: string) =>
+    post<Task>(taskPath(id, '/stage'), { holder, note }),
 
   comment: (id: string, text: string, kind: CommentKind, author?: string, harness?: string) =>
     post<TaskCommentResponse>(taskPath(id, '/comment'), {

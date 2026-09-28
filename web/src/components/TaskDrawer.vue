@@ -123,7 +123,6 @@ const props = defineProps<{
 
 // `.listik-stack` объявляет gap позже общих стилей drawer и перекрывает его.
 // Секции панели задают собственные отступы через margin/padding и разделитель.
-const drawerBodyGap = computed(() => 0)
 
 const emit = defineEmits<{
   'update:modelValue': [value: boolean]
@@ -135,7 +134,7 @@ const emit = defineEmits<{
   release: [payload: { id: string }]
   done: [payload: { id: string; result: string }]
   remove: [payload: { id: string }]
-  comment: [payload: { id: string; text: string; kind: CommentKind; author?: string }]
+  comment: [payload: { id: string; text: string; kind: CommentKind }]
   dep: [payload: { id: string; dependsOn: string }]
   /** Перейти к другой задаче, не закрывая панель (блокер, ожидающий, ребёнок). */
   'open-other': [id: string]
@@ -904,7 +903,7 @@ function submitFeed(): void {
   } else if (kind === 'question') {
     emit('needsOwner', { id: props.task.id, value: true, note: text })
   } else {
-    emit('comment', { id: props.task.id, text, kind, author: (holder.value ?? '').trim() || undefined })
+    emit('comment', { id: props.task.id, text, kind })
   }
   feedText.value = ''
 }
@@ -1053,7 +1052,7 @@ async function loadTree(): Promise<void> {
       <UiSkeleton variant="rect" height="160px" />
     </div>
 
-    <div v-else-if="task" class="listik-stack listik-drawer__body" :style="{ gap: `${drawerBodyGap}px` }">
+    <div v-else-if="task" class="listik-stack listik-drawer__body">
       <section class="listik-section">
         <div class="listik-section__head">
           <h4 class="listik-section__title">Где стоит процесс</h4>

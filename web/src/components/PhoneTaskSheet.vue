@@ -52,7 +52,6 @@ const emit = defineEmits<{
 
 // `.listik-stack` объявляет gap позже общих стилей drawer и перекрывает его.
 // Секции панели задают собственные отступы через margin/padding и разделитель.
-const drawerBodyGap = computed(() => 0)
 
 const blockedBy = computed<DepInfo[]>(() => props.task?.deps_state?.blocked_by ?? [])
 
@@ -120,7 +119,7 @@ const journalItems = computed<UiTimelineItem[]>(() => {
         </div>
       </UiAlert>
 
-      <div v-else-if="task" class="listik-stack listik-drawer__body" :style="{ gap: `${drawerBodyGap}px` }">
+      <div v-else-if="task" class="listik-stack listik-drawer__body">
         <section class="listik-section">
           <h4 class="listik-section__title">Кто держит</h4>
           <dl class="listik-dl">

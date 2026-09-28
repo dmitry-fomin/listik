@@ -1002,13 +1002,11 @@ async function removeTask(id: string): Promise<boolean> {
 }
 
 /**
- * Комментарий с доски пишет человек, а не держатель карточки: `author`, который
- * приходит из панели, — это `holder` задачи (им вполне может быть агент), в
- * авторы он не годится. Автор — «я» доски: имя `owner` (server.users) в серверном
+ * Комментарий с доски пишет человек, а не держатель карточки: `holder` задачи
+ * (им вполне может быть агент) в авторы не годится. Автор — «я» доски: имя `owner` (server.users) в серверном
  * режиме, иначе человеческий ключ `me` (как в локальном режиме, где списка нет).
- * Аргумент оставлен для совместимости с вызовом из App.vue и намеренно не используется.
  */
-const addComment = (id: string, text: string, kind: CommentKind, _author?: string): Promise<boolean> =>
+const addComment = (id: string, text: string, kind: CommentKind): Promise<boolean> =>
   act('comment', () => api.comment(id, text, kind, owner.value || 'me'))
 
 const addDependency = (id: string, dependsOn: string, actor?: string): Promise<boolean> =>

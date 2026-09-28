@@ -928,7 +928,7 @@ body .ui-drawer-backdrop.ui-drawer-backdrop--right .ui-drawer.ui-drawer--right.u
 }
 
 /* Разделители между прямыми секциями панели. */
-.listik-drawer__body {
+.listik-stack.listik-drawer__body {
   gap: 0;
 }
 

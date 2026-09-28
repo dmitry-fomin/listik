@@ -310,7 +310,7 @@ const { status, schedule, cancel } = useAutosave<RoutePatch>({
     if (patch.title !== undefined) baseline.title = patch.title
     if (patch.hint !== undefined) baseline.hint = patch.hint
     if (patch.visible !== undefined) baseline.visible = patch.visible
-    if (patch.icon !== undefined) baseline.icon = patch.icon ?? null
+    if (patch.icon !== undefined) baseline.icon = patch.icon
     // Из отправленного patch, а не из черновика: правка ролей, сделанная, пока
     // PATCH летел, иначе сочлась бы сохранённой и досылка её не отправила бы.
     if (patch.roles !== undefined) baseline.roles = JSON.stringify(patch.roles)

@@ -39,7 +39,6 @@ const props = defineProps<{
 const emit = defineEmits<{
   'update:filters': [patch: Partial<Filters>]
   reset: []
-  apply: []
 }>()
 
 function toOptions(options: FacetsOption[]): UiSelectOption[] {

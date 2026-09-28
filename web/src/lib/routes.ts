@@ -20,28 +20,14 @@ import type {
  */
 export const NO_ROUTE = ''
 
-/** Эпику всегда нужно ТЗ (он режется на шаги через этап 1) — записи без `roles.spec` закрыты. */
-export function pipelineAllowed(route: PipelineRouteDef, type: string): boolean {
-  if (type !== 'epic') return true
-  return Boolean(route.roles.spec)
-}
-
 /**
- * Рой (`kind = swarm`, listik-2gry): как у конвейера — эпику нужен этап ТЗ,
- * то есть заполненная ячейка `roles.spec`; остальным типам рой разрешён всегда.
- */
-export function swarmAllowed(route: SwarmLikeRoute, type: string): boolean {
-  if (type !== 'epic') return true
-  return Boolean(route.roles.spec)
-}
-
-/**
- * Разрешён ли маршрут типу задачи — одни и те же правила у «Новой задачи» и у
- * смены маршрута в карточке: эпику нужен этап ТЗ.
+ * Разрешён ли маршрут типу задачи — одно правило у «Новой задачи» и у смены
+ * маршрута в карточке, для конвейера и роя: эпику нужен этап ТЗ (заполненная
+ * `roles.spec`), остальным типам — любой маршрут.
  */
 export function routeAllowedForType(route: RouteDef, type: string): boolean {
-  if (route.kind === 'swarm' || route.driver === 'swarm') return swarmAllowed(route, type)
-  return pipelineAllowed(route, type)
+  if (type !== 'epic') return true
+  return Boolean(route.roles.spec)
 }
 
 /**
@@ -63,7 +49,7 @@ export function routesAlertText(requestFailed: boolean, error: string | null): s
 export function defaultPipelineFor(type: string, routes: RouteDef[]): PipelineRouteDef | null {
   const allowed = routes.filter(
     (route): route is PipelineRouteDef =>
-      route.kind === 'pipeline' && route.visible && pipelineAllowed(route, type),
+      route.kind === 'pipeline' && route.visible && routeAllowedForType(route, type),
   )
   const preferred = type === 'epic' ? 'high-pipeline' : 'low-pipeline'
   return allowed.find((route) => route.key === preferred) ?? allowed[0] ?? null
@@ -207,7 +193,7 @@ export function splitPlaceholders(text: string): PlaceholderChunk[] {
 export function countPlaceholders(argv: string[] | string | null | undefined, name: string): number {
   const text = commandText(argv)
   const token = `{${name}}`
-  if (!token || text.length === 0) return 0
+  if (text.length === 0) return 0
   let count = 0
   let index = text.indexOf(token)
   while (index !== -1) {

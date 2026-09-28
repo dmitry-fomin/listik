@@ -207,8 +207,8 @@ async function onRemove(payload: { id: string }): Promise<void> {
   else toast.danger(store.lastError.value ?? 'Не удалось удалить задачу')
 }
 
-async function onComment(payload: { id: string; text: string; kind: CommentKind; author?: string }): Promise<void> {
-  const ok = await store.addComment(payload.id, payload.text, payload.kind, payload.author)
+async function onComment(payload: { id: string; text: string; kind: CommentKind }): Promise<void> {
+  const ok = await store.addComment(payload.id, payload.text, payload.kind)
   if (ok) toast.success('Комментарий добавлен')
   else toast.danger(store.lastError.value ?? 'Комментарий не отправлен')
 }

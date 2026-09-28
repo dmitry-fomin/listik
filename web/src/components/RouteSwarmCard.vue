@@ -445,9 +445,12 @@ function hasBraces(value: string): boolean {
 
 /**
  * Элементы команды раскрытой роли: свой argv или шаблон харнесса + промпт
- * последним аргументом. Пустой промпт — лаунчер сам добавляет протокол роя
- * (`SWARM_PROMPT` приходит в `GET /api/harnesses` → `store.swarmPrompt`),
- * промпт харнесса в рой не наследуется (`stage_launch._cell_prompt`).
+ * последним аргументом. Пустой промпт — лаунчер сам ставит протокол роя
+ * (`SWARM_PROMPT` приходит в `GET /api/harnesses` → `store.swarmPrompt`) и
+ * дописывает к нему через пустую строку хвост с критериями агента роли
+ * (`roleTail`); здесь последним элементом — только протокол, хвост добавляют
+ * предпросмотр и копирование: подстановок в нём нет, и в `roleUnknownNames` он
+ * не входит. Промпт харнесса в рой не наследуется (`stage_launch._cell_prompt`).
  */
 const roleCommandParts = computed<string[]>(() => {
   const cell = roles[openRole.value]
@@ -458,19 +461,78 @@ const roleCommandParts = computed<string[]>(() => {
   return prompt !== '' ? [...argv, prompt] : argv
 })
 
+/**
+ * Ключ хвоста раскрытой роли в `swarm_role_tails`/`swarm_role_errors`: имя роли,
+ * а у `impl` без роли с командой после неё — `impl_last`. «Роль с командой» —
+ * правило `stage_launch.resolve_role`: у ячейки `judge` черновика есть `harness`
+ * и непустой свой argv или argv харнесса.
+ */
+const roleTailKey = computed<string>(() => {
+  if (openRole.value !== 'impl') return openRole.value
+  const judge = roles.judge
+  const harness = judge?.harness.trim() ?? ''
+  if (harness === '') return 'impl_last'
+  const own = judge?.argv?.filter((value) => value.trim() !== '') ?? []
+  const record = store.harnesses.value.find((item) => item.key === harness)
+  return own.length > 0 || (record?.argv?.length ?? 0) > 0 ? 'impl' : 'impl_last'
+})
+
+/** Промпт раскрытой роли — протокол роя: своего `prompt` у ячейки нет. */
+const roleUsesProtocol = computed(() => {
+  const cell = roles[openRole.value]
+  return Boolean(cell) && cell!.prompt.trim() === ''
+})
+
+/** Хвост после протокола (дословно, без подстановок); нет — пустая строка. */
+const roleTail = computed(() =>
+  roleUsesProtocol.value && store.swarmPrompt.value !== ''
+    ? (store.swarmRoleTails.value[roleTailKey.value] ?? '')
+    : '',
+)
+
+/** Критерии роли не собрались — лаунчер её не запустит (своим промптом не показывается). */
+const roleCriteriaError = computed(() => {
+  if (!roleUsesProtocol.value) return ''
+  const error = store.swarmRoleErrors.value[roleTailKey.value]
+  if (error === undefined) return ''
+  const role = roleTailKey.value === 'impl_last' ? 'impl' : roleTailKey.value
+  return `роль не запустится: нет критериев роли ${role}: ${error}`
+})
+
+/**
+ * Протокол с хвостом — один аргумент: протокол с `"\n\n"` на конце уже в
+ * кавычках (в нём пробел), его подстановки показываются как обычно, а хвост
+ * вставляется перед закрывающей кавычкой как есть, с тем же экранированием `"`.
+ */
+function escapeTail(tail: string): string {
+  return tail.replace(/"/g, '\\"')
+}
+
 /** Та же команда одной строкой — её забирает кнопка копирования у заголовка секции. */
-const roleCommandPreview = computed(() => previewCommand(roleCommandParts.value, props.route.key))
+const roleCommandPreview = computed(() => {
+  const parts = roleCommandParts.value
+  if (roleTail.value === '') return previewCommand(parts, props.route.key)
+  const line = previewCommand([...parts.slice(0, -1), `${parts[parts.length - 1]}\n\n`], props.route.key)
+  return `${line.slice(0, -1)}${escapeTail(roleTail.value)}"`
+})
 
 /**
  * Предпросмотр кусками для подсветки, как в блоке «Чем запускается» карточки
  * конвейера: места подстановок (уже примерные значения) — акцентом, незнакомое
  * `{имя}` — красным с волной. Элементы соединены пробелом — как в команде.
+ * Хвост роли — текстовым куском, скобки в нём не подсвечиваются.
  */
 const rolePreviewChunks = computed<PlaceholderChunk[]>(() => {
   const chunks: PlaceholderChunk[] = []
-  roleCommandParts.value.forEach((element, index) => {
+  const parts = roleCommandParts.value
+  parts.forEach((element, index) => {
     if (index > 0) chunks.push({ type: 'text', value: ' ' })
-    chunks.push(...previewChunks(element, props.route.key))
+    if (index === parts.length - 1 && roleTail.value !== '') {
+      const body = previewChunks(`${element}\n\n`, props.route.key)
+      chunks.push(...body.slice(0, -1), { type: 'text', value: `${escapeTail(roleTail.value)}"` })
+    } else {
+      chunks.push(...previewChunks(element, props.route.key))
+    }
   })
   return chunks
 })
@@ -630,7 +692,7 @@ const roleInherits = computed(() => {
           class="listik-route-swarm__prompt"
           :rows="4"
           :invalid="Boolean(rolePromptProblem)"
-          placeholder="пусто — протокол роя («готово»/«вопрос»/«не смог»)"
+          placeholder="пусто — протокол роя и критерии агента роли"
         />
         <p v-if="rolePromptProblem" class="listik-route-swarm__problem">{{ rolePromptProblem }}</p>
         <RouteSubstitutions :route-key="route.key" :command="roleArgs.map((row) => row.value)" />
@@ -662,6 +724,7 @@ const roleInherits = computed(() => {
         <p v-if="roleUnknownNames.length > 0" class="listik-route-swarm__problem">
           неизвестная подстановка: {{ roleUnknownNames.join(', ') }}
         </p>
+        <p v-if="roleCriteriaError" class="listik-route-swarm__problem">{{ roleCriteriaError }}</p>
       </section>
     </template>
 

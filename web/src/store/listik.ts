@@ -199,6 +199,8 @@ const routeCreateConflict = ref(false)
 const harnesses = ref<Harness[]>([])
 /** Протокол роли роя из ответа `GET /api/harnesses` — для предпросмотра команды роли. */
 const swarmPrompt = ref('')
+const swarmRoleTails = ref<Record<string, string>>({})
+const swarmRoleErrors = ref<Record<string, string>>({})
 const harnessesError = ref<string | null>(null)
 const harnessesLoading = ref(false)
 let harnessesRequested = false
@@ -1228,6 +1230,8 @@ async function loadHarnesses(): Promise<void> {
       const data = await api.harnesses()
       harnesses.value = data.harnesses ?? []
       swarmPrompt.value = data.swarm_prompt ?? ''
+      swarmRoleTails.value = data.swarm_role_tails ?? {}
+      swarmRoleErrors.value = data.swarm_role_errors ?? {}
       harnessesError.value = null
     } catch (error) {
       onHarnessesError(error)
@@ -1551,6 +1555,8 @@ export function useListikStore() {
     routeCreateConflict,
     harnesses,
     swarmPrompt,
+    swarmRoleTails,
+    swarmRoleErrors,
     harnessesError,
     harnessesLoading,
     harnessCreateConflict,

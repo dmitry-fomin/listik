@@ -794,7 +794,7 @@ def plan(conn, *, project: str, stage: str | None = None, apply: bool = False,
 
 # --- проход `listik rescope`: области read_scope/write_scope из ТЗ + уточнение графа ------
 
-MERGED_MARK = "рой: влито:"     # маркер барьера swarm-6 (swarm/barrier.mjs, MERGED_MARK); дубль
+MERGED_MARK = "рой: влито:"     # маркер барьера swarm-6 (swarm/barrier.mjs, MERGED_MARK); совпадение проверяет tests/test_swarm_markers.py
 MAX_SPEC_CHARS = 60_000         # текст одного ТЗ в промпте
 MAX_SUMMARY_CHARS = 600
 MAX_DRIFT_RECORDS = 200         # последних записей копилки в промпт графа

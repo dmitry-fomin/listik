@@ -7,7 +7,7 @@
 import fs from "node:fs";
 import path from "node:path";
 import {parseConfig, ConfigError, HelpRequested} from "./config.mjs";
-import {isSoftQuestion, OPEN_STATUSES, swarmTasks} from "./decide.mjs";
+import {isSoftQuestion, OPEN_STATUSES, SWARM_PREFIX, swarmTasks} from "./decide.mjs";
 import {Listik} from "./listik.mjs";
 import {tick} from "./run.mjs";
 import {open as openLog, skipLabel} from "./log.mjs";
@@ -33,7 +33,7 @@ export function waitingLine(result) {
 // короткая причина; иначе воркер сам о чём-то спросил.
 export function questionReason(text) {
   if (typeof text !== "string") return "вопрос воркера";
-  if (!text.startsWith("рой:")) {
+  if (!text.startsWith(SWARM_PREFIX)) {
     return isSoftQuestion(text) ? "вопрос воркера, есть дефолт" : "вопрос воркера";
   }
   if (text.includes("бюджет прогона исчерпан")) return "бюджет";

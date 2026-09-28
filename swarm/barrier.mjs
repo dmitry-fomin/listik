@@ -7,7 +7,7 @@ import path from "node:path";
 import {runWithTimeout} from "./proc.mjs";
 import {stampFile} from "./log.mjs";
 import {OPEN_STATUSES, isFrozen, portOf, REJECTED_MARK, isSoftQuestion, openQuestion,
-  fromComments} from "./decide.mjs";
+  fromComments, FROZEN_LABEL} from "./decide.mjs";
 import {resolveWithArbiter} from "./arbiter.mjs";
 
 export {REJECTED_MARK};
@@ -653,11 +653,11 @@ export async function runBarrier({listik, git, fs, config, swarmConfig, log, tas
     const marked = parseMarked(card.comments, UNFROZEN_MARK).filter(m => m.data && m.data.owner === owner);
     const hasMark = marked.length > 0;
     const cardLabels = card.labels || [];
-    const hasFrozenLabel = cardLabels.some(l => typeof l === "string" && l.startsWith("frozen-by:"));
+    const hasFrozenLabel = cardLabels.some(l => typeof l === "string" && l.startsWith(FROZEN_LABEL));
 
     if (hasMark && !hasFrozenLabel) continue; // уже разморожена целиком — повтор молча
 
-    const newLabels = cardLabels.filter(l => !(typeof l === "string" && l.startsWith("frozen-by:")));
+    const newLabels = cardLabels.filter(l => !(typeof l === "string" && l.startsWith(FROZEN_LABEL)));
 
     if (hasMark && hasFrozenLabel) {
       try {

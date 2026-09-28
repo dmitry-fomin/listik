@@ -19,7 +19,9 @@ from datetime import datetime, timezone
 from . import errors
 from . import scope as scope_mod
 from . import worktree
-from .statuses import OPEN_STATUSES
+#: `SWARM_ACTOR` — актор всех записей заморозки — решение машинное, не подписывается
+#: человеком: `--actor`/`LISTIK_OWNER` его не подменяют (см. `_SwarmCards` в `bin/listik`).
+from .deps import OPEN_STATUSES, RESOURCE_BLOCK_AUTHOR as SWARM_ACTOR
 
 #: Маркер «работа в основной ветке» — своя копия `store.MAIN_WORKTREE_MARKERS`:
 #: этот модуль не импортирует `store` (см. докстрингу модуля), поэтому набор
@@ -45,10 +47,6 @@ FROZEN_LABEL = "frozen-by:"
 #: Начало `note` отзыва при заморозке — по нему «добивка» узнаёт недоделанную
 #: заморозку прошлого прогона (revoke прошёл, метка — нет).
 FREEZE_NOTE = "рой: заморожена — пробное слияние с "
-
-#: Актор всех записей заморозки — решение машинное, не подписывается человеком:
-#: `--actor`/`LISTIK_OWNER` его не подменяют (см. `_SwarmCards` в `bin/listik`).
-SWARM_ACTOR = "agent:listik-swarm"
 
 #: Автор/дата снимка — фиксированные, чтобы `snapshot` неизменного грязного
 #: дерева был детерминированным (см. `snapshot`).
@@ -334,7 +332,7 @@ def _decide_all(probes: list[dict], tasks_out: dict, card_map: dict, cards, *,
 def _first_change_records(comments: list[dict]) -> list[dict]:
     return sorted(
         (c for c in comments
-         if c.get("author") == "agent:listik-swarm"
+         if c.get("author") == SWARM_ACTOR
          and (c.get("text") or "").startswith(FIRST_CHANGE_MARK)),
         key=lambda c: c.get("created_at") or "")
 
@@ -343,7 +341,7 @@ def _recorded_scope_files(comments: list[dict]) -> set[str]:
     """Файлы, уже записанные предыдущими `SCOPE_MARK`-заметками; битый JSON — пропуск."""
     recorded: set[str] = set()
     for c in comments:
-        if c.get("author") != "agent:listik-swarm":
+        if c.get("author") != SWARM_ACTOR:
             continue
         text = c.get("text") or ""
         if not text.startswith(SCOPE_MARK):
@@ -426,8 +424,8 @@ def scan(project_path, tasks: list[dict], cards, *, dry_run: bool = False,
         labels = card.get("labels") or []
         frozen_by = None
         for lbl in labels:
-            if lbl.startswith("frozen-by:"):
-                frozen_by = lbl[len("frozen-by:"):]
+            if lbl.startswith(FROZEN_LABEL):
+                frozen_by = lbl[len(FROZEN_LABEL):]
                 break
         launch_alive = bool(card.get("launched_by") == "listik" and card.get("launch_pid")
                             and not card.get("launch_finished_at"))

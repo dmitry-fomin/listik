@@ -1785,7 +1785,7 @@ class _SwarmCards:
     `comment`) — от имени машины (listik-dfjc).
     """
 
-    ACTOR = "agent:listik-swarm"
+    ACTOR = swarm_watch.SWARM_ACTOR
 
     def __init__(self, args) -> None:
         self._args = args
@@ -1814,7 +1814,7 @@ class _SwarmCards:
                    local_kwargs={"task_id": task_id})
 
     def comment(self, task_id: str, text: str) -> dict:
-        body = {"text": text, "kind": "journal", "author": "agent:listik-swarm"}
+        body = {"text": text, "kind": "journal", "author": self.ACTOR}
         return call("comment", self._args, f"/api/tasks/{task_id}/comment", method="POST",
                    body=body, local_kwargs={**body, "task_id": task_id})
 

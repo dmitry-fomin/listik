@@ -7,6 +7,8 @@ import {DEFAULT_QUESTION_TIMEOUT} from "./config.mjs";
 // общего объявления нет); расхождение ловит tests/test_statuses.py.
 export const OPEN_STATUSES = new Set(["open", "in_progress", "blocked", "review"]);
 export const REJECTED_MARK = "рой: не принята:";
+export const FROZEN_LABEL = "frozen-by:";
+export const SWARM_PREFIX = "рой:";
 export const SOFT_DEFAULT_RE = /^по умолчанию:\s*(\S.*)$/mu;
 
 const textUnscoped = (id) => "рой: у задачи нет write_scope — какие файлы и каталоги она правит? " +
@@ -84,7 +86,7 @@ export function defaultLine(text) {
 
 export function isSoftQuestion(text) {
   if (typeof text !== "string") return false;
-  if (text.trimStart().startsWith("рой:")) return false;
+  if (text.trimStart().startsWith(SWARM_PREFIX)) return false;
   return defaultLine(text) !== null;
 }
 
@@ -146,8 +148,8 @@ export function dueDefaults({tasks, events, config, now}) {
 export function isFrozen(task) {
   const labels = task.labels || [];
   for (const label of labels) {
-    if (typeof label === "string" && label.startsWith("frozen-by:")) {
-      return label.slice("frozen-by:".length);
+    if (typeof label === "string" && label.startsWith(FROZEN_LABEL)) {
+      return label.slice(FROZEN_LABEL.length);
     }
   }
   return null;

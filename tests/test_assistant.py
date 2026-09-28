@@ -524,5 +524,90 @@ class AssistantHttpTests(AssistantApiTests):
         self.assertNotIn(API_KEY, json.dumps(payload, ensure_ascii=False))
 
 
+class ExtractJsonObjectTests(unittest.TestCase):
+    def assert_error(self, content, message):
+        with self.assertRaises(assistant_mod.AssistantError) as ctx:
+            assistant_mod.extract_json_object(content)
+        self.assertEqual(str(ctx.exception), message)
+        self.assertEqual(ctx.exception.status, 502)
+
+    def test_not_string(self):
+        self.assert_error(None, "DeepSeek вернул ответ не строкой")
+
+    def test_unparsable(self):
+        self.assert_error("извините", "не удалось разобрать ответ DeepSeek как JSON: извините")
+
+    def test_not_object(self):
+        self.assert_error("[1]", "ответ DeepSeek — не JSON-объект")
+
+    def test_fenced_and_surrounded(self):
+        self.assertEqual(assistant_mod.extract_json_object('```json\n{"a": 1}\n```'), {"a": 1})
+        self.assertEqual(assistant_mod.extract_json_object('вот: {"a": 1} всё'), {"a": 1})
+
+
+class StrSettingTests(unittest.TestCase):
+    ENV = "LISTIK_TEST_STR_SETTING"
+
+    def test_non_string_gives_default(self):
+        self.assertEqual(assistant_mod._str_setting({"k": 5}, "k", default="d"), "d")
+
+    def test_blank_gives_default(self):
+        self.assertEqual(assistant_mod._str_setting({"k": "  "}, "k", default="d"), "d")
+
+    def test_value_stripped(self):
+        self.assertEqual(assistant_mod._str_setting({"k": " v "}, "k", default="d"), "v")
+
+    def test_env_wins_and_stripped(self):
+        with mock.patch.dict("os.environ", {self.ENV: " e "}):
+            self.assertEqual(assistant_mod._str_setting({"k": "v"}, "k", self.ENV, "d"), "e")
+
+    def test_blank_env_does_not_override(self):
+        for env_value in ("", "   "):
+            with mock.patch.dict("os.environ", {self.ENV: env_value}):
+                self.assertEqual(assistant_mod._str_setting({"k": "v"}, "k", self.ENV, "d"), "v")
+
+    def test_no_env_name_ignores_environment(self):
+        with mock.patch.dict("os.environ", {"k": "e"}):
+            self.assertEqual(assistant_mod._str_setting({"k": "v"}, "k"), "v")
+
+
+class CleanAcceptanceTests(unittest.TestCase):
+    def test_not_list(self):
+        self.assertEqual(assistant_mod.clean_acceptance("строка"), [])
+        self.assertEqual(assistant_mod.clean_acceptance(None), [])
+
+    def test_markers_duplicates_non_strings(self):
+        self.assertEqual(
+            assistant_mod.clean_acceptance(["- а", "• а", 3, "  ", "* б"]), ["а", "б"])
+
+    def test_limit(self):
+        raw = [f"пункт {i}" for i in range(assistant_mod.MAX_ACCEPTANCE_ITEMS + 5)]
+        self.assertEqual(len(assistant_mod.clean_acceptance(raw)),
+                         assistant_mod.MAX_ACCEPTANCE_ITEMS)
+
+
+class MatchRouteTests(unittest.TestCase):
+    CANDIDATES = [{"key": "low-pipeline", "kind": "pipeline", "title": "Low", "hint": None}]
+
+    def test_bad_input(self):
+        self.assertIsNone(assistant_mod.match_route("low-pipeline", self.CANDIDATES))
+        self.assertIsNone(assistant_mod.match_route({"key": 1}, self.CANDIDATES))
+
+    def test_unknown_key(self):
+        self.assertIsNone(assistant_mod.match_route({"key": "nope"}, self.CANDIDATES))
+
+    def test_key_with_spaces_found_hint_none(self):
+        self.assertEqual(
+            assistant_mod.match_route({"key": " low-pipeline ", "reason": " мало "},
+                                      self.CANDIDATES),
+            {"key": "low-pipeline", "kind": "pipeline", "title": "Low", "hint": "",
+             "reason": "мало"})
+
+    def test_reason_not_string(self):
+        self.assertEqual(
+            assistant_mod.match_route({"key": "low-pipeline", "reason": 5},
+                                      self.CANDIDATES)["reason"], "")
+
+
 if __name__ == "__main__":
     unittest.main()

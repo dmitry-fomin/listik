@@ -723,5 +723,16 @@ class ApplyDoesNotTouchCardsTests(TempDbTestCase):
         self.assertEqual(before, after)
 
 
+class ParseJsonErrorTests(unittest.TestCase):
+    def test_error_text(self):
+        for content, message in (("[1]", "ответ модели роя не JSON-объект: [1]"),
+                                 ("нет", "ответ модели роя не JSON-объект: нет")):
+            with self.assertRaises(swarm_llm.SwarmLlmError) as ctx:
+                swarm_llm.parse_json(content)
+            self.assertIs(type(ctx.exception), swarm_llm.SwarmLlmError)
+            self.assertEqual(str(ctx.exception), message)
+            self.assertEqual(ctx.exception.status, 502)
+
+
 if __name__ == "__main__":
     unittest.main()

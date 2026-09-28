@@ -22,8 +22,6 @@
 from __future__ import annotations
 
 import logging
-import os
-import re
 import subprocess
 
 from . import assistant
@@ -35,6 +33,9 @@ from . import store
 from . import store_helpers as store_helpers_mod
 from . import swarm_watch
 from . import util
+
+_clip = assistant._clip
+_str_setting = assistant._str_setting
 
 DEFAULT_BASE_URL = "https://openrouter.ai/api/v1"
 DEFAULT_MODEL = "z-ai/glm-5.3-flash"
@@ -75,10 +76,7 @@ def model_name(cfg: dict | None = None) -> str:
     section = cfg.get("swarm") if isinstance(cfg, dict) else None
     if not isinstance(section, dict):
         section = {}
-    model = section.get("model")
-    model = model.strip() if isinstance(model, str) and model.strip() else ""
-    env_model = (os.environ.get(ENV_MODEL) or "").strip()
-    return env_model or model or DEFAULT_MODEL
+    return _str_setting(section, "model", ENV_MODEL, DEFAULT_MODEL)
 
 
 def settings(cfg: dict | None = None) -> dict:
@@ -88,40 +86,12 @@ def settings(cfg: dict | None = None) -> dict:
     if not isinstance(section, dict):
         section = {}
 
-    api_key = section.get("api_key")
-    api_key = api_key.strip() if isinstance(api_key, str) else ""
-    env_api_key = (os.environ.get(ENV_API_KEY) or "").strip()
-    if env_api_key:
-        api_key = env_api_key
-
-    base_url = section.get("base_url")
-    base_url = base_url.strip() if isinstance(base_url, str) and base_url.strip() else ""
-    env_base_url = (os.environ.get(ENV_BASE_URL) or "").strip()
-    if env_base_url:
-        base_url = env_base_url
-    base_url = (base_url or DEFAULT_BASE_URL).rstrip("/")
-
+    api_key = _str_setting(section, "api_key", ENV_API_KEY)
+    base_url = _str_setting(section, "base_url", ENV_BASE_URL, DEFAULT_BASE_URL).rstrip("/")
     model = model_name(cfg)
-
-    jev_api_key = section.get("jev_api_key")
-    jev_api_key = jev_api_key.strip() if isinstance(jev_api_key, str) else ""
-    env_jev_api_key = (os.environ.get(ENV_JEV_API_KEY) or "").strip()
-    if env_jev_api_key:
-        jev_api_key = env_jev_api_key
-
-    jev_url = section.get("jev_url")
-    jev_url = jev_url.strip() if isinstance(jev_url, str) and jev_url.strip() else ""
-    env_jev_url = (os.environ.get(ENV_JEV_URL) or "").strip()
-    if env_jev_url:
-        jev_url = env_jev_url
-    jev_url = (jev_url or JEV_DEFAULT_URL).rstrip("/")
-
-    jev_model = section.get("jev_model")
-    jev_model = jev_model.strip() if isinstance(jev_model, str) and jev_model.strip() else ""
-    env_jev_model = (os.environ.get(ENV_JEV_MODEL) or "").strip()
-    if env_jev_model:
-        jev_model = env_jev_model
-    jev_model = jev_model or JEV_DEFAULT_MODEL
+    jev_api_key = _str_setting(section, "jev_api_key", ENV_JEV_API_KEY)
+    jev_url = _str_setting(section, "jev_url", ENV_JEV_URL, JEV_DEFAULT_URL).rstrip("/")
+    jev_model = _str_setting(section, "jev_model", ENV_JEV_MODEL, JEV_DEFAULT_MODEL)
 
     raw_command = section.get("command")
     if raw_command in (None, [], ()):
@@ -139,37 +109,12 @@ def jev_enabled(cfg_settings: dict) -> bool:
     return bool(cfg_settings.get("jev_api_key"))
 
 
-_FENCE_RE = re.compile(r"```(?:json)?\s*(.*?)\s*```", re.DOTALL)
-
-
-def _clip(value, limit: int) -> str:
-    text = value if isinstance(value, str) else str(value)
-    return text if len(text) <= limit else text[:limit] + "…"
-
-
 def parse_json(content) -> dict:
-    """Терпимый разбор ответа модели: своя копия `assistant.parse_suggestion`."""
-    if not isinstance(content, str):
-        raise SwarmLlmError("ответ модели роя не JSON-объект: " + _clip(content, 200))
-    text = content.strip()
-    fenced = _FENCE_RE.search(text)
-    if fenced:
-        text = fenced.group(1).strip()
+    """Терпимый разбор ответа модели через `assistant.extract_json_object`, с текстом ошибки роя."""
     try:
-        data = util.json_loads(text)
-    except util.JSONDecodeError:
-        start, end = text.find("{"), text.rfind("}")
-        if start == -1 or end <= start:
-            raise SwarmLlmError(
-                "ответ модели роя не JSON-объект: " + _clip(content, 200)) from None
-        try:
-            data = util.json_loads(text[start:end + 1])
-        except util.JSONDecodeError as exc:
-            raise SwarmLlmError(
-                "ответ модели роя не JSON-объект: " + _clip(content, 200)) from exc
-    if not isinstance(data, dict):
-        raise SwarmLlmError("ответ модели роя не JSON-объект: " + _clip(content, 200))
-    return data
+        return assistant.extract_json_object(content)
+    except assistant.AssistantError as exc:
+        raise SwarmLlmError("ответ модели роя не JSON-объект: " + _clip(content, 200)) from exc
 
 
 def _run_command(argv: list[str], input_text: str, timeout: float):

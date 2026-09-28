@@ -32,6 +32,7 @@ from __future__ import annotations
 
 import http.client
 import logging
+import os
 import re
 import urllib.error
 import urllib.request
@@ -99,21 +100,38 @@ class AssistantError(errors_mod.ListikError):
         super().__init__(message, code=code, status=status)
 
 
+def _str_setting(section: dict, key: str, env: str | None = None, default: str = "") -> str:
+    """Строка настройки: значение из секции без пробелов; непустой `env` сильнее; иначе `default`."""
+    value = section.get(key)
+    value = value.strip() if isinstance(value, str) else ""
+    if env:
+        env_value = (os.environ.get(env) or "").strip()
+        if env_value:
+            value = env_value
+    return value or default
+
+
 def settings(cfg: dict | None = None) -> dict:
     """Настройки помощника из `[assistant]`; значения по умолчанию — для пустых полей."""
     cfg = cfg if cfg is not None else util.load_config()
     section = cfg.get("assistant") or {}
     if not isinstance(section, dict):
         section = {}
-    base_url = section.get("base_url")
-    model = section.get("model")
-    api_key = section.get("api_key")
     return {
-        "api_key": api_key.strip() if isinstance(api_key, str) else "",
-        "base_url": (base_url.strip().rstrip("/") if isinstance(base_url, str) and base_url.strip()
-                     else DEFAULT_BASE_URL),
-        "model": (model.strip() if isinstance(model, str) and model.strip() else DEFAULT_MODEL),
+        "api_key": _str_setting(section, "api_key"),
+        "base_url": _str_setting(section, "base_url", default=DEFAULT_BASE_URL).rstrip("/"),
+        "model": _str_setting(section, "model", default=DEFAULT_MODEL),
     }
+
+
+def require_settings(cfg: dict | None = None) -> dict:
+    """Настройки помощника; без `api_key` — `AssistantError` 503."""
+    cfg_settings = settings(cfg)
+    if not cfg_settings["api_key"]:
+        raise AssistantError(
+            "помощник не настроен: добавьте api_key в config.toml, раздел [assistant]",
+            status=503, code=errors_mod.SERVER_ERROR)
+    return cfg_settings
 
 
 def status(cfg: dict | None = None) -> dict:
@@ -315,7 +333,7 @@ def chat(messages: list[dict], cfg_settings: dict, *, opener=None,
 _FENCE_RE = re.compile(r"```(?:json)?\s*(.*?)\s*```", re.DOTALL)
 
 
-def parse_suggestion(content: str) -> dict:
+def extract_json_object(content) -> dict:
     """Разобрать JSON-ответ модели: терпимо к ```-обёртке и тексту вокруг объекта."""
     if not isinstance(content, str):
         raise AssistantError("DeepSeek вернул ответ не строкой", status=502)
@@ -342,26 +360,52 @@ def parse_suggestion(content: str) -> dict:
     return data
 
 
+def clean_acceptance(raw) -> list[str]:
+    """Критерии приёмки: непустые строки без дублей и маркеров, не больше `MAX_ACCEPTANCE_ITEMS`."""
+    if not isinstance(raw, list):
+        return []
+    items: list[str] = []
+    seen: set[str] = set()
+    for item in raw:
+        if not isinstance(item, str):
+            continue
+        line = item.strip().lstrip("-•*").strip()
+        if not line or line in seen:
+            continue
+        seen.add(line)
+        items.append(line)
+        if len(items) >= MAX_ACCEPTANCE_ITEMS:
+            break
+    return items
+
+
+def match_route(raw, candidates: list[dict]) -> dict | None:
+    """Маршрут из ответа модели, только если его ключ есть среди `candidates`."""
+    if not isinstance(raw, dict):
+        return None
+    key = raw.get("key")
+    if not isinstance(key, str):
+        return None
+    key = key.strip()
+    found = next((item for item in candidates if item.get("key") == key), None)
+    if found is None:
+        return None
+    reason = raw.get("reason")
+    return {
+        "key": found["key"],
+        "kind": found.get("kind"),
+        "title": found.get("title"),
+        "hint": found.get("hint") or "",
+        "reason": reason.strip() if isinstance(reason, str) else "",
+    }
+
+
 def _normalize_suggestion(data: dict, candidates: list[dict]) -> dict:
     """Привести ответ модели к форме, на которую опирается доска."""
     text = data.get("text")
     suggestion: dict = {"text": text.strip() if isinstance(text, str) else ""}
 
-    raw_acceptance = data.get("acceptance")
-    acceptance: list[str] = []
-    seen: set[str] = set()
-    if isinstance(raw_acceptance, list):
-        for item in raw_acceptance:
-            if not isinstance(item, str):
-                continue
-            line = item.strip().lstrip("-•*").strip()
-            if not line or line in seen:
-                continue
-            seen.add(line)
-            acceptance.append(line)
-            if len(acceptance) >= MAX_ACCEPTANCE_ITEMS:
-                break
-    suggestion["acceptance"] = acceptance
+    suggestion["acceptance"] = clean_acceptance(data.get("acceptance"))
 
     complexity = None
     raw_complexity = data.get("complexity")
@@ -373,23 +417,7 @@ def _normalize_suggestion(data: dict, candidates: list[dict]) -> dict:
                           "reason": reason.strip() if isinstance(reason, str) else ""}
     suggestion["complexity"] = complexity
 
-    route = None
-    raw_route = data.get("route")
-    if isinstance(raw_route, dict):
-        key = raw_route.get("key")
-        if isinstance(key, str):
-            key = key.strip()
-            found = next((item for item in candidates if item.get("key") == key), None)
-            if found is not None:
-                reason = raw_route.get("reason")
-                route = {
-                    "key": found["key"],
-                    "kind": found.get("kind"),
-                    "title": found.get("title"),
-                    "hint": found.get("hint") or "",
-                    "reason": reason.strip() if isinstance(reason, str) else "",
-                }
-    suggestion["route"] = route
+    suggestion["route"] = match_route(data.get("route"), candidates)
     return suggestion
 
 
@@ -412,11 +440,7 @@ def suggest(field, text: str = "", context: dict | None = None, *,
         raise AssistantError("поле пустое и контекста нет — нечего проверять",
                              status=400, code=errors_mod.BAD_ARGUMENT)
 
-    cfg_settings = settings(cfg)
-    if not cfg_settings["api_key"]:
-        raise AssistantError(
-            "помощник не настроен: добавьте api_key в config.toml, раздел [assistant]",
-            status=503, code=errors_mod.SERVER_ERROR)
+    cfg_settings = require_settings(cfg)
 
     candidates = route_candidates(routes)
     messages = _messages(field, text, clean_context, candidates)
@@ -426,7 +450,7 @@ def suggest(field, text: str = "", context: dict | None = None, *,
                              code=errors_mod.BAD_ARGUMENT)
 
     content = chat(messages, cfg_settings, opener=opener, timeout=timeout)
-    data = parse_suggestion(content)
+    data = extract_json_object(content)
     return {
         "field": field,
         "model": cfg_settings["model"],

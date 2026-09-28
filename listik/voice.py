@@ -83,17 +83,12 @@ def settings(cfg: dict | None = None) -> dict:
     section = cfg.get("deepgram") or {}
     if not isinstance(section, dict):
         section = {}
-    api_key = section.get("api_key")
-    base_url = section.get("base_url")
-    model = section.get("model")
-    language = section.get("language")
+    setting = assistant_mod._str_setting
     return {
-        "api_key": api_key.strip() if isinstance(api_key, str) else "",
-        "base_url": (base_url.strip().rstrip("/") if isinstance(base_url, str) and base_url.strip()
-                     else DEFAULT_BASE_URL),
-        "model": (model.strip() if isinstance(model, str) and model.strip() else DEFAULT_MODEL),
-        "language": (language.strip() if isinstance(language, str) and language.strip()
-                     else DEFAULT_LANGUAGE),
+        "api_key": setting(section, "api_key"),
+        "base_url": setting(section, "base_url", default=DEFAULT_BASE_URL).rstrip("/"),
+        "model": setting(section, "model", default=DEFAULT_MODEL),
+        "language": setting(section, "language", default=DEFAULT_LANGUAGE),
     }
 
 
@@ -183,25 +178,6 @@ def _clean_projects(projects) -> list[dict]:
     return out[:MAX_PROJECTS]
 
 
-def _clean_acceptance(raw) -> list[str] | None:
-    """Критерии приёмки: непустые строки без дублей и маркеров, первые 10."""
-    if not isinstance(raw, list):
-        return None
-    items: list[str] = []
-    seen: set[str] = set()
-    for item in raw:
-        if not isinstance(item, str):
-            continue
-        line = item.strip().lstrip("-•*").strip()
-        if not line or line in seen:
-            continue
-        seen.add(line)
-        items.append(line)
-        if len(items) >= assistant_mod.MAX_ACCEPTANCE_ITEMS:
-            break
-    return items or None
-
-
 def _normalize_draft(data: dict, projects: list[dict], routes: list[dict]) -> dict:
     """Привести ответ модели к черновику: всё непрошедшее правило — `null`."""
     slugs = {project["slug"] for project in projects}
@@ -219,29 +195,13 @@ def _normalize_draft(data: dict, projects: list[dict], routes: list[dict]) -> di
     raw_description = data.get("description")
     description = raw_description.strip() if isinstance(raw_description, str) else ""
 
-    route = None
-    raw_route = data.get("route")
-    if isinstance(raw_route, dict):
-        key = raw_route.get("key")
-        if isinstance(key, str):
-            found = next((item for item in routes if item.get("key") == key.strip()), None)
-            if found is not None:
-                reason = raw_route.get("reason")
-                route = {
-                    "key": found["key"],
-                    "kind": found.get("kind"),
-                    "title": found.get("title"),
-                    "hint": found.get("hint") or "",
-                    "reason": reason.strip() if isinstance(reason, str) else "",
-                }
-
     return {
         "project": project,
         "type": draft_type,
         "title": title or None,
         "description": description or None,
-        "acceptance": _clean_acceptance(data.get("acceptance")),
-        "route": route,
+        "acceptance": assistant_mod.clean_acceptance(data.get("acceptance")) or None,
+        "route": assistant_mod.match_route(data.get("route"), routes),
     }
 
 
@@ -264,11 +224,7 @@ def draft(text: str, *, projects: list[dict], cfg: dict | None = None,
             f"рассказ длиннее {MAX_TEXT_CHARS} символов — разбейте его на части",
             status=400, code=errors_mod.BAD_ARGUMENT)
 
-    cfg_settings = assistant_mod.settings(cfg)
-    if not cfg_settings["api_key"]:
-        raise assistant_mod.AssistantError(
-            "помощник не настроен: добавьте api_key в config.toml, раздел [assistant]",
-            status=503, code=errors_mod.SERVER_ERROR)
+    cfg_settings = assistant_mod.require_settings(cfg)
 
     clean_projects = _clean_projects(projects)
     candidates = assistant_mod.route_candidates(routes)
@@ -278,7 +234,7 @@ def draft(text: str, *, projects: list[dict], cfg: dict | None = None,
             {"text": clean_text, "projects": clean_projects, "routes": candidates})},
     ]
     content = assistant_mod.chat(messages, cfg_settings, opener=opener, timeout=timeout)
-    data = assistant_mod.parse_suggestion(content)
+    data = assistant_mod.extract_json_object(content)
     return {
         "model": cfg_settings["model"],
         "draft": _normalize_draft(data, clean_projects, candidates),

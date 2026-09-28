@@ -16,9 +16,49 @@ const SKIP_LABELS = {
   frozen: "заморожена", gated: "гейт", budget: "бюджет",
   sliced: "нарезана, ждёт порции", capacity: "не влезла в партию",
 };
-const NEEDS_OWNER_LABELS = {
-  unscoped: "без области", sliced_stuck: "порции не запускаются",
+// Причины вопроса человеку: код → подпись и начало текста вопроса. `re` заякорены
+// на начало и взаимоисключающие — порядок записей на `questionCode` не влияет.
+// Тексты ставят decide.mjs, run.mjs, rollback.mjs, barrier.mjs и listik/*.py;
+// сверка с ними — swarm/test/reasons.test.mjs.
+export const QUESTION_REASONS = {
+  unscoped: {label: "без области", re: /^рой: у задачи нет write_scope/u},
+  sliced_stuck: {label: "порции не запускаются",
+    re: /^рой: задача нарезана, но ни одна порция не запускается/u},
+  crashed: {label: "упала", re: /^рой: процесс задачи завершился/u},
+  no_ports: {label: "нет портов", re: /^рой: задача зависла, но перезапустить нечем/u},
+  hung: {label: "зависла", re: /^рой: задача зависла \(бежит дольше/u},
+  budget: {label: "бюджет", re: /^рой: бюджет прогона исчерпан/u},
+  process_not_stopped: {label: "процесс не снят", re: /^рой: полномочия отозваны, но процесс/u},
+  worktree_failed: {label: "нет рабочего дерева", re: /^рой: не удалось завести рабочее дерево/u},
+  freeze_limit: {label: "предел откатов", re: /^рой: предел откатов/u},
+  rejected: {label: "не принята", re: /^рой: не влита — отклонена \d+ раз/u},
+  unmerged: {label: "не влита", re: /^рой: не влита — (?!отклонена \d+ раз)/u},
+  halt: {label: "стоп роя", re: /^рой: интеграционные тесты /u},
+  no_role_after: {label: "нет роли после этапа", re: /^рой: после \S+ роли нет/u},
+  portions_no_role: {label: "порции без роли",
+    re: /^рой: порции заведены, но после s1-spec роли нет/u},
+  portions_cancelled: {label: "порции отменены", re: /^рой: все порции отменены/u},
+  route_no_roles: {label: "маршрут без ролей", re: /^рой: у маршрута .*? нет роли с командой/u},
+  no_criteria: {label: "нет критериев роли", re: /^рой: нет критериев роли/u},
+  no_workdir: {label: "нет рабочего каталога", re: /^рой: нет рабочего каталога/u},
+  claim_failed: {label: "не взята харнессом", re: /^рой: не взял карточку за /u},
+  start_failed: {label: "этап не запустился", re: /^рой: этап \S+ \([^)]*\) не запустился:/u},
+  not_delivered: {label: "работа не сдана", re: /^рой: этап \S+ \([^)]*\) не сдал работу/u},
+  empty_question: {label: "вопрос без текста",
+    re: /^рой: этап \S+ \([^)]*\) ответил «вопрос» без текста/u},
+  outcome_error: {label: "исход не разобран", re: /^рой: не разобрал исход этапа/u},
+  autostart_refused: {label: "автостарт не выполнен", re: /^автостарт не выполнен: /u},
 };
+
+// Код причины по тексту вопроса — только от начала текста; не подошло → null.
+export function questionCode(text) {
+  if (typeof text !== "string") return null;
+  const head = text.trimStart();
+  for (const [code, {re}] of Object.entries(QUESTION_REASONS)) {
+    if (re.test(head)) return code;
+  }
+  return null;
+}
 
 export function skipLabel(s) {
   if (s.reason === "held") return `держит ${s.holder ?? "другой"}`;
@@ -26,7 +66,7 @@ export function skipLabel(s) {
 }
 
 export function needsOwnerLabel(n) {
-  return Object.hasOwn(NEEDS_OWNER_LABELS, n.reason) ? NEEDS_OWNER_LABELS[n.reason] : n.reason;
+  return Object.hasOwn(QUESTION_REASONS, n.reason) ? QUESTION_REASONS[n.reason].label : n.reason;
 }
 
 export function open(dir, project, out = process.stdout) {

@@ -10,7 +10,7 @@ import {parseConfig, ConfigError, HelpRequested} from "./config.mjs";
 import {isSoftQuestion, OPEN_STATUSES, portOf, SWARM_PREFIX, swarmTasks} from "./decide.mjs";
 import {Listik} from "./listik.mjs";
 import {tick} from "./run.mjs";
-import {open as openLog, skipLabel} from "./log.mjs";
+import {open as openLog, skipLabel, questionCode, QUESTION_REASONS} from "./log.mjs";
 import {errText, budgetBound, spentShown, cyclesDesc, tokenRejectedText} from "./util.mjs";
 
 function sleep(ms) {
@@ -30,26 +30,15 @@ export function waitingLine(result) {
   return `ждут: ${parts.length ? parts.join(", ") : (result.open || []).join(", ")}`;
 }
 
-// п.8: причина вопроса — по последнему комментарию kind=="question". «рой: …» — своя
-// короткая причина; иначе воркер сам о чём-то спросил.
+// п.8: причина вопроса — по последнему комментарию kind=="question". Код причины —
+// по таблице QUESTION_REASONS (log.mjs), только от начала текста; незнакомый вопрос
+// с префиксом роя — «вопрос роя»; иначе воркер сам о чём-то спросил.
 export function questionReason(text) {
   if (typeof text !== "string") return "вопрос воркера";
-  if (!text.startsWith(SWARM_PREFIX)) {
-    return isSoftQuestion(text) ? "вопрос воркера, есть дефолт" : "вопрос воркера";
-  }
-  if (text.includes("бюджет прогона исчерпан")) return "бюджет";
-  if (text.includes("ни одна порция не запускается")) return "порции не запускаются";
-  if (text.includes("нет маршрута")) return "без маршрута";
-  if (text.includes("нет write_scope")) return "без области";
-  if (text.includes("процесс задачи завершился")) return "упала";
-  if (text.includes("свободных портов")) return "нет портов";
-  if (text.includes("задача зависла")) return "зависла";
-  if (text.includes("не снят")) return "процесс не снят";
-  if (text.includes("интеграционные тесты")) return "стоп роя";
-  if (text.includes("отклонена")) return "не принята";
-  if (text.includes("не влита")) return "не влита";
-  if (text.includes("предел откатов")) return "предел откатов";
-  return "вопрос воркера";
+  const code = questionCode(text);
+  if (code) return QUESTION_REASONS[code].label;
+  if (text.trimStart().startsWith(SWARM_PREFIX)) return "вопрос роя";
+  return isSoftQuestion(text) ? "вопрос воркера, есть дефолт" : "вопрос воркера";
 }
 
 async function reportWaiting(listik, config, log, result) {

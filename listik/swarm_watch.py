@@ -14,6 +14,7 @@ import json
 import os
 import shutil
 import tempfile
+from contextlib import contextmanager
 from datetime import datetime, timezone
 
 from . import errors
@@ -69,14 +70,36 @@ def _git_out(repo, *args: str, env: dict | None = None) -> str:
 
 
 def _is_oid(text: str) -> bool:
-    return len(text) == 40 and all(ch in _HEX_DIGITS for ch in text)
+    """Hex-oid объекта git: 40 символов (SHA-1) или 64 (SHA-256)."""
+    return len(text) in (40, 64) and all(ch in _HEX_DIGITS for ch in text)
+
+
+@contextmanager
+def _temp_index(prefix: str, *, copy_from: str | None = None):
+    """Путь временного индекса; после выхода (и по исключению) удаляет его и `.lock`.
+
+    `copy_from` — файл, копией которого начинается временный индекс; без него
+    файла к началу работы нет (его создаст `read-tree`).
+    """
+    fd, tmp_index = tempfile.mkstemp(prefix=prefix)
+    os.close(fd)
+    try:
+        if copy_from is None:
+            os.remove(tmp_index)
+        else:
+            shutil.copyfile(copy_from, tmp_index)
+        yield tmp_index
+    finally:
+        for path in (tmp_index, tmp_index + ".lock"):
+            if os.path.exists(path):
+                os.remove(path)
 
 
 # ------------------------------------------------------------------ changes
 
 
-def _diff_via_index_copy(tree, merge_base: str) -> tuple[str, str]:
-    """`--name-only`/`--numstat` через приватную копию индекса дерева.
+def _diff_via_index_copy(tree, merge_base: str) -> str:
+    """Вывод `git diff --numstat` через приватную копию индекса дерева.
 
     Ни порцеляновый `git diff`, ни плумбинг `git diff-index` в одиночку не годятся:
     `diff <commit>` на git 2.54.0 при racy-clean файле (stat разошёлся с кэшем,
@@ -97,26 +120,15 @@ def _diff_via_index_copy(tree, merge_base: str) -> tuple[str, str]:
     if not os.path.isabs(real_index):
         real_index = os.path.join(str(tree), real_index)
 
-    fd, tmp_index = tempfile.mkstemp(prefix="listik-watch-diff-index-")
-    os.close(fd)
-    try:
-        shutil.copyfile(real_index, tmp_index)
-        diff_env = {"GIT_INDEX_FILE": tmp_index}
-        diff_out = _git_out(tree, "-c", "core.quotepath=false", "diff", "--name-only",
-                            "--no-renames", merge_base, env=diff_env)
-        numstat_out = _git_out(tree, "-c", "core.quotepath=false", "diff", "--numstat",
-                               "--no-renames", merge_base, env=diff_env)
-    finally:
-        for path in (tmp_index, tmp_index + ".lock"):
-            if os.path.exists(path):
-                os.remove(path)
-    return diff_out, numstat_out
+    with _temp_index("listik-watch-diff-index-", copy_from=real_index) as tmp_index:
+        return _git_out(tree, "-c", "core.quotepath=false", "diff", "--numstat",
+                        "--no-renames", merge_base, env={"GIT_INDEX_FILE": tmp_index})
 
 
 def changes(tree, base_ref: str) -> dict:
     """Тронутые файлы дерева задачи относительно `base_ref` — sha `HEAD` проекта.
 
-    `--name-only`/`--numstat` идут через `_diff_via_index_copy` — см. его
+    `--numstat` (из его путей — и список файлов) идёт через `_diff_via_index_copy` — см. его
     docstring про то, почему ни `diff`, ни `diff-index` по настоящему индексу
     дерева не годятся сами по себе.
     """
@@ -124,8 +136,7 @@ def changes(tree, base_ref: str) -> dict:
     ahead = int(_git_out(tree, "rev-list", "--count", f"{merge_base}..HEAD"))
     dirty = bool(_git_out(tree, "status", "--porcelain"))
 
-    diff_out, numstat_out = _diff_via_index_copy(tree, merge_base)
-    diff_files = [line for line in diff_out.splitlines() if line]
+    numstat_out = _diff_via_index_copy(tree, merge_base)
 
     others_out = _git_out(tree, "-c", "core.quotepath=false", "ls-files", "--others",
                           "--exclude-standard")
@@ -142,7 +153,7 @@ def changes(tree, base_ref: str) -> dict:
     for path in others:
         numstat.setdefault(path, {"added": None, "deleted": None})
 
-    files = sorted(set(diff_files) | set(others))
+    files = sorted(numstat)
 
     return {"merge_base": merge_base, "ahead": ahead, "dirty": dirty,
             "files": files, "numstat": numstat}
@@ -158,20 +169,13 @@ def snapshot(tree, *, dirty: bool | None = None) -> str:
     if not dirty:
         return _git_out(tree, "rev-parse", "HEAD")
 
-    fd, tmp_index = tempfile.mkstemp(prefix="listik-watch-index-")
-    os.close(fd)
-    os.remove(tmp_index)
-    try:
+    with _temp_index("listik-watch-index-") as tmp_index:
         index_env = {"GIT_INDEX_FILE": tmp_index}
         worktree.git(tree, "read-tree", "HEAD", env=index_env)
         worktree.git(tree, "add", "-A", env=index_env)
         tree_sha = _git_out(tree, "write-tree", env=index_env)
         return _git_out(tree, "commit-tree", tree_sha, "-p", "HEAD", "-m", _SNAPSHOT_MESSAGE,
                         env=_SNAPSHOT_COMMIT_ENV)
-    finally:
-        for path in (tmp_index, tmp_index + ".lock"):
-            if os.path.exists(path):
-                os.remove(path)
 
 
 # ------------------------------------------------------------------ probe
@@ -391,7 +395,7 @@ def _select_candidates(project_path, tasks: list[dict], registered: list[dict],
 
 
 def scan(project_path, tasks: list[dict], cards, *, dry_run: bool = False,
-        now: str | None = None) -> dict:
+        now: str | None = None, truncated: bool = False) -> dict:
     """Один тик наблюдателя роя: тронутые файлы, первая правка, расхождения, пробы,
     лестница реакций (§2 порции c) — замораживает опоздавшего при конфликте.
 
@@ -399,6 +403,7 @@ def scan(project_path, tasks: list[dict], cards, *, dry_run: bool = False,
     методами `show(task_id) -> dict`, `comment(task_id, text) -> dict`,
     `revoke(task_id, note) -> dict`, `release(task_id, note) -> dict` и
     `set_labels(task_id, labels) -> dict`.
+    `truncated` — список задач проекта неполный (упёрся в лимит `list`).
     """
     now_str = now or datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
     main_head = worktree.head_sha(project_path)
@@ -512,7 +517,7 @@ def scan(project_path, tasks: list[dict], cards, *, dry_run: bool = False,
 
     return {
         "project_path": project_path, "main_head": main_head, "dry_run": dry_run,
-        "truncated": False,
+        "truncated": bool(truncated),
         "tasks": tasks_out, "skipped": skipped, "order": order,
         "probes": probes, "discrepancies": discrepancies, "decisions": decisions,
     }

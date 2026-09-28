@@ -881,5 +881,16 @@ class NeverLaunchedNotResumedTests(LadderCase):
         self.assertFalse(any(l.startswith("frozen-by:") for l in self.card(t2)["labels"]))
 
 
+
+class TruncatedParamTests(LadderCase):
+    def test_scan_truncated_parameter(self) -> None:
+        tasks = store.list_tasks(self.conn, project="demo", include_closed=True,
+                                 limit=1000)["tasks"]
+        out = swarm_watch.scan(self.project_path, tasks, self.port, dry_run=True,
+                               truncated=True)
+        self.assertIs(out["truncated"], True)
+        self.assertIs(self.scan(dry_run=True)["truncated"], False)
+
+
 if __name__ == "__main__":  # pragma: no cover
     unittest.main()

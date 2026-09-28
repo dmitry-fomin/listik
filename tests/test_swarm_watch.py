@@ -321,8 +321,6 @@ class SwarmWatchCase(unittest.TestCase):
                 result.stdout = fake_index
             elif "diff" in argv and "--numstat" in argv:
                 result.stdout = "1\t0\tf.txt\n"
-            elif "diff" in argv and "--name-only" in argv:
-                result.stdout = "f.txt\n"
             elif "write-tree" in argv or "commit-tree" in argv:
                 result.stdout = "a" * 40
             elif "merge-tree" in argv:
@@ -349,7 +347,7 @@ class SwarmWatchCase(unittest.TestCase):
             is_index_write = (
                 "read-tree" in argv or ("add" in argv and "-A" in argv)
                 or "write-tree" in argv
-                or (("diff" in argv) and ("--name-only" in argv or "--numstat" in argv)))
+                or (("diff" in argv) and ("--numstat" in argv)))
             if is_index_write:
                 env = kwargs.get("env")
                 self.assertIsNotNone(env)
@@ -364,7 +362,7 @@ class SwarmWatchCase(unittest.TestCase):
             else:
                 self.assertIsNone(kwargs.get("env"))
 
-            if (("diff" in argv and ("--name-only" in argv or "--numstat" in argv))
+            if (("diff" in argv and "--numstat" in argv)
                     or "merge-tree" in argv
                     or ("ls-files" in argv and "--others" in argv)):
                 self.assertEqual(argv[4:6], ["-c", "core.quotepath=false"])
@@ -462,6 +460,101 @@ class SwarmWatchCase(unittest.TestCase):
     def test_common_files(self) -> None:
         self.assertEqual(swarm_watch.common_files(["b", "a", "a"], ["a", "c"]), ["a"])
         self.assertEqual(swarm_watch.common_files(["x"], ["y"]), [])
+
+    # -------------------------------------------------------------- listik-ibge
+
+    def test_changes_single_numstat_diff(self) -> None:
+        calls: list[list[str]] = []
+        fd, fake_index = tempfile.mkstemp(prefix="listik-swarm-watch-mock-index-")
+        os.close(fd)
+        self.addCleanup(lambda: os.path.exists(fake_index) and os.remove(fake_index))
+
+        def fake_run(argv, **kwargs):
+            calls.append(list(argv))
+            result = mock.Mock()
+            result.returncode = 0
+            result.stderr = ""
+            if "rev-list" in argv and "--count" in argv:
+                result.stdout = "1"
+            elif "rev-parse" in argv and "--git-path" in argv:
+                result.stdout = fake_index
+            elif "diff" in argv:
+                result.stdout = "3\t1\tsrc/a.py\n-\t-\tbin.dat\n"
+            else:
+                result.stdout = ""
+            return result
+
+        with mock.patch.object(worktree_mod.subprocess, "run", side_effect=fake_run):
+            out = swarm_watch.changes("/fake/tree", "0" * 40)
+
+        diffs = [argv for argv in calls if "diff" in argv]
+        self.assertEqual(len(diffs), 1)
+        self.assertIn("--numstat", diffs[0])
+        self.assertNotIn("--name-only", diffs[0])
+        self.assertEqual(out["files"], ["bin.dat", "src/a.py"])
+        self.assertEqual(out["numstat"]["bin.dat"], {"added": None, "deleted": None})
+
+    def test_temp_index_removed_on_exception(self) -> None:
+        with self.assertRaises(RuntimeError):
+            with swarm_watch._temp_index("listik-swarm-watch-test-") as tmp_index:
+                Path(tmp_index).write_bytes(b"x")
+                Path(tmp_index + ".lock").write_bytes(b"x")
+                raise RuntimeError("boom")
+        self.assertFalse(os.path.exists(tmp_index))
+        self.assertFalse(os.path.exists(tmp_index + ".lock"))
+
+        src = Path(self.tmp) / "src-index"
+        src.write_bytes(b"real-index")
+        with swarm_watch._temp_index("listik-swarm-watch-test-", copy_from=str(src)) as tmp_index:
+            self.assertEqual(Path(tmp_index).read_bytes(), b"real-index")
+        self.assertFalse(os.path.exists(tmp_index))
+        self.assertEqual(src.read_bytes(), b"real-index")
+
+
+class IsOidTests(unittest.TestCase):
+    def test_sha1_and_sha256_lengths(self) -> None:
+        for text in ("a" * 40, "F" * 40, "0123456789abcdef" * 4, "ABCDEF12" * 8):
+            self.assertTrue(swarm_watch._is_oid(text), text)
+        for text in ("a" * 39, "a" * 41, "a" * 63, "a" * 65, "", "g" + "a" * 63):
+            self.assertFalse(swarm_watch._is_oid(text), text)
+
+
+@unittest.skipUnless(HAS_GIT, "нет git")
+class Sha256ProbeTests(unittest.TestCase):
+    def setUp(self) -> None:
+        self._env_patch = mock.patch.dict(
+            os.environ, {"GIT_CONFIG_GLOBAL": "/dev/null", "GIT_CONFIG_NOSYSTEM": "1"})
+        self._env_patch.start()
+        self.addCleanup(self._env_patch.stop)
+        self.tmp = tempfile.mkdtemp(prefix="listik-swarm-watch-sha256-")
+        self.addCleanup(shutil.rmtree, self.tmp, ignore_errors=True)
+        self.repo = Path(self.tmp) / "repo"
+        self.repo.mkdir()
+        init = subprocess.run(["git", "-C", str(self.repo), "init", "-q", "-b", "main",
+                               "--object-format=sha256", "."], capture_output=True, text=True)
+        if init.returncode != 0:
+            self.skipTest(f"git не умеет --object-format=sha256: {init.stderr.strip()}")
+        self._git("config", "user.name", "Тест")
+        self._git("config", "user.email", "test@example.com")
+        self._git("config", "commit.gpgsign", "false")
+        (self.repo / "f.txt").write_text(F_CONTENT, encoding="utf-8")
+        self._git("add", ".")
+        self._git("commit", "-qm", "первый")
+
+    def _git(self, *args: str, cwd=None) -> None:
+        proc = subprocess.run(["git", "-C", str(cwd or self.repo), *args],
+                              capture_output=True, text=True)
+        self.assertEqual(proc.returncode, 0, proc.stderr)
+
+    def test_probe_conflict_on_sha256_repo(self) -> None:
+        for name, repl in (("a", "la"), ("b", "lb")):
+            tree = self.repo / ".worktrees" / name
+            self._git("worktree", "add", "-b", f"task/{name}", str(tree), "HEAD")
+            (tree / "f.txt").write_text(F_CONTENT.replace("l4", repl), encoding="utf-8")
+            self._git("commit", "-aqm", name, cwd=tree)
+
+        result = swarm_watch.probe(str(self.repo), "task/a", "task/b")
+        self.assertEqual(result, {"clean": False, "files": ["f.txt"]})
 
 
 if __name__ == "__main__":  # pragma: no cover

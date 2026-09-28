@@ -1879,10 +1879,10 @@ def cmd_watch(args) -> int:
 
     cards = _SwarmCards(args)
     result = swarm_watch.scan(project_path, tasks, cards,
-                              dry_run=bool(getattr(args, "dry_run", False)))
+                              dry_run=bool(getattr(args, "dry_run", False)),
+                              truncated=truncated)
     result["skipped"] = {**filter_skipped, **result["skipped"]}
     result["project"] = project
-    result["truncated"] = truncated
 
     lines: list[str] = []
     for tid, t in result["tasks"].items():

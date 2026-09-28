@@ -100,6 +100,7 @@ import {
   coldStartRows,
   coldStartTone,
   desktopHolderPresentation,
+  depHolderHint,
   hasHolderTitle,
   healthPillText,
   projectOf,
@@ -960,7 +961,7 @@ function pickOwner(value: string | null): void {
 // ── «Связи» ────────────────────────────────────────────────────────────────
 
 function depCardHint(dep: DepInfo): string {
-  const base = hasHolderTitle(dep.holder_title) ? `держит ${dep.holder_title} · ${dep.holder_age}` : 'без держателя'
+  const base = dep.holder ? `${depHolderHint(dep)} · ${dep.holder_age}` : depHolderHint(dep)
   return dep.stale ? `${base} · стоит без движения` : base
 }
 
@@ -1642,7 +1643,7 @@ async function loadTree(): Promise<void> {
             <li v-for="entry in depTree.waits_for" :key="`tw-${entry.id}`" class="listik-dep">
               <span class="listik-mono">ждёт {{ entry.id }}</span>
               <span class="listik-dep__title">{{ entry.title }}</span>
-              <span class="listik-dep__note">{{ entry.status }} · {{ hasHolderTitle(entry.holder_title) ? entry.holder_title : 'без держателя' }}</span>
+              <span class="listik-dep__note">{{ entry.status }} · {{ entry.holder ? entry.holder_title : 'без держателя' }}</span>
             </li>
             <li v-for="entry in depTree.waited_by" :key="`tb-${entry.id}`" class="listik-dep">
               <span class="listik-mono">её ждёт {{ entry.id }}</span>

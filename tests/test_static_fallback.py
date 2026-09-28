@@ -4,6 +4,8 @@ Safari, попросивший `/favicon.ico` и получивший HTML-ст�
 иконку битой, запоминает отказ и оставляет вкладку без фавиконки; Chrome такую
 подмену молча игнорирует. Поэтому отсутствующий файл с расширением получает 404,
 а на index.html по-прежнему падают только пути без расширения (маршруты приложения).
+Без собранной доски корень `/` и `/index.html` отдают страницу «доска не собрана»,
+а остальные пути с расширением по-прежнему получают 404.
 
 Сервер поднимается в процессе, по одному на тест; `paths.WEB_DIR` подменяется на
 временный каталог с поддельным `dist`, поэтому сборка фронта для теста не нужна.
@@ -97,11 +99,7 @@ class StaticFallbackTest(StaticCase):
                 self.assertEqual(body.decode("utf-8"), INDEX)
 
     def test_board_not_built_shows_actual_web_dir(self):
-        """Без dist/index.html страница-заглушка называет настоящий каталог фронта.
-
-        Маршрут без расширения: `/` превращается в `index.html` и при отсутствии файла
-        получает 404 как ассет (поведение с listik-5cb0, в этой правке не меняется).
-        """
+        """Без dist/index.html страница-заглушка называет настоящий каталог фронта."""
         (self.dist / "index.html").unlink()
         status, headers, body = self.get("/board")
         self.assertEqual(status, 200)
@@ -109,6 +107,30 @@ class StaticFallbackTest(StaticCase):
         text = body.decode("utf-8")
         self.assertIn(f"cd {html.escape(str(paths.WEB_DIR))}\n", text)
         self.assertNotIn("~/Projects/Listik/web", text)
+
+    def test_root_without_board_shows_not_built_page(self):
+        """listik-4ntu: `/` и `/index.html` без доски — та же заглушка, что и `/board`."""
+        (self.dist / "index.html").unlink()
+        expected = self.get("/board")
+        for path in ("/", "/index.html"):
+            with self.subTest(path=path):
+                status, headers, body = self.get(path)
+                self.assertEqual(status, expected[0])
+                self.assertEqual(headers["Content-Type"], expected[1]["Content-Type"])
+                self.assertEqual(body, expected[2])
+                self.assertEqual(status, 200)
+                self.assertIn("text/html", headers["Content-Type"])
+                self.assertEqual(headers["Cache-Control"], "no-store")
+                self.assertIn(f"cd {html.escape(str(paths.WEB_DIR))}\n", body.decode("utf-8"))
+
+    def test_missing_files_with_extension_are_404_without_board(self):
+        (self.dist / "index.html").unlink()
+        for path in ("/favicon.ico", "/assets/index-deadbeef.js", "/subdir/index.html"):
+            with self.subTest(path=path):
+                status, headers, body = self.get(path)
+                self.assertEqual(status, 404)
+                self.assertNotIn("text/html", headers["Content-Type"])
+                self.assertNotIn(b"<html", body)
 
 
 class FaviconAssetsTest(unittest.TestCase):

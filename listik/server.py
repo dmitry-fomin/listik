@@ -1720,7 +1720,8 @@ class Handler(BaseHTTPRequestHandler):
             # ассета отвечаем честным 404, а не HTML-страницей с кодом 200.
             # Safari, попросивший /favicon.ico и получивший HTML, считает иконку
             # битой, запоминает отказ и рисует вкладку без фавиконки (listik-5cb0).
-            if Path(rel).suffix:
+            # Сам index.html — не ассет: без доски `/` получает заглушку (listik-4ntu).
+            if Path(rel).suffix and rel != "index.html":
                 return self._send(404, b"not found\n", "text/plain; charset=utf-8",
                                   {"Cache-Control": "no-store"})
             target = dist / "index.html"

@@ -20,7 +20,6 @@ from . import actors as actors_mod
 from . import errors as errors_mod
 from . import routes as routes_mod
 from . import store
-from .store_helpers import json_list  # noqa: F401  (переэкспорт для читателей)
 
 now_iso = store.now_iso
 
@@ -28,10 +27,12 @@ now_iso = store.now_iso
 #: выдача человеку, команды нет.
 KINDS = ("exec", "manual")
 
-#: Ключи глифов, которые доска умеет рисовать своей иконкой; прочие ключи тоже
-#: допустимы — доска покажет «свою букву».
-KNOWN_ICONS = ("claude", "dsh", "codex", "grok", "devin",
-               "pi", "pi-glm", "pi-deepseek", "user")
+#: Слова-ответы роя: последняя строка вывода харнесса.
+ANSWER_READY = "готово"
+ANSWER_QUESTION = "вопрос"
+ANSWER_FAILED = "не смог"
+ANSWER_GREEN = "зелёный"
+ANSWER_RED = "красный"
 
 #: Промпт роли роя по умолчанию: этап и роль подставляет лаунчер, держателя
 #: карточки ставит сам Listik (см. docs/specs/swarm-stage-launch.md).
@@ -40,8 +41,9 @@ SWARM_PROMPT = (
     "взята за тебя — claim, release и stage не вызывай. Контекст этапа: "
     "listik context {task_id} --stage {stage}. Рабочее дерево {worktree}, ветка "
     "{branch}, каталог {cwd}. Ответ — последняя строка вывода, одно слово без "
-    "знаков: «готово», «вопрос» (текст вопроса — строками выше) или «не смог»; "
-    "на приёмке — «зелёный» или «красный» (список правок — строками выше)."
+    f"знаков: «{ANSWER_READY}», «{ANSWER_QUESTION}» (текст вопроса — строками выше) "
+    f"или «{ANSWER_FAILED}»; на приёмке — «{ANSWER_GREEN}» или «{ANSWER_RED}» (список "
+    "правок — строками выше)."
 )
 
 #: Промпт харнесса по умолчанию для самостоятельной работы по протоколу AGENTS.md;
@@ -380,8 +382,3 @@ def seed(conn: sqlite3.Connection) -> None:
                 (item["prompt"], ts, item["key"], item["prompt"]))
         conn.execute(
             "INSERT INTO meta(key, value) VALUES('seed_headless_argv', '1')")
-
-
-def default_role_prompt() -> str:
-    """Промпт роли роя по умолчанию — с него предзаполняется карточка роли."""
-    return SWARM_PROMPT

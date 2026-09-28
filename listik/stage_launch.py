@@ -14,6 +14,8 @@ from pathlib import Path
 from . import actors as actors_mod
 from . import errors as errors_mod
 from . import harnesses_store
+from .harnesses_store import (ANSWER_FAILED, ANSWER_GREEN, ANSWER_QUESTION, ANSWER_READY,
+                              ANSWER_RED)
 from . import paths
 from . import store
 from . import store_helpers
@@ -33,10 +35,10 @@ STAGE_TO_ROLE = dict(STAGE_ROLES)
 #: `вопрос`/`не смог` годятся на любом этапе, включая приёмку; `зелёный`/`красный`
 #: — только у судьи, `готово` — только не у него.
 ANSWERS: dict[str, frozenset[str]] = {
-    "spec": frozenset({"готово", "вопрос", "не смог"}),
-    "critic": frozenset({"готово", "вопрос", "не смог"}),
-    "impl": frozenset({"готово", "вопрос", "не смог"}),
-    "judge": frozenset({"вопрос", "не смог", "зелёный", "красный"}),
+    "spec": frozenset({ANSWER_READY, ANSWER_QUESTION, ANSWER_FAILED}),
+    "critic": frozenset({ANSWER_READY, ANSWER_QUESTION, ANSWER_FAILED}),
+    "impl": frozenset({ANSWER_READY, ANSWER_QUESTION, ANSWER_FAILED}),
+    "judge": frozenset({ANSWER_QUESTION, ANSWER_FAILED, ANSWER_GREEN, ANSWER_RED}),
 }
 
 #: Сколько читаем с конца `.out` (ответ + текст вопроса/правок над ним).
@@ -131,9 +133,10 @@ _LAST_IMPL_BLOCK = (
     "запрет коммита из критериев выше. Закоммитить не вышло — ответ «не смог»."
 )
 
-_ANSWER_LINE = "Последняя строка вывода — одно слово: «готово», «вопрос» или «не смог»."
-_JUDGE_ANSWER_LINE = ("Последняя строка вывода — одно слово: «зелёный», «красный», «вопрос» "
-                      "или «не смог».")
+_ANSWER_LINE = (f"Последняя строка вывода — одно слово: «{ANSWER_READY}», «{ANSWER_QUESTION}» "
+                f"или «{ANSWER_FAILED}».")
+_JUDGE_ANSWER_LINE = (f"Последняя строка вывода — одно слово: «{ANSWER_GREEN}», «{ANSWER_RED}», "
+                      f"«{ANSWER_QUESTION}» или «{ANSWER_FAILED}».")
 
 
 class CriteriaError(Exception):
@@ -522,9 +525,9 @@ def apply_outcome(conn: sqlite3.Connection, task_id: str, *, notify=None) -> Non
                               author=SWARM_ACTOR, kind="journal")
             return
         allowed = ANSWERS.get(role, frozenset())
-        if first == "готово" and first in allowed:
+        if first == ANSWER_READY and first in allowed:
             children = portions(conn, task_id)
-            if stage == "s1-spec" and role == "spec" and children:
+            if stage == "s1-spec" and children:
                 single = _single_fresh(conn, children)
                 if single is None:
                     _clear_holder(conn, task_id, "рой: нарезка, держатель снят")
@@ -535,8 +538,8 @@ def apply_outcome(conn: sqlite3.Connection, task_id: str, *, notify=None) -> Non
                 merge_single_portion(conn, task_id, file=single["spec_path"],
                                      checklist=single["checklist_path"],
                                      child_id=single["id"], actor=SWARM_ACTOR)
-            nxt = next_stage_with_role(conn, record or {}, stage) if record else None
-            if record and nxt is None and stage == "s3-impl" and role == "impl":
+            nxt = next_stage_with_role(conn, record, stage) if record else None
+            if record and nxt is None and stage == "s3-impl":
                 # Приёмки нет — закрывает Listik, коммит сделала роль (блок role_tail).
                 note = "рой: ответ «готово», ролей после s3-impl нет — карточка закрыта"
                 store.update_task(conn, task_id, actor=SWARM_ACTOR,
@@ -559,7 +562,7 @@ def apply_outcome(conn: sqlite3.Connection, task_id: str, *, notify=None) -> Non
                     conn, task_id, value=True, actor=SWARM_ACTOR,
                     text=f"рой: после {stage} роли нет, карточку не закрываю. "
                          "Сними флаг — запущу тот же этап снова.")
-        elif first == "зелёный" and role == "judge":
+        elif first == ANSWER_GREEN and first in allowed:
             store.add_comment(conn, task_id, "VERDICT: PASS", author=SWARM_ACTOR,
                               kind="verdict")
             store.update_task(conn, task_id, actor=SWARM_ACTOR,
@@ -568,7 +571,7 @@ def apply_outcome(conn: sqlite3.Connection, task_id: str, *, notify=None) -> Non
             store.add_comment(conn, task_id,
                               "рой: ответ «зелёный», карточка закрыта",
                               author=SWARM_ACTOR, kind="journal")
-        elif first == "красный" and role == "judge":
+        elif first == ANSWER_RED and first in allowed:
             body = tail.strip() or (
                 f"1. приёмка ответила «красный» без списка правок — "
                 f"лог {launch_log} — разбери лог и поправь")
@@ -578,7 +581,7 @@ def apply_outcome(conn: sqlite3.Connection, task_id: str, *, notify=None) -> Non
             store.add_comment(conn, task_id,
                               "рой: ответ «красный», возврат на s3-impl, держатель снят",
                               author=SWARM_ACTOR, kind="journal")
-        elif first == "вопрос" and first in allowed:
+        elif first == ANSWER_QUESTION and first in allowed:
             text = tail.strip() or (
                 f"рой: этап {stage} ({role}) ответил «вопрос» без текста. "
                 f"Лог: {launch_log}")

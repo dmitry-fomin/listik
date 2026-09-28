@@ -477,7 +477,6 @@ def link_hints(conn: sqlite3.Connection, task_id: str, *, limit: int = 5) -> lis
     или `x = "<id>"` — ссылка на файл, а не на карточку, и предупреждение по ней
     было бы ложным (вердикт grok, listik-0wpx)."""
     try:
-        from . import deps as deps_mod
         found = deps_mod.mentioned(conn, task_id, limit=limit, mode="hints")
     except Exception:  # noqa: BLE001 — подсказка необязательна
         return []
@@ -941,9 +940,6 @@ def update_task(conn: sqlite3.Connection, task_id: str, *, actor: str | None = N
             event(conn, task_id, "stage", from_value=stage_old, to_value=new,
                   actor=actor_key, harness=harness, note=note, duration_s=dur,
                   transition=transition)
-            if new in PIPELINE_STAGES:
-                # задача в конвейере — держателя не сбрасываем
-                pass
         elif key == "status":
             event(conn, task_id, "status", from_value=old, to_value=new,
                   actor=actor_key, harness=harness, note=note)
@@ -1684,11 +1680,18 @@ def _portion_flags(conn: sqlite3.Connection, task_id: str,
     return has, cancelled_only, stuck
 
 
-def row_to_task(conn: sqlite3.Connection, row: sqlite3.Row) -> dict:
-    cfg = config_mod.load()
-    warn = float((cfg.get("board") or {}).get("wip_warn_hours", 8))
-    stale_h = float((cfg.get("board") or {}).get("stale_hours", 24))
-    assign_warn_min = float((cfg.get("board") or {}).get("assign_warn_minutes", 15))
+def board_config() -> dict:
+    """Пороги `[board]` из config.toml; циклы по карточкам грузят их один раз."""
+    return config_mod.load().get("board") or {}
+
+
+def row_to_task(conn: sqlite3.Connection, row: sqlite3.Row, *,
+                board: dict | None = None) -> dict:
+    if board is None:
+        board = board_config()
+    warn = float(board.get("wip_warn_hours", 8))
+    stale_h = float(board.get("stale_hours", 24))
+    assign_warn_min = float(board.get("assign_warn_minutes", 15))
     labels = store_helpers.json_list(row["labels"])
     blockers = store_helpers.json_list(row["blocked_by"])
     stage_hours = hours_since(row["stage_at"]) if row["stage_at"] else None
@@ -1796,9 +1799,9 @@ def row_to_task(conn: sqlite3.Connection, row: sqlite3.Row) -> dict:
         "needs_owner": bool(row["needs_owner"]),
         "labels": labels,
         "spec_path": row["spec_path"],
-        "checklist_path": row["checklist_path"] if "checklist_path" in row.keys() else None,
-        "review_path": row["review_path"] if "review_path" in row.keys() else None,
-        "decision_path": row["decision_path"] if "decision_path" in row.keys() else None,
+        "checklist_path": row["checklist_path"],
+        "review_path": row["review_path"],
+        "decision_path": row["decision_path"],
         "journal_path": row["journal_path"],
         "worktree": row["worktree"],
         "branch": row["branch"],
@@ -1815,8 +1818,7 @@ def row_to_task(conn: sqlite3.Connection, row: sqlite3.Row) -> dict:
         "launch_exit_code": row["launch_exit_code"],
         "launch_finished_at": row["launch_finished_at"],
         "launch_error": row["launch_error"],
-        "launch_driver": (row["launch_driver"]
-                          if "launch_driver" in row.keys() else None),
+        "launch_driver": row["launch_driver"],
         "has_portions": has_portions,
         "portions_cancelled_only": portions_cancelled_only,
         "portions_stuck": portions_stuck,
@@ -1921,6 +1923,22 @@ def _portion_title(path: str, letter: str) -> str:
     return f"порция {letter}"
 
 
+def _portion_match(steps_dir: str, task_id: str, letter: str,
+                   candidates: list[dict]) -> tuple[str, str | None, dict | None]:
+    """Файл порции, её чек-лист (или None) и карточка из `candidates`: сначала по
+    `realpath` `spec_path`, иначе `documents.match_portion_child`."""
+    from . import documents
+    file = os.path.join(steps_dir, f"{task_id}.{letter}.md")
+    check = os.path.join(steps_dir, f"{task_id}.check-{letter}.md")
+    check = check if os.path.isfile(check) else None
+    real = os.path.realpath(file)
+    child = next((c for c in candidates if (c.get("spec_path") or "").strip()
+                  and os.path.realpath(c["spec_path"]) == real), None)
+    if child is None:
+        child = documents.match_portion_child(candidates, letter)
+    return file, check, child
+
+
 def sync_portions(conn: sqlite3.Connection, task_id: str, *, actor: str | None = None,
                   harness: str | None = None) -> dict:
     """Карточки порций по файлам шага `<id>.<X>.md` рядом со `spec_path` шага.
@@ -1940,20 +1958,12 @@ def sync_portions(conn: sqlite3.Connection, task_id: str, *, actor: str | None =
     pattern = re.compile(rf"^{re.escape(task_id)}\.([a-z])\.md$")
     letters = sorted(m.group(1) for m in map(pattern.match, os.listdir(steps_dir)) if m)
 
-    from . import documents
     children = child_cards(conn, task_id)
     if len(letters) == 1:
         # Одна порция — карточку не заводим, её ведёт сам шаг (listik-zr05, порция e).
         from . import stage_launch
         letter = letters[0]
-        file = os.path.join(steps_dir, f"{task_id}.{letter}.md")
-        check = os.path.join(steps_dir, f"{task_id}.check-{letter}.md")
-        check = check if os.path.isfile(check) else None
-        real = os.path.realpath(file)
-        child = next((c for c in children if (c.get("spec_path") or "").strip()
-                      and os.path.realpath(c["spec_path"]) == real), None)
-        if child is None:
-            child = documents.match_portion_child(children, letter)
+        file, check, child = _portion_match(steps_dir, task_id, letter, children)
         stage_launch.merge_single_portion(conn, task_id, file=file, checklist=check,
                                           child_id=child["id"] if child else None,
                                           actor=actor, harness=harness)
@@ -1968,15 +1978,8 @@ def sync_portions(conn: sqlite3.Connection, task_id: str, *, actor: str | None =
     unchanged: list[str] = []
     portions: list[dict] = []
     for letter in letters:
-        file = os.path.join(steps_dir, f"{task_id}.{letter}.md")
-        check = os.path.join(steps_dir, f"{task_id}.check-{letter}.md")
-        check = check if os.path.isfile(check) else None
         free = [c for c in children if c["id"] not in taken]
-        real = os.path.realpath(file)
-        child = next((c for c in free if (c.get("spec_path") or "").strip()
-                      and os.path.realpath(c["spec_path"]) == real), None)
-        if child is None:
-            child = documents.match_portion_child(free, letter)
+        file, check, child = _portion_match(steps_dir, task_id, letter, free)
         if child is None:
             card = create_task(conn, title=_portion_title(file, letter), parent=task_id,
                                spec_path=file, checklist_path=check, created_by=actor,
@@ -2189,8 +2192,10 @@ def list_tasks(conn: sqlite3.Connection, *, project: str | None = None, status: 
     # Параметры выражения в списке SELECT связываются раньше параметров WHERE.
     wf_sql, wf_params = _waiting_for_count_sql()
 
+    board_cfg = board_config()
+
     def to_task(r: sqlite3.Row) -> dict:
-        return {**row_to_task(conn, r), "waiting_for_count": r["waiting_for_count"]}
+        return {**row_to_task(conn, r, board=board_cfg), "waiting_for_count": r["waiting_for_count"]}
 
     if health:
         # ponytail: row_to_task по всей выборке — O(n) запросов, терпимо при сотнях
@@ -2263,7 +2268,8 @@ def board(conn: sqlite3.Connection, *, group_by: str = "status", project: str | 
     rows = conn.execute(
         f"SELECT * FROM tasks {sql_where} ORDER BY priority ASC, updated_at DESC", params
     ).fetchall()
-    tasks = [row_to_task(conn, r) for r in rows]
+    board_cfg = board_config()
+    tasks = [row_to_task(conn, r, board=board_cfg) for r in rows]
 
     lint_result: dict = {"count": 0, "items": []}
     if project:
@@ -2414,12 +2420,12 @@ def stats(conn: sqlite3.Connection, project: str | None = None) -> dict:
         f"SELECT count(*) FROM tasks {where} AND needs_owner = 1", params).fetchone()[0]
     # Счётчики — из флагов карточек `row_to_task`, чтобы совпадать с доской по
     # построению (пороги `board.*`, активность детей, задачи без держателя).
-    active = [row_to_task(conn, r) for r in conn.execute(
+    board_cfg = board_config()
+    active = [row_to_task(conn, r, board=board_cfg) for r in conn.execute(
         f"SELECT * FROM tasks {where} AND status IN ({RUNNING_STATUSES_SQL}) "
         "ORDER BY stage_at ASC", params)]
     stale = sum(1 for t in active if t["stale"])
     long_stage = sum(1 for t in active if t["stage_warn"])
-    board_cfg = config_mod.load().get("board") or {}
     return {
         "by_status": by_status,
         "by_stage": by_stage,

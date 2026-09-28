@@ -146,7 +146,8 @@ def _tasks_by_id(conn: sqlite3.Connection, ids: list[str]) -> dict[str, sqlite3.
     return {r["id"]: r for r in _fetch(conn, f"SELECT * FROM tasks WHERE id IN ({marks})", tuple(ids))}
 
 
-def _info(conn: sqlite3.Connection, task_id: str, dep_type: str) -> dict:
+def _info(conn: sqlite3.Connection, task_id: str, dep_type: str, *,
+          board: dict | None = None) -> dict:
     """Короткая справка о блокере: что это, кто держит, сколько стоит."""
     from . import store  # локальный импорт: store сам зовёт deps.*
     row = _tasks_by_id(conn, [task_id]).get(task_id)
@@ -155,7 +156,7 @@ def _info(conn: sqlite3.Connection, task_id: str, dep_type: str) -> dict:
         return {"id": task_id, "dep_type": dep_type, "missing": True,
                 "title": "(задача не найдена)", "status": "missing",
                 "holder": None, "holder_title": None, "idle_age": "—", "stale": False}
-    task = store.row_to_task(conn, row)
+    task = store.row_to_task(conn, row, board=board)
     return {
         "id": task_id,
         "dep_type": dep_type,
@@ -175,31 +176,34 @@ def _info(conn: sqlite3.Connection, task_id: str, dep_type: str) -> dict:
     }
 
 
-def blockers(conn: sqlite3.Connection, task_id: str) -> list[dict]:
+def blockers(conn: sqlite3.Connection, task_id: str, *,
+             board: dict | None = None) -> list[dict]:
     """Незакрытые жёсткие блокеры задачи — то, из-за чего её нельзя брать."""
-    out = [_info(conn, r["depends_on"], r["dep_type"])
+    out = [_info(conn, r["depends_on"], r["dep_type"], board=board)
            for r in open_hard_edges(conn, issue_ids=[task_id])]
     out.sort(key=lambda b: (b["status"] != IN_PROGRESS, b.get("holder_age") is None))
     return out
 
 
-def waiting_for(conn: sqlite3.Connection, task_id: str) -> list[dict]:
+def waiting_for(conn: sqlite3.Connection, task_id: str, *,
+                board: dict | None = None) -> list[dict]:
     """Что зависит от этой задачи: пока она не закрыта, эти задачи стоят."""
-    out = [_info(conn, r["issue_id"], r["dep_type"])
+    out = [_info(conn, r["issue_id"], r["dep_type"], board=board)
            for r in open_hard_edges(conn, depends_on=task_id)]
     out = [w for w in out if w["status"] not in FINAL_STATUSES]
     out.sort(key=lambda b: b["status"] != IN_PROGRESS)
     return out
 
 
-def children(conn: sqlite3.Connection, task_id: str) -> list[dict]:
+def children(conn: sqlite3.Connection, task_id: str, *,
+             board: dict | None = None) -> list[dict]:
     """Дети по PARENT_TYPES, каждый один раз; висячие строки deps без задачи не в счёт."""
     rows = _fetch(conn, "SELECT d.issue_id FROM deps d JOIN tasks t ON t.id = d.issue_id "
                         "WHERE d.depends_on = ? AND d.dep_type IN "
                         f"({','.join('?' * len(PARENT_TYPES))}) ORDER BY d.rowid",
                   (task_id, *PARENT_TYPES))
     # Ребёнок по обоим типам сразу — один раз, в прежнем порядке строк.
-    return [_info(conn, i, "parent-child") for i in dict.fromkeys(r["issue_id"] for r in rows)]
+    return [_info(conn, i, "parent-child", board=board) for i in dict.fromkeys(r["issue_id"] for r in rows)]
 
 
 def parent(conn: sqlite3.Connection, task_id: str) -> dict | None:
@@ -500,10 +504,11 @@ def ready_tasks(conn: sqlite3.Connection, *, project: str | None = None,
     rows = _fetch(conn, f"SELECT t.* FROM tasks t WHERE {' AND '.join(where)} "
                         "ORDER BY t.priority ASC, t.updated_at DESC LIMIT ?",
                   (*params, limit or -1))
+    board_cfg = store.board_config()
     out = []
     for row in rows:
-        task = store.row_to_task(conn, row)
-        task["waiting_for_count"] = len(waiting_for(conn, row["id"]))
+        task = store.row_to_task(conn, row, board=board_cfg)
+        task["waiting_for_count"] = len(waiting_for(conn, row["id"], board=board_cfg))
         out.append(task)
     return out
 
@@ -524,17 +529,19 @@ def blocked_tasks(conn: sqlite3.Connection, *, project: str | None = None,
         params.append(project)
     rows = _fetch(conn, f"SELECT t.* FROM tasks t WHERE {' AND '.join(where)} "
                         "ORDER BY t.priority ASC, t.updated_at DESC", tuple(params))
+    board_cfg = store.board_config()
     out = []
     for row in rows:
-        info = blockers(conn, row["id"])
+        info = blockers(conn, row["id"], board=board_cfg)
         if not info:
             continue
-        task = store.row_to_task(conn, row)
+        task = store.row_to_task(conn, row, board=board_cfg)
         task["blockers"] = info
         task["blocked_by"] = [b["id"] for b in info]
         # Дети эпика нужны карточке на доске: «детей открыто N» считается и для
         # заблокированных задач, а не только в карточке задачи.
-        task["children_open"] = [c for c in children(conn, row["id"]) if not c["closed"]]
+        task["children_open"] = [c for c in children(conn, row["id"], board=board_cfg)
+                                 if not c["closed"]]
         # «Блокеры стоят»: ни один из них никто не двигает. Открытая задача без держателя
         # тоже стоит — её просто никто не взял, и ждать её молча бессмысленно.
         task["blocked_by_stale"] = all(b["missing"] or b["stale"] or not b["holder"] for b in info)
@@ -664,6 +671,7 @@ def suggested(conn: sqlite3.Connection, *, project: str | None = None,
         "SELECT issue_id, depends_on, created_by, created_at FROM deps "
         "WHERE dep_type='suggested-blocks' ORDER BY created_at ASC",
     )
+    board_cfg = store.board_config()
     out: list[dict] = []
     for r in rows:
         issue_row = tasks_by_id.get(r["issue_id"])
@@ -677,7 +685,7 @@ def suggested(conn: sqlite3.Connection, *, project: str | None = None,
             continue
         dep_row = tasks_by_id.get(r["depends_on"])
         if dep_row is not None:
-            dep_task = store.row_to_task(conn, dep_row)
+            dep_task = store.row_to_task(conn, dep_row, board=board_cfg)
             depends_on_title = dep_task["title"]
             depends_on_status = dep_task["status"]
         else:

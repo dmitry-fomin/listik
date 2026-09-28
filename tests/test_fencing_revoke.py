@@ -381,6 +381,24 @@ class NotOurLaunchTests(RevokeTestCase):
         self.assertIsNone(self.row(tid)["launch_finished_at"])
 
 
+class KillProcessCodeTests(RevokeTestCase):
+    """`_kill_process` возвращает машинный код исхода, не подпись (listik-rttz)."""
+
+    def test_live_child_is_killed(self):
+        proc = subprocess.Popen(["sleep", "30"], start_new_session=True)
+        self.addCleanup(self._kill_and_join, proc, None)
+        self.assertEqual(launcher_mod._kill_process("t", proc.pid, 2.0), "killed")
+        self.assertIsNotNone(proc.poll())
+
+    def test_permission_error_is_alive(self):
+        proc = subprocess.Popen(["sleep", "30"], start_new_session=True)
+        self.addCleanup(self._kill_and_join, proc, None)
+        with mock.patch.object(launcher_mod.os, "killpg", side_effect=PermissionError), \
+             contextlib.redirect_stderr(io.StringIO()):
+            self.assertEqual(launcher_mod._kill_process("t", proc.pid, 0.2), "alive")
+        self.assertIsNone(proc.poll())
+
+
 # ------------------------------------------------------------------ 6: revoke после recover
 
 class AfterRecoverTests(RevokeTestCase):

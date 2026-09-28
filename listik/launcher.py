@@ -307,7 +307,7 @@ def _record_started(conn, task_id: str, row, proc: subprocess.Popen, notify, *,
     try:
         conn.execute(fields, (pid, str(log_path), store.now_iso(), task_id))
         # add_comment коммитит и UPDATE выше — запуск пишется одной транзакцией.
-        store.add_comment(conn, task_id, journal, author="agent:listik", kind="journal")
+        store.add_comment(conn, task_id, journal, author=store.AUTOSTART_ACTOR, kind="journal")
     except Exception as exc:  # noqa: BLE001 — пробросим после старта слежения
         first = exc
         conn.rollback()
@@ -328,6 +328,21 @@ def _record_started(conn, task_id: str, row, proc: subprocess.Popen, notify, *,
                    dispatch_id=dispatch_id, generation=generation)
     if first is not None:
         raise first
+
+
+def _finish(conn, task_id: str, driver: str | None, text: str, notify) -> None:
+    """Разобрать завершение запуска по снимку `launch_driver`.
+
+    Рой — исход карточки разбирает `stage_launch.apply_outcome` (общую строку
+    «процесс завершился» не пишем, docs/specs/swarm-stage-launch.md); скил —
+    `text` журналом от `store.AUTOSTART_ACTOR` (`add_comment` коммитит и UPDATE
+    вызывающего). Событие доски шлёт вызывающий.
+    """
+    if driver == routes_mod.DRIVER_SWARM:
+        from . import stage_launch
+        stage_launch.apply_outcome(conn, task_id, notify=notify)
+    else:
+        store.add_comment(conn, task_id, text, author=store.AUTOSTART_ACTOR, kind="journal")
 
 
 def _track(conn, db_path, task_id: str, pid: int, proc: subprocess.Popen, notify,
@@ -353,22 +368,14 @@ def _track(conn, db_path, task_id: str, pid: int, proc: subprocess.Popen, notify
                 target, task_id,
                 f"автостарт: процесс {pid} поколения {generation} завершился с кодом "
                 f"{code} после отзыва — карточка не менялась",
-                author="agent:listik", kind="journal")
+                author=store.AUTOSTART_ACTOR, kind="journal")
         else:
-            # У режима роя stdout идёт в `.out` рядом с launch_log, а исход
-            # карточки разбирает `stage_launch.apply_outcome` — общую строку
-            # «процесс завершился» там не пишем (docs/specs/swarm-stage-launch.md).
+            # У режима роя stdout идёт в `.out` рядом с launch_log (см. `_finish`).
+            # Этап, держателя и статус слежение скила не трогает.
             drv = target.execute(
                 "SELECT launch_driver FROM tasks WHERE id = ?", (task_id,)).fetchone()
-            if drv is not None and (drv["launch_driver"] or "") == "swarm":
-                from . import stage_launch
-                stage_launch.apply_outcome(target, task_id, notify=notify)
-            else:
-                # add_comment коммитит и UPDATE выше — завершение пишется одной
-                # транзакцией. Этап, держателя и статус слежение не трогает.
-                store.add_comment(target, task_id,
-                                  f"автостарт: процесс {pid} завершился с кодом {code}",
-                                  author="agent:listik", kind="journal")
+            _finish(target, task_id, drv["launch_driver"] if drv is not None else None,
+                    f"автостарт: процесс {pid} завершился с кодом {code}", notify)
     except Exception as exc:  # noqa: BLE001 — падать в демоне нельзя, скажем в stderr
         print(f"autostart {task_id}: не записал завершение процесса {pid}: {exc}",
               file=sys.stderr, flush=True)
@@ -417,7 +424,7 @@ def start(conn, task_id: str, notify=None, *, log_dir=None, env=None) -> str | N
     # лаунчер и только в первый захват (снимок ещё пуст).
     driver = None
     if record is not None:
-        driver = record.get("driver") or "skill"
+        driver = record.get("driver") or routes_mod.DRIVER_SKILL
 
     ts = store.now_iso()
     dispatch_id = uuid.uuid4().hex
@@ -454,7 +461,8 @@ def start(conn, task_id: str, notify=None, *, log_dir=None, env=None) -> str | N
 
         # После снимка способ читается с карточки: правка `routes.driver` начатый
         # прогон не переводит в другой способ.
-        swarm = (row["launch_driver"] or driver or "skill") == "swarm"
+        swarm = ((row["launch_driver"] or driver or routes_mod.DRIVER_SKILL)
+                 == routes_mod.DRIVER_SWARM)
         if not swarm:
             command = record.get("command")
             if not command:
@@ -505,7 +513,7 @@ def _swarm_refuse(conn, task_id: str, text: str, notify) -> dict:
     """
     _release(conn, task_id)
     store.set_needs_owner(conn, task_id, value=True, text=text,
-                          actor="agent:listik")
+                          actor=store.AUTOSTART_ACTOR)
     print(f"swarm {task_id}: {text}", file=sys.stderr, flush=True)
     _notify(notify, task_id)
     return {"launched": False, "needs_owner": True}
@@ -543,7 +551,7 @@ def _start_swarm(conn, task_id: str, row, record: dict, *, notify, log_dir,
         if sliced:
             store.add_comment(conn, task_id,
                               "рой: родитель нарезан, запускаются порции",
-                              author="agent:listik", kind="journal")
+                              author=store.AUTOSTART_ACTOR, kind="journal")
             _release(conn, task_id)
             _notify(notify, task_id)
             return {"launched": False, "reason": "sliced"}
@@ -553,7 +561,7 @@ def _start_swarm(conn, task_id: str, row, record: dict, *, notify, log_dir,
         if cancelled_only:
             if not row["needs_owner"]:
                 store.set_needs_owner(
-                    conn, task_id, value=True, actor="agent:listik",
+                    conn, task_id, value=True, actor=store.AUTOSTART_ACTOR,
                     text="рой: все порции отменены, родитель не закрыт")
             _release(conn, task_id)
             _notify(notify, task_id)
@@ -576,13 +584,13 @@ def _start_swarm(conn, task_id: str, row, record: dict, *, notify, log_dir,
                     conn, task_id,
                     f"рой: после {stage} роли нет, карточку не закрываю. "
                     "Сними флаг — запущу тот же этап снова.", notify)
-            store.next_stage(conn, task_id, to_stage=nxt, actor="agent:listik",
+            store.next_stage(conn, task_id, to_stage=nxt, actor=store.AUTOSTART_ACTOR,
                              note=f"рой: роли {role or '—'} нет, этап {stage} → {nxt}")
             # Пропуск без держателя: если липкий переход держателя оставил — снять.
             stage_launch._clear_holder(conn, task_id, "рой: пропуск роли, держатель снят")
             store.add_comment(conn, task_id,
                               f"рой: роли {role or '—'} нет, этап {stage} → {nxt}",
-                              author="agent:listik", kind="journal")
+                              author=store.AUTOSTART_ACTOR, kind="journal")
             _release(conn, task_id)
             _notify(notify, task_id)
             return {"launched": False, "stage_skipped": nxt}
@@ -614,7 +622,7 @@ def _start_swarm(conn, task_id: str, row, record: dict, *, notify, log_dir,
         # Пустой этап незапущенной карточки — `s1-spec`; записываем его до `claim`,
         # чтобы разрешённость харнесса проверялась по этапу.
         if not (row["stage"] or "").strip():
-            store.update_task(conn, task_id, actor="agent:listik", stage="s1-spec",
+            store.update_task(conn, task_id, actor=store.AUTOSTART_ACTOR, stage="s1-spec",
                               note="рой: начало — этап s1-spec")
             row = conn.execute("SELECT * FROM tasks WHERE id = ?", (task_id,)).fetchone()
 
@@ -627,7 +635,7 @@ def _start_swarm(conn, task_id: str, row, record: dict, *, notify, log_dir,
                         actor=f"agent:{harness}", note=f"рой: взял за {harness}")
         except Exception as exc:  # noqa: BLE001 — любой отказ claim → вопрос человеку
             _release(conn, task_id)
-            store.set_needs_owner(conn, task_id, value=True, actor="agent:listik",
+            store.set_needs_owner(conn, task_id, value=True, actor=store.AUTOSTART_ACTOR,
                                   text=f"рой: не взял карточку за {harness} "
                                        f"(этап {stage}, роль {role}): "
                                        f"{errors_mod.message_of(exc)}")
@@ -681,7 +689,7 @@ def _start_swarm(conn, task_id: str, row, record: dict, *, notify, log_dir,
                                         start_new_session=True, env=proc_env)
         except OSError as exc:
             # Процесса нет — держателя и захват снять, вопрос человеку.
-            store.update_task(conn, task_id, actor="agent:listik", holder="",
+            store.update_task(conn, task_id, actor=store.AUTOSTART_ACTOR, holder="",
                               note="рой: запуск не удался, держатель снят")
             return _swarm_refuse(conn, task_id,
                                  f"рой: этап {stage} ({role}) не запустился: {exc}",
@@ -692,7 +700,7 @@ def _start_swarm(conn, task_id: str, row, record: dict, *, notify, log_dir,
         # снять, исключение — наружу как есть. `claim` закоммитил сам, откат его не трогает.
         conn.rollback()
         if claimed:
-            store.update_task(conn, task_id, actor="agent:listik", holder="",
+            store.update_task(conn, task_id, actor=store.AUTOSTART_ACTOR, holder="",
                               note="рой: сбой до старта процесса, держатель снят")
         _release(conn, task_id, dispatch_id=dispatch_id)
         raise
@@ -737,16 +745,10 @@ def recover(conn, notify=None) -> list[str]:
                 (ts, ts, row["id"], pid, row["dispatch_id"]))
             if cur.rowcount == 0:
                 continue
-            if (row["launch_driver"] or "") == "swarm":
-                # Завершение без кода разбирает рой по `.out` — как завершение
-                # со слежением (пустой вывод → вопрос человеку).
-                from . import stage_launch
-                stage_launch.apply_outcome(conn, row["id"], notify=notify)
-            else:
-                store.add_comment(
-                    conn, row["id"],
-                    "автостарт: отслеживание потеряно при перезапуске сервера",
-                    author="agent:listik", kind="journal")
+            # Завершение без кода у роя разбирается по `.out` — как завершение
+            # со слежением (пустой вывод → вопрос человеку).
+            _finish(conn, row["id"], row["launch_driver"],
+                    "автостарт: отслеживание потеряно при перезапуске сервера", notify)
             _notify(notify, row["id"])
             lost.append(row["id"])
         except PermissionError:
@@ -799,14 +801,9 @@ def _poll(conn, db_path, task_id: str, pid: int, notify, dispatch_id: str | None
             return
         drv = target.execute(
             "SELECT launch_driver FROM tasks WHERE id = ?", (task_id,)).fetchone()
-        if drv is not None and (drv["launch_driver"] or "") == "swarm":
-            from . import stage_launch
-            stage_launch.apply_outcome(target, task_id, notify=notify)
-        else:
-            store.add_comment(target, task_id,
-                              f"автостарт: процесс {pid} завершился; слежение было "
-                              "потеряно при перезапуске сервера — код выхода неизвестен",
-                              author="agent:listik", kind="journal")
+        _finish(target, task_id, drv["launch_driver"] if drv is not None else None,
+                f"автостарт: процесс {pid} завершился; слежение было "
+                "потеряно при перезапуске сервера — код выхода неизвестен", notify)
     except Exception as exc:  # noqa: BLE001 — падать в демоне нельзя
         print(f"autostart {task_id}: не записал завершение процесса {pid}: {exc}",
               file=sys.stderr, flush=True)
@@ -876,31 +873,44 @@ def _wait_dead(task_id: str, pid: int, grace: float) -> bool:
         time.sleep(_KILL_POLL_INTERVAL)
 
 
+# Код исхода отзыва → подпись в `note` события `revoke` и в журнале. Подписи —
+# контракт: `swarm/main.mjs` ищет в `note` подстроку `не снят`, docs/API.md их
+# перечисляет.
+REVOKE_OUTCOMES = {
+    "killed": "снят",
+    "alive": "не снят",
+    "foreign": "не наш запуск",
+    "finished": "уже завершён",
+    "kept": "оставлен жить",
+}
+
+
 def _kill_process(task_id: str, pid: int, grace: float) -> str:
     """Снять процесс: SIGTERM, ожидание `grace`, эскалация до SIGKILL.
 
-    Возвращает исход: `"снят"` (смерть подтверждена в этом вызове) или `"не
-    снят"` (сигнал не прошёл или процесс пережил SIGKILL за `grace`).
+    Возвращает код исхода: `"killed"` (смерть подтверждена в этом вызове) или
+    `"alive"` (сигнал не прошёл или процесс пережил SIGKILL за `grace`); подпись
+    для журнала — `REVOKE_OUTCOMES`.
     """
     status, exc = _signal(pid, signal.SIGTERM)
     if status == "denied":
         print(f"autostart {task_id}: не удалось снять процесс {pid}: {exc}",
               file=sys.stderr, flush=True)
-        return "не снят"
+        return "alive"
     if status == "dead":
-        return "снят"
+        return "killed"
     if _wait_dead(task_id, pid, grace):
-        return "снят"
+        return "killed"
     status, exc = _signal(pid, signal.SIGKILL)
     if status == "denied":
         print(f"autostart {task_id}: не удалось снять процесс {pid}: {exc}",
               file=sys.stderr, flush=True)
-        return "не снят"
+        return "alive"
     if status == "dead":
-        return "снят"
+        return "killed"
     if _wait_dead(task_id, pid, grace):
-        return "снят"
-    return "не снят"
+        return "killed"
+    return "alive"
 
 
 def revoke(conn, task_id: str, *, actor: str | None = None, harness: str | None = None,
@@ -955,17 +965,17 @@ def revoke(conn, task_id: str, *, actor: str | None = None, harness: str | None 
     is_ours_alive = bool(launched_by == "listik" and pid and pid > 1
                          and pid != os.getpid())
     if not is_ours_alive:
-        outcome = "не наш запуск"
+        outcome = "foreign"
     elif finished_at:
-        outcome = "уже завершён"
+        outcome = "finished"
     elif not kill:
-        outcome = "оставлен жить"
+        outcome = "kept"
     else:
         outcome = _kill_process(task_id, pid, KILL_GRACE)
 
     # Шаг 3 — запись исхода: launch_finished_at только при подтверждённой в этом
     # вызове смерти, и только если ещё не было записано.
-    if outcome == "снят" and not finished_at:
+    if outcome == "killed" and not finished_at:
         conn.execute("UPDATE tasks SET launch_finished_at = ? WHERE id = ?",
                      (store.now_iso(), task_id))
 
@@ -975,13 +985,13 @@ def revoke(conn, task_id: str, *, actor: str | None = None, harness: str | None 
     store.event(conn, task_id, "revoke", from_value=str(old), to_value=str(old + 1),
                actor=actor_key, harness=harness,
                note=f"{note or 'полномочия отозваны'}; запуск {dispatch_id or '—'}, "
-                    f"pid {pid or '—'}, процесс {outcome}")
+                    f"pid {pid or '—'}, процесс {REVOKE_OUTCOMES[outcome]}")
     # add_comment коммитит всё — UPDATE launch_finished_at и событие revoke выше
     # уходят одной транзакцией с журналом.
     store.add_comment(
         conn, task_id,
         f"автостарт: полномочия поколения {old} отозваны (запуск {dispatch_id or '—'}, "
-        f"pid {pid or '—'}, процесс {outcome}); новое поколение {old + 1}",
-        author="agent:listik", kind="journal")
+        f"pid {pid or '—'}, процесс {REVOKE_OUTCOMES[outcome]}); новое поколение {old + 1}",
+        author=store.AUTOSTART_ACTOR, kind="journal")
     _notify(notify, task_id, "revoke")
     return store.get_task(conn, task_id)

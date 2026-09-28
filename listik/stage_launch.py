@@ -51,7 +51,7 @@ FAIL_TAIL_LIMIT = 1000
 #: не должен вытеснить из `TAIL_LIMIT` строки ближе к ответу.
 CUT_LINE_KEEP = 500
 
-SWARM_ACTOR = "agent:listik"
+SWARM_ACTOR = store.AUTOSTART_ACTOR
 
 
 # ------------------------------------------------------------------ расклад

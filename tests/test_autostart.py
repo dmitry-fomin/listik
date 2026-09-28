@@ -884,6 +884,17 @@ class RecoverTests(AutostartTestCase):
         self.assertIn("автостарт: отслеживание потеряно при перезапуске сервера", texts)
         self.assertEqual(self.notify, [("task", {"id": task["id"], "action": "launch"})])
 
+    def test_dead_pid_of_swarm_card_goes_to_apply_outcome(self) -> None:
+        # Развилка драйвера (listik-rttz): рой разбирает исход сам, строки скила нет.
+        task = self.make_launched(self.dead_pid(), launch_driver="swarm", dispatch_id="d",
+                                  launch_log=str(self.tmp_path / "рой.log"))
+        self.assertEqual(launcher_mod.recover(self.conn, notify=self.notify_cb), [task["id"]])
+        row = self.row(task["id"])
+        self.assertTrue(row["launch_finished_at"])
+        self.assertIsNone(row["launched_by"])
+        texts = [c["text"] for c in self.comments(task["id"], "journal")]
+        self.assertNotIn("автостарт: отслеживание потеряно при перезапуске сервера", texts)
+
     def test_live_pid_is_untouched(self) -> None:
         task = self.make_launched(os.getpid())
         self.assertEqual(launcher_mod.recover(self.conn, notify=self.notify_cb), [])

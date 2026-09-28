@@ -62,7 +62,9 @@ ROLE_KEYS = ("spec", "critic", "impl", "judge")
 PROVIDERS = ("claude", "glm", "openai", "grok", "deepseek", "devin")
 # Способ исполнения маршрута (listik-2gry): `skill` — конвейер-скил,
 # `swarm` — рой: Listik поднимает по процессу на этап и сам ведёт этапы.
-DRIVERS = ("skill", "swarm")
+DRIVER_SKILL = "skill"
+DRIVER_SWARM = "swarm"
+DRIVERS = (DRIVER_SKILL, DRIVER_SWARM)
 # Уровни маршрута — значения поля `icon`; подписи и иконки для доски лежат в
 # `web/src/lib/dictionaries.ts` (`ROUTE_ICONS`).
 ROUTE_ICONS = ("xhigh", "high", "medium", "low", "xlow", "direct")

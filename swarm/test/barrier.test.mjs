@@ -2116,7 +2116,7 @@ suite("верификатор: тот же маркер от другого ав
   assert.equal(listik.calls.needsOwner.length, 0);
 });
 
-suite("пустой дифф: дерево есть, ветка = HEAD, без MERGED_MARK → rejected empty", async () => {
+suite("пустой дифф: дерево есть и чистое, ветка = HEAD, без MERGED_MARK → уже влита", async () => {
   const repo = initRepo("swarm-barrier-repo-");
   const tree = addWorktree(repo, "t1");
   const tasks = [doneTask("t1", tree)];
@@ -2128,12 +2128,55 @@ suite("пустой дифф: дерево есть, ветка = HEAD, без M
     swarmConfig: {integration: []}, log, tasks, projectPath: repo, now: new Date(),
   });
   assert.equal(await git.headSha(repo), before);
-  assert.deepEqual(result.rejected, ["t1"]);
-  assert.deepEqual(result.unmerged, []);
-  const rec = parseRejected(listik, "t1");
-  assert.equal(rec.reason, "empty");
-  assert.equal(listik.calls.set.length, 1);
-  assert.equal(listik.calls.comment.some(c => c.text.startsWith(MERGED_MARK)), false);
+  assert.ok(result.merged.includes("t1"));
+  assert.deepEqual(result.rejected, []);
+  const mc = listik.calls.comment.find(c => c.id === "t1" && c.text.startsWith(MERGED_MARK));
+  assert.ok(mc, "ожидался comment t1 с MERGED_MARK");
+  const rec = JSON.parse(mc.text.slice(MERGED_MARK.length).trim());
+  assert.deepEqual(rec.files, []);
+  assert.equal(listik.calls.comment.some(c => c.text.startsWith(REJECTED_MARK)), false);
+  assert.equal(listik.calls.set.some(c => c.fields.status === "open"), false);
+});
+
+suite("пустой дифф: ветка = HEAD, в дереве незакоммиченный файл → needs-owner, дерево цело", async () => {
+  const repo = initRepo("swarm-barrier-repo-");
+  const tree = addWorktree(repo, "t1");
+  writeFileSync(join(tree, "untracked.txt"), "x\n");
+  const tasks = [doneTask("t1", tree)];
+  const listik = fakeListik({t1: {id: "t1", comments: [], write_scope: []}});
+  const log = makeLog();
+  const result = await runBarrier({
+    listik, git, fs: nodeFs, config: {dryRun: false, project: "demo", logDir: tmpLogDir()},
+    swarmConfig: {integration: []}, log, tasks, projectPath: repo, now: new Date(),
+  });
+  assert.equal(result.merged.includes("t1"), false);
+  assert.ok(result.unmerged.includes("t1"));
+  assert.equal(listik.calls.needsOwner.length, 1);
+  assert.match(listik.calls.needsOwner[0].text, /незакоммиченные правки или новые файлы/);
+  assert.equal(nodeFs.existsSync(tree), true);
+  assert.equal(nodeFs.existsSync(join(tree, "untracked.txt")), true);
+});
+
+suite("пустой дифф: эпик без своих коммитов и его порция — оба влиты, ни один не отклонён", async () => {
+  const repo = initRepo("swarm-barrier-repo-");
+  const treeE1 = addWorktree(repo, "e1"); // ветка эпика = HEAD, своих коммитов нет
+  const treeP1 = addWorktree(repo, "p1");
+  commitFile(treeP1, "p1.txt", "p\n", "p1");
+  const tasks = [doneTask("e1", treeE1), doneTask("p1", treeP1)];
+  const listik = fakeListik({
+    e1: {id: "e1", comments: [], write_scope: []},
+    p1: {id: "p1", comments: [], write_scope: []},
+  });
+  const log = makeLog();
+  const result = await runBarrier({
+    listik, git, fs: nodeFs, config: {dryRun: false, project: "demo", logDir: tmpLogDir()},
+    swarmConfig: {integration: []}, log, tasks, projectPath: repo, now: new Date(),
+  });
+  assert.deepEqual(result.merged.sort(), ["e1", "p1"]);
+  assert.deepEqual(result.rejected, []);
+  assert.equal(listik.calls.comment.some(
+    c => c.id === "e1" && c.text.startsWith(REJECTED_MARK)), false);
+  assert.equal(listik.calls.set.some(c => c.fields.status === "open"), false);
 });
 
 suite("верификатор: verify [] и красная integration → команд верификатора нет, задача влита", async () => {

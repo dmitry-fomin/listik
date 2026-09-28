@@ -323,7 +323,20 @@ export async function runBarrier({listik, git, fs, config, swarmConfig, log, tas
         continue;
       }
     }
-    if (ahead === 0 && !fs.existsSync(entry.worktree)) {
+    // Ветка, целиком вошедшая в HEAD, считается влитой — и с живым каталогом дерева,
+    // но только если оно чистое (влитая руками ветка, эпик без собственных коммитов:
+    // его работа в порциях). Грязное дерево и ошибка `isDirty` идут прежним путём в
+    // `toSort` — там их остановят `dirty_tree`/`dirty_check_error`, а `cleanupOne`
+    // влитой задачи молча стёр бы незакоммиченные правки.
+    let cleanMerged = ahead === 0 && !fs.existsSync(entry.worktree);
+    if (ahead === 0 && !cleanMerged) {
+      try {
+        cleanMerged = !(await git.isDirty(entry.worktree));
+      } catch {
+        cleanMerged = false;
+      }
+    }
+    if (cleanMerged) {
       merged.push(entry.id);
       log.line(`${entry.id} уже влита`);
       if (!dryRun) {

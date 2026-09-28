@@ -459,3 +459,94 @@ class HolderNoteResetTest(TempDbTestCase):
         hb = _events(self.conn, self.t, "heartbeat")
         self.assertEqual(hb[-1]["from_value"], "codex")
         self.assertEqual(hb[-1]["to_value"], "claude")
+
+
+# listik-nqbj: claim держателем выданной карточки переводит `open` в `in_progress`.
+class ClaimAfterIssueStatusTests(TempDbTestCase):
+    def setUp(self) -> None:
+        super().setUp()
+        self.t = store.create_task(self.conn, title="Выданная", project="demo")["id"]
+
+    def _issue(self, holder: str) -> None:
+        store.next_stage(self.conn, self.t, to_stage="s1-spec", holder=holder,
+                         actor="agent:claude", harness="claude")
+
+    def _claim_dsh(self) -> dict:
+        return store.claim(self.conn, self.t, holder="dsh", actor="agent:dsh", harness="dsh")
+
+    def _status_events(self):
+        return _events(self.conn, self.t, "status")
+
+    def test_t1_claude_claim_after_issue_goes_in_progress(self) -> None:
+        self._issue("claude")
+        before = store.get_task(self.conn, self.t)
+        self.assertEqual(before["status"], "open")
+        self.assertFalse(before["started_at"])
+        out = store.claim(self.conn, self.t, holder="claude", actor="agent:claude", harness="claude")
+        self.assertEqual(out["status"], "in_progress")
+        self.assertTrue(out["started_at"])
+        ev = self._status_events()
+        self.assertEqual(len(ev), 1)
+        self.assertEqual((ev[0]["from_value"], ev[0]["to_value"]), ("open", "in_progress"))
+        self.assertEqual(ev[0]["actor"], "agent:claude")
+        self.assertEqual(ev[0]["harness"], "claude")
+        self.assertEqual(out["orchestrator"], "claude")
+
+    def test_t2_t3_dsh_claim_after_issue_then_idempotent(self) -> None:
+        self._issue("dsh")
+        claims_after_issue = len(_events(self.conn, self.t, "claim"))
+        out = self._claim_dsh()
+        self.assertEqual(out["status"], "in_progress")
+        self.assertTrue(out["holder_taken"])
+        claims = _events(self.conn, self.t, "claim")
+        self.assertEqual(len(claims), claims_after_issue + 1)
+        self.assertEqual(claims[-1]["actor"], "agent:dsh")
+        ev = self._status_events()
+        self.assertEqual(len(ev), 1)
+        self.assertEqual(ev[0]["actor"], "agent:dsh")
+        self.assertEqual(ev[0]["harness"], "dsh")
+        # T3: повторный claim ничего не добавляет.
+        started = out["started_at"]
+        again = self._claim_dsh()
+        self.assertEqual(again["status"], "in_progress")
+        self.assertEqual(again["started_at"], started)
+        self.assertEqual(len(self._status_events()), 1)
+        self.assertEqual(len(_events(self.conn, self.t, "claim")), claims_after_issue + 1)
+
+    def test_t4_repeat_claim_of_stuck_open_card(self) -> None:
+        self._issue("dsh")
+        self._claim_dsh()
+        self.conn.execute("UPDATE tasks SET status = 'open' WHERE id = ?", (self.t,))
+        self.conn.commit()
+        claims = len(_events(self.conn, self.t, "claim"))
+        statuses = len(self._status_events())
+        out = self._claim_dsh()
+        self.assertEqual(out["status"], "in_progress")
+        self.assertEqual(len(_events(self.conn, self.t, "claim")), claims)
+        ev = self._status_events()
+        self.assertEqual(len(ev), statuses + 1)
+        self.assertEqual((ev[-1]["from_value"], ev[-1]["to_value"]), ("open", "in_progress"))
+
+    def test_t5_non_open_status_is_untouched(self) -> None:
+        self._issue("dsh")
+        store.update_task(self.conn, self.t, status="review")
+        statuses = len(self._status_events())
+        out = self._claim_dsh()
+        self.assertEqual(out["status"], "review")
+        self.assertEqual(len(self._status_events()), statuses)
+
+    def test_t6_claim_is_committed(self) -> None:
+        self._issue("dsh")
+        self._claim_dsh()
+        self.assertFalse(self.conn.in_transaction)
+        other = sqlite3.connect(self.db_path)
+        try:
+            status = other.execute("SELECT status FROM tasks WHERE id = ?", (self.t,)).fetchone()[0]
+            kinds = [r[0] for r in other.execute(
+                "SELECT kind FROM events WHERE task_id = ? AND actor = 'agent:dsh'", (self.t,))]
+        finally:
+            other.close()
+        self.assertEqual(status, "in_progress")
+        self.assertIn("claim", kinds)
+        self.assertIn("status", kinds)
+

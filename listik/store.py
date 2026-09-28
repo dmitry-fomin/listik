@@ -1127,6 +1127,7 @@ def claim(conn: sqlite3.Connection, task_id: str, *, holder: str, harness: str |
             # deps.expire_return_handoffs) so an agent that resumes with `claim`
             # rather than `heartbeat` is not treated as having gone silent.
             state = holder_claim_state(conn, task_id, current_holder)
+            branch_note = note or "взял задачу, которую выдали"
             ts = now_iso()
             conn.execute("UPDATE tasks SET holder_at = ?, updated_at = ? WHERE id = ?",
                         (ts, ts, task_id))
@@ -1140,9 +1141,17 @@ def claim(conn: sqlite3.Connection, task_id: str, *, holder: str, harness: str |
                     actors_mod.remember(conn, actor, actor_key)
                 event(conn, task_id, "claim", from_value=current_holder,
                       to_value=current_holder, actor=actor_key, harness=harness,
-                      note=note or "взял задачу, которую выдали")
+                      note=branch_note)
             _mark_claude_orchestrator(conn, task_id, holder)
-            conn.commit()
+            if row["status"] == OPEN:
+                # Держатель есть и claim прошёл — карточка в работе, как в обычном
+                # пути. Статус меняем только через update_task (событие, started_at,
+                # refresh_task, индекс, эпик); его commit фиксирует и записи выше.
+                # holder не передаём: иначе update_task напишет своё claim/release.
+                update_task(conn, task_id, actor=actor, harness=harness or holder,
+                            note=branch_note, status=IN_PROGRESS)
+            else:
+                conn.commit()
             return get_task(conn, task_id)
         cur_task = row_to_task(conn, row)
         stale_note = ", молчит — брошена?" if cur_task["stale"] else ""

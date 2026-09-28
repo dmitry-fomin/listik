@@ -3,7 +3,7 @@ from __future__ import annotations
 
 import unittest
 
-from listik import documents, store
+from listik import db as db_mod, documents, store
 from tests.helpers import TempDbTestCase
 
 
@@ -140,6 +140,184 @@ class JournalPathDecisionTests(TempDbTestCase):
 
         decisions = [d for d in docs if d["kind"] == "decision"]
         self.assertEqual([d["path"] for d in decisions], [journal])
+
+
+class StaleDocumentTests(TempDbTestCase):
+    """index_task_documents удаляет строки documents, чей путь карточке больше не соответствует."""
+
+    def _write(self, name: str) -> str:
+        path = self.tmp_path / name
+        path.write_text(f"# {name}\n\nТекст {name}.\n", encoding="utf-8")
+        return str(path)
+
+    def _rows(self, task_id: str) -> list[tuple[str, str]]:
+        return sorted((r["kind"], r["path"]) for r in self.conn.execute(
+            "SELECT kind, path FROM documents WHERE task_id=?", (task_id,)))
+
+    def _row(self, task_id: str, kind: str, path: str):
+        return self.conn.execute("SELECT * FROM documents WHERE task_id=? AND kind=? AND path=?",
+                                 (task_id, kind, path)).fetchone()
+
+    def _insert_legacy(self, task_id: str, kind: str, path: str) -> str:
+        doc_id = f"legacy-{kind}-{task_id}"
+        self.conn.execute(
+            "INSERT INTO documents(id,task_id,kind,path,revision,content_hash,title,status) "
+            "VALUES(?,?,?,?,1,'x',?, 'ok')", (doc_id, task_id, kind, path, path))
+        documents._insert_chunks(self.conn, task_id, doc_id, "# Старое\n\nСтарый текст.\n")
+        self.conn.commit()
+        self.assertGreater(_counts(self.conn, doc_id)[1], 0)
+        return doc_id
+
+    def test_context_commits_drop_visible_to_second_connection(self) -> None:
+        spec = self._write("spec.md")
+        task = store.create_task(self.conn, title="context и второе соединение", project=None,
+                                 spec_path=spec)
+        legacy = self._insert_legacy(task["id"], "spec", "old-spec.md")
+        chunk_id = self.conn.execute(
+            "SELECT id FROM document_chunks WHERE document_id=? LIMIT 1", (legacy,)).fetchone()[0]
+        self.conn.execute(
+            "INSERT INTO embeddings(doc_id,doc_kind,task_id,model,dim,vec,text_hash,embedded_at) "
+            "VALUES(?,'chunk',?,'m',1,x'00','h','t')", (chunk_id, task["id"]))
+        self.conn.commit()
+
+        documents.context(self.conn, task["id"], "s1-spec")
+
+        other = db_mod.connect(self.db_path)
+        try:
+            self.assertEqual(_counts(other, legacy), (0, 0, 0))
+            self.assertEqual(other.execute(
+                "SELECT count(*) FROM embeddings WHERE doc_id=?", (chunk_id,)).fetchone()[0], 0)
+        finally:
+            other.close()
+
+    def test_drop_writes_no_events_and_returns_current_docs(self) -> None:
+        spec, review = self._write("spec.md"), self._write("review.md")
+        task = store.create_task(self.conn, title="события и возврат", project=None,
+                                 spec_path=spec, review_path=review)
+        self._insert_legacy(task["id"], "spec", "old-spec.md")
+        self._insert_legacy(task["id"], "notes", "notes.md")
+        count = "SELECT count(*) FROM events WHERE task_id=?"
+        before = self.conn.execute(count, (task["id"],)).fetchone()[0]
+
+        docs = documents.index_task_documents(self.conn, task["id"])
+
+        self.assertEqual(self.conn.execute(count, (task["id"],)).fetchone()[0], before)
+        self.assertEqual([(d["kind"], d["path"]) for d in docs], [("spec", spec), ("review", review)])
+        self.assertEqual(docs, [documents.document_json(self.conn, d["id"]) for d in docs])
+
+    def test_legacy_journal_row_dropped_when_decision_path_set(self) -> None:
+        decision, journal = self._write("decision.md"), self._write("journal.md")
+        task = store.create_task(self.conn, title="decision и journal", project=None,
+                                 decision_path=decision, journal_path=journal)
+        live = self._row(task["id"], "decision", decision)
+        legacy = self._insert_legacy(task["id"], "decision", journal)
+
+        documents.index_task_documents(self.conn, task["id"])
+
+        self.assertEqual(self._rows(task["id"]), [("decision", decision)])
+        self.assertEqual(_counts(self.conn, legacy), (0, 0, 0))
+        after = self._row(task["id"], "decision", decision)
+        self.assertEqual((after["id"], after["revision"]), (live["id"], live["revision"]))
+
+    def test_spec_path_change_drops_old_row_and_chunks(self) -> None:
+        old, new = self._write("a.md"), self._write("b.md")
+        task = store.create_task(self.conn, title="смена spec", project=None, spec_path=old)
+        old_id = self._row(task["id"], "spec", old)["id"]
+
+        store.update_task(self.conn, task["id"], spec_path=new)
+
+        self.assertEqual(self._rows(task["id"]), [("spec", new)])
+        self.assertEqual(_counts(self.conn, old_id), (0, 0, 0))
+        self.assertEqual([d["path"] for d in store.task_documents(self.conn, task["id"])], [new])
+
+    def test_cleared_review_path_drops_rows(self) -> None:
+        review = self._write("review.md")
+        task = store.create_task(self.conn, title="очистка review", project=None, review_path=review)
+
+        store.update_task(self.conn, task["id"], review_path="")
+
+        self.assertEqual(self._rows(task["id"]), [])
+
+    def test_put_document_with_new_path_leaves_one_spec_row(self) -> None:
+        old = self._write("old.md")
+        task = store.create_task(self.conn, title="put с новым путём", project=None, spec_path=old)
+
+        documents.put_document(self.conn, task["id"], "spec", "# Новый\n\nтекст\n", path="new.md")
+
+        self.assertEqual(self._rows(task["id"]), [("spec", "new.md")])
+
+    def test_uploaded_row_dropped_after_path_change(self) -> None:
+        task = store.create_task(self.conn, title="upload и смена пути", project=None)
+        up = documents.put_document(self.conn, task["id"], "spec", "# Старый\n\nтекст\n", path="old.md")
+
+        store.update_task(self.conn, task["id"], spec_path="new.md")
+
+        self.assertIsNone(self._row(task["id"], "spec", "old.md"))
+        self.assertEqual(_counts(self.conn, up["id"]), (0, 0, 0))
+
+    def test_current_upload_row_kept(self) -> None:
+        task = store.create_task(self.conn, title="upload по текущему пути", project=None)
+        up = documents.put_document(self.conn, task["id"], "spec", "# Текст\n\nтело\n", path="cur.md")
+        self._insert_legacy(task["id"], "spec", "stale.md")
+
+        documents.index_task_documents(self.conn, task["id"])
+
+        row = self._row(task["id"], "spec", "cur.md")
+        self.assertEqual((row["id"], row["revision"], row["source"], row["content"]),
+                         (up["id"], up["revision"], "upload", "# Текст\n\nтело\n"))
+        self.assertEqual(self._rows(task["id"]), [("spec", "cur.md")])
+
+    def test_unknown_kind_row_dropped(self) -> None:
+        task = store.create_task(self.conn, title="чужой kind", project=None)
+        legacy = self._insert_legacy(task["id"], "notes", "notes.md")
+
+        self.assertEqual(documents.index_task_documents(self.conn, task["id"]), [])
+
+        self.assertEqual(self._rows(task["id"]), [])
+        self.assertEqual(_counts(self.conn, legacy), (0, 0, 0))
+
+    def test_journal_only_row_kept_with_same_id_and_revision(self) -> None:
+        journal = self._write("journal.md")
+        task = store.create_task(self.conn, title="только journal", project=None, journal_path=journal)
+        before = self._row(task["id"], "decision", journal)
+        self._insert_legacy(task["id"], "decision", "old-decision.md")
+
+        documents.index_task_documents(self.conn, task["id"])
+
+        after = self._row(task["id"], "decision", journal)
+        self.assertEqual((after["id"], after["revision"]), (before["id"], before["revision"]))
+        self.assertEqual(self._rows(task["id"]), [("decision", journal)])
+
+    def test_all_paths_cleared_drops_everything_but_not_other_task(self) -> None:
+        paths = {f: self._write(f"{f}.md") for f in
+                 ("spec_path", "checklist_path", "review_path", "decision_path", "journal_path")}
+        task = store.create_task(self.conn, title="все пути", project=None, **paths)
+        other = store.create_task(self.conn, title="соседка", project=None,
+                                  spec_path=paths["spec_path"])
+        other_before = self._rows(other["id"])
+        other_doc = self._row(other["id"], "spec", paths["spec_path"])
+        other_counts = _counts(self.conn, other_doc["id"])
+        self.assertTrue(self._rows(task["id"]))
+
+        store.update_task(self.conn, task["id"], **{f: "" for f in paths})
+
+        self.assertEqual(self._rows(task["id"]), [])
+        self.assertEqual(self._rows(other["id"]), other_before)
+        self.assertEqual(_counts(self.conn, other_doc["id"]), other_counts)
+
+    def test_other_task_with_same_spec_path_untouched(self) -> None:
+        old, new = self._write("shared.md"), self._write("new.md")
+        first = store.create_task(self.conn, title="первая", project=None, spec_path=old)
+        second = store.create_task(self.conn, title="вторая", project=None, spec_path=old)
+        second_doc = self._row(second["id"], "spec", old)
+        second_counts = _counts(self.conn, second_doc["id"])
+
+        store.update_task(self.conn, first["id"], spec_path=new)
+
+        self.assertEqual(self._rows(first["id"]), [("spec", new)])
+        after = self._row(second["id"], "spec", old)
+        self.assertEqual((after["id"], after["revision"]), (second_doc["id"], second_doc["revision"]))
+        self.assertEqual(_counts(self.conn, second_doc["id"]), second_counts)
 
 
 if __name__ == "__main__":

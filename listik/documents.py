@@ -470,8 +470,29 @@ def index_task_documents(conn: sqlite3.Connection, task_id: str) -> list[dict]:
         raise errors_mod.NotFound(f"задача не найдена: {task_id}")
     # One document per kind; journal_path (the old name of decision) is used only when
     # decision_path is empty — see _doc_path.
-    return [index_document(conn, task_id, path, kind=kind)
+    docs = [index_document(conn, task_id, path, kind=kind)
             for kind in DOC_FIELDS if (path := _doc_path(task, kind))]
+    _drop_stale_documents(conn, task_id)
+    return docs
+
+
+def _drop_stale_documents(conn: sqlite3.Connection, task_id: str) -> None:
+    """Удалить строки documents задачи, чей (kind, path) карточке больше не соответствует.
+
+    Пути читаются заново: index_document коммитит, и другое соединение могло сменить путь.
+    Удаляются и загруженные (source='upload') строки, и строки неизвестного kind.
+    """
+    task = conn.execute("SELECT * FROM tasks WHERE id=?", (task_id,)).fetchone()
+    if task is None:
+        return
+    stale = [r["id"] for r in conn.execute(
+        "SELECT id, kind, path FROM documents WHERE task_id=?", (task_id,)).fetchall()
+        if r["kind"] not in DOC_FIELDS or r["path"] != _doc_path(task, r["kind"])]
+    for doc_id in stale:
+        _drop_chunks(conn, doc_id)
+        conn.execute("DELETE FROM documents WHERE id=?", (doc_id,))
+    if stale:
+        conn.commit()
 
 
 def refresh_all(conn: sqlite3.Connection) -> dict:

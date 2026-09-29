@@ -1,0 +1,26 @@
+diff --git a/listik/mcp.py b/listik/mcp.py
+index 3b71615..7a91fe1 100644
+--- a/listik/mcp.py
++++ b/listik/mcp.py
+@@ -565,7 +565,7 @@ def call_tool(name: str, args: dict, conn=None, owner=FROM_ENV, fence=FROM_ENV)
+             holder=args.get("holder"),
+             needs_owner=bool(args.get("needs_owner")), issue_type=args.get("type"),
+             text=args.get("text"), include_closed=bool(args.get("include_closed")),
+-            limit=_int_arg(args, "limit", 50), order=args.get("order", "updated"),
++            limit=_int_arg(args, "limit", 200), order=args.get("order", "updated"),
+             as_owner=owner)
+     if name == "listik_show":
+         from . import deps as deps_mod
+diff --git a/tests/test_mcp_null_args.py b/tests/test_mcp_null_args.py
+index 572ca65..14bc2c1 100644
+--- a/tests/test_mcp_null_args.py
++++ b/tests/test_mcp_null_args.py
+@@ -36,7 +36,7 @@ class McpNullArgsTests(TempDbTestCase):
+             store.create_task(self.conn, title=f"T{i}", project="demo")
+         null = _call(self.conn, "listik_list", {"project": "demo", "limit": None})
+         absent = _call(self.conn, "listik_list", {"project": "demo"})
+-        self.assertEqual(null["limit"], 50)
++        self.assertEqual(null["limit"], absent["limit"])
+         ids = [t["id"] for t in null["tasks"]]
+         self.assertEqual(len(ids), 3)
+         self.assertEqual(ids, [t["id"] for t in absent["tasks"]])

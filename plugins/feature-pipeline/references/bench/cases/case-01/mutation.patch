@@ -1,0 +1,13 @@
+diff --git a/listik/deps.py b/listik/deps.py
+index e545de6..1013496 100644
+--- a/listik/deps.py
++++ b/listik/deps.py
+@@ -461,7 +461,7 @@ def ready_tasks(conn: sqlite3.Connection, *, project: str | None = None,
+         where.append("(t.holder IS NULL OR t.holder = '')")
+     rows = _fetch(conn, f"SELECT t.* FROM tasks t WHERE {' AND '.join(where)} "
+                         "ORDER BY t.priority ASC, t.updated_at DESC LIMIT ?",
+-                  (*params, limit or -1))
++                  (*params, limit if limit > 1 else -1))
+     out = []
+     for row in rows:
+         task = store.row_to_task(conn, row)

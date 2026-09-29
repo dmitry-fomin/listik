@@ -1,0 +1,53 @@
+[
+  {
+    "name": "case-01",
+    "class": "граница/off-by-one",
+    "step": "listik-amrv",
+    "portion": "a",
+    "commit": "6897bd1",
+    "tests": [
+      "tests.test_open_hard_edges",
+      "tests.test_deps.ReadyTasksTests",
+      "tests.test_deps.AddDepSuggestionTests",
+      "tests.test_resource_blocks",
+      "tests.test_epic.NotTakenTests",
+      "tests.test_claim.ExpireReturnWindowTests",
+      "tests.test_scope_schema.ScopeCardTests",
+      "tests.test_owner_store.ServerModeListCase"
+    ],
+    "defect": "listik/deps.py, ready_tasks: параметр LIMIT считается как `limit if limit > 1 else -1`, поэтому limit=1 снимает лимит и выдаёт все свободные задачи вместо одной",
+    "defect_path": "listik/deps.py"
+  },
+  {
+    "name": "case-02",
+    "class": "чистый",
+    "step": "listik-nghw",
+    "portion": "a",
+    "commit": "27f08e7",
+    "tests": [
+      "tests.test_board_blocked_count",
+      "tests.test_board_lint",
+      "tests.test_board_stage_columns",
+      "tests.test_assigned_not_taken",
+      "tests.test_routes_config",
+      "tests.test_owner_store"
+    ],
+    "defect": null,
+    "defect_path": null
+  },
+  {
+    "name": "case-03",
+    "class": "ложно-зелёный тест",
+    "step": "listik-ds5l",
+    "portion": "a",
+    "commit": "8ffb560",
+    "tests": [
+      "tests.test_mcp_null_args",
+      "tests.test_ready_limit",
+      "tests.test_blocked_limit",
+      "tests.test_mcp_tools"
+    ],
+    "defect": "listik/mcp.py, call_tool, ветка listik_list: умолчание limit 200 вместо 50 (и без ключа, и при null); в tests/test_mcp_null_args.py test_list_null_limit ослаблен — `assertEqual(null[\"limit\"], 50)` заменён на сравнение с ответом без ключа",
+    "defect_path": "listik/mcp.py"
+  }
+]

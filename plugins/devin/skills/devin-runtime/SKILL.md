@@ -48,7 +48,7 @@ Options for `run`/`resume`:
 | `--thinking <medium\|high\|max>` | `medium` | effort level = model `swe-2-<level>`; this list only |
 | `--channel <swe>` | `swe` | the only channel; the flag exists so presets can pass it |
 | `--sandbox` | off | devin's OS sandbox for the exec tool (macOS seatbelt / Linux bwrap) |
-| `--trust-workspace` | always on | kept for compatibility: `--respect-workspace-trust false` is always passed |
+| `--trust-workspace` | always on | kept for compatibility: `--respect-workspace-trust false` is always passed, on `run` and `resume` alike |
 | `--cwd <dir>` | current | working directory of the run |
 | `--timeout <s>` | 540 foreground, 7200 background | `0` removes the limit |
 
@@ -92,7 +92,7 @@ Options for `run`/`resume`:
 | `completed` | answer ready, fetch with `result` |
 | `timeout` | hit its limit; `result` still returns the partial answer |
 | `canceled` | killed via `cancel` |
-| `failed` | devin exited with an error; cause in `logs` |
+| `failed` | devin exited with an error (cause in `logs`), or exited 0 after rejecting a tool call; the cause is in `error` of `status` and on stderr of `result` |
 | `orphaned` | process gone, outcome never written: reboot or `kill -9`. No answer is coming |
 
 `status <id>` prints the status twice: `status=` is what the worker recorded,
@@ -142,8 +142,12 @@ devin's own ladder is `auto` ⊂ `accept-edits` ⊂ `smart` ⊂ `dangerous`, and
 | `write` | `dangerous` | everything auto-approved |
 
 In non-interactive (`-p`) mode there is nobody to confirm a tool, so a tool that is not
-auto-approved is rejected outright: devin warns on stderr and **ends the turn with no
-text**. The bridge reports that as exit 6 "empty answer", not as a silent success.
+auto-approved is rejected outright: devin warns on stderr and **ends the turn** with
+exit 0; stdout may still hold interim text, which is not the answer. The bridge reports
+that as exit 6 (background: status `failed`) with the cause
+`devin rejected a tool call in --permission <perm>: the answer is partial; …`, not as a
+silent success; any partial text is still printed on stdout. An empty answer with no
+rejection is still exit 6 "empty answer".
 
 ## Exit codes
 
@@ -153,7 +157,7 @@ text**. The bridge reports that as exit 6 "empty answer", not as a silent succes
 | 1 | `check`: devin not ready; `status`/`sessions`: no records | an answer, not a failure |
 | 2 | bad call: missing binary, empty prompt, bad option, unknown job-id, missing or taken session name | fix the command, or fall back to `run` |
 | 5 | background job still running | wait and retry `result` |
-| 6 | timeout, cancel, non-zero devin exit or empty answer | check `logs`, then `check` |
+| 6 | timeout, cancel, non-zero devin exit, rejected tool call (partial text may be on stdout) or empty answer | check `logs`, then `check` |
 
 ## Failure modes
 
@@ -161,8 +165,9 @@ text**. The bridge reports that as exit 6 "empty answer", not as a silent succes
 | --- | --- |
 | Bash call cut at 600 s | run was started in foreground; restart with `--background` |
 | `devin not found in PATH` | not installed, or installed after the session started — new terminal or `DEVIN_CLAUDE_BIN` |
-| exit 6 "empty answer" | a tool was blocked by the permission mode; rerun with the rights the task actually needs, or accept the limit |
-| `rejected a tool call that requires confirmation` on stderr | same cause, seen from devin's side |
+| exit 6 / `failed` with `devin rejected a tool call in --permission <perm>` | a tool was blocked by the permission mode; stdout holds partial text at most — never pass it off as the answer. Rerun with the rights the task actually needs, or accept the limit |
+| exit 6 "empty answer" | devin ended the turn with no text and no rejection on stderr; check `logs` |
+| `rejected a tool call that requires confirmation` on devin's stderr | the rejection above, seen from devin's side |
 | job stuck in `running` with no output | check `logs`: no turns in the session yet means the run has not reached the model |
 | answer looks invented | check `transcript` for whether files were read at all |
 

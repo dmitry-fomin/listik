@@ -39,7 +39,8 @@ Needs a follow-up on the same hypothesis: give the run `--session <name>` and co
 - **Instant, complete agreement deserves scepticism.** Models share blind spots and share
   your framing. The divergence is the finding — report it first.
 - Confirm files were actually read: `transcript <job-id>`.
-- An empty answer with exit 6 means a tool was blocked by read-only mode, not that devin
-  had nothing to say — report the limit rather than rerunning with wider rights.
+- Exit 6 with `devin rejected a tool call` (or an empty answer) means a tool was blocked by
+  read-only mode, not that devin had nothing to say — any text that came with it is partial,
+  not the review. Report the limit rather than rerunning with wider rights.
 - Don't turn the review into an immediate code change — report to the human first. An edit
   is a separate decision and a separate `/devin:devin-delegate` call.

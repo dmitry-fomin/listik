@@ -63,8 +63,9 @@ the caller distributes parallel work as separate copies of this agent.
 | an effort level named explicitly | `--thinking high` or `--thinking max` |
 
 Never infer write access from the shape of the task — only from an explicit request to
-change files. A read-only run that hits the ban reports it honestly (exit 6, empty answer),
-which is cheaper than an unrequested edit. On devin `--permission bash` is already not
+change files. A read-only run that hits the ban reports it honestly (exit 6 / `failed` with
+`devin rejected a tool call`, possibly with partial text that must not be returned as the
+answer), which is cheaper than an unrequested edit. On devin `--permission bash` is already not
 read-only: its `smart` mode also passes edits it judges safe.
 
 Never pick the effort level yourself. The default is `medium`; `--thinking` goes in only

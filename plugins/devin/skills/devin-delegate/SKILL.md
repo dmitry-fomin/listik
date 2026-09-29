@@ -87,8 +87,10 @@ background `--permission write` job keeps editing files while you do other thing
 launch one only when the human knows it is running.
 
 A tool the mode does not allow is not a crash: in non-interactive mode devin rejects it and
-ends the turn, and the bridge reports exit 6 "empty answer". Report that as a permission
-result, don't retry with wider rights on your own.
+ends the turn, and the bridge reports exit 6 (background: `failed`) with
+`devin rejected a tool call in --permission <perm>…`. Partial text may come with it on
+stdout — it is not the answer, don't present it as one. Report that as a permission result,
+don't retry with wider rights on your own.
 
 ## Parsing flags out of the request
 

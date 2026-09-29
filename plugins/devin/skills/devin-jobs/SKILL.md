@@ -42,8 +42,10 @@ states and exit codes are in `devin-runtime`.
 - **`clean` erases prompts, job events and answers from disk.** It spares running jobs and
   devin's own sessions (they live in devin's database), but ask before cleaning unprompted.
 - **Exit code 5 from `result` is not a failure** — it means still running.
-- **Exit code 6 with "empty answer" is a permission result**, not a crash: a tool was
-  blocked by the run's `--permission` mode. Say which mode it ran in.
+- **Exit code 6 / status `failed` with `devin rejected a tool call`** (even at `exit 0`) is
+  a permission result, not a crash: a tool was blocked by the run's `--permission` mode. Any
+  text `result` prints is partial — never pass it off as the answer. Say which mode it ran
+  in. Exit 6 "empty answer" without a rejection is a separate case: check `logs`.
 - **Several jobs at once is normal.** Tell them apart by session name and label, and fetch
   each `result` separately so a finished job doesn't wait on a slower neighbour.
 - A cancelled or failed job can still return a partial answer: `result` prints what

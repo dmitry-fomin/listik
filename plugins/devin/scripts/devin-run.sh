@@ -12,10 +12,13 @@
 #   devin-run.sh sessions [--json]
 #   devin-run.sh transcript <job-id> | transcript --session <имя>
 #
-# Инвариант, на котором держится вся обвязка: в stdout подкоманд `run`/`resume`
-# (foreground) и `result` попадает РОВНО финальный ответ devin и ничего больше.
-# Всё служебное — прогресс, диагностика, ошибки запуска — идёт в stderr или в
-# файлы джобы. Вызывающий может отдавать этот stdout пользователю дословно.
+# Инвариант, на котором держится вся обвязка: при успехе (код 0) в stdout
+# подкоманд `run`/`resume` (foreground) и `result` попадает РОВНО финальный
+# ответ devin и ничего больше — вызывающий может отдавать его пользователю
+# дословно. При коде 6 (таймаут, отмена, отказ инструмента, сбой) stdout может
+# нести неполный текст devin, а причина — в stderr. Всё служебное — прогресс,
+# диагностика, ошибки запуска — в любом случае идёт только в stderr или в файлы
+# джобы.
 #
 # Фоновая джоба — самостоятельная сущность с собственным идентификатором:
 # её можно опрашивать (`status`, `logs`), забирать (`result`), убивать
@@ -52,7 +55,8 @@
 # 7. Доверие к каталогу (`--respect-workspace-trust`): в неинтерактивном
 #    режиме devin не может показать запрос доверия и падает в недоверенном
 #    каталоге. Поэтому обвязка всегда передаёт `--respect-workspace-trust false`
-#    (решение автора 25.09.2026); `--trust-workspace` оставлен для совместимости.
+#    — и в run, и в resume (решение автора 25.09.2026); `--trust-workspace`
+#    оставлен для совместимости и ничего не меняет.
 #
 # 8. Фонового режима у devin нет вовсе — фон целиком на обвязке (воркер,
 #    meta-файл, kill_tree, каталог состояния).
@@ -280,7 +284,10 @@ find_devin_bin() {
 # РАНЬШЕ команд, а наша (read ⊂ bash ⊂ write) — наоборот. Отсюда отображение:
 #   read  -> auto       — автоодобряются только читающие инструменты; всё
 #                         остальное в режиме -p подтвердить некому, поэтому
-#                         прогон честно упирается в запрет;
+#                         прогон честно упирается в запрет: devin отклоняет
+#                         вызов и обрывает ход (код 0, stdout пуст или с
+#                         промежуточным текстом) — обвязка отдаёт это как
+#                         ошибку, см. tool_rejected;
 #   bash  -> smart      — самый низкий режим devin, где вообще выполняются
 #                         команды; правки он тоже пропускает, так что «bash»
 #                         здесь шире нашего обычного «команды без правок»;
@@ -299,6 +306,36 @@ mode_label() {
     read-bash) echo "commands and edits a fast model judges safe" ;;
     *)         echo "read-only (edits and commands blocked)" ;;
   esac
+}
+
+# Внутренний режим → имя в терминах флага --permission моста (для сообщений).
+permission_flag_of() {
+  case "$1" in
+    write)     printf 'write' ;;
+    read-bash) printf 'bash' ;;
+    *)         printf 'read' ;;
+  esac
+}
+
+# Признак отказа инструмента в stderr прогона. Допущение: в режиме -p devin не
+# может спросить подтверждение, поэтому отклонённый вызов инструмента обрывает
+# ход — всё, что после этого лежит в stdout, не итоговый ответ, даже если stdout
+# непуст (замер 29.09.2026: код 0, 787 байт промежуточных реплик). Проверяется
+# при любом режиме прав.
+tool_rejected() {
+  [[ -s "$1" ]] && grep -q 'rejected a tool call' "$1"
+}
+
+# Причина отказа — одна строка для foreground (die) и фона (meta error).
+rejection_message() {
+  local perm hint
+  perm="$(permission_flag_of "$1")"
+  case "$perm" in
+    read)  hint="rerun with --permission bash or write if the task needs it" ;;
+    bash)  hint="rerun with --permission write if the task needs it" ;;
+    *)     hint="every tool is already auto-approved in this mode - check the transcript" ;;
+  esac
+  printf 'devin rejected a tool call in --permission %s: the answer is partial; %s' "$perm" "$hint"
 }
 
 # --permission <read|bash|write> — единый флаг прав; --write/--bash остаются
@@ -760,8 +797,8 @@ build_devin_args() {
   local bin="$1" mode="$2" model="$3" sandbox="$4" trust_off="$5" prompt_file="$6"
   DEVIN_ARGS=("$bin" --model "$model" --permission-mode "$(devin_permission_mode "$mode")")
   [[ "$sandbox" -eq 1 ]] && DEVIN_ARGS+=(--sandbox)
-  # Проверку доверия снимаем только по явной просьбе: неинтерактивный прогон в
-  # недоверенном каталоге падает, и решение «доверять» принимает человек.
+  # Проверка доверия снимается всегда, и для run, и для resume (решение автора
+  # 25.09.2026): неинтерактивный прогон в недоверенном каталоге иначе падает.
   [[ "$trust_off" -eq 1 ]] && DEVIN_ARGS+=(--respect-workspace-trust false)
   [[ -n "$RESUME_SESSION_ID" ]] && DEVIN_ARGS+=(-r "$RESUME_SESSION_ID")
   DEVIN_ARGS+=(--prompt-file "$prompt_file" -p)
@@ -828,10 +865,16 @@ run_foreground() {
 
   case "$DEVIN_RC" in
     0)
-      # Пустой ответ при нулевом коде — обычный исход запрещённого
-      # инструмента: devin в неинтерактивном режиме отклоняет неодобренный
-      # вызов и заканчивает ход вообще без текста. Молча вернуть пустой
-      # stdout нельзя — вызывающий принял бы это за ответ.
+      # Отказ инструмента: devin в неинтерактивном режиме отклоняет
+      # неодобренный вызов и обрывает ход с кодом 0 — stdout при этом пуст или
+      # несёт промежуточные реплики, но не итоговый ответ. Неполный текст
+      # отдаём как есть, причину — в stderr, код 6.
+      if tool_rejected "$err_file"; then
+        [[ -s "$out_file" ]] && cat "$out_file"
+        die 6 "$(rejection_message "$mode")"
+      fi
+      # Пустой ответ без признака отказа — тоже не ответ: молча вернуть пустой
+      # stdout нельзя, вызывающий принял бы это за ответ.
       if [[ ! -s "$out_file" ]]; then
         die 6 "devin returned an empty answer${err_text:+ - $err_text}: in --permission read a tool it is not allowed to run ends the turn without text; rerun with --permission bash or write if the task really needs it"
       fi
@@ -966,8 +1009,12 @@ run_background() {
     local final="completed"
     [[ $rc -eq 124 ]] && final="timeout"
     [[ $rc -ne 0 && $rc -ne 124 ]] && final="failed"
+    local rejected=0
+    [[ $rc -eq 0 ]] && tool_rejected "$job_dir/stderr.txt" && { final="failed"; rejected=1; }
     [[ -f "$job_dir/canceled" ]] && final="canceled"
-    if [[ "$final" == "failed" && -s "$job_dir/stderr.txt" ]]; then
+    if [[ "$final" == "failed" && $rejected -eq 1 ]]; then
+      meta_set error "$(rejection_message "$mode")" "$job_dir/meta"
+    elif [[ "$final" == "failed" && -s "$job_dir/stderr.txt" ]]; then
       meta_set error "$(strip_control < "$job_dir/stderr.txt" | tr '\n' ' ' | tail -c 300)" "$job_dir/meta"
     fi
     job_event "$job_dir/events.jsonl" job_end "exit $rc, $final, answer $(file_bytes "$job_dir/output.txt") bytes"
@@ -1355,7 +1402,7 @@ cmd_clean() {
 # --- resume -----------------------------------------------------------------
 cmd_resume() {
   local target="" name="" mode="" thinking="" workdir="" timeout_s="" \
-        background=0 label="" sandbox=0 trust_off=0 sandbox_given=0
+        background=0 label="" sandbox=0 trust_off=1 sandbox_given=0
   while [[ $# -gt 0 ]]; do
     case "$1" in
       --session)         name="$(need_value --session "${2:-}")"; shift 2 ;;

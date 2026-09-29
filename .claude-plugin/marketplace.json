@@ -45,7 +45,7 @@
     {
       "name": "devin",
       "source": "./plugins/devin",
-      "version": "0.1.1",
+      "version": "0.1.2",
       "description": "Мост в терминальный агент devin (Cognition): делегирование задач в SWE-2 с фоновыми задачами, уровнями усилия и продолжением сессии"
     },
     {

@@ -115,7 +115,8 @@ The prompt always arrives on stdin. Use a quoted heredoc (`<<'TASK'`) so the she
 expand `$` and backticks in the task text.
 
 Exit codes: `0` success · `1` not ready / nothing to list · `2` bad call · `5` job still
-running · `6` timeout, cancel, non-zero devin exit or empty answer.
+running · `6` timeout, cancel, non-zero devin exit, rejected tool call or empty answer
+(on `6` stdout may carry partial text — it is not the answer; the cause is on stderr).
 
 ## Named sessions
 
@@ -152,17 +153,17 @@ So on devin `--permission bash` is **wider** than "commands but no edits": there
 in between. If the working tree must stay untouched, stay on `read`.
 
 In non-interactive mode there is nobody to confirm a tool call, so a tool the mode does not
-auto-approve is rejected outright — devin warns on stderr and ends the turn with no text.
-The bridge surfaces that as exit 6 with a readable message instead of a silent empty
-answer:
+auto-approve is rejected outright — devin warns on stderr and ends the turn, still with
+exit 0; stdout may hold interim text, but never the final answer. The bridge surfaces that
+as exit 6 (a background job ends `failed`, `exit 0`, with the cause in `error`) instead of a
+silent success. Any partial text stays on stdout; the cause goes to stderr:
 
 ```
 $ devin-run.sh run --permission read <<< 'Write hello into /tmp/probe.txt'
-error: devin returned an empty answer - warning: rejected a tool call that requires
-confirmation. Running in non-interactive mode. …: in --permission read a tool it is not
-allowed to run ends the turn without text; rerun with --permission bash or write if the
-task really needs it
+error: devin rejected a tool call in --permission read: the answer is partial; rerun with --permission bash or write if the task needs it
 ```
+
+An empty answer with no rejection on stderr is still exit 6 "empty answer".
 
 ## The OS sandbox and workspace trust
 
@@ -173,7 +174,7 @@ Two devin-specific switches:
   on, commands can write only inside the workspace. `status` records `sandbox=on|off` and
   the full `cmdline`, so what a job actually ran with is checkable after the fact.
 - Workspace trust is always skipped: the bridge passes `--respect-workspace-trust false` on
-  every run. devin refuses to run non-interactively in a directory nobody has trusted,
+  every run and every `resume`. devin refuses to run non-interactively in a directory nobody has trusted,
   because the trust prompt cannot be shown — and every new task worktree is such a
   directory. `--trust-workspace` is still accepted and changes nothing.
 

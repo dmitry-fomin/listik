@@ -1,7 +1,8 @@
 # feature-pipeline
 
 Пресеты конвейера реализации задачи: ТЗ → критика ТЗ → код → приёмка с коммитом. Основной контекст
-только маршрутизирует, носит вопросы автору и ведёт журнал; код пишет исполнитель, коммитит судья.
+только маршрутизирует, носит вопросы автору и ведёт журнал; код пишет исполнитель, коммитит судья
+(в `high-pipeline` и `xhigh-pipeline` при чистых линзах приёмки порцию коммитит оркестратор).
 Каждый скил запускается только по явному имени — маршрутом карточки Listik (`launch_route` или
 метка `process:<ключ>`) или когда человек назвал пресет.
 
@@ -11,8 +12,8 @@
 
 | Скил | Когда брать | ТЗ | Критика ТЗ | Код | Приёмка + коммит |
 | --- | --- | --- | --- | --- | --- |
-| `xhigh-pipeline` | ошибка дороже прогона; ~$4 на задачу | Opus 5.5 xhigh (`pipeline-spec-writer-xhigh`, `model: opus`) | GLM 5.3 Flash + DeepSeek V4.1 Flash в pi, параллельно, сводит оркестратор | Opus 5.5 xhigh (`pipeline-implementer-xhigh`) | Grok 4.7 xhigh |
-| `high-pipeline` | расклад по умолчанию; ~$4 | Opus 5.5 high (`pipeline-spec-writer`, `model: opus`) | GLM 5.3 Flash + DeepSeek V4.1 Flash в pi, параллельно, сводит оркестратор | Opus 5.5 high (`pipeline-implementer-high`, `model: opus`) | Grok 4.7 xhigh |
+| `xhigh-pipeline` | ошибка дороже прогона; ~$4 на задачу | Opus 5.5 xhigh (`pipeline-spec-writer-xhigh`, `model: opus`) | GLM 5.3 Flash + DeepSeek V4.1 Flash в pi, параллельно, сводит оркестратор | Opus 5.5 xhigh (`pipeline-implementer-xhigh`) | линзы GLM 5.3 Flash ×3 в pi, при находке — Grok 4.7 xhigh |
+| `high-pipeline` | расклад по умолчанию; ~$4 | Opus 5.5 high (`pipeline-spec-writer`, `model: opus`) | GLM 5.3 Flash + DeepSeek V4.1 Flash в pi, параллельно, сводит оркестратор | Opus 5.5 high (`pipeline-implementer-high`, `model: opus`) | линзы GLM 5.3 Flash ×3 в pi, при находке — Grok 4.7 xhigh |
 | `medium-pipeline` | работа понятная, хватит пониженного усилия; ~$3 | Opus 5.5 medium (`pipeline-spec-writer-medium`, `model: opus`) | GLM 5.3 Flash + DeepSeek V4.1 Flash в pi, параллельно, сводит оркестратор | Opus 5.5 medium (`pipeline-implementer`, `model: opus`) | Grok 4.7 high |
 | `low-pipeline` | поджимает лимит Max: код вне квоты; ~$3 | Opus 5.5 low (`pipeline-spec-writer-low`, `model: opus`) | GLM 5.3 Flash + DeepSeek V4.1 Flash в pi, параллельно, сводит оркестратор | devin SWE-2 max (`devin:devin-delegate --thinking max`) | Grok 4.7 high |
 | `xlow-pipeline` | задача в один прогон, нужна независимая приёмка | — | — | devin SWE-2 max (`devin:devin-delegate --thinking max`) | Grok 4.7 high |
@@ -50,7 +51,7 @@ NotebookEdit): автоодобряет запросы исполнителей 
 ## references
 
 - `pipeline-core.md` — общий протокол пресетов: правила, цикл, вопросы (в т.ч. headless под роем),
-  шаг 0, имена бумаг и деревьев, треки, пакет диффа, коммит приёмкой, пределы, журнал, Listik.
+  шаг 0, имена бумаг и деревьев, треки, пакет диффа, коммит приёмкой, приёмка линзами, пределы, журнал, Listik.
 - `ROLES.md` — почему на роли поставлены эти модели; таблицы генерирует `presets.py`.
 - `README.md` + `fetch_aa.py`, `fetch_openrouter.py`, `models.*`, `openrouter.*` — снимки рейтингов
   моделей и скрипты их обновления.

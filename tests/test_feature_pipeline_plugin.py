@@ -1435,5 +1435,103 @@ class FeaturePipelineLensAcceptanceTests(unittest.TestCase):
                 self.assertNotEqual(_lens_core_problems(mutated), [])
 
 
+#: Приёмка линзами в пресетах (listik-3exw, порция b): кто ссылается на ядро и что несёт.
+LENS_PRESETS = ("high-pipeline", "xhigh-pipeline")
+LENS_CORE_REF = "`pipeline-core.md`, «Приёмка линзами»"
+LENS_REF = "«Приёмка линзами»"
+LENS_FILE_MARK = "lens-<X>"
+LENS_ROLES_REQUIRED = ("--channel glm", "линз")
+LENS_STAGE4_REQUIRED = (LENS_REF, "pi:pi-delegate")
+LENS_JUDGE_REQUIRED = ("вынести:", "отбросить:", "чинить", LENS_FILE_MARK)
+LENS_JUDGE_BLOCK_MARK = "Ты — приёмка одной порции ТЗ"
+LENS_README = pathlib.Path("README.md")
+
+
+def _fenced_block_with(text: str, needle: str) -> str:
+    """Fenced-блок (между строками ```), в котором есть строка с `needle`; пусто — нет."""
+    block: list[str] | None = None
+    for line in text.splitlines():
+        if line.strip().startswith("```"):
+            if block is None:
+                block = []
+                continue
+            if any(needle in inner for inner in block):
+                return "\n".join(block)
+            block = None
+        elif block is not None:
+            block.append(line)
+    return ""
+
+
+def _lens_preset_problems(name: str, text: str) -> list[str]:
+    """Проблемы приёмки линзами в тексте SKILL.md пресета; пусто — всё на месте."""
+    problems: list[str] = []
+    if name in LENS_PRESETS:
+        if LENS_CORE_REF not in text:
+            problems.append(f"{name}: нет ссылки {LENS_CORE_REF!r}")
+        roles = _text_section(text, "## Роли")
+        problems.extend(f"{name}: в «## Роли» нет {needle!r}"
+                        for needle in LENS_ROLES_REQUIRED if needle not in roles)
+        stage4 = _text_block(text, "### 4.", lambda line: line.startswith("## "))
+        problems.extend(f"{name}: в этапе 4 нет {needle!r}"
+                        for needle in LENS_STAGE4_REQUIRED if needle not in stage4)
+        judge = _fenced_block_with(text, LENS_JUDGE_BLOCK_MARK)
+        problems.extend(f"{name}: в задании судье нет {needle!r}"
+                        for needle in LENS_JUDGE_REQUIRED if needle not in judge)
+    else:
+        problems.extend(f"{name}: чужой пресет несёт {needle!r}"
+                        for needle in (LENS_REF, LENS_FILE_MARK) if needle in text)
+    return problems
+
+
+def _lens_readme_problems(text: str, skills: set[str]) -> list[str]:
+    """Строки таблицы «Скилы» README: `линз` ровно у LENS_PRESETS."""
+    problems: list[str] = []
+    for name in sorted(skills):
+        prefix = f"| `{name}` "
+        rows = [line for line in text.splitlines() if line.startswith(prefix)]
+        if name in LENS_PRESETS:
+            if not rows:
+                problems.append(f"README: нет строки {prefix!r}")
+            elif not any("линз" in row for row in rows):
+                problems.append(f"README: строка {name} не называет линзы")
+        elif any("линз" in row for row in rows):
+            problems.append(f"README: строка {name} называет линзы")
+    return problems
+
+
+class FeaturePipelineLensPresetTests(unittest.TestCase):
+    """Пресеты high и xhigh ведут приёмку линзами по ядру (listik-3exw, порция b)."""
+
+    def test_skills_follow_lens_acceptance(self) -> None:
+        names = _skill_names()
+        for name in LENS_PRESETS:
+            self.assertIn(name, names, f"нет скила {name}")
+        for name in sorted(names):
+            with self.subTest(skill=name):
+                self.assertEqual(_lens_preset_problems(name, _skill_text(name)), [])
+
+    def test_readme_names_lenses_only_for_lens_presets(self) -> None:
+        self.assertEqual(_lens_readme_problems(_plugin_text(LENS_README), _skill_names()), [])
+
+    def test_lens_checks_reject_broken_texts(self) -> None:
+        high = _skill_text("high-pipeline")
+        medium = _skill_text("medium-pipeline")
+        xhigh = _skill_text("xhigh-pipeline")
+        judge = _fenced_block_with(xhigh, LENS_JUDGE_BLOCK_MARK)
+        self.assertIn("вынести:", judge, "в задании судье xhigh нет «вынести:»")
+        broken = {
+            "high без «Приёмка линзами»": ("high-pipeline", high, high.replace(LENS_REF, "")),
+            "medium с «Приёмка линзами»": ("medium-pipeline", medium,
+                                           medium + f"\nПриёмка — по {LENS_CORE_REF}.\n"),
+            "xhigh: задание судье без «вынести:»": (
+                "xhigh-pipeline", xhigh, xhigh.replace(judge, judge.replace("вынести:", ""), 1)),
+        }
+        for case, (name, text, mutated) in broken.items():
+            with self.subTest(case=case):
+                self.assertNotEqual(mutated, text, "изменение не применилось")
+                self.assertNotEqual(_lens_preset_problems(name, mutated), [])
+
+
 if __name__ == "__main__":
     unittest.main()

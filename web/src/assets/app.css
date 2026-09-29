@@ -1998,7 +1998,39 @@ body .ui-drawer-backdrop.ui-drawer-backdrop--right .ui-drawer.ui-drawer--right.u
   flex-direction: column;
   align-items: center;
   gap: 2px;
+  min-width: 0;
   color: var(--ink-2);
+}
+
+/* Модель ячейки роли конвейера: имя — основным текстом, усилие — вторичным
+   после средней точки; строка не переносится, лишнее — многоточием, полный
+   `title` ячейки — в нативном тултипе. */
+.listik-pipelines__model {
+  display: flex;
+  align-items: baseline;
+  justify-content: center;
+  min-width: 0;
+  max-width: 100%;
+  overflow: hidden;
+  white-space: nowrap;
+}
+
+.listik-pipelines__model-name {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  font-size: var(--text-xs);
+  color: var(--ink-1);
+}
+
+.listik-pipelines__model-effort {
+  flex-shrink: 0;
+  font-size: 10px;
+  color: var(--ink-3);
+}
+
+.listik-pipelines__model-effort::before {
+  content: '\00a0·\00a0';
 }
 
 .listik-pipelines__cell-label {

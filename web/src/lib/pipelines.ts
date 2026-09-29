@@ -57,14 +57,55 @@ export type RoleParamValue = string | number | boolean
 
 export interface RoleCell {
   provider: ProviderKey
-  /** короткая подпись под иконкой ячейки */
+  /**
+   * усилие одиночной модели (`xhigh`, `max`); если моделей несколько — короткая
+   * подпись вроде `S+DS+SWE`
+   */
   label: string
-  /** полная расшифровка — в тултип */
+  /** модель или модели по договорённости `roleModels`: `Модель · усилие + Модель …` */
   title: string
   /** скил-запускатор роли (`плагин:скил`); нет — роль описана без запускателя */
   skill?: string
   /** параметры запускателя; без `skill` сервер их не принимает */
   params?: Record<string, RoleParamValue>
+}
+
+/** `label`, если его нет целым словом в `title` (без учёта регистра), иначе `null`. */
+export function effortOf(label: string, title: string): string | null {
+  if (!label) return null
+  const needle = label.toLowerCase()
+  const words = title.toLowerCase().split(/[\s·—\-:,]+/)
+  return words.includes(needle) ? null : label
+}
+
+/** Строка модели ячейки роли: имя и усилие (`null` — усилия нет). */
+export interface RoleModel {
+  name: string
+  effort: string | null
+}
+
+/**
+ * Модели ячейки роли из `title` по договорённости: модели через ` + `, усилие
+ * модели — после последнего ` · ` в её части. У единственной части без ` · `
+ * усилием считается `label` (`effortOf`: только если его нет словом в имени);
+ * у нескольких частей `label` — сокращение и не используется. Пустой `title`
+ * даёт одну строку `{ name: label, effort: null }`. Названий моделей функция
+ * не знает и текст не переписывает — только делит.
+ *
+ * Пример: `title` «Sonnet 5.5 · high + DeepSeek V4.1 + SWE-2 · max» →
+ * Sonnet 5.5/high, DeepSeek V4.1/null, SWE-2/max; `label` «xhigh» и `title`
+ * «Opus 5.5» → Opus 5.5/xhigh.
+ */
+export function roleModels(cell: Pick<RoleCell, 'label' | 'title'>): RoleModel[] {
+  const parts = (cell.title ?? '').split(' + ').map((part) => part.trim()).filter(Boolean)
+  if (parts.length === 0) return [{ name: cell.label, effort: null }]
+  return parts.map((part) => {
+    const at = part.lastIndexOf(' · ')
+    if (at !== -1) {
+      return { name: part.slice(0, at).trim(), effort: part.slice(at + 3).trim() || null }
+    }
+    return { name: part, effort: parts.length === 1 ? effortOf(cell.label, part) : null }
+  })
 }
 
 /** Имя параметра — то же правило, что у сервера (`listik/routes.py`). */

@@ -2,8 +2,10 @@
 /**
  * RoutePicker — визуальный выбор маршрута двумя группами (макет
  * `docs/prototype/NewTaskRoutes-html/NewTaskRoutes.dc.html`, listik-2gry):
- * «Конвейеры» (таблица пресетов: иконка уровня + роли) и «Рой» (строки с
- * цепочкой харнессов этапов, пропущенный этап — пунктир); под ними — пункт
+ * «Конвейеры» (подпись «оркестратор — Claude Code»; таблица пресетов: иконка
+ * уровня + роли, в ячейке роли — модели текстом «имя · усилие», см.
+ * `roleModels`) и «Рой» (подпись «оркестратор — Listik»; строки с цепочкой
+ * харнессов этапов, пропущенный этап — пунктир); под ними — пункт
  * «без маршрута» и осиротевший ключ. Заведение нового маршрута отсюда
  * убрано — оно живёт только в настройках «Маршруты».
  *
@@ -15,11 +17,10 @@
 import { computed } from 'vue'
 import ListikIcon from '@/components/ListikIcon.vue'
 import HarnessIcon from '@/components/marks/HarnessIcon.vue'
-import ProviderIcon from '@/components/marks/ProviderIcon.vue'
 import RouteIcon from '@/components/marks/RouteIcon.vue'
 import type { RouteDef } from '@/api/types'
 import { harnessTitle } from '@/lib/harness'
-import { isSwarmCell, ROLE_KEYS, ROLE_TITLES } from '@/lib/pipelines'
+import { isProviderCell, isSwarmCell, ROLE_KEYS, ROLE_TITLES, roleModels, type RoleKey } from '@/lib/pipelines'
 import {
   NO_ROUTE,
   pickerRoutesOf,
@@ -106,6 +107,11 @@ function selectClear(): void {
   selectItem({ key: NO_ROUTE, route: null })
 }
 
+/** Тултип ячейки роли конвейера — её `title` как есть; у роевой и пустой — нет. */
+function cellTitle(cell: RouteDef['roles'][RoleKey]): string | undefined {
+  return cell && isProviderCell(cell) ? cell.title : undefined
+}
+
 function routeTooltip(route: RouteDef): string {
   if (routeAllowed(route)) return route.hint
   return 'Эпик всегда режется на шаги через ТЗ (s1) — пресеты без этапа ТЗ для эпиков закрыты.'
@@ -156,12 +162,13 @@ function onRouteKeydown(event: KeyboardEvent, key: string): void {
     :aria-disabled="disabled || undefined"
     :aria-busy="disabled || undefined"
   >
-    <!-- Группа «Конвейеры»: этапы ведёт claude внутри одного процесса;
-         конвейер приходит из plugins/ сам, из доски его не завести. -->
+    <!-- Группа «Конвейеры»: оркестратор — Claude Code, ячейки ролей — модели
+         текстом (`roleModels`); конвейер приходит из plugins/ сам, из доски
+         его не завести. -->
     <div class="listik-rgroup">
       <div class="listik-rgroup__head">
         <span class="listik-rgroup__title">Конвейеры</span>
-        <span class="listik-rgroup__hint">этапы внутри одного процесса</span>
+        <span class="listik-rgroup__hint">оркестратор — Claude Code</span>
         <span class="listik-rgroup__spacer" aria-hidden="true" />
       </div>
 
@@ -198,7 +205,12 @@ function onRouteKeydown(event: KeyboardEvent, key: string): void {
             </span>
           </span>
 
-          <span v-for="role in ROLE_KEYS" :key="role" class="listik-pipelines__cell">
+          <span
+            v-for="role in ROLE_KEYS"
+            :key="role"
+            class="listik-pipelines__cell"
+            :title="cellTitle(route.roles[role])"
+          >
             <template v-if="route.roles[role]">
               <!-- Ячейка роевой формы (`driver=swarm` у pipeline) рисуется
                    глифом харнесса — у неё нет `provider`. -->
@@ -207,8 +219,14 @@ function onRouteKeydown(event: KeyboardEvent, key: string): void {
                 <span class="listik-pipelines__cell-label">{{ harnessTitle(route.roles[role]!.harness) }}</span>
               </template>
               <template v-else>
-                <ProviderIcon :provider="route.roles[role]!.provider" size="sm" />
-                <span class="listik-pipelines__cell-label">{{ route.roles[role]!.label }}</span>
+                <span
+                  v-for="(model, at) in roleModels(route.roles[role]!)"
+                  :key="at"
+                  class="listik-pipelines__model"
+                >
+                  <span class="listik-pipelines__model-name">{{ model.name }}</span>
+                  <span v-if="model.effort" class="listik-pipelines__model-effort">{{ model.effort }}</span>
+                </span>
               </template>
             </template>
             <span v-else class="listik-pipelines__cell-empty" aria-hidden="true">—</span>
@@ -217,12 +235,12 @@ function onRouteKeydown(event: KeyboardEvent, key: string): void {
       </div>
     </div>
 
-    <!-- Группа «Рой»: Listik водит карточку по этапам, на каждый — свой
-         харнесс; пропущенный этап в цепочке — пунктирная черта. -->
+    <!-- Группа «Рой»: оркестратор — Listik, на каждый этап — свой харнесс;
+         пропущенный этап в цепочке — пунктирная черта. -->
     <div class="listik-rgroup">
       <div class="listik-rgroup__head">
         <span class="listik-rgroup__title">Рой</span>
-        <span class="listik-rgroup__hint">Listik водит карточку по этапам — на каждый отдельный харнесс</span>
+        <span class="listik-rgroup__hint">оркестратор — Listik</span>
         <span class="listik-rgroup__spacer" aria-hidden="true" />
       </div>
 
@@ -252,7 +270,12 @@ function onRouteKeydown(event: KeyboardEvent, key: string): void {
             </span>
           </span>
 
-          <span v-for="role in ROLE_KEYS" :key="role" class="listik-pipelines__cell">
+          <span
+            v-for="role in ROLE_KEYS"
+            :key="role"
+            class="listik-pipelines__cell"
+            :title="cellTitle(route.roles[role])"
+          >
             <template v-if="route.roles[role]">
               <!-- Ячейка роевой формы (`driver=swarm` у pipeline) рисуется
                    глифом харнесса — у неё нет `provider`. -->
@@ -261,8 +284,14 @@ function onRouteKeydown(event: KeyboardEvent, key: string): void {
                 <span class="listik-pipelines__cell-label">{{ harnessTitle(route.roles[role]!.harness) }}</span>
               </template>
               <template v-else>
-                <ProviderIcon :provider="route.roles[role]!.provider" size="sm" />
-                <span class="listik-pipelines__cell-label">{{ route.roles[role]!.label }}</span>
+                <span
+                  v-for="(model, at) in roleModels(route.roles[role]!)"
+                  :key="at"
+                  class="listik-pipelines__model"
+                >
+                  <span class="listik-pipelines__model-name">{{ model.name }}</span>
+                  <span v-if="model.effort" class="listik-pipelines__model-effort">{{ model.effort }}</span>
+                </span>
               </template>
             </template>
             <span v-else class="listik-pipelines__cell-empty" aria-hidden="true">—</span>

@@ -198,6 +198,71 @@ try {
     }
   })
 
+  // 1a. Та же карточка: подписи групп — оркестраторы, ячейки конвейеров —
+  //     модели текстом (без глифа вендора), роевые ячейки — с глифом харнесса.
+  await record('матрица маршрута: оркестраторы групп и модели текстом', async () => {
+    const seen = await evaluate(`(() => {
+      const picker = document.querySelector('.ui-drawer [role="radiogroup"][aria-label="Маршрут запуска"]');
+      if (!picker) return null;
+      const text = (el) => el ? el.textContent.replace(/\\s+/g, ' ').trim() : null;
+      const hintOf = (title) => {
+        const head = [...picker.querySelectorAll('.listik-rgroup__head')]
+          .find((el) => text(el.querySelector('.listik-rgroup__title')) === title);
+        return head ? text(head.querySelector('.listik-rgroup__hint')) : null;
+      };
+      const row = (key) => picker.querySelector('[data-route-key="' + key + '"]');
+      const cellsOf = (key) => row(key) ? [...row(key).querySelectorAll('.listik-pipelines__cell')] : [];
+      const modelsOf = (cell) => cell
+        ? [...cell.querySelectorAll('.listik-pipelines__model')].map((model) => {
+            const effort = model.querySelector('.listik-pipelines__model-effort');
+            return {
+              name: text(model.querySelector('.listik-pipelines__model-name')),
+              effort: effort ? effort.textContent.replace(/^[\\s·]+|[\\s·]+$/g, '') : null,
+            };
+          })
+        : null;
+      const pipeline = (key) => ({
+        models: row(key) ? row(key).querySelectorAll('.listik-pipelines__model').length : -1,
+        glyphs: cellsOf(key).reduce((sum, cell) => sum + cell.querySelectorAll('.listik-harness-icon').length, 0),
+      });
+      const critic = cellsOf('high-pipeline')[1];
+      const low = cellsOf('low-pipeline');
+      return {
+        pipelinesHint: hintOf('Конвейеры'),
+        swarmHint: hintOf('Рой'),
+        high: pipeline('high-pipeline'),
+        low: pipeline('low-pipeline'),
+        highCritic: modelsOf(critic),
+        highCriticTitle: critic ? critic.getAttribute('title') : null,
+        highHasShort: row('high-pipeline') ? row('high-pipeline').textContent.includes('S+DS+SWE') : null,
+        lowJudge: modelsOf(low[3]),
+        lowCritic: modelsOf(low[1]),
+        swarmGlyphs: row('dsh-direct') ? row('dsh-direct').querySelectorAll('.listik-harness-icon').length : -1,
+      };
+    })()`)
+    const same = (got, want) => JSON.stringify(got) === JSON.stringify(want)
+    const ok = Boolean(seen)
+      && seen.pipelinesHint === 'оркестратор — Claude Code'
+      && seen.swarmHint === 'оркестратор — Listik'
+      && seen.high.models > 0 && seen.high.glyphs === 0
+      && seen.low.models > 0 && seen.low.glyphs === 0
+      && same(seen.highCritic, [
+        { name: 'Sonnet 5.5', effort: 'high' },
+        { name: 'DeepSeek V4.1', effort: null },
+        { name: 'SWE-2', effort: 'max' },
+      ])
+      && seen.highCriticTitle === 'Sonnet 5.5 · high + DeepSeek V4.1 + SWE-2 · max'
+      && seen.highHasShort === false
+      && same(seen.lowJudge, [{ name: 'Проверка', effort: 'Судья' }])
+      && same(seen.lowCritic, [{ name: 'GLM — критик', effort: null }])
+      && seen.swarmGlyphs > 0
+    return {
+      ok,
+      expect: 'подписи «оркестратор — Claude Code»/«оркестратор — Listik»; в ячейках конвейеров модели текстом без глифа; критик high — три модели, тултип — title; роевая строка с глифом',
+      got: seen,
+    }
+  })
+
   // 2. Клик по «без маршрута» сразу шлёт PATCH с одним полем `route: ''`.
   await record('клик по «без маршрута» сразу шлёт route: «»', async () => {
     const before = patches.length

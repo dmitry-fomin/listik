@@ -467,11 +467,6 @@ function cancel(): void {
       </UiField>
 
       <section class="listik-stack" style="gap: var(--space-2)">
-        <h4 class="listik-section__title">Как делать</h4>
-        <p class="listik-newtask__route-caption">
-          Маршрут · кто исполняет и по какому процессу
-        </p>
-
         <template v-if="routesFailed">
           <UiAlert tone="warning">
             {{ routesAlert }}
@@ -512,14 +507,3 @@ function cancel(): void {
   </UiDrawer>
 </template>
 
-<style scoped>
-/* Подпись блока маршрутов под «Как делать» — мелкий капс, как в макете. */
-.listik-newtask__route-caption {
-  margin: 0;
-  font-size: var(--text-xs);
-  font-weight: var(--weight-semibold);
-  letter-spacing: 0.06em;
-  text-transform: uppercase;
-  color: var(--ink-3);
-}
-</style>

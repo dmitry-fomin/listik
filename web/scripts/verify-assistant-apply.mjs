@@ -295,6 +295,30 @@ try {
   if (!(await openNewTask())) throw new Error('кнопка «Новая задача» не найдена')
   await openModal()
 
+  // Блок маршрутов «Новой задачи» — без заголовка «Как делать» и подписи под ним.
+  await record('форма: блок маршрутов без заголовка и подписи', async () => {
+    const seen = await evaluate(`(() => {
+      const drawer = [...document.querySelectorAll('.ui-drawer')]
+        .find((el) =>
+          (el.querySelector('.ui-drawer__header') ?? el.querySelector('.ui-drawer__title'))
+            ?.textContent.includes('Новая задача')) ?? null;
+      if (!drawer) return null;
+      const text = drawer.textContent;
+      return {
+        picker: Boolean(drawer.querySelector('.listik-route-picker')),
+        howTo: text.includes('Как делать'),
+        caption: text.includes('Маршрут · кто исполняет и по какому процессу'),
+        captionEl: Boolean(drawer.querySelector('.listik-newtask__route-caption')),
+      };
+    })()`)
+    const ok = Boolean(seen) && seen.picker && !seen.howTo && !seen.caption && !seen.captionEl
+    return {
+      ok,
+      expect: 'в форме есть .listik-route-picker, нет «Как делать», подписи маршрута и .listik-newtask__route-caption',
+      got: seen,
+    }
+  })
+
   // 5. «Применить текст»: текст ушёл в поле, поповер открыт, секция скрыта.
   await record('full: «Применить текст» — текст в поле, поповер открыт, секция скрыта', async () => {
     const before = await scenario('full')

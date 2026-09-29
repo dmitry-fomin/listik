@@ -17,7 +17,7 @@
         "critic": {
           "provider": "claude",
           "label": "S+DS+SWE",
-          "title": "Sonnet 5.5 high + pi: DeepSeek 4.1 flash + devin SWE-2 max"
+          "title": "Sonnet 5.5 · high + DeepSeek V4.1 + SWE-2 · max"
         },
         "impl": {
           "provider": "claude",
@@ -53,7 +53,7 @@
         "critic": {
           "provider": "claude",
           "label": "S+DS+SWE",
-          "title": "Sonnet 5.5 high + pi: DeepSeek 4.1 flash + devin SWE-2 max"
+          "title": "Sonnet 5.5 · high + DeepSeek V4.1 + SWE-2 · max"
         },
         "impl": {
           "provider": "claude",
@@ -89,7 +89,7 @@
         "critic": {
           "provider": "claude",
           "label": "S+DS",
-          "title": "Sonnet 5.5 high + pi: DeepSeek 4.1 flash"
+          "title": "Sonnet 5.5 · high + DeepSeek V4.1"
         },
         "impl": {
           "provider": "claude",
@@ -125,13 +125,13 @@
         "critic": {
           "provider": "glm",
           "label": "GLM+DS",
-          "title": "pi: GLM 5.3 + DeepSeek 4.1 flash",
+          "title": "GLM 5.3 + DeepSeek V4.1",
           "skill": "pi:pi-delegate"
         },
         "impl": {
           "provider": "devin",
           "label": "max",
-          "title": "devin · SWE-2",
+          "title": "SWE-2",
           "skill": "devin:devin-delegate",
           "params": {
             "thinking": "max"
@@ -161,7 +161,7 @@
         "impl": {
           "provider": "devin",
           "label": "max",
-          "title": "devin · SWE-2",
+          "title": "SWE-2",
           "skill": "devin:devin-delegate",
           "params": {
             "thinking": "max"
@@ -191,7 +191,7 @@
         "impl": {
           "provider": "devin",
           "label": "high",
-          "title": "devin · SWE-2",
+          "title": "SWE-2",
           "skill": "devin:devin-delegate",
           "params": {
             "thinking": "high"
@@ -200,7 +200,7 @@
         "judge": {
           "provider": "glm",
           "label": "GLM",
-          "title": "pi: GLM 5.3 flash",
+          "title": "GLM 5.3",
           "skill": "pi:pi-delegate",
           "params": {
             "channel": "glm"
@@ -225,7 +225,7 @@
         "spec": {
           "provider": "devin",
           "label": "max",
-          "title": "devin · SWE-2",
+          "title": "SWE-2",
           "skill": "devin:devin-delegate",
           "params": {
             "thinking": "max"
@@ -234,12 +234,12 @@
         "critic": {
           "provider": "claude",
           "label": "S+DS",
-          "title": "Sonnet 5.5 high + pi: DeepSeek 4.1 flash"
+          "title": "Sonnet 5.5 · high + DeepSeek V4.1"
         },
         "impl": {
           "provider": "glm",
           "label": "GLM",
-          "title": "pi: GLM 5.3 flash",
+          "title": "GLM 5.3",
           "skill": "pi:pi-delegate",
           "params": {
             "channel": "glm"

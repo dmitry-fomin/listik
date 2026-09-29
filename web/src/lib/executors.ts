@@ -9,7 +9,7 @@
  */
 import type { RouteDef, Task } from '@/api/types'
 import { harnessOf, harnessTitle, type HarnessKey } from './harness'
-import { isSwarmCell, STAGE_ROLE, type ProviderKey } from './pipelines'
+import { effortOf, isSwarmCell, STAGE_ROLE, type ProviderKey } from './pipelines'
 import { routeByKey } from './routes'
 import { DONE_STAGE } from './dictionaries'
 
@@ -27,14 +27,6 @@ export interface StageExecutor {
    * `title`; иначе и у роя — `null` (listik-erjx).
    */
   detail: string | null
-}
-
-/** `label`, если его нет целым словом в `title` (без учёта регистра), иначе `null`. */
-function executorDetail(label: string, title: string): string | null {
-  if (!label) return null
-  const needle = label.toLowerCase()
-  const words = title.toLowerCase().split(/[\s·—\-:,]+/)
-  return words.includes(needle) ? null : label
 }
 
 /**
@@ -58,7 +50,7 @@ export function stageExecutor(
     return { kind: 'swarm', harness: cell.harness, label: name, title: name, detail: null }
   }
   const title = cell.title || cell.label
-  return { kind: 'role', provider: cell.provider, label: cell.label, title, detail: executorDetail(cell.label, title) }
+  return { kind: 'role', provider: cell.provider, label: cell.label, title, detail: effortOf(cell.label, title) }
 }
 
 /** Харнессы держателя, которыми вендор ячейки роли исполняет этап. */

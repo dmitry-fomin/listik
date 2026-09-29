@@ -829,13 +829,15 @@ start_run() {
     "$prompt" "$name" "$sandbox" "$trust_off"
 }
 
-# Понятный текст вместо сырого отказа devin: доверие к каталогу — самая частая
-# причина падения неинтерактивного прогона на новой машине.
+# Понятный текст вместо сырого отказа devin: обвязка всегда передаёт
+# --respect-workspace-trust false, поэтому отказ по доверию — остаточный случай
+# (например, бинарь devin, не знающий этого флага). --trust-workspace в совет
+# не входит: флаг оставлен для совместимости и ничего не меняет.
 trust_hint_if_needed() {
   local err_text="$1" workdir="$2"
   case "$err_text" in
     *untrusted*|*"workspace trust"*)
-      printf ' - the directory %s was never trusted: start `devin` there interactively once, or rerun with --trust-workspace' "$workdir" ;;
+      printf ' - the directory %s was never trusted: start `devin` there interactively once' "$workdir" ;;
   esac
 }
 

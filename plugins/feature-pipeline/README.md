@@ -32,7 +32,7 @@
 | `pipeline-spec-writer-xhigh` | opus / xhigh | то же | `xhigh-pipeline` — **`model: opus`** |
 | `pipeline-spec-writer-medium` | opus / medium | то же | `medium-pipeline` — **`model: opus`** |
 | `pipeline-spec-writer-low` | opus / low | то же | `low-pipeline` — **`model: opus`** |
-| `pipeline-critic` | opus / high | критика ТЗ и чек-листа до реализации, репозиторий только на чтение, ничего не правит | не зовётся ни одним скилом |
+| `pipeline-critic`, `pipeline-critic-low/-medium/-xhigh` | sonnet / high, low, medium, xhigh | запасной критик ТЗ и чек-листа: вместо канала pi, не ответившего после повтора; усилие — как у Opus пресета | этап 2 всех пресетов с критикой, только при сбое pi |
 | `pipeline-implementer` | sonnet / medium | реализует одну порцию, не коммитит | `medium-pipeline` — **`model: opus`** |
 | `pipeline-implementer-high` | sonnet / high | то же для неочевидных порций | `high-pipeline` — **`model: opus`** |
 | `pipeline-implementer-xhigh` | opus / xhigh | то же на максимальном усилии | `xhigh-pipeline` |

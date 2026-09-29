@@ -288,6 +288,10 @@ def cmd_prepare(args, parser):
 
 
 VERDICT_STRIP = re.compile(r"[*_#\s]")
+# Первая строка, склеенная с комментариями харнесса (вывод /grok:result): вердикт — в её конце,
+# в начале строки или сразу после знака конца фразы, дальше только пробелы и необязательный хеш.
+VERDICT_TAIL = re.compile(r"(?:^|(?<=[.!?…)`]))(зелёный|красный)(?:\s+[0-9a-f]{7,40})?\s*$",
+                          re.IGNORECASE)
 
 
 def parse_report(path):
@@ -312,6 +316,8 @@ def parse_report(path):
             verdict = "зелёный"
         elif v.startswith("красный"):
             verdict = "красный"
+        elif m := VERDICT_TAIL.search(re.sub(r"[*_#]", "", first).strip()):
+            verdict = m.group(1).lower()
     return verdict, seconds, "\n".join(body)
 
 

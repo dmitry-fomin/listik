@@ -387,6 +387,19 @@ sys.exit(0 if double(3) == 6 else 1)
         self.assertIn(f"лишний отчёт: {self.runs / 'beta/case-77.md'}", r.stdout)
         self.assertNotIn("case-77 |", r.stdout)
 
+    def test_summarize_glued_first_line(self):
+        for n in ("case-01", "case-02", "case-03", "case-04"):
+            self.case(name=n)
+        self.report("alpha", "case-01", "Читаю чек-лист и порцию, сверяю отказ `claim` и "
+                    "поведение старого кода.красный\n1. pkg.py:5 — сломано")
+        self.report("alpha", "case-02", "Коммичу только четыре пути порции.зелёный 8223705")
+        self.report("alpha", "case-03", "Проверки зелёный, дальше смотрю дифф")
+        self.report("alpha", "case-04", "Все проверки зелёный")
+        r = self.run_bench(cmd="summarize")
+        self.assertEqual(r.returncode, 0, r.stderr)
+        verdicts = [l.split(" | ")[4] for l in r.stdout.splitlines() if l.startswith("| alpha ")]
+        self.assertEqual(verdicts, ["красный", "зелёный", "нет вердикта", "нет вердикта"])
+
     def test_summarize_empty(self):
         self.case()
         self.runs.mkdir()

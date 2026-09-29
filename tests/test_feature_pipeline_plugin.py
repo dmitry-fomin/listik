@@ -564,6 +564,10 @@ VENDORED_SESSION_TO_PATH = {
     "pi:pi-check": "plugins/pi/skills/pi-check/SKILL.md",
     "pi:pi-jobs": "plugins/pi/skills/pi-jobs/SKILL.md",
     "pi:pi-runtime": "plugins/pi/skills/pi-runtime/SKILL.md",
+    "devin:devin-delegate": "plugins/devin/skills/devin-delegate/SKILL.md",
+    "devin:devin-check": "plugins/devin/skills/devin-check/SKILL.md",
+    "devin:devin-jobs": "plugins/devin/skills/devin-jobs/SKILL.md",
+    "devin:devin-runtime": "plugins/devin/skills/devin-runtime/SKILL.md",
 }
 
 #: Канал в пресете называется запуском; у него в тексте ещё и путь `plugins/…`.
@@ -573,11 +577,12 @@ VENDORED_LAUNCH_SKILLS = (
     "second-opinion:ask",
     "listik:listik",
     "pi:pi-delegate",
+    "devin:devin-delegate",
 )
 
 MD_SKILL_LINK_RE = re.compile(r"\[`(?P<name>[^`]+)`\]\((?P<href>[^)]+)\)")
 VENDORED_HREF_MARKS = ("/dsh/", "/codex/", "/second-opinion/", "/listik/")
-VENDORED_HREF_MARKS += ("/pi/",)
+VENDORED_HREF_MARKS += ("/pi/", "/devin/")
 
 
 def _pipeline_docs() -> list[pathlib.Path]:
@@ -1249,19 +1254,51 @@ class FeaturePipelineCopyAndNegativeControlTests(unittest.TestCase):
                 self.assertIn(anchor, item, f"{path}: в пункте 10 нет «{anchor}»")
 
 
-#: Критика ТЗ (listik-jmxl): две модели в pi, одно задание на обе, сводка оркестратора.
-CRITIQUE_CORE_REQUIRED = (
-    "## Критика ТЗ — две модели в pi",
-    "--channel glm",
-    "--channel deepseek",
-    "--permission read",
-    "review-<X>.glm.md",
-    "review-<X>.deepseek.md",
-    "Границы и ценность:",
-    "Сверка с кодом:",
-    "стоп: критик — pi <канал> недоступен: <причина>",
-    "по умолчанию: принять все блокирующие",
+#: Критика ТЗ (listik-6rp9, порция a): состав задаёт пресет, ядро — виды критиков, кворум и окно.
+CRITIQUE_HEADING = "## Критика ТЗ — состав по пресету и кворум"
+CRITIQUE_SECTION_REQUIRED = (
+    "--channel deepseek", "--channel glm", "devin:devin-delegate", "--thinking max",
+    "--permission read", "--timeout 900", "feature-pipeline:pipeline-critic", "model: sonnet",
+    "pipeline-critic-low", "review-<X>.sonnet.md", "review-<X>.devin.md", "review-<X>.deepseek.md",
+    "review-<X>.glm.md", "15 минут", "кворум", "[все]", "Границы и ценность:", "Сверка с кодом:",
+    "стоп: критика — кворум не набран", "по умолчанию: принять все блокирующие",
+    "actual_status", "completed", "## Блокирующие", "## Существенные", "pi:pi-runtime",
+    "devin:devin-runtime", "pi:pi-check", "devin:devin-check", "TaskStop",
 )
+CRITIQUE_CORE_FORBIDDEN = ("две модели в pi", "pipeline-critic-medium", "pipeline-critic-xhigh",
+                           "universal-pipeline", "[оба]")
+CRITIQUE_PAPER_NAMES = ("review-<X>.sonnet.md", "review-<X>.devin.md")
+CRITIQUE_AGENTS_EFFORT = {"pipeline-critic.md": "high", "pipeline-critic-low.md": "low"}
+CRITIQUE_AGENTS_REMOVED = ("pipeline-critic-medium.md", "pipeline-critic-xhigh.md")
+
+
+def _critique_core_problems(text: str) -> list[str]:
+    """Проблемы «Критики ТЗ» в тексте ядра; пустой список — всё на месте."""
+    problems: list[str] = []
+    section = _text_section(text, CRITIQUE_HEADING)
+    if not section:
+        problems.append(f"нет раздела {CRITIQUE_HEADING!r}")
+    else:
+        problems.extend(f"в разделе нет {needle!r}" for needle in CRITIQUE_SECTION_REQUIRED
+                        if needle not in section)
+    problems.extend(f"в ядре есть {needle!r}" for needle in CRITIQUE_CORE_FORBIDDEN if needle in text)
+    names_rule = _text_block(_text_section(text, "## Имена бумаг и деревьев"), "1. ",
+                             lambda line: line.startswith("2. "))
+    problems.extend(f"правило 1 «Имена бумаг и деревьев» не называет {name!r}"
+                    for name in CRITIQUE_PAPER_NAMES if name not in names_rule)
+    journal = _text_section(text, "## Журнал")
+    if "glm+deepseek" in journal:
+        problems.append("в «Журнал» есть 'glm+deepseek'")
+    if "порция <X>: кворум" not in journal:
+        problems.append("в «Журнал» нет 'порция <X>: кворум'")
+    if "devin:devin-delegate" not in _text_section(text, "## Внешние скилы"):
+        problems.append("в «Внешние скилы» нет 'devin:devin-delegate'")
+    who_writes = _text_block(text, "**Кто пишет в карточку.**", lambda line: not line.strip())
+    if "pipeline-critic*" not in who_writes:
+        problems.append("абзац «Кто пишет в карточку» не называет 'pipeline-critic*'")
+    return problems
+
+
 CRITIQUE_PRESETS = ("xhigh-pipeline", "high-pipeline", "medium-pipeline", "low-pipeline",
                     "cross-pipeline")
 CRITIQUE_PRESET_REQUIRED = ("pi:pi-delegate", "pi:pi-jobs", "`pipeline-core.md`, «Критика ТЗ»",
@@ -1287,10 +1324,41 @@ class FeaturePipelineCritiqueTests(unittest.TestCase):
     """Этап 2 всех пресетов с критикой — GLM и DeepSeek в pi по ядру (listik-jmxl)."""
 
     def test_core_defines_critique(self) -> None:
+        self.assertEqual(_critique_core_problems(_plugin_text(CORE_DOC)), [])
+
+    def test_critique_check_rejects_broken_core(self) -> None:
         text = _plugin_text(CORE_DOC)
-        for needle in CRITIQUE_CORE_REQUIRED:
-            with self.subTest(required=needle):
-                self.assertIn(needle, text, f"{CORE_DOC}: нет {needle!r}")
+        section = _text_section(text, CRITIQUE_HEADING)
+        journal = _text_section(text, "## Журнал")
+        self.assertTrue(section, f"{CORE_DOC}: нет раздела {CRITIQUE_HEADING!r}")
+        self.assertTrue(journal, f"{CORE_DOC}: нет раздела «Журнал»")
+        broken = {
+            "без заголовка": text.replace(CRITIQUE_HEADING + "\n", "", 1),
+            "дописан pipeline-critic-xhigh": text.replace(
+                section, section + "\nзапасной: pipeline-critic-xhigh\n", 1),
+            "дописан [оба]": text.replace(section, section + "\n- [оба] [код] пункт\n", 1),
+            "в «Журнал» дописано критика glm+deepseek": text.replace(
+                journal, journal + "\n| старое | `порция <X>: критика glm+deepseek — …` |\n", 1),
+        }
+        for needle in ("15 минут", "--permission read", "стоп: критика — кворум не набран",
+                       "completed"):
+            broken[f"без {needle!r}"] = text.replace(section, section.replace(needle, ""), 1)
+        for case, mutated in broken.items():
+            with self.subTest(case=case):
+                self.assertNotEqual(mutated, text, "изменение не применилось")
+                self.assertNotEqual(_critique_core_problems(mutated), [])
+
+    def test_critic_agents(self) -> None:
+        agents = PLUGIN_DIR / AGENTS_SUBDIR
+        for name, effort in CRITIQUE_AGENTS_EFFORT.items():
+            frontmatter = _frontmatter(_plugin_text(pathlib.Path(AGENTS_SUBDIR) / name).splitlines())
+            with self.subTest(agent=name):
+                self.assertIsNotNone(frontmatter, f"{name}: нет frontmatter")
+                self.assertIn("model: sonnet", frontmatter, f"{name}: не model: sonnet")
+                self.assertIn(f"effort: {effort}", frontmatter, f"{name}: не effort: {effort}")
+        for name in CRITIQUE_AGENTS_REMOVED:
+            with self.subTest(removed=name):
+                self.assertFalse((agents / name).exists(), f"{name} должен быть удалён")
 
     def test_critique_presets_point_to_core(self) -> None:
         for name in CRITIQUE_PRESETS:

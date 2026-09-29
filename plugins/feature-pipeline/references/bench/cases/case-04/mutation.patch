@@ -1,0 +1,16 @@
+diff --git a/alembic/versions/0012_event_transition.py b/alembic/versions/0012_event_transition.py
+index 35204d3..dec26f2 100644
+--- a/alembic/versions/0012_event_transition.py
++++ b/alembic/versions/0012_event_transition.py
+@@ -38,8 +38,9 @@ def upgrade() -> None:
+         if "transition" in columns:
+             return
+     op.execute(ADD_COLUMN)
+-    for sql in BACKFILL_TRANSITION_SQL:
+-        op.execute(sql)
++    if op.get_context().as_sql:
++        for sql in BACKFILL_TRANSITION_SQL:
++            op.execute(sql)
+ 
+ 
+ def downgrade() -> None:

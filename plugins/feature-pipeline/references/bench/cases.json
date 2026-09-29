@@ -49,5 +49,74 @@
     ],
     "defect": "listik/mcp.py, call_tool, ветка listik_list: умолчание limit 200 вместо 50 (и без ключа, и при null); в tests/test_mcp_null_args.py test_list_null_limit ослаблен — `assertEqual(null[\"limit\"], 50)` заменён на сравнение с ответом без ключа",
     "defect_path": "listik/mcp.py"
+  },
+  {
+    "name": "case-04",
+    "class": "миграция/схема",
+    "step": "listik-cvm8",
+    "portion": "a",
+    "commit": "8106e86",
+    "tests": [
+      "tests.test_stage_transition_event",
+      "tests.test_routing",
+      "tests.test_claim",
+      "tests.test_comment_author",
+      "tests.test_release_grace",
+      "tests.test_stage_launch",
+      "tests.test_stage_same",
+      "tests.test_stage_done_closes",
+      "tests.test_worked_by",
+      "tests.test_fencing",
+      "tests.test_mcp_tools",
+      "tests.test_mcp_http",
+      "tests.test_autostart",
+      "tests.test_documents_upload",
+      "tests.test_orchestrator",
+      "tests.test_owner_store",
+      "tests.test_routes_db",
+      "tests.test_routes_direct_migration",
+      "tests.test_scope_schema"
+    ],
+    "defect": "alembic/versions/0012_event_transition.py, upgrade: досыпка `BACKFILL_TRANSITION_SQL` выполняется только в режиме `--sql`; онлайн `alembic upgrade` на существующей базе добавляет колонку `events.transition`, но старые события `stage` с заметкой по умолчанию остаются с `transition` NULL",
+    "defect_path": "alembic/versions/0012_event_transition.py"
+  },
+  {
+    "name": "case-05",
+    "class": "пропущенный путь доставки",
+    "step": "listik-5qay",
+    "portion": "a",
+    "commit": "2ee365f",
+    "tests": [
+      "tests.test_cli_page_totals",
+      "tests.test_memory_list",
+      "tests.test_deps",
+      "tests.test_mcp_tools",
+      "tests.test_lint",
+      "tests.test_board_lint"
+    ],
+    "defect": "bin/listik, cmd_memory: второй вызов за полным числом идёт только при `total == args.limit` (без `or 20`), поэтому `listik memory -n 0` при заметках больше 20 печатает `всего: 20` вместо `показано 20 из N` — и через сервер, и с `--local`",
+    "defect_path": "bin/listik"
+  },
+  {
+    "name": "case-06",
+    "class": "права/владелец",
+    "step": "listik-jaid",
+    "portion": "a",
+    "commit": "1a13902",
+    "tests": [
+      "tests.test_done_release",
+      "tests.test_owner_store",
+      "tests.test_owner_http",
+      "tests.test_owner_cli",
+      "tests.test_done_releases_holder",
+      "tests.test_stage_done_closes",
+      "tests.test_stage_same",
+      "tests.test_mcp_tools",
+      "tests.test_board_events",
+      "tests.test_fencing",
+      "tests.test_local_bypass_warning"
+    ],
+    "defect": "listik/mcp.py, call_tool, ветка listik_release: `as_owner=args.get(\"owner\") or owner` — идентичность берётся из аргумента инструмента, и чужой (`bob`) освобождает задачу `ann`, передав `{\"owner\": \"ann\"}` (по stdio и по `POST /mcp`)",
+    "defect_path": "listik/mcp.py"
   }
 ]

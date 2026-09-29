@@ -1,0 +1,13 @@
+diff --git a/listik/mcp.py b/listik/mcp.py
+index 952488b..4512366 100644
+--- a/listik/mcp.py
++++ b/listik/mcp.py
+@@ -662,7 +662,7 @@ def call_tool(name: str, args: dict, conn=None, owner=FROM_ENV, fence=FROM_ENV)
+                                 reason=args.get("reason"), as_owner=owner)
+     if name == "listik_release":
+         return store.release_task(conn, args["id"], actor=args.get("actor"),
+-                                  note=args.get("note"), as_owner=owner)
++                                  note=args.get("note"), as_owner=args.get("owner") or owner)
+     if name == "listik_inbox":
+         res = store.board(conn, group_by="status", include_closed=False)
+         items = res.get("needs_you") or []

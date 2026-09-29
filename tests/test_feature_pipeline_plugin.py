@@ -1259,17 +1259,29 @@ CRITIQUE_HEADING = "## Критика ТЗ — состав по пресету 
 CRITIQUE_SECTION_REQUIRED = (
     "--channel deepseek", "--channel glm", "devin:devin-delegate", "--thinking max",
     "--permission read", "--timeout 900", "feature-pipeline:pipeline-critic", "model: sonnet",
-    "pipeline-critic-low", "review-<X>.sonnet.md", "review-<X>.devin.md", "review-<X>.deepseek.md",
+    "review-<X>.sonnet.md", "review-<X>.devin.md", "review-<X>.deepseek.md",
     "review-<X>.glm.md", "15 минут", "кворум", "[все]", "Границы и ценность:", "Сверка с кодом:",
     "стоп: критика — кворум не набран", "по умолчанию: принять все блокирующие",
     "actual_status", "completed", "## Блокирующие", "## Существенные", "pi:pi-runtime",
     "devin:devin-runtime", "pi:pi-check", "devin:devin-check", "TaskStop",
+    "30%", "без не-Anthropic критика кворума нет", "до срока ожидания",
 )
 CRITIQUE_CORE_FORBIDDEN = ("две модели в pi", "pipeline-critic-medium", "pipeline-critic-xhigh",
-                           "universal-pipeline", "[оба]")
+                           "universal-pipeline", "[оба]", "pipeline-critic-low", "Sonnet low вместо",
+                           "досрочно по набранному кворуму никого не отменяешь")
+#: Отмена по кворуму (listik-cszk): строки журнала в абзаце «Кворум.» и в «## Журнал».
+CRITIQUE_QUORUM_JOURNAL = ("отменён по кворуму", "остальным до <ЧЧ:ММ>")
+#: Запасного критика нет (listik-cszk): без учёта регистра и переносов строк.
+SPARE_CRITIC_RE = re.compile(r"запасн\w* критик", re.I)
 CRITIQUE_PAPER_NAMES = ("review-<X>.sonnet.md", "review-<X>.devin.md")
-CRITIQUE_AGENTS_EFFORT = {"pipeline-critic.md": "high", "pipeline-critic-low.md": "low"}
-CRITIQUE_AGENTS_REMOVED = ("pipeline-critic-medium.md", "pipeline-critic-xhigh.md")
+CRITIQUE_AGENTS_EFFORT = {"pipeline-critic.md": "high"}
+CRITIQUE_AGENTS_REMOVED = ("pipeline-critic-medium.md", "pipeline-critic-xhigh.md",
+                           "pipeline-critic-low.md")
+
+
+def _has_spare_critic(text: str) -> bool:
+    """Есть ли «запасной критик» в любом регистре и с любыми переносами между словами."""
+    return bool(SPARE_CRITIC_RE.search(" ".join(text.split())))
 
 
 def _critique_core_problems(text: str) -> list[str]:
@@ -1281,7 +1293,12 @@ def _critique_core_problems(text: str) -> list[str]:
     else:
         problems.extend(f"в разделе нет {needle!r}" for needle in CRITIQUE_SECTION_REQUIRED
                         if needle not in section)
+        quorum = _text_block(section, "**Кворум.**", lambda line: not line.strip())
+        problems.extend(f"в абзаце «Кворум.» нет {needle!r}" for needle in CRITIQUE_QUORUM_JOURNAL
+                        if needle not in quorum)
     problems.extend(f"в ядре есть {needle!r}" for needle in CRITIQUE_CORE_FORBIDDEN if needle in text)
+    if _has_spare_critic(text):
+        problems.append("в ядре есть «запасной критик»")
     names_rule = _text_block(_text_section(text, "## Имена бумаг и деревьев"), "1. ",
                              lambda line: line.startswith("2. "))
     problems.extend(f"правило 1 «Имена бумаг и деревьев» не называет {name!r}"
@@ -1291,6 +1308,8 @@ def _critique_core_problems(text: str) -> list[str]:
         problems.append("в «Журнал» есть 'glm+deepseek'")
     if "порция <X>: кворум" not in journal:
         problems.append("в «Журнал» нет 'порция <X>: кворум'")
+    problems.extend(f"в «Журнал» нет {needle!r}" for needle in CRITIQUE_QUORUM_JOURNAL
+                    if needle not in journal)
     if "devin:devin-delegate" not in _text_section(text, "## Внешние скилы"):
         problems.append("в «Внешние скилы» нет 'devin:devin-delegate'")
     who_writes = _text_block(text, "**Кто пишет в карточку.**", lambda line: not line.strip())
@@ -1330,6 +1349,8 @@ class FeaturePipelineCritiqueTests(unittest.TestCase):
         text = _plugin_text(CORE_DOC)
         section = _text_section(text, CRITIQUE_HEADING)
         journal = _text_section(text, "## Журнал")
+        quorum = _text_block(section, "**Кворум.**", lambda line: not line.strip())
+        self.assertTrue(quorum, f"{CORE_DOC}: нет абзаца «Кворум.»")
         self.assertTrue(section, f"{CORE_DOC}: нет раздела {CRITIQUE_HEADING!r}")
         self.assertTrue(journal, f"{CORE_DOC}: нет раздела «Журнал»")
         broken = {
@@ -1339,9 +1360,17 @@ class FeaturePipelineCritiqueTests(unittest.TestCase):
             "дописан [оба]": text.replace(section, section + "\n- [оба] [код] пункт\n", 1),
             "в «Журнал» дописано критика glm+deepseek": text.replace(
                 journal, journal + "\n| старое | `порция <X>: критика glm+deepseek — …` |\n", 1),
+            "в раздел дописан Запасной критик": text.replace(
+                section, section + "\n**Запасной критик** — Sonnet.\n", 1),
+            "в раздел дописано строчное запасной\\nкритик": text.replace(
+                section, section + "\nидёт запасной\nкритик Sonnet.\n", 1),
+            "в раздел дописано досрочно … не отменяешь": text.replace(
+                section, section + "\nдосрочно по набранному кворуму никого не отменяешь.\n", 1),
+            "из абзаца Кворум убрано отменён по кворуму": text.replace(
+                quorum, quorum.replace("отменён по кворуму", ""), 1),
         }
         for needle in ("15 минут", "--permission read", "стоп: критика — кворум не набран",
-                       "completed"):
+                       "completed", "30%", "до срока ожидания"):
             broken[f"без {needle!r}"] = text.replace(section, section.replace(needle, ""), 1)
         for case, mutated in broken.items():
             with self.subTest(case=case):
@@ -1613,8 +1642,9 @@ CRITIQUE_COMPOSITION = {
     # devin-критика выдали бы devin:devin-check или --thinking max.
     "cross-pipeline": (CRITIQUE_SONNET + ("deepseek",), ("devin:devin-check", "--thinking max"),
                        ("glm",)),
-    "low-pipeline": (("deepseek", "glm", "feature-pipeline:pipeline-critic-low", "model: sonnet"),
-                     ("`feature-pipeline:pipeline-critic`", "devin:devin-delegate"), ()),
+    "low-pipeline": (("deepseek", "glm"),
+                     ("`feature-pipeline:pipeline-critic`", "devin:devin-delegate",
+                      "pipeline-critic-low", "Sonnet low"), ()),
 }
 #: Кто назван критиком: во frontmatter `description` и в столбце «Критика ТЗ» README плагина.
 CRITIQUE_NAMES = {
@@ -1655,6 +1685,33 @@ def _critique_preset_problems(name: str, text: str) -> list[str]:
         problems.append(f"{name}: в description старое {CRITIQUE_OLD_DESCRIPTION!r}")
     if name == "medium-pipeline" and "GLM" in description:
         problems.append(f"{name}: в description есть 'GLM'")
+    if name == "low-pipeline" and _has_spare_critic(text):
+        problems.append(f"{name}: есть «запасной критик»")
+    return problems
+
+
+ROLES_DOC = pathlib.Path("references") / "ROLES.md"
+ROLES_CRITIQUE_PREFIX = "### Критика — состав по пресету"
+XHIGH_HEADING = "# Конвейер xhigh-pipeline"
+
+
+def _xhigh_intro(text: str) -> str:
+    """Первый абзац после заголовка xhigh: от первой непустой строки до следующей пустой."""
+    lines = text.splitlines()
+    start = next((i for i, line in enumerate(lines) if line == XHIGH_HEADING), None)
+    if start is None:
+        return ""
+    first = next((i for i in range(start + 1, len(lines)) if lines[i].strip()), len(lines))
+    end = next((i for i in range(first, len(lines)) if not lines[i].strip()), len(lines))
+    return "\n".join(lines[first:end])
+
+
+def _xhigh_intro_problems(text: str) -> list[str]:
+    """xhigh только у Opus: в первом абзаце роли без «Каждая роль на xhigh»."""
+    paragraph = _xhigh_intro(text)
+    problems = ["xhigh: есть 'Каждая роль на xhigh'"] if "Каждая роль на xhigh" in text else []
+    problems.extend(f"xhigh: в первом абзаце нет {needle!r}"
+                    for needle in ("Opus 5.5", "Sonnet 5.5 high") if needle not in paragraph)
     return problems
 
 
@@ -1709,11 +1766,31 @@ class FeaturePipelineCritiqueCompositionTests(unittest.TestCase):
                                                        lambda s: s + "\ndevin:devin-delegate"),
             "cross + GLM 5.3 Flash": in_stage2("cross-pipeline", lambda s: s + "\nGLM 5.3 Flash"),
             "medium без «кворум»": in_stage2("medium-pipeline", lambda s: s.replace("кворум", "")),
+            "low + pipeline-critic-low": in_stage2(
+                "low-pipeline", lambda s: s + "\n`feature-pipeline:pipeline-critic-low`"),
+            "low: в таблицу Роли дописан запасной критик": (
+                "low-pipeline", texts["low-pipeline"].replace(
+                    "| 2. Критика ТЗ |", "| 2. Критика ТЗ, запасной критик Sonnet |", 1)),
         }
         for case, (name, mutated) in broken.items():
             with self.subTest(case=case):
                 self.assertNotEqual(mutated, texts[name], "изменение не применилось")
                 self.assertNotEqual(_critique_preset_problems(name, mutated), [])
+
+    def test_roles_critique_has_no_spare_critic(self) -> None:
+        text = _plugin_text(ROLES_DOC)
+        section = _text_block(text, ROLES_CRITIQUE_PREFIX, lambda line: line.startswith("#"))
+        self.assertTrue(section, f"{ROLES_DOC}: нет раздела {ROLES_CRITIQUE_PREFIX!r}")
+        self.assertFalse(_has_spare_critic(section), f"{ROLES_DOC}: есть «запасной критик»")
+        self.assertNotIn("pipeline-critic-low", section)
+
+    def test_xhigh_first_paragraph(self) -> None:
+        text = _skill_text("xhigh-pipeline")
+        self.assertEqual(_xhigh_intro_problems(text), [])
+        paragraph = _xhigh_intro(text)
+        mutated = text.replace(paragraph, paragraph.replace("Роли:", "Каждая роль на xhigh:", 1), 1)
+        self.assertNotEqual(mutated, text, "изменение не применилось")
+        self.assertNotEqual(_xhigh_intro_problems(mutated), [])
 
     def test_routes_critic_cells(self) -> None:
         routes = {record["key"]: record for record in _routes()}

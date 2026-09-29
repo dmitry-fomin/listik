@@ -15,10 +15,9 @@
           "title": "Opus 5.5"
         },
         "critic": {
-          "provider": "glm",
-          "label": "GLM+DS",
-          "title": "pi: GLM 5.3 + DeepSeek 4.1 flash",
-          "skill": "pi:pi-delegate"
+          "provider": "claude",
+          "label": "S+DS+SWE",
+          "title": "Sonnet 5.5 high + pi: DeepSeek 4.1 flash + devin SWE-2 max"
         },
         "impl": {
           "provider": "claude",
@@ -52,10 +51,9 @@
           "title": "Opus 5.5"
         },
         "critic": {
-          "provider": "glm",
-          "label": "GLM+DS",
-          "title": "pi: GLM 5.3 + DeepSeek 4.1 flash",
-          "skill": "pi:pi-delegate"
+          "provider": "claude",
+          "label": "S+DS+SWE",
+          "title": "Sonnet 5.5 high + pi: DeepSeek 4.1 flash + devin SWE-2 max"
         },
         "impl": {
           "provider": "claude",
@@ -89,10 +87,9 @@
           "title": "Opus 5.5"
         },
         "critic": {
-          "provider": "glm",
-          "label": "GLM+DS",
-          "title": "pi: GLM 5.3 + DeepSeek 4.1 flash",
-          "skill": "pi:pi-delegate"
+          "provider": "claude",
+          "label": "S+DS",
+          "title": "Sonnet 5.5 high + pi: DeepSeek 4.1 flash"
         },
         "impl": {
           "provider": "claude",
@@ -221,7 +218,7 @@
       "key": "cross-pipeline",
       "kind": "pipeline",
       "title": "cross",
-      "hint": "Devin ТЗ · GLM+DS критика · GLM код · Grok приёмка",
+      "hint": "Devin ТЗ · Sonnet+DS критика · GLM код · Grok приёмка",
       "visible": true,
       "icon": "xhigh",
       "roles": {
@@ -235,10 +232,9 @@
           }
         },
         "critic": {
-          "provider": "glm",
-          "label": "GLM+DS",
-          "title": "pi: GLM 5.3 + DeepSeek 4.1 flash",
-          "skill": "pi:pi-delegate"
+          "provider": "claude",
+          "label": "S+DS",
+          "title": "Sonnet 5.5 high + pi: DeepSeek 4.1 flash"
         },
         "impl": {
           "provider": "glm",

@@ -1601,5 +1601,133 @@ class FeaturePipelineLensPresetTests(unittest.TestCase):
                 self.assertNotEqual(_lens_preset_problems(name, mutated), [])
 
 
+#: Состав критиков по пресетам (listik-6rp9, порция b): что обязано быть и чего нет в этапе 2.
+CRITIQUE_QUORUM_STOP = "стоп: критика — кворум не набран"
+CRITIQUE_SONNET = ("feature-pipeline:pipeline-critic", "model: sonnet")
+CRITIQUE_COMPOSITION = {
+    # имя: (есть в этапе 2, нет в этапе 2 (с учётом регистра), нет без учёта регистра)
+    "xhigh-pipeline": (CRITIQUE_SONNET + ("devin:devin-delegate", "deepseek"), (), ("glm",)),
+    "high-pipeline": (CRITIQUE_SONNET + ("devin:devin-delegate", "deepseek"), (), ("glm",)),
+    "medium-pipeline": (CRITIQUE_SONNET + ("deepseek",), ("devin:devin-delegate",), ("glm",)),
+    # в cross автор ТЗ — devin: возврат автору законно зовёт devin:devin-delegate, а
+    # devin-критика выдали бы devin:devin-check или --thinking max.
+    "cross-pipeline": (CRITIQUE_SONNET + ("deepseek",), ("devin:devin-check", "--thinking max"),
+                       ("glm",)),
+    "low-pipeline": (("deepseek", "glm", "feature-pipeline:pipeline-critic-low", "model: sonnet"),
+                     ("`feature-pipeline:pipeline-critic`", "devin:devin-delegate"), ()),
+}
+#: Кто назван критиком: во frontmatter `description` и в столбце «Критика ТЗ» README плагина.
+CRITIQUE_NAMES = {
+    "xhigh-pipeline": ("Sonnet", "DeepSeek", "SWE-2"),
+    "high-pipeline": ("Sonnet", "DeepSeek", "SWE-2"),
+    "medium-pipeline": ("Sonnet", "DeepSeek"),
+    "cross-pipeline": ("Sonnet", "DeepSeek"),
+    "low-pipeline": ("DeepSeek", "GLM"),
+}
+CRITIQUE_OLD_DESCRIPTION = "GLM 5.3 Flash и DeepSeek V4.1 Flash"
+CRITIQUE_README_COLUMN = "Критика ТЗ"
+CRITIC_LABELS = {"xhigh-pipeline": "S+DS+SWE", "high-pipeline": "S+DS+SWE",
+                 "medium-pipeline": "S+DS", "cross-pipeline": "S+DS", "low-pipeline": "GLM+DS"}
+CROSS_HINT = "Devin ТЗ · Sonnet+DS критика · GLM код · Grok приёмка"
+
+
+def _description(text: str) -> str:
+    """Значение `description:` из frontmatter; пусто — нет."""
+    frontmatter = _frontmatter(text.splitlines()) or []
+    return next((line for line in frontmatter if line.startswith("description:")), "")
+
+
+def _critique_preset_problems(name: str, text: str) -> list[str]:
+    """Проблемы состава критиков в SKILL.md пресета; пусто — всё на месте."""
+    required, forbidden, forbidden_ci = CRITIQUE_COMPOSITION[name]
+    stage2 = _stage2_section(text)
+    if not stage2:
+        return [f"{name}: нет раздела «### 2.»"]
+    problems = [f"{name}: в этапе 2 нет {needle!r}"
+                for needle in ("кворум", CRITIQUE_QUORUM_STOP, *required) if needle not in stage2]
+    problems.extend(f"{name}: в этапе 2 есть {needle!r}" for needle in forbidden if needle in stage2)
+    problems.extend(f"{name}: в этапе 2 есть {needle!r}" for needle in forbidden_ci
+                    if needle in stage2.lower())
+    description = _description(text)
+    problems.extend(f"{name}: description не называет {needle!r}"
+                    for needle in CRITIQUE_NAMES[name] if needle not in description)
+    if CRITIQUE_OLD_DESCRIPTION in description:
+        problems.append(f"{name}: в description старое {CRITIQUE_OLD_DESCRIPTION!r}")
+    if name == "medium-pipeline" and "GLM" in description:
+        problems.append(f"{name}: в description есть 'GLM'")
+    return problems
+
+
+def _critique_readme_problems(text: str) -> list[str]:
+    """Столбец «Критика ТЗ» таблицы «Скилы» README плагина называет состав пресета."""
+    lines = text.splitlines()
+    header = next((line for line in lines if line.startswith("| Скил |")), "")
+    columns = [cell.strip() for cell in header.strip("|").split("|")]
+    if CRITIQUE_README_COLUMN not in columns:
+        return [f"README: в таблице «Скилы» нет столбца {CRITIQUE_README_COLUMN!r}"]
+    index = columns.index(CRITIQUE_README_COLUMN)
+    problems: list[str] = []
+    for name, needles in CRITIQUE_NAMES.items():
+        row = next((line for line in lines if line.startswith(f"| `{name}` ")), None)
+        if row is None:
+            problems.append(f"README: нет строки {name}")
+            continue
+        cells = [cell.strip() for cell in row.strip().strip("|").split("|")]
+        cell = cells[index] if index < len(cells) else ""
+        problems.extend(f"README: {name}, «Критика ТЗ» не называет {needle!r}"
+                        for needle in needles if needle not in cell)
+        if "GLM" not in needles and "GLM" in cell:
+            problems.append(f"README: {name}, «Критика ТЗ» называет 'GLM'")
+    return problems
+
+
+class FeaturePipelineCritiqueCompositionTests(unittest.TestCase):
+    """Свой состав критиков в каждом пресете, кворум по ядру (listik-6rp9, порция b)."""
+
+    def test_compositions_in_place(self) -> None:
+        for name in CRITIQUE_PRESETS:
+            with self.subTest(skill=name):
+                self.assertEqual(_critique_preset_problems(name, _skill_text(name)), [])
+        self.assertEqual(_critique_readme_problems(_plugin_text(LENS_README)), [])
+
+    def test_composition_checks_reject_broken_texts(self) -> None:
+        texts = {name: _skill_text(name) for name in CRITIQUE_PRESETS}
+
+        def in_stage2(name: str, edit) -> tuple[str, str]:
+            text = texts[name]
+            stage2 = _stage2_section(text)
+            self.assertTrue(stage2, f"{name}: нет раздела «### 2.»")
+            return name, text.replace(stage2, edit(stage2), 1)
+
+        broken = {
+            "medium + --channel glm": in_stage2("medium-pipeline", lambda s: s + "\n--channel glm"),
+            "high без model: sonnet": in_stage2("high-pipeline",
+                                                lambda s: s.replace("model: sonnet", "")),
+            "low + devin:devin-delegate": in_stage2("low-pipeline",
+                                                    lambda s: s + "\ndevin:devin-delegate"),
+            "medium + devin:devin-delegate": in_stage2("medium-pipeline",
+                                                       lambda s: s + "\ndevin:devin-delegate"),
+            "cross + GLM 5.3 Flash": in_stage2("cross-pipeline", lambda s: s + "\nGLM 5.3 Flash"),
+            "medium без «кворум»": in_stage2("medium-pipeline", lambda s: s.replace("кворум", "")),
+        }
+        for case, (name, mutated) in broken.items():
+            with self.subTest(case=case):
+                self.assertNotEqual(mutated, texts[name], "изменение не применилось")
+                self.assertNotEqual(_critique_preset_problems(name, mutated), [])
+
+    def test_routes_critic_cells(self) -> None:
+        routes = {record["key"]: record for record in _routes()}
+        for name, label in CRITIC_LABELS.items():
+            cell = routes[name]["roles"]["critic"]
+            with self.subTest(route=name):
+                self.assertEqual(cell["label"], label)
+                if name == "low-pipeline":
+                    self.assertEqual(cell.get("skill"), "pi:pi-delegate")
+                else:
+                    self.assertEqual(cell["provider"], "claude")
+                    self.assertNotIn("skill", cell)
+        self.assertEqual(routes["cross-pipeline"]["hint"], CROSS_HINT)
+
+
 if __name__ == "__main__":
     unittest.main()

@@ -87,11 +87,11 @@ MCP-инструментами `listik_*` или командой `listik new`. 
 
 | Маршрут | ТЗ | Критика | Реализация | Приёмка | Когда берут |
 |---|---|---|---|---|---|
-| `xhigh-pipeline` | Opus xhigh | GLM | Opus xhigh | Grok xhigh | ошибка дороже прогона |
-| `cross-pipeline` | Devin | Grok | GLM в pi | Grok | автор ТЗ и код — разные вендоры |
-| `high-pipeline` | Opus high | GLM | Opus high | Grok xhigh | расклад по умолчанию |
-| `medium-pipeline` | Opus medium | GLM | Opus medium | Grok high | работа понятная |
-| `low-pipeline` | Opus low | GLM | devin SWE-2 max | Grok high | код вне квоты Max |
+| `xhigh-pipeline` | Opus xhigh | Sonnet + DeepSeek + SWE-2 | Opus xhigh | Grok xhigh | ошибка дороже прогона |
+| `cross-pipeline` | Devin | DeepSeek + Sonnet | GLM в pi | Grok | автор ТЗ и код — разные вендоры |
+| `high-pipeline` | Opus high | Sonnet + DeepSeek + SWE-2 | Opus high | Grok xhigh | расклад по умолчанию |
+| `medium-pipeline` | Opus medium | Sonnet + DeepSeek | Opus medium | Grok high | работа понятная |
+| `low-pipeline` | Opus low | DeepSeek + GLM | devin SWE-2 max | Grok high | код вне квоты Max |
 | `xlow-pipeline` | — | — | devin SWE-2 max | Grok high | один прогон с приёмкой |
 | `nano-pipeline` | — | — | devin SWE-2 high | GLM в pi | короткая задача: сделать и принять |
 

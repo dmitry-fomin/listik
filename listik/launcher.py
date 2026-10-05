@@ -675,8 +675,6 @@ def _start_swarm(conn, task_id: str, row, record: dict, *, notify, log_dir,
                 prompt = ("Приёмка вернула работу красным вердиктом. Сначала закрой каждый "
                           "его пункт, потом остальное; в ответе перечисли, что сделал по "
                           f"каждому пункту.\nПравки вердикта:\n{fixes}\n\n{prompt}")
-        if prompt is not None:
-            argv.append(prompt)
 
         log_path = _log_path(task_id, log_dir)
         # У роя потоки разделены: stdout (ответ — последней строкой) — в `.out`,
@@ -689,6 +687,14 @@ def _start_swarm(conn, task_id: str, row, record: dict, *, notify, log_dir,
         prompt_file = None
         if prompt is not None and role:
             prompt_file = _save_prompt_file(task_id, role, prompt)
+
+        # devin читает промпт из файла через --prompt-file, остальные — последним аргументом.
+        if prompt is not None:
+            if harness == "devin":
+                if prompt_file is not None:
+                    argv.extend(["--prompt-file", str(prompt_file)])
+            else:
+                argv.append(prompt)
 
         try:
             log_path.parent.mkdir(parents=True, exist_ok=True)

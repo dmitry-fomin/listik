@@ -646,6 +646,8 @@ def cmd_status(args) -> int:
         }, "", force_json=True, indent=None)
         return 1 if state == "down" else 0
     # Каталог данных — до проверки сервера: он нужен и когда сервер не отвечает.
+    print("✨")
+    print(f"версия: {__version__}")
     print(f"бинарник CLI: {bin_path}")
     print(f"каталог данных: {paths.DATA_DIR}")
     print(f"config CLI: {paths.CONFIG_PATH}")

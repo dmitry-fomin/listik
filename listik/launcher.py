@@ -519,6 +519,19 @@ def _swarm_refuse(conn, task_id: str, text: str, notify) -> dict:
     return {"launched": False, "needs_owner": True}
 
 
+def _save_prompt_file(task_id: str, role: str, prompt: str) -> Path:
+    """Записать промпт роли в файл для отладки.
+
+    Возвращает путь к созданному файлу. Папка `~/.listik/prompts/<task_id>/`
+    создаётся при первом вызове для задачи. Старые промпты не удаляются.
+    """
+    prompts_dir = paths.DATA_DIR / "prompts" / task_id
+    prompts_dir.mkdir(parents=True, exist_ok=True)
+    prompt_file = prompts_dir / f"role-{role}.txt"
+    prompt_file.write_text(prompt, encoding="utf-8")
+    return prompt_file
+
+
 def _start_swarm(conn, task_id: str, row, record: dict, *, notify, log_dir,
                  extra: dict, dispatch_id: str):
     """Запуск режима роя: `claim` за харнесс роли, процесс этой роли.
@@ -671,6 +684,12 @@ def _start_swarm(conn, task_id: str, row, record: dict, *, notify, log_dir,
         out_path = stage_launch.out_path_of(str(log_path))
         proc_env = _launch_env(task_id, key, row, extra, LISTIK_STAGE=stage,
                                LISTIK_ROLE=role or "", LISTIK_HARNESS=harness)
+
+        # Записать промпт в файл для отладки (до старта процесса).
+        prompt_file = None
+        if prompt is not None and role:
+            prompt_file = _save_prompt_file(task_id, role, prompt)
+
         try:
             log_path.parent.mkdir(parents=True, exist_ok=True)
             # Оба файла закрываются при любом исходе; после `Popen` процесс держит
@@ -678,9 +697,11 @@ def _start_swarm(conn, task_id: str, row, record: dict, *, notify, log_dir,
             with open(out_path, "wb") as out_file, open(log_path, "wb") as log_file:
                 # Шапка лога — чем запущен этап: без неё разбор «что было в промпте»
                 # невозможен.
+                prompt_file_note = f"рой: промпт сохранён: {prompt_file}\n" if prompt_file else ""
                 log_file.write(
                     f"рой: этап {stage}, роль {role}, харнесс {harness}\n"
                     f"рой: argv {json.dumps(argv[:-1] if prompt is not None else argv, ensure_ascii=False)}\n"
+                    f"{prompt_file_note}"
                     f"рой: промпт (sha256 {hashlib.sha256((prompt or '').encode()).hexdigest()[:16]}):\n"
                     f"{prompt or '—'}\nрой: конец промпта\n".encode())
                 log_file.flush()

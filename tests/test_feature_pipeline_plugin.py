@@ -1261,7 +1261,7 @@ CRITIQUE_SECTION_REQUIRED = (
     "--permission read", "--timeout 900", "feature-pipeline:pipeline-critic", "model: sonnet",
     "review-<X>.sonnet.md", "review-<X>.devin.md", "review-<X>.deepseek.md",
     "review-<X>.glm.md", "15 минут", "кворум", "[все]", "Границы и ценность:", "Сверка с кодом:",
-    "стоп: критика — кворум не набран", "по умолчанию: принять все блокирующие",
+    "стоп: критика — кворум не набран", "Решение по сводке", "decisions-<X>.md",
     "actual_status", "completed", "## Блокирующие", "## Существенные", "pi:pi-runtime",
     "devin:devin-runtime", "pi:pi-check", "devin:devin-check", "TaskStop",
     "30%", "без не-Anthropic критика кворума нет", "до срока ожидания",

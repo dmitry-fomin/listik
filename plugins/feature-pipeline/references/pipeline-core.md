@@ -421,7 +421,7 @@ Agent id субагента живёт только в этом разговор
    задачи), `<id>.<X>.md`, `<id>.check-<X>.md`, `<id>.review-<X>.md`, `<id>.decisions-<X>.md` — решения оркестратора по сводке, `<id>.review-<X>.<вид>.md` — сырые ответы критиков, вид — `sonnet`, `deepseek`, `glm`, `devin` или `codex` (`<id>.review-<X>.sonnet.md`, `<id>.review-<X>.deepseek.md`, `<id>.review-<X>.glm.md`, `<id>.review-<X>.devin.md`, `<id>.review-<X>.codex.md`), `<id>.red-<X>.md`,
    `<id>.judge-<X>.r<R>.md`, `<id>.judge-<X>.r<R>.<вид>.md` — ответы судей коллегии, вид `sonnet`, `opus` или
    `codex` (раздел «Приёмка коллегией»), `<id>.lens-<X>.scope.md`, `<id>.lens-<X>.holes.md` и
-   `<id>.lens-<X>.intent.md` (ответы линз приёмки), `<id>.journal.md`, дамп `$D/<id>.diff-<X>.r<R>.txt`. Пример:
+   `<id>.lens-<X>.intent.md` (ответы линз приёмки), `<id>.answer.md` — ответ `question-pipeline`, `<id>.journal.md`, дамп `$D/<id>.diff-<X>.r<R>.txt`. Пример:
    `listik-n5fe.a.md`, `listik-n5fe.check-a.md`.
 2. **Журнал при карточке — всегда `<steps>/<id>.journal.md`**, даже когда у работы есть спека.
    `<specs>/<спека>.journal.md` остаётся только для работы без карточки.
@@ -1354,10 +1354,10 @@ listik claim <id> --holder claude --actor agent:claude --harness claude
 ```
 
 **Эпик без писателя ТЗ — стоп.** Пресеты без писателя ТЗ: `opus-pipeline`,
-`xlow-pipeline` и `nano-pipeline`. Если `issue_type == "epic"`, а пресет из этого списка:
+`xlow-pipeline`, `nano-pipeline`, `chore-pipeline` и `question-pipeline`. Если `issue_type == "epic"`, а пресет из этого списка:
 
 ```
-listik needs-owner <id> "эпик нельзя вести пресетом без писателя ТЗ: порции и дочерние карточки заводит только писатель ТЗ. Выберите пресет с писателем ТЗ — xhigh-pipeline, high-pipeline, medium-pipeline, low-pipeline или cross-pipeline — либо заведите обычную задачу." --actor agent:claude --harness claude
+listik needs-owner <id> "эпик нельзя вести пресетом без писателя ТЗ: порции и дочерние карточки заводит только писатель ТЗ. Выберите пресет с писателем ТЗ — xhigh-pipeline, high-pipeline, medium-pipeline, low-pipeline, cross-pipeline, sol-pipeline, epic-pipeline, feat-pipeline, refactor-pipeline или bug-pipeline — либо заведите обычную задачу." --actor agent:claude --harness claude
 ```
 
 Вопрос — дословно в чат, дальше стоп: этапы не начинаются.

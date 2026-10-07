@@ -430,6 +430,83 @@
         "-p",
         "Задача {task_id} (проект {project}), маршрут {route}. Запусти скил /feature-pipeline:{route} и веди карточку по нему: ты оркестратор, кода не пишешь и порцию не коммитишь. Протокол — скил listik:listik. Первым действием, до чтения кода и show: claim {task_id} --holder claude. Дальше heartbeat каждые 10–15 мин, пока карточку держишь ты. Все команды с --actor agent:claude --harness claude."
       ]
+    },
+    {
+      "key": "bug-pipeline",
+      "kind": "pipeline",
+      "title": "баг",
+      "hint": "Opus ТЗ · Sonnet код · S+O приёмка",
+      "visible": true,
+      "icon": "medium",
+      "roles": {
+        "spec": {
+          "provider": "claude",
+          "label": "medium",
+          "title": "Opus 5.5"
+        },
+        "impl": {
+          "provider": "claude",
+          "label": "high",
+          "title": "Sonnet 5.5"
+        },
+        "judge": {
+          "provider": "claude",
+          "label": "S+O",
+          "title": "Sonnet 5.5 · high + Opus 5.5 · high"
+        }
+      },
+      "command": [
+        "claude",
+        "--dangerously-skip-permissions",
+        "-p",
+        "Задача {task_id} (проект {project}), маршрут {route}. Запусти скил /feature-pipeline:{route} и веди карточку по нему: ты оркестратор, кода не пишешь и порцию не коммитишь. Протокол — скил listik:listik. Первым действием, до чтения кода и show: claim {task_id} --holder claude. Дальше heartbeat каждые 10–15 мин, пока карточку держишь ты. Все команды с --actor agent:claude --harness claude."
+      ]
+    },
+    {
+      "key": "chore-pipeline",
+      "kind": "pipeline",
+      "title": "мелкая правка",
+      "hint": "Opus код · Sonnet приёмка",
+      "visible": true,
+      "icon": "xlow",
+      "roles": {
+        "impl": {
+          "provider": "claude",
+          "label": "medium",
+          "title": "Opus 5.5"
+        },
+        "judge": {
+          "provider": "claude",
+          "label": "high",
+          "title": "Sonnet 5.5"
+        }
+      },
+      "command": [
+        "claude",
+        "--dangerously-skip-permissions",
+        "-p",
+        "Задача {task_id} (проект {project}), маршрут {route}. Запусти скил /feature-pipeline:{route} и веди карточку по нему: ты оркестратор, кода не пишешь и порцию не коммитишь. Протокол — скил listik:listik. Первым действием, до чтения кода и show: claim {task_id} --holder claude. Дальше heartbeat каждые 10–15 мин, пока карточку держишь ты. Все команды с --actor agent:claude --harness claude."
+      ]
+    },
+    {
+      "key": "question-pipeline",
+      "kind": "pipeline",
+      "title": "вопрос",
+      "hint": "Opus, Sonnet или Haiku — по сложности вопроса",
+      "visible": true,
+      "roles": {
+        "spec": {
+          "provider": "claude",
+          "label": "O/S/H",
+          "title": "Opus 5.5 / Sonnet 5.5 / Haiku — по сложности вопроса"
+        }
+      },
+      "command": [
+        "claude",
+        "--dangerously-skip-permissions",
+        "-p",
+        "Задача {task_id} (проект {project}), маршрут {route}. Запусти скил /feature-pipeline:{route} и веди карточку по нему: ты оркестратор, кода не пишешь и порцию не коммитишь. Протокол — скил listik:listik. Первым действием, до чтения кода и show: claim {task_id} --holder claude. Дальше heartbeat каждые 10–15 мин, пока карточку держишь ты. Все команды с --actor agent:claude --harness claude."
+      ]
     }
   ]
 }

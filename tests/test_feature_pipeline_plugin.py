@@ -373,6 +373,8 @@ BASE_ID_SKILLS = (
     "epic-pipeline",
     "feat-pipeline",
     "refactor-pipeline",
+    "bug-pipeline",
+    "chore-pipeline",
 )
 
 #: Пресеты, у которых `argument-hint` называет бумаги по `<id>.<X>.md`.
@@ -385,6 +387,7 @@ ARGUMENT_HINT_ID_SKILLS = (
     "epic-pipeline",
     "feat-pipeline",
     "refactor-pipeline",
+    "bug-pipeline",
 )
 
 BASE_LINE_RE = re.compile(r"^BASE=<id>", re.MULTILINE)
@@ -514,6 +517,9 @@ EXECUTOR_PRESETS = {
     "epic-pipeline": "SendMessage",
     "feat-pipeline": "SendMessage",
     "refactor-pipeline": "SendMessage",
+    "bug-pipeline": "SendMessage",
+    "chore-pipeline": "SendMessage",
+    "question-pipeline": "SendMessage",
     "opus-pipeline": "SendMessage",
     "xhigh-pipeline": "SendMessage",
     "low-pipeline": "сессия <id>",
@@ -1190,7 +1196,8 @@ class FeaturePipelineListikCardTests(unittest.TestCase):
 
     def test_spec_and_critic_agents_do_not_preload_listik(self) -> None:
         agents = PLUGIN_DIR / AGENTS_SUBDIR
-        names = ["pipeline-critic.md"] + sorted(path.name for path in agents.glob("pipeline-spec-writer*.md"))
+        names = ["pipeline-critic.md", "pipeline-answerer.md"] + sorted(
+            path.name for path in agents.glob("pipeline-spec-writer*.md"))
         self.assertGreater(len(names), 1, "не нашлось ни одного pipeline-spec-writer*.md")
         for name in names:
             with self.subTest(agent=name):
@@ -1232,6 +1239,8 @@ class FeaturePipelineCopyAndNegativeControlTests(unittest.TestCase):
         pathlib.Path(SKILLS_SUBDIR) / "epic-pipeline" / SKILL_FILE,
         pathlib.Path(SKILLS_SUBDIR) / "feat-pipeline" / SKILL_FILE,
         pathlib.Path(SKILLS_SUBDIR) / "refactor-pipeline" / SKILL_FILE,
+        pathlib.Path(SKILLS_SUBDIR) / "bug-pipeline" / SKILL_FILE,
+        pathlib.Path(SKILLS_SUBDIR) / "chore-pipeline" / SKILL_FILE,
     ]
 
     def test_core_has_copy_section(self) -> None:
@@ -1380,7 +1389,8 @@ def _critique_preset_required(name: str) -> tuple[str, ...]:
 
 CRITIQUE_PRESET_FORBIDDEN = ("second-opinion:ask", "--no-system")
 CRITIQUE_STAGE2_FORBIDDEN = ("--write", "--permission write")
-NO_CRITIQUE_PRESETS = ("xlow-pipeline", "nano-pipeline", "opus-pipeline")
+NO_CRITIQUE_PRESETS = ("xlow-pipeline", "nano-pipeline", "opus-pipeline", "bug-pipeline",
+                       "chore-pipeline", "question-pipeline")
 NO_CRITIQUE_FORBIDDEN = ("review-<X>.glm.md", "«Критика ТЗ»")
 
 

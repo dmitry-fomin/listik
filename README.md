@@ -98,6 +98,9 @@ MCP-инструментами `listik_*` или командой `listik new`. 
 | `epic-pipeline` | Opus high | Sonnet + Sol medium (Codex) | Sonnet high | Sonnet high + Opus high + Sol high (Codex), единогласно | эпик |
 | `feat-pipeline` | Opus medium | Sonnet | Sonnet high | Sonnet high + Opus high + Sol high (Codex), единогласно | фича |
 | `refactor-pipeline` | Opus medium | Sonnet | Sonnet high | Sonnet high + Opus high + Sol high (Codex), единогласно | рефакторинг, поведение не меняется |
+| `bug-pipeline` | Opus medium | — | Sonnet high | Sonnet high + Opus high, единогласно | баг: сперва тест, падающий до правки |
+| `chore-pipeline` | — | — | Opus medium | Sonnet high | мелкая правка по описанию |
+| `question-pipeline` | — | — | — | — | вопрос: ответ Haiku, Sonnet или Opus по сложности — в карточку |
 
 Привести таблицу к `routes.json` установленной копии — `listik routes --reimport`: пайплайны
 из файла перезаписываются (их правки на доске пропадают), пайплайны-скилы не из файла удаляются,
@@ -105,6 +108,8 @@ MCP-инструментами `listik_*` или командой `listik new`. 
 записей файла. До записи таблица снимается в `<каталог данных>/routes.bak-<UTC>.json`; вернуть
 её — `listik routes --reimport --from <копия>` (`--from` берёт любой файл в формате `routes.json`).
 Отчёт `--json`: `imported`, `source`, `kept`, `removed`, `backup`, `orphans`.
+Новые пресеты (`epic-pipeline`…`question-pipeline`) попадают в уже установленную базу только после
+`listik routes --reimport`.
 Полный список — `listik routes`, `GET /api/routes` или
 доска; там же собирается свой набор. Исполнители подключаются плагинами Claude Code,
 репозиторий сам является маркетплейсом:

@@ -1,0 +1,20 @@
+{
+  "name": "claude-codex",
+  "displayName": "Claude + Codex pipeline presets",
+  "version": "0.2.0",
+  "description": "Pipeline presets (spec, critique, code, acceptance) run only on Claude and OpenAI Codex; requires the feature-pipeline, codex and listik plugins.",
+  "author": {
+    "name": "Dmitry Fomin",
+    "url": "https://github.com/dmitry-fomin"
+  },
+  "homepage": "https://github.com/dmitry-fomin/listik",
+  "repository": "https://github.com/dmitry-fomin/listik",
+  "license": "MIT",
+  "keywords": [
+    "pipeline",
+    "claude",
+    "codex",
+    "openai",
+    "subagent"
+  ]
+}

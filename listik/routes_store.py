@@ -474,6 +474,8 @@ def ensure_imported(conn: sqlite3.Connection) -> dict:
 ROUTE_ADDITIONS: list[tuple[int, tuple[str, ...]]] = [
     (1, ()),  # было devin-pipeline — маршрут снят как дубликат xlow-pipeline
     (2, ("opus-pipeline",)),  # переименован из opus-single-pipeline
+    (3, ("cc-xhigh-pipeline", "cc-high-pipeline", "cc-medium-pipeline",
+         "cc-low-pipeline", "cc-xlow-pipeline", "cc-nano-pipeline")),  # пресеты claude-codex
 ]
 
 
@@ -508,6 +510,9 @@ def add_shipped(conn: sqlite3.Connection, *, fresh: bool = False) -> list[str]:
 # ------------------------------------------------------------------ скилы (справочник)
 
 def _skill_missing_warning(key: str) -> str:
+    if key.startswith(skills.CC_PREFIX):
+        return (f"маршрута {key!r}: скила /claude-codex:{key[len(skills.CC_PREFIX):]} нет, "
+                "маршрут скрыт")
     return f"маршрута {key!r}: скила /feature-pipeline:{key} нет, маршрут скрыт"
 
 

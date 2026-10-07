@@ -112,6 +112,7 @@ MCP-инструментами `listik_*` или командой `listik new`. 
 /plugin marketplace add dmitry-fomin/listik
 /plugin install listik@listik             # протокол задач: скил listik:listik
 /plugin install feature-pipeline@listik   # пресеты конвейера и агенты pipeline-*
+/plugin install claude-codex@listik   # пресеты конвейера на Claude + Codex
 /plugin install dsh@listik                # DeepSeek Harness
 /plugin install codex@listik              # OpenAI Codex CLI
 /plugin install pi@listik                 # pi CLI (GLM 5.3 Flash, DeepSeek v4.1 Flash); критика ТЗ в конвейерах

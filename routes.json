@@ -322,6 +322,237 @@
         "-p",
         "Задача {task_id} (проект {project}), маршрут {route}. Запусти скил /feature-pipeline:{route} и веди карточку по нему: ты оркестратор, кода не пишешь и порцию не коммитишь. Протокол — скил listik:listik. Первым действием, до чтения кода и show: claim {task_id} --holder claude. Дальше heartbeat каждые 10–15 мин, пока карточку держишь ты. Все команды с --actor agent:claude --harness claude."
       ]
+    },
+    {
+      "key": "cc-xhigh-pipeline",
+      "kind": "pipeline",
+      "title": "cc xhigh",
+      "hint": "Claude + Codex · от 50 мин на задачу",
+      "visible": true,
+      "icon": "xhigh",
+      "roles": {
+        "spec": {
+          "provider": "claude",
+          "label": "xhigh",
+          "title": "Opus 5.5"
+        },
+        "critic": {
+          "provider": "claude",
+          "label": "S+O+Sol",
+          "title": "Sonnet 5.5 · xhigh + Opus 5.5 · high + GPT-6.1 Sol · high"
+        },
+        "impl": {
+          "provider": "claude",
+          "label": "xhigh",
+          "title": "Opus 5.5"
+        },
+        "judge": {
+          "provider": "openai",
+          "label": "high",
+          "title": "GPT-6 Astra",
+          "skill": "codex:codex-delegate",
+          "params": {
+            "model": "gpt-6-astra",
+            "effort": "high"
+          }
+        }
+      },
+      "command": [
+        "claude",
+        "--dangerously-skip-permissions",
+        "-p",
+        "Задача {task_id} (проект {project}), маршрут {route}. Запусти скил /claude-codex:xhigh-pipeline и веди карточку по нему: ты оркестратор, кода не пишешь и порцию не коммитишь. Протокол — скил listik:listik. Первым действием, до чтения кода и show: claim {task_id} --holder claude. Дальше heartbeat каждые 10–15 мин, пока карточку держишь ты. Все команды с --actor agent:claude --harness claude."
+      ]
+    },
+    {
+      "key": "cc-high-pipeline",
+      "kind": "pipeline",
+      "title": "cc high",
+      "hint": "Claude + Codex · от 40 мин на задачу",
+      "visible": true,
+      "icon": "high",
+      "roles": {
+        "spec": {
+          "provider": "claude",
+          "label": "high",
+          "title": "Opus 5.5"
+        },
+        "critic": {
+          "provider": "claude",
+          "label": "S+O+Sol",
+          "title": "Sonnet 5.5 · high + Opus 5.5 · medium + GPT-6.1 Sol · high"
+        },
+        "impl": {
+          "provider": "claude",
+          "label": "high",
+          "title": "Opus 5.5"
+        },
+        "judge": {
+          "provider": "openai",
+          "label": "high",
+          "title": "GPT-6 Astra",
+          "skill": "codex:codex-delegate",
+          "params": {
+            "model": "gpt-6-astra",
+            "effort": "high"
+          }
+        }
+      },
+      "command": [
+        "claude",
+        "--dangerously-skip-permissions",
+        "-p",
+        "Задача {task_id} (проект {project}), маршрут {route}. Запусти скил /claude-codex:high-pipeline и веди карточку по нему: ты оркестратор, кода не пишешь и порцию не коммитишь. Протокол — скил listik:listik. Первым действием, до чтения кода и show: claim {task_id} --holder claude. Дальше heartbeat каждые 10–15 мин, пока карточку держишь ты. Все команды с --actor agent:claude --harness claude."
+      ]
+    },
+    {
+      "key": "cc-medium-pipeline",
+      "kind": "pipeline",
+      "title": "cc medium",
+      "hint": "Claude + Codex · 30 мин на задачу",
+      "visible": true,
+      "icon": "medium",
+      "roles": {
+        "spec": {
+          "provider": "claude",
+          "label": "medium",
+          "title": "Opus 5.5"
+        },
+        "critic": {
+          "provider": "claude",
+          "label": "S+Sol",
+          "title": "Sonnet 5.5 · medium + GPT-6.1 Sol · medium"
+        },
+        "impl": {
+          "provider": "claude",
+          "label": "medium",
+          "title": "Opus 5.5"
+        },
+        "judge": {
+          "provider": "openai",
+          "label": "high",
+          "title": "GPT-6 Astra",
+          "skill": "codex:codex-delegate",
+          "params": {
+            "model": "gpt-6-astra",
+            "effort": "high"
+          }
+        }
+      },
+      "command": [
+        "claude",
+        "--dangerously-skip-permissions",
+        "-p",
+        "Задача {task_id} (проект {project}), маршрут {route}. Запусти скил /claude-codex:medium-pipeline и веди карточку по нему: ты оркестратор, кода не пишешь и порцию не коммитишь. Протокол — скил listik:listik. Первым действием, до чтения кода и show: claim {task_id} --holder claude. Дальше heartbeat каждые 10–15 мин, пока карточку держишь ты. Все команды с --actor agent:claude --harness claude."
+      ]
+    },
+    {
+      "key": "cc-low-pipeline",
+      "kind": "pipeline",
+      "title": "cc low",
+      "hint": "Claude + Codex · на 20 мин, с ТЗ и критикой",
+      "visible": true,
+      "icon": "low",
+      "roles": {
+        "spec": {
+          "provider": "claude",
+          "label": "low",
+          "title": "Opus 5.5"
+        },
+        "critic": {
+          "provider": "openai",
+          "label": "Sol",
+          "title": "GPT-6.1 Sol · medium",
+          "skill": "codex:codex-delegate",
+          "params": {
+            "model": "gpt-6.1-sol",
+            "effort": "medium"
+          }
+        },
+        "impl": {
+          "provider": "claude",
+          "label": "low",
+          "title": "Opus 5.5"
+        },
+        "judge": {
+          "provider": "openai",
+          "label": "medium",
+          "title": "GPT-6 Astra",
+          "skill": "codex:codex-delegate",
+          "params": {
+            "model": "gpt-6-astra",
+            "effort": "medium"
+          }
+        }
+      },
+      "command": [
+        "claude",
+        "--dangerously-skip-permissions",
+        "-p",
+        "Задача {task_id} (проект {project}), маршрут {route}. Запусти скил /claude-codex:low-pipeline и веди карточку по нему: ты оркестратор, кода не пишешь и порцию не коммитишь. Протокол — скил listik:listik. Первым действием, до чтения кода и show: claim {task_id} --holder claude. Дальше heartbeat каждые 10–15 мин, пока карточку держишь ты. Все команды с --actor agent:claude --harness claude."
+      ]
+    },
+    {
+      "key": "cc-xlow-pipeline",
+      "kind": "pipeline",
+      "title": "cc xlow",
+      "hint": "Claude + Codex · без ТЗ и критики · не для эпиков",
+      "visible": true,
+      "icon": "xlow",
+      "roles": {
+        "impl": {
+          "provider": "claude",
+          "label": "medium",
+          "title": "Opus 5.5"
+        },
+        "judge": {
+          "provider": "openai",
+          "label": "medium",
+          "title": "GPT-6 Astra",
+          "skill": "codex:codex-delegate",
+          "params": {
+            "model": "gpt-6-astra",
+            "effort": "medium"
+          }
+        }
+      },
+      "command": [
+        "claude",
+        "--dangerously-skip-permissions",
+        "-p",
+        "Задача {task_id} (проект {project}), маршрут {route}. Запусти скил /claude-codex:xlow-pipeline и веди карточку по нему: ты оркестратор, кода не пишешь и порцию не коммитишь. Протокол — скил listik:listik. Первым действием, до чтения кода и show: claim {task_id} --holder claude. Дальше heartbeat каждые 10–15 мин, пока карточку держишь ты. Все команды с --actor agent:claude --harness claude."
+      ]
+    },
+    {
+      "key": "cc-nano-pipeline",
+      "kind": "pipeline",
+      "title": "cc nano",
+      "hint": "Claude + Codex · мелкие правки · без ТЗ и критики",
+      "visible": true,
+      "icon": "xlow",
+      "roles": {
+        "impl": {
+          "provider": "claude",
+          "label": "medium",
+          "title": "Opus 5.5"
+        },
+        "judge": {
+          "provider": "openai",
+          "label": "medium",
+          "title": "GPT-6 Astra",
+          "skill": "codex:codex-delegate",
+          "params": {
+            "model": "gpt-6-astra",
+            "effort": "medium"
+          }
+        }
+      },
+      "command": [
+        "claude",
+        "--dangerously-skip-permissions",
+        "-p",
+        "Задача {task_id} (проект {project}), маршрут {route}. Запусти скил /claude-codex:nano-pipeline и веди карточку по нему: ты оркестратор, кода не пишешь и порцию не коммитишь. Протокол — скил listik:listik. Первым действием, до чтения кода и show: claim {task_id} --holder claude. Дальше heartbeat каждые 10–15 мин, пока карточку держишь ты. Все команды с --actor agent:claude --harness claude."
+      ]
     }
   ]
 }

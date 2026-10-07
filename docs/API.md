@@ -336,7 +336,7 @@ to create index.lock: File exists». Пострадавший — воркер, 
 Маршруты — это таблица пресетов конвейера и маршрутов роя; она же даёт команду
 для автостарта. Источник и при чтении, и при записи — таблица `routes` в базе
 (`listik/routes_store.py`); у конвейера в режиме скила есть `command` (`claude -p` со
-скилом `/feature-pipeline:{route}`), у роя команды — в ячейках ролей. Вид записи —
+скилом `/feature-pipeline:{route}`; у маршрутов `cc-<имя>` — `/claude-codex:<имя>`), у роя команды — в ячейках ролей. Вид записи —
 `pipeline` или `swarm`, поля `harness` у записи нет. Одиночное исполнение (один харнесс
 делает задачу целиком) — маршрут роя с одной ролью `impl` (или `spec`+`impl` одним
 харнессом). `routes.json` в корне
@@ -687,19 +687,23 @@ dispatch_id IS ?` — именно `IS`, чтобы обслуживать и з
 ### Справочник маршрутов и скилов конвейеров
 
 `GET /api/routes` у каждой записи `kind=pipeline` добавляет `skill_path` — путь к
-`plugins/feature-pipeline/skills/<key>/SKILL.md` относительно корня Listik, если каталог
-скила есть, иначе `null`. Если каталог этого скила пропал (переименовали, удалили) при
+`plugins/feature-pipeline/skills/<key>/SKILL.md` относительно корня Listik (у ключа
+`cc-<имя>` — `plugins/claude-codex/skills/<имя>/SKILL.md`), если каталог скила есть,
+иначе `null`. Если каталог этого скила пропал (переименовали, удалили) при
 установленных скилах вообще, запись получает `skill_missing: true`, в ответе (не в базе)
 `visible` подменяется на `false` — маршрут скрыт автоматически, а не переписан, — и в
 `warnings` добавляется строка `маршрута "<key>": скила /feature-pipeline:<key> нет,
-маршрут скрыт`. Установленный (не из исходников) Listik может быть без каталога
+маршрут скрыт` (у `cc-<имя>` — `маршрута "<key>": скила /claude-codex:<имя> нет, маршрут
+скрыт`). Установленный (не из исходников) Listik может быть без каталога
 `plugins/` вовсе: тогда сверка ничего не помечает и ничего не прячет — иначе один
 недостающий каталог спрятал бы все конвейеры разом.
 
 `GET /api/routes/sync` — сверка списком: `skills_available` (есть ли каталог
-`plugins/feature-pipeline/skills/` хотя бы с одним скилом), `missing_skill[]` — записи
+`plugins/feature-pipeline/skills/` хотя бы с одним скилом; скилы claude-codex не в
+счёт — без feature-pipeline он не работает), `missing_skill[]` — записи
 `kind=pipeline` из базы, для которых нет каталога скила, `missing_route[]` —
-`{key,title,hint,skill_path}` скилов, для которых нет записи в базе. Без каталога скилов
+`{key,title,hint,skill_path}` скилов, для которых нет записи в базе. Скилы
+`plugins/claude-codex/skills/<имя>` сверяются с маршрутами `cc-<имя>`. Без каталога скилов
 вовсе — оба списка пустые.
 
 ### Правка, заведение, удаление и порядок маршрутов
@@ -707,7 +711,7 @@ dispatch_id IS ?` — именно `IS`, чтобы обслуживать и з
 | Метод | Путь | Тело | Ответ и правила |
 |---|---|---|---|
 | PATCH | `/api/routes/{key}` | любые из `title, hint, icon, visible, roles` | `200` с обновлённой записью. `kind, key, command, position, driver` в теле — `400 bad_argument` с именем поля (`поле нельзя менять: driver`); `roles` пустой (`{}`), `null`, не-объект или негодная ячейка — `400 bad_argument` с путём до поля (`roles.impl.params.a`), запись при этом не меняется; у маршрута роя (`kind=swarm`) ячейка роли — `{harness, argv?, prompt?}` (харнесс обязан быть в каталоге `harnesses`, `argv`/`prompt` с теми же подстановками, `null`-ячейка — пропуск роли, хотя бы одна роль обязана остаться); `roles.<роль>.skill`, которого нет среди скилов-запускаторов этой установки, — `400` со списком доступных (каталога нет вовсе — проверка не делается); постороннее поле — `400` с его именем; пустое тело — `400` «нечего менять»; нет ключа — `404` |
-| POST | `/api/routes` | вид задаёт `kind`: нет поля или `"pipeline"` — конвейер (`key`, необязательно `roles`); `"swarm"` — маршрут роя (`key`, `title`, обязательный `roles` с ячейками `{harness, argv?, prompt?}` или `null`, необязательно `hint`, `icon`, `visible`) | `kind` вне `pipeline`/`swarm` (в том числе прежний вид `direct`) или не строка — `400 bad_argument` с именем `kind` и допустимыми `pipeline`/`swarm`. Рой: `201` с записью `kind="swarm"`, `command=null`; `roles` без поля — `400`, расклад без единой роли с командой, ячейка с лишним полем или с харнессом, которого нет в каталоге `harnesses`, — `400` с путём до поля; поле кроме перечисленных (`command`, `harness`, `driver`) — `400` (`поле нельзя передать: driver`). Конвейер: `201` с новой записью `kind="pipeline"`, `visible=false`, `title`/`hint` — из frontmatter `SKILL.md` (`name`/первое предложение `description`), `roles` — переданный расклад (ключа нет или `null` — `{}`; явный `{}` — `400`; негодный расклад или неизвестный `skill` — `400`, как у PATCH), `command=null`, `icon` — уровень по ключу (`routes.fallback_icon`), `position` — в конец; ключа нет среди скилов `plugins/feature-pipeline/skills/*` — `400`; поле кроме `key`/`roles` — `400`. Маршрут с таким ключом уже есть (любого вида) — `409 conflict` |
+| POST | `/api/routes` | вид задаёт `kind`: нет поля или `"pipeline"` — конвейер (`key`, необязательно `roles`); `"swarm"` — маршрут роя (`key`, `title`, обязательный `roles` с ячейками `{harness, argv?, prompt?}` или `null`, необязательно `hint`, `icon`, `visible`) | `kind` вне `pipeline`/`swarm` (в том числе прежний вид `direct`) или не строка — `400 bad_argument` с именем `kind` и допустимыми `pipeline`/`swarm`. Рой: `201` с записью `kind="swarm"`, `command=null`; `roles` без поля — `400`, расклад без единой роли с командой, ячейка с лишним полем или с харнессом, которого нет в каталоге `harnesses`, — `400` с путём до поля; поле кроме перечисленных (`command`, `harness`, `driver`) — `400` (`поле нельзя передать: driver`). Конвейер: `201` с новой записью `kind="pipeline"`, `visible=false`, `title`/`hint` — из frontmatter `SKILL.md` (`name`/первое предложение `description`), `roles` — переданный расклад (ключа нет или `null` — `{}`; явный `{}` — `400`; негодный расклад или неизвестный `skill` — `400`, как у PATCH), `command=null`, `icon` — уровень по ключу (`routes.fallback_icon`), `position` — в конец; ключа нет среди скилов `plugins/feature-pipeline/skills/*` (ключ `cc-<имя>` — среди `plugins/claude-codex/skills/<имя>`) — `400`; поле кроме `key`/`roles` — `400`. Маршрут с таким ключом уже есть (любого вида) — `409 conflict` |
 | DELETE | `/api/routes/{key}` | — | `200 {"removed": key, "tasks_cleared": N}`. У всех задач с этим `launch_route` — в любом статусе и на любом этапе — снимается `launch_route` и метки `harness:`/`process:`; статус, этап, держатель и прочие поля не меняются. Гард `route_change_denied` (см. «Смена маршрута») здесь не действует: это удаление справочной записи, а не решение автора о задаче, и он отказал бы половине задач в работе, оставив их ссылку на удалённый маршрут висеть. Ничего, кроме `launch_route`/меток, не удаляется и не закрывается — задачи целы. Повторный `DELETE` того же ключа — `404`, ничего не меняет |
 | POST | `/api/routes/reorder` | `{"keys": ["…", …]}` | `200` со списком записей в новом порядке (ключи, не попавшие в список, уезжают в конец в прежнем относительном порядке). Неизвестный ключ — `400`; поле кроме `keys` — `400` |
 
@@ -1456,7 +1460,7 @@ id внутри файлового пути (`docs/specs/<id>.md`, `/wt/<id>/lis
 | GET | `/api/routes` | — | `ok, error, path, warnings[], routes[]` — записи таблицы `routes` (`command`, `roles`, `position`, посчитанный `icon`; см. «Маршруты запуска»), у `kind=pipeline` ещё `skill_path` и, если скила нет, `skill_missing: true` (в ответе `visible: false`) — см. «Справочник маршрутов и скилов конвейеров»; `warnings` — замечания ввоза и сверки со скилами (маршрут без скила: строка про скрытый маршрут); ошибка базы — `ok=false` и текст, а не HTTP-ошибка |
 | GET | `/api/routes/launchers` | — | `skills_available, launchers[], providers[], roles[]` — справочник для редактора состава ролей: `launchers` — скилы-запускаторы установки (`key` вида `плагин:скил`, `plugin`, `skill`, `title`, `hint`, `provider` по умолчанию, `skill_path` или `null` у плагина вне репозитория), `providers` — допустимые вендоры ячейки роли, `roles` — ключи ролей (`spec`/`critic`/`impl`/`judge`); метод не GET — `405` |
 | GET/POST | `/api/harnesses`, GET/PATCH `/api/harnesses/{key}` | см. «Каталог харнессов» | каталог исполнителей: список с `used_by[]`, заведение и правка; удаления нет |
-| GET | `/api/routes/sync` | — | `skills_available, missing_skill[], missing_route[]` — сверка таблицы со скилами `plugins/feature-pipeline/skills/*` (см. «Справочник маршрутов и скилов конвейеров»); без каталога скилов — оба списка пустые |
+| GET | `/api/routes/sync` | — | `skills_available, missing_skill[], missing_route[]` — сверка таблицы со скилами `plugins/feature-pipeline/skills/*` и `plugins/claude-codex/skills/*` (маршрут `cc-<имя>`; `skills_available` — по feature-pipeline) (см. «Справочник маршрутов и скилов конвейеров»); без каталога скилов — оба списка пустые |
 | GET | `/api/assistant/status` | — | `enabled, model, base_url, voice` — настроен ли помощник DeepSeek (`[assistant]` в `config.toml`) и голосовой ввод (`voice=true` — непусты оба ключа, `[assistant]` и `[deepgram]`); ключи наружу не отдаются (см. «Помощник DeepSeek») |
 | GET | `/api/meta` | `archived` | `projects[], actors[], facets{}, statuses{}, stages{}, priorities{}, issue_types{}, routing{transitions, return_window_hours}` — `routing` — общая таблица `config.toml` без переопределений проектов; действующая таблица проекта — `projects[].routing_effective` |
 | GET | `/api/projects` | — | `projects[]` — все репозитории доски, включая скрытые: `slug, title, kind, path, path_exists, git_remote, git_branch, archived, n_tasks, n_open, n_wip`, плюс `routing` (переопределение проекта — объект или `null`), `routing_effective` (действующая слитая таблица, которой реально пользуется `transition_kind`), `routing_source` (`default`\|`config`\|`db`\|`config+db`), `routing_error` (`null` или строка с причиной, по которой переопределение из базы или `config.toml` не прочитано — только источник и имя класса ошибки, без содержимого; при нечитаемом `config.toml` `routing_effective` — `null`), плюс `root` (корень поиска проектов) |

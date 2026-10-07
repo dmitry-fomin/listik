@@ -18,6 +18,11 @@ from . import paths
 
 SKILLS_DIR = paths.ROOT_DIR / "plugins" / "feature-pipeline" / "skills"
 
+#: Скилы пресетов claude-codex: маршрут `cc-<имя>` ↔ `CC_SKILLS_DIR/<имя>/SKILL.md`
+#: (ключ маршрута уникален, а имена скилов совпадают с feature-pipeline).
+CC_SKILLS_DIR = paths.ROOT_DIR / "plugins" / "claude-codex" / "skills"
+CC_PREFIX = "cc-"
+
 #: Куда обрезается `hint` (первое предложение `description`) — описания скилов
 #: очень длинные, а справочник маршрутов должен помещаться строкой.
 HINT_MAX_CHARS = 120
@@ -62,17 +67,31 @@ def _first_sentence(text: str, *, max_chars: int = HINT_MAX_CHARS) -> str:
     return cut.rstrip(",.;:· ") + "…"
 
 
-def skill_keys() -> list[str]:
-    """Ключи скилов — имена подкаталогов с `SKILL.md`; нет каталога — пустой список."""
-    if not SKILLS_DIR.is_dir():
+def _dir_skills(directory) -> list[str]:
+    """Имена подкаталогов с `SKILL.md`; нет каталога — пустой список."""
+    if not directory.is_dir():
         return []
-    return sorted(p.name for p in SKILLS_DIR.iterdir()
-                 if p.is_dir() and (p / "SKILL.md").is_file())
+    return [p.name for p in directory.iterdir() if p.is_dir() and (p / "SKILL.md").is_file()]
+
+
+def skill_keys() -> list[str]:
+    """Ключи маршрутов со скилом: feature-pipeline как есть, claude-codex — с `cc-`."""
+    return sorted(_dir_skills(SKILLS_DIR) + [CC_PREFIX + n for n in _dir_skills(CC_SKILLS_DIR)])
 
 
 def skills_available() -> bool:
-    """Каталог скилов есть и в нём хотя бы один скил."""
-    return bool(skill_keys())
+    """Каталог скилов feature-pipeline есть и в нём хотя бы один скил.
+
+    claude-codex без feature-pipeline не работает, поэтому его скилы не в счёт.
+    """
+    return bool(_dir_skills(SKILLS_DIR))
+
+
+def _skill_md(key: str):
+    """`SKILL.md` маршрута: `cc-<имя>` — в claude-codex, остальное — в feature-pipeline."""
+    if key.startswith(CC_PREFIX):
+        return CC_SKILLS_DIR / key[len(CC_PREFIX):] / "SKILL.md"
+    return SKILLS_DIR / key / "SKILL.md"
 
 
 def skill_info(key: str) -> dict | None:
@@ -82,7 +101,7 @@ def skill_info(key: str) -> dict | None:
     предложение `description`, `skill_path` — путь к `SKILL.md` относительно
     корня репозитория.
     """
-    md_path = SKILLS_DIR / key / "SKILL.md"
+    md_path = _skill_md(key)
     if not md_path.is_file():
         return None
     try:

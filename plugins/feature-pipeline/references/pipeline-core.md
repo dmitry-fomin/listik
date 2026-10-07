@@ -80,11 +80,12 @@
 
 | Вид | Запуск | Файл ответа |
 | --- | --- | --- |
-| `sonnet` | `Agent` `feature-pipeline:pipeline-critic` с `model: sonnet` в вызове (Sonnet high), фоном | критик пишет сам: `$STEPS/$BASE.review-<X>.sonnet.md` |
+| `sonnet` | `Agent` — агент-критик с `model: sonnet` в вызове, фоном; по умолчанию `feature-pipeline:pipeline-critic` (Sonnet high), пресет может назвать другого агента-критика — усилие тогда из его frontmatter | критик пишет сам: `$STEPS/$BASE.review-<X>.sonnet.md` |
+| `opus` | `Agent` — агент-критик, которого назвал пресет, с `model: opus` в вызове, фоном; усилие — из frontmatter этого агента | критик пишет сам: `$STEPS/$BASE.review-<X>.opus.md` |
 | `deepseek` | `pi:pi-delegate`, `--channel deepseek`, `--permission read`, `--timeout 900`, фоновой задачей | вывод `result <job-id>` скила `pi:pi-jobs` в `$STEPS/$BASE.review-<X>.deepseek.md` |
 | `glm` | `pi:pi-delegate`, `--channel glm`, `--permission read`, `--timeout 900`, фоновой задачей | вывод `result <job-id>` скила `pi:pi-jobs` в `$STEPS/$BASE.review-<X>.glm.md` |
 | `devin` | `devin:devin-delegate`, `--thinking max` (SWE-2 max), `--permission read`, `--timeout 900`, фоновой задачей, сессию не называть | вывод `result <job-id>` скила `devin:devin-jobs` в `$STEPS/$BASE.review-<X>.devin.md` |
-| `codex` | `codex:codex-delegate`, `--model gpt-6.1-sol --effort medium` (GPT-6.1 Sol medium), `--permission read`, `--timeout 900`, фоновой задачей, флаг провайдера не передаётся, сессию не называть | вывод `result <job-id>` скила `codex:codex-jobs` в `$STEPS/$BASE.review-<X>.codex.md` |
+| `codex` | `codex:codex-delegate`, `--model gpt-6.1-sol --effort medium` (GPT-6.1 Sol medium); пресет может назвать `--effort high` (GPT-6.1 Sol high) — тогда в вызове `--effort high`, другой модели и другого усилия пресет не назначает; `--permission read`, `--timeout 900`, фоновой задачей, флаг провайдера не передаётся, сессию не называть | вывод `result <job-id>` скила `codex:codex-jobs` в `$STEPS/$BASE.review-<X>.codex.md` |
 
 У всех внешних (`deepseek`, `glm`, `devin`, `codex`): `--permission read` — команд у критика нет: в том же дереве может
 работать исполнитель прошлой порции; `--cwd <дерево работы>` — эталон из строки журнала шага `дерево <путь>`
@@ -92,6 +93,10 @@
 `--label "$BASE <X>: критика <вид>"`; сессию не называй — продолжать нечего. Форки скилов `pi:pi-delegate`,
 `devin:devin-delegate` и `codex:codex-delegate` по умолчанию сами ждут и забирают ответ — в запросе к скилу скажи только «запусти фоном
 и верни job-id»: ждёшь и забираешь ответ ты сам («Забор»).
+
+**Критик `opus`.** Всё, что ядро говорит про `sonnet` о задании (строка `ответ целиком запиши в …`), файле ответа,
+сроке ожидания, отмене через `TaskStop`, годности ответа и отсутствии предполёта, действует и для `opus`; путь
+файла ответа критик берёт из строки задания — для `opus` это `$STEPS/$BASE.review-<X>.opus.md`.
 
 У `devin` в `--permission read` любой не-читающий инструмент отклоняется, и прогон завершается статусом
 `failed` («rejected a tool call») — это негодный ответ, а не повод перезапускать с более широким правом.
@@ -104,12 +109,13 @@ Anthropic его не заменяет ни в одном пресете. Кво
 `отменён по кворуму`: `порция <X>: критик <вид> выбыл — отменён по кворуму`. По набранному кворуму — строка
 `порция <X>: кворум — <виды с годным ответом>, остальным до <ЧЧ:ММ>` (срок ожидания); хвост
 `, остальным до <ЧЧ:ММ>` опускается, когда ждать некого — к моменту кворума ответили все критики состава
-(в medium и cross это всегда так: кворум — все).
+(в medium и cross это всегда так: кворум — все). `opus` — критик Anthropic: не-Anthropic критика он не заменяет, в
+кворум не входит и срок ожидания `Tк` не сдвигает — к сроку не ответил, выбывает `отменён по кворуму`.
 
 **Предполётная проверка** — до этапа 1, вместе с остальными ролями пресета. `deepseek` и `glm` — `pi:pi-check`
 с **полной** пробой (`check` без `--probe-timeout`, до 120 с на канал — быстрая 30-секундная у GLM даёт ложный
 таймаут); `ready: yes` у pi значит «хоть один канал», здесь смотришь `ok` каждого канала из состава. `devin` —
-`devin:devin-check`. `codex` — `codex:codex-check`, годен при `ready: yes`. У `sonnet` предполёта нет. Критик без `ok` на предполёте из состава выбывает: кворум без
+`devin:devin-check`. `codex` — `codex:codex-check`, годен при `ready: yes`. У `sonnet` и `opus` предполёта нет. Критик без `ok` на предполёте из состава выбывает: кворум без
 него ещё набираем — строка в журнал `предполёт: критик <вид> недоступен: <причина> — критика без него`; уже не
 набираем — стоп-фактор «Кворум не набран» ниже.
 
@@ -414,7 +420,7 @@ Agent id субагента живёт только в этом разговор
 
 1. **Имя работы `<id>`** — полный id карточки Listik, как его печатает Listik (`listik-n5fe`), без
    сокращения и без номера. Бумаги: `<steps>/<id>.md` — шаг (у `opus-pipeline` — файл
-   задачи), `<id>.<X>.md`, `<id>.check-<X>.md`, `<id>.review-<X>.md`, `<id>.decisions-<X>.md` — решения оркестратора по сводке, `<id>.review-<X>.<вид>.md` — сырые ответы критиков, вид — `sonnet`, `deepseek`, `glm`, `devin` или `codex` (`<id>.review-<X>.sonnet.md`, `<id>.review-<X>.deepseek.md`, `<id>.review-<X>.glm.md`, `<id>.review-<X>.devin.md`, `<id>.review-<X>.codex.md`), `<id>.red-<X>.md`,
+   задачи), `<id>.<X>.md`, `<id>.check-<X>.md`, `<id>.review-<X>.md`, `<id>.decisions-<X>.md` — решения оркестратора по сводке, `<id>.review-<X>.<вид>.md` — сырые ответы критиков, вид — `sonnet`, `opus`, `deepseek`, `glm`, `devin` или `codex` (`<id>.review-<X>.sonnet.md`, `<id>.review-<X>.opus.md`, `<id>.review-<X>.deepseek.md`, `<id>.review-<X>.glm.md`, `<id>.review-<X>.devin.md`, `<id>.review-<X>.codex.md`), `<id>.red-<X>.md`,
    `<id>.judge-<X>.r<R>.md`, `<id>.lens-<X>.scope.md`, `<id>.lens-<X>.holes.md` и
    `<id>.lens-<X>.intent.md` (ответы линз приёмки), `<id>.journal.md`, дамп `$D/<id>.diff-<X>.r<R>.txt`. Пример:
    `listik-n5fe.a.md`, `listik-n5fe.check-a.md`.
@@ -615,7 +621,7 @@ listik worktree <id> --track <часть> --actor agent:claude --harness claude
 
 Имена бумаг трека — по правилу 1 из «Имён бумаг и деревьев», от `<трек>` вместо `<id>`:
 `<steps>/<трек>.md` — шаг, `<трек>.<X>.md` — порция, `<трек>.check-<X>.md` — её чек-лист,
-`<трек>.review-<X>.md` — сводка замечаний критиков, рядом сырые ответы критиков `<трек>.review-<X>.<вид>.md`, вид — `sonnet`, `deepseek`, `glm`, `devin` или `codex`. Ты их не сочиняешь: после `готово` этапа 1 сверься
+`<трек>.review-<X>.md` — сводка замечаний критиков, рядом сырые ответы критиков `<трек>.review-<X>.<вид>.md`, вид — `sonnet`, `opus`, `deepseek`, `glm`, `devin` или `codex`. Ты их не сочиняешь: после `готово` этапа 1 сверься
 с `ls <steps>` и передавай дальше то, что там лежит.
 
 **Журнал трека именуется по треку — `<steps>/<трек>.journal.md` — даже когда у работы есть

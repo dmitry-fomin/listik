@@ -185,6 +185,7 @@ committed (see `.gitignore`).
 
 The skills used to run this project's work live in this repo and are made exactly for it:
 - `plugins/feature-pipeline/` — the pipeline presets (`feature-pipeline:*`: skills, agents, hooks, references);
+- `plugins/claude-codex/` — пресеты `claude-codex:*` на связке Claude + Codex, переиспользуют ядро и агентов feature-pipeline;
 - `plugins/listik/` — the `listik:listik` task-protocol skill;
 - `plugins/dsh/` — DeepSeek Harness bridge (`dsh:dsh-delegate` and related skills);
 - `plugins/codex/` — OpenAI Codex CLI bridge (`codex:codex-delegate` and related skills);

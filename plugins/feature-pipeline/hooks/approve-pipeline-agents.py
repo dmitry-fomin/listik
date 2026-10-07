@@ -23,6 +23,7 @@ AGENTS = {
     "feature-pipeline:pipeline-implementer-xhigh",
     "feature-pipeline:pipeline-implementer-solo",
     "feature-pipeline:pipeline-judge",
+    "claude-codex:pipeline-implementer-low",
 }
 
 EDIT_TOOLS = {"Edit", "Write", "MultiEdit", "NotebookEdit"}

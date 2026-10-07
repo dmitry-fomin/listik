@@ -110,6 +110,47 @@
       ]
     },
     {
+      "key": "sol-pipeline",
+      "kind": "pipeline",
+      "title": "sol",
+      "hint": "Opus ТЗ и код · Sonnet+Sol критика · Sol приёмка",
+      "visible": true,
+      "icon": "medium",
+      "roles": {
+        "spec": {
+          "provider": "claude",
+          "label": "medium",
+          "title": "Opus 5.5"
+        },
+        "critic": {
+          "provider": "claude",
+          "label": "S+Sol",
+          "title": "Sonnet 5.5 · high + GPT-6.1 Sol · medium"
+        },
+        "impl": {
+          "provider": "claude",
+          "label": "medium",
+          "title": "Opus 5.5"
+        },
+        "judge": {
+          "provider": "openai",
+          "label": "high",
+          "title": "GPT-6.1 Sol",
+          "skill": "codex:codex-delegate",
+          "params": {
+            "model": "gpt-6.1-sol",
+            "effort": "high"
+          }
+        }
+      },
+      "command": [
+        "claude",
+        "--dangerously-skip-permissions",
+        "-p",
+        "Задача {task_id} (проект {project}), маршрут {route}. Запусти скил /feature-pipeline:{route} и веди карточку по нему: ты оркестратор, кода не пишешь и порцию не коммитишь. Протокол — скил listik:listik. Первым действием, до чтения кода и show: claim {task_id} --holder claude. Дальше heartbeat каждые 10–15 мин, пока карточку держишь ты. Все команды с --actor agent:claude --harness claude."
+      ]
+    },
+    {
       "key": "low-pipeline",
       "kind": "pipeline",
       "title": "low",

@@ -1272,6 +1272,8 @@ CRITIQUE_SECTION_REQUIRED = (
     "30%", "без не-Anthropic критика кворума нет", "до срока ожидания",
     "codex:codex-delegate", "--model gpt-6.1-sol --effort medium", "review-<X>.codex.md",
     "codex:codex-runtime",
+    # Вид критика opus и codex high для пресетов claude-codex (listik-r1pd, порция a).
+    "model: opus", "review-<X>.opus.md", "**Критик `opus`.**", "--effort high",
 )
 CRITIQUE_CORE_FORBIDDEN = ("две модели в pi", "pipeline-critic-medium", "pipeline-critic-xhigh",
                            "universal-pipeline", "[оба]", "pipeline-critic-low", "Sonnet low вместо",
@@ -1280,7 +1282,8 @@ CRITIQUE_CORE_FORBIDDEN = ("две модели в pi", "pipeline-critic-medium"
 CRITIQUE_QUORUM_JOURNAL = ("отменён по кворуму", "остальным до <ЧЧ:ММ>")
 #: Запасного критика нет (listik-cszk): без учёта регистра и переносов строк.
 SPARE_CRITIC_RE = re.compile(r"запасн\w* критик", re.I)
-CRITIQUE_PAPER_NAMES = ("review-<X>.sonnet.md", "review-<X>.devin.md", "review-<X>.codex.md")
+CRITIQUE_PAPER_NAMES = ("review-<X>.sonnet.md", "review-<X>.devin.md", "review-<X>.codex.md",
+                        "review-<X>.opus.md")
 CRITIQUE_AGENTS_EFFORT = {"pipeline-critic.md": "high"}
 CRITIQUE_AGENTS_REMOVED = ("pipeline-critic-medium.md", "pipeline-critic-xhigh.md",
                            "pipeline-critic-low.md")
@@ -1290,13 +1293,27 @@ CRITIQUE_AGENTS_REMOVED = ("pipeline-critic-medium.md", "pipeline-critic-xhigh.m
 CODEX_DELEGATE_SKILL = "plugins/codex/skills/codex-delegate/SKILL.md"
 CODEX_RUNTIME_SKILL = "plugins/codex/skills/codex-runtime/SKILL.md"
 CODEX_RUNTIME_RED_LINES = "## Red lines (apply inside every codex run)"
-CODEX_COMMIT_EXCEPTION_REQUIRED = ("sol-pipeline", "push", "amend", "reset", "explicit paths")
+CODEX_COMMIT_EXCEPTION_REQUIRED = ("sol-pipeline", "push", "amend", "reset", "explicit paths",
+                                   "claude-codex")
+#: Исключение на --model/--effort для пресетов claude-codex в мосте codex (listik-r1pd, порция a).
+CODEX_RUNNER_AGENT = "plugins/codex/agents/codex-runner.md"
+CODEX_README = "plugins/codex/README.md"
+CODEX_MODEL_PIN_PLUGINS = ("feature-pipeline", "claude-codex")
 
 
 def _codex_commit_exception_problems(block: str) -> list[str]:
     """Чего не хватает блоку запрета коммитов в мосте codex; пустой список — всё на месте."""
     return [f"в блоке нет {needle!r}" for needle in CODEX_COMMIT_EXCEPTION_REQUIRED
             if needle not in block]
+
+
+def _codex_model_pin_missing(block: str) -> list[str]:
+    """Какие плагины не названы в исключении на --model/--effort; пустой список — все."""
+    return [name for name in CODEX_MODEL_PIN_PLUGINS if name not in block]
+
+
+def _is_blank(line: str) -> bool:
+    return not line.strip()
 
 
 def _has_spare_critic(text: str) -> bool:
@@ -1318,11 +1335,21 @@ def _critique_core_problems(text: str) -> list[str]:
                         if needle not in quorum)
         if "`codex`" not in quorum:
             problems.append("в абзаце «Кворум.» нет '`codex`'")
+        if "`opus`" not in quorum:
+            problems.append("в абзаце «Кворум.» нет '`opus`'")
+        rows = section.splitlines()
+        opus_at = next((i for i, line in enumerate(rows) if line.startswith("| `opus` |")), None)
+        if opus_at is None:
+            problems.append("в таблице видов нет строки '| `opus` |'")
+        elif opus_at == 0 or not rows[opus_at - 1].startswith("| `sonnet` |"):
+            problems.append("строка '| `opus` |' идёт не сразу после '| `sonnet` |'")
         if "--provider" in section:
             problems.append("в разделе есть '--provider'")
         preflight = _text_block(section, "**Предполётная проверка**", lambda line: not line.strip())
         if "codex:codex-check" not in preflight:
             problems.append("в абзаце «Предполётная проверка» нет 'codex:codex-check'")
+        if "`opus`" not in preflight:
+            problems.append("в абзаце «Предполётная проверка» нет '`opus`'")
         collect = _text_block(section, "**Забор.**", lambda line: not line.strip())
         if "codex:codex-jobs" not in collect:
             problems.append("в абзаце «Забор.» нет 'codex:codex-jobs'")
@@ -1396,6 +1423,13 @@ class FeaturePipelineCritiqueTests(unittest.TestCase):
         collect = _text_block(section, "**Забор.**", lambda line: not line.strip())
         codex_row = next((line for line in section.splitlines() if line.startswith("| `codex` |")), "")
         self.assertTrue(codex_row, f"{CORE_DOC}: нет строки таблицы вида codex")
+        opus_row = next((line for line in section.splitlines() if line.startswith("| `opus` |")), "")
+        self.assertTrue(opus_row, f"{CORE_DOC}: нет строки таблицы вида opus")
+        opus_critic = _text_block(section, "**Критик `opus`.**", lambda line: not line.strip())
+        self.assertTrue(opus_critic, f"{CORE_DOC}: нет абзаца «Критик `opus`.»")
+        table_end = _text_block(section, opus_row, lambda line: not line.startswith("| ")) \
+            .splitlines()[-1]
+        self.assertNotEqual(table_end, opus_row, f"{CORE_DOC}: строка opus уже последняя")
         self.assertTrue(section, f"{CORE_DOC}: нет раздела {CRITIQUE_HEADING!r}")
         self.assertTrue(journal, f"{CORE_DOC}: нет раздела «Журнал»")
         broken = {
@@ -1422,6 +1456,14 @@ class FeaturePipelineCritiqueTests(unittest.TestCase):
                 preflight, preflight.replace("codex:codex-check", ""), 1),
             "из абзаца Забор убрано codex:codex-jobs": text.replace(
                 collect, collect.replace("codex:codex-jobs", ""), 1),
+            "убрана строка вида opus": text.replace(opus_row + "\n", "", 1),
+            "строка вида opus переставлена в конец таблицы": text.replace(
+                opus_row + "\n", "", 1).replace(table_end + "\n", table_end + "\n" + opus_row + "\n", 1),
+            "убран абзац Критик `opus`": text.replace(opus_critic + "\n", "", 1),
+            "из абзаца Кворум убрано `opus`": text.replace(
+                quorum, quorum.replace("`opus`", ""), 1),
+            "из строки codex убрано --effort high": text.replace(
+                codex_row, codex_row.replace("--effort high", ""), 1),
         }
         for needle in ("15 минут", "--permission read", "стоп: критика — кворум не набран",
                        "completed", "30%", "до срока ожидания"):
@@ -1444,10 +1486,38 @@ class FeaturePipelineCritiqueTests(unittest.TestCase):
             with self.subTest(file=path):
                 self.assertTrue(block, f"{path}: нет блока запрета коммитов")
                 self.assertEqual(_codex_commit_exception_problems(block), [], path)
-                for needle in ("sol-pipeline", "push"):
+                for needle in ("sol-pipeline", "push", "claude-codex"):
                     self.assertNotEqual(
                         _codex_commit_exception_problems(block.replace(needle, "")), [],
                         f"{path}: проверка не ловит блок без {needle!r}")
+
+    def test_codex_bridge_allows_claude_codex_model_pins(self) -> None:
+        delegate = (REPO_DIR / CODEX_DELEGATE_SKILL).read_text(encoding="utf-8")
+        runtime = (REPO_DIR / CODEX_RUNTIME_SKILL).read_text(encoding="utf-8")
+        runner = (REPO_DIR / CODEX_RUNNER_AGENT).read_text(encoding="utf-8")
+        readme = (REPO_DIR / CODEX_README).read_text(encoding="utf-8")
+        blocks = {
+            f"{CODEX_DELEGATE_SKILL}: Model, provider": _text_block(
+                delegate, "Model, provider and effort are never your choice", _is_blank),
+            f"{CODEX_RUNTIME_SKILL}: Model, provider": _text_block(
+                runtime, "- **Model, provider and effort are the human's choice.**",
+                lambda line: line.startswith("- ")),
+            f"{CODEX_RUNNER_AGENT}: Model, provider": _text_block(
+                runner, "Model, provider and effort stay as the human configured them", _is_blank),
+            f"{CODEX_README}: one exception": _text_block(
+                readme, next((line for line in readme.splitlines()
+                              if "The one exception is a run started by" in line), "\0"), _is_blank),
+            f"{CODEX_README}: --model": _text_block(
+                readme, "| `--model <name>`", lambda line: True),
+            f"{CODEX_README}: --effort": _text_block(
+                readme, "| `--effort <level>`", lambda line: True),
+        }
+        for name, block in blocks.items():
+            with self.subTest(place=name):
+                self.assertTrue(block, f"{name}: блок не найден")
+                self.assertEqual(_codex_model_pin_missing(block), [], name)
+                self.assertNotEqual(_codex_model_pin_missing(block.replace("claude-codex", "")), [],
+                                    f"{name}: проверка не ловит блок без 'claude-codex'")
 
     def test_critic_agents(self) -> None:
         agents = PLUGIN_DIR / AGENTS_SUBDIR

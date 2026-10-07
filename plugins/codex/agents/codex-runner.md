@@ -63,7 +63,7 @@ change files. A read-only run that hits the ban reports it honestly, which is ch
 an unrequested edit.
 
 Model, provider and effort stay as the human configured them in `~/.codex/config.toml`.
-One exception: a call from a feature-pipeline preset, which must pass the `--model` and
+One exception: a call from a `feature-pipeline` or `claude-codex` preset, which must pass the `--model` and
 `--effort` the preset requires, because model-per-role is part of the preset (rationale in
 `plugins/feature-pipeline/references/ROLES.md`). Never add `--provider` for it.
 

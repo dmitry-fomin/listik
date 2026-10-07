@@ -32,6 +32,7 @@ import json
 import os
 import pathlib
 import pty
+import re
 import select
 import shutil
 import signal
@@ -1059,20 +1060,35 @@ class InstallScriptTests(unittest.TestCase):
             env.pop("NO_COLOR", None)
             env.pop("CI", None)
             env["TERM"] = "xterm-256color"
+        prompt = self.PROMPT.encode("utf-8")
+        sent = 0
+
+        def step(buf: bytes) -> bytes | None:
+            nonlocal sent
+            if sent < len(answers) and buf.count(prompt) > sent:
+                sent += 1
+                return answers[sent - 1]
+            return None
+
+        code, out = self.pty_session(env, None if plain else (24, 100), step, timeout)
+        self.assertEqual(sent, len(answers), out)
+        return code, out, log
+
+    def pty_session(self, env: dict, winsize: tuple[int, int] | None, step,
+                    timeout: float) -> tuple[int, str]:
+        """Общая pty-обвязка: `step(buf)` по накопленному выводу отдаёт байты для ввода или None."""
         argv = [SH, str(INSTALL_SH), "--archive", str(self.make_archive(VERSION)),
                 "--service", "no", "--mcp", "no", "--swarm", "no", "--plugins", "yes",
                 "--codex-network", "no"]
-        prompt = self.PROMPT.encode("utf-8")
         pid, fd = pty.fork()
         if pid == 0:  # pragma: no cover — дочерний процесс
             try:
-                if not plain:
-                    fcntl.ioctl(0, termios.TIOCSWINSZ, struct.pack("HHHH", 24, 100, 0, 0))
+                if winsize:
+                    fcntl.ioctl(0, termios.TIOCSWINSZ, struct.pack("HHHH", *winsize, 0, 0))
                 os.execve(SH, argv, env)
             finally:
                 os._exit(127)
         buf = b""
-        sent = 0
         reaped = False
         try:
             deadline = time.monotonic() + timeout
@@ -1091,9 +1107,9 @@ class InstallScriptTests(unittest.TestCase):
                     if not chunk:
                         break
                     buf += chunk
-                if sent < len(answers) and buf.count(prompt) > sent:
-                    os.write(fd, answers[sent])
-                    sent += 1
+                data = step(buf)
+                if data:
+                    os.write(fd, data)
             _, status = os.waitpid(pid, 0)
             reaped = True
         finally:
@@ -1104,9 +1120,7 @@ class InstallScriptTests(unittest.TestCase):
                     pass
                 os.waitpid(pid, 0)
             os.close(fd)
-        out = buf.decode("utf-8", errors="replace")
-        self.assertEqual(sent, len(answers), out)
-        return os.waitstatus_to_exitcode(status), out, log
+        return os.waitstatus_to_exitcode(status), buf.decode("utf-8", errors="replace")
 
     @unittest.skipUnless(shutil.which("stty"), "нужен stty")
     def test_pty_reasks_and_dedups(self) -> None:
@@ -1151,6 +1165,120 @@ class InstallScriptTests(unittest.TestCase):
         self.assertEqual(self.installed_plugins(log), {"listik", "feature-pipeline"})
         self.assertTrue(all(self.route_visibility().values()))
 
+
+    # --- listik-jdo8, порция c: меню с галочками в оформленном режиме -----
+
+    def run_menu(self, rows: int, cols: int, keys: list[tuple[tuple[str, ...], bytes]],
+                 timeout: float = 240) -> tuple[int, str, pathlib.Path]:
+        """Оформленный режим под pty; `keys` — (что дождаться после прошлой клавиши, клавиша).
+
+        Каждая клавиша — отдельной записью и только после перерисовки: одиночный Esc иначе
+        склеился бы со следующей клавишей в одну последовательность.
+        """
+        env, log = self.fake_env()
+        env.pop("NO_COLOR", None)
+        env.pop("CI", None)
+        env["TERM"] = "xterm-256color"
+        plain_prompt = "Номера через пробел или запятую".encode("utf-8")
+        sent = 0
+        pos = 0
+
+        def step(buf: bytes) -> bytes | None:
+            nonlocal sent, pos
+            if sent < len(keys) and plain_prompt in buf:
+                self.fail("ждали меню, а пришёл построчный вопрос: "
+                          + buf.decode("utf-8", errors="replace"))
+            if sent >= len(keys):
+                return None
+            wait, data = keys[sent]
+            tail = buf[pos:]
+            if all(w.encode("utf-8") in tail for w in wait):
+                sent += 1
+                pos = len(buf)
+                return data
+            return None
+
+        code, out = self.pty_session(env, (rows, cols), step, timeout)
+        self.assertEqual(sent, len(keys), out)
+        return code, out, log
+
+    @staticmethod
+    def visible(out: str) -> str:
+        """Вывод без escape-последовательностей."""
+        return re.sub(r"\x1b\[[0-9;?]*[A-Za-z]", "", out)
+
+    def report(self, out: str, name: str) -> str:
+        """Значение строки итоговой панели («нейронки», «харнессы»)."""
+        found = re.findall(name + r":\s+([^\r\n]*)", self.visible(out))
+        self.assertTrue(found, out)
+        return found[-1].strip()
+
+    def menu_lines(self, out: str) -> list[str]:
+        """Видимый текст строк меню."""
+        text = self.visible(out)
+        return [ln for ln in re.split(r"\r\n|\r|\n", text)
+                if any(m in ln for m in ("[✓]", "[ ]", "Пробел", "Какие", "Отметьте"))]
+
+    KEYS_WIDE = "Пробел отметить"
+
+    @unittest.skipUnless(shutil.which("stty"), "нужен stty")
+    def test_menu_main(self) -> None:
+        k = self.KEYS_WIDE
+        code, out, log = self.run_menu(40, 100, [
+            (("Какие нейронки", k), b"\r"),
+            (("Какие харнессы", k), b"\x1b[B"),
+            ((k,), b" "),
+            ((k,), b"\r"),
+        ])
+        self.assertEqual(code, 0, out)
+        self.assertIn("Отметьте, что есть", out)
+        self.assertIn("[✓]", out)
+        self.assertIn("[ ]", out)
+        self.assertNotIn(self.PROMPT, out)
+        self.assertEqual(self.report(out, "нейронки"), "claude, openai, deepseek, glm, grok, devin, gemini")
+        self.assertEqual(self.report(out, "харнессы"), "claude, pi, devin, dsh, opencode, grok")
+        self.assertNotIn("plugin install codex@listik", self.log_text(log))
+        self.assertIn("plugin install pi@listik", self.log_text(log))
+
+    @unittest.skipUnless(shutil.which("stty"), "нужен stty")
+    def test_menu_edges_and_ignored_keys(self) -> None:
+        k = self.KEYS_WIDE
+        keys = [(("Какие нейронки", k), b"\x1b[A")]
+        keys += [((k,), key) for key in (b"y", b"n", b"\x1b", b" ", b"\r")]
+        keys.append((("Какие харнессы", k), b"\x1b[B"))
+        keys += [((k,), b"\x1b[B")] * 9
+        keys += [((k,), b" "), ((k,), b"\r")]
+        code, out, log = self.run_menu(40, 100, keys)
+        self.assertEqual(code, 0, out)
+        self.assertEqual(self.report(out, "нейронки"), "openai, deepseek, glm, grok, devin, gemini")
+        self.assertEqual(self.report(out, "харнессы"), "claude, codex, pi, devin, dsh, opencode")
+        self.assertNotIn("plugin install feature-pipeline@listik", self.log_text(log))
+
+    @unittest.skipUnless(shutil.which("stty"), "нужен stty")
+    def test_menu_narrow(self) -> None:
+        k = "Пробел · Enter"
+        keys = [(("Какие нейронки", k), b"\x1b[B")]
+        keys += [((k,), key) for key in (b"\x1b[B", b"\x1b[A", b" ", b"\r")]
+        keys.append((("Какие харнессы", k), b"\x1b[B"))
+        keys += [((k,), key) for key in (b"\x1b[B", b"\x1b[B", b"\x1b[A", b" ", b"\r")]
+        code, out, log = self.run_menu(40, 60, keys)
+        self.assertEqual(code, 0, out)
+        self.assertNotIn(self.KEYS_WIDE, out)
+        self.assertEqual(self.report(out, "нейронки"), "claude, deepseek, glm, grok, devin, gemini")
+        self.assertEqual(self.report(out, "харнессы"), "claude, codex, devin, dsh, opencode, grok")
+        lines = self.menu_lines(out)
+        self.assertTrue(lines)
+        for line in lines:
+            self.assertLessEqual(len(line), 60, line)
+
+    @unittest.skipUnless(shutil.which("stty"), "нужен stty")
+    def test_menu_ctrl_c_aborts(self) -> None:
+        code, out, log = self.run_menu(40, 100, [(("Какие нейронки", self.KEYS_WIDE), b"\x03")])
+        self.assertNotEqual(code, 0, out)
+        self.assertIn("установка прервана", out)
+        tail = out[out.rindex(self.KEYS_WIDE):]
+        self.assertIn("\x1b[?25h", tail)
+        self.assertNotIn("plugin install", self.log_text(log))
 
 if __name__ == "__main__":
     unittest.main()

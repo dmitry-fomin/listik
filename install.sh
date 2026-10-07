@@ -379,6 +379,121 @@ ui_menu2() {
     return 0
 }
 
+ui_checklist_keys() {
+    # строка клавиш меню с галочками: на узком терминале — короткая, иначе перенос
+    if [ "$ui_cols" -ge 80 ]; then
+        ui_fit "↑ ↓ выбор · Пробел отметить · Enter подтвердить · Ctrl+C отмена"
+    else
+        ui_fit "↑ ↓ · Пробел · Enter · Ctrl+C"
+    fi
+    ui_line "  ${c_dim}$fit${c_off}"
+}
+
+ui_checklist_draw() {
+    # $@ — подписи пунктов; отметки — $checklist_marks, курсор — $checklist_cur
+    checklist_k=1
+    checklist_rest=$checklist_marks
+    # префикс «  ❯ [✓] » на 2 знака длиннее, чем рассчитано в ui_fit
+    checklist_max=$((ui_cols - ${#ui_pad} - 8))
+    [ "$checklist_max" -lt 18 ] && checklist_max=18
+    for checklist_label in "$@"; do
+        checklist_c=${checklist_rest%"${checklist_rest#?}"}
+        checklist_rest=${checklist_rest#?}
+        checklist_len=$(printf '%s' "$checklist_label" | wc -m | tr -d ' ')
+        if [ "$checklist_len" -gt "$checklist_max" ]; then
+            checklist_label=$(printf '%s' "$checklist_label" | cut -c1-$((checklist_max - 1)))…
+        fi
+        if [ "$checklist_c" = 1 ]; then
+            checklist_box="${c_ok}[✓]${c_off}"
+        else
+            checklist_box="${c_dim}[ ]${c_off}"
+        fi
+        if [ "$checklist_k" = "$checklist_cur" ]; then
+            ui_line "  ${c_ok}❯${c_off} $checklist_box ${c_sel}$checklist_label${c_off}"
+        else
+            ui_line "    $checklist_box ${c_text}$checklist_label${c_off}"
+        fi
+        checklist_k=$((checklist_k + 1))
+    done
+}
+
+ui_checklist() {
+    # $1 — вопрос, $2 — подсказка, дальше — подписи пунктов. Ответ — в $checklist_choice:
+    # номера отмеченных через пробел по возрастанию (пусто — ни одного).
+    # Возврат 1 — меню не показано (нет оформления, raw или строк на экране).
+    [ "$ui_enabled" = 1 ] || return 1
+    checklist_q=$1
+    checklist_hint=$2
+    shift 2
+    checklist_n=$#
+    # заставка 20 строк + меню N + 3 + строка запаса
+    [ "$ui_rows" -lt $((20 + checklist_n + 3 + 1)) ] && return 1
+    ui_tty_raw || return 1
+    checklist_marks=
+    checklist_k=0
+    while [ "$checklist_k" -lt "$checklist_n" ]; do
+        checklist_marks="${checklist_marks}1"
+        checklist_k=$((checklist_k + 1))
+    done
+    checklist_cur=1
+    ui_cursor_hide
+    ui_clear_hold
+    ui_fit "$checklist_q"
+    ui_line "  ${c_ok}?${c_off} ${c_sel}$fit${c_off}"
+    ui_fit "$checklist_hint"
+    ui_line "    ${c_dim}$fit${c_off}"
+    ui_checklist_draw "$@"
+    ui_checklist_keys
+    while :; do
+        ui_read_key
+        case $key in
+            up) [ "$checklist_cur" -gt 1 ] && checklist_cur=$((checklist_cur - 1)) ;;
+            down) [ "$checklist_cur" -lt "$checklist_n" ] && checklist_cur=$((checklist_cur + 1)) ;;
+            space)
+                checklist_new=
+                checklist_k=1
+                checklist_rest=$checklist_marks
+                while [ -n "$checklist_rest" ]; do
+                    checklist_c=${checklist_rest%"${checklist_rest#?}"}
+                    checklist_rest=${checklist_rest#?}
+                    if [ "$checklist_k" = "$checklist_cur" ]; then
+                        if [ "$checklist_c" = 1 ]; then checklist_c=0; else checklist_c=1; fi
+                    fi
+                    checklist_new=$checklist_new$checklist_c
+                    checklist_k=$((checklist_k + 1))
+                done
+                checklist_marks=$checklist_new
+                ;;
+            enter) break ;;
+            abort)
+                ui_cursor_show
+                ui_tty_restore
+                printf '\n'
+                die "установка прервана"
+                ;;
+        esac
+        # перерисовываем пункты и строку клавиш; вопрос и подсказка стоят на месте
+        printf '%s[%dA' "$esc" "$((checklist_n + 1))"
+        ui_checklist_draw "$@"
+        ui_checklist_keys
+    done
+    checklist_choice=
+    checklist_k=1
+    checklist_rest=$checklist_marks
+    while [ -n "$checklist_rest" ]; do
+        [ "${checklist_rest%"${checklist_rest#?}"}" = 1 ] &&
+            checklist_choice="$checklist_choice${checklist_choice:+ }$checklist_k"
+        checklist_rest=${checklist_rest#?}
+        checklist_k=$((checklist_k + 1))
+    done
+    ui_tty_restore
+    ui_cursor_show
+    # Отвеченный вопрос убираем — его место займёт следующий шаг или вопрос.
+    ui_hold=$((checklist_n + 3))
+    ui_clear_hold
+    return 0
+}
+
 ui_mark() {
     # значок по статусу: ok — галочка, «не удалось» — крест, остальное — точка
     case $1 in
@@ -1127,7 +1242,12 @@ choose_list() {
         "$cl_fn" "$cl_id"
         set -- "$@" "$label"
     done
-    ask_list_plain "$cl_q" "$@" || return 0
+    if [ "$ui_enabled" = 1 ] &&
+        ui_checklist "$cl_q" "Отметьте, что есть: от этого зависят плагины" "$@"; then
+        list_numbers=$checklist_choice
+    else
+        ask_list_plain "$cl_q" "$@" || return 0
+    fi
     chosen=
     cl_i=1
     for cl_id in $cl_ids; do

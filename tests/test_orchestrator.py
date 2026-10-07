@@ -90,7 +90,7 @@ class MigrationTests(unittest.TestCase):
         self.assertNotIn("idx_tasks_assignee", _indexes(conn))
         version = conn.execute(
             "SELECT value FROM meta WHERE key = 'schema_version'").fetchone()[0]
-        self.assertEqual(version, "14")
+        self.assertEqual(version, "15")
 
         self.assertFalse(db_mod.rename_task_orchestrator(conn))
         again = db_mod.init(self.path)

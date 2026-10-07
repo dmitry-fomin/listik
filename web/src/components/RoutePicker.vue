@@ -212,8 +212,9 @@ function onRouteKeydown(event: KeyboardEvent, key: string): void {
             :title="cellTitle(route.roles[role])"
           >
             <template v-if="route.roles[role]">
-              <!-- Ячейка роевой формы (`driver=swarm` у pipeline) рисуется
-                   глифом харнесса — у неё нет `provider`. -->
+              <!-- Ячейка роевой формы (наследие роевых конвейеров; сужение
+                   до RoleCell — вне шага listik-ujra) рисуется глифом
+                   харнесса — у неё нет `provider`. -->
               <template v-if="isSwarmCell(route.roles[role])">
                 <HarnessIcon :harness="route.roles[role]!.harness" size="sm" />
                 <span class="listik-pipelines__cell-label">{{ harnessTitle(route.roles[role]!.harness) }}</span>
@@ -277,8 +278,9 @@ function onRouteKeydown(event: KeyboardEvent, key: string): void {
             :title="cellTitle(route.roles[role])"
           >
             <template v-if="route.roles[role]">
-              <!-- Ячейка роевой формы (`driver=swarm` у pipeline) рисуется
-                   глифом харнесса — у неё нет `provider`. -->
+              <!-- Ячейка роевой формы (наследие роевых конвейеров; сужение
+                   до RoleCell — вне шага listik-ujra) рисуется глифом
+                   харнесса — у неё нет `provider`. -->
               <template v-if="isSwarmCell(route.roles[role])">
                 <HarnessIcon :harness="route.roles[role]!.harness" size="sm" />
                 <span class="listik-pipelines__cell-label">{{ harnessTitle(route.roles[role]!.harness) }}</span>

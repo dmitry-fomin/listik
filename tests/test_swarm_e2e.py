@@ -1,6 +1,6 @@
 """Сквозная приёмка роя (`bin/listik-swarm`) на живом сервере Listik, настоящем
 `bin/listik`, настоящем git и поддельном воркере (listik-9hcc, порция d; режим
-`driver=swarm` — listik-w7ge, порция d).
+`kind=swarm` — listik-w7ge, порция d).
 
 Юнит-тесты роя (b/c) гоняют `decide`/`tick` на подставном `listik`; здесь --
 процесс роя (`node bin/listik-swarm`) реально общается с реальным сервером
@@ -50,7 +50,7 @@ def _missing_tool() -> str | None:
 
 _MISSING_TOOL = _missing_tool()
 
-# Воркер роли этапа (режим `driver=swarm`): роль — из `LISTIK_ROLE`, ответ этапа —
+# Воркер роли этапа (режим роя, `kind=swarm`): роль — из `LISTIK_ROLE`, ответ этапа —
 # последняя строка stdout. `listik` воркер не зовёт вовсе: claim, журнал запуска и
 # переходы делает Listik. `spec`/`critic` -> «готово», `judge` -> «зелёный», `impl` ->
 # (зависание | падение при первом запуске `impl` карточки) | сон FAKE_WORKER_SLEEP ->

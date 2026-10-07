@@ -509,12 +509,10 @@ class CreateSwarmRouteTests(RoutesApiBase):
         status, record = self.post("/api/routes", self.body())
         self.assertEqual(status, 201)
         self.assertEqual(record["kind"], "swarm")
-        self.assertEqual(record["driver"], "swarm")
         self.assertEqual(record["roles"]["impl"]["harness"], "codex")
         self.assertIsNone(record["command"])
         self.assertNotIn("harness", record)
-        stored = routes_store.get_route(self.conn, "roy")
-        self.assertEqual(stored["driver"], "swarm")
+        self.assertEqual(routes_store.get_route(self.conn, "roy")["kind"], "swarm")
 
     def test_post_swarm_requires_roles(self) -> None:
         for bad in (None, {}, "x"):
@@ -564,44 +562,67 @@ class CreateSwarmRouteTests(RoutesApiBase):
         self.assertEqual(status, 200)
         self.assertEqual(record["roles"]["judge"]["harness"], "codex")
 
-    def test_patch_driver_flip_revalidates_existing_roles(self) -> None:
-        """`driver` нельзя переключить под старым раскладом: скиловые ячейки
-        `{provider,…}` роем не исполняются — PATCH отклоняется до записи."""
-        self.write_and_import([pipeline_record()])
-        with self.assertRaises(server.ApiError) as ctx:
-            self.patch("/api/routes/demo-pipeline", {"driver": "swarm"})
-        self.assertEqual(ctx.exception.status, 400)
-        self.assertEqual(
-            routes_store.get_route(self.conn, "demo-pipeline")["driver"], "skill")
-
-    def test_patch_driver_and_roles_in_one_request(self) -> None:
-        """`driver` вместе с новым раскладом в одном PATCH — итог проверяется
-        по новому способу исполнения; обратный перевод — так же."""
-        self.write_and_import([pipeline_record()])
-        status, record = self.patch(
-            "/api/routes/demo-pipeline",
-            {"driver": "swarm", "roles": {"impl": {"harness": "codex"}}})
-        self.assertEqual(status, 200)
-        self.assertEqual(record["driver"], "swarm")
-        self.assertEqual(record["roles"]["impl"]["harness"], "codex")
-        status, record = self.patch(
-            "/api/routes/demo-pipeline",
-            {"driver": "skill",
-             "roles": {"impl": {"provider": "claude", "label": "Opus",
-                                "title": "Opus · medium"}}})
-        self.assertEqual(status, 200)
-        self.assertEqual(record["driver"], "skill")
-
-    def test_used_by_counts_swarm_driven_pipeline(self) -> None:
-        """`used_by` харнесса видит роли и в конвейере с `driver=swarm`."""
+    def test_used_by_counts_swarm_route(self) -> None:
+        """`used_by` харнесса видит роли маршрута `kind=swarm`."""
         self.post("/api/harnesses", {"key": "mini", "argv": ["mini", "run"]})
-        self.write_and_import([pipeline_record()])
-        self.patch("/api/routes/demo-pipeline",
-                   {"driver": "swarm", "roles": {"impl": {"harness": "mini"}}})
+        self.post("/api/routes", self.body(roles={"impl": {"harness": "mini"}}))
         status, detail = self.get("/api/harnesses/mini")
         self.assertEqual(status, 200)
-        self.assertIn({"route": "demo-pipeline", "kind": "swarm", "role": "impl"},
-                      detail["used_by"])
+        self.assertIn({"route": "roy", "kind": "swarm", "role": "impl"}, detail["used_by"])
+
+
+class RouteDriverGoneTests(RoutesApiBase):
+    """listik-ujra: поля `driver` у маршрута нет — его нельзя ни передать, ни получить."""
+
+    SWARM = {"kind": "swarm", "key": "roy", "title": "Рой",
+             "roles": {"impl": {"harness": "codex"}}}
+
+    def assert_bad_driver(self, method, path, body) -> None:
+        with self.assertRaises(server.ApiError) as ctx:
+            method(path, body)
+        self.assertEqual(ctx.exception.status, 400)
+        self.assertEqual(ctx.exception.code, errors.BAD_ARGUMENT)
+        self.assertIn("driver", ctx.exception.message)
+
+    def test_patch_with_driver_is_400_and_changes_nothing(self) -> None:
+        self.write_and_import([pipeline_record()])
+        self.post("/api/routes", self.SWARM)
+        for key, roles in (("demo-pipeline", {"impl": {"harness": "codex"}}),
+                           ("roy", {"judge": {"harness": "codex"}})):
+            before = self.conn.execute("SELECT * FROM routes WHERE key = ?", (key,)).fetchone()
+            for body in ({"driver": "swarm"}, {"driver": "skill"},
+                         {"driver": "swarm", "roles": roles}):
+                with self.subTest(key=key, body=body):
+                    self.assert_bad_driver(self.patch, f"/api/routes/{key}", body)
+                    after = self.conn.execute(
+                        "SELECT * FROM routes WHERE key = ?", (key,)).fetchone()
+                    self.assertEqual(dict(after), dict(before))
+
+    def test_post_with_driver_is_400_and_creates_nothing(self) -> None:
+        for body in ({"key": "xhigh-pipeline", "driver": "skill"},
+                     {**self.SWARM, "driver": "swarm"}):
+            with self.subTest(body=body):
+                self.assert_bad_driver(self.post, "/api/routes", body)
+                with self.assertRaises(errors.NotFound):
+                    routes_store.get_route(self.conn, body["key"])
+
+    def test_update_route_rejects_driver(self) -> None:
+        self.write_and_import([pipeline_record()])
+        with self.assertRaises(ValueError) as ctx:
+            routes_store.update_route(self.conn, "demo-pipeline", driver="skill")
+        self.assertIn("driver", str(ctx.exception))
+
+    def test_records_have_no_driver(self) -> None:
+        self.write_and_import([pipeline_record()])
+        self.post("/api/routes", self.SWARM)
+        status, data = self.get("/api/routes")
+        self.assertEqual(status, 200)
+        self.assertTrue(data["routes"])
+        for record in data["routes"]:
+            self.assertNotIn("driver", record)
+        for record in routes_store.list_routes(self.conn):
+            self.assertNotIn("driver", record)
+            self.assertNotIn("driver", routes_store.get_route(self.conn, record["key"]))
 
 
 if __name__ == "__main__":

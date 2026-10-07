@@ -60,10 +60,10 @@ class SchemaTests(TempDbTestCase):
         self.assertEqual(cols["transition"]["type"], "TEXT")
         self.assertEqual(cols["transition"]["notnull"], 0)
         self.assertIsNone(cols["transition"]["dflt_value"])
-        self.assertEqual(db_mod.SCHEMA_VERSION, 14)
+        self.assertEqual(db_mod.SCHEMA_VERSION, 15)
         version = self.conn.execute(
             "SELECT value FROM meta WHERE key = 'schema_version'").fetchone()[0]
-        self.assertEqual(version, "14")
+        self.assertEqual(version, "15")
 
 
 class BackfillTests(unittest.TestCase):

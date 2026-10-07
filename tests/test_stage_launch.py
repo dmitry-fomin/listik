@@ -1,4 +1,4 @@
-"""Режим роя (`driver=swarm`): claim за роль, последняя строка `.out`, нарезка,
+"""Режим роя (`kind=swarm`): claim за роль, последняя строка `.out`, нарезка,
 закрытие родителя, `launched:false` (listik-2gry, docs/specs/swarm-stage-launch.md).
 
 Процессы — настоящие `python3 -c` короткоживущие скрипты (харнесс `probe`),

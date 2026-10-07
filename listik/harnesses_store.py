@@ -182,9 +182,9 @@ def used_by(conn: sqlite3.Connection, key: str) -> list[dict]:
     """Где харнесс задействован: роли маршрутов роя."""
     out: list[dict] = []
     for row in conn.execute(
-            "SELECT key, kind, roles, driver FROM routes WHERE roles LIKE ?",
+            "SELECT key, kind, roles FROM routes WHERE roles LIKE ?",
             (f'%"{key}"%',)).fetchall():
-        swarm = row["kind"] == "swarm" or row["driver"] == "swarm"
+        swarm = row["kind"] == "swarm"
         if swarm and row["roles"]:
             try:
                 roles = json.loads(row["roles"])

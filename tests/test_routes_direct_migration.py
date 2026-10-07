@@ -86,6 +86,7 @@ class DirectMigrationTests(unittest.TestCase):
     def test_rows_become_single_role_swarm_routes(self) -> None:
         conn = self.open_migrated()
         self.assertNotIn("harness", self.columns(conn))
+        self.assertNotIn("driver", self.columns(conn))
         rows = {row["key"]: row for row in conn.execute("SELECT * FROM routes")}
         self.assertEqual(set(rows), {key for key, _, _ in ROWS})
         expected_roles = {
@@ -97,7 +98,6 @@ class DirectMigrationTests(unittest.TestCase):
         for key, row in rows.items():
             with self.subTest(key=key):
                 self.assertEqual(row["kind"], "swarm")
-                self.assertEqual(row["driver"], "swarm")
                 self.assertIsNone(row["command"])
                 self.assertEqual(json.loads(row["roles"]), expected_roles[key])
                 before = self.routes_before[key]
@@ -105,7 +105,7 @@ class DirectMigrationTests(unittest.TestCase):
                     self.assertEqual(row[name], before[name], name)
         version = conn.execute(
             "SELECT value FROM meta WHERE key = 'schema_version'").fetchone()[0]
-        self.assertEqual(version, "14")
+        self.assertEqual(version, "15")
         self.assertEqual(conn.execute(
             "SELECT launch_route FROM tasks WHERE id = 't1'").fetchone()[0], "r-grok")
 

@@ -1,7 +1,6 @@
 <script setup lang="ts">
 /**
- * RouteSwarmCard — карточка маршрута `kind=swarm` (и конвейера с
- * `driver=swarm`) во вкладке «Маршруты» настроек (`RoutesSettings.vue`,
+ * RouteSwarmCard — карточка маршрута `kind=swarm` во вкладке «Маршруты» настроек (`RoutesSettings.vue`,
  * правая панель). Раскладка — по макету
  * `docs/design/settings/Настройки · Маршруты · рой-html/RoutesSwarm.dc.html`.
  *
@@ -45,7 +44,7 @@ import RouteCommandText from './RouteCommandText.vue'
 import RouteSubstitutions from './RouteSubstitutions.vue'
 import store from '@/store/listik'
 import { useAutosave } from '@/lib/autosave'
-import type { RouteIconKey, RoutePatch, RouteRemoved, SwarmLikeRoute, SwarmRoles } from '@/api/types'
+import type { RouteIconKey, RoutePatch, RouteRemoved, SwarmRouteDef, SwarmRoles } from '@/api/types'
 import { ROUTE_ICON_OPTIONS, routeIconGlyph } from '@/lib/dictionaries'
 import { harnessTitle, runnableHarness } from '@/lib/harness'
 import { isSwarmCell, ROLE_KEYS, roleStage, ROLE_TITLES, type RoleKey } from '@/lib/pipelines'
@@ -63,7 +62,7 @@ import {
   type PlaceholderChunk,
 } from '@/lib/routes'
 
-const props = defineProps<{ route: SwarmLikeRoute }>()
+const props = defineProps<{ route: SwarmRouteDef }>()
 const emit = defineEmits<{
   'update:dirty': [value: boolean]
   /** Маршрут удалён на сервере — разделу пригодится ответ (число снятых карточек). */
@@ -88,12 +87,12 @@ interface RoleDraft {
   prompt: string
 }
 
-function headerOf(route: SwarmLikeRoute): HeaderDraft {
+function headerOf(route: SwarmRouteDef): HeaderDraft {
   return { title: route.title, hint: route.hint, visible: route.visible, icon: route.icon ?? null }
 }
 
 function roleDraftOf(cell: unknown): RoleDraft | null {
-  // Provider-ячейка под driver=swarm сервер не примет — читаем как пропуск.
+  // Provider-ячейку в маршруте роя сервер не примет — читаем как пропуск.
   if (!isSwarmCell(cell)) return null
   return {
     harness: cell.harness,
@@ -104,7 +103,7 @@ function roleDraftOf(cell: unknown): RoleDraft | null {
 
 type RolesDraft = Record<RoleKey, RoleDraft | null>
 
-function rolesOf(route: SwarmLikeRoute): RolesDraft {
+function rolesOf(route: SwarmRouteDef): RolesDraft {
   return {
     spec: roleDraftOf(route.roles.spec),
     critic: roleDraftOf(route.roles.critic),
@@ -150,7 +149,7 @@ const saveError = ref<string | null>(null)
 /** Роль, чья команда раскрыта ниже списка; пропущенная — без редактора. */
 const openRole = ref<RoleKey>(ROLE_KEYS.find((role) => roles[role]) ?? 'spec')
 
-function resetDraft(route: SwarmLikeRoute): void {
+function resetDraft(route: SwarmRouteDef): void {
   const header = headerOf(route)
   draft.title = header.title
   draft.hint = header.hint
@@ -740,7 +739,7 @@ const roleInherits = computed(() => {
         Правки применятся к следующему запуску. Уже запущенные задачи не трогаются.
       </span>
       <UiSaveStatus :status="status" @retry="() => schedule(true)" />
-      <!-- Удаляются только записи роя: у конвейера с driver=swarm кнопки нет. -->
+      <!-- Удаляются только записи роя (`kind=swarm`). -->
       <UiButton
         v-if="route.kind === 'swarm'"
         variant="danger"

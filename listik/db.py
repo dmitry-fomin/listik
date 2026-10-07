@@ -11,7 +11,7 @@ from pathlib import Path
 
 from . import paths
 
-SCHEMA_VERSION = 14
+SCHEMA_VERSION = 15
 
 SCHEMA = """
 PRAGMA journal_mode = WAL;
@@ -96,9 +96,9 @@ CREATE TABLE IF NOT EXISTS tasks (
     write_scope  TEXT NOT NULL DEFAULT '[]',   -- JSON-список относительных путей, которые задача правит
     dispatch_id  TEXT,                         -- id запуска воркера; NULL, пока запуска не было
     generation   INTEGER NOT NULL DEFAULT 0,   -- поколение запуска, растёт при каждом старте
-    -- Способ исполнения маршрута — снимок `routes.driver` на момент первого
-    -- запуска (listik-2gry). Пишет только лаунчер; NULL — запуска не было,
-    -- читается живое поле маршрута.
+    -- Способ исполнения — снимок по `kind` маршрута (swarm → swarm, иначе skill)
+    -- на момент первого запуска (listik-2gry). Пишет только лаунчер; NULL —
+    -- запуска не было, решает `kind` маршрута.
     launch_driver TEXT                         -- skill | swarm | NULL
 );
 CREATE INDEX IF NOT EXISTS idx_tasks_status   ON tasks(status);
@@ -209,7 +209,6 @@ CREATE TABLE IF NOT EXISTS routes (
     position   INTEGER NOT NULL DEFAULT 0, -- порядок в списке и в «Новой задаче»
     command    TEXT,                       -- JSON-массив argv, либо NULL
     roles      TEXT,                       -- pipeline: {"spec":{provider,label,title},…}; swarm: {"spec":{harness,argv,prompt},…}
-    driver     TEXT NOT NULL DEFAULT 'skill',  -- skill | swarm (swarm — у kind=swarm)
     created_at TEXT,
     updated_at TEXT
 );
@@ -341,7 +340,6 @@ MIGRATIONS: list[tuple[str, str, str]] = [
     ("tasks", "dispatch_id", "TEXT"),
     ("tasks", "generation", "INTEGER NOT NULL DEFAULT 0"),
     ("tasks", "launch_driver", "TEXT"),
-    ("routes", "driver", "TEXT NOT NULL DEFAULT 'skill'"),
     ("comments", "kind", "TEXT NOT NULL DEFAULT 'comment'"),
     ("deps", "created_by", "TEXT"),
     ("documents", "status", "TEXT NOT NULL DEFAULT 'ok'"),
@@ -407,6 +405,7 @@ def init(db_path: Path | None = None, *, verbose: bool = False) -> sqlite3.Conne
     harnesses_store.seed(conn)
     conn.commit()
     drop_direct_routes(conn)
+    drop_route_driver(conn)
     return conn
 
 
@@ -414,7 +413,8 @@ def init(db_path: Path | None = None, *, verbose: bool = False) -> sqlite3.Conne
 #: `kind='direct'` становится маршрутом роя с одной ролью `impl` — харнесс строки,
 #: argv — `command` без последнего элемента (последний элемент — промпт, он не переносится:
 #: у роя claim/stage/done делает Listik). Харнесса нет в каталоге — заводится
-#: запись. Тот же текст — у alembic-ревизии 0010_drop_direct_routes.
+#: запись. Тот же текст — у alembic-ревизии 0010_drop_direct_routes, кроме `driver`,
+#: которого больше нет в схеме.
 _ARGV = ("CASE WHEN json_valid(command) THEN CASE WHEN json_array_length(command) >= 2 "
          "THEN json_remove(command, '$[#-1]') END END")
 DROP_DIRECT_SQL = (
@@ -432,7 +432,7 @@ DROP_DIRECT_SQL = (
     "WHERE kind = 'direct'",
     f"UPDATE routes SET roles = json_set(roles, '$.impl.argv', {_ARGV}) "
     f"WHERE kind = 'direct' AND ({_ARGV}) IS NOT NULL",
-    "UPDATE routes SET kind = 'swarm', driver = 'swarm', command = NULL "
+    "UPDATE routes SET kind = 'swarm', command = NULL "
     "WHERE kind = 'direct'",
     "ALTER TABLE routes DROP COLUMN harness",
 )
@@ -454,6 +454,37 @@ def drop_direct_routes(conn: sqlite3.Connection) -> bool:
         conn.execute("RELEASE drop_direct")
         raise
     conn.execute("RELEASE drop_direct")
+    conn.commit()
+    return True
+
+
+#: Снятие `routes.driver` (схема 15, listik-ujra): способ исполнения выводится из `kind`.
+#: Запрещённое сочетание `pipeline` + `driver='swarm'` с непустым раскладом (ячейки уже
+#: роевые) становится роем тем же ключом; с пустым раскладом остаётся конвейером — рой
+#: без ролей недопустим. Тот же текст — у alembic-ревизии 0013_drop_route_driver.
+KIND_ONLY_ROUTES_SQL = (
+    "UPDATE routes SET kind = 'swarm' WHERE kind = 'pipeline' AND driver = 'swarm' "
+    "AND COALESCE(roles, '') NOT IN ('', '{}')",
+    "ALTER TABLE routes DROP COLUMN driver",
+)
+
+
+def drop_route_driver(conn: sqlite3.Connection) -> bool:
+    """Перевести `pipeline`+`driver='swarm'` в рой и удалить `routes.driver` одной транзакцией.
+
+    Только если колонка ещё есть — повторный вызов ничего не делает (False).
+    """
+    if "driver" not in _existing_columns(conn, "routes"):
+        return False
+    conn.execute("SAVEPOINT drop_route_driver")
+    try:
+        for sql in KIND_ONLY_ROUTES_SQL:
+            conn.execute(sql)
+    except Exception:
+        conn.execute("ROLLBACK TO drop_route_driver")
+        conn.execute("RELEASE drop_route_driver")
+        raise
+    conn.execute("RELEASE drop_route_driver")
     conn.commit()
     return True
 

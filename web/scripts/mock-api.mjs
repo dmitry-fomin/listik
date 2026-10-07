@@ -990,7 +990,6 @@ const ROUTES = [
   {
     key: 'dsh-direct',
     kind: 'swarm',
-    driver: 'swarm',
     title: 'DeepSeek — целиком',
     hint: 'один харнесс, без конвейера',
     visible: true,
@@ -1001,7 +1000,6 @@ const ROUTES = [
   {
     key: 'hidden-route',
     kind: 'swarm',
-    driver: 'swarm',
     title: 'Скрытый маршрут',
     hint: 'в списке доски не показывается',
     visible: false,

@@ -112,8 +112,8 @@ export function roleModels(cell: Pick<RoleCell, 'label' | 'title'>): RoleModel[]
 export const PARAM_KEY_RE = /^[a-z][a-z0-9_]*$/
 
 /**
- * Ячейка роли роевого исполнения (`driver='swarm'` у `kind=swarm` или
- * `kind=pipeline`, listik-2gry): исполнитель — харнесс из каталога, а не
+ * Ячейка роли роевого исполнения (ячейка маршрута `kind=swarm`,
+ * listik-2gry): исполнитель — харнесс из каталога, а не
  * вендор с подписью. Тип объявлен в `api/types.ts` (`SwarmRoleCell`),
  * предикат здесь — рядом с `RoleCell`, которому он альтернатива.
  */

@@ -60,11 +60,6 @@ VERSION = 1
 KINDS = ("pipeline", "swarm")
 ROLE_KEYS = ("spec", "critic", "impl", "judge")
 PROVIDERS = ("claude", "glm", "openai", "grok", "deepseek", "devin")
-# Способ исполнения маршрута (listik-2gry): `skill` — конвейер-скил,
-# `swarm` — рой: Listik поднимает по процессу на этап и сам ведёт этапы.
-DRIVER_SKILL = "skill"
-DRIVER_SWARM = "swarm"
-DRIVERS = (DRIVER_SKILL, DRIVER_SWARM)
 # Уровни маршрута — значения поля `icon`; подписи и иконки для доски лежат в
 # `web/src/lib/dictionaries.ts` (`ROUTE_ICONS`).
 ROUTE_ICONS = ("xhigh", "high", "medium", "low", "xlow", "direct")
@@ -72,8 +67,7 @@ PLACEHOLDERS = ("task_id", "project", "route", "cwd", "worktree", "branch",
                 "stage", "role", "harness")
 
 ROOT_FIELDS = ("version", "routes")
-RECORD_FIELDS = ("key", "kind", "title", "hint", "visible", "icon", "roles", "strip", "command",
-                 "driver")
+RECORD_FIELDS = ("key", "kind", "title", "hint", "visible", "icon", "roles", "strip", "command")
 ROLE_FIELDS = ("provider", "label", "title", "skill", "params")
 #: Поля ячейки роли маршрута `kind=swarm`: харнесс из каталога (`harnesses`),
 #: свой argv и свой промпт — последним аргументом. Пустая ячейка (роль не задана)
@@ -335,7 +329,12 @@ def _validate_icon(item: dict, key: str, where: str,
 def _validate_route(item, where: str, warnings: list[str] | None = None) -> dict:
     if not isinstance(item, dict):
         raise _err(where, "запись должна быть объектом")
-    _extra_fields(item, RECORD_FIELDS, where)
+    # driver: совместимость со старыми бэкапами — поле допустимо, только если равно выводу из kind
+    _extra_fields(item, RECORD_FIELDS + ("driver",), where)
+    old, kind = item.get("driver"), item.get("kind")
+    if old is not None and kind in KINDS and old != ("skill" if kind == "pipeline" else "swarm"):
+        raise _err(f"{where}.driver", "устаревшее поле: допустимо только значение по kind "
+                   "(pipeline — \"skill\", swarm — \"swarm\") или null")
 
     key = _present(item, "key", where)
     if not isinstance(key, str) or not KEY_RE.match(key):
@@ -344,10 +343,6 @@ def _validate_route(item, where: str, warnings: list[str] | None = None) -> dict
     kind = _present(item, "kind", where)
     if kind not in KINDS:
         raise _err(f"{where}.kind", 'должен быть "pipeline" или "swarm"')
-
-    driver = item.get("driver")
-    if driver is not None and driver not in DRIVERS:
-        raise _err(f"{where}.driver", f"допустимы: {', '.join(DRIVERS)}")
 
     title = _present(item, "title", where)
     if not _text(title):
@@ -372,24 +367,18 @@ def _validate_route(item, where: str, warnings: list[str] | None = None) -> dict
     if kind == "pipeline":
         if "roles" not in item:
             raise _err(f"{where}.roles", "обязательно для pipeline")
-        # Пайплайн роя (`driver: swarm`) хранит ячейки роя `{harness, argv?, prompt?}`,
-        # как `kind: swarm`, — так его и проверяем, иначе бэкап таблицы не читается.
         # Пустой расклад `{}` — хранимое состояние конвейера, заведённого без ролей
         # (`POST /api/routes` без `roles`): бэкап такой записи должен читаться обратно.
         if item["roles"] == {}:
             record["roles"] = {}
-        elif driver == "swarm":
-            record["roles"] = validate_swarm_roles(item["roles"], f"{where}.roles")
         else:
             record["roles"] = _validate_roles(item["roles"], f"{where}.roles")
-        record["driver"] = driver or "skill"
     else:
         if "roles" not in item:
             raise _err(f"{where}.roles", "обязательно для swarm")
         # Каталог харнессов файлу недоступен: проверяется только форма ячеек
         # и наличие команды у самой роли (argv) — слой базы проверит строже.
         record["roles"] = validate_swarm_roles(item["roles"], f"{where}.roles")
-        record["driver"] = "swarm"
 
     record["command"] = (validate_command(item["command"], f"{where}.command")
                          if "command" in item else None)
@@ -510,7 +499,6 @@ def labels_for(conn, route_key: str | None) -> list[str]:
     `KeyError` (баг в коде, не «маршрута нет») не глотается.
     """
     from . import routes_store  # цикл: routes_store импортирует routes
-    from . import stage_launch  # цикл: stage_launch → store → routes
     key = (route_key or "").strip()
     if not key:
         return []
@@ -521,8 +509,8 @@ def labels_for(conn, route_key: str | None) -> list[str]:
         return []
     except errors.NotFound:  # маршрута нет: метки не выдумываем
         return []
-    if record["kind"] == "swarm" or stage_launch.is_swarm(record):
-        # Рой (по `kind` или по `driver`) ведёт сам Listik, харнесс меняется по
+    if record["kind"] == "swarm":
+        # Рой ведёт сам Listik, харнесс меняется по
         # этапам — общего исполнителя в метке нет, только ключ маршрута.
         return [f"process:{record['key']}"]
     return ["harness:claude", f"process:{record['key']}"]

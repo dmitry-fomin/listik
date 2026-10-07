@@ -11,7 +11,7 @@ import type { UiRecordListColumn } from '@zoloto585/facet'
 import type {
   PipelineRouteDef,
   RouteDef,
-  SwarmLikeRoute,
+  SwarmRouteDef,
 } from '@/api/types'
 
 /**
@@ -88,26 +88,22 @@ export function pickerRoutesOf(
 }
 
 /**
- * Строки таблицы ролей — пресеты конвейера режима скила. Конвейер с
- * `driver='swarm'` исполняется роем — в таблицу конвейеров не входит, а в
- * группу «Рой» (`swarmRoutesOf`); иначе запись оказывалась бы в обеих группах.
+ * Строки таблицы ролей — пресеты конвейера (`kind = pipeline`). Маршруты роя
+ * (`kind = swarm`) — в группе «Рой» (`swarmRoutesOf`).
  */
 export function pipelineRowsOf(routes: RouteDef[]): PipelineRouteDef[] {
   return routes.filter(
-    (route): route is PipelineRouteDef =>
-      route.kind === 'pipeline' && route.driver !== 'swarm',
+    (route): route is PipelineRouteDef => route.kind === 'pipeline',
   )
 }
 
 /**
- * Роевые маршруты: `kind = swarm` и конвейеры с `driver='swarm'` (ячейки у
- * них — `SwarmRoleCell`). Секция «Рой» в пикере «как делать» и группа «Рой»
- * в настройках маршрутов.
+ * Маршруты роя: `kind = swarm` (ячейки у них — `SwarmRoleCell`). Секция «Рой»
+ * в пикере «как делать» и группа «Рой» в настройках маршрутов.
  */
-export function swarmRoutesOf(routes: RouteDef[]): SwarmLikeRoute[] {
+export function swarmRoutesOf(routes: RouteDef[]): SwarmRouteDef[] {
   return routes.filter(
-    (route): route is SwarmLikeRoute =>
-      route.kind === 'swarm' || (route.kind === 'pipeline' && route.driver === 'swarm'),
+    (route): route is SwarmRouteDef => route.kind === 'swarm',
   )
 }
 

@@ -19,12 +19,12 @@ export const textSlicedStuck = (id) =>
   `Принять порции: listik portions adopt ${id}. Начать заново с s1-spec (порции снимутся, ` +
   `текст сохранится): listik restart ${id} --stage s1-spec.`;
 
-// Карточка режима роя: снимок launch_driver, а до первого запуска — driver/kind маршрута.
+// Карточка режима роя: снимок launch_driver, а до первого запуска — kind маршрута.
 function isSwarmCard(t, routeByKey) {
   if (!t.launch_route) return false;
   if (t.launch_driver === "swarm") return true;
   const route = routeByKey.get(t.launch_route);
-  return !t.launch_driver && !!route && (route.kind === "swarm" || route.driver === "swarm");
+  return !t.launch_driver && !!route && route.kind === "swarm";
 }
 
 // План волн только из карточек роя: без маршрута или с маршрутом не из роя карточка

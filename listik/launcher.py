@@ -43,6 +43,8 @@ from . import store
 _SUBST_RE = re.compile(r"\{(" + "|".join(routes_mod.PLACEHOLDERS) + r")\}")
 
 ALREADY_STARTED = "уже запущена Listik"
+#: Значение снимка `launch_driver` у карточки роя (маршрут `kind=swarm`).
+SWARM = "swarm"
 
 # Переменные LISTIK_*, которые сам Listik читает или выдаёт (см. listik/paths.py,
 # bin/listik, listik/client.py, listik/cwd_project.py, listik/fence.py, штатные пять
@@ -330,7 +332,7 @@ def _record_started(conn, task_id: str, row, proc: subprocess.Popen, notify, *,
         raise first
 
 
-def _finish(conn, task_id: str, driver: str | None, text: str, notify) -> None:
+def _finish(conn, task_id: str, mode: str | None, text: str, notify) -> None:
     """Разобрать завершение запуска по снимку `launch_driver`.
 
     Рой — исход карточки разбирает `stage_launch.apply_outcome` (общую строку
@@ -338,7 +340,7 @@ def _finish(conn, task_id: str, driver: str | None, text: str, notify) -> None:
     `text` журналом от `store.AUTOSTART_ACTOR` (`add_comment` коммитит и UPDATE
     вызывающего). Событие доски шлёт вызывающий.
     """
-    if driver == routes_mod.DRIVER_SWARM:
+    if mode == SWARM:
         from . import stage_launch
         stage_launch.apply_outcome(conn, task_id, notify=notify)
     else:
@@ -372,9 +374,9 @@ def _track(conn, db_path, task_id: str, pid: int, proc: subprocess.Popen, notify
         else:
             # У режима роя stdout идёт в `.out` рядом с launch_log (см. `_finish`).
             # Этап, держателя и статус слежение скила не трогает.
-            drv = target.execute(
+            snap = target.execute(
                 "SELECT launch_driver FROM tasks WHERE id = ?", (task_id,)).fetchone()
-            _finish(target, task_id, drv["launch_driver"] if drv is not None else None,
+            _finish(target, task_id, snap["launch_driver"] if snap is not None else None,
                     f"автостарт: процесс {pid} завершился с кодом {code}", notify)
     except Exception as exc:  # noqa: BLE001 — падать в демоне нельзя, скажем в stderr
         print(f"autostart {task_id}: не записал завершение процесса {pid}: {exc}",
@@ -422,9 +424,9 @@ def start(conn, task_id: str, notify=None, *, log_dir=None, env=None) -> str | N
     record = state.by_key.get(key) if state.ok else None
     # Снимок способа исполнения (listik-2gry): `launch_driver` пишет только
     # лаунчер и только в первый захват (снимок ещё пуст).
-    driver = None
+    mode = None
     if record is not None:
-        driver = record.get("driver") or routes_mod.DRIVER_SKILL
+        mode = SWARM if record.get("kind") == "swarm" else "skill"
 
     ts = store.now_iso()
     dispatch_id = uuid.uuid4().hex
@@ -434,7 +436,7 @@ def start(conn, task_id: str, notify=None, *, log_dir=None, env=None) -> str | N
         "UPDATE tasks SET launched_by = 'listik', orchestrator = 'listik', launched_at = ?, "
         "generation = generation + 1, dispatch_id = ?, "
         "launch_driver = COALESCE(launch_driver, ?) "
-        "WHERE id = ? AND launched_by IS NULL", (ts, dispatch_id, driver, task_id))
+        "WHERE id = ? AND launched_by IS NULL", (ts, dispatch_id, mode, task_id))
     conn.commit()
     if captured.rowcount == 0:
         # Задача уже запущена этим или параллельным вызовом: ни launch_error, ни
@@ -459,10 +461,9 @@ def start(conn, task_id: str, notify=None, *, log_dir=None, env=None) -> str | N
         if row is None:  # задачу удалили между захватом и чтением; захват снимет except
             raise errors_mod.NotFound(f"задача не найдена: {task_id}")
 
-        # После снимка способ читается с карточки: правка `routes.driver` начатый
+        # После снимка способ читается с карточки: смена `kind` маршрута начатый
         # прогон не переводит в другой способ.
-        swarm = ((row["launch_driver"] or driver or routes_mod.DRIVER_SKILL)
-                 == routes_mod.DRIVER_SWARM)
+        swarm = (row["launch_driver"] or mode) == SWARM
         if not swarm:
             command = record.get("command")
             if not command:
@@ -826,9 +827,9 @@ def _poll(conn, db_path, task_id: str, pid: int, notify, dispatch_id: str | None
         if cur.rowcount == 0:  # запись уже сделана или задачу перезапустили
             target.commit()
             return
-        drv = target.execute(
+        snap = target.execute(
             "SELECT launch_driver FROM tasks WHERE id = ?", (task_id,)).fetchone()
-        _finish(target, task_id, drv["launch_driver"] if drv is not None else None,
+        _finish(target, task_id, snap["launch_driver"] if snap is not None else None,
                 f"автостарт: процесс {pid} завершился; слежение было "
                 "потеряно при перезапуске сервера — код выхода неизвестен", notify)
     except Exception as exc:  # noqa: BLE001 — падать в демоне нельзя

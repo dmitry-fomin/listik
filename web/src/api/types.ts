@@ -436,9 +436,6 @@ export interface ProjectRemoved {
  */
 export type RouteIconKey = 'xhigh' | 'high' | 'medium' | 'low' | 'xlow' | 'direct'
 
-/** Способ исполнения маршрута (`routes.driver`): `skill` — один процесс на карточку, `swarm` — этапы отдельными процессами (listik-2gry). */
-export type RouteDriver = 'skill' | 'swarm'
-
 interface RouteBase {
   key: string
   title: string
@@ -455,14 +452,12 @@ interface RouteBase {
   position: number
   /** Argv команды маршрута; `null` — команды нет (роли ещё не переввезены и т.п.). */
   command: string[] | null
-  /** Способ исполнения: `skill` — один процесс, `swarm` — этапы отдельными процессами. */
-  driver?: RouteDriver
 }
 
 /**
- * Пресет конвейера: роли ТЗ/критик/исполнитель/судья. При `driver='swarm'`
- * (роевой конвейер, listik-2gry) ячейки — `SwarmRoleCell`, а не `RoleCell`:
- * различают их `isSwarmCell`/`isProviderCell` из `lib/pipelines.ts`.
+ * Пресет конвейера: роли ТЗ/критик/исполнитель/судья. `SwarmRoleCell` в типе
+ * ролей — наследие роевых конвейеров; сужение до `RoleCell` — вне шага
+ * listik-ujra. Различают ячейки `isSwarmCell`/`isProviderCell` из `lib/pipelines.ts`.
  */
 export interface PipelineRouteDef extends RouteBase {
   kind: 'pipeline'
@@ -489,17 +484,10 @@ export type SwarmRoles = Partial<Record<RoleKey, SwarmRoleCell | null>>
 /** Маршрут роя: Listik водит карточку по этапам, на каждый — свой харнесс. */
 export interface SwarmRouteDef extends RouteBase {
   kind: 'swarm'
-  driver: 'swarm'
   roles: SwarmRoles
 }
 
 export type RouteDef = PipelineRouteDef | SwarmRouteDef
-
-/**
- * Маршрут, исполняемый роем: `kind='swarm'` или конвейер с `driver='swarm'`
- * (в группу «Рой» попадают оба — `swarmRoutesOf` в `lib/routes.ts`).
- */
-export type SwarmLikeRoute = SwarmRouteDef | PipelineRouteDef
 
 /** GET /api/routes: ошибка файла — `ok:false` с текстом, а не HTTP-ошибкой. */
 export interface RoutesResponse {
@@ -543,8 +531,6 @@ export interface RoutePatch {
    * или `null` (пропуск этапа).
    */
   roles?: Partial<Record<RoleKey, RoleCell | SwarmRoleCell | null>>
-  /** Способ исполнения конвейера: `skill` (умолчание) или `swarm`. */
-  driver?: RouteDriver
 }
 
 /**

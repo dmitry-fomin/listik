@@ -9,7 +9,7 @@ import {textSlicedStuck} from "../decide.mjs";
 import {DEFAULT_QUESTION_TIMEOUT} from "../config.mjs";
 
 // Маршрут роя для каждого id фикстур: карточки не роя рой не видит вовсе.
-const SWARM_ROUTES = [..."abcdefghijklmnopqrstuvwxyz".split(""), ...Array.from({length: 21}, (_, i) => "t" + i), "nr", "ns", "frozen", "canc", "cand", "done-plain", "done-port", "done1", "halt1", "n1", "new", "running1"].map(id => ({key: "route-" + id, driver: "swarm", icon: "low"}));
+const SWARM_ROUTES = [..."abcdefghijklmnopqrstuvwxyz".split(""), ...Array.from({length: 21}, (_, i) => "t" + i), "nr", "ns", "frozen", "canc", "cand", "done-plain", "done-port", "done1", "halt1", "n1", "new", "running1"].map(id => ({key: "route-" + id, kind: "swarm", icon: "low"}));
 
 const config = {parallel: 3, weights: {xhigh: 3, high: 2, medium: 1, low: 1, xlow: 1, direct: 1}};
 
@@ -21,7 +21,7 @@ function task(id, over = {}) {
 }
 
 function routesFor(ids, icon) {
-  return ids.map(id => ({key: "route-" + id, driver: "swarm", icon}));
+  return ids.map(id => ({key: "route-" + id, kind: "swarm", icon}));
 }
 
 test("нарезанный родитель режима роя не запускается, режим скила в выборку не попадает", () => {
@@ -32,8 +32,8 @@ test("нарезанный родитель режима роя не запус�
   });
   const plan = {waves: [["p", "s", "c"]], cycles: [], unroutable: [], unscoped: [], blocked: {}};
   const routes = [
-    {key: "swarm", icon: "low", driver: "swarm"},
-    {key: "skill", icon: "low", driver: "skill"},
+    {key: "swarm", icon: "low", kind: "swarm"},
+    {key: "skill", icon: "low", kind: "pipeline"},
   ];
   const res = decide({plan, tasks: [sliced, skill, cancelled], routes, config, now: new Date()});
   assert.deepEqual(res.launch, []);
@@ -54,7 +54,7 @@ test("2а: xhigh=3, parallel 3, [xhigh, low, low] — берём xhigh, оста
   const ids = ["a", "b", "c"];
   const tasks = ids.map(id => task(id));
   const plan = {waves: [ids], cycles: [], unroutable: [], unscoped: [], blocked: {}};
-  const routes = [{key: "route-a", driver: "swarm", icon: "xhigh"}, {key: "route-b", driver: "swarm", icon: "low"}, {key: "route-c", driver: "swarm", icon: "low"}];
+  const routes = [{key: "route-a", kind: "swarm", icon: "xhigh"}, {key: "route-b", kind: "swarm", icon: "low"}, {key: "route-c", kind: "swarm", icon: "low"}];
   const res = decide({plan, tasks, routes, config, now: new Date()});
   assert.deepEqual(res.launch.map(l => l.id), ["a"]);
   assert.deepEqual(res.skipped.map(s => s.id), ["b", "c"]);
@@ -65,7 +65,7 @@ test("2б: xhigh=3, parallel 3, [low, low, xhigh] — два low, xhigh проп
   const ids = ["a", "b", "c"];
   const tasks = ids.map(id => task(id));
   const plan = {waves: [ids], cycles: [], unroutable: [], unscoped: [], blocked: {}};
-  const routes = [{key: "route-a", driver: "swarm", icon: "low"}, {key: "route-b", driver: "swarm", icon: "low"}, {key: "route-c", driver: "swarm", icon: "xhigh"}];
+  const routes = [{key: "route-a", kind: "swarm", icon: "low"}, {key: "route-b", kind: "swarm", icon: "low"}, {key: "route-c", kind: "swarm", icon: "xhigh"}];
   const res = decide({plan, tasks, routes, config, now: new Date()});
   assert.deepEqual(res.launch.map(l => l.id), ["a", "b"]);
   assert.deepEqual(res.skipped.map(s => s.id), ["c"]);
@@ -74,7 +74,7 @@ test("2б: xhigh=3, parallel 3, [low, low, xhigh] — два low, xhigh проп
 test("3: parallel 2, единственный кандидат xhigh (вес 3) — берём одного, oversized", () => {
   const tasks = [task("a")];
   const plan = {waves: [["a"]], cycles: [], unroutable: [], unscoped: [], blocked: {}};
-  const routes = [{key: "route-a", driver: "swarm", icon: "xhigh"}];
+  const routes = [{key: "route-a", kind: "swarm", icon: "xhigh"}];
   const res = decide({plan, tasks, routes, config: {...config, parallel: 2}, now: new Date()});
   assert.deepEqual(res.launch.map(l => l.id), ["a"]);
   assert.equal(res.report.reason, "oversized");
@@ -119,21 +119,21 @@ test("7: кандидат с holder — в skipped held, не в launch", () => 
   assert.deepEqual(res.skipped, [{id: "a", reason: "held"}]);
 });
 
-test("7б: has_portions прячет родителя роя; карточка скила в выборку не попадает", () => {
+test("7б: has_portions прячет родителя роя; карточка скила и конвейер без снимка в выборку не попадают", () => {
   const snapSwarm = task("a", {has_portions: true, launch_driver: "swarm"});
   const snapSkill = task("b", {has_portions: true, launch_driver: "skill"});
-  // Снимка нет — смотрим маршрут: конвейер с driver=swarm тоже рой.
-  const routeSwarm = task("c", {has_portions: true});
-  const tasks = [snapSwarm, snapSkill, routeSwarm];
+  // Снимка нет — смотрим маршрут: конвейер не рой, даже с лишним полем способа исполнения (см. route-c).
+  const routePipeline = task("c", {has_portions: true});
+  const tasks = [snapSwarm, snapSkill, routePipeline];
   const plan = {waves: [["a", "b", "c"]], cycles: [], unroutable: [], unscoped: [], blocked: {}};
   const routes = [
-    {key: "route-a", driver: "swarm", icon: "low"},
-    {key: "route-b", driver: "swarm", icon: "low"},
+    {key: "route-a", kind: "swarm", icon: "low"},
+    {key: "route-b", kind: "swarm", icon: "low"},
     {key: "route-c", icon: "low", kind: "pipeline", driver: "swarm"},
   ];
   const res = decide({plan, tasks, routes, config, now: new Date()});
   assert.deepEqual(res.launch, []);
-  assert.deepEqual(res.skipped.map(s => [s.id, s.reason]), [["a", "sliced"], ["c", "sliced"]]);
+  assert.deepEqual(res.skipped.map(s => [s.id, s.reason]), [["a", "sliced"]]);
 });
 
 test("8: unroutable — без вопроса; unscoped — needsOwner с needs_owner ложным, не для true", () => {
@@ -1013,7 +1013,7 @@ test("defaultLine: несколько маркеров — действует п
 });
 
 // Зависшая нарезка (listik-zr05, порция f).
-const stuckRoutes = [{key: "swarm", icon: "low", driver: "swarm"}, {key: "skill", icon: "low", driver: "skill"}];
+const stuckRoutes = [{key: "swarm", icon: "low", kind: "swarm"}, {key: "skill", icon: "low", kind: "pipeline"}];
 const stuck = (id, over = {}) => task(id, {
   launch_driver: "swarm", launch_route: "swarm", has_portions: true, portions_stuck: true, ...over,
 });
@@ -1108,9 +1108,9 @@ test("sliced_stuck: карточка и в unscoped, и в волне 0 — ро
 test("рой берёт только маршруты роя: пайплайн скила, прямой харнесс, без маршрута — вне выборки", () => {
   const tasks = [task("a", {launch_route: "shiki-pow"}), task("b", {launch_route: "high-pipeline"}),
     task("c", {launch_route: "grok"}), task("d", {launch_route: null}), task("e", {launch_route: "grok"})];
-  const routes = [{key: "shiki-pow", kind: "swarm", driver: "swarm", icon: "low"},
-    {key: "high-pipeline", kind: "pipeline", driver: "skill", icon: "low"},
-    {key: "grok", kind: "direct", driver: "skill", icon: "low"}];
+  const routes = [{key: "shiki-pow", kind: "swarm", icon: "low"},
+    {key: "high-pipeline", kind: "pipeline", icon: "low"},
+    {key: "grok", kind: "direct", icon: "low"}];
   const plan = {waves: [["a", "b", "c", "d"]], cycles: [["b", "c"], ["a", "b"]], unroutable: ["d"], unscoped: ["e"],
     blocked: {e: ["b"]}};
   const res = decide({plan, tasks, routes, config, now: new Date()});

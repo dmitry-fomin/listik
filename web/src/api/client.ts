@@ -131,7 +131,7 @@ export const api = {
   routes: () => get<RoutesResponse>('/api/routes'),
 
   /**
-   * Правка записи маршрута: `title|hint|icon|visible|roles|driver`; `command`
+   * Правка записи маршрута: `title|hint|icon|visible|roles`; `command`
    * сервер не принимает (`400`).
    */
   patchRoute: (key: string, body: RoutePatch) =>

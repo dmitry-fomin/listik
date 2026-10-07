@@ -14,7 +14,7 @@ import {open as openLog} from "../log.mjs";
 import {acquireProjectLock, noteCycles, projectsDue, questionReason, waitingLine} from "../main.mjs";
 
 // Маршрут роя для каждого id фикстур: карточки не роя рой не видит вовсе.
-const SWARM_ROUTES = [..."abcdefghijklmnopqrstuvwxyz".split(""), ...Array.from({length: 21}, (_, i) => "t" + i), "nr", "ns", "frozen", "canc", "cand", "done-plain", "done-port", "done1", "halt1", "n1", "new", "running1"].map(id => ({key: "r-" + id, driver: "swarm", icon: "low"}));
+const SWARM_ROUTES = [..."abcdefghijklmnopqrstuvwxyz".split(""), ...Array.from({length: 21}, (_, i) => "t" + i), "nr", "ns", "frozen", "canc", "cand", "done-plain", "done-port", "done1", "halt1", "n1", "new", "running1"].map(id => ({key: "r-" + id, kind: "swarm", icon: "low"}));
 
 // `git` может отсутствовать на машине судьи — тогда блок watch+barrier пропускается целиком.
 const gitTest = gitAvailable ? test : test.skip;
@@ -2585,7 +2585,7 @@ test("main: без --project тикает каждый проект с рабо�
 // --- listik-w7ge, порция c: projectsDue и откаты только по карточкам роя ---
 
 test("projectsDue: проекты только с не-роевыми карточками мимо, с роевыми — в ответе", () => {
-  const routes = [...SWARM_ROUTES, {key: "r-skill", driver: "skill", icon: "low"}];
+  const routes = [...SWARM_ROUTES, {key: "r-skill", kind: "pipeline", icon: "low"}];
   assert.deepEqual(projectsDue([
     {id: "h1", project: "bare", status: "open"},
     {id: "h2", project: "skill", status: "open", launch_route: "r-skill"},

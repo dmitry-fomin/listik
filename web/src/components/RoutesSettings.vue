@@ -2,7 +2,7 @@
 /**
  * Раздел «Маршруты» страницы настроек (`views/SettingsPage.vue`, `/settings/routes`):
  * список записей `routes` двумя группами — «Конвейеры» (`kind=pipeline`) и
- * «Рой» (`kind=swarm` и конвейеры на `driver=swarm`). Правку самой записи
+ * «Рой» (`kind=swarm`). Правку самой записи
  * ведут карточки справа: `RouteCard.vue` (конвейер, автосохранение шапки) и
  * `RouteSwarmCard.vue` (рой: выбор исполнителя роли, пропуск, команда роли).
  *
@@ -31,7 +31,7 @@ import NewSwarmRouteModal from './NewSwarmRouteModal.vue'
 import ListikIcon from './ListikIcon.vue'
 import RouteIcon from './marks/RouteIcon.vue'
 import store from '@/store/listik'
-import type { PipelineRouteDef, RouteDef, RouteRemoved, SwarmLikeRoute } from '@/api/types'
+import type { PipelineRouteDef, RouteDef, RouteRemoved, SwarmRouteDef } from '@/api/types'
 import { pipelineRowsOf, swarmRoutesOf } from '@/lib/routes'
 import { ROLE_KEYS, roleStage } from '@/lib/pipelines'
 import { plural } from '@/lib/format'
@@ -39,10 +39,10 @@ import { registerLeaveGuard } from '@/lib/router'
 
 /** Источник списка — сам `store.routes`, без местных копий. */
 const pipelineRoutes = computed<PipelineRouteDef[]>(() => pipelineRowsOf(store.routes.value))
-const swarmRoutes = computed<SwarmLikeRoute[]>(() => swarmRoutesOf(store.routes.value))
+const swarmRoutes = computed<SwarmRouteDef[]>(() => swarmRoutesOf(store.routes.value))
 
 /** Непустые ячейки `route.roles`: ключ со значением `null`/`undefined` не считается. */
-function filledRoles(route: SwarmLikeRoute): number {
+function filledRoles(route: RouteDef): number {
   return Object.values(route.roles).filter((cell) => cell !== null && cell !== undefined).length
 }
 
@@ -52,7 +52,7 @@ function pipelineMeta(route: PipelineRouteDef): string {
 }
 
 /** Текст пилюли состава — `N ролей` со склонением. */
-function rolesBadge(route: SwarmLikeRoute): string {
+function rolesBadge(route: RouteDef): string {
   const count = filledRoles(route)
   return `${count} ${plural(count, 'роль', 'роли', 'ролей')}`
 }
@@ -62,7 +62,7 @@ function rolesBadge(route: SwarmLikeRoute): string {
  * как у строки в «Новой задаче». Цепочка исполнителей в узкой колонке не
  * помещается — она видна в карточке справа.
  */
-function swarmMeta(route: SwarmLikeRoute): string {
+function swarmMeta(route: SwarmRouteDef): string {
   const skipped = ROLE_KEYS.filter((role) => !route.roles[role]).map((role) => {
     return roleStage(role)?.code ?? role
   })
@@ -83,20 +83,14 @@ const selected = computed<RouteDef | null>(
 /**
  * Разновидность выбранной записи отдельными computed, а не `v-if` по
  * `selected.kind` в шаблоне: так карточка получает уже сузившийся тип
- * (`PipelineRouteDef`/`SwarmLikeRoute`), а не `RouteDef` с
- * приведением. Конвейер с `driver=swarm` правится карточкой роя — у него те
- * же ячейки `{harness, argv, prompt}`.
+ * (`PipelineRouteDef`/`SwarmRouteDef`), а не `RouteDef` с
+ * приведением.
  */
 const selectedPipeline = computed<PipelineRouteDef | null>(() =>
-  selected.value?.kind === 'pipeline' && selected.value.driver !== 'swarm'
-    ? selected.value
-    : null,
+  selected.value?.kind === 'pipeline' ? selected.value : null,
 )
-const selectedSwarm = computed<SwarmLikeRoute | null>(() =>
-  selected.value?.kind === 'swarm' ||
-  (selected.value?.kind === 'pipeline' && selected.value.driver === 'swarm')
-    ? (selected.value as SwarmLikeRoute)
-    : null,
+const selectedSwarm = computed<SwarmRouteDef | null>(() =>
+  selected.value?.kind === 'swarm' ? selected.value : null,
 )
 
 /*

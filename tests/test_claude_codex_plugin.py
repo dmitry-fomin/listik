@@ -1,4 +1,4 @@
-"""Плагин claude-codex: пресеты конвейера на Claude + Codex (listik-r1pd, порция b).
+"""Плагин claude-codex: пресеты конвейера на Claude + Codex (listik-r1pd, порции b и c).
 
 Плагин ставится вместе с feature-pipeline, codex и listik и ничего из них не копирует: скилы
 пресетов ссылаются на ядро feature-pipeline, своих агентов два — критики нового усилия, их тело
@@ -46,9 +46,38 @@ OPUS_REVIEW = "review-<X>.opus.md"
 STAGE4_REQUIRED = ("codex:codex-delegate", "--model gpt-6-astra", "--effort high", "--permission write",
                    "--holder codex", "VERDICT: PASS")
 
+STAGE4_REQUIRED_MEDIUM = ("codex:codex-delegate", "--model gpt-6-astra --effort medium", "--permission write",
+                          "--holder codex", "VERDICT: PASS")
+#: Судья low/xlow/nano — Astra medium: ни high-усилия, ни модели критика.
+STAGE4_FORBIDDEN_MEDIUM = ("--effort high", "--model gpt-6.1-sol")
+IMPLEMENTER_PAIR = ("`feature-pipeline:pipeline-implementer`", "model: opus")
+HOD1_TITLE = "## Ход 1"
+GIT_STATUS = 'git -C "$WT" status --porcelain'
+
+#: Пресет xlow/nano: этапы 3–4 и условный ход 1 одного локального субагента, судья Astra medium.
+_NO_SPEC_PRESET: dict = {
+    "stages": (3, 4),
+    "required": {
+        4: STAGE4_REQUIRED_MEDIUM + ("Запрет codex на коммиты здесь снят автором", "adhoc"),
+    },
+    "pairs": {3: (IMPLEMENTER_PAIR,)},
+    "forbidden": {3: ("codex:codex-delegate",), 4: STAGE4_FORBIDDEN_MEDIUM},
+    "hod1": {
+        "required": ("write_scope", GIT_STATUS, "главнее формата"),
+        "pairs": (IMPLEMENTER_PAIR,),
+        "forbidden": ("codex:codex-delegate",),
+    },
+    "text_required": ("SendMessage", "codex:codex-check"),
+    "judge_like_sol": False,
+    "judge_twin": "no-spec",
+}
+
 #: Пресет → требования по этапам. `required` — подстроки раздела `### <n>.`, `pairs` — пары подстрок,
 #: обязанные стоять в одной строке раздела, `forbidden` — подстроки, которых в разделе нет,
-#: `judge_like_sol` — задание судье побайтно как в sol-pipeline.
+#: `judge_like_sol` — задание судье побайтно как в sol-pipeline. Необязательные ключи: `stages` —
+#: какие разделы `### <n>.` есть (остальных из 1–4 быть не должно; по умолчанию все четыре),
+#: `hod1` — требования к разделу `## Ход 1` (required/pairs/forbidden), `text_required` — подстроки
+#: всего текста, `judge_twin` — группа пресетов, чьи задания судье равны друг другу побайтно.
 PRESETS: dict[str, dict] = {
     "xhigh-pipeline": {
         "required": {
@@ -93,17 +122,36 @@ PRESETS: dict[str, dict] = {
         "forbidden": {2: (OPUS_REVIEW, "--effort high")},
         "judge_like_sol": True,
     },
+    "low-pipeline": {
+        "required": {
+            1: ("`feature-pipeline:pipeline-spec-writer-low`", "model: opus"),
+            2: ("codex:codex-delegate", "--model gpt-6.1-sol --effort medium", "--permission read",
+                "кворум — он один", QUORUM_STOP, "codex:codex-jobs"),
+            3: ("claude-codex:pipeline-implementer-low", "параметр `model` в вызове не передаётся"),
+            4: STAGE4_REQUIRED_MEDIUM,
+        },
+        "pairs": {},
+        "forbidden": {2: ("pipeline-critic", "model: sonnet"), 3: ("codex:codex-delegate", "model: opus"),
+                      4: STAGE4_FORBIDDEN_MEDIUM},
+        "text_required": ("codex:codex-check",),
+        "judge_like_sol": True,
+    },
+    "xlow-pipeline": _NO_SPEC_PRESET,
+    "nano-pipeline": _NO_SPEC_PRESET,
 }
 
 #: Во всех этапах 2 нет этих подстрок.
 STAGE2_FORBIDDEN_ALL = ("--permission write",)
 
 CRITIC_SAMPLE = pathlib.Path("plugins") / "feature-pipeline" / "agents" / "pipeline-critic.md"
+IMPLEMENTER_SAMPLE = pathlib.Path("plugins") / "feature-pipeline" / "agents" / "pipeline-implementer.md"
 
-#: Файл агента → (model, effort, файл-образец тела относительно корня репозитория).
-AGENTS: dict[str, tuple[str, str, pathlib.Path]] = {
-    "pipeline-critic-xhigh.md": ("sonnet", "xhigh", CRITIC_SAMPLE),
-    "pipeline-critic-medium.md": ("sonnet", "medium", CRITIC_SAMPLE),
+#: Файл агента → (model, effort, файл-образец тела относительно корня репозитория, список `skills:`;
+#: пустой список — строки `skills:` во frontmatter нет).
+AGENTS: dict[str, tuple[str, str, pathlib.Path, tuple[str, ...]]] = {
+    "pipeline-critic-xhigh.md": ("sonnet", "xhigh", CRITIC_SAMPLE, ()),
+    "pipeline-critic-medium.md": ("sonnet", "medium", CRITIC_SAMPLE, ()),
+    "pipeline-implementer-low.md": ("opus", "low", IMPLEMENTER_SAMPLE, ("listik:listik",)),
 }
 
 #: Ссылка markdown `[текст](цель)`.
@@ -158,6 +206,30 @@ def _stage_section(text: str, number: int) -> str:
     return "\n".join(lines[start:end])
 
 
+def _hod1_section(text: str) -> str:
+    """Строки от начинающейся с `## Ход 1` до следующего `## ` (без неё)."""
+    lines = text.splitlines()
+    start = next((i for i, line in enumerate(lines) if line.startswith(HOD1_TITLE)), None)
+    if start is None:
+        return ""
+    end = next((i for i in range(start + 1, len(lines)) if lines[i].startswith("## ")), len(lines))
+    return "\n".join(lines[start:end])
+
+
+def _fm_list(frontmatter: list[str], key: str) -> list[str] | None:
+    """Пункты списка `key:` вида `  - значение`; None — строки `key:` нет."""
+    try:
+        start = frontmatter.index(f"{key}:")
+    except ValueError:
+        return None
+    items = []
+    for line in frontmatter[start + 1:]:
+        if not line.startswith("  - "):
+            break
+        items.append(line[len("  - "):].strip())
+    return items
+
+
 def _skill_problems(name: str, text: str, skill_dir: pathlib.Path) -> list[str]:
     """Проверка 2 и 4: frontmatter, ссылки, обязательные и запрещённые подстроки."""
     problems: list[str] = []
@@ -196,7 +268,10 @@ def _stage_problems(name: str, text: str) -> list[str]:
     """Проверки 4 и 5: состав по этапам и запрещённые подстроки; пусто — всё на месте."""
     spec = PRESETS[name]
     problems: list[str] = []
-    for number in (1, 2, 3, 4):
+    stages = spec.get("stages", (1, 2, 3, 4))
+    problems.extend(f"есть лишний раздел «### {number}.»" for number in (1, 2, 3, 4)
+                    if number not in stages and _stage_section(text, number))
+    for number in stages:
         section = _stage_section(text, number)
         if not section:
             problems.append(f"нет раздела «### {number}.»")
@@ -211,6 +286,21 @@ def _stage_problems(name: str, text: str) -> list[str]:
         if number == 2:
             forbidden = tuple(forbidden) + STAGE2_FORBIDDEN_ALL
         problems.extend(f"в «### {number}.» есть {needle!r}" for needle in forbidden if needle in section)
+    hod1 = spec.get("hod1")
+    if hod1 is not None:
+        section = _hod1_section(text)
+        if not section:
+            problems.append(f"нет раздела «{HOD1_TITLE}»")
+        else:
+            problems.extend(f"в «{HOD1_TITLE}» нет {needle!r}"
+                            for needle in hod1["required"] if needle not in section)
+            lines = section.splitlines()
+            for first, second in hod1["pairs"]:
+                if not any(first in line and second in line for line in lines):
+                    problems.append(f"в «{HOD1_TITLE}» нет строки с {first!r} и {second!r}")
+            problems.extend(f"в «{HOD1_TITLE}» есть {needle!r}"
+                            for needle in hod1["forbidden"] if needle in section)
+    problems.extend(f"в тексте нет {needle!r}" for needle in spec.get("text_required", ()) if needle not in text)
     lowered = text.lower()
     problems.extend(f"есть запрещённое {needle!r}" for needle in SKILL_FORBIDDEN_CI if needle in lowered)
     return problems
@@ -245,7 +335,7 @@ def _judge_problems(text: str, sample: str) -> list[str]:
 
 def _agent_problems(filename: str, text: str) -> list[str]:
     """Проверка 8 для одного агента; пусто — всё на месте."""
-    model, effort, sample_path = AGENTS[filename]
+    model, effort, sample_path, skills = AGENTS[filename]
     sample_fm, sample_body = _split_frontmatter((REPO_DIR / sample_path).read_text(encoding="utf-8"))
     frontmatter, body = _split_frontmatter(text)
     if frontmatter is None:
@@ -257,8 +347,11 @@ def _agent_problems(filename: str, text: str) -> list[str]:
         problems.append(f"model не {model}")
     if _fm_values(frontmatter, "effort") != [effort]:
         problems.append(f"effort не {effort}")
-    if _fm_values(frontmatter, "skills"):
+    found_skills = _fm_list(frontmatter, "skills")
+    if not skills and (found_skills is not None or _fm_values(frontmatter, "skills")):
         problems.append("есть skills:")
+    if skills and found_skills != list(skills):
+        problems.append(f"skills не {list(skills)}")
     descriptions = _fm_values(frontmatter, "description")
     if len(descriptions) != 1:
         problems.append(f"строк description: {len(descriptions)}")
@@ -360,6 +453,57 @@ class ClaudeCodexSkillTests(unittest.TestCase):
             with self.subTest(preset=name):
                 self.assertEqual(_judge_problems(_skill_path(name).read_text(encoding="utf-8"), sample), [])
 
+    def test_judge_twins_equal(self) -> None:
+        groups: dict[str, list[str]] = {}
+        for name, spec in PRESETS.items():
+            if spec.get("judge_twin"):
+                groups.setdefault(spec["judge_twin"], []).append(name)
+        self.assertTrue(groups, "нет ни одной группы judge_twin")
+        for group, names in groups.items():
+            with self.subTest(group=group):
+                self.assertGreater(len(names), 1, f"в группе {group} один пресет")
+                blocks = {name: _judge_block(_skill_path(name).read_text(encoding="utf-8")) for name in names}
+                for name, block in blocks.items():
+                    self.assertIsNotNone(block, f"{name}: нет fenced-блока задания судье")
+                self.assertEqual(len(set(blocks.values())), 1, f"задания судье в группе {group} разошлись")
+
+    def test_stage_check_rejects_broken_low_xlow_nano(self) -> None:
+        def in_stage(text: str, number: int, edit) -> str:
+            section = _stage_section(text, number)
+            self.assertTrue(section, f"нет раздела «### {number}.»")
+            return text.replace(section, edit(section), 1)
+
+        def in_hod1(text: str, edit) -> str:
+            section = _hod1_section(text)
+            self.assertTrue(section, f"нет раздела «{HOD1_TITLE}»")
+            return text.replace(section, edit(section), 1)
+
+        def without_line(text: str, needle: str) -> str:
+            return "\n".join(line for line in text.split("\n") if needle not in line)
+
+        originals = {name: _skill_path(name).read_text(encoding="utf-8")
+                     for name in ("low-pipeline", "xlow-pipeline", "nano-pipeline")}
+        low, xlow, nano = originals["low-pipeline"], originals["xlow-pipeline"], originals["nano-pipeline"]
+        broken = {
+            ("low-pipeline", "### 3. исполнитель → codex:codex-delegate"): in_stage(
+                low, 3, lambda s: s.replace("claude-codex:pipeline-implementer-low", "codex:codex-delegate")),
+            ("low-pipeline", "### 4. --effort medium → --effort high"): in_stage(
+                low, 4, lambda s: s.replace("--effort medium", "--effort high")),
+            ("low-pipeline", "### 4. без --permission write"): in_stage(
+                low, 4, lambda s: s.replace("--permission write", "")),
+            ("xlow-pipeline", "Ход 1 без model: opus"): in_hod1(
+                xlow, lambda s: s.replace("model: opus", "")),
+            ("xlow-pipeline", "без строки git status"): without_line(xlow, GIT_STATUS),
+            ("xlow-pipeline", "### 4. без --holder codex"): in_stage(
+                xlow, 4, lambda s: s.replace("--holder codex", "")),
+            ("nano-pipeline", "### 4. gpt-6-astra → gpt-6.1-sol"): in_stage(
+                nano, 4, lambda s: s.replace("--model gpt-6-astra", "--model gpt-6.1-sol")),
+        }
+        for (name, case), mutated in broken.items():
+            with self.subTest(preset=name, case=case):
+                self.assertNotEqual(mutated, originals[name], "изменение не применилось")
+                self.assertNotEqual(_stage_problems(name, mutated), [])
+
     def test_judge_check_rejects_changed_line(self) -> None:
         sample = SOL_SKILL.read_text(encoding="utf-8")
         text = _skill_path("xhigh-pipeline").read_text(encoding="utf-8")
@@ -394,6 +538,24 @@ class ClaudeCodexAgentTests(unittest.TestCase):
         changed_body[body_line] = changed_body[body_line] + " (изменено)"
         broken = {
             "тело изменено на строку": "\n".join(changed_body),
+            "description образца": re.sub(r"^description: .*$",
+                                          lambda _: f"description: {sample_description}",
+                                          text, count=1, flags=re.M),
+        }
+        for case, mutated in broken.items():
+            with self.subTest(case=case):
+                self.assertNotEqual(mutated, text, "изменение не применилось")
+                self.assertNotEqual(_agent_problems(filename, mutated), [])
+
+    def test_implementer_low_check_rejects_broken_texts(self) -> None:
+        filename = "pipeline-implementer-low.md"
+        text = (PLUGIN_DIR / AGENTS_SUBDIR / filename).read_text(encoding="utf-8")
+        sample_fm, _ = _split_frontmatter((REPO_DIR / IMPLEMENTER_SAMPLE).read_text(encoding="utf-8"))
+        sample_description = _fm_values(sample_fm, "description")[0]
+        broken = {
+            "без skills": text.replace("skills:\n  - listik:listik\n", "", 1),
+            "effort medium": text.replace("effort: low", "effort: medium", 1),
+            "model sonnet": text.replace("model: opus", "model: sonnet", 1),
             "description образца": re.sub(r"^description: .*$",
                                           lambda _: f"description: {sample_description}",
                                           text, count=1, flags=re.M),

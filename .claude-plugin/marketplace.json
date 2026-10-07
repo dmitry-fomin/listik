@@ -15,13 +15,13 @@
     {
       "name": "feature-pipeline",
       "source": "./plugins/feature-pipeline",
-      "version": "0.22.0",
+      "version": "0.23.0",
       "description": "Конвейер ТЗ → критика → реализация → приёмка: скилы-пресеты, которые ведут задачу через четыре этапа силами субагентов и внешних агентных харнессов."
     },
     {
       "name": "claude-codex",
       "source": "./plugins/claude-codex",
-      "version": "0.1.0",
+      "version": "0.2.0",
       "description": "Пресеты конвейера ТЗ → критика → код → приёмка только на Claude и Codex; ставится вместе с feature-pipeline, codex и listik."
     },
     {

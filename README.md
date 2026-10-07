@@ -102,6 +102,8 @@ MCP-инструментами `listik_*` или командой `listik new`. 
 записей файла. До записи таблица снимается в `<каталог данных>/routes.bak-<UTC>.json`; вернуть
 её — `listik routes --reimport --from <копия>` (`--from` берёт любой файл в формате `routes.json`).
 Отчёт `--json`: `imported`, `source`, `kept`, `removed`, `backup`, `orphans`.
+Скрыть маршруты — `listik routes --hide <ключ> …`; вернуть видимость — на доске или
+`PATCH /api/routes/{key}`.
 Полный список — `listik routes`, `GET /api/routes` или
 доска; там же собирается свой набор. Исполнители подключаются плагинами Claude Code,
 репозиторий сам является маркетплейсом:

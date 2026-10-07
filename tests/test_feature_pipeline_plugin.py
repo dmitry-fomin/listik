@@ -75,7 +75,8 @@ class FeaturePipelinePluginTests(unittest.TestCase):
     """routes.json, скилы плагина и маркетплейс не разъезжаются."""
 
     def test_routes_pipelines_match_plugin_skills(self) -> None:
-        keys = _keys_of_kind("pipeline")
+        # Маршруты `cc-*` — пресеты claude-codex, их сверяет tests/test_claude_codex_plugin.py.
+        keys = {k for k in _keys_of_kind("pipeline") if not k.startswith("cc-")}
         skills = _skill_names()
         self.assertTrue(keys, "в routes.json нет ни одной записи kind == pipeline")
         extra = sorted(keys - skills)

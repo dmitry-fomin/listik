@@ -23,6 +23,8 @@
 
 ## Пресеты
 
+Маршруты Listik этих пресетов — `cc-<имя>` (`cc-xhigh-pipeline` … `cc-nano-pipeline`): ключ маршрута уникален, а имена скилов совпадают с feature-pipeline; команда маршрута зовёт `/claude-codex:<имя>`.
+
 | Пресет | ТЗ | Критика (кворум) | Код | Приёмка |
 | --- | --- | --- | --- | --- |
 | `xhigh-pipeline` | Opus 5.5 xhigh | Sonnet 5.5 xhigh, Opus 5.5 high, GPT-6.1 Sol high; кворум — Sonnet и Sol, Opus в кворум не входит | Opus 5.5 xhigh | GPT-6 Astra high в Codex, коммитит судья |

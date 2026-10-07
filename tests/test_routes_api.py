@@ -4,9 +4,9 @@
 Прогоняется через `server.handle(...)`, как соседние тесты ручек (`test_route_change.py`,
 `test_projects_add.py`): `get_conn` подменяется на временное соединение, ошибки — это
 `server.ApiError`, пойманный `assertRaises`. Скилы читаются из настоящего
-`plugins/feature-pipeline/skills/*` репозитория (там ровно те 9 ключей, что и в образце
-`routes.json`) — кроме тестов, которые явно подменяют `skills.SKILLS_DIR` на пустой/чужой
-каталог.
+`plugins/feature-pipeline/skills/*` и `plugins/claude-codex/skills/*` репозитория (вместе —
+ровно те 15 ключей, что и в образце `routes.json`, у claude-codex с префиксом `cc-`) —
+кроме тестов, которые явно подменяют `skills.SKILLS_DIR` на пустой/чужой каталог.
 """
 from __future__ import annotations
 
@@ -31,6 +31,8 @@ ROUTES_JSON = REPO_DIR / "routes.json"
 EXPECTED_KEYS = [
     "xhigh-pipeline", "high-pipeline", "medium-pipeline", "sol-pipeline", "low-pipeline",
     "xlow-pipeline", "nano-pipeline", "cross-pipeline", "opus-pipeline",
+    "cc-xhigh-pipeline", "cc-high-pipeline", "cc-medium-pipeline", "cc-low-pipeline",
+    "cc-xlow-pipeline", "cc-nano-pipeline",
 ]
 
 
@@ -130,6 +132,61 @@ class SkillMatchTests(RoutesApiBase):
         self.assertTrue(record["visible"])
         self.assertEqual(record["skill_path"],
                          "plugins/feature-pipeline/skills/high-pipeline/SKILL.md")
+
+
+class ClaudeCodexSkillTests(RoutesApiBase):
+    """Маршрут `cc-<имя>` ↔ скил `plugins/claude-codex/skills/<имя>/SKILL.md`."""
+
+    def test_cc_route_has_claude_codex_skill_path(self) -> None:
+        self.import_sample()
+        status, data = self.get("/api/routes")
+        self.assertEqual(status, 200)
+        record = next(r for r in data["routes"] if r["key"] == "cc-high-pipeline")
+        self.assertNotIn("skill_missing", record)
+        self.assertTrue(record["visible"])
+        self.assertEqual(record["skill_path"],
+                         "plugins/claude-codex/skills/high-pipeline/SKILL.md")
+
+    def test_cc_route_without_skill_is_hidden_with_claude_codex_warning(self) -> None:
+        self.write_and_import([pipeline_record(key="cc-fake-pipeline"), swarm_record()])
+        status, data = self.get("/api/routes")
+        record = next(r for r in data["routes"] if r["key"] == "cc-fake-pipeline")
+        self.assertTrue(record["skill_missing"])
+        self.assertFalse(record["visible"])
+        self.assertTrue(any("/claude-codex:fake-pipeline" in w for w in data["warnings"]))
+        self.assertFalse(any("/feature-pipeline:cc-fake-pipeline" in w for w in data["warnings"]))
+
+    def test_sync_on_sample_is_clean(self) -> None:
+        self.import_sample()
+        status, data = self.get("/api/routes/sync")
+        self.assertEqual(status, 200)
+        self.assertTrue(data["skills_available"])
+        self.assertEqual(data["missing_skill"], [])
+        self.assertEqual(data["missing_route"], [])
+
+    def test_no_feature_pipeline_dir_means_no_skills_even_with_claude_codex(self) -> None:
+        with mock.patch.object(skills_mod, "SKILLS_DIR", self.tmp_path / "нет-такого-каталога"):
+            self.assertTrue(skills_mod.CC_SKILLS_DIR.is_dir())
+            self.assertFalse(skills_mod.skills_available())
+            self.import_sample()
+            status, data = self.get("/api/routes")
+        self.assertEqual(status, 200)
+        self.assertFalse(any(r.get("skill_missing") for r in data["routes"]))
+
+    def test_post_unknown_cc_key_is_400_naming_claude_codex(self) -> None:
+        with self.assertRaises(server.ApiError) as ctx:
+            self.post("/api/routes", {"key": "cc-fake-pipeline"})
+        self.assertEqual(ctx.exception.status, 400)
+        self.assertEqual(ctx.exception.code, errors.BAD_ARGUMENT)
+        self.assertIn("plugins/claude-codex/skills", ctx.exception.message)
+        self.assertIn("plugins/feature-pipeline/skills", ctx.exception.message)
+
+    def test_post_deleted_cc_route_is_201(self) -> None:
+        self.import_sample()
+        routes_store.delete_route(self.conn, "cc-high-pipeline")
+        status, record = self.post("/api/routes", {"key": "cc-high-pipeline"})
+        self.assertEqual(status, 201)
+        self.assertEqual(record["kind"], "pipeline")
 
 
 class NoSkillsDirectoryTests(RoutesApiBase):

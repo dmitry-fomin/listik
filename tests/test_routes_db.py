@@ -26,9 +26,7 @@ ROUTES_JSON = REPO_DIR / "routes.json"
 
 EXPECTED_KEYS = [
     "xhigh-pipeline", "high-pipeline", "medium-pipeline", "sol-pipeline", "low-pipeline",
-    "xlow-pipeline", "nano-pipeline", "cross-pipeline", "opus-pipeline", "epic-pipeline",
-    "feat-pipeline", "refactor-pipeline", "bug-pipeline", "chore-pipeline",
-    "question-pipeline",
+    "xlow-pipeline", "nano-pipeline", "cross-pipeline", "opus-pipeline",
 ]
 
 
@@ -76,11 +74,11 @@ class ImportSampleTests(RoutesDbTestCase):
 
     def test_sample_imports_in_file_order(self) -> None:
         report = self.import_sample()
-        self.assertEqual(report, {"imported": 15, "skipped": False,
+        self.assertEqual(report, {"imported": 9, "skipped": False,
                                   "source": str(ROUTES_JSON), "replaced": False})
         records = routes_store.list_routes(self.conn)
         self.assertEqual([r["key"] for r in records], EXPECTED_KEYS)
-        self.assertEqual([r["position"] for r in records], list(range(15)))
+        self.assertEqual([r["position"] for r in records], list(range(9)))
 
     def test_high_pipeline_roles_keep_providers(self) -> None:
         self.import_sample()
@@ -153,7 +151,7 @@ class ShippedAdditionsTests(RoutesDbTestCase):
         with self.patch_paths(source=ROUTES_JSON), contextlib.redirect_stderr(io.StringIO()):
             report = routes_store.ensure_imported(self.conn)
         self.assertEqual(report["added"], [])
-        self.assertEqual(routes_store.count(self.conn), 15)
+        self.assertEqual(routes_store.count(self.conn), 9)
 
 
 class ReimportTests(RoutesDbTestCase):
@@ -175,7 +173,7 @@ class ReimportTests(RoutesDbTestCase):
         report = self.import_sample(replace=True)
         self.assertFalse(report["skipped"])
         self.assertTrue(report["replaced"])
-        self.assertEqual(report["imported"], 15)
+        self.assertEqual(report["imported"], 9)
         record = routes_store.get_route(self.conn, "cross-pipeline")
         self.assertEqual(record["title"], shipped)
         self.assertTrue(record["visible"])
@@ -189,7 +187,7 @@ class ReimportTests(RoutesDbTestCase):
             with self.assertRaises(routes_mod.RoutesError):
                 routes_store.import_file(self.conn, bad)
         self.assertEqual(routes_store.list_routes(self.conn), before)
-        self.assertEqual(routes_store.count(self.conn), 15)
+        self.assertEqual(routes_store.count(self.conn), 9)
 
     def test_ensure_imported_swallows_broken_file(self) -> None:
         bad = self.tmp_path / "broken.json"
@@ -203,7 +201,7 @@ class ReimportTests(RoutesDbTestCase):
     def test_default_source_is_sample(self) -> None:
         with self.patch_paths(source=ROUTES_JSON):
             report = routes_store.ensure_imported(self.conn)
-        self.assertEqual(report["imported"], 15)
+        self.assertEqual(report["imported"], 9)
         self.assertEqual(report["source"], str(ROUTES_JSON))
 
     def test_strip_field_is_not_stored(self) -> None:
@@ -232,7 +230,7 @@ class ReimportCommandTests(RoutesDbTestCase):
         self.conn.commit()
         report = routes_store.reimport(self.conn, ROUTES_JSON)
         self.assertTrue(report["replaced"])
-        self.assertEqual(report["imported"], 15)
+        self.assertEqual(report["imported"], 9)
         self.assertEqual(report["orphans"], {"gone-route": 1})
         self.assertEqual(routes_store.get_route(self.conn, "cross-pipeline")["title"], shipped)
         row = self.conn.execute("SELECT launch_route FROM tasks WHERE id = ?",
@@ -255,7 +253,7 @@ class ReimportCommandTests(RoutesDbTestCase):
         self.assertEqual(proc.returncode, 0, proc.stdout + proc.stderr)
         report = json.loads(proc.stdout)
         self.assertTrue(report["replaced"])
-        self.assertEqual(report["imported"], 15)
+        self.assertEqual(report["imported"], 9)
         self.assertEqual(report["orphans"], {})
         self.assertEqual(routes_store.get_route(self.conn, "cross-pipeline")["title"], shipped)
 
@@ -315,7 +313,7 @@ class ReimportKeepsUserRoutesTests(RoutesDbTestCase):
         self.assertEqual(report["orphans"], {})
         self.assertTrue(report["replaced"])
         self.assertFalse(report["skipped"])
-        self.assertEqual(report["imported"], 15)
+        self.assertEqual(report["imported"], 9)
         backup = pathlib.Path(report["backup"])
         self.assertTrue(backup.is_file())
         self.assertEqual(backup.parent, self.data_dir)
@@ -552,7 +550,7 @@ class CrudTests(RoutesDbTestCase):
     def test_create_uses_max_position_plus_one(self) -> None:
         record = routes_store.create_route(self.conn, key="zzz-solo", kind="swarm",
                                            title="Zzz", roles={"impl": {"harness": "dsh"}})
-        self.assertEqual(record["position"], 15)
+        self.assertEqual(record["position"], 9)
         self.assertEqual(routes_store.list_routes(self.conn)[-1]["key"], "zzz-solo")
 
     def test_create_duplicate_key(self) -> None:
@@ -584,7 +582,7 @@ class CrudTests(RoutesDbTestCase):
     def test_reorder_full(self) -> None:
         reordered = routes_store.reorder(self.conn, list(reversed(EXPECTED_KEYS)))
         self.assertEqual([r["key"] for r in reordered], list(reversed(EXPECTED_KEYS)))
-        self.assertEqual([r["position"] for r in reordered], list(range(15)))
+        self.assertEqual([r["position"] for r in reordered], list(range(9)))
         self.assertEqual([r["key"] for r in routes_store.list_routes(self.conn)],
                          list(reversed(EXPECTED_KEYS)))
 
@@ -593,7 +591,7 @@ class CrudTests(RoutesDbTestCase):
         reordered = routes_store.reorder(self.conn, ["cross-pipeline", "nano-pipeline"])
         self.assertEqual([r["key"] for r in reordered], ["cross-pipeline", "nano-pipeline", *rest])
         positions = [r["position"] for r in reordered]
-        self.assertEqual(positions, list(range(15)))
+        self.assertEqual(positions, list(range(9)))
 
     def test_reorder_unknown_key(self) -> None:
         with self.assertRaises(ValueError) as ctx:

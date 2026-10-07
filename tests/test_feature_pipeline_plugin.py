@@ -370,6 +370,9 @@ BASE_ID_SKILLS = (
     "low-pipeline",
     "xlow-pipeline",
     "sol-pipeline",
+    "epic-pipeline",
+    "feat-pipeline",
+    "refactor-pipeline",
 )
 
 #: Пресеты, у которых `argument-hint` называет бумаги по `<id>.<X>.md`.
@@ -379,6 +382,9 @@ ARGUMENT_HINT_ID_SKILLS = (
     "medium-pipeline",
     "low-pipeline",
     "sol-pipeline",
+    "epic-pipeline",
+    "feat-pipeline",
+    "refactor-pipeline",
 )
 
 BASE_LINE_RE = re.compile(r"^BASE=<id>", re.MULTILINE)
@@ -505,6 +511,9 @@ EXECUTOR_PRESETS = {
     "high-pipeline": "SendMessage",
     "medium-pipeline": "SendMessage",
     "sol-pipeline": "SendMessage",
+    "epic-pipeline": "SendMessage",
+    "feat-pipeline": "SendMessage",
+    "refactor-pipeline": "SendMessage",
     "opus-pipeline": "SendMessage",
     "xhigh-pipeline": "SendMessage",
     "low-pipeline": "сессия <id>",
@@ -1220,6 +1229,9 @@ class FeaturePipelineCopyAndNegativeControlTests(unittest.TestCase):
         pathlib.Path(SKILLS_SUBDIR) / "cross-pipeline" / SKILL_FILE,
         pathlib.Path(SKILLS_SUBDIR) / "nano-pipeline" / SKILL_FILE,
         pathlib.Path(SKILLS_SUBDIR) / "sol-pipeline" / SKILL_FILE,
+        pathlib.Path(SKILLS_SUBDIR) / "epic-pipeline" / SKILL_FILE,
+        pathlib.Path(SKILLS_SUBDIR) / "feat-pipeline" / SKILL_FILE,
+        pathlib.Path(SKILLS_SUBDIR) / "refactor-pipeline" / SKILL_FILE,
     ]
 
     def test_core_has_copy_section(self) -> None:
@@ -1349,11 +1361,14 @@ def _critique_core_problems(text: str) -> list[str]:
 
 
 CRITIQUE_PRESETS = ("xhigh-pipeline", "high-pipeline", "medium-pipeline", "low-pipeline",
-                    "cross-pipeline", "sol-pipeline")
+                    "cross-pipeline", "sol-pipeline", "epic-pipeline", "feat-pipeline",
+                    "refactor-pipeline")
 #: Общие для всех пресетов с критикой подстроки и скилы внешнего критика по пресету: у
 #: sol-pipeline внешний критик — codex, у остальных — pi.
 CRITIQUE_PRESET_COMMON = ("`pipeline-core.md`, «Критика ТЗ»", "$STEPS/$BASE.review-<X>.md")
-CRITIQUE_PRESET_LAUNCHERS = {"sol-pipeline": ("codex:codex-delegate", "codex:codex-jobs")}
+CRITIQUE_PRESET_LAUNCHERS = {"sol-pipeline": ("codex:codex-delegate", "codex:codex-jobs"),
+                             "epic-pipeline": ("codex:codex-delegate", "codex:codex-jobs"),
+                             "feat-pipeline": (), "refactor-pipeline": ()}
 CRITIQUE_PRESET_DEFAULT_LAUNCHERS = ("pi:pi-delegate", "pi:pi-jobs")
 
 
@@ -1719,6 +1734,14 @@ CRITIQUE_COMPOSITION = {
                       "pipeline-critic-low", "Sonnet low"), ()),
     "sol-pipeline": (CRITIQUE_SONNET + ("codex:codex-delegate", "--effort medium", "gpt-6.1-sol"),
                      ("pi:pi-delegate", "devin:devin-delegate"), ("glm", "deepseek")),
+    "epic-pipeline": (CRITIQUE_SONNET + ("codex:codex-delegate", "--effort medium", "gpt-6.1-sol"),
+                      ("pi:pi-delegate", "devin:devin-delegate", "--permission write"),
+                      ("glm", "deepseek")),
+    "feat-pipeline": (CRITIQUE_SONNET, ("pi:pi-delegate", "devin:devin-delegate", "codex:codex-delegate",
+                                        "--permission write"), ("glm", "deepseek")),
+    "refactor-pipeline": (CRITIQUE_SONNET,
+                          ("pi:pi-delegate", "devin:devin-delegate", "codex:codex-delegate",
+                           "--permission write"), ("glm", "deepseek")),
 }
 #: Кто назван критиком: во frontmatter `description` и в столбце «Критика ТЗ» README плагина.
 CRITIQUE_NAMES = {
@@ -1728,12 +1751,16 @@ CRITIQUE_NAMES = {
     "cross-pipeline": ("Sonnet", "DeepSeek"),
     "low-pipeline": ("DeepSeek", "GLM"),
     "sol-pipeline": ("Sonnet", "Sol"),
+    "epic-pipeline": ("Sonnet", "Sol"),
+    "feat-pipeline": ("Sonnet",),
+    "refactor-pipeline": ("Sonnet",),
 }
 CRITIQUE_OLD_DESCRIPTION = "GLM 5.3 Flash и DeepSeek V4.1 Flash"
 CRITIQUE_README_COLUMN = "Критика ТЗ"
 CRITIC_LABELS = {"xhigh-pipeline": "S+DS+SWE", "high-pipeline": "S+DS+SWE",
                  "medium-pipeline": "S+DS", "cross-pipeline": "S+DS", "low-pipeline": "GLM+DS",
-                 "sol-pipeline": "S+Sol"}
+                 "sol-pipeline": "S+Sol", "epic-pipeline": "S+Sol", "feat-pipeline": "high",
+                 "refactor-pipeline": "high"}
 CROSS_HINT = "Devin ТЗ · Sonnet+DS критика · GLM код · Grok приёмка"
 
 
@@ -1964,6 +1991,59 @@ class FeaturePipelineSolPresetTests(unittest.TestCase):
         self.assertEqual(judge.get("params"), SOL_ROUTE_JUDGE_PARAMS)
         self.assertEqual(judge.get("provider"), "openai")
         self.assertEqual(record.get("icon"), "medium")
+
+
+#: Пресеты по типу задачи с коллегией судей (listik-wleu, порция b): автор ТЗ — Opus, исполнитель —
+#: Sonnet high без `model`, приёмка — коллегия sonnet + opus + codex.
+TYPE_PRESETS = {"epic-pipeline": "feature-pipeline:pipeline-spec-writer`",
+                "feat-pipeline": "feature-pipeline:pipeline-spec-writer-medium`",
+                "refactor-pipeline": "feature-pipeline:pipeline-spec-writer-medium`"}
+TYPE_STAGE3_REQUIRED = ("pipeline-implementer-high",)
+TYPE_STAGE4_REQUIRED = ("Приёмка коллегией", "model: sonnet", "--model gpt-6.1-sol", "--effort high",
+                        "--permission write")
+TYPE_FORBIDDEN = ("--provider", "--holder codex", "reset, stash")
+
+
+def _type_preset_problems(name: str, text: str) -> list[str]:
+    """Этапы 1, 3, 4 пресета по типу задачи; пусто — всё на месте."""
+    required = {1: ("model: opus", TYPE_PRESETS[name]), 3: TYPE_STAGE3_REQUIRED, 4: TYPE_STAGE4_REQUIRED}
+    problems: list[str] = []
+    for number, needles in required.items():
+        section = _stage_section(text, number)
+        if not section:
+            problems.append(f"{name}: нет раздела «### {number}.»")
+            continue
+        problems.extend(f"{name}: в «### {number}.» нет {needle!r}" for needle in needles
+                        if needle not in section)
+        if number == 3 and "model: opus" in section:
+            problems.append(f"{name}: в «### 3.» есть 'model: opus'")
+    problems.extend(f"{name}: в файле есть {needle!r}" for needle in TYPE_FORBIDDEN if needle in text)
+    return problems
+
+
+class FeaturePipelineTypePresetTests(unittest.TestCase):
+    """epic/feat/refactor-pipeline: Opus пишет ТЗ, Sonnet high — код, коллегия принимает."""
+
+    def test_type_presets_in_place(self) -> None:
+        for name in TYPE_PRESETS:
+            with self.subTest(skill=name):
+                self.assertEqual(_type_preset_problems(name, _skill_text(name)), [])
+
+    def test_type_preset_check_rejects_broken_texts(self) -> None:
+        for name in TYPE_PRESETS:
+            text = _skill_text(name)
+            stage1, stage3, stage4 = (_stage_section(text, n) for n in (1, 3, 4))
+            self.assertTrue(stage1 and stage3 and stage4, f"{name}: нет раздела этапа")
+            broken = {
+                "### 1. без model: opus": text.replace(stage1, stage1.replace("model: opus", ""), 1),
+                "### 3. + model: opus": text.replace(stage3, stage3 + "\nmodel: opus", 1),
+                "### 4. без --permission write": text.replace(
+                    stage4, stage4.replace("--permission write", ""), 1),
+            }
+            for case, mutated in broken.items():
+                with self.subTest(skill=name, case=case):
+                    self.assertNotEqual(mutated, text, "изменение не применилось")
+                    self.assertNotEqual(_type_preset_problems(name, mutated), [])
 
 
 #: Приёмка коллегией судей и отступления пресетов по типу задачи (listik-wleu, порция a).

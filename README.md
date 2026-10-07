@@ -95,6 +95,9 @@ MCP-инструментами `listik_*` или командой `listik new`. 
 | `low-pipeline` | Opus low | DeepSeek + GLM | devin SWE-2 max | Grok high | код вне квоты Max |
 | `xlow-pipeline` | — | — | devin SWE-2 max | Grok high | один прогон с приёмкой |
 | `nano-pipeline` | — | — | devin SWE-2 high | GLM в pi | короткая задача: сделать и принять |
+| `epic-pipeline` | Opus high | Sonnet + Sol medium (Codex) | Sonnet high | Sonnet high + Opus high + Sol high (Codex), единогласно | эпик |
+| `feat-pipeline` | Opus medium | Sonnet | Sonnet high | Sonnet high + Opus high + Sol high (Codex), единогласно | фича |
+| `refactor-pipeline` | Opus medium | Sonnet | Sonnet high | Sonnet high + Opus high + Sol high (Codex), единогласно | рефакторинг, поведение не меняется |
 
 Привести таблицу к `routes.json` установленной копии — `listik routes --reimport`: пайплайны
 из файла перезаписываются (их правки на доске пропадают), пайплайны-скилы не из файла удаляются,

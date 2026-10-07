@@ -2,7 +2,9 @@
 
 Пресеты конвейера реализации задачи: ТЗ → критика ТЗ → код → приёмка с коммитом. Основной контекст
 только маршрутизирует, носит вопросы автору и ведёт журнал; код пишет исполнитель, коммитит судья
-(в `high-pipeline` и `xhigh-pipeline` при чистых линзах приёмки порцию коммитит оркестратор).
+(в `high-pipeline` и `xhigh-pipeline` при чистых линзах приёмки порцию коммитит оркестратор; в пресетах с
+коллегией судей — `epic-pipeline`, `feat-pipeline`, `refactor-pipeline` — порцию при единогласном зелёном
+коммитит оркестратор).
 Каждый скил запускается только по явному имени — маршрутом карточки Listik (`launch_route` или
 метка `process:<ключ>`) или когда человек назвал пресет.
 
@@ -21,6 +23,9 @@
 | `nano-pipeline` | то же, дешевле; при пустом `write_scope` сперва ход на чтении за границами правки | — | — | devin SWE-2 high (`devin:devin-delegate --thinking high`) | GLM 5.3 Flash (`pi:pi-delegate --channel glm`) |
 | `cross-pipeline` | автор ТЗ и исполнитель на разных вендорах: Devin пишет ТЗ, GLM в pi — код | Devin (SWE-2, max) | DeepSeek V4.1 Flash в pi + Sonnet 5.5 high (`pipeline-critic`, `model: sonnet`), кворум, сводит оркестратор | GLM 5.3 Flash в pi | Grok 4.7 xhigh |
 | `opus-pipeline` | понятная работа в один заход, приёмка не нужна; $0 внешних | — | — | Opus medium (`pipeline-implementer-solo`, `model: opus`), сам коммитит | — |
+| `epic-pipeline` | эпик, автор выбрал состав сам | Opus 5.5 high (`pipeline-spec-writer`, `model: opus`) | Sonnet 5.5 high (`pipeline-critic`, `model: sonnet`) + GPT-6.1 Sol medium в Codex, кворум, сводит оркестратор | Sonnet 5.5 high (`pipeline-implementer-high`) | коллегия Sonnet 5.5 high (`pipeline-judge`, `model: sonnet`) + Opus 5.5 high (`pipeline-judge`) + GPT-6.1 Sol high в Codex, единогласно, коммитит оркестратор |
+| `feat-pipeline` | фича, автор выбрал состав сам | Opus 5.5 medium (`pipeline-spec-writer-medium`, `model: opus`) | Sonnet 5.5 high (`pipeline-critic`, `model: sonnet`), один, кворум — он | Sonnet 5.5 high (`pipeline-implementer-high`) | коллегия Sonnet 5.5 high (`pipeline-judge`, `model: sonnet`) + Opus 5.5 high (`pipeline-judge`) + GPT-6.1 Sol high в Codex, единогласно, коммитит оркестратор |
+| `refactor-pipeline` | рефакторинг: внешнее поведение не меняется | Opus 5.5 medium (`pipeline-spec-writer-medium`, `model: opus`) | Sonnet 5.5 high (`pipeline-critic`, `model: sonnet`), один, кворум — он | Sonnet 5.5 high (`pipeline-implementer-high`) | коллегия Sonnet 5.5 high (`pipeline-judge`, `model: sonnet`) + Opus 5.5 high (`pipeline-judge`) + GPT-6.1 Sol high в Codex, единогласно, коммитит оркестратор |
 
 ## Агенты
 
@@ -29,16 +34,16 @@
 
 | Агент | Модель / effort | Роль | Где используется (перебивка model) |
 | --- | --- | --- | --- |
-| `pipeline-spec-writer` | opus / high | ТЗ шага, порции, чек-листы; только каталог шагов, неясное — вопросом автору | `high-pipeline` — **`model: opus`** |
+| `pipeline-spec-writer` | opus / high | ТЗ шага, порции, чек-листы; только каталог шагов, неясное — вопросом автору | `high-pipeline`, `epic-pipeline` — **`model: opus`** |
 | `pipeline-spec-writer-xhigh` | opus / xhigh | то же | `xhigh-pipeline` — **`model: opus`** |
-| `pipeline-spec-writer-medium` | opus / medium | то же | `medium-pipeline`, `sol-pipeline` — **`model: opus`** |
+| `pipeline-spec-writer-medium` | opus / medium | то же | `medium-pipeline`, `sol-pipeline`, `feat-pipeline`, `refactor-pipeline` — **`model: opus`** |
 | `pipeline-spec-writer-low` | opus / low | то же | `low-pipeline` — **`model: opus`** |
-| `pipeline-critic` | sonnet / high | штатный критик ТЗ и чек-листа (`model: sonnet`), критик `sonnet` в составе | этап 2 xhigh/high/medium/cross/sol-pipeline |
+| `pipeline-critic` | sonnet / high | штатный критик ТЗ и чек-листа (`model: sonnet`), критик `sonnet` в составе | этап 2 xhigh/high/medium/cross/sol/epic/feat/refactor-pipeline |
 | `pipeline-implementer` | sonnet / medium | реализует одну порцию, не коммитит | `medium-pipeline`, `sol-pipeline` — **`model: opus`** |
-| `pipeline-implementer-high` | sonnet / high | то же для неочевидных порций | `high-pipeline` — **`model: opus`** |
+| `pipeline-implementer-high` | sonnet / high | то же для неочевидных порций | `high-pipeline` — **`model: opus`**; `epic-pipeline`, `feat-pipeline`, `refactor-pipeline` — без `model` |
 | `pipeline-implementer-xhigh` | opus / xhigh | то же на максимальном усилии | `xhigh-pipeline` |
 | `pipeline-implementer-solo` | sonnet / medium | задача в один проход и сам коммитит | `opus-pipeline` — **`model: opus`** |
-| `pipeline-judge` | opus / high | приёмка: чек-лист, срезанные углы в диффе, вердикт, при зелёном — коммит; код не правит | не зовётся ни одним скилом |
+| `pipeline-judge` | opus / high | приёмка: чек-лист, срезанные углы в диффе, вердикт, при зелёном — коммит; код не правит | коллегия `epic`/`feat`/`refactor-pipeline`: судья `sonnet` — **`model: sonnet`**, судья `opus` — без `model` |
 
 Исполнители и судья преднагружают скил `listik:listik` (поле `skills:`) и при названном в задаче id (`Listik, карточка <id>`) ведут карточку сами — раздел «Карточка Listik» в теле агента.
 

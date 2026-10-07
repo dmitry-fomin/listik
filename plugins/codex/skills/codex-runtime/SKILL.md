@@ -79,7 +79,9 @@ no extra paths. Each commit still prints a harmless
 `git pack-refs`, `git gc` and deleting a packed branch do not work inside the sandbox.
 
 Add `write` only when the human asked for a change in this message; never infer it from a
-task merely looking like implementation. A background write job keeps editing files while
+task merely looking like implementation. A collegium judge of a feature-pipeline preset whose SKILL.md names codex as a
+collegium judge (`epic-pipeline`, `feat-pipeline`, `refactor-pipeline`) also runs with `write`, only to run the checks —
+no edits and no commit; the commit exception stays with `sol-pipeline` alone. A background write job keeps editing files while
 you do other things, so launch one only when the human knows it is running.
 
 ## Non-obvious rules

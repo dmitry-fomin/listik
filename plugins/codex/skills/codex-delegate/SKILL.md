@@ -73,7 +73,7 @@ One flag, three values (`--write` still works as an alias for `--permission writ
 | --- | --- | --- |
 | `read` | reading and commands, writes denied by the sandbox | default, any investigation |
 | `bash` | the same sandbox as `read` — codex has no separate command tier | accepted for parity with the other bridges |
-| `write` | file edits inside `--cwd` | only if the human asked for a change in this message, or for the judge of a preset whose SKILL.md names codex as the judge (`sol-pipeline`): launching the preset is that consent |
+| `write` | file edits inside `--cwd` | only if the human asked for a change in this message, or for the judge of a preset whose SKILL.md names codex as the judge (`sol-pipeline`): launching the preset is that consent; also for a **collegium** judge of a preset whose SKILL.md names codex as a collegium judge (`epic-pipeline`, `feat-pipeline`, `refactor-pipeline`) — only to run the checks, без правок и без коммита; исключение на коммит — только `sol-pipeline` |
 
 Never infer write access from a task merely looking like implementation: a read-only run
 that hits the ban says so honestly, which is cheaper than an unrequested edit. A background

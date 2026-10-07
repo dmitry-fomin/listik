@@ -15,6 +15,7 @@
 | `xhigh-pipeline` | ошибка дороже прогона; ~$4 на задачу | Opus 5.5 xhigh (`pipeline-spec-writer-xhigh`, `model: opus`) | Sonnet 5.5 high (`pipeline-critic`, `model: sonnet`) + DeepSeek V4.1 Flash в pi + devin SWE-2 max, кворум, сводит оркестратор | Opus 5.5 xhigh (`pipeline-implementer-xhigh`) | линзы GLM 5.3 Flash ×3 в pi, при находке — Grok 4.7 xhigh |
 | `high-pipeline` | расклад по умолчанию; ~$4 | Opus 5.5 high (`pipeline-spec-writer`, `model: opus`) | Sonnet 5.5 high (`pipeline-critic`, `model: sonnet`) + DeepSeek V4.1 Flash в pi + devin SWE-2 max, кворум, сводит оркестратор | Opus 5.5 high (`pipeline-implementer-high`, `model: opus`) | линзы GLM 5.3 Flash ×3 в pi, при находке — Grok 4.7 xhigh |
 | `medium-pipeline` | работа понятная, хватит пониженного усилия; ~$3 | Opus 5.5 medium (`pipeline-spec-writer-medium`, `model: opus`) | Sonnet 5.5 high (`pipeline-critic`, `model: sonnet`) + DeepSeek V4.1 Flash в pi, кворум, сводит оркестратор | Opus 5.5 medium (`pipeline-implementer`, `model: opus`) | Grok 4.7 high |
+| `sol-pipeline` | проверяющие от OpenAI вместо Grok, автор выбрал сам | Opus 5.5 medium (`pipeline-spec-writer-medium`, `model: opus`) | Sonnet 5.5 high (`pipeline-critic`, `model: sonnet`) + GPT-6.1 Sol medium в Codex, кворум, сводит оркестратор | Opus 5.5 medium (`pipeline-implementer`, `model: opus`) | GPT-6.1 Sol high в Codex |
 | `low-pipeline` | поджимает лимит Max: код вне квоты; ~$3 | Opus 5.5 low (`pipeline-spec-writer-low`, `model: opus`) | DeepSeek V4.1 Flash + GLM 5.3 Flash в pi, кворум, сводит оркестратор | devin SWE-2 max (`devin:devin-delegate --thinking max`) | Grok 4.7 high |
 | `xlow-pipeline` | задача в один прогон, нужна независимая приёмка | — | — | devin SWE-2 max (`devin:devin-delegate --thinking max`) | Grok 4.7 high |
 | `nano-pipeline` | то же, дешевле; при пустом `write_scope` сперва ход на чтении за границами правки | — | — | devin SWE-2 high (`devin:devin-delegate --thinking high`) | GLM 5.3 Flash (`pi:pi-delegate --channel glm`) |
@@ -30,10 +31,10 @@
 | --- | --- | --- | --- |
 | `pipeline-spec-writer` | opus / high | ТЗ шага, порции, чек-листы; только каталог шагов, неясное — вопросом автору | `high-pipeline` — **`model: opus`** |
 | `pipeline-spec-writer-xhigh` | opus / xhigh | то же | `xhigh-pipeline` — **`model: opus`** |
-| `pipeline-spec-writer-medium` | opus / medium | то же | `medium-pipeline` — **`model: opus`** |
+| `pipeline-spec-writer-medium` | opus / medium | то же | `medium-pipeline`, `sol-pipeline` — **`model: opus`** |
 | `pipeline-spec-writer-low` | opus / low | то же | `low-pipeline` — **`model: opus`** |
-| `pipeline-critic` | sonnet / high | штатный критик ТЗ и чек-листа (`model: sonnet`), критик `sonnet` в составе | этап 2 xhigh/high/medium/cross-pipeline |
-| `pipeline-implementer` | sonnet / medium | реализует одну порцию, не коммитит | `medium-pipeline` — **`model: opus`** |
+| `pipeline-critic` | sonnet / high | штатный критик ТЗ и чек-листа (`model: sonnet`), критик `sonnet` в составе | этап 2 xhigh/high/medium/cross/sol-pipeline |
+| `pipeline-implementer` | sonnet / medium | реализует одну порцию, не коммитит | `medium-pipeline`, `sol-pipeline` — **`model: opus`** |
 | `pipeline-implementer-high` | sonnet / high | то же для неочевидных порций | `high-pipeline` — **`model: opus`** |
 | `pipeline-implementer-xhigh` | opus / xhigh | то же на максимальном усилии | `xhigh-pipeline` |
 | `pipeline-implementer-solo` | sonnet / medium | задача в один проход и сам коммитит | `opus-pipeline` — **`model: opus`** |

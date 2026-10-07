@@ -369,6 +369,7 @@ BASE_ID_SKILLS = (
     "medium-pipeline",
     "low-pipeline",
     "xlow-pipeline",
+    "sol-pipeline",
 )
 
 #: Пресеты, у которых `argument-hint` называет бумаги по `<id>.<X>.md`.
@@ -377,6 +378,7 @@ ARGUMENT_HINT_ID_SKILLS = (
     "xhigh-pipeline",
     "medium-pipeline",
     "low-pipeline",
+    "sol-pipeline",
 )
 
 BASE_LINE_RE = re.compile(r"^BASE=<id>", re.MULTILINE)
@@ -502,6 +504,7 @@ SESSION_JOURNAL_LINES = (
 EXECUTOR_PRESETS = {
     "high-pipeline": "SendMessage",
     "medium-pipeline": "SendMessage",
+    "sol-pipeline": "SendMessage",
     "opus-pipeline": "SendMessage",
     "xhigh-pipeline": "SendMessage",
     "low-pipeline": "сессия <id>",
@@ -791,6 +794,7 @@ INLINE_JUDGE_SKILLS = (
     pathlib.Path(SKILLS_SUBDIR) / "low-pipeline" / SKILL_FILE,
     pathlib.Path(SKILLS_SUBDIR) / "xlow-pipeline" / SKILL_FILE,
     pathlib.Path(SKILLS_SUBDIR) / "nano-pipeline" / SKILL_FILE,
+    pathlib.Path(SKILLS_SUBDIR) / "sol-pipeline" / SKILL_FILE,
 )
 
 #: Начало блока inline-задания судье: строка про зелёный вердикт и коммит порции. В пяти
@@ -1215,6 +1219,7 @@ class FeaturePipelineCopyAndNegativeControlTests(unittest.TestCase):
         pathlib.Path(SKILLS_SUBDIR) / "xlow-pipeline" / SKILL_FILE,
         pathlib.Path(SKILLS_SUBDIR) / "cross-pipeline" / SKILL_FILE,
         pathlib.Path(SKILLS_SUBDIR) / "nano-pipeline" / SKILL_FILE,
+        pathlib.Path(SKILLS_SUBDIR) / "sol-pipeline" / SKILL_FILE,
     ]
 
     def test_core_has_copy_section(self) -> None:
@@ -1265,6 +1270,8 @@ CRITIQUE_SECTION_REQUIRED = (
     "actual_status", "completed", "## Блокирующие", "## Существенные", "pi:pi-runtime",
     "devin:devin-runtime", "pi:pi-check", "devin:devin-check", "TaskStop",
     "30%", "без не-Anthropic критика кворума нет", "до срока ожидания",
+    "codex:codex-delegate", "--model gpt-6.1-sol --effort medium", "review-<X>.codex.md",
+    "codex:codex-runtime",
 )
 CRITIQUE_CORE_FORBIDDEN = ("две модели в pi", "pipeline-critic-medium", "pipeline-critic-xhigh",
                            "universal-pipeline", "[оба]", "pipeline-critic-low", "Sonnet low вместо",
@@ -1273,10 +1280,23 @@ CRITIQUE_CORE_FORBIDDEN = ("две модели в pi", "pipeline-critic-medium"
 CRITIQUE_QUORUM_JOURNAL = ("отменён по кворуму", "остальным до <ЧЧ:ММ>")
 #: Запасного критика нет (listik-cszk): без учёта регистра и переносов строк.
 SPARE_CRITIC_RE = re.compile(r"запасн\w* критик", re.I)
-CRITIQUE_PAPER_NAMES = ("review-<X>.sonnet.md", "review-<X>.devin.md")
+CRITIQUE_PAPER_NAMES = ("review-<X>.sonnet.md", "review-<X>.devin.md", "review-<X>.codex.md")
 CRITIQUE_AGENTS_EFFORT = {"pipeline-critic.md": "high"}
 CRITIQUE_AGENTS_REMOVED = ("pipeline-critic-medium.md", "pipeline-critic-xhigh.md",
                            "pipeline-critic-low.md")
+
+
+#: Исключение на коммит судьи sol-pipeline в мосте codex (listik-rdwp, порция a).
+CODEX_DELEGATE_SKILL = "plugins/codex/skills/codex-delegate/SKILL.md"
+CODEX_RUNTIME_SKILL = "plugins/codex/skills/codex-runtime/SKILL.md"
+CODEX_RUNTIME_RED_LINES = "## Red lines (apply inside every codex run)"
+CODEX_COMMIT_EXCEPTION_REQUIRED = ("sol-pipeline", "push", "amend", "reset", "explicit paths")
+
+
+def _codex_commit_exception_problems(block: str) -> list[str]:
+    """Чего не хватает блоку запрета коммитов в мосте codex; пустой список — всё на месте."""
+    return [f"в блоке нет {needle!r}" for needle in CODEX_COMMIT_EXCEPTION_REQUIRED
+            if needle not in block]
 
 
 def _has_spare_critic(text: str) -> bool:
@@ -1296,6 +1316,16 @@ def _critique_core_problems(text: str) -> list[str]:
         quorum = _text_block(section, "**Кворум.**", lambda line: not line.strip())
         problems.extend(f"в абзаце «Кворум.» нет {needle!r}" for needle in CRITIQUE_QUORUM_JOURNAL
                         if needle not in quorum)
+        if "`codex`" not in quorum:
+            problems.append("в абзаце «Кворум.» нет '`codex`'")
+        if "--provider" in section:
+            problems.append("в разделе есть '--provider'")
+        preflight = _text_block(section, "**Предполётная проверка**", lambda line: not line.strip())
+        if "codex:codex-check" not in preflight:
+            problems.append("в абзаце «Предполётная проверка» нет 'codex:codex-check'")
+        collect = _text_block(section, "**Забор.**", lambda line: not line.strip())
+        if "codex:codex-jobs" not in collect:
+            problems.append("в абзаце «Забор.» нет 'codex:codex-jobs'")
     problems.extend(f"в ядре есть {needle!r}" for needle in CRITIQUE_CORE_FORBIDDEN if needle in text)
     if _has_spare_critic(text):
         problems.append("в ядре есть «запасной критик»")
@@ -1319,9 +1349,20 @@ def _critique_core_problems(text: str) -> list[str]:
 
 
 CRITIQUE_PRESETS = ("xhigh-pipeline", "high-pipeline", "medium-pipeline", "low-pipeline",
-                    "cross-pipeline")
-CRITIQUE_PRESET_REQUIRED = ("pi:pi-delegate", "pi:pi-jobs", "`pipeline-core.md`, «Критика ТЗ»",
-                            "$STEPS/$BASE.review-<X>.md")
+                    "cross-pipeline", "sol-pipeline")
+#: Общие для всех пресетов с критикой подстроки и скилы внешнего критика по пресету: у
+#: sol-pipeline внешний критик — codex, у остальных — pi.
+CRITIQUE_PRESET_COMMON = ("`pipeline-core.md`, «Критика ТЗ»", "$STEPS/$BASE.review-<X>.md")
+CRITIQUE_PRESET_LAUNCHERS = {"sol-pipeline": ("codex:codex-delegate", "codex:codex-jobs")}
+CRITIQUE_PRESET_DEFAULT_LAUNCHERS = ("pi:pi-delegate", "pi:pi-jobs")
+
+
+def _critique_preset_required(name: str) -> tuple[str, ...]:
+    """Обязательные подстроки пресета с критикой: скилы его внешнего критика плюс общие."""
+    return CRITIQUE_PRESET_LAUNCHERS.get(name, CRITIQUE_PRESET_DEFAULT_LAUNCHERS) + \
+        CRITIQUE_PRESET_COMMON
+
+
 CRITIQUE_PRESET_FORBIDDEN = ("second-opinion:ask", "--no-system")
 CRITIQUE_STAGE2_FORBIDDEN = ("--write", "--permission write")
 NO_CRITIQUE_PRESETS = ("xlow-pipeline", "nano-pipeline", "opus-pipeline")
@@ -1351,6 +1392,10 @@ class FeaturePipelineCritiqueTests(unittest.TestCase):
         journal = _text_section(text, "## Журнал")
         quorum = _text_block(section, "**Кворум.**", lambda line: not line.strip())
         self.assertTrue(quorum, f"{CORE_DOC}: нет абзаца «Кворум.»")
+        preflight = _text_block(section, "**Предполётная проверка**", lambda line: not line.strip())
+        collect = _text_block(section, "**Забор.**", lambda line: not line.strip())
+        codex_row = next((line for line in section.splitlines() if line.startswith("| `codex` |")), "")
+        self.assertTrue(codex_row, f"{CORE_DOC}: нет строки таблицы вида codex")
         self.assertTrue(section, f"{CORE_DOC}: нет раздела {CRITIQUE_HEADING!r}")
         self.assertTrue(journal, f"{CORE_DOC}: нет раздела «Журнал»")
         broken = {
@@ -1368,6 +1413,15 @@ class FeaturePipelineCritiqueTests(unittest.TestCase):
                 section, section + "\nдосрочно по набранному кворуму никого не отменяешь.\n", 1),
             "из абзаца Кворум убрано отменён по кворуму": text.replace(
                 quorum, quorum.replace("отменён по кворуму", ""), 1),
+            "из раздела убрана строка вида codex": text.replace(codex_row + "\n", "", 1),
+            "из абзаца Кворум убрано `codex`": text.replace(
+                quorum, quorum.replace("`codex`", ""), 1),
+            "в раздел дописано --provider": text.replace(
+                section, section + "\n--provider a6api\n", 1),
+            "из абзаца Предполётная проверка убрано codex:codex-check": text.replace(
+                preflight, preflight.replace("codex:codex-check", ""), 1),
+            "из абзаца Забор убрано codex:codex-jobs": text.replace(
+                collect, collect.replace("codex:codex-jobs", ""), 1),
         }
         for needle in ("15 минут", "--permission read", "стоп: критика — кворум не набран",
                        "completed", "30%", "до срока ожидания"):
@@ -1376,6 +1430,24 @@ class FeaturePipelineCritiqueTests(unittest.TestCase):
             with self.subTest(case=case):
                 self.assertNotEqual(mutated, text, "изменение не применилось")
                 self.assertNotEqual(_critique_core_problems(mutated), [])
+
+    def test_codex_bridge_allows_sol_pipeline_judge_commit(self) -> None:
+        delegate = (REPO_DIR / CODEX_DELEGATE_SKILL).read_text(encoding="utf-8")
+        runtime = (REPO_DIR / CODEX_RUNTIME_SKILL).read_text(encoding="utf-8")
+        blocks = {
+            CODEX_DELEGATE_SKILL: _text_block(delegate, "Project red lines",
+                                              lambda line: not line.strip()),
+            CODEX_RUNTIME_SKILL: _text_block(_text_section(runtime, CODEX_RUNTIME_RED_LINES),
+                                             "- Never commit", lambda line: line.startswith("- ")),
+        }
+        for path, block in blocks.items():
+            with self.subTest(file=path):
+                self.assertTrue(block, f"{path}: нет блока запрета коммитов")
+                self.assertEqual(_codex_commit_exception_problems(block), [], path)
+                for needle in ("sol-pipeline", "push"):
+                    self.assertNotEqual(
+                        _codex_commit_exception_problems(block.replace(needle, "")), [],
+                        f"{path}: проверка не ловит блок без {needle!r}")
 
     def test_critic_agents(self) -> None:
         agents = PLUGIN_DIR / AGENTS_SUBDIR
@@ -1392,7 +1464,7 @@ class FeaturePipelineCritiqueTests(unittest.TestCase):
     def test_critique_presets_point_to_core(self) -> None:
         for name in CRITIQUE_PRESETS:
             text = _skill_text(name)
-            for needle in CRITIQUE_PRESET_REQUIRED:
+            for needle in _critique_preset_required(name):
                 with self.subTest(skill=name, required=needle):
                     self.assertIn(needle, text, f"{name}/{SKILL_FILE}: нет {needle!r}")
             for needle in CRITIQUE_PRESET_FORBIDDEN:
@@ -1645,6 +1717,8 @@ CRITIQUE_COMPOSITION = {
     "low-pipeline": (("deepseek", "glm"),
                      ("`feature-pipeline:pipeline-critic`", "devin:devin-delegate",
                       "pipeline-critic-low", "Sonnet low"), ()),
+    "sol-pipeline": (CRITIQUE_SONNET + ("codex:codex-delegate", "--effort medium", "gpt-6.1-sol"),
+                     ("pi:pi-delegate", "devin:devin-delegate"), ("glm", "deepseek")),
 }
 #: Кто назван критиком: во frontmatter `description` и в столбце «Критика ТЗ» README плагина.
 CRITIQUE_NAMES = {
@@ -1653,11 +1727,13 @@ CRITIQUE_NAMES = {
     "medium-pipeline": ("Sonnet", "DeepSeek"),
     "cross-pipeline": ("Sonnet", "DeepSeek"),
     "low-pipeline": ("DeepSeek", "GLM"),
+    "sol-pipeline": ("Sonnet", "Sol"),
 }
 CRITIQUE_OLD_DESCRIPTION = "GLM 5.3 Flash и DeepSeek V4.1 Flash"
 CRITIQUE_README_COLUMN = "Критика ТЗ"
 CRITIC_LABELS = {"xhigh-pipeline": "S+DS+SWE", "high-pipeline": "S+DS+SWE",
-                 "medium-pipeline": "S+DS", "cross-pipeline": "S+DS", "low-pipeline": "GLM+DS"}
+                 "medium-pipeline": "S+DS", "cross-pipeline": "S+DS", "low-pipeline": "GLM+DS",
+                 "sol-pipeline": "S+Sol"}
 CROSS_HINT = "Devin ТЗ · Sonnet+DS критика · GLM код · Grok приёмка"
 
 
@@ -1804,6 +1880,90 @@ class FeaturePipelineCritiqueCompositionTests(unittest.TestCase):
                     self.assertEqual(cell["provider"], "claude")
                     self.assertNotIn("skill", cell)
         self.assertEqual(routes["cross-pipeline"]["hint"], CROSS_HINT)
+
+
+#: sol-pipeline (listik-rdwp, порция b): Opus в этапах 1 и 3, Sol в Codex в этапе 4, чужих каналов нет.
+SOL_PRESET = "sol-pipeline"
+SOL_STAGE1_REQUIRED = ("model: opus",)
+SOL_STAGE2_REQUIRED = ("--effort medium",)
+SOL_STAGE3_REQUIRED = ("model: opus",)
+SOL_STAGE4_REQUIRED = ("codex:codex-delegate", "--model gpt-6.1-sol", "--effort high",
+                       "--permission write", "--holder codex")
+SOL_FORBIDDEN = ("--provider", "/grok:", "Grok Build", "pi:pi-", "devin", "--channel", "402",
+                 "Fable", "SpaceXAI")
+SOL_FORBIDDEN_CI = ("glm", "deepseek")
+SOL_ROUTE_JUDGE_PARAMS = {"model": "gpt-6.1-sol", "effort": "high"}
+
+
+def _stage_section(text: str, number: int) -> str:
+    """Строки от начинающейся с `### <n>.` до следующего `### ` или `## ` (без неё)."""
+    lines = text.splitlines()
+    start = next((i for i, line in enumerate(lines) if line.startswith(f"### {number}.")), None)
+    if start is None:
+        return ""
+    end = next((i for i in range(start + 1, len(lines))
+                if lines[i].startswith("### ") or lines[i].startswith("## ")), len(lines))
+    return "\n".join(lines[start:end])
+
+
+def _sol_preset_problems(text: str) -> list[str]:
+    """Флаги и состав sol-pipeline; пусто — всё на месте."""
+    problems: list[str] = []
+    for number, required in ((1, SOL_STAGE1_REQUIRED), (2, SOL_STAGE2_REQUIRED),
+                             (3, SOL_STAGE3_REQUIRED), (4, SOL_STAGE4_REQUIRED)):
+        section = _stage_section(text, number)
+        if not section:
+            problems.append(f"нет раздела «### {number}.»")
+            continue
+        problems.extend(f"в «### {number}.» нет {needle!r}" for needle in required
+                        if needle not in section)
+    problems.extend(f"в файле есть {needle!r}" for needle in SOL_FORBIDDEN if needle in text)
+    problems.extend(f"в файле есть {needle!r} (без учёта регистра)" for needle in SOL_FORBIDDEN_CI
+                    if needle in text.lower())
+    return problems
+
+
+class FeaturePipelineSolPresetTests(unittest.TestCase):
+    """sol-pipeline: Opus пишет ТЗ и код, Sonnet и Sol критикуют, Sol high в Codex принимает."""
+
+    def test_sol_preset_flags(self) -> None:
+        self.assertEqual(_sol_preset_problems(_skill_text(SOL_PRESET)), [])
+
+    def test_sol_preset_check_rejects_broken_texts(self) -> None:
+        text = _skill_text(SOL_PRESET)
+        stage1, stage3, stage4 = (_stage_section(text, n) for n in (1, 3, 4))
+        for number, section in ((1, stage1), (3, stage3), (4, stage4)):
+            self.assertTrue(section, f"{SOL_PRESET}: нет раздела «### {number}.»")
+
+        def in_section(section: str, edit) -> str:
+            return text.replace(section, edit(section), 1)
+
+        broken = {
+            "### 1. без model: opus": in_section(stage1, lambda s: s.replace("model: opus", "")),
+            "### 3. без model: opus": in_section(stage3, lambda s: s.replace("model: opus", "")),
+            "### 4. без --model gpt-6.1-sol": in_section(
+                stage4, lambda s: s.replace("--model gpt-6.1-sol", "")),
+            "### 4. без --permission write": in_section(
+                stage4, lambda s: s.replace("--permission write", "")),
+            "### 4. --effort high → --effort medium": in_section(
+                stage4, lambda s: s.replace("--effort high", "--effort medium")),
+            "### 4. + --provider a6api": in_section(stage4, lambda s: s + "\n--provider a6api"),
+            "+ /grok:delegate": text + "\n/grok:delegate\n",
+            "+ DeepSeek": text + "\nDeepSeek\n",
+        }
+        for case, mutated in broken.items():
+            with self.subTest(case=case):
+                self.assertNotEqual(mutated, text, "изменение не применилось")
+                self.assertNotEqual(_sol_preset_problems(mutated), [])
+
+    def test_sol_route(self) -> None:
+        record = next((r for r in _routes() if r["key"] == SOL_PRESET), None)
+        self.assertIsNotNone(record, f"routes.json: нет записи {SOL_PRESET}")
+        judge = record["roles"]["judge"]
+        self.assertEqual(judge.get("skill"), "codex:codex-delegate")
+        self.assertEqual(judge.get("params"), SOL_ROUTE_JUDGE_PARAMS)
+        self.assertEqual(judge.get("provider"), "openai")
+        self.assertEqual(record.get("icon"), "medium")
 
 
 if __name__ == "__main__":

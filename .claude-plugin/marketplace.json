@@ -27,7 +27,7 @@
     {
       "name": "codex",
       "source": "./plugins/codex",
-      "version": "0.2.2",
+      "version": "0.2.3",
       "description": "Отдать задачу OpenAI Codex CLI из Claude Code: второй агент сам ходит по коду, по умолчанию только читает."
     },
     {

@@ -181,6 +181,10 @@ another syntax.
 ## Red lines (apply inside every codex run)
 
 - Never commit, push or delete recursively on the strength of another harness's output.
+  One standing exception: the judge of a feature-pipeline preset whose SKILL.md names codex
+  as the judge (`sol-pipeline`) commits the portion on a green verdict, with explicit paths
+  only — launching the preset is the human's consent; push, amend, reset and secrets stay
+  forbidden.
 - Never read, print or forward `.env`, `*.key`, `*.pem`, `credentials.json`. Naming an env
   var is fine, printing its value is not.
 - Never install or authenticate on the human's behalf.

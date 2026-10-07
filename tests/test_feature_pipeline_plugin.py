@@ -1265,6 +1265,8 @@ CRITIQUE_SECTION_REQUIRED = (
     "actual_status", "completed", "## Блокирующие", "## Существенные", "pi:pi-runtime",
     "devin:devin-runtime", "pi:pi-check", "devin:devin-check", "TaskStop",
     "30%", "без не-Anthropic критика кворума нет", "до срока ожидания",
+    "codex:codex-delegate", "--model gpt-6.1-sol --effort medium", "review-<X>.codex.md",
+    "codex:codex-runtime",
 )
 CRITIQUE_CORE_FORBIDDEN = ("две модели в pi", "pipeline-critic-medium", "pipeline-critic-xhigh",
                            "universal-pipeline", "[оба]", "pipeline-critic-low", "Sonnet low вместо",
@@ -1273,10 +1275,23 @@ CRITIQUE_CORE_FORBIDDEN = ("две модели в pi", "pipeline-critic-medium"
 CRITIQUE_QUORUM_JOURNAL = ("отменён по кворуму", "остальным до <ЧЧ:ММ>")
 #: Запасного критика нет (listik-cszk): без учёта регистра и переносов строк.
 SPARE_CRITIC_RE = re.compile(r"запасн\w* критик", re.I)
-CRITIQUE_PAPER_NAMES = ("review-<X>.sonnet.md", "review-<X>.devin.md")
+CRITIQUE_PAPER_NAMES = ("review-<X>.sonnet.md", "review-<X>.devin.md", "review-<X>.codex.md")
 CRITIQUE_AGENTS_EFFORT = {"pipeline-critic.md": "high"}
 CRITIQUE_AGENTS_REMOVED = ("pipeline-critic-medium.md", "pipeline-critic-xhigh.md",
                            "pipeline-critic-low.md")
+
+
+#: Исключение на коммит судьи sol-pipeline в мосте codex (listik-rdwp, порция a).
+CODEX_DELEGATE_SKILL = "plugins/codex/skills/codex-delegate/SKILL.md"
+CODEX_RUNTIME_SKILL = "plugins/codex/skills/codex-runtime/SKILL.md"
+CODEX_RUNTIME_RED_LINES = "## Red lines (apply inside every codex run)"
+CODEX_COMMIT_EXCEPTION_REQUIRED = ("sol-pipeline", "push", "amend", "reset", "explicit paths")
+
+
+def _codex_commit_exception_problems(block: str) -> list[str]:
+    """Чего не хватает блоку запрета коммитов в мосте codex; пустой список — всё на месте."""
+    return [f"в блоке нет {needle!r}" for needle in CODEX_COMMIT_EXCEPTION_REQUIRED
+            if needle not in block]
 
 
 def _has_spare_critic(text: str) -> bool:
@@ -1296,6 +1311,16 @@ def _critique_core_problems(text: str) -> list[str]:
         quorum = _text_block(section, "**Кворум.**", lambda line: not line.strip())
         problems.extend(f"в абзаце «Кворум.» нет {needle!r}" for needle in CRITIQUE_QUORUM_JOURNAL
                         if needle not in quorum)
+        if "`codex`" not in quorum:
+            problems.append("в абзаце «Кворум.» нет '`codex`'")
+        if "--provider" in section:
+            problems.append("в разделе есть '--provider'")
+        preflight = _text_block(section, "**Предполётная проверка**", lambda line: not line.strip())
+        if "codex:codex-check" not in preflight:
+            problems.append("в абзаце «Предполётная проверка» нет 'codex:codex-check'")
+        collect = _text_block(section, "**Забор.**", lambda line: not line.strip())
+        if "codex:codex-jobs" not in collect:
+            problems.append("в абзаце «Забор.» нет 'codex:codex-jobs'")
     problems.extend(f"в ядре есть {needle!r}" for needle in CRITIQUE_CORE_FORBIDDEN if needle in text)
     if _has_spare_critic(text):
         problems.append("в ядре есть «запасной критик»")
@@ -1351,6 +1376,10 @@ class FeaturePipelineCritiqueTests(unittest.TestCase):
         journal = _text_section(text, "## Журнал")
         quorum = _text_block(section, "**Кворум.**", lambda line: not line.strip())
         self.assertTrue(quorum, f"{CORE_DOC}: нет абзаца «Кворум.»")
+        preflight = _text_block(section, "**Предполётная проверка**", lambda line: not line.strip())
+        collect = _text_block(section, "**Забор.**", lambda line: not line.strip())
+        codex_row = next((line for line in section.splitlines() if line.startswith("| `codex` |")), "")
+        self.assertTrue(codex_row, f"{CORE_DOC}: нет строки таблицы вида codex")
         self.assertTrue(section, f"{CORE_DOC}: нет раздела {CRITIQUE_HEADING!r}")
         self.assertTrue(journal, f"{CORE_DOC}: нет раздела «Журнал»")
         broken = {
@@ -1368,6 +1397,15 @@ class FeaturePipelineCritiqueTests(unittest.TestCase):
                 section, section + "\nдосрочно по набранному кворуму никого не отменяешь.\n", 1),
             "из абзаца Кворум убрано отменён по кворуму": text.replace(
                 quorum, quorum.replace("отменён по кворуму", ""), 1),
+            "из раздела убрана строка вида codex": text.replace(codex_row + "\n", "", 1),
+            "из абзаца Кворум убрано `codex`": text.replace(
+                quorum, quorum.replace("`codex`", ""), 1),
+            "в раздел дописано --provider": text.replace(
+                section, section + "\n--provider a6api\n", 1),
+            "из абзаца Предполётная проверка убрано codex:codex-check": text.replace(
+                preflight, preflight.replace("codex:codex-check", ""), 1),
+            "из абзаца Забор убрано codex:codex-jobs": text.replace(
+                collect, collect.replace("codex:codex-jobs", ""), 1),
         }
         for needle in ("15 минут", "--permission read", "стоп: критика — кворум не набран",
                        "completed", "30%", "до срока ожидания"):
@@ -1376,6 +1414,24 @@ class FeaturePipelineCritiqueTests(unittest.TestCase):
             with self.subTest(case=case):
                 self.assertNotEqual(mutated, text, "изменение не применилось")
                 self.assertNotEqual(_critique_core_problems(mutated), [])
+
+    def test_codex_bridge_allows_sol_pipeline_judge_commit(self) -> None:
+        delegate = (REPO_DIR / CODEX_DELEGATE_SKILL).read_text(encoding="utf-8")
+        runtime = (REPO_DIR / CODEX_RUNTIME_SKILL).read_text(encoding="utf-8")
+        blocks = {
+            CODEX_DELEGATE_SKILL: _text_block(delegate, "Project red lines",
+                                              lambda line: not line.strip()),
+            CODEX_RUNTIME_SKILL: _text_block(_text_section(runtime, CODEX_RUNTIME_RED_LINES),
+                                             "- Never commit", lambda line: line.startswith("- ")),
+        }
+        for path, block in blocks.items():
+            with self.subTest(file=path):
+                self.assertTrue(block, f"{path}: нет блока запрета коммитов")
+                self.assertEqual(_codex_commit_exception_problems(block), [], path)
+                for needle in ("sol-pipeline", "push"):
+                    self.assertNotEqual(
+                        _codex_commit_exception_problems(block.replace(needle, "")), [],
+                        f"{path}: проверка не ловит блок без {needle!r}")
 
     def test_critic_agents(self) -> None:
         agents = PLUGIN_DIR / AGENTS_SUBDIR

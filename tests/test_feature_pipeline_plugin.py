@@ -1966,5 +1966,160 @@ class FeaturePipelineSolPresetTests(unittest.TestCase):
         self.assertEqual(record.get("icon"), "medium")
 
 
+#: Приёмка коллегией судей и отступления пресетов по типу задачи (listik-wleu, порция a).
+COLLEGIUM_HEADING = "## Приёмка коллегией"
+COLLEGIUM_TRIGGER = "Коллегия судей: вердикт без коммита."
+COLLEGIUM_JOURNAL_LINES = (
+    "порция <X>: отпечаток до коллегии <sha>",
+    "порция <X>: судья <вид> — <job-id или agent id>, запуск <ЧЧ:ММ>",
+    "порция <X>: судья <вид> повтор — <причина>",
+    "порция <X>: отпечаток после коллегии <sha>",
+    "порция <X>: судья изменил дерево — стоп",
+    "порция <X>: коллегия — зелёный (<виды>), коммит <hash7>",
+    "порция <X>: коллегия — красный (<виды с красным>)",
+)
+COLLEGIUM_SECTION_REQUIRED = (
+    COLLEGIUM_TRIGGER, "model: sonnet", "--model gpt-6.1-sol --effort high", "--permission write",
+    "--timeout 10200", "codex:codex-jobs", "TaskStop", "VERDICT: PASS", "VERDICT: FAIL", "ГРАНИЦЫ:",
+    "judge-<X>.r<R-1>.md", *COLLEGIUM_JOURNAL_LINES,
+)
+COLLEGIUM_QUORUM_REQUIRED = ("feat-pipeline", "refactor-pipeline", "порция <X>: кворум — sonnet")
+COLLEGIUM_JUDGE_HEADING = "## Коллегия судей"
+COLLEGIUM_JUDGE_REQUIRED = (COLLEGIUM_TRIGGER, "не коммитишь", "в Listik не пишешь")
+COLLEGIUM_CODEX_REQUIRED = ("epic-pipeline", "feat-pipeline", "refactor-pipeline",
+                            "исключение на коммит — только `sol-pipeline`")
+COLLEGIUM_ROLES_HEADING = "### Пресеты по типу задачи — выбор автора"
+COLLEGIUM_ROLES_REQUIRED = (
+    "0.676", "0.684", "0.646", "0.516", "0.494", "0.324", "2026-10-07", "2026-09-29",
+    "epic-pipeline", "feat-pipeline", "refactor-pipeline", "bug-pipeline", "chore-pipeline",
+    "question-pipeline",
+)
+
+
+def _collegium_core_problems(text: str) -> list[str]:
+    """Проблемы «Приёмки коллегией» и связанных правок в тексте ядра; пусто — всё на месте."""
+    problems: list[str] = []
+    headings = [line for line in text.splitlines() if line.startswith("## ")]
+    section = _text_section(text, COLLEGIUM_HEADING)
+    if not section:
+        problems.append(f"нет раздела {COLLEGIUM_HEADING!r}")
+    else:
+        if LENS_HEADING in headings and LENS_BEFORE_HEADING in headings:
+            index = headings.index(COLLEGIUM_HEADING)
+            if not headings.index(LENS_HEADING) < index < headings.index(LENS_BEFORE_HEADING):
+                problems.append(f"{COLLEGIUM_HEADING!r} стоит не между {LENS_HEADING!r} "
+                                f"и {LENS_BEFORE_HEADING!r}")
+        else:
+            problems.append(f"нет {LENS_HEADING!r} или {LENS_BEFORE_HEADING!r}")
+        problems.extend(f"в разделе нет {needle!r}" for needle in COLLEGIUM_SECTION_REQUIRED
+                        if needle not in section)
+    journal = _text_section(text, "## Журнал")
+    problems.extend(f"в «Журнал» нет {line!r}" for line in COLLEGIUM_JOURNAL_LINES
+                    if line not in journal)
+    rules = _text_section(text, "## Жёсткие правила")
+    if "Исключений три" not in rules:
+        problems.append("в «Жёсткие правила» нет «Исключений три»")
+    if "Исключений два" in rules:
+        problems.append("в «Жёсткие правила» осталось «Исключений два»")
+    quorum = _text_block(_text_section(text, CRITIQUE_HEADING), "**Кворум.**",
+                         lambda line: not line.strip())
+    problems.extend(f"в абзаце «Кворум.» нет {needle!r}" for needle in COLLEGIUM_QUORUM_REQUIRED
+                    if needle not in quorum)
+    if "коллеги" not in _text_section(text, LENS_BEFORE_HEADING):
+        problems.append(f"в {LENS_BEFORE_HEADING!r} нет упоминания коллегии")
+    return problems
+
+
+def _collegium_judge_problems(text: str) -> list[str]:
+    """Проблемы режима коллегии в `pipeline-judge.md`; пусто — всё на месте."""
+    section = _text_section(text, COLLEGIUM_JUDGE_HEADING)
+    if not section:
+        return [f"нет раздела {COLLEGIUM_JUDGE_HEADING!r}"]
+    return [f"в разделе нет {needle!r}" for needle in COLLEGIUM_JUDGE_REQUIRED
+            if needle not in section]
+
+
+def _collegium_codex_problems(text: str) -> list[str]:
+    """Проблемы строки `write` таблицы «Permissions» в `codex-delegate/SKILL.md`; пусто — всё на месте."""
+    permissions = _text_section(text, "## Permissions")
+    row = next((line for line in permissions.splitlines() if line.startswith("| `write` |")), "")
+    if not row:
+        return ["в «Permissions» нет строки `write`"]
+    return [f"в строке `write` нет {needle!r}" for needle in COLLEGIUM_CODEX_REQUIRED
+            if needle not in row]
+
+
+def _collegium_roles_problems(text: str) -> list[str]:
+    """Проблемы раздела отступлений пресетов по типу задачи в `ROLES.md`; пусто — всё на месте."""
+    section = _text_block(text, COLLEGIUM_ROLES_HEADING, lambda line: line.startswith("#"))
+    if not section:
+        return [f"нет раздела {COLLEGIUM_ROLES_HEADING!r}"]
+    return [f"в разделе нет {needle!r}" for needle in COLLEGIUM_ROLES_REQUIRED
+            if needle not in section]
+
+
+class FeaturePipelineCollegiumTests(unittest.TestCase):
+    """Коллегия судей в ядре, судье и мосте codex; отступления в ROLES.md (listik-wleu, порция a)."""
+
+    def _texts(self) -> dict:
+        return {
+            _collegium_core_problems: _plugin_text(CORE_DOC),
+            _collegium_judge_problems: _plugin_text(pathlib.Path(AGENTS_SUBDIR) / "pipeline-judge.md"),
+            _collegium_codex_problems: (REPO_DIR / CODEX_DELEGATE_SKILL).read_text(encoding="utf-8"),
+            _collegium_roles_problems: _plugin_text(ROLES_DOC),
+        }
+
+    def test_collegium_texts_in_place(self) -> None:
+        for check, text in self._texts().items():
+            with self.subTest(check=check.__name__):
+                self.assertEqual(check(text), [])
+
+    def test_collegium_checks_reject_broken_texts(self) -> None:
+        texts = self._texts()
+        core = texts[_collegium_core_problems]
+        section = _text_section(core, COLLEGIUM_HEADING)
+        journal = _text_section(core, "## Журнал")
+        judge = texts[_collegium_judge_problems]
+        judge_section = _text_section(judge, COLLEGIUM_JUDGE_HEADING)
+        codex = texts[_collegium_codex_problems]
+        roles = texts[_collegium_roles_problems]
+        roles_section = _text_block(roles, COLLEGIUM_ROLES_HEADING, lambda line: line.startswith("#"))
+        self.assertTrue(section and journal and judge_section and roles_section)
+
+        def in_part(text: str, part: str, needle: str, new: str = "") -> str:
+            return text.replace(part, part.replace(needle, new), 1)
+
+        broken = [
+            ("ядро без заголовка", _collegium_core_problems,
+             core.replace(COLLEGIUM_HEADING + "\n", "", 1)),
+            ("ядро без триггера", _collegium_core_problems, in_part(core, section, COLLEGIUM_TRIGGER)),
+            ("ядро без VERDICT: FAIL", _collegium_core_problems,
+             in_part(core, section, "VERDICT: FAIL")),
+            ("«Журнал» без строки коллегии", _collegium_core_problems,
+             in_part(core, journal, COLLEGIUM_JOURNAL_LINES[4])),
+            ("Исключений три → два", _collegium_core_problems,
+             core.replace("Исключений три", "Исключений два")),
+            ("судья без раздела", _collegium_judge_problems,
+             judge.replace(COLLEGIUM_JUDGE_HEADING + "\n", "", 1)),
+            ("судья без триггера", _collegium_judge_problems,
+             in_part(judge, judge_section, COLLEGIUM_TRIGGER)),
+            ("судья без запрета Listik", _collegium_judge_problems,
+             in_part(judge, judge_section, "в Listik не пишешь")),
+            ("codex без feat-pipeline", _collegium_codex_problems,
+             codex.replace("`feat-pipeline`", "")),
+            ("codex без исключения на коммит", _collegium_codex_problems,
+             codex.replace("исключение на коммит — только `sol-pipeline`", "")),
+            ("roles без заголовка", _collegium_roles_problems,
+             roles.replace(COLLEGIUM_ROLES_HEADING + "\n", "", 1)),
+            ("roles без 0.494", _collegium_roles_problems, in_part(roles, roles_section, "0.494")),
+            ("roles без chore-pipeline", _collegium_roles_problems,
+             in_part(roles, roles_section, "chore-pipeline")),
+        ]
+        for case, check, mutated in broken:
+            with self.subTest(case=case):
+                self.assertNotEqual(mutated, texts[check], "изменение не применилось")
+                self.assertNotEqual(check(mutated), [])
+
+
 if __name__ == "__main__":
     unittest.main()

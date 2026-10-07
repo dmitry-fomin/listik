@@ -7,10 +7,11 @@ import unittest
 from listik.stage_launch import in_swarm
 
 ROUTES = {
-    "roy": {"key": "roy", "kind": "swarm", "driver": "swarm"},
+    "roy": {"key": "roy", "kind": "swarm"},
+    # Лишнее поле старой схемы: рой решается только по `kind` (listik-ujra).
     "pipe-swarm": {"key": "pipe-swarm", "kind": "pipeline", "driver": "swarm"},
-    "pipe-skill": {"key": "pipe-skill", "kind": "pipeline", "driver": "skill"},
-    "direct": {"key": "direct", "kind": "direct", "driver": "skill"},
+    "pipe": {"key": "pipe", "kind": "pipeline"},
+    "direct": {"key": "direct", "kind": "direct"},
 }
 
 
@@ -26,8 +27,9 @@ class InSwarmTests(unittest.TestCase):
             ("снимок swarm, маршрута нет в словаре", card("gone", "swarm"), True),
             ("без снимка, маршрута нет в словаре", card("gone"), False),
             ("без снимка, kind=swarm", card("roy"), True),
-            ("без снимка, pipeline driver=swarm", card("pipe-swarm"), True),
-            ("без снимка, pipeline driver=skill", card("pipe-skill"), False),
+            ("без снимка, pipeline с лишним полем роя", card("pipe-swarm"), False),
+            ("без снимка, pipeline", card("pipe"), False),
+            ("снимок swarm, маршрут-конвейер", card("pipe", "swarm"), True),
             ("без снимка, direct", card("direct"), False),
             ("снимок skill, роевой маршрут", card("roy", "skill"), False),
             ("словарь без полей", {}, False),

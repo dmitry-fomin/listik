@@ -87,15 +87,6 @@ class LabelRuleTests(RoutesStateMixin, TempDbTestCase):
     def test_swarm_gets_only_its_key(self) -> None:
         self.assertEqual(routes_mod.labels_for(self.conn, SWARM), SWARM_LABELS)
 
-    def test_swarm_driven_pipeline_gets_only_its_key(self) -> None:
-        """listik-1lbn: рой определяется и по `driver`, не только по `kind`."""
-        routes_store.upsert_route(self.conn, {**ROUTES_DOC["routes"][0], "key": "roy-pipeline",
-                                              "driver": "swarm",
-                                              "roles": {"impl": {"harness": "dsh",
-                                                                 "argv": ["dsh", "{task_id}"]}}})
-        self.assertEqual(routes_mod.labels_for(self.conn, "roy-pipeline"),
-                         ["process:roy-pipeline"])
-
     def test_empty_unknown_or_whitespace_key_gets_nothing(self) -> None:
         for key in (None, "", "   ", "нет-такого"):
             with self.subTest(key=key):

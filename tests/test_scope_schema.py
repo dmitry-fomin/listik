@@ -72,8 +72,8 @@ class SchemaMigrationTests(TempDbTestCase):
                 conn.execute("SELECT COUNT(*) FROM projects").fetchone()[0], 1)
             version = conn.execute(
                 "SELECT value FROM meta WHERE key = 'schema_version'").fetchone()[0]
-            self.assertEqual(version, "14")
-            self.assertEqual(db_mod.SCHEMA_VERSION, 14)
+            self.assertEqual(version, "15")
+            self.assertEqual(db_mod.SCHEMA_VERSION, 15)
             self.assertEqual(db_mod.migrate(conn), [])
         finally:
             conn.close()

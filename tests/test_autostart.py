@@ -195,8 +195,8 @@ class SchemaAndFieldsTests(AutostartTestCase):
                 self.assertIn(name, columns, name)
             version = conn.execute(
                 "SELECT value FROM meta WHERE key = 'schema_version'").fetchone()
-            self.assertEqual(version["value"], "14")
-            self.assertEqual(db_mod.SCHEMA_VERSION, 14)
+            self.assertEqual(version["value"], "15")
+            self.assertEqual(db_mod.SCHEMA_VERSION, 15)
         finally:
             conn.close()
 
@@ -405,6 +405,8 @@ class LaunchTests(AutostartTestCase):
 
         row = self.row(task["id"])
         self.assertEqual(row["launched_by"], "listik")
+        # Снимок способа по `kind` маршрута (listik-ujra): конвейер — `skill`.
+        self.assertEqual(row["launch_driver"], "skill")
         self.assertIsInstance(row["launch_pid"], int)
         self.assertTrue(row["launched_at"])
         self.assertEqual(row["launch_error"], None)

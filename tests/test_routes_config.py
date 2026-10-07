@@ -70,7 +70,7 @@ def swarm_record() -> dict:
 def swarm_normalized(**over) -> dict:
     """`swarm_record()` после `routes.validate`: у ключа `dsh` уровня нет."""
     return {"key": "dsh", "kind": "swarm", "title": "dsh", "hint": "", "visible": True,
-            "icon": None, "roles": {"impl": {"harness": "dsh"}}, "driver": "swarm",
+            "icon": None, "roles": {"impl": {"harness": "dsh"}},
             "command": None, **over}
 
 
@@ -308,12 +308,27 @@ class ValidateTests(unittest.TestCase):
 
     def test_roles_empty(self) -> None:
         """Пустой расклад — хранимое состояние конвейера (listik-1lbn), у роя — ошибка."""
-        for extra in ({}, {"driver": "swarm"}):
-            with self.subTest(**extra):
-                normalized = routes_mod.validate(
-                    document({**pipeline_record(), "roles": {}, **extra}))
-                self.assertEqual(normalized[0]["roles"], {})
+        normalized = routes_mod.validate(document({**pipeline_record(), "roles": {}}))
+        self.assertEqual(normalized[0]["roles"], {})
         self.check_error(document({**swarm_record(), "roles": {}}), "routes[0].roles")
+
+    def test_old_backup_driver_matching_kind_is_dropped(self) -> None:
+        """listik-ujra: `driver` из старого бэкапа принимается, только если равен выводу
+        из `kind` (или null), и в нормализованную запись не попадает."""
+        for record in ({**pipeline_record(), "driver": "skill"},
+                       {**swarm_record(), "driver": "swarm"},
+                       {**pipeline_record(), "driver": None},
+                       {**swarm_record(), "driver": None}):
+            with self.subTest(kind=record["kind"], value=record["driver"]):
+                self.assertNotIn("driver", routes_mod.validate(document(record))[0])
+
+    def test_old_backup_driver_other_value_is_error(self) -> None:
+        for record in ({**pipeline_record(), "driver": "swarm"},
+                       {**swarm_record(), "driver": "skill"},
+                       {**pipeline_record(), "driver": "bogus"},
+                       {**swarm_record(), "driver": 1}):
+            with self.subTest(kind=record["kind"], value=record["driver"]):
+                self.check_error(document(record), "routes[0].driver")
 
     def test_role_unknown(self) -> None:
         record = pipeline_record()

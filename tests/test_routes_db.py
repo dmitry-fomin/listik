@@ -259,11 +259,11 @@ class ReimportCommandTests(RoutesDbTestCase):
 
 
 class ReimportKeepsUserRoutesTests(RoutesDbTestCase):
-    """`reimport` сохраняет маршруты не из файла, кроме пайплайнов-скилов, и пишет бэкап
+    """`reimport` сохраняет маршруты не из файла, кроме конвейеров, и пишет бэкап
     (listik-zr05, порция g)."""
 
     SWARM_ROLES = {"impl": {"harness": "codex", "argv": ["codex", "exec", "{task_id}"]}}
-    KEPT = ["chiki-pow", "my-solo", "my-swarm-pipe"]
+    KEPT = ["chiki-pow", "my-solo", "my-roy"]
     BACKUP_RE = r"routes\.bak-\d{8}T\d{6}Z(-\d+)?\.json"
 
     def setUp(self) -> None:
@@ -278,8 +278,8 @@ class ReimportKeepsUserRoutesTests(RoutesDbTestCase):
                                   roles=self.SWARM_ROLES)
         routes_store.upsert_route(self.conn, {**swarm_record(), "key": "my-solo",
                                               "title": "Мой dsh"})
-        routes_store.upsert_route(self.conn, {**pipeline_record(), "key": "my-swarm-pipe",
-                                              "driver": "swarm", "roles": self.SWARM_ROLES})
+        routes_store.upsert_route(self.conn, {**swarm_record(), "key": "my-roy",
+                                              "roles": self.SWARM_ROLES})
         routes_store.upsert_route(self.conn, {**pipeline_record(), "key": "my-pipe"})
         routes_store.update_route(self.conn, "high-pipeline", title="Моя правка")
         task = store.create_task(self.conn, title="рой", project="listik")
@@ -341,12 +341,13 @@ class ReimportKeepsUserRoutesTests(RoutesDbTestCase):
         self.assertEqual(state.by_key["high-pipeline"]["title"], "Моя правка")
 
     def test_backup_records_have_no_harness(self) -> None:
-        """Бэкап таблицы без поля `harness` у любой записи (listik-ar8v)."""
+        """Бэкап таблицы без полей `harness` (listik-ar8v) и `driver` (listik-ujra)."""
         report = self.reimport()
         saved = json.loads(pathlib.Path(report["backup"]).read_text(encoding="utf-8"))["routes"]
         self.assertEqual({r["key"] for r in saved}, set(self.before))
         for record in saved:
             self.assertNotIn("harness", record, record["key"])
+            self.assertNotIn("driver", record, record["key"])
         self.assertEqual(next(r for r in saved if r["key"] == "my-solo")["roles"],
                          {"impl": {"harness": "dsh"}})
 
@@ -368,13 +369,11 @@ class ReimportKeepsUserRoutesTests(RoutesDbTestCase):
     def test_file_validator_swarm_cells(self) -> None:
         base = {"key": "p", "title": "t", "visible": True}
         cell = {"impl": {"harness": "codex"}}
-        for kind, driver in (("swarm", None), ("pipeline", "swarm")):
-            record = {**base, "kind": kind, "roles": cell,
-                      **({"driver": driver} if driver else {})}
-            self.assertEqual(routes_mod.validate(document(record))[0]["roles"], cell)
+        self.assertEqual(routes_mod.validate(document({**base, "kind": "swarm", "roles": cell}))
+                         [0]["roles"], cell)
+        # Форма ячеек — только по `kind`: у конвейера роевые ячейки не проходят.
         with self.assertRaises(routes_mod.RoutesError):
-            routes_mod.validate(document({**base, "kind": "pipeline", "driver": "swarm",
-                                          "roles": pipeline_record()["roles"]}))
+            routes_mod.validate(document({**base, "kind": "pipeline", "roles": cell}))
         # С каталогом без argv по умолчанию команда по-прежнему обязательна.
         with self.assertRaises(routes_mod.RoutesError):
             routes_mod.validate_swarm_roles(cell, "roles", {"codex": {"argv": None}})
@@ -637,7 +636,7 @@ class SchemaUpgradeTests(unittest.TestCase):
             self.assertEqual(conn.execute("SELECT COUNT(*) FROM projects").fetchone()[0], 1)
             version = conn.execute(
                 "SELECT value FROM meta WHERE key = 'schema_version'").fetchone()[0]
-            self.assertEqual(version, "14")
+            self.assertEqual(version, "15")
         finally:
             conn.close()
 

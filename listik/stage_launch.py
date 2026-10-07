@@ -1,4 +1,4 @@
-"""Этапный запуск роя (`driver="swarm"`): расклад этап↔роль, разбор ответа
+"""Этапный запуск роя (`kind="swarm"`): расклад этап↔роль, разбор ответа
 (последней строки вывода) харнесса, переходы и порции. Протокол и контракт —
 `docs/specs/swarm-stage-launch.md`.
 """
@@ -57,8 +57,8 @@ SWARM_ACTOR = store.AUTOSTART_ACTOR
 # ------------------------------------------------------------------ расклад
 
 def is_swarm(record: dict | None) -> bool:
-    """Маршрут едет роем: `driver=swarm` (у `kind=swarm` он такой всегда)."""
-    return bool(record) and record.get("driver") == "swarm"
+    """Маршрут едет роем: `kind=swarm`."""
+    return bool(record) and record.get("kind") == "swarm"
 
 
 def role_of_stage(stage: str | None) -> str | None:
@@ -67,8 +67,7 @@ def role_of_stage(stage: str | None) -> str | None:
 
 
 def _cell_argv(cell: dict, harness_record: dict | None) -> list | None:
-    """argv роли: `argv` ячейки `kind=swarm`, `command` ячейки конвейера с
-    `driver=swarm`, иначе argv харнесса по умолчанию."""
+    """argv роли: `argv` ячейки (или её `command`), иначе argv харнесса по умолчанию."""
     argv = cell.get("argv") or cell.get("command")
     if not argv and harness_record:
         argv = harness_record.get("argv")
@@ -218,7 +217,7 @@ def resolve_role(conn: sqlite3.Connection, record: dict, role: str | None) -> di
     `own_prompt` — у ячейки свой промпт: критерии агента лаунчер к нему не дописывает.
 
     Роль есть, когда у ячейки задан `harness` и находится команда: свой argv
-    (`argv` у `kind=swarm`, `command` у конвейера с `driver=swarm`) или argv
+    (`argv` или `command` ячейки) или argv
     харнесса по умолчанию. Ячейка без харнесса и харнесс без команды —
     «нет роли с командой», это не сбой маршрута: этап пропускается.
     """
@@ -422,7 +421,7 @@ def in_swarm(task, routes_by_key: dict) -> bool:
 
     Пустой `launch_route` — не карточка роя; снимок `launch_driver == "swarm"` — карточка
     роя; снимка нет — решает маршрут из `routes_by_key` (`routes.state(conn).by_key`):
-    `kind == "swarm"` или `driver == "swarm"`; снимок другой или маршрута нет — не рой.
+    `kind == "swarm"`; снимок другой или маршрута нет — не рой.
     `task` — `sqlite3.Row` или `dict` (отсутствующее поле — пустое). Отличие от клиента —
     `strip` маршрута: пробельный маршрут здесь пуст (как в `is_swarm_task`).
     """
@@ -430,16 +429,16 @@ def in_swarm(task, routes_by_key: dict) -> bool:
     route_key = ((task["launch_route"] if "launch_route" in keys else None) or "").strip()
     if not route_key:
         return False
-    driver = (task["launch_driver"] if "launch_driver" in keys else None) or ""
-    if driver:
-        return driver == "swarm"
+    snapshot = (task["launch_driver"] if "launch_driver" in keys else None) or ""
+    if snapshot:
+        return snapshot == "swarm"
     route = routes_by_key.get(route_key)
-    return bool(route) and (route.get("kind") == "swarm" or route.get("driver") == "swarm")
+    return bool(route) and route.get("kind") == "swarm"
 
 
 def is_swarm_task(conn: sqlite3.Connection, row) -> bool:
-    """Карточка едет роем: снимок `launch_driver`, а до первого запуска — живой
-    `driver` её маршрута. Маршрута нет в базе — не рой, прочие ошибки чтения
+    """Карточка едет роем: снимок `launch_driver`, а до первого запуска — `kind`
+    её маршрута. Маршрута нет в базе — не рой, прочие ошибки чтения
     пробрасываются."""
     snapshot = row["launch_driver"] if "launch_driver" in row.keys() else None
     if snapshot:

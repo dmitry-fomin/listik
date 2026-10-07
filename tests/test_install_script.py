@@ -22,6 +22,8 @@ argv в общий лог-файл и выходят с кодом, которы
 """
 from __future__ import annotations
 
+import errno
+import fcntl
 import functools
 import hashlib
 import http.server
@@ -29,12 +31,18 @@ import io
 import json
 import os
 import pathlib
+import pty
+import select
 import shutil
+import signal
 import socket
+import sqlite3
+import struct
 import subprocess
 import sys
 import tarfile
 import tempfile
+import termios
 import threading
 import time
 import tomllib
@@ -87,10 +95,20 @@ exit "${FAKE_SYSTEMCTL_EXIT:-0}"
 
 #: `claude mcp get` по умолчанию «не найдена» (1) — так `install.sh` не пытается `mcp remove`
 #: лишний раз; тест на `mcp get` -> 0 подменяет `FAKE_CLAUDE_MCP_GET_EXIT`.
+#: listik-jdo8: `FAKE_CLAUDE_FAIL_PLUGIN=<плагин>@listik` роняет его install/update,
+#: `FAKE_CLAUDE_FAIL_MARKETPLACE=1` — `plugin marketplace update`. В /dev/tty не пишет.
 FAKE_CLAUDE_SH = """#!/bin/sh
 printf 'claude %s\\n' "$*" >> "$FAKE_LOG"
 if [ "$1" = mcp ] && [ "$2" = get ]; then
     exit "${FAKE_CLAUDE_MCP_GET_EXIT:-1}"
+fi
+if [ "$1" = plugin ] && [ "$2" = marketplace ] && [ "$3" = update ] \\
+        && [ "${FAKE_CLAUDE_FAIL_MARKETPLACE:-}" = 1 ]; then
+    exit 1
+fi
+if [ "$1" = plugin ] && { [ "$2" = install ] || [ "$2" = update ]; } \\
+        && [ -n "${FAKE_CLAUDE_FAIL_PLUGIN:-}" ] && [ "$3" = "$FAKE_CLAUDE_FAIL_PLUGIN" ]; then
+    exit 1
 fi
 exit "${FAKE_CLAUDE_EXIT:-0}"
 """
@@ -477,6 +495,7 @@ class InstallScriptTests(unittest.TestCase):
         self.assertIn("plugin install dsh@listik", text)
         self.assertIn("plugin install codex@listik", text)
         self.assertIn("plugin install second-opinion@listik", text)
+        self.assertIn("plugin install claude-codex@listik", text)
         self.assertIn("plugin marketplace update listik", text)
         for name in ("listik", "feature-pipeline", "pi", "devin", "opencode"):
             self.assertIn(f"plugin install {name}@listik", text)
@@ -836,6 +855,301 @@ class InstallScriptTests(unittest.TestCase):
         result = self.run_install("--help")
         self.assertIn("--routes-reimport", result.stdout)
         self.assertIn("LISTIK_ROUTES_REIMPORT", result.stdout)
+
+    # --- listik-jdo8, порция b: плагины по выбору нейронок и харнессов ----
+
+    ALL_PLUGINS = ("listik", "feature-pipeline", "claude-codex", "dsh", "codex", "opencode",
+                   "pi", "devin", "second-opinion")
+    PROMPT = "Номера через пробел или запятую; Enter — все, 0 — ни одной: "
+
+    def fake_env(self, **overrides: str) -> tuple[dict, pathlib.Path]:
+        fake_dir, log = self.make_fake_tools()
+        env = self.env(PATH=f"{fake_dir}:{os.environ.get('PATH', '')}",
+                       FAKE_LOG=str(log), LISTIK_PORT=str(free_port()), **overrides)
+        return env, log
+
+    @staticmethod
+    def log_text(log: pathlib.Path) -> str:
+        return log.read_text(encoding="utf-8") if log.exists() else ""
+
+    def installed_plugins(self, log: pathlib.Path) -> set[str]:
+        text = self.log_text(log)
+        return {p for p in self.ALL_PLUGINS if f"plugin install {p}@listik\n" in text}
+
+    def route_visibility(self) -> dict[str, int]:
+        conn = sqlite3.connect(self.installed_home / "listik.db")
+        try:
+            return dict(conn.execute("SELECT key, visible FROM routes").fetchall())
+        finally:
+            conn.close()
+
+    def install_plugins(self, *extra: str, env: dict) -> subprocess.CompletedProcess:
+        result = self.run_install("--archive", str(self.make_archive(VERSION)), "--yes",
+                                  "--service", "no", "--mcp", "no", "--swarm", "no",
+                                  "--plugins", "yes", *extra, env=env)
+        self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+        return result
+
+    def test_lists_select_plugins(self) -> None:
+        env, log = self.fake_env()
+        result = self.install_plugins("--models", " deepseek , claude,,claude",
+                                      "--harnesses=pi,claude,dsh", env=env)
+        self.assertEqual(self.installed_plugins(log),
+                         {"listik", "feature-pipeline", "dsh", "pi", "second-opinion"})
+        self.assertNotIn("uninstall", self.log_text(log))
+        self.assertIn("нейронки: claude, deepseek", result.stdout)
+        self.assertIn("харнессы: claude, pi, dsh", result.stdout)
+        self.assertIn("плагины: ok (listik, feature-pipeline, dsh, pi, second-opinion)",
+                      result.stdout)
+        self.assertNotIn("скрыты маршруты", result.stdout)
+        self.assertNotIn("grok:", result.stdout)
+        self.assertTrue(all(self.route_visibility().values()))
+
+    def test_lists_order_of_plugins_and_claude_codex(self) -> None:
+        env, log = self.fake_env()
+        self.install_plugins("--models", "openai,claude,glm", "--harnesses",
+                             "opencode,codex,claude", env=env)
+        installs = [ln.split()[3] for ln in self.log_text(log).splitlines()
+                    if ln.startswith("claude plugin install ")]
+        self.assertEqual(installs, ["listik@listik", "feature-pipeline@listik",
+                                    "claude-codex@listik", "codex@listik", "opencode@listik",
+                                    "second-opinion@listik"])
+
+    def test_without_claude_model_hides_pipeline_routes(self) -> None:
+        env, log = self.fake_env()
+        result = self.install_plugins("--models", "openai", "--harnesses", "claude,codex",
+                                      env=env)
+        self.assertEqual(self.installed_plugins(log), {"listik", "codex", "second-opinion"})
+        visibility = self.route_visibility()
+        self.assertEqual(len(visibility), ROUTES_COUNT)
+        self.assertFalse(any(visibility.values()), visibility)
+        self.assertIn("скрыты маршруты: ", result.stdout)
+        self.assertIn("low-pipeline", result.stdout)
+
+    def test_without_claude_harness_installs_nothing(self) -> None:
+        env, log = self.fake_env()
+        result = self.install_plugins("--models", "all", "--harnesses", "codex,grok", env=env)
+        self.assertNotIn("claude plugin", self.log_text(log))
+        self.assertIn("плагины: пропущен (не выбран claude)", result.stdout)
+        self.assertIn("grok: плагина в marketplace listik нет, ставится отдельно", result.stdout)
+        self.assertFalse(any(self.route_visibility().values()))
+
+    def test_only_listik_when_claude_harness_alone(self) -> None:
+        env, log = self.fake_env()
+        result = self.install_plugins("--models", "none", "--harnesses", "claude", env=env)
+        self.assertEqual(self.installed_plugins(log), {"listik"})
+        self.assertIn("нейронки: —", result.stdout)
+        self.assertIn("плагины: ok (listik)", result.stdout)
+
+    def test_env_lists_and_flag_wins(self) -> None:
+        env, log = self.fake_env(LISTIK_MODELS="claude", LISTIK_HARNESSES="claude,devin")
+        result = self.install_plugins("--models", "claude,devin", env=env)
+        self.assertEqual(self.installed_plugins(log), {"listik", "feature-pipeline", "devin"})
+        self.assertIn("харнессы: claude, devin", result.stdout)
+
+    def test_empty_env_is_unset(self) -> None:
+        env, log = self.fake_env(LISTIK_MODELS="", LISTIK_HARNESSES="")
+        self.install_plugins(env=env)
+        self.assertEqual(self.installed_plugins(log), set(self.ALL_PLUGINS))
+
+    def test_yes_installs_all_and_hides_nothing(self) -> None:
+        env, log = self.fake_env(FAKE_CLAUDE_FAIL_PLUGIN="claude-codex@listik")
+        result = self.install_plugins(env=env)
+        self.assertEqual(self.installed_plugins(log), set(self.ALL_PLUGINS))
+        self.assertIn("плагины: не удалось (claude-codex)", result.stdout)
+        self.assertIn("/plugin install claude-codex@listik", result.stderr)
+        self.assertTrue(all(self.route_visibility().values()))
+        self.assertNotIn("скрыты маршруты", result.stdout)
+        self.assertIn("grok: плагина в marketplace listik нет", result.stdout)
+
+    def test_without_tty_installs_all(self) -> None:
+        env, log = self.fake_env()
+        result = self.run_install("--archive", str(self.make_archive(VERSION)),
+                                  "--service", "no", "--mcp", "no", "--swarm", "no",
+                                  "--plugins", "yes", "--codex-network", "no",
+                                  env=env, stdin=subprocess.DEVNULL, session=True)
+        self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+        self.assertEqual(self.installed_plugins(log), set(self.ALL_PLUGINS))
+        self.assertTrue(all(self.route_visibility().values()))
+
+    def test_marketplace_update_fails(self) -> None:
+        env, log = self.fake_env(FAKE_CLAUDE_FAIL_MARKETPLACE="1")
+        result = self.install_plugins("--models", "claude", "--harnesses", "claude", env=env)
+        self.assertIn("плагины: не удалось (marketplace)", result.stdout)
+        self.assertEqual(self.installed_plugins(log), {"listik", "feature-pipeline"})
+        self.assertIn("/plugin install feature-pipeline@listik", result.stderr)
+        self.assertNotIn("/plugin install dsh@listik", result.stderr)
+
+    def test_no_claude_hint_lists_selected_only(self) -> None:
+        env = self.env(PATH=path_without("claude"), LISTIK_PORT=str(free_port()))
+        result = self.install_plugins("--models", "claude", "--harnesses", "claude", env=env)
+        self.assertIn("плагины: не удалось", result.stdout)
+        self.assertIn("/plugin install feature-pipeline@listik", result.stdout)
+        self.assertNotIn("/plugin install dsh@listik", result.stdout)
+
+    def test_plugins_no_keeps_routes(self) -> None:
+        env, log = self.fake_env()
+        self.install_plugins("--models", "openai", "--harnesses", "claude", env=env)
+        conn = sqlite3.connect(self.installed_home / "listik.db")
+        with conn:
+            conn.execute("UPDATE routes SET visible = 1 WHERE key = 'low-pipeline'")
+        conn.close()
+        before = self.route_visibility()
+        log.write_text("", encoding="utf-8")
+        result = self.run_install("--archive", str(self.make_archive(VERSION)), "--yes",
+                                  "--service", "no", "--mcp", "no", "--swarm", "no",
+                                  "--plugins", "no", "--models", "none", env=env)
+        self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+        self.assertEqual(self.route_visibility(), before)
+        self.assertEqual(self.log_text(log), "")
+        self.assertIn("плагины: пропущен", result.stdout)
+        self.assertNotIn("нейронки:", result.stdout)
+        self.assertNotIn("харнессы:", result.stdout)
+
+    def test_plugins_no_still_validates_lists(self) -> None:
+        result = self.run_install("--archive", str(self.make_archive(VERSION)), "--yes",
+                                  "--plugins", "no", "--harnesses", "bogus")
+        self.assertEqual(result.returncode, 1)
+        self.assertIn("--harnesses: неизвестный харнесс 'bogus'", result.stderr)
+
+    def assert_list_rejected(self, args: tuple[str, ...], env_extra: dict, message: str) -> None:
+        env, log = self.fake_env(**env_extra)
+        result = self.run_install("--archive", str(self.make_archive(VERSION)), "--yes",
+                                  "--plugins", "yes", *args, env=env)
+        self.assertEqual(result.returncode, 1, result.stdout + result.stderr)
+        self.assertIn(message, result.stderr)
+        self.assertFalse(self.app.exists(), "установка не остановилась до распаковки")
+        self.assertEqual(self.log_text(log), "")
+
+    def test_list_errors_stop_before_unpack(self) -> None:
+        cases = [
+            (("--models", "claude,Claude,bad"), {},
+             "--models: неизвестная нейронка 'Claude' (можно: claude, openai, deepseek, glm, "
+             "grok, devin, gemini, all, none)"),
+            (("--harnesses", "foo"), {},
+             "--harnesses: неизвестный харнесс 'foo' (можно: claude, codex, pi, devin, dsh, "
+             "opencode, grok, all, none)"),
+            ((), {"LISTIK_MODELS": "gpt"}, "--models: неизвестная нейронка 'gpt'"),
+            ((), {"LISTIK_HARNESSES": "cursor"}, "--harnesses: неизвестный харнесс 'cursor'"),
+            (("--models", "all,claude"), {}, "--models: all и none пишутся отдельно"),
+            (("--harnesses", "none,claude"), {}, "--harnesses: all и none пишутся отдельно"),
+            (("--models", " , "), {}, "--models: пустой список (ни одной — none)"),
+            (("--models",), {}, "--models"),
+            (("--harnesses",), {}, "--harnesses"),
+        ]
+        for args, env_extra, message in cases:
+            with self.subTest(args=args, env=env_extra):
+                self.assert_list_rejected(args, env_extra, message)
+
+    def test_lists_in_help(self) -> None:
+        result = self.run_install("--help")
+        for text in ("--models", "--harnesses", "LISTIK_MODELS", "LISTIK_HARNESSES",
+                     "gemini", "opencode", "all", "none", "по выбору"):
+            self.assertIn(text, result.stdout)
+
+    # --- listik-jdo8, порция b: построчный вопрос через pty ---------------
+
+    def run_pty(self, answers: list[bytes], *, plain: bool = True,
+                timeout: float = 240) -> tuple[int, str, pathlib.Path]:
+        """install.sh под pty: на каждое новое приглашение — следующий ответ."""
+        env, log = self.fake_env()
+        if plain:
+            env["LISTIK_PLAIN"] = "1"
+        else:
+            env.pop("NO_COLOR", None)
+            env.pop("CI", None)
+            env["TERM"] = "xterm-256color"
+        argv = [SH, str(INSTALL_SH), "--archive", str(self.make_archive(VERSION)),
+                "--service", "no", "--mcp", "no", "--swarm", "no", "--plugins", "yes",
+                "--codex-network", "no"]
+        prompt = self.PROMPT.encode("utf-8")
+        pid, fd = pty.fork()
+        if pid == 0:  # pragma: no cover — дочерний процесс
+            try:
+                if not plain:
+                    fcntl.ioctl(0, termios.TIOCSWINSZ, struct.pack("HHHH", 24, 100, 0, 0))
+                os.execve(SH, argv, env)
+            finally:
+                os._exit(127)
+        buf = b""
+        sent = 0
+        reaped = False
+        try:
+            deadline = time.monotonic() + timeout
+            while True:
+                left = deadline - time.monotonic()
+                if left <= 0:
+                    self.fail(f"install.sh не закончил за {timeout} с: {buf.decode(errors='replace')}")
+                ready, _, _ = select.select([fd], [], [], min(left, 1.0))
+                if ready:
+                    try:
+                        chunk = os.read(fd, 4096)
+                    except OSError as exc:
+                        if exc.errno == errno.EIO:
+                            break
+                        raise
+                    if not chunk:
+                        break
+                    buf += chunk
+                if sent < len(answers) and buf.count(prompt) > sent:
+                    os.write(fd, answers[sent])
+                    sent += 1
+            _, status = os.waitpid(pid, 0)
+            reaped = True
+        finally:
+            if not reaped:
+                try:
+                    os.kill(pid, signal.SIGKILL)
+                except OSError:
+                    pass
+                os.waitpid(pid, 0)
+            os.close(fd)
+        out = buf.decode("utf-8", errors="replace")
+        self.assertEqual(sent, len(answers), out)
+        return os.waitstatus_to_exitcode(status), out, log
+
+    @unittest.skipUnless(shutil.which("stty"), "нужен stty")
+    def test_pty_reasks_and_dedups(self) -> None:
+        code, out, log = self.run_pty([b"2 x\r", b"1,3 3\r", b"\r"])
+        self.assertEqual(code, 0, out)
+        self.assertIn("Какие нейронки (подписки) у вас есть?", out)
+        self.assertIn("  1) Claude (Anthropic)", out)
+        self.assertIn("  7) Gemini (Google)", out)
+        self.assertIn("Какие харнессы у вас установлены?", out)
+        self.assertIn("  5) DeepSeek Harness (dsh)", out)
+        self.assertIn("не понял: x", out)
+        self.assertEqual(out.count(self.PROMPT), 3)
+        self.assertIn("нейронки: claude, deepseek", out)
+        self.assertIn("харнессы: claude, codex, pi, devin, dsh, opencode, grok", out)
+        self.assertEqual(self.installed_plugins(log),
+                         {"listik", "feature-pipeline", "dsh", "opencode", "pi",
+                          "second-opinion"})
+
+    @unittest.skipUnless(shutil.which("stty"), "нужен stty")
+    def test_pty_zero_and_out_of_range(self) -> None:
+        code, out, log = self.run_pty([b"0\r", b"0 1\r", b"9\r", b"01\r"])
+        self.assertEqual(code, 0, out)
+        self.assertIn("не понял: 0", out)
+        self.assertIn("не понял: 9", out)
+        self.assertIn("нейронки: —", out)
+        self.assertIn("харнессы: claude", out)
+        self.assertEqual(self.installed_plugins(log), {"listik"})
+        self.assertFalse(any(self.route_visibility().values()))
+
+    @unittest.skipUnless(shutil.which("stty"), "нужен stty")
+    def test_pty_eof_means_all(self) -> None:
+        code, out, log = self.run_pty([b"\r", b"\x04"])
+        self.assertEqual(code, 0, out)
+        self.assertEqual(self.installed_plugins(log), set(self.ALL_PLUGINS))
+
+    @unittest.skipUnless(shutil.which("stty"), "нужен stty")
+    def test_pty_decorated_mode_asks_plain(self) -> None:
+        code, out, log = self.run_pty([b"1\r", b"1 2\r"], plain=False)
+        self.assertEqual(code, 0, out)
+        self.assertIn("\x1b[", out, "оформленный режим не включился")
+        self.assertIn("Какие харнессы у вас установлены?", out)
+        self.assertEqual(self.installed_plugins(log), {"listik", "feature-pipeline"})
+        self.assertTrue(all(self.route_visibility().values()))
 
 
 if __name__ == "__main__":

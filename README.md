@@ -185,8 +185,37 @@ curl -fsSL https://github.com/dmitry-fomin/listik/releases/latest/download/insta
 (`LISTIK_ROUTES_REIMPORT`, по умолчанию `ask` — вопрос в `/dev/tty`, без tty и с `--yes` — `no`);
 то же вручную — `listik routes --reimport`.
 
+Плагины ставятся по выбору: установщик задаёт два вопроса — какие нейронки (подписки)
+у вас есть (claude, openai, deepseek, glm, grok, devin, gemini) и какие харнессы установлены
+(claude, codex, pi, devin, dsh, opencode, grok); ответ — номера через пробел или запятую,
+Enter — все, 0 — ни одной. Без ответа (`--yes`, нет `/dev/tty`) выбраны все. Все плагины
+marketplace `listik` — плагины Claude Code, поэтому без харнесса `claude` не ставится ничего.
+
+| Плагин | Когда ставится (при выбранном харнессе `claude`) |
+|---|---|
+| `listik` | всегда |
+| `feature-pipeline` | нейронка `claude` |
+| `claude-codex` | харнесс `codex`, нейронки `claude` и `openai` |
+| `dsh` | харнесс `dsh`, нейронка `deepseek` |
+| `codex` | харнесс `codex`, нейронка `openai` |
+| `opencode` | харнесс `opencode`, нейронка `glm` или `deepseek` |
+| `pi` | харнесс `pi`, нейронка `glm` или `deepseek` |
+| `devin` | харнесс `devin`, нейронка `devin` |
+| `second-opinion` | любая из нейронок `deepseek`, `openai`, `grok`, `gemini` |
+
+Плагина `claude-codex` в marketplace `listik` пока нет (он появится с влитием listik-r1pd):
+до тех пор каждая установка, где он выбран (в том числе `--yes` и запуск без `/dev/tty`),
+заканчивается статусом плагинов `не удалось (claude-codex)` при коде возврата 0 — это ожидаемо.
+
+У Grok CLI плагина в marketplace `listik` нет — он ставится отдельно. Ответы задаются и
+флагами `--models LIST` / `--harnesses LIST` (`LISTIK_MODELS` / `LISTIK_HARNESSES`): id через
+запятую, `all` или `none`. Маршруты невыбранного плагина пайплайнов (`feature-pipeline`,
+`claude-codex`) установщик скрывает с доски (`listik routes --hide`), обратно не открывает.
+Невыбранные плагины, которые уже стоят, не удаляются.
+
 Все флаги (`--version`, `--archive`, `--home`, `--service`, `--swarm`, `--mcp`, `--plugins`,
-`--codex-network`, `--routes-reimport`, `--yes`, …) — `install.sh --help`.
+`--models`, `--harnesses`, `--codex-network`, `--routes-reimport`, `--yes`, …) —
+`install.sh --help`.
 
 ### Из исходников
 

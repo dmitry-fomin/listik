@@ -433,8 +433,17 @@ usage() {
   --service yes|no      поставить и (пере)запустить автозапуск сервера
                         (launchd/systemd --user), по умолчанию yes
   --mcp yes|no          подключить MCP-сервер (claude mcp add), по умолчанию no
-  --plugins yes|no      поставить или обновить все плагины marketplace listik,
-                        по умолчанию yes
+  --plugins yes|no      поставить или обновить плагины marketplace listik по выбору
+                        нейронок и харнессов, по умолчанию yes
+  --models LIST         какие нейронки (подписки) есть, через запятую (LISTIK_MODELS):
+                        claude, openai, deepseek, glm, grok, devin, gemini;
+                        all — все, none — ни одной; без флага — вопрос в /dev/tty,
+                        без ответа — все
+  --harnesses LIST      какие харнессы установлены, через запятую (LISTIK_HARNESSES):
+                        claude, codex, pi, devin, dsh, opencode, grok;
+                        all — все, none — ни одного; без флага — вопрос в /dev/tty,
+                        без ответа — все. Без claude плагины не ставятся; плагин
+                        пайплайнов, который не выбран, — его маршруты скрываются
   --swarm yes|no        включить рой: сервер сам проверяет задачи всех проектов
                         каждые 30 секунд ([swarm] enabled в config.toml),
                         по умолчанию yes
@@ -454,14 +463,15 @@ usage() {
                         данных; задачи не трогаются; ask — спросить в /dev/tty, без tty — no
   --yes                 на вопросы без явного флага отвечать значением по умолчанию
                         (service/plugins/swarm — yes, mcp и routes-reimport — no; вопрос
-                        Codex он не закрывает — нужен --codex-network yes)
+                        Codex он не закрывает — нужен --codex-network yes; выбор
+                        плагинов — все)
   --help                эта справка
 
 Переменные окружения:
   LISTIK_HOME           каталог данных (по умолчанию ~/.listik); обёртка ставит его
                         по умолчанию, но заданное пользователем значение важнее
   LISTIK_VERSION, LISTIK_ARCHIVE, LISTIK_BIN_DIR, LISTIK_CODEX_NETWORK,
-  LISTIK_ROUTES_REIMPORT — см. флаги
+  LISTIK_ROUTES_REIMPORT, LISTIK_MODELS, LISTIK_HARNESSES — см. флаги
   CODEX_HOME            каталог настроек Codex (по умолчанию ~/.codex); в нём
                         установщик смотрит config.toml
   LISTIK_PLAIN          1 — без заставки, анимации, цвета и меню: только прежние
@@ -479,6 +489,96 @@ USAGE
 
 # ------------------------------------------------------------------ параметры
 
+# Справочники выбора плагинов: id в порядке показа, подпись — функцией (в подписях
+# пробелы, словами по списку их не пронести).
+models_ids="claude openai deepseek glm grok devin gemini"
+harnesses_ids="claude codex pi devin dsh opencode grok"
+
+model_label() {
+    case $1 in
+        claude) label="Claude (Anthropic)" ;;
+        openai) label="OpenAI (GPT, Codex)" ;;
+        deepseek) label="DeepSeek" ;;
+        glm) label="GLM (Zhipu)" ;;
+        grok) label="Grok (xAI)" ;;
+        devin) label="Devin / SWE (Cognition)" ;;
+        gemini) label="Gemini (Google)" ;;
+    esac
+}
+
+harness_label() {
+    case $1 in
+        claude) label="Claude Code" ;;
+        codex) label="Codex CLI" ;;
+        pi) label="pi" ;;
+        devin) label="devin" ;;
+        dsh) label="DeepSeek Harness (dsh)" ;;
+        opencode) label="opencode" ;;
+        grok) label="Grok CLI" ;;
+    esac
+}
+
+in_list() {
+    # 0 — слово $1 есть в списке через пробел $2
+    case " $2 " in *" $1 "*) return 0 ;; esac
+    return 1
+}
+
+comma_list() {
+    # список через пробел $1 — в $joined через ", " (пусто — «—»)
+    joined=
+    for w in $1; do
+        joined="$joined${joined:+, }$w"
+    done
+    [ -n "$joined" ] || joined=—
+}
+
+parse_list() {
+    # $1 — имя флага, $2 — справочник id, $3 — «неизвестная нейронка»/«неизвестный харнесс»,
+    # $4 — значение. Результат — $parsed: id через пробел в порядке справочника.
+    pl_seen=
+    pl_all=0
+    pl_none=0
+    pl_n=0
+    pl_ifs=$IFS
+    set -f
+    IFS=,
+    for pl_item in $4; do
+        IFS=$pl_ifs
+        pl_item=${pl_item#"${pl_item%%[!	 ]*}"}
+        pl_item=${pl_item%"${pl_item##*[!	 ]}"}
+        [ -n "$pl_item" ] || continue
+        pl_n=$((pl_n + 1))
+        case $pl_item in
+            all) pl_all=1 ;;
+            none) pl_none=1 ;;
+            *)
+                if ! in_list "$pl_item" "$2"; then
+                    IFS=$pl_ifs
+                    set +f
+                    comma_list "$2 all none"
+                    die "$1: $3 '$pl_item' (можно: $joined)"
+                fi
+                pl_seen="$pl_seen $pl_item"
+                ;;
+        esac
+    done
+    IFS=$pl_ifs
+    set +f
+    [ "$pl_n" -gt 0 ] || die "$1: пустой список (ни одной — none)"
+    # дубль `all,all` схлопывается, а `all,none` и `all,claude` — смесь
+    if [ $((pl_all + pl_none)) -gt 1 ] ||
+        { [ $((pl_all + pl_none)) = 1 ] && [ -n "$pl_seen" ]; }; then
+        die "$1: all и none пишутся отдельно"
+    fi
+    parsed=
+    for pl_item in $2; do
+        if [ "$pl_all" = 1 ] || in_list "$pl_item" "$pl_seen"; then
+            parsed="$parsed${parsed:+ }$pl_item"
+        fi
+    done
+}
+
 version=${LISTIK_VERSION:-}
 archive=${LISTIK_ARCHIVE:-}
 home=${LISTIK_HOME:-}
@@ -489,6 +589,13 @@ plugins_answer=
 swarm_answer=
 codex_network=${LISTIK_CODEX_NETWORK:-}
 routes_reimport=${LISTIK_ROUTES_REIMPORT:-}
+# Пустая переменная — как незаданная; флаг (даже пустой) — задан.
+models_raw=${LISTIK_MODELS:-}
+models_given=0
+[ -n "$models_raw" ] && models_given=1
+harnesses_raw=${LISTIK_HARNESSES:-}
+harnesses_given=0
+[ -n "$harnesses_raw" ] && harnesses_given=1
 assume_yes=0
 
 while [ $# -gt 0 ]; do
@@ -553,6 +660,26 @@ while [ $# -gt 0 ]; do
             shift
             ;;
         --routes-reimport=*) routes_reimport=${1#--routes-reimport=} ;;
+        --models)
+            [ $# -ge 2 ] || die "--models ждёт список нейронок через запятую"
+            models_raw=$2
+            models_given=1
+            shift
+            ;;
+        --models=*)
+            models_raw=${1#--models=}
+            models_given=1
+            ;;
+        --harnesses)
+            [ $# -ge 2 ] || die "--harnesses ждёт список харнессов через запятую"
+            harnesses_raw=$2
+            harnesses_given=1
+            shift
+            ;;
+        --harnesses=*)
+            harnesses_raw=${1#--harnesses=}
+            harnesses_given=1
+            ;;
         --yes|-y) assume_yes=1 ;;
         -h|--help)
             usage
@@ -591,6 +718,16 @@ case $routes_reimport in
     *) die "--routes-reimport ждёт yes, no или ask, а не '$routes_reimport'" ;;
 esac
 [ -n "$home" ] || die "--home не может быть пустым"
+models_sel=
+if [ "$models_given" = 1 ]; then
+    parse_list --models "$models_ids" "неизвестная нейронка" "$models_raw"
+    models_sel=$parsed
+fi
+harnesses_sel=
+if [ "$harnesses_given" = 1 ]; then
+    parse_list --harnesses "$harnesses_ids" "неизвестный харнесс" "$harnesses_raw"
+    harnesses_sel=$parsed
+fi
 
 ui_init
 # Заставка начинается раньше, чем появляется временный каталог, а курсор к этому
@@ -893,6 +1030,114 @@ ask_yes_default_no() {
     esac
 }
 
+ask_list_plain() {
+    # $1 — вопрос, дальше — подписи пунктов. Результат — $list_numbers: номера через
+    # пробел по возрастанию (пусто — ни одного). Возврат 1 — нет /dev/tty.
+    al_q=$1
+    shift
+    al_total=$#
+    al_every=
+    al_i=1
+    while [ "$al_i" -le "$al_total" ]; do
+        al_every="$al_every${al_every:+ }$al_i"
+        al_i=$((al_i + 1))
+    done
+    if [ "$ui_enabled" = 1 ]; then
+        ui_clear_hold
+    fi
+    while :; do
+        {
+            printf '%s\n' "$al_q"
+            al_i=1
+            for al_label in "$@"; do
+                printf '  %d) %s\n' "$al_i" "$al_label"
+                al_i=$((al_i + 1))
+            done
+            printf 'Номера через пробел или запятую; Enter — все, 0 — ни одной: '
+        } 2>/dev/null >/dev/tty || return 1
+        al_answer=
+        if ! read -r al_answer < /dev/tty 2>/dev/null; then
+            list_numbers=$al_every
+            break
+        fi
+        al_bad=
+        al_zero=0
+        al_seen=
+        al_n=0
+        al_ifs=$IFS
+        set -f
+        IFS=", 	"
+        for al_tok in $al_answer; do
+            [ -n "$al_tok" ] || continue
+            al_n=$((al_n + 1))
+            case $al_tok in
+                *[!0-9]*)
+                    [ -n "$al_bad" ] || al_bad=$al_tok
+                    continue
+                    ;;
+            esac
+            # ведущие нули — не восьмеричное: «07» — это 7; длинное число — вне диапазона
+            al_num=${al_tok#"${al_tok%%[!0]*}"}
+            if [ -z "$al_num" ]; then
+                al_zero=1
+                [ -n "$al_bad" ] || al_bad=$al_tok
+            elif [ "${#al_num}" -gt 4 ] || [ "$al_num" -gt "$al_total" ]; then
+                [ -n "$al_bad" ] || al_bad=$al_tok
+            else
+                al_seen="$al_seen $al_num"
+            fi
+        done
+        IFS=$al_ifs
+        set +f
+        if [ "$al_n" = 0 ]; then
+            list_numbers=$al_every
+            break
+        fi
+        if [ "$al_n" = 1 ] && [ "$al_zero" = 1 ]; then
+            list_numbers=
+            break
+        fi
+        if [ -z "$al_bad" ]; then
+            list_numbers=
+            for al_i in $al_every; do
+                if in_list "$al_i" "$al_seen"; then
+                    list_numbers="$list_numbers${list_numbers:+ }$al_i"
+                fi
+            done
+            break
+        fi
+        printf 'не понял: %s\n' "$al_bad" 2>/dev/null >/dev/tty || return 1
+    done
+    if [ "$ui_enabled" = 1 ]; then
+        ui_hold=0
+    fi
+    return 0
+}
+
+choose_list() {
+    # $1 — справочник id, $2 — функция подписи, $3 — вопрос. Результат — $chosen.
+    # --yes и нет /dev/tty — все.
+    cl_ids=$1
+    chosen=$cl_ids
+    [ "$assume_yes" = 1 ] && return 0
+    cl_fn=$2
+    cl_q=$3
+    set --
+    for cl_id in $cl_ids; do
+        "$cl_fn" "$cl_id"
+        set -- "$@" "$label"
+    done
+    ask_list_plain "$cl_q" "$@" || return 0
+    chosen=
+    cl_i=1
+    for cl_id in $cl_ids; do
+        if in_list "$cl_i" "$list_numbers"; then
+            chosen="$chosen${chosen:+ }$cl_id"
+        fi
+        cl_i=$((cl_i + 1))
+    done
+}
+
 ask_yes_default_yes "$service_answer" \
     "Установить автозапуск сервера (launchd/systemd)?" \
     "Сервер будет подниматься сам при входе в систему."
@@ -905,6 +1150,17 @@ ask_yes_default_yes "$plugins_answer" \
     "Установить или обновить плагины Claude (marketplace listik)?" \
     "Скилы работы с задачами и конвейеры реализации."
 plugins_answer=$decision
+if [ "$plugins_answer" = yes ]; then
+    # Флаг на одном списке не отменяет вопрос о другом.
+    if [ "$models_given" = 0 ]; then
+        choose_list "$models_ids" model_label "Какие нейронки (подписки) у вас есть?"
+        models_sel=$chosen
+    fi
+    if [ "$harnesses_given" = 0 ]; then
+        choose_list "$harnesses_ids" harness_label "Какие харнессы у вас установлены?"
+        harnesses_sel=$chosen
+    fi
+fi
 ask_yes_default_yes "$swarm_answer" \
     "Включить рой?" \
     "Сервер будет сам проверять задачи всех проектов каждые 30 секунд."
@@ -971,9 +1227,25 @@ if [ "$mcp_answer" = yes ]; then
 fi
 
 plugins_status=пропущен
-# Все плагины marketplace listik: при обновлении установки их скилы тоже должны
-# обновиться, иначе агенты читают устаревшие копии из ~/.claude/plugins/cache.
-listik_plugins="listik feature-pipeline dsh codex opencode pi devin second-opinion"
+# Плагины marketplace listik по выбору нейронок и харнессов. Все они — плагины Claude
+# Code: без харнесса claude не ставится ничего. При обновлении установки выбранные
+# обновляются, иначе агенты читают устаревшие копии из ~/.claude/plugins/cache.
+# Невыбранные не удаляются.
+listik_plugins=
+if in_list claude "$harnesses_sel"; then
+    m() { in_list "$1" "$models_sel"; }
+    h() { in_list "$1" "$harnesses_sel"; }
+    listik_plugins=listik
+    m claude && listik_plugins="$listik_plugins feature-pipeline"
+    h codex && m claude && m openai && listik_plugins="$listik_plugins claude-codex"
+    h dsh && m deepseek && listik_plugins="$listik_plugins dsh"
+    h codex && m openai && listik_plugins="$listik_plugins codex"
+    h opencode && { m glm || m deepseek; } && listik_plugins="$listik_plugins opencode"
+    h pi && { m glm || m deepseek; } && listik_plugins="$listik_plugins pi"
+    h devin && m devin && listik_plugins="$listik_plugins devin"
+    { m deepseek || m openai || m grok || m gemini; } &&
+        listik_plugins="$listik_plugins second-opinion"
+fi
 plugins_manual() {
     note "  /plugin marketplace add dmitry-fomin/listik"
     note "  /plugin marketplace update listik"
@@ -981,21 +1253,32 @@ plugins_manual() {
         note "  /plugin install $p@listik  (уже стоит — /plugin update $p@listik)"
     done
 }
-if [ "$plugins_answer" = yes ]; then
+if [ "$plugins_answer" = yes ] && [ -z "$listik_plugins" ]; then
+    plugins_status="пропущен (не выбран claude)"
+elif [ "$plugins_answer" = yes ]; then
     if command -v claude >/dev/null 2>&1 && claude plugin --help >/dev/null 2>&1; then
-        plugins_ok=1
+        plugins_market_ok=1
+        plugins_failed=
         # add на уже добавленном marketplace ничего не подтягивает — update всегда.
         claude plugin marketplace add dmitry-fomin/listik >/dev/null 2>&1 || true
-        claude plugin marketplace update listik >/dev/null 2>&1 || plugins_ok=0
+        claude plugin marketplace update listik >/dev/null 2>&1 || plugins_market_ok=0
         for p in $listik_plugins; do
             # install на уже стоящем плагине — no-op, версию поднимает только update.
-            claude plugin install "$p@listik" >/dev/null 2>&1 || plugins_ok=0
-            claude plugin update "$p@listik" >/dev/null 2>&1 || plugins_ok=0
+            p_ok=1
+            claude plugin install "$p@listik" >/dev/null 2>&1 || p_ok=0
+            claude plugin update "$p@listik" >/dev/null 2>&1 || p_ok=0
+            [ "$p_ok" = 1 ] || plugins_failed="$plugins_failed $p"
         done
-        if [ "$plugins_ok" = 1 ]; then
-            plugins_status=ok
+        if [ "$plugins_market_ok" = 1 ] && [ -z "$plugins_failed" ]; then
+            comma_list "$listik_plugins"
+            plugins_status="ok ($joined)"
         else
-            plugins_status="не удалось"
+            if [ "$plugins_market_ok" = 0 ]; then
+                plugins_status="не удалось (marketplace)"
+            else
+                comma_list "$plugins_failed"
+                plugins_status="не удалось ($joined)"
+            fi
             note "$prog: плагины: не все команды claude plugin отработали — поставьте вручную:" >&2
             plugins_manual >&2
         fi
@@ -1233,6 +1516,45 @@ if [ "$routes_update" = 1 ]; then
     fi
 fi
 
+# ------------------------------- шаг 7.4: скрыть маршруты невыбранных пайплайнов
+
+# После 7.3: reimport перезаписывает visible из routes.json. Плагин пайплайнов, который
+# не выбран (п. 3–4; упавшая установка не в счёт), — его маршруты прячем с доски.
+# Открывать обратно установщик не умеет.
+hidden_status=
+if [ "$plugins_answer" = yes ]; then
+    hide_plugins=
+    for p in feature-pipeline claude-codex; do
+        in_list "$p" "$listik_plugins" || hide_plugins="$hide_plugins $p"
+    done
+    if [ -n "$hide_plugins" ]; then
+        hide_keys=
+        hide_ok=1
+        # shellcheck disable=SC2086  # имена плагинов — отдельными аргументами
+        if hide_out=$("$wrapper" --local routes --json 2>"$tmp/routes-hide.err") &&
+            hide_keys=$(printf '%s' "$hide_out" | "$python3_bin" -c 'import json, sys; ps = sys.argv[1:]; print(" ".join(r["key"] for r in json.load(sys.stdin)["routes"] if r.get("visible") is not False and (any("/%s:" % p in c for p in ps for c in r.get("command") or []) or ("feature-pipeline" in ps and r.get("kind") == "pipeline" and r.get("command") is None))))' $hide_plugins 2>>"$tmp/routes-hide.err"); then
+            if [ -n "$hide_keys" ]; then
+                # shellcheck disable=SC2086  # ключи — отдельными аргументами
+                if hide_out=$("$wrapper" --local routes --hide $hide_keys 2>&1); then
+                    comma_list "$hide_keys"
+                    hidden_status=$joined
+                else
+                    hide_ok=0
+                fi
+            fi
+        else
+            hide_ok=0
+            hide_out="$hide_out
+$(cat "$tmp/routes-hide.err" 2>/dev/null || true)"
+        fi
+        if [ "$hide_ok" = 0 ]; then
+            hidden_status="не удалось"
+            note "$prog: маршруты: скрыть не удалось:" >&2
+            printf '%s\n' "$hide_out" | grep -v '^! --local' >&2 || true
+        fi
+    fi
+fi
+
 # -------------------------------------------------- шаг 8: протокол и шаг 9: сводка
 
 protocol_changed=0
@@ -1264,9 +1586,21 @@ if [ "$ui_enabled" = 1 ]; then
     ui_report "автозапуск:" "$service_report" "$service_status"
     ui_report "рой:       " "$swarm_status" "$swarm_status"
     ui_report "MCP:       " "$mcp_status" "$mcp_status"
-    ui_report "плагины:   " "$plugins_status" "$plugins_status"
+    if [ "$plugins_answer" = yes ]; then
+        comma_list "$models_sel"
+        ui_report "нейронки:  " "$joined"
+        comma_list "$harnesses_sel"
+        ui_report "харнессы:  " "$joined"
+    fi
+    ui_report "плагины:   " "$plugins_status" "${plugins_status%% (*}"
+    if in_list grok "$harnesses_sel" && [ "$plugins_answer" = yes ]; then
+        ui_report "grok:      " "плагина в marketplace listik нет, ставится отдельно" "-"
+    fi
     ui_report "Codex:     " "$codex_status" "$codex_status"
     ui_report "маршруты:  " "$routes_status" "$routes_status"
+    if [ -n "$hidden_status" ]; then
+        ui_report "скрыты:    " "$hidden_status" "$hidden_status"
+    fi
     if [ -n "${path_hint:-}" ]; then
         ui_line ""
         ui_fit "$path_hint"
@@ -1297,9 +1631,19 @@ else
     note "автозапуск: $service_report"
     note "рой: $swarm_status"
     note "MCP: $mcp_status"
+    if [ "$plugins_answer" = yes ]; then
+        comma_list "$models_sel"
+        note "нейронки: $joined"
+        comma_list "$harnesses_sel"
+        note "харнессы: $joined"
+    fi
     note "плагины: $plugins_status"
+    if in_list grok "$harnesses_sel" && [ "$plugins_answer" = yes ]; then
+        note "grok: плагина в marketplace listik нет, ставится отдельно"
+    fi
     note "Codex: $codex_status"
     note "маршруты: $routes_status"
+    [ -n "$hidden_status" ] && note "скрыты маршруты: $hidden_status"
     note "дальше:"
     note "  $next_1"
     note "  $next_2"

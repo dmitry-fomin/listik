@@ -2376,13 +2376,58 @@ def cmd_actors(args) -> int:
 
 def cmd_routes(args) -> int:
     """Маршруты запуска: список из таблицы `routes` (через сервер или локально)."""
+    hide = getattr(args, "hide", None)
+    if hide and (getattr(args, "reimport", False) or getattr(args, "source", None) is not None):
+        raise errors.ListikError("--hide нельзя совмещать с --reimport и --from",
+                                 code=errors.BAD_ARGUMENT, exit_code=2,
+                                 hint="listik routes --hide <ключ> …")
     if getattr(args, "source", None) is not None and not getattr(args, "reimport", False):
         raise errors.ListikError("--from работает только вместе с --reimport",
                                  code=errors.BAD_ARGUMENT, exit_code=2,
                                  hint="listik routes --reimport --from <файл>")
+    if hide:
+        return _cmd_routes_hide(args, list(dict.fromkeys(hide)))
     if getattr(args, "reimport", False):
         return _cmd_routes_reimport(args)
     return _cmd_routes_list(args)
+
+
+def _routes_missing(missing: list[str]) -> None:
+    if missing:
+        raise errors.ListikError(f"маршрутов нет: {', '.join(missing)}; ничего не скрыто",
+                                 code=errors.NOT_FOUND, hint="listik routes — список ключей")
+
+
+def _cmd_routes_hide(args, keys: list[str]) -> int:
+    """`--hide`: всем ключам `visible=false`; хоть одного нет — ничего не меняем."""
+    local = getattr(args, "local", False)
+    if not local and client.is_up(args.host, args.port):
+        # ponytail: проверка по GET и запись отдельными PATCH — маршрут, удалённый
+        # между ними на доске, даст 404 после части записей (предел описан в API.md).
+        rows = client.request("GET", "/api/routes", host=args.host, port=args.port)
+        have = {r.get("key") for r in rows.get("routes") or []}
+        _routes_missing([k for k in keys if k not in have])
+        for key in keys:
+            client.request("PATCH", f"/api/routes/{urllib.parse.quote(key, safe='')}",
+                           body={"visible": False}, host=args.host, port=args.port)
+    else:
+        if local:
+            warn_local_bypass(args, writing=True)
+        conn = db.init()
+        missing = []
+        for key in keys:
+            try:
+                routes_store.get_route(conn, key)
+            except errors.NotFound:
+                missing.append(key)
+        _routes_missing(missing)
+        for key in keys:
+            routes_store.update_route(conn, key, visible=False)
+    if getattr(args, "json", False):
+        emit(args, {"hidden": keys}, "")
+        return 0
+    print(f"скрыты: {', '.join(keys)}")
+    return 0
 
 
 def _cmd_routes_reimport(args) -> int:
@@ -3036,6 +3081,9 @@ def build_parser() -> argparse.ArgumentParser:
     sp.add_argument("--from", dest="source", metavar="FILE",
                     help="с --reimport: взять маршруты из этого файла (например, из "
                          "копии routes.bak-*.json) вместо routes.json")
+    sp.add_argument("--hide", nargs="+", metavar="KEY",
+                    help="скрыть маршруты с этими ключами (visible=false); хоть одного "
+                         "ключа нет — ничего не меняется")
 
     sp = add("dep", cmd_dep,
              help="связи между задачами: add, confirm, rm, tree, cycles, suggest, link, suggested")

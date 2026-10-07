@@ -92,6 +92,7 @@ listik memory "про что-то"
 /plugin marketplace add dmitry-fomin/listik
 /plugin install listik@listik             # скил listik:listik — протокол задач
 /plugin install feature-pipeline@listik   # пресеты конвейера *-pipeline и агенты pipeline-*
+/plugin install claude-codex@listik      # пресеты claude-codex:*-pipeline на Claude + Codex
 /plugin install dsh@listik                # DeepSeek Harness: dsh:dsh-delegate
 /plugin install codex@listik              # OpenAI Codex CLI: codex:codex-delegate
 /plugin install pi@listik                 # pi CLI (GLM 5.3 Flash, DeepSeek v4.1 Flash): pi:pi-delegate, в т.ч. критика ТЗ

@@ -129,7 +129,7 @@ class FeaturePipelinePluginTests(unittest.TestCase):
         names = [entry.get("name") for entry in entries]
         self.assertEqual(
             names,
-            ["listik", "feature-pipeline", "dsh", "codex", "opencode", "pi", "devin",
+            ["listik", "feature-pipeline", "claude-codex", "dsh", "codex", "opencode", "pi", "devin",
              "second-opinion"],
             f"состав маркетплейса не тот: {names}",
         )

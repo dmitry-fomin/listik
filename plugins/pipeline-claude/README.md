@@ -20,6 +20,7 @@
 | Скил | Когда брать | ТЗ | Критика ТЗ | Код | Приёмка + коммит |
 | --- | --- | --- | --- | --- | --- |
 | `opus` | понятная работа в один заход, приёмка не нужна; $0 внешних | — | — | Opus medium (`pipeline-implementer-solo`, `model: opus`), сам коммитит | — |
-| `high` | только Claude Code, без внешних харнессов; $0 внешних, усилие — от сессии (`claude --effort`) | Opus 5.5 (`pipeline-spec-writer-inherit`, `model: opus`) | Sonnet 5.5 + Opus 5.5 (`pipeline-critic-inherit`), кворум — оба | Opus 5.5 (`pipeline-implementer-inherit`, `model: opus`) | линзы Sonnet 5.5 ×3 (`pipeline-lens`), при находке — Sonnet 5.5 (`pipeline-judge-inherit`) |
+| `xhigh` | то же, что `high`, на усилии xhigh; $0 внешних | Opus 5.5 xhigh (`pipeline-spec-writer-xhigh`, `model: opus`) | Sonnet 5.5 xhigh + Opus 5.5 xhigh (`pipeline-critic-xhigh`), кворум — оба | Opus 5.5 xhigh (`pipeline-implementer-xhigh`, `model: opus`) | линзы Sonnet 5.5 xhigh ×3 (`pipeline-lens-xhigh`), при находке — Sonnet 5.5 xhigh (`pipeline-judge-xhigh`) |
+| `high` | только Claude Code, без внешних харнессов; $0 внешних, усилие ролей — high из их агентов | Opus 5.5 high (`pipeline-spec-writer`, `model: opus`) | Sonnet 5.5 high + Opus 5.5 high (`pipeline-critic`), кворум — оба | Opus 5.5 high (`pipeline-implementer-high`, `model: opus`) | линзы Sonnet 5.5 high ×3 (`pipeline-lens`), при находке — Sonnet 5.5 high (`pipeline-judge`) |
 
 Агенты, хук автоодобрения и ядро `pipeline-core.md` — в плагине `pipeline-core` (`plugins/pipeline-core/README.md`).

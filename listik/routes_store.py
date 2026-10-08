@@ -480,6 +480,7 @@ ROUTE_ADDITIONS: list[tuple[int, tuple[str, ...]]] = [
     (2, ("claude-opus",)),  # переименован из opus-single-pipeline
     (3, ("cc-xhigh", "cc-high", "cc-medium",
          "cc-low", "cc-xlow", "cc-nano")),  # пресеты claude-codex
+    (4, ("claude-xhigh", "claude-high")),  # пресеты pipeline-claude с линзами (listik-d9rj)
 ]
 
 

@@ -5,7 +5,7 @@
 `test_projects_add.py`): `get_conn` подменяется на временное соединение, ошибки — это
 `server.ApiError`, пойманный `assertRaises`. Скилы читаются из настоящих
 `plugins/pipeline-full|pipeline-cc|pipeline-claude/skills/*` репозитория (вместе — ровно те
-16 ключей, что и в образце `routes.json`, ключ `<плагин без pipeline->-<скил>`) — кроме
+17 ключей, что и в образце `routes.json`, ключ `<плагин без pipeline->-<скил>`) — кроме
 тестов, которые явно подменяют `skills.PIPELINE_PLUGINS_DIR` на пустой/чужой каталог.
 """
 from __future__ import annotations
@@ -30,7 +30,7 @@ ROUTES_JSON = REPO_DIR / "routes.json"
 
 EXPECTED_KEYS = [
     "full-xhigh", "full-high", "full-medium", "cc-sol", "full-low",
-    "full-xlow", "full-nano", "full-cross", "claude-high", "claude-opus",
+    "full-xlow", "full-nano", "full-cross", "claude-xhigh", "claude-high", "claude-opus",
     "cc-xhigh", "cc-high", "cc-medium", "cc-low",
     "cc-xlow", "cc-nano",
 ]

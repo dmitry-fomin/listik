@@ -1206,7 +1206,6 @@ SPEC_WRITER_MULTI_PARTS_PARAGRAPH_START = (
 
 #: Ожидаемые пути `_spec_writer_paths()`: четыре писателя ТЗ без потерь.
 EXPECTED_SPEC_WRITER_PATHS = (
-    pathlib.Path(AGENTS_SUBDIR) / "pipeline-spec-writer-inherit.md",
     pathlib.Path(AGENTS_SUBDIR) / "pipeline-spec-writer-low.md",
     pathlib.Path(AGENTS_SUBDIR) / "pipeline-spec-writer-medium.md",
     pathlib.Path(AGENTS_SUBDIR) / "pipeline-spec-writer-xhigh.md",
@@ -1314,6 +1313,7 @@ class FeaturePipelineListikCardTests(unittest.TestCase):
         "pipeline-implementer-high.md": "-k journal",
         "pipeline-implementer-solo.md": "-k journal",
         "pipeline-judge.md": "-k verdict",
+        "pipeline-judge-xhigh.md": "-k verdict",
     }
 
     @staticmethod
@@ -1849,9 +1849,18 @@ def _readme(plugin: str) -> pathlib.Path:
 
 
 #: Пресеты с линзами-субагентами Claude вместо pi glm: запуск — по скилу пресета, остальное — по ядру.
-CLAUDE_LENS_PRESETS = ("pipeline-claude:high",)
-CLAUDE_LENS_REQUIRED = (LENS_CORE_REF, "pipeline-core:pipeline-lens",
-                        "pipeline-core:pipeline-judge-inherit", "вынести:", "отбросить:", LENS_FILE_MARK)
+CLAUDE_LENS_PRESETS = ("pipeline-claude:high", "pipeline-claude:xhigh")
+CLAUDE_LENS_REQUIRED = (LENS_CORE_REF, "вынести:", "отбросить:", LENS_FILE_MARK)
+#: Агенты линзы и судьи каждого из CLAUDE_LENS_PRESETS — своей колонки; сверка — по имени целиком.
+CLAUDE_LENS_AGENTS = {
+    "pipeline-claude:high": ("pipeline-core:pipeline-lens", "pipeline-core:pipeline-judge"),
+    "pipeline-claude:xhigh": ("pipeline-core:pipeline-lens-xhigh", "pipeline-core:pipeline-judge-xhigh"),
+}
+
+
+def _whole_name(name: str) -> re.Pattern[str]:
+    """Имя агента или пресета целиком: после него не идёт буква, цифра, `_` или `-`."""
+    return re.compile(re.escape(name) + r"(?![\w-])")
 
 
 def _fenced_block_with(text: str, needle: str) -> str:
@@ -1887,6 +1896,8 @@ def _lens_preset_problems(name: str, text: str) -> list[str]:
                         for needle in LENS_JUDGE_REQUIRED if needle not in judge)
     elif name in CLAUDE_LENS_PRESETS:
         problems.extend(f"{name}: нет {needle!r}" for needle in CLAUDE_LENS_REQUIRED if needle not in text)
+        problems.extend(f"{name}: нет агента {agent!r}" for agent in CLAUDE_LENS_AGENTS[name]
+                        if not _whole_name(agent).search(text))
     else:
         problems.extend(f"{name}: чужой пресет несёт {needle!r}"
                         for needle in (LENS_REF, LENS_FILE_MARK) if needle in text)
@@ -2276,6 +2287,19 @@ def _foreign_prefix_hits(root: pathlib.Path) -> list[tuple[str, int]]:
 HOOK_SCRIPT = CORE_PLUGIN_DIR / "hooks" / "approve-pipeline-agents.py"
 HOOKS_JSON = CORE_PLUGIN_DIR / "hooks" / "hooks.json"
 HOOK_AGENT_PREFIX = "pipeline-core:pipeline-"
+CORE_MANIFEST = CORE_PLUGIN_DIR / PLUGIN_MANIFEST
+#: AGENTS хука после listik-d9rj, порция f: исполнители и два судьи, без `*-inherit`.
+HOOK_AGENTS_EXPECTED = {f"pipeline-core:{name}" for name in (
+    "pipeline-implementer", "pipeline-implementer-high", "pipeline-implementer-xhigh",
+    "pipeline-implementer-solo", "pipeline-implementer-low", "pipeline-judge", "pipeline-judge-xhigh")}
+
+
+def _hook_descriptions() -> dict[str, str]:
+    """Описания, которые перечисляют агентов хука: `hooks.json` и настройка `auto_approve_agents`."""
+    return {
+        "hooks.json": _read_json(HOOKS_JSON)["description"],
+        "plugin.json": _read_json(CORE_MANIFEST)["userConfig"]["auto_approve_agents"]["description"],
+    }
 
 
 def _hook_agents() -> set[str]:
@@ -2288,9 +2312,18 @@ def _hook_agents() -> set[str]:
 
 
 def _hook_agent_problems(agents: set[str], description: str) -> list[str]:
-    """Имена агентов хука: префикс `pipeline-core:pipeline-`, файл агента есть, description их называет."""
+    """Имена агентов хука: префикс `pipeline-core:pipeline-`, файл агента есть, description их называет.
+
+    И обратно (listik-d9rj, порция f): исполнители и судьи (`pipeline-implementer…`, `pipeline-judge…`, имя
+    целиком, без `pipeline-core:`), названные в description, — ровно короткие имена `agents`; `inherit` нет.
+    """
     named = {token.removeprefix("pipeline-core:") for token in re.findall(r"[\w:-]+", description)}
     problems: list[str] = []
+    extra = sorted({token for token in named if re.fullmatch(r"pipeline-(implementer|judge)[\w-]*", token)}
+                   - {name.split(":", 1)[-1] for name in agents})
+    problems.extend(f"{token}: description называет агента, которого нет в AGENTS" for token in extra)
+    if "inherit" in description:
+        problems.append("в description есть 'inherit'")
     for name in sorted(agents):
         short = name.split(":", 1)[-1]
         if not name.startswith(HOOK_AGENT_PREFIX):
@@ -2298,7 +2331,7 @@ def _hook_agent_problems(agents: set[str], description: str) -> list[str]:
         elif not (CORE_PLUGIN_DIR / AGENTS_SUBDIR / f"{short}.md").is_file():
             problems.append(f"{name}: нет файла агента {short}.md")
         if short not in named:
-            problems.append(f"{name}: description в hooks.json его не называет")
+            problems.append(f"{name}: description его не называет")
     return problems
 
 
@@ -2372,8 +2405,25 @@ class PipelineNamesTests(unittest.TestCase):
     def test_hook_agents(self) -> None:
         agents = _hook_agents()
         self.assertTrue(agents, f"{HOOK_SCRIPT}: не нашлось множества AGENTS")
-        description = _read_json(HOOKS_JSON)["description"]
-        self.assertEqual(_hook_agent_problems(agents, description), [])
+        for source, description in _hook_descriptions().items():
+            with self.subTest(description=source):
+                self.assertEqual(_hook_agent_problems(agents, description), [])
+
+    def test_hook_agents_exactly_seven(self) -> None:
+        """listik-d9rj, порция f: AGENTS хука — ровно семь имён, без `*-inherit`."""
+        self.assertEqual(_hook_agents(), HOOK_AGENTS_EXPECTED)
+
+    def test_hook_agents_check_rejects_extra_and_inherit(self) -> None:
+        agents, description = _hook_agents(), _read_json(HOOKS_JSON)["description"]
+        for case, broken in {
+            "лишний агент в description": description.replace("pipeline-judge-xhigh",
+                                                              "pipeline-judge-xhigh, pipeline-judge-inherit"),
+            "агент description без пары в AGENTS": description + " pipeline-implementer-max",
+        }.items():
+            with self.subTest(case=case):
+                self.assertNotEqual(broken, description, "изменение не применилось")
+                self.assertNotEqual(_hook_agent_problems(agents, broken), [])
+        self.assertNotEqual(_hook_agent_problems(agents | {"pipeline-core:pipeline-judge-inherit"}, description), [])
 
     def test_hook_agents_check_rejects_foreign_prefix(self) -> None:
         agents, description = _hook_agents(), _read_json(HOOKS_JSON)["description"]
@@ -2403,6 +2453,235 @@ class PipelineNamesTests(unittest.TestCase):
         for needle in LISTIK_SKILL_FORBIDDEN:
             with self.subTest(forbidden=needle):
                 self.assertNotIn(needle, text)
+
+
+
+#: Состав пресетов pipeline-claude (listik-d9rj, порция f): агент роли (`pipeline-core:<имя>`) → `model` в вызове.
+CLAUDE_COLUMNS = {
+    "pipeline-claude:high": {
+        "pipeline-spec-writer": ("opus",),
+        "pipeline-critic": ("sonnet", "opus"),
+        "pipeline-implementer-high": ("opus",),
+        "pipeline-lens": ("sonnet",),
+        "pipeline-judge": ("sonnet",),
+    },
+    "pipeline-claude:xhigh": {
+        "pipeline-spec-writer-xhigh": ("opus",),
+        "pipeline-critic-xhigh": ("sonnet", "opus"),
+        "pipeline-implementer-xhigh": ("opus",),
+        "pipeline-lens-xhigh": ("sonnet",),
+        "pipeline-judge-xhigh": ("sonnet",),
+    },
+}
+CLAUDE_SELF_NAMES = {
+    "pipeline-claude:high": ("name: high", "process:claude-high", "/pipeline-claude:high"),
+    "pipeline-claude:xhigh": ("name: xhigh", "process:claude-xhigh", "/pipeline-claude:xhigh"),
+}
+EFFORT_PARAGRAPH_START = "**Усилие.**"
+EFFORT_PARAGRAPH_REQUIRED = ("frontmatter", "--effort")
+EFFORT_OUTSIDE_FORBIDDEN = ("усилие сессии", "--effort", "/effort", "наследует")
+EFFORT_JOURNAL_LINE = "шаг <id>: усилие"
+INHERIT_MARK = "-inherit"
+
+
+def _claude_composition_problems(name: str, text: str) -> list[str]:
+    """Состав пресета pipeline-claude: пары «агент — model» в строках «## Роли», чужих агентов и пресета нет."""
+    rows = [line for line in _text_section(text, "## Роли").splitlines() if line.startswith("| ")]
+    problems: list[str] = []
+    for agent, models in CLAUDE_COLUMNS[name].items():
+        pattern = _whole_name(f"pipeline-core:{agent}")
+        agent_rows = [row for row in rows if pattern.search(row)]
+        if not agent_rows:
+            problems.append(f"{name}: в «## Роли» нет строки с pipeline-core:{agent}")
+        problems.extend(f"{name}: строка pipeline-core:{agent} без 'model: {model}'" for model in models
+                        if agent_rows and not any(f"model: {model}" in row for row in agent_rows))
+    for other, agents in CLAUDE_COLUMNS.items():
+        if other == name:
+            continue
+        if _whole_name(other).search(text):
+            problems.append(f"{name}: называет пресет {other}")
+        problems.extend(f"{name}: называет агента {agent} пресета {other}" for agent in agents
+                        if _whole_name(agent).search(text))
+    return problems
+
+
+def _effort_paragraph_bounds(lines: list[str]) -> tuple[int, int] | None:
+    """[начало, конец) абзаца «Усилие.»: строка с `**Усилие.**` и до ближайшей пустой."""
+    start = next((i for i, line in enumerate(lines) if line.startswith(EFFORT_PARAGRAPH_START)), None)
+    if start is None:
+        return None
+    end = next((i for i in range(start, len(lines)) if not lines[i].strip()), len(lines))
+    return start, end
+
+
+def _claude_effort_problems(name: str, text: str) -> list[str]:
+    """Усилие ролей — из агентов: `inherit` нет, про сессию и `--effort` — только абзац «Усилие.»."""
+    problems = [f"{name}: есть 'inherit'"] if "inherit" in text else []
+    lines = text.splitlines()
+    bounds = _effort_paragraph_bounds(lines)
+    if bounds is None:
+        return problems + [f"{name}: нет абзаца {EFFORT_PARAGRAPH_START!r}"]
+    paragraph = "\n".join(lines[bounds[0]:bounds[1]])
+    outside = "\n".join(lines[:bounds[0]] + lines[bounds[1]:]).lower()
+    problems.extend(f"{name}: в абзаце «Усилие.» нет {needle!r}" for needle in EFFORT_PARAGRAPH_REQUIRED
+                    if needle not in paragraph)
+    problems.extend(f"{name}: вне абзаца «Усилие.» есть {needle!r}" for needle in EFFORT_OUTSIDE_FORBIDDEN
+                    if needle in outside)
+    if EFFORT_JOURNAL_LINE in text:
+        problems.append(f"{name}: есть строка журнала {EFFORT_JOURNAL_LINE!r}")
+    return problems
+
+
+def _claude_xhigh_from_high(text: str) -> str:
+    """Правило п. 3.2: имена агентов high-колонки → xhigh-колонки (целиком), затем слово `high` → `xhigh`."""
+    pairs = zip(CLAUDE_COLUMNS["pipeline-claude:high"], CLAUDE_COLUMNS["pipeline-claude:xhigh"])
+    for high, xhigh in pairs:
+        text = _whole_name(high).sub(xhigh, text)
+    return re.sub(r"(?<!\w)high(?!\w)", "xhigh", text)
+
+
+def _claude_parity_problems(high: str, xhigh: str) -> list[str]:
+    """Расхождение xhigh/SKILL.md с high/SKILL.md после правила п. 3.2; пусто — тексты равны."""
+    expected = _claude_xhigh_from_high(high)
+    if expected == xhigh:
+        return []
+    got, want = xhigh.splitlines(), expected.splitlines()
+    index = next((i for i, (a, b) in enumerate(zip(got, want)) if a != b), min(len(got), len(want)))
+    return [f"xhigh/SKILL.md расходится с high/SKILL.md со строки {index + 1}"]
+
+
+def _agent_parts(name: str) -> tuple[list[str], str]:
+    """Frontmatter агента строками и тело — всё после второй строки `---`, побайтно."""
+    text = _plugin_text(pathlib.Path(AGENTS_SUBDIR) / name)
+    frontmatter = _frontmatter(text.splitlines())
+    if frontmatter is None:
+        raise AssertionError(f"{name}: frontmatter не закрыт строкой ---")
+    head = "---\n" + "".join(line + "\n" for line in frontmatter) + "---\n"
+    if not text.startswith(head):
+        raise AssertionError(f"{name}: frontmatter не разобрался")
+    return frontmatter, text[len(head):]
+
+
+def _inherit_hits(root: pathlib.Path) -> list[str]:
+    """Аналог `git grep -- -inherit -- plugins`: файлы под `root` с подстрокой `-inherit` (имя или текст)."""
+    hits: list[str] = []
+    for path in sorted(root.rglob("*")):
+        relative = path.relative_to(root).as_posix()
+        if INHERIT_MARK in relative:
+            hits.append(relative)
+            continue
+        if not path.is_file():
+            continue
+        try:
+            text = path.read_text(encoding="utf-8")
+        except UnicodeDecodeError:
+            continue
+        if INHERIT_MARK in text:
+            hits.append(relative)
+    return hits
+
+
+class PipelineClaudePresetsTests(unittest.TestCase):
+    """Пресеты pipeline-claude:high и pipeline-claude:xhigh: усилие ролей — из агентов (listik-d9rj, порция f)."""
+
+    def test_skills_present(self) -> None:
+        self.assertEqual(sorted(path.name for path in (PLUGINS_DIR / "pipeline-claude" / SKILLS_SUBDIR).iterdir()
+                                if path.is_dir()), ["high", "opus", "xhigh"])
+
+    def test_composition(self) -> None:
+        for name in CLAUDE_COLUMNS:
+            with self.subTest(skill=name):
+                self.assertEqual(_claude_composition_problems(name, _skill_text(name)), [])
+
+    def test_composition_check_rejects_foreign_agent(self) -> None:
+        text = _skill_text("pipeline-claude:xhigh")
+        broken = text.replace("pipeline-core:pipeline-critic-xhigh", "pipeline-core:pipeline-critic", 1)
+        self.assertNotEqual(broken, text, "изменение не применилось")
+        self.assertNotEqual(_claude_composition_problems("pipeline-claude:xhigh", broken), [])
+
+    def test_self_names(self) -> None:
+        for name, needles in CLAUDE_SELF_NAMES.items():
+            text = _skill_text(name)
+            frontmatter = _frontmatter(text.splitlines()) or []
+            for needle in needles:
+                with self.subTest(skill=name, needle=needle):
+                    if needle.startswith("name: "):
+                        self.assertIn(needle, frontmatter)
+                    else:
+                        self.assertRegex(text, _whole_name(needle))
+
+    def test_effort_from_agents(self) -> None:
+        for name in CLAUDE_COLUMNS:
+            with self.subTest(skill=name):
+                self.assertEqual(_claude_effort_problems(name, _skill_text(name)), [])
+
+    def test_effort_check_rejects_session_effort(self) -> None:
+        text = _skill_text("pipeline-claude:high")
+        broken = text.replace("## Роли\n", "## Роли\n\nУсилие ролей — усилие сессии.\n", 1)
+        self.assertNotEqual(broken, text, "изменение не применилось")
+        self.assertNotEqual(_claude_effort_problems("pipeline-claude:high", broken), [])
+
+    def test_xhigh_is_high_with_xhigh_agents(self) -> None:
+        high, xhigh = _skill_text("pipeline-claude:high"), _skill_text("pipeline-claude:xhigh")
+        self.assertEqual(_claude_parity_problems(high, xhigh), [])
+
+    def test_parity_check_rejects_missing_stage2_line(self) -> None:
+        high, xhigh = _skill_text("pipeline-claude:high"), _skill_text("pipeline-claude:xhigh")
+        lines = xhigh.split("\n")
+        stage2 = _stage2_section(xhigh).split("\n")
+        index = lines.index(stage2[2])
+        broken = "\n".join(lines[:index] + lines[index + 1:])
+        self.assertNotEqual(broken, xhigh, "изменение не применилось")
+        self.assertNotEqual(_claude_parity_problems(high, broken), [])
+
+
+class PipelineClaudeAgentsTests(unittest.TestCase):
+    """Агенты pipeline-core после listik-d9rj, порция f: усилие во frontmatter, копии xhigh, без `*-inherit`."""
+
+    def test_every_agent_has_effort(self) -> None:
+        paths = _agent_paths()
+        self.assertTrue(paths)
+        for relative in paths:
+            with self.subTest(agent=relative.name):
+                frontmatter = _frontmatter(_plugin_text(relative).splitlines()) or []
+                self.assertTrue(any(line.startswith("effort:") for line in frontmatter),
+                                f"{relative}: во frontmatter нет effort")
+
+    def test_xhigh_copies_keep_body(self) -> None:
+        for copy, original in (("pipeline-lens-xhigh.md", "pipeline-lens.md"),
+                               ("pipeline-judge-xhigh.md", "pipeline-judge.md")):
+            with self.subTest(agent=copy):
+                self.assertEqual(_agent_parts(copy)[1], _agent_parts(original)[1])
+
+    def test_lens_and_judge_frontmatter(self) -> None:
+        expected = {
+            "pipeline-lens.md": ("name: pipeline-lens", "model: sonnet", "effort: high"),
+            "pipeline-lens-xhigh.md": ("name: pipeline-lens-xhigh", "model: sonnet", "effort: xhigh"),
+            "pipeline-judge-xhigh.md": ("name: pipeline-judge-xhigh", "model: sonnet", "effort: xhigh",
+                                        "skills:", "  - listik:listik"),
+        }
+        descriptions = {
+            "pipeline-lens.md": ("Модель — Sonnet, усилие high", "уровень xhigh — pipeline-lens-xhigh",
+                                 "Зовётся только по имени из пресетов pipeline-claude"),
+            "pipeline-lens-xhigh.md": ("усилие xhigh", "Зовётся только по имени из пресетов pipeline-claude"),
+            "pipeline-judge-xhigh.md": ("pipeline-claude:xhigh", "Sonnet", "усилие xhigh"),
+        }
+        for name, lines in expected.items():
+            frontmatter = _agent_parts(name)[0]
+            description = next((line for line in frontmatter if line.startswith("description:")), "")
+            for line in lines:
+                with self.subTest(agent=name, line=line):
+                    self.assertIn(line, frontmatter)
+            for needle in descriptions[name]:
+                with self.subTest(agent=name, description=needle):
+                    self.assertIn(needle, description)
+            if name.startswith("pipeline-lens"):
+                for needle in ("наследует", "усилие сессии", "claude-pipeline"):
+                    with self.subTest(agent=name, forbidden=needle):
+                        self.assertNotIn(needle, description)
+
+    def test_no_inherit_in_plugins(self) -> None:
+        self.assertEqual(_inherit_hits(PLUGINS_DIR), [])
 
 
 if __name__ == "__main__":

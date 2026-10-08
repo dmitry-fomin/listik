@@ -308,33 +308,70 @@
       ]
     },
     {
+      "key": "claude-xhigh",
+      "kind": "pipeline",
+      "plugin": "pipeline-claude",
+      "title": "claude xhigh",
+      "hint": "только Claude: внешних денег ноль",
+      "visible": true,
+      "icon": "xhigh",
+      "roles": {
+        "spec": {
+          "provider": "claude",
+          "label": "xhigh",
+          "title": "Opus 5.5"
+        },
+        "critic": {
+          "provider": "claude",
+          "label": "S+O",
+          "title": "Sonnet 5.5 · xhigh + Opus 5.5 · xhigh"
+        },
+        "impl": {
+          "provider": "claude",
+          "label": "xhigh",
+          "title": "Opus 5.5"
+        },
+        "judge": {
+          "provider": "claude",
+          "label": "линзы",
+          "title": "Sonnet 5.5 · 3 линзы → Sonnet 5.5 · xhigh"
+        }
+      },
+      "command": [
+        "claude",
+        "--dangerously-skip-permissions",
+        "-p",
+        "Задача {task_id} (проект {project}), маршрут {route}. Запусти скил /{plugin}:{skill} и веди карточку по нему: ты оркестратор, кода не пишешь и порцию не коммитишь. Протокол — скил listik:listik. Первым действием, до чтения кода и show: claim {task_id} --holder claude. Дальше heartbeat каждые 10–15 мин, пока карточку держишь ты. Все команды с --actor agent:claude --harness claude."
+      ]
+    },
+    {
       "key": "claude-high",
       "kind": "pipeline",
       "plugin": "pipeline-claude",
-      "title": "claude",
+      "title": "claude high",
       "hint": "только Claude: внешних денег ноль",
       "visible": true,
       "icon": "high",
       "roles": {
         "spec": {
           "provider": "claude",
-          "label": "Opus",
+          "label": "high",
           "title": "Opus 5.5"
         },
         "critic": {
           "provider": "claude",
           "label": "S+O",
-          "title": "Sonnet 5.5 + Opus 5.5"
+          "title": "Sonnet 5.5 · high + Opus 5.5 · high"
         },
         "impl": {
           "provider": "claude",
-          "label": "Opus",
+          "label": "high",
           "title": "Opus 5.5"
         },
         "judge": {
           "provider": "claude",
           "label": "линзы",
-          "title": "Sonnet 5.5 · 3 линзы → Sonnet 5.5"
+          "title": "Sonnet 5.5 · 3 линзы → Sonnet 5.5 · high"
         }
       },
       "command": [

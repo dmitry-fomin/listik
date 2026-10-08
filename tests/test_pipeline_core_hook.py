@@ -79,6 +79,18 @@ class PipelineCoreHookTests(unittest.TestCase):
         path = self.git_dir / "config"
         self.assertEqual(self.run_hook("pipeline-core:pipeline-judge", "Write", {"file_path": str(path)}), "")
 
+    def test_10_removed_inherit_agents_silent(self) -> None:
+        """listik-d9rj, порция f: агенты *-inherit удалены — автоодобрения у их имён нет."""
+        for agent in ("pipeline-core:pipeline-judge-inherit", "pipeline-core:pipeline-implementer-inherit"):
+            with self.subTest(agent=agent):
+                self.assertEqual(self.run_hook(agent, "Bash", {"command": "ls"}), "")
+
+    def test_11_judge_xhigh_allowed_like_judge(self) -> None:
+        agent = "pipeline-core:pipeline-judge-xhigh"
+        self.assertAllow(self.run_hook(agent, "Bash", {"command": "ls"}))
+        self.assertEqual(self.run_hook(agent, "Bash", {"command": "git push"}), "")
+        self.assertEqual(self.run_hook(agent, "Write", {"file_path": str(self.git_dir / "config")}), "")
+
 
 if __name__ == "__main__":
     unittest.main()

@@ -103,7 +103,7 @@
 
 **Кворум.** Годные ответы должны дать: `sonnet`, если он в составе пресета, **плюс хотя бы один не-Anthropic
 критик** (`deepseek`, `glm`, `devin` или `codex`); без не-Anthropic критика кворума нет — ни `sonnet`, ни другой критик
-Anthropic его не заменяет ни в одном пресете, кроме `pipeline-claude:high`: там внешних каналов нет по замыслу, и
+Anthropic его не заменяет ни в одном пресете, кроме `pipeline-claude:high` и `pipeline-claude:xhigh`: там внешних каналов нет по замыслу, и
 кворум — годные ответы `sonnet` и `opus` (оба входят, `opus` срок `Tк` сдвигает). Кворум набран — упавшие, негодные и отменённые критики этап не
 останавливают: сводка собирается из годных ответов, по каждому выбывшему — строка в журнал
 `порция <X>: критик <вид> выбыл — <причина>`; не ответивший к сроку ожидания (ниже) выбывает с причиной
@@ -853,8 +853,8 @@ lock-файлов, секретов. Формулировка «все пути 
   Каждое требование порции и каждый пункт чек-листа — сделан ли в диффе; что заявлено, но не сделано; что
   сделано сверх порции; как изменение выглядит для пользователя (вывод команды, текст ошибки, экран).
 
-**Модель.** Все три линзы — `pi:pi-delegate` с `--channel glm`; в `pipeline-claude:high` — `Agent`
-`pipeline-core:pipeline-lens` (Sonnet), запуск, забор и годность — по скилу пресета, остальное в разделе
+**Модель.** Все три линзы — `pi:pi-delegate` с `--channel glm`; в `pipeline-claude:high` и `pipeline-claude:xhigh` — `Agent`
+`pipeline-core:pipeline-lens` и `pipeline-core:pipeline-lens-xhigh` соответственно (Sonnet), запуск, забор и годность — по скилу пресета, остальное в разделе
 действует как есть. DeepSeek линзам не даётся: чистая линза
 пропускает порцию без судьи, а DeepSeek по `ROLES.md` не судья. Предполёт — `pi:pi-check` полной
 пробой (`check` без `--probe-timeout`, до 120 с на канал); канал `glm` без `ok` — стоп-фактор (раздел «Стоп-фактор»).
@@ -1110,11 +1110,11 @@ listik
 за локального субагента сессия берёт карточку страховочно — см. абзац ниже): вместо них в текст
 задачи харнессу идёт шаблон ниже. У локальных субагентов `pipeline-spec-writer-*` и `pipeline-critic*`
 своего актора нет: за них пишет сессия — это тот же `agent:claude`. `pipeline-implementer*` и
-`pipeline-judge` ведут карточку сами по скилу `listik:listik`, если сессия назвала им id (строка задания ниже):
+`pipeline-judge*` ведут карточку сами по скилу `listik:listik`, если сессия назвала им id (строка задания ниже):
 актор у них тот же `agent:claude`, держатель `claude`.
 
 **Локальный субагент на этапах 3–4: сессия выдаёт себе и держит страховку.** Если этап 3 делает
-`pipeline-implementer*`, а этап 4 — `pipeline-judge`, перед запуском субагента карточка выдаётся себе, сразу
+`pipeline-implementer*`, а этап 4 — `pipeline-judge*`, перед запуском субагента карточка выдаётся себе, сразу
 за выдачей идёт свой `claim`, а пока субагент работает — heartbeat по правилу раздела «Всегда». Это
 страховка на случай, если субагент упал до своего `claim`; для того же держателя `claim` идемпотентен,
 конфликта нет. В задачу субагенту идёт строка `Listik, карточка <P>` (подраздел «Строка задания локальному
@@ -1130,7 +1130,7 @@ listik heartbeat <карточка> --holder claude --note "<id>, порция X
 `board.assign_warn_minutes` уезжает в «нужен ты», а после закрытия в «кто выполнял» (`worked_by`)
 остаётся один этап 1.
 
-**Вердикт локального судьи пишет он сам; сессия — только страховка.** После возврата `pipeline-judge`
+**Вердикт локального судьи пишет он сам; сессия — только страховка.** После возврата `pipeline-judge*`
 сессия смотрит `listik show <P> --json --actor agent:claude --harness claude` и ищет вердикт **этого
 захода** — комментарий `-k verdict`, чьё время позже **последней** выдачи карточки на `s4-judge`
 (событие `stage … --to s4-judge --holder claude` этого захода). «Есть хоть один вердикт» не годится:
@@ -1184,7 +1184,7 @@ listik
 
 ### Строка задания локальному субагенту
 
-`pipeline-implementer*` и `pipeline-judge` получают в задаче строку `Listik, карточка <P>` — id буквально,
+`pipeline-implementer*` и `pipeline-judge*` получают в задаче строку `Listik, карточка <P>` — id буквально,
 первой строкой (при пути дерева в задаче — второй, сразу после него). Больше ничего о протоколе в задачу
 не пишется: он у субагента в скиле. Претензии к его `claim`/`journal`/`verdict` — к разделу «Карточка
 Listik» в файле агента (`agents/pipeline-*.md`).
@@ -1208,7 +1208,7 @@ listik claim <id> --holder claude --actor agent:claude --harness claude
 `pipeline-full:xlow`, `pipeline-cc:xlow`, `pipeline-full:nano` и `pipeline-cc:nano`. Если `issue_type == "epic"`, а пресет из этого списка:
 
 ```
-listik needs-owner <id> "эпик нельзя вести пресетом без писателя ТЗ: порции и дочерние карточки заводит только писатель ТЗ. Выберите пресет с писателем ТЗ — pipeline-full:xhigh, pipeline-full:high, pipeline-full:medium, pipeline-full:low, pipeline-full:cross, pipeline-cc:xhigh, pipeline-cc:high, pipeline-cc:medium, pipeline-cc:low, pipeline-cc:sol или pipeline-claude:high — либо заведите обычную задачу." --actor agent:claude --harness claude
+listik needs-owner <id> "эпик нельзя вести пресетом без писателя ТЗ: порции и дочерние карточки заводит только писатель ТЗ. Выберите пресет с писателем ТЗ — pipeline-full:xhigh, pipeline-full:high, pipeline-full:medium, pipeline-full:low, pipeline-full:cross, pipeline-cc:xhigh, pipeline-cc:high, pipeline-cc:medium, pipeline-cc:low, pipeline-cc:sol, pipeline-claude:high или pipeline-claude:xhigh — либо заведите обычную задачу." --actor agent:claude --harness claude
 ```
 
 Вопрос — дословно в чат, дальше стоп: этапы не начинаются.

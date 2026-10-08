@@ -51,6 +51,8 @@ SWARM = "swarm"
 # и три роя из `_launch_env`) — их нельзя переопределить через `env` запуска.
 # Переменные, которые читает только install.sh, сюда не входят (см. docs/API.md,
 # «Отзыв и перезапуск»).
+# LISTIK_REMOTE_TOKEN — токен общего сервера для `listik remote set`: секрет
+# разработчика, процессу задачи через `launch --env` его не передают.
 RESERVED_ENV = frozenset({
     "LISTIK_HOME", "LISTIK_DB", "LISTIK_CONFIG", "LISTIK_LOG", "LISTIK_PORT",
     "LISTIK_PROJECTS_ROOT", "LISTIK_OLLAMA_URL", "LISTIK_EMBED_MODEL", "LISTIK_EMBED_DIM",
@@ -58,6 +60,7 @@ RESERVED_ENV = frozenset({
     "LISTIK_ACTOR", "LISTIK_OWNER", "LISTIK_PROJECT", "LISTIK_WRAPPER",
     "LISTIK_TASK_ID", "LISTIK_ROUTE", "LISTIK_LAUNCHED_BY", "LISTIK_GENERATION",
     "LISTIK_DISPATCH_ID", "LISTIK_STAGE", "LISTIK_ROLE", "LISTIK_HARNESS",
+    "LISTIK_REMOTE_TOKEN",
 })
 
 _ENV_KEY_RE = re.compile(r"^LISTIK_[A-Z0-9_]+$")

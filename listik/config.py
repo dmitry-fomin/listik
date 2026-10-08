@@ -14,6 +14,7 @@ import sqlite3
 import sys
 import tempfile
 import tomllib
+import urllib.parse
 from pathlib import Path
 from typing import Any
 
@@ -235,8 +236,12 @@ def swarm_enabled(cfg: dict | None = None) -> bool:
 
     Ключа нет — выключен. Раздел целиком в DEFAULTS не кладём: рядом лежат
     ключ и модель проходов plan/rescope, и `ensure_token` не должен их выдумывать.
+    В серверном режиме (`[server] mode = "server"`) рой выключен всегда: на общем
+    сервере он не нужен (listik-r69k).
     """
     cfg = load() if cfg is None else cfg
+    if is_server_mode(cfg):
+        return False
     section = cfg.get("swarm")
     if not isinstance(section, dict) or "enabled" not in section:
         return False
@@ -249,49 +254,57 @@ def swarm_enabled(cfg: dict | None = None) -> bool:
 _TABLE_RE = re.compile(r"^\s*\[\s*([^\]]+?)\s*\]\s*(?:#.*)?$")
 
 
-def _patch_swarm_enabled(text: str, enabled: bool) -> str:
-    """Вписать `enabled` в таблицу `[swarm]`, не переписывая остальной файл.
+def _patch_value(text: str, table: str, key: str, literal: str) -> str:
+    """Вписать `key = literal` в таблицу `[table]`, не переписывая остальной файл.
 
     Комментарии и чужие таблицы остаются как были. Полный `save()` сюда не годится:
-    он материализует DEFAULTS и стирает комментарии.
+    он материализует DEFAULTS и стирает комментарии. Таблицы нет — она дописывается
+    в конец; ключ есть — заменяется его строка; нет — вставляется сразу за заголовком.
     """
-    literal = "true" if enabled else "false"
     newline = "\r\n" if "\r\n" in text else "\n"
     lines = text.splitlines(keepends=True)
     section_at: int | None = None
-    enabled_at: int | None = None
-    in_swarm = False
+    key_at: int | None = None
+    in_table = False
     for index, line in enumerate(lines):
         body = line.rstrip("\r\n")
         header = _TABLE_RE.match(body)
         if header:
             name = header.group(1).strip().strip('"').strip("'")
-            in_swarm = name == "swarm"
-            if in_swarm and section_at is None:
+            in_table = name == table
+            if in_table and section_at is None:
                 section_at = index
             continue
-        if in_swarm and body.lstrip().startswith("enabled") and "=" in body.split("#", 1)[0]:
-            key = body.split("=", 1)[0].strip()
-            if key == "enabled" and enabled_at is None:
-                enabled_at = index
-    assignment = f"enabled = {literal}"
+        if in_table and body.lstrip().startswith(key) and "=" in body.split("#", 1)[0]:
+            found = body.split("=", 1)[0].strip()
+            if found == key and key_at is None:
+                key_at = index
+    assignment = f"{key} = {literal}"
     if section_at is None:
         base = text
         if base and not base.endswith(("\n", "\r")):
             base += newline
         if base and not base.endswith(newline * 2):
             base += newline
-        return base + f"[swarm]{newline}{assignment}{newline}"
-    if enabled_at is not None:
-        old = lines[enabled_at]
+        return base + f"[{table}]{newline}{assignment}{newline}"
+    if key_at is not None:
+        old = lines[key_at]
         ending = "\r\n" if old.endswith("\r\n") else ("\n" if old.endswith("\n") else newline)
         indent = re.match(r"^(\s*)", old).group(1)
-        lines[enabled_at] = f"{indent}{assignment}{ending}"
+        lines[key_at] = f"{indent}{assignment}{ending}"
         return "".join(lines)
     header = lines[section_at]
     ending = "\r\n" if header.endswith("\r\n") else "\n"
+    if not header.endswith("\n"):  # заголовок — последняя строка без перевода
+        lines[section_at] = header + newline
+        ending = newline
     lines.insert(section_at + 1, f"{assignment}{ending}")
     return "".join(lines)
+
+
+def _patch_swarm_enabled(text: str, enabled: bool) -> str:
+    """Вписать `enabled` в таблицу `[swarm]` (см. `_patch_value`)."""
+    return _patch_value(text, "swarm", "enabled", "true" if enabled else "false")
 
 
 def set_swarm_enabled(enabled: bool, path: Path | None = None) -> None:
@@ -317,6 +330,126 @@ def set_swarm_enabled(enabled: bool, path: Path | None = None) -> None:
     section = parsed.get("swarm")
     if not isinstance(section, dict) or section.get("enabled") is not enabled:
         raise ValueError("не удалось записать [swarm] enabled")
+    _atomic_write(cfg_path, new)
+
+
+def normalize_url(value: object) -> str:
+    """Адрес общего сервера в одном виде: `http(s)://хост[:порт][/префикс]`.
+
+    Схема и хост — в нижнем регистре, порт по умолчанию (80/443) и хвостовой `/`
+    снимаются, IPv6 остаётся в скобках. userinfo, query, fragment, кривой порт —
+    `errors.BadArgument` с причиной.
+    """
+    if not isinstance(value, str):
+        raise errors_mod.BadArgument(f"адрес сервера должен быть строкой, а не {value!r}")
+    text = value.strip()
+
+    def bad(reason: str) -> errors_mod.BadArgument:
+        return errors_mod.BadArgument(f"адрес сервера {text!r}: {reason}")
+
+    if not text:
+        raise bad("пустой")
+    if any(ch.isspace() or not ch.isprintable() for ch in text):
+        raise bad("пробелы и непечатные символы недопустимы")
+    try:
+        parts = urllib.parse.urlsplit(text)
+        port = parts.port
+    except ValueError as exc:
+        raise bad(f"не разбирается ({exc})") from exc
+    scheme = parts.scheme.lower()
+    if scheme not in ("http", "https") or not text.lower().startswith(scheme + "://"):
+        raise bad("нужна схема http:// или https://")
+    if "@" in parts.netloc:
+        raise bad("логин и пароль в адресе недопустимы")
+    if "?" in text or "#" in text:
+        raise bad("query (?…) и fragment (#…) недопустимы")
+    host = (parts.hostname or "").lower()
+    if not host:
+        raise bad("нет хоста")
+    if parts.netloc.endswith(":"):
+        raise bad("пустой порт")
+    if port == 0:
+        raise bad("порт должен быть 1–65535")
+    if ":" in host:
+        host = f"[{host}]"
+    if port is not None and port != {"http": 80, "https": 443}[scheme]:
+        host = f"{host}:{port}"
+    return f"{scheme}://{host}{parts.path.rstrip('/')}"
+
+
+def same_server(a: str, b: str) -> bool:
+    """Один ли это сервер: сравнение адресов после `normalize_url`."""
+    return normalize_url(a) == normalize_url(b)
+
+
+def remote(cfg: dict | None = None) -> dict | None:
+    """Общий сервер клиента из `[remote]`: `{"url", "token"}` или `None`, если не задан."""
+    cfg = load() if cfg is None else cfg
+    section = cfg.get("remote")
+    if section is None:
+        return None
+    if not isinstance(section, dict):
+        raise errors_mod.BadArgument("remote: в config.toml ожидается таблица [remote]")
+    url = section.get("url")
+    if url is None or url == "":
+        return None
+    try:
+        normalized = normalize_url(url)
+    except errors_mod.BadArgument as exc:
+        raise errors_mod.BadArgument(f"remote.url = {url!r} в config.toml: {exc}") from exc
+    token = section.get("token", "")
+    if not isinstance(token, str):
+        raise errors_mod.BadArgument("remote.token в config.toml: ожидается строка")
+    return {"url": normalized, "token": token}
+
+
+def _plain_table(text: str, parsed: dict, name: str) -> None:
+    """`name` в файле — либо нет, либо обычная таблица `[name]`; иначе ValueError."""
+    if name not in parsed:
+        return
+    has_header = any(
+        (m := _TABLE_RE.match(line)) and m.group(1).strip().strip('"').strip("'") == name
+        for line in text.splitlines())
+    if not isinstance(parsed[name], dict) or not has_header:
+        raise ValueError(f"config.toml: {name} задан не таблицей [{name}] "
+                         "(инлайн, точечные ключи или скаляр) — поправь файл руками")
+
+
+def set_remote(url: str, token: str, owner: str | None = None,
+               path: Path | None = None) -> None:
+    """Записать `[remote] url/token` (и `[auth] owner`, если передан), не трогая остальное."""
+    url = normalize_url(url)
+    if not isinstance(token, str):
+        raise ValueError("token: ожидается строка")
+    owner = owner.strip() if isinstance(owner, str) else None
+    cfg_path = Path(path or paths.CONFIG_PATH)
+    text = cfg_path.read_text(encoding="utf-8") if cfg_path.is_file() else ""
+    try:
+        before = tomllib.loads(text)
+    except tomllib.TOMLDecodeError as exc:
+        raise ValueError(f"config.toml не читается: {exc}") from exc
+    _plain_table(text, before, "remote")
+    if owner:
+        _plain_table(text, before, "auth")
+
+    def lit(value: str) -> str:
+        return json.dumps(value, ensure_ascii=False)
+
+    # token раньше url: новая строка встаёт сразу за заголовком, url окажется первым
+    new = _patch_value(text, "remote", "token", lit(token))
+    new = _patch_value(new, "remote", "url", lit(url))
+    if owner:
+        new = _patch_value(new, "auth", "owner", lit(owner))
+    expected = copy.deepcopy(before)
+    expected.setdefault("remote", {}).update(url=url, token=token)
+    if owner:
+        expected.setdefault("auth", {})["owner"] = owner
+    try:
+        parsed = tomllib.loads(new)
+    except tomllib.TOMLDecodeError as exc:
+        raise ValueError(f"config.toml после записи [remote] не читается: {exc}") from exc
+    if parsed != expected:
+        raise ValueError("не удалось записать [remote]: файл после правки не совпал с ожидаемым")
     _atomic_write(cfg_path, new)
 
 

@@ -15,6 +15,7 @@ import sqlite3
 import sys
 import traceback
 import urllib.parse
+import urllib.request
 from datetime import datetime, timezone
 from pathlib import Path
 
@@ -1520,6 +1521,9 @@ def _print_swarm(health: dict | None) -> None:
         print(f"рой:    конфиг: {info['error']}")
         return
     suffix = f" · модель {info['model']}" if info.get("model") else ""
+    if info.get("disabled_reason") == "server_mode":
+        print(f"рой:    выключен: серверный режим{suffix}")
+        return
     if not info.get("enabled"):
         print(f"рой:    выключен (listik swarm on){suffix}")
         return
@@ -1543,6 +1547,8 @@ def cmd_swarm(args) -> int:
             print("его поднимает listik serve; если сервер уже работает — подожди несколько секунд")
         return 0
     enabled = state == "on"
+    if enabled and client.config_mod.is_server_mode():
+        raise errors.BadArgument("в серверном режиме рой не запускается")
     client.config_mod.set_swarm_enabled(enabled)
     if enabled:
         print("рой включён: [swarm] enabled = true")
@@ -1550,6 +1556,135 @@ def cmd_swarm(args) -> int:
     else:
         print("рой выключен: [swarm] enabled = false")
         print("живой сервер на этой машине остановит процесс в течение нескольких секунд")
+    return 0
+
+
+class _NoRedirect(urllib.request.HTTPRedirectHandler):
+    """Редирект не выполнять: Authorization не должен уйти на другой адрес."""
+
+    def redirect_request(self, req, fp, code, msg, headers, newurl):  # noqa: D401
+        return None
+
+
+def _remote_token() -> str:
+    """Токен общего сервера: LISTIK_REMOTE_TOKEN → getpass (tty) → строка stdin."""
+    import getpass
+    token = os.environ.get("LISTIK_REMOTE_TOKEN") or ""
+    if not token:
+        try:
+            if sys.stdin is not None and sys.stdin.isatty():
+                token = getpass.getpass("токен общего сервера: ")
+            elif sys.stdin is not None:
+                token = sys.stdin.readline()
+        except EOFError:
+            token = ""
+    token = token.strip()
+    hint = "токен передай в LISTIK_REMOTE_TOKEN или строкой в stdin"
+    if not token:
+        raise errors.ListikError("токен общего сервера не задан", code=errors.BAD_ARGUMENT,
+                                 hint=hint)
+    if not token.isprintable():
+        raise errors.ListikError("токен общего сервера: перевод строки или непечатные символы",
+                                 code=errors.BAD_ARGUMENT, hint=hint)
+    return token
+
+
+def _check_remote(url: str, token: str, owner: str) -> bool:
+    """GET <url>/api/health с токеном. False — сервер не ответил; отказ — ListikError."""
+    import http.client
+    import urllib.error
+    req = urllib.request.Request(url + "/api/health",
+                                 headers={"Authorization": f"Bearer {token}"})
+    if owner:
+        req.add_header("X-Listik-Owner", owner)
+    hint = f"проверь адрес: listik remote set <url> (сейчас {url})"
+
+    def not_listik(reason: str) -> errors.ListikError:
+        return errors.ListikError(f"по адресу {url} не сервер Listik ({reason})",
+                                  code=errors.BAD_ARGUMENT, hint=hint)
+
+    try:
+        with urllib.request.build_opener(_NoRedirect).open(req, timeout=5) as resp:
+            status, raw = resp.status, resp.read(1_000_000)
+    except urllib.error.HTTPError as exc:
+        status, raw = exc.code, b""
+        exc.close()
+    except http.client.HTTPException as exc:
+        raise not_listik(f"ответ не HTTP: {type(exc).__name__}") from exc
+    except (urllib.error.URLError, OSError):
+        return False
+    if status == 401:
+        raise errors.ListikError(f"общий сервер {url} не принял токен", code=errors.UNAUTHORIZED,
+                                 hint="проверь токен у администратора сервера")
+    if not 200 <= status < 300:
+        raise not_listik(f"HTTP {status}")
+    try:
+        payload = json.loads(raw.decode("utf-8"))
+    except (UnicodeDecodeError, json.JSONDecodeError) as exc:
+        raise not_listik("ответ не JSON") from exc
+    data = payload.get("data") if isinstance(payload, dict) else None
+    if not isinstance(data, dict) or "status" not in data:
+        raise not_listik("в ответе нет data.status")
+    if data.get("authed") is False:
+        raise errors.ListikError(f"общий сервер {url} не принял токен", code=errors.UNAUTHORIZED,
+                                 hint="проверь токен у администратора сервера")
+    if data.get("mode") == "server":
+        people = data.get("users")
+        if not owner:
+            print("! имя на сервере не задано: --owner, LISTIK_OWNER или [auth] owner",
+                  file=sys.stderr)
+        elif isinstance(people, list) and owner not in people:
+            raise errors.BadArgument(
+                f"имени {owner!r} нет среди людей сервера {url}: "
+                f"{', '.join(str(p) for p in people) or '(список пуст)'}")
+    return True
+
+
+def cmd_remote(args) -> int:
+    """Показать или записать общий сервер клиента (`[remote]` в config.toml)."""
+    from listik import project_file
+    cfg_mod = client.config_mod
+    if args.action is None:
+        info: dict = {"url": None, "owner": client.owner(getattr(args, "owner", None)) or None,
+                      "token_set": False, "project_file": None}
+        try:
+            rem = cfg_mod.remote()
+            if rem:
+                info["url"], info["token_set"] = rem["url"], bool(rem["token"])
+        except (errors.ListikError, ValueError) as exc:
+            info["remote_error"] = errors.as_error(exc).message
+        try:
+            info["project_file"] = project_file.find(os.getcwd())
+        except errors.ListikError as exc:
+            info["project_file_error"] = exc.message
+        pf = info["project_file"]
+        lines = [f"общий сервер: {info['url'] or 'не задан'}",
+                 f"владелец: {info['owner'] or 'не задан'}",
+                 f"токен: {'задан' if info['token_set'] else 'не задан'}",
+                 f"файл проекта: {pf['path']} (server {pf['server']}, проект {pf['project']})"
+                 if pf else "файл проекта: нет"]
+        if "remote_error" in info:
+            lines.append(f"ошибка [remote]: {info['remote_error']}")
+        if "project_file_error" in info:
+            lines.append(f"ошибка файла проекта: {info['project_file_error']}")
+        emit(args, info, "\n".join(lines))
+        return 0
+    if not args.url:
+        raise errors.ListikError("remote set: нужен адрес общего сервера",
+                                 code=errors.BAD_ARGUMENT, hint="listik remote --help",
+                                 exit_code=2)
+    url = cfg_mod.normalize_url(args.url)
+    cfg_owner = cfg_mod.default_owner()  # битый config.toml — отказ до сети
+    who = client.owner(getattr(args, "owner", None))
+    token = _remote_token()
+    checked = _check_remote(url, token, who)
+    if not checked:
+        print(f"! сервер {url} не ответил — настройки записаны без проверки", file=sys.stderr)
+    cfg_mod.set_remote(url, token, who if who and who != cfg_owner else None)
+    out = {"url": url, "owner": who or None, "config_path": str(paths.CONFIG_PATH),
+           "checked": checked}
+    emit(args, out, f"общий сервер: {url}\nвладелец: {who or 'не задан'}\n"
+                    f"конфиг: {paths.CONFIG_PATH}")
     return 0
 
 
@@ -2999,6 +3134,18 @@ def build_parser() -> argparse.ArgumentParser:
              help="включить рой в config.toml: сервер сам гоняет все проекты")
     sp.add_argument("state", choices=["on", "off", "status"],
                     help="on — [swarm] enabled = true; off — false; status — что сейчас")
+
+    remote_help = ("общий сервер Listik этого клиента: без аргументов — показать, "
+                   "set <url> — проверить и записать в [remote] config.toml")
+    sp = add("remote", cmd_remote, help=remote_help,
+             description=remote_help + ". Токен не передаётся в аргументах: он берётся из "
+             "LISTIK_REMOTE_TOKEN, иначе спрашивается в терминале или читается строкой "
+             "из stdin. Имя — --owner, LISTIK_OWNER или [auth] owner. Токен не печатается.")
+    sp.add_argument("action", nargs="?", choices=["set"],
+                    help="set — записать адрес и токен общего сервера (без него — показать)")
+    sp.add_argument("url", nargs="?",
+                    help="адрес общего сервера для set: http(s)://хост[:порт][/префикс]; "
+                    "токен — LISTIK_REMOTE_TOKEN или stdin")
 
     sp = add("arbiter-check", cmd_arbiter_check,
              help="проверка результата арбитра слияния через jev (рой зовёт сам)",

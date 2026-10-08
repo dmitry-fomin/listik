@@ -76,7 +76,7 @@ def fenced_after(lines, start):
 
 
 def judge_task_head():
-    """Задание судьи из low-pipeline без хвоста про карточку Listik; None — не вынулось."""
+    """Задание судьи из pipeline-full:low без хвоста про карточку Listik; None — не вынулось."""
     try:
         lines = SKILL.read_text(encoding="utf-8").splitlines()
     except OSError:

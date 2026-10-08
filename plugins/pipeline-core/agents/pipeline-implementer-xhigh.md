@@ -1,6 +1,6 @@
 ---
 name: pipeline-implementer-xhigh
-description: Тот же исполнитель одной порции ТЗ, что pipeline-implementer, но Opus с effort xhigh — исполнитель этапа 3 в xhigh-pipeline. Получает ровно один путь к файлу порции и больше ничего. Не коммитит и за границы порции не выходит.
+description: Тот же исполнитель одной порции ТЗ, что pipeline-implementer, но Opus с effort xhigh — исполнитель этапа 3 в pipeline-full:xhigh и pipeline-cc:xhigh. Получает ровно один путь к файлу порции и больше ничего. Не коммитит и за границы порции не выходит.
 model: opus
 effort: xhigh
 tools: Read, Write, Edit, Bash, Grep, Glob

@@ -1,6 +1,6 @@
 ---
 name: pipeline-critic-inherit
-description: "Тот же критик ТЗ порции, что pipeline-critic, — для claude-pipeline; модель — параметром `model` в вызове (`sonnet` или `opus`). Получает пути к порции и чек-листу, репозиторий видит только на чтение, замечания кладёт файлом. Усилия во frontmatter нет — наследует усилие сессии, которая его позвала (`claude --effort <уровень>` или `/effort`). Зовётся только по имени из claude-pipeline."
+description: "Тот же критик ТЗ порции, что pipeline-critic, — для pipeline-claude:high; модель — параметром `model` в вызове (`sonnet` или `opus`). Получает пути к порции и чек-листу, репозиторий видит только на чтение, замечания кладёт файлом. Усилия во frontmatter нет — наследует усилие сессии, которая его позвала (`claude --effort <уровень>` или `/effort`). Зовётся только по имени из pipeline-claude:high."
 model: sonnet
 tools: Read, Grep, Glob, Bash, Write
 color: orange

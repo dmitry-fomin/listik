@@ -1,6 +1,6 @@
 ---
 name: pipeline-implementer-low
-description: "Исполнитель одной порции ТЗ с effort low для пресета claude-codex:low-pipeline (Opus low). Получает ровно один путь к файлу порции и больше ничего. Не коммитит и за границы порции не выходит."
+description: "Исполнитель одной порции ТЗ с effort low для пресета pipeline-cc:low (Opus low). Получает ровно один путь к файлу порции и больше ничего. Не коммитит и за границы порции не выходит."
 model: opus
 effort: low
 tools: Read, Write, Edit, Bash, Grep, Glob

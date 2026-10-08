@@ -1,6 +1,6 @@
 ---
 name: pipeline-critic
-description: Независимая критика ТЗ порции и её чек-листа до начала реализации — штатный критик этапа 2 (Sonnet high) в составе xhigh/high/medium/cross/sol-pipeline. Получает пути к порции и чек-листу, репозиторий видит только на чтение, замечания кладёт файлом и возвращает короткую выжимку. Ничего не правит — ни ТЗ, ни код.
+description: Независимая критика ТЗ порции и её чек-листа до начала реализации — штатный критик этапа 2 (Sonnet high) в составе pipeline-full:xhigh, pipeline-full:high, pipeline-full:medium, pipeline-full:cross, pipeline-cc:xhigh, pipeline-cc:high и pipeline-cc:sol. Получает пути к порции и чек-листу, репозиторий видит только на чтение, замечания кладёт файлом и возвращает короткую выжимку. Ничего не правит — ни ТЗ, ни код.
 model: sonnet
 effort: high
 tools: Read, Grep, Glob, Bash, Write

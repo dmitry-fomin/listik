@@ -1,6 +1,6 @@
 ---
 name: pipeline-implementer-inherit
-description: "Тот же исполнитель одной порции ТЗ, что pipeline-implementer (Opus), — для claude-pipeline. Получает ровно один путь к файлу порции. Не коммитит и за границы порции не выходит. Усилия во frontmatter нет — наследует усилие сессии, которая его позвала (`claude --effort <уровень>` или `/effort`). Зовётся только по имени из claude-pipeline."
+description: "Тот же исполнитель одной порции ТЗ, что pipeline-implementer (Opus), — для pipeline-claude:high. Получает ровно один путь к файлу порции. Не коммитит и за границы порции не выходит. Усилия во frontmatter нет — наследует усилие сессии, которая его позвала (`claude --effort <уровень>` или `/effort`). Зовётся только по имени из pipeline-claude:high."
 model: opus
 tools: Read, Write, Edit, Bash, Grep, Glob
 skills:

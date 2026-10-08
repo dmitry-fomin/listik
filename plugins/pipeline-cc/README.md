@@ -2,7 +2,7 @@
 
 Линейка пресетов конвейера ТЗ → критика → код → приёмка, где работают только Claude (локальные субагенты
 основной сессии) и Codex (OpenAI, через скил `codex:codex-delegate`). Пресеты вызываются как
-`/claude-codex:<пресет>` или маршрутом карточки Listik `process:cc-<пресет>`.
+`/pipeline-cc:<пресет>` или маршрутом карточки Listik `process:cc-<пресет>`.
 
 Плагин ничего не копирует: общий протокол — ядро `plugins/pipeline-core/references/pipeline-core.md`,
 писатели ТЗ, исполнители и критики — агенты `pipeline-core:*`, внешние прогоны — скилы
@@ -47,7 +47,7 @@ sol — проверяющие от OpenAI вместо Grok, автор выб�
 
 Метрика — `omniscienceHallucinationRate` Artificial Analysis (AA-Omniscience hallucination rate, меньше —
 лучше). Для моделей Anthropic и GPT-6 Astra — снимок `plugins/pipeline-core/references/models.json` от
-2026-09-29 (поле `fetched`; 2026-09-22 — дата релиза Opus 5.5 в нём, а не снимка); для GPT-6.1 Sol — живая страница AA, снято 2026-10-07 (тех же цифр раздел «sol-pipeline —
+2026-09-29 (поле `fetched`; 2026-09-22 — дата релиза Opus 5.5 в нём, а не снимка); для GPT-6.1 Sol — живая страница AA, снято 2026-10-07 (тех же цифр раздел «… —
 проверяющие от OpenAI» в `plugins/pipeline-core/references/ROLES.md`).
 
 | Модель (slug AA) | Роль | Hal |

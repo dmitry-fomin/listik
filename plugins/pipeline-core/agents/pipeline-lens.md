@@ -1,6 +1,6 @@
 ---
 name: pipeline-lens
-description: "Линза приёмки claude-pipeline: отвечает на один вопрос (scope, holes или intent) о порции, уже сделанной в дереве, и кладёт ответ файлом по пути из задания. Кода не правит, не коммитит, в Listik не пишет. Модель — Sonnet; усилия во frontmatter нет — наследует усилие сессии, которая её позвала. Зовётся только по имени из claude-pipeline."
+description: "Линза приёмки pipeline-claude:high: отвечает на один вопрос (scope, holes или intent) о порции, уже сделанной в дереве, и кладёт ответ файлом по пути из задания. Кода не правит, не коммитит, в Listik не пишет. Модель — Sonnet; усилия во frontmatter нет — наследует усилие сессии, которая её позвала. Зовётся только по имени из pipeline-claude:high."
 model: sonnet
 tools: Read, Grep, Glob, Bash, Write
 color: cyan

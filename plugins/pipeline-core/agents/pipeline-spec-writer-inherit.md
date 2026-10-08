@@ -1,6 +1,6 @@
 ---
 name: pipeline-spec-writer-inherit
-description: "Тот же автор ТЗ, что pipeline-spec-writer (Opus), — для claude-pipeline. Получает путь к спеке или текст задачи, каталог шагов и имя бумаг; в режиме правки — ещё путь к файлу решений оркестратора. Пишет только в каталог шагов, кода не трогает. Усилия во frontmatter нет — наследует усилие сессии, которая его позвала (`claude --effort <уровень>` или `/effort`). Зовётся только по имени из claude-pipeline."
+description: "Тот же автор ТЗ, что pipeline-spec-writer (Opus), — для pipeline-claude:high. Получает путь к спеке или текст задачи, каталог шагов и имя бумаг; в режиме правки — ещё путь к файлу решений оркестратора. Пишет только в каталог шагов, кода не трогает. Усилия во frontmatter нет — наследует усилие сессии, которая его позвала (`claude --effort <уровень>` или `/effort`). Зовётся только по имени из pipeline-claude:high."
 model: opus
 tools: Read, Grep, Glob, Bash, Write, Edit
 color: purple

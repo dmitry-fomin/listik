@@ -1,5 +1,5 @@
 """Плагин pipeline-cc: пресеты конвейера на Claude + Codex (listik-r1pd, порции b и c;
-бывший плагин claude-codex, переименован в listik-d9rj, порция b).
+имя плагина и пресетов — listik-d9rj, порции b и c).
 
 Плагин ставится вместе с pipeline-core, codex и listik и ничего из них не копирует: скилы
 пресетов читают ядро через скил `pipeline-core:core`, их агенты (критики нового усилия, тело
@@ -23,9 +23,7 @@ MARKETPLACE_JSON = REPO_DIR / ".claude-plugin" / "marketplace.json"
 SOL_SKILL = PLUGIN_DIR / "skills" / "sol" / "SKILL.md"
 
 PLUGIN_NAME = "pipeline-cc"
-#: Имя плагина до listik-d9rj: тексты агентов pipeline-core до порции c ещё зовут его так.
-OLD_PLUGIN_NAME = "claude-codex"
-#: Скил sol переехал в pipeline-cc из feature-pipeline: его тексты сверяет tests/test_pipeline_plugins.py,
+#: Скил sol переехал в pipeline-cc из другого плагина пресетов: его тексты сверяет tests/test_pipeline_plugins.py,
 #: здесь он — только образец задания судье.
 FROM_FEATURE_PIPELINE = ("sol",)
 PLUGIN_MANIFEST = pathlib.Path(".claude-plugin") / "plugin.json"
@@ -40,18 +38,9 @@ CORE_LINK = ("скил `pipeline-core:core`",
 LAUNCH_PHRASE = "Запускай только по явному имени"
 JUDGE_TASK_LINE = "Задание, которое уходит в `codex:codex-delegate`:"
 
-#: Новый скил → старое имя (listik-d9rj, порция b): тексты скилов до порции c зовут пресет старым именем.
-OLD_NAMES = {
-    "xhigh": "xhigh-pipeline",
-    "high": "high-pipeline",
-    "medium": "medium-pipeline",
-    "low": "low-pipeline",
-    "xlow": "xlow-pipeline",
-    "nano": "nano-pipeline",
-}
-
-#: Подстроки, которые обязаны быть в каждом SKILL.md плагина; `{name}` — старое имя пресета (OLD_NAMES).
-SKILL_REQUIRED = ("Стоп-фактор", "пресет claude-codex:{name}", "`model` перебивает frontmatter",
+#: Подстроки, которые обязаны быть в каждом SKILL.md плагина; `{name}` — имя скила (каталог в skills/).
+SKILL_REQUIRED = ("Стоп-фактор", "пресет pipeline-cc:{name}", "# Конвейер pipeline-cc:{name}",
+                  "process:cc-{name}", "/pipeline-cc:{name}", "`model` перебивает frontmatter",
                   "не того усилия", "согласие")
 
 #: Подстроки, которых нет ни в одном SKILL.md плагина (без учёта регистра).
@@ -93,7 +82,7 @@ _NO_SPEC_PRESET: dict = {
 
 #: Пресет → требования по этапам. `required` — подстроки раздела `### <n>.`, `pairs` — пары подстрок,
 #: обязанные стоять в одной строке раздела, `forbidden` — подстроки, которых в разделе нет,
-#: `judge_like_sol` — задание судье побайтно как в sol-pipeline. Необязательные ключи: `stages` —
+#: `judge_like_sol` — задание судье побайтно как в pipeline-cc:sol. Необязательные ключи: `stages` —
 #: какие разделы `### <n>.` есть (остальных из 1–4 быть не должно; по умолчанию все четыре),
 #: `hod1` — требования к разделу `## Ход 1` (required/pairs/forbidden), `text_required` — подстроки
 #: всего текста, `judge_twin` — группа пресетов, чьи задания судье равны друг другу побайтно.
@@ -276,7 +265,7 @@ def _skill_problems(name: str, text: str, skill_dir: pathlib.Path) -> list[str]:
         if not (skill_dir / path).exists():
             problems.append(f"ссылка ведёт в никуда: {target}")
     for needle in SKILL_REQUIRED:
-        needle = needle.format(name=OLD_NAMES[name])
+        needle = needle.format(name=name)
         if needle not in text:
             problems.append(f"нет {needle!r}")
     lowered = text.lower()
@@ -347,10 +336,10 @@ def _judge_block(text: str) -> str | None:
 def _judge_problems(text: str, sample: str) -> list[str]:
     block, expected = _judge_block(text), _judge_block(sample)
     if expected is None:
-        return ["в sol-pipeline нет задания судье"]
+        return ["в pipeline-cc:sol нет задания судье"]
     if block is None:
         return ["нет fenced-блока задания судье в «### 4.»"]
-    return [] if block == expected else ["задание судье разошлось с sol-pipeline"]
+    return [] if block == expected else ["задание судье разошлось с pipeline-cc:sol"]
 
 
 def _agent_problems(filename: str, text: str) -> list[str]:
@@ -377,8 +366,8 @@ def _agent_problems(filename: str, text: str) -> list[str]:
         problems.append(f"строк description: {len(descriptions)}")
     else:
         value = descriptions[0]
-        if effort not in value or OLD_PLUGIN_NAME not in value:
-            problems.append(f"в description нет {effort!r} или {OLD_PLUGIN_NAME!r}")
+        if effort not in value or PLUGIN_NAME not in value:
+            problems.append(f"в description нет {effort!r} или {PLUGIN_NAME!r}")
         if value.strip('"') == _fm_values(sample_fm or [], "description")[0].strip('"'):
             problems.append("description скопирован у образца")
     if body != sample_body:

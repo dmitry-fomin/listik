@@ -1,0 +1,22 @@
+{
+  "name": "pipeline-claude",
+  "displayName": "Pipeline: Claude only",
+  "version": "1.0.0",
+  "description": "Pipeline presets run only on Claude: opus (one Opus pass that commits itself) and high (a Claude-only spec, critique, code and acceptance crew); requires the pipeline-core plugin.",
+  "author": {
+    "name": "Dmitry Fomin",
+    "url": "https://github.com/dmitry-fomin"
+  },
+  "homepage": "https://github.com/dmitry-fomin/listik",
+  "repository": "https://github.com/dmitry-fomin/listik",
+  "license": "MIT",
+  "keywords": [
+    "pipeline",
+    "claude",
+    "subagent",
+    "orchestration"
+  ],
+  "dependencies": [
+    "pipeline-core"
+  ]
+}

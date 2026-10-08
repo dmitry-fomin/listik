@@ -306,7 +306,7 @@ class JudgeBench(unittest.TestCase):
 
     def copy_script(self, skill_text, core_text):
         root = self.tmp / "plugins"
-        write(self.tmp, "plugins/feature-pipeline/skills/low-pipeline/SKILL.md", skill_text)
+        write(root, "pipeline-full/skills/low/SKILL.md", skill_text)
         write(root, "pipeline-core/references/pipeline-core.md", core_text)
         (root / "pipeline-core/references/bench").mkdir()
         shutil.copy(SCRIPT, root / "pipeline-core/references/bench/judge_bench.py")
@@ -317,11 +317,11 @@ class JudgeBench(unittest.TestCase):
         self.case()
         r = self.run_bench(script=root / "pipeline-core/references/bench/judge_bench.py")
         self.assertEqual(r.returncode, 2)
-        self.assertIn(f"нет задания судьи в {self.tmp / 'plugins/feature-pipeline/skills/low-pipeline/SKILL.md'}", r.stderr)
+        self.assertIn(f"нет задания судьи в {root / 'pipeline-full/skills/low/SKILL.md'}", r.stderr)
         self.assertFalse(self.out.exists())
 
     def test_no_diff_block(self):
-        skill = (ROOT / "plugins/feature-pipeline/skills/low-pipeline/SKILL.md").read_text("utf-8")
+        skill = (ROOT / "plugins/pipeline-full/skills/low/SKILL.md").read_text("utf-8")
         root = self.copy_script(skill, "# без раздела\n")
         self.case()
         r = self.run_bench(script=root / "pipeline-core/references/bench/judge_bench.py")

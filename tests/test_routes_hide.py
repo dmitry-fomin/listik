@@ -50,25 +50,25 @@ class HideBase(RoutesDbTestCase):
 
 class HideLocalTests(HideBase):
     def test_hides_pipeline_and_swarm_dedup(self) -> None:
-        before = routes_store.get_route(self.conn, "xlow-pipeline")
-        p = self.run_cli("--hide", "xlow-pipeline", "swarm-x", "xlow-pipeline", "--json")
+        before = routes_store.get_route(self.conn, "full-xlow")
+        p = self.run_cli("--hide", "full-xlow", "swarm-x", "full-xlow", "--json")
         self.assertEqual(p.returncode, 0, p.stdout + p.stderr)
-        self.assertEqual(json.loads(p.stdout), {"hidden": ["xlow-pipeline", "swarm-x"]})
-        self.assertFalse(self.visible("xlow-pipeline"))
+        self.assertEqual(json.loads(p.stdout), {"hidden": ["full-xlow", "swarm-x"]})
+        self.assertFalse(self.visible("full-xlow"))
         self.assertFalse(self.visible("swarm-x"))
-        after = routes_store.get_route(self.conn, "xlow-pipeline")
+        after = routes_store.get_route(self.conn, "full-xlow")
         for field in ("kind", "title", "hint", "roles", "command", "position"):
             self.assertEqual(before.get(field), after.get(field), field)
 
     def test_text_output_and_repeat_hide(self) -> None:
-        self.run_cli("--hide", "nano-pipeline")
-        p = self.run_cli("--hide", "nano-pipeline", "low-pipeline")
+        self.run_cli("--hide", "full-nano")
+        p = self.run_cli("--hide", "full-nano", "full-low")
         self.assertEqual(p.returncode, 0, p.stdout + p.stderr)
-        self.assertEqual(p.stdout.strip(), "скрыты: nano-pipeline, low-pipeline")
+        self.assertEqual(p.stdout.strip(), "скрыты: full-nano, full-low")
 
     def test_missing_keys_change_nothing(self) -> None:
         before = self.all_visible()
-        p = self.run_cli("--hide", "nope-1", "xlow-pipeline", "nope-2", "--json")
+        p = self.run_cli("--hide", "nope-1", "full-xlow", "nope-2", "--json")
         self.assertEqual(p.returncode, 1, p.stdout + p.stderr)
         err = json.loads(p.stdout)["error"]
         self.assertEqual(err["code"], "not_found")
@@ -79,7 +79,7 @@ class HideLocalTests(HideBase):
     def test_conflicting_flags_exit_2(self) -> None:
         before = self.all_visible()
         for extra in (["--reimport"], ["--from", "x.json"], ["--reimport", "--from", "x.json"]):
-            p = self.run_cli("--hide", "xlow-pipeline", *extra)
+            p = self.run_cli("--hide", "full-xlow", *extra)
             self.assertEqual(p.returncode, 2, p.stdout + p.stderr)
             self.assertIn("--hide", p.stdout + p.stderr)
         self.assertEqual(self.all_visible(), before)
@@ -111,16 +111,16 @@ class HideServerTests(HideBase):
         super().tearDown()
 
     def test_hides_via_server(self) -> None:
-        p = self.run_cli("--hide", "swarm-x", "low-pipeline", "--json", local=False)
+        p = self.run_cli("--hide", "swarm-x", "full-low", "--json", local=False)
         self.assertEqual(p.returncode, 0, p.stdout + p.stderr)
-        self.assertEqual(json.loads(p.stdout), {"hidden": ["swarm-x", "low-pipeline"]})
+        self.assertEqual(json.loads(p.stdout), {"hidden": ["swarm-x", "full-low"]})
         self.assertNotIn("--local", p.stderr)
         self.assertFalse(self.visible("swarm-x"))
-        self.assertFalse(self.visible("low-pipeline"))
+        self.assertFalse(self.visible("full-low"))
 
     def test_missing_via_server_changes_nothing(self) -> None:
         before = self.all_visible()
-        p = self.run_cli("--hide", "low-pipeline", "nope-a", "nope-b", "--json", local=False)
+        p = self.run_cli("--hide", "full-low", "nope-a", "nope-b", "--json", local=False)
         self.assertEqual(p.returncode, 1, p.stdout + p.stderr)
         err = json.loads(p.stdout)["error"]
         self.assertEqual(err["code"], "not_found")
@@ -129,8 +129,8 @@ class HideServerTests(HideBase):
         self.assertEqual(self.all_visible(), before)
 
     def test_local_warns_while_server_up(self) -> None:
-        p = self.run_cli("--hide", "low-pipeline", "--json")
+        p = self.run_cli("--hide", "full-low", "--json")
         self.assertEqual(p.returncode, 0, p.stdout + p.stderr)
         self.assertIn(_load_warning(), p.stderr)
-        self.assertEqual(json.loads(p.stdout), {"hidden": ["low-pipeline"]})
-        self.assertFalse(self.visible("low-pipeline"))
+        self.assertEqual(json.loads(p.stdout), {"hidden": ["full-low"]})
+        self.assertFalse(self.visible("full-low"))

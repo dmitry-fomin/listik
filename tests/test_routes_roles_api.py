@@ -45,28 +45,28 @@ class RolesApiBase(RoutesApiBase):
 class PatchRolesTests(RolesApiBase):
     def setUp(self) -> None:
         super().setUp()
-        self.write_and_import([pipeline_record(key="high-pipeline"), swarm_record()])
+        self.write_and_import([pipeline_record(key="full-high"), swarm_record()])
 
     def test_patch_roles_written_and_published(self) -> None:
-        before = self.route("high-pipeline")
+        before = self.route("full-high")
         with mock.patch.object(server, "publish") as publish:
-            status, data = server.handle("PATCH", "/api/routes/high-pipeline", {},
+            status, data = server.handle("PATCH", "/api/routes/full-high", {},
                                          {"roles": ROLES}, authed=True)
         self.assertEqual(status, 200)
         self.assertIsInstance(data["roles"], dict)
         self.assertEqual(data["roles"], ROLES)
-        publish.assert_called_once_with("route", {"key": "high-pipeline", "action": "updated"})
+        publish.assert_called_once_with("route", {"key": "full-high", "action": "updated"})
         # то же самое видно в общем чтении маршрутов, и updated_at сдвинулся
         _, listing = self.get("/api/routes")
-        record = next(r for r in listing["routes"] if r["key"] == "high-pipeline")
+        record = next(r for r in listing["routes"] if r["key"] == "full-high")
         self.assertEqual(record["roles"], ROLES)
-        self.assertNotEqual(self.route("high-pipeline"), before)
+        self.assertNotEqual(self.route("full-high"), before)
 
     def test_params_types_survive_roundtrip(self) -> None:
         roles = {"impl": {"provider": "glm", "label": "GLM", "title": "GLM",
                           "skill": "pi:pi-delegate",
                           "params": {"channel": "glm", "web": False, "tokens": 12}}}
-        _, data = self.patch("/api/routes/high-pipeline", {"roles": roles})
+        _, data = self.patch("/api/routes/full-high", {"roles": roles})
         params = data["roles"]["impl"]["params"]
         self.assertIs(params["web"], False)
         self.assertEqual(params["tokens"], 12)
@@ -97,23 +97,23 @@ class PatchRolesTests(RolesApiBase):
             "string": "x",
             "null": None,
         }
-        before = self.route("high-pipeline")
+        before = self.route("full-high")
         for name, roles in bad.items():
             with self.subTest(case=name):
                 with mock.patch.object(server, "publish") as publish:
                     with self.assertRaises(server.ApiError) as ctx:
-                        server.handle("PATCH", "/api/routes/high-pipeline", {},
+                        server.handle("PATCH", "/api/routes/full-high", {},
                                       {"roles": roles}, authed=True)
                 self.assertEqual(ctx.exception.status, 400)
                 self.assertEqual(ctx.exception.code, errors.BAD_ARGUMENT)
                 publish.assert_not_called()
-                self.assertEqual(self.route("high-pipeline"), before)
+                self.assertEqual(self.route("full-high"), before)
 
     def test_unknown_launcher_rejected(self) -> None:
         roles = {"impl": {"provider": "glm", "label": "x", "title": "y",
                           "skill": "no-such:launcher"}}
         with self.assertRaises(server.ApiError) as ctx:
-            self.patch("/api/routes/high-pipeline", {"roles": roles})
+            self.patch("/api/routes/full-high", {"roles": roles})
         self.assertEqual(ctx.exception.status, 400)
         self.assertIn("roles.impl.skill", ctx.exception.message)
         for key in CATALOGUE:
@@ -124,16 +124,16 @@ class PatchRolesTests(RolesApiBase):
         self.catalogue([])
         roles = {"impl": {"provider": "glm", "label": "x", "title": "y",
                           "skill": "any:launcher"}}
-        status, data = self.patch("/api/routes/high-pipeline", {"roles": roles})
+        status, data = self.patch("/api/routes/full-high", {"roles": roles})
         self.assertEqual(status, 200)
         self.assertEqual(data["roles"]["impl"]["skill"], "any:launcher")
 
     def test_patched_roles_pass_file_validation(self) -> None:
         """Роли, принятые HTTP-путём, принимает и проверка файла поставки."""
-        self.patch("/api/routes/high-pipeline", {"roles": ROLES})
-        self.assertEqual(self.route("high-pipeline")["roles"], ROLES)
+        self.patch("/api/routes/full-high", {"roles": ROLES})
+        self.assertEqual(self.route("full-high")["roles"], ROLES)
         document = {"version": 1, "routes": [
-            {"key": "high-pipeline", "kind": "pipeline", "title": "Демо", "hint": "подсказка",
+            {"key": "full-high", "kind": "pipeline", "title": "Демо", "hint": "подсказка",
              "visible": True, "roles": ROLES}]}
         self.assertEqual(routes_mod.validate(document)[0]["roles"], ROLES)
 
@@ -146,23 +146,23 @@ class PostRolesTests(RolesApiBase):
     def test_post_with_roles(self) -> None:
         with mock.patch.object(server, "publish") as publish:
             status, data = server.handle("POST", "/api/routes", {},
-                                         {"key": "high-pipeline", "roles": ROLES}, authed=True)
+                                         {"key": "full-high", "roles": ROLES}, authed=True)
         self.assertEqual(status, 201)
         self.assertIsInstance(data["roles"], dict)
         self.assertEqual(data["roles"], ROLES)
-        publish.assert_called_once_with("route", {"key": "high-pipeline", "action": "created"})
+        publish.assert_called_once_with("route", {"key": "full-high", "action": "created"})
 
     def test_post_without_roles_and_with_null(self) -> None:
-        status, data = self.post("/api/routes", {"key": "high-pipeline"})
+        status, data = self.post("/api/routes", {"key": "full-high"})
         self.assertEqual(status, 201)
         self.assertEqual(data["roles"], {})
-        status, data = self.post("/api/routes", {"key": "low-pipeline", "roles": None})
+        status, data = self.post("/api/routes", {"key": "full-low", "roles": None})
         self.assertEqual(status, 201)
         self.assertEqual(data["roles"], {})
 
     def test_post_with_empty_roles_rejected(self) -> None:
         with self.assertRaises(server.ApiError) as ctx:
-            self.post("/api/routes", {"key": "high-pipeline", "roles": {}})
+            self.post("/api/routes", {"key": "full-high", "roles": {}})
         self.assertEqual(ctx.exception.status, 400)
         self.assertEqual(ctx.exception.code, errors.BAD_ARGUMENT)
 
@@ -170,20 +170,20 @@ class PostRolesTests(RolesApiBase):
         roles = {"impl": {"provider": "glm", "label": "x", "title": "y",
                           "skill": "no-such:launcher"}}
         with self.assertRaises(server.ApiError) as ctx:
-            self.post("/api/routes", {"key": "high-pipeline", "roles": roles})
+            self.post("/api/routes", {"key": "full-high", "roles": roles})
         self.assertEqual(ctx.exception.status, 400)
         self.assertIn("roles.impl.skill", ctx.exception.message)
 
     def test_post_with_unknown_field_still_rejected(self) -> None:
         with self.assertRaises(server.ApiError) as ctx:
-            self.post("/api/routes", {"key": "high-pipeline", "kind": "direct"})
+            self.post("/api/routes", {"key": "full-high", "kind": "direct"})
         self.assertEqual(ctx.exception.status, 400)
         self.assertIn("kind", ctx.exception.message)
 
     def test_post_with_invalid_roles_rejected(self) -> None:
         roles = {"impl": {"provider": "нет", "label": "x", "title": "y"}}
         with self.assertRaises(server.ApiError) as ctx:
-            self.post("/api/routes", {"key": "high-pipeline", "roles": roles})
+            self.post("/api/routes", {"key": "full-high", "roles": roles})
         self.assertEqual(ctx.exception.status, 400)
         self.assertEqual(ctx.exception.code, errors.BAD_ARGUMENT)
 

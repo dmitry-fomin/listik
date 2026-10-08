@@ -6,8 +6,8 @@
 проверяет файл (`load`/`validate`), а первичный ввоз в пустую таблицу делает
 `listik.routes_store` (при `listik init` и старте сервера). Больше файл не перечитывает
 никто и ни с чем не сверяет: записи в базе главнее. В образце у каждой записи
-есть `command`: конвейер запускает `claude -p` со скилом `/feature-pipeline:{route}`,
-у маршрутов `cc-*` (`cc-<имя>`) — со скилом `/claude-codex:<имя>`.
+есть `command`: конвейер запускает `claude -p` со скилом `/<плагин>:<скил>` своего ключа
+(`full-high` → `/pipeline-full:high`, см. `listik.skills.skill_ref`).
 
 Читатели берут маршруты только из базы (`state(conn)`), файл в обход ввоза не читает
 никто. Кеша нет: правка записи в базе видна сразу, перезапуск сервера не нужен.
@@ -30,8 +30,9 @@
   * `icon` — необязательный уровень маршрута для иконки на доске, одно из
     `xhigh`/`high`/`medium`/`low`/`xlow`/`direct`. Если поля нет, уровень выводится из самой
     ключа (`fallback_icon`): часть ключа до первого `-`, если она из того же набора
-    (`xhigh-pipeline` → `xhigh`); у записи без
-    выводимого уровня (`opus-pipeline`) иконки нет; явный `null` — иконки нет. Неизвестное значение — не ошибка
+    (`xhigh-team` → `xhigh`), а у конвейера ещё и часть после первого `-`
+    (`full-high` → `high`); у записи без выводимого уровня (`claude-opus`) иконки нет;
+    у маршрута роя второе правило не действует; явный `null` — иконки нет. Неизвестное значение — не ошибка
     файла, а предупреждение (listik-itg8): запись получает уровень по ключу, поле
     `icon_error` с причиной и текст в `warnings` ответа `GET /api/routes`; строка уходит
     в stderr (у демона — в `listik.log`), а остальные записи и автостарт работают как обычно;
@@ -289,18 +290,26 @@ def validate_command(value, where: str) -> list[str]:
     return command
 
 
-def fallback_icon(key: str) -> str | None:
+def fallback_icon(key: str, kind: str = "pipeline") -> str | None:
     """Уровень маршрута для записи без поля `icon`.
 
-    Берётся часть ключа до первого `-` (`xhigh-pipeline` → `xhigh`), но только
-    если она из `ROUTE_ICONS`: у `opus-pipeline` или `pidi` уровня нет, и иконка
-    не выдумывается (`None`).
+    Первое правило, для обоих видов, — часть ключа до первого `-`, если она из
+    `ROUTE_ICONS` (`xhigh-team` → `xhigh`). Второе, только для конвейера
+    (`kind == "pipeline"`), — часть после первого `-` (`full-high` → `high`,
+    `cc-xlow` → `xlow`). У `claude-opus` или `pidi` уровня нет, и иконка не
+    выдумывается (`None`). У маршрута роя `icon` — вес партии: ключ вроде
+    `team-high` без явного `icon` веса не получает (`fallback_icon("x-high", "swarm")`
+    → `None`).
     """
-    prefix = key.split("-", 1)[0]
-    return prefix if prefix in ROUTE_ICONS else None
+    prefix, _, rest = key.partition("-")
+    if prefix in ROUTE_ICONS:
+        return prefix
+    if kind == "pipeline" and rest in ROUTE_ICONS:
+        return rest
+    return None
 
 
-def _validate_icon(item: dict, key: str, where: str,
+def _validate_icon(item: dict, key: str, kind: str, where: str,
                    warnings: list[str] | None = None) -> tuple[str | None, str | None]:
     """Поле `icon`: явный уровень, иначе фолбэк по записи; `None` — иконки нет.
 
@@ -310,13 +319,13 @@ def _validate_icon(item: dict, key: str, where: str,
     (его отдаёт `GET /api/routes` — доска помечает такую иконку как недоступную).
     """
     if "icon" not in item:
-        return fallback_icon(key), None
+        return fallback_icon(key, kind), None
     value = item["icon"]
     if value is None:
         return None, None  # явный null — иконки нет (так пишет бэкап маршрутов)
     if value in ROUTE_ICONS:
         return value, None
-    fallback = fallback_icon(key)
+    fallback = fallback_icon(key, kind)
     error = (f"неизвестный уровень {value!r}, допустимы: " + ", ".join(ROUTE_ICONS))
     if fallback is not None:
         warning = f"{where}.icon: {error}; беру уровень из ключа {key!r}: {fallback!r}"
@@ -357,7 +366,7 @@ def _validate_route(item, where: str, warnings: list[str] | None = None) -> dict
     if not isinstance(visible, bool):
         raise _err(f"{where}.visible", "должно быть true или false, не строка и не число")
 
-    icon, icon_error = _validate_icon(item, key, where, warnings)
+    icon, icon_error = _validate_icon(item, key, kind, where, warnings)
     record = {"key": key, "kind": kind, "title": title, "hint": hint, "visible": visible,
               "icon": icon}
     # Поле появляется только у записи с непринятым `icon`: у остальных записей

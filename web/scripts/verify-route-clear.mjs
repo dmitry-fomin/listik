@@ -34,7 +34,7 @@ const chromePort = 9400 + Math.floor(Math.random() * 400)
 const profile = mkdtempSync(join(tmpdir(), 'listik-routes-'))
 const CARD = 'listik-routes-error'
 const FRESH = 'listik-routes-fresh'
-const ROUTE = 'low-pipeline'
+const ROUTE = 'full-low'
 
 /* ── Сценарии ───────────────────────────────────────────────────────────── */
 
@@ -190,7 +190,7 @@ try {
       && current.icons > 0
       && current.alert == null
       && current.labels.includes('harness:claude')
-      && current.labels.includes('process:low-pipeline')
+      && current.labels.includes('process:full-low')
     return {
       ok,
       expect: 'матрица с текущим маршрутом и иконками, без кнопки сохранения и без алерта, метки harness:/process:',
@@ -225,16 +225,16 @@ try {
         models: row(key) ? row(key).querySelectorAll('.listik-pipelines__model').length : -1,
         glyphs: cellsOf(key).reduce((sum, cell) => sum + cell.querySelectorAll('.listik-harness-icon').length, 0),
       });
-      const critic = cellsOf('high-pipeline')[1];
-      const low = cellsOf('low-pipeline');
+      const critic = cellsOf('full-high')[1];
+      const low = cellsOf('full-low');
       return {
         pipelinesHint: hintOf('Конвейеры'),
         swarmHint: hintOf('Рой'),
-        high: pipeline('high-pipeline'),
-        low: pipeline('low-pipeline'),
+        high: pipeline('full-high'),
+        low: pipeline('full-low'),
         highCritic: modelsOf(critic),
         highCriticTitle: critic ? critic.getAttribute('title') : null,
-        highHasShort: row('high-pipeline') ? row('high-pipeline').textContent.includes('S+DS+SWE') : null,
+        highHasShort: row('full-high') ? row('full-high').textContent.includes('S+DS+SWE') : null,
         lowJudge: modelsOf(low[3]),
         lowCritic: modelsOf(low[1]),
         swarmGlyphs: row('dsh-direct') ? row('dsh-direct').querySelectorAll('.listik-harness-icon').length : -1,
@@ -346,22 +346,22 @@ try {
   // 6. Клик по пресету сразу шлёт его ключ — без отдельной кнопки «Сохранить».
   await record('клик по пресету сразу сохраняет маршрут', async () => {
     const before = patches.length
-    const clicked = await clickRoute('high-pipeline')
+    const clicked = await clickRoute('full-high')
     const sent = await waitFor(async () => (patches.length > before ? patches[patches.length - 1] : null))
     const body = sent?.body ?? {}
     const after = await waitFor(async () => {
       const current = await state()
-      return current.selectedKey === 'high-pipeline' ? current : null
+      return current.selectedKey === 'full-high' ? current : null
     })
     const ok = Boolean(clicked)
       && Boolean(sent)
       && sent.path.includes(`/api/tasks/${FRESH}`)
-      && body.route === 'high-pipeline'
+      && body.route === 'full-high'
       && body.labels === undefined
       && after?.selectedLabel === 'Высокий — конвейер'
     return {
       ok,
-      expect: `клик сразу PATCH /api/tasks/${FRESH} с route:'high-pipeline', пресет выбран`,
+      expect: `клик сразу PATCH /api/tasks/${FRESH} с route:'full-high', пресет выбран`,
       got: { clicked, patch: sent, selectedKey: after?.selectedKey, selectedLabel: after?.selectedLabel },
     }
   })

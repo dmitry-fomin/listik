@@ -144,7 +144,7 @@ TOOLS: list[dict] = [
                                     "description": "ID карточки, при работе над которой найдена эта задача: "
                                                    "сразу ставит мягкую связь discovered-from"},
                 "route": {"type": "string",
-                          "description": "ключ маршрута из таблицы routes (low-pipeline, dsh, …)"},
+                          "description": "ключ маршрута из таблицы routes (full-low, dsh, …)"},
                 "owner": {"type": "string",
                           "description": "владелец-человек, серверный режим; "
                                          "по умолчанию — представившийся"},

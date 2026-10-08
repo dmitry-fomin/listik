@@ -472,10 +472,11 @@ def ensure_imported(conn: sqlite3.Connection) -> dict:
 #: ключи. Уже установленная база получает их один раз (номер — в `meta`
 #: `routes_additions`); удалённый потом человеком маршрут не возвращается.
 ROUTE_ADDITIONS: list[tuple[int, tuple[str, ...]]] = [
-    (1, ()),  # было devin-pipeline — маршрут снят как дубликат xlow-pipeline
-    (2, ("opus-pipeline",)),  # переименован из opus-single-pipeline
-    (3, ("cc-xhigh-pipeline", "cc-high-pipeline", "cc-medium-pipeline",
-         "cc-low-pipeline", "cc-xlow-pipeline", "cc-nano-pipeline")),  # пресеты claude-codex
+    (1, ()),  # было devin-pipeline — маршрут снят как дубликат xlow (ныне full-xlow)
+    # Записи 2 и 3: ключи переименованы в listik-d9rj (claude-opus, cc-<уровень>).
+    (2, ("claude-opus",)),  # переименован из opus-single-pipeline
+    (3, ("cc-xhigh", "cc-high", "cc-medium",
+         "cc-low", "cc-xlow", "cc-nano")),  # пресеты claude-codex
 ]
 
 
@@ -510,10 +511,10 @@ def add_shipped(conn: sqlite3.Connection, *, fresh: bool = False) -> list[str]:
 # ------------------------------------------------------------------ скилы (справочник)
 
 def _skill_missing_warning(key: str) -> str:
-    if key.startswith(skills.CC_PREFIX):
-        return (f"маршрута {key!r}: скила /claude-codex:{key[len(skills.CC_PREFIX):]} нет, "
-                "маршрут скрыт")
-    return f"маршрута {key!r}: скила /feature-pipeline:{key} нет, маршрут скрыт"
+    ref = skills.skill_ref(key)
+    if ref is None:
+        return f"маршрута {key!r}: скила для ключа нет, маршрут скрыт"
+    return f"маршрута {key!r}: скила {ref} нет, маршрут скрыт"
 
 
 def routes_response(conn: sqlite3.Connection) -> dict:

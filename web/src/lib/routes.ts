@@ -41,8 +41,8 @@ export function routesAlertText(requestFailed: boolean, error: string | null): s
 }
 
 /**
- * Пресет по умолчанию зависит от типа: эпик крупнее и рискованнее — `high-pipeline`,
- * задаче и багу хватает `low-pipeline`. Если нужного ключа нет среди видимых
+ * Пресет по умолчанию зависит от типа: эпик крупнее и рискованнее — `full-high`,
+ * задаче и багу хватает `full-low`. Если нужного ключа нет среди видимых
  * разрешённых, берётся первый видимый разрешённый `pipeline` в порядке ответа;
  * если и его нет — маршрут не выбран (`null`).
  */
@@ -51,7 +51,7 @@ export function defaultPipelineFor(type: string, routes: RouteDef[]): PipelineRo
     (route): route is PipelineRouteDef =>
       route.kind === 'pipeline' && route.visible && routeAllowedForType(route, type),
   )
-  const preferred = type === 'epic' ? 'high-pipeline' : 'low-pipeline'
+  const preferred = type === 'epic' ? 'full-high' : 'full-low'
   return allowed.find((route) => route.key === preferred) ?? allowed[0] ?? null
 }
 

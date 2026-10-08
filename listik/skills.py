@@ -1,4 +1,10 @@
-"""Справочник скилов конвейеров `plugins/feature-pipeline/skills/*` (шаг listik-8jgz, порция c).
+"""Справочник скилов конвейеров трёх плагинов пресетов (шаг listik-8jgz, порция c; listik-d9rj).
+
+Пресеты живут в `plugins/pipeline-full`, `plugins/pipeline-cc` и `plugins/pipeline-claude`
+(`PIPELINE_PLUGINS`), скил — каталог `plugins/<плагин>/skills/<имя>` с `SKILL.md`. Ключ
+маршрута — имя плагина без префикса `pipeline-`, дефис и имя каталога:
+`plugins/pipeline-full/skills/high` → `full-high`, `plugins/pipeline-cc/skills/sol` → `cc-sol`;
+команда маршрута зовёт скил `/<плагин>:<имя>` (`skill_ref`).
 
 Скилы дают заголовок (`name`) и подсказку (`description`) для маршрутов
 `kind=pipeline`, но не роли: роли живут только в таблице `routes`
@@ -16,12 +22,11 @@ from __future__ import annotations
 
 from . import paths
 
-SKILLS_DIR = paths.ROOT_DIR / "plugins" / "feature-pipeline" / "skills"
-
-#: Скилы пресетов claude-codex: маршрут `cc-<имя>` ↔ `CC_SKILLS_DIR/<имя>/SKILL.md`
-#: (ключ маршрута уникален, а имена скилов совпадают с feature-pipeline).
-CC_SKILLS_DIR = paths.ROOT_DIR / "plugins" / "claude-codex" / "skills"
-CC_PREFIX = "cc-"
+#: Плагины пресетов конвейера; ключ скила — `<плагин без "pipeline-">-<каталог скила>`.
+PIPELINE_PLUGINS = ("pipeline-full", "pipeline-cc", "pipeline-claude")
+PIPELINE_PREFIX = "pipeline-"
+#: Корень плагинов пресетов — отдельно от `PLUGINS_DIR` запускаторов: тесты подменяют их независимо.
+PIPELINE_PLUGINS_DIR = paths.ROOT_DIR / "plugins"
 
 #: Куда обрезается `hint` (первое предложение `description`) — описания скилов
 #: очень длинные, а справочник маршрутов должен помещаться строкой.
@@ -74,34 +79,61 @@ def _dir_skills(directory) -> list[str]:
     return [p.name for p in directory.iterdir() if p.is_dir() and (p / "SKILL.md").is_file()]
 
 
+def _plugin_skills_dir(plugin: str):
+    return PIPELINE_PLUGINS_DIR / plugin / "skills"
+
+
+def _split_key(key: str) -> tuple[str, str] | None:
+    """`(плагин, каталог скила)` по ключу `full-high`; префикс не из трёх плагинов — `None`."""
+    if not isinstance(key, str):
+        return None
+    prefix, sep, skill = key.partition("-")
+    plugin = PIPELINE_PREFIX + prefix
+    if not sep or not skill or plugin not in PIPELINE_PLUGINS:
+        return None
+    return plugin, skill
+
+
 def skill_keys() -> list[str]:
-    """Ключи маршрутов со скилом: feature-pipeline как есть, claude-codex — с `cc-`."""
-    return sorted(_dir_skills(SKILLS_DIR) + [CC_PREFIX + n for n in _dir_skills(CC_SKILLS_DIR)])
+    """Отсортированные ключи `<плагин без pipeline->-<скил>` всех скилов трёх плагинов."""
+    return sorted(f"{plugin[len(PIPELINE_PREFIX):]}-{name}"
+                  for plugin in PIPELINE_PLUGINS
+                  for name in _dir_skills(_plugin_skills_dir(plugin)))
 
 
 def skills_available() -> bool:
-    """Каталог скилов feature-pipeline есть и в нём хотя бы один скил.
+    """Хотя бы у одного из трёх плагинов пресетов есть хотя бы один скил."""
+    return any(_dir_skills(_plugin_skills_dir(plugin)) for plugin in PIPELINE_PLUGINS)
 
-    claude-codex без feature-pipeline не работает, поэтому его скилы не в счёт.
+
+def skill_ref(key: str) -> str | None:
+    """Имя скила для команды и текстов: `full-high` → `/pipeline-full:high`.
+
+    Чистое преобразование строки: файлов не читает и наличие `SKILL.md` не
+    проверяет (`cc-fake` → `/pipeline-cc:fake`). Префикс ключа не `full`/`cc`/
+    `claude`, дефиса нет или после него пусто — `None`.
     """
-    return bool(_dir_skills(SKILLS_DIR))
-
-
-def _skill_md(key: str):
-    """`SKILL.md` маршрута: `cc-<имя>` — в claude-codex, остальное — в feature-pipeline."""
-    if key.startswith(CC_PREFIX):
-        return CC_SKILLS_DIR / key[len(CC_PREFIX):] / "SKILL.md"
-    return SKILLS_DIR / key / "SKILL.md"
+    parts = _split_key(key)
+    if parts is None:
+        return None
+    plugin, skill = parts
+    return f"/{plugin}:{skill}"
 
 
 def skill_info(key: str) -> dict | None:
-    """`{"key", "title", "hint", "skill_path"}` по ключу скила; нет скила — `None`.
+    """`{"key", "plugin", "skill", "title", "hint", "skill_path"}` по ключу скила; нет скила — `None`.
 
-    `title` — поле `name` из frontmatter (нет — сам ключ), `hint` — первое
-    предложение `description`, `skill_path` — путь к `SKILL.md` относительно
-    корня репозитория.
+    `plugin` — имя плагина (`pipeline-full`), `skill` — имя каталога скила,
+    `title` — поле `name` из frontmatter (нет — сам ключ), короткое, без имени
+    плагина; `hint` — первое предложение `description`, `skill_path` — путь к
+    `SKILL.md` относительно корня репозитория. Префикс ключа не из трёх плагинов
+    или нет `SKILL.md` — `None`.
     """
-    md_path = _skill_md(key)
+    parts = _split_key(key)
+    if parts is None:
+        return None
+    plugin, skill = parts
+    md_path = _plugin_skills_dir(plugin) / skill / "SKILL.md"
     if not md_path.is_file():
         return None
     try:
@@ -112,7 +144,8 @@ def skill_info(key: str) -> dict | None:
     title = front.get("name") or key
     hint = _first_sentence(front.get("description", ""))
     rel = md_path.relative_to(paths.ROOT_DIR)
-    return {"key": key, "title": title, "hint": hint, "skill_path": str(rel)}
+    return {"key": key, "plugin": plugin, "skill": skill, "title": title, "hint": hint,
+            "skill_path": str(rel)}
 
 
 # ------------------------------------------------- запускаторы (каталог ролей)

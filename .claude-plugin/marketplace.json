@@ -19,16 +19,22 @@
       "description": "Общее ядро конвейеров pipeline-*: протокол этапов, агенты конвейера и хук автоодобрения их команд; от него зависят плагины пресетов."
     },
     {
-      "name": "feature-pipeline",
-      "source": "./plugins/feature-pipeline",
-      "version": "0.25.0",
-      "description": "Конвейер ТЗ → критика → реализация → приёмка: скилы-пресеты, которые ведут задачу через четыре этапа силами субагентов и внешних агентных харнессов."
+      "name": "pipeline-full",
+      "source": "./plugins/pipeline-full",
+      "version": "1.0.0",
+      "description": "Пресеты конвейера ТЗ → критика → код → приёмка со смешанными вендорами: xhigh, high, medium, low, xlow, nano и cross."
     },
     {
-      "name": "claude-codex",
-      "source": "./plugins/claude-codex",
-      "version": "0.3.0",
-      "description": "Пресеты конвейера ТЗ → критика → код → приёмка только на Claude и Codex; ставится вместе с feature-pipeline, codex и listik."
+      "name": "pipeline-cc",
+      "source": "./plugins/pipeline-cc",
+      "version": "1.0.0",
+      "description": "Пресеты конвейера ТЗ → критика → код → приёмка только на Claude и Codex; ставится вместе с pipeline-core и codex."
+    },
+    {
+      "name": "pipeline-claude",
+      "source": "./plugins/pipeline-claude",
+      "version": "1.0.0",
+      "description": "Пресеты конвейера только на Claude: opus — один проход Opus с коммитом, high — полный конвейер силами Claude."
     },
     {
       "name": "dsh",

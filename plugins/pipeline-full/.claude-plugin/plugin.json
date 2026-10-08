@@ -1,0 +1,23 @@
+{
+  "name": "pipeline-full",
+  "displayName": "Pipeline: full",
+  "version": "1.0.0",
+  "description": "Pipeline presets (spec, critique, code, acceptance) that mix vendors: xhigh, high, medium, low, xlow, nano and cross, crewed by Claude, DeepSeek and GLM in pi, SWE-2 in devin and Grok; requires the pipeline-core plugin.",
+  "author": {
+    "name": "Dmitry Fomin",
+    "url": "https://github.com/dmitry-fomin"
+  },
+  "homepage": "https://github.com/dmitry-fomin/listik",
+  "repository": "https://github.com/dmitry-fomin/listik",
+  "license": "MIT",
+  "keywords": [
+    "pipeline",
+    "orchestration",
+    "delegation",
+    "grok",
+    "deepseek"
+  ],
+  "dependencies": [
+    "pipeline-core"
+  ]
+}

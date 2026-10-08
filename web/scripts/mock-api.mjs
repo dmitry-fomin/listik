@@ -43,7 +43,7 @@
  * при `noproject`, `project: 'ghost-project'` (нет в `/api/meta`) при `badproject`,
  * `title: null` при `notitle`, `type: 'feature'` (остальное — как у полного) при
  * `feature`, HTTP 502 при `draft-fail`, иначе полный
- * (`project: 'listik'`, `type: 'task'`, видимый маршрут `low-pipeline`).
+ * (`project: 'listik'`, `type: 'task'`, видимый маршрут `full-low`).
  * Только под `--voice` ручки голоса и живут.
  * `--cold` добавляет четыре задачи под строку «worktree · branch» блока
  * «Холодный старт»: отдельное дерево, работа в `main`, она же в `master`, и
@@ -946,7 +946,7 @@ if (markdownMode) {
 
 /**
  * `--routes`: записи таблицы маршрутов и карточка с отказавшим автостартом. Маршрут
- * `low-pipeline` у неё есть, а запуск не удался — `launch_error`, флаг «нужен
+ * `full-low` у неё есть, а запуск не удался — `launch_error`, флаг «нужен
  * человек» и метки маршрута стоят ровно так, как их пишет `launcher.refuse`.
  * Панель задачи по `route_editable: true` показывает ту же матрицу маршрутов,
  * что «Новая задача»; снятие маршрута пунктом «без маршрута» (клик сразу
@@ -954,7 +954,7 @@ if (markdownMode) {
  */
 const ROUTES = [
   {
-    key: 'low-pipeline',
+    key: 'full-low',
     kind: 'pipeline',
     title: 'Низкий — конвейер',
     hint: 'дёшево и быстро',
@@ -970,7 +970,7 @@ const ROUTES = [
     },
   },
   {
-    key: 'high-pipeline',
+    key: 'full-high',
     kind: 'pipeline',
     title: 'Высокий — конвейер',
     hint: 'дороже, но надёжнее',
@@ -1028,12 +1028,12 @@ const ASSISTANT_COMPLEXITY = {
 
 /**
  * Маршрут ответа `full` — видимая запись из `--routes`, допустимая типу `task`.
- * Умолчание формы для задачи (`lib/routes.ts` → `low-pipeline`) пропускаем: оно и
+ * Умолчание формы для задачи (`lib/routes.ts` → `full-low`) пропускаем: оно и
  * так выбрано, и кнопка была бы «Уже выбран» — применить маршрут нечем.
  */
 function assistantRouteOf() {
   const visible = ROUTES.filter((route) => route.visible)
-  return visible.find((route) => route.key !== 'low-pipeline') ?? visible[0] ?? null
+  return visible.find((route) => route.key !== 'full-low') ?? visible[0] ?? null
 }
 
 /** Поле `route` ответа: `noroute` — null, `blocked` — ключ, которого нет в таблице маршрутов. */
@@ -1096,10 +1096,10 @@ const listQueries = []
 /** id созданных моком карточек: `mock-1`, `mock-2`, … */
 let nextMockId = 1
 
-/** Маршрут полного черновика — видимая запись `ROUTES` (`key: 'low-pipeline'`). */
+/** Маршрут полного черновика — видимая запись `ROUTES` (`key: 'full-low'`). */
 function voiceDraftRoute() {
   const route =
-    ROUTES.find((item) => item.key === 'low-pipeline' && item.visible) ??
+    ROUTES.find((item) => item.key === 'full-low' && item.visible) ??
     ROUTES.find((item) => item.visible)
   if (!route) return null
   return {
@@ -1193,10 +1193,10 @@ if (routesMode) {
       orchestrator: null,
       orchestrator_title: '',
       autostart: true,
-      launch_route: 'low-pipeline',
-      launch_error: 'маршрута low-pipeline нет в базе',
+      launch_route: 'full-low',
+      launch_error: 'маршрута full-low нет в базе',
       needs_owner: true,
-      labels: ['harness:claude', 'process:low-pipeline', 'frontend'],
+      labels: ['harness:claude', 'process:full-low', 'frontend'],
       stale: false,
       abandoned: false,
     }),
@@ -1221,7 +1221,7 @@ if (routesMode) {
       stale: false,
       abandoned: false,
     }),
-    // Карточка на s3-impl конвейера `low-pipeline`: держит оркестратор
+    // Карточка на s3-impl конвейера `full-low`: держит оркестратор
     // (`claude`), а этап делает роль `impl` (DeepSeek) — по ней проверяется
     // подпись «делает …» в подвале и в панели (scripts/verify-card-executor.mjs).
     task({
@@ -1240,8 +1240,8 @@ if (routesMode) {
       idle_age: '6 мин',
       orchestrator: 'claude',
       orchestrator_title: 'claude',
-      launch_route: 'low-pipeline',
-      labels: ['harness:claude', 'process:low-pipeline', 'frontend'],
+      launch_route: 'full-low',
+      labels: ['harness:claude', 'process:full-low', 'frontend'],
       stale: false,
       abandoned: false,
     }),
@@ -1264,8 +1264,8 @@ if (routesMode) {
       idle_age: '6 мин',
       orchestrator: 'listik',
       orchestrator_title: '',
-      launch_route: 'low-pipeline',
-      labels: ['harness:claude', 'process:low-pipeline', 'frontend'],
+      launch_route: 'full-low',
+      labels: ['harness:claude', 'process:full-low', 'frontend'],
       stale: false,
       abandoned: false,
     }),
@@ -1287,8 +1287,8 @@ if (routesMode) {
       idle_age: '6 мин',
       orchestrator: 'listik',
       orchestrator_title: 'listik',
-      launch_route: 'low-pipeline',
-      labels: ['harness:claude', 'process:low-pipeline', 'frontend'],
+      launch_route: 'full-low',
+      labels: ['harness:claude', 'process:full-low', 'frontend'],
       stale: false,
       abandoned: false,
     }),
@@ -1311,8 +1311,8 @@ if (routesMode) {
       idle_age: '6 мин',
       orchestrator: null,
       orchestrator_title: '',
-      launch_route: 'low-pipeline',
-      labels: ['harness:claude', 'process:low-pipeline', 'frontend'],
+      launch_route: 'full-low',
+      labels: ['harness:claude', 'process:full-low', 'frontend'],
       stale: false,
       abandoned: false,
     }),

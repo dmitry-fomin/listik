@@ -69,7 +69,7 @@ const FIXTURE = [
   ev('answer', { note: '   ' }), // 9
   ev('comment', { to_value: 'journal' }), // 10
   ev('note', { note: 'порции: создано 1' }), // 11
-  ev('route', { to_value: 'low-pipeline' }), // 12
+  ev('route', { to_value: 'full-low' }), // 12
   ev('type_change', { from_value: 'task', to_value: 'epic' }), // 13
   ev('document_error', { note: 'spec_path x: нет файла' }), // 14
   ev('document_restored'), // 15
@@ -154,7 +154,7 @@ const TITLES = [
   ['№21', n(21), 'статус в работе → готова'],
   ['status in_progress → cancelled', CANCELLED, 'статус в работе → отменена'],
   ['status null → done', ev('status', { to_value: 'done' }), 'статус — → готова'],
-  ['№12', n(12), 'маршрут — → low-pipeline'],
+  ['№12', n(12), 'маршрут — → full-low'],
   ['№14', n(14), 'ошибка документа'],
   ['№15', n(15), 'документ восстановлен'],
   ['№8', n(8), 'нужен человек'],
@@ -183,7 +183,7 @@ const SUBSTITUTED = {
   5: '@@heartbeat · agent:claude',
   8: '@@question',
   9: '@@answer',
-  12: '@@route — → low-pipeline',
+  12: '@@route — → full-low',
   14: '@@document_error',
   15: '@@document_restored',
   20: '@@release · agent:claude',

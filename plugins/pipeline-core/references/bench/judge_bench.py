@@ -21,7 +21,7 @@ import tempfile
 from pathlib import Path
 
 HERE = Path(__file__).resolve().parent
-SKILL = (HERE / "../../../feature-pipeline/skills/low-pipeline/SKILL.md").resolve()
+SKILL = (HERE / "../../../pipeline-full/skills/low/SKILL.md").resolve()
 CORE = (HERE / "../pipeline-core.md").resolve()
 
 TASK_ANCHOR = "Задание, которое уходит в `/grok:delegate`:"

@@ -884,6 +884,20 @@ class InstallScriptTests(unittest.TestCase):
         finally:
             conn.close()
 
+    def assert_only_cc_hidden(self, stdout: str | None = None) -> None:
+        """claude-codex не выбран: скрыты ровно маршруты cc-*, остальные видимы (listik-z8fy).
+
+        `stdout` простого режима — ещё и сверка строки «скрыты маршруты: …» с базой."""
+        visibility = self.route_visibility()
+        hidden = {k for k, v in visibility.items() if not v}
+        cc = {k for k in visibility if k.startswith("cc-")}
+        self.assertTrue(cc, visibility)
+        self.assertEqual(hidden, cc, visibility)
+        if stdout is not None:
+            line = next((ln for ln in stdout.splitlines() if "скрыты маршруты: " in ln), "")
+            self.assertEqual(set(line.partition("скрыты маршруты: ")[2].split(", ")), cc,
+                             stdout)
+
     def install_plugins(self, *extra: str, env: dict) -> subprocess.CompletedProcess:
         result = self.run_install("--archive", str(self.make_archive(VERSION)), "--yes",
                                   "--service", "no", "--mcp", "no", "--swarm", "no",
@@ -902,19 +916,22 @@ class InstallScriptTests(unittest.TestCase):
         self.assertIn("харнессы: claude, pi, dsh", result.stdout)
         self.assertIn("плагины: ok (listik, feature-pipeline, dsh, pi, second-opinion)",
                       result.stdout)
-        self.assertNotIn("скрыты маршруты", result.stdout)
         self.assertNotIn("grok:", result.stdout)
-        self.assertTrue(all(self.route_visibility().values()))
+        self.assert_only_cc_hidden(result.stdout)
 
     def test_lists_order_of_plugins_and_claude_codex(self) -> None:
         env, log = self.fake_env()
-        self.install_plugins("--models", "openai,claude,glm", "--harnesses",
-                             "opencode,codex,claude", env=env)
+        result = self.install_plugins("--models", "openai,claude,glm", "--harnesses",
+                                      "opencode,codex,claude", env=env)
         installs = [ln.split()[3] for ln in self.log_text(log).splitlines()
                     if ln.startswith("claude plugin install ")]
         self.assertEqual(installs, ["listik@listik", "feature-pipeline@listik",
                                     "claude-codex@listik", "codex@listik", "opencode@listik",
                                     "second-opinion@listik"])
+        visibility = self.route_visibility()
+        self.assertTrue(any(k.startswith("cc-") for k in visibility), visibility)
+        self.assertTrue(all(visibility.values()), visibility)
+        self.assertNotIn("скрыты маршруты", result.stdout)
 
     def test_without_claude_model_hides_pipeline_routes(self) -> None:
         env, log = self.fake_env()
@@ -1163,7 +1180,7 @@ class InstallScriptTests(unittest.TestCase):
         self.assertIn("\x1b[", out, "оформленный режим не включился")
         self.assertIn("Какие харнессы у вас установлены?", out)
         self.assertEqual(self.installed_plugins(log), {"listik", "feature-pipeline"})
-        self.assertTrue(all(self.route_visibility().values()))
+        self.assert_only_cc_hidden()
 
 
     # --- listik-jdo8, порция c: меню с галочками в оформленном режиме -----

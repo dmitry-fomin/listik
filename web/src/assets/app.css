@@ -2033,6 +2033,15 @@ body .ui-drawer-backdrop.ui-drawer-backdrop--right .ui-drawer.ui-drawer--right.u
   content: '\00a0·\00a0';
 }
 
+/* Модель после ` → ` (судья за линзами): зовётся только при находке —
+   стрелка перед именем показывает эскалацию. */
+.listik-pipelines__model--escalation::before {
+  content: '→\00a0';
+  flex-shrink: 0;
+  font-size: var(--text-xs);
+  color: var(--ink-3);
+}
+
 .listik-pipelines__cell-label {
   font-size: 10px;
   line-height: 1;

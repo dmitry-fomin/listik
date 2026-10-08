@@ -224,6 +224,7 @@ function onRouteKeydown(event: KeyboardEvent, key: string): void {
                   v-for="(model, at) in roleModels(route.roles[role]!)"
                   :key="at"
                   class="listik-pipelines__model"
+                  :class="{ 'listik-pipelines__model--escalation': model.escalation }"
                 >
                   <span class="listik-pipelines__model-name">{{ model.name }}</span>
                   <span v-if="model.effort" class="listik-pipelines__model-effort">{{ model.effort }}</span>
@@ -290,6 +291,7 @@ function onRouteKeydown(event: KeyboardEvent, key: string): void {
                   v-for="(model, at) in roleModels(route.roles[role]!)"
                   :key="at"
                   class="listik-pipelines__model"
+                  :class="{ 'listik-pipelines__model--escalation': model.escalation }"
                 >
                   <span class="listik-pipelines__model-name">{{ model.name }}</span>
                   <span v-if="model.effort" class="listik-pipelines__model-effort">{{ model.effort }}</span>

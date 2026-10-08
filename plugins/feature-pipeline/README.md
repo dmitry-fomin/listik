@@ -20,6 +20,7 @@
 | `xlow-pipeline` | задача в один прогон, нужна независимая приёмка | — | — | devin SWE-2 max (`devin:devin-delegate --thinking max`) | Grok 4.7 high |
 | `nano-pipeline` | то же, дешевле; при пустом `write_scope` сперва ход на чтении за границами правки | — | — | devin SWE-2 high (`devin:devin-delegate --thinking high`) | GLM 5.3 Flash (`pi:pi-delegate --channel glm`) |
 | `cross-pipeline` | автор ТЗ и исполнитель на разных вендорах: Devin пишет ТЗ, GLM в pi — код | Devin (SWE-2, max) | DeepSeek V4.1 Flash в pi + Sonnet 5.5 high (`pipeline-critic`, `model: sonnet`), кворум, сводит оркестратор | GLM 5.3 Flash в pi | Grok 4.7 xhigh |
+| `claude-pipeline` | только Claude Code, без внешних харнессов; $0 внешних, усилие — от сессии (`claude --effort`) | Opus 5.5 (`pipeline-spec-writer-inherit`, `model: opus`) | Sonnet 5.5 + Opus 5.5 (`pipeline-critic-inherit`), кворум — оба | Opus 5.5 (`pipeline-implementer-inherit`, `model: opus`) | линзы Sonnet 5.5 ×3 (`pipeline-lens`), при находке — Sonnet 5.5 (`pipeline-judge-inherit`) |
 | `opus-pipeline` | понятная работа в один заход, приёмка не нужна; $0 внешних | — | — | Opus medium (`pipeline-implementer-solo`, `model: opus`), сам коммитит | — |
 
 ## Агенты

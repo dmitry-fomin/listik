@@ -1054,6 +1054,7 @@ SPEC_WRITER_MULTI_PARTS_PARAGRAPH_START = (
 
 #: Ожидаемые пути `_spec_writer_paths()`: четыре писателя ТЗ без потерь.
 EXPECTED_SPEC_WRITER_PATHS = (
+    pathlib.Path(AGENTS_SUBDIR) / "pipeline-spec-writer-inherit.md",
     pathlib.Path(AGENTS_SUBDIR) / "pipeline-spec-writer-low.md",
     pathlib.Path(AGENTS_SUBDIR) / "pipeline-spec-writer-medium.md",
     pathlib.Path(AGENTS_SUBDIR) / "pipeline-spec-writer-xhigh.md",
@@ -1685,6 +1686,10 @@ LENS_STAGE4_REQUIRED = (LENS_REF, "pi:pi-delegate")
 LENS_JUDGE_REQUIRED = ("вынести:", "отбросить:", "чинить", LENS_FILE_MARK)
 LENS_JUDGE_BLOCK_MARK = "Ты — приёмка одной порции ТЗ"
 LENS_README = pathlib.Path("README.md")
+#: Пресеты с линзами-субагентами Claude вместо pi glm: запуск — по скилу пресета, остальное — по ядру.
+CLAUDE_LENS_PRESETS = ("claude-pipeline",)
+CLAUDE_LENS_REQUIRED = (LENS_CORE_REF, "feature-pipeline:pipeline-lens",
+                        "feature-pipeline:pipeline-judge-inherit", "вынести:", "отбросить:", LENS_FILE_MARK)
 
 
 def _fenced_block_with(text: str, needle: str) -> str:
@@ -1718,6 +1723,8 @@ def _lens_preset_problems(name: str, text: str) -> list[str]:
         judge = _fenced_block_with(text, LENS_JUDGE_BLOCK_MARK)
         problems.extend(f"{name}: в задании судье нет {needle!r}"
                         for needle in LENS_JUDGE_REQUIRED if needle not in judge)
+    elif name in CLAUDE_LENS_PRESETS:
+        problems.extend(f"{name}: нет {needle!r}" for needle in CLAUDE_LENS_REQUIRED if needle not in text)
     else:
         problems.extend(f"{name}: чужой пресет несёт {needle!r}"
                         for needle in (LENS_REF, LENS_FILE_MARK) if needle in text)
@@ -1730,7 +1737,7 @@ def _lens_readme_problems(text: str, skills: set[str]) -> list[str]:
     for name in sorted(skills):
         prefix = f"| `{name}` "
         rows = [line for line in text.splitlines() if line.startswith(prefix)]
-        if name in LENS_PRESETS:
+        if name in LENS_PRESETS + CLAUDE_LENS_PRESETS:
             if not rows:
                 problems.append(f"README: нет строки {prefix!r}")
             elif not any("линз" in row for row in rows):
@@ -1745,7 +1752,7 @@ class FeaturePipelineLensPresetTests(unittest.TestCase):
 
     def test_skills_follow_lens_acceptance(self) -> None:
         names = _skill_names()
-        for name in LENS_PRESETS:
+        for name in LENS_PRESETS + CLAUDE_LENS_PRESETS:
             self.assertIn(name, names, f"нет скила {name}")
         for name in sorted(names):
             with self.subTest(skill=name):

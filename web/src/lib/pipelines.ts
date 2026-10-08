@@ -82,10 +82,13 @@ export function effortOf(label: string, title: string): string | null {
 export interface RoleModel {
   name: string
   effort: string | null
+  /** модель стоит после ` → `: зовётся, только если предыдущие что-то нашли (линзы → судья) */
+  escalation: boolean
 }
 
 /**
- * Модели ячейки роли из `title` по договорённости: модели через ` + `, усилие
+ * Модели ячейки роли из `title` по договорённости: модели через ` + `
+ * (параллельно) или ` → ` (следующая зовётся только при находке), усилие
  * модели — после последнего ` · ` в её части. У единственной части без ` · `
  * усилием считается `label` (`effortOf`: только если его нет словом в имени);
  * у нескольких частей `label` — сокращение и не используется. Пустой `title`
@@ -94,17 +97,23 @@ export interface RoleModel {
  *
  * Пример: `title` «Sonnet 5.5 · high + DeepSeek V4.1 + SWE-2 · max» →
  * Sonnet 5.5/high, DeepSeek V4.1/null, SWE-2/max; `label` «xhigh» и `title`
- * «Opus 5.5» → Opus 5.5/xhigh.
+ * «Opus 5.5» → Opus 5.5/xhigh; «GLM 5.3 Flash · 3 линзы → Grok 4.7 · xhigh» →
+ * GLM 5.3 Flash/3 линзы, Grok 4.7/xhigh с `escalation`.
  */
 export function roleModels(cell: Pick<RoleCell, 'label' | 'title'>): RoleModel[] {
-  const parts = (cell.title ?? '').split(' + ').map((part) => part.trim()).filter(Boolean)
-  if (parts.length === 0) return [{ name: cell.label, effort: null }]
-  return parts.map((part) => {
-    const at = part.lastIndexOf(' · ')
+  const parts = (cell.title ?? '')
+    .split(/( \+ | → )/)
+    .reduce<{ text: string; escalation: boolean }[]>((acc, chunk, at, all) => {
+      if (at % 2 === 0 && chunk.trim()) acc.push({ text: chunk.trim(), escalation: all[at - 1] === ' → ' })
+      return acc
+    }, [])
+  if (parts.length === 0) return [{ name: cell.label, effort: null, escalation: false }]
+  return parts.map(({ text, escalation }) => {
+    const at = text.lastIndexOf(' · ')
     if (at !== -1) {
-      return { name: part.slice(0, at).trim(), effort: part.slice(at + 3).trim() || null }
+      return { name: text.slice(0, at).trim(), effort: text.slice(at + 3).trim() || null, escalation }
     }
-    return { name: part, effort: parts.length === 1 ? effortOf(cell.label, part) : null }
+    return { name: text, effort: parts.length === 1 ? effortOf(cell.label, text) : null, escalation }
   })
 }
 

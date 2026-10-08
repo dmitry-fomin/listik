@@ -53,8 +53,10 @@ import { ROUTE_ICON_OPTIONS, routeIconGlyph } from '@/lib/dictionaries'
 import {
   isProviderCell,
   ROLE_KEYS,
+  roleModels,
   roleStage,
   type ProviderKey,
+  type RoleModel,
   type RoleCell,
   type RoleKey,
 } from '@/lib/pipelines'
@@ -149,9 +151,9 @@ interface RoleTile {
   stageLabel: string
   /** Вендор роли — глифом `ProviderIcon`, как в `RoutePicker`. */
   provider: ProviderKey
-  /** Короткая подпись ячейки рядом с глифом; пусто — показываем ключ вендора. */
-  vendorLabel: string
-  /** Полная расшифровка ячейки — в тултип глифа. */
+  /** Модели ячейки построчно (`roleModels`): имя, усилие, эскалация после ` → `. */
+  models: RoleModel[]
+  /** Полная расшифровка ячейки — в тултип плитки. */
   vendorTitle: string
 }
 
@@ -164,7 +166,7 @@ const roleTiles = computed<RoleTile[]>(() =>
       stageCode: stage?.code ?? '',
       stageLabel: stage?.label ?? '',
       provider: cell.provider,
-      vendorLabel: cell.label || cell.provider,
+      models: roleModels(cell),
       vendorTitle: cell.title || cell.label || cell.provider,
     }
   }),
@@ -241,12 +243,23 @@ function braced(name: string): string {
         <h4 class="listik-route-card__section-title">Состав конвейера</h4>
       </div>
       <div v-if="roleTiles.length > 0" class="listik-route-card__roles">
-        <div v-for="tile in roleTiles" :key="tile.role" class="listik-route-card__role">
-          <span class="listik-route-card__role-stage">{{ tile.stageCode }} · {{ tile.stageLabel }}</span>
-          <span class="listik-route-card__role-vendor" :title="tile.vendorTitle">
+        <div v-for="tile in roleTiles" :key="tile.role" class="listik-route-card__role" :title="tile.vendorTitle">
+          <span class="listik-route-card__role-head">
+            <span class="listik-route-card__role-stage">{{ tile.stageCode }} · {{ tile.stageLabel }}</span>
             <ProviderIcon :provider="tile.provider" size="sm" />
-            <span class="listik-route-card__role-vendor-label">{{ tile.vendorLabel }}</span>
           </span>
+          <ul class="listik-route-card__role-models">
+            <li
+              v-for="(model, at) in tile.models"
+              :key="at"
+              class="listik-route-card__role-model"
+              :class="{ 'is-escalation': model.escalation }"
+            >
+              <span v-if="model.escalation" class="listik-route-card__role-then">при находке</span>
+              <span class="listik-route-card__role-name">{{ model.name }}</span>
+              <span v-if="model.effort" class="listik-route-card__role-effort">{{ model.effort }}</span>
+            </li>
+          </ul>
         </div>
       </div>
       <UiEmptyState v-else compact title="ролей нет" />
@@ -407,16 +420,15 @@ function braced(name: string): string {
 /* ── плитки ролей (только показ) ── */
 
 .listik-route-card__roles {
-  display: flex;
-  flex-wrap: wrap;
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(150px, 1fr));
   gap: var(--space-2);
 }
 
 .listik-route-card__role {
   display: flex;
-  flex: 1 1 0;
   flex-direction: column;
-  gap: var(--space-1);
+  gap: var(--space-2);
   min-width: 0;
   padding: var(--space-3);
   border: 1px solid var(--hairline);
@@ -432,19 +444,58 @@ function braced(name: string): string {
   color: var(--accent-600);
 }
 
-.listik-route-card__role-vendor {
+.listik-route-card__role-head {
   display: flex;
   align-items: center;
+  justify-content: space-between;
+  gap: var(--space-2);
+}
+
+.listik-route-card__role-models {
+  display: flex;
+  flex-direction: column;
   gap: var(--space-1);
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.listik-route-card__role-model {
+  display: flex;
+  align-items: baseline;
+  flex-wrap: wrap;
+  gap: 0 var(--space-1);
   min-width: 0;
+  font-size: var(--text-sm);
+  color: var(--ink-1);
+}
+
+/* Модель после ` → ` (судья за линзами) — отделена чертой и подписью «при находке». */
+.listik-route-card__role-model.is-escalation {
+  padding-top: var(--space-1);
+  border-top: 1px dashed var(--hairline);
+}
+
+.listik-route-card__role-then {
+  flex-basis: 100%;
   font-size: var(--text-xs);
   color: var(--ink-3);
 }
 
-.listik-route-card__role-vendor-label {
+.listik-route-card__role-then::before {
+  content: '→\00a0';
+}
+
+.listik-route-card__role-name {
+  min-width: 0;
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
+}
+
+.listik-route-card__role-effort {
+  font-size: var(--text-xs);
+  color: var(--ink-3);
 }
 
 /* ── команда ── */

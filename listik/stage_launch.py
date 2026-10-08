@@ -90,7 +90,7 @@ def _own_prompt(cell: dict) -> str | None:
 
 #: Каталог агентов конвейера: из них берутся критерии роли. Читается в момент вызова —
 #: тесты подменяют его своим каталогом.
-AGENTS_DIR = paths.ROOT_DIR / "plugins" / "feature-pipeline" / "agents"
+AGENTS_DIR = paths.ROOT_DIR / "plugins" / "pipeline-core" / "agents"
 
 #: Роль → (файл агента, заголовки его разделов по порядку, без `## `).
 ROLE_AGENTS: dict[str, tuple[str, tuple[str, ...]]] = {
@@ -105,7 +105,7 @@ ROLE_AGENTS: dict[str, tuple[str, tuple[str, ...]]] = {
 }
 
 _ROLE_BRIDGE = (
-    "Критерии роли {role} — разделы агента {stem} (plugins/feature-pipeline/agents/{name}). "
+    "Критерии роли {role} — разделы агента {stem} (plugins/pipeline-core/agents/{name}). "
     "Где они расходятся с протоколом выше, действует протокол: ответ — последняя строка "
     "вывода, а не первая строка отчёта; claim, heartbeat, release, stage, needs-owner и "
     "вердикт (-k verdict) ты не делаешь — карточку ведёт Listik; оркестратора и дампов "

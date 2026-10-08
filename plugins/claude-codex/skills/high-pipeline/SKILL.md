@@ -13,9 +13,8 @@ GPT-6 Astra high принимает и коммитит). Оба Claude-крит
 критики требует не-Anthropic критика — здесь это `codex`. Расклад выбран автором, а не выведен расчётом; цифры
 галлюцинаций по ролям — в [README плагина](../../README.md) (`plugins/claude-codex/README.md`).
 
-**Прочитай [pipeline-core.md](../../../feature-pipeline/references/pipeline-core.md)
-(`plugins/feature-pipeline/references/pipeline-core.md`) целиком до первого действия.** Это ядро плагина
-`feature-pipeline`: твоя роль, жёсткие правила, протокол вопросов, шаг 0, треки, сборка пакета диффа, пределы на
+**Вызови скил `pipeline-core:core` и прочитай ядро по пути, который он назовёт, целиком до первого действия** (в репозитории — `plugins/pipeline-core/references/pipeline-core.md`). Это ядро плагина
+`pipeline-core`: твоя роль, жёсткие правила, протокол вопросов, шаг 0, треки, сборка пакета диффа, пределы на
 порцию, журнал и общие грабли. Ниже — только то, чем `claude-codex:high-pipeline` отличается: кто делает каждый этап и как
 его позвать.
 
@@ -29,15 +28,15 @@ Codex. Секреты в ТЗ не пропускает этап 1, в дифф 
 
 | Этап | Кто | Модель и усилие | Первая строка отчёта |
 | --- | --- | --- | --- |
-| 1. ТЗ и чек-листы | субагент `feature-pipeline:pipeline-spec-writer` | **`model: opus` в вызове** (frontmatter — opus, effort high) → Opus 5.5 high | `готово` или `вопрос` |
-| 2. Критика ТЗ | `sonnet` — `feature-pipeline:pipeline-critic`, `model: sonnet`, `Agent` фоном;<br>`opus` — `claude-codex:pipeline-critic-medium`, `model: opus`, `Agent` фоном;<br>`codex` — скил `codex:codex-delegate`, фоновой задачей; все одним сообщением | Sonnet 5.5 high; Opus 5.5 medium; GPT-6.1 Sol high (`--model gpt-6.1-sol --effort high --permission read`); кворум — `sonnet` и `codex`, `opus` в кворум не входит | по файлу на критика, потом твоя сводка `review-<X>.md` с разделами «Блокирующие» и «Существенные» |
-| 3. Реализация | субагент `feature-pipeline:pipeline-implementer-high` | **`model: opus` в вызове** (frontmatter — sonnet, effort high) → Opus 5.5 high | `готово`, `не смог` или `вопрос` |
+| 1. ТЗ и чек-листы | субагент `pipeline-core:pipeline-spec-writer` | **`model: opus` в вызове** (frontmatter — opus, effort high) → Opus 5.5 high | `готово` или `вопрос` |
+| 2. Критика ТЗ | `sonnet` — `pipeline-core:pipeline-critic`, `model: sonnet`, `Agent` фоном;<br>`opus` — `pipeline-core:pipeline-critic-medium`, `model: opus`, `Agent` фоном;<br>`codex` — скил `codex:codex-delegate`, фоновой задачей; все одним сообщением | Sonnet 5.5 high; Opus 5.5 medium; GPT-6.1 Sol high (`--model gpt-6.1-sol --effort high --permission read`); кворум — `sonnet` и `codex`, `opus` в кворум не входит | по файлу на критика, потом твоя сводка `review-<X>.md` с разделами «Блокирующие» и «Существенные» |
+| 3. Реализация | субагент `pipeline-core:pipeline-implementer-high` | **`model: opus` в вызове** (frontmatter — sonnet, effort high) → Opus 5.5 high | `готово`, `не смог` или `вопрос` |
 | 4. Приёмка и коммит | скил `codex:codex-delegate`, фоновой задачей | GPT-6 Astra high: `--model gpt-6-astra --effort high --permission write`; коммитит судья | `зелёный` с хешем или `красный` |
 
 `model` перебивает frontmatter, усилие остаётся из него и в вызове не меняется — нужен другой уровень, это
 другой агент. Перебиваются все четыре Claude-субагента: автор ТЗ `model: opus` (во frontmatter opus high),
-исполнитель `model: opus` (во frontmatter sonnet high), критик `feature-pipeline:pipeline-critic` — `model: sonnet`,
-критик `claude-codex:pipeline-critic-medium` — `model: opus` (во frontmatter у обоих критиков sonnet). Забудешь
+исполнитель `model: opus` (во frontmatter sonnet high), критик `pipeline-core:pipeline-critic` — `model: sonnet`,
+критик `pipeline-core:pipeline-critic-medium` — `model: opus` (во frontmatter у обоих критиков sonnet). Забудешь
 `model` у исполнителя — код напишет Sonnet; у критика `opus` — он ответит Sonnet medium.
 
 В каждом вызове codex модель и усилие задаются флагами пресета (`--model`, `--effort`); флаг провайдера
@@ -45,7 +44,7 @@ Codex. Секреты в ТЗ не пропускает этап 1, в дифф 
 
 ## Нужные скилы
 
-Пресет требует установленного плагина `feature-pipeline` (ядро `pipeline-core.md` и агенты `feature-pipeline:*`);
+Пресет требует установленного плагина `pipeline-core` (ядро `pipeline-core.md` и агенты `pipeline-core:*`);
 нет его, нет плагина `codex` или `listik` — стоп по ядру (раздел «Внешние скилы» `pipeline-core.md`). Скрипты из
 кэша не зови.
 
@@ -90,7 +89,7 @@ WT=.             # в треке — абсолютный путь дерева 
 
 ### 1. ТЗ и чек-листы — `pipeline-spec-writer`, `model: opus`, один раз на шаг
 
-`Agent` `feature-pipeline:pipeline-spec-writer`, **`model: opus`** — обязательно, в каждом запуске и в
+`Agent` `pipeline-core:pipeline-spec-writer`, **`model: opus`** — обязательно, в каждом запуске и в
 режиме правки. В задаче:
 путь к спеке **или** текст автора; `$STEPS`; имя бумаг `<id>`. В треке добавь **границу этого трека** —
 каталог или слой, за который его ТЗ не выходит, словами автора. Правила порций, границ
@@ -105,8 +104,8 @@ WT=.             # в треке — абсолютный путь дерева 
 
 Состав — три критика, все одним сообщением, с одним заданием:
 
-- `sonnet` — `feature-pipeline:pipeline-critic`, `model: sonnet` (Sonnet 5.5 high): `Agent` фоном, ответ критик пишет сам в `$STEPS/$BASE.review-<X>.sonnet.md`;
-- `opus` — `claude-codex:pipeline-critic-medium`, `model: opus` (Opus 5.5 medium): `Agent` фоном, ответ критик пишет сам в `$STEPS/$BASE.review-<X>.opus.md`;
+- `sonnet` — `pipeline-core:pipeline-critic`, `model: sonnet` (Sonnet 5.5 high): `Agent` фоном, ответ критик пишет сам в `$STEPS/$BASE.review-<X>.sonnet.md`;
+- `opus` — `pipeline-core:pipeline-critic-medium`, `model: opus` (Opus 5.5 medium): `Agent` фоном, ответ критик пишет сам в `$STEPS/$BASE.review-<X>.opus.md`;
 - `codex` — `codex:codex-delegate`, `--model gpt-6.1-sol --effort high` (GPT-6.1 Sol high), `--permission read`, фоновой задачей, ответ — `result` через `codex:codex-jobs` в `$STEPS/$BASE.review-<X>.codex.md`.
 
 Здесь кворум — годные ответы `sonnet` и `codex`; `opus` в кворум не входит: он критик Anthropic и не-Anthropic
@@ -122,7 +121,7 @@ WT=.             # в треке — абсолютный путь дерева 
 
 ### 3. Реализация — `pipeline-implementer-high`, `model: opus`
 
-`Agent` `feature-pipeline:pipeline-implementer-high`, **`model: opus`** — в каждом запуске и повторе. В задаче — путь к порции
+`Agent` `pipeline-core:pipeline-implementer-high`, **`model: opus`** — в каждом запуске и повторе. В задаче — путь к порции
 `$STEPS/$BASE.<X>.md`, по одной за раз; право записи у агента в определении. В треке первой
 строкой абсолютный путь дерева трека. Есть карточка — строка `Listik, карточка <P>` (id буквально) идёт в задачу первой строкой, в треке — второй,
 сразу после пути дерева трека; карточки нет (`Listik: карточки нет`) — строки нет (`pipeline-core.md`, раздел

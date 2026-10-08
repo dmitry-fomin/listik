@@ -12,9 +12,9 @@ license: MIT
 критик Sonnet 5.5 high: он той же семьи, что автор ТЗ (Opus, Anthropic), поэтому кворум критики требует
 хотя бы одного не-Anthropic критика — здесь это `codex`, и кворум — оба. Пресет выбран автором, а не
 выведен расчётом; цифры и сознательные отступления от правил подбора — в
-[ROLES.md, «sol-pipeline — проверяющие от OpenAI»](../../references/ROLES.md).
+[ROLES.md, «sol-pipeline — проверяющие от OpenAI»](../../../pipeline-core/references/ROLES.md).
 
-**Прочитай [pipeline-core.md](../../references/pipeline-core.md) целиком до первого действия.**
+**Вызови скил `pipeline-core:core` и прочитай ядро по пути, который он назовёт, целиком до первого действия** (в репозитории — `plugins/pipeline-core/references/pipeline-core.md`).
 Там всё, что у пресетов общее: твоя роль, жёсткие правила, протокол вопросов, шаг 0, треки,
 сборка пакета диффа, пределы на порцию, журнал и общие грабли. Ниже — только то, чем sol-pipeline
 отличается: кто делает каждый этап и как его позвать.
@@ -29,9 +29,9 @@ license: MIT
 
 | Этап | Кто | Модель и усилие | Первая строка отчёта |
 | --- | --- | --- | --- |
-| 1. ТЗ и чек-листы | субагент `feature-pipeline:pipeline-spec-writer-medium` | **`model: opus` в вызове** (frontmatter — opus, effort medium) → Opus 5.5 medium | `готово` или `вопрос` |
-| 2. Критика ТЗ | `sonnet` — `Agent` `feature-pipeline:pipeline-critic`, **`model: sonnet` в вызове**, фоном; `codex` — скил `codex:codex-delegate`, фоновой задачей; оба одним сообщением | Sonnet 5.5 high; GPT-6.1 Sol medium (`--model gpt-6.1-sol --effort medium --permission read`); кворум — оба | по файлу на критика, потом твоя сводка `review-<X>.md` с разделами «Блокирующие» и «Существенные» |
-| 3. Реализация | субагент `feature-pipeline:pipeline-implementer` | **`model: opus` в вызове** (frontmatter — Sonnet, effort medium) → Opus 5.5 medium | `готово`, `не смог` или `вопрос` |
+| 1. ТЗ и чек-листы | субагент `pipeline-core:pipeline-spec-writer-medium` | **`model: opus` в вызове** (frontmatter — opus, effort medium) → Opus 5.5 medium | `готово` или `вопрос` |
+| 2. Критика ТЗ | `sonnet` — `Agent` `pipeline-core:pipeline-critic`, **`model: sonnet` в вызове**, фоном; `codex` — скил `codex:codex-delegate`, фоновой задачей; оба одним сообщением | Sonnet 5.5 high; GPT-6.1 Sol medium (`--model gpt-6.1-sol --effort medium --permission read`); кворум — оба | по файлу на критика, потом твоя сводка `review-<X>.md` с разделами «Блокирующие» и «Существенные» |
+| 3. Реализация | субагент `pipeline-core:pipeline-implementer` | **`model: opus` в вызове** (frontmatter — Sonnet, effort medium) → Opus 5.5 medium | `готово`, `не смог` или `вопрос` |
 | 4. Приёмка и коммит | скил `codex:codex-delegate`, фоновой задачей | GPT-6.1 Sol high: `--model gpt-6.1-sol --effort high --permission write` | `зелёный` с хешем или `красный` |
 
 Оба Claude-субагента перебиваются **параметром `model: opus` в вызове**: у автора ТЗ во frontmatter
@@ -84,7 +84,7 @@ WT=.             # в треке — абсолютный путь дерева 
 
 ### 1. ТЗ и чек-листы — `pipeline-spec-writer-medium`, `model: opus`, один раз на шаг
 
-`Agent` `feature-pipeline:pipeline-spec-writer-medium`, **`model: opus`** — обязательно, в каждом запуске и в
+`Agent` `pipeline-core:pipeline-spec-writer-medium`, **`model: opus`** — обязательно, в каждом запуске и в
 режиме правки. В задаче:
 путь к спеке **или** текст автора; `$STEPS`; имя бумаг `<id>`. В треке добавь **границу этого трека** —
 каталог или слой, за который его ТЗ не выходит, словами автора. Правила порций, границ
@@ -98,7 +98,7 @@ WT=.             # в треке — абсолютный путь дерева 
 
 **Стоп-фактор.** Критики этапа идут по кворуму, а не по правилу недоступной роли: выбывший критик (запуск упал, не залогинен, ответила не та модель, ответ негоден или не пришёл за окно) — не стоп, пока кворум пресета набран. Не набран — стоп по ядру: журнал `стоп: критика — кворум не набран: <кто не дал годного ответа и почему>`, `needs-owner` и тот же вопрос в чат (`pipeline-core.md`, «Критика ТЗ»).
 
-Состав — два критика: `sonnet` — `Agent` `feature-pipeline:pipeline-critic` с **`model: sonnet` в вызове** (Sonnet 5.5 high), фоном; `codex` — `codex:codex-delegate`, `--model gpt-6.1-sol --effort medium` (GPT-6.1 Sol medium), `--permission read`, фоновой задачей, ответ — `result` через `codex:codex-jobs`. Кворум — годные ответы обоих: Sonnet той же семьи, что автор ТЗ, а не-Anthropic критик в составе один. Оба запускаются одним сообщением, с одним заданием.
+Состав — два критика: `sonnet` — `Agent` `pipeline-core:pipeline-critic` с **`model: sonnet` в вызове** (Sonnet 5.5 high), фоном; `codex` — `codex:codex-delegate`, `--model gpt-6.1-sol --effort medium` (GPT-6.1 Sol medium), `--permission read`, фоновой задачей, ответ — `result` через `codex:codex-jobs`. Кворум — годные ответы обоих: Sonnet той же семьи, что автор ТЗ, а не-Anthropic критик в составе один. Оба запускаются одним сообщением, с одним заданием.
 Проверка на секреты, старые ответы, запуск, задание, окно 15 минут, забор, годность, повтор, журнал выбывших и правила сведения в `$STEPS/$BASE.review-<X>.md` — `pipeline-core.md`, «Критика ТЗ».
 
 Дальше как в локальном конвейере: решение по сводке — твоё, по ядру (`pipeline-core.md`, «Решение по сводке»): каждому пункту
@@ -109,7 +109,7 @@ WT=.             # в треке — абсолютный путь дерева 
 
 ### 3. Реализация — `pipeline-implementer`, `model: opus`
 
-`Agent` `feature-pipeline:pipeline-implementer`, **`model: opus`**. В задаче — путь к порции
+`Agent` `pipeline-core:pipeline-implementer`, **`model: opus`**. В задаче — путь к порции
 `$STEPS/$BASE.<X>.md`, по одной за раз; право записи у агента в определении. В треке первой
 строкой абсолютный путь дерева трека. Есть карточка — строка `Listik, карточка <P>` (id буквально) идёт в задачу первой строкой, в треке — второй,
 сразу после пути дерева трека; карточки нет (`Listik: карточки нет`) — строки нет (`pipeline-core.md`, раздел

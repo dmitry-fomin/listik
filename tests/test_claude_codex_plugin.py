@@ -1,8 +1,8 @@
 """Плагин claude-codex: пресеты конвейера на Claude + Codex (listik-r1pd, порции b и c).
 
-Плагин ставится вместе с feature-pipeline, codex и listik и ничего из них не копирует: скилы
-пресетов ссылаются на ядро feature-pipeline, своих агентов два — критики нового усилия, их тело
-побайтно равно телу `feature-pipeline:pipeline-critic`.
+Плагин ставится вместе с pipeline-core, codex и listik и ничего из них не копирует: скилы
+пресетов читают ядро через скил `pipeline-core:core`, их агенты (критики нового усилия, тело
+побайтно равно телу `pipeline-core:pipeline-critic`, и исполнитель low) живут в pipeline-core.
 
 Файлы читаются в момент вызова через константы модуля, а не при импорте. Набор пресетов —
 словарь `PRESETS`, агенты — словарь `AGENTS`: новый пресет или агент добавляется строкой в
@@ -18,6 +18,7 @@ import unittest
 REPO_DIR = pathlib.Path(__file__).resolve().parents[1]
 PLUGIN_DIR = REPO_DIR / "plugins" / "claude-codex"
 FEATURE_PIPELINE_DIR = REPO_DIR / "plugins" / "feature-pipeline"
+CORE_PLUGIN_DIR = REPO_DIR / "plugins" / "pipeline-core"
 MARKETPLACE_JSON = REPO_DIR / ".claude-plugin" / "marketplace.json"
 SOL_SKILL = FEATURE_PIPELINE_DIR / "skills" / "sol-pipeline" / "SKILL.md"
 
@@ -27,7 +28,10 @@ SKILLS_SUBDIR = "skills"
 AGENTS_SUBDIR = "agents"
 SKILL_FILE = "SKILL.md"
 
-CORE_LINK = "../../../feature-pipeline/references/pipeline-core.md"
+#: Чтение ядра через скил-указатель: подстроки текста SKILL.md со схлопнутыми пробелами.
+CORE_LINK = ("скил `pipeline-core:core`",
+             "прочитай ядро по пути, который он назовёт, целиком до первого действия",
+             "`plugins/pipeline-core/references/pipeline-core.md`")
 LAUNCH_PHRASE = "Запускай только по явному имени"
 JUDGE_TASK_LINE = "Задание, которое уходит в `codex:codex-delegate`:"
 
@@ -50,7 +54,7 @@ STAGE4_REQUIRED_MEDIUM = ("codex:codex-delegate", "--model gpt-6-astra --effort 
                           "--holder codex", "VERDICT: PASS")
 #: Судья low/xlow/nano — Astra medium: ни high-усилия, ни модели критика.
 STAGE4_FORBIDDEN_MEDIUM = ("--effort high", "--model gpt-6.1-sol")
-IMPLEMENTER_PAIR = ("`feature-pipeline:pipeline-implementer`", "model: opus")
+IMPLEMENTER_PAIR = ("`pipeline-core:pipeline-implementer`", "model: opus")
 HOD1_TITLE = "## Ход 1"
 GIT_STATUS = 'git -C "$WT" status --porcelain'
 
@@ -81,53 +85,53 @@ _NO_SPEC_PRESET: dict = {
 PRESETS: dict[str, dict] = {
     "xhigh-pipeline": {
         "required": {
-            1: ("`feature-pipeline:pipeline-spec-writer-xhigh`", "model: opus"),
+            1: ("`pipeline-core:pipeline-spec-writer-xhigh`", "model: opus"),
             2: ("--model gpt-6.1-sol --effort high", OPUS_REVIEW, QUORUM_ANTHROPIC_EXTRA,
                 "отменён по кворуму", QUORUM_STOP),
-            3: ("feature-pipeline:pipeline-implementer-xhigh", "параметр `model` в вызове не передаётся"),
+            3: ("pipeline-core:pipeline-implementer-xhigh", "параметр `model` в вызове не передаётся"),
             4: STAGE4_REQUIRED,
         },
         "pairs": {
-            2: (("claude-codex:pipeline-critic-xhigh", "model: sonnet"),
-                ("`feature-pipeline:pipeline-critic`", "model: opus")),
+            2: (("pipeline-core:pipeline-critic-xhigh", "model: sonnet"),
+                ("`pipeline-core:pipeline-critic`", "model: opus")),
         },
         "forbidden": {3: ("model: opus",)},
         "judge_like_sol": True,
     },
     "high-pipeline": {
         "required": {
-            1: ("`feature-pipeline:pipeline-spec-writer`", "model: opus"),
+            1: ("`pipeline-core:pipeline-spec-writer`", "model: opus"),
             2: ("--model gpt-6.1-sol --effort high", OPUS_REVIEW, QUORUM_ANTHROPIC_EXTRA,
                 "отменён по кворуму", QUORUM_STOP),
             4: STAGE4_REQUIRED,
         },
         "pairs": {
-            2: (("`feature-pipeline:pipeline-critic`", "model: sonnet"),
-                ("claude-codex:pipeline-critic-medium", "model: opus")),
-            3: (("feature-pipeline:pipeline-implementer-high", "model: opus"),),
+            2: (("`pipeline-core:pipeline-critic`", "model: sonnet"),
+                ("pipeline-core:pipeline-critic-medium", "model: opus")),
+            3: (("pipeline-core:pipeline-implementer-high", "model: opus"),),
         },
         "forbidden": {},
         "judge_like_sol": True,
     },
     "medium-pipeline": {
         "required": {
-            1: ("`feature-pipeline:pipeline-spec-writer-medium`", "model: opus"),
+            1: ("`pipeline-core:pipeline-spec-writer-medium`", "model: opus"),
             2: ("--model gpt-6.1-sol --effort medium", "кворум — оба", QUORUM_STOP),
             4: STAGE4_REQUIRED,
         },
         "pairs": {
-            2: (("claude-codex:pipeline-critic-medium", "model: sonnet"),),
-            3: (("`feature-pipeline:pipeline-implementer`", "model: opus"),),
+            2: (("pipeline-core:pipeline-critic-medium", "model: sonnet"),),
+            3: (("`pipeline-core:pipeline-implementer`", "model: opus"),),
         },
         "forbidden": {2: (OPUS_REVIEW, "--effort high")},
         "judge_like_sol": True,
     },
     "low-pipeline": {
         "required": {
-            1: ("`feature-pipeline:pipeline-spec-writer-low`", "model: opus"),
+            1: ("`pipeline-core:pipeline-spec-writer-low`", "model: opus"),
             2: ("codex:codex-delegate", "--model gpt-6.1-sol --effort medium", "--permission read",
                 "кворум — он один", QUORUM_STOP, "codex:codex-jobs"),
-            3: ("claude-codex:pipeline-implementer-low", "параметр `model` в вызове не передаётся"),
+            3: ("pipeline-core:pipeline-implementer-low", "параметр `model` в вызове не передаётся"),
             4: STAGE4_REQUIRED_MEDIUM,
         },
         "pairs": {},
@@ -143,8 +147,8 @@ PRESETS: dict[str, dict] = {
 #: Во всех этапах 2 нет этих подстрок.
 STAGE2_FORBIDDEN_ALL = ("--permission write",)
 
-CRITIC_SAMPLE = pathlib.Path("plugins") / "feature-pipeline" / "agents" / "pipeline-critic.md"
-IMPLEMENTER_SAMPLE = pathlib.Path("plugins") / "feature-pipeline" / "agents" / "pipeline-implementer.md"
+CRITIC_SAMPLE = pathlib.Path("plugins") / "pipeline-core" / "agents" / "pipeline-critic.md"
+IMPLEMENTER_SAMPLE = pathlib.Path("plugins") / "pipeline-core" / "agents" / "pipeline-implementer.md"
 
 #: Файл агента → (model, effort, файл-образец тела относительно корня репозитория, список `skills:`;
 #: пустой список — строки `skills:` во frontmatter нет).
@@ -247,8 +251,8 @@ def _skill_problems(name: str, text: str, skill_dir: pathlib.Path) -> list[str]:
             problems.append("description не в двойных кавычках")
         if LAUNCH_PHRASE not in value:
             problems.append(f"в description нет {LAUNCH_PHRASE!r}")
-    if CORE_LINK not in text:
-        problems.append(f"нет ссылки {CORE_LINK}")
+    collapsed = " ".join(text.split())
+    problems.extend(f"нет чтения ядра {needle!r}" for needle in CORE_LINK if needle not in collapsed)
     for target in LINK_RE.findall(text):
         if target.startswith(("http://", "https://", "mailto:", "#")):
             continue
@@ -486,7 +490,7 @@ class ClaudeCodexSkillTests(unittest.TestCase):
         low, xlow, nano = originals["low-pipeline"], originals["xlow-pipeline"], originals["nano-pipeline"]
         broken = {
             ("low-pipeline", "### 3. исполнитель → codex:codex-delegate"): in_stage(
-                low, 3, lambda s: s.replace("claude-codex:pipeline-implementer-low", "codex:codex-delegate")),
+                low, 3, lambda s: s.replace("pipeline-core:pipeline-implementer-low", "codex:codex-delegate")),
             ("low-pipeline", "### 4. --effort medium → --effort high"): in_stage(
                 low, 4, lambda s: s.replace("--effort medium", "--effort high")),
             ("low-pipeline", "### 4. без --permission write"): in_stage(
@@ -518,18 +522,22 @@ class ClaudeCodexSkillTests(unittest.TestCase):
 
 class ClaudeCodexAgentTests(unittest.TestCase):
     def test_agent_files_match_dict(self) -> None:
-        found = {path.name for path in (PLUGIN_DIR / AGENTS_SUBDIR).glob("*.md")}
-        self.assertEqual(found, set(AGENTS))
+        for filename in sorted(AGENTS):
+            with self.subTest(agent=filename):
+                self.assertTrue((CORE_PLUGIN_DIR / AGENTS_SUBDIR / filename).is_file(),
+                                f"нет {CORE_PLUGIN_DIR / AGENTS_SUBDIR / filename}")
+        self.assertFalse((PLUGIN_DIR / AGENTS_SUBDIR).exists(),
+                         f"каталог {PLUGIN_DIR / AGENTS_SUBDIR} есть — агенты живут в pipeline-core")
 
     def test_agents(self) -> None:
         for filename in sorted(AGENTS):
             with self.subTest(agent=filename):
-                text = (PLUGIN_DIR / AGENTS_SUBDIR / filename).read_text(encoding="utf-8")
+                text = (CORE_PLUGIN_DIR / AGENTS_SUBDIR / filename).read_text(encoding="utf-8")
                 self.assertEqual(_agent_problems(filename, text), [])
 
     def test_agent_check_rejects_broken_texts(self) -> None:
         filename = "pipeline-critic-xhigh.md"
-        text = (PLUGIN_DIR / AGENTS_SUBDIR / filename).read_text(encoding="utf-8")
+        text = (CORE_PLUGIN_DIR / AGENTS_SUBDIR / filename).read_text(encoding="utf-8")
         sample_fm, _ = _split_frontmatter((REPO_DIR / CRITIC_SAMPLE).read_text(encoding="utf-8"))
         sample_description = _fm_values(sample_fm, "description")[0]
         lines = text.split("\n")
@@ -549,7 +557,7 @@ class ClaudeCodexAgentTests(unittest.TestCase):
 
     def test_implementer_low_check_rejects_broken_texts(self) -> None:
         filename = "pipeline-implementer-low.md"
-        text = (PLUGIN_DIR / AGENTS_SUBDIR / filename).read_text(encoding="utf-8")
+        text = (CORE_PLUGIN_DIR / AGENTS_SUBDIR / filename).read_text(encoding="utf-8")
         sample_fm, _ = _split_frontmatter((REPO_DIR / IMPLEMENTER_SAMPLE).read_text(encoding="utf-8"))
         sample_description = _fm_values(sample_fm, "description")[0]
         broken = {

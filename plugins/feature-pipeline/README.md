@@ -23,37 +23,4 @@
 | `claude-pipeline` | только Claude Code, без внешних харнессов; $0 внешних, усилие — от сессии (`claude --effort`) | Opus 5.5 (`pipeline-spec-writer-inherit`, `model: opus`) | Sonnet 5.5 + Opus 5.5 (`pipeline-critic-inherit`), кворум — оба | Opus 5.5 (`pipeline-implementer-inherit`, `model: opus`) | линзы Sonnet 5.5 ×3 (`pipeline-lens`), при находке — Sonnet 5.5 (`pipeline-judge-inherit`) |
 | `opus-pipeline` | понятная работа в один заход, приёмка не нужна; $0 внешних | — | — | Opus medium (`pipeline-implementer-solo`, `model: opus`), сам коммитит | — |
 
-## Агенты
-
-Модель и effort — из frontmatter `agents/*.md`. Effort задаётся только во frontmatter; `model` в
-вызове перебивает frontmatter.
-
-| Агент | Модель / effort | Роль | Где используется (перебивка model) |
-| --- | --- | --- | --- |
-| `pipeline-spec-writer` | opus / high | ТЗ шага, порции, чек-листы; только каталог шагов, неясное — вопросом автору | `high-pipeline` — **`model: opus`** |
-| `pipeline-spec-writer-xhigh` | opus / xhigh | то же | `xhigh-pipeline` — **`model: opus`** |
-| `pipeline-spec-writer-medium` | opus / medium | то же | `medium-pipeline`, `sol-pipeline` — **`model: opus`** |
-| `pipeline-spec-writer-low` | opus / low | то же | `low-pipeline` — **`model: opus`** |
-| `pipeline-critic` | sonnet / high | штатный критик ТЗ и чек-листа (`model: sonnet`), критик `sonnet` в составе | этап 2 xhigh/high/medium/cross/sol-pipeline |
-| `pipeline-implementer` | sonnet / medium | реализует одну порцию, не коммитит | `medium-pipeline`, `sol-pipeline` — **`model: opus`** |
-| `pipeline-implementer-high` | sonnet / high | то же для неочевидных порций | `high-pipeline` — **`model: opus`** |
-| `pipeline-implementer-xhigh` | opus / xhigh | то же на максимальном усилии | `xhigh-pipeline` |
-| `pipeline-implementer-solo` | sonnet / medium | задача в один проход и сам коммитит | `opus-pipeline` — **`model: opus`** |
-| `pipeline-judge` | opus / high | приёмка: чек-лист, срезанные углы в диффе, вердикт, при зелёном — коммит; код не правит | не зовётся ни одним скилом |
-
-Исполнители и судья преднагружают скил `listik:listik` (поле `skills:`) и при названном в задаче id (`Listik, карточка <id>`) ведут карточку сами — раздел «Карточка Listik» в теле агента.
-
-## Хуки
-
-`hooks/hooks.json` → `approve-pipeline-agents.py` на `PermissionRequest` (Bash/Edit/Write/MultiEdit/
-NotebookEdit): автоодобряет запросы исполнителей и судьи, только если в настройках плагина включён
-`auto_approve_agents`, правка лежит в проекте/его worktree/`.git/feature-pipeline` и не секрет,
-команда не из списка опасных. Иначе и при ошибке хук молчит — обычный запрос; deny-правила сильнее.
-
-## references
-
-- `pipeline-core.md` — общий протокол пресетов: правила, цикл, вопросы (в т.ч. headless под роем),
-  шаг 0, имена бумаг и деревьев, треки, пакет диффа, коммит приёмкой, приёмка линзами, пределы, журнал, Listik.
-- `ROLES.md` — почему на роли поставлены эти модели; таблицы генерирует `presets.py`.
-- `README.md` + `fetch_aa.py`, `fetch_openrouter.py`, `models.*`, `openrouter.*` — снимки рейтингов
-  моделей и скрипты их обновления.
+Агенты, хук автоодобрения и ядро `pipeline-core.md` — в плагине `pipeline-core` (`plugins/pipeline-core/README.md`).

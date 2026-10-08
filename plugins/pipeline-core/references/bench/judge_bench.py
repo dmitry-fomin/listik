@@ -21,7 +21,7 @@ import tempfile
 from pathlib import Path
 
 HERE = Path(__file__).resolve().parent
-SKILL = (HERE / "../../skills/low-pipeline/SKILL.md").resolve()
+SKILL = (HERE / "../../../feature-pipeline/skills/low-pipeline/SKILL.md").resolve()
 CORE = (HERE / "../pipeline-core.md").resolve()
 
 TASK_ANCHOR = "Задание, которое уходит в `/grok:delegate`:"
@@ -47,7 +47,7 @@ BENCH_TAIL = """Стенд проверки судей: карточки Listik 
 Дерево порции (рабочий каталог: там гоняешь чек-лист и коммитишь): {tree}
 Чек-лист приёмки: {tree}/{steps}/{step}.check-{portion}.md
 Файл порции: {tree}/{steps}/{step}.{portion}.md
-Пакет диффа (заход r1): {tree}/.git/feature-pipeline/{step}.diff-{portion}.r1.txt
+Пакет диффа (заход r1): {tree}/.git/pipeline-core/{step}.diff-{portion}.r1.txt
 """
 
 
@@ -227,7 +227,7 @@ def build(case, case_dir, tree, repo, task_head, block, no_mutation):
                  "<R>": "1"}.items():
         script = script.replace(k, v)
     r = subprocess.run(["bash", "-c", script], cwd=tree, env=GIT_ENV, capture_output=True)
-    dump = tree / f".git/feature-pipeline/{case['step']}.diff-{case['portion']}.r1.txt"
+    dump = tree / f".git/pipeline-core/{case['step']}.diff-{case['portion']}.r1.txt"
     if r.returncode or not dump.is_file():
         raise Fail("пакет диффа пуст")
 

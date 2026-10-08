@@ -6,8 +6,8 @@ import tempfile
 import unittest
 from pathlib import Path
 
-CORE = Path(__file__).resolve().parents[1] / "plugins/feature-pipeline/references/pipeline-core.md"
-DUMP_REL = "feature-pipeline/t.diff-a.r1.txt"
+CORE = Path(__file__).resolve().parents[1] / "plugins/pipeline-core/references/pipeline-core.md"
+DUMP_REL = "pipeline-core/t.diff-a.r1.txt"
 GIT_ENV = {
     "GIT_AUTHOR_NAME": "t", "GIT_AUTHOR_EMAIL": "t@t",
     "GIT_COMMITTER_NAME": "t", "GIT_COMMITTER_EMAIL": "t@t",

@@ -1,10 +1,10 @@
 #!/usr/bin/env python3
-"""PermissionRequest-хук плагина feature-pipeline.
+"""PermissionRequest-хук плагина pipeline-core.
 
 Одобряет запрос разрешения без участия автора, только если одновременно:
 - в настройках плагина включён auto_approve_agents;
 - запрос пришёл от субагента конвейера (исполнитель или судья);
-- правка файла лежит в проекте, в одном из его worktree или в .git/feature-pipeline,
+- правка файла лежит в проекте, в одном из его worktree или в .git/pipeline-core,
   и это не секрет; команда Bash не попадает в список опасного.
 
 Во всех остальных случаях хук молчит — и Claude Code задаёт обычный вопрос.
@@ -18,14 +18,14 @@ import subprocess
 import sys
 
 AGENTS = {
-    "feature-pipeline:pipeline-implementer",
-    "feature-pipeline:pipeline-implementer-high",
-    "feature-pipeline:pipeline-implementer-xhigh",
-    "feature-pipeline:pipeline-implementer-solo",
-    "feature-pipeline:pipeline-judge",
-    "feature-pipeline:pipeline-implementer-inherit",
-    "feature-pipeline:pipeline-judge-inherit",
-    "claude-codex:pipeline-implementer-low",
+    "pipeline-core:pipeline-implementer",
+    "pipeline-core:pipeline-implementer-high",
+    "pipeline-core:pipeline-implementer-xhigh",
+    "pipeline-core:pipeline-implementer-solo",
+    "pipeline-core:pipeline-judge",
+    "pipeline-core:pipeline-implementer-inherit",
+    "pipeline-core:pipeline-judge-inherit",
+    "pipeline-core:pipeline-implementer-low",
 }
 
 EDIT_TOOLS = {"Edit", "Write", "MultiEdit", "NotebookEdit"}
@@ -82,7 +82,7 @@ def edit_allowed(path, project):
     if not path or SECRET_PATH.search(path):
         return False
     git_dir = git(["rev-parse", "--absolute-git-dir"], project).strip()
-    if git_dir and inside(path, os.path.join(git_dir, "feature-pipeline")):
+    if git_dir and inside(path, os.path.join(git_dir, "pipeline-core")):
         return True
     if ".git" in os.path.realpath(path).split(os.sep):
         return False

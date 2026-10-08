@@ -7,7 +7,7 @@ license: MIT
 
 # Конвейер nano-pipeline
 
-**Прочитай [pipeline-core.md](../../references/pipeline-core.md) целиком до первого действия.** Ниже — только
+**Вызови скил `pipeline-core:core` и прочитай ядро по пути, который он назовёт, целиком до первого действия** (в репозитории — `plugins/pipeline-core/references/pipeline-core.md`). Ниже — только
 то, чем этот пресет отличается.
 
 ## Роли

@@ -13,9 +13,8 @@ Codex кода не пишет. Расклад утверждён автором
 [README плагина](../../README.md) (`plugins/claude-codex/README.md`). Основной контекст только маршрутизирует,
 носит вопросы автору и ведёт журнал.
 
-**Прочитай [pipeline-core.md](../../../feature-pipeline/references/pipeline-core.md)
-(`plugins/feature-pipeline/references/pipeline-core.md`) целиком до первого действия.** Это ядро плагина
-`feature-pipeline`: твоя роль, жёсткие правила, протокол вопросов, шаг 0, adhoc-файл, сборка пакета диффа, пределы
+**Вызови скил `pipeline-core:core` и прочитай ядро по пути, который он назовёт, целиком до первого действия** (в репозитории — `plugins/pipeline-core/references/pipeline-core.md`). Это ядро плагина
+`pipeline-core`: твоя роль, жёсткие правила, протокол вопросов, шаг 0, adhoc-файл, сборка пакета диффа, пределы
 на порцию, журнал, раздел `## Listik` и общие грабли. Ниже — только то, чем `claude-codex:xlow-pipeline` отличается:
 кто делает каждый этап и как его позвать.
 
@@ -29,7 +28,7 @@ Codex кода не пишет. Расклад утверждён автором
 
 | Этап | Кто | Модель и усилие | Первая строка отчёта |
 | --- | --- | --- | --- |
-| Ход 1 (условно) и 3. Реализация | субагент `feature-pipeline:pipeline-implementer` | **`model: opus` в вызове** (frontmatter — sonnet, effort medium) → Opus 5.5 medium | `готово`, `не смог` или `вопрос` |
+| Ход 1 (условно) и 3. Реализация | субагент `pipeline-core:pipeline-implementer` | **`model: opus` в вызове** (frontmatter — sonnet, effort medium) → Opus 5.5 medium | `готово`, `не смог` или `вопрос` |
 | 4. Приёмка и коммит | скил `codex:codex-delegate`, фоновой задачей | GPT-6 Astra medium: `--model gpt-6-astra --effort medium --permission write`; коммитит судья | `зелёный` с хешем или `красный` |
 
 `model` перебивает frontmatter, усилие остаётся из него и в вызове не меняется — нужен другой уровень, это
@@ -41,8 +40,8 @@ frontmatter sonnet medium). Забудешь `model` — код напишет S
 
 ## Нужные скилы
 
-Пресет требует установленного плагина `feature-pipeline` (ядро `pipeline-core.md` и агент
-`feature-pipeline:pipeline-implementer`); нет его, нет плагина `codex` или `listik` — стоп по ядру (раздел
+Пресет требует установленного плагина `pipeline-core` (ядро `pipeline-core.md` и агент
+`pipeline-core:pipeline-implementer`); нет его, нет плагина `codex` или `listik` — стоп по ядру (раздел
 «Внешние скилы» `pipeline-core.md`). Скрипты из кэша не зови.
 
 - [`codex:codex-delegate`](../../../codex/skills/codex-delegate/SKILL.md) (`plugins/codex/skills/codex-delegate/SKILL.md`) — этап 4 и предполётный прогон судьи;
@@ -119,7 +118,7 @@ WT=.             # в треке — абсолютный путь дерева 
 
 **Когда идёт.** Ход 1 идёт, только если выполнены **оба** условия: у карточки пуст `write_scope` (`listik show <id> --json` — поле `write_scope` равно `[]`) **и** автор в тексте задачи не назвал ни одного пути. «Назвал путь» — в тексте автора есть хотя бы один токен, похожий на путь: содержит `/` без пробелов (`listik/store.py`, `web/src/`, `docs/`) **или** оканчивается расширением файла (`.py .md .ts .vue .mjs .js .json .sh .toml .yaml .yml .css .html .txt`) — регекс `(^|\s)[\w.@-]+(/[\w.@-]*)+|\b[\w-]+\.(py|md|ts|vue|mjs|js|json|sh|toml|yaml|yml|css|html|txt)\b`. Существование пути в дереве **не** проверяется: названный автором новый файл — тоже «назван». Без карточки — только второе условие. Иначе ход 1 пропускается: в adhoc-файл идут границы автора (по ядру), в журнал — `порция a: ход 1 пропущен — write_scope задан` или `порция a: ход 1 пропущен — пути названы автором`, и этап 3 идёт одним ходом.
 
-**Вызов.** `Agent` `feature-pipeline:pipeline-implementer`, **`model: opus`** в вызове; путь к adhoc-файлу —
+**Вызов.** `Agent` `pipeline-core:pipeline-implementer`, **`model: opus`** в вызове; путь к adhoc-файлу —
 строкой. Карточку на ход 1 держит сессия сама (`claim`/`heartbeat` по ядру, раздел `## Listik`) с note `<id>, порция
 a, ход 1: границы`; строка `Listik, карточка <P>` в задачу хода 1 не идёт. Agent id — сразу в журнал строкой
 `порция a: исполнитель <agent-id>`. Задание хода 1:
@@ -154,11 +153,11 @@ a, ход 1: границы`; строка `Listik, карточка <P>` в з�
 `listik stage <P> --to s3-impl --holder claude --actor agent:claude --harness claude`.
 
 **Развилка по ходу 1.** Был ход 1 (успешный) — этап 3 это **ход 2**: продолжение того же агента
-`feature-pipeline:pipeline-implementer` (`model: opus` — с хода 1) через `SendMessage` по agent id из журнала с заданием
+`pipeline-core:pipeline-implementer` (`model: opus` — с хода 1) через `SendMessage` по agent id из журнала с заданием
 ниже. Продолжить нельзя (agent id потерян после `/clear`, `SendMessage` отказал) — **новый** `Agent`
-`feature-pipeline:pipeline-implementer`, `model: opus`, с тем же заданием: границы уже в adhoc-файле; в журнал
+`pipeline-core:pipeline-implementer`, `model: opus`, с тем же заданием: границы уже в adhoc-файле; в журнал
 `порция a: откат — новый исполнитель <agent-id>` (как этап 3 `claude-codex:medium-pipeline`). Хода 1 не было
-(пропущен или не удался дважды) — новый запуск `Agent` `feature-pipeline:pipeline-implementer`, `model: opus`.
+(пропущен или не удался дважды) — новый запуск `Agent` `pipeline-core:pipeline-implementer`, `model: opus`.
 
 Задание этапа 3 — путь к adhoc-файлу `$STEPS/$BASE.a.md`; в треке первой строкой абсолютный путь дерева трека. Есть
 карточка — строка `Listik, карточка <P>` (id буквально) идёт первой строкой, в треке — второй, сразу после пути
@@ -271,7 +270,7 @@ listik
 | Симптом | Причина | Что делать |
 | --- | --- | --- |
 | Код написан Sonnet вместо Opus | забыт `model: opus` у исполнителя (в ходе 1, в откате или в повторе) | у исполнителя во frontmatter `sonnet` — `model: opus` в каждом запуске; отчёт не считается, повтор с `model: opus` |
-| Ответ модели не того усилия | позван не `feature-pipeline:pipeline-implementer` (другой исполнитель — другое усилие) | исполнитель — ровно агент из таблицы «Роли» с `model: opus`; повтор верным агентом |
+| Ответ модели не того усилия | позван не `pipeline-core:pipeline-implementer` (другой исполнитель — другое усилие) | исполнитель — ровно агент из таблицы «Роли» с `model: opus`; повтор верным агентом |
 | Ход 1 вернул правки, дерево изменилось | исполнитель нарушил запрет хода 1 | `git -C "$WT" status --porcelain` после хода 1; изменилось — стоп и вопрос автору, ход 2 не запускается |
 | После хода 1 в write_scope каталог `.`/корень | список путей «Файлы:» негодный, критерий годности пропущен | повтор хода 1 с уточнением «каталоги не шире модуля» |
 | Ход 2 начал с нуля | agent id потерян или `SendMessage` отказал | это откат: новый субагент с `model: opus` и границами из adhoc-файла, строка в журнал |

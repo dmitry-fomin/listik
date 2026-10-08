@@ -4,17 +4,17 @@
 основной сессии) и Codex (OpenAI, через скил `codex:codex-delegate`). Пресеты вызываются как
 `/claude-codex:<пресет>` или маршрутом карточки Listik `process:cc-<пресет>`.
 
-Плагин ничего не копирует: общий протокол — ядро `plugins/feature-pipeline/references/pipeline-core.md`,
-писатели ТЗ, исполнители и критик `pipeline-critic` — агенты `feature-pipeline:*`, внешние прогоны — скилы
-`codex:*`, карточка и журнал — `listik:listik`. Своих агентов три — критики `claude-codex:pipeline-critic-xhigh`
-и `claude-codex:pipeline-critic-medium` (Sonnet по умолчанию, модель задаётся параметром `model` в вызове) и
-исполнитель `claude-codex:pipeline-implementer-low` (Opus low, `model` в вызове не передаётся).
-Поэтому ставится только вместе с тремя плагинами того же маркетплейса:
+Плагин ничего не копирует: общий протокол — ядро `plugins/pipeline-core/references/pipeline-core.md`,
+писатели ТЗ, исполнители и критики — агенты `pipeline-core:*`, внешние прогоны — скилы
+`codex:*`, карточка и журнал — `listik:listik`. Своих агентов у плагина нет: критики `pipeline-core:pipeline-critic-xhigh`
+и `pipeline-core:pipeline-critic-medium` (Sonnet по умолчанию, модель задаётся параметром `model` в вызове) и
+исполнитель `pipeline-core:pipeline-implementer-low` (Opus low, `model` в вызове не передаётся) тоже живут в
+`pipeline-core`. Поэтому ставится только вместе с тремя плагинами того же маркетплейса:
 
 ```
 /plugin marketplace add dmitry-fomin/listik
 /plugin install listik@listik
-/plugin install feature-pipeline@listik
+/plugin install pipeline-core@listik
 /plugin install codex@listik
 /plugin install claude-codex@listik
 ```
@@ -41,9 +41,9 @@ medium. xlow и nano по составу совпадают; nano — для с�
 ## Обоснование: Hal
 
 Метрика — `omniscienceHallucinationRate` Artificial Analysis (AA-Omniscience hallucination rate, меньше —
-лучше). Для моделей Anthropic и GPT-6 Astra — снимок `plugins/feature-pipeline/references/models.json` от
+лучше). Для моделей Anthropic и GPT-6 Astra — снимок `plugins/pipeline-core/references/models.json` от
 2026-09-29 (поле `fetched`; 2026-09-22 — дата релиза Opus 5.5 в нём, а не снимка); для GPT-6.1 Sol — живая страница AA, снято 2026-10-07 (тех же цифр раздел «sol-pipeline —
-проверяющие от OpenAI» в `plugins/feature-pipeline/references/ROLES.md`).
+проверяющие от OpenAI» в `plugins/pipeline-core/references/ROLES.md`).
 
 | Модель (slug AA) | Роль | Hal |
 | --- | --- | --- |

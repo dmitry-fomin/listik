@@ -96,7 +96,7 @@ you do other things, so launch one only when the human knows it is running.
   `~/.codex/config.toml`; `check` reports them as diagnostics, not as an invitation to
   switch. The one exception is a call from a `feature-pipeline` or `claude-codex` preset,
   which must pass the `--model` and `--effort` it requires, because model-per-role is part
-  of the preset (rationale in `plugins/feature-pipeline/references/ROLES.md`). Never add
+  of the preset (rationale in `plugins/pipeline-core/references/ROLES.md`). Never add
   `--provider` for that exception.
 - **Parallel runs are supported**, including in one working directory — separate sessions,
   separate job directories, no shared lock. Exception: two `--permission write` runs in the

@@ -168,7 +168,7 @@ class SwarmE2ECase(AutostartTestCase, FencingHttpCase):
         # берётся из `paths.ROOT_DIR` при импорте, а `AutostartTestCase` подменяет его
         # временным каталогом — указываем на настоящие файлы агентов репозитория.
         agents_patch = mock.patch.object(
-            stage_launch, "AGENTS_DIR", REPO_DIR / "plugins" / "feature-pipeline" / "agents")
+            stage_launch, "AGENTS_DIR", REPO_DIR / "plugins" / "pipeline-core" / "agents")
         agents_patch.start()
         self.addCleanup(agents_patch.stop)
 

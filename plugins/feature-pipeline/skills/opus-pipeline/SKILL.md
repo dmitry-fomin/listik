@@ -11,11 +11,10 @@ license: MIT
 квоты 2.19 усл. ед., около 365 с — против $2.01 и 1608 с у low-pipeline из четырёх
 ролей. Это и есть повод: **конвейер из дешёвых моделей проигрывает одной средней модели
 и по деньгам, и по времени**, поэтому на задачи, которые модель делает за один заход,
-конвейер ставить незачем. Обоснование — в [ROLES.md](../../references/ROLES.md), раздел
+конвейер ставить незачем. Обоснование — в [ROLES.md](../../../pipeline-core/references/ROLES.md), раздел
 «Пресет 5 существует, потому что конвейер не всегда окупается».
 
-**Прочитай [pipeline-core.md](../../references/pipeline-core.md) целиком до первого
-действия** — но применяй оттуда не всё, список ниже. Карточка — скил [`listik:listik`](../../../listik/skills/listik/SKILL.md) (`plugins/listik/skills/listik/SKILL.md`). Скил запускается только по явному имени — маршрутом карточки Listik (`launch_route` или метка
+**Вызови скил `pipeline-core:core` и прочитай ядро по пути, который он назовёт, целиком до первого действия** (в репозитории — `plugins/pipeline-core/references/pipeline-core.md`) — но применяй оттуда не всё, список ниже. Карточка — скил [`listik:listik`](../../../listik/skills/listik/SKILL.md) (`plugins/listik/skills/listik/SKILL.md`). Скил запускается только по явному имени — маршрутом карточки Listik (`launch_route` или метка
 `process:opus-pipeline`) или человеком (`/feature-pipeline:opus-pipeline`); по сходству задачи сам его не подхватывай. Все команды — из корня основного дерева.
 
 ## Чем платим за скорость
@@ -59,7 +58,7 @@ license: MIT
 
 | Этап | Кто | Модель и усилие | Первая строка отчёта |
 | --- | --- | --- | --- |
-| реализация и коммит | субагент `feature-pipeline:pipeline-implementer-solo` | **`model: opus` в вызове** (frontmatter — Sonnet, effort medium) → Opus medium | `готово` с хешем, `не смог` или `вопрос` |
+| реализация и коммит | субагент `pipeline-core:pipeline-implementer-solo` | **`model: opus` в вызове** (frontmatter — Sonnet, effort medium) → Opus medium | `готово` с хешем, `не смог` или `вопрос` |
 
 `model: opus` обязателен в каждом запуске и повторе: без него задачу сделает Sonnet, и
 пресет перестанет быть тем, за что выбран. Усилие в вызове не правится — `medium` стоит
@@ -102,7 +101,7 @@ license: MIT
 
 ## Реализация и коммит
 
-`Agent` `feature-pipeline:pipeline-implementer-solo`, **`model: opus`**. В задаче —
+`Agent` `pipeline-core:pipeline-implementer-solo`, **`model: opus`**. В задаче —
 **один путь** к файлу задачи и больше ничего; в треке первой строкой ещё абсолютный путь
 дерева трека («код правь в `<путь>`, каждую команду начинай с перехода туда»). При карточке
 к ним добавляется строка `Listik, карточка <id>` (id буквально) — первой строкой, в треке второй,

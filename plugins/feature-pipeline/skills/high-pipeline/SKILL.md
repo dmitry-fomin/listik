@@ -11,12 +11,12 @@ license: MIT
 снаружи и от других вендоров (критики DeepSeek в pi и devin SWE-2, линзы приёмки GLM в pi, судья SpaceXAI по их находкам),
 кроме критика Sonnet 5.5 high: он той же семьи, что автор ТЗ (Opus, Anthropic), поэтому кворум критики требует хотя бы одного
 не-Anthropic критика. Платишь ровно за независимость
-приёмки; обоснование расклада — в [ROLES.md](../../references/ROLES.md) и
-[presets-2026-09-24.md](../../references/presets-2026-09-24.md): Opus 5.5 обходит Fable 5.1 на каждом
+приёмки; обоснование расклада — в [ROLES.md](../../../pipeline-core/references/ROLES.md) и
+[presets-2026-09-24.md](../../../pipeline-core/references/presets-2026-09-24.md): Opus 5.5 обходит Fable 5.1 на каждом
 усилии (Opus high — II 53.6 / TB4 .566 против Fable medium 48.9 / .449), поэтому Fable из пресета убран.
 Внешних денег ≈ $4 на задачу (оценка AA).
 
-**Прочитай [pipeline-core.md](../../references/pipeline-core.md) целиком до первого действия.**
+**Вызови скил `pipeline-core:core` и прочитай ядро по пути, который он назовёт, целиком до первого действия** (в репозитории — `plugins/pipeline-core/references/pipeline-core.md`).
 Там всё, что у пресетов общее: твоя роль, жёсткие правила, протокол вопросов, шаг 0, треки,
 сборка пакета диффа, пределы на порцию, журнал и общие грабли. Ниже — только то, чем high-pipeline
 отличается: кто делает каждый этап и как его позвать.
@@ -31,9 +31,9 @@ license: MIT
 
 | Этап | Кто | Модель и усилие | Первая строка отчёта |
 | --- | --- | --- | --- |
-| 1. ТЗ и чек-листы | субагент `feature-pipeline:pipeline-spec-writer` | **`model: opus` в вызове** (frontmatter — opus, effort high) → Opus high | `готово` или `вопрос` |
-| 2. Критика ТЗ | три критика одним сообщением: `sonnet` — `Agent` `feature-pipeline:pipeline-critic`, **`model: sonnet` в вызове**, фоном; `deepseek` — скил `pi:pi-delegate`, фоновой задачей; `devin` — скил `devin:devin-delegate`, фоновой задачей | Sonnet 5.5 high; канал `deepseek` (DeepSeek V4.1 Flash), `--permission read`; devin `--thinking max` (SWE-2 max), `--permission read`; кворум — `sonnet` и хотя бы один из `deepseek`, `devin` | по файлу на критика, потом твоя сводка `review-<X>.md` с разделами «Блокирующие» и «Существенные» |
-| 3. Реализация | субагент `feature-pipeline:pipeline-implementer-high` | **`model: opus` в вызове** (frontmatter — Sonnet, effort high) → Opus high | `готово`, `не смог` или `вопрос` |
+| 1. ТЗ и чек-листы | субагент `pipeline-core:pipeline-spec-writer` | **`model: opus` в вызове** (frontmatter — opus, effort high) → Opus high | `готово` или `вопрос` |
+| 2. Критика ТЗ | три критика одним сообщением: `sonnet` — `Agent` `pipeline-core:pipeline-critic`, **`model: sonnet` в вызове**, фоном; `deepseek` — скил `pi:pi-delegate`, фоновой задачей; `devin` — скил `devin:devin-delegate`, фоновой задачей | Sonnet 5.5 high; канал `deepseek` (DeepSeek V4.1 Flash), `--permission read`; devin `--thinking max` (SWE-2 max), `--permission read`; кворум — `sonnet` и хотя бы один из `deepseek`, `devin` | по файлу на критика, потом твоя сводка `review-<X>.md` с разделами «Блокирующие» и «Существенные» |
+| 3. Реализация | субагент `pipeline-core:pipeline-implementer-high` | **`model: opus` в вызове** (frontmatter — Sonnet, effort high) → Opus high | `готово`, `не смог` или `вопрос` |
 | 4. Приёмка: линзы | скил `pi:pi-delegate`, три фоновые задачи одним сообщением, на заходе `r1` | канал `glm` (`--channel glm`, GLM 5.3 Flash); `scope` — `--permission bash`, `holes` и `intent` — `--permission read` | по файлу на линзу, первая строка `чисто` или `находки` |
 | 4. Приёмка: судья | `/grok:delegate`, фоновой задачей — только при находке линз, при «Критичных инвариантах» и на заходах `r2`+ | `--model grok-4.7 --effort xhigh` | `зелёный` с хешем или `красный` |
 
@@ -84,7 +84,7 @@ WT=.             # в треке — абсолютный путь дерева 
 
 ### 1. ТЗ и чек-листы — `pipeline-spec-writer`, `model: opus`, один раз на шаг
 
-`Agent` `feature-pipeline:pipeline-spec-writer`, **`model: opus`** — обязательно, в каждом запуске и в
+`Agent` `pipeline-core:pipeline-spec-writer`, **`model: opus`** — обязательно, в каждом запуске и в
 режиме правки. В задаче:
 путь к спеке **или** текст автора; `$STEPS`; имя бумаг `<id>`. В треке добавь **границу этого трека** —
 каталог или слой, за который его ТЗ не выходит, словами автора. Правила порций, границ
@@ -98,7 +98,7 @@ WT=.             # в треке — абсолютный путь дерева 
 
 **Стоп-фактор.** Критики этапа идут по кворуму, а не по правилу недоступной роли: выбывший критик (запуск упал, не залогинен, ответила не та модель, ответ негоден или не пришёл за окно) — не стоп, пока кворум пресета набран. Не набран — стоп по ядру: журнал `стоп: критика — кворум не набран: <кто не дал годного ответа и почему>`, `needs-owner` и тот же вопрос в чат (`pipeline-core.md`, «Критика ТЗ»).
 
-Состав — три критика: `sonnet` — `Agent` `feature-pipeline:pipeline-critic` с **`model: sonnet` в вызове** (Sonnet 5.5 high), фоном; `deepseek` — `pi:pi-delegate`, канал `deepseek` (DeepSeek V4.1 Flash), `--permission read`, фоновой задачей, ответ — `result` через `pi:pi-jobs`; `devin` — `devin:devin-delegate` с `--thinking max` (SWE-2 max), `--permission read`, фоновой задачей, ответ — `result` через `devin:devin-jobs`. Кворум — годный ответ `sonnet` и хотя бы одного из `deepseek`, `devin`: Sonnet той же семьи, что автор ТЗ, и без не-Anthropic критика кворума нет. Все три запускаются одним сообщением, с одним заданием.
+Состав — три критика: `sonnet` — `Agent` `pipeline-core:pipeline-critic` с **`model: sonnet` в вызове** (Sonnet 5.5 high), фоном; `deepseek` — `pi:pi-delegate`, канал `deepseek` (DeepSeek V4.1 Flash), `--permission read`, фоновой задачей, ответ — `result` через `pi:pi-jobs`; `devin` — `devin:devin-delegate` с `--thinking max` (SWE-2 max), `--permission read`, фоновой задачей, ответ — `result` через `devin:devin-jobs`. Кворум — годный ответ `sonnet` и хотя бы одного из `deepseek`, `devin`: Sonnet той же семьи, что автор ТЗ, и без не-Anthropic критика кворума нет. Все три запускаются одним сообщением, с одним заданием.
 Проверка на секреты, старые ответы, запуск, задание, окно 15 минут, забор, годность, повтор, журнал выбывших и правила сведения в `$STEPS/$BASE.review-<X>.md` — `pipeline-core.md`, «Критика ТЗ».
 
 Дальше как в локальном конвейере: решение по сводке — твоё, по ядру (`pipeline-core.md`, «Решение по сводке»): каждому пункту
@@ -109,7 +109,7 @@ WT=.             # в треке — абсолютный путь дерева 
 
 ### 3. Реализация — `pipeline-implementer-high`, `model: opus`
 
-`Agent` `feature-pipeline:pipeline-implementer-high`, **`model: opus`**. В задаче — путь к порции
+`Agent` `pipeline-core:pipeline-implementer-high`, **`model: opus`**. В задаче — путь к порции
 `$STEPS/$BASE.<X>.md`, по одной за раз; право записи у агента в определении. В треке первой
 строкой абсолютный путь дерева трека. Есть карточка — строка `Listik, карточка <P>` (id буквально) идёт в задачу первой строкой, в треке — второй,
 сразу после пути дерева трека; карточки нет (`Listik: карточки нет`) — строки нет (`pipeline-core.md`, раздел

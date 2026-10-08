@@ -3,11 +3,11 @@
 Воспроизводимая проверка моделей-судей: разные судьи принимают одни и те же порции работы, в часть
 которых подложен дефект. Этап приёмки воспроизводится как настоящий: порция лежит незакоммиченной
 поверх базы, бумаги шага — в `docs/specs/steps/`, пакет диффа собран блоком «Пакет диффа для
-приёмки» из `../pipeline-core.md`, задание судье — блок из `../../skills/low-pipeline/SKILL.md`
+приёмки» из `../pipeline-core.md`, задание судье — блок из `../../../feature-pipeline/skills/low-pipeline/SKILL.md`
 (после строки ``Задание, которое уходит в `/grok:delegate`:``, без хвоста про карточку Listik) плюс
 стендовая часть с путями.
 
-`BENCH` ниже — этот каталог (`plugins/feature-pipeline/references/bench`).
+`BENCH` ниже — этот каталог (`plugins/pipeline-core/references/bench`).
 
 ## Кейсы — ключ ответов
 
@@ -48,11 +48,11 @@ python3 BENCH/judge_bench.py prepare --judge <метка> [--out <каталог
 
 ```sh
 cd <дерево кейса>
-claude -p --agent feature-pipeline:pipeline-judge --model sonnet --effort high \
+claude -p --agent pipeline-core:pipeline-judge --model sonnet --effort high \
   --output-format json --permission-mode bypassPermissions "$(cat <файл задания>)"
 ```
 
-- Имя агента — полное имя `pipeline-judge` в установленном плагине (`feature-pipeline:pipeline-judge`);
+- Имя агента — полное имя `pipeline-judge` в установленном плагине (`pipeline-core:pipeline-judge`);
   сверь перед серией по списку агентов Claude Code.
 - Во frontmatter `pipeline-judge` стоит `model: opus` — модель задаётся **в вызове** (`--model
   sonnet`) и перекрывает его. Что ответил именно Sonnet, сверяй по полю модели в JSON-выводе
@@ -89,7 +89,7 @@ claude -p --agent feature-pipeline:pipeline-judge --model sonnet --effort high \
 После всех прогонов — файл сумм отчётов (пути от корня рабочего дерева):
 
 ```sh
-shasum -a 256 plugins/feature-pipeline/references/bench/runs/*/*.md \
+shasum -a 256 plugins/pipeline-core/references/bench/runs/*/*.md \
   > <основное дерево>/docs/specs/steps/listik-ep3s.runs.sha256
 ```
 

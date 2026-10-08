@@ -16,11 +16,15 @@ from __future__ import annotations
 import json
 import pathlib
 import re
+import shutil
+import tempfile
 import unittest
 
 REPO_DIR = pathlib.Path(__file__).resolve().parents[1]
 ROUTES_JSON = REPO_DIR / "routes.json"
 PLUGIN_DIR = REPO_DIR / "plugins" / "feature-pipeline"
+#: Плагин ядра: агенты, хук и `references` пресетов живут здесь, скилы — в PLUGIN_DIR.
+CORE_PLUGIN_DIR = REPO_DIR / "plugins" / "pipeline-core"
 MARKETPLACE_JSON = REPO_DIR / ".claude-plugin" / "marketplace.json"
 
 #: Имя плагина в маркетплейсе; оно же — имя каталога плагина.
@@ -130,8 +134,8 @@ class FeaturePipelinePluginTests(unittest.TestCase):
         names = [entry.get("name") for entry in entries]
         self.assertEqual(
             names,
-            ["listik", "feature-pipeline", "claude-codex", "dsh", "codex", "opencode", "pi", "devin",
-             "second-opinion"],
+            ["listik", "pipeline-core", "feature-pipeline", "claude-codex", "dsh", "codex", "opencode", "pi",
+             "devin", "second-opinion"],
             f"состав маркетплейса не тот: {names}",
         )
         for entry in entries:
@@ -153,7 +157,7 @@ class FeaturePipelinePluginTests(unittest.TestCase):
         self.assertEqual(_keys_of_kind("direct"), set(),
                          "в routes.json осталась запись kind == direct")
 
-#: Пути (относительно PLUGIN_DIR), которые должны называть работу по id карточки (`<id>`), а не
+#: Пути (относительно плагина, см. `_plugin_path`), которые должны называть работу по id карточки (`<id>`), а не
 #: по номеру шага. `agents/*.md` собирается в момент вызова теста, а не при импорте.
 CORE_DOC = pathlib.Path("references") / "pipeline-core.md"
 AGENTS_SUBDIR = "agents"
@@ -163,8 +167,17 @@ MANIFEST_LINE = (
 )
 
 
+#: Каталоги, переехавшие в плагин ядра: путь с таким первым компонентом читается из CORE_PLUGIN_DIR.
+CORE_SUBDIRS = ("agents", "hooks", "references")
+
+
+def _plugin_path(relative: pathlib.Path) -> pathlib.Path:
+    root = CORE_PLUGIN_DIR if pathlib.Path(relative).parts[0] in CORE_SUBDIRS else PLUGIN_DIR
+    return root / relative
+
+
 def _plugin_text(relative: pathlib.Path) -> str:
-    return (PLUGIN_DIR / relative).read_text(encoding="utf-8")
+    return _plugin_path(relative).read_text(encoding="utf-8")
 
 
 #: Начало абзаца шага 0 про файл широкой механической правки.
@@ -197,8 +210,8 @@ def _core_paragraph(start: str) -> str:
 
 
 def _agent_paths() -> list[pathlib.Path]:
-    """Все `agents/*.md`, относительно PLUGIN_DIR, в момент вызова."""
-    agents_dir = PLUGIN_DIR / AGENTS_SUBDIR
+    """Все `agents/*.md`, относительно CORE_PLUGIN_DIR, в момент вызова."""
+    agents_dir = CORE_PLUGIN_DIR / AGENTS_SUBDIR
     return sorted(
         (pathlib.Path(AGENTS_SUBDIR) / path.name)
         for path in agents_dir.glob("*.md")
@@ -206,11 +219,110 @@ def _agent_paths() -> list[pathlib.Path]:
 
 
 def _spec_writer_paths() -> list[pathlib.Path]:
-    agents_dir = PLUGIN_DIR / AGENTS_SUBDIR
+    agents_dir = CORE_PLUGIN_DIR / AGENTS_SUBDIR
     return sorted(
         (pathlib.Path(AGENTS_SUBDIR) / path.name)
         for path in agents_dir.glob("pipeline-spec-writer*.md")
     )
+
+
+
+#: Скил-указатель на ядро в плагине pipeline-core (listik-d9rj, порция a).
+CORE_SKILL = pathlib.Path("skills") / "core" / SKILL_FILE
+CORE_SKILL_PATH_LINE = "${CLAUDE_PLUGIN_ROOT}/references/pipeline-core.md"
+PLUGIN_ROOT_VAR = "${CLAUDE_PLUGIN_ROOT}"
+#: Относительная markdown-ссылка `[текст](путь)` — та же форма, что LINK_RE в test_claude_codex_plugin.py.
+LINK_RE = re.compile(r"\[[^\]\n]*\]\(([^)\s]+)\)")
+
+
+def _core_path_from_skill(plugin_root: pathlib.Path) -> pathlib.Path | None:
+    """Путь ядра из скила `core` копии плагина после подстановки `${CLAUDE_PLUGIN_ROOT}`."""
+    text = (plugin_root / CORE_SKILL).read_text(encoding="utf-8").replace(PLUGIN_ROOT_VAR, str(plugin_root))
+    resolved = CORE_SKILL_PATH_LINE.replace(PLUGIN_ROOT_VAR, str(plugin_root))
+    if resolved not in text:
+        return None
+    return pathlib.Path(resolved)
+
+
+def _broken_links(skill_path: pathlib.Path) -> list[str]:
+    """Относительные ссылки SKILL.md, которые не ведут в существующий файл."""
+    broken = []
+    for target in LINK_RE.findall(skill_path.read_text(encoding="utf-8")):
+        if target.startswith(("http://", "https://", "mailto:", "#")):
+            continue
+        if not (skill_path.parent / target.split("#", 1)[0]).exists():
+            broken.append(target)
+    return broken
+
+
+class PipelineCorePluginTests(unittest.TestCase):
+    """Плагин pipeline-core: скил-указатель, доставка ядра одним плагином, зависимости."""
+
+    def test_core_skill(self) -> None:
+        path = CORE_PLUGIN_DIR / CORE_SKILL
+        self.assertTrue(path.is_file(), f"нет {path}")
+        text = path.read_text(encoding="utf-8")
+        frontmatter = _frontmatter(text.splitlines())
+        self.assertIsNotNone(frontmatter, f"{path}: нет frontmatter")
+        self.assertIn("name: core", frontmatter)
+        self.assertIn("user-invocable: false", frontmatter)
+        self.assertIn(CORE_SKILL_PATH_LINE, text)
+        self.assertTrue((CORE_PLUGIN_DIR / "references" / "pipeline-core.md").is_file())
+
+    def _copy_plugin(self) -> pathlib.Path:
+        tmp = pathlib.Path(tempfile.mkdtemp())
+        self.addCleanup(shutil.rmtree, tmp, ignore_errors=True)
+        root = tmp / "pipeline-core" / "1.0.0"
+        shutil.copytree(CORE_PLUGIN_DIR, root)
+        return root
+
+    def test_core_delivered_by_single_plugin(self) -> None:
+        """Копия одного плагина, как в кэше Claude Code: путь из скила ведёт в файл внутри копии."""
+        root = self._copy_plugin()
+        core = _core_path_from_skill(root)
+        self.assertIsNotNone(core, f"в скиле нет строки {CORE_SKILL_PATH_LINE!r}")
+        self.assertTrue(core.is_file(), f"ядра нет по пути из скила: {core}")
+        self.assertTrue(core.resolve().is_relative_to(root.resolve()), f"{core} вне копии плагина {root}")
+
+    def test_core_delivery_check_rejects_broken_copy(self) -> None:
+        root = self._copy_plugin()
+        (root / "references" / "pipeline-core.md").unlink()
+        core = _core_path_from_skill(root)
+        self.assertFalse(core is not None and core.is_file(), "проверка не заметила пропавшее ядро")
+        root = self._copy_plugin()
+        skill = root / CORE_SKILL
+        skill.write_text(skill.read_text(encoding="utf-8").replace(
+            CORE_SKILL_PATH_LINE, PLUGIN_ROOT_VAR + "/../feature-pipeline/references/pipeline-core.md"),
+            encoding="utf-8")
+        core = _core_path_from_skill(root)
+        self.assertFalse(core is not None and core.is_file(), "проверка не заметила путь вне плагина")
+
+    def test_preset_links_resolve(self) -> None:
+        skills = sorted(_skill_names())
+        self.assertTrue(skills)
+        for name in skills:
+            with self.subTest(skill=name):
+                self.assertEqual(_broken_links(PLUGIN_DIR / SKILLS_SUBDIR / name / SKILL_FILE), [])
+
+    def test_link_check_rejects_old_references_link(self) -> None:
+        tmp = pathlib.Path(tempfile.mkdtemp())
+        self.addCleanup(shutil.rmtree, tmp, ignore_errors=True)
+        skill = tmp / "plugins" / "feature-pipeline" / "skills" / "high-pipeline" / SKILL_FILE
+        skill.parent.mkdir(parents=True)
+        old_link = "../../references/ROLES.md"
+        skill.write_text(_skill_text("high-pipeline") + f"\n[ROLES.md]({old_link})\n", encoding="utf-8")
+        self.assertIn(old_link, _broken_links(skill))
+
+    def test_preset_plugins_depend_on_core(self) -> None:
+        for plugin in ("feature-pipeline", "claude-codex"):
+            with self.subTest(plugin=plugin):
+                manifest = _read_json(REPO_DIR / "plugins" / plugin / PLUGIN_MANIFEST)
+                self.assertIn("pipeline-core", manifest.get("dependencies", []))
+        with_option = sorted(
+            entry["name"] for entry in _read_json(MARKETPLACE_JSON)["plugins"]
+            if "auto_approve_agents" in _read_json(REPO_DIR / entry["source"] / PLUGIN_MANIFEST)
+            .get("userConfig", {}))
+        self.assertEqual(with_option, ["pipeline-core"])
 
 
 class FeaturePipelineStepNamingTests(unittest.TestCase):
@@ -340,7 +452,7 @@ class FeaturePipelineStepNamingTests(unittest.TestCase):
 
     def test_tracks_doc_removed(self) -> None:
         """`tracks.md` удалён, и ни один `SKILL.md` на него больше не ссылается."""
-        tracks_doc = PLUGIN_DIR / "skills" / "feature-pipeline" / "references" / "tracks.md"
+        tracks_doc = PLUGIN_DIR / "skills/feature-pipeline/references/tracks.md"
         self.assertFalse(
             tracks_doc.exists(),
             f"{tracks_doc}: файл должен быть удалён — его содержимое переехало в {CORE_DOC}",
@@ -384,8 +496,10 @@ ARGUMENT_HINT_ID_SKILLS = (
 
 BASE_LINE_RE = re.compile(r"^BASE=<id>", re.MULTILINE)
 
-#: Ссылка на ядро, которую держит каждый SKILL.md пресета.
-CORE_LINK = "[pipeline-core.md](../../references/pipeline-core.md)"
+#: Чтение ядра, которое держит каждый SKILL.md пресета: подстроки текста со схлопнутыми пробелами.
+CORE_LINK = ("скил `pipeline-core:core`",
+             "прочитай ядро по пути, который он назовёт, целиком до первого действия",
+             "`plugins/pipeline-core/references/pipeline-core.md`")
 
 #: Пресеты без ссылки на ядро (сейчас таких нет).
 PRESETS_WITHOUT_CORE_LINK: tuple[str, ...] = ()
@@ -429,15 +543,17 @@ class FeaturePipelineSkillNamingTests(unittest.TestCase):
                 )
 
     def test_presets_read_core(self) -> None:
-        """Каждый пресет отсылает к ядру ссылкой на pipeline-core.md."""
+        """Каждый пресет читает ядро через скил `pipeline-core:core` (пробелы и переносы схлопнуты)."""
         for name in sorted(_skill_names()):
             if name in PRESETS_WITHOUT_CORE_LINK:
                 continue
-            with self.subTest(skill=name):
-                self.assertIn(
-                    CORE_LINK, _skill_text(name),
-                    f"{name}/{SKILL_FILE}: нет ссылки на ядро {CORE_LINK!r}",
-                )
+            collapsed = " ".join(_skill_text(name).split())
+            for needle in CORE_LINK:
+                with self.subTest(skill=name, needle=needle):
+                    self.assertIn(
+                        needle, collapsed,
+                        f"{name}/{SKILL_FILE}: нет чтения ядра {needle!r}",
+                    )
 
     def test_opus_pipeline_naming(self) -> None:
         text = _skill_text("opus-pipeline")
@@ -591,7 +707,7 @@ VENDORED_HREF_MARKS += ("/pi/", "/devin/")
 
 def _pipeline_docs() -> list[pathlib.Path]:
     """Ядро и SKILL.md всех пресетов — там, где оркестратор ищет внешний скил."""
-    docs = [PLUGIN_DIR / CORE_DOC]
+    docs = [_plugin_path(CORE_DOC)]
     docs.extend(
         PLUGIN_DIR / SKILLS_SUBDIR / name / SKILL_FILE
         for name in sorted(_skill_names())
@@ -692,7 +808,7 @@ class FeaturePipelineNoFallbackTests(unittest.TestCase):
                     self.assertIn(needle, text, f"{name}/{SKILL_FILE}: нет стоп-фактора {needle!r}")
 
     def test_core_defines_stop_factor(self) -> None:
-        core = (PLUGIN_DIR / "references" / "pipeline-core.md").read_text(encoding="utf-8")
+        core = (CORE_PLUGIN_DIR / "references" / "pipeline-core.md").read_text(encoding="utf-8")
         for needle in ("### Стоп-фактор", "`стоп: <роль> — <харнесс> недоступен: <причина>`",
                        "Запасного исполнителя нет", "стоп-фактор недоступной роли"):
             with self.subTest(required=needle):
@@ -770,7 +886,7 @@ def _amend_scan_paths() -> list[pathlib.Path]:
     """Файлы скана: references/*.md, agents/*.md и skills/*/SKILL.md (hooks/ не входит)."""
     paths = sorted(
         pathlib.Path(REFERENCES_SUBDIR) / path.name
-        for path in (PLUGIN_DIR / REFERENCES_SUBDIR).glob("*.md")
+        for path in (CORE_PLUGIN_DIR / REFERENCES_SUBDIR).glob("*.md")
     )
     paths.extend(_agent_paths())
     paths.extend(
@@ -1182,7 +1298,7 @@ class FeaturePipelineListikCardTests(unittest.TestCase):
                 self.assertIn(marker, text, f"{name}: нет {marker!r}")
 
     def test_spec_and_critic_agents_do_not_preload_listik(self) -> None:
-        agents = PLUGIN_DIR / AGENTS_SUBDIR
+        agents = CORE_PLUGIN_DIR / AGENTS_SUBDIR
         names = ["pipeline-critic.md"] + sorted(path.name for path in agents.glob("pipeline-spec-writer*.md"))
         self.assertGreater(len(names), 1, "не нашлось ни одного pipeline-spec-writer*.md")
         for name in names:
@@ -1265,7 +1381,7 @@ class FeaturePipelineCopyAndNegativeControlTests(unittest.TestCase):
 CRITIQUE_HEADING = "## Критика ТЗ — состав по пресету и кворум"
 CRITIQUE_SECTION_REQUIRED = (
     "--channel deepseek", "--channel glm", "devin:devin-delegate", "--thinking max",
-    "--permission read", "--timeout 900", "feature-pipeline:pipeline-critic", "model: sonnet",
+    "--permission read", "--timeout 900", "pipeline-core:pipeline-critic", "model: sonnet",
     "review-<X>.sonnet.md", "review-<X>.devin.md", "review-<X>.deepseek.md",
     "review-<X>.glm.md", "15 минут", "кворум", "[все]", "Границы и ценность:", "Сверка с кодом:",
     "стоп: критика — кворум не набран", "Решение по сводке", "decisions-<X>.md",
@@ -1287,8 +1403,8 @@ SPARE_CRITIC_RE = re.compile(r"запасн\w* критик", re.I)
 CRITIQUE_PAPER_NAMES = ("review-<X>.sonnet.md", "review-<X>.devin.md", "review-<X>.codex.md",
                         "review-<X>.opus.md")
 CRITIQUE_AGENTS_EFFORT = {"pipeline-critic.md": "high"}
-CRITIQUE_AGENTS_REMOVED = ("pipeline-critic-medium.md", "pipeline-critic-xhigh.md",
-                           "pipeline-critic-low.md")
+#: Удалённые агенты-критики: medium/xhigh законно живут в pipeline-core (пресеты claude-codex), low — нигде.
+CRITIQUE_AGENTS_REMOVED = ("pipeline-critic-low.md",)
 
 
 #: Исключение на коммит судьи sol-pipeline в мосте codex (listik-rdwp, порция a).
@@ -1522,13 +1638,15 @@ class FeaturePipelineCritiqueTests(unittest.TestCase):
                                     f"{name}: проверка не ловит блок без 'claude-codex'")
 
     def test_critic_agents(self) -> None:
-        agents = PLUGIN_DIR / AGENTS_SUBDIR
+        agents = CORE_PLUGIN_DIR / AGENTS_SUBDIR
         for name, effort in CRITIQUE_AGENTS_EFFORT.items():
             frontmatter = _frontmatter(_plugin_text(pathlib.Path(AGENTS_SUBDIR) / name).splitlines())
             with self.subTest(agent=name):
                 self.assertIsNotNone(frontmatter, f"{name}: нет frontmatter")
                 self.assertIn("model: sonnet", frontmatter, f"{name}: не model: sonnet")
                 self.assertIn(f"effort: {effort}", frontmatter, f"{name}: не effort: {effort}")
+        self.assertFalse((PLUGIN_DIR / AGENTS_SUBDIR).exists(),
+                         f"{PLUGIN_DIR / AGENTS_SUBDIR}: агенты переехали в pipeline-core, каталога быть не должно")
         for name in CRITIQUE_AGENTS_REMOVED:
             with self.subTest(removed=name):
                 self.assertFalse((agents / name).exists(), f"{name} должен быть удалён")
@@ -1688,8 +1806,8 @@ LENS_JUDGE_BLOCK_MARK = "Ты — приёмка одной порции ТЗ"
 LENS_README = pathlib.Path("README.md")
 #: Пресеты с линзами-субагентами Claude вместо pi glm: запуск — по скилу пресета, остальное — по ядру.
 CLAUDE_LENS_PRESETS = ("claude-pipeline",)
-CLAUDE_LENS_REQUIRED = (LENS_CORE_REF, "feature-pipeline:pipeline-lens",
-                        "feature-pipeline:pipeline-judge-inherit", "вынести:", "отбросить:", LENS_FILE_MARK)
+CLAUDE_LENS_REQUIRED = (LENS_CORE_REF, "pipeline-core:pipeline-lens",
+                        "pipeline-core:pipeline-judge-inherit", "вынести:", "отбросить:", LENS_FILE_MARK)
 
 
 def _fenced_block_with(text: str, needle: str) -> str:
@@ -1782,7 +1900,7 @@ class FeaturePipelineLensPresetTests(unittest.TestCase):
 
 #: Состав критиков по пресетам (listik-6rp9, порция b): что обязано быть и чего нет в этапе 2.
 CRITIQUE_QUORUM_STOP = "стоп: критика — кворум не набран"
-CRITIQUE_SONNET = ("feature-pipeline:pipeline-critic", "model: sonnet")
+CRITIQUE_SONNET = ("pipeline-core:pipeline-critic", "model: sonnet")
 CRITIQUE_COMPOSITION = {
     # имя: (есть в этапе 2, нет в этапе 2 (с учётом регистра), нет без учёта регистра)
     "xhigh-pipeline": (CRITIQUE_SONNET + ("devin:devin-delegate", "deepseek"), (), ("glm",)),
@@ -1793,7 +1911,7 @@ CRITIQUE_COMPOSITION = {
     "cross-pipeline": (CRITIQUE_SONNET + ("deepseek",), ("devin:devin-check", "--thinking max"),
                        ("glm",)),
     "low-pipeline": (("deepseek", "glm"),
-                     ("`feature-pipeline:pipeline-critic`", "devin:devin-delegate",
+                     ("`pipeline-core:pipeline-critic`", "devin:devin-delegate",
                       "pipeline-critic-low", "Sonnet low"), ()),
     "sol-pipeline": (CRITIQUE_SONNET + ("codex:codex-delegate", "--effort medium", "gpt-6.1-sol"),
                      ("pi:pi-delegate", "devin:devin-delegate"), ("glm", "deepseek")),
@@ -1921,7 +2039,7 @@ class FeaturePipelineCritiqueCompositionTests(unittest.TestCase):
             "cross + GLM 5.3 Flash": in_stage2("cross-pipeline", lambda s: s + "\nGLM 5.3 Flash"),
             "medium без «кворум»": in_stage2("medium-pipeline", lambda s: s.replace("кворум", "")),
             "low + pipeline-critic-low": in_stage2(
-                "low-pipeline", lambda s: s + "\n`feature-pipeline:pipeline-critic-low`"),
+                "low-pipeline", lambda s: s + "\n`pipeline-core:pipeline-critic-low`"),
             "low: в таблицу Роли дописан запасной критик": (
                 "low-pipeline", texts["low-pipeline"].replace(
                     "| 2. Критика ТЗ |", "| 2. Критика ТЗ, запасной критик Sonnet |", 1)),

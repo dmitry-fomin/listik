@@ -246,7 +246,7 @@ class LaunchTests(SwarmCase):
     # ---------------------------------------------- критерии роли (listik-2cu2)
 
     BRIDGE = ("Критерии роли {role} — разделы агента {stem} "
-              "(plugins/feature-pipeline/agents/{stem}.md). Где они расходятся с протоколом "
+              "(plugins/pipeline-core/agents/{stem}.md). Где они расходятся с протоколом "
               "выше, действует протокол: ответ — последняя строка вывода, а не первая строка "
               "отчёта; claim, heartbeat, release, stage, needs-owner и вердикт (-k verdict) "
               "ты не делаешь — карточку ведёт Listik; оркестратора и дампов диффа нет, всё "
@@ -297,7 +297,7 @@ class LaunchTests(SwarmCase):
         self.addCleanup(patcher.stop)
 
     def test_each_role_sees_its_criteria_in_log(self) -> None:
-        agents = Path(__file__).resolve().parent.parent / "plugins/feature-pipeline/agents"
+        agents = Path(__file__).resolve().parent.parent / "plugins/pipeline-core/agents"
         for role, stage, stem, titles, answer in self.ROLE_CASES:
             with self.subTest(role=role):
                 lines = (agents / f"{stem}.md").read_text(encoding="utf-8").splitlines()
@@ -313,7 +313,7 @@ class LaunchTests(SwarmCase):
                     self.assertNotIn(header, logged)
 
     def test_judge_prompt_has_duplicates_point(self) -> None:
-        agents = Path(__file__).resolve().parent.parent / "plugins/feature-pipeline/agents"
+        agents = Path(__file__).resolve().parent.parent / "plugins/pipeline-core/agents"
         point = next(line for line in (agents / "pipeline-judge.md").read_text(
             encoding="utf-8").splitlines() if "Отдельно — **дубликаты**" in line)
         _, prompt, logged = self.run_role("judge", "s4-judge", "зелёный")
@@ -347,7 +347,7 @@ class LaunchTests(SwarmCase):
             task_id=task_id, project="proj", stage="s4-judge", role="judge",
             worktree=cwd, branch="", cwd=cwd)
         bridge = ("Критерии роли judge — разделы агента pipeline-judge "
-                  "(plugins/feature-pipeline/agents/pipeline-judge.md). Где они расходятся с "
+                  "(plugins/pipeline-core/agents/pipeline-judge.md). Где они расходятся с "
                   "протоколом выше, действует протокол: ответ — последняя строка вывода, а не "
                   "первая строка отчёта; claim, heartbeat, release, stage, needs-owner и "
                   "вердикт (-k verdict) ты не делаешь — карточку ведёт Listik; оркестратора и "

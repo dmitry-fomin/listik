@@ -12,9 +12,8 @@ license: MIT
 нет, поэтому кворум критики — он один. Расклад утверждён автором 07.10.2026, а не выведен расчётом; цифры
 галлюцинаций по ролям — в [README плагина](../../README.md) (`plugins/claude-codex/README.md`).
 
-**Прочитай [pipeline-core.md](../../../feature-pipeline/references/pipeline-core.md)
-(`plugins/feature-pipeline/references/pipeline-core.md`) целиком до первого действия.** Это ядро плагина
-`feature-pipeline`: твоя роль, жёсткие правила, протокол вопросов, шаг 0, треки, сборка пакета диффа, пределы на
+**Вызови скил `pipeline-core:core` и прочитай ядро по пути, который он назовёт, целиком до первого действия** (в репозитории — `plugins/pipeline-core/references/pipeline-core.md`). Это ядро плагина
+`pipeline-core`: твоя роль, жёсткие правила, протокол вопросов, шаг 0, треки, сборка пакета диффа, пределы на
 порцию, журнал и общие грабли. Ниже — только то, чем `claude-codex:low-pipeline` отличается: кто делает каждый этап и как
 его позвать.
 
@@ -28,15 +27,15 @@ Codex. Секреты в ТЗ не пропускает этап 1, в дифф 
 
 | Этап | Кто | Модель и усилие | Первая строка отчёта |
 | --- | --- | --- | --- |
-| 1. ТЗ и чек-листы | субагент `feature-pipeline:pipeline-spec-writer-low` | **`model: opus` в вызове** (frontmatter — opus, effort low) → Opus 5.5 low | `готово` или `вопрос` |
+| 1. ТЗ и чек-листы | субагент `pipeline-core:pipeline-spec-writer-low` | **`model: opus` в вызове** (frontmatter — opus, effort low) → Opus 5.5 low | `готово` или `вопрос` |
 | 2. Критика ТЗ | `codex` — скил `codex:codex-delegate`, фоновой задачей | GPT-6.1 Sol medium (`--model gpt-6.1-sol --effort medium --permission read`); кворум — он один | файл критика, потом твоя сводка `review-<X>.md` с разделами «Блокирующие» и «Существенные» |
-| 3. Реализация | субагент `claude-codex:pipeline-implementer-low` | параметр `model` в вызове не передаётся (frontmatter — opus, effort low) → Opus 5.5 low | `готово`, `не смог` или `вопрос` |
+| 3. Реализация | субагент `pipeline-core:pipeline-implementer-low` | параметр `model` в вызове не передаётся (frontmatter — opus, effort low) → Opus 5.5 low | `готово`, `не смог` или `вопрос` |
 | 4. Приёмка и коммит | скил `codex:codex-delegate`, фоновой задачей | GPT-6 Astra medium: `--model gpt-6-astra --effort medium --permission write`; коммитит судья | `зелёный` с хешем или `красный` |
 
 `model` перебивает frontmatter, усилие остаётся из него и в вызове не меняется — нужен другой уровень, это
 другой агент. Автору ТЗ `model: opus` передаётся (во frontmatter opus low; параметр страхует от смены по
-умолчанию). Исполнителю `claude-codex:pipeline-implementer-low` параметр `model` в вызове не передаётся: во
-frontmatter уже opus low. Возьмёшь вместо него `feature-pipeline:pipeline-implementer` и забудешь `model` — код
+умолчанию). Исполнителю `pipeline-core:pipeline-implementer-low` параметр `model` в вызове не передаётся: во
+frontmatter уже opus low. Возьмёшь вместо него `pipeline-core:pipeline-implementer` и забудешь `model` — код
 напишет Sonnet; передашь ему `model: opus` — Opus, но medium, не того усилия.
 
 В каждом вызове codex модель и усилие задаются флагами пресета (`--model`, `--effort`); флаг провайдера
@@ -44,7 +43,7 @@ frontmatter уже opus low. Возьмёшь вместо него `feature-pip
 
 ## Нужные скилы
 
-Пресет требует установленного плагина `feature-pipeline` (ядро `pipeline-core.md` и агенты `feature-pipeline:*`);
+Пресет требует установленного плагина `pipeline-core` (ядро `pipeline-core.md` и агенты `pipeline-core:*`);
 нет его, нет плагина `codex` или `listik` — стоп по ядру (раздел «Внешние скилы» `pipeline-core.md`). Скрипты из
 кэша не зови.
 
@@ -89,7 +88,7 @@ WT=.             # в треке — абсолютный путь дерева 
 
 ### 1. ТЗ и чек-листы — `pipeline-spec-writer-low`, `model: opus`, один раз на шаг
 
-`Agent` `feature-pipeline:pipeline-spec-writer-low`, **`model: opus`** — обязательно, в каждом запуске и в
+`Agent` `pipeline-core:pipeline-spec-writer-low`, **`model: opus`** — обязательно, в каждом запуске и в
 режиме правки. В задаче:
 путь к спеке **или** текст автора; `$STEPS`; имя бумаг `<id>`. В треке добавь **границу этого трека** —
 каталог или слой, за который его ТЗ не выходит, словами автора. Правила порций, границ
@@ -115,7 +114,7 @@ WT=.             # в треке — абсолютный путь дерева 
 
 ### 3. Реализация — `pipeline-implementer-low`
 
-`Agent` `claude-codex:pipeline-implementer-low`, параметр `model` в вызове не передаётся (frontmatter — opus low). В задаче — путь к порции
+`Agent` `pipeline-core:pipeline-implementer-low`, параметр `model` в вызове не передаётся (frontmatter — opus low). В задаче — путь к порции
 `$STEPS/$BASE.<X>.md`, по одной за раз; право записи у агента в определении. В треке первой
 строкой абсолютный путь дерева трека. Есть карточка — строка `Listik, карточка <P>` (id буквально) идёт в задачу первой строкой, в треке — второй,
 сразу после пути дерева трека; карточки нет (`Listik: карточки нет`) — строки нет (`pipeline-core.md`, раздел
@@ -229,7 +228,7 @@ listik
 
 | Симптом | Причина | Что делать |
 | --- | --- | --- |
-| Код написан Sonnet или Opus не того усилия | вместо `claude-codex:pipeline-implementer-low` позван `feature-pipeline:pipeline-implementer` (Sonnet без `model`, Opus medium с `model: opus`) | исполнитель — только `claude-codex:pipeline-implementer-low`, без параметра `model`; отчёт этапа не считается, повтор верным агентом |
+| Код написан Sonnet или Opus не того усилия | вместо `pipeline-core:pipeline-implementer-low` позван `pipeline-core:pipeline-implementer` (Sonnet без `model`, Opus medium с `model: opus`) | исполнитель — только `pipeline-core:pipeline-implementer-low`, без параметра `model`; отчёт этапа не считается, повтор верным агентом |
 | ТЗ написано моделью не того усилия | позван не `pipeline-spec-writer-low` или забыт `model: opus` | автор ТЗ и `model` — ровно парой из таблицы «Роли»; ТЗ переписать верной парой |
 | Критик ответил моделью не того усилия | в вызове codex не тот `--effort` | ответ не той модели — критик выбыл по ядру, повтор с `--model gpt-6.1-sol --effort medium` |
 | Судья ответил без коммита и пишет «read-only» или об отказе записи | в вызов не попал `--permission write` — песочница только на чтение | вердикт не считать; перезапуск судьи с `--permission write` |

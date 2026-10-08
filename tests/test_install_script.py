@@ -98,6 +98,9 @@ exit "${FAKE_SYSTEMCTL_EXIT:-0}"
 #: лишний раз; тест на `mcp get` -> 0 подменяет `FAKE_CLAUDE_MCP_GET_EXIT`.
 #: listik-jdo8: `FAKE_CLAUDE_FAIL_PLUGIN=<плагин>@listik` роняет его install/update,
 #: `FAKE_CLAUDE_FAIL_MARKETPLACE=1` — `plugin marketplace update`. В /dev/tty не пишет.
+#: listik-d9rj: `plugin list --json` печатает `FAKE_CLAUDE_PLUGIN_LIST` (по умолчанию `[]`) и
+#: выходит с `FAKE_CLAUDE_LIST_EXIT` (по умолчанию 0); `FAKE_CLAUDE_FAIL_UNINSTALL=<id>`
+#: роняет `plugin uninstall <id>`.
 FAKE_CLAUDE_SH = """#!/bin/sh
 printf 'claude %s\\n' "$*" >> "$FAKE_LOG"
 if [ "$1" = mcp ] && [ "$2" = get ]; then
@@ -109,6 +112,14 @@ if [ "$1" = plugin ] && [ "$2" = marketplace ] && [ "$3" = update ] \\
 fi
 if [ "$1" = plugin ] && { [ "$2" = install ] || [ "$2" = update ]; } \\
         && [ -n "${FAKE_CLAUDE_FAIL_PLUGIN:-}" ] && [ "$3" = "$FAKE_CLAUDE_FAIL_PLUGIN" ]; then
+    exit 1
+fi
+if [ "$1" = plugin ] && [ "$2" = list ] && [ "$3" = --json ]; then
+    printf '%s\\n' "${FAKE_CLAUDE_PLUGIN_LIST:-[]}"
+    exit "${FAKE_CLAUDE_LIST_EXIT:-0}"
+fi
+if [ "$1" = plugin ] && [ "$2" = uninstall ] \\
+        && [ -n "${FAKE_CLAUDE_FAIL_UNINSTALL:-}" ] && [ "$3" = "$FAKE_CLAUDE_FAIL_UNINSTALL" ]; then
     exit 1
 fi
 exit "${FAKE_CLAUDE_EXIT:-0}"
@@ -492,13 +503,13 @@ class InstallScriptTests(unittest.TestCase):
         self.assertIn("MCP: пропущен", result.stdout)
         self.assertIn("plugin marketplace add dmitry-fomin/listik", text)
         self.assertIn("plugin install listik@listik", text)
-        self.assertIn("plugin install feature-pipeline@listik", text)
+        self.assertIn("plugin install pipeline-core@listik", text)
         self.assertIn("plugin install dsh@listik", text)
         self.assertIn("plugin install codex@listik", text)
         self.assertIn("plugin install second-opinion@listik", text)
-        self.assertIn("plugin install claude-codex@listik", text)
+        self.assertIn("plugin install pipeline-cc@listik", text)
         self.assertIn("plugin marketplace update listik", text)
-        for name in ("listik", "feature-pipeline", "pi", "devin", "opencode"):
+        for name in ("listik", "pipeline-core", "pi", "devin", "opencode"):
             self.assertIn(f"plugin install {name}@listik", text)
             self.assertIn(f"plugin update {name}@listik", text)
 
@@ -797,14 +808,15 @@ class InstallScriptTests(unittest.TestCase):
         import sqlite3
         conn = sqlite3.connect(self.installed_home / "listik.db")
         with conn:
-            conn.execute("UPDATE routes SET title = 'Моя правка' WHERE key = 'low-pipeline'")
+            cur = conn.execute("UPDATE routes SET title = 'Моя правка' WHERE key = 'full-low'")
+            self.assertEqual(cur.rowcount, 1)
         conn.close()
 
     def installed_route_title(self) -> str:
         import sqlite3
         conn = sqlite3.connect(self.installed_home / "listik.db")
         try:
-            return conn.execute("SELECT title FROM routes WHERE key = 'low-pipeline'").fetchone()[0]
+            return conn.execute("SELECT title FROM routes WHERE key = 'full-low'").fetchone()[0]
         finally:
             conn.close()
 
@@ -859,9 +871,11 @@ class InstallScriptTests(unittest.TestCase):
 
     # --- listik-jdo8, порция b: плагины по выбору нейронок и харнессов ----
 
-    ALL_PLUGINS = ("listik", "feature-pipeline", "claude-codex", "dsh", "codex", "opencode",
-                   "pi", "devin", "second-opinion")
+    ALL_PLUGINS = ("listik", "pipeline-core", "pipeline-full", "pipeline-cc", "pipeline-claude",
+                   "dsh", "codex", "opencode", "pi", "devin", "second-opinion")
     PROMPT = "Номера через пробел или запятую; Enter — все, 0 — ни одной: "
+    OLD_PLUGINS_USER = ('[{"id":"feature-pipeline@listik","scope":"user"},'
+                        '{"id":"claude-codex@listik","scope":"user"}]')
 
     def fake_env(self, **overrides: str) -> tuple[dict, pathlib.Path]:
         fake_dir, log = self.make_fake_tools()
@@ -884,19 +898,28 @@ class InstallScriptTests(unittest.TestCase):
         finally:
             conn.close()
 
-    def assert_only_cc_hidden(self, stdout: str | None = None) -> None:
-        """claude-codex не выбран: скрыты ровно маршруты cc-*, остальные видимы (listik-z8fy).
+    def assert_hidden_plugins(self, unselected: set[str], stdout: str | None = None) -> None:
+        """Скрыты ровно маршруты, у которых `plugin` в `unselected`, остальные видимы
+        (listik-z8fy, listik-d9rj).
 
         `stdout` простого режима — ещё и сверка строки «скрыты маршруты: …» с базой."""
-        visibility = self.route_visibility()
-        hidden = {k for k, v in visibility.items() if not v}
-        cc = {k for k in visibility if k.startswith("cc-")}
-        self.assertTrue(cc, visibility)
-        self.assertEqual(hidden, cc, visibility)
+        conn = sqlite3.connect(self.installed_home / "listik.db")
+        try:
+            rows = conn.execute("SELECT key, visible, plugin FROM routes").fetchall()
+        finally:
+            conn.close()
+        hidden = {k for k, v, _ in rows if not v}
+        expected = {k for k, _, p in rows if p in unselected}
+        if unselected:
+            self.assertTrue(expected, rows)
+        self.assertEqual(hidden, expected, rows)
         if stdout is not None:
             line = next((ln for ln in stdout.splitlines() if "скрыты маршруты: " in ln), "")
-            self.assertEqual(set(line.partition("скрыты маршруты: ")[2].split(", ")), cc,
-                             stdout)
+            if expected:
+                self.assertEqual(set(line.partition("скрыты маршруты: ")[2].split(", ")),
+                                 expected, stdout)
+            else:
+                self.assertNotIn("скрыты маршруты", stdout)
 
     def install_plugins(self, *extra: str, env: dict) -> subprocess.CompletedProcess:
         result = self.run_install("--archive", str(self.make_archive(VERSION)), "--yes",
@@ -910,14 +933,15 @@ class InstallScriptTests(unittest.TestCase):
         result = self.install_plugins("--models", " deepseek , claude,,claude",
                                       "--harnesses=pi,claude,dsh", env=env)
         self.assertEqual(self.installed_plugins(log),
-                         {"listik", "feature-pipeline", "dsh", "pi", "second-opinion"})
+                         {"listik", "pipeline-core", "pipeline-claude", "dsh", "pi",
+                          "second-opinion"})
         self.assertNotIn("uninstall", self.log_text(log))
         self.assertIn("нейронки: claude, deepseek", result.stdout)
         self.assertIn("харнессы: claude, pi, dsh", result.stdout)
-        self.assertIn("плагины: ok (listik, feature-pipeline, dsh, pi, second-opinion)",
-                      result.stdout)
+        self.assertIn("плагины: ok (listik, pipeline-core, pipeline-claude, dsh, pi, "
+                      "second-opinion)", result.stdout)
         self.assertNotIn("grok:", result.stdout)
-        self.assert_only_cc_hidden(result.stdout)
+        self.assert_hidden_plugins({"pipeline-full", "pipeline-cc"}, result.stdout)
 
     def test_lists_order_of_plugins_and_claude_codex(self) -> None:
         env, log = self.fake_env()
@@ -925,13 +949,14 @@ class InstallScriptTests(unittest.TestCase):
                                       "opencode,codex,claude", env=env)
         installs = [ln.split()[3] for ln in self.log_text(log).splitlines()
                     if ln.startswith("claude plugin install ")]
-        self.assertEqual(installs, ["listik@listik", "feature-pipeline@listik",
-                                    "claude-codex@listik", "codex@listik", "opencode@listik",
+        self.assertEqual(installs, ["listik@listik", "pipeline-core@listik",
+                                    "pipeline-cc@listik", "pipeline-claude@listik",
+                                    "codex@listik", "opencode@listik",
                                     "second-opinion@listik"])
         visibility = self.route_visibility()
         self.assertTrue(any(k.startswith("cc-") for k in visibility), visibility)
-        self.assertTrue(all(visibility.values()), visibility)
-        self.assertNotIn("скрыты маршруты", result.stdout)
+        # pipeline-full не выбран (нет grok/devin/pi) — скрыт только он, cc-* видимы.
+        self.assert_hidden_plugins({"pipeline-full"}, result.stdout)
 
     def test_without_claude_model_hides_pipeline_routes(self) -> None:
         env, log = self.fake_env()
@@ -942,10 +967,11 @@ class InstallScriptTests(unittest.TestCase):
         self.assertEqual(len(visibility), ROUTES_COUNT)
         self.assertFalse(any(visibility.values()), visibility)
         self.assertIn("скрыты маршруты: ", result.stdout)
-        self.assertIn("low-pipeline", result.stdout)
+        self.assertIn("full-low", result.stdout)
+        self.assertNotIn("plugin install pipeline-", self.log_text(log))
 
     def test_without_claude_harness_installs_nothing(self) -> None:
-        env, log = self.fake_env()
+        env, log = self.fake_env(FAKE_CLAUDE_PLUGIN_LIST=self.OLD_PLUGINS_USER)
         result = self.install_plugins("--models", "all", "--harnesses", "codex,grok", env=env)
         self.assertNotIn("claude plugin", self.log_text(log))
         self.assertIn("плагины: пропущен (не выбран claude)", result.stdout)
@@ -962,7 +988,8 @@ class InstallScriptTests(unittest.TestCase):
     def test_env_lists_and_flag_wins(self) -> None:
         env, log = self.fake_env(LISTIK_MODELS="claude", LISTIK_HARNESSES="claude,devin")
         result = self.install_plugins("--models", "claude,devin", env=env)
-        self.assertEqual(self.installed_plugins(log), {"listik", "feature-pipeline", "devin"})
+        self.assertEqual(self.installed_plugins(log), {"listik", "pipeline-core", "pipeline-claude",
+                                                         "devin"})
         self.assertIn("харнессы: claude, devin", result.stdout)
 
     def test_empty_env_is_unset(self) -> None:
@@ -971,11 +998,11 @@ class InstallScriptTests(unittest.TestCase):
         self.assertEqual(self.installed_plugins(log), set(self.ALL_PLUGINS))
 
     def test_yes_installs_all_and_hides_nothing(self) -> None:
-        env, log = self.fake_env(FAKE_CLAUDE_FAIL_PLUGIN="claude-codex@listik")
+        env, log = self.fake_env(FAKE_CLAUDE_FAIL_PLUGIN="pipeline-cc@listik")
         result = self.install_plugins(env=env)
         self.assertEqual(self.installed_plugins(log), set(self.ALL_PLUGINS))
-        self.assertIn("плагины: не удалось (claude-codex)", result.stdout)
-        self.assertIn("/plugin install claude-codex@listik", result.stderr)
+        self.assertIn("плагины: не удалось (pipeline-cc)", result.stdout)
+        self.assertIn("/plugin install pipeline-cc@listik", result.stderr)
         self.assertTrue(all(self.route_visibility().values()))
         self.assertNotIn("скрыты маршруты", result.stdout)
         self.assertIn("grok: плагина в marketplace listik нет", result.stdout)
@@ -994,15 +1021,16 @@ class InstallScriptTests(unittest.TestCase):
         env, log = self.fake_env(FAKE_CLAUDE_FAIL_MARKETPLACE="1")
         result = self.install_plugins("--models", "claude", "--harnesses", "claude", env=env)
         self.assertIn("плагины: не удалось (marketplace)", result.stdout)
-        self.assertEqual(self.installed_plugins(log), {"listik", "feature-pipeline"})
-        self.assertIn("/plugin install feature-pipeline@listik", result.stderr)
+        self.assertEqual(self.installed_plugins(log),
+                         {"listik", "pipeline-core", "pipeline-claude"})
+        self.assertIn("/plugin install pipeline-core@listik", result.stderr)
         self.assertNotIn("/plugin install dsh@listik", result.stderr)
 
     def test_no_claude_hint_lists_selected_only(self) -> None:
         env = self.env(PATH=path_without("claude"), LISTIK_PORT=str(free_port()))
         result = self.install_plugins("--models", "claude", "--harnesses", "claude", env=env)
         self.assertIn("плагины: не удалось", result.stdout)
-        self.assertIn("/plugin install feature-pipeline@listik", result.stdout)
+        self.assertIn("/plugin install pipeline-core@listik", result.stdout)
         self.assertNotIn("/plugin install dsh@listik", result.stdout)
 
     def test_plugins_no_keeps_routes(self) -> None:
@@ -1010,7 +1038,8 @@ class InstallScriptTests(unittest.TestCase):
         self.install_plugins("--models", "openai", "--harnesses", "claude", env=env)
         conn = sqlite3.connect(self.installed_home / "listik.db")
         with conn:
-            conn.execute("UPDATE routes SET visible = 1 WHERE key = 'low-pipeline'")
+            cur = conn.execute("UPDATE routes SET visible = 1 WHERE key = 'full-low'")
+            self.assertEqual(cur.rowcount, 1)
         conn.close()
         before = self.route_visibility()
         log.write_text("", encoding="utf-8")
@@ -1064,6 +1093,189 @@ class InstallScriptTests(unittest.TestCase):
         for text in ("--models", "--harnesses", "LISTIK_MODELS", "LISTIK_HARNESSES",
                      "gemini", "opencode", "all", "none", "по выбору"):
             self.assertIn(text, result.stdout)
+        help_text = " ".join(result.stdout.split())
+        self.assertIn("pipeline-full", help_text)
+        self.assertIn("харнессы claude, grok, devin, pi", help_text)
+        self.assertIn("нейронки claude, grok, devin, glm, deepseek", help_text)
+
+    # --- listik-d9rj, порция e: плагины pipeline-*, удаление старых ----------
+
+    ALL_MODELS = ("claude", "openai", "deepseek", "glm", "grok", "devin", "gemini")
+    ALL_HARNESSES = ("claude", "codex", "pi", "devin", "dsh", "opencode", "grok")
+
+    def plugin_installs(self, log: pathlib.Path) -> list[str]:
+        return [ln.split()[3] for ln in self.log_text(log).splitlines()
+                if ln.startswith("claude plugin install ")]
+
+    def install_without(self, log: pathlib.Path, env: dict, *, model: str | None = None,
+                        harness: str | None = None) -> subprocess.CompletedProcess:
+        """Полный набор без одной нейронки/харнесса; лог и видимость — с чистого листа."""
+        log.write_text("", encoding="utf-8")
+        models = ",".join(m for m in self.ALL_MODELS if m != model)
+        harnesses = ",".join(h for h in self.ALL_HARNESSES if h != harness)
+        return self.install_plugins("--models", models, "--harnesses", harnesses,
+                                    "--routes-reimport", "yes", env=env)
+
+    def test_all_selected_installs_pipeline_family(self) -> None:
+        env, log = self.fake_env()
+        result = self.install_plugins("--models", "all", "--harnesses", "all", env=env)
+        self.assertEqual(self.plugin_installs(log),
+                         [f"{p}@listik" for p in ("listik", "pipeline-core", "pipeline-full",
+                                                  "pipeline-cc", "pipeline-claude", "dsh",
+                                                  "codex", "opencode", "pi", "devin",
+                                                  "second-opinion")])
+        self.assertIn("плагины: ok (listik, pipeline-core, pipeline-full, pipeline-cc, "
+                      "pipeline-claude, ", result.stdout)
+        self.assertTrue(all(self.route_visibility().values()))
+        self.assertNotIn("скрыты маршруты", result.stdout)
+
+    def test_pipeline_full_requires_every_condition(self) -> None:
+        env, log = self.fake_env()
+        cases = [("model", "claude"), ("harness", "grok"), ("harness", "devin"),
+                 ("harness", "pi"), ("model", "grok"), ("model", "devin"), ("model", "glm"),
+                 ("model", "deepseek")]
+        for what, name in cases:
+            with self.subTest(**{what: name}):
+                result = self.install_without(log, env, **{what: name})
+                self.assertNotIn("plugin install pipeline-full@listik", self.log_text(log))
+                if (what, name) == ("model", "claude"):
+                    self.assert_hidden_plugins(
+                        {"pipeline-full", "pipeline-cc", "pipeline-claude"}, result.stdout)
+                else:
+                    self.assert_hidden_plugins({"pipeline-full"}, result.stdout)
+
+    def test_pipeline_cc_requires_codex_and_openai(self) -> None:
+        env, log = self.fake_env()
+        for what, name in (("harness", "codex"), ("model", "openai")):
+            with self.subTest(**{what: name}):
+                result = self.install_without(log, env, **{what: name})
+                self.assertNotIn("pipeline-cc@listik", self.log_text(log))
+                self.assert_hidden_plugins({"pipeline-cc"}, result.stdout)
+
+    def test_claude_only_installs_core_and_claude(self) -> None:
+        env, log = self.fake_env()
+        result = self.install_plugins("--models", "claude", "--harnesses", "claude", env=env)
+        self.assertEqual(self.plugin_installs(log),
+                         ["listik@listik", "pipeline-core@listik", "pipeline-claude@listik"])
+        self.assert_hidden_plugins({"pipeline-full", "pipeline-cc"}, result.stdout)
+
+    def test_hide_by_plugin_keeps_own_and_swarm_routes(self) -> None:
+        from listik import routes_store
+        env, log = self.fake_env()
+        self.install_plugins("--models", "all", "--harnesses", "all", env=env)
+        conn = sqlite3.connect(self.installed_home / "listik.db")
+        try:
+            cols = [r[1] for r in conn.execute("PRAGMA table_info(routes)")
+                    if r[1] not in ("key", "plugin")]
+            with conn:
+                cur = conn.execute(
+                    f"INSERT INTO routes (key, plugin, {', '.join(cols)}) "
+                    f"SELECT 'my-flow', NULL, {', '.join(cols)} FROM routes "
+                    "WHERE key = 'full-low'")
+                self.assertEqual(cur.rowcount, 1)
+            conn.row_factory = sqlite3.Row
+            routes_store.create_route(conn, key="my-swarm", kind="swarm", title="рой",
+                                      visible=True, roles={"impl": {"harness": "dsh"}})
+        finally:
+            conn.close()
+        result = self.install_plugins("--models", "openai", "--harnesses", "claude,codex",
+                                      env=env)
+        visibility = self.route_visibility()
+        self.assertEqual(visibility["my-flow"], 1)
+        self.assertEqual(visibility["my-swarm"], 1)
+        line = next(ln for ln in result.stdout.splitlines() if "скрыты маршруты: " in ln)
+        self.assertNotIn("my-flow", line)
+        self.assertNotIn("my-swarm", line)
+        self.assert_hidden_plugins({"pipeline-full", "pipeline-cc", "pipeline-claude"},
+                                   result.stdout)
+
+    def test_removes_old_user_plugins(self) -> None:
+        env, log = self.fake_env(FAKE_CLAUDE_PLUGIN_LIST=(
+            '[{"id":"feature-pipeline@listik","scope":"user"},'
+            '{"id":"claude-codex@listik","scope":"user"},{"id":"pi@listik","scope":"user"}]'))
+        result = self.install_plugins("--models", "claude", "--harnesses", "claude", env=env)
+        lines = self.log_text(log).splitlines()
+        list_idx = lines.index("claude plugin list --json")
+        self.assertGreater(lines.index("claude plugin uninstall feature-pipeline@listik"),
+                           list_idx)
+        self.assertGreater(lines.index("claude plugin uninstall claude-codex@listik"), list_idx)
+        self.assertNotIn("uninstall pi@listik", self.log_text(log))
+        self.assertEqual(result.stdout.count("удалён устаревший"), 2, result.stdout)
+
+    def test_old_plugin_other_scope_kept(self) -> None:
+        env, log = self.fake_env(
+            FAKE_CLAUDE_PLUGIN_LIST='[{"id":"feature-pipeline@listik","scope":"project"}]')
+        result = self.install_plugins("--models", "claude", "--harnesses", "claude", env=env)
+        self.assertNotIn("uninstall", self.log_text(log))
+        self.assertIn("feature-pipeline@listik стоит в области project", result.stderr)
+
+    def test_old_plugins_list_unreadable(self) -> None:
+        for extra in ({"FAKE_CLAUDE_LIST_EXIT": "1"}, {"FAKE_CLAUDE_PLUGIN_LIST": "not json"},
+                      {"FAKE_CLAUDE_PLUGIN_LIST": '{"a":1}'}):
+            with self.subTest(**extra):
+                env, log = self.fake_env(**extra)
+                log.write_text("", encoding="utf-8")
+                # reimport возвращает visible из routes.json — скрытое прошлым случаем
+                # не мешает проверить строку «скрыты маршруты» в этом.
+                result = self.install_plugins("--models", "claude", "--harnesses", "claude",
+                                              "--routes-reimport", "yes", env=env)
+                self.assertEqual(result.returncode, 0)
+                self.assertNotIn("uninstall", self.log_text(log))
+                self.assertIn("не удалось проверить старые", result.stderr)
+                self.assertIn("плагины: ok (listik, pipeline-core, pipeline-claude)",
+                              result.stdout)
+                self.assertIn("скрыты маршруты: ", result.stdout)
+
+    def test_old_plugin_uninstall_fails(self) -> None:
+        env, log = self.fake_env(FAKE_CLAUDE_PLUGIN_LIST=self.OLD_PLUGINS_USER,
+                                 FAKE_CLAUDE_FAIL_UNINSTALL="feature-pipeline@listik")
+        result = self.install_plugins("--models", "claude", "--harnesses", "claude", env=env)
+        self.assertEqual(result.returncode, 0)
+        self.assertIn("не удалось удалить feature-pipeline@listik — удалите вручную",
+                      result.stderr)
+        self.assertIn("удалён устаревший claude-codex@listik", result.stdout)
+        self.assertIn("плагины: ok (", result.stdout)
+
+    def test_plugins_no_skips_old_plugins(self) -> None:
+        env, log = self.fake_env(FAKE_CLAUDE_PLUGIN_LIST=self.OLD_PLUGINS_USER)
+        result = self.run_install("--archive", str(self.make_archive(VERSION)), "--yes",
+                                  "--service", "no", "--mcp", "no", "--swarm", "no",
+                                  "--plugins", "no", env=env)
+        self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+        self.assertNotIn("plugin list", self.log_text(log))
+        self.assertNotIn("plugin uninstall", self.log_text(log))
+
+    def test_old_plugins_kept_without_claude_model(self) -> None:
+        env, log = self.fake_env(FAKE_CLAUDE_PLUGIN_LIST=self.OLD_PLUGINS_USER)
+        result = self.install_plugins("--models", "openai", "--harnesses", "claude,codex",
+                                      env=env)
+        self.assertNotIn("plugin list", self.log_text(log))
+        self.assertNotIn("uninstall", self.log_text(log))
+        self.assertNotIn("не удалось проверить старые", result.stdout + result.stderr)
+        self.assertNotIn("не проверялись", result.stdout + result.stderr)
+
+    def test_old_plugins_kept_when_core_fails(self) -> None:
+        for extra in ({"FAKE_CLAUDE_FAIL_PLUGIN": "pipeline-core@listik"},
+                      {"FAKE_CLAUDE_FAIL_MARKETPLACE": "1"}):
+            with self.subTest(**extra):
+                env, log = self.fake_env(FAKE_CLAUDE_PLUGIN_LIST=self.OLD_PLUGINS_USER,
+                                         **extra)
+                log.write_text("", encoding="utf-8")
+                result = self.install_plugins("--models", "claude", "--harnesses", "claude",
+                                              env=env)
+                self.assertEqual(result.returncode, 0)
+                self.assertNotIn("plugin list", self.log_text(log))
+                self.assertNotIn("uninstall", self.log_text(log))
+                self.assertIn("pipeline-core не поставился", result.stderr)
+
+    def test_no_claude_hints_old_plugins_removal(self) -> None:
+        env = self.env(PATH=path_without("claude"), LISTIK_PORT=str(free_port()))
+        result = self.install_plugins("--models", "claude", "--harnesses", "claude", env=env)
+        self.assertIn("не удалось проверить старые", result.stdout)
+        self.assertIn("/plugin uninstall feature-pipeline@listik", result.stdout)
+        result = self.install_plugins("--models", "openai", "--harnesses", "claude,codex",
+                                      env=env)
+        self.assertNotIn("не удалось проверить старые", result.stdout)
 
     # --- listik-jdo8, порция b: построчный вопрос через pty ---------------
 
@@ -1153,8 +1365,8 @@ class InstallScriptTests(unittest.TestCase):
         self.assertIn("нейронки: claude, deepseek", out)
         self.assertIn("харнессы: claude, codex, pi, devin, dsh, opencode, grok", out)
         self.assertEqual(self.installed_plugins(log),
-                         {"listik", "feature-pipeline", "dsh", "opencode", "pi",
-                          "second-opinion"})
+                         {"listik", "pipeline-core", "pipeline-claude", "dsh", "opencode",
+                          "pi", "second-opinion"})
 
     @unittest.skipUnless(shutil.which("stty"), "нужен stty")
     def test_pty_zero_and_out_of_range(self) -> None:
@@ -1179,8 +1391,9 @@ class InstallScriptTests(unittest.TestCase):
         self.assertEqual(code, 0, out)
         self.assertIn("\x1b[", out, "оформленный режим не включился")
         self.assertIn("Какие харнессы у вас установлены?", out)
-        self.assertEqual(self.installed_plugins(log), {"listik", "feature-pipeline"})
-        self.assert_only_cc_hidden()
+        self.assertEqual(self.installed_plugins(log),
+                         {"listik", "pipeline-core", "pipeline-claude"})
+        self.assert_hidden_plugins({"pipeline-full", "pipeline-cc"})
 
 
     # --- listik-jdo8, порция c: меню с галочками в оформленном режиме -----
@@ -1269,7 +1482,7 @@ class InstallScriptTests(unittest.TestCase):
         self.assertEqual(code, 0, out)
         self.assertEqual(self.report(out, "нейронки"), "openai, deepseek, glm, grok, devin, gemini")
         self.assertEqual(self.report(out, "харнессы"), "claude, codex, pi, devin, dsh, opencode")
-        self.assertNotIn("plugin install feature-pipeline@listik", self.log_text(log))
+        self.assertNotIn("plugin install pipeline-core@listik", self.log_text(log))
 
     @unittest.skipUnless(shutil.which("stty"), "нужен stty")
     def test_menu_narrow(self) -> None:

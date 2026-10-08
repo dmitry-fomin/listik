@@ -35,6 +35,7 @@ from . import errors as errors_mod
 from . import harnesses_store
 from . import paths
 from . import routes as routes_mod
+from . import skills
 from . import store
 
 # Подстановки в элементах команды: ровно те, что разрешает routes.py. Замена
@@ -476,7 +477,17 @@ def start(conn, task_id: str, notify=None, *, log_dir=None, env=None) -> str | N
                              f"нет рабочего каталога (worktree или path проекта {project})",
                              notify)
 
-            values = _launch_values(task_id, row, key, cwd)
+            # `{plugin}`/`{skill}` — из поля `plugin` записи (listik-d9rj, порция d).
+            # Команда, которая на них ссылается, у записи без плагина развернулась бы
+            # в `/:` — такой запуск не начинаем.
+            plugin = record.get("plugin") or ""
+            skill = (skills.skill_of(plugin, key) or "") if plugin else ""
+            used = {name for element in command for name in _SUBST_RE.findall(element)}
+            if ("plugin" in used and not plugin) or ("skill" in used and not skill):
+                return _fail(conn, task_id, f"у маршрута {key} не задан плагин — команда "
+                             "ссылается на {plugin}/{skill}", notify)
+
+            values = _launch_values(task_id, row, key, cwd, plugin=plugin, skill=skill)
             argv = [_substitute(element, values) for element in command]
 
             log_path = _log_path(task_id, log_dir)

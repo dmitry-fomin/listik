@@ -4,7 +4,9 @@
 (`PIPELINE_PLUGINS`), скил — каталог `plugins/<плагин>/skills/<имя>` с `SKILL.md`. Ключ
 маршрута — имя плагина без префикса `pipeline-`, дефис и имя каталога:
 `plugins/pipeline-full/skills/high` → `full-high`, `plugins/pipeline-cc/skills/sol` → `cc-sol`;
-команда маршрута зовёт скил `/<плагин>:<имя>` (`skill_ref`).
+команда маршрута зовёт скил `/<плагин>:<имя>` (`skill_ref`). У записи маршрута плагин —
+явное поле `plugin` (порция d): по нему `skill_of`/`skill_md` находят скил записи, а
+`skill_info`/`skill_ref` без `plugin=` выводят плагин из ключа каталога.
 
 Скилы дают заголовок (`name`) и подсказку (`description`) для маршрутов
 `kind=pipeline`, но не роли: роли живут только в таблице `routes`
@@ -106,34 +108,64 @@ def skills_available() -> bool:
     return any(_dir_skills(_plugin_skills_dir(plugin)) for plugin in PIPELINE_PLUGINS)
 
 
-def skill_ref(key: str) -> str | None:
+def skill_of(plugin, key) -> str | None:
+    """Имя каталога скила записи с плагином `plugin`: ключ без `<плагин без pipeline->-`.
+
+    `skill_of("pipeline-full", "full-high")` → `"high"`. Плагин не из
+    `PIPELINE_PLUGINS`, ключ не начинается с его префикса или после префикса пусто —
+    `None`. Файлов не читает.
+    """
+    if plugin not in PIPELINE_PLUGINS or not isinstance(key, str):
+        return None
+    prefix = plugin[len(PIPELINE_PREFIX):] + "-"
+    if not key.startswith(prefix) or len(key) == len(prefix):
+        return None
+    return key[len(prefix):]
+
+
+def skill_md(plugin: str, skill: str):
+    """Путь к `SKILL.md` скила `skill` плагина `plugin` (наличие не проверяется)."""
+    return _plugin_skills_dir(plugin) / skill / "SKILL.md"
+
+
+def _parts(key, plugin) -> tuple[str, str] | None:
+    """`(плагин, скил)`: по `plugin` записи, если он передан, иначе по префиксу ключа."""
+    if plugin is None:
+        return _split_key(key)
+    skill = skill_of(plugin, key)
+    return None if skill is None else (plugin, skill)
+
+
+def skill_ref(key: str, plugin: str | None = None) -> str | None:
     """Имя скила для команды и текстов: `full-high` → `/pipeline-full:high`.
 
     Чистое преобразование строки: файлов не читает и наличие `SKILL.md` не
     проверяет (`cc-fake` → `/pipeline-cc:fake`). Префикс ключа не `full`/`cc`/
-    `claude`, дефиса нет или после него пусто — `None`.
+    `claude`, дефиса нет или после него пусто — `None`. Передан `plugin` — плагин
+    берётся из него, а не из префикса ключа (`skill_of`).
     """
-    parts = _split_key(key)
+    parts = _parts(key, plugin)
     if parts is None:
         return None
     plugin, skill = parts
     return f"/{plugin}:{skill}"
 
 
-def skill_info(key: str) -> dict | None:
+def skill_info(key: str, plugin: str | None = None) -> dict | None:
     """`{"key", "plugin", "skill", "title", "hint", "skill_path"}` по ключу скила; нет скила — `None`.
 
     `plugin` — имя плагина (`pipeline-full`), `skill` — имя каталога скила,
     `title` — поле `name` из frontmatter (нет — сам ключ), короткое, без имени
     плагина; `hint` — первое предложение `description`, `skill_path` — путь к
     `SKILL.md` относительно корня репозитория. Префикс ключа не из трёх плагинов
-    или нет `SKILL.md` — `None`.
+    или нет `SKILL.md` — `None`. Передан `plugin` (поле записи маршрута) — плагин
+    берётся из него, а не из префикса ключа.
     """
-    parts = _split_key(key)
+    parts = _parts(key, plugin)
     if parts is None:
         return None
     plugin, skill = parts
-    md_path = _plugin_skills_dir(plugin) / skill / "SKILL.md"
+    md_path = skill_md(plugin, skill)
     if not md_path.is_file():
         return None
     try:

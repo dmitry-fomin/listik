@@ -109,7 +109,7 @@ export function swarmRoutesOf(routes: RouteDef[]): SwarmRouteDef[] {
 
 // ── подстановки команды (`command`, argv записи маршрута) ───────────────────
 // Правила и сам набор — `listik/routes.py` (`PLACEHOLDERS`, `PLACEHOLDER_RE`):
-// в argv допустимы только эти девять имён в фигурных скобках, любое другое —
+// в argv допустимы только эти одиннадцать имён в фигурных скобках, любое другое —
 // «незнакомая подстановка». Здесь — то же самое для карточки маршрута:
 // разбор строки на куски для подсветки (`splitPlaceholders`), подсчёт
 // вхождений для панели «Подстановки» (`countPlaceholders`) и список
@@ -125,6 +125,8 @@ export const ROUTE_PLACEHOLDERS = [
   'stage',
   'role',
   'harness',
+  'plugin',
+  'skill',
 ] as const
 export type RoutePlaceholder = (typeof ROUTE_PLACEHOLDERS)[number]
 
@@ -301,8 +303,42 @@ const PLACEHOLDER_EXAMPLES: Record<string, string> = {
   harness: 'claude',
 }
 
+/** Плагины пресетов конвейера — `skills.PIPELINE_PLUGINS` сервера. */
+const PIPELINE_PLUGINS = ['pipeline-full', 'pipeline-cc', 'pipeline-claude'] as const
+
+/**
+ * Разбор ключа конвейера `<плагин без pipeline->-<скил>`: `full-high` →
+ * `{ plugin: 'pipeline-full', skill: 'high' }`. Передан `plugin` (поле записи) —
+ * берётся он и ключ сверяется с его префиксом; иначе плагин выводится из
+ * префикса ключа. Не разбирается — `null`.
+ */
+function splitPipelineKey(key: string, plugin?: string | null): { plugin: string; skill: string } | null {
+  const candidates = plugin ? [plugin] : PIPELINE_PLUGINS
+  for (const name of candidates) {
+    if (!(PIPELINE_PLUGINS as readonly string[]).includes(name)) continue
+    const prefix = `${name.slice('pipeline-'.length)}-`
+    if (key.startsWith(prefix) && key.length > prefix.length) {
+      return { plugin: name, skill: key.slice(prefix.length) }
+    }
+  }
+  return null
+}
+
+/**
+ * Скил записи конвейера для текстов: `/pipeline-full:high` по полю `plugin`;
+ * плагин не задан (или ключ с ним не сходится) — `null`.
+ */
+export function routeSkillRef(route: { key: string; plugin?: string | null }): string | null {
+  if (!route.plugin) return null
+  const parts = splitPipelineKey(route.key, route.plugin)
+  return parts ? `/${parts.plugin}:${parts.skill}` : null
+}
+
 export function placeholderExample(name: string, routeKey: string): string {
   if (name === 'route') return routeKey
+  // Как у сервера: значения из плагина записи; ключ без префикса плагина — пусто.
+  if (name === 'plugin') return splitPipelineKey(routeKey)?.plugin ?? ''
+  if (name === 'skill') return splitPipelineKey(routeKey)?.skill ?? ''
   return PLACEHOLDER_EXAMPLES[name] ?? ''
 }
 

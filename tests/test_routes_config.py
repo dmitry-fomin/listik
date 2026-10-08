@@ -23,6 +23,7 @@ import unittest
 from unittest import mock
 
 from listik import embed as embed_mod
+from listik import launcher
 from listik import paths
 from listik import routes as routes_mod
 from listik import routes_store
@@ -72,8 +73,8 @@ def swarm_record() -> dict:
 
 def swarm_normalized(**over) -> dict:
     """`swarm_record()` после `routes.validate`: у ключа `dsh` уровня нет."""
-    return {"key": "dsh", "kind": "swarm", "title": "dsh", "hint": "", "visible": True,
-            "icon": None, "roles": {"impl": {"harness": "dsh"}},
+    return {"key": "dsh", "kind": "swarm", "plugin": None, "title": "dsh", "hint": "",
+            "visible": True, "icon": None, "roles": {"impl": {"harness": "dsh"}},
             "command": None, **over}
 
 
@@ -132,8 +133,9 @@ class RepoRoutesFileTests(unittest.TestCase):
     def test_repo_every_record_has_command(self) -> None:
         """В образце у каждой записи есть argv автостарта: конвейер — claude.
 
-        У всех записей конвейера argv одинаков, кроме подстроки `/<плагин>:<скил>`
-        в промпте, а она — `skills.skill_ref(key)` (listik-d9rj, порция b).
+        У всех записей конвейера argv одинаков и содержит `/{plugin}:{skill}`, а
+        подстановка `plugin`/`skill` записи даёт `skills.skill_ref(key)` (listik-d9rj,
+        порции b и d).
         """
         normalized = {record["key"]: record for record in routes_mod.validate(self.raw)}
         pipeline_cmd = None
@@ -146,15 +148,17 @@ class RepoRoutesFileTests(unittest.TestCase):
                                  ["claude", "--dangerously-skip-permissions", "-p"], raw["key"])
                 ref = skills_mod.skill_ref(raw["key"])
                 self.assertIsNotNone(ref, raw["key"])
-                self.assertIn(f"Запусти скил {ref} ", raw["command"][-1], raw["key"])
+                self.assertIn("Запусти скил /{plugin}:{skill} ", raw["command"][-1], raw["key"])
+                values = {"plugin": raw["plugin"],
+                          "skill": skills_mod.skill_of(raw["plugin"], raw["key"])}
+                self.assertIn(f"Запусти скил {ref} ",
+                              launcher._substitute(raw["command"][-1], values), raw["key"])
                 pipeline_records.append(raw)
                 if pipeline_cmd is None:
-                    pipeline_cmd = [*raw["command"][:-1], raw["command"][-1].replace(ref, "{skill}", 1)]
+                    pipeline_cmd = raw["command"]
         self.assertTrue(pipeline_records)
         for raw in pipeline_records:
-            ref = skills_mod.skill_ref(raw["key"])
-            expected = [*pipeline_cmd[:-1], pipeline_cmd[-1].replace("{skill}", ref)]
-            self.assertEqual(raw["command"], expected, raw["key"])
+            self.assertEqual(raw["command"], pipeline_cmd, raw["key"])
 
     def test_web_src_has_no_embedded_route_tables(self) -> None:
         offenders: list[str] = []
@@ -439,7 +443,7 @@ class ValidateTests(unittest.TestCase):
         self.assertIn("неизвестная подстановка", message)
         self.assertEqual(routes_mod.PLACEHOLDERS,
                          ("task_id", "project", "route", "cwd", "worktree", "branch",
-                          "stage", "role", "harness"))
+                          "stage", "role", "harness", "plugin", "skill"))
         for name in routes_mod.PLACEHOLDERS:
             self.assertIn("{" + name + "}", message)
 
@@ -486,6 +490,65 @@ def board_icon_names() -> set[str]:
     text = ICONS_TS.read_text(encoding="utf-8")
     return {quoted or bare for quoted, bare in
             re.findall(r"^\s*(?:'([a-z0-9-]+)'|([a-z][a-z0-9-]*)):\s*\{", text, re.M)}
+
+
+class PluginFieldTests(unittest.TestCase):
+    """Поле `plugin` записи маршрута (listik-d9rj, порция d)."""
+
+    def check_error(self, record) -> str:
+        with self.assertRaises(routes_mod.RoutesError) as ctx:
+            routes_mod.validate(document(record))
+        return str(ctx.exception)
+
+    def test_unknown_plugin(self) -> None:
+        message = self.check_error({**pipeline_record(), "key": "full-high",
+                                    "plugin": "pipeline-foo"})
+        self.assertIn("routes[0].plugin: допустимы pipeline-full, pipeline-cc, pipeline-claude",
+                      message)
+        self.assertNotIn("лишнее поле", message)
+
+    def test_key_must_start_with_plugin_prefix(self) -> None:
+        message = self.check_error({**pipeline_record(), "key": "full-high",
+                                    "plugin": "pipeline-cc"})
+        self.assertIn("routes[0].key: у плагина pipeline-cc ключ начинается с 'cc-'", message)
+
+    def test_key_with_empty_skill_is_rejected(self) -> None:
+        message = self.check_error({**pipeline_record(), "key": "full-",
+                                    "plugin": "pipeline-full"})
+        self.assertIn("routes[0].key: у плагина pipeline-full ключ начинается с 'full-'", message)
+
+    def test_swarm_record_has_no_plugin(self) -> None:
+        message = self.check_error({**swarm_record(), "plugin": "pipeline-full"})
+        self.assertIn("routes[0].plugin: поле только у kind=pipeline", message)
+
+    def test_missing_or_null_plugin_is_none(self) -> None:
+        normalized = routes_mod.validate(document(
+            pipeline_record(), {**pipeline_record(), "key": "other", "plugin": None},
+            {**swarm_record(), "plugin": None}))
+        self.assertEqual([r["plugin"] for r in normalized], [None, None, None])
+
+    def test_plugin_is_kept_and_follows_kind(self) -> None:
+        record = routes_mod.validate(document(
+            {**pipeline_record(), "key": "cc-high", "plugin": "pipeline-cc"}))[0]
+        self.assertEqual(record["plugin"], "pipeline-cc")
+        self.assertEqual(list(record)[:3], ["key", "kind", "plugin"])
+        self.assertEqual(routes_mod.RECORD_FIELDS[:3], ("key", "kind", "plugin"))
+
+    def test_sample_pipelines_name_plugin_by_key_prefix(self) -> None:
+        raw = json.loads(ROUTES_JSON.read_text(encoding="utf-8"))
+        pipelines = [r for r in raw["routes"] if r["kind"] == "pipeline"]
+        self.assertEqual(len(pipelines), 16)
+        for record in pipelines:
+            with self.subTest(key=record["key"]):
+                self.assertEqual(record["plugin"], "pipeline-" + record["key"].split("-", 1)[0])
+                self.assertEqual(list(record)[:3], ["key", "kind", "plugin"])
+
+    def test_substitute_plugin_and_skill(self) -> None:
+        self.assertEqual(launcher._substitute("/{plugin}:{skill}",
+                                              {"plugin": "pipeline-full", "skill": "high"}),
+                         "/pipeline-full:high")
+        # Без значений (запуск роя, запись без плагина) — пустые строки.
+        self.assertEqual(launcher._substitute("/{plugin}:{skill}", {}), "/:")
 
 
 class RouteIconDictionaryTests(unittest.TestCase):
@@ -709,8 +772,8 @@ class RoutesApiTests(TempDbTestCase):
 
     def test_routes_with_bad_icon_import_fallback_and_keep_all_records(self) -> None:
         """Предупреждение при ввозе; база хранит фолбэк, без файловых предупреждений."""
-        bad = {**pipeline_record(), "key": "full-xhigh", "icon": "xhihg"}
-        plain = {**pipeline_record(), "key": "full-cross"}
+        bad = {**pipeline_record(), "key": "full-xhigh", "plugin": "pipeline-full", "icon": "xhihg"}
+        plain = {**pipeline_record(), "key": "full-cross", "plugin": "pipeline-full"}
         self.target.parent.mkdir(parents=True)
         self.target.write_text(json.dumps({"version": 1, "routes": [bad, plain, swarm_record()]},
                                           ensure_ascii=False), encoding="utf-8")

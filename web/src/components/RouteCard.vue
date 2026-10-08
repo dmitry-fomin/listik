@@ -60,9 +60,11 @@ import {
   type RoleCell,
   type RoleKey,
 } from '@/lib/pipelines'
-import { splitPlaceholders, unknownPlaceholders } from '@/lib/routes'
+import { routeSkillRef, splitPlaceholders, unknownPlaceholders } from '@/lib/routes'
 
 const props = defineProps<{ route: PipelineRouteDef }>()
+/** Скил записи по её `plugin` для бейджа расхождения; плагин не задан — `null`. */
+const skillRef = computed(() => routeSkillRef(props.route))
 
 /* ── шапка: title/hint/visible/icon, автосохранение ── */
 
@@ -302,7 +304,8 @@ function braced(name: string): string {
       <div class="listik-route-card__skill">
         <UiAlert v-if="route.skill_missing" tone="warning">
           <template #title>Расхождение с поставкой</template>
-          каталога <code class="listik-mono">/feature-pipeline:{{ route.key }}</code> нет, маршрут скрыт от автора.
+          <template v-if="skillRef">скила <code class="listik-mono">{{ skillRef }}</code> нет, маршрут скрыт от автора.</template>
+          <template v-else>у маршрута <code class="listik-mono">{{ route.key }}</code> не задан плагин, маршрут скрыт от автора.</template>
         </UiAlert>
         <template v-else-if="route.skill_path">
           <span class="listik-route-card__skill-label">Каталог поставки на месте:</span>

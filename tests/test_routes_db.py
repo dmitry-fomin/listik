@@ -19,6 +19,7 @@ from listik import errors
 from listik import launcher
 from listik import routes as routes_mod
 from listik import routes_store
+from listik import skills as skills_mod
 from tests.helpers import TempDbTestCase
 
 REPO_DIR = pathlib.Path(__file__).resolve().parent.parent
@@ -129,6 +130,8 @@ class ImportSampleTests(RoutesDbTestCase):
         self.assertEqual(record["command"][0], "claude")
         values = {name: name for name in routes_mod.PLACEHOLDERS}
         values["route"] = "full-cross"
+        values["plugin"] = record["plugin"]
+        values["skill"] = skills_mod.skill_of(record["plugin"], "full-cross")
         substituted = [launcher._substitute(element, values)
                        for element in record["command"]]
         self.assertTrue(any("/pipeline-full:cross" in line and "маршрут full-cross" in line
@@ -498,6 +501,73 @@ class ReimportKeepsUserRoutesTests(RoutesDbTestCase):
         self.assertIn("копия таблицы:", proc.stdout)
 
 
+class PluginStoreTests(RoutesDbTestCase):
+    """Поле `plugin` в хранилище и бэкапе (listik-d9rj, порция d)."""
+
+    def setUp(self) -> None:
+        super().setUp()
+        from listik import paths
+        patcher = mock.patch.object(paths, "DATA_DIR", self.tmp_path / "data")
+        patcher.start()
+        self.addCleanup(patcher.stop)
+
+    def test_sample_rows_carry_plugin(self) -> None:
+        self.import_sample()
+        record = routes_store.get_route(self.conn, "full-high")
+        self.assertEqual(record["plugin"], "pipeline-full")
+        row = self.conn.execute("SELECT plugin FROM routes WHERE key = 'cc-low'").fetchone()
+        self.assertEqual(row[0], "pipeline-cc")
+        self.assertIn("/{plugin}:{skill}", record["command"][-1])
+        values = {name: name for name in routes_mod.PLACEHOLDERS}
+        values.update(plugin=record["plugin"],
+                      skill=skills_mod.skill_of(record["plugin"], "full-high"))
+        self.assertIn("/pipeline-full:high", launcher._substitute(record["command"][-1], values))
+
+    def test_prepare_checks_plugin(self) -> None:
+        cases = (({"key": "full-high", "plugin": "pipeline-cc"}, "key: у плагина pipeline-cc"),
+                 ({"key": "full-high", "plugin": "pipeline-foo"}, "plugin: допустимы"),
+                 ({**swarm_record(), "plugin": "pipeline-full"}, "plugin: поле только у kind=pipeline"))
+        for over, text in cases:
+            with self.subTest(text=text):
+                with self.assertRaises(ValueError) as ctx:
+                    routes_store.upsert_route(self.conn, {**pipeline_record(), **over})
+                self.assertIn(text, str(ctx.exception))
+
+    def test_create_route_with_plugin(self) -> None:
+        record = routes_store.create_route(self.conn, key="full-high", kind="pipeline",
+                                           title="t", plugin="pipeline-full")
+        self.assertEqual(record["plugin"], "pipeline-full")
+        bare = routes_store.create_route(self.conn, key="bare", kind="pipeline", title="t")
+        self.assertIsNone(bare["plugin"])
+
+    def test_update_route_does_not_change_plugin(self) -> None:
+        self.import_sample()
+        self.assertNotIn("plugin", routes_store.UPDATE_FIELDS)
+        with self.assertRaises(ValueError):
+            routes_store.update_route(self.conn, "full-high", plugin="pipeline-cc")
+        self.assertEqual(routes_store.get_route(self.conn, "full-high")["plugin"], "pipeline-full")
+
+    def test_backup_has_plugin_and_reads_back(self) -> None:
+        self.import_sample()
+        routes_store.create_route(self.conn, key="roy", kind="swarm", title="Рой",
+                                  roles={"impl": {"harness": "dsh"}})
+        routes_store.create_route(self.conn, key="bare", kind="pipeline", title="Голый")
+        before = {r["key"]: r["plugin"] for r in routes_store.list_routes(self.conn)}
+        with contextlib.redirect_stderr(io.StringIO()):
+            report = routes_store.reimport(self.conn, ROUTES_JSON)
+        saved = json.loads(pathlib.Path(report["backup"]).read_text(encoding="utf-8"))["routes"]
+        for record in saved:
+            self.assertIn("plugin", record, record["key"])
+        self.assertEqual({r["key"]: r["plugin"] for r in saved}, before)
+        self.assertIsNone(next(r for r in saved if r["key"] == "roy")["plugin"])
+        self.conn.execute("UPDATE routes SET plugin = NULL")
+        self.conn.commit()
+        with contextlib.redirect_stderr(io.StringIO()):
+            routes_store.reimport(self.conn, report["backup"])
+        self.assertEqual({r["key"]: r["plugin"] for r in routes_store.list_routes(self.conn)},
+                         before)
+
+
 class FieldRulesTests(RoutesDbTestCase):
     """Правила полей — по одному случаю на нарушение."""
 
@@ -681,7 +751,7 @@ class SchemaUpgradeTests(unittest.TestCase):
             self.assertEqual(conn.execute("SELECT COUNT(*) FROM projects").fetchone()[0], 1)
             version = conn.execute(
                 "SELECT value FROM meta WHERE key = 'schema_version'").fetchone()[0]
-            self.assertEqual(version, "15")
+            self.assertEqual(version, "16")
         finally:
             conn.close()
 

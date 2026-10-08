@@ -16,6 +16,9 @@ import pathlib
 import re
 import unittest
 
+from listik import launcher
+from listik import skills as skills_mod
+
 REPO_DIR = pathlib.Path(__file__).resolve().parents[1]
 PLUGIN_DIR = REPO_DIR / "plugins" / "pipeline-cc"
 CORE_PLUGIN_DIR = REPO_DIR / "plugins" / "pipeline-core"
@@ -654,7 +657,10 @@ class ClaudeCodexRoutesTests(unittest.TestCase):
     def test_command_calls_pipeline_cc_skill(self) -> None:
         for key, record in _cc_records().items():
             with self.subTest(route=key):
-                prompt = record["command"][-1]
+                self.assertEqual(record["plugin"], PLUGIN_NAME)
+                prompt = launcher._substitute(record["command"][-1], {
+                    "plugin": record["plugin"],
+                    "skill": skills_mod.skill_of(record["plugin"], key)})
                 self.assertIn(f"/{PLUGIN_NAME}:{key[len(ROUTE_PREFIX):]}", prompt)
                 self.assertNotIn("/feature-pipeline:", prompt)
 

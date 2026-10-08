@@ -195,8 +195,8 @@ class SchemaAndFieldsTests(AutostartTestCase):
                 self.assertIn(name, columns, name)
             version = conn.execute(
                 "SELECT value FROM meta WHERE key = 'schema_version'").fetchone()
-            self.assertEqual(version["value"], "15")
-            self.assertEqual(db_mod.SCHEMA_VERSION, 15)
+            self.assertEqual(version["value"], "16")
+            self.assertEqual(db_mod.SCHEMA_VERSION, 16)
         finally:
             conn.close()
 
@@ -530,6 +530,54 @@ class LaunchTests(AutostartTestCase):
         self.assertEqual(self.row(task["id"])["needs_owner"], 0)
         self.assertIsNone(self.row(task["id"])["launch_error"])
         self.join_tracker(task["id"])
+
+
+class PluginLaunchTests(AutostartTestCase):
+    """Подстановки `{plugin}`/`{skill}` команды конвейера (listik-d9rj, порция d)."""
+
+    def prepare(self, record):
+        proj_dir = self.tmp_path / "proj"
+        proj_dir.mkdir(exist_ok=True)
+        self.make_project("proj", path=proj_dir)
+        self.set_routes(record)
+        return self.make_task(project="proj", autostart=True, route=record["key"])
+
+    def test_sample_full_high_argv_names_skill(self) -> None:
+        shipped = json.loads((REPO_DIR / "routes.json").read_text(encoding="utf-8"))
+        record = next(r for r in shipped["routes"] if r["key"] == "full-high")
+        self.assertEqual(record["plugin"], "pipeline-full")
+        task = self.prepare(record)
+        real_popen = subprocess.Popen
+        seen: list[list[str]] = []
+
+        def fake_popen(argv, **kwargs):
+            seen.append(list(argv))
+            return real_popen([sys.executable, "-c", "pass"], **kwargs)
+
+        with mock.patch.object(launcher_mod.subprocess, "Popen", side_effect=fake_popen):
+            self.assertIsNone(self.launch(task["id"]))
+        self.join_tracker(task["id"])
+        self.assertEqual(len(seen), 1)
+        prompt = seen[0][-1]
+        self.assertIn("Запусти скил /pipeline-full:high ", prompt)
+        for argument in seen[0]:
+            self.assertNotIn("{plugin}", argument)
+            self.assertNotIn("{skill}", argument)
+
+    def test_pipeline_without_plugin_referring_placeholders_refuses(self) -> None:
+        record = pipeline_record("my-flow", command=["claude", "-p", "Запусти скил /{plugin}:{skill}"])
+        task = self.prepare(record)
+        with mock.patch.object(launcher_mod.subprocess, "Popen") as popen, \
+                contextlib.redirect_stderr(io.StringIO()):
+            reason = self.launch(task["id"], notify=self.notify_cb)
+        popen.assert_not_called()
+        self.assertTrue(reason.startswith("у маршрута my-flow не задан плагин"), reason)
+        self.assertIn("{plugin}/{skill}", reason)
+        row = self.row(task["id"])
+        self.assertEqual(row["launch_error"], reason)
+        self.assertEqual(row["needs_owner"], 1)
+        self.assertIsNone(row["launched_by"], "захват не снят")
+        self.assertIsNone(row["launch_pid"])
 
 
 class CaptureReleaseOnErrorTests(AutostartTestCase):

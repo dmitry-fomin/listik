@@ -6,8 +6,9 @@
 проверяет файл (`load`/`validate`), а первичный ввоз в пустую таблицу делает
 `listik.routes_store` (при `listik init` и старте сервера). Больше файл не перечитывает
 никто и ни с чем не сверяет: записи в базе главнее. В образце у каждой записи
-есть `command`: конвейер запускает `claude -p` со скилом `/<плагин>:<скил>` своего ключа
-(`full-high` → `/pipeline-full:high`, см. `listik.skills.skill_ref`).
+есть `command`: конвейер запускает `claude -p` со скилом `/{plugin}:{skill}` — плагином
+записи и ключом без его префикса (`full-high` → `/pipeline-full:high`, см.
+`listik.skills.skill_of`).
 
 Читатели берут маршруты только из базы (`state(conn)`), файл в обход ввоза не читает
 никто. Кеша нет: правка записи в базе видна сразу, перезапуск сервера не нужен.
@@ -19,6 +20,12 @@
 Запись маршрута:
   * `key` — `^[a-z0-9][a-z0-9-]*$`, уникален в файле;
   * `kind` — `"pipeline"` или `"swarm"`;
+  * `plugin` — плагин пресета конвейера, одно из `pipeline-full`/`pipeline-cc`/
+    `pipeline-claude`; необязательно (старые бэкапы без поля читаются), отсутствие и
+    `null` — `None`. Только у `kind=pipeline`. При заданном плагине ключ начинается с
+    имени плагина без `pipeline-` и дефиса, и после префикса непуст (`pipeline-full` →
+    `full-high`). Проверка — `check_plugin`, её же зовёт `routes_store._prepare`.
+    Нормализованная запись всегда содержит `plugin` (значение или `None`);
   * `title` — непустая строка;
   * `hint` — строка, по умолчанию `""`;
   * `visible` — именно JSON `true`/`false`;
@@ -40,7 +47,10 @@
 
 Лишние поля на любом уровне — ошибка (защита от опечаток вроде `visble`).
 В `command` допустимы только подстановки `{task_id}`, `{project}`, `{route}`, `{cwd}`,
-`{worktree}`, `{branch}`, `{stage}`, `{role}`, `{harness}`; любая другая фигурная скобка (включая `{{`) — ошибка.
+`{worktree}`, `{branch}`, `{stage}`, `{role}`, `{harness}`, `{plugin}`, `{skill}`; любая другая
+фигурная скобка (включая `{{`) — ошибка. `{plugin}` — значение поля `plugin` записи,
+`{skill}` — ключ без `<плагин без pipeline->-` (`full-high` → `high`); у записи без
+`plugin` обе пустые (запуск конвейера, чья команда на них ссылается, — отказ лаунчера).
 Подставляет значения `launcher`: целиком в элемент массива, без shell и без повторной
 подстановки внутри значения.
 
@@ -54,7 +64,7 @@ import sqlite3
 import sys
 from dataclasses import dataclass, field
 
-from . import errors, paths, util
+from . import errors, paths, skills, util
 
 SOURCE_PATH = paths.ROOT_DIR / "routes.json"
 
@@ -66,10 +76,10 @@ PROVIDERS = ("claude", "glm", "openai", "grok", "deepseek", "devin")
 # `web/src/lib/dictionaries.ts` (`ROUTE_ICONS`).
 ROUTE_ICONS = ("xhigh", "high", "medium", "low", "xlow", "direct")
 PLACEHOLDERS = ("task_id", "project", "route", "cwd", "worktree", "branch",
-                "stage", "role", "harness")
+                "stage", "role", "harness", "plugin", "skill")
 
 ROOT_FIELDS = ("version", "routes")
-RECORD_FIELDS = ("key", "kind", "title", "hint", "visible", "icon", "roles", "strip", "command")
+RECORD_FIELDS = ("key", "kind", "plugin", "title", "hint", "visible", "icon", "roles", "strip", "command")
 ROLE_FIELDS = ("provider", "label", "title", "skill", "params")
 #: Поля ячейки роли маршрута `kind=swarm`: харнесс из каталога (`harnesses`),
 #: свой argv и свой промпт — последним аргументом. Пустая ячейка (роль не задана)
@@ -290,6 +300,25 @@ def validate_command(value, where: str) -> list[str]:
     return command
 
 
+def check_plugin(kind, key, value, where: str):
+    """Поле `plugin` записи маршрута: `None` (нет поля или `null`) либо плагин пресета.
+
+    Плагин — только у `kind=pipeline`, из `skills.PIPELINE_PLUGINS`, и ключ записи
+    начинается с `<плагин без pipeline->-` с непустым остатком. Нарушение —
+    `RoutesError` с путём до поля (`where` — путь до записи, `""` — корень).
+    """
+    if value is None:
+        return None
+    if kind != "pipeline":
+        raise _err(_at(where, "plugin"), "поле только у kind=pipeline")
+    if value not in skills.PIPELINE_PLUGINS:
+        raise _err(_at(where, "plugin"), "допустимы " + ", ".join(skills.PIPELINE_PLUGINS))
+    if skills.skill_of(value, key) is None:
+        short = value[len(skills.PIPELINE_PREFIX):]
+        raise _err(_at(where, "key"), f"у плагина {value} ключ начинается с '{short}-'")
+    return value
+
+
 def fallback_icon(key: str, kind: str = "pipeline") -> str | None:
     """Уровень маршрута для записи без поля `icon`.
 
@@ -354,6 +383,8 @@ def _validate_route(item, where: str, warnings: list[str] | None = None) -> dict
     if kind not in KINDS:
         raise _err(f"{where}.kind", 'должен быть "pipeline" или "swarm"')
 
+    plugin = check_plugin(kind, key, item.get("plugin"), where)
+
     title = _present(item, "title", where)
     if not _text(title):
         raise _err(f"{where}.title", "непустая строка")
@@ -367,7 +398,7 @@ def _validate_route(item, where: str, warnings: list[str] | None = None) -> dict
         raise _err(f"{where}.visible", "должно быть true или false, не строка и не число")
 
     icon, icon_error = _validate_icon(item, key, kind, where, warnings)
-    record = {"key": key, "kind": kind, "title": title, "hint": hint, "visible": visible,
+    record = {"key": key, "kind": kind, "plugin": plugin, "title": title, "hint": hint, "visible": visible,
               "icon": icon}
     # Поле появляется только у записи с непринятым `icon`: у остальных записей
     # набор полей не меняется, а доска по нему рисует «иконка недоступна».

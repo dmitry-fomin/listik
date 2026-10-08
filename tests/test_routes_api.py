@@ -125,7 +125,8 @@ class SkillMatchTests(RoutesApiBase):
         self.assertTrue(row["visible"])
 
     def test_route_with_real_skill_has_skill_path_and_is_not_hidden(self) -> None:
-        self.write_and_import([pipeline_record(key="full-high"), swarm_record()])
+        self.write_and_import([pipeline_record(key="full-high", plugin="pipeline-full"),
+                               swarm_record()])
         status, data = self.get("/api/routes")
         record = next(r for r in data["routes"] if r["key"] == "full-high")
         self.assertNotIn("skill_missing", record)
@@ -148,7 +149,7 @@ class ClaudeCodexSkillTests(RoutesApiBase):
                          "plugins/pipeline-cc/skills/high/SKILL.md")
 
     def test_cc_route_without_skill_is_hidden_with_pipeline_cc_warning(self) -> None:
-        self.write_and_import([pipeline_record(key="cc-fake"), swarm_record()])
+        self.write_and_import([pipeline_record(key="cc-fake", plugin="pipeline-cc"), swarm_record()])
         status, data = self.get("/api/routes")
         record = next(r for r in data["routes"] if r["key"] == "cc-fake")
         self.assertTrue(record["skill_missing"])
@@ -191,6 +192,67 @@ class ClaudeCodexSkillTests(RoutesApiBase):
         # Заголовок — короткий `name` из frontmatter, без имени плагина; уровень — по ключу.
         self.assertEqual(record["title"], "high")
         self.assertEqual(record["icon"], "high")
+
+
+class PluginFieldApiTests(RoutesApiBase):
+    """Поле `plugin` в `GET`/`POST`/`PATCH /api/routes` (listik-d9rj, порция d)."""
+
+    def test_get_sample_has_plugin_and_skill_path(self) -> None:
+        self.import_sample()
+        routes_store.create_route(self.conn, key="roy", kind="swarm", title="Рой",
+                                  roles={"impl": {"harness": "dsh"}})
+        status, data = self.get("/api/routes")
+        self.assertEqual(status, 200)
+        records = {r["key"]: r for r in data["routes"]}
+        for record in data["routes"]:
+            self.assertIn("plugin", record, record["key"])
+        self.assertEqual(records["full-high"]["plugin"], "pipeline-full")
+        self.assertEqual(records["full-high"]["skill_path"],
+                         "plugins/pipeline-full/skills/high/SKILL.md")
+        self.assertEqual(records["cc-sol"]["plugin"], "pipeline-cc")
+        self.assertEqual(records["claude-opus"]["plugin"], "pipeline-claude")
+        self.assertIsNone(records["roy"]["plugin"])
+        self.assertEqual(data["warnings"], [])
+
+    def test_pipeline_without_plugin_is_hidden_with_warning(self) -> None:
+        self.write_and_import([pipeline_record(key="old-flow"), swarm_record()])
+        status, data = self.get("/api/routes")
+        record = next(r for r in data["routes"] if r["key"] == "old-flow")
+        self.assertTrue(record["skill_missing"])
+        self.assertFalse(record["visible"])
+        self.assertIsNone(record["skill_path"])
+        self.assertIn("маршрута 'old-flow': не задан плагин, маршрут скрыт", data["warnings"])
+        self.assertTrue(routes_store.get_route(self.conn, "old-flow")["visible"])
+        status, sync = self.get("/api/routes/sync")
+        self.assertIn("old-flow", [r["key"] for r in sync["missing_skill"]])
+
+    def test_plugin_without_skill_dir_is_hidden_with_warning(self) -> None:
+        self.write_and_import([pipeline_record(key="full-nope", plugin="pipeline-full")])
+        status, data = self.get("/api/routes")
+        record = next(r for r in data["routes"] if r["key"] == "full-nope")
+        self.assertTrue(record["skill_missing"])
+        self.assertFalse(record["visible"])
+        self.assertIn("маршрута 'full-nope': скила /pipeline-full:nope нет, маршрут скрыт",
+                      data["warnings"])
+        status, sync = self.get("/api/routes/sync")
+        self.assertEqual([r["key"] for r in sync["missing_skill"]], ["full-nope"])
+
+    def test_post_takes_plugin_from_catalogue(self) -> None:
+        self.import_sample()
+        routes_store.delete_route(self.conn, "cc-high")
+        status, record = self.post("/api/routes", {"key": "cc-high"})
+        self.assertEqual(status, 201)
+        self.assertEqual(record["plugin"], "pipeline-cc")
+        self.assertEqual(routes_store.get_route(self.conn, "cc-high")["plugin"], "pipeline-cc")
+
+    def test_patch_plugin_is_400_and_unchanged(self) -> None:
+        self.import_sample()
+        with self.assertRaises(server.ApiError) as ctx:
+            self.patch("/api/routes/full-high", {"plugin": "pipeline-cc"})
+        self.assertEqual(ctx.exception.status, 400)
+        self.assertEqual(ctx.exception.code, errors.BAD_ARGUMENT)
+        self.assertEqual(routes_store.get_route(self.conn, "full-high")["plugin"],
+                         "pipeline-full")
 
 
 class SkillCatalogTests(RoutesApiBase):

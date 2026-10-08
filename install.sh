@@ -559,9 +559,9 @@ usage() {
                         all — все, none — ни одного; без флага — вопрос в /dev/tty,
                         без ответа — все. Без claude плагины не ставятся; плагин
                         пайплайнов, который не выбран, — его маршруты скрываются
-  --swarm yes|no        включить рой: сервер сам проверяет задачи всех проектов
-                        каждые 30 секунд ([swarm] enabled в config.toml),
-                        по умолчанию yes
+  --swarm yes|no        включить рой (экспериментально): сервер сам проверяет задачи
+                        всех проектов каждые 30 секунд ([swarm] enabled в config.toml),
+                        по умолчанию no
   --codex-network yes|no|ask
                         если codex установлен, а в его config.toml нет
                         [sandbox_workspace_write] с network_access = true — дописать
@@ -577,7 +577,7 @@ usage() {
                         остаются, копия таблицы — routes.bak-*.json в каталоге
                         данных; задачи не трогаются; ask — спросить в /dev/tty, без tty — no
   --yes                 на вопросы без явного флага отвечать значением по умолчанию
-                        (service/plugins/swarm — yes, mcp и routes-reimport — no; вопрос
+                        (service/plugins — yes, swarm, mcp и routes-reimport — no; вопрос
                         Codex он не закрывает — нужен --codex-network yes; выбор
                         плагинов — все)
   --help                эта справка
@@ -1281,9 +1281,9 @@ if [ "$plugins_answer" = yes ]; then
         harnesses_sel=$chosen
     fi
 fi
-ask_yes_default_yes "$swarm_answer" \
-    "Включить рой?" \
-    "Сервер будет сам проверять задачи всех проектов каждые 30 секунд."
+ask_yes_default_no "$swarm_answer" \
+    "Включить рой? (экспериментально)" \
+    "Экспериментальная функция. Сервер будет сам проверять задачи всех проектов каждые 30 секунд."
 swarm_answer=$decision
 
 # Флаг пишем до автозапуска: сервер, который сейчас встанет, должен его увидеть.

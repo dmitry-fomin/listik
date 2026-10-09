@@ -479,7 +479,7 @@ ROUTE_ADDITIONS: list[tuple[int, tuple[str, ...]]] = [
     # Записи 2 и 3: ключи переименованы в listik-d9rj (claude-opus, cc-<уровень>).
     (2, ()),  # было claude-opus (из opus-single-pipeline) — пресет снят 09.10.2026
     (3, ("cc-xhigh", "cc-high", "cc-medium",
-         "cc-low", "cc-xlow", "cc-nano")),  # пресеты pipeline-cc (бывший claude-codex)
+         "cc-low", "cc-xlow")),  # пресеты pipeline-cc (бывший claude-codex); пресет nano снят 09.10.2026
     (4, ("claude-xhigh", "claude-high")),  # пресеты pipeline-claude с линзами (listik-d9rj)
 ]
 

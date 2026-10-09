@@ -50,7 +50,7 @@ EXPECTED_KEYS = [
     "full-medium", "cc-medium",
     "full-low", "cc-low",
     "full-xlow", "cc-xlow",
-    "full-nano", "cc-nano",
+    "full-nano",
     "full-cross",
 ]
 
@@ -104,9 +104,9 @@ class RepoRoutesFileTests(unittest.TestCase):
             self.skipTest(f"git недоступен: {exc}")
         self.assertEqual(done.returncode, 1, done.stdout + done.stderr)
 
-    def test_has_fifteen_records_in_order(self) -> None:
+    def test_has_fourteen_records_in_order(self) -> None:
         self.assertEqual(self.raw["version"], 1)
-        self.assertEqual(len(self.raw["routes"]), 15)
+        self.assertEqual(len(self.raw["routes"]), 14)
         self.assertEqual([r["key"] for r in self.raw["routes"]], EXPECTED_KEYS)
 
     def test_validates_and_every_record_is_visible(self) -> None:
@@ -117,7 +117,7 @@ class RepoRoutesFileTests(unittest.TestCase):
 
     def test_kinds_match_the_table(self) -> None:
         kinds = [r["kind"] for r in self.raw["routes"]]
-        self.assertEqual(kinds, ["pipeline"] * 15)
+        self.assertEqual(kinds, ["pipeline"] * 14)
 
     def test_icons_are_the_route_levels(self) -> None:
         normalized = {r["key"]: r["icon"] for r in routes_mod.validate(self.raw)}

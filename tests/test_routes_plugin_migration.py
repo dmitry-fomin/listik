@@ -185,7 +185,10 @@ class FreshDatabaseTests(Schema15Base):
 
 
 #: Пресеты, снятые после переименования (09.10.2026): записи в базе остаются без скила.
-REMOVED_PRESETS = ("cc-sol", "claude-opus")
+#: Снятый пресет — переименованный ключ, которого уже нет в поставке `routes.json`.
+SHIPPED_KEYS = {r["key"] for r in json.loads(
+    (REPO_DIR / "routes.json").read_text(encoding="utf-8"))["routes"]}
+REMOVED_PRESETS = tuple(key for key in NEW_KEYS if key not in SHIPPED_KEYS)
 
 
 class PluginMigrationTests(Schema15Base):
@@ -270,7 +273,9 @@ class PluginMigrationTests(Schema15Base):
             with self.subTest(key=key):
                 self.assertNotIn("skill_missing", records[key])
                 self.assertIsNotNone(records[key]["skill_path"])
-        # Пресеты sol и opus удалены: переименованные записи остаются, но без скила — скрыты.
+        # Снятые пресеты (sol, opus, nano у pipeline-cc): переименованные записи остаются,
+        # но без скила — скрыты. Список выводится из поставки и имена здесь не зашиты.
+        self.assertEqual(len(REMOVED_PRESETS), 3)
         for key in REMOVED_PRESETS:
             self.assertTrue(records[key]["skill_missing"], key)
         self.assertTrue(records["my-flow"]["skill_missing"])
@@ -341,14 +346,14 @@ class CornerCaseTests(Schema15Base):
 
     def test_route_additions_bring_cc_routes_with_plugin(self) -> None:
         cc = {"cc-xhigh-pipeline", "cc-high-pipeline", "cc-medium-pipeline", "cc-low-pipeline",
-              "cc-xlow-pipeline", "cc-nano-pipeline"}
+              "cc-xlow-pipeline"}
         make_schema15(self.path, routes=route_rows(skip=cc), additions=2)
         conn = self.init()
         with contextlib.redirect_stderr(io.StringIO()):
             result = routes_store.ensure_imported(conn)
         self.assertNotIn("error", result)
         rows = {row["key"]: row["plugin"] for row in conn.execute("SELECT key, plugin FROM routes")}
-        for key in ("cc-xhigh", "cc-high", "cc-medium", "cc-low", "cc-xlow", "cc-nano"):
+        for key in ("cc-xhigh", "cc-high", "cc-medium", "cc-low", "cc-xlow"):
             with self.subTest(key=key):
                 self.assertEqual(rows.get(key), "pipeline-cc")
 

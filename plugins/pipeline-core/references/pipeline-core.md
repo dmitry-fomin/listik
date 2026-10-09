@@ -50,7 +50,7 @@
 обязана отказать, и наблюдаемый отказ (тест, который падает на коде до правки, команда с ненулевым
 кодом возврата или текстом ошибки). «Теперь проверяется» без такого пункта — не починка. Судья
 негативный контроль прогоняет и отказ показывает выводом; в adhoc-ветке без автора ТЗ
-(`pipeline-full:xlow`, `pipeline-cc:xlow`, `pipeline-full:nano`, `pipeline-cc:nano`, широкая правка) судья строит такой сценарий сам. Негативный
+(`pipeline-full:xlow`, `pipeline-cc:xlow`, `pipeline-full:nano`, широкая правка) судья строит такой сценарий сам. Негативный
 контроль, который не отказал, — красный вердикт.
 
 ### Записи живых проверок
@@ -408,7 +408,7 @@ Agent id субагента живёт только в этом разговор
 автора ты кладёшь **дословно** в `<steps>/<id>.a.md` при карточке (правило 4), без карточки —
 в `<steps>/adhoc-<ГГГГ-ММ-ДД>-<слаг>.a.md`, с двумя разделами:
 «Требования» — текст автора как есть, «Границы правки» — то, что автор назвал; не назвал —
-«только названные файлы и слой, остальное не трогать». Пресеты без писателя ТЗ (`pipeline-full:xlow`, `pipeline-cc:xlow`, `pipeline-full:nano`, `pipeline-cc:nano`)
+«только названные файлы и слой, остальное не трогать». Пресеты без писателя ТЗ (`pipeline-full:xlow`, `pipeline-cc:xlow`, `pipeline-full:nano`)
 могут уточнить этот раздел ходом 1 самого исполнителя — списком путей „Файлы:“/„Не трогать:“,
 который уходит и в `write_scope` карточки; правило и условие запуска — в самих пресетах. Своих требований не добавляешь. Приёмке
 этот же файл идёт и как порция, и как чек-лист. Везде ниже, где стоит `<id>`, для этой ветки при
@@ -1203,7 +1203,7 @@ listik claim <id> --holder claude --actor agent:claude --harness claude
 ```
 
 **Эпик без писателя ТЗ — стоп.** Пресеты без писателя ТЗ:
-`pipeline-full:xlow`, `pipeline-cc:xlow`, `pipeline-full:nano` и `pipeline-cc:nano`. Если `issue_type == "epic"`, а пресет из этого списка:
+`pipeline-full:xlow`, `pipeline-cc:xlow` и `pipeline-full:nano`. Если `issue_type == "epic"`, а пресет из этого списка:
 
 ```
 listik needs-owner <id> "эпик нельзя вести пресетом без писателя ТЗ: порции и дочерние карточки заводит только писатель ТЗ. Выберите пресет с писателем ТЗ — pipeline-full:xhigh, pipeline-full:high, pipeline-full:medium, pipeline-full:low, pipeline-full:cross, pipeline-cc:xhigh, pipeline-cc:high, pipeline-cc:medium, pipeline-cc:low, pipeline-claude:high или pipeline-claude:xhigh — либо заведите обычную задачу." --actor agent:claude --harness claude
@@ -1333,7 +1333,7 @@ listik claim <id> --holder claude --actor agent:claude --harness claude   # ло
 `listik done <id> -r "<коммит <hash7>>" --actor agent:claude --harness claude` за оркестратором;
 доделочный второй коммит — `-r "<коммиты <hash7>, <hash7>>"` там же.
 
-Пресет **без писателя ТЗ** (adhoc-ветка, `pipeline-full:xlow`, `pipeline-cc:xlow`, `pipeline-full:nano`, `pipeline-cc:nano`): этапов 1–2 нет, карточка одна:
+Пресет **без писателя ТЗ** (adhoc-ветка, `pipeline-full:xlow`, `pipeline-cc:xlow`, `pipeline-full:nano`): этапов 1–2 нет, карточка одна:
 
 ```
 listik set <id> spec_path=<абс. путь adhoc-файла> checklist_path=<тот же adhoc-файл> decision_path=<абс. путь журнала> --actor agent:claude --harness claude

@@ -26,7 +26,7 @@
 
 ## Скилы
 
-Все — `pipeline-cc:<имя>`. «—» — этапа нет. Маршруты Listik этих пресетов — `cc-<имя>` (`cc-xhigh` … `cc-nano`); команда маршрута зовёт `/pipeline-cc:<имя>`.
+Все — `pipeline-cc:<имя>`. «—» — этапа нет. Маршруты Listik этих пресетов — `cc-<имя>` (`cc-xhigh` … `cc-xlow`); команда маршрута зовёт `/pipeline-cc:<имя>`.
 
 | Скил | ТЗ | Критика ТЗ | Код | Приёмка |
 | --- | --- | --- | --- | --- |
@@ -35,11 +35,9 @@
 | `medium` | Opus 5.5 medium | Sonnet 5.5 medium, GPT-6.1 Sol medium; кворум — оба | Opus 5.5 medium | GPT-6 Astra high в Codex, коммитит судья |
 | `low` | Opus 5.5 low | GPT-6.1 Sol medium; кворум — он один | Opus 5.5 low | GPT-6 Astra medium в Codex, коммитит судья |
 | `xlow` | — | — | Opus 5.5 medium (два хода) | GPT-6 Astra medium в Codex, коммитит судья |
-| `nano` | — | — | Opus 5.5 medium (два хода) | GPT-6 Astra medium в Codex, коммитит судья |
 
 xhigh и high — расклад автора 07.10.2026, medium — выведен по аналогии и утверждён автором.
-low/xlow/nano утверждены автором 07.10.2026 — код пишет Opus (low у low, medium у xlow и nano), судья — Codex Astra
-medium. xlow и nano по составу совпадают; nano — для самых мелких правок (одна-две правки в одном месте).
+low и xlow утверждены автором 07.10.2026 — код пишет Opus (low у low, medium у xlow), судья — Codex Astra medium.
 
 Агенты, хук автоодобрения и ядро `pipeline-core.md` — в плагине `pipeline-core` (`plugins/pipeline-core/README.md`).
 
@@ -54,7 +52,7 @@ medium. xlow и nano по составу совпадают; nano — для с�
 | --- | --- | --- |
 | `claude-opus-5-5-xhigh` | xhigh: ТЗ, код | 0.657 |
 | `claude-opus-5-5-high` | high: ТЗ, код; xhigh: критик `opus` | 0.676 |
-| `claude-opus-5-5-medium` | medium: ТЗ, код; high: критик `opus`; xlow, nano: код | 0.684 |
+| `claude-opus-5-5-medium` | medium: ТЗ, код; high: критик `opus`; xlow: код | 0.684 |
 | `claude-opus-5-5-low` | low: ТЗ, код | 0.676 |
 | `claude-sonnet-5-5-xhigh` | xhigh: критик `sonnet` | 0.629 |
 | `claude-sonnet-5-5-high` | high: критик `sonnet` | 0.646 |
@@ -62,7 +60,7 @@ medium. xlow и nano по составу совпадают; nano — для с�
 | `gpt-6-1-sol-high` | xhigh, high: критик `codex` | 0.494 |
 | `gpt-6-1-sol-medium` | medium, low: критик `codex` | 0.516 |
 | `gpt-6-astra-high` | xhigh, high, medium: судья | 0.448 |
-| `gpt-6-astra-medium` | low, xlow, nano: судья | 0.465 |
+| `gpt-6-astra-medium` | low, xlow: судья | 0.465 |
 
 ## Схемы
 
@@ -95,9 +93,3 @@ medium. xlow и nano по составу совпадают; nano — для с�
 ![pipeline-cc:xlow](docs/xlow.svg)
 
 Когда брать: Claude + Codex · без ТЗ и критики · не для эпиков
-
-### pipeline-cc:nano
-
-![pipeline-cc:nano](docs/nano.svg)
-
-Когда брать: Claude + Codex · мелкие правки · без ТЗ и критики

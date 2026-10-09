@@ -55,13 +55,13 @@ STAGE4_REQUIRED = ("codex:codex-delegate", "--model gpt-6-astra", "--effort high
 
 STAGE4_REQUIRED_MEDIUM = ("codex:codex-delegate", "--model gpt-6-astra --effort medium", "--permission write",
                           "--holder codex", "VERDICT: PASS")
-#: Судья low/xlow/nano — Astra medium: ни high-усилия, ни модели критика.
+#: Судья low и xlow — Astra medium: ни high-усилия, ни модели критика.
 STAGE4_FORBIDDEN_MEDIUM = ("--effort high", "--model gpt-6.1-sol")
 IMPLEMENTER_PAIR = ("`pipeline-core:pipeline-implementer`", "model: opus")
 HOD1_TITLE = "## Ход 1"
 GIT_STATUS = 'git -C "$WT" status --porcelain'
 
-#: Пресет xlow/nano: этапы 3–4 и условный ход 1 одного локального субагента, судья Astra medium.
+#: Пресет xlow: этапы 3–4 и условный ход 1 одного локального субагента, судья Astra medium.
 _NO_SPEC_PRESET: dict = {
     "stages": (3, 4),
     "required": {
@@ -75,7 +75,6 @@ _NO_SPEC_PRESET: dict = {
         "forbidden": ("codex:codex-delegate",),
     },
     "text_required": ("SendMessage", "codex:codex-check"),
-    "judge_twin": "no-spec",
 }
 
 #: Пресет → требования по этапам. `required` — подстроки раздела `### <n>.`, `pairs` — пары подстрок,
@@ -143,7 +142,6 @@ PRESETS: dict[str, dict] = {
         "judge_twin": "with-spec",
     },
     "xlow": _NO_SPEC_PRESET,
-    "nano": _NO_SPEC_PRESET,
 }
 
 #: Во всех этапах 2 нет этих подстрок.
@@ -467,7 +465,7 @@ class ClaudeCodexSkillTests(unittest.TestCase):
                     self.assertIsNotNone(block, f"{name}: нет fenced-блока задания судье")
                 self.assertEqual(len(set(blocks.values())), 1, f"задания судье в группе {group} разошлись")
 
-    def test_stage_check_rejects_broken_low_xlow_nano(self) -> None:
+    def test_stage_check_rejects_broken_low_xlow(self) -> None:
         def in_stage(text: str, number: int, edit) -> str:
             section = _stage_section(text, number)
             self.assertTrue(section, f"нет раздела «### {number}.»")
@@ -482,8 +480,8 @@ class ClaudeCodexSkillTests(unittest.TestCase):
             return "\n".join(line for line in text.split("\n") if needle not in line)
 
         originals = {name: _skill_path(name).read_text(encoding="utf-8")
-                     for name in ("low", "xlow", "nano")}
-        low, xlow, nano = originals["low"], originals["xlow"], originals["nano"]
+                     for name in ("low", "xlow")}
+        low, xlow = originals["low"], originals["xlow"]
         broken = {
             ("low", "### 3. исполнитель → codex:codex-delegate"): in_stage(
                 low, 3, lambda s: s.replace("pipeline-core:pipeline-implementer-low", "codex:codex-delegate")),
@@ -496,8 +494,6 @@ class ClaudeCodexSkillTests(unittest.TestCase):
             ("xlow", "без строки git status"): without_line(xlow, GIT_STATUS),
             ("xlow", "### 4. без --holder codex"): in_stage(
                 xlow, 4, lambda s: s.replace("--holder codex", "")),
-            ("nano", "### 4. gpt-6-astra → gpt-6.1-sol"): in_stage(
-                nano, 4, lambda s: s.replace("--model gpt-6-astra", "--model gpt-6.1-sol")),
         }
         for (name, case), mutated in broken.items():
             with self.subTest(preset=name, case=case):
@@ -608,8 +604,6 @@ CC_ROUTES: dict[str, tuple[str, str, str, dict]] = {
         "critic": _codex("Sol", "GPT-6.1 Sol · medium", "gpt-6.1-sol", "medium"),
         "impl": _claude("low"), "judge": _ASTRA_MEDIUM}),
     "cc-xlow": ("xlow", "cc xlow", "Claude + Codex · без ТЗ и критики · не для эпиков", {
-        "impl": _claude("medium"), "judge": _ASTRA_MEDIUM}),
-    "cc-nano": ("xlow", "cc nano", "Claude + Codex · мелкие правки · без ТЗ и критики", {
         "impl": _claude("medium"), "judge": _ASTRA_MEDIUM}),
 }
 

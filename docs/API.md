@@ -397,7 +397,7 @@ Listik — только файл поставки: `listik init`/старт се
 | `nano-pipeline` | `full-nano` | `pipeline-full` |
 | `cross-pipeline` | `full-cross` | `pipeline-full` |
 | `sol-pipeline` | `cc-sol` | `pipeline-cc` |
-| `cc-xhigh-pipeline` … `cc-nano-pipeline` | `cc-xhigh` … `cc-nano` | `pipeline-cc` |
+| `cc-xhigh-pipeline` … `cc-xlow-pipeline` | `cc-xhigh` … `cc-xlow` | `pipeline-cc` |
 | `opus-pipeline` | `claude-opus` | `pipeline-claude` |
 | `claude-pipeline` | `claude-high` | `pipeline-claude` |
 

@@ -60,7 +60,7 @@ def _keys_of_kind(kind: str) -> set[str]:
 
 #: Скилы pipeline-cc: их тексты сверяет tests/test_pipeline_cc_plugin.py,
 #: здесь — только имя во frontmatter и связь с routes.json.
-CC_SKILLS = frozenset(f"pipeline-cc:{level}" for level in ("xhigh", "high", "medium", "low", "xlow", "nano"))
+CC_SKILLS = frozenset(f"pipeline-cc:{level}" for level in ("xhigh", "high", "medium", "low", "xlow"))
 
 
 def _all_skill_names() -> set[str]:
@@ -2245,12 +2245,12 @@ class PipelineNamesTests(unittest.TestCase):
 
     def test_foreign_prefix_check_rejects_mixup(self) -> None:
         root = self._copy_plugins()
-        nano = root / "pipeline-cc" / "skills" / "nano" / SKILL_FILE
-        nano.write_text(nano.read_text(encoding="utf-8") + "\nкак в pipeline-full:xlow\n", encoding="utf-8")
+        xlow = root / "pipeline-cc" / "skills" / "xlow" / SKILL_FILE
+        xlow.write_text(xlow.read_text(encoding="utf-8") + "\nкак в pipeline-full:xlow\n", encoding="utf-8")
         low = root / "pipeline-full" / "skills" / "low" / SKILL_FILE
         low.write_text(low.read_text(encoding="utf-8") + "\nкак в pipeline-cc:low\n", encoding="utf-8")
         self.assertEqual({path for path, _ in _foreign_prefix_hits(root)},
-                         {"pipeline-cc/skills/nano/SKILL.md", "pipeline-full/skills/low/SKILL.md"})
+                         {"pipeline-cc/skills/xlow/SKILL.md", "pipeline-full/skills/low/SKILL.md"})
 
     def test_no_agent_prefix_of_preset_plugin(self) -> None:
         pattern = re.compile(r"pipeline-(full|cc|claude):pipeline-")

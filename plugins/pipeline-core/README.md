@@ -34,7 +34,7 @@
 | `pipeline-critic` | sonnet / high | штатный критик ТЗ и чек-листа (`model: sonnet`), критик `sonnet` в составе | этап 2 `pipeline-full:xhigh`, `pipeline-full:high`, `pipeline-full:medium`, `pipeline-full:cross`, `pipeline-cc:high`; `pipeline-full:low` — критик `haiku`, **`model: haiku`**; `pipeline-cc:xhigh` — критик `opus`, **`model: opus`**; `pipeline-claude:high` — критики `sonnet` и `opus`, **`model: sonnet`** и **`model: opus`** |
 | `pipeline-critic-xhigh` | sonnet / xhigh | критик ТЗ и чек-листа, тело — как у `pipeline-critic` | `pipeline-cc:xhigh` — критик `sonnet`, **`model: sonnet`**; `pipeline-claude:xhigh` — критики `sonnet` и `opus`, **`model: sonnet`** и **`model: opus`** |
 | `pipeline-critic-medium` | sonnet / medium | то же | `pipeline-cc:medium` — критик `sonnet`, **`model: sonnet`**; `pipeline-cc:high` — критик `opus`, **`model: opus`** |
-| `pipeline-implementer` | sonnet / medium | реализует одну порцию, не коммитит | `pipeline-full:medium`, `pipeline-cc:medium`, `pipeline-cc:xlow`, `pipeline-cc:nano` — **`model: opus`** |
+| `pipeline-implementer` | sonnet / medium | реализует одну порцию, не коммитит | `pipeline-full:medium`, `pipeline-cc:medium`, `pipeline-cc:xlow` — **`model: opus`** |
 | `pipeline-implementer-high` | sonnet / high | то же для неочевидных порций | `pipeline-full:high`, `pipeline-cc:high`, `pipeline-claude:high` — **`model: opus`** |
 | `pipeline-implementer-xhigh` | opus / xhigh | то же на максимальном усилии | `pipeline-full:xhigh`, `pipeline-cc:xhigh`; `pipeline-claude:xhigh` — **`model: opus`** |
 | `pipeline-implementer-low` | opus / low | то же на низком усилии | `pipeline-cc:low` (`model` в вызове не передаётся) |

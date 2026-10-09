@@ -98,7 +98,7 @@ class PipelineSchemesTests(unittest.TestCase):
         self.assertEqual(texts.count("ТЗ"), 1)
         self.assertEqual(texts.count("Критик"), 3)
         for head in ("Код", "Линза scope", "Линза holes", "Линза intent", "Судья по находке", "Коммит порции",
-                     "красный вердикт", "Opus 5.5 · high", "GLM 5.3 Flash", "Grok 4.7 · xhigh"):
+                     "красный вердикт", "Opus 5.5 · high", "Haiku 5.5", "Grok 4.7 · xhigh"):
             self.assertIn(head, texts)
         for text in texts:
             self.assertNotIn("S+DS+SWE", text)

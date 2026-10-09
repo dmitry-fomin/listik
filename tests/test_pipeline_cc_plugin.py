@@ -48,12 +48,12 @@ SKILL_FORBIDDEN_CI = ("pi:pi-", "devin", "grok", "dsh", "deepseek", "glm", "--pr
 
 #: Приёмка линзами Haiku 5.5 max (listik-jllp, порция b): линзы — локальные субагенты
 #: `pipeline-core:pipeline-lens` на заходе `r1`; судья Codex Astra идёт по их находкам,
-#: при чистых линзах порцию коммитит оркестратор. В xlow/nano линз нет.
+#: при чистых линзах порцию коммитит оркестратор. В xlow линз нет.
 LENS_PRESETS = ("xhigh", "high", "medium", "low")
 LENS_AGENT = "pipeline-core:pipeline-lens"
 LENS_MODEL = "model: haiku"
 LENS_CORE_REF = "`pipeline-core.md`, «Приёмка линзами»"
-#: «линз» запрещена только пресетам без линз (xlow, nano) — им линзы не положены.
+#: «линз» запрещена только пресету без линз (xlow) — ему линзы не положены.
 NO_LENS_FORBIDDEN_CI = ("линз",)
 #: Подстроки всего текста пресета с линзами: ссылка на ядро, локальность линз, коммит
 #: оркестратора при чистых линзах, предполётная проверка линзы и две строки «Грабли».
@@ -382,7 +382,7 @@ README = PLUGIN_DIR / "README.md"
 
 def _readme_lens_problems(text: str) -> list[str]:
     """Строки «Скилы» README: линзы «Haiku 5.5 max ×3» и коммит оркестратора — ровно
-    у пресетов с линзами; в строках xlow/nano слова «линз» нет."""
+    у пресетов с линзами; в строке xlow слова «линз» нет."""
     problems: list[str] = []
     for name in sorted(PRESETS):
         rows = [line for line in text.splitlines() if line.startswith(f"| `{name}` ")]
@@ -474,7 +474,7 @@ class ClaudeCodexSkillTests(unittest.TestCase):
                 self.assertNotEqual(_skill_problems(name, mutated, path.parent), [])
 
     def test_skill_check_rejects_broken_lens_texts(self) -> None:
-        """listik-jllp, порция b: линзы — у четырёх пресетов, у xlow/nano слова «линз» нет."""
+        """listik-jllp, порция b: линзы — у четырёх пресетов, у xlow слова «линз» нет."""
 
         def without_in_roles_row(text: str, needle: str) -> str:
             lines = text.splitlines()
@@ -610,7 +610,7 @@ class ClaudeCodexSkillTests(unittest.TestCase):
         text = README.read_text(encoding="utf-8")
         low_row = "линзы Haiku 5.5 max ×3; при находке — GPT-6 Astra medium в Codex"
         broken = {
-            "nano с «линз»": text.replace("| `nano` |", "| `nano` | линзы,"),
+            "xlow с «линз»": text.replace("| `xlow` |", "| `xlow` | линзы,"),
             "low без «Haiku 5.5 max ×3»": text.replace(
                 low_row, low_row.replace("Haiku 5.5 max ×3", "Haiku 5.5 ×3")),
             "xhigh без коммита оркестратора": text.replace(

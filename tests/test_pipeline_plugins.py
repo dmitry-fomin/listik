@@ -1808,9 +1808,14 @@ class FeaturePipelineLensAcceptanceTests(unittest.TestCase):
                 self.assertNotEqual(_lens_core_problems(mutated), [])
 
 
-#: Приёмка линзами в пресетах (listik-3exw, порция b; линзы Haiku — listik-jllp, порция a):
-#: кто ссылается на ядро и что несёт.
-LENS_PRESETS = ("pipeline-full:high", "pipeline-full:xhigh")
+#: Приёмка линзами в пресетах (listik-3exw, порция b; линзы Haiku — listik-jllp, порция a;
+#: medium и cross — listik-jllp, порция b): кто ссылается на ядро и что несёт.
+LENS_PRESETS = ("pipeline-full:high", "pipeline-full:xhigh",
+                "pipeline-full:medium", "pipeline-full:cross")
+#: Пресеты pipeline-cc с теми же линзами (listik-jllp, порция b); их тексты сверяет
+#: tests/test_pipeline_cc_plugin.py — здесь список нужен строке `pipeline-lens` в README ядра.
+CC_LENS_PRESETS = ("pipeline-cc:xhigh", "pipeline-cc:high",
+                   "pipeline-cc:medium", "pipeline-cc:low")
 LENS_CORE_REF = "`pipeline-core.md`, «Приёмка линзами»"
 LENS_REF = "«Приёмка линзами»"
 LENS_FILE_MARK = "lens-<X>"
@@ -1927,7 +1932,7 @@ def _lens_preset_problems(name: str, text: str) -> list[str]:
 
 
 def _lens_readme_problems(text: str, skills: set[str]) -> list[str]:
-    """Строки таблицы «Скилы» README плагина: `линз` и Haiku 5.5 max ровно у пресетов с линзами."""
+    """Строки таблицы «Скилы» README плагина: `линз` и Haiku 5.5 max ×3 ровно у пресетов с линзами."""
     problems: list[str] = []
     for name in sorted(skills):
         prefix = f"| `{_skill_dir_name(name)}` "
@@ -1937,15 +1942,15 @@ def _lens_readme_problems(text: str, skills: set[str]) -> list[str]:
                 problems.append(f"README: нет строки {prefix!r}")
             elif not any("линз" in row for row in rows):
                 problems.append(f"README: строка {name} не называет линзы")
-            elif not any("Haiku 5.5 max" in row for row in rows):
-                problems.append(f"README: строка {name} не называет линзы Haiku 5.5 max")
+            elif not any("Haiku 5.5 max ×3" in row for row in rows):
+                problems.append(f"README: строка {name} не называет линзы Haiku 5.5 max ×3")
         elif any("линз" in row for row in rows):
             problems.append(f"README: строка {name} называет линзы")
     return problems
 
 
 def _core_readme_lens_problems(text: str) -> list[str]:
-    """Строка `pipeline-lens` в README ядра: haiku / max и все четыре пресета с линзами."""
+    """Строка `pipeline-lens` в README ядра: haiku / max и все десять пресетов с линзами."""
     problems: list[str] = []
     if "pipeline-lens-xhigh" in text:
         problems.append("README ядра называет удалённого pipeline-lens-xhigh")
@@ -1953,7 +1958,7 @@ def _core_readme_lens_problems(text: str) -> list[str]:
     if not rows:
         return problems + ["README ядра: нет строки агента `pipeline-lens`"]
     row = rows[0]
-    for needle in ("haiku / max", "model: haiku", *LENS_PRESETS, *CLAUDE_LENS_PRESETS):
+    for needle in ("haiku / max", "model: haiku", *LENS_PRESETS, *CLAUDE_LENS_PRESETS, *CC_LENS_PRESETS):
         if needle not in row:
             problems.append(f"README ядра: строка `pipeline-lens` не называет {needle!r}")
     return problems
@@ -1984,7 +1989,8 @@ def _lens_agent_problems(text: str) -> list[str]:
 
 
 class FeaturePipelineLensPresetTests(unittest.TestCase):
-    """Пресеты high и xhigh ведут приёмку линзами по ядру (listik-3exw, порция b)."""
+    """Пресеты high, xhigh, medium и cross ведут приёмку линзами по ядру (listik-3exw,
+    порция b; medium и cross — listik-jllp, порция b)."""
 
     def test_skills_follow_lens_acceptance(self) -> None:
         names = _skill_names()
@@ -2000,6 +2006,20 @@ class FeaturePipelineLensPresetTests(unittest.TestCase):
                 skills = {name for name in _skill_names() if name.startswith(f"{plugin}:")}
                 self.assertEqual(_lens_readme_problems(_plugin_text(_readme(plugin)), skills), [])
 
+    def test_readme_lens_check_rejects_mutations(self) -> None:
+        text = _plugin_text(_readme("pipeline-full"))
+        skills = {name for name in _skill_names() if name.startswith("pipeline-full:")}
+        medium_row = "линзы Haiku 5.5 max ×3 (`pipeline-lens`, `model: haiku`), при находке — Grok 4.7 high"
+        for case, mutated in {
+            "medium: линзы без «max»": text.replace(
+                medium_row, medium_row.replace("Haiku 5.5 max ×3", "Haiku 5.5 ×3")),
+            "low: строка с «линз»": text.replace(
+                "| `low` |", "| `low` | линзы,"),
+        }.items():
+            with self.subTest(case=case):
+                self.assertNotEqual(mutated, text, "изменение не применилось")
+                self.assertNotEqual(_lens_readme_problems(mutated, skills), [])
+
     def test_core_readme_lens_row(self) -> None:
         self.assertEqual(
             _core_readme_lens_problems(_plugin_text(_readme("pipeline-core"))), [])
@@ -2007,6 +2027,7 @@ class FeaturePipelineLensPresetTests(unittest.TestCase):
     def test_lens_checks_reject_broken_texts(self) -> None:
         high = _skill_text("pipeline-full:high")
         medium = _skill_text("pipeline-full:medium")
+        low = _skill_text("pipeline-full:low")
         xhigh = _skill_text("pipeline-full:xhigh")
         claude_xhigh = _skill_text("pipeline-claude:xhigh")
         judge = _fenced_block_with(xhigh, LENS_JUDGE_BLOCK_MARK)
@@ -2015,8 +2036,10 @@ class FeaturePipelineLensPresetTests(unittest.TestCase):
         self.assertTrue(stage4, "pipeline-full:high: нет раздела «### 4.»")
         broken = {
             "high без «Приёмка линзами»": ("pipeline-full:high", high, high.replace(LENS_REF, "")),
-            "medium с «Приёмка линзами»": ("pipeline-full:medium", medium,
-                                           medium + f"\nПриёмка — по {LENS_CORE_REF}.\n"),
+            "medium без «Приёмка линзами»": ("pipeline-full:medium", medium,
+                                             medium.replace(LENS_REF, "")),
+            "low с «Приёмка линзами»": ("pipeline-full:low", low,
+                                       low + f"\nПриёмка — по {LENS_CORE_REF}.\n"),
             "xhigh: задание судье без «вынести:»": (
                 "pipeline-full:xhigh", xhigh, xhigh.replace(judge, judge.replace("вынести:", ""), 1)),
             "high без «Haiku 5.5 max» в description": (
@@ -2291,10 +2314,10 @@ HOOK_SCRIPT = CORE_PLUGIN_DIR / "hooks" / "approve-pipeline-agents.py"
 HOOKS_JSON = CORE_PLUGIN_DIR / "hooks" / "hooks.json"
 HOOK_AGENT_PREFIX = "pipeline-core:pipeline-"
 CORE_MANIFEST = CORE_PLUGIN_DIR / PLUGIN_MANIFEST
-#: AGENTS хука после listik-d9rj, порция f: исполнители и два судьи, без `*-inherit`.
+#: AGENTS хука после listik-jllp, порция b: исполнители, два судьи и линза, без `*-inherit`.
 HOOK_AGENTS_EXPECTED = {f"pipeline-core:{name}" for name in (
     "pipeline-implementer", "pipeline-implementer-high", "pipeline-implementer-xhigh",
-    "pipeline-implementer-low", "pipeline-judge", "pipeline-judge-xhigh")}
+    "pipeline-implementer-low", "pipeline-judge", "pipeline-judge-xhigh", "pipeline-lens")}
 
 
 def _hook_descriptions() -> dict[str, str]:
@@ -2314,11 +2337,19 @@ def _hook_agents() -> set[str]:
     return set()
 
 
-def _hook_agent_problems(agents: set[str], description: str) -> list[str]:
+#: Агенты, которых `hooks.json` называть не обязано: `pipeline-lens` остался вне его описания —
+#: файл вне границ правки (listik-jllp, порция b); все остальные агенты AGENTS обязаны там быть.
+HOOKS_JSON_NAME_EXEMPT = frozenset({"pipeline-core:pipeline-lens"})
+
+
+def _hook_agent_problems(agents: set[str], description: str,
+                         name_exempt: frozenset[str] = frozenset()) -> list[str]:
     """Имена агентов хука: префикс `pipeline-core:pipeline-`, файл агента есть, description их называет.
 
     И обратно (listik-d9rj, порция f): исполнители и судьи (`pipeline-implementer…`, `pipeline-judge…`, имя
     целиком, без `pipeline-core:`), названные в description, — ровно короткие имена `agents`; `inherit` нет.
+    `name_exempt` — единственные агенты, которых description называть не обязано (`pipeline-lens`
+    в `hooks.json`); проверка имён касается всех остальных, в том числе в `hooks.json`.
     """
     named = {token.removeprefix("pipeline-core:") for token in re.findall(r"[\w:-]+", description)}
     problems: list[str] = []
@@ -2333,7 +2364,7 @@ def _hook_agent_problems(agents: set[str], description: str) -> list[str]:
             problems.append(f"{name}: префикс не {HOOK_AGENT_PREFIX!r}")
         elif not (CORE_PLUGIN_DIR / AGENTS_SUBDIR / f"{short}.md").is_file():
             problems.append(f"{name}: нет файла агента {short}.md")
-        if short not in named:
+        if name not in name_exempt and short not in named:
             problems.append(f"{name}: description его не называет")
     return problems
 
@@ -2410,10 +2441,14 @@ class PipelineNamesTests(unittest.TestCase):
         self.assertTrue(agents, f"{HOOK_SCRIPT}: не нашлось множества AGENTS")
         for source, description in _hook_descriptions().items():
             with self.subTest(description=source):
-                self.assertEqual(_hook_agent_problems(agents, description), [])
+                # Полное перечисление обязано быть в userConfig plugin.json; hooks.json
+                # не называет только pipeline-lens (вне границ listik-jllp, порция b),
+                # остальные агенты обязаны в нём быть, как раньше.
+                exempt = HOOKS_JSON_NAME_EXEMPT if source == "hooks.json" else frozenset()
+                self.assertEqual(_hook_agent_problems(agents, description, name_exempt=exempt), [])
 
     def test_hook_agents_exactly_seven(self) -> None:
-        """listik-d9rj, порция f: AGENTS хука — ровно семь имён, без `*-inherit`."""
+        """listik-d9rj, порция f, и listik-jllp, порция b: AGENTS хука — ровно семь имён, без `*-inherit`."""
         self.assertEqual(_hook_agents(), HOOK_AGENTS_EXPECTED)
 
     def test_hook_agents_check_rejects_extra_and_inherit(self) -> None:
@@ -2422,17 +2457,21 @@ class PipelineNamesTests(unittest.TestCase):
             "лишний агент в description": description.replace("pipeline-judge-xhigh",
                                                               "pipeline-judge-xhigh, pipeline-judge-inherit"),
             "агент description без пары в AGENTS": description + " pipeline-implementer-max",
+            "description hooks.json без pipeline-judge": description.replace("pipeline-judge,", "", 1),
         }.items():
             with self.subTest(case=case):
                 self.assertNotEqual(broken, description, "изменение не применилось")
-                self.assertNotEqual(_hook_agent_problems(agents, broken), [])
-        self.assertNotEqual(_hook_agent_problems(agents | {"pipeline-core:pipeline-judge-inherit"}, description), [])
+                self.assertNotEqual(_hook_agent_problems(agents, broken,
+                                                         name_exempt=HOOKS_JSON_NAME_EXEMPT), [])
+        self.assertNotEqual(_hook_agent_problems(agents | {"pipeline-core:pipeline-judge-inherit"},
+                                                 description, name_exempt=HOOKS_JSON_NAME_EXEMPT), [])
 
     def test_hook_agents_check_rejects_foreign_prefix(self) -> None:
         agents, description = _hook_agents(), _read_json(HOOKS_JSON)["description"]
         for bad in ("claude-codex:pipeline-implementer-low", "pipeline-cc:pipeline-implementer-low"):
             with self.subTest(agent=bad):
-                problems = _hook_agent_problems(agents | {bad}, description)
+                problems = _hook_agent_problems(agents | {bad}, description,
+                                              name_exempt=HOOKS_JSON_NAME_EXEMPT)
                 self.assertTrue(any(bad in problem for problem in problems), problems)
 
     def test_presets_name_themselves(self) -> None:

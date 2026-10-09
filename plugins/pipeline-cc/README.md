@@ -30,10 +30,10 @@
 
 | Скил | ТЗ | Критика ТЗ | Код | Приёмка |
 | --- | --- | --- | --- | --- |
-| `xhigh` | Opus 5.5 xhigh | Sonnet 5.5 xhigh, Opus 5.5 high, GPT-6.1 Sol high; кворум — Sonnet и Sol, Opus в кворум не входит | Opus 5.5 xhigh | GPT-6 Astra high в Codex, коммитит судья |
-| `high` | Opus 5.5 high | Sonnet 5.5 high, Opus 5.5 medium, GPT-6.1 Sol high; кворум — Sonnet и Sol, Opus в кворум не входит | Opus 5.5 high | GPT-6 Astra high в Codex, коммитит судья |
-| `medium` | Opus 5.5 medium | Sonnet 5.5 medium, GPT-6.1 Sol medium; кворум — оба | Opus 5.5 medium | GPT-6 Astra high в Codex, коммитит судья |
-| `low` | Opus 5.5 low | GPT-6.1 Sol medium; кворум — он один | Opus 5.5 low | GPT-6 Astra medium в Codex, коммитит судья |
+| `xhigh` | Opus 5.5 xhigh | Sonnet 5.5 xhigh, Opus 5.5 high, GPT-6.1 Sol high; кворум — Sonnet и Sol, Opus в кворум не входит | Opus 5.5 xhigh | линзы Haiku 5.5 max ×3; при находке — GPT-6 Astra high в Codex, коммитит судья; при чистых линзах коммитит оркестратор |
+| `high` | Opus 5.5 high | Sonnet 5.5 high, Opus 5.5 medium, GPT-6.1 Sol high; кворум — Sonnet и Sol, Opus в кворум не входит | Opus 5.5 high | линзы Haiku 5.5 max ×3; при находке — GPT-6 Astra high в Codex, коммитит судья; при чистых линзах коммитит оркестратор |
+| `medium` | Opus 5.5 medium | Sonnet 5.5 medium, GPT-6.1 Sol medium; кворум — оба | Opus 5.5 medium | линзы Haiku 5.5 max ×3; при находке — GPT-6 Astra high в Codex, коммитит судья; при чистых линзах коммитит оркестратор |
+| `low` | Opus 5.5 low | GPT-6.1 Sol medium; кворум — он один | Opus 5.5 low | линзы Haiku 5.5 max ×3; при находке — GPT-6 Astra medium в Codex, коммитит судья; при чистых линзах коммитит оркестратор |
 | `xlow` | — | — | Opus 5.5 medium (два хода) | GPT-6 Astra medium в Codex, коммитит судья |
 
 xhigh и high — расклад автора 07.10.2026, medium — выведен по аналогии и утверждён автором.

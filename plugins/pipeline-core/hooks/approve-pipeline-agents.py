@@ -24,6 +24,7 @@ AGENTS = {
     "pipeline-core:pipeline-judge",
     "pipeline-core:pipeline-judge-xhigh",
     "pipeline-core:pipeline-implementer-low",
+    "pipeline-core:pipeline-lens",
 }
 
 EDIT_TOOLS = {"Edit", "Write", "MultiEdit", "NotebookEdit"}

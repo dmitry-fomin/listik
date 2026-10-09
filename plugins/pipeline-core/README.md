@@ -40,7 +40,7 @@
 | `pipeline-implementer-low` | opus / low | то же на низком усилии | `pipeline-cc:low` (`model` в вызове не передаётся) |
 | `pipeline-judge` | opus / high | приёмка: чек-лист, срезанные углы в диффе, вердикт, при зелёном — коммит; код не правит | `pipeline-claude:high` — при находке линз, **`model: sonnet`** |
 | `pipeline-judge-xhigh` | sonnet / xhigh | то же | `pipeline-claude:xhigh` — при находке линз, **`model: sonnet`** |
-| `pipeline-lens` | haiku / max | линза приёмки | `pipeline-full:high`, `pipeline-full:xhigh`, `pipeline-claude:high`, `pipeline-claude:xhigh` — три линзы, **`model: haiku`** |
+| `pipeline-lens` | haiku / max | линза приёмки | `pipeline-full:high`, `pipeline-full:xhigh`, `pipeline-full:medium`, `pipeline-full:cross`, `pipeline-claude:high`, `pipeline-claude:xhigh`, `pipeline-cc:xhigh`, `pipeline-cc:high`, `pipeline-cc:medium`, `pipeline-cc:low` — три линзы, **`model: haiku`** |
 
 Исполнители и судья преднагружают скил `listik:listik` (поле `skills:`) и при названном в задаче id (`Listik, карточка <id>`) ведут карточку сами — раздел «Карточка Listik» в теле агента.
 

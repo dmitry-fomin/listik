@@ -91,6 +91,13 @@ class PipelineCoreHookTests(unittest.TestCase):
         self.assertEqual(self.run_hook(agent, "Bash", {"command": "git push"}), "")
         self.assertEqual(self.run_hook(agent, "Write", {"file_path": str(self.git_dir / "config")}), "")
 
+    def test_12_lens_allowed_like_judge(self) -> None:
+        """listik-jllp, порция b: линза в списке автоодобрения, опасное — по-прежнему запрос."""
+        agent = "pipeline-core:pipeline-lens"
+        self.assertAllow(self.run_hook(agent, "Bash", {"command": "ls"}))
+        self.assertEqual(self.run_hook(agent, "Bash", {"command": "git push"}), "")
+        self.assertEqual(self.run_hook(agent, "Write", {"file_path": str(self.git_dir / "config")}), "")
+
 
 if __name__ == "__main__":
     unittest.main()

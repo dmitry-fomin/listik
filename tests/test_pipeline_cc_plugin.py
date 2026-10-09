@@ -44,7 +44,26 @@ SKILL_REQUIRED = ("Стоп-фактор", "пресет pipeline-cc:{name}", "#
 
 #: Подстроки, которых нет ни в одном SKILL.md плагина (без учёта регистра).
 SKILL_FORBIDDEN_CI = ("pi:pi-", "devin", "grok", "dsh", "deepseek", "glm", "--provider", "--channel",
-                      "линз", "/feature-pipeline:")
+                      "/feature-pipeline:")
+
+#: Приёмка линзами Haiku 5.5 max (listik-jllp, порция b): линзы — локальные субагенты
+#: `pipeline-core:pipeline-lens` на заходе `r1`; судья Codex Astra идёт по их находкам,
+#: при чистых линзах порцию коммитит оркестратор. В xlow/nano линз нет.
+LENS_PRESETS = ("xhigh", "high", "medium", "low")
+LENS_AGENT = "pipeline-core:pipeline-lens"
+LENS_MODEL = "model: haiku"
+LENS_CORE_REF = "`pipeline-core.md`, «Приёмка линзами»"
+#: «линз» запрещена только пресетам без линз (xlow, nano) — им линзы не положены.
+NO_LENS_FORBIDDEN_CI = ("линз",)
+#: Подстроки всего текста пресета с линзами: ссылка на ядро, локальность линз, коммит
+#: оркестратора при чистых линзах, предполётная проверка линзы и две строки «Грабли».
+LENS_TEXT_REQUIRED = (LENS_CORE_REF, LENS_AGENT, "Haiku 5.5 max", "локальные субагенты",
+                      "коммитит оркестратор", "стоп: линза", "Линза изменила дерево",
+                      "После красного снова зовутся линзы")
+#: Этап 4 пресета с линзами: запуск одним сообщением, развилка и файлы линз в задании судье.
+STAGE4_LENS = (LENS_AGENT, LENS_MODEL, "одним сообщением", LENS_CORE_REF, "Линзы чисты",
+               "lens-<X>", "вынести:", "отбросить:", "чинить",
+               'git -C "$WT" log --oneline -1')
 
 QUORUM_ANTHROPIC_EXTRA = "кворум — годные ответы `sonnet` и `codex`; `opus` в кворум не входит"
 QUORUM_STOP = "стоп: критика — кворум не набран"
@@ -90,7 +109,7 @@ PRESETS: dict[str, dict] = {
             2: ("--model gpt-6.1-sol --effort high", OPUS_REVIEW, QUORUM_ANTHROPIC_EXTRA,
                 "отменён по кворуму", QUORUM_STOP),
             3: ("pipeline-core:pipeline-implementer-xhigh", "параметр `model` в вызове не передаётся"),
-            4: STAGE4_REQUIRED,
+            4: STAGE4_REQUIRED + STAGE4_LENS,
         },
         "pairs": {
             2: (("pipeline-core:pipeline-critic-xhigh", "model: sonnet"),
@@ -104,7 +123,7 @@ PRESETS: dict[str, dict] = {
             1: ("`pipeline-core:pipeline-spec-writer`", "model: opus"),
             2: ("--model gpt-6.1-sol --effort high", OPUS_REVIEW, QUORUM_ANTHROPIC_EXTRA,
                 "отменён по кворуму", QUORUM_STOP),
-            4: STAGE4_REQUIRED,
+            4: STAGE4_REQUIRED + STAGE4_LENS,
         },
         "pairs": {
             2: (("`pipeline-core:pipeline-critic`", "model: sonnet"),
@@ -118,7 +137,7 @@ PRESETS: dict[str, dict] = {
         "required": {
             1: ("`pipeline-core:pipeline-spec-writer-medium`", "model: opus"),
             2: ("--model gpt-6.1-sol --effort medium", "кворум — оба", QUORUM_STOP),
-            4: STAGE4_REQUIRED,
+            4: STAGE4_REQUIRED + STAGE4_LENS,
         },
         "pairs": {
             2: (("pipeline-core:pipeline-critic-medium", "model: sonnet"),),
@@ -133,7 +152,7 @@ PRESETS: dict[str, dict] = {
             2: ("codex:codex-delegate", "--model gpt-6.1-sol --effort medium", "--permission read",
                 "кворум — он один", QUORUM_STOP, "codex:codex-jobs"),
             3: ("pipeline-core:pipeline-implementer-low", "параметр `model` в вызове не передаётся"),
-            4: STAGE4_REQUIRED_MEDIUM,
+            4: STAGE4_REQUIRED_MEDIUM + STAGE4_LENS,
         },
         "pairs": {},
         "forbidden": {2: ("pipeline-critic", "model: sonnet"), 3: ("codex:codex-delegate", "model: opus"),
@@ -220,6 +239,16 @@ def _hod1_section(text: str) -> str:
     return "\n".join(lines[start:end])
 
 
+def _roles_section(text: str) -> list[str]:
+    """Строки раздела `## Роли` до следующего `## ` (без неё); пусто — раздела нет."""
+    lines = text.splitlines()
+    start = next((i for i, line in enumerate(lines) if line.startswith("## Роли")), None)
+    if start is None:
+        return []
+    end = next((i for i in range(start + 1, len(lines)) if lines[i].startswith("## ")), len(lines))
+    return lines[start:end]
+
+
 def _fm_list(frontmatter: list[str], key: str) -> list[str] | None:
     """Пункты списка `key:` вида `  - значение`; None — строки `key:` нет."""
     try:
@@ -251,6 +280,8 @@ def _skill_problems(name: str, text: str, skill_dir: pathlib.Path) -> list[str]:
             problems.append("description не в двойных кавычках")
         if LAUNCH_PHRASE not in value:
             problems.append(f"в description нет {LAUNCH_PHRASE!r}")
+        if name in LENS_PRESETS and "Haiku 5.5 max" not in value:
+            problems.append("в description нет 'Haiku 5.5 max'")
     collapsed = " ".join(text.split())
     problems.extend(f"нет чтения ядра {needle!r}" for needle in CORE_LINK if needle not in collapsed)
     for target in LINK_RE.findall(text):
@@ -264,7 +295,15 @@ def _skill_problems(name: str, text: str, skill_dir: pathlib.Path) -> list[str]:
         if needle not in text:
             problems.append(f"нет {needle!r}")
     lowered = text.lower()
-    problems.extend(f"есть запрещённое {needle!r}" for needle in SKILL_FORBIDDEN_CI if needle in lowered)
+    forbidden = SKILL_FORBIDDEN_CI if name in LENS_PRESETS else SKILL_FORBIDDEN_CI + NO_LENS_FORBIDDEN_CI
+    problems.extend(f"есть запрещённое {needle!r}" for needle in forbidden if needle in lowered)
+    if name in LENS_PRESETS:
+        problems.extend(f"нет {needle!r}" for needle in LENS_TEXT_REQUIRED if needle not in text)
+        roles = _roles_section(text)
+        if not any(LENS_AGENT in line and LENS_MODEL in line for line in roles):
+            problems.append(f"в «## Роли» нет строки линз {LENS_AGENT!r} с {LENS_MODEL!r}")
+        if not any("только при находке линз" in line for line in roles):
+            problems.append("в «## Роли» нет строки судьи «только при находке линз»")
     return problems
 
 
@@ -306,7 +345,8 @@ def _stage_problems(name: str, text: str) -> list[str]:
                             for needle in hod1["forbidden"] if needle in section)
     problems.extend(f"в тексте нет {needle!r}" for needle in spec.get("text_required", ()) if needle not in text)
     lowered = text.lower()
-    problems.extend(f"есть запрещённое {needle!r}" for needle in SKILL_FORBIDDEN_CI if needle in lowered)
+    forbidden = SKILL_FORBIDDEN_CI if name in LENS_PRESETS else SKILL_FORBIDDEN_CI + NO_LENS_FORBIDDEN_CI
+    problems.extend(f"есть запрещённое {needle!r}" for needle in forbidden if needle in lowered)
     return problems
 
 
@@ -335,6 +375,27 @@ def _judge_problems(text: str, sample: str) -> list[str]:
     if block is None:
         return ["нет fenced-блока задания судье в «### 4.»"]
     return [] if block == expected else ["задание судье разошлось с образцом"]
+
+
+README = PLUGIN_DIR / "README.md"
+
+
+def _readme_lens_problems(text: str) -> list[str]:
+    """Строки «Скилы» README: линзы «Haiku 5.5 max ×3» и коммит оркестратора — ровно
+    у пресетов с линзами; в строках xlow/nano слова «линз» нет."""
+    problems: list[str] = []
+    for name in sorted(PRESETS):
+        rows = [line for line in text.splitlines() if line.startswith(f"| `{name}` ")]
+        if name in LENS_PRESETS:
+            if not rows:
+                problems.append(f"README: нет строки {name!r}")
+            elif not any("Haiku 5.5 max ×3" in row for row in rows):
+                problems.append(f"README: строка {name} не называет линзы Haiku 5.5 max ×3")
+            elif not any("коммитит оркестратор" in row for row in rows):
+                problems.append(f"README: строка {name} не называет коммит оркестратора")
+        elif any("линз" in row for row in rows):
+            problems.append(f"README: строка {name} называет линзы")
+    return problems
 
 
 def _agent_problems(filename: str, text: str) -> list[str]:
@@ -411,6 +472,35 @@ class ClaudeCodexSkillTests(unittest.TestCase):
             with self.subTest(case=case):
                 self.assertNotEqual(mutated, text, "изменение не применилось")
                 self.assertNotEqual(_skill_problems(name, mutated, path.parent), [])
+
+    def test_skill_check_rejects_broken_lens_texts(self) -> None:
+        """listik-jllp, порция b: линзы — у четырёх пресетов, у xlow/nano слова «линз» нет."""
+
+        def without_in_roles_row(text: str, needle: str) -> str:
+            lines = text.splitlines()
+            for index, line in enumerate(lines):
+                if "Приёмка: линзы" in line and LENS_AGENT in line:
+                    lines[index] = line.replace(needle, "")
+                    return "\n".join(lines)
+            self.fail("нет строки роли линз")
+
+        originals = {name: _skill_path(name).read_text(encoding="utf-8")
+                     for name in ("medium", "low", "xlow")}
+        medium, low, xlow = originals["medium"], originals["low"], originals["xlow"]
+        broken = {
+            ("medium", "строка роли линз без model: haiku"):
+                ("medium", without_in_roles_row(medium, LENS_MODEL)),
+            ("medium", "строка роли судьи без «только при находке линз»"):
+                ("medium", medium.replace("только при находке линз", "")),
+            ("low", "description без «Haiku 5.5 max»"):
+                ("low", low.replace("Haiku 5.5 max", "", 1)),
+            ("xlow", "xlow + «Приёмка линзами»"):
+                ("xlow", xlow + "\nПриёмка — по «Приёмка линзами».\n"),
+        }
+        for (name, case), (preset, mutated) in broken.items():
+            with self.subTest(preset=name, case=case):
+                self.assertNotEqual(mutated, originals[preset], "изменение не применилось")
+                self.assertNotEqual(_skill_problems(preset, mutated, _skill_path(preset).parent), [])
 
     def test_stages(self) -> None:
         for name in sorted(PRESETS):
@@ -494,6 +584,8 @@ class ClaudeCodexSkillTests(unittest.TestCase):
             ("xlow", "без строки git status"): without_line(xlow, GIT_STATUS),
             ("xlow", "### 4. без --holder codex"): in_stage(
                 xlow, 4, lambda s: s.replace("--holder codex", "")),
+            ("low", "### 4. без model: haiku"): in_stage(
+                low, 4, lambda s: s.replace("model: haiku", "")),
         }
         for (name, case), mutated in broken.items():
             with self.subTest(preset=name, case=case):
@@ -510,6 +602,24 @@ class ClaudeCodexSkillTests(unittest.TestCase):
         mutated = text.replace(block, "\n".join(lines), 1)
         self.assertNotEqual(mutated, text, "изменение не применилось")
         self.assertNotEqual(_judge_problems(mutated, sample), [])
+
+    def test_readme_lens_rows(self) -> None:
+        self.assertEqual(_readme_lens_problems(README.read_text(encoding="utf-8")), [])
+
+    def test_readme_lens_check_rejects_broken_rows(self) -> None:
+        text = README.read_text(encoding="utf-8")
+        low_row = "линзы Haiku 5.5 max ×3; при находке — GPT-6 Astra medium в Codex"
+        broken = {
+            "nano с «линз»": text.replace("| `nano` |", "| `nano` | линзы,"),
+            "low без «Haiku 5.5 max ×3»": text.replace(
+                low_row, low_row.replace("Haiku 5.5 max ×3", "Haiku 5.5 ×3")),
+            "xhigh без коммита оркестратора": text.replace(
+                "при чистых линзах коммитит оркестратор", "", 1),
+        }
+        for case, mutated in broken.items():
+            with self.subTest(case=case):
+                self.assertNotEqual(mutated, text, "изменение не применилось")
+                self.assertNotEqual(_readme_lens_problems(mutated), [])
 
 
 class ClaudeCodexAgentTests(unittest.TestCase):

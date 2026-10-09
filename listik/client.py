@@ -6,12 +6,14 @@
 """
 from __future__ import annotations
 
+import http.client
 import json
 import os
 import sqlite3
 import urllib.error
 import urllib.parse
 import urllib.request
+from dataclasses import dataclass
 
 from . import config as config_mod
 from . import db as db_mod
@@ -24,23 +26,116 @@ class ApiDown(Exception):
     pass
 
 
+# ------------------------------------------------------------------ цель команды
+
+@dataclass(frozen=True)
+class Target:
+    """Куда идёт команда: свой сервер (`local`) или общий из `.listik.toml` (`remote`)."""
+    kind: str                  # "local" | "remote"
+    base_url: str              # без хвостового "/"
+    token: str                 # токен для заголовка Authorization
+    project_file: dict | None  # результат project_file.find или None
+
+
+_active: Target | None = None
+
+
+def use_target(target: Target | None) -> None:
+    """Сделать цель активной; None — сброс к прежнему поведению по `[server]`."""
+    global _active
+    _active = target
+
+
+def active_target() -> Target | None:
+    return _active
+
+
+def is_remote() -> bool:
+    return _active is not None and _active.kind == "remote"
+
+
+def _local_target(cfg: dict, host: str | None, port: int | None,
+                  project_file: dict | None) -> Target:
+    h = host or cfg["server"]["host"]
+    p = int(port or cfg["server"]["port"])
+    return Target("local", f"http://{h}:{p}", config_mod.auth_token(cfg), project_file)
+
+
+def resolve_target(cwd: str, *, local: bool = False,
+                   host: str | None = None, port: int | None = None) -> Target:
+    """Цель команды: `--local` → явные host/port → `.listik.toml` → свой `[server]`."""
+    from . import project_file as project_file_mod
+    found = project_file_mod.find(cwd)  # ошибки разбора — как есть
+    to_local = bool(local or host or port or not found or found["server"] == "local")
+    try:
+        cfg = config_mod.load()
+    except (OSError, ValueError):
+        if not to_local:
+            raise  # без `[remote]` удалённую цель не выбрать
+        # Битый config.toml — не отказ локальной цели: пустые base_url/token значат
+        # «прежнее поведение», base_url()/token() перечитают `[server]` сами, как раньше.
+        return Target("local", "", "", found)
+    if local or host or port:
+        return _local_target(cfg, host, port, found)
+    if not found or found["server"] == "local":
+        return _local_target(cfg, None, None, found)
+    url = found["server"]
+    try:
+        rem = config_mod.remote(cfg)
+    except errors.BadArgument as exc:
+        raise errors.ListikError(str(exc), code=errors.BAD_ARGUMENT,
+                                 hint=f"listik remote set {url}") from exc
+    if rem is None:
+        if config_mod.is_server_mode(cfg):
+            # Машина самого общего сервера: его адрес — свой `[server]`.
+            return _local_target(cfg, None, None, found)
+        raise errors.ListikError(
+            f"проект живёт на общем сервере {url} ({found['path']}), "
+            "а общий сервер у клиента не настроен",
+            code=errors.BAD_ARGUMENT, hint=f"listik remote set {url}")
+    if not config_mod.same_server(rem["url"], url):
+        raise errors.ListikError(
+            f"проект живёт на общем сервере {url} ({found['path']}), "
+            f"а у клиента настроен другой: {rem['url']}",
+            code=errors.BAD_ARGUMENT, hint=f"listik remote set {url}")
+    return Target("remote", url.rstrip("/"), rem["token"], found)
+
+
 def _remote_or_local(*, local: bool, host: str | None, port: int | None,
                      remote, local_call):
-    """Выполнить операцию через API, если сервер доступен, иначе локально."""
-    if not local and is_up(host, port):
+    """Выполнить операцию через API, если сервер доступен, иначе локально.
+
+    На удалённой цели — только API: локальная база не подменяет общий сервер."""
+    if not local and ((_targeted(host, port) and is_remote()) or is_up(host, port)):
         return remote()
     return local_call()
 
 
+def _targeted(host: str | None, port: int | None) -> bool:
+    """Вызов без явных host/port идёт по активной цели (если она есть)."""
+    return _active is not None and bool(_active.base_url) and not host and not port
+
+
 def base_url(host: str | None = None, port: int | None = None) -> str:
+    if _targeted(host, port):
+        return _active.base_url
     cfg = config_mod.load()
     h = host or cfg["server"]["host"]
     p = int(port or cfg["server"]["port"])
     return f"http://{h}:{p}"
 
 
-def token() -> str:
+def token(host: str | None = None, port: int | None = None) -> str:
+    if _targeted(host, port):
+        return _active.token
     return config_mod.auth_token(config_mod.load())
+
+
+def _unreachable() -> errors.ListikError:
+    """Сетевой сбой на удалённой цели: отказ, а не фолбэк в локальную базу."""
+    return errors.ListikError(
+        f"общий сервер {_active.base_url} не отвечает", code=errors.UNREACHABLE,
+        hint="проверь сеть и listik status; локальная база не тронута")
 
 
 def owner(explicit: str | None = None) -> str:
@@ -76,8 +171,9 @@ def health(host: str | None = None, port: int | None = None, timeout: float = 2.
     """Состояние сервера: None — не отвечает. 401 тоже считается «отвечает».
     auth=False — без токена и владельца: сервер отвечает лёгкой веткой (без git/Ollama)."""
     req = urllib.request.Request(f"{base_url(host, port)}/api/health")
-    if auth and token():
-        req.add_header("Authorization", f"Bearer {token()}")
+    tok = token(host, port) if auth else ""
+    if tok:
+        req.add_header("Authorization", f"Bearer {tok}")
     who = _resolve_owner(owner) if auth else None
     if who:
         req.add_header("X-Listik-Owner", who)
@@ -121,8 +217,9 @@ def request(method: str, path: str, *, query: dict | None = None, body: dict | N
         if qs:
             url += "?" + qs
     data = json.dumps(body or {}, ensure_ascii=False).encode("utf-8") if body is not None else None
+    remote = _targeted(host, port) and is_remote()
     req = urllib.request.Request(url, data=data, method=method)
-    req.add_header("Authorization", f"Bearer {token()}")
+    req.add_header("Authorization", f"Bearer {token(host, port)}")
     # Идентичность — только заголовком: в строке запроса и теле её нет.
     who = _resolve_owner(owner)
     if who:
@@ -136,7 +233,12 @@ def request(method: str, path: str, *, query: dict | None = None, body: dict | N
         with urllib.request.urlopen(req, timeout=timeout) as resp:
             raw_ok = resp.read()
     except urllib.error.HTTPError as exc:
-        raw = exc.read().decode("utf-8", "replace")
+        try:
+            raw = exc.read().decode("utf-8", "replace")
+        except (OSError, http.client.HTTPException) as read_exc:
+            if remote:
+                raise _unreachable() from read_exc
+            raise
         code = errors.code_for_status(exc.code)
         hint = errors.hint_for_status(exc.code)
         try:
@@ -156,10 +258,20 @@ def request(method: str, path: str, *, query: dict | None = None, body: dict | N
                 hint = errors.HINT_BY_CODE.get(code) or hint
         except json.JSONDecodeError:
             message = raw
+        if remote and code == errors.UNAUTHORIZED:
+            hint = "; ".join(x for x in (hint, f"токен общего сервера: listik remote set "
+                                                f"{_active.base_url}") if x)
         raise errors.ListikError(str(message).strip(), code=code, hint=hint,
                                  status=exc.code) from exc
     except urllib.error.URLError as exc:
+        if remote:
+            raise _unreachable() from exc
         raise ApiDown(str(exc)) from exc
+    except (OSError, http.client.HTTPException) as exc:
+        # Таймаут, обрыв посреди ответа: на общем сервере это тот же «не отвечает».
+        if remote:
+            raise _unreachable() from exc
+        raise
     try:
         payload = json.loads(raw_ok.decode("utf-8"))
     except (json.JSONDecodeError, UnicodeDecodeError) as exc:

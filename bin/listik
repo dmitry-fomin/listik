@@ -12,6 +12,7 @@ import json
 import os
 import re
 import sqlite3
+import subprocess
 import sys
 import traceback
 import urllib.parse
@@ -116,6 +117,10 @@ def log_traceback(exc: BaseException) -> None:
 
 
 def actor_default(args) -> str | None:
+    if client.is_remote():
+        # На общем сервере автор по умолчанию — тот же человек, что и владелец.
+        return (args.actor or os.environ.get("LISTIK_ACTOR")
+                or client.owner(getattr(args, "owner", None)) or os.environ.get("USER"))
     return args.actor or os.environ.get("LISTIK_ACTOR") or os.environ.get("USER")
 
 
@@ -144,11 +149,27 @@ PROJECT_DEFAULT_COMMANDS = frozenset({
     "waves", "lint",
 })
 
+#: Команды, которым цель из `.listik.toml` не нужна: служебные и свои для машины.
+#: Для них цель не активируется, и `call()` идёт на локальный сервер.
+LOCAL_COMMANDS = frozenset({
+    "serve", "stop", "init", "backup", "restore", "init-projects", "import-from-bd",
+    "token", "service", "swarm", "arbiter-check", "remote", "mcp",
+})
+
 #: Зарезервированное значение `--project`/`LISTIK_PROJECT` — «все проекты».
 ALL_PROJECTS = "all"
 
 #: Начало строки в stderr, которой сообщаем о подстановке проекта по каталогу.
 PROJECT_DETECTED_PREFIX = "# проект определён по каталогу"
+
+#: Начало строки в stderr о подстановке проекта из файла `.listik.toml`.
+PROJECT_FILE_PREFIX = "# проект из .listik.toml"
+
+
+def _project_file() -> dict | None:
+    """Файл проекта активной цели (None — цели нет или файла нет)."""
+    target = client.active_target()
+    return target.project_file if target else None
 
 
 def _detect_project(args) -> str | None:
@@ -170,8 +191,8 @@ def _detect_project(args) -> str | None:
 def project_default(args) -> str | None:
     """Итоговое значение `args.project` для команд с фильтром по проекту.
 
-    Приоритет: явный флаг → `LISTIK_PROJECT` → автоопределение по cwd → без
-    фильтра. Пустая переменная окружения — «не задана». Значение `all` (регистр
+    Приоритет: явный флаг → `LISTIK_PROJECT` → `project` из `.listik.toml` →
+    автоопределение по cwd (не на общем сервере: пути там чужие) → без фильтра. Пустая переменная окружения — «не задана». Значение `all` (регистр
     не важен) зарезервировано под «все проекты»: фильтр не подставляется и
     автоопределение не запускается. Список проектов запрашивается лениво — только
     когда ни флаг, ни переменная ничего не дали.
@@ -183,10 +204,22 @@ def project_default(args) -> str | None:
     env_value = (os.environ.get("LISTIK_PROJECT") or "").strip()
     if env_value:
         return None if env_value.casefold() == ALL_PROJECTS else env_value
+    quiet = getattr(args, "json", False) or getattr(args, "stop_hook", False)
+    pf = _project_file()
+    if pf:
+        slug = pf["project"]
+        if slug.casefold() == ALL_PROJECTS:
+            return None
+        if not quiet:
+            print(f"{PROJECT_FILE_PREFIX}: {slug} (все проекты: --project all)",
+                  file=sys.stderr)
+        return slug
+    if client.is_remote():
+        return None
     slug = _detect_project(args)
     if not slug:
         return None
-    if not getattr(args, "json", False) and not getattr(args, "stop_hook", False):
+    if not quiet:
         print(f"{PROJECT_DETECTED_PREFIX}: {slug} (все проекты: --project all)",
               file=sys.stderr)
     return slug
@@ -221,12 +254,21 @@ def warn_local_bypass(args, *, writing: bool) -> None:
     """
     if not writing or not getattr(args, "local", False):
         return
+    warn_remote_project_bypass()
     try:
         up = client.is_up(getattr(args, "host", None), getattr(args, "port", None))
     except Exception:  # noqa: BLE001 — битый config.toml не должен ломать саму команду
         up = False
     if up:
         print(LOCAL_BYPASS_WARNING, file=sys.stderr)
+
+
+def warn_remote_project_bypass() -> None:
+    """`--local` пишет мимо общего сервера, на котором живёт проект: сказать об этом."""
+    pf = _project_file()
+    if pf and pf["server"] != "local":
+        print(f"! --local: проект живёт на {pf['server']}, запись уйдёт в локальную базу "
+              "этой машины", file=sys.stderr)
 
 
 def call(op: str, args, path: str, *, query: dict | None = None, body: dict | None = None,
@@ -246,7 +288,8 @@ def call(op: str, args, path: str, *, query: dict | None = None, body: dict | No
     if getattr(args, "local", False):
         warn_local_bypass(args, writing=op in WRITE_OPS)
         return client.local_call(op, fence=token, **local_kwargs)
-    if client.is_up(args.host, args.port):
+    # Общий сервер: без предпроверки и без фолбэка — сбой сети станет `unreachable`.
+    if client.is_remote() or client.is_up(args.host, args.port):
         return client.request(method, path, query=query, body=body,
                               host=args.host, port=args.port, timeout=timeout,
                               owner=owner or None, fence=token)
@@ -268,8 +311,31 @@ def _reraise_bad_argument(exc: BaseException):
                              exit_code=2, status=err.status) from exc
 
 
+def _clone_root(root: str) -> str:
+    """Основное рабочее дерево репозитория с `root` (из `.worktrees/<id>` — сам клон)."""
+    try:
+        proc = subprocess.run(["git", "--no-optional-locks", "-C", root, "rev-parse",
+                               "--path-format=absolute", "--git-common-dir"],
+                              capture_output=True, text=True, check=False)
+    except OSError:
+        return root
+    common = proc.stdout.strip()
+    return str(Path(common).parent) if proc.returncode == 0 and common else root
+
+
 def _project_path(args, slug: str) -> str:
-    """Путь проекта `slug` из `/api/projects`; пустой — `bad_argument`."""
+    """Путь проекта `slug` из `/api/projects`; пустой — `bad_argument`.
+
+    На общем сервере пути проектов чужие: путь известен только для проекта клона,
+    в котором лежит `.listik.toml`, — это корень клона, сервер не спрашиваем."""
+    if client.is_remote():
+        pf = _project_file() or {}
+        if slug != pf.get("project"):
+            raise errors.ListikError(
+                "на общем сервере путь известен только для проекта текущего клона "
+                f"({pf.get('project')})", code=errors.BAD_ARGUMENT,
+                hint="запусти команду из клона нужного проекта")
+        return _clone_root(pf["root"])
     res = call("projects", args, "/api/projects", local_kwargs={}, fallback_warning=False)
     project = next((p for p in (res.get("projects") or []) if p.get("slug") == slug), None)
     path = ((project or {}).get("path") or "").strip()
@@ -602,8 +668,88 @@ def _mode_of(h: dict | None) -> str:
     return "server" if server_mode_enabled() else "local"
 
 
+def _status_remote(args, target) -> int:
+    """`status` на общем сервере: только его ответ, без своих pid/путей/роя и без токена."""
+    url = target.base_url
+    pf = target.project_file or {}
+    who = owner_default(args)
+    h = client.health(owner=who or None)
+    result = {"installation": "remote", "token": "unchecked", "warnings": []}
+    if h is not None:
+        authed = h.get("authed")
+        result["token"] = ("accepted" if authed is True
+                           else "rejected" if authed is False else "unknown")
+        if authed is False:
+            result["warnings"].append(
+                f"токен не принят общим сервером; обнови его: listik remote set {url}")
+        elif authed is not True:
+            result["warnings"].append("сервер не сообщил, принят ли токен")
+    mode = _mode_of(h) if h is not None else None
+    owner = (who or None) if mode == "server" else None
+    swarm = h.get("swarm") if h and isinstance(h.get("swarm"), dict) else None
+    if getattr(args, "json", False):
+        if h is None:
+            state = "down"
+        elif h.get("authed") is False:
+            state = "unauthorized"
+        else:
+            state = "up"
+        emit(args, {
+            "server": state,
+            "mode": mode,
+            "owner": owner,
+            "bin_path": str(Path(__file__).resolve()),
+            "diagnostics": result,
+            "pid": None,
+            "url": url,
+            "target": "remote",
+            "project_file": pf.get("path"),
+            "version": __version__,
+            "data_dir": str(paths.DATA_DIR),
+            "db_path": str(paths.DB_PATH),
+            "config_path": str(paths.CONFIG_PATH),
+            "log_path": str(paths.LOG_PATH),
+            "code_dir": str(paths.ROOT_DIR),
+            "swarm": swarm,
+            "health": h if state in ("up", "unauthorized") else None,
+        }, "", force_json=True, indent=None)
+        return 1 if state == "down" else 0
+    print("✨")
+    print(f"версия: {__version__}")
+    print(f"бинарник CLI: {Path(__file__).resolve()}")
+    print(f"config CLI: {paths.CONFIG_PATH}")
+    if h is None:
+        print(f"сервер: {url} не отвечает")
+        print(f"проект: {pf.get('project')}")
+        return 1
+    print(f"сервер: {url} (общий, из {pf.get('path')})")
+    print(f"проект: {pf.get('project')}")
+    print(f"режим: {'серверный' if mode == 'server' else 'локальный'}")
+    if mode == "server":
+        print(f"владелец: {owner}" if owner
+              else "владелец: не задан (--owner / LISTIK_OWNER / [auth] owner)")
+    token_state = {"accepted": "принят", "rejected": "не принят", "unknown": "не проверен"}
+    print(f"токен: {token_state[result['token']]}")
+    for warning in result["warnings"]:
+        print(f"ВНИМАНИЕ: {warning}")
+    if h.get("authed") is True:
+        print(f"доска:  {url}/")
+    if h.get("authed") and h.get("counts"):
+        c = h["counts"]
+        print(f"данные: {c['tasks']} задач, {c['comments']} комментариев, "
+              f"{c['events']} событий, {c['embeddings']} векторов")
+        emb = h.get("embed") or {}
+        print(f"поиск:  модель {emb.get('model')} "
+              + ("готова" if emb.get("ok") else "НЕДОСТУПНА — векторов не будет"))
+    if swarm is not None:
+        _print_swarm(h)
+    return 0
+
+
 def cmd_status(args) -> int:
     from listik import server
+    if client.is_remote():
+        return _status_remote(args, client.active_target())
     # Подготовить конфиг и токен для штатной работы status.
     local = bool(getattr(args, "local", False))
     who = owner_default(args)
@@ -642,6 +788,9 @@ def cmd_status(args) -> int:
             "log_path": str(paths.LOG_PATH),
             "code_dir": str(paths.ROOT_DIR),
             "swarm": _swarm_view(h),
+            "target": "local",
+            "project_file": next((pf["path"] for pf in [_project_file()]
+                                  if pf and pf["server"] == "local"), None),
             # Ответ /api/health как есть — только когда он что-то значит.
             "health": h if state in ("up", "unauthorized") else None,
         }, "", force_json=True, indent=None)
@@ -1382,6 +1531,13 @@ def cmd_memory(args) -> int:
 
 
 def cmd_remember(args) -> int:
+    if client.is_remote():
+        raise errors.ListikError(
+            "на общем сервере заметку записывает MCP-инструмент listik_remember: "
+            "у HTTP API нет записи заметок", code=errors.UNSUPPORTED,
+            hint="локальная база не тронута")
+    if getattr(args, "local", False):
+        warn_remote_project_bypass()
     conn = db.init()
     try:
         out = store.remember(conn, args.text, key=args.key, project=args.project)
@@ -1978,6 +2134,10 @@ def cmd_watch(args) -> int:
     """Наблюдатель деревьев роя: тронутые файлы, пробное слияние по парам, расхождения
     с write_scope, лестница реакций на конфликт (§2 порции c) — замораживает
     опоздавшего либо только отчитывается, если он уже не в работе."""
+    if client.is_remote():
+        raise errors.ListikError(
+            "наблюдатель роя на общем сервере не работает: рой там выключен",
+            code=errors.UNSUPPORTED, hint="listik watch — для проектов своего сервера")
     project = (getattr(args, "project", None) or "").strip()
     if not project:
         raise errors.ListikError(
@@ -2140,15 +2300,22 @@ def lint_stop_hook(args) -> int:
         if isinstance(payload, dict) and payload.get("stop_hook_active") is True:
             return 0
         # Сервер лежит, а базы нет — не создаём её ни автоопределением проекта,
-        # ни самим lint (local_call открывает базу через db.init).
-        local = getattr(args, "local", False) or not client.is_up(args.host, args.port)
-        if local and not paths.DB_PATH.exists():
-            return 0
+        # ни самим lint (local_call открывает базу через db.init). На общем сервере
+        # локальная база не при чём: проект — из файла, сбой сети — тихий выход.
+        if not client.is_remote():
+            local = getattr(args, "local", False) or not client.is_up(args.host, args.port)
+            if local and not paths.DB_PATH.exists():
+                return 0
         project = project_default(args)
         if not project:
             return 0
-        res = call("lint", args, "/api/lint", query={"project": project},
-                   local_kwargs={"project": project}, fallback_warning=False)
+        try:
+            res = call("lint", args, "/api/lint", query={"project": project},
+                       local_kwargs={"project": project}, fallback_warning=False)
+        except errors.ListikError as exc:
+            if exc.code == errors.UNREACHABLE:
+                return 0
+            raise
         items = res["items"]
         if not items:
             return 0
@@ -2235,17 +2402,11 @@ def cmd_dep_tree(args) -> int:
 
 
 def cmd_dep_cycles(args) -> int:
-    conn = db.init()
-    from listik import deps as deps_mod
-    try:
-        found = deps_mod.cycles(conn)
-    except Exception:
-        # Незакоммиченная запись упавшей операции держала бы блокировку (listik-mqr6).
-        try:
-            conn.rollback()
-        except sqlite3.Error:
-            pass
-        raise
+    if client.is_remote():
+        # Своего эндпоинта у циклов нет: их отдаёт `GET /api/ready`.
+        found = call("ready", args, "/api/ready", query={"limit": 1}).get("cycles") or []
+    else:
+        found = _local_cycles()
     if getattr(args, "json", False):
         emit(args, found, "")
         return 0
@@ -2255,6 +2416,20 @@ def cmd_dep_cycles(args) -> int:
     for cycle in found:
         print("цикл: " + " → ".join(cycle))
     return 0
+
+
+def _local_cycles() -> list:
+    conn = db.init()
+    from listik import deps as deps_mod
+    try:
+        return deps_mod.cycles(conn)
+    except Exception:
+        # Незакоммиченная запись упавшей операции держала бы блокировку (listik-mqr6).
+        try:
+            conn.rollback()
+        except sqlite3.Error:
+            pass
+        raise
 
 
 def cmd_inbox(args) -> int:
@@ -2438,6 +2613,8 @@ def cmd_projects(args) -> int:
         _print_routing(project)
         return 0
 
+    if getattr(args, "add", None) and client.is_remote():
+        return _projects_add_remote(args)
     if getattr(args, "add", None):
         project_path = str(Path(args.add).expanduser().resolve())
         project = call("project_add", args, "/api/projects", method="POST",
@@ -2498,6 +2675,21 @@ def cmd_projects(args) -> int:
     return 0
 
 
+def _projects_add_remote(args) -> int:
+    """`projects --add` на общем сервере: каталог клиента серверу чужой — шлём без `path`."""
+    project_path = Path(args.add).expanduser().resolve()
+    pf = _project_file() or {}
+    slug = args.slug
+    if not slug and pf and Path(_clone_root(pf["root"])).resolve() == project_path:
+        slug = pf["project"]
+    slug = slug or project_path.name
+    body = {"slug": slug, "title": args.title, "kind": args.kind or "native"}
+    project = call("project_add", args, "/api/projects", method="POST", body=body,
+                   local_kwargs=body, fallback_warning=False)
+    print(f"проект {project.get('slug') or slug} добавлен на общий сервер (без каталога)")
+    return 0
+
+
 def cmd_actors(args) -> int:
     res = call("meta", args, "/api/meta", local_kwargs={})
     if getattr(args, "json", False):
@@ -2536,7 +2728,7 @@ def _routes_missing(missing: list[str]) -> None:
 def _cmd_routes_hide(args, keys: list[str]) -> int:
     """`--hide`: всем ключам `visible=false`; хоть одного нет — ничего не меняем."""
     local = getattr(args, "local", False)
-    if not local and client.is_up(args.host, args.port):
+    if not local and (client.is_remote() or client.is_up(args.host, args.port)):
         # ponytail: проверка по GET и запись отдельными PATCH — маршрут, удалённый
         # между ними на доске, даст 404 после части записей (предел описан в API.md).
         rows = client.request("GET", "/api/routes", host=args.host, port=args.port)
@@ -2574,7 +2766,7 @@ def _cmd_routes_reimport(args) -> int:
         # Сервер читает файл сам и из своего каталога: путь — абсолютный.
         source = os.path.abspath(os.path.expanduser(source))
     local = getattr(args, "local", False)
-    if not local and client.is_up(args.host, args.port):
+    if not local and (client.is_remote() or client.is_up(args.host, args.port)):
         body = {} if source is None else {"path": source}
         data = client.request("POST", "/api/routes/reimport", body=body,
                               host=args.host, port=args.port)
@@ -3313,6 +3505,16 @@ class _ClosedPipeSafeStdout:
         return getattr(self._stream, name)
 
 
+def _activate_target(args) -> None:
+    """Цель команды по cwd и флагам; cwd удалён — прежнее поведение, без цели."""
+    try:
+        cwd = os.getcwd()
+    except OSError:
+        return
+    client.use_target(client.resolve_target(cwd, local=bool(getattr(args, "local", False)),
+                                            host=args.host, port=args.port))
+
+
 def main(argv: list[str] | None = None) -> int:
     saved = sys.stdout
     guard = sys.stdout = _ClosedPipeSafeStdout(saved)
@@ -3324,6 +3526,8 @@ def main(argv: list[str] | None = None) -> int:
 
 
 def _main(argv: list[str] | None) -> int:
+    # Цель не должна протекать между вызовами `_main` (тесты зовут его подряд).
+    client.use_target(None)
     raw = list(sys.argv[1:] if argv is None else argv)
     # --json может стоять и до подкоманды, и после: ошибка разбора аргументов
     # случается раньше, чем флаг попадёт в args, поэтому смотрим сам argv.
@@ -3342,11 +3546,18 @@ def _main(argv: list[str] | None) -> int:
     if not hasattr(args, "json"):
         args.json = False
     json_mode = json_mode or args.json
-    # lint --stop-hook определяет проект сам: сначала stdin хука, потом база.
-    if (getattr(args, "cmd", None) in PROJECT_DEFAULT_COMMANDS
-            and not getattr(args, "stop_hook", False)):
-        args.project = project_default(args)
     try:
+        if getattr(args, "cmd", None) not in LOCAL_COMMANDS:
+            try:
+                _activate_target(args)
+            except Exception:  # noqa: BLE001 — Stop-хук не падает и молчит в stderr
+                if getattr(args, "stop_hook", False):
+                    return 0
+                raise
+        # lint --stop-hook определяет проект сам: сначала stdin хука, потом база.
+        if (getattr(args, "cmd", None) in PROJECT_DEFAULT_COMMANDS
+                and not getattr(args, "stop_hook", False)):
+            args.project = project_default(args)
         return int(args.func(args) or 0)
     except (errors.ListikError, KeyError, ValueError, PermissionError) as exc:
         # Ожидаемые ошибки: разбор аргументов, «не найдено» (errors.NotFound),

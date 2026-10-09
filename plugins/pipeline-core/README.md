@@ -5,6 +5,10 @@
 путь ядра. Сам задачу не ведёт — от него зависят пресетные плагины (`pipeline-full`, `pipeline-cc`, `pipeline-claude`), их
 `plugin.json` перечисляет `pipeline-core` в `dependencies`. Агенты зовутся как `pipeline-core:<имя>`.
 
+Пресеты — их состав, установка и схема каждого пресета — в README пресетных плагинов:
+[pipeline-full](../pipeline-full/README.md), [pipeline-cc](../pipeline-cc/README.md),
+[pipeline-claude](../pipeline-claude/README.md).
+
 ## Скил core
 
 `pipeline-core:core` — указатель на ядро: пресет вызывает его до первого действия, скил называет путь

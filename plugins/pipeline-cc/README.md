@@ -2,7 +2,10 @@
 
 Линейка пресетов конвейера ТЗ → критика → код → приёмка, где работают только Claude (локальные субагенты
 основной сессии) и Codex (OpenAI, через скил `codex:codex-delegate`). Пресеты вызываются как
-`/pipeline-cc:<пресет>` или маршрутом карточки Listik `process:cc-<пресет>`.
+`/pipeline-cc:<пресет>` или маршрутом карточки Listik `process:cc-<пресет>`: имя запуска `/pipeline-cc:<уровень>`,
+ключ маршрута `cc-<уровень>`.
+
+Нужны харнессы Claude Code и Codex CLI и подписки Claude и OpenAI.
 
 Плагин ничего не копирует: общий протокол — ядро `plugins/pipeline-core/references/pipeline-core.md`,
 писатели ТЗ, исполнители и критики — агенты `pipeline-core:*`, внешние прогоны — скилы
@@ -19,7 +22,7 @@
 /plugin install pipeline-cc@listik
 ```
 
-Нет хотя бы одного из них — пресет останавливается до первого действия (раздел «Внешние скилы» ядра).
+Нет хотя бы одного из этих плагинов — пресет останавливается до первого действия (раздел «Внешние скилы» ядра).
 
 ## Скилы
 
@@ -63,3 +66,47 @@ sol — проверяющие от OpenAI вместо Grok, автор выб�
 | `gpt-6-1-sol-medium` | medium, low: критик `codex` | 0.516 |
 | `gpt-6-astra-high` | xhigh, high, medium: судья | 0.448 |
 | `gpt-6-astra-medium` | low, xlow, nano: судья | 0.465 |
+
+## Схемы
+
+### pipeline-cc:sol
+
+![pipeline-cc:sol](docs/sol.svg)
+
+Когда брать: Opus ТЗ и код · Sonnet+Sol критика · Sol приёмка
+
+### pipeline-cc:xhigh
+
+![pipeline-cc:xhigh](docs/xhigh.svg)
+
+Когда брать: Claude + Codex · от 50 мин на задачу
+
+### pipeline-cc:high
+
+![pipeline-cc:high](docs/high.svg)
+
+Когда брать: Claude + Codex · от 40 мин на задачу
+
+### pipeline-cc:medium
+
+![pipeline-cc:medium](docs/medium.svg)
+
+Когда брать: Claude + Codex · 30 мин на задачу
+
+### pipeline-cc:low
+
+![pipeline-cc:low](docs/low.svg)
+
+Когда брать: Claude + Codex · на 20 мин, с ТЗ и критикой
+
+### pipeline-cc:xlow
+
+![pipeline-cc:xlow](docs/xlow.svg)
+
+Когда брать: Claude + Codex · без ТЗ и критики · не для эпиков
+
+### pipeline-cc:nano
+
+![pipeline-cc:nano](docs/nano.svg)
+
+Когда брать: Claude + Codex · мелкие правки · без ТЗ и критики

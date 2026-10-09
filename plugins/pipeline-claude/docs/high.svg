@@ -1,0 +1,43 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1379" height="304" viewBox="0 0 1379 304" font-family="-apple-system, 'Segoe UI', Helvetica, Arial, sans-serif">
+  <title>pipeline-claude:high</title>
+  <defs>
+    <marker id="arrow" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse">
+      <path d="M0 0L10 5L0 10z" fill="#c8c8c8"/>
+    </marker>
+  </defs>
+  <rect width="100%" height="100%" fill="#fff"/>
+  <text x="24" y="32" text-anchor="start" font-size="15" font-weight="700" fill="#111">pipeline-claude:high</text>
+  <text x="24" y="54" text-anchor="start" font-size="12" fill="#6b6b6b">claude high · только Claude: внешних денег ноль</text>
+  <line x1="161" y1="158" x2="217" y2="128" stroke="#c8c8c8" stroke-width="1.2" marker-end="url(#arrow)"/>
+  <line x1="161" y1="158" x2="217" y2="188" stroke="#c8c8c8" stroke-width="1.2" marker-end="url(#arrow)"/>
+  <line x1="369" y1="128" x2="425" y2="158" stroke="#c8c8c8" stroke-width="1.2" marker-end="url(#arrow)"/>
+  <line x1="369" y1="188" x2="425" y2="158" stroke="#c8c8c8" stroke-width="1.2" marker-end="url(#arrow)"/>
+  <line x1="562" y1="158" x2="618" y2="98" stroke="#c8c8c8" stroke-width="1.2" marker-end="url(#arrow)"/>
+  <line x1="562" y1="158" x2="618" y2="158" stroke="#c8c8c8" stroke-width="1.2" marker-end="url(#arrow)"/>
+  <line x1="562" y1="158" x2="618" y2="218" stroke="#c8c8c8" stroke-width="1.2" marker-end="url(#arrow)"/>
+  <line x1="744" y1="98" x2="800" y2="158" stroke="#c8c8c8" stroke-width="1.2" marker-end="url(#arrow)"/>
+  <line x1="744" y1="158" x2="800" y2="158" stroke="#c8c8c8" stroke-width="1.2" marker-end="url(#arrow)"/>
+  <line x1="744" y1="218" x2="800" y2="158" stroke="#c8c8c8" stroke-width="1.2" marker-end="url(#arrow)"/>
+  <line x1="960" y1="158" x2="1016" y2="158" stroke="#c8c8c8" stroke-width="1.2" marker-end="url(#arrow)"/>
+  <text x="92" y="154" text-anchor="middle" font-size="15" font-weight="700" fill="#111">ТЗ</text>
+  <text x="92" y="172" text-anchor="middle" font-size="12" fill="#6b6b6b">Opus 5.5 · high</text>
+  <text x="293" y="124" text-anchor="middle" font-size="15" font-weight="700" fill="#111">Критик</text>
+  <text x="293" y="142" text-anchor="middle" font-size="12" fill="#6b6b6b">Sonnet 5.5 · high</text>
+  <text x="293" y="184" text-anchor="middle" font-size="15" font-weight="700" fill="#111">Критик</text>
+  <text x="293" y="202" text-anchor="middle" font-size="12" fill="#6b6b6b">Opus 5.5 · high</text>
+  <text x="493" y="154" text-anchor="middle" font-size="15" font-weight="700" fill="#111">Код</text>
+  <text x="493" y="172" text-anchor="middle" font-size="12" fill="#6b6b6b">Opus 5.5 · high</text>
+  <text x="681" y="94" text-anchor="middle" font-size="15" font-weight="700" fill="#111">Линза scope</text>
+  <text x="681" y="112" text-anchor="middle" font-size="12" fill="#6b6b6b">Sonnet 5.5</text>
+  <text x="681" y="154" text-anchor="middle" font-size="15" font-weight="700" fill="#111">Линза holes</text>
+  <text x="681" y="172" text-anchor="middle" font-size="12" fill="#6b6b6b">Sonnet 5.5</text>
+  <text x="681" y="214" text-anchor="middle" font-size="15" font-weight="700" fill="#111">Линза intent</text>
+  <text x="681" y="232" text-anchor="middle" font-size="12" fill="#6b6b6b">Sonnet 5.5</text>
+  <text x="880" y="154" text-anchor="middle" font-size="15" font-weight="700" fill="#111">Судья по находке</text>
+  <text x="880" y="172" text-anchor="middle" font-size="12" fill="#6b6b6b">Sonnet 5.5 · high</text>
+  <rect x="1016" y="134" width="339" height="46" rx="8" fill="none" stroke="#111" stroke-width="1"/>
+  <text x="1185" y="154" text-anchor="middle" font-size="15" font-weight="700" fill="#111">Коммит порции</text>
+  <text x="1185" y="172" text-anchor="middle" font-size="12" fill="#6b6b6b">оркестратор при чистых линзах, иначе судья</text>
+  <path d="M880 184 C880 288 493 288 493 184" fill="none" stroke="#c8c8c8" stroke-width="1.2" stroke-dasharray="5 4" marker-end="url(#arrow)"/>
+  <text x="686" y="280" text-anchor="middle" font-size="12" fill="#6b6b6b">красный вердикт</text>
+</svg>

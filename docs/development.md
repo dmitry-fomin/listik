@@ -9,7 +9,7 @@
 bin/listik     CLI и клиент API (одна программа)
 listik/        сервер, база, поиск, эмбеддинги, MCP
 web/           доска (Vue 3)
-plugins/       плагины Claude Code: listik, feature-pipeline, claude-codex, pi, dsh, codex, second-opinion
+plugins/       плагины Claude Code: listik, pipeline-core, pipeline-full, pipeline-cc, pipeline-claude, pi, dsh, codex, opencode, devin, second-opinion
 docs/API.md    контракт данных и эндпоинтов — источник истины по поведению
 docs/usage.md  работа с задачами: протокол, конвейер, доска, поиск
 AGENTS.md      правила работы агента с задачами

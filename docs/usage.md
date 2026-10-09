@@ -91,16 +91,18 @@ listik memory "про что-то"
 ```
 /plugin marketplace add dmitry-fomin/listik
 /plugin install listik@listik             # скил listik:listik — протокол задач
-/plugin install feature-pipeline@listik   # пресеты конвейера *-pipeline и агенты pipeline-*
-/plugin install claude-codex@listik      # пресеты claude-codex:*-pipeline на Claude + Codex
+/plugin install pipeline-core@listik      # ядро конвейера, агенты pipeline-*, хук; ставится зависимостью пресетов
+/plugin install pipeline-full@listik      # пресеты pipeline-full:* на всех харнессах
+/plugin install pipeline-cc@listik        # пресеты pipeline-cc:* на Claude + Codex
+/plugin install pipeline-claude@listik    # пресеты pipeline-claude:* только на Claude
 /plugin install dsh@listik                # DeepSeek Harness: dsh:dsh-delegate
 /plugin install codex@listik              # OpenAI Codex CLI: codex:codex-delegate
 /plugin install pi@listik                 # pi CLI (GLM 5.3 Flash, DeepSeek v4.1 Flash): pi:pi-delegate, в т.ч. критика ТЗ
 /plugin install second-opinion@listik     # второе мнение другой LLM: second-opinion:ask
 ```
 
-Пресеты `feature-pipeline` зовут внешние харнессы скилами этих плагинов; Grok остаётся отдельным
-(`grok@grok-build`). `opus-pipeline` обходится
+Пресеты `pipeline-full` и `pipeline-cc` зовут внешние харнессы скилами этих плагинов; Grok остаётся
+отдельным (`grok@grok-build`). `pipeline-claude:opus` обходится
 субагентом Claude. При изменении плагина поднимайте `version` в его `plugin.json` и в `marketplace.json`.
 
 **MCP** (инструменты `listik_*`, список — в docs/API.md):
@@ -616,7 +618,7 @@ show <id>`).
 Вопрос без дефолтной строки — тоже жёсткий: надзор и барьер ждут человека, автоответа нет.
 
 Правило для исполнителей — правило 7 протокола харнессов (`docs/harness-protocol.md`); для
-конвейера — подраздел «Headless» в `plugins/feature-pipeline/references/pipeline-core.md`.
+конвейера — подраздел «Headless» в `plugins/pipeline-core/references/pipeline-core.md`.
 
 Наблюдатель `listik watch` рой зовёт каждый тик, если у проекта есть каталог и в плане нет
 цикла: до `decide` и до барьера, в том числе пока воркеры ещё бегут. Успешная заморозка

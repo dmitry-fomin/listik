@@ -1,4 +1,4 @@
-<svg xmlns="http://www.w3.org/2000/svg" width="1031" height="251" viewBox="0 0 1031 251" font-family="-apple-system, 'Segoe UI', Helvetica, Arial, sans-serif">
+<svg xmlns="http://www.w3.org/2000/svg" width="1098" height="251" viewBox="0 0 1098 251" font-family="-apple-system, 'Segoe UI', Helvetica, Arial, sans-serif">
   <title>pipeline-full:cross</title>
   <defs>
     <marker id="arrow" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse">
@@ -10,23 +10,23 @@
   <text x="24" y="54" text-anchor="start" font-size="12" fill="#6b6b6b">cross · Devin ТЗ · Sonnet+DS критика · GLM код · Grok приёмка</text>
   <line x1="131" y1="128" x2="187" y2="98" stroke="#c8c8c8" stroke-width="1.2" marker-end="url(#arrow)"/>
   <line x1="131" y1="128" x2="187" y2="158" stroke="#c8c8c8" stroke-width="1.2" marker-end="url(#arrow)"/>
-  <line x1="354" y1="98" x2="410" y2="128" stroke="#c8c8c8" stroke-width="1.2" marker-end="url(#arrow)"/>
-  <line x1="354" y1="158" x2="410" y2="128" stroke="#c8c8c8" stroke-width="1.2" marker-end="url(#arrow)"/>
-  <line x1="532" y1="128" x2="588" y2="128" stroke="#c8c8c8" stroke-width="1.2" marker-end="url(#arrow)"/>
-  <line x1="732" y1="128" x2="788" y2="128" stroke="#c8c8c8" stroke-width="1.2" marker-end="url(#arrow)"/>
+  <line x1="369" y1="98" x2="425" y2="128" stroke="#c8c8c8" stroke-width="1.2" marker-end="url(#arrow)"/>
+  <line x1="369" y1="158" x2="425" y2="128" stroke="#c8c8c8" stroke-width="1.2" marker-end="url(#arrow)"/>
+  <line x1="599" y1="128" x2="655" y2="128" stroke="#c8c8c8" stroke-width="1.2" marker-end="url(#arrow)"/>
+  <line x1="799" y1="128" x2="855" y2="128" stroke="#c8c8c8" stroke-width="1.2" marker-end="url(#arrow)"/>
   <text x="77" y="124" text-anchor="middle" font-size="15" font-weight="700" fill="#111">ТЗ</text>
   <text x="77" y="142" text-anchor="middle" font-size="12" fill="#6b6b6b">SWE-2 · max</text>
-  <text x="270" y="94" text-anchor="middle" font-size="15" font-weight="700" fill="#111">Критик</text>
-  <text x="270" y="112" text-anchor="middle" font-size="12" fill="#6b6b6b">Sonnet 5.5 · high</text>
-  <text x="270" y="154" text-anchor="middle" font-size="15" font-weight="700" fill="#111">Критик</text>
-  <text x="270" y="172" text-anchor="middle" font-size="12" fill="#6b6b6b">DeepSeek V4.1 Flash</text>
-  <text x="471" y="124" text-anchor="middle" font-size="15" font-weight="700" fill="#111">Код</text>
-  <text x="471" y="142" text-anchor="middle" font-size="12" fill="#6b6b6b">GLM 5.3 Flash</text>
-  <text x="660" y="124" text-anchor="middle" font-size="15" font-weight="700" fill="#111">Приёмка</text>
-  <text x="660" y="142" text-anchor="middle" font-size="12" fill="#6b6b6b">Grok 4.7 · xhigh</text>
-  <rect x="788" y="104" width="219" height="46" rx="8" fill="none" stroke="#111" stroke-width="1"/>
-  <text x="897" y="124" text-anchor="middle" font-size="15" font-weight="700" fill="#111">Коммит порции</text>
-  <text x="897" y="142" text-anchor="middle" font-size="12" fill="#6b6b6b">судья при зелёном вердикте</text>
-  <path d="M660 154 C660 228 471 228 471 154" fill="none" stroke="#c8c8c8" stroke-width="1.2" stroke-dasharray="5 4" marker-end="url(#arrow)"/>
-  <text x="565" y="227" text-anchor="middle" font-size="12" fill="#6b6b6b">красный вердикт</text>
+  <text x="278" y="94" text-anchor="middle" font-size="15" font-weight="700" fill="#111">Критик</text>
+  <text x="278" y="112" text-anchor="middle" font-size="12" fill="#6b6b6b">Sonnet 5.5 · high</text>
+  <text x="278" y="154" text-anchor="middle" font-size="15" font-weight="700" fill="#111">Критик</text>
+  <text x="278" y="172" text-anchor="middle" font-size="12" fill="#6b6b6b">DeepSeek Flash · high</text>
+  <text x="512" y="124" text-anchor="middle" font-size="15" font-weight="700" fill="#111">Код</text>
+  <text x="512" y="142" text-anchor="middle" font-size="12" fill="#6b6b6b">GLM 5.3 Flash · high</text>
+  <text x="727" y="124" text-anchor="middle" font-size="15" font-weight="700" fill="#111">Приёмка</text>
+  <text x="727" y="142" text-anchor="middle" font-size="12" fill="#6b6b6b">Grok 4.7 · xhigh</text>
+  <rect x="855" y="104" width="219" height="46" rx="8" fill="none" stroke="#111" stroke-width="1"/>
+  <text x="964" y="124" text-anchor="middle" font-size="15" font-weight="700" fill="#111">Коммит порции</text>
+  <text x="964" y="142" text-anchor="middle" font-size="12" fill="#6b6b6b">судья при зелёном вердикте</text>
+  <path d="M727 154 C727 228 512 228 512 154" fill="none" stroke="#c8c8c8" stroke-width="1.2" stroke-dasharray="5 4" marker-end="url(#arrow)"/>
+  <text x="619" y="227" text-anchor="middle" font-size="12" fill="#6b6b6b">красный вердикт</text>
 </svg>

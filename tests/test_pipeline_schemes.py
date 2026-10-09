@@ -73,7 +73,7 @@ class PipelineSchemesTests(unittest.TestCase):
 
     def test_every_route_has_valid_svg(self) -> None:
         routes = _routes()
-        self.assertEqual(len(routes), 15)
+        self.assertEqual(len(routes), 14)
         for route in routes:
             name = f"{route['plugin']}:{_skill(route)}"
             path = _svg_path(route)
@@ -173,7 +173,7 @@ class PipelineSchemesDeterminismTests(unittest.TestCase):
             shutil.copy(REPO_DIR / "routes.json", root / "routes.json")
             self.assertEqual(_run("--root", str(root)).returncode, 0)
             outputs.append({p.relative_to(root).as_posix(): p.read_bytes() for p in root.glob("plugins/*/docs/*.svg")})
-        self.assertEqual(len(outputs[0]), 15)
+        self.assertEqual(len(outputs[0]), 14)
         self.assertEqual(outputs[0], outputs[1])
 
 

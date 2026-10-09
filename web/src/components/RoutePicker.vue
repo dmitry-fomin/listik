@@ -18,6 +18,7 @@ import { computed } from 'vue'
 import ListikIcon from '@/components/ListikIcon.vue'
 import HarnessIcon from '@/components/marks/HarnessIcon.vue'
 import RouteIcon from '@/components/marks/RouteIcon.vue'
+import RouteName from '@/components/marks/RouteName.vue'
 import type { RouteDef } from '@/api/types'
 import { harnessTitle } from '@/lib/harness'
 import { isProviderCell, isSwarmCell, ROLE_KEYS, ROLE_TITLES, roleModels, type RoleKey } from '@/lib/pipelines'
@@ -200,7 +201,7 @@ function onRouteKeydown(event: KeyboardEvent, key: string): void {
           <span class="listik-pipelines__row-title">
             <RouteIcon :route="route" size="sm" />
             <span class="listik-pipelines__row-text">
-              <span class="listik-pipelines__row-name">{{ route.title }}</span>
+              <span class="listik-pipelines__row-name"><RouteName :route="route" /></span>
               <span class="listik-pipelines__row-hint">{{ route.hint }}</span>
             </span>
           </span>
@@ -267,7 +268,7 @@ function onRouteKeydown(event: KeyboardEvent, key: string): void {
           <span class="listik-pipelines__row-title">
             <RouteIcon :route="route" size="sm" />
             <span class="listik-pipelines__row-text">
-              <span class="listik-pipelines__row-name">{{ route.title }}</span>
+              <span class="listik-pipelines__row-name"><RouteName :route="route" /></span>
               <span class="listik-pipelines__row-hint">{{ route.hint }}</span>
             </span>
           </span>

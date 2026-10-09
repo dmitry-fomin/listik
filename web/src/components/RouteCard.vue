@@ -45,6 +45,7 @@ import IconToggle from './IconToggle.vue'
 import ListikIcon from './ListikIcon.vue'
 import ProviderIcon from './marks/ProviderIcon.vue'
 import RouteIcon from './marks/RouteIcon.vue'
+import RouteName from './marks/RouteName.vue'
 import RouteSubstitutions from './RouteSubstitutions.vue'
 import store from '@/store/listik'
 import type { PipelineRouteDef, RouteIconKey, RoutePatch } from '@/api/types'
@@ -195,7 +196,7 @@ function braced(name: string): string {
         <RouteIcon :route="route" size="md" />
       </span>
       <div class="listik-route-card__head-main">
-        <h2 class="listik-route-card__name">{{ route.title }}</h2>
+        <h2 class="listik-route-card__name"><RouteName :route="route" /></h2>
         <p class="listik-route-card__keyline">
           Конвейер · скилл <code class="listik-mono">{{ route.key }}</code>
         </p>

@@ -19,6 +19,7 @@
 import { computed, ref, watch } from 'vue'
 import { UiAlert, UiBadge, UiButton, UiPopover, UiSpinner } from '@zoloto585/facet'
 import ListikIcon from '@/components/ListikIcon.vue'
+import RouteName from '@/components/marks/RouteName.vue'
 import type {
   AssistantComplexityLevel,
   AssistantContext,
@@ -91,6 +92,15 @@ const suggestedRoute = computed(() => {
   if (!key) return null
   return store.routes.value.find((route) => route.visible && route.key === key) ?? null
 })
+
+/**
+ * Подпись предложенного маршрута, когда записи в таблице нет: `title` либо
+ * ключ — как раньше (у `AssistantRoute` нет `plugin`, его в `RouteName`
+ * не передаём).
+ */
+const suggestedRouteLabel = computed(
+  () => suggestion.value?.route?.title || suggestion.value?.route?.key || '',
+)
 
 const routeSelected = computed(
   () => Boolean(suggestion.value?.route?.key) && suggestion.value?.route?.key === props.selectedRouteKey,
@@ -255,7 +265,8 @@ function applyRoute(): void {
               <template v-if="suggestion.route">
                 <div class="listik-row">
                   <span class="listik-assist__route">
-                    {{ suggestion.route.title || suggestion.route.key }}
+                    <RouteName v-if="suggestedRoute" :route="suggestedRoute" />
+                    <template v-else>{{ suggestedRouteLabel }}</template>
                   </span>
                   <UiBadge tone="neutral" size="sm">{{ suggestion.route.key }}</UiBadge>
                 </div>

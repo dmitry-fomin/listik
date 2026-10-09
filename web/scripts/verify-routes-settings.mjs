@@ -258,6 +258,29 @@ const fetchRoute = (key) => `(async () => {
   }
 })()`
 
+/*
+ * Отображаемое название записи маршрута — копия `routeNameText` из
+ * `src/lib/routes.ts` (listik-5oi5, порция a): у конвейера с `plugin` строка
+ * и шапка показывают «<уровень> <семейство>» (уровень — title без ведущего
+ * «<семейство> », семейство — plugin без «pipeline-»), а поле «Название»
+ * по-прежнему держит сырой title, поэтому сравнивать текст списка с ним
+ * больше нельзя.
+ */
+const VERIFY_PIPELINE_PLUGINS = ['pipeline-full', 'pipeline-cc', 'pipeline-claude']
+const displayRouteName = (route) => {
+  const family =
+    route && VERIFY_PIPELINE_PLUGINS.includes(route.plugin)
+      ? route.plugin.slice('pipeline-'.length)
+      : null
+  if (family === null) return route?.title ?? null
+  const prefix = `${family} `
+  const level =
+    route.title.startsWith(prefix) && route.title.length > prefix.length
+      ? route.title.slice(prefix.length)
+      : route.title
+  return `${level} ${family}`
+}
+
 /**
  * Печатает символы `value` в поле `input[index]` карточки одним нативным
  * сеттером на символ + событие `input` — без `blur`, чтобы проверить именно
@@ -672,7 +695,12 @@ try {
   report.selectClicked = await evaluate(clickRow('Конвейеры', 1))
   await sleep(500)
   report.selectedTitleShown = await evaluate(detailTitle)
-  report.selectionMatches = report.selectedTitleShown === pipelineBefore[1].title
+  // строка списка показывает отображаемое название («уровень семейство»), поле
+  // карточки — сырой title: обе стороны сверяем с записью API (listik-5oi5.a)
+  const selectedPipelineRoute = await evaluate(fetchRoute(pipelineBefore[1].key))
+  report.selectionMatches =
+    report.selectedTitleShown === (selectedPipelineRoute?.title ?? null) &&
+    pipelineBefore[1].title === displayRouteName(selectedPipelineRoute)
 
   /*
    * ── карточка выбранного маршрута (порция `e`): шапка сохраняется сама.
@@ -1248,7 +1276,8 @@ try {
     report.selectClicked === true &&
     report.selectionMatches === true &&
     report.cardRowReselected === true &&
-    report.cardTitleShown === pipelineBefore[1].title &&
+    report.cardTitleShown === cardOriginal.title &&
+    pipelineBefore[1].title === displayRouteName(cardOriginal) &&
     report.hintCallsCount === 1 &&
     report.hintCallSingleKey === true &&
     report.hintCallValueMatches === true &&

@@ -18,7 +18,7 @@ import type { ProjectRow, Task } from '@/api/types'
 import store, { type DepsSummary } from '@/store/listik'
 import { AT_RISK_IDLE_HOURS, taskHealth, healthReason, healthTone } from '@/lib/health'
 import { CANCELLED_STATUS, DONE_STAGE, DONE_STATUS, statusTitle } from '@/lib/dictionaries'
-import { routeByKey } from '@/lib/routes'
+import { routeByKey, routeNameText } from '@/lib/routes'
 import { stageExecutor } from '@/lib/executors'
 import { workedByOf } from '@/lib/task-presentation'
 
@@ -169,7 +169,7 @@ function onKeydown(event: KeyboardEvent): void {
         v-if="taskRoute"
         :route="taskRoute"
         size="xs"
-        :title="`маршрут: ${taskRoute.title}`"
+        :title="`маршрут: ${routeNameText(taskRoute)}`"
       />
       <ProjectMark :project="project ?? null" :slug="task.project" with-title size="sm" />
       <span class="listik-task-card__spacer" />

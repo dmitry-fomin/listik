@@ -334,6 +334,44 @@ export function routeSkillRef(route: { key: string; plugin?: string | null }): s
   return parts ? `/${parts.plugin}:${parts.skill}` : null
 }
 
+/**
+ * Название маршрута для показа, разложенное на уровень и семейство. У
+ * пресетов-конвейеров (`plugin` — один из `PIPELINE_PLUGINS`) семейство
+ * рисуется отдельным серым хвостом (`RouteName`), а `title` у них обычно
+ * «<семейство> <уровень>» — префикс снимается, чтобы семейство не
+ * дублировалось. Уровень берётся из `title`, а не из `key`: автор может
+ * переименовать маршрут в настройках, и его название остаётся видно.
+ * Префикс снимается только целиком («cc » — семейство и пробел); если после
+ * снятия ничего не осталось (title ровно «cc»), возвращается `title` как есть.
+ * У роя, devin и своих маршрутов `plugin` пуст — `family` `null`.
+ */
+export function routeNameParts(route: {
+  key: string
+  title: string
+  plugin?: string | null
+}): { level: string; family: string | null } {
+  const plugin = route.plugin ?? null
+  if (!plugin || !(PIPELINE_PLUGINS as readonly string[]).includes(plugin)) {
+    return { level: route.title, family: null }
+  }
+  const family = plugin.slice('pipeline-'.length)
+  const prefix = `${family} `
+  const level =
+    route.title.startsWith(prefix) && route.title.length > prefix.length
+      ? route.title.slice(prefix.length)
+      : route.title
+  return { level, family }
+}
+
+/**
+ * То же название одной строкой для текстовых атрибутов (`title`, `aria-label`):
+ * «<уровень> <семейство>» либо просто уровень, когда семейства нет.
+ */
+export function routeNameText(route: { key: string; title: string; plugin?: string | null }): string {
+  const { level, family } = routeNameParts(route)
+  return family === null ? level : `${level} ${family}`
+}
+
 export function placeholderExample(name: string, routeKey: string): string {
   if (name === 'route') return routeKey
   // Как у сервера: значения из плагина записи; ключ без префикса плагина — пусто.

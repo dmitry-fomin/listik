@@ -40,6 +40,7 @@ import IconToggle from './IconToggle.vue'
 import ListikIcon from './ListikIcon.vue'
 import HarnessIcon from './marks/HarnessIcon.vue'
 import RouteIcon from './marks/RouteIcon.vue'
+import RouteName from './marks/RouteName.vue'
 import RouteCommandText from './RouteCommandText.vue'
 import RouteSubstitutions from './RouteSubstitutions.vue'
 import store from '@/store/listik'
@@ -552,7 +553,7 @@ const roleInherits = computed(() => {
         <RouteIcon :route="route" size="md" />
       </span>
       <div class="listik-route-swarm__head-main">
-        <h2 class="listik-route-swarm__name">{{ route.title }}</h2>
+        <h2 class="listik-route-swarm__name"><RouteName :route="route" /></h2>
         <p class="listik-route-swarm__keyline">
           Маршрут роя · ключ <code class="listik-mono">{{ route.key }}</code> · этапы запускает Listik
         </p>

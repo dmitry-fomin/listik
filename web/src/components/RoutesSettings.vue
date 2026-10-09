@@ -30,6 +30,7 @@ import RouteSwarmCard from './RouteSwarmCard.vue'
 import NewSwarmRouteModal from './NewSwarmRouteModal.vue'
 import ListikIcon from './ListikIcon.vue'
 import RouteIcon from './marks/RouteIcon.vue'
+import RouteName from './marks/RouteName.vue'
 import store from '@/store/listik'
 import type { PipelineRouteDef, RouteDef, RouteRemoved, SwarmRouteDef } from '@/api/types'
 import { pipelineRowsOf, routeSkillRef, swarmRoutesOf } from '@/lib/routes'
@@ -260,7 +261,7 @@ onBeforeUnmount(() => {
                   >
                     <RouteIcon :route="route" size="sm" />
                     <span class="listik-routes-row__main">
-                      <span class="listik-routes-row__title">{{ route.title }}</span>
+                      <span class="listik-routes-row__title"><RouteName :route="route" /></span>
                       <code class="listik-mono">{{ pipelineMeta(route) }}</code>
                     </span>
                     <UiBadge v-if="!route.visible" tone="neutral" size="sm">выключен</UiBadge>
@@ -315,7 +316,7 @@ onBeforeUnmount(() => {
                   >
                     <RouteIcon :route="route" size="sm" />
                     <span class="listik-routes-row__main">
-                      <span class="listik-routes-row__title">{{ route.title }}</span>
+                      <span class="listik-routes-row__title"><RouteName :route="route" /></span>
                       <code class="listik-mono">{{ swarmMeta(route) }}</code>
                     </span>
                     <UiBadge v-if="!route.visible" tone="neutral" size="sm">выключен</UiBadge>

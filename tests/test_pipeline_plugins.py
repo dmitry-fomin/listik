@@ -1691,8 +1691,8 @@ LENS_HEADING = "## Приёмка линзами"
 LENS_JOURNAL_LINES = (
     "порция <X>: отпечаток до линз <sha>",
     "порция <X>: отпечаток после линз <sha>",
-    "порция <X>: pi-glm job <id> (линза <имя>)",
-    "порция <X>: pi-glm повтор линзы <имя> — <причина>",
+    "порция <X>: линза <имя> запущена",
+    "порция <X>: повтор линзы <имя> — <причина>",
     "порция <X>: в диффе похоже на секрет — стоп",
     "порция <X>: линза изменила дерево — стоп",
     "порция <X>: линзы — чисто, коммит <hash7>",
@@ -1703,17 +1703,19 @@ LENS_SECTION_REQUIRED = (
     "«сборка и границы»", "«технические дыры»", "«соответствие намерению»",
     "$STEPS/$BASE.lens-<X>.scope.md", "$STEPS/$BASE.lens-<X>.holes.md",
     "$STEPS/$BASE.lens-<X>.intent.md",
-    "--channel glm", "--permission bash", "--permission read",
-    '--label "$BASE <X>: линза <имя>"',
-    "Границы правки", "Проверки порции", "негативный контроль вне «Проверок порции»",
+    "pipeline-core:pipeline-lens", "model: haiku", "Haiku 5.5", "mktemp -d", "одним сообщением",
+    "Границы правки", "Проверки порции",
     "Код читай в дереве работы", "чисто", "находки", "## Критичные инварианты",
     "вынести:", "отбросить:", "чинить", "--discovered-from <P>",
     "<id> (порция <X>): <суть порции>", "находки 0", "Находки линз — не красное",
-    "стоп: линза <линза> — pi glm недоступен: <причина>",
+    "стоп: линза <имя> — <причина>",
     "порция <X>: готово (коммит <hash7>)",
     *LENS_JOURNAL_LINES,
 )
-LENS_SECTION_FORBIDDEN = ("--permission write", "--write", "--channel deepseek")
+LENS_SECTION_FORBIDDEN = ("--permission write", "--write", "--channel deepseek",
+                          "--channel glm", "pi:pi-delegate", "pi:pi-jobs", "pi:pi-runtime",
+                          "pi-glm", "pipeline-lens-xhigh",
+                          "негативный контроль вне «Проверок порции»")
 LENS_PAPER_NAMES = ("<id>.lens-<X>.scope.md", "<id>.lens-<X>.holes.md", "<id>.lens-<X>.intent.md")
 HEADLESS_PARAGRAPH_START = "Что не дефолтится и в headless"
 
@@ -1766,7 +1768,7 @@ def _lens_core_problems(text: str) -> list[str]:
 
 
 class FeaturePipelineLensAcceptanceTests(unittest.TestCase):
-    """Приёмка линзами в ядре (listik-3exw, порция a): три линзы GLM перед судьёй."""
+    """Приёмка линзами в ядре (listik-3exw, порция a): три линзы Haiku перед судьёй."""
 
     def test_core_defines_lens_acceptance(self) -> None:
         self.assertEqual(_lens_core_problems(_plugin_text(CORE_DOC)), [])
@@ -1781,6 +1783,22 @@ class FeaturePipelineLensAcceptanceTests(unittest.TestCase):
                 section, section + "\nлинза scope: --permission write\n", 1),
             "--channel deepseek": text.replace(
                 section, section + "\nлинза intent: --channel deepseek\n", 1),
+            "--channel glm": text.replace(
+                section, section + "\nлинза scope: --channel glm\n", 1),
+            "pi:pi-delegate": text.replace(
+                section, section + "\nлинзы через pi:pi-delegate\n", 1),
+            "pi:pi-jobs": text.replace(
+                section, section + "\nзабор линз через pi:pi-jobs\n", 1),
+            "pi:pi-runtime": text.replace(
+                section, section + "\nконтракт pi:pi-runtime\n", 1),
+            "pi-glm job": text.replace(
+                section, section + "\npi-glm job <id> (линза <имя>)\n", 1),
+            "pipeline-lens-xhigh": text.replace(
+                section, section + "\nлинза xhigh — pipeline-lens-xhigh\n", 1),
+            "негативный контроль вне «Проверок порции»": text.replace(
+                section, section + "\nнегативный контроль вне «Проверок порции» не прогонялся\n", 1),
+            "model: sonnet вместо haiku": text.replace(
+                section, section.replace("model: haiku", "model: sonnet"), 1),
             "без «Находки линз — не красное»": text.replace(
                 section, section.replace("Находки линз — не красное", ""), 1),
         }
@@ -1790,13 +1808,22 @@ class FeaturePipelineLensAcceptanceTests(unittest.TestCase):
                 self.assertNotEqual(_lens_core_problems(mutated), [])
 
 
-#: Приёмка линзами в пресетах (listik-3exw, порция b): кто ссылается на ядро и что несёт.
+#: Приёмка линзами в пресетах (listik-3exw, порция b; линзы Haiku — listik-jllp, порция a):
+#: кто ссылается на ядро и что несёт.
 LENS_PRESETS = ("pipeline-full:high", "pipeline-full:xhigh")
 LENS_CORE_REF = "`pipeline-core.md`, «Приёмка линзами»"
 LENS_REF = "«Приёмка линзами»"
 LENS_FILE_MARK = "lens-<X>"
-LENS_ROLES_REQUIRED = ("--channel glm", "линз")
-LENS_STAGE4_REQUIRED = (LENS_REF, "pi:pi-delegate")
+#: Линза — общий агент pipeline-core:pipeline-lens на Haiku 5.5 max (решение 09.10.2026,
+#: `models.json`: omniscienceHallucinationRate у max 0.404).
+LENS_AGENT = "pipeline-core:pipeline-lens"
+LENS_MODEL_MARK = "model: haiku"
+LENS_HAIKU_REQUIRED = ("Haiku 5.5 max",)
+LENS_ROLES_REQUIRED = (LENS_AGENT, LENS_MODEL_MARK, "линз")
+LENS_STAGE4_REQUIRED = (LENS_REF, LENS_AGENT, LENS_MODEL_MARK)
+#: В этапе 4 и таблице «Роли» пресетов с линзами не остаётся старого запуска линз через pi/GLM.
+LENS_PRESET_FORBIDDEN = ("pi:pi-delegate", "pi:pi-jobs", "pi:pi-runtime", "pi-glm",
+                         "--channel glm", "pipeline-lens-xhigh", "GLM 5.3 Flash")
 LENS_JUDGE_REQUIRED = ("вынести:", "отбросить:", "чинить", LENS_FILE_MARK)
 LENS_JUDGE_BLOCK_MARK = "Ты — приёмка одной порции ТЗ"
 
@@ -1806,13 +1833,15 @@ def _readme(plugin: str) -> pathlib.Path:
     return pathlib.Path(plugin) / "README.md"
 
 
-#: Пресеты с линзами-субагентами Claude вместо pi glm: запуск — по скилу пресета, остальное — по ядру.
+#: Пресеты pipeline-claude: те же линзы-субагенты Haiku, без внешних харнессов.
 CLAUDE_LENS_PRESETS = ("pipeline-claude:high", "pipeline-claude:xhigh")
-CLAUDE_LENS_REQUIRED = (LENS_CORE_REF, "вынести:", "отбросить:", LENS_FILE_MARK)
+CLAUDE_LENS_REQUIRED = (LENS_CORE_REF, "вынести:", "отбросить:", LENS_FILE_MARK,
+                        LENS_MODEL_MARK, *LENS_HAIKU_REQUIRED)
+CLAUDE_LENS_FORBIDDEN = LENS_PRESET_FORBIDDEN + ("линзы Sonnet",)
 #: Агенты линзы и судьи каждого из CLAUDE_LENS_PRESETS — своей колонки; сверка — по имени целиком.
 CLAUDE_LENS_AGENTS = {
     "pipeline-claude:high": ("pipeline-core:pipeline-lens", "pipeline-core:pipeline-judge"),
-    "pipeline-claude:xhigh": ("pipeline-core:pipeline-lens-xhigh", "pipeline-core:pipeline-judge-xhigh"),
+    "pipeline-claude:xhigh": ("pipeline-core:pipeline-lens", "pipeline-core:pipeline-judge-xhigh"),
 }
 
 
@@ -1837,25 +1866,60 @@ def _fenced_block_with(text: str, needle: str) -> str:
     return ""
 
 
+def _intro_paragraph(text: str) -> str:
+    """Вводный абзац скила: первая непустая строка после заголовка «# Конвейер» до пустой."""
+    lines = text.splitlines()
+    start = next((i for i, line in enumerate(lines) if line.startswith("# Конвейер ")), None)
+    if start is None:
+        return ""
+    first = next((i for i in range(start + 1, len(lines)) if lines[i].strip()), len(lines))
+    end = next((i for i in range(first, len(lines)) if not lines[i].strip()), len(lines))
+    return "\n".join(lines[first:end])
+
+
+def _effort_paragraph(text: str) -> str:
+    """Абзац «Усилие.» целиком; пусто — нет."""
+    lines = text.splitlines()
+    bounds = _effort_paragraph_bounds(lines)
+    return "\n".join(lines[bounds[0]:bounds[1]]) if bounds else ""
+
+
 def _lens_preset_problems(name: str, text: str) -> list[str]:
     """Проблемы приёмки линзами в тексте SKILL.md пресета; пусто — всё на месте."""
     problems: list[str] = []
     if name in LENS_PRESETS:
         if LENS_CORE_REF not in text:
             problems.append(f"{name}: нет ссылки {LENS_CORE_REF!r}")
+        problems.extend(f"{name}: в description нет {needle!r}"
+                        for needle in LENS_HAIKU_REQUIRED if needle not in _description(text))
+        problems.extend(f"{name}: во вводном абзаце нет {needle!r}"
+                        for needle in LENS_HAIKU_REQUIRED if needle not in _intro_paragraph(text))
+        consent = _text_block(text, "Скил запускается только по явному имени", _is_blank)
+        problems.extend(f"{name}: в абзаце согласия нет {needle!r}"
+                        for needle in LENS_HAIKU_REQUIRED if needle not in consent)
         roles = _text_section(text, "## Роли")
         problems.extend(f"{name}: в «## Роли» нет {needle!r}"
                         for needle in LENS_ROLES_REQUIRED if needle not in roles)
         stage4 = _text_block(text, "### 4.", lambda line: line.startswith("## "))
         problems.extend(f"{name}: в этапе 4 нет {needle!r}"
                         for needle in LENS_STAGE4_REQUIRED if needle not in stage4)
+        problems.extend(f"{name}: в этапе 4 есть {needle!r}"
+                        for needle in LENS_PRESET_FORBIDDEN if needle in stage4)
         judge = _fenced_block_with(text, LENS_JUDGE_BLOCK_MARK)
         problems.extend(f"{name}: в задании судье нет {needle!r}"
                         for needle in LENS_JUDGE_REQUIRED if needle not in judge)
     elif name in CLAUDE_LENS_PRESETS:
         problems.extend(f"{name}: нет {needle!r}" for needle in CLAUDE_LENS_REQUIRED if needle not in text)
+        problems.extend(f"{name}: в description нет {needle!r}"
+                        for needle in LENS_HAIKU_REQUIRED if needle not in _description(text))
+        problems.extend(f"{name}: во вводном абзаце нет {needle!r}"
+                        for needle in LENS_HAIKU_REQUIRED if needle not in _intro_paragraph(text))
+        problems.extend(f"{name}: в абзаце «Усилие.» нет {needle!r}"
+                        for needle in LENS_HAIKU_REQUIRED if needle not in _effort_paragraph(text))
         problems.extend(f"{name}: нет агента {agent!r}" for agent in CLAUDE_LENS_AGENTS[name]
                         if not _whole_name(agent).search(text))
+        problems.extend(f"{name}: есть {needle!r}"
+                        for needle in CLAUDE_LENS_FORBIDDEN if needle in text)
     else:
         problems.extend(f"{name}: чужой пресет несёт {needle!r}"
                         for needle in (LENS_REF, LENS_FILE_MARK) if needle in text)
@@ -1863,7 +1927,7 @@ def _lens_preset_problems(name: str, text: str) -> list[str]:
 
 
 def _lens_readme_problems(text: str, skills: set[str]) -> list[str]:
-    """Строки таблицы «Скилы» README плагина: `линз` ровно у LENS_PRESETS; строка — по имени каталога."""
+    """Строки таблицы «Скилы» README плагина: `линз` и Haiku 5.5 max ровно у пресетов с линзами."""
     problems: list[str] = []
     for name in sorted(skills):
         prefix = f"| `{_skill_dir_name(name)}` "
@@ -1873,8 +1937,49 @@ def _lens_readme_problems(text: str, skills: set[str]) -> list[str]:
                 problems.append(f"README: нет строки {prefix!r}")
             elif not any("линз" in row for row in rows):
                 problems.append(f"README: строка {name} не называет линзы")
+            elif not any("Haiku 5.5 max" in row for row in rows):
+                problems.append(f"README: строка {name} не называет линзы Haiku 5.5 max")
         elif any("линз" in row for row in rows):
             problems.append(f"README: строка {name} называет линзы")
+    return problems
+
+
+def _core_readme_lens_problems(text: str) -> list[str]:
+    """Строка `pipeline-lens` в README ядра: haiku / max и все четыре пресета с линзами."""
+    problems: list[str] = []
+    if "pipeline-lens-xhigh" in text:
+        problems.append("README ядра называет удалённого pipeline-lens-xhigh")
+    rows = [line for line in text.splitlines() if line.startswith("| `pipeline-lens` ")]
+    if not rows:
+        return problems + ["README ядра: нет строки агента `pipeline-lens`"]
+    row = rows[0]
+    for needle in ("haiku / max", "model: haiku", *LENS_PRESETS, *CLAUDE_LENS_PRESETS):
+        if needle not in row:
+            problems.append(f"README ядра: строка `pipeline-lens` не называет {needle!r}")
+    return problems
+
+
+LENS_AGENT_FILE = pathlib.Path(AGENTS_SUBDIR) / "pipeline-lens.md"
+
+
+def _lens_agent_problems(text: str) -> list[str]:
+    """Проблемы определения `pipeline-lens.md`: frontmatter haiku/max, description называет
+    Haiku 5.5 max и пресеты, тело несёт прогон негативных контролей в `mktemp -d`."""
+    frontmatter = _frontmatter(text.splitlines()) or []
+    description = next((line for line in frontmatter if line.startswith("description:")), "")
+    problems = [f"pipeline-lens.md: во frontmatter нет {needle!r}" for needle in
+                ("name: pipeline-lens", "model: haiku", "effort: max") if needle not in frontmatter]
+    problems.extend(f"pipeline-lens.md: description не называет {needle!r}"
+                    for needle in ("Haiku 5.5", "max", "pipeline-full", "pipeline-cc", "pipeline-claude")
+                    if needle not in description)
+    problems.extend(f"pipeline-lens.md: в description есть {needle!r}"
+                    for needle in ("Sonnet", "только pipeline-claude", "pipeline-lens-xhigh",
+                                   "наследует", "усилие сессии", "claude-pipeline")
+                    if needle in description)
+    problems.extend(f"pipeline-lens.md: нет {needle!r}"
+                    for needle in ("негативный контроль", "mktemp -d") if needle not in text)
+    problems.extend(f"pipeline-lens.md: есть {needle!r}"
+                    for needle in ("негативный контроль вне «Проверок порции»",) if needle in text)
     return problems
 
 
@@ -1895,18 +2000,52 @@ class FeaturePipelineLensPresetTests(unittest.TestCase):
                 skills = {name for name in _skill_names() if name.startswith(f"{plugin}:")}
                 self.assertEqual(_lens_readme_problems(_plugin_text(_readme(plugin)), skills), [])
 
+    def test_core_readme_lens_row(self) -> None:
+        self.assertEqual(
+            _core_readme_lens_problems(_plugin_text(_readme("pipeline-core"))), [])
+
     def test_lens_checks_reject_broken_texts(self) -> None:
         high = _skill_text("pipeline-full:high")
         medium = _skill_text("pipeline-full:medium")
         xhigh = _skill_text("pipeline-full:xhigh")
+        claude_xhigh = _skill_text("pipeline-claude:xhigh")
         judge = _fenced_block_with(xhigh, LENS_JUDGE_BLOCK_MARK)
         self.assertIn("вынести:", judge, "в задании судье xhigh нет «вынести:»")
+        stage4 = _text_block(high, "### 4.", lambda line: line.startswith("## "))
+        self.assertTrue(stage4, "pipeline-full:high: нет раздела «### 4.»")
         broken = {
             "high без «Приёмка линзами»": ("pipeline-full:high", high, high.replace(LENS_REF, "")),
             "medium с «Приёмка линзами»": ("pipeline-full:medium", medium,
                                            medium + f"\nПриёмка — по {LENS_CORE_REF}.\n"),
             "xhigh: задание судье без «вынести:»": (
                 "pipeline-full:xhigh", xhigh, xhigh.replace(judge, judge.replace("вынести:", ""), 1)),
+            "high без «Haiku 5.5 max» в description": (
+                "pipeline-full:high", high,
+                high.replace(_description(high),
+                             _description(high).replace("Haiku 5.5 max", ""), 1)),
+            "high без «Haiku 5.5 max» во вводном абзаце": (
+                "pipeline-full:high", high,
+                high.replace(_intro_paragraph(high),
+                             _intro_paragraph(high).replace("Haiku 5.5 max", ""), 1)),
+            "claude:high без «Haiku 5.5 max» в «Усилие.»": (
+                "pipeline-claude:high", _skill_text("pipeline-claude:high"),
+                _skill_text("pipeline-claude:high").replace(
+                    _effort_paragraph(_skill_text("pipeline-claude:high")),
+                    _effort_paragraph(_skill_text("pipeline-claude:high"))
+                    .replace("Haiku 5.5 max", ""), 1)),
+            "high: линзы в этапе 4 через pi": (
+                "pipeline-full:high", high,
+                high.replace(stage4, stage4 + "\nлинзы — pi:pi-delegate --channel glm\n", 1)),
+            "xhigh: в этапе 4 дописан pipeline-lens-xhigh": (
+                "pipeline-full:xhigh", xhigh,
+                xhigh.replace("### 4.", "### 4. Агент pipeline-lens-xhigh.", 1)),
+            "claude:xhigh с pipeline-lens-xhigh": (
+                "pipeline-claude:xhigh", claude_xhigh,
+                claude_xhigh.replace("pipeline-core:pipeline-lens`",
+                                     "pipeline-core:pipeline-lens-xhigh`", 1)),
+            "claude:high линзы на sonnet": (
+                "pipeline-claude:high", _skill_text("pipeline-claude:high"),
+                _skill_text("pipeline-claude:high").replace(LENS_MODEL_MARK, "model: sonnet")),
         }
         for case, (name, text, mutated) in broken.items():
             with self.subTest(case=case):
@@ -2326,14 +2465,14 @@ CLAUDE_COLUMNS = {
         "pipeline-spec-writer": ("opus",),
         "pipeline-critic": ("sonnet", "opus"),
         "pipeline-implementer-high": ("opus",),
-        "pipeline-lens": ("sonnet",),
+        "pipeline-lens": ("haiku",),
         "pipeline-judge": ("sonnet",),
     },
     "pipeline-claude:xhigh": {
         "pipeline-spec-writer-xhigh": ("opus",),
         "pipeline-critic-xhigh": ("sonnet", "opus"),
         "pipeline-implementer-xhigh": ("opus",),
-        "pipeline-lens-xhigh": ("sonnet",),
+        "pipeline-lens": ("haiku",),
         "pipeline-judge-xhigh": ("sonnet",),
     },
 }
@@ -2364,7 +2503,9 @@ def _claude_composition_problems(name: str, text: str) -> list[str]:
             continue
         if _whole_name(other).search(text):
             problems.append(f"{name}: называет пресет {other}")
-        problems.extend(f"{name}: называет агента {agent} пресета {other}" for agent in agents
+        # Общий агент (линзы pipeline-lens) легально назван в обоих пресетах — чужим не считается.
+        foreign = [agent for agent in agents if agent not in CLAUDE_COLUMNS[name]]
+        problems.extend(f"{name}: называет агента {agent} пресета {other}" for agent in foreign
                         if _whole_name(agent).search(text))
     return problems
 
@@ -2512,37 +2653,42 @@ class PipelineClaudeAgentsTests(unittest.TestCase):
                                 f"{relative}: во frontmatter нет effort")
 
     def test_xhigh_copies_keep_body(self) -> None:
-        for copy, original in (("pipeline-lens-xhigh.md", "pipeline-lens.md"),
-                               ("pipeline-judge-xhigh.md", "pipeline-judge.md")):
+        """Пары «xhigh-копия держит тело оригинала»; отдельной линзы xhigh нет — общий pipeline-lens."""
+        for copy, original in (("pipeline-judge-xhigh.md", "pipeline-judge.md"),):
             with self.subTest(agent=copy):
                 self.assertEqual(_agent_parts(copy)[1], _agent_parts(original)[1])
 
+    def test_lens_xhigh_agent_removed(self) -> None:
+        """Отдельного агента линзы xhigh больше нет: оба пресета делят pipeline-lens (listik-jllp)."""
+        self.assertFalse(
+            (CORE_PLUGIN_DIR / AGENTS_SUBDIR / "pipeline-lens-xhigh.md").exists(),
+            "pipeline-lens-xhigh.md должен быть удалён",
+        )
+
     def test_lens_and_judge_frontmatter(self) -> None:
-        expected = {
-            "pipeline-lens.md": ("name: pipeline-lens", "model: sonnet", "effort: high"),
-            "pipeline-lens-xhigh.md": ("name: pipeline-lens-xhigh", "model: sonnet", "effort: xhigh"),
-            "pipeline-judge-xhigh.md": ("name: pipeline-judge-xhigh", "model: sonnet", "effort: xhigh",
-                                        "skills:", "  - listik:listik"),
-        }
-        descriptions = {
-            "pipeline-lens.md": ("Модель — Sonnet, усилие high", "уровень xhigh — pipeline-lens-xhigh",
-                                 "Зовётся только по имени из пресетов pipeline-claude"),
-            "pipeline-lens-xhigh.md": ("усилие xhigh", "Зовётся только по имени из пресетов pipeline-claude"),
-            "pipeline-judge-xhigh.md": ("pipeline-claude:xhigh", "Sonnet", "усилие xhigh"),
-        }
-        for name, lines in expected.items():
-            frontmatter = _agent_parts(name)[0]
-            description = next((line for line in frontmatter if line.startswith("description:")), "")
-            for line in lines:
-                with self.subTest(agent=name, line=line):
-                    self.assertIn(line, frontmatter)
-            for needle in descriptions[name]:
-                with self.subTest(agent=name, description=needle):
-                    self.assertIn(needle, description)
-            if name.startswith("pipeline-lens"):
-                for needle in ("наследует", "усилие сессии", "claude-pipeline"):
-                    with self.subTest(agent=name, forbidden=needle):
-                        self.assertNotIn(needle, description)
+        self.assertEqual(
+            _lens_agent_problems(_plugin_text(LENS_AGENT_FILE)), [])
+        frontmatter = _agent_parts("pipeline-judge-xhigh.md")[0]
+        for line in ("name: pipeline-judge-xhigh", "model: sonnet", "effort: xhigh",
+                     "skills:", "  - listik:listik"):
+            with self.subTest(agent="pipeline-judge-xhigh.md", line=line):
+                self.assertIn(line, frontmatter)
+        description = next((line for line in frontmatter if line.startswith("description:")), "")
+        for needle in ("pipeline-claude:xhigh", "Sonnet", "усилие xhigh"):
+            with self.subTest(agent="pipeline-judge-xhigh.md", description=needle):
+                self.assertIn(needle, description)
+
+    def test_lens_frontmatter_check_rejects_sonnet(self) -> None:
+        """Подмена модели линзы на sonnet обязана давать проблему: гард смотрит model/effort."""
+        text = _plugin_text(LENS_AGENT_FILE)
+        broken = text.replace("model: haiku", "model: sonnet")
+        self.assertNotEqual(broken, text, "изменение не применилось")
+        self.assertNotEqual(_lens_agent_problems(broken), [])
+        old_wording = text + "\nнегативный контроль вне «Проверок порции» не прогонялся\n"
+        self.assertNotEqual(
+            _lens_agent_problems(old_wording), [],
+            "проверка не заметила фразу про непрогнанный негативный контроль",
+        )
 
     def test_no_inherit_in_plugins(self) -> None:
         self.assertEqual(_inherit_hits(PLUGINS_DIR), [])

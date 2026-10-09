@@ -24,8 +24,8 @@
 
 | Скил | Когда брать | ТЗ | Критика ТЗ | Код | Приёмка + коммит |
 | --- | --- | --- | --- | --- | --- |
-| `xhigh` | то же, что `high`, на усилии xhigh; $0 внешних | Opus 5.5 xhigh (`pipeline-spec-writer-xhigh`, `model: opus`) | Sonnet 5.5 xhigh + Opus 5.5 xhigh (`pipeline-critic-xhigh`), кворум — оба | Opus 5.5 xhigh (`pipeline-implementer-xhigh`, `model: opus`) | линзы Sonnet 5.5 xhigh ×3 (`pipeline-lens-xhigh`), при находке — Sonnet 5.5 xhigh (`pipeline-judge-xhigh`) |
-| `high` | только Claude Code, без внешних харнессов; $0 внешних, усилие ролей — high из их агентов | Opus 5.5 high (`pipeline-spec-writer`, `model: opus`) | Sonnet 5.5 high + Opus 5.5 high (`pipeline-critic`), кворум — оба | Opus 5.5 high (`pipeline-implementer-high`, `model: opus`) | линзы Sonnet 5.5 high ×3 (`pipeline-lens`), при находке — Sonnet 5.5 high (`pipeline-judge`) |
+| `xhigh` | то же, что `high`, на усилии xhigh; $0 внешних | Opus 5.5 xhigh (`pipeline-spec-writer-xhigh`, `model: opus`) | Sonnet 5.5 xhigh + Opus 5.5 xhigh (`pipeline-critic-xhigh`), кворум — оба | Opus 5.5 xhigh (`pipeline-implementer-xhigh`, `model: opus`) | линзы Haiku 5.5 max ×3 (`pipeline-lens`, `model: haiku`), при находке — Sonnet 5.5 xhigh (`pipeline-judge-xhigh`) |
+| `high` | только Claude Code, без внешних харнессов; $0 внешних, усилие ролей — high из их агентов | Opus 5.5 high (`pipeline-spec-writer`, `model: opus`) | Sonnet 5.5 high + Opus 5.5 high (`pipeline-critic`), кворум — оба | Opus 5.5 high (`pipeline-implementer-high`, `model: opus`) | линзы Haiku 5.5 max ×3 (`pipeline-lens`, `model: haiku`), при находке — Sonnet 5.5 high (`pipeline-judge`) |
 
 Агенты, хук автоодобрения и ядро `pipeline-core.md` — в плагине `pipeline-core` (`plugins/pipeline-core/README.md`).
 

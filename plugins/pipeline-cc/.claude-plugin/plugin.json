@@ -2,7 +2,7 @@
   "name": "pipeline-cc",
   "displayName": "Pipeline: Claude + Codex",
   "version": "1.0.0",
-  "description": "Pipeline presets (spec, critique, code, acceptance) run only on Claude and OpenAI Codex: xhigh, high, medium, low, xlow, nano and sol; requires the pipeline-core and codex plugins.",
+  "description": "Pipeline presets (spec, critique, code, acceptance) run only on Claude and OpenAI Codex: xhigh, high, medium, low and xlow; requires the pipeline-core and codex plugins.",
   "author": {
     "name": "Dmitry Fomin",
     "url": "https://github.com/dmitry-fomin"

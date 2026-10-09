@@ -87,16 +87,16 @@ MCP-инструментами `listik_*` или командой `listik new`. 
 
 | Маршрут | Скил | ТЗ | Критика | Реализация | Приёмка | Когда берут |
 |---|---|---|---|---|---|---|
-| `full-xhigh` | `pipeline-full:xhigh` | Opus xhigh | Sonnet + DeepSeek V4.1 Flash + GLM 5.3 Flash | Opus xhigh | линзы GLM 5.3 Flash → Grok xhigh | ошибка дороже прогона |
-| `claude-xhigh` | `pipeline-claude:xhigh` | Opus xhigh | Sonnet xhigh + Opus xhigh | Opus xhigh | линзы Sonnet → Sonnet xhigh | только Claude: внешних денег ноль |
-| `full-high` | `pipeline-full:high` | Opus high | Sonnet + DeepSeek V4.1 Flash + GLM 5.3 Flash | Opus high | линзы GLM 5.3 Flash → Grok xhigh | расклад по умолчанию |
-| `claude-high` | `pipeline-claude:high` | Opus high | Sonnet high + Opus high | Opus high | линзы Sonnet → Sonnet high | только Claude: внешних денег ноль |
-| `full-medium` | `pipeline-full:medium` | Opus medium | Sonnet + DeepSeek V4.1 Flash | Opus medium | Grok high | работа понятная |
+| `full-xhigh` | `pipeline-full:xhigh` | Opus xhigh | Sonnet + DeepSeek V4.1 Flash + GLM 5.3 Flash | Opus xhigh | линзы Haiku 5.5 max → Grok xhigh | ошибка дороже прогона |
+| `claude-xhigh` | `pipeline-claude:xhigh` | Opus xhigh | Sonnet xhigh + Opus xhigh | Opus xhigh | линзы Haiku 5.5 max → Sonnet xhigh | только Claude: внешних денег ноль |
+| `full-high` | `pipeline-full:high` | Opus high | Sonnet + DeepSeek V4.1 Flash + GLM 5.3 Flash | Opus high | линзы Haiku 5.5 max → Grok xhigh | расклад по умолчанию |
+| `claude-high` | `pipeline-claude:high` | Opus high | Sonnet high + Opus high | Opus high | линзы Haiku 5.5 max → Sonnet high | только Claude: внешних денег ноль |
+| `full-medium` | `pipeline-full:medium` | Opus medium | Sonnet + DeepSeek V4.1 Flash | Opus medium | линзы Haiku 5.5 max → Grok high | работа понятная |
 | `full-low` | `pipeline-full:low` | Opus low | DeepSeek V4.1 Flash + GLM 5.3 Flash + Haiku 5.5 | devin SWE-2 max | Grok high | код вне квоты Max |
 | `full-xlow` | `pipeline-full:xlow` | — | — | devin SWE-2 max | Grok high | один прогон с приёмкой |
 | `full-nano` | `pipeline-full:nano` | — | — | devin SWE-2 high | GLM 5.3 Flash в pi | короткая задача: сделать и принять |
-| `full-cross` | `pipeline-full:cross` | Devin | DeepSeek V4.1 Flash + Sonnet | GLM 5.3 Flash в pi | Grok | автор ТЗ и код — разные вендоры |
-| `cc-xhigh`, `cc-high`, `cc-medium`, `cc-low`, `cc-xlow` | `pipeline-cc:<уровень>` | по уровню | по уровню | Opus | Astra (Codex) | линейка Claude + Codex — см. `plugins/pipeline-cc/README.md` |
+| `full-cross` | `pipeline-full:cross` | Devin | DeepSeek V4.1 Flash + Sonnet | GLM 5.3 Flash в pi | линзы Haiku 5.5 max → Grok xhigh | автор ТЗ и код — разные вендоры |
+| `cc-xhigh`, `cc-high`, `cc-medium`, `cc-low`, `cc-xlow` | `pipeline-cc:<уровень>` | по уровню | по уровню | Opus | линзы Haiku 5.5 max → Astra (Codex), кроме cc-xlow | линейка Claude + Codex — см. `plugins/pipeline-cc/README.md` |
 
 Схема каждого пресета — в README его плагина: [pipeline-full](plugins/pipeline-full/README.md),
 [pipeline-cc](plugins/pipeline-cc/README.md), [pipeline-claude](plugins/pipeline-claude/README.md).

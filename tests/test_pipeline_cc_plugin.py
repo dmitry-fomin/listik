@@ -689,7 +689,10 @@ def _codex(label: str, title: str, model: str, effort: str) -> dict:
             "skill": "codex:codex-delegate", "params": {"model": model, "effort": effort}}
 
 
-_ASTRA_HIGH = _codex("high", "GPT-6 Astra", "gpt-6-astra", "high")
+_ASTRA_LENS_HIGH = _codex("линзы", "Haiku 5.5 · max · 3 линзы → GPT-6 Astra · high",
+                          "gpt-6-astra", "high")
+_ASTRA_LENS_MEDIUM = _codex("линзы", "Haiku 5.5 · max · 3 линзы → GPT-6 Astra · medium",
+                            "gpt-6-astra", "medium")
 _ASTRA_MEDIUM = _codex("medium", "GPT-6 Astra", "gpt-6-astra", "medium")
 
 #: Маршруты `cc-*` в routes.json: ключ → (icon, title, hint, roles) — по таблицам ТЗ порции d.
@@ -698,21 +701,21 @@ CC_ROUTES: dict[str, tuple[str, str, str, dict]] = {
         "spec": _claude("xhigh"),
         "critic": {"provider": "claude", "label": "S+O+Sol",
                    "title": "Sonnet 5.5 · xhigh + Opus 5.5 · high + GPT-6.1 Sol · high"},
-        "impl": _claude("xhigh"), "judge": _ASTRA_HIGH}),
+        "impl": _claude("xhigh"), "judge": _ASTRA_LENS_HIGH}),
     "cc-high": ("high", "cc high", "Claude + Codex · от 40 мин на задачу", {
         "spec": _claude("high"),
         "critic": {"provider": "claude", "label": "S+O+Sol",
                    "title": "Sonnet 5.5 · high + Opus 5.5 · medium + GPT-6.1 Sol · high"},
-        "impl": _claude("high"), "judge": _ASTRA_HIGH}),
+        "impl": _claude("high"), "judge": _ASTRA_LENS_HIGH}),
     "cc-medium": ("medium", "cc medium", "Claude + Codex · 30 мин на задачу", {
         "spec": _claude("medium"),
         "critic": {"provider": "claude", "label": "S+Sol",
                    "title": "Sonnet 5.5 · medium + GPT-6.1 Sol · medium"},
-        "impl": _claude("medium"), "judge": _ASTRA_HIGH}),
+        "impl": _claude("medium"), "judge": _ASTRA_LENS_HIGH}),
     "cc-low": ("low", "cc low", "Claude + Codex · на 20 мин, с ТЗ и критикой", {
         "spec": _claude("low"),
         "critic": _codex("Sol", "GPT-6.1 Sol · medium", "gpt-6.1-sol", "medium"),
-        "impl": _claude("low"), "judge": _ASTRA_MEDIUM}),
+        "impl": _claude("low"), "judge": _ASTRA_LENS_MEDIUM}),
     "cc-xlow": ("xlow", "cc xlow", "Claude + Codex · без ТЗ и критики · не для эпиков", {
         "impl": _claude("medium"), "judge": _ASTRA_MEDIUM}),
 }

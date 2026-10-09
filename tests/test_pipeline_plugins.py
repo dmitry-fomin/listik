@@ -210,8 +210,15 @@ def _plugin_path(relative: pathlib.Path) -> pathlib.Path:
     return root / relative
 
 
+#: Части ядра (listik-7qbc): разделы, вынесенные из CORE_DOC в отдельные файлы рядом с ним.
+CORE_PARTS = tuple(pathlib.Path("references") / name for name in (
+    "pipeline-core-critique.md", "pipeline-core-tracks.md", "pipeline-core-lenses.md"))
+
+
 def _plugin_text(relative: pathlib.Path) -> str:
-    return _plugin_path(relative).read_text(encoding="utf-8")
+    """Текст файла плагина; для CORE_DOC — ядро вместе с частями, как его читает оркестратор."""
+    paths = (relative, *CORE_PARTS) if relative == CORE_DOC else (relative,)
+    return "\n".join(_plugin_path(path).read_text(encoding="utf-8") for path in paths)
 
 
 #: Начало абзаца шага 0 про файл широкой механической правки.
@@ -317,6 +324,19 @@ class PipelineCorePluginTests(unittest.TestCase):
         self.assertIsNotNone(core, f"в скиле нет строки {CORE_SKILL_PATH_LINE!r}")
         self.assertTrue(core.is_file(), f"ядра нет по пути из скила: {core}")
         self.assertTrue(core.resolve().is_relative_to(root.resolve()), f"{core} вне копии плагина {root}")
+
+    def test_core_parts_listed_in_core(self) -> None:
+        """Каждый `pipeline-core-*.md` назван в таблице «Части ядра», и каждый названный файл есть."""
+        core = _plugin_path(CORE_DOC).read_text(encoding="utf-8")
+        table = _text_block(core, "| Раздел | Файл |", lambda line: not line.strip())
+        on_disk = sorted(path.name for path in (CORE_PLUGIN_DIR / "references").glob("pipeline-core-*.md"))
+        listed = sorted(re.findall(r"`(pipeline-core-[a-z]+\.md)`", table))
+        self.assertEqual(listed, on_disk)
+        self.assertEqual(sorted(path.name for path in CORE_PARTS), on_disk)
+        for part in CORE_PARTS:
+            heading = next(line for line in _plugin_text(part).splitlines() if line.startswith("## "))
+            with self.subTest(part=str(part)):
+                self.assertNotIn(heading, core.splitlines(), f"{CORE_DOC}: раздел {heading!r} не вынесен")
 
     def test_core_delivery_check_rejects_broken_copy(self) -> None:
         root = self._copy_plugin()
@@ -826,7 +846,7 @@ class FeaturePipelineNoFallbackTests(unittest.TestCase):
                     self.assertIn(needle, text, f"{name}/{SKILL_FILE}: нет стоп-фактора {needle!r}")
 
     def test_core_defines_stop_factor(self) -> None:
-        core = (CORE_PLUGIN_DIR / "references" / "pipeline-core.md").read_text(encoding="utf-8")
+        core = _plugin_text(CORE_DOC)
         for needle in ("### Стоп-фактор", "`стоп: <роль> — <харнесс> недоступен: <причина>`",
                        "Запасного исполнителя нет", "стоп-фактор недоступной роли"):
             with self.subTest(required=needle):
@@ -1666,10 +1686,8 @@ class FeaturePipelineCritiqueTests(unittest.TestCase):
                     self.assertNotIn(needle, text, f"{name}/{SKILL_FILE}: есть {needle!r}")
 
 
-#: Приёмка линзами (listik-3exw, порция a): раздел ядра, его место и дословные строки.
+#: Приёмка линзами (listik-3exw, порция a): раздел ядра (часть `pipeline-core-lenses.md`) и дословные строки.
 LENS_HEADING = "## Приёмка линзами"
-LENS_AFTER_HEADING = "## Коммит порции приёмкой"
-LENS_BEFORE_HEADING = "## Пределы на порцию"
 LENS_JOURNAL_LINES = (
     "порция <X>: отпечаток до линз <sha>",
     "порция <X>: отпечаток после линз <sha>",
@@ -1723,20 +1741,10 @@ def _text_block(text: str, start_prefix: str, stop) -> str:
 def _lens_core_problems(text: str) -> list[str]:
     """Проблемы «Приёмки линзами» в тексте ядра; пустой список — всё на месте."""
     problems: list[str] = []
-    lines = text.splitlines()
-    headings = [line for line in lines if line.startswith("## ")]
     section = _text_section(text, LENS_HEADING)
     if not section:
         problems.append(f"нет раздела {LENS_HEADING!r}")
     else:
-        for neighbour in (LENS_AFTER_HEADING, LENS_BEFORE_HEADING):
-            if neighbour not in headings:
-                problems.append(f"нет раздела {neighbour!r}")
-        if LENS_AFTER_HEADING in headings and LENS_BEFORE_HEADING in headings:
-            index = headings.index(LENS_HEADING)
-            if not headings.index(LENS_AFTER_HEADING) < index < headings.index(LENS_BEFORE_HEADING):
-                problems.append(f"{LENS_HEADING!r} стоит не между {LENS_AFTER_HEADING!r} "
-                                f"и {LENS_BEFORE_HEADING!r}")
         problems.extend(f"в разделе нет {needle!r}" for needle in LENS_SECTION_REQUIRED
                         if needle not in section)
         problems.extend(f"в разделе есть {needle!r}" for needle in LENS_SECTION_FORBIDDEN

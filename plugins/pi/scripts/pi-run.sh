@@ -51,8 +51,8 @@
 #    сам, здесь просто отмечено, чтобы не «исправляли» на несуществующий флаг).
 #
 # 6. Расширения НЕ отключаются: `~/.pi/agent/extensions/b-ai.ts` регистрирует
-#    провайдеров `b-ai-glm`/`b-ai-deepseek`, и `--no-extensions` убрал бы их
-#    из списка провайдеров вовсе.
+#    провайдера `b-ai-glm` (канал glm), и `--no-extensions` убрал бы его
+#    из списка провайдеров вовсе. Канал deepseek — встроенный провайдер pi.
 #
 # 7. Канал GLM (`b-ai-glm/glm-5.3-flash`) иногда зависает до первого токена
 #    (>120с без ответа) — это не сбой обвязки, у пробы `check` поэтому есть
@@ -78,7 +78,7 @@ RPC="$(cd "$(dirname "$0")" && pwd)/pi-rpc.py"
 # считается каналом по умолчанию (решение автора: glm).
 CHANNELS=(
   "glm:b-ai-glm/glm-5.3-flash"
-  "deepseek:b-ai-deepseek/deepseek-v4.1-flash"
+  "deepseek:deepseek/deepseek-flash"
 )
 
 THINKING_LEVELS=(off minimal low medium high xhigh max)
@@ -276,7 +276,7 @@ usage:
   edit tools), write (everything). --write and --bash are kept as aliases for
   --permission write / --permission bash.
 channels (value of --channel/--model): glm = b-ai-glm/glm-5.3-flash (default),
-  deepseek = b-ai-deepseek/deepseek-v4.1-flash; --model also takes a full
+  deepseek = deepseek/deepseek-flash; --model also takes a full
   provider/model id, --channel takes the short name only.
 --thinking: off, minimal, low, medium, high, xhigh, max
 USAGE
@@ -1120,7 +1120,7 @@ cmd_status() {
       out+="$(job_json "$d" "$st"),"
     else
       # 33 — ширина идентификатора с учётом даты/pid/RANDOM; 34 — под самую
-      # длинную модель канала (b-ai-deepseek/deepseek-v4.1-flash, 33 символа).
+      # длинную модель в старых джобах (b-ai-deepseek/deepseek-v4.1-flash, 33 символа).
       status_row \
         "$dir" "$st" "$(elapsed_of "$d")" \
         "$(meta_get model "$d/meta")" \

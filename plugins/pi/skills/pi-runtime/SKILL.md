@@ -117,8 +117,8 @@ the job is honestly `running`.
   final assistant message from the event stream.
 - A provider error arrives as `stop_reason=error` — that is job status `failed`, not a
   script crash; the text is in `logs`.
-- `~/.pi/agent/extensions/b-ai.ts` registers the `b-ai-glm` / `b-ai-deepseek` providers.
-  Disabling it removes both channels. `PI_CLAUDE_DEFAULT_MODEL` moves the default,
+- `~/.pi/agent/extensions/b-ai.ts` registers the `b-ai-glm` provider (channel `glm`); the
+  `deepseek` channel is pi's built-in `deepseek` provider. Disabling the extension removes `glm`. `PI_CLAUDE_DEFAULT_MODEL` moves the default,
   `PI_CLAUDE_BIN` points at the binary, `PI_CLAUDE_STATE_DIR` at the state directory.
 - **`pi auth check` lies for these providers** (`not_ready` / `provider_not_found`) even
   when runs succeed, because they are registered by an extension rather than by static

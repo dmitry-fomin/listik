@@ -27,9 +27,9 @@ addressable by a short channel name via `--model` or `--channel`:
 | Channel | Model | Notes |
 | --- | --- | --- |
 | `glm` | `b-ai-glm/glm-5.3-flash` | the default: every run without `--model`/`--channel` goes here |
-| `deepseek` | `b-ai-deepseek/deepseek-v4.1-flash` | second opinion from a different family — **prone to making things up**: it will invent a file, a flag or an API that does not exist and sound sure about it, so treat every concrete claim as a lead to verify, not as a fact |
+| `deepseek` | `deepseek/deepseek-flash` | second opinion from a different family — **prone to making things up**: it will invent a file, a flag or an API that does not exist and sound sure about it, so treat every concrete claim as a lead to verify, not as a fact |
 
-`--model deepseek` and `--model b-ai-deepseek/deepseek-v4.1-flash` are the same thing: the
+`--model deepseek` and `--model deepseek/deepseek-flash` are the same thing: the
 short name is expanded by the bridge, and a full `provider/model` id is passed through
 untouched. `--channel` accepts only the short name. `PI_CLAUDE_DEFAULT_MODEL` moves the
 default globally and takes a channel name too.
@@ -46,9 +46,9 @@ history.
 
 - [Claude Code](https://code.claude.com) v2.1.216 or later — earlier versions drop the
   plugin prefix from command names, so `/pi:pi-delegate` would not resolve
-- `pi` on your `PATH` (or `PI_CLAUDE_BIN`), **with the `b-ai-glm`/`b-ai-deepseek` providers
-  registered by your `pi` user extension** (`~/.pi/agent/extensions/b-ai.ts`) — without it,
-  neither channel is reachable no matter how the CLI itself is configured
+- `pi` on your `PATH` (or `PI_CLAUDE_BIN`), **with the `b-ai-glm` provider registered by your
+  `pi` user extension** (`~/.pi/agent/extensions/b-ai.ts`) — without it the `glm` channel is
+  unreachable — and pi's built-in `deepseek` provider authenticated for the `deepseek` channel
 - `bash`
 - **`python3` as a hard requirement** — every run goes through the RPC client
   (`pi-rpc.py`), and without python3 `run` refuses to start at all
@@ -202,7 +202,7 @@ version:          0.85.1
 rpc client:       /Users/you/.claude/plugins/.../pi-rpc.py (ok) · python3: /usr/bin/python3
 default channel:  glm -> b-ai-glm/glm-5.3-flash
 channels:         glm -> b-ai-glm/glm-5.3-flash (in catalog: yes; probe: timeout 30s, default)
-                  deepseek -> b-ai-deepseek/deepseek-v4.1-flash (in catalog: yes; probe: answered in 4s)
+                  deepseek -> deepseek/deepseek-flash (in catalog: yes; probe: answered in 4s)
 note: "in catalog" lists models with configured auth - "no" does not mean the model does not exist; the probe is the final word
 default permission: read-only (edits and bash blocked) (--tools read,grep,find,ls)
 background jobs running: 0
@@ -233,9 +233,9 @@ implementation:
   therefore a hard requirement here, not a convenience.
 - **`pi --rpc` does not exist — the flag is `--mode rpc`.** The RPC client builds the
   invocation itself; nothing in this plugin ever passes a bare `--rpc`.
-- **Extensions cannot be disabled** because the `b.ai` providers (`b-ai-glm`,
-  `b-ai-deepseek`) come from `~/.pi/agent/extensions/b-ai.ts`, a user extension — turning
-  extensions off would remove both channels from the provider list.
+- **Extensions cannot be disabled** because the `b.ai` provider `b-ai-glm` comes from
+  `~/.pi/agent/extensions/b-ai.ts`, a user extension — turning extensions off would remove
+  the `glm` channel from the provider list.
 - **Provider errors arrive as `stopReason: "error"` with exit code 0 from `pi`**, so the
   bridge reads the message the RPC stream carries, not the process exit code, to detect a
   failed run.

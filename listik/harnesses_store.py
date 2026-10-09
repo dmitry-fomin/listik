@@ -93,8 +93,8 @@ SEEDS: list[dict] = [
      "argv": ["pi", "--print", "--no-session", "--model", "b-ai-glm/glm-5.3-flash"],
      "prompt": _prompt(DIRECT_PROMPT, "pi-glm"), "kind": "exec", "builtin": 1},
     {"key": "pi-deepseek", "label": "pi · DeepSeek",
-     "hint": "pi --print · DeepSeek v4.1 Flash", "icon": "pi-deepseek",
-     "argv": ["pi", "--print", "--no-session", "--model", "b-ai-deepseek/deepseek-v4.1-flash"],
+     "hint": "pi --print · DeepSeek Flash", "icon": "pi-deepseek",
+     "argv": ["pi", "--print", "--no-session", "--model", "deepseek/deepseek-flash"],
      "prompt": _prompt(DIRECT_PROMPT, "pi-deepseek"), "kind": "exec", "builtin": 1},
     {"key": "devin", "label": "devin", "hint": "Devin · devin -p",
      "icon": "devin",
@@ -382,3 +382,18 @@ def seed(conn: sqlite3.Connection) -> None:
                 (item["prompt"], ts, item["key"], item["prompt"]))
         conn.execute(
             "INSERT INTO meta(key, value) VALUES('seed_headless_argv', '1')")
+    # Канал DeepSeek в pi переехал с `b-ai-deepseek/deepseek-v4.1-flash` на
+    # встроенный провайдер `deepseek/deepseek-flash` (listik-g42w). Тем же
+    # правилом: одноразово и только там, где argv ещё стоит прежний сид.
+    if conn.execute(
+            "SELECT value FROM meta WHERE key = 'seed_pi_deepseek_flash'").fetchone() is None:
+        conn.execute(
+            "UPDATE harnesses SET argv = ?, hint = ?, updated_at = ? "
+            "WHERE key = 'pi-deepseek' AND builtin = 1 AND argv = ?",
+            (json.dumps(["pi", "--print", "--no-session", "--model",
+                         "deepseek/deepseek-flash"], ensure_ascii=False),
+             "pi --print · DeepSeek Flash", ts,
+             json.dumps(["pi", "--print", "--no-session", "--model",
+                         "b-ai-deepseek/deepseek-v4.1-flash"], ensure_ascii=False)))
+        conn.execute(
+            "INSERT INTO meta(key, value) VALUES('seed_pi_deepseek_flash', '1')")

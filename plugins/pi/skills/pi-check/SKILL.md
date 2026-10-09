@@ -1,6 +1,6 @@
 ---
 name: pi-check
-description: Check whether pi is ready to work — binary, version, rpc client and python3, both channels (glm = b-ai-glm/glm-5.3-flash by default, deepseek = b-ai-deepseek/deepseek-v4.1-flash), and how many background jobs are already running.
+description: Check whether pi is ready to work — binary, version, rpc client and python3, both channels (glm = b-ai-glm/glm-5.3-flash by default, deepseek = deepseek/deepseek-flash), and how many background jobs are already running.
 when_to_use: Triggers — "is pi working", "check pi", "why doesn't pi answer", "what channel does pi use". Run it on your own when a delegation failed at launch. This is about harness readiness, not about work in flight — "pi is silent" after a background job is /pi:pi-jobs, and posing a task is /pi:pi-delegate.
 allowed-tools: Bash(${CLAUDE_PLUGIN_ROOT}/scripts/pi-run.sh *)
 ---

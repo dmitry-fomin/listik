@@ -63,6 +63,20 @@ class SeedTests(TempDbTestCase):
             "SELECT actor FROM actor_aliases WHERE raw = 'gemini'").fetchone()
         self.assertEqual(row["actor"], "agent:gemini")
 
+    def test_seed_moves_pi_deepseek_to_flash_once(self) -> None:
+        # Старая база: сид pi-deepseek на b-ai-deepseek, флага фикса нет (listik-g42w).
+        old = ["pi", "--print", "--no-session", "--model", "b-ai-deepseek/deepseek-v4.1-flash"]
+        harnesses_store.update(self.conn, "pi-deepseek", {"argv": old})
+        self.conn.execute("DELETE FROM meta WHERE key = 'seed_pi_deepseek_flash'")
+        self.conn.commit()
+        harnesses_store.seed(self.conn)
+        self.assertEqual(harnesses_store.get(self.conn, "pi-deepseek")["argv"],
+                         ["pi", "--print", "--no-session", "--model", "deepseek/deepseek-flash"])
+        # Флаг стоит: возврат к старому argv руками больше не переписывается.
+        harnesses_store.update(self.conn, "pi-deepseek", {"argv": old})
+        harnesses_store.seed(self.conn)
+        self.assertEqual(harnesses_store.get(self.conn, "pi-deepseek")["argv"], old)
+
 
 class CrudTests(TempDbTestCase):
     def test_create_and_get(self) -> None:

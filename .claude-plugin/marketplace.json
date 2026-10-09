@@ -45,7 +45,7 @@
     {
       "name": "pi",
       "source": "./plugins/pi",
-      "version": "0.1.1",
+      "version": "0.1.2",
       "description": "Мост в pi CLI: делегирование задач в GLM 5.3 Flash и DeepSeek v4.1 Flash через RPC-режим pi, с фоновыми задачами и продолжением сессии"
     },
     {

@@ -1304,11 +1304,12 @@ class InstallScriptTests(unittest.TestCase):
         return code, out, log
 
     def pty_session(self, env: dict, winsize: tuple[int, int] | None, step,
-                    timeout: float) -> tuple[int, str]:
+                    timeout: float,
+                    extra_args: tuple[str, ...] = ("--server", "no")) -> tuple[int, str]:
         """Общая pty-обвязка: `step(buf)` по накопленному выводу отдаёт байты для ввода или None."""
         argv = [SH, str(INSTALL_SH), "--archive", str(self.make_archive(VERSION)),
                 "--service", "no", "--mcp", "no", "--swarm", "no", "--plugins", "yes",
-                "--codex-network", "no"]
+                "--codex-network", "no", *extra_args]
         pid, fd = pty.fork()
         if pid == 0:  # pragma: no cover — дочерний процесс
             try:

@@ -25,6 +25,7 @@
     revoked             полномочия на задачу отозваны: запуск устарел, у задачи новое поколение
     dep_cycle           в смысловых зависимостях цикл — waves --apply ничего не записал
     already_launched    задача уже запущена: процесс идёт, второй запуск не нужен
+    unreachable         общий (удалённый) сервер не отвечает; локальная база не тронута
 """
 from __future__ import annotations
 
@@ -44,6 +45,7 @@ INTERNAL = "internal"
 REVOKED = "revoked"
 DEP_CYCLE = "dep_cycle"
 ALREADY_LAUNCHED = "already_launched"
+UNREACHABLE = "unreachable"
 
 #: HTTP-статус → код. Нужен, когда сервер ответил без поля `code` (старая версия,
 #: прокси, ошибка вне обработчика) — код всё равно должен быть машинным.

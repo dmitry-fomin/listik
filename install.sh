@@ -144,6 +144,15 @@ ui_tty_restore() {
     stty "$tty_saved" </dev/tty 2>/dev/null || true
 }
 
+# Состояние терминала до ввода токена без эха — своё, не tty_saved: в простом режиме
+# tty_saved пуст, а эхо вернуть надо и там.
+remote_tty_saved=
+
+remote_tty_restore() {
+    [ -n "$remote_tty_saved" ] || return 0
+    stty "$remote_tty_saved" </dev/tty 2>/dev/null || true
+}
+
 ui_cursor_hide() { [ "$ui_enabled" = 1 ] && printf '%s[?25l' "$esc" || true; }
 ui_cursor_show() { [ "$ui_enabled" = 1 ] && printf '%s[?25h' "$esc" || true; }
 
@@ -565,6 +574,13 @@ usage() {
   --swarm yes|no        включить рой (экспериментально): сервер сам проверяет задачи
                         всех проектов каждые 30 секунд ([swarm] enabled в config.toml),
                         по умолчанию no
+  --server URL|no       подключить общий сервер Listik (listik remote set): URL —
+                        http(s)://…, no — не подключать; без флага — вопрос
+                        в /dev/tty, без tty — не подключать. Уже настроенный сервер
+                        без флага не переспрашивается. Токен — LISTIK_REMOTE_TOKEN
+                        или ввод в /dev/tty без эха
+  --owner ИМЯ           как вас писать на общем сервере; без флага — вопрос,
+                        по умолчанию $USER (пусто — id -un)
   --codex-network yes|no|ask
                         если codex установлен, а в его config.toml нет
                         [sandbox_workspace_write] с network_access = true — дописать
@@ -580,9 +596,9 @@ usage() {
                         остаются, копия таблицы — routes.bak-*.json в каталоге
                         данных; задачи не трогаются; ask — спросить в /dev/tty, без tty — no
   --yes                 на вопросы без явного флага отвечать значением по умолчанию
-                        (service/plugins — yes, swarm, mcp и routes-reimport — no; вопрос
-                        Codex он не закрывает — нужен --codex-network yes; выбор
-                        плагинов — все)
+                        (service/plugins — yes, swarm, mcp и routes-reimport — no; общий
+                        сервер не подключается; вопрос Codex он не закрывает — нужен
+                        --codex-network yes; выбор плагинов — все)
   --help                эта справка
 
 Переменные окружения:
@@ -590,6 +606,9 @@ usage() {
                         по умолчанию, но заданное пользователем значение важнее
   LISTIK_VERSION, LISTIK_ARCHIVE, LISTIK_BIN_DIR, LISTIK_CODEX_NETWORK,
   LISTIK_ROUTES_REIMPORT, LISTIK_MODELS, LISTIK_HARNESSES — см. флаги
+  LISTIK_REMOTE_TOKEN   общий токен сервера для --server (пустая — как незаданная,
+                        тогда токен спрашивается в /dev/tty без эха); флага для
+                        токена нет — он не должен попадать в argv и историю shell
   CODEX_HOME            каталог настроек Codex (по умолчанию ~/.codex); в нём
                         установщик смотрит config.toml
   LISTIK_PLAIN          1 — без заставки, анимации, цвета и меню: только прежние
@@ -705,6 +724,10 @@ service_answer=
 mcp_answer=
 plugins_answer=
 swarm_answer=
+# --server: флаг (даже пустой) — задан; домен проверяется после цикла.
+server_answer=
+server_given=0
+owner_answer=
 codex_network=${LISTIK_CODEX_NETWORK:-}
 routes_reimport=${LISTIK_ROUTES_REIMPORT:-}
 # Пустая переменная — как незаданная; флаг (даже пустой) — задан.
@@ -766,6 +789,22 @@ while [ $# -gt 0 ]; do
             shift
             ;;
         --swarm=*) swarm_answer=${1#--swarm=} ;;
+        --server)
+            [ $# -ge 2 ] || die "--server ждёт адрес http(s)://… или no"
+            server_answer=$2
+            server_given=1
+            shift
+            ;;
+        --server=*)
+            server_answer=${1#--server=}
+            server_given=1
+            ;;
+        --owner)
+            [ $# -ge 2 ] || die "--owner ждёт имя на общем сервере"
+            owner_answer=$2
+            shift
+            ;;
+        --owner=*) owner_answer=${1#--owner=} ;;
         --codex-network)
             [ $# -ge 2 ] || die "--codex-network ждёт yes, no или ask"
             codex_network=$2
@@ -827,6 +866,13 @@ case $swarm_answer in
     ""|yes|no) ;;
     *) die "--swarm ждёт yes или no, а не '$swarm_answer'" ;;
 esac
+if [ "$server_given" = 1 ]; then
+    # Полная проверка адреса — в `listik remote set`; здесь только явно не адрес.
+    case $server_answer in
+        no|http://*|https://*) ;;
+        *) die "--server ждёт адрес http(s)://… или no, а не '$server_answer'" ;;
+    esac
+fi
 case $codex_network in
     ""|yes|no|ask) ;;
     *) die "--codex-network ждёт yes, no или ask, а не '$codex_network'" ;;
@@ -921,6 +967,7 @@ tmp=$(mktemp -d "${TMPDIR:-/tmp}/listik-install.XXXXXX") ||
     die "не удалось создать временный каталог"
 staging=
 cleanup() {
+    remote_tty_restore
     ui_tty_restore
     ui_cursor_show
     if [ -n "$staging" ] && [ -d "$staging" ]; then
@@ -1289,6 +1336,83 @@ ask_yes_default_no "$swarm_answer" \
     "Экспериментальная функция. Сервер будет сам проверять задачи всех проектов каждые 30 секунд."
 swarm_answer=$decision
 
+# Общий сервер: адрес, токен и имя. Записывает их только `listik remote set` (ниже);
+# токен живёт в переменной и уходит в окружение этой одной команды — не в argv.
+remote_ask() {
+    # $1 — приглашение; строка из /dev/tty в $answer. Возврат 1 — нет tty.
+    answer=
+    printf '%s' "$1" 2>/dev/null >/dev/tty || return 1
+    read -r answer < /dev/tty 2>/dev/null || return 1
+}
+
+remote_ask_token() {
+    # Токен из /dev/tty без эха в $remote_token. Возврат 1 — нет tty или токен пуст.
+    remote_token=
+    remote_tty_saved=$(stty -g </dev/tty 2>/dev/null) || remote_tty_saved=
+    [ -n "$remote_tty_saved" ] || return 1
+    if stty -echo </dev/tty 2>/dev/null; then
+        printf 'общий токен сервера: ' 2>/dev/null >/dev/tty || true
+        read -r remote_token < /dev/tty 2>/dev/null || remote_token=
+        remote_tty_restore
+        printf '\n' 2>/dev/null >/dev/tty || true
+    fi
+    [ -n "$remote_token" ]
+}
+
+remote_configured=
+if remote_json=$("$wrapper" remote --json </dev/null 2>/dev/null); then
+    remote_configured=$(printf '%s' "$remote_json" | python3 -c \
+        'import json,sys; print(json.load(sys.stdin).get("url") or "")' 2>/dev/null) ||
+        remote_configured=
+fi
+remote_do=0
+remote_status=пропущен
+remote_url=
+remote_token=${LISTIK_REMOTE_TOKEN:-}
+remote_name=$owner_answer
+if [ -n "$remote_configured" ] && [ "$server_given" = 0 ]; then
+    remote_status="$remote_configured (уже настроен)"
+elif [ "$server_answer" != no ]; then
+    remote_url=$server_answer
+    remote_want=1
+    if [ "$server_given" = 0 ]; then
+        ask_yes_default_no "" "Подключиться к общему серверу Listik?" \
+            "Задачи проектов с .listik.toml будут жить на нём; нужны адрес, общий токен и ваше имя на сервере."
+        [ "$decision" = yes ] || remote_want=0
+    fi
+    if [ "$remote_want" = 1 ]; then
+        # Ctrl+C на строчном вводе — возврат эха и выход: bash 3.2 (/bin/sh на macOS)
+        # после трапа без exit снова ждал бы ввода, уже без временного каталога.
+        trap 'remote_tty_restore; printf "\n" 2>/dev/null >/dev/tty; exit 130' HUP INT TERM QUIT
+        # Строчный ввод под панелью: живую строку шага убираем, курсор показываем.
+        ui_clear_hold
+        ui_cursor_show
+        if [ -z "$remote_url" ]; then
+            remote_ask 'адрес сервера (https://…): ' || answer=
+            remote_url=$answer
+        fi
+        if [ -z "$remote_url" ]; then
+            remote_status=пропущен
+        elif [ -z "$remote_token" ] && ! remote_ask_token; then
+            remote_status="не удалось (нет токена: LISTIK_REMOTE_TOKEN)"
+        else
+            if [ -z "$remote_name" ]; then
+                remote_default=${USER:-}
+                [ -n "$remote_default" ] || remote_default=$(id -un 2>/dev/null) || remote_default=
+                if remote_ask "как вас писать на сервере [$remote_default]: " &&
+                    [ -n "$answer" ]; then
+                    remote_name=$answer
+                else
+                    remote_name=$remote_default
+                fi
+            fi
+            remote_do=1
+        fi
+        trap cleanup HUP INT TERM QUIT
+        ui_hold=0
+    fi
+fi
+
 # Флаг пишем до автозапуска: сервер, который сейчас встанет, должен его увидеть.
 swarm_status=пропущен
 if [ "$swarm_answer" = yes ]; then
@@ -1308,6 +1432,29 @@ else
         note "$swarm_out" >&2
     fi
 fi
+
+# Подключение к общему серверу не обязательно: отказ — статус, а не конец установки.
+# stdin — /dev/null: под `curl | sh` команда иначе читала бы сам скрипт.
+if [ "$remote_do" = 1 ]; then
+    if remote_out=$(LISTIK_REMOTE_TOKEN="$remote_token" "$wrapper" remote set "$remote_url" \
+        --owner "$remote_name" --json </dev/null 2>"$tmp/remote.err"); then
+        remote_checked=$(printf '%s' "$remote_out" | python3 -c \
+            'import json,sys; print(json.load(sys.stdin).get("checked") is True)' 2>/dev/null) ||
+            remote_checked=
+        if [ "$remote_checked" = True ]; then
+            remote_status=ok
+        else
+            remote_status="ok (сервер не ответил, проверка позже: listik status)"
+        fi
+    else
+        remote_status="не удалось"
+        note "$prog: общий сервер: 'listik remote set' не выполнился:" >&2
+        cat "$tmp/remote.err" >&2 || true
+        # С --json причина отказа приходит в stdout.
+        [ -z "$remote_out" ] || note "$remote_out" >&2
+    fi
+fi
+remote_token=
 
 service_status=пропущен
 service_note=
@@ -1753,6 +1900,7 @@ if [ "$ui_enabled" = 1 ]; then
     ui_report "автозапуск:" "$service_report" "$service_status"
     ui_report "рой:       " "$swarm_status" "$swarm_status"
     ui_report "MCP:       " "$mcp_status" "$mcp_status"
+    ui_report "общий:     " "$remote_status" "${remote_status%% (*}"
     if [ "$plugins_answer" = yes ]; then
         comma_list "$models_sel"
         ui_report "нейронки:  " "$joined"
@@ -1798,6 +1946,7 @@ else
     note "автозапуск: $service_report"
     note "рой: $swarm_status"
     note "MCP: $mcp_status"
+    note "общий сервер: $remote_status"
     if [ "$plugins_answer" = yes ]; then
         comma_list "$models_sel"
         note "нейронки: $joined"

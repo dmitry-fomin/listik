@@ -4,6 +4,14 @@ port = 8787
 
 [auth]
 token = "test-token"
+# owner = "ann"        # как вас писать на общем сервере (имя из его [server] users)
+
+# Общий сервер Listik для проектов, у которых в .listik.toml стоит server = "<URL>".
+# Записывается командой `listik remote set <url> --owner <имя>` (или установщиком с
+# --server): токен — из LISTIK_REMOTE_TOKEN или ввода в терминале, в argv он не попадает.
+# [remote]
+# url = "https://listik.example"
+# token = ""
 
 [embed]
 enabled = true

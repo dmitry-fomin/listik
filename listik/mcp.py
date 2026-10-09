@@ -7,7 +7,10 @@ JSON-RPC 2.0; поддерживаемые версии протокола MCP �
   * stdio — `bin/listik mcp`; работает через локальную базу: сервер Listik может быть и
     не поднят, а задача должна открываться всегда. Пишет stdio мимо сервера, поэтому
     после пишущего инструмента сам зовёт `POST /api/notify` (в фоне и молча, если
-    сервера нет) — иначе доска не узнала бы о записи до перезагрузки (listik-hkdp);
+    сервера нет) — иначе доска не узнала бы о записи до перезагрузки (listik-hkdp).
+    Если `.listik.toml` каталога агента ведёт на общий сервер (`client.resolve_target`),
+    stdio становится прокси: каждое сообщение уходит `POST <сервер>/mcp`, локальная
+    база не открывается (listik-r69k, порция d);
   * HTTP — `POST /mcp` сервера Listik (Streamable HTTP: один POST — одно сообщение,
     ответ обычным JSON, без SSE и сессий) — для Listik, стоящего на другом сервере;
     авторизация заголовком `Authorization: Bearer <токен>` или `X-Listik-Token`.
@@ -21,15 +24,18 @@ JSON-RPC 2.0; поддерживаемые версии протокола MCP �
 """
 from __future__ import annotations
 
+import http.client
 import json
 import os
 import sqlite3
 import sys
 import threading
 import time
+import urllib.error
 import urllib.request
 
 from . import __version__
+from . import client as client_mod
 from . import config as config_mod
 from . import db as db_mod
 from . import errors as errors_mod
@@ -46,7 +52,8 @@ SERVER_INFO = {"name": "listik", "version": __version__}
 WRITE_TOOLS = frozenset({
     "listik_create", "listik_update", "listik_claim", "listik_heartbeat", "listik_stage",
     "listik_comment", "listik_needs_owner", "listik_done", "listik_release", "listik_deps",
-    "listik_put_document", "listik_waves",
+    "listik_put_document", "listik_waves", "listik_delete", "listik_portions",
+    "listik_restart", "listik_mentions",
 })
 
 TASK_ID = {"type": "string", "description": "ID задачи, например zoloto585-search-a1b2"}
@@ -509,7 +516,124 @@ TOOLS: list[dict] = [
             "required": ["project"],
         },
     },
+    {
+        "name": "listik_delete",
+        "description": ("Удалить задачу целиком: комментарии, события, документы, связи — "
+                        "то же, что DELETE /api/tasks/{id}. Необратимо. В серверном режиме "
+                        "чужую задачу удалить нельзя. Через stdio без поднятого сервера "
+                        "задача удаляется прямо из базы, и доска узнает об удалении только "
+                        "при следующей загрузке."),
+        "inputSchema": {
+            "type": "object",
+            "properties": {"id": TASK_ID},
+            "required": ["id"],
+        },
+    },
+    {
+        "name": "listik_mentions",
+        "description": ("Задачи, упомянутые в тексте этой, но не связанные с ней. Без link "
+                        "только читает (ответ items). С link — как `listik dep link --json`: "
+                        "ставит связь dep_type (по умолчанию relates-to) с каждой упомянутой "
+                        "(с only — только с ней); жёсткая связь от агента записывается "
+                        "предложением. Ответ: candidates, linked, made, skipped (кандидат, "
+                        "которого нет или с которым связь невозможна)."),
+        "inputSchema": {
+            "type": "object",
+            "properties": {
+                "id": TASK_ID,
+                "limit": {"type": "integer", "default": 50},
+                "link": {"type": "boolean", "default": False,
+                         "description": "связать с упомянутыми задачами"},
+                "dep_type": {"type": "string", "default": "relates-to"},
+                "only": {"type": "string",
+                         "description": "ID одной упомянутой задачи: связать только с ней"},
+                "actor": ACTOR,
+            },
+            "required": ["id"],
+        },
+    },
+    {
+        "name": "listik_portions",
+        "description": ("Порции шага. sync — завести карточки порций по файлам "
+                        "`<id>.<X>.md` рядом со spec_path шага (идемпотентно, как "
+                        "`listik portions sync`); adopt — принять нарезку карточки роя "
+                        "(`listik portions adopt`). В серверном режиме чужую задачу "
+                        "нарезать нельзя."),
+        "inputSchema": {
+            "type": "object",
+            "properties": {
+                "id": TASK_ID,
+                "action": {"type": "string", "enum": ["sync", "adopt"]},
+                "actor": ACTOR,
+                "harness": {"type": "string"},
+            },
+            "required": ["id", "action"],
+        },
+    },
+    {
+        "name": "listik_restart",
+        "description": ("Перезапустить карточку роя с этапа (`listik restart`): этап "
+                        "выбран, держателя нет, запуска нет — рой запустит роль этапа "
+                        "на следующем тике. route — сменить маршрут. В серверном режиме "
+                        "чужую задачу перезапустить нельзя."),
+        "inputSchema": {
+            "type": "object",
+            "properties": {
+                "id": TASK_ID,
+                "stage": {"type": "string", "enum": ["s1-spec", "s2-review", "s3-impl", "s4-judge"]},
+                "route": {"type": "string", "description": "ключ маршрута из таблицы routes"},
+                "note": {"type": "string", "description": "зачем перезапускаем"},
+                "actor": ACTOR,
+                "harness": {"type": "string"},
+            },
+            "required": ["id"],
+        },
+    },
+    {
+        "name": "listik_revoke",
+        "description": ("Отозвать полномочия текущего запуска задачи (`listik revoke`): "
+                        "поколение поднимается, записи старого процесса уходят в карантин; "
+                        "kill (по умолчанию true) снимает и сам процесс. Выполняет только "
+                        "сервер Listik: процесс задачи держит он. В серверном режиме чужую "
+                        "задачу отозвать нельзя."),
+        "inputSchema": {
+            "type": "object",
+            "properties": {
+                "id": TASK_ID,
+                "note": {"type": "string", "description": "почему отзываем"},
+                "kill": {"type": "boolean", "default": True},
+                "actor": ACTOR,
+                "harness": {"type": "string"},
+            },
+            "required": ["id"],
+        },
+    },
+    {
+        "name": "listik_launch",
+        "description": ("Запустить процесс задачи по её маршруту (`listik launch`). Ответ — "
+                        "карточка с launched: true (у карточки роя — с исходом). Отказ — "
+                        "ошибка с кодом already_launched (уже запущена) или conflict. "
+                        "Выполняет только сервер Listik: процесс задачи держит он. В "
+                        "серверном режиме чужую задачу запустить нельзя."),
+        "inputSchema": {
+            "type": "object",
+            "properties": {
+                "id": TASK_ID,
+                "env": {"type": "object", "additionalProperties": {"type": "string"},
+                        "description": "окружение процесса: только ключи LISTIK_*"},
+            },
+            "required": ["id"],
+        },
+    },
 ]
+
+#: Управляющие инструменты → глагол отказа «чужую задачу <глагол> нельзя»
+#: (`store.check_owner_action`, как у HTTP-ручек).
+OWNER_TOOLS = {
+    "listik_delete": "удалить", "listik_portions": "нарезать на порции",
+    "listik_restart": "перезапустить", "listik_revoke": "отозвать",
+    "listik_launch": "запустить",
+}
 
 
 class _FromEnv:
@@ -532,7 +656,8 @@ def _int_arg(args: dict, key: str, default: int) -> int:
     return default if value is None else int(value)
 
 
-def call_tool(name: str, args: dict, conn=None, owner=FROM_ENV, fence=FROM_ENV) -> object:
+def call_tool(name: str, args: dict, conn=None, owner=FROM_ENV, fence=FROM_ENV,
+              notify=None) -> object:
     """`owner` — владелец-человек, от чьего имени идёт вызов (серверный режим).
 
     Источник имени определяет транспорт, а не пустота значения. У HTTP владелец
@@ -545,13 +670,17 @@ def call_tool(name: str, args: dict, conn=None, owner=FROM_ENV, fence=FROM_ENV) 
     берёт его из окружения (`fence.from_env`), HTTP передаёт значение заголовков
     (может быть `None`, если их нет). `listik_show` карантин не отдаёт никогда —
     для него ограждение не нужно, у чтения нечего отвергать.
+
+    `notify` — публикация кадра доски (`server.publish`); её передаёт только процесс
+    сервера (HTTP-транспорт). С ней `listik_launch`/`listik_revoke`/`listik_delete`
+    выполняются здесь же; без неё (stdio) уходят запросом к своему серверу.
     """
     # `null` в аргументе = ключ не передан (listik-ds5l, listik-ngm2)
     args = {k: v for k, v in args.items() if v is not None}
     if conn is None:
         conn = _conn()
         try:
-            return call_tool(name, args, conn, owner, fence)
+            return call_tool(name, args, conn, owner, fence, notify)
         except Exception:
             # Соединение открыл сам вызов: его незакоммиченная запись держала бы
             # блокировку записи (listik-mqr6). Переданное снаружи откатывает
@@ -566,11 +695,14 @@ def call_tool(name: str, args: dict, conn=None, owner=FROM_ENV, fence=FROM_ENV) 
     if fence is FROM_ENV:
         fence = fence_mod.from_env()
     # Ограждаемые инструменты и имена их операций — `fence.OPS["mcp"]`; `guard` до store.
-    # `listik_deps` ограждён и добавлением, и удалением связи (`("listik_deps", "rm")`).
-    fenced = (name, "rm") if name == "listik_deps" and args.get("action") == "rm" else name
+    fenced = _fence_key(name, args)
     if fenced in fence_mod.OPS["mcp"]:
         fence_mod.guard(conn, args.get("id"), fence, op=fence_mod.OPS["mcp"][fenced], args=args,
                         actor=args.get("actor") or owner, harness=args.get("harness"))
+    if name in OWNER_TOOLS:
+        # Чужую задачу нельзя удалить, запустить, отозвать, перезапустить и нарезать —
+        # до любого эффекта, как у HTTP-ручек.
+        store.check_owner_action(conn, args.get("id"), owner, action=OWNER_TOOLS[name])
     if name == "listik_search":
         return search_mod.search(conn, args["query"], limit=_int_arg(args, "limit", 10),
                                  project=args.get("project"), status=args.get("status"),
@@ -728,7 +860,125 @@ def call_tool(name: str, args: dict, conn=None, owner=FROM_ENV, fence=FROM_ENV) 
             return deps_mod.apply_resource_blocks(
                 conn, project=args.get("project") or "", stage=args.get("stage"))
         return deps_mod.waves(conn, project=args.get("project") or "", stage=args.get("stage"))
+    if name == "listik_mentions":
+        return _mentions(conn, args)
+    if name == "listik_portions":
+        action = args.get("action")
+        actor = args.get("actor") or owner
+        if action == "sync":
+            return store.sync_portions(conn, args["id"], actor=actor, harness=args.get("harness"))
+        if action == "adopt":
+            from . import stage_launch
+            return stage_launch.adopt_portions(conn, args["id"], actor=actor,
+                                               harness=args.get("harness"))
+        raise errors_mod.BadArgument(f"action: ожидается sync или adopt, а не {action!r}")
+    if name == "listik_restart":
+        from . import stage_launch
+        return stage_launch.restart_task(
+            conn, args["id"], stage=args.get("stage"), route=args.get("route"),
+            note=args.get("note"), actor=args.get("actor") or owner,
+            harness=args.get("harness"))
+    if name in ("listik_launch", "listik_revoke", "listik_delete"):
+        if notify is None:
+            return _via_own_server(conn, name, args, owner, fence)
+        return _server_side(conn, name, args, notify)
     raise ValueError(f"неизвестный инструмент: {name}")
+
+
+def _fence_key(name: str, args: dict):
+    """Ключ инструмента в `fence.OPS["mcp"]`: у части инструментов op зависит от аргументов."""
+    if name == "listik_deps" and args.get("action") == "rm":
+        return (name, "rm")
+    if name == "listik_portions":
+        return (name, args.get("action"))
+    if name == "listik_mentions" and args.get("link"):
+        return (name, "link")
+    return name
+
+
+def _mentions(conn, args: dict) -> dict:
+    """`listik_mentions`: чтение упоминаний, с `link` — как `listik dep link --json`."""
+    from . import deps as deps_mod
+    tid = args["id"]
+    items = deps_mod.mentioned(conn, tid, limit=_int_arg(args, "limit", 50) or 50)
+    if not args.get("link"):
+        return {"items": items}
+    actor = _mcp_actor(args.get("actor"))
+    dep_type = args.get("dep_type") or "relates-to"
+    linked, skipped = [], []
+    for item in items:
+        if args.get("only") and args["only"] != item["id"]:
+            continue
+        try:
+            linked.append(store.add_dep(conn, tid, item["id"], dep_type, actor, confirm=False))
+        except (errors_mod.ListikError, errors_mod.NotFound, ValueError) as exc:
+            err = errors_mod.as_error(exc)
+            # Как `dep link`: кандидата нет или связь с ним невозможна — пропускаем
+            # его одного; прочие ошибки касаются всего вызова.
+            if err.code not in (errors_mod.NOT_FOUND, errors_mod.CONFLICT):
+                raise
+            skipped.append({"id": item["id"], "code": err.code, "message": err.message})
+    return {"candidates": items, "linked": linked, "made": len(linked), "skipped": skipped}
+
+
+def _server_side(conn, name: str, args: dict, notify) -> object:
+    """`launch`/`revoke`/`delete` в процессе сервера — как HTTP-ручки, с его `notify`."""
+    from . import launcher as launcher_mod
+    tid = args["id"]
+    if name == "listik_delete":
+        store.delete_task(conn, tid)
+        notify("task", {"id": tid, "action": "deleted"})
+        return {"deleted": tid}
+    if name == "listik_revoke":
+        return launcher_mod.revoke(conn, tid, actor=args.get("actor"),
+                                   harness=args.get("harness"), note=args.get("note"),
+                                   kill=bool(args.get("kill", True)), notify=notify)
+    result = launcher_mod.start(conn, tid, notify=notify, env=args.get("env"))
+    if isinstance(result, dict):
+        out = store.get_task(conn, tid)
+        out.update(result)
+        return out
+    if result is not None:
+        code = (errors_mod.ALREADY_LAUNCHED if result == launcher_mod.ALREADY_STARTED
+                else errors_mod.CONFLICT)
+        raise errors_mod.ListikError(result, code=code, status=409)
+    out = store.get_task(conn, tid)
+    out["launched"] = True
+    return out
+
+
+def _own_server(cfg: dict) -> tuple[str, int]:
+    """Адрес своего сервера по `[server]`: «слушать везде» — не адрес, по которому ходят."""
+    host = str(cfg["server"]["host"] or "127.0.0.1")
+    if host in ("0.0.0.0", "::", "*"):
+        host = "127.0.0.1"
+    return host, int(cfg["server"]["port"])
+
+
+def _via_own_server(conn, name: str, args: dict, owner, fence) -> object:
+    """stdio: `launch`/`revoke`/`delete` — запросом к своему серверу (процесс задачи
+    держит он). Сервера нет: `launch`/`revoke` — отказ, `delete` — прямо в базе."""
+    from . import client as client_mod
+    tid = args["id"]
+    host, port = _own_server(config_mod.load())
+    op = {"listik_launch": "launch", "listik_revoke": "revoke"}.get(name)
+    if client_mod.is_up(host, port):
+        if op == "launch":
+            method, path, body = "POST", f"/api/tasks/{tid}/launch", {"env": args.get("env")}
+        elif op == "revoke":
+            method, path = "POST", f"/api/tasks/{tid}/revoke"
+            body = {k: args[k] for k in ("note", "kill", "actor", "harness") if k in args}
+        else:
+            method, path, body = "DELETE", f"/api/tasks/{tid}", None
+        try:
+            return client_mod.request(method, path, body=body, host=host, port=port,
+                                      owner=owner, fence=fence)
+        except client_mod.ApiDown:
+            pass  # сервер ушёл между проверкой и запросом — как «сервера нет»
+    if op is not None:
+        raise client_mod.server_only_error(op)
+    store.delete_task(conn, tid)
+    return {"deleted": tid}
 
 
 def _norm_actor(value: str | None) -> str | None:
@@ -772,9 +1022,10 @@ def rpc_error(rid, code: int, message: str) -> dict:
     return {"jsonrpc": "2.0", "id": rid, "error": {"code": code, "message": message}}
 
 
-def handle(request: dict, conn=None, owner=FROM_ENV, fence=FROM_ENV) -> dict | None:
-    """`owner`/`fence` — см. `call_tool`: HTTP всегда передаёт значение заголовков
-    (в том числе `None`, если их нет), stdio вызывает без аргумента."""
+def handle(request: dict, conn=None, owner=FROM_ENV, fence=FROM_ENV,
+           notify=None) -> dict | None:
+    """`owner`/`fence`/`notify` — см. `call_tool`: HTTP всегда передаёт значение
+    заголовков (в том числе `None`, если их нет) и `publish`, stdio вызывает без них."""
     method, rid, params = request_parts(request)
 
     if method == "initialize":
@@ -795,7 +1046,7 @@ def handle(request: dict, conn=None, owner=FROM_ENV, fence=FROM_ENV) -> dict | N
         name = params.get("name")
         args = params.get("arguments") or {}
         try:
-            payload = call_tool(name, args, conn, owner, fence)
+            payload = call_tool(name, args, conn, owner, fence, notify)
         except Exception as exc:  # noqa: BLE001
             # Соединение живёт дольше вызова (stdio — процесс, HTTP — поток): частичная
             # запись упавшего инструмента ушла бы в базу со следующим (listik-mqr6).
@@ -860,8 +1111,11 @@ def notify_event(request: dict, response: dict | None) -> list[tuple[str, str]]:
     args = params.get("arguments") or {}
     if name == "listik_waves":
         return [(tid, "deps") for tid in _waves_ids(result)] if args.get("apply") else []
+    if name == "listik_mentions" and not args.get("link"):
+        return []  # без link — чтение
     task_id = _result_id(result) if name == "listik_create" else args.get("id")
-    return [(task_id, name)] if isinstance(task_id, str) and task_id else []
+    action = "deleted" if name == "listik_delete" else name  # доска ждёт именно "deleted"
+    return [(task_id, action)] if isinstance(task_id, str) and task_id else []
 
 
 #: Сколько ждём сервер, пока сообщаем ему о записи. Ответ инструмента этой
@@ -884,12 +1138,10 @@ def _post_notify(task_id: str, action: str) -> None:
     """
     try:
         cfg = config_mod.load()
-        host = str(cfg["server"]["host"] or "127.0.0.1")
-        if host in ("0.0.0.0", "::", "*"):
-            host = "127.0.0.1"  # «слушать везде» — не адрес, по которому ходят
+        host, port = _own_server(cfg)
         body = errors_mod.json_dumps({"task_id": task_id, "action": action}).encode("utf-8")
         req = urllib.request.Request(
-            f"http://{host}:{int(cfg['server']['port'])}/api/notify",
+            f"http://{host}:{port}/api/notify",
             data=body, method="POST")
         req.add_header("Content-Type", "application/json")
         token = config_mod.auth_token(cfg)
@@ -937,7 +1189,194 @@ def wait_pending_notifies(timeout: float = NOTIFY_TIMEOUT + 0.5) -> None:
         alive[0].join(remaining)
 
 
+#: Сколько прокси ждёт ответа общего сервера на одно сообщение, секунд.
+PROXY_TIMEOUT = 120
+
+#: Инструменты, которым подставляется проект (аргумент → `LISTIK_PROJECT` → файл), как
+#: `--project` у CLI. `listik_memory`/`listik_remember`/`listik_deps_suggested` — нет:
+#: у CLI память и предложенные связи проект по каталогу тоже не берут.
+PROJECT_TOOLS = frozenset({
+    "listik_search", "listik_list", "listik_create", "listik_ready", "listik_blocked",
+    "listik_board", "listik_stats", "listik_waves",
+})
+
+#: Инструменты, у которых прокси подставляет автора из `LISTIK_ACTOR` агента: иначе
+#: `_mcp_actor` на сервере подписал бы запись окружением сервера.
+ACTOR_TOOLS = frozenset({"listik_comment", "listik_needs_owner", "listik_deps",
+                         "listik_mentions"})
+
+ALL_PROJECTS = "all"
+
+
+def _given(args: dict, key: str) -> bool:
+    """Ключ передан агентом. `null` — не передан (как у `call_tool`), `""` — передан."""
+    return args.get(key) is not None
+
+
+def with_defaults(request: dict, project_file: dict | None, *, proxy: bool) -> dict:
+    """Подстановки в `tools/call` с объектом `params.arguments`; остальное — как есть.
+
+    Проект — аргумент → `LISTIK_PROJECT` → `project` из `.listik.toml`; `all` (кроме
+    `listik_waves`, у волн «всех проектов» нет) снимает фильтр. Автор (только прокси) —
+    `actor = LISTIK_ACTOR`, если агент не передал ни `author`, ни `actor`. Явно
+    переданное не заменяется.
+    """
+    if request.get("method") != "tools/call":
+        return request
+    params = request.get("params")
+    if not isinstance(params, dict) or not isinstance(params.get("arguments"), dict):
+        return request
+    name = params.get("name")
+    args = dict(params["arguments"])
+    if name in PROJECT_TOOLS:
+        if not _given(args, "project"):
+            fallback = ((os.environ.get("LISTIK_PROJECT") or "").strip()
+                        or (project_file or {}).get("project"))
+            if fallback:
+                args["project"] = fallback
+        value = args.get("project")
+        if (name != "listik_waves" and isinstance(value, str)
+                and value.strip().casefold() == ALL_PROJECTS):
+            del args["project"]
+    if proxy and name in ACTOR_TOOLS and not _given(args, "author") \
+            and not _given(args, "actor"):
+        actor = (os.environ.get("LISTIK_ACTOR") or "").strip()
+        if actor:
+            args["actor"] = actor
+    return {**request, "params": {**params, "arguments": args}}
+
+
+class _NoRedirect(urllib.request.HTTPRedirectHandler):
+    """3xx не выполняется: `Authorization` не должен уйти на чужой адрес."""
+
+    def redirect_request(self, req, fp, code, msg, headers, newurl):  # noqa: D401
+        return None
+
+
+def _server_error_text(raw: bytes) -> str:
+    """`error` из тела отказа: `{"ok": false, "error": "…"}` или JSON-RPC `error.message`."""
+    try:
+        body = errors_mod.json_loads(raw)
+    except (ValueError, UnicodeDecodeError):
+        return ""
+    error = body.get("error") if isinstance(body, dict) else None
+    if isinstance(error, dict):
+        error = error.get("message")
+    return str(error).strip() if error else ""
+
+
+def proxy_message(target, request: dict, *, timeout: float = PROXY_TIMEOUT) -> dict | None:
+    """Одно сообщение — `POST <target.base_url>/mcp`; ответ для stdout или `None`.
+
+    `None` — писать нечего: 202 (уведомление) или любая неудача уведомления. Ошибки
+    запроса с `id` — JSON-RPC `error` `-32603`; токен в их текст не попадает.
+    """
+    rid = request.get("id")
+    notification = "id" not in request
+    url = target.base_url
+
+    def fail(message: str) -> dict | None:
+        return None if notification else rpc_error(rid, -32603, message)
+
+    req = urllib.request.Request(f"{url}/mcp", method="POST",
+                                 data=errors_mod.json_dumps(request).encode("utf-8"))
+    req.add_header("Content-Type", "application/json")
+    req.add_header("Authorization", f"Bearer {target.token}")
+    who = client_mod.owner()
+    if who:
+        req.add_header("X-Listik-Owner", who)
+    token = fence_mod.from_env()
+    if token is not None:
+        for key, value in fence_mod.to_headers(token).items():
+            req.add_header(key, value)
+    try:
+        with urllib.request.build_opener(_NoRedirect).open(req, timeout=timeout) as resp:
+            status, raw = resp.status, resp.read()
+    except urllib.error.HTTPError as exc:
+        status = exc.code
+        try:
+            raw = exc.read()
+        except (OSError, http.client.HTTPException):
+            raw = b""
+    except urllib.error.URLError:
+        # Запрос не ушёл (refused, DNS, таймаут соединения): записи точно не было.
+        return fail(f"общий сервер {url} не отвечает — проверь сеть и listik status; "
+                    "локальная база не тронута")
+    except (OSError, http.client.HTTPException):
+        # Запрос ушёл, ответа нет: запись могла примениться, повтор дал бы дубль.
+        return fail(f"общий сервер {url} не ответил вовремя — результат неизвестен, "
+                    "проверь карточку, прежде чем повторять")
+    if status == 202:
+        return None
+    if status == 200:
+        if not raw.strip():
+            return None
+        try:
+            return errors_mod.json_loads(raw)
+        except (ValueError, UnicodeDecodeError):
+            return fail(f"общий сервер {url} ответил не-JSON — проверь адрес в .listik.toml")
+    detail = _server_error_text(raw)
+    message = f"общий сервер {url} ответил {status}" + (f": {detail}" if detail else "")
+    if 300 <= status < 400:
+        message += " — сервер перенаправляет: проверь адрес в .listik.toml"
+    elif status == 401:
+        message += f" — проверь токен: listik remote set {url}"
+    return fail(message)
+
+
+def _write(response: dict) -> None:
+    sys.stdout.write(errors_mod.json_dumps(response) + "\n")
+    sys.stdout.flush()
+
+
+def _run_remote(target, failure: str | None) -> int:
+    """Прокси на общий сервер (`failure is None`) или отказ ошибкой конфигурации.
+
+    Локальная база не открывается ни в одном из двух режимов.
+    """
+    for line in sys.stdin:
+        line = line.strip()
+        if not line:
+            continue
+        try:
+            request = errors_mod.json_loads(line)
+        except json.JSONDecodeError as exc:
+            _write(rpc_error(None, -32700, f"невалидный JSON: {exc}"))
+            continue
+        if not isinstance(request, dict):
+            _write(rpc_error(None, -32600, "неверный запрос JSON-RPC"))
+            continue
+        if failure is not None:
+            response = None if "id" not in request else rpc_error(request.get("id"), -32603,
+                                                                  failure)
+        else:
+            response = proxy_message(target, with_defaults(request, target.project_file,
+                                                           proxy=True))
+        if response is not None:
+            _write(response)
+    return 0
+
+
+def _resolve() -> tuple[object | None, str | None]:
+    """Цель stdio по каталогу агента: `(Target, None)` или `(None, текст ошибки)`.
+
+    cwd удалён — `(None, None)`: прежнее поведение, локальная база.
+    """
+    try:
+        cwd = os.getcwd()
+    except OSError:
+        return None, None
+    try:
+        return client_mod.resolve_target(cwd), None
+    except (errors_mod.ListikError, OSError, ValueError) as exc:
+        return None, errors_mod.mcp_error_text(exc)
+
+
 def run() -> int:
+    target, failure = _resolve()
+    if failure is not None or (target is not None and target.kind == "remote"):
+        return _run_remote(target, failure)
+    project_file = target.project_file if target is not None else None
     # Одно соединение на весь stdio-процесс: без него call_tool открывал бы
     # новое соединение на каждый вызов и не закрывал его (listik-sxcd).
     # Маршруты `listik_create` берёт из таблицы `routes` через это же соединение —
@@ -954,6 +1393,8 @@ def run() -> int:
                 rpc_error(None, -32700, f"невалидный JSON: {exc}")) + "\n")
             sys.stdout.flush()
             continue
+        if project_file is not None and isinstance(request, dict):
+            request = with_defaults(request, project_file, proxy=False)
         response = handle(request, conn=conn)
         if response is None:
             continue

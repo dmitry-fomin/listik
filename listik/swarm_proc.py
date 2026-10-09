@@ -79,8 +79,11 @@ def runtime() -> dict:
     стороны) живой pid из файла — это и есть запущенный рой.
     """
     error = None
+    server_mode = False
     try:
-        enabled = config_mod.swarm_enabled()
+        cfg = config_mod.load()
+        server_mode = config_mod.is_server_mode(cfg)
+        enabled = config_mod.swarm_enabled(cfg)
     except ValueError as exc:
         enabled, error = False, str(exc)
     sup = _current
@@ -92,6 +95,8 @@ def runtime() -> dict:
         out = {"enabled": enabled, "running": pid is not None, "pid": pid}
     if error is not None:
         out["error"] = error
+    if server_mode:
+        out["disabled_reason"] = "server_mode"
     return out
 
 

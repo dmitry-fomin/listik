@@ -122,6 +122,28 @@ def check_task_owner(row, as_owner: str | None, *, task_id: str) -> None:
             f"задача {task_id} принадлежит {row_owner}: чужую задачу брать нельзя")
 
 
+def check_owner_action(conn: sqlite3.Connection, task_id: str, as_owner: str | None, *,
+                       action: str) -> None:
+    """Серверный режим: можно ли представившемуся управлять задачей (удалить,
+    запустить, отозвать, перезапустить, нарезать на порции).
+
+    Правило — как у `PATCH`/`done` (`update_task`): локальный режим и
+    непредставившийся проходят, имя не из `server.users` — `BadArgument`, чужой
+    владелец задачи — `Forbidden`, нет задачи — `NotFound`. Зовётся до любого эффекта.
+    """
+    cfg = server_cfg()
+    if cfg is None:
+        return
+    value = config_mod.check_owner(as_owner, cfg)
+    if value is None:
+        return
+    row = store_helpers.task_row(conn, task_id)
+    row_owner = (row["owner"] or "").strip()
+    if row_owner and row_owner != value:
+        raise errors_mod.Forbidden(
+            f"задача {task_id} принадлежит {row_owner}: чужую задачу {action} нельзя")
+
+
 def main_worktree(value: str | None) -> str:
     """Канонический маркер основной ветки (`main`/`master`) или `''`.
 
@@ -1990,9 +2012,11 @@ def sync_portions(conn: sqlite3.Connection, task_id: str, *, actor: str | None =
         free = [c for c in children if c["id"] not in taken]
         file, check, child = _portion_match(steps_dir, task_id, letter, free)
         if child is None:
+            # Порция наследует владельца шага: в серверном режиме без него create_task
+            # отказал бы (в локальном владелец игнорируется).
             card = create_task(conn, title=_portion_title(file, letter), parent=task_id,
                                spec_path=file, checklist_path=check, created_by=actor,
-                               harness=harness)
+                               harness=harness, owner=row["owner"] or None)
             created.append(card["id"])
         else:
             fields = {}

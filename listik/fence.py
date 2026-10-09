@@ -51,14 +51,21 @@ OPS = {
         "PUT /api/tasks/{id}/documents/{kind}": "document",
         "DELETE /api/tasks/{id}/deps/{dep}": "dep_remove",
     },
-    # Инструменты MCP; ключ-кортеж `("listik_deps", "rm")` — `listik_deps` с
-    # `action: "rm"` (кортеж не совпадёт ни с каким именем инструмента).
+    # Инструменты MCP; ключ-кортеж `(инструмент, вариант)` — op зависит от аргумента
+    # (`listik_deps` с `action: "rm"`, `listik_portions` по `action`, `listik_mentions`
+    # с `link`); кортеж не совпадёт ни с каким именем инструмента. `listik_mentions`
+    # без `link` — чтение, не ограждается.
     "mcp": {
         "listik_update": "update", "listik_claim": "claim", "listik_heartbeat": "heartbeat",
         "listik_stage": "stage", "listik_comment": "comment",
         "listik_needs_owner": "needs-owner", "listik_done": "done",
         "listik_release": "release", "listik_put_document": "document",
         "listik_deps": "dep_add", ("listik_deps", "rm"): "dep_remove",
+        "listik_delete": "delete",
+        ("listik_portions", "sync"): "portions_sync",
+        ("listik_portions", "adopt"): "portions_adopt",
+        "listik_restart": "restart", "listik_revoke": "revoke", "listik_launch": "launch",
+        ("listik_mentions", "link"): "dep_add",
     },
     # op `client.local_call`.
     "local": {

@@ -58,10 +58,12 @@ def _memory_keys(out) -> list[str]:
 
 class McpToolsTests(TempDbTestCase):
     # ---- 1. список инструментов
-    def test_tools_list_returns_exactly_31_names(self) -> None:
+    def test_tools_list_returns_exactly_37_names(self) -> None:
         names = set(_tools_list(self.conn))
-        self.assertEqual(names, OLD_TOOLS | NEW_TOOLS | DOC_TOOLS)
-        self.assertEqual(len(names), 31)
+        self.assertEqual(names, OLD_TOOLS | NEW_TOOLS | DOC_TOOLS | {
+            "listik_delete", "listik_mentions", "listik_portions", "listik_restart",
+            "listik_revoke", "listik_launch"})
+        self.assertEqual(len(names), 37)
 
     # ---- 2. схемы новых инструментов и новые параметры старых
     def test_new_tool_schemas_and_new_params(self) -> None:

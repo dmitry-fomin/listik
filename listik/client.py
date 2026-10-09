@@ -159,7 +159,18 @@ def owner(explicit: str | None = None) -> str:
 #: Операции `local_call`, которые понимают `as_owner`. Остальным ключ не передаём:
 #: у их функций store такого аргумента нет и вызов упал бы TypeError.
 OWNER_LOCAL_OPS = frozenset({"list", "board", "ready", "create", "claim", "heartbeat",
-                             "stage", "update", "done", "release"})
+                             "stage", "update", "done", "release", "portions_sync",
+                             "portions_adopt", "restart"})
+
+
+def server_only_error(op: str) -> errors.ListikError:
+    """Отказ `revoke`/`launch` без сервера: процесс задачи держит он, а не вызывающий.
+
+    Общий текст для локального фолбэка CLI и stdio-MCP (`listik_launch`/`listik_revoke`).
+    """
+    return errors.ListikError(
+        f"{op} выполняет только сервер: процесс задачи держит он",
+        code=errors.UNSUPPORTED, hint="подними сервер: listik serve")
 
 #: Тот же `owner()` под именем без конфликта: в `request()`/`health()` параметр
 #: называется `owner` и перекрывает имя функции.
@@ -404,14 +415,20 @@ def _local_op(conn, op: str, fence: fence_mod.Token | dict | None, kwargs: dict)
         task_id = kwargs.pop("task_id")
         return store.add_comment(conn, task_id, **kwargs)
     if op == "portions_sync":
+        store.check_owner_action(conn, kwargs["task_id"], kwargs.get("as_owner"),
+                                 action="нарезать на порции")
         return store.sync_portions(conn, kwargs["task_id"], actor=kwargs.get("actor"),
                                    harness=kwargs.get("harness"))
     if op == "portions_adopt":
         from . import stage_launch
+        store.check_owner_action(conn, kwargs["task_id"], kwargs.get("as_owner"),
+                                 action="нарезать на порции")
         return stage_launch.adopt_portions(conn, kwargs["task_id"], actor=kwargs.get("actor"),
                                            harness=kwargs.get("harness"))
     if op == "restart":
         from . import stage_launch
+        store.check_owner_action(conn, kwargs["task_id"], kwargs.get("as_owner"),
+                                 action="перезапустить")
         return stage_launch.restart_task(
             conn, kwargs["task_id"], stage=kwargs.get("stage"), route=kwargs.get("route"),
             note=kwargs.get("note"), actor=kwargs.get("actor"), harness=kwargs.get("harness"))
@@ -509,9 +526,7 @@ def _local_op(conn, op: str, fence: fence_mod.Token | dict | None, kwargs: dict)
             raise errors.ListikError(errors.message_of(exc), code=errors.CONFLICT) from exc
     if op in ("revoke", "launch"):
         # Процесс задачи держит сервер: локальному фолбэку некому его снять/запустить.
-        raise errors.ListikError(
-            f"{op} выполняет только сервер: процесс задачи держит он",
-            code=errors.UNSUPPORTED, hint="подними сервер: listik serve")
+        raise server_only_error(op)
     if op == "project_routing":
         try:
             return store.update_project(conn, kwargs["slug"], routing=kwargs.get("routing") or {})

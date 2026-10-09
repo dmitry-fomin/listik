@@ -461,7 +461,7 @@ class McpDocumentTests(TempDbTestCase):
     def test_tools_list_has_31_tools_with_document_schemas(self) -> None:
         tools = self._tools()
 
-        self.assertEqual(len(tools), 31)
+        self.assertEqual(len(tools), 37)
         self.assertIn("listik_put_document", tools)
         self.assertIn("listik_get_document", tools)
         put_schema = tools["listik_put_document"]["inputSchema"]

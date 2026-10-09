@@ -574,6 +574,14 @@ def error_response(exc: BaseException) -> tuple[int, str, str, str]:
     return 500, f"{type(exc).__name__}: {text}", errors_mod.INTERNAL, ""
 
 
+#: Управляющие POST-действия карточки → глагол отказа «чужую задачу <глагол> нельзя»
+#: (`store.check_owner_action`).
+OWNER_ACTIONS = {
+    "launch": "запустить", "revoke": "отозвать", "restart": "перезапустить",
+    "portions/sync": "нарезать на порции", "portions/adopt": "нарезать на порции",
+}
+
+
 def _publish_edge_changes(edges: dict | None) -> None:
     """Событие `deps` доске — по разу на каждую карточку из добавленных/снятых рёбер."""
     if not edges:
@@ -1264,6 +1272,7 @@ def handle(method: str, path: str, query: dict, body: dict, authed: bool = False
                                 op=fence_mod.OPS["http_route"]["DELETE /api/tasks/{id}"], args=body,
                                 actor=body.get("actor") or owner, harness=body.get("harness"))
                 try:
+                    store.check_owner_action(conn, tid, owner, action="удалить")
                     store.delete_task(conn, tid)
                 except errors_mod.NotFound as exc:
                     raise api_error(404, exc) from exc
@@ -1292,6 +1301,10 @@ def handle(method: str, path: str, query: dict, body: dict, authed: bool = False
                     fence_mod.guard(conn, tid, fence, op=fence_mod.OPS["http_action"][action],
                                     args=body,
                                     actor=body.get("actor") or owner, harness=body.get("harness"))
+                # Чужую задачу нельзя запустить, отозвать, перезапустить и нарезать —
+                # проверка владельца до любого эффекта (серверный режим).
+                if action in OWNER_ACTIONS:
+                    store.check_owner_action(conn, tid, owner, action=OWNER_ACTIONS[action])
                 if action == "claim":
                     out = store.claim(conn, tid, holder=need(body, "holder"),
                                       harness=body.get("harness"), note=body.get("note"),
@@ -1692,7 +1705,7 @@ class Handler(BaseHTTPRequestHandler):
         # 6. Разбор сообщения — тот же, что у stdio.
         try:
             response = mcp.handle(request, conn=get_conn(), owner=self._owner(),
-                                  fence=fence_mod.from_headers(self.headers))
+                                  fence=fence_mod.from_headers(self.headers), notify=publish)
         except Exception as exc:  # noqa: BLE001
             status, message, _code, _hint = error_response(exc)
             return rpc_error(status, -32603, message, rid)

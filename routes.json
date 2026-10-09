@@ -500,38 +500,6 @@
       ]
     },
     {
-      "key": "cc-nano",
-      "kind": "pipeline",
-      "plugin": "pipeline-cc",
-      "title": "cc nano",
-      "hint": "Claude + Codex · мелкие правки · без ТЗ и критики",
-      "visible": true,
-      "icon": "xlow",
-      "roles": {
-        "impl": {
-          "provider": "claude",
-          "label": "medium",
-          "title": "Opus 5.5"
-        },
-        "judge": {
-          "provider": "openai",
-          "label": "medium",
-          "title": "GPT-6 Astra",
-          "skill": "codex:codex-delegate",
-          "params": {
-            "model": "gpt-6-astra",
-            "effort": "medium"
-          }
-        }
-      },
-      "command": [
-        "claude",
-        "--dangerously-skip-permissions",
-        "-p",
-        "Задача {task_id} (проект {project}), маршрут {route}. Запусти скил /{plugin}:{skill} и веди карточку по нему: ты оркестратор, кода не пишешь и порцию не коммитишь. Протокол — скил listik:listik. Первым действием, до чтения кода и show: claim {task_id} --holder claude. Дальше heartbeat каждые 10–15 мин, пока карточку держишь ты. Все команды с --actor agent:claude --harness claude."
-      ]
-    },
-    {
       "key": "full-cross",
       "kind": "pipeline",
       "plugin": "pipeline-full",

@@ -2238,7 +2238,6 @@ OLD_NAMES_EXCLUDED = (
     "pipeline-core/references/openrouter.*",
     "pipeline-core/references/fetch_aa.py",
     "pipeline-core/references/fetch_openrouter.py",
-    "pipeline-core/references/bench/runs/*",
 )
 
 

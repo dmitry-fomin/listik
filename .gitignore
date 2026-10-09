@@ -44,3 +44,6 @@ dist/
 __pycache__/
 *.pyc
 .DS_Store
+
+# отчёты прогонов бенча судей — локальные, не в репо (listik-ss74)
+plugins/pipeline-core/references/bench/runs/

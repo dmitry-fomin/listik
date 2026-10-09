@@ -7,7 +7,10 @@ JSON-RPC 2.0; поддерживаемые версии протокола MCP �
   * stdio — `bin/listik mcp`; работает через локальную базу: сервер Listik может быть и
     не поднят, а задача должна открываться всегда. Пишет stdio мимо сервера, поэтому
     после пишущего инструмента сам зовёт `POST /api/notify` (в фоне и молча, если
-    сервера нет) — иначе доска не узнала бы о записи до перезагрузки (listik-hkdp);
+    сервера нет) — иначе доска не узнала бы о записи до перезагрузки (listik-hkdp).
+    Если `.listik.toml` каталога агента ведёт на общий сервер (`client.resolve_target`),
+    stdio становится прокси: каждое сообщение уходит `POST <сервер>/mcp`, локальная
+    база не открывается (listik-r69k, порция d);
   * HTTP — `POST /mcp` сервера Listik (Streamable HTTP: один POST — одно сообщение,
     ответ обычным JSON, без SSE и сессий) — для Listik, стоящего на другом сервере;
     авторизация заголовком `Authorization: Bearer <токен>` или `X-Listik-Token`.
@@ -21,15 +24,18 @@ JSON-RPC 2.0; поддерживаемые версии протокола MCP �
 """
 from __future__ import annotations
 
+import http.client
 import json
 import os
 import sqlite3
 import sys
 import threading
 import time
+import urllib.error
 import urllib.request
 
 from . import __version__
+from . import client as client_mod
 from . import config as config_mod
 from . import db as db_mod
 from . import errors as errors_mod
@@ -1183,7 +1189,194 @@ def wait_pending_notifies(timeout: float = NOTIFY_TIMEOUT + 0.5) -> None:
         alive[0].join(remaining)
 
 
+#: Сколько прокси ждёт ответа общего сервера на одно сообщение, секунд.
+PROXY_TIMEOUT = 120
+
+#: Инструменты, которым подставляется проект (аргумент → `LISTIK_PROJECT` → файл), как
+#: `--project` у CLI. `listik_memory`/`listik_remember`/`listik_deps_suggested` — нет:
+#: у CLI память и предложенные связи проект по каталогу тоже не берут.
+PROJECT_TOOLS = frozenset({
+    "listik_search", "listik_list", "listik_create", "listik_ready", "listik_blocked",
+    "listik_board", "listik_stats", "listik_waves",
+})
+
+#: Инструменты, у которых прокси подставляет автора из `LISTIK_ACTOR` агента: иначе
+#: `_mcp_actor` на сервере подписал бы запись окружением сервера.
+ACTOR_TOOLS = frozenset({"listik_comment", "listik_needs_owner", "listik_deps",
+                         "listik_mentions"})
+
+ALL_PROJECTS = "all"
+
+
+def _given(args: dict, key: str) -> bool:
+    """Ключ передан агентом. `null` — не передан (как у `call_tool`), `""` — передан."""
+    return args.get(key) is not None
+
+
+def with_defaults(request: dict, project_file: dict | None, *, proxy: bool) -> dict:
+    """Подстановки в `tools/call` с объектом `params.arguments`; остальное — как есть.
+
+    Проект — аргумент → `LISTIK_PROJECT` → `project` из `.listik.toml`; `all` (кроме
+    `listik_waves`, у волн «всех проектов» нет) снимает фильтр. Автор (только прокси) —
+    `actor = LISTIK_ACTOR`, если агент не передал ни `author`, ни `actor`. Явно
+    переданное не заменяется.
+    """
+    if request.get("method") != "tools/call":
+        return request
+    params = request.get("params")
+    if not isinstance(params, dict) or not isinstance(params.get("arguments"), dict):
+        return request
+    name = params.get("name")
+    args = dict(params["arguments"])
+    if name in PROJECT_TOOLS:
+        if not _given(args, "project"):
+            fallback = ((os.environ.get("LISTIK_PROJECT") or "").strip()
+                        or (project_file or {}).get("project"))
+            if fallback:
+                args["project"] = fallback
+        value = args.get("project")
+        if (name != "listik_waves" and isinstance(value, str)
+                and value.strip().casefold() == ALL_PROJECTS):
+            del args["project"]
+    if proxy and name in ACTOR_TOOLS and not _given(args, "author") \
+            and not _given(args, "actor"):
+        actor = (os.environ.get("LISTIK_ACTOR") or "").strip()
+        if actor:
+            args["actor"] = actor
+    return {**request, "params": {**params, "arguments": args}}
+
+
+class _NoRedirect(urllib.request.HTTPRedirectHandler):
+    """3xx не выполняется: `Authorization` не должен уйти на чужой адрес."""
+
+    def redirect_request(self, req, fp, code, msg, headers, newurl):  # noqa: D401
+        return None
+
+
+def _server_error_text(raw: bytes) -> str:
+    """`error` из тела отказа: `{"ok": false, "error": "…"}` или JSON-RPC `error.message`."""
+    try:
+        body = errors_mod.json_loads(raw)
+    except (ValueError, UnicodeDecodeError):
+        return ""
+    error = body.get("error") if isinstance(body, dict) else None
+    if isinstance(error, dict):
+        error = error.get("message")
+    return str(error).strip() if error else ""
+
+
+def proxy_message(target, request: dict, *, timeout: float = PROXY_TIMEOUT) -> dict | None:
+    """Одно сообщение — `POST <target.base_url>/mcp`; ответ для stdout или `None`.
+
+    `None` — писать нечего: 202 (уведомление) или любая неудача уведомления. Ошибки
+    запроса с `id` — JSON-RPC `error` `-32603`; токен в их текст не попадает.
+    """
+    rid = request.get("id")
+    notification = "id" not in request
+    url = target.base_url
+
+    def fail(message: str) -> dict | None:
+        return None if notification else rpc_error(rid, -32603, message)
+
+    req = urllib.request.Request(f"{url}/mcp", method="POST",
+                                 data=errors_mod.json_dumps(request).encode("utf-8"))
+    req.add_header("Content-Type", "application/json")
+    req.add_header("Authorization", f"Bearer {target.token}")
+    who = client_mod.owner()
+    if who:
+        req.add_header("X-Listik-Owner", who)
+    token = fence_mod.from_env()
+    if token is not None:
+        for key, value in fence_mod.to_headers(token).items():
+            req.add_header(key, value)
+    try:
+        with urllib.request.build_opener(_NoRedirect).open(req, timeout=timeout) as resp:
+            status, raw = resp.status, resp.read()
+    except urllib.error.HTTPError as exc:
+        status = exc.code
+        try:
+            raw = exc.read()
+        except (OSError, http.client.HTTPException):
+            raw = b""
+    except urllib.error.URLError:
+        # Запрос не ушёл (refused, DNS, таймаут соединения): записи точно не было.
+        return fail(f"общий сервер {url} не отвечает — проверь сеть и listik status; "
+                    "локальная база не тронута")
+    except (OSError, http.client.HTTPException):
+        # Запрос ушёл, ответа нет: запись могла примениться, повтор дал бы дубль.
+        return fail(f"общий сервер {url} не ответил вовремя — результат неизвестен, "
+                    "проверь карточку, прежде чем повторять")
+    if status == 202:
+        return None
+    if status == 200:
+        if not raw.strip():
+            return None
+        try:
+            return errors_mod.json_loads(raw)
+        except (ValueError, UnicodeDecodeError):
+            return fail(f"общий сервер {url} ответил не-JSON — проверь адрес в .listik.toml")
+    detail = _server_error_text(raw)
+    message = f"общий сервер {url} ответил {status}" + (f": {detail}" if detail else "")
+    if 300 <= status < 400:
+        message += " — сервер перенаправляет: проверь адрес в .listik.toml"
+    elif status == 401:
+        message += f" — проверь токен: listik remote set {url}"
+    return fail(message)
+
+
+def _write(response: dict) -> None:
+    sys.stdout.write(errors_mod.json_dumps(response) + "\n")
+    sys.stdout.flush()
+
+
+def _run_remote(target, failure: str | None) -> int:
+    """Прокси на общий сервер (`failure is None`) или отказ ошибкой конфигурации.
+
+    Локальная база не открывается ни в одном из двух режимов.
+    """
+    for line in sys.stdin:
+        line = line.strip()
+        if not line:
+            continue
+        try:
+            request = errors_mod.json_loads(line)
+        except json.JSONDecodeError as exc:
+            _write(rpc_error(None, -32700, f"невалидный JSON: {exc}"))
+            continue
+        if not isinstance(request, dict):
+            _write(rpc_error(None, -32600, "неверный запрос JSON-RPC"))
+            continue
+        if failure is not None:
+            response = None if "id" not in request else rpc_error(request.get("id"), -32603,
+                                                                  failure)
+        else:
+            response = proxy_message(target, with_defaults(request, target.project_file,
+                                                           proxy=True))
+        if response is not None:
+            _write(response)
+    return 0
+
+
+def _resolve() -> tuple[object | None, str | None]:
+    """Цель stdio по каталогу агента: `(Target, None)` или `(None, текст ошибки)`.
+
+    cwd удалён — `(None, None)`: прежнее поведение, локальная база.
+    """
+    try:
+        cwd = os.getcwd()
+    except OSError:
+        return None, None
+    try:
+        return client_mod.resolve_target(cwd), None
+    except (errors_mod.ListikError, OSError, ValueError) as exc:
+        return None, errors_mod.mcp_error_text(exc)
+
+
 def run() -> int:
+    target, failure = _resolve()
+    if failure is not None or (target is not None and target.kind == "remote"):
+        return _run_remote(target, failure)
+    project_file = target.project_file if target is not None else None
     # Одно соединение на весь stdio-процесс: без него call_tool открывал бы
     # новое соединение на каждый вызов и не закрывал его (listik-sxcd).
     # Маршруты `listik_create` берёт из таблицы `routes` через это же соединение —
@@ -1200,6 +1393,8 @@ def run() -> int:
                 rpc_error(None, -32700, f"невалидный JSON: {exc}")) + "\n")
             sys.stdout.flush()
             continue
+        if project_file is not None and isinstance(request, dict):
+            request = with_defaults(request, project_file, proxy=False)
         response = handle(request, conn=conn)
         if response is None:
             continue

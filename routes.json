@@ -18,7 +18,7 @@
         "critic": {
           "provider": "claude",
           "label": "S+DS+GLM",
-          "title": "Sonnet 5.5 · high + DeepSeek V4.1 Flash + GLM 5.3 Flash"
+          "title": "Sonnet 5.5 · high + DeepSeek Flash · high + GLM 5.3 Flash · high"
         },
         "impl": {
           "provider": "claude",
@@ -28,7 +28,7 @@
         "judge": {
           "provider": "grok",
           "label": "линзы",
-          "title": "GLM 5.3 Flash · 3 линзы → Grok 4.7 · xhigh"
+          "title": "GLM 5.3 Flash · high · 3 линзы → Grok 4.7 · xhigh"
         }
       },
       "command": [
@@ -134,7 +134,7 @@
         "critic": {
           "provider": "claude",
           "label": "S+DS+GLM",
-          "title": "Sonnet 5.5 · high + DeepSeek V4.1 Flash + GLM 5.3 Flash"
+          "title": "Sonnet 5.5 · high + DeepSeek Flash · high + GLM 5.3 Flash · high"
         },
         "impl": {
           "provider": "claude",
@@ -144,7 +144,7 @@
         "judge": {
           "provider": "grok",
           "label": "линзы",
-          "title": "GLM 5.3 Flash · 3 линзы → Grok 4.7 · xhigh"
+          "title": "GLM 5.3 Flash · high · 3 линзы → Grok 4.7 · xhigh"
         }
       },
       "command": [
@@ -250,7 +250,7 @@
         "critic": {
           "provider": "claude",
           "label": "S+DS",
-          "title": "Sonnet 5.5 · high + DeepSeek V4.1 Flash"
+          "title": "Sonnet 5.5 · high + DeepSeek Flash · high"
         },
         "impl": {
           "provider": "claude",
@@ -329,7 +329,7 @@
         "critic": {
           "provider": "glm",
           "label": "GLM+DS+H",
-          "title": "GLM 5.3 Flash + DeepSeek V4.1 Flash + Haiku 5.5 · high",
+          "title": "GLM 5.3 Flash · high + DeepSeek Flash · high + Haiku 5.5 · high",
           "skill": "pi:pi-delegate"
         },
         "impl": {
@@ -485,7 +485,7 @@
         "judge": {
           "provider": "glm",
           "label": "GLM",
-          "title": "GLM 5.3 Flash",
+          "title": "GLM 5.3 Flash · high",
           "skill": "pi:pi-delegate",
           "params": {
             "channel": "glm"
@@ -520,12 +520,12 @@
         "critic": {
           "provider": "claude",
           "label": "S+DS",
-          "title": "Sonnet 5.5 · high + DeepSeek V4.1 Flash"
+          "title": "Sonnet 5.5 · high + DeepSeek Flash · high"
         },
         "impl": {
           "provider": "glm",
           "label": "GLM",
-          "title": "GLM 5.3 Flash",
+          "title": "GLM 5.3 Flash · high",
           "skill": "pi:pi-delegate",
           "params": {
             "channel": "glm"

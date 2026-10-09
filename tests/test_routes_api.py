@@ -3,10 +3,10 @@
 
 Прогоняется через `server.handle(...)`, как соседние тесты ручек (`test_route_change.py`,
 `test_projects_add.py`): `get_conn` подменяется на временное соединение, ошибки — это
-`server.ApiError`, пойманный `assertRaises`. Скилы читаются из настоящего
-`plugins/feature-pipeline/skills/*` и `plugins/claude-codex/skills/*` репозитория (вместе —
-ровно те 15 ключей, что и в образце `routes.json`, у claude-codex с префиксом `cc-`) —
-кроме тестов, которые явно подменяют `skills.SKILLS_DIR` на пустой/чужой каталог.
+`server.ApiError`, пойманный `assertRaises`. Скилы читаются из настоящих
+`plugins/pipeline-full|pipeline-cc|pipeline-claude/skills/*` репозитория (вместе — ровно те
+17 ключей, что и в образце `routes.json`, ключ `<плагин без pipeline->-<скил>`) — кроме
+тестов, которые явно подменяют `skills.PIPELINE_PLUGINS_DIR` на пустой/чужой каталог.
 """
 from __future__ import annotations
 
@@ -29,10 +29,10 @@ REPO_DIR = pathlib.Path(__file__).resolve().parent.parent
 ROUTES_JSON = REPO_DIR / "routes.json"
 
 EXPECTED_KEYS = [
-    "xhigh-pipeline", "high-pipeline", "medium-pipeline", "sol-pipeline", "low-pipeline",
-    "xlow-pipeline", "nano-pipeline", "cross-pipeline", "opus-pipeline",
-    "cc-xhigh-pipeline", "cc-high-pipeline", "cc-medium-pipeline", "cc-low-pipeline",
-    "cc-xlow-pipeline", "cc-nano-pipeline",
+    "full-xhigh", "full-high", "full-medium", "cc-sol", "full-low",
+    "full-xlow", "full-nano", "full-cross", "claude-xhigh", "claude-high", "claude-opus",
+    "cc-xhigh", "cc-high", "cc-medium", "cc-low",
+    "cc-xlow", "cc-nano",
 ]
 
 
@@ -125,36 +125,37 @@ class SkillMatchTests(RoutesApiBase):
         self.assertTrue(row["visible"])
 
     def test_route_with_real_skill_has_skill_path_and_is_not_hidden(self) -> None:
-        self.write_and_import([pipeline_record(key="high-pipeline"), swarm_record()])
+        self.write_and_import([pipeline_record(key="full-high", plugin="pipeline-full"),
+                               swarm_record()])
         status, data = self.get("/api/routes")
-        record = next(r for r in data["routes"] if r["key"] == "high-pipeline")
+        record = next(r for r in data["routes"] if r["key"] == "full-high")
         self.assertNotIn("skill_missing", record)
         self.assertTrue(record["visible"])
         self.assertEqual(record["skill_path"],
-                         "plugins/feature-pipeline/skills/high-pipeline/SKILL.md")
+                         "plugins/pipeline-full/skills/high/SKILL.md")
 
 
 class ClaudeCodexSkillTests(RoutesApiBase):
-    """Маршрут `cc-<имя>` ↔ скил `plugins/claude-codex/skills/<имя>/SKILL.md`."""
+    """Маршрут `cc-<имя>` ↔ скил `plugins/pipeline-cc/skills/<имя>/SKILL.md`."""
 
-    def test_cc_route_has_claude_codex_skill_path(self) -> None:
+    def test_cc_route_has_pipeline_cc_skill_path(self) -> None:
         self.import_sample()
         status, data = self.get("/api/routes")
         self.assertEqual(status, 200)
-        record = next(r for r in data["routes"] if r["key"] == "cc-high-pipeline")
+        record = next(r for r in data["routes"] if r["key"] == "cc-high")
         self.assertNotIn("skill_missing", record)
         self.assertTrue(record["visible"])
         self.assertEqual(record["skill_path"],
-                         "plugins/claude-codex/skills/high-pipeline/SKILL.md")
+                         "plugins/pipeline-cc/skills/high/SKILL.md")
 
-    def test_cc_route_without_skill_is_hidden_with_claude_codex_warning(self) -> None:
-        self.write_and_import([pipeline_record(key="cc-fake-pipeline"), swarm_record()])
+    def test_cc_route_without_skill_is_hidden_with_pipeline_cc_warning(self) -> None:
+        self.write_and_import([pipeline_record(key="cc-fake", plugin="pipeline-cc"), swarm_record()])
         status, data = self.get("/api/routes")
-        record = next(r for r in data["routes"] if r["key"] == "cc-fake-pipeline")
+        record = next(r for r in data["routes"] if r["key"] == "cc-fake")
         self.assertTrue(record["skill_missing"])
         self.assertFalse(record["visible"])
-        self.assertTrue(any("/claude-codex:fake-pipeline" in w for w in data["warnings"]))
-        self.assertFalse(any("/feature-pipeline:cc-fake-pipeline" in w for w in data["warnings"]))
+        self.assertTrue(any("/pipeline-cc:fake" in w for w in data["warnings"]))
+        self.assertFalse(any("/pipeline-full:cc-fake" in w for w in data["warnings"]))
 
     def test_sync_on_sample_is_clean(self) -> None:
         self.import_sample()
@@ -164,29 +165,132 @@ class ClaudeCodexSkillTests(RoutesApiBase):
         self.assertEqual(data["missing_skill"], [])
         self.assertEqual(data["missing_route"], [])
 
-    def test_no_feature_pipeline_dir_means_no_skills_even_with_claude_codex(self) -> None:
-        with mock.patch.object(skills_mod, "SKILLS_DIR", self.tmp_path / "нет-такого-каталога"):
-            self.assertTrue(skills_mod.CC_SKILLS_DIR.is_dir())
+    def test_no_plugins_dir_means_no_skills(self) -> None:
+        with mock.patch.object(skills_mod, "PIPELINE_PLUGINS_DIR", self.tmp_path / "нет-такого-каталога"):
+            self.assertTrue((skills_mod.paths.ROOT_DIR / "plugins" / "pipeline-cc" / "skills").is_dir())
             self.assertFalse(skills_mod.skills_available())
             self.import_sample()
             status, data = self.get("/api/routes")
         self.assertEqual(status, 200)
         self.assertFalse(any(r.get("skill_missing") for r in data["routes"]))
 
-    def test_post_unknown_cc_key_is_400_naming_claude_codex(self) -> None:
+    def test_post_unknown_cc_key_is_400_naming_plugins(self) -> None:
         with self.assertRaises(server.ApiError) as ctx:
-            self.post("/api/routes", {"key": "cc-fake-pipeline"})
+            self.post("/api/routes", {"key": "cc-fake"})
         self.assertEqual(ctx.exception.status, 400)
         self.assertEqual(ctx.exception.code, errors.BAD_ARGUMENT)
-        self.assertIn("plugins/claude-codex/skills", ctx.exception.message)
-        self.assertIn("plugins/feature-pipeline/skills", ctx.exception.message)
+        self.assertIn("pipeline-cc", ctx.exception.message)
+        self.assertIn("plugins/pipeline-full", ctx.exception.message)
+        self.assertIn("full-high", ctx.exception.message)
 
     def test_post_deleted_cc_route_is_201(self) -> None:
         self.import_sample()
-        routes_store.delete_route(self.conn, "cc-high-pipeline")
-        status, record = self.post("/api/routes", {"key": "cc-high-pipeline"})
+        routes_store.delete_route(self.conn, "cc-high")
+        status, record = self.post("/api/routes", {"key": "cc-high"})
         self.assertEqual(status, 201)
         self.assertEqual(record["kind"], "pipeline")
+        # Заголовок — короткий `name` из frontmatter, без имени плагина; уровень — по ключу.
+        self.assertEqual(record["title"], "high")
+        self.assertEqual(record["icon"], "high")
+
+
+class PluginFieldApiTests(RoutesApiBase):
+    """Поле `plugin` в `GET`/`POST`/`PATCH /api/routes` (listik-d9rj, порция d)."""
+
+    def test_get_sample_has_plugin_and_skill_path(self) -> None:
+        self.import_sample()
+        routes_store.create_route(self.conn, key="roy", kind="swarm", title="Рой",
+                                  roles={"impl": {"harness": "dsh"}})
+        status, data = self.get("/api/routes")
+        self.assertEqual(status, 200)
+        records = {r["key"]: r for r in data["routes"]}
+        for record in data["routes"]:
+            self.assertIn("plugin", record, record["key"])
+        self.assertEqual(records["full-high"]["plugin"], "pipeline-full")
+        self.assertEqual(records["full-high"]["skill_path"],
+                         "plugins/pipeline-full/skills/high/SKILL.md")
+        self.assertEqual(records["cc-sol"]["plugin"], "pipeline-cc")
+        self.assertEqual(records["claude-opus"]["plugin"], "pipeline-claude")
+        self.assertIsNone(records["roy"]["plugin"])
+        self.assertEqual(data["warnings"], [])
+
+    def test_pipeline_without_plugin_is_hidden_with_warning(self) -> None:
+        self.write_and_import([pipeline_record(key="old-flow"), swarm_record()])
+        status, data = self.get("/api/routes")
+        record = next(r for r in data["routes"] if r["key"] == "old-flow")
+        self.assertTrue(record["skill_missing"])
+        self.assertFalse(record["visible"])
+        self.assertIsNone(record["skill_path"])
+        self.assertIn("маршрута 'old-flow': не задан плагин, маршрут скрыт", data["warnings"])
+        self.assertTrue(routes_store.get_route(self.conn, "old-flow")["visible"])
+        status, sync = self.get("/api/routes/sync")
+        self.assertIn("old-flow", [r["key"] for r in sync["missing_skill"]])
+
+    def test_plugin_without_skill_dir_is_hidden_with_warning(self) -> None:
+        self.write_and_import([pipeline_record(key="full-nope", plugin="pipeline-full")])
+        status, data = self.get("/api/routes")
+        record = next(r for r in data["routes"] if r["key"] == "full-nope")
+        self.assertTrue(record["skill_missing"])
+        self.assertFalse(record["visible"])
+        self.assertIn("маршрута 'full-nope': скила /pipeline-full:nope нет, маршрут скрыт",
+                      data["warnings"])
+        status, sync = self.get("/api/routes/sync")
+        self.assertEqual([r["key"] for r in sync["missing_skill"]], ["full-nope"])
+
+    def test_post_takes_plugin_from_catalogue(self) -> None:
+        self.import_sample()
+        routes_store.delete_route(self.conn, "cc-high")
+        status, record = self.post("/api/routes", {"key": "cc-high"})
+        self.assertEqual(status, 201)
+        self.assertEqual(record["plugin"], "pipeline-cc")
+        self.assertEqual(routes_store.get_route(self.conn, "cc-high")["plugin"], "pipeline-cc")
+
+    def test_patch_plugin_is_400_and_unchanged(self) -> None:
+        self.import_sample()
+        with self.assertRaises(server.ApiError) as ctx:
+            self.patch("/api/routes/full-high", {"plugin": "pipeline-cc"})
+        self.assertEqual(ctx.exception.status, 400)
+        self.assertEqual(ctx.exception.code, errors.BAD_ARGUMENT)
+        self.assertEqual(routes_store.get_route(self.conn, "full-high")["plugin"],
+                         "pipeline-full")
+
+
+class SkillCatalogTests(RoutesApiBase):
+    """Ключ скила `<плагин без pipeline->-<скил>` (listik-d9rj, порция b): справочник и имя для текстов."""
+
+    def test_skill_info_by_plugin_prefix(self) -> None:
+        info = skills_mod.skill_info("full-high")
+        self.assertEqual(info["plugin"], "pipeline-full")
+        self.assertEqual(info["skill"], "high")
+        self.assertEqual(info["title"], "high")
+        self.assertEqual(info["skill_path"], "plugins/pipeline-full/skills/high/SKILL.md")
+        self.assertEqual(skills_mod.skill_info("cc-sol")["skill"], "sol")
+        self.assertEqual(skills_mod.skill_info("cc-sol")["skill_path"],
+                         "plugins/pipeline-cc/skills/sol/SKILL.md")
+        for key in ("xhigh-pipeline", "nope-high", "full-nope"):
+            with self.subTest(key=key):
+                self.assertIsNone(skills_mod.skill_info(key))
+
+    def test_skill_ref_is_pure_string(self) -> None:
+        cases = (("full-high", "/pipeline-full:high"), ("full-nope", "/pipeline-full:nope"),
+                 ("cc-fake", "/pipeline-cc:fake"), ("claude-opus", "/pipeline-claude:opus"),
+                 ("xhigh-pipeline", None), ("pidi", None), ("nope-high", None), ("full-", None))
+        for key, ref in cases:
+            with self.subTest(key=key):
+                self.assertEqual(skills_mod.skill_ref(key), ref)
+
+    def test_skill_keys_match_sample(self) -> None:
+        self.assertEqual(skills_mod.skill_keys(), sorted(EXPECTED_KEYS))
+
+    def test_sync_missing_route_names_plugin_and_short_title(self) -> None:
+        self.import_sample()
+        routes_store.delete_route(self.conn, "cc-high")
+        status, data = self.get("/api/routes/sync")
+        self.assertEqual(status, 200)
+        self.assertEqual(data["missing_skill"], [])
+        self.assertEqual([r["key"] for r in data["missing_route"]], ["cc-high"])
+        self.assertEqual(data["missing_route"][0]["plugin"], "pipeline-cc")
+        self.assertEqual(data["missing_route"][0]["title"], "high")
 
 
 class NoSkillsDirectoryTests(RoutesApiBase):
@@ -194,7 +298,7 @@ class NoSkillsDirectoryTests(RoutesApiBase):
 
     def setUp(self) -> None:
         super().setUp()
-        self._skills_patch = mock.patch.object(skills_mod, "SKILLS_DIR",
+        self._skills_patch = mock.patch.object(skills_mod, "PIPELINE_PLUGINS_DIR",
                                                self.tmp_path / "нет-такого-каталога")
         self._skills_patch.start()
         self.addCleanup(self._skills_patch.stop)
@@ -223,7 +327,7 @@ class SyncEndpointTests(RoutesApiBase):
         self.assertTrue(data["skills_available"])
         self.assertEqual([r["key"] for r in data["missing_skill"]], ["totally-fake-pipeline"])
         missing_route_keys = {r["key"] for r in data["missing_route"]}
-        self.assertIn("high-pipeline", missing_route_keys)
+        self.assertIn("full-high", missing_route_keys)
         self.assertNotIn("totally-fake-pipeline", missing_route_keys)
 
 
@@ -233,7 +337,7 @@ class PatchRouteTests(RoutesApiBase):
         self.import_sample()
 
     def test_patch_updates_title_hint_icon_visible(self) -> None:
-        status, record = self.patch("/api/routes/cross-pipeline",
+        status, record = self.patch("/api/routes/full-cross",
                                     {"title": "Новый", "hint": "h", "icon": "high",
                                      "visible": False})
         self.assertEqual(status, 200)
@@ -244,7 +348,7 @@ class PatchRouteTests(RoutesApiBase):
 
     def test_patch_roles_in_body_is_400_names_the_field(self) -> None:
         with self.assertRaises(server.ApiError) as ctx:
-            self.patch("/api/routes/high-pipeline", {"roles": {}})
+            self.patch("/api/routes/full-high", {"roles": {}})
         self.assertEqual(ctx.exception.status, 400)
         self.assertEqual(ctx.exception.code, errors.BAD_ARGUMENT)
         self.assertIn("roles", ctx.exception.message)
@@ -253,25 +357,25 @@ class PatchRouteTests(RoutesApiBase):
         for field, value in (("kind", "swarm"), ("key", "x"), ("harness", "dsh"),
                              ("position", 0), ("command", ["run", "{task_id}"])):
             with self.assertRaises(server.ApiError) as ctx:
-                self.patch("/api/routes/cross-pipeline", {field: value})
+                self.patch("/api/routes/full-cross", {field: value})
             self.assertEqual(ctx.exception.status, 400, field)
             self.assertIn(field, ctx.exception.message)
             self.assertIn("нельзя менять", ctx.exception.message)
 
     def test_patch_command_on_pipeline_is_400(self) -> None:
         with self.assertRaises(server.ApiError) as ctx:
-            self.patch("/api/routes/high-pipeline", {"command": ["x"]})
+            self.patch("/api/routes/full-high", {"command": ["x"]})
         self.assertEqual(ctx.exception.status, 400)
 
     def test_patch_unknown_field_is_400_names_it(self) -> None:
         with self.assertRaises(server.ApiError) as ctx:
-            self.patch("/api/routes/cross-pipeline", {"foo": 1})
+            self.patch("/api/routes/full-cross", {"foo": 1})
         self.assertEqual(ctx.exception.status, 400)
         self.assertIn("foo", ctx.exception.message)
 
     def test_patch_empty_body_is_400(self) -> None:
         with self.assertRaises(server.ApiError) as ctx:
-            self.patch("/api/routes/cross-pipeline", {})
+            self.patch("/api/routes/full-cross", {})
         self.assertEqual(ctx.exception.status, 400)
 
     def test_patch_unknown_key_is_404(self) -> None:
@@ -282,7 +386,7 @@ class PatchRouteTests(RoutesApiBase):
 
 class CreateRouteTests(RoutesApiBase):
     def test_post_creates_pipeline_route_without_roles(self) -> None:
-        status, record = self.post("/api/routes", {"key": "high-pipeline"})
+        status, record = self.post("/api/routes", {"key": "full-high"})
         self.assertEqual(status, 201)
         self.assertEqual(record["kind"], "pipeline")
         self.assertFalse(record["visible"])
@@ -298,14 +402,14 @@ class CreateRouteTests(RoutesApiBase):
 
     def test_post_extra_field_is_400(self) -> None:
         with self.assertRaises(server.ApiError) as ctx:
-            self.post("/api/routes", {"key": "high-pipeline", "visible": True})
+            self.post("/api/routes", {"key": "full-high", "visible": True})
         self.assertEqual(ctx.exception.status, 400)
         self.assertIn("visible", ctx.exception.message)
 
     def test_post_duplicate_key_is_409(self) -> None:
         self.import_sample()
         with self.assertRaises(server.ApiError) as ctx:
-            self.post("/api/routes", {"key": "high-pipeline"})
+            self.post("/api/routes", {"key": "full-high"})
         self.assertEqual(ctx.exception.status, 409)
 
 
@@ -315,12 +419,12 @@ class DeleteRouteTests(RoutesApiBase):
         self.import_sample()
 
     def test_delete_clears_route_and_labels_but_keeps_tasks(self) -> None:
-        open_task = store.create_task(self.conn, title="open", project="p", route="cross-pipeline")
-        working = store.create_task(self.conn, title="working", project="p", route="cross-pipeline")
+        open_task = store.create_task(self.conn, title="open", project="p", route="full-cross")
+        working = store.create_task(self.conn, title="working", project="p", route="full-cross")
         store.claim(self.conn, working["id"], holder="dsh")
-        status, data = self.delete("/api/routes/cross-pipeline")
+        status, data = self.delete("/api/routes/full-cross")
         self.assertEqual(status, 200)
-        self.assertEqual(data["removed"], "cross-pipeline")
+        self.assertEqual(data["removed"], "full-cross")
         self.assertEqual(data["tasks_cleared"], 2)
         for tid in (open_task["id"], working["id"]):
             row = self.conn.execute(
@@ -328,7 +432,7 @@ class DeleteRouteTests(RoutesApiBase):
                 (tid,)).fetchone()
             self.assertIsNone(row["launch_route"])
             self.assertNotIn("harness:claude", json.loads(row["labels"]))
-            self.assertNotIn("process:cross-pipeline", json.loads(row["labels"]))
+            self.assertNotIn("process:full-cross", json.loads(row["labels"]))
         # Держатель и статус задачи в работе — не тронуты.
         self.assertEqual(
             self.conn.execute("SELECT holder FROM tasks WHERE id = ?",
@@ -336,7 +440,7 @@ class DeleteRouteTests(RoutesApiBase):
         self.assertIsNotNone(store.get_task(self.conn, open_task["id"]))
         self.assertIsNotNone(store.get_task(self.conn, working["id"]))
         with self.assertRaises(errors.NotFound):
-            routes_store.get_route(self.conn, "cross-pipeline")
+            routes_store.get_route(self.conn, "full-cross")
 
     def test_delete_unknown_key_is_404(self) -> None:
         with self.assertRaises(server.ApiError) as ctx:
@@ -344,9 +448,9 @@ class DeleteRouteTests(RoutesApiBase):
         self.assertEqual(ctx.exception.status, 404)
 
     def test_second_delete_of_same_key_is_404_and_noop(self) -> None:
-        self.delete("/api/routes/nano-pipeline")
+        self.delete("/api/routes/full-nano")
         with self.assertRaises(server.ApiError) as ctx:
-            self.delete("/api/routes/nano-pipeline")
+            self.delete("/api/routes/full-nano")
         self.assertEqual(ctx.exception.status, 404)
 
 
@@ -374,33 +478,33 @@ class ReimportRoutesTests(RoutesApiBase):
 
     def test_reimport_rewrites_table(self) -> None:
         self.import_sample()
-        shipped = routes_store.get_route(self.conn, "cross-pipeline")["title"]
-        routes_store.update_route(self.conn, "cross-pipeline", title="Моя правка")
+        shipped = routes_store.get_route(self.conn, "full-cross")["title"]
+        routes_store.update_route(self.conn, "full-cross", title="Моя правка")
         with mock.patch.object(server, "publish") as publish:
             status, report = server.handle("POST", "/api/routes/reimport", {}, {}, authed=True)
         self.assertEqual(status, 200)
         self.assertTrue(report["replaced"])
         self.assertEqual(report["imported"], len(EXPECTED_KEYS))
         self.assertEqual(report["orphans"], {})
-        self.assertEqual(routes_store.get_route(self.conn, "cross-pipeline")["title"], shipped)
+        self.assertEqual(routes_store.get_route(self.conn, "full-cross")["title"], shipped)
         publish.assert_called_once_with("route", {"key": None, "action": "reimported"})
 
     def test_reimport_from_backup_path(self) -> None:
         from listik import paths
         self.import_sample()
-        shipped = routes_store.get_route(self.conn, "cross-pipeline")["title"]
-        routes_store.update_route(self.conn, "cross-pipeline", title="Моя правка")
+        shipped = routes_store.get_route(self.conn, "full-cross")["title"]
+        routes_store.update_route(self.conn, "full-cross", title="Моя правка")
         with mock.patch.object(paths, "DATA_DIR", self.tmp_path / "data"), \
                 mock.patch.object(server, "publish"), \
                 contextlib.redirect_stderr(io.StringIO()):
             _, first = server.handle("POST", "/api/routes/reimport", {}, {}, authed=True)
-            self.assertEqual(routes_store.get_route(self.conn, "cross-pipeline")["title"],
+            self.assertEqual(routes_store.get_route(self.conn, "full-cross")["title"],
                              shipped)
             status, report = server.handle("POST", "/api/routes/reimport", {},
                                            {"path": first["backup"]}, authed=True)
         self.assertEqual(status, 200)
         self.assertEqual(report["source"], first["backup"])
-        self.assertEqual(routes_store.get_route(self.conn, "cross-pipeline")["title"],
+        self.assertEqual(routes_store.get_route(self.conn, "full-cross")["title"],
                          "Моя правка")
 
     def test_reimport_bad_path_is_400(self) -> None:
@@ -442,9 +546,9 @@ class CreateRouteKindTests(RoutesApiBase):
                 self.assert_kind_rejected({"kind": kind, "key": "x", "title": "x"})
 
     def test_pipeline_without_kind_and_explicit_kind_are_same(self) -> None:
-        status_a, rec_a = self.post("/api/routes", {"key": "high-pipeline"})
+        status_a, rec_a = self.post("/api/routes", {"key": "full-high"})
         self.assertEqual(status_a, 201)
-        status_b, rec_b = self.post("/api/routes", {"key": "low-pipeline", "kind": "pipeline"})
+        status_b, rec_b = self.post("/api/routes", {"key": "full-low", "kind": "pipeline"})
         self.assertEqual(status_b, 201)
         for record in (rec_a, rec_b):
             self.assertEqual(record["kind"], "pipeline")
@@ -656,7 +760,7 @@ class RouteDriverGoneTests(RoutesApiBase):
                     self.assertEqual(dict(after), dict(before))
 
     def test_post_with_driver_is_400_and_creates_nothing(self) -> None:
-        for body in ({"key": "xhigh-pipeline", "driver": "skill"},
+        for body in ({"key": "full-xhigh", "driver": "skill"},
                      {**self.SWARM, "driver": "swarm"}):
             with self.subTest(body=body):
                 self.assert_bad_driver(self.post, "/api/routes", body)

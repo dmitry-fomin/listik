@@ -1,0 +1,28 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1097" height="199" viewBox="0 0 1097 199" font-family="-apple-system, 'Segoe UI', Helvetica, Arial, sans-serif">
+  <title>pipeline-cc:low</title>
+  <defs>
+    <marker id="arrow" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse">
+      <path d="M0 0L10 5L0 10z" fill="#c8c8c8"/>
+    </marker>
+  </defs>
+  <rect width="100%" height="100%" fill="#fff"/>
+  <text x="24" y="32" text-anchor="start" font-size="15" font-weight="700" fill="#111">pipeline-cc:low</text>
+  <text x="24" y="54" text-anchor="start" font-size="12" fill="#6b6b6b">cc low · Claude + Codex · на 20 мин, с ТЗ и критикой</text>
+  <line x1="153" y1="98" x2="209" y2="98" stroke="#c8c8c8" stroke-width="1.2" marker-end="url(#arrow)"/>
+  <line x1="383" y1="98" x2="439" y2="98" stroke="#c8c8c8" stroke-width="1.2" marker-end="url(#arrow)"/>
+  <line x1="568" y1="98" x2="624" y2="98" stroke="#c8c8c8" stroke-width="1.2" marker-end="url(#arrow)"/>
+  <line x1="798" y1="98" x2="854" y2="98" stroke="#c8c8c8" stroke-width="1.2" marker-end="url(#arrow)"/>
+  <text x="88" y="94" text-anchor="middle" font-size="15" font-weight="700" fill="#111">ТЗ</text>
+  <text x="88" y="112" text-anchor="middle" font-size="12" fill="#6b6b6b">Opus 5.5 · low</text>
+  <text x="296" y="94" text-anchor="middle" font-size="15" font-weight="700" fill="#111">Критик</text>
+  <text x="296" y="112" text-anchor="middle" font-size="12" fill="#6b6b6b">GPT-6.1 Sol · medium</text>
+  <text x="503" y="94" text-anchor="middle" font-size="15" font-weight="700" fill="#111">Код</text>
+  <text x="503" y="112" text-anchor="middle" font-size="12" fill="#6b6b6b">Opus 5.5 · low</text>
+  <text x="711" y="94" text-anchor="middle" font-size="15" font-weight="700" fill="#111">Приёмка</text>
+  <text x="711" y="112" text-anchor="middle" font-size="12" fill="#6b6b6b">GPT-6 Astra · medium</text>
+  <rect x="854" y="74" width="219" height="46" rx="8" fill="none" stroke="#111" stroke-width="1"/>
+  <text x="963" y="94" text-anchor="middle" font-size="15" font-weight="700" fill="#111">Коммит порции</text>
+  <text x="963" y="112" text-anchor="middle" font-size="12" fill="#6b6b6b">судья при зелёном вердикте</text>
+  <path d="M711 124 C711 168 503 168 503 124" fill="none" stroke="#c8c8c8" stroke-width="1.2" stroke-dasharray="5 4" marker-end="url(#arrow)"/>
+  <text x="607" y="175" text-anchor="middle" font-size="12" fill="#6b6b6b">красный вердикт</text>
+</svg>

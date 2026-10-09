@@ -11,7 +11,7 @@ from pathlib import Path
 
 from . import paths
 
-SCHEMA_VERSION = 15
+SCHEMA_VERSION = 16
 
 SCHEMA = """
 PRAGMA journal_mode = WAL;
@@ -202,6 +202,7 @@ CREATE TABLE IF NOT EXISTS meta (
 CREATE TABLE IF NOT EXISTS routes (
     key        TEXT PRIMARY KEY,
     kind       TEXT NOT NULL,              -- pipeline | swarm
+    plugin     TEXT,                       -- pipeline-full | pipeline-cc | pipeline-claude, NULL — рой или запись без плагина
     title      TEXT NOT NULL,
     hint       TEXT NOT NULL DEFAULT '',
     icon       TEXT,                       -- xhigh|high|medium|low|xlow|direct, NULL — уровня нет
@@ -406,6 +407,7 @@ def init(db_path: Path | None = None, *, verbose: bool = False) -> sqlite3.Conne
     conn.commit()
     drop_direct_routes(conn)
     drop_route_driver(conn)
+    rename_pipeline_routes(conn)
     return conn
 
 
@@ -485,6 +487,87 @@ def drop_route_driver(conn: sqlite3.Connection) -> bool:
         conn.execute("RELEASE drop_route_driver")
         raise
     conn.execute("RELEASE drop_route_driver")
+    conn.commit()
+    return True
+
+
+#: Плагины пресетов (схема 16, listik-d9rj): старые ключи конвейеров переезжают на
+#: `<плагин без pipeline->-<скил>`, у записи появляется явное поле `plugin`. Колонку
+#: `routes.plugin` добавляет только `rename_pipeline_routes` (не `MIGRATIONS`): по её
+#: отсутствию функция узнаёт, что миграции ещё не было. Тот же текст — у alembic-ревизии
+#: 0014_pipeline_plugins.
+PIPELINE_ROUTE_RENAMES = (
+    # старый ключ, новый ключ, плагин
+    ("xhigh-pipeline", "full-xhigh", "pipeline-full"),
+    ("high-pipeline", "full-high", "pipeline-full"),
+    ("medium-pipeline", "full-medium", "pipeline-full"),
+    ("low-pipeline", "full-low", "pipeline-full"),
+    ("xlow-pipeline", "full-xlow", "pipeline-full"),
+    ("nano-pipeline", "full-nano", "pipeline-full"),
+    ("cross-pipeline", "full-cross", "pipeline-full"),
+    ("sol-pipeline", "cc-sol", "pipeline-cc"),
+    ("cc-xhigh-pipeline", "cc-xhigh", "pipeline-cc"),
+    ("cc-high-pipeline", "cc-high", "pipeline-cc"),
+    ("cc-medium-pipeline", "cc-medium", "pipeline-cc"),
+    ("cc-low-pipeline", "cc-low", "pipeline-cc"),
+    ("cc-xlow-pipeline", "cc-xlow", "pipeline-cc"),
+    ("cc-nano-pipeline", "cc-nano", "pipeline-cc"),
+    ("opus-pipeline", "claude-opus", "pipeline-claude"),
+    ("claude-pipeline", "claude-high", "pipeline-claude"),
+)
+#: Ссылка команды на скил записи после миграции.
+SKILL_PLACEHOLDER = "/{plugin}:{skill}"
+
+
+def pipeline_rename_sql(old: str, new: str, plugin: str) -> tuple[str, ...]:
+    """Операторы переезда одного ключа `old` → `new` с плагином `plugin`.
+
+    Строка `routes` переименовывается, только если она конвейер и ключ `new` свободен;
+    карточки (`launch_route`, метка `process:<old>`) — только если строку
+    переименовал этот вызов: колонка `plugin` только что добавлена, значит у `new`
+    плагин задан ровно тогда. `task_fts` обновляется по меткам — триггеров на ней нет.
+    """
+    command = f"REPLACE(REPLACE(command, '/feature-pipeline:{{route}}', '{SKILL_PLACEHOLDER}'), " \
+              f"'/feature-pipeline:{old}', '{SKILL_PLACEHOLDER}')"
+    if old.startswith("cc-"):
+        command = f"REPLACE({command}, '/claude-codex:{old[3:]}', '{SKILL_PLACEHOLDER}')"
+    renamed = f"EXISTS (SELECT 1 FROM routes WHERE key = '{new}' AND plugin = '{plugin}')"
+    return (
+        f"UPDATE routes SET key = '{new}', plugin = '{plugin}', "
+        f"updated_at = strftime('%Y-%m-%dT%H:%M:%SZ', 'now'), command = {command} "
+        f"WHERE key = '{old}' AND kind = 'pipeline' "
+        f"AND NOT EXISTS (SELECT 1 FROM routes WHERE key = '{new}')",
+        f"UPDATE tasks SET launch_route = '{new}' WHERE launch_route = '{old}' AND {renamed}",
+        f"UPDATE tasks SET labels = REPLACE(labels, '\"process:{old}\"', '\"process:{new}\"') "
+        f"WHERE instr(labels, '\"process:{old}\"') > 0 AND {renamed}",
+        "UPDATE task_fts SET labels = (SELECT labels FROM tasks WHERE tasks.id = task_fts.task_id) "
+        f"WHERE task_id IN (SELECT id FROM tasks WHERE instr(labels, '\"process:{new}\"') > 0)",
+    )
+
+
+def rename_pipeline_routes(conn: sqlite3.Connection) -> bool:
+    """Добавить `routes.plugin` и перевести старые ключи конвейеров одной транзакцией.
+
+    Только если колонки `plugin` ещё нет — иначе (свежая база, повторный вызов) ничего
+    не делает (False). Таблица соответствия — глобал `PIPELINE_ROUTE_RENAMES` на момент
+    вызова. Строки роя и свои конвейеры автора получают `plugin = NULL`; ни одна строка
+    не удаляется, событий нет, `tasks.updated_at` не меняется. При ошибке — откат до
+    SAVEPOINT (колонки, ключей, меток и индекса как до вызова) и исключение наружу.
+    Тот же текст — у alembic-ревизии 0014_pipeline_plugins.
+    """
+    if "plugin" in _existing_columns(conn, "routes"):
+        return False
+    conn.execute("SAVEPOINT pipeline_plugins")
+    try:
+        conn.execute("ALTER TABLE routes ADD COLUMN plugin TEXT")
+        for old, new, plugin in PIPELINE_ROUTE_RENAMES:
+            for sql in pipeline_rename_sql(old, new, plugin):
+                conn.execute(sql)
+    except Exception:
+        conn.execute("ROLLBACK TO pipeline_plugins")
+        conn.execute("RELEASE pipeline_plugins")
+        raise
+    conn.execute("RELEASE pipeline_plugins")
     conn.commit()
     return True
 

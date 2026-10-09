@@ -1,0 +1,31 @@
+{
+  "name": "pipeline-core",
+  "displayName": "Pipeline core",
+  "version": "1.0.0",
+  "description": "Shared core of the pipeline-* presets: the stage protocol (references/pipeline-core.md), the pipeline agents (spec writers, critics, implementers, judges) and the opt-in hook that auto-approves their non-destructive commands. Preset plugins depend on it and read the core through its pipeline-core:core skill.",
+  "userConfig": {
+    "auto_approve_agents": {
+      "type": "boolean",
+      "title": "Автоодобрение команд агентов конвейера",
+      "description": "pipeline-core:pipeline-implementer, pipeline-core:pipeline-implementer-high, pipeline-core:pipeline-implementer-xhigh, pipeline-core:pipeline-implementer-solo, pipeline-core:pipeline-judge, pipeline-core:pipeline-judge-xhigh и pipeline-core:pipeline-implementer-low получают без запроса правки файлов в проекте и его worktree и команды Bash. push, reset, clean, stash, rebase, rm -r, sudo, docker, ssh, publish, секреты и прочее опасное по-прежнему идут запросом. `git add` и `git commit` проходят без запроса у всех агентов списка — кому коммитить нельзя, того держит его собственное определение, а не хук. Основная сессия и другие агенты не затрагиваются.",
+      "default": false
+    }
+  },
+  "author": {
+    "name": "Dmitry Fomin",
+    "url": "https://github.com/dmitry-fomin"
+  },
+  "homepage": "https://github.com/dmitry-fomin/listik",
+  "repository": "https://github.com/dmitry-fomin/listik",
+  "license": "MIT",
+  "keywords": [
+    "pipeline",
+    "orchestration",
+    "subagent",
+    "hooks",
+    "delegation"
+  ],
+  "dependencies": [
+    "listik"
+  ]
+}

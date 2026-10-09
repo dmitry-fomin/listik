@@ -9,7 +9,7 @@ import unittest
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[1]
-REFS = ROOT / "plugins/feature-pipeline/references"
+REFS = ROOT / "plugins/pipeline-core/references"
 SCRIPT = REFS / "bench/judge_bench.py"
 GIT_ENV = {
     "GIT_AUTHOR_NAME": "t", "GIT_AUTHOR_EMAIL": "t@t",
@@ -193,13 +193,13 @@ class JudgeBench(unittest.TestCase):
             text = (tree / "docs/specs/steps" / f).read_text(encoding="utf-8")
             self.assertNotIn("{{TREE}}", text)
             self.assertIn(str(tree), text)
-        dump = tree / ".git/feature-pipeline/s.diff-a.r1.txt"
+        dump = tree / ".git/pipeline-core/s.diff-a.r1.txt"
         self.assertIn("return x + 2", dump.read_text(encoding="utf-8"))
         task = task_file.read_text(encoding="utf-8")
         self.assertIn(task, r.stdout)
         self.assertIn("Ты — приёмка одной порции ТЗ", task)
         for p in (f"{tree}/docs/specs/steps/s.check-a.md", f"{tree}/docs/specs/steps/s.a.md",
-                  f"{tree}/.git/feature-pipeline/s.diff-a.r1.txt"):
+                  f"{tree}/.git/pipeline-core/s.diff-a.r1.txt"):
             self.assertIn(p, task)
         for bad in ("Listik, карточка", "listik claim", DEFECT, CLASS, self.impl):
             self.assertNotIn(bad, task)
@@ -305,26 +305,26 @@ class JudgeBench(unittest.TestCase):
         self.assertFalse(self.out.exists())
 
     def copy_script(self, skill_text, core_text):
-        root = self.tmp / "plugin"
-        write(root, "skills/low-pipeline/SKILL.md", skill_text)
-        write(root, "references/pipeline-core.md", core_text)
-        (root / "references/bench").mkdir()
-        shutil.copy(SCRIPT, root / "references/bench/judge_bench.py")
+        root = self.tmp / "plugins"
+        write(root, "pipeline-full/skills/low/SKILL.md", skill_text)
+        write(root, "pipeline-core/references/pipeline-core.md", core_text)
+        (root / "pipeline-core/references/bench").mkdir()
+        shutil.copy(SCRIPT, root / "pipeline-core/references/bench/judge_bench.py")
         return root
 
     def test_no_judge_task(self):
         root = self.copy_script("# без якоря\n", (REFS / "pipeline-core.md").read_text("utf-8"))
         self.case()
-        r = self.run_bench(script=root / "references/bench/judge_bench.py")
+        r = self.run_bench(script=root / "pipeline-core/references/bench/judge_bench.py")
         self.assertEqual(r.returncode, 2)
-        self.assertIn(f"нет задания судьи в {root / 'skills/low-pipeline/SKILL.md'}", r.stderr)
+        self.assertIn(f"нет задания судьи в {root / 'pipeline-full/skills/low/SKILL.md'}", r.stderr)
         self.assertFalse(self.out.exists())
 
     def test_no_diff_block(self):
-        skill = (ROOT / "plugins/feature-pipeline/skills/low-pipeline/SKILL.md").read_text("utf-8")
+        skill = (ROOT / "plugins/pipeline-full/skills/low/SKILL.md").read_text("utf-8")
         root = self.copy_script(skill, "# без раздела\n")
         self.case()
-        r = self.run_bench(script=root / "references/bench/judge_bench.py")
+        r = self.run_bench(script=root / "pipeline-core/references/bench/judge_bench.py")
         self.assertEqual(r.returncode, 2)
         self.assertIn("нет блока пакета диффа в", r.stderr)
         self.assertFalse(self.out.exists())

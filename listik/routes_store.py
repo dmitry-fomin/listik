@@ -7,7 +7,7 @@
 (`routes.labels_for`, `routes.state`) — ленивый, внутри функции, чтобы не было цикла.
 
 Запись в базе и запись наружу — та же форма, что отдаёт `routes.validate`:
-`{"key", "kind", "title", "hint", "visible": bool, "icon": str|None,
+`{"key", "kind", "plugin": str|None, "title", "hint", "visible": bool, "icon": str|None,
 "position": int, "command": list[str]|None, "roles": dict}`
 (`roles` — пустой словарь, если ролей нет).
 JSON-колонки (`command`, `roles`) разбираются здесь, битый JSON — пустое
@@ -29,11 +29,11 @@ from datetime import datetime, timezone
 from . import errors, harnesses_store, paths, routes, skills, store
 
 #: Поля, которые вообще разрешено менять точечно.  Всё остальное (`kind`, `key`,
-#: `command`, `position`) через `update_route` недоступно.  `roles` правится
+#: `command`, `position`, `plugin`) через `update_route` недоступно.  `roles` правится
 #: (listik-syu8): расклад ролей задаётся из UI доски, а не только ввозом файла.
 UPDATE_FIELDS = ("title", "hint", "icon", "visible", "roles")
 
-COLS = ("key", "kind", "title", "hint", "icon", "visible", "position", "command", "roles", "created_at", "updated_at")
+COLS = ("key", "kind", "plugin", "title", "hint", "icon", "visible", "position", "command", "roles", "created_at", "updated_at")
 
 
 # ------------------------------------------------------------------ значения
@@ -129,6 +129,7 @@ def _prepare(conn, record: dict) -> dict:
     kind = record.get("kind")
     if kind not in routes.KINDS:
         raise ValueError('kind: должен быть "pipeline" или "swarm"')
+    plugin = routes.check_plugin(kind, key, record.get("plugin"), "")
     title = _check_title(record.get("title"))
     hint = _check_hint(record.get("hint", ""))
     icon = _check_icon(record.get("icon"))
@@ -150,8 +151,8 @@ def _prepare(conn, record: dict) -> dict:
             raise ValueError("roles: у swarm-записи нужна хотя бы одна роль "
                              "spec/critic/impl/judge с харнессом и командой")
         roles = _check_roles(conn, roles, kind)
-    return {"key": key, "kind": kind, "title": title, "hint": hint, "icon": icon,
-            "visible": 1 if visible else 0,
+    return {"key": key, "kind": kind, "plugin": plugin, "title": title, "hint": hint,
+            "icon": icon, "visible": 1 if visible else 0,
             "command": _dumps(command), "roles": _dumps(roles)}
 
 
@@ -161,6 +162,7 @@ def _row_to_record(row: sqlite3.Row) -> dict:
     record = {
         "key": row["key"],
         "kind": row["kind"],
+        "plugin": row["plugin"],
         "title": row["title"],
         "hint": row["hint"],
         "visible": bool(row["visible"]),
@@ -201,9 +203,9 @@ def count(conn: sqlite3.Connection) -> int:
 def _insert(conn: sqlite3.Connection, values: dict, position: int) -> None:
     now = store.now_iso()
     conn.execute(
-        "INSERT INTO routes(key, kind, title, hint, icon, visible, position, "
-        "command, roles, created_at, updated_at) VALUES(?,?,?,?,?,?,?,?,?,?,?)",
-        (values["key"], values["kind"], values["title"], values["hint"], values["icon"],
+        "INSERT INTO routes(key, kind, plugin, title, hint, icon, visible, position, "
+        "command, roles, created_at, updated_at) VALUES(?,?,?,?,?,?,?,?,?,?,?,?)",
+        (values["key"], values["kind"], values["plugin"], values["title"], values["hint"], values["icon"],
          values["visible"], int(position), values["command"],
          values["roles"], now, now),
     )
@@ -220,9 +222,9 @@ def _upsert_raw(conn: sqlite3.Connection, record: dict, *, position=None) -> Non
     if position is None:
         position = existing["position"]
     conn.execute(
-        "UPDATE routes SET kind=?, title=?, hint=?, icon=?, visible=?, position=?, "
+        "UPDATE routes SET kind=?, plugin=?, title=?, hint=?, icon=?, visible=?, position=?, "
         "command=?, roles=?, updated_at=? WHERE key=?",
-        (values["kind"], values["title"], values["hint"], values["icon"], values["visible"],
+        (values["kind"], values["plugin"], values["title"], values["hint"], values["icon"], values["visible"],
          int(position), values["command"], values["roles"],
          store.now_iso(), key),
     )
@@ -242,9 +244,9 @@ def upsert_route(conn: sqlite3.Connection, record: dict, *, position=None) -> di
 
 
 def create_route(conn: sqlite3.Connection, *, key, kind, title, hint="", icon=None,
-                 visible=False, command=None, roles=None) -> dict:
+                 visible=False, command=None, roles=None, plugin=None) -> dict:
     """Новая запись, `position = max(position)+1`; дубликат ключа — `ValueError`."""
-    record = {"key": key, "kind": kind, "title": title, "hint": hint, "icon": icon,
+    record = {"key": key, "kind": kind, "plugin": plugin, "title": title, "hint": hint, "icon": icon,
               "visible": visible, "command": command,
               "roles": roles}
     _prepare(conn, record)  # проверяем до обращения к базе: ключ и остальные поля
@@ -376,7 +378,8 @@ def _backup_record(record: dict) -> dict:
     """Запись `list_routes` в форме `routes.json`: без полей, которых нет в формате
     файла (`position`) и без пустого `command` (валидатор
     файла `null` в нём не принимает). `icon: null` остаётся: без поля ввоз вывел бы
-    уровень по ключу, и снятая иконка вернулась бы из бэкапа."""
+    уровень по ключу, и снятая иконка вернулась бы из бэкапа. `plugin` пишется всегда
+    (у роя и у конвейера без плагина — `null`)."""
     out = {k: v for k, v in record.items() if k in routes.RECORD_FIELDS}
     if out.get("command") is None:
         out.pop("command", None)
@@ -472,10 +475,12 @@ def ensure_imported(conn: sqlite3.Connection) -> dict:
 #: ключи. Уже установленная база получает их один раз (номер — в `meta`
 #: `routes_additions`); удалённый потом человеком маршрут не возвращается.
 ROUTE_ADDITIONS: list[tuple[int, tuple[str, ...]]] = [
-    (1, ()),  # было devin-pipeline — маршрут снят как дубликат xlow-pipeline
-    (2, ("opus-pipeline",)),  # переименован из opus-single-pipeline
-    (3, ("cc-xhigh-pipeline", "cc-high-pipeline", "cc-medium-pipeline",
-         "cc-low-pipeline", "cc-xlow-pipeline", "cc-nano-pipeline")),  # пресеты claude-codex
+    (1, ()),  # было devin-pipeline — маршрут снят как дубликат xlow (ныне full-xlow)
+    # Записи 2 и 3: ключи переименованы в listik-d9rj (claude-opus, cc-<уровень>).
+    (2, ("claude-opus",)),  # переименован из opus-single-pipeline
+    (3, ("cc-xhigh", "cc-high", "cc-medium",
+         "cc-low", "cc-xlow", "cc-nano")),  # пресеты claude-codex
+    (4, ("claude-xhigh", "claude-high")),  # пресеты pipeline-claude с линзами (listik-d9rj)
 ]
 
 
@@ -509,11 +514,20 @@ def add_shipped(conn: sqlite3.Connection, *, fresh: bool = False) -> list[str]:
 
 # ------------------------------------------------------------------ скилы (справочник)
 
-def _skill_missing_warning(key: str) -> str:
-    if key.startswith(skills.CC_PREFIX):
-        return (f"маршрута {key!r}: скила /claude-codex:{key[len(skills.CC_PREFIX):]} нет, "
-                "маршрут скрыт")
-    return f"маршрута {key!r}: скила /feature-pipeline:{key} нет, маршрут скрыт"
+def _skill_missing_warning(key: str, plugin) -> str:
+    if plugin is None:
+        return f"маршрута {key!r}: не задан плагин, маршрут скрыт"
+    return f"маршрута {key!r}: скила /{plugin}:{skills.skill_of(plugin, key) or ''} нет, маршрут скрыт"
+
+
+def _skill_of_record(record: dict) -> dict | None:
+    """Скил конвейера по полю `plugin` записи: `skills.skill_info` или `None`.
+
+    `None` — плагин не задан или каталога `PIPELINE_PLUGINS_DIR/<plugin>/skills/<скил>`
+    с `SKILL.md` нет.
+    """
+    plugin = record.get("plugin")
+    return skills.skill_info(record["key"], plugin=plugin) if plugin else None
 
 
 def routes_response(conn: sqlite3.Connection) -> dict:
@@ -521,9 +535,10 @@ def routes_response(conn: sqlite3.Connection) -> dict:
 
     Записи — `routes.state(conn).routes` (то есть `list_routes`, порядок
     `position, key`) плюс у `kind=pipeline`: `skill_path` (путь к `SKILL.md` или
-    `None`) и, если скилы установлены, а каталога этого скила нет, —
-    `skill_missing: true` и `visible` переписанный в ответе на `False` (в базе
-    значение не меняется — маршрут скрыт автоматически, а не переписан).
+    `None`) и, если скилы установлены, а у записи не задан `plugin` или нет каталога
+    скила `<plugin>/skills/<ключ без префикса>`, — `skill_missing: true` и `visible`
+    переписанный в ответе на `False` (в базе значение не меняется — маршрут скрыт
+    автоматически, а не переписан) с предупреждением в `warnings`.
     Установленный Listik может быть без каталога `plugins/` вовсе
     (`skills.skills_available() is False`): тогда ни один маршрут не помечается
     «без скила», чтобы не спрятать разом все конвейеры.
@@ -531,18 +546,17 @@ def routes_response(conn: sqlite3.Connection) -> dict:
     state = routes.state(conn)
     warnings = list(state.warnings)
     available = skills.skills_available()
-    keys = set(skills.skill_keys()) if available else set()
     out_routes: list[dict] = []
     for record in state.routes:
         record = dict(record)
         if record["kind"] == "pipeline":
-            if available and record["key"] not in keys:
+            info = _skill_of_record(record) if available else None
+            if available and info is None:
                 record["skill_missing"] = True
                 record["visible"] = False
                 record["skill_path"] = None
-                warnings.append(_skill_missing_warning(record["key"]))
+                warnings.append(_skill_missing_warning(record["key"], record.get("plugin")))
             else:
-                info = skills.skill_info(record["key"]) if available else None
                 record["skill_path"] = info["skill_path"] if info else None
         out_routes.append(record)
     return {"ok": state.ok, "error": state.error, "path": state.path,
@@ -552,6 +566,8 @@ def routes_response(conn: sqlite3.Connection) -> dict:
 def sync_report(conn: sqlite3.Connection) -> dict:
     """Тело `GET /api/routes/sync` — сверка таблицы маршрутов со скилами.
 
+    `missing_skill` — записи конвейера без `plugin` или без каталога скила по
+    `plugin`; `missing_route` — ключи каталога скилов, которых нет в таблице.
     `skills_available=False` (нет каталога `plugins/` вовсе) — оба списка
     пустые: без установленных скилов сверять не с чем, и она не должна
     выглядеть так, будто пропали все конвейеры.
@@ -561,7 +577,7 @@ def sync_report(conn: sqlite3.Connection) -> dict:
     keys = set(skills.skill_keys())
     pipelines = [r for r in list_routes(conn) if r["kind"] == "pipeline"]
     route_keys = {r["key"] for r in pipelines}
-    missing_skill = [r for r in pipelines if r["key"] not in keys]
+    missing_skill = [r for r in pipelines if _skill_of_record(r) is None]
     missing_route = [skills.skill_info(key) for key in sorted(keys) if key not in route_keys]
     return {"skills_available": True, "missing_skill": missing_skill,
             "missing_route": missing_route}

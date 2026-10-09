@@ -508,7 +508,7 @@ try {
     }
   })
 
-  await record('открыть форму: поля из черновика, маршрут low-pipeline, автостарт выключен', async () => {
+  await record('открыть форму: поля из черновика, маршрут full-low, автостарт выключен', async () => {
     await resetUi()
     await setCase('ok')
     await resetRequests()
@@ -543,10 +543,10 @@ try {
         expectedCriteria.every((item) => acceptanceLines.includes(item)) &&
         filled.modalType === 'задача' &&
         filled.modalProject === 'Listik' &&
-        filled.modalRoute === 'low-pipeline' &&
+        filled.modalRoute === 'full-low' &&
         filled.modalAutostart === null &&
-        after.modalRoute === 'low-pipeline',
-      expect: 'заполнены заголовок/описание/критерии, тип task, проект listik, маршрут low-pipeline, галки автостарта нет; после смены типа маршрут не сброшен',
+        after.modalRoute === 'full-low',
+      expect: 'заполнены заголовок/описание/критерии, тип task, проект listik, маршрут full-low, галки автостарта нет; после смены типа маршрут не сброшен',
       got: {
         filled: {
           title: filled.modalTitle,

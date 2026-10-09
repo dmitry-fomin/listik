@@ -63,7 +63,7 @@ class BoardStageColumnTests(TempDbTestCase):
         # Метки маршрута столбец не выбирают: без этапа карточка в «Заведена»,
         # а не в «Втором мнении» — туда её переводит только этап.
         task = store.create_task(self.conn, title="Только метки", project="demo",
-                                 labels=["harness:claude", "process:feature-pipeline"])
+                                 labels=["harness:claude", "process:full-high"])
 
         board = store.board(self.conn, group_by="stage")
 

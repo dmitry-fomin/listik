@@ -106,11 +106,18 @@ Database migrations exist as two parallel mechanisms — don't confuse them:
   listik-syu8); `kind`/`key`/`position` stay unwritable. A role cell is `{provider, label, title}`
   plus the optional `skill` (a launcher skill, `плагин:скил` — e.g. `pi:pi-delegate`) and its
   flat `params`; the same validation (`routes._validate_roles`) serves the seed file and the HTTP
-  path. `listik/skills.py` is a
-  read-only catalogue of two things — `plugins/feature-pipeline/skills/*/SKILL.md` (title/hint/
-  path) used to prefill new pipeline routes and flag routes whose skill directory disappeared,
-  and the launcher skills (`plugins/*/skills/*-delegate`) offered to role cells — never a source
-  of roles itself.
+  path. A pipeline route key is `<plugin without "pipeline-">-<skill name>` (`full-high`,
+  `cc-sol`, `claude-opus`); a `kind=pipeline` record has the `plugin` field (the preset's plugin:
+  `pipeline-full`/`pipeline-cc`/`pipeline-claude`; `null` for swarm routes and the author's own
+  pipelines, checked by `routes.check_plugin`). It feeds the `{plugin}`/`{skill}` placeholders
+  in `command` (`{skill}` is the key without its plugin prefix, both empty without `plugin`;
+  launching a pipeline whose command uses them without a `plugin` is refused) and the skill path
+  `plugins/<plugin>/skills/<skill>/SKILL.md` (`skill_path` in `routes_response`; with `plugins/`
+  present, no `plugin` or no such directory — `skill_missing`). `listik/skills.py` is a
+  read-only catalogue of two things — `plugins/pipeline-full|pipeline-cc|pipeline-claude/skills/*/SKILL.md`
+  (title/hint/path) used to prefill new pipeline routes and flag routes whose skill directory
+  disappeared, and the launcher skills (`plugins/*/skills/*-delegate`) offered to role cells —
+  never a source of roles itself.
 - `listik/backup.py` — `listik backup` / `listik restore` via the sqlite backup API (a plain
   `cp` of a WAL database is inconsistent). `restore` refuses while the server is running unless
   `--stop`, keeps a `listik.db.bak-pre-restore-*` safety copy and removes stale `-wal`/`-shm`.
@@ -184,8 +191,10 @@ committed (see `.gitignore`).
 ## Project plugins (skills)
 
 The skills used to run this project's work live in this repo and are made exactly for it:
-- `plugins/feature-pipeline/` — the pipeline presets (`feature-pipeline:*`: skills, agents, hooks, references);
-- `plugins/claude-codex/` — пресеты `claude-codex:*` на связке Claude + Codex, переиспользуют ядро и агентов feature-pipeline;
+- `plugins/pipeline-core/` — the pipeline core (`references/`), the `pipeline-core:*` agents, the agent auto-approve hook and the pointer skill `pipeline-core:core`;
+- `plugins/pipeline-full/` — presets `pipeline-full:<skill>` across all harnesses;
+- `plugins/pipeline-cc/` — presets `pipeline-cc:<skill>` on Claude + Codex;
+- `plugins/pipeline-claude/` — presets `pipeline-claude:<skill>` on Claude only;
 - `plugins/listik/` — the `listik:listik` task-protocol skill;
 - `plugins/dsh/` — DeepSeek Harness bridge (`dsh:dsh-delegate` and related skills);
 - `plugins/codex/` — OpenAI Codex CLI bridge (`codex:codex-delegate` and related skills);

@@ -314,7 +314,7 @@ export interface RouteIconItem extends DictionaryItem<RouteIconKey> {
 /**
  * Уровни маршрута разработки — значения поля `icon` записи таблицы `routes`
  * (`GET /api/routes`). Сам уровень считает сервер: явное поле или фолбэк по
- * ключу маршрута (`xhigh-pipeline` → `xhigh`, `direct`-записи → `direct`), —
+ * ключу маршрута (`full-xhigh` → `xhigh`, `direct`-записи → `direct`), —
  * поэтому таблица нужна только для подписи и иконки.
  */
 export const ROUTE_ICONS: RouteIconItem[] = [

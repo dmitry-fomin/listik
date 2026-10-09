@@ -23,10 +23,12 @@ import unittest
 from unittest import mock
 
 from listik import embed as embed_mod
+from listik import launcher
 from listik import paths
 from listik import routes as routes_mod
 from listik import routes_store
 from listik import server
+from listik import skills as skills_mod
 from tests.helpers import TempDbTestCase
 
 REPO_DIR = pathlib.Path(__file__).resolve().parent.parent
@@ -43,10 +45,10 @@ ROUTE_GLYPH_RE = re.compile(r"icon: '([a-z0-9-]+)'")
 
 # Порядок записей в routes.json — он же порядок строк формы «Новая задача».
 EXPECTED_KEYS = [
-    "xhigh-pipeline", "high-pipeline", "medium-pipeline", "sol-pipeline", "low-pipeline",
-    "xlow-pipeline", "nano-pipeline", "cross-pipeline", "opus-pipeline",
-    "cc-xhigh-pipeline", "cc-high-pipeline", "cc-medium-pipeline", "cc-low-pipeline",
-    "cc-xlow-pipeline", "cc-nano-pipeline",
+    "full-xhigh", "full-high", "full-medium", "cc-sol", "full-low",
+    "full-xlow", "full-nano", "full-cross", "claude-xhigh", "claude-high", "claude-opus",
+    "cc-xhigh", "cc-high", "cc-medium", "cc-low",
+    "cc-xlow", "cc-nano",
 ]
 
 # Таблицы маршрутов, зашитые в доске до шага 09, порции c: их заменил ответ API.
@@ -71,8 +73,8 @@ def swarm_record() -> dict:
 
 def swarm_normalized(**over) -> dict:
     """`swarm_record()` после `routes.validate`: у ключа `dsh` уровня нет."""
-    return {"key": "dsh", "kind": "swarm", "title": "dsh", "hint": "", "visible": True,
-            "icon": None, "roles": {"impl": {"harness": "dsh"}},
+    return {"key": "dsh", "kind": "swarm", "plugin": None, "title": "dsh", "hint": "",
+            "visible": True, "icon": None, "roles": {"impl": {"harness": "dsh"}},
             "command": None, **over}
 
 
@@ -99,9 +101,9 @@ class RepoRoutesFileTests(unittest.TestCase):
             self.skipTest(f"git недоступен: {exc}")
         self.assertEqual(done.returncode, 1, done.stdout + done.stderr)
 
-    def test_has_fifteen_records_in_order(self) -> None:
+    def test_has_seventeen_records_in_order(self) -> None:
         self.assertEqual(self.raw["version"], 1)
-        self.assertEqual(len(self.raw["routes"]), 15)
+        self.assertEqual(len(self.raw["routes"]), 17)
         self.assertEqual([r["key"] for r in self.raw["routes"]], EXPECTED_KEYS)
 
     def test_validates_and_every_record_is_visible(self) -> None:
@@ -112,47 +114,51 @@ class RepoRoutesFileTests(unittest.TestCase):
 
     def test_kinds_match_the_table(self) -> None:
         kinds = [r["kind"] for r in self.raw["routes"]]
-        self.assertEqual(kinds, ["pipeline"] * 15)
+        self.assertEqual(kinds, ["pipeline"] * 17)
 
     def test_icons_are_the_route_levels(self) -> None:
         normalized = {r["key"]: r["icon"] for r in routes_mod.validate(self.raw)}
-        self.assertEqual(normalized["xhigh-pipeline"], "xhigh")
-        self.assertEqual(normalized["high-pipeline"], "high")
-        self.assertEqual(normalized["medium-pipeline"], "medium")
-        self.assertEqual(normalized["sol-pipeline"], "medium")
-        self.assertEqual(normalized["low-pipeline"], "low")
-        self.assertEqual(normalized["xlow-pipeline"], "xlow")
+        self.assertEqual(normalized["full-xhigh"], "xhigh")
+        self.assertEqual(normalized["full-high"], "high")
+        self.assertEqual(normalized["full-medium"], "medium")
+        self.assertEqual(normalized["cc-sol"], "medium")
+        self.assertEqual(normalized["full-low"], "low")
+        self.assertEqual(normalized["full-xlow"], "xlow")
         # Уровень nano из ключа не выводится — стоит явно, на ступени xlow.
-        self.assertEqual(normalized["nano-pipeline"], "xlow")
+        self.assertEqual(normalized["full-nano"], "xlow")
         # У пресетов без уровня поля нет — иконка не выдумывается.
-        for key in ("opus-pipeline",):
+        for key in ("claude-opus",):
             self.assertIsNone(normalized[key])
 
     def test_repo_every_record_has_command(self) -> None:
-        """В образце у каждой записи есть argv автостарта: конвейер — claude."""
+        """В образце у каждой записи есть argv автостарта: конвейер — claude.
+
+        У всех записей конвейера argv одинаков и содержит `/{plugin}:{skill}`, а
+        подстановка `plugin`/`skill` записи даёт `skills.skill_ref(key)` (listik-d9rj,
+        порции b и d).
+        """
         normalized = {record["key"]: record for record in routes_mod.validate(self.raw)}
         pipeline_cmd = None
-        cc_records = []
+        pipeline_records = []
         for raw in self.raw["routes"]:
             self.assertIn("command", raw, raw["key"])
             self.assertEqual(normalized[raw["key"]]["command"], raw["command"])
-            if raw["kind"] == "pipeline" and raw["key"].startswith("cc-"):
-                cc_records.append(raw)
-            elif raw["kind"] == "pipeline":
+            if raw["kind"] == "pipeline":
                 self.assertEqual(raw["command"][:3],
                                  ["claude", "--dangerously-skip-permissions", "-p"], raw["key"])
-                self.assertIn("/feature-pipeline:{route}", raw["command"][-1], raw["key"])
+                ref = skills_mod.skill_ref(raw["key"])
+                self.assertIsNotNone(ref, raw["key"])
+                self.assertIn("Запусти скил /{plugin}:{skill} ", raw["command"][-1], raw["key"])
+                values = {"plugin": raw["plugin"],
+                          "skill": skills_mod.skill_of(raw["plugin"], raw["key"])}
+                self.assertIn(f"Запусти скил {ref} ",
+                              launcher._substitute(raw["command"][-1], values), raw["key"])
+                pipeline_records.append(raw)
                 if pipeline_cmd is None:
                     pipeline_cmd = raw["command"]
-                else:
-                    self.assertEqual(raw["command"], pipeline_cmd, raw["key"])
-        # У маршрута `cc-<имя>` — та же команда, но скил `/claude-codex:<имя>`.
-        self.assertTrue(cc_records)
-        for raw in cc_records:
-            name = raw["key"][len("cc-"):]
-            expected = [*pipeline_cmd[:-1], pipeline_cmd[-1].replace(
-                "/feature-pipeline:{route}", f"/claude-codex:{name}")]
-            self.assertEqual(raw["command"], expected, raw["key"])
+        self.assertTrue(pipeline_records)
+        for raw in pipeline_records:
+            self.assertEqual(raw["command"], pipeline_cmd, raw["key"])
 
     def test_web_src_has_no_embedded_route_tables(self) -> None:
         offenders: list[str] = []
@@ -279,13 +285,27 @@ class ValidateTests(unittest.TestCase):
                 self.assertEqual(normalized[0]["icon"], level)
 
     def test_icon_fallback_ignores_kind(self) -> None:
-        """Уровень — только из префикса ключа, у обоих видов (listik-ar8v)."""
+        """Первое правило — уровень из префикса ключа, у обоих видов (listik-ar8v)."""
         cases = (("xhigh-pipeline", "xhigh"), ("low-pipeline", "low"),
                  ("opus-pipeline", None), ("pidi", None))
         for key, level in cases:
             with self.subTest(key=key):
                 self.assertEqual(routes_mod.fallback_icon(key), level)
         self.assertIsNone(routes_mod.validate(document(swarm_record()))[0]["icon"])
+
+    def test_icon_fallback_second_rule_only_for_pipeline(self) -> None:
+        """Второе правило (listik-d9rj): часть после первого `-` — только у конвейера."""
+        cases = (("full-high", "high"), ("cc-xlow", "xlow"), ("claude-opus", None),
+                 ("xhigh-pipeline", "xhigh"), ("pidi", None))
+        for key, level in cases:
+            with self.subTest(key=key):
+                self.assertEqual(routes_mod.fallback_icon(key), level)
+        self.assertIsNone(routes_mod.fallback_icon("x-high", "swarm"))
+        self.assertEqual(routes_mod.fallback_icon("x-high", "pipeline"), "high")
+        swarm = {**swarm_record(), "key": "x-high"}
+        self.assertIsNone(routes_mod.validate(document(swarm))[0]["icon"])
+        pipeline = {**pipeline_record(), "key": "x-high"}
+        self.assertEqual(routes_mod.validate(document(pipeline))[0]["icon"], "high")
 
     def test_icon_fallback_has_nothing_for_unknown_prefix(self) -> None:
         for key in ("cross-pipeline", "demo-pipeline"):
@@ -423,7 +443,7 @@ class ValidateTests(unittest.TestCase):
         self.assertIn("неизвестная подстановка", message)
         self.assertEqual(routes_mod.PLACEHOLDERS,
                          ("task_id", "project", "route", "cwd", "worktree", "branch",
-                          "stage", "role", "harness"))
+                          "stage", "role", "harness", "plugin", "skill"))
         for name in routes_mod.PLACEHOLDERS:
             self.assertIn("{" + name + "}", message)
 
@@ -470,6 +490,65 @@ def board_icon_names() -> set[str]:
     text = ICONS_TS.read_text(encoding="utf-8")
     return {quoted or bare for quoted, bare in
             re.findall(r"^\s*(?:'([a-z0-9-]+)'|([a-z][a-z0-9-]*)):\s*\{", text, re.M)}
+
+
+class PluginFieldTests(unittest.TestCase):
+    """Поле `plugin` записи маршрута (listik-d9rj, порция d)."""
+
+    def check_error(self, record) -> str:
+        with self.assertRaises(routes_mod.RoutesError) as ctx:
+            routes_mod.validate(document(record))
+        return str(ctx.exception)
+
+    def test_unknown_plugin(self) -> None:
+        message = self.check_error({**pipeline_record(), "key": "full-high",
+                                    "plugin": "pipeline-foo"})
+        self.assertIn("routes[0].plugin: допустимы pipeline-full, pipeline-cc, pipeline-claude",
+                      message)
+        self.assertNotIn("лишнее поле", message)
+
+    def test_key_must_start_with_plugin_prefix(self) -> None:
+        message = self.check_error({**pipeline_record(), "key": "full-high",
+                                    "plugin": "pipeline-cc"})
+        self.assertIn("routes[0].key: у плагина pipeline-cc ключ начинается с 'cc-'", message)
+
+    def test_key_with_empty_skill_is_rejected(self) -> None:
+        message = self.check_error({**pipeline_record(), "key": "full-",
+                                    "plugin": "pipeline-full"})
+        self.assertIn("routes[0].key: у плагина pipeline-full ключ начинается с 'full-'", message)
+
+    def test_swarm_record_has_no_plugin(self) -> None:
+        message = self.check_error({**swarm_record(), "plugin": "pipeline-full"})
+        self.assertIn("routes[0].plugin: поле только у kind=pipeline", message)
+
+    def test_missing_or_null_plugin_is_none(self) -> None:
+        normalized = routes_mod.validate(document(
+            pipeline_record(), {**pipeline_record(), "key": "other", "plugin": None},
+            {**swarm_record(), "plugin": None}))
+        self.assertEqual([r["plugin"] for r in normalized], [None, None, None])
+
+    def test_plugin_is_kept_and_follows_kind(self) -> None:
+        record = routes_mod.validate(document(
+            {**pipeline_record(), "key": "cc-high", "plugin": "pipeline-cc"}))[0]
+        self.assertEqual(record["plugin"], "pipeline-cc")
+        self.assertEqual(list(record)[:3], ["key", "kind", "plugin"])
+        self.assertEqual(routes_mod.RECORD_FIELDS[:3], ("key", "kind", "plugin"))
+
+    def test_sample_pipelines_name_plugin_by_key_prefix(self) -> None:
+        raw = json.loads(ROUTES_JSON.read_text(encoding="utf-8"))
+        pipelines = [r for r in raw["routes"] if r["kind"] == "pipeline"]
+        self.assertEqual(len(pipelines), 17)
+        for record in pipelines:
+            with self.subTest(key=record["key"]):
+                self.assertEqual(record["plugin"], "pipeline-" + record["key"].split("-", 1)[0])
+                self.assertEqual(list(record)[:3], ["key", "kind", "plugin"])
+
+    def test_substitute_plugin_and_skill(self) -> None:
+        self.assertEqual(launcher._substitute("/{plugin}:{skill}",
+                                              {"plugin": "pipeline-full", "skill": "high"}),
+                         "/pipeline-full:high")
+        # Без значений (запуск роя, запись без плагина) — пустые строки.
+        self.assertEqual(launcher._substitute("/{plugin}:{skill}", {}), "/:")
 
 
 class RouteIconDictionaryTests(unittest.TestCase):
@@ -566,7 +645,7 @@ class FileLoadTests(TempDbTestCase):
         self.assertTrue(state.ok)
         self.assertIsNone(state.error)
         self.assertEqual(state.path, str(self.source))
-        self.assertEqual(len(state.routes), 15)
+        self.assertEqual(len(state.routes), 17)
         self.assertEqual(sorted(state.by_key), sorted(r["key"] for r in state.routes))
         self.assertEqual(state.warnings, [])
 
@@ -607,18 +686,18 @@ class FileLoadTests(TempDbTestCase):
         self.source.write_text("{ битый", encoding="utf-8")
         current = routes_mod.state(self.conn)
         self.assertTrue(current.ok)
-        self.assertEqual(len(current.routes), 15)
+        self.assertEqual(len(current.routes), 17)
         self.assertEqual(current.path, str(paths.DB_PATH))
         self.assertEqual(current.warnings, [])
         with contextlib.redirect_stderr(io.StringIO()):
             self.assertTrue(routes_store.ensure_imported(self.conn).get("skipped"))
-        self.assertEqual(len(routes_mod.state(self.conn).routes), 15)
+        self.assertEqual(len(routes_mod.state(self.conn).routes), 17)
 
     def test_database_update_is_visible_immediately(self) -> None:
         routes_store.import_file(self.conn, self.source)
-        self.conn.execute("UPDATE routes SET title = ? WHERE key = 'cross-pipeline'", ("Проверка",))
+        self.conn.execute("UPDATE routes SET title = ? WHERE key = 'full-cross'", ("Проверка",))
         self.conn.commit()
-        self.assertEqual(routes_mod.state(self.conn).by_key["cross-pipeline"]["title"], "Проверка")
+        self.assertEqual(routes_mod.state(self.conn).by_key["full-cross"]["title"], "Проверка")
 
     def test_database_error_is_reported(self) -> None:
         with mock.patch.object(routes_store, "list_routes",
@@ -680,21 +759,21 @@ class RoutesApiTests(TempDbTestCase):
         self.assertTrue(data["ok"])
         self.assertIsNone(data["error"])
         self.assertEqual(data["path"], str(paths.DB_PATH))
-        self.assertEqual(len(data["routes"]), 15)
+        self.assertEqual(len(data["routes"]), 17)
         for record in data["routes"]:
             self.assertIn("command", record)
             self.assertNotIn("strip", record)
             self.assertIn("icon", record)
         icons = {record["key"]: record["icon"] for record in data["routes"]}
-        self.assertEqual(icons["xhigh-pipeline"], "xhigh")
-        self.assertEqual(icons["medium-pipeline"], "medium")
-        self.assertEqual(icons["nano-pipeline"], "xlow")
-        self.assertIsNone(icons["opus-pipeline"])
+        self.assertEqual(icons["full-xhigh"], "xhigh")
+        self.assertEqual(icons["full-medium"], "medium")
+        self.assertEqual(icons["full-nano"], "xlow")
+        self.assertIsNone(icons["claude-opus"])
 
     def test_routes_with_bad_icon_import_fallback_and_keep_all_records(self) -> None:
         """Предупреждение при ввозе; база хранит фолбэк, без файловых предупреждений."""
-        bad = {**pipeline_record(), "key": "xhigh-pipeline", "icon": "xhihg"}
-        plain = {**pipeline_record(), "key": "cross-pipeline"}
+        bad = {**pipeline_record(), "key": "full-xhigh", "plugin": "pipeline-full", "icon": "xhihg"}
+        plain = {**pipeline_record(), "key": "full-cross", "plugin": "pipeline-full"}
         self.target.parent.mkdir(parents=True)
         self.target.write_text(json.dumps({"version": 1, "routes": [bad, plain, swarm_record()]},
                                           ensure_ascii=False), encoding="utf-8")
@@ -709,11 +788,11 @@ class RoutesApiTests(TempDbTestCase):
         self.assertIsNone(data["error"])
         self.assertEqual(data["warnings"], [])
         records = {record["key"]: record for record in data["routes"]}
-        self.assertEqual(sorted(records), ["cross-pipeline", "dsh", "xhigh-pipeline"])
-        self.assertEqual(records["xhigh-pipeline"]["icon"], "xhigh")
-        self.assertNotIn("icon_error", records["xhigh-pipeline"])
-        self.assertIsNone(records["cross-pipeline"]["icon"])
-        self.assertNotIn("icon_error", records["cross-pipeline"])
+        self.assertEqual(sorted(records), ["dsh", "full-cross", "full-xhigh"])
+        self.assertEqual(records["full-xhigh"]["icon"], "xhigh")
+        self.assertNotIn("icon_error", records["full-xhigh"])
+        self.assertIsNone(records["full-cross"]["icon"])
+        self.assertNotIn("icon_error", records["full-cross"])
         self.assertIsNone(records["dsh"]["icon"])
         for record in records.values():
             self.assertIn("command", record)
@@ -764,7 +843,7 @@ class RoutesApiTests(TempDbTestCase):
         self.assertEqual(status, 200)
         data = payload["data"]
         self.assertTrue(data["ok"])
-        self.assertEqual(len(data["routes"]), 15)
+        self.assertEqual(len(data["routes"]), 17)
         self.assertEqual([r["key"] for r in data["routes"]], EXPECTED_KEYS)
         self.assertTrue(all("command" in r for r in data["routes"]))
 
@@ -789,15 +868,15 @@ class RoutesApiTests(TempDbTestCase):
         status, payload = self._get("/api/routes", token=self.TOKEN)
         self.assertEqual(status, 200)
         self.assertTrue(payload["data"]["ok"])
-        self.assertEqual(len(payload["data"]["routes"]), 15)
+        self.assertEqual(len(payload["data"]["routes"]), 17)
 
     def test_database_change_reaches_live_http_without_restart(self) -> None:
         self._init_from_repo()
-        self.conn.execute("UPDATE routes SET title = ? WHERE key = ?", ("Проверка", "cross-pipeline"))
+        self.conn.execute("UPDATE routes SET title = ? WHERE key = ?", ("Проверка", "full-cross"))
         self.conn.commit()
         status, payload = self._get("/api/routes", token=self.TOKEN)
         self.assertEqual(status, 200)
-        self.assertEqual(next(r for r in payload["data"]["routes"] if r["key"] == "cross-pipeline")
+        self.assertEqual(next(r for r in payload["data"]["routes"] if r["key"] == "full-cross")
                          ["title"], "Проверка")
 
     def test_health_reports_routes(self) -> None:
@@ -809,7 +888,7 @@ class RoutesApiTests(TempDbTestCase):
         self.assertTrue(state["ok"])
         self.assertIsNone(state["error"])
         self.assertEqual(state["path"], str(paths.DB_PATH))
-        self.assertEqual(state["count"], 15)
+        self.assertEqual(state["count"], 17)
 
     def test_health_database_error_is_reported(self) -> None:
         with mock.patch.object(routes_store, "list_routes",

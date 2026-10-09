@@ -826,8 +826,9 @@ def handle(method: str, path: str, query: dict, body: dict, authed: bool = False
             info = skills_mod.skill_info(key)
             if info is None:
                 raise ApiError(400, f"скила {key!r} нет среди "
-                               f"plugins/feature-pipeline/skills (ключ cc-<имя> — "
-                               f"plugins/claude-codex/skills/<имя>)",
+                               f"plugins/pipeline-full|pipeline-cc|pipeline-claude/skills "
+                               f"(ключ <плагин>-<скил>: full-high → "
+                               f"plugins/pipeline-full/skills/high)",
                                code=errors_mod.BAD_ARGUMENT)
             try:
                 routes_store.get_route(conn, key)
@@ -847,7 +848,7 @@ def handle(method: str, path: str, query: dict, body: dict, authed: bool = False
                 record = routes_store.create_route(
                     conn, key=key, kind="pipeline", title=info["title"], hint=info["hint"],
                     icon=routes_mod.fallback_icon(key), visible=False,
-                    command=None, roles=roles)
+                    command=None, roles=roles, plugin=info["plugin"])
             except ValueError as exc:
                 raise ApiError(400, errors_mod.message_of(exc),
                                code=errors_mod.BAD_ARGUMENT) from exc

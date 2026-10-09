@@ -32,7 +32,7 @@ import ListikIcon from './ListikIcon.vue'
 import RouteIcon from './marks/RouteIcon.vue'
 import store from '@/store/listik'
 import type { PipelineRouteDef, RouteDef, RouteRemoved, SwarmRouteDef } from '@/api/types'
-import { pipelineRowsOf, swarmRoutesOf } from '@/lib/routes'
+import { pipelineRowsOf, routeSkillRef, swarmRoutesOf } from '@/lib/routes'
 import { ROLE_KEYS, roleStage } from '@/lib/pipelines'
 import { plural } from '@/lib/format'
 import { registerLeaveGuard } from '@/lib/router'
@@ -72,7 +72,9 @@ function swarmMeta(route: SwarmRouteDef): string {
 
 /** Подсказка бейджа расхождения — та же, что была у строки. */
 function skillMissingHint(route: PipelineRouteDef): string {
-  return `каталога /feature-pipeline:${route.key} нет, маршрут скрыт от автора`
+  const ref = routeSkillRef(route)
+  if (ref === null) return `у маршрута ${route.key} не задан плагин, маршрут скрыт от автора`
+  return `скила ${ref} нет, маршрут скрыт от автора`
 }
 
 const selectedKey = ref<string | null>(null)

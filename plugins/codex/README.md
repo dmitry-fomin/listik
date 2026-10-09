@@ -43,7 +43,7 @@ from — an `export` added to your shell profile after the session started is no
 `/codex:codex-check` prints the active provider, model, and auth status from
 `codex doctor --json`. **The model is yours to choose, in this file.** The skills and the
 `codex-runner` subagent do not override it per run: they pass the prompt and let the CLI use
-your settings. The one exception is a run started by a `feature-pipeline` or `claude-codex` preset, which pins
+your settings. The one exception is a run started by a `pipeline-full`, `pipeline-cc` or `pipeline-claude` preset, which pins
 the model and effort on purpose — the role line-up is what the preset is picked for. The
 script also accepts `--provider <route>`, `--model <id>` and
 `--effort <level>` for manual use; unlike the DeepSeek bridge, these need no alias table or
@@ -138,8 +138,8 @@ EOF
 | --- | --- | --- |
 | `--permission <read\|bash\|write>` | `read` | permission mode in one flag (see below) |
 | `--write` | off | alias for `--permission write` — allow writes to the working directory (`-s workspace-write`) |
-| `--model <name>` | user's setting | manual use, and `feature-pipeline` and `claude-codex` presets, which pin it on purpose (`-m`) |
-| `--effort <level>` | user's setting | manual use and `feature-pipeline` and `claude-codex` presets; not validated against a fixed list — valid values are model-dependent (`-c model_reasoning_effort="<level>"`) |
+| `--model <name>` | user's setting | manual use, and `pipeline-full`, `pipeline-cc` and `pipeline-claude` presets, which pin it on purpose (`-m`) |
+| `--effort <level>` | user's setting | manual use and `pipeline-full`, `pipeline-cc` and `pipeline-claude` presets; not validated against a fixed list — valid values are model-dependent (`-c model_reasoning_effort="<level>"`) |
 | `--provider <route>` | user's setting | manual use only — switch `[model_providers.<name>]` route for one run (`-c model_provider="<route>"`) |
 | `--cwd <dir>` | current directory | working directory and sandbox boundary (`-C`); in a git worktree or main checkout `write` also opens a narrow set of git paths (see Permissions) |
 | `--timeout <sec>` | 540 foreground, 7200 background | `0` removes the limit entirely |
@@ -170,7 +170,7 @@ process is actually alive. Trust the second one.
 | `write` | `workspace-write` | edit files inside `--cwd` |
 
 `--write` remains as an alias for `--permission write`, because Listik routes and
-`feature-pipeline` presets already send it.
+`pipeline-full` presets, `pipeline-cc:sol`, `pipeline-claude:opus` and `pipeline-claude:high` already send it.
 
 **`write` in a git checkout.** codex keeps the `.git` of the working directory read-only
 under `workspace-write`, so the bridge opens a narrow set of git paths with `--add-dir`

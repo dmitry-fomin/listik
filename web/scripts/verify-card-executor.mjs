@@ -4,7 +4,7 @@
  * показывается тот, кто реально делает этап, а не держатель-оркестратор.
  *
  * Поднимает mock-api в режиме `--routes` (карточка `listik-executor` на s3-impl
- * конвейера `low-pipeline` с держателем `claude`, плюс `listik-routes-fresh`
+ * конвейера `full-low` с держателем `claude`, плюс `listik-routes-fresh`
  * без маршрута), отдаёт собранный `web/dist` и гоняет сценарии в headless
  * Chrome через CDP.
  *
@@ -49,7 +49,7 @@ const CARD = 'listik-executor'
 const CARD_TITLE = 'Этап делает роль маршрута'
 const FRESH = 'listik-routes-fresh'
 const FRESH_TITLE = 'Заведена без маршрута'
-/** title роли `impl` в `low-pipeline` мока — должен попасть в «делает …». */
+/** title роли `impl` в `full-low` мока — должен попасть в «делает …». */
 const IMPL_TITLE = 'DeepSeek — код'
 const SAME = 'listik-executor-same'
 const SAME_TITLE = 'Этап делает сам держатель'
@@ -57,7 +57,7 @@ const GLM = 'listik-executor-glm'
 const GLM_TITLE = 'Критик GLM держит сам'
 const FREE = 'listik-executor-free'
 const FREE_TITLE = 'Этап без держателя'
-/** title и label роли `judge` в `low-pipeline` мока. */
+/** title и label роли `judge` в `full-low` мока. */
 const JUDGE_TITLE = 'Проверка'
 const JUDGE_LABEL = 'Судья'
 

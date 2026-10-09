@@ -103,7 +103,7 @@ class DriverMigrationTests(unittest.TestCase):
             try:
                 self.assertNotIn("driver", self.columns(conn))
                 self.assertEqual(conn.execute(
-                    "SELECT value FROM meta WHERE key = 'schema_version'").fetchone()[0], "15")
+                    "SELECT value FROM meta WHERE key = 'schema_version'").fetchone()[0], "16")
             finally:
                 conn.close()
 
@@ -124,7 +124,7 @@ class DriverMigrationTests(unittest.TestCase):
         for key in records:
             self.assertNotIn("driver", routes_store.get_route(conn, key))
         self.assertEqual(conn.execute(
-            "SELECT value FROM meta WHERE key = 'schema_version'").fetchone()[0], "15")
+            "SELECT value FROM meta WHERE key = 'schema_version'").fetchone()[0], "16")
         task = conn.execute(
             "SELECT launch_route, launch_driver FROM tasks WHERE id = 't1'").fetchone()
         self.assertEqual(tuple(task), ("p-swarm", "skill"))
@@ -189,7 +189,7 @@ class DriverAlembicTests(unittest.TestCase):
     def test_online_upgrade_downgrade_upgrade(self) -> None:
         self.alembic("upgrade", "head")
         self.assertFalse(self.has_driver())
-        self.alembic("downgrade", "-1")
+        self.alembic("downgrade", "0012_event_transition")
         self.assertTrue(self.has_driver())
         self.alembic("upgrade", "head")
         self.assertFalse(self.has_driver())

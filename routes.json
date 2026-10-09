@@ -2,8 +2,9 @@
   "version": 1,
   "routes": [
     {
-      "key": "xhigh-pipeline",
+      "key": "full-xhigh",
       "kind": "pipeline",
+      "plugin": "pipeline-full",
       "title": "xhigh",
       "hint": "от 50 мин на задачу",
       "visible": true,
@@ -34,12 +35,13 @@
         "claude",
         "--dangerously-skip-permissions",
         "-p",
-        "Задача {task_id} (проект {project}), маршрут {route}. Запусти скил /feature-pipeline:{route} и веди карточку по нему: ты оркестратор, кода не пишешь и порцию не коммитишь. Протокол — скил listik:listik. Первым действием, до чтения кода и show: claim {task_id} --holder claude. Дальше heartbeat каждые 10–15 мин, пока карточку держишь ты. Все команды с --actor agent:claude --harness claude."
+        "Задача {task_id} (проект {project}), маршрут {route}. Запусти скил /{plugin}:{skill} и веди карточку по нему: ты оркестратор, кода не пишешь и порцию не коммитишь. Протокол — скил listik:listik. Первым действием, до чтения кода и show: claim {task_id} --holder claude. Дальше heartbeat каждые 10–15 мин, пока карточку держишь ты. Все команды с --actor agent:claude --harness claude."
       ]
     },
     {
-      "key": "high-pipeline",
+      "key": "full-high",
       "kind": "pipeline",
+      "plugin": "pipeline-full",
       "title": "high · по умолчанию",
       "hint": "от 40 мин на задачу",
       "visible": true,
@@ -70,12 +72,13 @@
         "claude",
         "--dangerously-skip-permissions",
         "-p",
-        "Задача {task_id} (проект {project}), маршрут {route}. Запусти скил /feature-pipeline:{route} и веди карточку по нему: ты оркестратор, кода не пишешь и порцию не коммитишь. Протокол — скил listik:listik. Первым действием, до чтения кода и show: claim {task_id} --holder claude. Дальше heartbeat каждые 10–15 мин, пока карточку держишь ты. Все команды с --actor agent:claude --harness claude."
+        "Задача {task_id} (проект {project}), маршрут {route}. Запусти скил /{plugin}:{skill} и веди карточку по нему: ты оркестратор, кода не пишешь и порцию не коммитишь. Протокол — скил listik:listik. Первым действием, до чтения кода и show: claim {task_id} --holder claude. Дальше heartbeat каждые 10–15 мин, пока карточку держишь ты. Все команды с --actor agent:claude --harness claude."
       ]
     },
     {
-      "key": "medium-pipeline",
+      "key": "full-medium",
       "kind": "pipeline",
+      "plugin": "pipeline-full",
       "title": "medium",
       "hint": "30 мин на задачу, когда работа понятная",
       "visible": true,
@@ -106,12 +109,13 @@
         "claude",
         "--dangerously-skip-permissions",
         "-p",
-        "Задача {task_id} (проект {project}), маршрут {route}. Запусти скил /feature-pipeline:{route} и веди карточку по нему: ты оркестратор, кода не пишешь и порцию не коммитишь. Протокол — скил listik:listik. Первым действием, до чтения кода и show: claim {task_id} --holder claude. Дальше heartbeat каждые 10–15 мин, пока карточку держишь ты. Все команды с --actor agent:claude --harness claude."
+        "Задача {task_id} (проект {project}), маршрут {route}. Запусти скил /{plugin}:{skill} и веди карточку по нему: ты оркестратор, кода не пишешь и порцию не коммитишь. Протокол — скил listik:listik. Первым действием, до чтения кода и show: claim {task_id} --holder claude. Дальше heartbeat каждые 10–15 мин, пока карточку держишь ты. Все команды с --actor agent:claude --harness claude."
       ]
     },
     {
-      "key": "sol-pipeline",
+      "key": "cc-sol",
       "kind": "pipeline",
+      "plugin": "pipeline-cc",
       "title": "sol",
       "hint": "Opus ТЗ и код · Sonnet+Sol критика · Sol приёмка",
       "visible": true,
@@ -147,12 +151,13 @@
         "claude",
         "--dangerously-skip-permissions",
         "-p",
-        "Задача {task_id} (проект {project}), маршрут {route}. Запусти скил /feature-pipeline:{route} и веди карточку по нему: ты оркестратор, кода не пишешь и порцию не коммитишь. Протокол — скил listik:listik. Первым действием, до чтения кода и show: claim {task_id} --holder claude. Дальше heartbeat каждые 10–15 мин, пока карточку держишь ты. Все команды с --actor agent:claude --harness claude."
+        "Задача {task_id} (проект {project}), маршрут {route}. Запусти скил /{plugin}:{skill} и веди карточку по нему: ты оркестратор, кода не пишешь и порцию не коммитишь. Протокол — скил listik:listik. Первым действием, до чтения кода и show: claim {task_id} --holder claude. Дальше heartbeat каждые 10–15 мин, пока карточку держишь ты. Все команды с --actor agent:claude --harness claude."
       ]
     },
     {
-      "key": "low-pipeline",
+      "key": "full-low",
       "kind": "pipeline",
+      "plugin": "pipeline-full",
       "title": "low",
       "hint": "на 20 мин, с ТЗ и критикой",
       "visible": true,
@@ -188,12 +193,13 @@
         "claude",
         "--dangerously-skip-permissions",
         "-p",
-        "Задача {task_id} (проект {project}), маршрут {route}. Запусти скил /feature-pipeline:{route} и веди карточку по нему: ты оркестратор, кода не пишешь и порцию не коммитишь. Протокол — скил listik:listik. Первым действием, до чтения кода и show: claim {task_id} --holder claude. Дальше heartbeat каждые 10–15 мин, пока карточку держишь ты. Все команды с --actor agent:claude --harness claude."
+        "Задача {task_id} (проект {project}), маршрут {route}. Запусти скил /{plugin}:{skill} и веди карточку по нему: ты оркестратор, кода не пишешь и порцию не коммитишь. Протокол — скил listik:listik. Первым действием, до чтения кода и show: claim {task_id} --holder claude. Дальше heartbeat каждые 10–15 мин, пока карточку держишь ты. Все команды с --actor agent:claude --harness claude."
       ]
     },
     {
-      "key": "xlow-pipeline",
+      "key": "full-xlow",
       "kind": "pipeline",
+      "plugin": "pipeline-full",
       "title": "xlow",
       "hint": "без ТЗ и критики · не для эпиков",
       "visible": true,
@@ -218,12 +224,13 @@
         "claude",
         "--dangerously-skip-permissions",
         "-p",
-        "Задача {task_id} (проект {project}), маршрут {route}. Запусти скил /feature-pipeline:{route} и веди карточку по нему: ты оркестратор, кода не пишешь и порцию не коммитишь. Протокол — скил listik:listik. Первым действием, до чтения кода и show: claim {task_id} --holder claude. Дальше heartbeat каждые 10–15 мин, пока карточку держишь ты. Все команды с --actor agent:claude --harness claude."
+        "Задача {task_id} (проект {project}), маршрут {route}. Запусти скил /{plugin}:{skill} и веди карточку по нему: ты оркестратор, кода не пишешь и порцию не коммитишь. Протокол — скил listik:listik. Первым действием, до чтения кода и show: claim {task_id} --holder claude. Дальше heartbeat каждые 10–15 мин, пока карточку держишь ты. Все команды с --actor agent:claude --harness claude."
       ]
     },
     {
-      "key": "nano-pipeline",
+      "key": "full-nano",
       "kind": "pipeline",
+      "plugin": "pipeline-full",
       "title": "nano",
       "hint": "без ТЗ и критики · не для эпиков",
       "visible": true,
@@ -252,12 +259,13 @@
         "claude",
         "--dangerously-skip-permissions",
         "-p",
-        "Задача {task_id} (проект {project}), маршрут {route}. Запусти скил /feature-pipeline:{route} и веди карточку по нему: ты оркестратор, кода не пишешь и порцию не коммитишь. Протокол — скил listik:listik. Первым действием, до чтения кода и show: claim {task_id} --holder claude. Дальше heartbeat каждые 10–15 мин, пока карточку держишь ты. Все команды с --actor agent:claude --harness claude."
+        "Задача {task_id} (проект {project}), маршрут {route}. Запусти скил /{plugin}:{skill} и веди карточку по нему: ты оркестратор, кода не пишешь и порцию не коммитишь. Протокол — скил listik:listik. Первым действием, до чтения кода и show: claim {task_id} --holder claude. Дальше heartbeat каждые 10–15 мин, пока карточку держишь ты. Все команды с --actor agent:claude --harness claude."
       ]
     },
     {
-      "key": "cross-pipeline",
+      "key": "full-cross",
       "kind": "pipeline",
+      "plugin": "pipeline-full",
       "title": "cross",
       "hint": "Devin ТЗ · Sonnet+DS критика · GLM код · Grok приёмка",
       "visible": true,
@@ -296,50 +304,87 @@
         "claude",
         "--dangerously-skip-permissions",
         "-p",
-        "Задача {task_id} (проект {project}), маршрут {route}. Запусти скил /feature-pipeline:{route} и веди карточку по нему: ты оркестратор, кода не пишешь и порцию не коммитишь. Протокол — скил listik:listik. Первым действием, до чтения кода и show: claim {task_id} --holder claude. Дальше heartbeat каждые 10–15 мин, пока карточку держишь ты. Все команды с --actor agent:claude --harness claude."
+        "Задача {task_id} (проект {project}), маршрут {route}. Запусти скил /{plugin}:{skill} и веди карточку по нему: ты оркестратор, кода не пишешь и порцию не коммитишь. Протокол — скил listik:listik. Первым действием, до чтения кода и show: claim {task_id} --holder claude. Дальше heartbeat каждые 10–15 мин, пока карточку держишь ты. Все команды с --actor agent:claude --harness claude."
       ]
     },
     {
-      "key": "claude-pipeline",
+      "key": "claude-xhigh",
       "kind": "pipeline",
-      "title": "claude",
+      "plugin": "pipeline-claude",
+      "title": "claude xhigh",
+      "hint": "только Claude: внешних денег ноль",
+      "visible": true,
+      "icon": "xhigh",
+      "roles": {
+        "spec": {
+          "provider": "claude",
+          "label": "xhigh",
+          "title": "Opus 5.5"
+        },
+        "critic": {
+          "provider": "claude",
+          "label": "S+O",
+          "title": "Sonnet 5.5 · xhigh + Opus 5.5 · xhigh"
+        },
+        "impl": {
+          "provider": "claude",
+          "label": "xhigh",
+          "title": "Opus 5.5"
+        },
+        "judge": {
+          "provider": "claude",
+          "label": "линзы",
+          "title": "Sonnet 5.5 · 3 линзы → Sonnet 5.5 · xhigh"
+        }
+      },
+      "command": [
+        "claude",
+        "--dangerously-skip-permissions",
+        "-p",
+        "Задача {task_id} (проект {project}), маршрут {route}. Запусти скил /{plugin}:{skill} и веди карточку по нему: ты оркестратор, кода не пишешь и порцию не коммитишь. Протокол — скил listik:listik. Первым действием, до чтения кода и show: claim {task_id} --holder claude. Дальше heartbeat каждые 10–15 мин, пока карточку держишь ты. Все команды с --actor agent:claude --harness claude."
+      ]
+    },
+    {
+      "key": "claude-high",
+      "kind": "pipeline",
+      "plugin": "pipeline-claude",
+      "title": "claude high",
       "hint": "только Claude: внешних денег ноль",
       "visible": true,
       "icon": "high",
       "roles": {
         "spec": {
           "provider": "claude",
-          "label": "Opus",
+          "label": "high",
           "title": "Opus 5.5"
         },
         "critic": {
           "provider": "claude",
           "label": "S+O",
-          "title": "Sonnet 5.5 + Opus 5.5"
+          "title": "Sonnet 5.5 · high + Opus 5.5 · high"
         },
         "impl": {
           "provider": "claude",
-          "label": "Opus",
+          "label": "high",
           "title": "Opus 5.5"
         },
         "judge": {
           "provider": "claude",
           "label": "линзы",
-          "title": "Sonnet 5.5 · 3 линзы → Sonnet 5.5"
+          "title": "Sonnet 5.5 · 3 линзы → Sonnet 5.5 · high"
         }
       },
       "command": [
         "claude",
-        "--effort",
-        "high",
         "--dangerously-skip-permissions",
         "-p",
-        "Задача {task_id} (проект {project}), маршрут {route}. Запусти скил /feature-pipeline:{route} и веди карточку по нему: ты оркестратор, кода не пишешь и порцию не коммитишь. Протокол — скил listik:listik. Первым действием, до чтения кода и show: claim {task_id} --holder claude. Дальше heartbeat каждые 10–15 мин, пока карточку держишь ты. Все команды с --actor agent:claude --harness claude."
+        "Задача {task_id} (проект {project}), маршрут {route}. Запусти скил /{plugin}:{skill} и веди карточку по нему: ты оркестратор, кода не пишешь и порцию не коммитишь. Протокол — скил listik:listik. Первым действием, до чтения кода и show: claim {task_id} --holder claude. Дальше heartbeat каждые 10–15 мин, пока карточку держишь ты. Все команды с --actor agent:claude --harness claude."
       ]
     },
     {
-      "key": "opus-pipeline",
+      "key": "claude-opus",
       "kind": "pipeline",
+      "plugin": "pipeline-claude",
       "title": "Opus",
       "hint": "без ТЗ, критики и приёмки",
       "visible": true,
@@ -358,12 +403,13 @@
         "claude",
         "--dangerously-skip-permissions",
         "-p",
-        "Задача {task_id} (проект {project}), маршрут {route}. Запусти скил /feature-pipeline:{route} и веди карточку по нему: ты оркестратор, кода не пишешь и порцию не коммитишь. Протокол — скил listik:listik. Первым действием, до чтения кода и show: claim {task_id} --holder claude. Дальше heartbeat каждые 10–15 мин, пока карточку держишь ты. Все команды с --actor agent:claude --harness claude."
+        "Задача {task_id} (проект {project}), маршрут {route}. Запусти скил /{plugin}:{skill} и веди карточку по нему: ты оркестратор, кода не пишешь и порцию не коммитишь. Протокол — скил listik:listik. Первым действием, до чтения кода и show: claim {task_id} --holder claude. Дальше heartbeat каждые 10–15 мин, пока карточку держишь ты. Все команды с --actor agent:claude --harness claude."
       ]
     },
     {
-      "key": "cc-xhigh-pipeline",
+      "key": "cc-xhigh",
       "kind": "pipeline",
+      "plugin": "pipeline-cc",
       "title": "cc xhigh",
       "hint": "Claude + Codex · от 50 мин на задачу",
       "visible": true,
@@ -399,12 +445,13 @@
         "claude",
         "--dangerously-skip-permissions",
         "-p",
-        "Задача {task_id} (проект {project}), маршрут {route}. Запусти скил /claude-codex:xhigh-pipeline и веди карточку по нему: ты оркестратор, кода не пишешь и порцию не коммитишь. Протокол — скил listik:listik. Первым действием, до чтения кода и show: claim {task_id} --holder claude. Дальше heartbeat каждые 10–15 мин, пока карточку держишь ты. Все команды с --actor agent:claude --harness claude."
+        "Задача {task_id} (проект {project}), маршрут {route}. Запусти скил /{plugin}:{skill} и веди карточку по нему: ты оркестратор, кода не пишешь и порцию не коммитишь. Протокол — скил listik:listik. Первым действием, до чтения кода и show: claim {task_id} --holder claude. Дальше heartbeat каждые 10–15 мин, пока карточку держишь ты. Все команды с --actor agent:claude --harness claude."
       ]
     },
     {
-      "key": "cc-high-pipeline",
+      "key": "cc-high",
       "kind": "pipeline",
+      "plugin": "pipeline-cc",
       "title": "cc high",
       "hint": "Claude + Codex · от 40 мин на задачу",
       "visible": true,
@@ -440,12 +487,13 @@
         "claude",
         "--dangerously-skip-permissions",
         "-p",
-        "Задача {task_id} (проект {project}), маршрут {route}. Запусти скил /claude-codex:high-pipeline и веди карточку по нему: ты оркестратор, кода не пишешь и порцию не коммитишь. Протокол — скил listik:listik. Первым действием, до чтения кода и show: claim {task_id} --holder claude. Дальше heartbeat каждые 10–15 мин, пока карточку держишь ты. Все команды с --actor agent:claude --harness claude."
+        "Задача {task_id} (проект {project}), маршрут {route}. Запусти скил /{plugin}:{skill} и веди карточку по нему: ты оркестратор, кода не пишешь и порцию не коммитишь. Протокол — скил listik:listik. Первым действием, до чтения кода и show: claim {task_id} --holder claude. Дальше heartbeat каждые 10–15 мин, пока карточку держишь ты. Все команды с --actor agent:claude --harness claude."
       ]
     },
     {
-      "key": "cc-medium-pipeline",
+      "key": "cc-medium",
       "kind": "pipeline",
+      "plugin": "pipeline-cc",
       "title": "cc medium",
       "hint": "Claude + Codex · 30 мин на задачу",
       "visible": true,
@@ -481,12 +529,13 @@
         "claude",
         "--dangerously-skip-permissions",
         "-p",
-        "Задача {task_id} (проект {project}), маршрут {route}. Запусти скил /claude-codex:medium-pipeline и веди карточку по нему: ты оркестратор, кода не пишешь и порцию не коммитишь. Протокол — скил listik:listik. Первым действием, до чтения кода и show: claim {task_id} --holder claude. Дальше heartbeat каждые 10–15 мин, пока карточку держишь ты. Все команды с --actor agent:claude --harness claude."
+        "Задача {task_id} (проект {project}), маршрут {route}. Запусти скил /{plugin}:{skill} и веди карточку по нему: ты оркестратор, кода не пишешь и порцию не коммитишь. Протокол — скил listik:listik. Первым действием, до чтения кода и show: claim {task_id} --holder claude. Дальше heartbeat каждые 10–15 мин, пока карточку держишь ты. Все команды с --actor agent:claude --harness claude."
       ]
     },
     {
-      "key": "cc-low-pipeline",
+      "key": "cc-low",
       "kind": "pipeline",
+      "plugin": "pipeline-cc",
       "title": "cc low",
       "hint": "Claude + Codex · на 20 мин, с ТЗ и критикой",
       "visible": true,
@@ -527,12 +576,13 @@
         "claude",
         "--dangerously-skip-permissions",
         "-p",
-        "Задача {task_id} (проект {project}), маршрут {route}. Запусти скил /claude-codex:low-pipeline и веди карточку по нему: ты оркестратор, кода не пишешь и порцию не коммитишь. Протокол — скил listik:listik. Первым действием, до чтения кода и show: claim {task_id} --holder claude. Дальше heartbeat каждые 10–15 мин, пока карточку держишь ты. Все команды с --actor agent:claude --harness claude."
+        "Задача {task_id} (проект {project}), маршрут {route}. Запусти скил /{plugin}:{skill} и веди карточку по нему: ты оркестратор, кода не пишешь и порцию не коммитишь. Протокол — скил listik:listik. Первым действием, до чтения кода и show: claim {task_id} --holder claude. Дальше heartbeat каждые 10–15 мин, пока карточку держишь ты. Все команды с --actor agent:claude --harness claude."
       ]
     },
     {
-      "key": "cc-xlow-pipeline",
+      "key": "cc-xlow",
       "kind": "pipeline",
+      "plugin": "pipeline-cc",
       "title": "cc xlow",
       "hint": "Claude + Codex · без ТЗ и критики · не для эпиков",
       "visible": true,
@@ -558,12 +608,13 @@
         "claude",
         "--dangerously-skip-permissions",
         "-p",
-        "Задача {task_id} (проект {project}), маршрут {route}. Запусти скил /claude-codex:xlow-pipeline и веди карточку по нему: ты оркестратор, кода не пишешь и порцию не коммитишь. Протокол — скил listik:listik. Первым действием, до чтения кода и show: claim {task_id} --holder claude. Дальше heartbeat каждые 10–15 мин, пока карточку держишь ты. Все команды с --actor agent:claude --harness claude."
+        "Задача {task_id} (проект {project}), маршрут {route}. Запусти скил /{plugin}:{skill} и веди карточку по нему: ты оркестратор, кода не пишешь и порцию не коммитишь. Протокол — скил listik:listik. Первым действием, до чтения кода и show: claim {task_id} --holder claude. Дальше heartbeat каждые 10–15 мин, пока карточку держишь ты. Все команды с --actor agent:claude --harness claude."
       ]
     },
     {
-      "key": "cc-nano-pipeline",
+      "key": "cc-nano",
       "kind": "pipeline",
+      "plugin": "pipeline-cc",
       "title": "cc nano",
       "hint": "Claude + Codex · мелкие правки · без ТЗ и критики",
       "visible": true,
@@ -589,7 +640,7 @@
         "claude",
         "--dangerously-skip-permissions",
         "-p",
-        "Задача {task_id} (проект {project}), маршрут {route}. Запусти скил /claude-codex:nano-pipeline и веди карточку по нему: ты оркестратор, кода не пишешь и порцию не коммитишь. Протокол — скил listik:listik. Первым действием, до чтения кода и show: claim {task_id} --holder claude. Дальше heartbeat каждые 10–15 мин, пока карточку держишь ты. Все команды с --actor agent:claude --harness claude."
+        "Задача {task_id} (проект {project}), маршрут {route}. Запусти скил /{plugin}:{skill} и веди карточку по нему: ты оркестратор, кода не пишешь и порцию не коммитишь. Протокол — скил listik:listik. Первым действием, до чтения кода и show: claim {task_id} --holder claude. Дальше heartbeat каждые 10–15 мин, пока карточку держишь ты. Все команды с --actor agent:claude --harness claude."
       ]
     }
   ]

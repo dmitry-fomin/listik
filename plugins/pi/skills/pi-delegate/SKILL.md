@@ -117,6 +117,6 @@ exception — report it and let the human decide.
 
 Project red lines hold inside pi too: no commits, pushes, recursive deletes or secrets. If
 the task implies any of those, ask the human before delegating. One standing exception: a
-feature-pipeline preset whose SKILL.md names pi as the judge (`nano-pipeline`) — launching the
+pipeline-full preset whose SKILL.md names pi as the judge (`pipeline-full:nano`) — launching the
 preset is the human's consent for that judge to commit the portion on a green verdict, with
 explicit paths only; push, amend, reset and secrets stay forbidden.

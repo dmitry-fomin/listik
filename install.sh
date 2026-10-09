@@ -558,7 +558,10 @@ usage() {
                         claude, codex, pi, devin, dsh, opencode, grok;
                         all — все, none — ни одного; без флага — вопрос в /dev/tty,
                         без ответа — все. Без claude плагины не ставятся; плагин
-                        пайплайнов, который не выбран, — его маршруты скрываются
+                        пайплайнов, который не выбран, — его маршруты скрываются;
+                        pipeline-full ставится, только если выбраны харнессы
+                        claude, grok, devin, pi и нейронки claude, grok, devin,
+                        glm, deepseek
   --swarm yes|no        включить рой (экспериментально): сервер сам проверяет задачи
                         всех проектов каждые 30 секунд ([swarm] enabled в config.toml),
                         по умолчанию no
@@ -1350,14 +1353,19 @@ plugins_status=пропущен
 # Плагины marketplace listik по выбору нейронок и харнессов. Все они — плагины Claude
 # Code: без харнесса claude не ставится ничего. При обновлении установки выбранные
 # обновляются, иначе агенты читают устаревшие копии из ~/.claude/plugins/cache.
-# Невыбранные не удаляются.
+# Пайплайны: pipeline-core (ядро) и pipeline-full/-cc/-claude (пресеты) по своим условиям.
+# Невыбранные не удаляются; удаляются только старые feature-pipeline и claude-codex
+# области user — и только когда встал pipeline-core, который их заменил.
 listik_plugins=
 if in_list claude "$harnesses_sel"; then
     m() { in_list "$1" "$models_sel"; }
     h() { in_list "$1" "$harnesses_sel"; }
     listik_plugins=listik
-    m claude && listik_plugins="$listik_plugins feature-pipeline"
-    h codex && m claude && m openai && listik_plugins="$listik_plugins claude-codex"
+    m claude && listik_plugins="$listik_plugins pipeline-core"
+    m claude && h grok && h devin && h pi && m grok && m devin && m glm && m deepseek &&
+        listik_plugins="$listik_plugins pipeline-full"
+    m claude && h codex && m openai && listik_plugins="$listik_plugins pipeline-cc"
+    m claude && listik_plugins="$listik_plugins pipeline-claude"
     h dsh && m deepseek && listik_plugins="$listik_plugins dsh"
     h codex && m openai && listik_plugins="$listik_plugins codex"
     h opencode && { m glm || m deepseek; } && listik_plugins="$listik_plugins opencode"
@@ -1402,10 +1410,47 @@ elif [ "$plugins_answer" = yes ]; then
             note "$prog: плагины: не все команды claude plugin отработали — поставьте вручную:" >&2
             plugins_manual >&2
         fi
+        # Старые плагины, которые заменил pipeline-core: удаляем только из области user
+        # и только когда pipeline-core действительно встал.
+        if in_list pipeline-core "$listik_plugins"; then
+            if [ "$plugins_market_ok" = 1 ] && ! in_list pipeline-core "$plugins_failed"; then
+                old_plugins=
+                if old_out=$(claude plugin list --json 2>/dev/null) &&
+                    old_plugins=$(printf '%s' "$old_out" | "$python3_bin" -c 'import json, sys
+d = json.load(sys.stdin)
+assert isinstance(d, list) and all(isinstance(e, dict) for e in d)
+seen = []
+for e in d:
+    pair = "%s %s" % (e.get("id"), e.get("scope"))
+    if e.get("id") in ("feature-pipeline@listik", "claude-codex@listik") and pair not in seen:
+        seen.append(pair)
+print("\n".join(seen))' 2>/dev/null); then
+                    printf '%s\n' "$old_plugins" | while read -r old_id old_scope; do
+                        [ -n "$old_id" ] || continue
+                        if [ "$old_scope" = user ]; then
+                            if claude plugin uninstall "$old_id" >/dev/null 2>&1; then
+                                note "$prog: плагины: удалён устаревший $old_id — его заменили pipeline-core и pipeline-*"
+                            else
+                                note "$prog: плагины: не удалось удалить $old_id — удалите вручную: /plugin uninstall $old_id" >&2
+                            fi
+                        else
+                            note "$prog: плагины: $old_id стоит в области $old_scope — удалите вручную в том проекте: /plugin uninstall $old_id" >&2
+                        fi
+                    done
+                else
+                    note "$prog: плагины: не удалось проверить старые feature-pipeline и claude-codex — если стоят, удалите вручную: /plugin uninstall feature-pipeline@listik, /plugin uninstall claude-codex@listik" >&2
+                fi
+            else
+                note "$prog: плагины: старые feature-pipeline и claude-codex не проверялись — pipeline-core не поставился; после его установки удалите вручную: /plugin uninstall feature-pipeline@listik, /plugin uninstall claude-codex@listik" >&2
+            fi
+        fi
     else
         plugins_status="не удалось"
         note "$prog: плагины: claude недоступен (нет в PATH или без подкоманды plugin) — поставьте вручную:"
         plugins_manual
+        if in_list pipeline-core "$listik_plugins"; then
+            note "$prog: плагины: не удалось проверить старые feature-pipeline и claude-codex — если стоят, удалите вручную: /plugin uninstall feature-pipeline@listik, /plugin uninstall claude-codex@listik"
+        fi
     fi
 fi
 
@@ -1638,13 +1683,15 @@ fi
 
 # ------------------------------- шаг 7.4: скрыть маршруты невыбранных пайплайнов
 
-# После 7.3: reimport перезаписывает visible из routes.json. Плагин пайплайнов, который
-# не выбран (п. 3–4; упавшая установка не в счёт), — его маршруты прячем с доски.
-# Открывать обратно установщик не умеет.
+# После 7.3: reimport перезаписывает visible из routes.json. Плагин пайплайнов
+# pipeline-full/-cc/-claude, который не выбран (упавшая установка не в счёт), — его
+# маршруты (по полю plugin записи) прячем с доски. Свои конвейеры автора (plugin null)
+# и рой не трогаем. visible в ответе routes --json сброшен у skill_missing, а в базе —
+# нет, поэтому такие записи тоже берём. Открывать обратно установщик не умеет.
 hidden_status=
 if [ "$plugins_answer" = yes ]; then
     hide_plugins=
-    for p in feature-pipeline claude-codex; do
+    for p in pipeline-full pipeline-cc pipeline-claude; do
         in_list "$p" "$listik_plugins" || hide_plugins="$hide_plugins $p"
     done
     if [ -n "$hide_plugins" ]; then
@@ -1652,7 +1699,7 @@ if [ "$plugins_answer" = yes ]; then
         hide_ok=1
         # shellcheck disable=SC2086  # имена плагинов — отдельными аргументами
         if hide_out=$("$wrapper" --local routes --json 2>"$tmp/routes-hide.err") &&
-            hide_keys=$(printf '%s' "$hide_out" | "$python3_bin" -c 'import json, sys; ps = sys.argv[1:]; print(" ".join(r["key"] for r in json.load(sys.stdin)["routes"] if r.get("visible") is not False and (any("/%s:" % p in c for p in ps for c in r.get("command") or []) or ("feature-pipeline" in ps and r.get("kind") == "pipeline" and r.get("command") is None))))' $hide_plugins 2>>"$tmp/routes-hide.err"); then
+            hide_keys=$(printf '%s' "$hide_out" | "$python3_bin" -c 'import json, sys; ps = sys.argv[1:]; print(" ".join(r["key"] for r in json.load(sys.stdin)["routes"] if r.get("kind") == "pipeline" and r.get("plugin") in ps and (r.get("visible") is not False or r.get("skill_missing"))))' $hide_plugins 2>>"$tmp/routes-hide.err"); then
             if [ -n "$hide_keys" ]; then
                 # shellcheck disable=SC2086  # ключи — отдельными аргументами
                 if hide_out=$("$wrapper" --local routes --hide $hide_keys 2>&1); then

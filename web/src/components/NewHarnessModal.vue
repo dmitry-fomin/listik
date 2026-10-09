@@ -44,6 +44,8 @@ import {
 } from '@/lib/routes'
 
 const emit = defineEmits<{ created: [harness: Harness]; close: [] }>()
+/** Команда роли роя: `{plugin}`/`{skill}` у неё всегда пусты — в списке их нет. */
+const HARNESS_PLACEHOLDERS = ROUTE_PLACEHOLDERS.filter((name) => name !== 'plugin' && name !== 'skill')
 
 /** Окно закрывается «Отменой», крестиком или Escape — сообщаем наружу, чтобы снять `v-if`. */
 const open = ref(true)
@@ -247,7 +249,7 @@ async function submit(): Promise<void> {
         <p v-if="promptProblem" class="listik-new-harness__problem">{{ promptProblem }}</p>
         <p class="listik-new-harness__placeholders">
           Подстановки:
-          <code v-for="name in ROUTE_PLACEHOLDERS" :key="name" class="listik-mono">
+          <code v-for="name in HARNESS_PLACEHOLDERS" :key="name" class="listik-mono">
             {{ braced(name) }}
           </code>
         </p>

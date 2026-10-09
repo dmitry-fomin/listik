@@ -70,7 +70,7 @@ Never pick the model, variant or agent yourself. Two exceptions: the task names 
 channel (`--model deepseek`), in which case pass it through and flag in your reply that this
 is DeepSeek, which confabulates files and functions; or the call comes from a pipeline
 preset, which must pass its required `--model` and `--variant` because model-per-role is
-part of the preset (rationale in `plugins/feature-pipeline/references/ROLES.md`).
+part of the preset (rationale in `plugins/pipeline-core/references/ROLES.md`).
 
 ## What to return
 

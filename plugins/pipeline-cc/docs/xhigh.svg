@@ -1,0 +1,36 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1097" height="304" viewBox="0 0 1097 304" font-family="-apple-system, 'Segoe UI', Helvetica, Arial, sans-serif">
+  <title>pipeline-cc:xhigh</title>
+  <defs>
+    <marker id="arrow" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse">
+      <path d="M0 0L10 5L0 10z" fill="#c8c8c8"/>
+    </marker>
+  </defs>
+  <rect width="100%" height="100%" fill="#fff"/>
+  <text x="24" y="32" text-anchor="start" font-size="15" font-weight="700" fill="#111">pipeline-cc:xhigh</text>
+  <text x="24" y="54" text-anchor="start" font-size="12" fill="#6b6b6b">cc xhigh · Claude + Codex · от 50 мин на задачу</text>
+  <line x1="168" y1="158" x2="224" y2="98" stroke="#c8c8c8" stroke-width="1.2" marker-end="url(#arrow)"/>
+  <line x1="168" y1="158" x2="224" y2="158" stroke="#c8c8c8" stroke-width="1.2" marker-end="url(#arrow)"/>
+  <line x1="168" y1="158" x2="224" y2="218" stroke="#c8c8c8" stroke-width="1.2" marker-end="url(#arrow)"/>
+  <line x1="383" y1="98" x2="439" y2="158" stroke="#c8c8c8" stroke-width="1.2" marker-end="url(#arrow)"/>
+  <line x1="383" y1="158" x2="439" y2="158" stroke="#c8c8c8" stroke-width="1.2" marker-end="url(#arrow)"/>
+  <line x1="383" y1="218" x2="439" y2="158" stroke="#c8c8c8" stroke-width="1.2" marker-end="url(#arrow)"/>
+  <line x1="583" y1="158" x2="639" y2="158" stroke="#c8c8c8" stroke-width="1.2" marker-end="url(#arrow)"/>
+  <line x1="798" y1="158" x2="854" y2="158" stroke="#c8c8c8" stroke-width="1.2" marker-end="url(#arrow)"/>
+  <text x="96" y="154" text-anchor="middle" font-size="15" font-weight="700" fill="#111">ТЗ</text>
+  <text x="96" y="172" text-anchor="middle" font-size="12" fill="#6b6b6b">Opus 5.5 · xhigh</text>
+  <text x="303" y="94" text-anchor="middle" font-size="15" font-weight="700" fill="#111">Критик</text>
+  <text x="303" y="112" text-anchor="middle" font-size="12" fill="#6b6b6b">Sonnet 5.5 · xhigh</text>
+  <text x="303" y="154" text-anchor="middle" font-size="15" font-weight="700" fill="#111">Критик</text>
+  <text x="303" y="172" text-anchor="middle" font-size="12" fill="#6b6b6b">Opus 5.5 · high</text>
+  <text x="303" y="214" text-anchor="middle" font-size="15" font-weight="700" fill="#111">Критик</text>
+  <text x="303" y="232" text-anchor="middle" font-size="12" fill="#6b6b6b">GPT-6.1 Sol · high</text>
+  <text x="511" y="154" text-anchor="middle" font-size="15" font-weight="700" fill="#111">Код</text>
+  <text x="511" y="172" text-anchor="middle" font-size="12" fill="#6b6b6b">Opus 5.5 · xhigh</text>
+  <text x="718" y="154" text-anchor="middle" font-size="15" font-weight="700" fill="#111">Приёмка</text>
+  <text x="718" y="172" text-anchor="middle" font-size="12" fill="#6b6b6b">GPT-6 Astra · high</text>
+  <rect x="854" y="134" width="219" height="46" rx="8" fill="none" stroke="#111" stroke-width="1"/>
+  <text x="963" y="154" text-anchor="middle" font-size="15" font-weight="700" fill="#111">Коммит порции</text>
+  <text x="963" y="172" text-anchor="middle" font-size="12" fill="#6b6b6b">судья при зелёном вердикте</text>
+  <path d="M718 184 C718 288 511 288 511 184" fill="none" stroke="#c8c8c8" stroke-width="1.2" stroke-dasharray="5 4" marker-end="url(#arrow)"/>
+  <text x="614" y="280" text-anchor="middle" font-size="12" fill="#6b6b6b">красный вердикт</text>
+</svg>

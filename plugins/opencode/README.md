@@ -136,7 +136,7 @@ EOF
 | `--session <name>` | none | name the session (`run`) or find it (`resume`) |
 | `--permission <read\|bash\|write>` | `read` | permission mode in one flag |
 | `--write` / `--bash` | off | aliases for `--permission write` / `--permission bash` |
-| `--model <channel\|provider/model>` | `glm` = `b.ai/glm-5.3-flash` | `glm` or `deepseek`, or a full model id; used manually and by `feature-pipeline` presets, which pin it on purpose |
+| `--model <channel\|provider/model>` | `glm` = `b.ai/glm-5.3-flash` | `glm` or `deepseek`, or a full model id; used manually and by `pipeline-full` presets, `pipeline-cc:sol`, `pipeline-claude:opus` and `pipeline-claude:high`, which pin it on purpose |
 | `--variant <level>` | model default | provider-specific reasoning effort; not validated against a fixed list |
 | `--agent <name>` | `build` | another opencode agent (`opencode agent list`) |
 | `--cwd <dir>` | current directory | working directory of the run |

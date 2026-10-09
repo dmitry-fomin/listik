@@ -73,16 +73,16 @@ class RouteStoreTests(RoutesSeeded):
         self.assertIsNone(task["launch_route"])
         self.assertIs(task["route_editable"], True)
 
-        updated = store.update_task(self.conn, task["id"], launch_route="low-pipeline")
-        self.assertEqual(updated["launch_route"], "low-pipeline")
-        self.assertEqual(self.route_events(task["id"]), [(None, "low-pipeline")])
+        updated = store.update_task(self.conn, task["id"], launch_route="full-low")
+        self.assertEqual(updated["launch_route"], "full-low")
+        self.assertEqual(self.route_events(task["id"]), [(None, "full-low")])
 
-        updated = store.update_task(self.conn, task["id"], launch_route="high-pipeline",
+        updated = store.update_task(self.conn, task["id"], launch_route="full-high",
                                     actor="agent:dsh", note="дороже, но надёжнее")
-        self.assertEqual(updated["launch_route"], "high-pipeline")
+        self.assertEqual(updated["launch_route"], "full-high")
         self.assertIs(updated["route_editable"], True)
         self.assertEqual(self.route_events(task["id"]),
-                         [(None, "low-pipeline"), ("low-pipeline", "high-pipeline")])
+                         [(None, "full-low"), ("full-low", "full-high")])
         event = self.conn.execute(
             "SELECT actor, note FROM events WHERE task_id = ? AND kind = 'route' "
             "ORDER BY rowid DESC LIMIT 1", (task["id"],)).fetchone()
@@ -90,37 +90,37 @@ class RouteStoreTests(RoutesSeeded):
         self.assertEqual(event["note"], "дороже, но надёжнее")
 
     def test_route_alias_route_is_the_same_field(self) -> None:
-        task = self.task(route="low-pipeline")
-        updated = store.update_task(self.conn, task["id"], route="xlow-pipeline")
-        self.assertEqual(updated["launch_route"], "xlow-pipeline")
+        task = self.task(route="full-low")
+        updated = store.update_task(self.conn, task["id"], route="full-xlow")
+        self.assertEqual(updated["launch_route"], "full-xlow")
 
     def test_empty_route_clears_it(self) -> None:
-        task = self.task(route="low-pipeline")
+        task = self.task(route="full-low")
         updated = store.update_task(self.conn, task["id"], launch_route="  ")
         self.assertIsNone(updated["launch_route"])
-        self.assertEqual(self.route_events(task["id"]), [("low-pipeline", None)])
+        self.assertEqual(self.route_events(task["id"]), [("full-low", None)])
 
     def test_same_route_is_unchanged_and_writes_nothing(self) -> None:
-        task = self.task(route="low-pipeline")
-        out = store.update_task(self.conn, task["id"], route=" low-pipeline ")
+        task = self.task(route="full-low")
+        out = store.update_task(self.conn, task["id"], route=" full-low ")
         self.assertIs(out.get("unchanged"), True)
-        self.assertEqual(out["launch_route"], "low-pipeline")
+        self.assertEqual(out["launch_route"], "full-low")
         self.assertEqual(out["id"], task["id"])
         self.assertIn("holder_title", out, "no-op set должен отдавать карточку, а не строку таблицы")
         self.assertEqual(self.route_events(task["id"]), [])
 
     def test_in_progress_without_holder_changes_route(self) -> None:
-        task = self.task(route="low-pipeline")
+        task = self.task(route="full-low")
         store.update_task(self.conn, task["id"], status="in_progress")
         self.assertIs(store.get_task(self.conn, task["id"])["route_editable"], True)
-        updated = store.update_task(self.conn, task["id"], route="xlow-pipeline")
-        self.assertEqual(updated["launch_route"], "xlow-pipeline")
+        updated = store.update_task(self.conn, task["id"], route="full-xlow")
+        self.assertEqual(updated["launch_route"], "full-xlow")
         self.assertEqual(updated["status"], "in_progress")
 
     def test_stage_is_kept_and_launch_driver_reset(self) -> None:
         for stage in ("s1-spec", "s3-impl"):
             with self.subTest(stage=stage):
-                task = self.task(route="low-pipeline", stage=stage)
+                task = self.task(route="full-low", stage=stage)
                 self.conn.execute(
                     "UPDATE tasks SET launch_driver = 'swarm', launched_by = 'x', "
                     "launch_finished_at = '2026-01-01T00:00:00Z', generation = 7 "
@@ -129,8 +129,8 @@ class RouteStoreTests(RoutesSeeded):
                 self.assertIs(store.get_task(self.conn, task["id"])["route_editable"], True)
                 labels_before = store.route_labels_from_row(self.row(task["id"]))
 
-                updated = store.update_task(self.conn, task["id"], route="high-pipeline")
-                self.assertEqual(updated["launch_route"], "high-pipeline")
+                updated = store.update_task(self.conn, task["id"], route="full-high")
+                self.assertEqual(updated["launch_route"], "full-high")
                 row = self.row(task["id"])
                 self.assertEqual(row["stage"], stage)
                 self.assertIsNone(row["launch_driver"])
@@ -139,10 +139,10 @@ class RouteStoreTests(RoutesSeeded):
                 self.assertEqual(row["launch_finished_at"], "2026-01-01T00:00:00Z")
                 self.assertEqual(
                     store.route_labels_from_row(row),
-                    store.labels_after_route_change(self.conn, labels_before, "high-pipeline"))
+                    store.labels_after_route_change(self.conn, labels_before, "full-high"))
 
     def test_clearing_route_resets_launch_driver(self) -> None:
-        task = self.task(route="low-pipeline", stage="s3-impl")
+        task = self.task(route="full-low", stage="s3-impl")
         self.conn.execute("UPDATE tasks SET launch_driver = 'swarm' WHERE id = ?",
                           (task["id"],))
         self.conn.commit()
@@ -150,11 +150,11 @@ class RouteStoreTests(RoutesSeeded):
         self.assertIsNone(self.row(task["id"])["launch_driver"])
 
     def test_same_route_keeps_launch_driver(self) -> None:
-        task = self.task(route="low-pipeline", stage="s3-impl")
+        task = self.task(route="full-low", stage="s3-impl")
         self.conn.execute("UPDATE tasks SET launch_driver = 'swarm' WHERE id = ?",
                           (task["id"],))
         self.conn.commit()
-        out = store.update_task(self.conn, task["id"], route="low-pipeline")
+        out = store.update_task(self.conn, task["id"], route="full-low")
         self.assertIs(out.get("unchanged"), True)
         self.assertEqual(self.row(task["id"])["launch_driver"], "swarm")
         self.assertEqual(self.route_events(task["id"]), [])
@@ -164,58 +164,58 @@ class RouteStoreTests(RoutesSeeded):
         store.update_task(self.conn, task["id"], holder="dsh")
         self.assertIs(store.get_task(self.conn, task["id"])["route_editable"], False)
         with self.assertRaises(ValueError) as ctx:
-            store.update_task(self.conn, task["id"], route="xlow-pipeline")
+            store.update_task(self.conn, task["id"], route="full-xlow")
         self.assertIn("маршрут нельзя менять", str(ctx.exception))
         self.assertIn("держит dsh", str(ctx.exception))
         self.assertIsNone(self.row(task["id"])["launch_route"])
 
     def test_live_launch_refuses(self) -> None:
-        task = self.task(route="low-pipeline")
+        task = self.task(route="full-low")
         self.conn.execute(
             "UPDATE tasks SET launched_by = 'listik', launch_pid = 42, "
             "launched_at = '2026-01-01T00:00:00Z' WHERE id = ?", (task["id"],))
         self.conn.commit()
         self.assertIs(store.get_task(self.conn, task["id"])["route_editable"], False)
         with self.assertRaises(ValueError) as ctx:
-            store.update_task(self.conn, task["id"], route="xlow-pipeline")
+            store.update_task(self.conn, task["id"], route="full-xlow")
         self.assertIn("маршрут нельзя менять", str(ctx.exception))
         self.assertIn("процесс запущен", str(ctx.exception))
-        self.assertEqual(self.row(task["id"])["launch_route"], "low-pipeline")
+        self.assertEqual(self.row(task["id"])["launch_route"], "full-low")
 
     def test_finished_launch_allows_change(self) -> None:
-        task = self.task(route="low-pipeline")
+        task = self.task(route="full-low")
         self.conn.execute(
             "UPDATE tasks SET launched_by = 'listik', launch_pid = 42, "
             "launched_at = '2026-01-01T00:00:00Z', "
             "launch_finished_at = '2026-01-01T01:00:00Z' WHERE id = ?", (task["id"],))
         self.conn.commit()
         self.assertIs(store.get_task(self.conn, task["id"])["route_editable"], True)
-        updated = store.update_task(self.conn, task["id"], route="xlow-pipeline")
-        self.assertEqual(updated["launch_route"], "xlow-pipeline")
+        updated = store.update_task(self.conn, task["id"], route="full-xlow")
+        self.assertEqual(updated["launch_route"], "full-xlow")
 
     def test_final_status_refuses(self) -> None:
         for status in ("done", "cancelled"):
             with self.subTest(status=status):
-                task = self.task(route="low-pipeline")
+                task = self.task(route="full-low")
                 store.update_task(self.conn, task["id"], status=status)
                 self.assertIs(store.get_task(self.conn, task["id"])["route_editable"], False)
                 with self.assertRaises(ValueError) as ctx:
-                    store.update_task(self.conn, task["id"], route="xlow-pipeline")
+                    store.update_task(self.conn, task["id"], route="full-xlow")
                 self.assertIn("маршрут нельзя менять", str(ctx.exception))
                 self.assertIn("статус «", str(ctx.exception))
-                self.assertEqual(self.row(task["id"])["launch_route"], "low-pipeline")
+                self.assertEqual(self.row(task["id"])["launch_route"], "full-low")
 
     def test_same_call_holder_or_close_cannot_change_route(self) -> None:
         """Один вызов не может назначить держателя или закрыть задачу и сменить
         маршрут: `status`/`holder` из тех же полей учитываются проверкой, и отказ
         не применяет ни одного поля."""
-        task = self.task(route="low-pipeline")
+        task = self.task(route="full-low")
         calls = (
-            (("holder", "dsh"), ("route", "xlow-pipeline")),
-            (("route", "xlow-pipeline"), ("holder", "dsh")),
-            (("status", "done"), ("route", "xlow-pipeline")),
-            (("status", "cancelled"), ("route", "xlow-pipeline")),
-            (("holder", "dsh"), ("status", "in_progress"), ("route", "xlow-pipeline")),
+            (("holder", "dsh"), ("route", "full-xlow")),
+            (("route", "full-xlow"), ("holder", "dsh")),
+            (("status", "done"), ("route", "full-xlow")),
+            (("status", "cancelled"), ("route", "full-xlow")),
+            (("holder", "dsh"), ("status", "in_progress"), ("route", "full-xlow")),
         )
         for pairs in calls:
             with self.subTest(pairs=pairs):
@@ -223,26 +223,26 @@ class RouteStoreTests(RoutesSeeded):
                     store.update_task(self.conn, task["id"], **dict(pairs))
                 self.assertIn("маршрут нельзя менять", str(ctx.exception))
                 row = self.row(task["id"])
-                self.assertEqual(row["launch_route"], "low-pipeline", "маршрут не менялся")
+                self.assertEqual(row["launch_route"], "full-low", "маршрут не менялся")
                 self.assertEqual(row["status"], "open", "отказ не применяет status")
                 self.assertIsNone(row["holder"], "отказ не применяет holder")
                 self.assertEqual(self.route_events(task["id"]), [])
 
     def test_same_call_clearing_stage_changes_route(self) -> None:
         """Этап смене не мешает — и снятие этапа в том же вызове тоже."""
-        task = self.task(route="low-pipeline", stage="s1-spec")
-        updated = store.update_task(self.conn, task["id"], stage="", route="xlow-pipeline")
-        self.assertEqual(updated["launch_route"], "xlow-pipeline")
+        task = self.task(route="full-low", stage="s1-spec")
+        updated = store.update_task(self.conn, task["id"], stage="", route="full-xlow")
+        self.assertEqual(updated["launch_route"], "full-xlow")
         self.assertFalse(self.row(task["id"])["stage"])
-        self.assertEqual(self.route_events(task["id"]), [("low-pipeline", "xlow-pipeline")])
+        self.assertEqual(self.route_events(task["id"]), [("full-low", "full-xlow")])
 
     def test_unknown_route_is_bad_argument_before_state_checks(self) -> None:
         """Неизвестный ключ — `BadArgument` «нет в базе» у любой карточки: и у
         открытой, и у закрытой, и у взятой (не «маршрут нельзя менять»)."""
-        open_task = self.task(route="low-pipeline")
-        done_task = self.task(route="low-pipeline")
+        open_task = self.task(route="full-low")
+        done_task = self.task(route="full-low")
         store.update_task(self.conn, done_task["id"], status="done")
-        held_task = self.task(route="low-pipeline")
+        held_task = self.task(route="full-low")
         store.update_task(self.conn, held_task["id"], holder="dsh")
         for task in (open_task, done_task, held_task):
             with self.subTest(task=task["id"]):
@@ -250,30 +250,30 @@ class RouteStoreTests(RoutesSeeded):
                     store.update_task(self.conn, task["id"], route="нет-такого")
                 message = str(ctx.exception)
                 self.assertIn("маршрута нет-такого нет в базе; есть: ", message)
-                self.assertIn("low-pipeline", message)
+                self.assertIn("full-low", message)
                 self.assertNotIn("маршрут нельзя менять", message)
-                self.assertEqual(self.row(task["id"])["launch_route"], "low-pipeline")
+                self.assertEqual(self.row(task["id"])["launch_route"], "full-low")
                 self.assertEqual(self.route_events(task["id"]), [])
 
     def test_same_call_with_same_route_starts_work(self) -> None:
         """Маршрут не меняется — началу работы это не мешает: смена была бы no-op."""
-        task = self.task(route="low-pipeline")
+        task = self.task(route="full-low")
         updated = store.update_task(self.conn, task["id"], status="in_progress",
-                                    route="low-pipeline")
+                                    route="full-low")
         self.assertEqual(updated["status"], "in_progress")
-        self.assertEqual(updated["launch_route"], "low-pipeline")
+        self.assertEqual(updated["launch_route"], "full-low")
         self.assertEqual(self.route_events(task["id"]), [])
 
     def test_non_string_route_is_rejected(self) -> None:
         task = self.task()
-        for value in (5, ["low-pipeline"], {"key": "low-pipeline"}):
+        for value in (5, ["full-low"], {"key": "full-low"}):
             with self.assertRaises(ValueError) as ctx:
                 store.update_task(self.conn, task["id"], route=value)
             self.assertIn("маршрут должен быть строкой", str(ctx.exception))
         self.assertIsNone(self.row(task["id"])["launch_route"])
 
     def test_other_launch_fields_are_still_not_updatable(self) -> None:
-        task = self.task(route="low-pipeline")
+        task = self.task(route="full-low")
         with self.assertRaises(errors.BadArgument):
             store.update_task(self.conn, task["id"], autostart=True, launched_by="listik",
                               launch_pid=1, launch_error="подмена", launch_exit_code=42,
@@ -300,7 +300,7 @@ class RouteRaceTests(RoutesSeeded):
         self.second = db_mod.connect(self.db_path)
         self.addCleanup(self.second.close)
         self.task = store.create_task(self.conn, title="проба", project="listik",
-                                      route="low-pipeline")
+                                      route="full-low")
 
     def route(self, conn=None) -> str | None:
         conn = conn or self.conn
@@ -331,14 +331,14 @@ class RouteRaceTests(RoutesSeeded):
 
         with mock.patch.object(store, "now_iso", side_effect=claim_then_now):
             with self.assertRaises(ValueError) as ctx:
-                store.update_task(self.second, self.task["id"], route="xlow-pipeline")
+                store.update_task(self.second, self.task["id"], route="full-xlow")
         self.assertTrue(fired, "подмена now_iso не сработала — гонка не воспроизвелась")
         message = str(ctx.exception)
         self.assertIn("маршрут нельзя менять", message)
         self.assertIn("держит dsh", message)
         # Маршрут остался прежним на обоих соединениях, следа смены нет.
-        self.assertEqual(self.route(), "low-pipeline")
-        self.assertEqual(self.route(self.second), "low-pipeline")
+        self.assertEqual(self.route(), "full-low")
+        self.assertEqual(self.route(self.second), "full-low")
         self.assertEqual(self.route_events(self.task["id"]), [])
         self.assertIs(store.get_task(self.second, self.task["id"])["route_editable"], False)
 
@@ -352,7 +352,7 @@ class RouteRaceTests(RoutesSeeded):
         """
         for attempt in range(10):
             task = store.create_task(self.conn, title=f"гонка {attempt}", project="listik",
-                                     route="low-pipeline")
+                                     route="full-low")
             lock = db_mod.connect(self.db_path)
             conn_claim = db_mod.connect(self.db_path)
             conn_route = db_mod.connect(self.db_path)
@@ -369,7 +369,7 @@ class RouteRaceTests(RoutesSeeded):
 
             def change(task_id=task["id"], conn=conn_route) -> None:
                 try:
-                    store.update_task(conn, task_id, route="xlow-pipeline")
+                    store.update_task(conn, task_id, route="full-xlow")
                 except ValueError:
                     pass  # отказ — законный исход гонки: задачу уже взяли
                 except BaseException as exc:  # noqa: BLE001
@@ -419,9 +419,9 @@ class RouteAutostartResetTests(RoutesSeeded):
     def refused_task(self, **fields) -> dict:
         """Задача, у которой автостарт отказал: `launch_error` + вопрос и флаг."""
         task = store.create_task(self.conn, title="проба", project="listik",
-                                 route="low-pipeline", **fields)
+                                 route="full-low", **fields)
         with contextlib.redirect_stderr(io.StringIO()):
-            launcher.refuse(self.conn, task["id"], "маршрута low-pipeline нет в routes.json")
+            launcher.refuse(self.conn, task["id"], "маршрута full-low нет в routes.json")
         return task
 
     def row(self, task_id: str):
@@ -438,9 +438,9 @@ class RouteAutostartResetTests(RoutesSeeded):
         task = self.refused_task()
         self.assertEqual(self.row(task["id"])["needs_owner"], 1)
 
-        updated = store.update_task(self.conn, task["id"], route="high-pipeline",
+        updated = store.update_task(self.conn, task["id"], route="full-high",
                                     actor="agent:dsh", harness="dsh")
-        self.assertEqual(updated["launch_route"], "high-pipeline")
+        self.assertEqual(updated["launch_route"], "full-high")
         self.assertIsNone(updated["launch_error"])
         self.assertIs(updated["needs_owner"], False)
         self.assertIsNone(self.row(task["id"])["launch_error"])
@@ -448,14 +448,14 @@ class RouteAutostartResetTests(RoutesSeeded):
 
         note = self.route_note(task["id"])
         self.assertIn("снята ошибка автостарта", note)
-        self.assertIn("маршрута low-pipeline нет в routes.json", note)
+        self.assertIn("маршрута full-low нет в routes.json", note)
         self.assertIn("снят флаг «нужен человек»", note)
         # Вопрос автостарта остаётся в истории: снятие флага не переписывает прошлое.
         question = self.conn.execute(
             "SELECT text, kind FROM comments WHERE task_id = ? AND kind = 'question'",
             (task["id"],)).fetchall()
         self.assertEqual([c["text"] for c in question],
-                         ["автостарт не выполнен: маршрута low-pipeline нет в routes.json — "
+                         ["автостарт не выполнен: маршрута full-low нет в routes.json — "
                           "нужен ты"])
 
     def test_clearing_route_also_clears_error_and_flag(self) -> None:
@@ -471,7 +471,7 @@ class RouteAutostartResetTests(RoutesSeeded):
         task = self.refused_task()
         store.set_needs_owner(self.conn, task["id"], value=False, text="беру на себя",
                               actor="me")
-        updated = store.update_task(self.conn, task["id"], route="medium-pipeline")
+        updated = store.update_task(self.conn, task["id"], route="full-medium")
         self.assertIsNone(updated["launch_error"])
         self.assertIs(updated["needs_owner"], False)
         note = self.route_note(task["id"])
@@ -483,7 +483,7 @@ class RouteAutostartResetTests(RoutesSeeded):
         task = self.refused_task()
         store.set_needs_owner(self.conn, task["id"], value=True,
                               text="и ещё: какую ветку брать?", actor="agent:dsh")
-        updated = store.update_task(self.conn, task["id"], route="high-pipeline")
+        updated = store.update_task(self.conn, task["id"], route="full-high")
         self.assertIsNone(updated["launch_error"])
         self.assertIs(updated["needs_owner"], True)
         note = self.route_note(task["id"])
@@ -493,20 +493,20 @@ class RouteAutostartResetTests(RoutesSeeded):
     def test_question_without_launch_error_is_untouched(self) -> None:
         """Флаг без ошибки автостарта смена маршрута не трогает (и пояснений нет)."""
         task = store.create_task(self.conn, title="проба", project="listik",
-                                 route="low-pipeline")
+                                 route="full-low")
         store.set_needs_owner(self.conn, task["id"], value=True,
                               text="нужен ответ человека", actor="me")
-        updated = store.update_task(self.conn, task["id"], route="high-pipeline")
+        updated = store.update_task(self.conn, task["id"], route="full-high")
         self.assertIs(updated["needs_owner"], True)
         self.assertIsNone(self.route_note(task["id"]))
 
     def test_same_route_does_not_touch_error(self) -> None:
         """Смены не было — отказ автостарта остаётся как есть."""
         task = self.refused_task()
-        out = store.update_task(self.conn, task["id"], route="low-pipeline")
+        out = store.update_task(self.conn, task["id"], route="full-low")
         self.assertIs(out.get("unchanged"), True)
         row = self.row(task["id"])
-        self.assertEqual(row["launch_error"], "маршрута low-pipeline нет в routes.json")
+        self.assertEqual(row["launch_error"], "маршрута full-low нет в routes.json")
         self.assertEqual(row["needs_owner"], 1)
 
     def test_refused_route_change_keeps_error(self) -> None:
@@ -514,20 +514,20 @@ class RouteAutostartResetTests(RoutesSeeded):
         task = self.refused_task()
         store.update_task(self.conn, task["id"], holder="dsh")
         with self.assertRaises(ValueError):
-            store.update_task(self.conn, task["id"], route="high-pipeline")
+            store.update_task(self.conn, task["id"], route="full-high")
         row = self.row(task["id"])
-        self.assertEqual(row["launch_route"], "low-pipeline")
-        self.assertEqual(row["launch_error"], "маршрута low-pipeline нет в routes.json")
+        self.assertEqual(row["launch_route"], "full-low")
+        self.assertEqual(row["launch_error"], "маршрута full-low нет в routes.json")
         self.assertEqual(row["needs_owner"], 1)
 
     def test_error_without_question_history_is_cleared(self) -> None:
         """Отказ, пришедший без вопроса в истории (импорт/фикстура): флаг тоже снимаем."""
         task = store.create_task(self.conn, title="проба", project="listik",
-                                 route="low-pipeline")
+                                 route="full-low")
         self.conn.execute("UPDATE tasks SET launch_error = ?, needs_owner = 1 WHERE id = ?",
                           ("подмена", task["id"]))
         self.conn.commit()
-        updated = store.update_task(self.conn, task["id"], route="high-pipeline")
+        updated = store.update_task(self.conn, task["id"], route="full-high")
         self.assertIsNone(updated["launch_error"])
         self.assertIs(updated["needs_owner"], False)
 
@@ -539,7 +539,7 @@ class RouteAutostartResetTests(RoutesSeeded):
     def routed_task_with_error(self, *, needs_owner: bool = False) -> dict:
         """Задача с маршрутом и `launch_error`, выставленным напрямую (старые данные)."""
         task = store.create_task(self.conn, title="проба", project="listik",
-                                 route="low-pipeline")
+                                 route="full-low")
         self.conn.execute("UPDATE tasks SET launch_error = ?, needs_owner = ? WHERE id = ?",
                           ("старый отказ", 1 if needs_owner else 0, task["id"]))
         self.conn.commit()
@@ -555,7 +555,7 @@ class RouteAutostartResetTests(RoutesSeeded):
         task = self.routed_task_with_error()
         store.set_needs_owner(self.conn, task["id"], value=True, actor="agent:listik",
                               text="автостарт не выполнен: старый отказ — нужен ты")
-        updated = store.update_task(self.conn, task["id"], route="high-pipeline")
+        updated = store.update_task(self.conn, task["id"], route="full-high")
         self.assertIsNone(updated["launch_error"])
         self.assertIs(updated["needs_owner"], False)
 
@@ -563,7 +563,7 @@ class RouteAutostartResetTests(RoutesSeeded):
         task = self.refused_task()
         store.set_needs_owner(self.conn, task["id"], value=True, actor="agent:listik",
                               harness="claude", text="автостарт не выполнен: другое")
-        updated = store.update_task(self.conn, task["id"], route="high-pipeline")
+        updated = store.update_task(self.conn, task["id"], route="full-high")
         self.assertIsNone(updated["launch_error"])
         self.assertIs(updated["needs_owner"], True)
         self.assertEqual(self.row(task["id"])["needs_owner"], 1)
@@ -572,13 +572,13 @@ class RouteAutostartResetTests(RoutesSeeded):
         task = self.refused_task()
         store.set_needs_owner(self.conn, task["id"], value=True, actor="agent:dsh",
                               harness="autostart", text="произвольный текст")
-        updated = store.update_task(self.conn, task["id"], route="high-pipeline")
+        updated = store.update_task(self.conn, task["id"], route="full-high")
         self.assertIsNone(updated["launch_error"])
         self.assertIs(updated["needs_owner"], False)
 
     def test_explicit_needs_owner_in_same_update_wins(self) -> None:
         task = self.refused_task()
-        updated = store.update_task(self.conn, task["id"], route="high-pipeline",
+        updated = store.update_task(self.conn, task["id"], route="full-high",
                                     needs_owner=True)
         self.assertIsNone(updated["launch_error"])
         self.assertEqual(self.row(task["id"])["launch_error"], None)
@@ -590,7 +590,7 @@ class RouteAutostartResetTests(RoutesSeeded):
                     actor="agent:listik", harness="",
                     note="автостарт не выполнен: старый отказ — нужен ты")
         self.conn.commit()
-        updated = store.update_task(self.conn, task["id"], route="high-pipeline")
+        updated = store.update_task(self.conn, task["id"], route="full-high")
         self.assertIsNone(updated["launch_error"])
         self.assertIs(updated["needs_owner"], False)
 
@@ -600,7 +600,7 @@ class RouteAutostartResetTests(RoutesSeeded):
                               actor="agent:dsh")
         self.conn.execute("UPDATE tasks SET needs_owner = 1 WHERE id = ?", (task["id"],))
         self.conn.commit()
-        updated = store.update_task(self.conn, task["id"], route="high-pipeline")
+        updated = store.update_task(self.conn, task["id"], route="full-high")
         self.assertIsNone(updated["launch_error"])
         self.assertEqual(self.row(task["id"])["needs_owner"], 1)
 
@@ -608,7 +608,7 @@ class RouteAutostartResetTests(RoutesSeeded):
         task = self.refused_task()
         store.set_needs_owner(self.conn, task["id"], value=True, actor="agent:dsh",
                               text="автостарт не выполнен: чужой вопрос")
-        updated = store.update_task(self.conn, task["id"], route="high-pipeline")
+        updated = store.update_task(self.conn, task["id"], route="full-high")
         self.assertIsNone(updated["launch_error"])
         self.assertEqual(self.row(task["id"])["needs_owner"], 1)
 
@@ -622,7 +622,7 @@ class RouteApiTests(RoutesSeeded):
         self._conn_patch.start()
         self.addCleanup(self._conn_patch.stop)
         self.task = store.create_task(self.conn, title="проба", project="listik",
-                                      route="low-pipeline")
+                                      route="full-low")
 
     def patch(self, body: dict, task_id: str | None = None):
         with mock.patch.object(server, "publish"):
@@ -634,31 +634,31 @@ class RouteApiTests(RoutesSeeded):
                                  (self.task["id"],)).fetchone()["launch_route"]
 
     def test_patch_route_of_open_task(self) -> None:
-        status, task = self.patch({"route": "high-pipeline", "actor": "me"})
+        status, task = self.patch({"route": "full-high", "actor": "me"})
         self.assertEqual(status, 200)
-        self.assertEqual(task["launch_route"], "high-pipeline")
+        self.assertEqual(task["launch_route"], "full-high")
         self.assertIs(task["route_editable"], True)
-        self.assertEqual(self.row_route(), "high-pipeline")
+        self.assertEqual(self.row_route(), "full-high")
 
     def test_patch_launch_route_is_the_same_field(self) -> None:
-        status, task = self.patch({"launch_route": "medium-pipeline"})
+        status, task = self.patch({"launch_route": "full-medium"})
         self.assertEqual(status, 200)
-        self.assertEqual(task["launch_route"], "medium-pipeline")
+        self.assertEqual(task["launch_route"], "full-medium")
 
     def test_patch_route_is_400_once_taken(self) -> None:
         store.claim(self.conn, self.task["id"], holder="dsh")
         with self.assertRaises(server.ApiError) as ctx:
-            self.patch({"route": "xlow-pipeline"})
+            self.patch({"route": "full-xlow"})
         self.assertEqual(ctx.exception.status, 400)
         self.assertIn("маршрут нельзя менять", ctx.exception.message)
         self.assertIn("держит dsh", ctx.exception.message)
-        self.assertEqual(self.row_route(), "low-pipeline")
+        self.assertEqual(self.row_route(), "full-low")
 
     def test_patch_route_on_stage_passes(self) -> None:
         staged = store.create_task(self.conn, title="этап", project="listik", stage="s3-impl")
-        status, task = self.patch({"route": "xlow-pipeline"}, task_id=staged["id"])
+        status, task = self.patch({"route": "full-xlow"}, task_id=staged["id"])
         self.assertEqual(status, 200)
-        self.assertEqual(task["launch_route"], "xlow-pipeline")
+        self.assertEqual(task["launch_route"], "full-xlow")
         self.assertEqual(task["stage"], "s3-impl")
 
     def test_patch_unknown_route_is_400_bad_argument(self) -> None:
@@ -667,19 +667,19 @@ class RouteApiTests(RoutesSeeded):
         self.assertEqual(ctx.exception.status, 400)
         self.assertEqual(ctx.exception.code, "bad_argument")
         self.assertIn("маршрута нет-такого нет в базе", ctx.exception.message)
-        self.assertEqual(self.row_route(), "low-pipeline")
+        self.assertEqual(self.row_route(), "full-low")
 
     def test_patch_route_400_on_non_string(self) -> None:
         with self.assertRaises(server.ApiError) as ctx:
-            self.patch({"route": ["xlow-pipeline"]})
+            self.patch({"route": ["full-xlow"]})
         self.assertEqual(ctx.exception.status, 400)
         self.assertIn("маршрут должен быть строкой", ctx.exception.message)
 
     def test_patch_same_call_holder_or_close_and_route_is_400(self) -> None:
         """Один PATCH не может закрыть задачу или назначить держателя и сменить
         маршрут — ни одного поля."""
-        for body in ({"status": "done", "route": "xlow-pipeline"},
-                     {"route": "xlow-pipeline", "holder": "dsh"}):
+        for body in ({"status": "done", "route": "full-xlow"},
+                     {"route": "full-xlow", "holder": "dsh"}):
             with self.subTest(body=body):
                 with self.assertRaises(server.ApiError) as ctx:
                     self.patch(dict(body))
@@ -691,7 +691,7 @@ class RouteApiTests(RoutesSeeded):
                 self.assertEqual(row["status"], "open")
                 self.assertIsNone(row["stage"])
                 self.assertIsNone(row["holder"])
-                self.assertEqual(row["launch_route"], "low-pipeline")
+                self.assertEqual(row["launch_route"], "full-low")
 
     def test_get_task_reports_route_editable(self) -> None:
         status, task = server.handle("GET", f"/api/tasks/{self.task['id']}", {}, {}, authed=True)
@@ -717,10 +717,10 @@ class RouteApiTests(RoutesSeeded):
         """Доска шлёт тот же PATCH: смена маршрута снимает отказ автостарта."""
         with contextlib.redirect_stderr(io.StringIO()):
             launcher.refuse(self.conn, self.task["id"],
-                            "маршрута low-pipeline нет в routes.json")
-        status, task = self.patch({"route": "high-pipeline", "actor": "me"})
+                            "маршрута full-low нет в routes.json")
+        status, task = self.patch({"route": "full-high", "actor": "me"})
         self.assertEqual(status, 200)
-        self.assertEqual(task["launch_route"], "high-pipeline")
+        self.assertEqual(task["launch_route"], "full-high")
         self.assertIsNone(task["launch_error"])
         self.assertIs(task["needs_owner"], False)
         row = self.conn.execute("SELECT launch_error, needs_owner FROM tasks WHERE id = ?",
@@ -746,25 +746,25 @@ class RouteMcpTests(RoutesSeeded):
         from listik import mcp
 
         task = store.create_task(self.conn, title="проба", project="listik",
-                                 route="low-pipeline")
+                                 route="full-low")
         out = mcp.call_tool("listik_update",
-                            {"id": task["id"], "fields": {"route": "high-pipeline"}},
+                            {"id": task["id"], "fields": {"route": "full-high"}},
                             conn=self.conn)
-        self.assertEqual(out["launch_route"], "high-pipeline")
+        self.assertEqual(out["launch_route"], "full-high")
         out = mcp.call_tool("listik_update",
-                            {"id": task["id"], "fields": {"launch_route": "medium-pipeline"}},
+                            {"id": task["id"], "fields": {"launch_route": "full-medium"}},
                             conn=self.conn)
-        self.assertEqual(out["launch_route"], "medium-pipeline")
+        self.assertEqual(out["launch_route"], "full-medium")
 
     def test_mcp_update_refuses_route_after_work_started(self) -> None:
         from listik import mcp
 
         task = store.create_task(self.conn, title="проба", project="listik",
-                                 route="low-pipeline")
+                                 route="full-low")
         store.claim(self.conn, task["id"], holder="dsh")
         with self.assertRaises(ValueError) as ctx:
             mcp.call_tool("listik_update",
-                          {"id": task["id"], "fields": {"route": "xlow-pipeline"}}, conn=self.conn)
+                          {"id": task["id"], "fields": {"route": "full-xlow"}}, conn=self.conn)
         self.assertIn("маршрут нельзя менять", str(ctx.exception))
 
 
@@ -780,7 +780,7 @@ class RouteCliTests(RoutesSeeded):
         )
 
     def _new(self, *extra: str) -> str:
-        proc = self._run("new", "проба", "-p", "listik", "--route", "low-pipeline",
+        proc = self._run("new", "проба", "-p", "listik", "--route", "full-low",
                          "--json", *extra)
         self.assertEqual(proc.returncode, 0, proc.stderr)
         return json.loads(proc.stdout)["id"]
@@ -792,9 +792,9 @@ class RouteCliTests(RoutesSeeded):
 
     def test_cli_changes_route_of_open_task(self) -> None:
         task_id = self._new()
-        proc = self._run("set", task_id, "route=high-pipeline")
+        proc = self._run("set", task_id, "route=full-high")
         self.assertEqual(proc.returncode, 0, proc.stderr)
-        self.assertEqual(self._show(task_id)["launch_route"], "high-pipeline")
+        self.assertEqual(self._show(task_id)["launch_route"], "full-high")
 
         proc = self._run("set", task_id, "launch_route=")
         self.assertEqual(proc.returncode, 0, proc.stderr)
@@ -804,25 +804,25 @@ class RouteCliTests(RoutesSeeded):
         task_id = self._new()
         proc = self._run("show", task_id)
         self.assertEqual(proc.returncode, 0, proc.stderr)
-        self.assertIn("маршрут:     low-pipeline (без автостарта)", proc.stdout)
+        self.assertIn("маршрут:     full-low (без автостарта)", proc.stdout)
 
     def test_cli_refuses_route_change_after_claim(self) -> None:
         task_id = self._new()
         proc = self._run("claim", task_id, "--holder", "dsh")
         self.assertEqual(proc.returncode, 0, proc.stderr)
 
-        proc = self._run("set", task_id, "route=high-pipeline")
+        proc = self._run("set", task_id, "route=full-high")
         self.assertEqual(proc.returncode, 1)
         self.assertIn("маршрут нельзя менять", proc.stderr)
         self.assertIn("держит dsh", proc.stderr)
-        self.assertEqual(self._show(task_id)["launch_route"], "low-pipeline")
+        self.assertEqual(self._show(task_id)["launch_route"], "full-low")
 
     def test_cli_changes_route_of_staged_task(self) -> None:
         task_id = self._new("--stage", "s3-impl")
-        proc = self._run("set", task_id, "route=high-pipeline")
+        proc = self._run("set", task_id, "route=full-high")
         self.assertEqual(proc.returncode, 0, proc.stderr)
         shown = self._show(task_id)
-        self.assertEqual(shown["launch_route"], "high-pipeline")
+        self.assertEqual(shown["launch_route"], "full-high")
         self.assertEqual(shown["stage"], "s3-impl")
 
     def test_cli_unknown_route_is_bad_argument_json(self) -> None:
@@ -832,13 +832,13 @@ class RouteCliTests(RoutesSeeded):
         error = json.loads(proc.stdout)["error"]
         self.assertEqual(error["code"], "bad_argument")
         self.assertIn("маршрута нет-такого нет в базе", error["message"])
-        self.assertEqual(self._show(task_id)["launch_route"], "low-pipeline")
+        self.assertEqual(self._show(task_id)["launch_route"], "full-low")
 
     def test_cli_noop_route_change_does_not_fail(self) -> None:
         task_id = self._new()
         proc = self._run("claim", task_id, "--holder", "dsh")
         self.assertEqual(proc.returncode, 0, proc.stderr)
-        proc = self._run("set", task_id, "route=low-pipeline")
+        proc = self._run("set", task_id, "route=full-low")
         self.assertEqual(proc.returncode, 0, proc.stderr)
 
     def test_cli_route_change_clears_launch_error(self) -> None:
@@ -852,10 +852,10 @@ class RouteCliTests(RoutesSeeded):
         self.assertEqual(shown["launch_error"], "сервер Listik не запущен")
         self.assertIs(shown["needs_owner"], True)
 
-        proc = self._run("set", task_id, "route=high-pipeline")
+        proc = self._run("set", task_id, "route=full-high")
         self.assertEqual(proc.returncode, 0, proc.stderr)
         shown = self._show(task_id)
-        self.assertEqual(shown["launch_route"], "high-pipeline")
+        self.assertEqual(shown["launch_route"], "full-high")
         self.assertIsNone(shown["launch_error"])
         self.assertIs(shown["needs_owner"], False)
 
@@ -872,7 +872,7 @@ class RouteCliParserTests(unittest.TestCase):
         proc = subprocess.run([sys.executable, str(LISTIK_BIN), "--help"],
                               capture_output=True, text=True, env=env, cwd=str(REPO_DIR))
         self.assertEqual(proc.returncode, 0, proc.stderr)
-        self.assertIn("route=low-pipeline", proc.stdout)
+        self.assertIn("route=full-low", proc.stdout)
 
 
 if __name__ == "__main__":

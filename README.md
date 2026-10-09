@@ -85,16 +85,23 @@ MCP-инструментами `listik_*` или командой `listik new`. 
 Исполнителей на каждый этап вы выбираете сами — хоть четыре разные модели,
 хоть одна и та же на все четыре:
 
-| Маршрут | ТЗ | Критика | Реализация | Приёмка | Когда берут |
-|---|---|---|---|---|---|
-| `xhigh-pipeline` | Opus xhigh | Sonnet + DeepSeek + SWE-2 | Opus xhigh | Grok xhigh | ошибка дороже прогона |
-| `cross-pipeline` | Devin | DeepSeek + Sonnet | GLM в pi | Grok | автор ТЗ и код — разные вендоры |
-| `high-pipeline` | Opus high | Sonnet + DeepSeek + SWE-2 | Opus high | Grok xhigh | расклад по умолчанию |
-| `medium-pipeline` | Opus medium | Sonnet + DeepSeek | Opus medium | Grok high | работа понятная |
-| `sol-pipeline` | Opus medium | Sonnet + Sol medium (Codex) | Opus medium | Sol high (Codex) | проверяющие от OpenAI вместо Grok |
-| `low-pipeline` | Opus low | DeepSeek + GLM | devin SWE-2 max | Grok high | код вне квоты Max |
-| `xlow-pipeline` | — | — | devin SWE-2 max | Grok high | один прогон с приёмкой |
-| `nano-pipeline` | — | — | devin SWE-2 high | GLM в pi | короткая задача: сделать и принять |
+| Маршрут | Скил | ТЗ | Критика | Реализация | Приёмка | Когда берут |
+|---|---|---|---|---|---|---|
+| `full-xhigh` | `pipeline-full:xhigh` | Opus xhigh | Sonnet + DeepSeek + SWE-2 | Opus xhigh | линзы GLM → Grok xhigh | ошибка дороже прогона |
+| `full-cross` | `pipeline-full:cross` | Devin | DeepSeek + Sonnet | GLM в pi | Grok | автор ТЗ и код — разные вендоры |
+| `full-high` | `pipeline-full:high` | Opus high | Sonnet + DeepSeek + SWE-2 | Opus high | линзы GLM → Grok xhigh | расклад по умолчанию |
+| `full-medium` | `pipeline-full:medium` | Opus medium | Sonnet + DeepSeek | Opus medium | Grok high | работа понятная |
+| `cc-sol` | `pipeline-cc:sol` | Opus medium | Sonnet + Sol medium (Codex) | Opus medium | Sol high (Codex) | проверяющие от OpenAI вместо Grok |
+| `full-low` | `pipeline-full:low` | Opus low | DeepSeek + GLM | devin SWE-2 max | Grok high | код вне квоты Max |
+| `full-xlow` | `pipeline-full:xlow` | — | — | devin SWE-2 max | Grok high | один прогон с приёмкой |
+| `full-nano` | `pipeline-full:nano` | — | — | devin SWE-2 high | GLM в pi | короткая задача: сделать и принять |
+| `cc-xhigh`, `cc-high`, `cc-medium`, `cc-low`, `cc-xlow`, `cc-nano` | `pipeline-cc:<уровень>` | по уровню | по уровню | Opus | Astra (Codex) | линейка Claude + Codex — см. `plugins/pipeline-cc/README.md` |
+| `claude-high` | `pipeline-claude:high` | Opus high | Sonnet high + Opus high | Opus high | линзы Sonnet → Sonnet high | только Claude: внешних денег ноль |
+| `claude-xhigh` | `pipeline-claude:xhigh` | Opus xhigh | Sonnet xhigh + Opus xhigh | Opus xhigh | линзы Sonnet → Sonnet xhigh | только Claude: внешних денег ноль |
+| `claude-opus` | `pipeline-claude:opus` | — | — | Opus medium | — | без ТЗ, критики и приёмки |
+
+Схема каждого пресета — в README его плагина: [pipeline-full](plugins/pipeline-full/README.md),
+[pipeline-cc](plugins/pipeline-cc/README.md), [pipeline-claude](plugins/pipeline-claude/README.md).
 
 Привести таблицу к `routes.json` установленной копии — `listik routes --reimport`: пайплайны
 из файла перезаписываются (их правки на доске пропадают), пайплайны-скилы не из файла удаляются,
@@ -111,8 +118,10 @@ MCP-инструментами `listik_*` или командой `listik new`. 
 ```
 /plugin marketplace add dmitry-fomin/listik
 /plugin install listik@listik             # протокол задач: скил listik:listik
-/plugin install feature-pipeline@listik   # пресеты конвейера и агенты pipeline-*
-/plugin install claude-codex@listik   # пресеты конвейера на Claude + Codex
+/plugin install pipeline-core@listik      # ядро конвейера, агенты pipeline-*, хук; ставится зависимостью пресетов
+/plugin install pipeline-full@listik      # пресеты конвейера на всех харнессах
+/plugin install pipeline-cc@listik        # пресеты конвейера на Claude + Codex
+/plugin install pipeline-claude@listik    # пресеты конвейера только на Claude
 /plugin install dsh@listik                # DeepSeek Harness
 /plugin install codex@listik              # OpenAI Codex CLI
 /plugin install pi@listik                 # pi CLI (GLM 5.3 Flash, DeepSeek v4.1 Flash); критика ТЗ в конвейерах
@@ -187,6 +196,12 @@ curl -fsSL https://github.com/dmitry-fomin/listik/releases/latest/download/insta
 (`LISTIK_ROUTES_REIMPORT`, по умолчанию `ask` — вопрос в `/dev/tty`, без tty и с `--yes` — `no`);
 то же вручную — `listik routes --reimport`.
 
+При обновлении до этой версии миграция базы (схема 16) один раз сама переводит старые ключи
+конвейеров на новые (например `xhigh-pipeline` → `full-xhigh`, `sol-pipeline` → `cc-sol`; полная
+таблица — «Плагин пресета и миграция схемы 16» в [docs/API.md](docs/API.md)): переименовывает
+строку в таблице `routes`, а за ней — `launch_route` карточек и их метки `process:<старый ключ>`.
+Маршруты роя, удалённые автором маршруты и ключи, чьё новое имя уже занято, она не трогает.
+
 Плагины ставятся по выбору: установщик задаёт два вопроса — какие нейронки (подписки)
 у вас есть (claude, openai, deepseek, glm, grok, devin, gemini) и какие харнессы установлены
 (claude, codex, pi, devin, dsh, opencode, grok); ответ — номера через пробел или запятую,
@@ -196,8 +211,10 @@ marketplace `listik` — плагины Claude Code, поэтому без ха�
 | Плагин | Когда ставится (при выбранном харнессе `claude`) |
 |---|---|
 | `listik` | всегда |
-| `feature-pipeline` | нейронка `claude` |
-| `claude-codex` | харнесс `codex`, нейронки `claude` и `openai` |
+| `pipeline-core` | нейронка `claude`; от него зависят три пресетных плагина |
+| `pipeline-full` | нейронка `claude` и харнесс `grok` и харнесс `devin` и харнесс `pi` и нейронка `grok` и нейронка `devin` и нейронка `glm` и нейронка `deepseek` |
+| `pipeline-cc` | нейронка `claude` и харнесс `codex` и нейронка `openai` |
+| `pipeline-claude` | нейронка `claude` |
 | `dsh` | харнесс `dsh`, нейронка `deepseek` |
 | `codex` | харнесс `codex`, нейронка `openai` |
 | `opencode` | харнесс `opencode`, нейронка `glm` или `deepseek` |
@@ -205,15 +222,19 @@ marketplace `listik` — плагины Claude Code, поэтому без ха�
 | `devin` | харнесс `devin`, нейронка `devin` |
 | `second-opinion` | любая из нейронок `deepseek`, `openai`, `grok`, `gemini` |
 
-Плагина `claude-codex` в marketplace `listik` пока нет (он появится с влитием listik-r1pd):
-до тех пор каждая установка, где он выбран (в том числе `--yes` и запуск без `/dev/tty`),
-заканчивается статусом плагинов `не удалось (claude-codex)` при коде возврата 0 — это ожидаемо.
-
 У Grok CLI плагина в marketplace `listik` нет — он ставится отдельно. Ответы задаются и
 флагами `--models LIST` / `--harnesses LIST` (`LISTIK_MODELS` / `LISTIK_HARNESSES`): id через
-запятую, `all` или `none`. Маршруты невыбранного плагина пайплайнов (`feature-pipeline`,
-`claude-codex`) установщик скрывает с доски (`listik routes --hide`), обратно не открывает.
-Невыбранные плагины, которые уже стоят, не удаляются.
+запятую, `all` или `none`. Маршруты невыбранных `pipeline-full`, `pipeline-cc`, `pipeline-claude`
+установщик скрывает с доски (`listik routes --hide`) по полю `plugin` записи маршрута; свои
+конвейеры без `plugin` и маршруты роя не скрываются; обратно установщик их не открывает.
+Невыбранные плагины, которые уже стоят, не удаляются, кроме старых `feature-pipeline` и
+`claude-codex` — их установщик удаляет.
+
+Старые `feature-pipeline@listik` и `claude-codex@listik` установщик удаляет, только когда встал
+`pipeline-core`, и только установленные в области `user`; стоящие в области проекта
+(`project`/`local`) он не трогает и печатает команду `/plugin uninstall …` для ручного удаления.
+Если проверить список плагинов не удалось или `pipeline-core` не поставился — тоже подсказка
+удалить их вручную.
 
 Все флаги (`--version`, `--archive`, `--home`, `--service`, `--swarm`, `--mcp`, `--plugins`,
 `--models`, `--harnesses`, `--codex-network`, `--routes-reimport`, `--yes`, …) —

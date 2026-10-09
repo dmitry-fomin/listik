@@ -1,0 +1,47 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1393" height="304" viewBox="0 0 1393 304" font-family="-apple-system, 'Segoe UI', Helvetica, Arial, sans-serif">
+  <title>pipeline-full:xhigh</title>
+  <defs>
+    <marker id="arrow" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse">
+      <path d="M0 0L10 5L0 10z" fill="#c8c8c8"/>
+    </marker>
+  </defs>
+  <rect width="100%" height="100%" fill="#fff"/>
+  <text x="24" y="32" text-anchor="start" font-size="15" font-weight="700" fill="#111">pipeline-full:xhigh</text>
+  <text x="24" y="54" text-anchor="start" font-size="12" fill="#6b6b6b">xhigh · от 50 мин на задачу</text>
+  <line x1="168" y1="158" x2="224" y2="98" stroke="#c8c8c8" stroke-width="1.2" marker-end="url(#arrow)"/>
+  <line x1="168" y1="158" x2="224" y2="158" stroke="#c8c8c8" stroke-width="1.2" marker-end="url(#arrow)"/>
+  <line x1="168" y1="158" x2="224" y2="218" stroke="#c8c8c8" stroke-width="1.2" marker-end="url(#arrow)"/>
+  <line x1="376" y1="98" x2="432" y2="158" stroke="#c8c8c8" stroke-width="1.2" marker-end="url(#arrow)"/>
+  <line x1="376" y1="158" x2="432" y2="158" stroke="#c8c8c8" stroke-width="1.2" marker-end="url(#arrow)"/>
+  <line x1="376" y1="218" x2="432" y2="158" stroke="#c8c8c8" stroke-width="1.2" marker-end="url(#arrow)"/>
+  <line x1="576" y1="158" x2="632" y2="98" stroke="#c8c8c8" stroke-width="1.2" marker-end="url(#arrow)"/>
+  <line x1="576" y1="158" x2="632" y2="158" stroke="#c8c8c8" stroke-width="1.2" marker-end="url(#arrow)"/>
+  <line x1="576" y1="158" x2="632" y2="218" stroke="#c8c8c8" stroke-width="1.2" marker-end="url(#arrow)"/>
+  <line x1="758" y1="98" x2="814" y2="158" stroke="#c8c8c8" stroke-width="1.2" marker-end="url(#arrow)"/>
+  <line x1="758" y1="158" x2="814" y2="158" stroke="#c8c8c8" stroke-width="1.2" marker-end="url(#arrow)"/>
+  <line x1="758" y1="218" x2="814" y2="158" stroke="#c8c8c8" stroke-width="1.2" marker-end="url(#arrow)"/>
+  <line x1="974" y1="158" x2="1030" y2="158" stroke="#c8c8c8" stroke-width="1.2" marker-end="url(#arrow)"/>
+  <text x="96" y="154" text-anchor="middle" font-size="15" font-weight="700" fill="#111">ТЗ</text>
+  <text x="96" y="172" text-anchor="middle" font-size="12" fill="#6b6b6b">Opus 5.5 · xhigh</text>
+  <text x="300" y="94" text-anchor="middle" font-size="15" font-weight="700" fill="#111">Критик</text>
+  <text x="300" y="112" text-anchor="middle" font-size="12" fill="#6b6b6b">Sonnet 5.5 · high</text>
+  <text x="300" y="154" text-anchor="middle" font-size="15" font-weight="700" fill="#111">Критик</text>
+  <text x="300" y="172" text-anchor="middle" font-size="12" fill="#6b6b6b">DeepSeek V4.1</text>
+  <text x="300" y="214" text-anchor="middle" font-size="15" font-weight="700" fill="#111">Критик</text>
+  <text x="300" y="232" text-anchor="middle" font-size="12" fill="#6b6b6b">SWE-2 · max</text>
+  <text x="504" y="154" text-anchor="middle" font-size="15" font-weight="700" fill="#111">Код</text>
+  <text x="504" y="172" text-anchor="middle" font-size="12" fill="#6b6b6b">Opus 5.5 · xhigh</text>
+  <text x="695" y="94" text-anchor="middle" font-size="15" font-weight="700" fill="#111">Линза scope</text>
+  <text x="695" y="112" text-anchor="middle" font-size="12" fill="#6b6b6b">GLM 5.3 Flash</text>
+  <text x="695" y="154" text-anchor="middle" font-size="15" font-weight="700" fill="#111">Линза holes</text>
+  <text x="695" y="172" text-anchor="middle" font-size="12" fill="#6b6b6b">GLM 5.3 Flash</text>
+  <text x="695" y="214" text-anchor="middle" font-size="15" font-weight="700" fill="#111">Линза intent</text>
+  <text x="695" y="232" text-anchor="middle" font-size="12" fill="#6b6b6b">GLM 5.3 Flash</text>
+  <text x="894" y="154" text-anchor="middle" font-size="15" font-weight="700" fill="#111">Судья по находке</text>
+  <text x="894" y="172" text-anchor="middle" font-size="12" fill="#6b6b6b">Grok 4.7 · xhigh</text>
+  <rect x="1030" y="134" width="339" height="46" rx="8" fill="none" stroke="#111" stroke-width="1"/>
+  <text x="1199" y="154" text-anchor="middle" font-size="15" font-weight="700" fill="#111">Коммит порции</text>
+  <text x="1199" y="172" text-anchor="middle" font-size="12" fill="#6b6b6b">оркестратор при чистых линзах, иначе судья</text>
+  <path d="M894 184 C894 288 504 288 504 184" fill="none" stroke="#c8c8c8" stroke-width="1.2" stroke-dasharray="5 4" marker-end="url(#arrow)"/>
+  <text x="699" y="280" text-anchor="middle" font-size="12" fill="#6b6b6b">красный вердикт</text>
+</svg>

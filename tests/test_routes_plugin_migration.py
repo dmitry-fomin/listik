@@ -184,6 +184,10 @@ class FreshDatabaseTests(Schema15Base):
                          {(table, column) for table, column, _ in db_mod.MIGRATIONS})
 
 
+#: Пресеты, снятые после переименования (09.10.2026): записи в базе остаются без скила.
+REMOVED_PRESETS = ("cc-sol", "claude-opus")
+
+
 class PluginMigrationTests(Schema15Base):
     def setUp(self) -> None:
         super().setUp()
@@ -261,9 +265,14 @@ class PluginMigrationTests(Schema15Base):
         data = routes_store.routes_response(conn)
         records = {r["key"]: r for r in data["routes"]}
         for key in NEW_KEYS:
+            if key in REMOVED_PRESETS:
+                continue
             with self.subTest(key=key):
                 self.assertNotIn("skill_missing", records[key])
                 self.assertIsNotNone(records[key]["skill_path"])
+        # Пресеты sol и opus удалены: переименованные записи остаются, но без скила — скрыты.
+        for key in REMOVED_PRESETS:
+            self.assertTrue(records[key]["skill_missing"], key)
         self.assertTrue(records["my-flow"]["skill_missing"])
 
     def test_second_init_is_noop(self) -> None:

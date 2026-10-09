@@ -43,18 +43,17 @@
 #    плюс `bash` для read-bash, без ограничения вовсе для write.
 #
 # 4. Готовность канала проверяется ПРОБНЫМ ПРОГОНОМ, а не `pi auth check`:
-#    `pi auth check --provider b-ai-glm` врёт (`not_ready`/`provider_not_found`),
-#    хотя прогон на этом канале проходит — провайдер регистрируется
-#    расширением, а не статичной конфигурацией, которую видит `auth check`.
+#    `pi auth check` говорит лишь, что ключ сохранён, а не что канал
+#    отвечает — последнее слово за пробой.
 #
 # 5. Флага `--rpc` у pi нет — правильно `pi --mode rpc` (клиент собирает это
 #    сам, здесь просто отмечено, чтобы не «исправляли» на несуществующий флаг).
 #
-# 6. Расширения НЕ отключаются: `~/.pi/agent/extensions/b-ai.ts` регистрирует
-#    провайдера `b-ai-glm` (канал glm), и `--no-extensions` убрал бы его
-#    из списка провайдеров вовсе. Канал deepseek — встроенный провайдер pi.
+# 6. Провайдер канала glm — `glm-a6` из `~/.pi/agent/models.json`, канал
+#    deepseek — встроенный провайдер pi `deepseek`. Расширения не отключаются:
+#    обвязка не трогает пользовательскую настройку pi.
 #
-# 7. Канал GLM (`b-ai-glm/glm-5.3-flash`) иногда зависает до первого токена
+# 7. Канал GLM (`glm-a6/glm-5.3-flash`) иногда зависает до первого токена
 #    (>120с без ответа) — это не сбой обвязки, у пробы `check` поэтому есть
 #    отдельный статус «таймаут», а не падение с ошибкой.
 #
@@ -77,7 +76,7 @@ RPC="$(cd "$(dirname "$0")" && pwd)/pi-rpc.py"
 # «имя:модель» на строку, порядок — порядок печати в check; первый канал
 # считается каналом по умолчанию (решение автора: glm).
 CHANNELS=(
-  "glm:b-ai-glm/glm-5.3-flash"
+  "glm:glm-a6/glm-5.3-flash"
   "deepseek:deepseek/deepseek-flash"
 )
 
@@ -275,7 +274,7 @@ usage:
 --permission: read (default, read/grep/find/ls only), bash (plus commands, no
   edit tools), write (everything). --write and --bash are kept as aliases for
   --permission write / --permission bash.
-channels (value of --channel/--model): glm = b-ai-glm/glm-5.3-flash (default),
+channels (value of --channel/--model): glm = glm-a6/glm-5.3-flash (default),
   deepseek = deepseek/deepseek-flash; --model also takes a full
   provider/model id, --channel takes the short name only.
 --thinking: off, minimal, low, medium, high, xhigh, max

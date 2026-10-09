@@ -45,10 +45,13 @@ ROUTE_GLYPH_RE = re.compile(r"icon: '([a-z0-9-]+)'")
 
 # Порядок записей в routes.json — он же порядок строк формы «Новая задача».
 EXPECTED_KEYS = [
-    "full-xhigh", "full-high", "full-medium", "cc-sol", "full-low",
-    "full-xlow", "full-nano", "full-cross", "claude-xhigh", "claude-high", "claude-opus",
-    "cc-xhigh", "cc-high", "cc-medium", "cc-low",
-    "cc-xlow", "cc-nano",
+    "full-xhigh", "cc-xhigh", "claude-xhigh",
+    "full-high", "cc-high", "claude-high",
+    "full-medium", "cc-medium",
+    "full-low", "cc-low",
+    "full-xlow", "cc-xlow",
+    "full-nano", "cc-nano",
+    "full-cross",
 ]
 
 # Таблицы маршрутов, зашитые в доске до шага 09, порции c: их заменил ответ API.
@@ -101,9 +104,9 @@ class RepoRoutesFileTests(unittest.TestCase):
             self.skipTest(f"git недоступен: {exc}")
         self.assertEqual(done.returncode, 1, done.stdout + done.stderr)
 
-    def test_has_seventeen_records_in_order(self) -> None:
+    def test_has_fifteen_records_in_order(self) -> None:
         self.assertEqual(self.raw["version"], 1)
-        self.assertEqual(len(self.raw["routes"]), 17)
+        self.assertEqual(len(self.raw["routes"]), 15)
         self.assertEqual([r["key"] for r in self.raw["routes"]], EXPECTED_KEYS)
 
     def test_validates_and_every_record_is_visible(self) -> None:
@@ -114,21 +117,18 @@ class RepoRoutesFileTests(unittest.TestCase):
 
     def test_kinds_match_the_table(self) -> None:
         kinds = [r["kind"] for r in self.raw["routes"]]
-        self.assertEqual(kinds, ["pipeline"] * 17)
+        self.assertEqual(kinds, ["pipeline"] * 15)
 
     def test_icons_are_the_route_levels(self) -> None:
         normalized = {r["key"]: r["icon"] for r in routes_mod.validate(self.raw)}
         self.assertEqual(normalized["full-xhigh"], "xhigh")
         self.assertEqual(normalized["full-high"], "high")
         self.assertEqual(normalized["full-medium"], "medium")
-        self.assertEqual(normalized["cc-sol"], "medium")
+        self.assertEqual(normalized["cc-medium"], "medium")
         self.assertEqual(normalized["full-low"], "low")
         self.assertEqual(normalized["full-xlow"], "xlow")
         # Уровень nano из ключа не выводится — стоит явно, на ступени xlow.
         self.assertEqual(normalized["full-nano"], "xlow")
-        # У пресетов без уровня поля нет — иконка не выдумывается.
-        for key in ("claude-opus",):
-            self.assertIsNone(normalized[key])
 
     def test_repo_every_record_has_command(self) -> None:
         """В образце у каждой записи есть argv автостарта: конвейер — claude.
@@ -537,7 +537,7 @@ class PluginFieldTests(unittest.TestCase):
     def test_sample_pipelines_name_plugin_by_key_prefix(self) -> None:
         raw = json.loads(ROUTES_JSON.read_text(encoding="utf-8"))
         pipelines = [r for r in raw["routes"] if r["kind"] == "pipeline"]
-        self.assertEqual(len(pipelines), 17)
+        self.assertEqual(len(pipelines), len(EXPECTED_KEYS))
         for record in pipelines:
             with self.subTest(key=record["key"]):
                 self.assertEqual(record["plugin"], "pipeline-" + record["key"].split("-", 1)[0])
@@ -645,7 +645,7 @@ class FileLoadTests(TempDbTestCase):
         self.assertTrue(state.ok)
         self.assertIsNone(state.error)
         self.assertEqual(state.path, str(self.source))
-        self.assertEqual(len(state.routes), 17)
+        self.assertEqual(len(state.routes), len(EXPECTED_KEYS))
         self.assertEqual(sorted(state.by_key), sorted(r["key"] for r in state.routes))
         self.assertEqual(state.warnings, [])
 
@@ -686,12 +686,12 @@ class FileLoadTests(TempDbTestCase):
         self.source.write_text("{ битый", encoding="utf-8")
         current = routes_mod.state(self.conn)
         self.assertTrue(current.ok)
-        self.assertEqual(len(current.routes), 17)
+        self.assertEqual(len(current.routes), len(EXPECTED_KEYS))
         self.assertEqual(current.path, str(paths.DB_PATH))
         self.assertEqual(current.warnings, [])
         with contextlib.redirect_stderr(io.StringIO()):
             self.assertTrue(routes_store.ensure_imported(self.conn).get("skipped"))
-        self.assertEqual(len(routes_mod.state(self.conn).routes), 17)
+        self.assertEqual(len(routes_mod.state(self.conn).routes), len(EXPECTED_KEYS))
 
     def test_database_update_is_visible_immediately(self) -> None:
         routes_store.import_file(self.conn, self.source)
@@ -759,7 +759,7 @@ class RoutesApiTests(TempDbTestCase):
         self.assertTrue(data["ok"])
         self.assertIsNone(data["error"])
         self.assertEqual(data["path"], str(paths.DB_PATH))
-        self.assertEqual(len(data["routes"]), 17)
+        self.assertEqual(len(data["routes"]), len(EXPECTED_KEYS))
         for record in data["routes"]:
             self.assertIn("command", record)
             self.assertNotIn("strip", record)
@@ -768,7 +768,6 @@ class RoutesApiTests(TempDbTestCase):
         self.assertEqual(icons["full-xhigh"], "xhigh")
         self.assertEqual(icons["full-medium"], "medium")
         self.assertEqual(icons["full-nano"], "xlow")
-        self.assertIsNone(icons["claude-opus"])
 
     def test_routes_with_bad_icon_import_fallback_and_keep_all_records(self) -> None:
         """Предупреждение при ввозе; база хранит фолбэк, без файловых предупреждений."""
@@ -843,7 +842,7 @@ class RoutesApiTests(TempDbTestCase):
         self.assertEqual(status, 200)
         data = payload["data"]
         self.assertTrue(data["ok"])
-        self.assertEqual(len(data["routes"]), 17)
+        self.assertEqual(len(data["routes"]), len(EXPECTED_KEYS))
         self.assertEqual([r["key"] for r in data["routes"]], EXPECTED_KEYS)
         self.assertTrue(all("command" in r for r in data["routes"]))
 
@@ -868,7 +867,7 @@ class RoutesApiTests(TempDbTestCase):
         status, payload = self._get("/api/routes", token=self.TOKEN)
         self.assertEqual(status, 200)
         self.assertTrue(payload["data"]["ok"])
-        self.assertEqual(len(payload["data"]["routes"]), 17)
+        self.assertEqual(len(payload["data"]["routes"]), len(EXPECTED_KEYS))
 
     def test_database_change_reaches_live_http_without_restart(self) -> None:
         self._init_from_repo()
@@ -888,7 +887,7 @@ class RoutesApiTests(TempDbTestCase):
         self.assertTrue(state["ok"])
         self.assertIsNone(state["error"])
         self.assertEqual(state["path"], str(paths.DB_PATH))
-        self.assertEqual(state["count"], 17)
+        self.assertEqual(state["count"], len(EXPECTED_KEYS))
 
     def test_health_database_error_is_reported(self) -> None:
         with mock.patch.object(routes_store, "list_routes",

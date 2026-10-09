@@ -3,7 +3,7 @@
 Пресеты живут в `plugins/pipeline-full`, `plugins/pipeline-cc` и `plugins/pipeline-claude`
 (`PIPELINE_PLUGINS`), скил — каталог `plugins/<плагин>/skills/<имя>` с `SKILL.md`. Ключ
 маршрута — имя плагина без префикса `pipeline-`, дефис и имя каталога:
-`plugins/pipeline-full/skills/high` → `full-high`, `plugins/pipeline-cc/skills/sol` → `cc-sol`;
+`plugins/pipeline-full/skills/high` → `full-high`, `plugins/pipeline-cc/skills/high` → `cc-high`;
 команда маршрута зовёт скил `/<плагин>:<имя>` (`skill_ref`). У записи маршрута плагин —
 явное поле `plugin` (порция d): по нему `skill_of`/`skill_md` находят скил записи, а
 `skill_info`/`skill_ref` без `plugin=` выводят плагин из ключа каталога.

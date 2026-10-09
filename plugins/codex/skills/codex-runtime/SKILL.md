@@ -182,7 +182,7 @@ another syntax.
 
 - Never commit, push or delete recursively on the strength of another harness's output.
   One standing exception: the judge of a `pipeline-full`, `pipeline-cc` or `pipeline-claude` preset whose
-  SKILL.md names codex as the judge (every `pipeline-cc:*` preset, `pipeline-cc:sol` included) commits
+  SKILL.md names codex as the judge (every `pipeline-cc:*` preset) commits
   the portion on a green verdict, with explicit paths only — launching the preset is the
   human's consent; push, amend, reset and secrets stay forbidden.
 - Never read, print or forward `.env`, `*.key`, `*.pem`, `credentials.json`. Naming an env

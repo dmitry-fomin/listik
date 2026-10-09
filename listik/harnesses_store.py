@@ -90,7 +90,7 @@ SEEDS: list[dict] = [
      "prompt": _prompt(DIRECT_PROMPT, "grok"), "kind": "exec", "builtin": 1},
     {"key": "pi-glm", "label": "pi · GLM", "hint": "pi --print · GLM 5.3 Flash",
      "icon": "pi-glm",
-     "argv": ["pi", "--print", "--no-session", "--model", "b-ai-glm/glm-5.3-flash"],
+     "argv": ["pi", "--print", "--no-session", "--model", "glm-a6/glm-5.3-flash"],
      "prompt": _prompt(DIRECT_PROMPT, "pi-glm"), "kind": "exec", "builtin": 1},
     {"key": "pi-deepseek", "label": "pi · DeepSeek",
      "hint": "pi --print · DeepSeek Flash", "icon": "pi-deepseek",
@@ -397,3 +397,16 @@ def seed(conn: sqlite3.Connection) -> None:
                          "b-ai-deepseek/deepseek-v4.1-flash"], ensure_ascii=False)))
         conn.execute(
             "INSERT INTO meta(key, value) VALUES('seed_pi_deepseek_flash', '1')")
+    # Канал GLM в pi переехал с `b-ai-glm` (расширение b-ai.ts) на провайдера
+    # `glm-a6` из models.json. Тем же правилом: одноразово и только по старому сиду.
+    if conn.execute(
+            "SELECT value FROM meta WHERE key = 'seed_pi_glm_a6'").fetchone() is None:
+        conn.execute(
+            "UPDATE harnesses SET argv = ?, updated_at = ? "
+            "WHERE key = 'pi-glm' AND builtin = 1 AND argv = ?",
+            (json.dumps(["pi", "--print", "--no-session", "--model",
+                         "glm-a6/glm-5.3-flash"], ensure_ascii=False), ts,
+             json.dumps(["pi", "--print", "--no-session", "--model",
+                         "b-ai-glm/glm-5.3-flash"], ensure_ascii=False)))
+        conn.execute(
+            "INSERT INTO meta(key, value) VALUES('seed_pi_glm_a6', '1')")

@@ -26,7 +26,7 @@
 
 ## Скилы
 
-Все — `pipeline-cc:<имя>`. «—» — этапа нет. Маршруты Listik этих пресетов — `cc-<имя>` (`cc-xhigh` … `cc-nano`, `cc-sol`); команда маршрута зовёт `/pipeline-cc:<имя>`.
+Все — `pipeline-cc:<имя>`. «—» — этапа нет. Маршруты Listik этих пресетов — `cc-<имя>` (`cc-xhigh` … `cc-nano`); команда маршрута зовёт `/pipeline-cc:<имя>`.
 
 | Скил | ТЗ | Критика ТЗ | Код | Приёмка |
 | --- | --- | --- | --- | --- |
@@ -36,13 +36,10 @@
 | `low` | Opus 5.5 low | GPT-6.1 Sol medium; кворум — он один | Opus 5.5 low | GPT-6 Astra medium в Codex, коммитит судья |
 | `xlow` | — | — | Opus 5.5 medium (два хода) | GPT-6 Astra medium в Codex, коммитит судья |
 | `nano` | — | — | Opus 5.5 medium (два хода) | GPT-6 Astra medium в Codex, коммитит судья |
-| `sol` | Opus 5.5 medium (`pipeline-spec-writer-medium`, `model: opus`) | Sonnet 5.5 high (`pipeline-critic`, `model: sonnet`) + GPT-6.1 Sol medium в Codex, кворум, сводит оркестратор | Opus 5.5 medium (`pipeline-implementer`, `model: opus`) | GPT-6.1 Sol high в Codex |
 
 xhigh и high — расклад автора 07.10.2026, medium — выведен по аналогии и утверждён автором.
 low/xlow/nano утверждены автором 07.10.2026 — код пишет Opus (low у low, medium у xlow и nano), судья — Codex Astra
 medium. xlow и nano по составу совпадают; nano — для самых мелких правок (одна-две правки в одном месте).
-
-sol — проверяющие от OpenAI вместо Grok, автор выбрал сам.
 
 Агенты, хук автоодобрения и ядро `pipeline-core.md` — в плагине `pipeline-core` (`plugins/pipeline-core/README.md`).
 
@@ -68,12 +65,6 @@ sol — проверяющие от OpenAI вместо Grok, автор выб�
 | `gpt-6-astra-medium` | low, xlow, nano: судья | 0.465 |
 
 ## Схемы
-
-### pipeline-cc:sol
-
-![pipeline-cc:sol](docs/sol.svg)
-
-Когда брать: Opus ТЗ и код · Sonnet+Sol критика · Sol приёмка
 
 ### pipeline-cc:xhigh
 

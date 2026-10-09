@@ -27,7 +27,7 @@ Listik — общая очередь задач и журнал работы д�
 
 1. Узнай маршрут: `L show <id> --fields launch_route,labels`; поле пустое — ключ из метки `process:<ключ>`, а метка `harness:<x>` — кто оркестрирует (нет метки — `claude`).
 2. Запусти по ключу:
-   - ключ конвейера `<p>-<уровень>` (`full-*`, `cc-*`, `claude-*`), `harness:claude` — вызови скил `pipeline-<p>:<уровень>` (например `full-xlow` → `pipeline-full:xlow`, `cc-sol` → `pipeline-cc:sol`, `claude-opus` → `pipeline-claude:opus`) и веди задачу по нему; внешних исполнителей ролей вызывает сам скил.
+   - ключ конвейера `<p>-<уровень>` (`full-*`, `cc-*`, `claude-*`), `harness:claude` — вызови скил `pipeline-<p>:<уровень>` (например `full-xlow` → `pipeline-full:xlow`, `cc-high` → `pipeline-cc:high`, `claude-high` → `pipeline-claude:high`) и веди задачу по нему; внешних исполнителей ролей вызывает сам скил.
    - ключ конвейера (`full-*`, `cc-*`, `claude-*`), `harness:<x>` другой — задачу целиком отдай субагенту
      `<x>:<x>-runner` (`pi:pi-runner`, `dsh:dsh-runner`, `codex:codex-runner`, `opencode:opencode-runner`; для grok — `grok:grok-delegate`) с промптом «вот id карточки и ключ процесса»; сам её не выполняй.
    - ключ — имя харнесса (`dsh`, `codex`, `grok`, `pi`…) — так же субагент этого харнесса.

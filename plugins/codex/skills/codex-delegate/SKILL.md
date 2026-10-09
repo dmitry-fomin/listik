@@ -73,7 +73,7 @@ One flag, three values (`--write` still works as an alias for `--permission writ
 | --- | --- | --- |
 | `read` | reading and commands, writes denied by the sandbox | default, any investigation |
 | `bash` | the same sandbox as `read` — codex has no separate command tier | accepted for parity with the other bridges |
-| `write` | file edits inside `--cwd` | only if the human asked for a change in this message, or for the judge of a `pipeline-full`, `pipeline-cc` or `pipeline-claude` preset whose SKILL.md names codex as the judge (every `pipeline-cc:*` preset, `pipeline-cc:sol` included): launching the preset is that consent |
+| `write` | file edits inside `--cwd` | only if the human asked for a change in this message, or for the judge of a `pipeline-full`, `pipeline-cc` or `pipeline-claude` preset whose SKILL.md names codex as the judge (every `pipeline-cc:*` preset): launching the preset is that consent |
 
 Never infer write access from a task merely looking like implementation: a read-only run
 that hits the ban says so honestly, which is cheaper than an unrequested edit. A background
@@ -112,6 +112,6 @@ A job running far longer than expected is a `logs <job-id>` question; a misphras
 Project red lines hold inside codex too: no commits, pushes, recursive deletes or secrets.
 If the task implies any of those, ask the human before delegating. One standing exception: a
 `pipeline-full`, `pipeline-cc` or `pipeline-claude` preset whose SKILL.md names codex as the judge
-(every `pipeline-cc:*` preset, `pipeline-cc:sol` included) — launching the preset is the human's consent for that judge to
+(every `pipeline-cc:*` preset) — launching the preset is the human's consent for that judge to
 commit the portion on a green verdict, with explicit paths only; push, amend, reset and secrets
 stay forbidden.

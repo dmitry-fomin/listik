@@ -13,8 +13,8 @@ bridge is built around.
 
 ## Where your code goes
 
-`pi` sends the files it reads to whichever provider its configuration points at — `b.ai`
-for the two channels wired in here, or any other provider you have set up. This plugin is a
+`pi` sends the files it reads to whichever provider its configuration points at — `glm-a6`
+for the `glm` channel, pi's built-in `deepseek` for the `deepseek` channel, or any other provider you have set up. This plugin is a
 bridge, not a sandbox: installing it means your working directory can leave your machine.
 Read-only mode prevents writes, not reads. Decide whether that is acceptable for a given
 repository *before* you delegate, and scope every task to the files it actually needs.
@@ -26,7 +26,7 @@ addressable by a short channel name via `--model` or `--channel`:
 
 | Channel | Model | Notes |
 | --- | --- | --- |
-| `glm` | `b-ai-glm/glm-5.3-flash` | the default: every run without `--model`/`--channel` goes here |
+| `glm` | `glm-a6/glm-5.3-flash` | the default: every run without `--model`/`--channel` goes here |
 | `deepseek` | `deepseek/deepseek-flash` | second opinion from a different family — **prone to making things up**: it will invent a file, a flag or an API that does not exist and sound sure about it, so treat every concrete claim as a lead to verify, not as a fact |
 
 `--model deepseek` and `--model deepseek/deepseek-flash` are the same thing: the
@@ -46,8 +46,8 @@ history.
 
 - [Claude Code](https://code.claude.com) v2.1.216 or later — earlier versions drop the
   plugin prefix from command names, so `/pi:pi-delegate` would not resolve
-- `pi` on your `PATH` (or `PI_CLAUDE_BIN`), **with the `b-ai-glm` provider registered by your
-  `pi` user extension** (`~/.pi/agent/extensions/b-ai.ts`) — without it the `glm` channel is
+- `pi` on your `PATH` (or `PI_CLAUDE_BIN`), **with the `glm-a6` provider configured in
+  `~/.pi/agent/models.json`** (with its key in `auth.json`) — without it the `glm` channel is
   unreachable — and pi's built-in `deepseek` provider authenticated for the `deepseek` channel
 - `bash`
 - **`python3` as a hard requirement** — every run goes through the RPC client
@@ -127,7 +127,7 @@ EOF
 | `--session <name>` | none | name the session (`run`) or find it (`resume`) |
 | `--permission <read\|bash\|write>` | `read` | permission mode in one flag |
 | `--write` / `--bash` | off | aliases for `--permission write` / `--permission bash` |
-| `--model <channel\|provider/model>` | `glm` = `b-ai-glm/glm-5.3-flash` | short channel name or a full model id |
+| `--model <channel\|provider/model>` | `glm` = `glm-a6/glm-5.3-flash` | short channel name or a full model id |
 | `--channel <channel>` | `glm` | same as `--model`, short name only; not combined with `--model` |
 | `--thinking <level>` | model default | `off`, `minimal`, `low`, `medium`, `high`, `xhigh`, `max` |
 | `--cwd <dir>` | current directory | working directory of the run |
@@ -200,8 +200,8 @@ ready:            yes
 binary:           /Users/you/.local/bin/pi (ok)
 version:          0.85.1
 rpc client:       /Users/you/.claude/plugins/.../pi-rpc.py (ok) · python3: /usr/bin/python3
-default channel:  glm -> b-ai-glm/glm-5.3-flash
-channels:         glm -> b-ai-glm/glm-5.3-flash (in catalog: yes; probe: timeout 30s, default)
+default channel:  glm -> glm-a6/glm-5.3-flash
+channels:         glm -> glm-a6/glm-5.3-flash (in catalog: yes; probe: timeout 30s, default)
                   deepseek -> deepseek/deepseek-flash (in catalog: yes; probe: answered in 4s)
 note: "in catalog" lists models with configured auth - "no" does not mean the model does not exist; the probe is the final word
 default permission: read-only (edits and bash blocked) (--tools read,grep,find,ls)
@@ -217,7 +217,7 @@ verbatim.
 | Variable | Default | Purpose |
 | --- | --- | --- |
 | `PI_CLAUDE_BIN` | `pi` from `PATH` | full path to the CLI binary when it isn't on `PATH` |
-| `PI_CLAUDE_DEFAULT_MODEL` | `b-ai-glm/glm-5.3-flash` | model used when `--model`/`--channel` is not given; accepts a channel name or a full model id |
+| `PI_CLAUDE_DEFAULT_MODEL` | `glm-a6/glm-5.3-flash` | model used when `--model`/`--channel` is not given; accepts a channel name or a full model id |
 | `PI_CLAUDE_STATE_DIR` | `${XDG_STATE_HOME:-~/.local/state}/pi-claude` | where background jobs and session names are kept |
 | `PI_CLAUDE_SESSION` | `CLAUDE_SESSION_ID` | tags jobs so `status` scopes by session instead of by directory |
 
@@ -233,16 +233,14 @@ implementation:
   therefore a hard requirement here, not a convenience.
 - **`pi --rpc` does not exist — the flag is `--mode rpc`.** The RPC client builds the
   invocation itself; nothing in this plugin ever passes a bare `--rpc`.
-- **Extensions cannot be disabled** because the `b.ai` provider `b-ai-glm` comes from
-  `~/.pi/agent/extensions/b-ai.ts`, a user extension — turning extensions off would remove
-  the `glm` channel from the provider list.
+- **Extensions are left as they are** — the bridge never passes `--no-extensions`; the
+  `glm` channel's provider `glm-a6` comes from `~/.pi/agent/models.json`, not an extension.
 - **Provider errors arrive as `stopReason: "error"` with exit code 0 from `pi`**, so the
   bridge reads the message the RPC stream carries, not the process exit code, to detect a
   failed run.
-- **Readiness is determined by a probe, not `pi auth check`** — `pi auth check` reports
-  `provider_not_found`/`not_ready` for these extension-registered providers even when a run
-  on that channel succeeds, so `check` probes both channels with a real (tiny) prompt
-  instead.
+- **Readiness is determined by a probe, not `pi auth check`** — `pi auth check` only says a key is
+  stored, not that the channel answers, so `check` probes both channels with a real (tiny)
+  prompt instead.
 - **GLM sometimes stalls before the first token** — probe and run time out instead of
   hanging forever, and the agent never switches channels on its own when that happens.
 - **Sessions resume by file path**, not by a `uuid` the CLI looks up in the current

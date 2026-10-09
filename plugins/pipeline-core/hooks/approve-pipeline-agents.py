@@ -21,7 +21,6 @@ AGENTS = {
     "pipeline-core:pipeline-implementer",
     "pipeline-core:pipeline-implementer-high",
     "pipeline-core:pipeline-implementer-xhigh",
-    "pipeline-core:pipeline-implementer-solo",
     "pipeline-core:pipeline-judge",
     "pipeline-core:pipeline-judge-xhigh",
     "pipeline-core:pipeline-implementer-low",

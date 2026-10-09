@@ -23,12 +23,8 @@ REPO_DIR = pathlib.Path(__file__).resolve().parents[1]
 PLUGIN_DIR = REPO_DIR / "plugins" / "pipeline-cc"
 CORE_PLUGIN_DIR = REPO_DIR / "plugins" / "pipeline-core"
 MARKETPLACE_JSON = REPO_DIR / ".claude-plugin" / "marketplace.json"
-SOL_SKILL = PLUGIN_DIR / "skills" / "sol" / "SKILL.md"
 
 PLUGIN_NAME = "pipeline-cc"
-#: Скил sol переехал в pipeline-cc из другого плагина пресетов: его тексты сверяет tests/test_pipeline_plugins.py,
-#: здесь он — только образец задания судье.
-FROM_FEATURE_PIPELINE = ("sol",)
 PLUGIN_MANIFEST = pathlib.Path(".claude-plugin") / "plugin.json"
 SKILLS_SUBDIR = "skills"
 AGENTS_SUBDIR = "agents"
@@ -79,13 +75,12 @@ _NO_SPEC_PRESET: dict = {
         "forbidden": ("codex:codex-delegate",),
     },
     "text_required": ("SendMessage", "codex:codex-check"),
-    "judge_like_sol": False,
     "judge_twin": "no-spec",
 }
 
 #: Пресет → требования по этапам. `required` — подстроки раздела `### <n>.`, `pairs` — пары подстрок,
 #: обязанные стоять в одной строке раздела, `forbidden` — подстроки, которых в разделе нет,
-#: `judge_like_sol` — задание судье побайтно как в pipeline-cc:sol. Необязательные ключи: `stages` —
+#: Необязательные ключи: `stages` —
 #: какие разделы `### <n>.` есть (остальных из 1–4 быть не должно; по умолчанию все четыре),
 #: `hod1` — требования к разделу `## Ход 1` (required/pairs/forbidden), `text_required` — подстроки
 #: всего текста, `judge_twin` — группа пресетов, чьи задания судье равны друг другу побайтно.
@@ -103,7 +98,7 @@ PRESETS: dict[str, dict] = {
                 ("`pipeline-core:pipeline-critic`", "model: opus")),
         },
         "forbidden": {3: ("model: opus",)},
-        "judge_like_sol": True,
+        "judge_twin": "with-spec",
     },
     "high": {
         "required": {
@@ -118,7 +113,7 @@ PRESETS: dict[str, dict] = {
             3: (("pipeline-core:pipeline-implementer-high", "model: opus"),),
         },
         "forbidden": {},
-        "judge_like_sol": True,
+        "judge_twin": "with-spec",
     },
     "medium": {
         "required": {
@@ -131,7 +126,7 @@ PRESETS: dict[str, dict] = {
             3: (("`pipeline-core:pipeline-implementer`", "model: opus"),),
         },
         "forbidden": {2: (OPUS_REVIEW, "--effort high")},
-        "judge_like_sol": True,
+        "judge_twin": "with-spec",
     },
     "low": {
         "required": {
@@ -145,7 +140,7 @@ PRESETS: dict[str, dict] = {
         "forbidden": {2: ("pipeline-critic", "model: sonnet"), 3: ("codex:codex-delegate", "model: opus"),
                       4: STAGE4_FORBIDDEN_MEDIUM},
         "text_required": ("codex:codex-check",),
-        "judge_like_sol": True,
+        "judge_twin": "with-spec",
     },
     "xlow": _NO_SPEC_PRESET,
     "nano": _NO_SPEC_PRESET,
@@ -176,8 +171,7 @@ def _read_json(path: pathlib.Path):
 def _skill_dirs() -> set[str]:
     skills = PLUGIN_DIR / SKILLS_SUBDIR
     return {path.name for path in skills.iterdir()
-            if path.is_dir() and (path / SKILL_FILE).is_file()
-            and path.name not in FROM_FEATURE_PIPELINE}
+            if path.is_dir() and (path / SKILL_FILE).is_file()}
 
 
 def _skill_path(name: str) -> pathlib.Path:
@@ -339,10 +333,10 @@ def _judge_block(text: str) -> str | None:
 def _judge_problems(text: str, sample: str) -> list[str]:
     block, expected = _judge_block(text), _judge_block(sample)
     if expected is None:
-        return ["в pipeline-cc:sol нет задания судье"]
+        return ["в образце нет задания судье"]
     if block is None:
         return ["нет fenced-блока задания судье в «### 4.»"]
-    return [] if block == expected else ["задание судье разошлось с pipeline-cc:sol"]
+    return [] if block == expected else ["задание судье разошлось с образцом"]
 
 
 def _agent_problems(filename: str, text: str) -> list[str]:
@@ -459,12 +453,6 @@ class ClaudeCodexSkillTests(unittest.TestCase):
                 self.assertNotEqual(mutated, originals[name], "изменение не применилось")
                 self.assertNotEqual(_stage_problems(name, mutated), [])
 
-    def test_judge_task_matches_sol(self) -> None:
-        sample = SOL_SKILL.read_text(encoding="utf-8")
-        for name in sorted(n for n, spec in PRESETS.items() if spec["judge_like_sol"]):
-            with self.subTest(preset=name):
-                self.assertEqual(_judge_problems(_skill_path(name).read_text(encoding="utf-8"), sample), [])
-
     def test_judge_twins_equal(self) -> None:
         groups: dict[str, list[str]] = {}
         for name, spec in PRESETS.items():
@@ -517,7 +505,7 @@ class ClaudeCodexSkillTests(unittest.TestCase):
                 self.assertNotEqual(_stage_problems(name, mutated), [])
 
     def test_judge_check_rejects_changed_line(self) -> None:
-        sample = SOL_SKILL.read_text(encoding="utf-8")
+        sample = _skill_path("high").read_text(encoding="utf-8")
         text = _skill_path("xhigh").read_text(encoding="utf-8")
         block = _judge_block(text)
         self.assertIsNotNone(block)
@@ -628,8 +616,7 @@ CC_ROUTES: dict[str, tuple[str, str, str, dict]] = {
 
 def _cc_records() -> dict[str, dict]:
     return {r["key"]: r for r in _read_json(ROUTES_JSON)["routes"]
-            if r["key"].startswith(ROUTE_PREFIX)
-            and r["key"][len(ROUTE_PREFIX):] not in FROM_FEATURE_PIPELINE}
+            if r["key"].startswith(ROUTE_PREFIX)}
 
 
 class ClaudeCodexRoutesTests(unittest.TestCase):

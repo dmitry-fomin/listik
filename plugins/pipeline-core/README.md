@@ -29,16 +29,15 @@
 | --- | --- | --- | --- |
 | `pipeline-spec-writer` | opus / high | ТЗ шага, порции, чек-листы; только каталог шагов, неясное — вопросом автору | `pipeline-full:high`, `pipeline-cc:high`, `pipeline-claude:high` — **`model: opus`** |
 | `pipeline-spec-writer-xhigh` | opus / xhigh | то же | `pipeline-full:xhigh`, `pipeline-cc:xhigh`, `pipeline-claude:xhigh` — **`model: opus`** |
-| `pipeline-spec-writer-medium` | opus / medium | то же | `pipeline-full:medium`, `pipeline-cc:medium`, `pipeline-cc:sol` — **`model: opus`** |
+| `pipeline-spec-writer-medium` | opus / medium | то же | `pipeline-full:medium`, `pipeline-cc:medium` — **`model: opus`** |
 | `pipeline-spec-writer-low` | opus / low | то же | `pipeline-full:low`, `pipeline-cc:low` — **`model: opus`** |
-| `pipeline-critic` | sonnet / high | штатный критик ТЗ и чек-листа (`model: sonnet`), критик `sonnet` в составе | этап 2 `pipeline-full:xhigh`, `pipeline-full:high`, `pipeline-full:medium`, `pipeline-full:cross`, `pipeline-cc:high`, `pipeline-cc:sol`; `pipeline-cc:xhigh` — критик `opus`, **`model: opus`**; `pipeline-claude:high` — критики `sonnet` и `opus`, **`model: sonnet`** и **`model: opus`** |
+| `pipeline-critic` | sonnet / high | штатный критик ТЗ и чек-листа (`model: sonnet`), критик `sonnet` в составе | этап 2 `pipeline-full:xhigh`, `pipeline-full:high`, `pipeline-full:medium`, `pipeline-full:cross`, `pipeline-cc:high`; `pipeline-full:low` — критик `haiku`, **`model: haiku`**; `pipeline-cc:xhigh` — критик `opus`, **`model: opus`**; `pipeline-claude:high` — критики `sonnet` и `opus`, **`model: sonnet`** и **`model: opus`** |
 | `pipeline-critic-xhigh` | sonnet / xhigh | критик ТЗ и чек-листа, тело — как у `pipeline-critic` | `pipeline-cc:xhigh` — критик `sonnet`, **`model: sonnet`**; `pipeline-claude:xhigh` — критики `sonnet` и `opus`, **`model: sonnet`** и **`model: opus`** |
 | `pipeline-critic-medium` | sonnet / medium | то же | `pipeline-cc:medium` — критик `sonnet`, **`model: sonnet`**; `pipeline-cc:high` — критик `opus`, **`model: opus`** |
-| `pipeline-implementer` | sonnet / medium | реализует одну порцию, не коммитит | `pipeline-full:medium`, `pipeline-cc:medium`, `pipeline-cc:xlow`, `pipeline-cc:nano`, `pipeline-cc:sol` — **`model: opus`** |
+| `pipeline-implementer` | sonnet / medium | реализует одну порцию, не коммитит | `pipeline-full:medium`, `pipeline-cc:medium`, `pipeline-cc:xlow`, `pipeline-cc:nano` — **`model: opus`** |
 | `pipeline-implementer-high` | sonnet / high | то же для неочевидных порций | `pipeline-full:high`, `pipeline-cc:high`, `pipeline-claude:high` — **`model: opus`** |
 | `pipeline-implementer-xhigh` | opus / xhigh | то же на максимальном усилии | `pipeline-full:xhigh`, `pipeline-cc:xhigh`; `pipeline-claude:xhigh` — **`model: opus`** |
 | `pipeline-implementer-low` | opus / low | то же на низком усилии | `pipeline-cc:low` (`model` в вызове не передаётся) |
-| `pipeline-implementer-solo` | sonnet / medium | задача в один проход и сам коммитит | `pipeline-claude:opus` — **`model: opus`** |
 | `pipeline-judge` | opus / high | приёмка: чек-лист, срезанные углы в диффе, вердикт, при зелёном — коммит; код не правит | `pipeline-claude:high` — при находке линз, **`model: sonnet`** |
 | `pipeline-judge-xhigh` | sonnet / xhigh | то же | `pipeline-claude:xhigh` — при находке линз, **`model: sonnet`** |
 | `pipeline-lens` | sonnet / high | линза приёмки | `pipeline-claude:high` — три линзы, **`model: sonnet`** |

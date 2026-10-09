@@ -431,11 +431,7 @@ class McpDiscoveredFromTests(TempDbTestCase):
 
 
 class ProtocolMentionsDiscoveredFromTests(TempDbTestCase):
-    """Пункт 2: протокол и блоки в AGENTS.md/CLAUDE.md говорят про --discovered-from."""
-
-    def test_protocol_documents_the_flag(self) -> None:
-        text = (paths.ROOT_DIR / "docs" / "harness-protocol.md").read_text(encoding="utf-8")
-        self.assertIn("--discovered-from", text)
+    """Пункт 2: блоки в AGENTS.md/CLAUDE.md говорят про --discovered-from."""
 
     def test_generated_block_matches_protocol(self) -> None:
         block = migrate.block()

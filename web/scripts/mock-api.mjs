@@ -980,8 +980,8 @@ const ROUTES = [
       spec: { provider: 'claude', label: 'ТЗ', title: 'ТЗ и чек-лист' },
       critic: {
         provider: 'claude',
-        label: 'S+DS+SWE',
-        title: 'Sonnet 5.5 · high + DeepSeek V4.1 + SWE-2 · max',
+        label: 'S+DS+GLM',
+        title: 'Sonnet 5.5 · high + DeepSeek V4.1 Flash + GLM 5.3 Flash',
       },
       impl: { provider: 'claude', label: 'Код', title: 'Реализация' },
       judge: { provider: 'grok', label: 'Судья', title: 'Проверка' },

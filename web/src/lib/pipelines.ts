@@ -59,7 +59,7 @@ export interface RoleCell {
   provider: ProviderKey
   /**
    * усилие одиночной модели (`xhigh`, `max`); если моделей несколько — короткая
-   * подпись вроде `S+DS+SWE`
+   * подпись вроде `S+DS+GLM`
    */
   label: string
   /** модель или модели по договорённости `roleModels`: `Модель · усилие + Модель …` */
@@ -95,8 +95,8 @@ export interface RoleModel {
  * даёт одну строку `{ name: label, effort: null }`. Названий моделей функция
  * не знает и текст не переписывает — только делит.
  *
- * Пример: `title` «Sonnet 5.5 · high + DeepSeek V4.1 + SWE-2 · max» →
- * Sonnet 5.5/high, DeepSeek V4.1/null, SWE-2/max; `label` «xhigh» и `title`
+ * Пример: `title` «Sonnet 5.5 · high + DeepSeek V4.1 Flash + GLM 5.3 Flash» →
+ * Sonnet 5.5/high, DeepSeek V4.1 Flash/null, GLM 5.3 Flash/null; `label` «xhigh» и `title`
  * «Opus 5.5» → Opus 5.5/xhigh; «GLM 5.3 Flash · 3 линзы → Grok 4.7 · xhigh» →
  * GLM 5.3 Flash/3 линзы, Grok 4.7/xhigh с `escalation`.
  */

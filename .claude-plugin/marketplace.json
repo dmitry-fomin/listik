@@ -34,7 +34,7 @@
       "name": "pipeline-claude",
       "source": "./plugins/pipeline-claude",
       "version": "1.0.0",
-      "description": "Пресеты конвейера только на Claude: opus — один проход Opus с коммитом, high и xhigh — полный конвейер силами Claude на усилии high или xhigh."
+      "description": "Пресеты конвейера только на Claude: high и xhigh — полный конвейер силами Claude на усилии high или xhigh."
     },
     {
       "name": "dsh",

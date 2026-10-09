@@ -73,7 +73,7 @@ class PipelineSchemesTests(unittest.TestCase):
 
     def test_every_route_has_valid_svg(self) -> None:
         routes = _routes()
-        self.assertEqual(len(routes), 17)
+        self.assertEqual(len(routes), 15)
         for route in routes:
             name = f"{route['plugin']}:{_skill(route)}"
             path = _svg_path(route)
@@ -108,8 +108,6 @@ class PipelineSchemesTests(unittest.TestCase):
         xlow = _texts(_svg_path(_route("full-xlow")))
         self.assertNotIn("ТЗ", xlow)
         self.assertNotIn("Критик", xlow)
-        opus = _texts(_svg_path(_route("claude-opus")))
-        self.assertEqual(sorted(t for t in opus if t in HEADS), ["Код", "Коммит порции"])
         self.assertEqual(_texts(_svg_path(_route("cc-low"))).count("Критик"), 1)
 
     def test_readme_schemes_section(self) -> None:
@@ -156,7 +154,7 @@ class PipelineSchemesCheckNegativeTests(unittest.TestCase):
         self._assert_fails_on(rel)
 
     def test_missing_file(self) -> None:
-        rel = "plugins/pipeline-cc/docs/sol.svg"
+        rel = "plugins/pipeline-cc/docs/medium.svg"
         (self.root / rel).unlink()
         self._assert_fails_on(rel)
 
@@ -175,7 +173,7 @@ class PipelineSchemesDeterminismTests(unittest.TestCase):
             shutil.copy(REPO_DIR / "routes.json", root / "routes.json")
             self.assertEqual(_run("--root", str(root)).returncode, 0)
             outputs.append({p.relative_to(root).as_posix(): p.read_bytes() for p in root.glob("plugins/*/docs/*.svg")})
-        self.assertEqual(len(outputs[0]), 17)
+        self.assertEqual(len(outputs[0]), 15)
         self.assertEqual(outputs[0], outputs[1])
 
 

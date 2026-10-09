@@ -46,7 +46,7 @@ Options for `run`/`resume`:
 | `--write` / `--bash` | off | aliases for `--permission write` / `--permission bash`, kept for Listik routes and pipeline presets |
 | `--cwd <dir>` | current | working directory of the run |
 | `--timeout <s>` | 540 foreground, 7200 background | `0` removes the limit |
-| `--model <channel\|provider/model>` | `glm` = `b-ai-glm/glm-5.3-flash` | short channel name or a full `provider/model` id |
+| `--model <channel\|provider/model>` | `glm` = `glm-a6/glm-5.3-flash` | short channel name or a full `provider/model` id |
 | `--channel <channel>` | `glm` | short channel name only; never combine with `--model` |
 | `--thinking <level>` | model default | `off`, `minimal`, `low`, `medium`, `high`, `xhigh`, `max` — this list only |
 
@@ -63,7 +63,7 @@ Options for `run`/`resume`:
 - **Secrets are a prompt-side concern.** pi opens files on its own, so scope the task to
   the files it needs and explicitly forbid `.env`, `*.key`, `*.pem`, `credentials.json`.
 - **Channel and thinking level are the human's choice.** Runs go on `glm`
-  (`b-ai-glm/glm-5.3-flash`). Add `--channel`/`--model`/`--thinking` only when the human
+  (`glm-a6/glm-5.3-flash`). Add `--channel`/`--model`/`--thinking` only when the human
   named it, or when a pipeline preset passes it — model-per-role is part of the preset.
   A default-channel timeout is *not* an exception: report it and offer the choice instead
   of silently switching.
@@ -117,12 +117,11 @@ the job is honestly `running`.
   final assistant message from the event stream.
 - A provider error arrives as `stop_reason=error` — that is job status `failed`, not a
   script crash; the text is in `logs`.
-- `~/.pi/agent/extensions/b-ai.ts` registers the `b-ai-glm` provider (channel `glm`); the
-  `deepseek` channel is pi's built-in `deepseek` provider. Disabling the extension removes `glm`. `PI_CLAUDE_DEFAULT_MODEL` moves the default,
+- The `glm` channel is the `glm-a6` provider from `~/.pi/agent/models.json`; the
+  `deepseek` channel is pi's built-in `deepseek` provider. `PI_CLAUDE_DEFAULT_MODEL` moves the default,
   `PI_CLAUDE_BIN` points at the binary, `PI_CLAUDE_STATE_DIR` at the state directory.
-- **`pi auth check` lies for these providers** (`not_ready` / `provider_not_found`) even
-  when runs succeed, because they are registered by an extension rather than by static
-  config. Readiness is decided by a probe run, never by `auth check`.
+- **`pi auth check` only says a key is stored**, not that the channel answers. Readiness
+  is decided by a probe run, never by `auth check`.
 
 ## Exit codes
 

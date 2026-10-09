@@ -2,7 +2,7 @@
   "name": "pipeline-claude",
   "displayName": "Pipeline: Claude only",
   "version": "1.0.0",
-  "description": "Pipeline presets run only on Claude: opus (one Opus pass that commits itself), high and xhigh (a Claude-only spec, critique, code and acceptance crew at high or xhigh effort); requires the pipeline-core plugin.",
+  "description": "Pipeline presets run only on Claude: high and xhigh (a Claude-only spec, critique, code and acceptance crew at high or xhigh effort); requires the pipeline-core plugin.",
   "author": {
     "name": "Dmitry Fomin",
     "url": "https://github.com/dmitry-fomin"

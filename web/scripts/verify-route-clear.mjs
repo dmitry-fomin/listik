@@ -234,7 +234,7 @@ try {
         low: pipeline('full-low'),
         highCritic: modelsOf(critic),
         highCriticTitle: critic ? critic.getAttribute('title') : null,
-        highHasShort: row('full-high') ? row('full-high').textContent.includes('S+DS+SWE') : null,
+        highHasShort: row('full-high') ? row('full-high').textContent.includes('S+DS+GLM') : null,
         lowJudge: modelsOf(low[3]),
         lowCritic: modelsOf(low[1]),
         swarmGlyphs: row('dsh-direct') ? row('dsh-direct').querySelectorAll('.listik-harness-icon').length : -1,
@@ -248,10 +248,10 @@ try {
       && seen.low.models > 0 && seen.low.glyphs === 0
       && same(seen.highCritic, [
         { name: 'Sonnet 5.5', effort: 'high' },
-        { name: 'DeepSeek V4.1', effort: null },
-        { name: 'SWE-2', effort: 'max' },
+        { name: 'DeepSeek V4.1 Flash', effort: null },
+        { name: 'GLM 5.3 Flash', effort: null },
       ])
-      && seen.highCriticTitle === 'Sonnet 5.5 · high + DeepSeek V4.1 + SWE-2 · max'
+      && seen.highCriticTitle === 'Sonnet 5.5 · high + DeepSeek V4.1 Flash + GLM 5.3 Flash'
       && seen.highHasShort === false
       && same(seen.lowJudge, [{ name: 'Проверка', effort: 'Судья' }])
       && same(seen.lowCritic, [{ name: 'GLM — критик', effort: null }])

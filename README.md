@@ -87,18 +87,16 @@ MCP-инструментами `listik_*` или командой `listik new`. 
 
 | Маршрут | Скил | ТЗ | Критика | Реализация | Приёмка | Когда берут |
 |---|---|---|---|---|---|---|
-| `full-xhigh` | `pipeline-full:xhigh` | Opus xhigh | Sonnet + DeepSeek + SWE-2 | Opus xhigh | линзы GLM → Grok xhigh | ошибка дороже прогона |
-| `full-cross` | `pipeline-full:cross` | Devin | DeepSeek + Sonnet | GLM в pi | Grok | автор ТЗ и код — разные вендоры |
-| `full-high` | `pipeline-full:high` | Opus high | Sonnet + DeepSeek + SWE-2 | Opus high | линзы GLM → Grok xhigh | расклад по умолчанию |
-| `full-medium` | `pipeline-full:medium` | Opus medium | Sonnet + DeepSeek | Opus medium | Grok high | работа понятная |
-| `cc-sol` | `pipeline-cc:sol` | Opus medium | Sonnet + Sol medium (Codex) | Opus medium | Sol high (Codex) | проверяющие от OpenAI вместо Grok |
-| `full-low` | `pipeline-full:low` | Opus low | DeepSeek + GLM | devin SWE-2 max | Grok high | код вне квоты Max |
-| `full-xlow` | `pipeline-full:xlow` | — | — | devin SWE-2 max | Grok high | один прогон с приёмкой |
-| `full-nano` | `pipeline-full:nano` | — | — | devin SWE-2 high | GLM в pi | короткая задача: сделать и принять |
-| `cc-xhigh`, `cc-high`, `cc-medium`, `cc-low`, `cc-xlow`, `cc-nano` | `pipeline-cc:<уровень>` | по уровню | по уровню | Opus | Astra (Codex) | линейка Claude + Codex — см. `plugins/pipeline-cc/README.md` |
-| `claude-high` | `pipeline-claude:high` | Opus high | Sonnet high + Opus high | Opus high | линзы Sonnet → Sonnet high | только Claude: внешних денег ноль |
+| `full-xhigh` | `pipeline-full:xhigh` | Opus xhigh | Sonnet + DeepSeek V4.1 Flash + GLM 5.3 Flash | Opus xhigh | линзы GLM 5.3 Flash → Grok xhigh | ошибка дороже прогона |
 | `claude-xhigh` | `pipeline-claude:xhigh` | Opus xhigh | Sonnet xhigh + Opus xhigh | Opus xhigh | линзы Sonnet → Sonnet xhigh | только Claude: внешних денег ноль |
-| `claude-opus` | `pipeline-claude:opus` | — | — | Opus medium | — | без ТЗ, критики и приёмки |
+| `full-high` | `pipeline-full:high` | Opus high | Sonnet + DeepSeek V4.1 Flash + GLM 5.3 Flash | Opus high | линзы GLM 5.3 Flash → Grok xhigh | расклад по умолчанию |
+| `claude-high` | `pipeline-claude:high` | Opus high | Sonnet high + Opus high | Opus high | линзы Sonnet → Sonnet high | только Claude: внешних денег ноль |
+| `full-medium` | `pipeline-full:medium` | Opus medium | Sonnet + DeepSeek V4.1 Flash | Opus medium | Grok high | работа понятная |
+| `full-low` | `pipeline-full:low` | Opus low | DeepSeek V4.1 Flash + GLM 5.3 Flash + Haiku 5.5 | devin SWE-2 max | Grok high | код вне квоты Max |
+| `full-xlow` | `pipeline-full:xlow` | — | — | devin SWE-2 max | Grok high | один прогон с приёмкой |
+| `full-nano` | `pipeline-full:nano` | — | — | devin SWE-2 high | GLM 5.3 Flash в pi | короткая задача: сделать и принять |
+| `full-cross` | `pipeline-full:cross` | Devin | DeepSeek V4.1 Flash + Sonnet | GLM 5.3 Flash в pi | Grok | автор ТЗ и код — разные вендоры |
+| `cc-xhigh`, `cc-high`, `cc-medium`, `cc-low`, `cc-xlow`, `cc-nano` | `pipeline-cc:<уровень>` | по уровню | по уровню | Opus | Astra (Codex) | линейка Claude + Codex — см. `plugins/pipeline-cc/README.md` |
 
 Схема каждого пресета — в README его плагина: [pipeline-full](plugins/pipeline-full/README.md),
 [pipeline-cc](plugins/pipeline-cc/README.md), [pipeline-claude](plugins/pipeline-claude/README.md).

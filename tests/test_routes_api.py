@@ -5,7 +5,7 @@
 `test_projects_add.py`): `get_conn` подменяется на временное соединение, ошибки — это
 `server.ApiError`, пойманный `assertRaises`. Скилы читаются из настоящих
 `plugins/pipeline-full|pipeline-cc|pipeline-claude/skills/*` репозитория (вместе — ровно те
-17 ключей, что и в образце `routes.json`, ключ `<плагин без pipeline->-<скил>`) — кроме
+15 ключей, что и в образце `routes.json`, ключ `<плагин без pipeline->-<скил>`) — кроме
 тестов, которые явно подменяют `skills.PIPELINE_PLUGINS_DIR` на пустой/чужой каталог.
 """
 from __future__ import annotations
@@ -28,12 +28,7 @@ from tests.helpers import TempDbTestCase
 REPO_DIR = pathlib.Path(__file__).resolve().parent.parent
 ROUTES_JSON = REPO_DIR / "routes.json"
 
-EXPECTED_KEYS = [
-    "full-xhigh", "full-high", "full-medium", "cc-sol", "full-low",
-    "full-xlow", "full-nano", "full-cross", "claude-xhigh", "claude-high", "claude-opus",
-    "cc-xhigh", "cc-high", "cc-medium", "cc-low",
-    "cc-xlow", "cc-nano",
-]
+from tests.test_routes_config import EXPECTED_KEYS
 
 
 def pipeline_record(key: str = "demo-pipeline", **overrides) -> dict:
@@ -209,8 +204,8 @@ class PluginFieldApiTests(RoutesApiBase):
         self.assertEqual(records["full-high"]["plugin"], "pipeline-full")
         self.assertEqual(records["full-high"]["skill_path"],
                          "plugins/pipeline-full/skills/high/SKILL.md")
-        self.assertEqual(records["cc-sol"]["plugin"], "pipeline-cc")
-        self.assertEqual(records["claude-opus"]["plugin"], "pipeline-claude")
+        self.assertEqual(records["cc-high"]["plugin"], "pipeline-cc")
+        self.assertEqual(records["claude-high"]["plugin"], "pipeline-claude")
         self.assertIsNone(records["roy"]["plugin"])
         self.assertEqual(data["warnings"], [])
 
@@ -264,9 +259,9 @@ class SkillCatalogTests(RoutesApiBase):
         self.assertEqual(info["skill"], "high")
         self.assertEqual(info["title"], "high")
         self.assertEqual(info["skill_path"], "plugins/pipeline-full/skills/high/SKILL.md")
-        self.assertEqual(skills_mod.skill_info("cc-sol")["skill"], "sol")
-        self.assertEqual(skills_mod.skill_info("cc-sol")["skill_path"],
-                         "plugins/pipeline-cc/skills/sol/SKILL.md")
+        self.assertEqual(skills_mod.skill_info("cc-high")["skill"], "high")
+        self.assertEqual(skills_mod.skill_info("cc-high")["skill_path"],
+                         "plugins/pipeline-cc/skills/high/SKILL.md")
         for key in ("xhigh-pipeline", "nope-high", "full-nope"):
             with self.subTest(key=key):
                 self.assertIsNone(skills_mod.skill_info(key))

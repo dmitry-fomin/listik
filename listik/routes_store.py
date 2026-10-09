@@ -477,7 +477,7 @@ def ensure_imported(conn: sqlite3.Connection) -> dict:
 ROUTE_ADDITIONS: list[tuple[int, tuple[str, ...]]] = [
     (1, ()),  # было devin-pipeline — маршрут снят как дубликат xlow (ныне full-xlow)
     # Записи 2 и 3: ключи переименованы в listik-d9rj (claude-opus, cc-<уровень>).
-    (2, ("claude-opus",)),  # переименован из opus-single-pipeline
+    (2, ()),  # было claude-opus (из opus-single-pipeline) — пресет снят 09.10.2026
     (3, ("cc-xhigh", "cc-high", "cc-medium",
          "cc-low", "cc-xlow", "cc-nano")),  # пресеты pipeline-cc (бывший claude-codex)
     (4, ("claude-xhigh", "claude-high")),  # пресеты pipeline-claude с линзами (listik-d9rj)

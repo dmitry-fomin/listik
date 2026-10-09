@@ -106,8 +106,8 @@ listik memory "про что-то"
 ```
 
 Пресеты `pipeline-full` и `pipeline-cc` зовут внешние харнессы скилами этих плагинов; Grok остаётся
-отдельным (`grok@grok-build`). `pipeline-claude:opus` обходится
-субагентом Claude. При изменении плагина поднимайте `version` в его `plugin.json` и в `marketplace.json`.
+отдельным (`grok@grok-build`). `pipeline-claude:*` обходятся
+субагентами Claude. При изменении плагина поднимайте `version` в его `plugin.json` и в `marketplace.json`.
 
 **MCP** (инструменты `listik_*`, список — в docs/API.md):
 

@@ -107,7 +107,7 @@ Database migrations exist as two parallel mechanisms — don't confuse them:
   plus the optional `skill` (a launcher skill, `плагин:скил` — e.g. `pi:pi-delegate`) and its
   flat `params`; the same validation (`routes._validate_roles`) serves the seed file and the HTTP
   path. A pipeline route key is `<plugin without "pipeline-">-<skill name>` (`full-high`,
-  `cc-sol`, `claude-opus`); a `kind=pipeline` record has the `plugin` field (the preset's plugin:
+  `cc-high`, `claude-high`); a `kind=pipeline` record has the `plugin` field (the preset's plugin:
   `pipeline-full`/`pipeline-cc`/`pipeline-claude`; `null` for swarm routes and the author's own
   pipelines, checked by `routes.check_plugin`). It feeds the `{plugin}`/`{skill}` placeholders
   in `command` (`{skill}` is the key without its plugin prefix, both empty without `plugin`;
@@ -134,7 +134,7 @@ Database migrations exist as two parallel mechanisms — don't confuse them:
   The bodies differ per file (`migrate.body_for`): `AGENTS.md` gets the full protocol read from
   `docs/harness-protocol.md` (`migrate.body()`) — change the protocol there, not in `migrate.py`;
   the same text also ships as the skill `.agents/skills/listik/SKILL.md` (`migrate.SKILL_REL`) for
-  harnesses that read `.agents/skills`, and `test_migrate` requires the two to be equal;
+  harnesses that read `.agents/skills` — keep the two equal;
   `init-projects` symlinks each project's `.agents/skills/listik` to that skill in the install
   (`migrate.skill_source()`, via `app/current`) and gitignores the link, and `listik worktree`
   repeats the link in the task tree, hidden via `info/exclude`;

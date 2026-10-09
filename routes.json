@@ -17,8 +17,8 @@
         },
         "critic": {
           "provider": "claude",
-          "label": "S+DS+SWE",
-          "title": "Sonnet 5.5 · high + DeepSeek V4.1 + SWE-2 · max"
+          "label": "S+DS+GLM",
+          "title": "Sonnet 5.5 · high + DeepSeek V4.1 Flash + GLM 5.3 Flash"
         },
         "impl": {
           "provider": "claude",
@@ -39,265 +39,38 @@
       ]
     },
     {
-      "key": "full-high",
-      "kind": "pipeline",
-      "plugin": "pipeline-full",
-      "title": "high · по умолчанию",
-      "hint": "от 40 мин на задачу",
-      "visible": true,
-      "icon": "high",
-      "roles": {
-        "spec": {
-          "provider": "claude",
-          "label": "high",
-          "title": "Opus 5.5"
-        },
-        "critic": {
-          "provider": "claude",
-          "label": "S+DS+SWE",
-          "title": "Sonnet 5.5 · high + DeepSeek V4.1 + SWE-2 · max"
-        },
-        "impl": {
-          "provider": "claude",
-          "label": "high",
-          "title": "Opus 5.5"
-        },
-        "judge": {
-          "provider": "grok",
-          "label": "линзы",
-          "title": "GLM 5.3 Flash · 3 линзы → Grok 4.7 · xhigh"
-        }
-      },
-      "command": [
-        "claude",
-        "--dangerously-skip-permissions",
-        "-p",
-        "Задача {task_id} (проект {project}), маршрут {route}. Запусти скил /{plugin}:{skill} и веди карточку по нему: ты оркестратор, кода не пишешь и порцию не коммитишь. Протокол — скил listik:listik. Первым действием, до чтения кода и show: claim {task_id} --holder claude. Дальше heartbeat каждые 10–15 мин, пока карточку держишь ты. Все команды с --actor agent:claude --harness claude."
-      ]
-    },
-    {
-      "key": "full-medium",
-      "kind": "pipeline",
-      "plugin": "pipeline-full",
-      "title": "medium",
-      "hint": "30 мин на задачу, когда работа понятная",
-      "visible": true,
-      "icon": "medium",
-      "roles": {
-        "spec": {
-          "provider": "claude",
-          "label": "medium",
-          "title": "Opus 5.5"
-        },
-        "critic": {
-          "provider": "claude",
-          "label": "S+DS",
-          "title": "Sonnet 5.5 · high + DeepSeek V4.1"
-        },
-        "impl": {
-          "provider": "claude",
-          "label": "medium",
-          "title": "Opus 5.5"
-        },
-        "judge": {
-          "provider": "grok",
-          "label": "high",
-          "title": "Grok 4.7"
-        }
-      },
-      "command": [
-        "claude",
-        "--dangerously-skip-permissions",
-        "-p",
-        "Задача {task_id} (проект {project}), маршрут {route}. Запусти скил /{plugin}:{skill} и веди карточку по нему: ты оркестратор, кода не пишешь и порцию не коммитишь. Протокол — скил listik:listik. Первым действием, до чтения кода и show: claim {task_id} --holder claude. Дальше heartbeat каждые 10–15 мин, пока карточку держишь ты. Все команды с --actor agent:claude --harness claude."
-      ]
-    },
-    {
-      "key": "cc-sol",
+      "key": "cc-xhigh",
       "kind": "pipeline",
       "plugin": "pipeline-cc",
-      "title": "sol",
-      "hint": "Opus ТЗ и код · Sonnet+Sol критика · Sol приёмка",
+      "title": "cc xhigh",
+      "hint": "Claude + Codex · от 50 мин на задачу",
       "visible": true,
-      "icon": "medium",
+      "icon": "xhigh",
       "roles": {
         "spec": {
           "provider": "claude",
-          "label": "medium",
+          "label": "xhigh",
           "title": "Opus 5.5"
         },
         "critic": {
           "provider": "claude",
-          "label": "S+Sol",
-          "title": "Sonnet 5.5 · high + GPT-6.1 Sol · medium"
+          "label": "S+O+Sol",
+          "title": "Sonnet 5.5 · xhigh + Opus 5.5 · high + GPT-6.1 Sol · high"
         },
         "impl": {
           "provider": "claude",
-          "label": "medium",
+          "label": "xhigh",
           "title": "Opus 5.5"
         },
         "judge": {
           "provider": "openai",
           "label": "high",
-          "title": "GPT-6.1 Sol",
+          "title": "GPT-6 Astra",
           "skill": "codex:codex-delegate",
           "params": {
-            "model": "gpt-6.1-sol",
+            "model": "gpt-6-astra",
             "effort": "high"
           }
-        }
-      },
-      "command": [
-        "claude",
-        "--dangerously-skip-permissions",
-        "-p",
-        "Задача {task_id} (проект {project}), маршрут {route}. Запусти скил /{plugin}:{skill} и веди карточку по нему: ты оркестратор, кода не пишешь и порцию не коммитишь. Протокол — скил listik:listik. Первым действием, до чтения кода и show: claim {task_id} --holder claude. Дальше heartbeat каждые 10–15 мин, пока карточку держишь ты. Все команды с --actor agent:claude --harness claude."
-      ]
-    },
-    {
-      "key": "full-low",
-      "kind": "pipeline",
-      "plugin": "pipeline-full",
-      "title": "low",
-      "hint": "на 20 мин, с ТЗ и критикой",
-      "visible": true,
-      "icon": "low",
-      "roles": {
-        "spec": {
-          "provider": "claude",
-          "label": "low",
-          "title": "Opus 5.5"
-        },
-        "critic": {
-          "provider": "glm",
-          "label": "GLM+DS",
-          "title": "GLM 5.3 + DeepSeek V4.1",
-          "skill": "pi:pi-delegate"
-        },
-        "impl": {
-          "provider": "devin",
-          "label": "max",
-          "title": "SWE-2",
-          "skill": "devin:devin-delegate",
-          "params": {
-            "thinking": "max"
-          }
-        },
-        "judge": {
-          "provider": "grok",
-          "label": "high",
-          "title": "Grok 4.7"
-        }
-      },
-      "command": [
-        "claude",
-        "--dangerously-skip-permissions",
-        "-p",
-        "Задача {task_id} (проект {project}), маршрут {route}. Запусти скил /{plugin}:{skill} и веди карточку по нему: ты оркестратор, кода не пишешь и порцию не коммитишь. Протокол — скил listik:listik. Первым действием, до чтения кода и show: claim {task_id} --holder claude. Дальше heartbeat каждые 10–15 мин, пока карточку держишь ты. Все команды с --actor agent:claude --harness claude."
-      ]
-    },
-    {
-      "key": "full-xlow",
-      "kind": "pipeline",
-      "plugin": "pipeline-full",
-      "title": "xlow",
-      "hint": "без ТЗ и критики · не для эпиков",
-      "visible": true,
-      "icon": "xlow",
-      "roles": {
-        "impl": {
-          "provider": "devin",
-          "label": "max",
-          "title": "SWE-2",
-          "skill": "devin:devin-delegate",
-          "params": {
-            "thinking": "max"
-          }
-        },
-        "judge": {
-          "provider": "grok",
-          "label": "high",
-          "title": "Grok 4.7"
-        }
-      },
-      "command": [
-        "claude",
-        "--dangerously-skip-permissions",
-        "-p",
-        "Задача {task_id} (проект {project}), маршрут {route}. Запусти скил /{plugin}:{skill} и веди карточку по нему: ты оркестратор, кода не пишешь и порцию не коммитишь. Протокол — скил listik:listik. Первым действием, до чтения кода и show: claim {task_id} --holder claude. Дальше heartbeat каждые 10–15 мин, пока карточку держишь ты. Все команды с --actor agent:claude --harness claude."
-      ]
-    },
-    {
-      "key": "full-nano",
-      "kind": "pipeline",
-      "plugin": "pipeline-full",
-      "title": "nano",
-      "hint": "без ТЗ и критики · не для эпиков",
-      "visible": true,
-      "icon": "xlow",
-      "roles": {
-        "impl": {
-          "provider": "devin",
-          "label": "high",
-          "title": "SWE-2",
-          "skill": "devin:devin-delegate",
-          "params": {
-            "thinking": "high"
-          }
-        },
-        "judge": {
-          "provider": "glm",
-          "label": "GLM",
-          "title": "GLM 5.3",
-          "skill": "pi:pi-delegate",
-          "params": {
-            "channel": "glm"
-          }
-        }
-      },
-      "command": [
-        "claude",
-        "--dangerously-skip-permissions",
-        "-p",
-        "Задача {task_id} (проект {project}), маршрут {route}. Запусти скил /{plugin}:{skill} и веди карточку по нему: ты оркестратор, кода не пишешь и порцию не коммитишь. Протокол — скил listik:listik. Первым действием, до чтения кода и show: claim {task_id} --holder claude. Дальше heartbeat каждые 10–15 мин, пока карточку держишь ты. Все команды с --actor agent:claude --harness claude."
-      ]
-    },
-    {
-      "key": "full-cross",
-      "kind": "pipeline",
-      "plugin": "pipeline-full",
-      "title": "cross",
-      "hint": "Devin ТЗ · Sonnet+DS критика · GLM код · Grok приёмка",
-      "visible": true,
-      "icon": "xhigh",
-      "roles": {
-        "spec": {
-          "provider": "devin",
-          "label": "max",
-          "title": "SWE-2",
-          "skill": "devin:devin-delegate",
-          "params": {
-            "thinking": "max"
-          }
-        },
-        "critic": {
-          "provider": "claude",
-          "label": "S+DS",
-          "title": "Sonnet 5.5 · high + DeepSeek V4.1"
-        },
-        "impl": {
-          "provider": "glm",
-          "label": "GLM",
-          "title": "GLM 5.3",
-          "skill": "pi:pi-delegate",
-          "params": {
-            "channel": "glm"
-          }
-        },
-        "judge": {
-          "provider": "grok",
-          "label": "xhigh",
-          "title": "Grok 4.7"
         }
       },
       "command": [
@@ -345,11 +118,11 @@
       ]
     },
     {
-      "key": "claude-high",
+      "key": "full-high",
       "kind": "pipeline",
-      "plugin": "pipeline-claude",
-      "title": "claude high",
-      "hint": "только Claude: внешних денег ноль",
+      "plugin": "pipeline-full",
+      "title": "high",
+      "hint": "от 40 мин на задачу",
       "visible": true,
       "icon": "high",
       "roles": {
@@ -360,8 +133,8 @@
         },
         "critic": {
           "provider": "claude",
-          "label": "S+O",
-          "title": "Sonnet 5.5 · high + Opus 5.5 · high"
+          "label": "S+DS+GLM",
+          "title": "Sonnet 5.5 · high + DeepSeek V4.1 Flash + GLM 5.3 Flash"
         },
         "impl": {
           "provider": "claude",
@@ -369,76 +142,9 @@
           "title": "Opus 5.5"
         },
         "judge": {
-          "provider": "claude",
+          "provider": "grok",
           "label": "линзы",
-          "title": "Sonnet 5.5 · 3 линзы → Sonnet 5.5 · high"
-        }
-      },
-      "command": [
-        "claude",
-        "--dangerously-skip-permissions",
-        "-p",
-        "Задача {task_id} (проект {project}), маршрут {route}. Запусти скил /{plugin}:{skill} и веди карточку по нему: ты оркестратор, кода не пишешь и порцию не коммитишь. Протокол — скил listik:listik. Первым действием, до чтения кода и show: claim {task_id} --holder claude. Дальше heartbeat каждые 10–15 мин, пока карточку держишь ты. Все команды с --actor agent:claude --harness claude."
-      ]
-    },
-    {
-      "key": "claude-opus",
-      "kind": "pipeline",
-      "plugin": "pipeline-claude",
-      "title": "Opus",
-      "hint": "без ТЗ, критики и приёмки",
-      "visible": true,
-      "roles": {
-        "impl": {
-          "provider": "claude",
-          "label": "medium",
-          "title": "Opus"
-        }
-      },
-      "strip": {
-        "provider": "claude",
-        "label": "Opus"
-      },
-      "command": [
-        "claude",
-        "--dangerously-skip-permissions",
-        "-p",
-        "Задача {task_id} (проект {project}), маршрут {route}. Запусти скил /{plugin}:{skill} и веди карточку по нему: ты оркестратор, кода не пишешь и порцию не коммитишь. Протокол — скил listik:listik. Первым действием, до чтения кода и show: claim {task_id} --holder claude. Дальше heartbeat каждые 10–15 мин, пока карточку держишь ты. Все команды с --actor agent:claude --harness claude."
-      ]
-    },
-    {
-      "key": "cc-xhigh",
-      "kind": "pipeline",
-      "plugin": "pipeline-cc",
-      "title": "cc xhigh",
-      "hint": "Claude + Codex · от 50 мин на задачу",
-      "visible": true,
-      "icon": "xhigh",
-      "roles": {
-        "spec": {
-          "provider": "claude",
-          "label": "xhigh",
-          "title": "Opus 5.5"
-        },
-        "critic": {
-          "provider": "claude",
-          "label": "S+O+Sol",
-          "title": "Sonnet 5.5 · xhigh + Opus 5.5 · high + GPT-6.1 Sol · high"
-        },
-        "impl": {
-          "provider": "claude",
-          "label": "xhigh",
-          "title": "Opus 5.5"
-        },
-        "judge": {
-          "provider": "openai",
-          "label": "high",
-          "title": "GPT-6 Astra",
-          "skill": "codex:codex-delegate",
-          "params": {
-            "model": "gpt-6-astra",
-            "effort": "high"
-          }
+          "title": "GLM 5.3 Flash · 3 линзы → Grok 4.7 · xhigh"
         }
       },
       "command": [
@@ -491,6 +197,80 @@
       ]
     },
     {
+      "key": "claude-high",
+      "kind": "pipeline",
+      "plugin": "pipeline-claude",
+      "title": "claude high",
+      "hint": "только Claude: внешних денег ноль",
+      "visible": true,
+      "icon": "high",
+      "roles": {
+        "spec": {
+          "provider": "claude",
+          "label": "high",
+          "title": "Opus 5.5"
+        },
+        "critic": {
+          "provider": "claude",
+          "label": "S+O",
+          "title": "Sonnet 5.5 · high + Opus 5.5 · high"
+        },
+        "impl": {
+          "provider": "claude",
+          "label": "high",
+          "title": "Opus 5.5"
+        },
+        "judge": {
+          "provider": "claude",
+          "label": "линзы",
+          "title": "Sonnet 5.5 · 3 линзы → Sonnet 5.5 · high"
+        }
+      },
+      "command": [
+        "claude",
+        "--dangerously-skip-permissions",
+        "-p",
+        "Задача {task_id} (проект {project}), маршрут {route}. Запусти скил /{plugin}:{skill} и веди карточку по нему: ты оркестратор, кода не пишешь и порцию не коммитишь. Протокол — скил listik:listik. Первым действием, до чтения кода и show: claim {task_id} --holder claude. Дальше heartbeat каждые 10–15 мин, пока карточку держишь ты. Все команды с --actor agent:claude --harness claude."
+      ]
+    },
+    {
+      "key": "full-medium",
+      "kind": "pipeline",
+      "plugin": "pipeline-full",
+      "title": "medium",
+      "hint": "30 мин на задачу, когда работа понятная",
+      "visible": true,
+      "icon": "medium",
+      "roles": {
+        "spec": {
+          "provider": "claude",
+          "label": "medium",
+          "title": "Opus 5.5"
+        },
+        "critic": {
+          "provider": "claude",
+          "label": "S+DS",
+          "title": "Sonnet 5.5 · high + DeepSeek V4.1 Flash"
+        },
+        "impl": {
+          "provider": "claude",
+          "label": "medium",
+          "title": "Opus 5.5"
+        },
+        "judge": {
+          "provider": "grok",
+          "label": "high",
+          "title": "Grok 4.7"
+        }
+      },
+      "command": [
+        "claude",
+        "--dangerously-skip-permissions",
+        "-p",
+        "Задача {task_id} (проект {project}), маршрут {route}. Запусти скил /{plugin}:{skill} и веди карточку по нему: ты оркестратор, кода не пишешь и порцию не коммитишь. Протокол — скил listik:listik. Первым действием, до чтения кода и show: claim {task_id} --holder claude. Дальше heartbeat каждые 10–15 мин, пока карточку держишь ты. Все команды с --actor agent:claude --harness claude."
+      ]
+    },
+    {
       "key": "cc-medium",
       "kind": "pipeline",
       "plugin": "pipeline-cc",
@@ -523,6 +303,48 @@
             "model": "gpt-6-astra",
             "effort": "high"
           }
+        }
+      },
+      "command": [
+        "claude",
+        "--dangerously-skip-permissions",
+        "-p",
+        "Задача {task_id} (проект {project}), маршрут {route}. Запусти скил /{plugin}:{skill} и веди карточку по нему: ты оркестратор, кода не пишешь и порцию не коммитишь. Протокол — скил listik:listik. Первым действием, до чтения кода и show: claim {task_id} --holder claude. Дальше heartbeat каждые 10–15 мин, пока карточку держишь ты. Все команды с --actor agent:claude --harness claude."
+      ]
+    },
+    {
+      "key": "full-low",
+      "kind": "pipeline",
+      "plugin": "pipeline-full",
+      "title": "low",
+      "hint": "на 20 мин, с ТЗ и критикой",
+      "visible": true,
+      "icon": "low",
+      "roles": {
+        "spec": {
+          "provider": "claude",
+          "label": "low",
+          "title": "Opus 5.5"
+        },
+        "critic": {
+          "provider": "glm",
+          "label": "GLM+DS+H",
+          "title": "GLM 5.3 Flash + DeepSeek V4.1 Flash + Haiku 5.5 · high",
+          "skill": "pi:pi-delegate"
+        },
+        "impl": {
+          "provider": "devin",
+          "label": "max",
+          "title": "SWE-2",
+          "skill": "devin:devin-delegate",
+          "params": {
+            "thinking": "max"
+          }
+        },
+        "judge": {
+          "provider": "grok",
+          "label": "high",
+          "title": "Grok 4.7"
         }
       },
       "command": [
@@ -580,6 +402,37 @@
       ]
     },
     {
+      "key": "full-xlow",
+      "kind": "pipeline",
+      "plugin": "pipeline-full",
+      "title": "xlow",
+      "hint": "без ТЗ и критики · не для эпиков",
+      "visible": true,
+      "icon": "xlow",
+      "roles": {
+        "impl": {
+          "provider": "devin",
+          "label": "max",
+          "title": "SWE-2",
+          "skill": "devin:devin-delegate",
+          "params": {
+            "thinking": "max"
+          }
+        },
+        "judge": {
+          "provider": "grok",
+          "label": "high",
+          "title": "Grok 4.7"
+        }
+      },
+      "command": [
+        "claude",
+        "--dangerously-skip-permissions",
+        "-p",
+        "Задача {task_id} (проект {project}), маршрут {route}. Запусти скил /{plugin}:{skill} и веди карточку по нему: ты оркестратор, кода не пишешь и порцию не коммитишь. Протокол — скил listik:listik. Первым действием, до чтения кода и show: claim {task_id} --holder claude. Дальше heartbeat каждые 10–15 мин, пока карточку держишь ты. Все команды с --actor agent:claude --harness claude."
+      ]
+    },
+    {
       "key": "cc-xlow",
       "kind": "pipeline",
       "plugin": "pipeline-cc",
@@ -601,6 +454,41 @@
           "params": {
             "model": "gpt-6-astra",
             "effort": "medium"
+          }
+        }
+      },
+      "command": [
+        "claude",
+        "--dangerously-skip-permissions",
+        "-p",
+        "Задача {task_id} (проект {project}), маршрут {route}. Запусти скил /{plugin}:{skill} и веди карточку по нему: ты оркестратор, кода не пишешь и порцию не коммитишь. Протокол — скил listik:listik. Первым действием, до чтения кода и show: claim {task_id} --holder claude. Дальше heartbeat каждые 10–15 мин, пока карточку держишь ты. Все команды с --actor agent:claude --harness claude."
+      ]
+    },
+    {
+      "key": "full-nano",
+      "kind": "pipeline",
+      "plugin": "pipeline-full",
+      "title": "nano",
+      "hint": "без ТЗ и критики · не для эпиков",
+      "visible": true,
+      "icon": "xlow",
+      "roles": {
+        "impl": {
+          "provider": "devin",
+          "label": "high",
+          "title": "SWE-2",
+          "skill": "devin:devin-delegate",
+          "params": {
+            "thinking": "high"
+          }
+        },
+        "judge": {
+          "provider": "glm",
+          "label": "GLM",
+          "title": "GLM 5.3 Flash",
+          "skill": "pi:pi-delegate",
+          "params": {
+            "channel": "glm"
           }
         }
       },
@@ -634,6 +522,51 @@
             "model": "gpt-6-astra",
             "effort": "medium"
           }
+        }
+      },
+      "command": [
+        "claude",
+        "--dangerously-skip-permissions",
+        "-p",
+        "Задача {task_id} (проект {project}), маршрут {route}. Запусти скил /{plugin}:{skill} и веди карточку по нему: ты оркестратор, кода не пишешь и порцию не коммитишь. Протокол — скил listik:listik. Первым действием, до чтения кода и show: claim {task_id} --holder claude. Дальше heartbeat каждые 10–15 мин, пока карточку держишь ты. Все команды с --actor agent:claude --harness claude."
+      ]
+    },
+    {
+      "key": "full-cross",
+      "kind": "pipeline",
+      "plugin": "pipeline-full",
+      "title": "cross",
+      "hint": "Devin ТЗ · Sonnet+DS критика · GLM код · Grok приёмка",
+      "visible": true,
+      "icon": "xhigh",
+      "roles": {
+        "spec": {
+          "provider": "devin",
+          "label": "max",
+          "title": "SWE-2",
+          "skill": "devin:devin-delegate",
+          "params": {
+            "thinking": "max"
+          }
+        },
+        "critic": {
+          "provider": "claude",
+          "label": "S+DS",
+          "title": "Sonnet 5.5 · high + DeepSeek V4.1 Flash"
+        },
+        "impl": {
+          "provider": "glm",
+          "label": "GLM",
+          "title": "GLM 5.3 Flash",
+          "skill": "pi:pi-delegate",
+          "params": {
+            "channel": "glm"
+          }
+        },
+        "judge": {
+          "provider": "grok",
+          "label": "xhigh",
+          "title": "Grok 4.7"
         }
       },
       "command": [

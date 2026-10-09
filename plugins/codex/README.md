@@ -170,7 +170,7 @@ process is actually alive. Trust the second one.
 | `write` | `workspace-write` | edit files inside `--cwd` |
 
 `--write` remains as an alias for `--permission write`, because Listik routes and
-`pipeline-full` presets, `pipeline-cc:sol`, `pipeline-claude:opus` and `pipeline-claude:high` already send it.
+`pipeline-full` presets and `pipeline-claude:high` already send it.
 
 **`write` in a git checkout.** codex keeps the `.git` of the working directory read-only
 under `workspace-write`, so the bridge opens a narrow set of git paths with `--add-dir`

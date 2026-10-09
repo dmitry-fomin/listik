@@ -31,7 +31,7 @@ EXPECTED_KEYS = [
     "cc-xhigh", "cc-high", "cc-medium", "cc-low",
     "cc-xlow", "cc-nano",
 ]
-#: Маршруты пресетов бывшего claude-codex — запись 3 `ROUTE_ADDITIONS`. `cc-sol` (бывший
+#: Маршруты пресетов pipeline-cc (бывшего claude-codex) — запись 3 `ROUTE_ADDITIONS`. `cc-sol` (бывший
 #: sol-pipeline из feature-pipeline) тоже начинается с `cc-`, но в эту запись не входит.
 CC_ADDITION_KEYS = [k for k in EXPECTED_KEYS if k.startswith("cc-") and k != "cc-sol"]
 

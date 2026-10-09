@@ -1,5 +1,5 @@
 судья: sonnet-5.5-high
-модель: sonnet (feature-pipeline:pipeline-judge, model: sonnet в вызове, effort high из frontmatter)
+модель: sonnet (pipeline-core:pipeline-judge, model: sonnet в вызове, effort high из frontmatter)
 начало: 2026-09-29T12:12:48Z
 конец: 2026-09-29T12:14:07Z
 секунд: 47

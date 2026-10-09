@@ -476,8 +476,9 @@ Listik — только файл поставки: `listik init`/старт се
 сохраняется вычисленный уровень, поэтому ответ маршрутов не содержит предупреждений.
 Проверка файла остаётся строгой ко всему остальному. Если поля в записи нет, ввоз выводит
 уровень сам: часть ключа до первого `-` (вид записи не влияет),
-если она из того же набора (`xhigh-pipeline` → `xhigh`, `xlow-pipeline` → `xlow`).
-У записи без выводимого уровня (`opus-pipeline`) иконки нет —
+если она из того же набора (`xhigh-team` → `xhigh`), а у конвейера ещё и часть после
+первого `-` (`full-high` → `high`, `cc-xlow` → `xlow`).
+У записи без выводимого уровня (`claude-opus`) иконки нет —
 в ответе `icon: null`. Явный `"icon": null` в файле — запись без иконки (так бэкап
 `routes --reimport` сохраняет снятую иконку, и `--from <бэкап>` её не возвращает). Файл поставки, созданный до появления поля, поэтому
 ввозится без правок: доска показывает уровень по ключу.
@@ -1246,7 +1247,7 @@ Listik и никогда не отдаёт его доске:
    "text": "переписанный текст поля",
    "acceptance": ["критерий, которого нет в текущей приёмке"],
    "complexity": {"level": "low|medium|high", "reason": "почему"},
-   "route": {"key": "low-pipeline", "kind": "pipeline", "title": "low", "hint": "…",
+   "route": {"key": "full-low", "kind": "pipeline", "title": "low", "hint": "…",
              "reason": "почему этот маршрут"}}}
 ```
 
@@ -1301,7 +1302,7 @@ config.toml, раздел [deepgram]»; Deepgram ответил ошибкой �
 ```json
 {"model": "deepseek-flash",
  "draft": {"project": "listik", "type": "task", "title": "…", "description": "…",
-           "acceptance": ["…"], "route": {"key": "low-pipeline", "kind": "pipeline",
+           "acceptance": ["…"], "route": {"key": "full-low", "kind": "pipeline",
                                           "title": "low", "hint": "…", "reason": "…"}}}
 ```
 
@@ -2293,7 +2294,7 @@ stage/status/holder/needs_owner/route) — доска узнаёт из `publish
 listik serve                       # поднять сервер и доску
 listik import-from-bd --source <path> [--project writerllm] [--dry-run] [--update]   # импорт выгрузки bd export WriterLLM, идемпотентно; --project так же сверяется с доской без учёта регистра
 listik new "Заголовок" -p project --type bug --priority 1 --actor agent:pi-glm
-listik new "Заголовок" -p project --route low-pipeline   # маршрут сохраняется; процесс поднимает рой или listik launch
+listik new "Заголовок" -p project --route full-low   # маршрут сохраняется; процесс поднимает рой или listik launch
 listik new "Шаг 09, порция b" -p listik --parent <id шага> --spec … --checklist … --review …  # порция — дочерняя карточка шага (parent-child)
 listik ready                        # что можно взять прямо сейчас
 listik ready --harness pi-glm          # то же, с идентичностью harness (флаг общий)

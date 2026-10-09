@@ -839,11 +839,15 @@ CLI (`bin/listik`) читает окружение один раз в `call()` �
 **Что ограждается.** Перед вызовом store — HTTP `PATCH`/`PUT /api/tasks/{id}`, `DELETE
 /api/tasks/{id}`, `PUT /api/tasks/{id}/documents/{kind}`, `DELETE /api/tasks/{id}/deps/{dep}`,
 `POST /api/tasks/{id}/{action}` для `claim`, `heartbeat`, `stage`, `comment`, `needs-owner`,
-`release`, `done`, `revoke`, `launch` и `deps` с `depends_on`; MCP-инструменты `listik_update`, `listik_claim`,
+`release`, `done`, `revoke`, `launch`, `restart`, `portions/sync`, `portions/adopt` и `deps` с
+`depends_on`; MCP-инструменты (ключи `fence.OPS["mcp"]`) `listik_update`, `listik_claim`,
 `listik_heartbeat`, `listik_stage`, `listik_comment`, `listik_needs_owner`, `listik_done`,
-`listik_release`, `listik_put_document` и `listik_deps` (и добавление, и удаление связи).
-Чтения (`GET`, `context`, `ready`, `mentions`, `deps` без `depends_on`, `listik_show`) не
-ограждаются; `POST /api/tasks` (создание) не ограждается — у него нет своей карточки.
+`listik_release`, `listik_put_document`, `listik_deps` (и добавление, и с `action: "rm"` —
+удаление связи), `listik_delete`, `listik_restart`, `listik_revoke`, `listik_launch`,
+`listik_portions` с `action: "sync"` и `"adopt"` и `listik_mentions` с `link: true` (op
+`dep_add`). Чтения (`GET`, `context`, `ready`, `mentions`, `deps` без `depends_on`,
+`listik_show`, `listik_mentions` без `link`) не ограждаются; `POST /api/tasks` (создание) не
+ограждается — у него нет своей карточки.
 
 **Отказ.** Несовпадение — `409` с кодом `revoked` и текстом «полномочия на задачу
 `<id>` отозваны: запуск поколения `<G>` устарел, текущее поколение `<current>»` (или, если
@@ -1435,7 +1439,11 @@ id внутри файлового пути (`docs/specs/<id>.md`, `/wt/<id>/lis
 локальном режиме; клиент при пустом `hint` подставляет подсказку по коду/статусу. `code` — из
 фиксированного словаря `bad_argument`, `not_found`, `conflict`, `unauthorized`, `forbidden`,
 `method_not_allowed`, `rate_limited`, `server_error`, `http_error`, `internal`, `revoked`,
-`dep_cycle`, `already_launched` (см. `listik/errors.py`). `revoked` — «полномочия на задачу отозваны: запуск устарел, у
+`dep_cycle`, `already_launched`, `unreachable` (см. `listik/errors.py`). `unreachable` — «общий
+сервер не отвечает»: код возникает на клиенте, когда общий сервер из `.listik.toml` недоступен
+(CLI отдаёт его в `error.code`, stdio-MCP — JSON-RPC-ошибкой «общий сервер … не отвечает»), и
+локальная база при этом не трогается; сервер этот код не отдаёт никогда (см. «CLI: общий
+сервер» и «stdio-прокси на общий сервер»). `revoked` — «полномочия на задачу отозваны: запуск устарел, у
 задачи новое поколение» (409, см. «Ограждение запуска: поколения и карантин»). `dep_cycle` —
 цикл в смысловых зависимостях карточек роя, `waves --apply` ничего не записал (409); клиент
 роя по этому коду переходит на расчёт без `--apply`, текст сообщения не контракт.
@@ -1634,7 +1642,7 @@ dropped_chunks, reason`), `reasons[]` (по одному пункту на ка�
 |---|---|---|---|
 | POST | `/api/tasks` | `title`(обязателен), `project, description, acceptance, design, notes, type, status, priority, stage, labels[], spec_path, checklist_path, review_path, decision_path, journal_path, external_ref, actor, harness, needs_owner, id, autostart, route, parent, discovered_from, owner` | создать. В серверном режиме владелец обязателен: `owner` в теле — «на кого» заводим, заголовок `X-Listik-Owner` — «кто заводит»; без поля владельцем становится представившийся, без того и другого — 400 `bad_argument`, имя не из `server.users` — тоже 400. В локальном режиме и поле, и заголовок игнорируются, `owner` остаётся `null`. `parent` — ID карточки шага: новая карточка сразу получает мягкую связь `parent-child` (порция), а без своего `project` — ещё и проект родителя; без своего непустого `journal_path` — журнал родителя; несуществующий `parent` — 404, задача не создаётся. `discovered_from` — ID карточки, при работе над которой задачу нашли: сразу пишется мягкая связь `discovered-from` (см. «Найденная по ходу задача»), несуществующий id — 404, задача не создаётся. В ответе, кроме задачи, — `link_hints[]` с упомянутыми в тексте, но несвязанными задачами. `autostart: true` — `400`, задача не создаётся (autostart больше не поддерживается); запуск — рой или `POST /api/tasks/{id}/launch`. `route` сохраняется в `launch_route` и помечает карточку метками маршрута `harness:`/`process:` (см. «Маршруты запуска»), уже заданные вручную метки не дублируются |
 | PATCH | `/api/tasks/{id}` | любые из `title, description, acceptance, design, notes, result, status, stage, priority, issue_type, holder, holder_note, project, labels[], spec_path, checklist_path, review_path, decision_path, journal_path, worktree, branch, close_reason, needs_owner, external_ref, archived, owner, read_scope[], write_scope[]` + `route` (алиас `launch_route`, см. «Смена маршрута») + `actor`, `harness`, `note` | изменить (каждое изменение пишется в events). `route` — «тип запуска»: принимается у незакрытой задачи без держателя и живого запуска (этап не мешает), иначе `400`/`conflict`; неизвестный ключ — `400`/`bad_argument`; смена сбрасывает `launch_driver`; пустая строка снимает маршрут; событие `route`; вместе с маршрутом сервер переписывает его метки `harness:`/`process:`. Остальные восемь полей запуска не принимаются (`400 bad_argument`). `orchestrator` (как и прежний `assignee`) не принимается (`400 bad_argument`), поле пишет система (см. «Модель задачи»). Любой ключ, кроме перечисленных полей и служебных `actor`, `harness`, `note`, даёт `400 bad_argument` с перечнем допустимых ключей, и карточка не меняется ни в одном поле; так же отвечают `listik set` без сервера и `listik_update` в MCP, где `actor`/`harness`/`note` передаются аргументами инструмента, а не ключами `fields`. `read_scope`/`write_scope` — списком строк, валидация и нормализация см. «Области чтения и записи» выше; строка вместо массива — `400 bad_argument`. `owner` — смена владельца: имя из `server.users`, пустая строка `""` снимает владельца (`null`); `null` в теле означает «поле не передано» (у `listik_update` в MCP `null` внутри `fields` — `bad_argument`, а не «поле не передано»). В серверном режиме правка **чужой** задачи (заголовок `X-Listik-Owner` не совпал с владельцем) с любым полем, кроме `owner`, — 403 `forbidden`, карточка не меняется; тело только с `owner` проходит при любом заголовке, а без заголовка владелец для правки не обязателен. `status` в `done`/`cancelled` снимает держателя; непустой `holder` в том же теле игнорируется |
-| DELETE | `/api/tasks/{id}` | — | удалить задачу вместе с её комментариями, событиями, документами с фрагментами, векторами, записями поиска и всеми строками `deps`, где она с любой стороны. У задач, которые её ждали, пересчитывается `blocked_by` — удалённая задача их больше не блокирует; у эпика-родителя пересчитываются тип и статус. Несуществующий id — `404` `not_found`: ничего не меняется, событие доске не рассылается |
+| DELETE | `/api/tasks/{id}` | — | удалить задачу вместе с её комментариями, событиями, документами с фрагментами, векторами, записями поиска и всеми строками `deps`, где она с любой стороны. У задач, которые её ждали, пересчитывается `blocked_by` — удалённая задача их больше не блокирует; у эпика-родителя пересчитываются тип и статус. Несуществующий id — `404` `not_found`: ничего не меняется, событие доске не рассылается. В серверном режиме задача чужого владельца — `403 forbidden` до любого эффекта (`store.check_owner_action`) |
 | PUT | `/api/tasks/{id}/documents/{kind}` | `content` (обязателен, строка не длиннее 1 000 000 символов), `path`, `actor` | принять текст документа и хранить его в базе (`source=upload`) — для сервера, где файлов проектов нет. Путь выбирается по шагам, ровно в этом порядке: 1) непустой `path` из тела; 2) иначе — уже записанный в карточке путь этого вида (`spec_path`/`checklist_path`/`review_path`/`decision_path`); 3) иначе, для `decision`, — `journal_path`; 4) иначе — виртуальный `listik://<id>/<kind>.md`. В случаях 1 и 4 выбранный путь дописывается в карточку. `revision` растёт только при смене текста (новая запись — сразу `revision=1`); при новой записи и при смене текста пишется событие `document_uploaded` с пометкой `r<revision>`; повтор с тем же текстом ревизию не меняет и события не создаёт. 400 — неизвестный `kind`, не передан или не строка `content`, текст длиннее 1 000 000 символов, не строка `path`; 404 — нет такой задачи; 405 — любой метод по этому пути, кроме `GET` и `PUT` |
 | POST | `/api/tasks/{id}/claim` | `holder`(обязателен), `harness`, `note`, `actor`, `force=false` | взять в работу. 400 по трём причинам: незакрытые жёсткие блокеры (обходится `force`, пишет предупреждение в историю), чужой держатель, занятое рабочее дерево — держатель и рабочее дерево `force` не обходят. `harness` проверяется, только если передан (сверяется с routing проекта на этапе задачи). В серверном режиме до всех этих проверок идёт владелец: без заголовка `X-Listik-Owner` — 400 `bad_argument` («укажи, от чьего имени берёшь задачу»), имя не из `server.users` — 400, чужая задача — 403 `forbidden` (и `force` этого не обходит); задачу без владельца берёт любой, владелец ей при этом не проставляется. `actor` пишется в событие `claim`: по нему доска отличает «взята» (`actor` = сам держатель) от «выдана, но не взята»; повторный claim того же держателя идемпотентен, но первый claim держателя по выданной карточке событие пишет. Тождество держателя — по актору: повторный claim тем же актором в любом написании (`pi-glm`, `agent:pi-glm`) идемпотентен, и хранимое написание держателя при этом не меняется. Claim держателем, который уже держит карточку (в том числе выданную через `stage --holder`), переводит статус `open` в `in_progress` так же, как обычный claim, а остальные статусы не меняет. Успешный claim, у которого `holder` — Claude (сводится к `agent:claude`), заполняет пустой `orchestrator` значением `claude`; непустой не трогает, событие не пишется |
 | POST | `/api/tasks/{id}/heartbeat` | `holder`(обязателен), `note`, `actor` | отметка «жив, работаю» (событие не чаще 10 мин). Если `holder` — другой актор, чем текущий (сравнение через `actors.resolve`; иное написание того же актора держателя не меняет, хранимое написание не перезаписывает и заметку не сбрасывает), держатель перезаписывается без проверок, `holder_note` прежнего сбрасывается (сохраняется только явно переданный `note`), а событие пишется всегда — смена держателя видна в истории. Отдельно от троттлинга событие пишется всегда, пока карточка «выдана, но не взята» (`not_taken`): первый heartbeat держателя и есть доказательство запуска, терять его в 10-минутном окне нельзя. Heartbeat от самого держателя (`actor`/`harness` = он) подтверждает, что карточка взята; heartbeat за него чужой рукой — нет. Владелец проверяется так же, как у `claim`: нет заголовка или имя не из `server.users` — 400 `bad_argument`, чужая задача — 403 `forbidden` |
@@ -1642,12 +1650,12 @@ dropped_chunks, reason`), `reasons[]` (по одному пункту на ка�
 | POST | `/api/tasks/{id}/comment` | `text`(обязателен), `author`/`actor`, `kind=comment\|journal\|question\|answer\|review\|verdict`, `harness` | комментарий в журнал задачи; `kind=question`/`answer` — те же виды, что пишет `needs-owner` (см. ниже), их можно оставить и вручную, но сам флаг `needs_owner` они не меняют; `kind=verdict` принимается как вердикт на `s4-judge` от агента или на любом этапе от человека и требует первой строки ровно `VERDICT: PASS` или `VERDICT: FAIL` (после `FAIL` — список правок), иначе 400; агентский verdict вне `s4-judge` сохраняется как обычный `comment`, этап не двигается, ответ содержит `verdict_accepted=false` и `message` с причиной |
 | POST | `/api/tasks/{id}/needs-owner` | `value=true\|false`, `note`, `actor`, `harness` | поднять/снять флаг «нужен человек»: при непустом `note` создаётся комментарий `kind=question` (`value=true`) или `kind=answer` (`value=false`); событие `question`/`answer` пишется при каждом вызове, даже если флаг уже стоит в нужном значении; ответ — полная карточка, как у `PATCH`. Автор комментария и события — `actor`; без него в серверном режиме подписывается человек из заголовка `X-Listik-Owner` (явный агентский `actor` сильнее), чтобы вопрос/ответ с доски не остался без автора. `PATCH /api/tasks/{id}` с `needs_owner` меняет только флаг и комментария не пишет |
 | POST | `/api/tasks/{id}/release` | `note`, `actor`, `harness` | освободить задачу: держатель снимается, событие `release` с заметкой `note` (по умолчанию «освободил»). В серверном режиме чужая задача (заголовок `X-Listik-Owner` не совпал с владельцем) — 403 `forbidden`, карточка не меняется, даже если держателя и так нет; имя не из `server.users` — 400 `bad_argument`; без заголовка проходит, как `PATCH` |
-| POST | `/api/tasks/{id}/portions/sync` | `actor`, `harness` | карточки порций шага по файлам `<id>.<буква>.md` в каталоге его `spec_path` (см. «Карточка-порция»): `{id, steps_dir, created[], updated[], unchanged[], linked[[prev, cur]…], portions[{letter, file, checklist, id, title}], merged}` (`merged: true` — файл порции один, она слита в шаг); если что-то изменилось — событие `note` у шага «порции: создано N, обновлено M, связано K». 400 `bad_argument`: у шага нет `spec_path` или его каталога нет; 404 — шага нет |
-| POST | `/api/tasks/{id}/portions/adopt` | `actor`, `harness` | принять зависшую нарезку роя (см. «Карточка-порция»): карточка родителя плюс `adopted[]` (id порций, получивших этап) и `stage` (этап порций или `null`, если после `s1-spec` роли нет), `merged` (`true` — единственная не начатая порция слита в родителя, `stage` — этап родителя, `adopted: []`). 409 `conflict`: родитель закрыт, не роя, не на `s1-spec`, маршрута нет в базе, не начатых порций нет; 404 — задачи нет |
+| POST | `/api/tasks/{id}/portions/sync` | `actor`, `harness` | карточки порций шага по файлам `<id>.<буква>.md` в каталоге его `spec_path` (см. «Карточка-порция»): `{id, steps_dir, created[], updated[], unchanged[], linked[[prev, cur]…], portions[{letter, file, checklist, id, title}], merged}` (`merged: true` — файл порции один, она слита в шаг); если что-то изменилось — событие `note` у шага «порции: создано N, обновлено M, связано K». 400 `bad_argument`: у шага нет `spec_path` или его каталога нет; 404 — шага нет. В серверном режиме задача чужого владельца — `403 forbidden` до любого эффекта (`store.check_owner_action`) |
+| POST | `/api/tasks/{id}/portions/adopt` | `actor`, `harness` | принять зависшую нарезку роя (см. «Карточка-порция»): карточка родителя плюс `adopted[]` (id порций, получивших этап) и `stage` (этап порций или `null`, если после `s1-spec` роли нет), `merged` (`true` — единственная не начатая порция слита в родителя, `stage` — этап родителя, `adopted: []`). 409 `conflict`: родитель закрыт, не роя, не на `s1-spec`, маршрута нет в базе, не начатых порций нет; 404 — задачи нет. В серверном режиме задача чужого владельца — `403 forbidden` до любого эффекта (`store.check_owner_action`) |
 | POST | `/api/tasks/{id}/done` | `result`, `reason`, `actor`, `note`, `harness` | закрыть: `status=done`, `stage=done`; держатель снимается (событие `release`), `holder_note` очищается. `result` пишется, если передан; `close_reason` — `reason`, иначе `result` (без обоих не трогается). В серверном режиме чужая задача (заголовок `X-Listik-Owner` не совпал с владельцем) — 403 `forbidden`, карточка не меняется, даже если она уже закрыта; имя не из `server.users` — 400 `bad_argument`; без заголовка проходит, как `PATCH` |
-| POST | `/api/tasks/{id}/revoke` | `actor`, `harness`, `note`, `kill=true` | отозвать полномочия текущего запуска (поднять поколение) и, если `kill`, снять его процесс — см. «Отзыв и перезапуск». `400` — задачу не запускали (`generation == 0`) или поколение изменилось параллельно. `200` — карточка после отзыва |
-| POST | `/api/tasks/{id}/launch` | `actor`, `harness`, `note` (пока не используется), `env{}` (`LISTIK_*` → строка, необязательный) | запустить задачу по маршруту следующим поколением (`launcher.start` без изменений логики) — см. «Отзыв и перезапуск». `200` — карточка с `"launched": true`; `409` — текст отказа `start` (`already_launched` — уже запущена; `conflict` — нет маршрута и т. п.), состояние — как у автостарта; `404 not_found` — задачи нет или её удалили, в том числе между захватом и запуском; `400 bad_argument` — `env` не прошёл `check_env` (карточка не трогается) |
-| POST | `/api/tasks/{id}/restart` | `stage?`, `route?`, `note?`, `actor`, `harness` | перезапуск карточки роя с этапа — см. «Перезапуск карточки роя с этапа». `200` — карточка плюс `restarted_from`, `detached`, `archive_dir`, `route_from` (при `route`); `404` — нет карточки; `400 bad_argument` — карточка не роя или этап не из `s1-spec`…`s4-judge`; `409 conflict` — закрыта, живой запуск, неизвестный `route`, эпик не на `s1-spec`, нет роли этапа, начатые порции |
+| POST | `/api/tasks/{id}/revoke` | `actor`, `harness`, `note`, `kill=true` | отозвать полномочия текущего запуска (поднять поколение) и, если `kill`, снять его процесс — см. «Отзыв и перезапуск». `400` — задачу не запускали (`generation == 0`) или поколение изменилось параллельно. `200` — карточка после отзыва. В серверном режиме задача чужого владельца — `403 forbidden` до любого эффекта (`store.check_owner_action`) |
+| POST | `/api/tasks/{id}/launch` | `actor`, `harness`, `note` (пока не используется), `env{}` (`LISTIK_*` → строка, необязательный) | запустить задачу по маршруту следующим поколением (`launcher.start` без изменений логики) — см. «Отзыв и перезапуск». `200` — карточка с `"launched": true`; `409` — текст отказа `start` (`already_launched` — уже запущена; `conflict` — нет маршрута и т. п.), состояние — как у автостарта; `404 not_found` — задачи нет или её удалили, в том числе между захватом и запуском; `400 bad_argument` — `env` не прошёл `check_env` (карточка не трогается). В серверном режиме задача чужого владельца — `403 forbidden` до любого эффекта (`store.check_owner_action`) |
+| POST | `/api/tasks/{id}/restart` | `stage?`, `route?`, `note?`, `actor`, `harness` | перезапуск карточки роя с этапа — см. «Перезапуск карточки роя с этапа». `200` — карточка плюс `restarted_from`, `detached`, `archive_dir`, `route_from` (при `route`); `404` — нет карточки; `400 bad_argument` — карточка не роя или этап не из `s1-spec`…`s4-judge`; `409 conflict` — закрыта, живой запуск, неизвестный `route`, эпик не на `s1-spec`, нет роли этапа, начатые порции. В серверном режиме задача чужого владельца — `403 forbidden` до любого эффекта (`store.check_owner_action`) |
 | POST | `/api/tasks/{id}/deps` | `depends_on`, `dep_type=blocks`, `confirm=false`, `actor` | с `depends_on` — добавить связь; без него — дерево зависимостей (`waits_for`/`waited_by`). Жёсткий `dep_type` (`blocks`/`blocked-by`/`waits-for`/`conditional-blocks`) от агентского `actor` без `confirm=true` не ставится сразу жёстким — пишется как `suggested-blocks` (мягкая, ждёт подтверждения человеком); `confirm=true` (или неагентский `actor`) ставит жёсткую связь сразу. `dep_type=resource-blocks` — 400 `bad_argument` для любого `actor` и `confirm`: ставит только планировщик роя, через этот путь не принимается. Ответ: `dep_type` (фактически записанный тип), `requested_dep_type` (что просили), `suggested`, `confirmed`, `promoted` (предложение заменено на жёсткую связь этим вызовом), `created`, `created_by`. 400 на самосвязь и на цикл жёстких связей — «уже есть жёсткая связь на паре» и цикл считаются без учёта `resource-blocks` |
 | DELETE | `/api/tasks/{id}/deps/{depends_on}` | `dep_type` строкой запроса | снять связь; без `dep_type` снимает разом `blocks` и `suggested-blocks` между той же парой задач, `resource-blocks` — только явным `dep_type=resource-blocks` (актор не ограничен). Ответ: `removed` (число снятых строк), `dep_types[]` |
 | POST | `/api/tasks/{id}/ready` | — | вердикт по задаче (`deps_state`, см. ниже) |
@@ -1759,15 +1767,21 @@ stdio (`listik mcp`) на строку с невалидным JSON отвеча
 
 **Владелец (серверный режим).** Кто пришёл, MCP узнаёт так же, как обычный API: по HTTP —
 заголовок `X-Listik-Owner` того же `POST /mcp`, по stdio (`listik mcp`) — переменная окружения
-`LISTIK_OWNER` (рядом с `LISTIK_ACTOR`). Он уходит в `listik_list`, `listik_board`,
-`listik_ready`, `listik_claim`, `listik_heartbeat`, `listik_stage`, `listik_update` и
+`LISTIK_OWNER` (рядом с `LISTIK_ACTOR`; stdio-прокси на общий сервер шлёт его заголовком, см.
+ниже). Он уходит в `listik_list`, `listik_board`, `listik_ready`, `listik_claim`,
+`listik_heartbeat`, `listik_stage`, `listik_update`, `listik_done`, `listik_release` и
 `listik_create`; у `listik_create` есть ещё свойство `owner` — «на кого» заводится задача
-(по умолчанию — представившийся). Отказ по владельцу (нет владельца, имя не из `server.users`,
-чужая задача) — обычная ошибка инструмента: HTTP 200 и `result.isError: true` с текстом
-причины. В локальном режиме всё это игнорируется.
+(по умолчанию — представившийся). Управляющие инструменты — `listik_delete`, `listik_launch`,
+`listik_revoke`, `listik_restart`, `listik_portions` — проверяют владельца до любого эффекта
+(`store.check_owner_action`, как HTTP-ручки): задачу чужого владельца они не трогают, отказ
+`forbidden` «задача `<id>` принадлежит `<владелец>`: чужую задачу `<удалить|запустить|отозвать|
+перезапустить|нарезать на порции>` нельзя». Отказ по владельцу (нет владельца, имя не из
+`server.users`, чужая задача) — обычная ошибка инструмента: HTTP 200 и `result.isError: true`
+с текстом причины. В локальном режиме всё это игнорируется.
 
 Автор записи по MCP: у `listik_comment` и `listik_deps` — `author`, затем `actor`, затем
-`LISTIK_ACTOR`, затем `agent:mcp`; владелец (`X-Listik-Owner`/`LISTIK_OWNER`) автором там не
+`LISTIK_ACTOR`, затем `agent:mcp`; у `listik_mentions` с `link` — `actor`, затем `LISTIK_ACTOR`,
+затем `agent:mcp`; владелец (`X-Listik-Owner`/`LISTIK_OWNER`) автором там не
 становится, так что вызов без автора остаётся агентским (вердикт вне `s4-judge` не принимается,
 жёсткая связь пишется как `suggested-blocks`). У `listik_needs_owner` — `actor`, затем владелец,
 затем `LISTIK_ACTOR`, затем `agent:mcp`. Имя приводится к каноническому ключу, например
@@ -1812,19 +1826,66 @@ stdio (`listik mcp`) на строку с невалидным JSON отвеча
 | `listik_release` | `id` | `POST /api/tasks/{id}/release` (`listik release`) |
 | `listik_inbox` | — | `GET /api/board` → `needs_you` (`listik inbox`) |
 | `listik_memory` | — | `GET /api/memory` (`listik memory`) |
-| `listik_remember` | `text` | HTTP-эндпоинта нет; `listik remember` пишет в базу на самой машине |
+| `listik_remember` | `text` | HTTP-эндпоинта нет; `listik remember` пишет в базу на самой машине (на общем сервере CLI отказывает — заметку пишет этот инструмент) |
 | `listik_projects` | — | `GET /api/projects` (`listik projects`) |
 | `listik_actors` | — | `GET /api/meta` → `actors[]` (`listik actors`) |
 | `listik_timeline` | — | `GET /api/timeline` (`listik timeline`) |
 | `listik_deps_suggested` | — | `GET /api/deps/suggested` (`listik dep suggested`) |
 | `listik_cycles` | — | — (`listik cycles` — только локально; `cycles[]` есть и в `GET /api/ready`) |
-| `listik_waves` | `project`, `stage`, `apply` | `GET /api/waves` (`listik waves`); `apply: true` — `POST /api/waves/apply` (`listik waves --apply`) |
+| `listik_waves` | `project` | `GET /api/waves` (`listik waves`); `apply: true` — `POST /api/waves/apply` (`listik waves --apply`) |
+| `listik_delete` | `id` | `DELETE /api/tasks/{id}` (CLI нет) |
+| `listik_mentions` | `id` | `POST /api/tasks/{id}/mentions` (`listik dep suggest`); `link: true` — как `listik dep link`, — связи через `POST /api/tasks/{id}/deps` |
+| `listik_portions` | `id`, `action` | `POST /api/tasks/{id}/portions/sync` и `…/portions/adopt` (`listik portions sync/adopt`) |
+| `listik_restart` | `id` | `POST /api/tasks/{id}/restart` (`listik restart`) |
+| `listik_revoke` | `id` | `POST /api/tasks/{id}/revoke` (`listik revoke`) |
+| `listik_launch` | `id` | `POST /api/tasks/{id}/launch` (`listik launch`) |
 
-**Событие доске.** После успешного `tools/call` пишущего инструмента (`listik_create`,
-`listik_update`, `listik_claim`, `listik_heartbeat`, `listik_stage`, `listik_comment`,
-`listik_needs_owner`, `listik_done`, `listik_release`, `listik_deps`, `listik_put_document`)
-сервер публикует событие для доски. Событие уходит уже после ответа и на сам ответ не влияет;
-ответ с `isError: true` события не создаёт.
+**Правило полноты.** У каждого эндпоинта карточки `/api/tasks/{id}/…` и у `DELETE
+/api/tasks/{id}` есть MCP-инструмент: агент по MCP может сделать с задачей всё, что HTTP API.
+Новый эндпоинт карточки приходит вместе со своим инструментом (`TOOLS` + `call_tool`, в
+`WRITE_TOOLS`, если пишет, и в `fence.OPS["mcp"]`, если ограждается); проверка —
+`tests/test_mcp_all_tools.py` (кейс на каждый инструмент `TOOLS`).
+
+**Инструменты управления задачей.** Аргументы — ровно `inputSchema`; `actor`/`harness` —
+кто делает, как у остальных пишущих инструментов. В серверном режиме все шесть проверяют
+владельца (см. «Владелец»), все, кроме чтения `listik_mentions`, ограждены токеном запуска.
+
+- `listik_delete` (`id`) — удалить задачу целиком, необратимо; ответ `{"deleted": "<id>"}`.
+- `listik_mentions` (`id`, `limit=50`, `link=false`, `dep_type="relates-to"`, `only`, `actor`) —
+  без `link` только читает: `{"items": [...]}` — упомянутые в тексте, но не связанные задачи;
+  с `link` — как `listik dep link --json`: `{candidates, linked, made, skipped}`, связь
+  `dep_type` с каждой упомянутой (с `only` — только с ней), жёсткая от агента пишется
+  предложением `suggested-blocks`; кандидат, которого нет или с которым связь невозможна,
+  уходит в `skipped[{id, code, message}]`.
+- `listik_portions` (`id`, `action`: `sync`|`adopt`, `actor`, `harness`) — ответ тот же, что у
+  `POST /api/tasks/{id}/portions/sync` / `…/adopt` (см. «Запись»). `sync` читает файлы шага на
+  диске той машины, где выполняется инструмент.
+- `listik_restart` (`id`, `stage`, `route`, `note`, `actor`, `harness`) — ответ и отказы как у
+  `POST /api/tasks/{id}/restart`.
+- `listik_revoke` (`id`, `note`, `kill=true`, `actor`, `harness`) — как `POST
+  /api/tasks/{id}/revoke`: ответ — карточка после отзыва.
+- `listik_launch` (`id`, `env`) — как `POST /api/tasks/{id}/launch`: карточка с `launched: true`
+  (у карточки роя — с исходом); уже запущена — ошибка `already_launched`, прочий отказ запуска —
+  `conflict`; `env` — только незарезервированные `LISTIK_*`.
+
+Где выполняются `listik_launch`, `listik_revoke` и `listik_delete`: по HTTP — в процессе
+сервера, которому пришёл `POST /mcp` (процесс задачи стартует на его машине); по stdio с
+локальной базой — запросом к своему серверу (`[server]` из `config.toml`). Свой сервер не
+поднят: `listik_launch`/`listik_revoke` отказывают `unsupported` («`<launch|revoke>` выполняет
+только сервер: процесс задачи держит он» — «подними сервер: listik serve»), а `listik_delete`
+удаляет задачу прямо из базы (доска узнает об этом при следующей загрузке). Через stdio-прокси
+на общий сервер все три выполняются на общем сервере.
+
+**Событие доске.** После успешного `tools/call` пишущего инструмента (`mcp.WRITE_TOOLS`:
+`listik_create`, `listik_update`, `listik_claim`, `listik_heartbeat`, `listik_stage`,
+`listik_comment`, `listik_needs_owner`, `listik_done`, `listik_release`, `listik_deps`,
+`listik_put_document`, `listik_waves`, `listik_delete`, `listik_portions`, `listik_restart`,
+`listik_mentions`) сервер публикует событие для доски. `listik_waves` шлёт событие `deps` по
+каждой карточке только с `apply: true`, `listik_mentions` — только с `link: true` (без него
+это чтение), `listik_delete` — действие `deleted` (его ждёт доска, чтобы убрать карточку).
+`listik_launch` и `listik_revoke` в `WRITE_TOOLS` не входят: событие о запуске и отзыве шлёт
+сам лаунчер сервера, как у HTTP-ручек. Событие уходит уже после ответа и на сам ответ не
+влияет; ответ с `isError: true` события не создаёт.
 
 MCP по stdio (`listik mcp`) пишет в базу мимо сервера, поэтому о записи сообщает сам: после
 того же набора пишущих инструментов он в фоне зовёт `POST /api/notify` (см. «Запись»). Ответ
@@ -1833,16 +1894,63 @@ MCP по stdio (`listik mcp`) пишет в базу мимо сервера, п
 процесс коротко дожидается неотправленных уведомлений (не дольше таймаута одного запроса),
 чтобы клиент, закрывший stdin сразу после записи, не потерял последнее событие.
 
-**Чего через MCP нет.** Администрирование намеренно оставлено только локальному CLI на самой
-машине: проекты — добавление на доску (`POST /api/projects`), правка и скрытие
-(`PATCH /api/projects/{slug}`, `archived=1`) и удаление (`DELETE /api/projects/{slug}`) — вместе с
-их routing; удаление задач (`DELETE /api/tasks/{id}`); импорты (
-`listik import-from-bd`); пересчёт векторов (`POST /api/embed`, `listik embed`); серверные
-команды `listik serve`, `listik stop`, `listik status`, `listik init` и `listik token`; раскладка
-блока протокола по чужим `AGENTS.md`/`CLAUDE.md`, заведение строки `.worktrees/` в их
-`.gitignore` и симлинка `.agents/skills/listik` на скил установки (со строкой под него в
-`.gitignore`) (`listik init-projects`). Из проектов через MCP
-доступно только чтение — `listik_projects`.
+**Чего через MCP нет и почему.** MCP — это работа с задачами; всё остальное — только CLI.
+Из проектов через MCP доступно только чтение — `listik_projects`.
+
+| Команда CLI | Решение | Почему |
+|---|---|---|
+| `listik worktree` | только CLI | git работает на машине агента; путь и ветку в карточку пишет `listik_update` (`worktree`, `branch`) |
+| проекты: `projects --add`, `--archive`, `--remove`, `--routing` | только CLI | администрирование доски, не запись о задаче |
+| маршруты: `listik routes` | только CLI | настройка запуска, не запись о задаче |
+| рой: `plan`, `rescope`, `arbiter-check`, `watch`, `swarm` | только CLI | управление роем, не запись о задаче |
+| `listik lint` | только CLI | проверка проекта, не запись о задаче |
+| `listik embed` | только CLI | пересчёт векторов — обслуживание сервера |
+| `listik import-from-bd` | только CLI | импорт, не запись о задаче |
+| `listik init-projects` | только CLI | правит `AGENTS.md`/`CLAUDE.md`, `.gitignore` и симлинк `.agents/skills/listik` в чужих репозиториях |
+| `listik backup`, `listik restore` | только CLI | обслуживание базы |
+| `listik token`, `listik service`, `listik status` | только CLI | своя установка и сервер |
+| `listik serve`, `listik stop`, `listik init` | только CLI | своя установка и сервер |
+| `listik remote` | только CLI | настройка клиента, не запись о задаче |
+
+**stdio-прокси на общий сервер.** `listik mcp` при старте ищет `.listik.toml` от своего
+рабочего каталога (тем же правилом, что CLI, см. «CLI: общий сервер»). Файл ведёт на общий
+сервер — процесс становится прокси: каждое JSON-RPC-сообщение уходит `POST <url>/mcp` с
+`Authorization: Bearer <[remote] token>`, `X-Listik-Owner` (`LISTIK_OWNER` → `[auth] owner`) и
+заголовками токена запуска (`X-Listik-Task`/`-Generation`/`-Dispatch` из окружения), ответ
+сервера отдаётся как есть. Локальная база не открывается. Перенаправления (3xx) не
+выполняются: токен не уходит на чужой адрес. Ждёт ответа до 120 с.
+
+Подстановки в `tools/call` (явно переданный аргумент не заменяется, `null` = не передан):
+
+- `project` — у `listik_search`, `listik_list`, `listik_create`, `listik_ready`,
+  `listik_blocked`, `listik_board`, `listik_stats`, `listik_waves`: аргумент → `LISTIK_PROJECT`
+  → `project` из `.listik.toml`. Значение `all` (регистр не важен) снимает фильтр — кроме
+  `listik_waves`: у волн «всех проектов» нет. Та же подстановка проекта работает и у stdio с
+  локальной базой, если в каталоге есть `.listik.toml` с `server = "local"`;
+- `actor` — только у прокси и только у `listik_comment`, `listik_needs_owner`, `listik_deps`,
+  `listik_mentions`, если агент не передал ни `author`, ни `actor`: `LISTIK_ACTOR` агента
+  (иначе сервер подписал бы запись своим окружением).
+
+Не подставляются: проект у `listik_memory`, `listik_remember`, `listik_deps_suggested` (у CLI
+память и предложенные связи проект по каталогу тоже не берут); `actor` у остальных
+инструментов; владелец — он идёт только заголовком.
+
+Ошибки прокси — JSON-RPC `error` с кодом `-32603` (на уведомление без `id` — ничего), токен в
+текст не попадает:
+
+| Когда | Текст |
+|---|---|
+| `[remote]` не задан или в нём другой адрес, файл не разбирается | ошибка конфигурации на каждое сообщение, например «проект живёт на общем сервере `<url>` (`<путь>`), а общий сервер у клиента не настроен — listik remote set `<url>`» |
+| запрос не ушёл (отказ соединения, DNS) | «общий сервер `<url>` не отвечает — проверь сеть и listik status; локальная база не тронута» |
+| запрос ушёл, ответа нет (таймаут, обрыв) | «общий сервер `<url>` не ответил вовремя — результат неизвестен, проверь карточку, прежде чем повторять» |
+| 3xx | «общий сервер `<url>` ответил `<код>` — сервер перенаправляет: проверь адрес в .listik.toml» |
+| 401 | «общий сервер `<url>` ответил 401… — проверь токен: listik remote set `<url>`» |
+| прочий HTTP-отказ | «общий сервер `<url>` ответил `<код>`: `<ошибка сервера>`» |
+| ответ 200 не JSON | «общий сервер `<url>` ответил не-JSON — проверь адрес в .listik.toml» |
+
+HTTP-подключение напрямую (`claude mcp add --transport http …/mcp --header "Authorization:
+Bearer …" --header "X-Listik-Owner: <имя>"`) — для машины без установленного Listik: там ничего
+не подставляется, `project` и `actor`/`author` передаёт агент.
 
 **`confirm` у `listik_deps`.** Инструмент принимает `confirm` и технически может поставить
 жёсткую связь сразу, но по протоколу harness `confirm` ставится только по указанию человека:
@@ -2181,7 +2289,8 @@ listik restore <копия> [--stop] [--force]  # восстановление; 
 ```
 
 Глобальные флаги: `--json`, `--actor <кто>`, `--owner <кто>`, `--harness <pi-glm|pi-deepseek|grok|claude>`,
-`--server/--port`.
+`--host/--port` (сервер Listik вместо `[server]` из `config.toml`), `--local` (база напрямую,
+мимо сервера).
 
 `--owner` — серверный режим: от чьего имени идёт команда (владелец-человек из `server.users`).
 Источники по убыванию приоритета: флаг `--owner`, переменная `LISTIK_OWNER`, ключ `[auth] owner`
@@ -2190,8 +2299,77 @@ listik restore <копия> [--stop] [--force]  # восстановление; 
 отказывает так же, как сервер (`forbidden`). Владелец задачи виден в `listik show` строкой
 «владелец: …» и меняется как обычное поле: `listik set <id> owner=bob`, а `listik set <id> owner=`
 (пустое значение) снимает его. В локальном режиме флаг ничего не делает.
-Если сервер не поднят, CLI работает с базой напрямую — команда агента не должна падать из-за
-незапущенного сервера.
+Если свой сервер не поднят, CLI работает с базой напрямую — команда агента не должна падать
+из-за незапущенного сервера. На общем сервере (ниже) этого фолбэка нет.
+
+### CLI: общий сервер
+
+```
+listik remote                                   # что настроено: [remote], имя, задан ли токен, файл проекта
+LISTIK_REMOTE_TOKEN=… listik remote set <url> [--owner ann]   # проверить сервер и записать [remote]
+```
+
+**Файл проекта `.listik.toml`.** Коммитится в репозиторий; ровно два ключа, других нет:
+
+```toml
+server = "https://listik.example"   # "local" или http(s)://хост[:порт][/префикс]
+project = "shop"                    # slug проекта на этом сервере
+```
+
+Любой другой ключ, нет `server`/`project`, `project` пустой или похожий на путь (`/…`, `~…`),
+не TOML/не UTF-8 — `bad_argument` с путём файла. Поиск — от рабочего каталога вверх до
+первого `.listik.toml`, но не выше каталога, где лежит `.git` (корень репозитория или дерева
+задачи): ближайший к cwd файл побеждает.
+
+**`[remote]` клиента.** Свой `config.toml`: `[remote] url` (адрес общего сервера) и `token`
+(общий токен сервера, `[auth] token` на нём), имя — `[auth] owner`. Один общий сервер на
+клиент. Пишет их `listik remote set <url>`: адрес приводится к виду
+`http(s)://хост[:порт][/префикс]` (логин/пароль, query, fragment — отказ); токен — только из
+`LISTIK_REMOTE_TOKEN`, иначе вводом в терминале без эха или строкой из stdin (в argv его нет,
+команда его не печатает); имя — `--owner` → `LISTIK_OWNER` → `[auth] owner`. Перед записью —
+`GET <url>/api/health` с токеном, без перехода по редиректам: 401 или `authed: false` —
+`unauthorized`; ответ не Listik — `bad_argument`; серверный режим и имени нет в его `users` —
+`bad_argument`; сервер не ответил — запись с предупреждением `! сервер … не ответил —
+настройки записаны без проверки`. Остальной `config.toml` (комментарии, другие таблицы) не
+переписывается. `listik remote` без аргументов ничего не пишет; `--json` —
+`{url, owner, token_set, project_file}`.
+
+**Выбор цели.** `--local` → `--host/--port` → `.listik.toml` → свой `[server]`. `server =
+"local"` или нет файла — свой Listik. URL — общий сервер: нужен `[remote]` с тем же адресом
+(сравнение после нормализации), иначе `bad_argument` «проект живёт на общем сервере `<url>`
+(`<файл>`), а общий сервер у клиента не настроен» / «…, а у клиента настроен другой: `<url>`»
+с подсказкой `listik remote set <url>`. Машина с `[server] mode = "server"` без `[remote]`
+считает URL файла своим и идёт на свой `[server]`. Команды `serve`, `stop`, `init`, `backup`,
+`restore`, `init-projects`, `import-from-bd`, `token`, `service`, `swarm`, `arbiter-check`,
+`remote`, `mcp` файл не читают и всегда локальные. `--local` в клоне с общим сервером пишет в
+локальную базу с предупреждением в stderr «! --local: проект живёт на `<url>`, запись уйдёт в
+локальную базу этой машины».
+
+**На общем сервере:**
+
+- запрос идёт с `Authorization: Bearer <[remote] token>` и `X-Listik-Owner`; сеть не ответила
+  (отказ соединения, таймаут, обрыв) — ошибка `unreachable` «общий сервер `<url>` не отвечает»,
+  подсказка «проверь сеть и listik status; локальная база не тронута». Фолбэка в базу нет;
+  401 — к подсказке добавляется `listik remote set <url>`;
+- проект по умолчанию (`ready`, `list`, `new` и др.): `--project` → `LISTIK_PROJECT` →
+  `project` из `.listik.toml` (в stderr — `# проект из .listik.toml: <slug>`); по
+  `projects.path` проект не ищется — пути на общем сервере не свои;
+- `actor` по умолчанию: `--actor` → `LISTIK_ACTOR` → имя владельца (`--owner` →
+  `LISTIK_OWNER` → `[auth] owner`) → `$USER`;
+- `listik status` показывает цель: в тексте `сервер: <url> (общий, из <файл>)` и проект, в
+  `--json` — `"target": "remote"`, `url`, `project_file`; локальная цель — `"target":
+  "local"`;
+- `listik remember` отказывает `unsupported`: «на общем сервере заметку записывает
+  MCP-инструмент listik_remember: у HTTP API нет записи заметок»;
+- `listik watch` отказывает `unsupported`: «наблюдатель роя на общем сервере не работает: рой
+  там выключен»;
+- `listik projects --add <путь>` заводит проект без каталога (`POST /api/projects` без `path`);
+- `listik worktree <id>` заводит дерево в основном клоне текущего репозитория и пишет в карточку
+  путь этой машины; для проекта не из текущего клона — `bad_argument`.
+
+В серверном режиме (`[server] mode = "server"`) сам сервер рой не запускает: `listik swarm on`
+отказывает «в серверном режиме рой не запускается», в `/api/health` у `swarm` —
+`disabled_reason: "server_mode"`, `listik status` — «рой: выключен: серверный режим».
 
 ### Ошибки CLI: один формат у argparse, API и локального режима
 

@@ -2179,6 +2179,44 @@ suite("пустой дифф: эпик без своих коммитов и е�
   assert.equal(listik.calls.set.some(c => c.fields.status === "open"), false);
 });
 
+suite("пустой дифф: карточка сама прошла s3-impl без замеченной правки → empty, не «уже влита»", async () => {
+  const repo = initRepo("swarm-barrier-repo-");
+  const tree = addWorktree(repo, "t1"); // ветка = HEAD, коммитов нет — исполнитель не закоммитил
+  const tasks = [doneTask("t1", tree)];
+  const listik = fakeListik({t1: {id: "t1", comments: [], write_scope: [],
+    events: [{kind: "stage", to_value: "s3-impl"}]}});
+  const log = makeLog();
+  const before = await git.headSha(repo);
+  const result = await runBarrier({
+    listik, git, fs: nodeFs, config: {dryRun: false, project: "demo", logDir: tmpLogDir()},
+    swarmConfig: {integration: []}, log, tasks, projectPath: repo, now: new Date(),
+  });
+  assert.equal(await git.headSha(repo), before);
+  assert.deepEqual(result.rejected, ["t1"]);
+  const rec = parseRejected(listik, "t1");
+  assert.equal(rec.reason, "empty");
+  assert.equal(listik.calls.comment.some(c => c.text.startsWith(MERGED_MARK)), false);
+  assert.deepEqual(listik.calls.set[0].fields, {status: "open", stage: "s3-impl"});
+});
+
+suite("пустой дифф: s3-impl пройден, но правка замечена — «уже влита» (влили руками)", async () => {
+  const repo = initRepo("swarm-barrier-repo-");
+  const tree = addWorktree(repo, "t1");
+  const tasks = [doneTask("t1", tree)];
+  const listik = fakeListik({t1: {id: "t1", write_scope: [],
+    comments: [{author: SWARM_AUTHOR, text: `${FIRST_CHANGE_MARK} {}`,
+                created_at: "2026-01-01T00:00:10Z"}],
+    events: [{kind: "stage", to_value: "s3-impl"}]}});
+  const log = makeLog();
+  const result = await runBarrier({
+    listik, git, fs: nodeFs, config: {dryRun: false, project: "demo", logDir: tmpLogDir()},
+    swarmConfig: {integration: []}, log, tasks, projectPath: repo, now: new Date(),
+  });
+  assert.ok(result.merged.includes("t1"));
+  assert.deepEqual(result.rejected, []);
+  assert.equal(listik.calls.comment.some(c => c.text.startsWith(REJECTED_MARK)), false);
+});
+
 suite("верификатор: verify [] и красная integration → команд верификатора нет, задача влита", async () => {
   const repo = initRepo("swarm-barrier-repo-");
   const tree = addWorktree(repo, "t1");

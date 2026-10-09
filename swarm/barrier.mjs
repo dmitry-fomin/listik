@@ -335,6 +335,16 @@ export async function runBarrier({listik, git, fs, config, swarmConfig, log, tas
       } catch {
         cleanMerged = false;
       }
+      // ...но только если карточка сама не проходила `s3-impl`: сдавшая «готово» без
+      // единой замеченной правки (наблюдатель ни разу не видел дерево живым — нет
+      // FIRST_CHANGE_MARK) — не «влита руками», а пустой дифф исполнителя; её место —
+      // шаг 5 и `rejectOne`. Эпик по ролям не ходит, ручное закрытие событий `s3-impl`
+      // не имеет, влитую руками ветку наблюдатель успел пометить — все трое влиты.
+      if (cleanMerged &&
+          (card.events || []).some(ev => ev.kind === "stage" && ev.to_value === "s3-impl") &&
+          firstChangeAt(card.comments) == null) {
+        cleanMerged = false;
+      }
     }
     if (cleanMerged) {
       merged.push(entry.id);

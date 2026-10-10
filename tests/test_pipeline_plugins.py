@@ -212,7 +212,23 @@ def _plugin_path(relative: pathlib.Path) -> pathlib.Path:
 
 #: Части ядра (listik-7qbc): разделы, вынесенные из CORE_DOC в отдельные файлы рядом с ним.
 CORE_PARTS = tuple(pathlib.Path("references") / name for name in (
-    "pipeline-core-critique.md", "pipeline-core-tracks.md", "pipeline-core-lenses.md"))
+    "pipeline-core-critique.md", "pipeline-core-tracks.md", "pipeline-core-lenses.md",
+    "pipeline-core-headless.md"))
+
+#: Бюджет стартового чтения оркестратора full-low (listik-7qbc): ядро + SKILL.md пресета (+ часть критики,
+#: если её срок не «перед этапом 2»). До карточки — 196 559 байт.
+FULL_LOW_SKILL = pathlib.Path("pipeline-full") / "skills" / "low" / SKILL_FILE
+FULL_LOW_START_BUDGET = 150_000
+#: То же под роем: плюс часть headless, которая читается на шаге 0.
+FULL_LOW_HEADLESS_START_BUDGET = 155_000
+#: Строк частей в таблице «Части ядра» (listik-7qbc, порция a: четыре).
+CORE_PARTS_TABLE_ROWS = 4
+HEADING_RE = re.compile(r"^#{1,6} ")
+
+
+def _heading_texts(text: str) -> list[str]:
+    """Тексты заголовков `^#{1,6} ` без решёток и пробелов — без учёта уровня."""
+    return [line.lstrip("#").strip() for line in text.splitlines() if HEADING_RE.match(line)]
 
 
 def _plugin_text(relative: pathlib.Path) -> str:
@@ -333,10 +349,55 @@ class PipelineCorePluginTests(unittest.TestCase):
         listed = sorted(re.findall(r"`(pipeline-core-[a-z]+\.md)`", table))
         self.assertEqual(listed, on_disk)
         self.assertEqual(sorted(path.name for path in CORE_PARTS), on_disk)
+        core_headings = set(_heading_texts(core))
         for part in CORE_PARTS:
-            heading = next(line for line in _plugin_text(part).splitlines() if line.startswith("## "))
+            lines = _plugin_text(part).splitlines()
+            self.assertTrue(lines and lines[0].startswith("# Часть ядра"), f"{part}: нет строки-названия")
+            headings = _heading_texts("\n".join(lines[1:]))
             with self.subTest(part=str(part)):
-                self.assertNotIn(heading, core.splitlines(), f"{CORE_DOC}: раздел {heading!r} не вынесен")
+                self.assertTrue(headings, f"{part}: нет заголовков")
+                self.assertEqual([h for h in headings if h in core_headings], [],
+                                 f"{CORE_DOC}: заголовки части {part.name} не вынесены")
+
+    def test_full_low_start_read_budget(self) -> None:
+        """Стартовое чтение оркестратора full-low влезает в бюджет; сроки частей в таблице — по ТЗ."""
+        core_path = _plugin_path(CORE_DOC)
+        core = core_path.read_text(encoding="utf-8")
+        table = _text_block(core, "| Раздел | Файл |", lambda line: not line.strip())
+        rows = [line for line in table.splitlines() if re.search(r"`pipeline-core-[a-z]+\.md`", line)]
+        critique_rows = [line for line in rows if "`pipeline-core-critique.md`" in line]
+
+        # Бюджет — первым: на ядре без сроков в таблице тест падает суммой, а не формой таблицы.
+        sizes = {"ядро": len(core_path.read_bytes()),
+                 str(FULL_LOW_SKILL): len((PLUGINS_DIR / FULL_LOW_SKILL).read_bytes())}
+        if not any("перед этапом 2" in line for line in critique_rows):
+            sizes["pipeline-core-critique.md"] = len(
+                _plugin_path(pathlib.Path("references") / "pipeline-core-critique.md").read_bytes())
+        total = sum(sizes.values())
+        self.assertLessEqual(total, FULL_LOW_START_BUDGET, f"стартовый набор {total} байт: {sizes}")
+        headless_path = _plugin_path(pathlib.Path("references") / "pipeline-core-headless.md")
+        headless_size = len(headless_path.read_bytes()) if headless_path.is_file() else 0
+        self.assertLessEqual(total + headless_size, FULL_LOW_HEADLESS_START_BUDGET,
+                             f"стартовый набор под роем {total + headless_size} байт: "
+                             f"{sizes} + headless {headless_size}")
+
+        self.assertEqual(len(rows), CORE_PARTS_TABLE_ROWS, table)
+
+        def row(name: str) -> str:
+            found = [line for line in rows if f"`{name}`" in line]
+            self.assertEqual(len(found), 1, f"нет строки части {name}")
+            return found[0]
+
+        critique, lenses, headless = (row("pipeline-core-critique.md"), row("pipeline-core-lenses.md"),
+                                      row("pipeline-core-headless.md"))
+        for needle in ("перед этапом 2", "«Роли»", "этап 2"):
+            self.assertIn(needle, critique)
+        for needle in ("перед первым этапом 4", "линзами"):
+            self.assertIn(needle, lenses)
+        for needle in ("LISTIK_LAUNCHED_BY", "шаг 0"):
+            self.assertIn(needle, headless)
+        for line in table.splitlines():
+            self.assertNotIn("до первого действия", line)
 
     def test_core_delivery_check_rejects_broken_copy(self) -> None:
         root = self._copy_plugin()
@@ -1399,7 +1460,7 @@ CRITIQUE_SECTION_REQUIRED = (
     "review-<X>.glm.md", "15 минут", "кворум", "[все]", "Границы и ценность:", "Сверка с кодом:",
     "стоп: критика — кворум не набран", "Решение по сводке", "decisions-<X>.md",
     "actual_status", "completed", "## Блокирующие", "## Существенные", "pi:pi-runtime",
-    "devin:devin-runtime", "pi:pi-check", "devin:devin-check", "TaskStop",
+    "devin:devin-runtime", "TaskStop",
     "30%", "без не-Anthropic критика кворума нет", "до срока ожидания",
     "codex:codex-delegate", "--model gpt-6.1-sol --effort medium", "review-<X>.codex.md",
     "codex:codex-runtime",
@@ -1413,6 +1474,11 @@ CRITIQUE_CORE_FORBIDDEN = ("две модели в pi", "pipeline-critic-medium"
 CRITIQUE_QUORUM_JOURNAL = ("отменён по кворуму", "остальным до <ЧЧ:ММ>")
 #: Запасного критика нет (listik-cszk): без учёта регистра и переносов строк.
 SPARE_CRITIC_RE = re.compile(r"запасн\w* критик", re.I)
+#: Предполёт критиков переехал в ядро (listik-7qbc, порция a).
+PREFLIGHT_HEADING = "## Предполётная проверка каналов"
+CRITIC_PREFLIGHT_START = "**Предполётная проверка критиков**"
+CRITIC_PREFLIGHT_REQUIRED = ("pi:pi-check", "devin:devin-check", "codex:codex-check", "`opus`",
+                             "стоп: критика — кворум не набран")
 CRITIQUE_PAPER_NAMES = ("review-<X>.sonnet.md", "review-<X>.devin.md", "review-<X>.codex.md",
                         "review-<X>.opus.md")
 CRITIQUE_AGENTS_EFFORT = {"pipeline-critic.md": "high"}
@@ -1476,14 +1542,18 @@ def _critique_core_problems(text: str) -> list[str]:
             problems.append("строка '| `opus` |' идёт не сразу после '| `sonnet` |'")
         if "--provider" in section:
             problems.append("в разделе есть '--provider'")
-        preflight = _text_block(section, "**Предполётная проверка**", lambda line: not line.strip())
-        if "codex:codex-check" not in preflight:
-            problems.append("в абзаце «Предполётная проверка» нет 'codex:codex-check'")
-        if "`opus`" not in preflight:
-            problems.append("в абзаце «Предполётная проверка» нет '`opus`'")
         collect = _text_block(section, "**Забор.**", lambda line: not line.strip())
         if "codex:codex-jobs" not in collect:
             problems.append("в абзаце «Забор.» нет 'codex:codex-jobs'")
+    preflight_section = _text_section(text, PREFLIGHT_HEADING)
+    preflight = _text_block(preflight_section, CRITIC_PREFLIGHT_START, lambda line: not line.strip())
+    if not preflight_section:
+        problems.append(f"нет раздела {PREFLIGHT_HEADING!r}")
+    elif not preflight:
+        problems.append(f"в {PREFLIGHT_HEADING!r} нет абзаца {CRITIC_PREFLIGHT_START!r}")
+    else:
+        problems.extend(f"в абзаце «Предполётная проверка критиков» нет {needle!r}"
+                        for needle in CRITIC_PREFLIGHT_REQUIRED if needle not in preflight)
     problems.extend(f"в ядре есть {needle!r}" for needle in CRITIQUE_CORE_FORBIDDEN if needle in text)
     if _has_spare_critic(text):
         problems.append("в ядре есть «запасной критик»")
@@ -1541,7 +1611,9 @@ class FeaturePipelineCritiqueTests(unittest.TestCase):
         journal = _text_section(text, "## Журнал")
         quorum = _text_block(section, "**Кворум.**", lambda line: not line.strip())
         self.assertTrue(quorum, f"{CORE_DOC}: нет абзаца «Кворум.»")
-        preflight = _text_block(section, "**Предполётная проверка**", lambda line: not line.strip())
+        preflight = _text_block(_text_section(text, PREFLIGHT_HEADING), CRITIC_PREFLIGHT_START,
+                                lambda line: not line.strip())
+        self.assertTrue(preflight, f"{CORE_DOC}: нет абзаца «Предполётная проверка критиков»")
         collect = _text_block(section, "**Забор.**", lambda line: not line.strip())
         codex_row = next((line for line in section.splitlines() if line.startswith("| `codex` |")), "")
         self.assertTrue(codex_row, f"{CORE_DOC}: нет строки таблицы вида codex")
@@ -1576,6 +1648,13 @@ class FeaturePipelineCritiqueTests(unittest.TestCase):
                 section, section + "\n--provider a6api\n", 1),
             "из абзаца Предполётная проверка убрано codex:codex-check": text.replace(
                 preflight, preflight.replace("codex:codex-check", ""), 1),
+            "из абзаца Предполётная проверка убрано devin:devin-check": text.replace(
+                preflight, preflight.replace("devin:devin-check", ""), 1),
+            "из абзаца Предполётная проверка убрано pi:pi-check": text.replace(
+                preflight, preflight.replace("pi:pi-check", ""), 1),
+            "из абзаца Предполётная проверка убрано стоп: критика — кворум не набран": text.replace(
+                preflight, preflight.replace("стоп: критика — кворум не набран", ""), 1),
+            "убран заголовок Предполётная проверка каналов": text.replace(PREFLIGHT_HEADING + "\n", "", 1),
             "из абзаца Забор убрано codex:codex-jobs": text.replace(
                 collect, collect.replace("codex:codex-jobs", ""), 1),
             "убрана строка вида opus": text.replace(opus_row + "\n", "", 1),

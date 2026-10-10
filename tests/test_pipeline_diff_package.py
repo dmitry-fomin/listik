@@ -1,4 +1,4 @@
-"""Блок «Пакет диффа для приёмки» из pipeline-core.md исполняется на временном репозитории."""
+"""Блок «Пакет диффа для приёмки» из pipeline-core-accept.md исполняется на временном репозитории."""
 import os
 import shutil
 import subprocess
@@ -6,7 +6,7 @@ import tempfile
 import unittest
 from pathlib import Path
 
-CORE = Path(__file__).resolve().parents[1] / "plugins/pipeline-core/references/pipeline-core.md"
+CORE = Path(__file__).resolve().parents[1] / "plugins/pipeline-core/references/pipeline-core-accept.md"
 DUMP_REL = "pipeline-core/t.diff-a.r1.txt"
 GIT_ENV = {
     "GIT_AUTHOR_NAME": "t", "GIT_AUTHOR_EMAIL": "t@t",

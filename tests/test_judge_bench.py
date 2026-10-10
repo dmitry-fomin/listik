@@ -307,13 +307,13 @@ class JudgeBench(unittest.TestCase):
     def copy_script(self, skill_text, core_text):
         root = self.tmp / "plugins"
         write(root, "pipeline-full/skills/low/SKILL.md", skill_text)
-        write(root, "pipeline-core/references/pipeline-core.md", core_text)
+        write(root, "pipeline-core/references/pipeline-core-accept.md", core_text)
         (root / "pipeline-core/references/bench").mkdir()
         shutil.copy(SCRIPT, root / "pipeline-core/references/bench/judge_bench.py")
         return root
 
     def test_no_judge_task(self):
-        root = self.copy_script("# без якоря\n", (REFS / "pipeline-core.md").read_text("utf-8"))
+        root = self.copy_script("# без якоря\n", (REFS / "pipeline-core-accept.md").read_text("utf-8"))
         self.case()
         r = self.run_bench(script=root / "pipeline-core/references/bench/judge_bench.py")
         self.assertEqual(r.returncode, 2)

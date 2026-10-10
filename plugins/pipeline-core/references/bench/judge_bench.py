@@ -22,9 +22,9 @@ from pathlib import Path
 
 HERE = Path(__file__).resolve().parent
 SKILL = (HERE / "../../../pipeline-full/skills/low/SKILL.md").resolve()
-CORE = (HERE / "../pipeline-core.md").resolve()
+CORE = (HERE / "../pipeline-core-accept.md").resolve()
 
-TASK_ANCHOR = "Задание, которое уходит в `/grok:delegate`:"
+TASK_ANCHOR = "Задание судье (файл"
 TASK_TAIL = "Listik, карточка"
 DIFF_HEAD = "## Пакет диффа для приёмки"
 STEPS_REL = "docs/specs/steps"
@@ -221,7 +221,7 @@ def build(case, case_dir, tree, repo, task_head, block, no_mutation):
         text = (case_dir / "papers" / f).read_text(encoding="utf-8")
         (steps / f).write_text(text.replace("{{TREE}}", str(tree)), encoding="utf-8")
 
-    # 12. Пакет диффа — блок pipeline-core.md как есть.
+    # 12. Пакет диффа — блок pipeline-core-accept.md как есть.
     script = block
     for k, v in {"<steps>": STEPS_REL, "<трек>": case["step"], "<X>": case["portion"],
                  "<R>": "1"}.items():

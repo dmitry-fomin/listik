@@ -213,16 +213,17 @@ def _plugin_path(relative: pathlib.Path) -> pathlib.Path:
 #: Части ядра (listik-7qbc): разделы, вынесенные из CORE_DOC в отдельные файлы рядом с ним.
 CORE_PARTS = tuple(pathlib.Path("references") / name for name in (
     "pipeline-core-critique.md", "pipeline-core-tracks.md", "pipeline-core-lenses.md",
-    "pipeline-core-headless.md"))
+    "pipeline-core-headless.md", "pipeline-core-accept.md"))
 
 #: Бюджет стартового чтения оркестратора full-low (listik-7qbc): ядро + SKILL.md пресета (+ часть критики,
-#: если её срок не «перед этапом 2»). До карточки — 196 559 байт.
+#: если её срок не «перед этапом 2»). До карточки — 196 559 байт; порция a — 150 000 (под роем 155 000),
+#: порция b (часть реализации и приёмки) — 135 000 (под роем 140 000).
 FULL_LOW_SKILL = pathlib.Path("pipeline-full") / "skills" / "low" / SKILL_FILE
-FULL_LOW_START_BUDGET = 150_000
+FULL_LOW_START_BUDGET = 135_000
 #: То же под роем: плюс часть headless, которая читается на шаге 0.
-FULL_LOW_HEADLESS_START_BUDGET = 155_000
-#: Строк частей в таблице «Части ядра» (listik-7qbc, порция a: четыре).
-CORE_PARTS_TABLE_ROWS = 4
+FULL_LOW_HEADLESS_START_BUDGET = 140_000
+#: Строк частей в таблице «Части ядра» (listik-7qbc: порция a — четыре, порция b — пять).
+CORE_PARTS_TABLE_ROWS = 5
 HEADING_RE = re.compile(r"^#{1,6} ")
 
 
@@ -396,6 +397,10 @@ class PipelineCorePluginTests(unittest.TestCase):
             self.assertIn(needle, lenses)
         for needle in ("LISTIK_LAUNCHED_BY", "шаг 0"):
             self.assertIn(needle, headless)
+        accept = row("pipeline-core-accept.md")
+        for needle in ("перед первым этапом 3", "или этапом 4", "/clear", "сразу после шага 0"):
+            self.assertIn(needle, accept)
+        self.assertNotIn("до первого действия", accept)
         for line in table.splitlines():
             self.assertNotIn("до первого действия", line)
 
@@ -824,7 +829,7 @@ class FeaturePipelineVendoredSkillPathTests(unittest.TestCase):
 
     def test_markdown_links_to_listik_plugins_resolve(self) -> None:
         for path in _pipeline_docs():
-            text = path.read_text(encoding="utf-8")
+            text = _plugin_text(CORE_DOC) if path == _plugin_path(CORE_DOC) else path.read_text(encoding="utf-8")
             rel = path.relative_to(REPO_DIR)
             for match in MD_SKILL_LINK_RE.finditer(text):
                 href = match.group("href")
@@ -839,7 +844,7 @@ class FeaturePipelineVendoredSkillPathTests(unittest.TestCase):
 
     def test_mentioned_vendored_skills_have_link_and_repo_path(self) -> None:
         for path in _pipeline_docs():
-            text = path.read_text(encoding="utf-8")
+            text = _plugin_text(CORE_DOC) if path == _plugin_path(CORE_DOC) else path.read_text(encoding="utf-8")
             rel = path.relative_to(REPO_DIR)
             linked = {match.group("name") for match in MD_SKILL_LINK_RE.finditer(text)}
             for name, repo_path in VENDORED_SESSION_TO_PATH.items():

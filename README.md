@@ -95,7 +95,6 @@ MCP-инструментами `listik_*` или командой `listik new`. 
 | `full-low` | `pipeline-full:low` | Opus low | DeepSeek V4.1 Flash + GLM 5.3 Flash + Haiku 5.5 | devin SWE-2 max | Grok high | код вне квоты Max |
 | `full-xlow` | `pipeline-full:xlow` | — | — | devin SWE-2 max | Grok high | один прогон с приёмкой |
 | `full-nano` | `pipeline-full:nano` | — | — | devin SWE-2 high | GLM 5.3 Flash в pi | короткая задача: сделать и принять |
-| `full-cross` | `pipeline-full:cross` | Devin | DeepSeek V4.1 Flash + Sonnet | GLM 5.3 Flash в pi | линзы Haiku 5.5 max → Grok xhigh | автор ТЗ и код — разные вендоры |
 | `cc-xhigh`, `cc-high`, `cc-medium`, `cc-low`, `cc-xlow` | `pipeline-cc:<уровень>` | по уровню | по уровню | Opus | линзы Haiku 5.5 max → Astra (Codex), кроме cc-xlow | линейка Claude + Codex — см. `plugins/pipeline-cc/README.md` |
 
 Схема каждого пресета — в README его плагина: [pipeline-full](plugins/pipeline-full/README.md),

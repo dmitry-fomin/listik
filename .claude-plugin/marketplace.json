@@ -22,7 +22,7 @@
       "name": "pipeline-full",
       "source": "./plugins/pipeline-full",
       "version": "1.0.0",
-      "description": "Пресеты конвейера ТЗ → критика → код → приёмка со смешанными вендорами: xhigh, high, medium, low, xlow, nano и cross."
+      "description": "Пресеты конвейера ТЗ → критика → код → приёмка со смешанными вендорами: xhigh, high, medium, low, xlow и nano."
     },
     {
       "name": "pipeline-cc",

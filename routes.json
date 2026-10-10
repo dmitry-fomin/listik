@@ -498,51 +498,6 @@
         "-p",
         "Задача {task_id} (проект {project}), маршрут {route}. Запусти скил /{plugin}:{skill} и веди карточку по нему: ты оркестратор, кода не пишешь и порцию не коммитишь. Протокол — скил listik:listik. Первым действием, до чтения кода и show: claim {task_id} --holder claude. Дальше heartbeat каждые 10–15 мин, пока карточку держишь ты. Все команды с --actor agent:claude --harness claude."
       ]
-    },
-    {
-      "key": "full-cross",
-      "kind": "pipeline",
-      "plugin": "pipeline-full",
-      "title": "cross",
-      "hint": "Devin ТЗ · Sonnet+DS критика · GLM код · Grok приёмка",
-      "visible": true,
-      "icon": "xhigh",
-      "roles": {
-        "spec": {
-          "provider": "devin",
-          "label": "max",
-          "title": "SWE-2",
-          "skill": "devin:devin-delegate",
-          "params": {
-            "thinking": "max"
-          }
-        },
-        "critic": {
-          "provider": "claude",
-          "label": "S+DS",
-          "title": "Sonnet 5.5 · high + DeepSeek Flash · high"
-        },
-        "impl": {
-          "provider": "glm",
-          "label": "GLM",
-          "title": "GLM 5.3 Flash · high",
-          "skill": "pi:pi-delegate",
-          "params": {
-            "channel": "glm"
-          }
-        },
-        "judge": {
-          "provider": "grok",
-          "label": "линзы",
-          "title": "Haiku 5.5 · max · 3 линзы → Grok 4.7 · xhigh"
-        }
-      },
-      "command": [
-        "claude",
-        "--dangerously-skip-permissions",
-        "-p",
-        "Задача {task_id} (проект {project}), маршрут {route}. Запусти скил /{plugin}:{skill} и веди карточку по нему: ты оркестратор, кода не пишешь и порцию не коммитишь. Протокол — скил listik:listik. Первым действием, до чтения кода и show: claim {task_id} --holder claude. Дальше heartbeat каждые 10–15 мин, пока карточку держишь ты. Все команды с --actor agent:claude --harness claude."
-      ]
     }
   ]
 }

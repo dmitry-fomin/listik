@@ -273,9 +273,9 @@ class PluginMigrationTests(Schema15Base):
             with self.subTest(key=key):
                 self.assertNotIn("skill_missing", records[key])
                 self.assertIsNotNone(records[key]["skill_path"])
-        # Снятые пресеты (sol, opus, nano у pipeline-cc): переименованные записи остаются,
+        # Снятые пресеты (sol, opus, nano у pipeline-cc, cross у pipeline-full): переименованные записи остаются,
         # но без скила — скрыты. Список выводится из поставки и имена здесь не зашиты.
-        self.assertEqual(len(REMOVED_PRESETS), 3)
+        self.assertEqual(len(REMOVED_PRESETS), 4)
         for key in REMOVED_PRESETS:
             self.assertTrue(records[key]["skill_missing"], key)
         self.assertTrue(records["my-flow"]["skill_missing"])

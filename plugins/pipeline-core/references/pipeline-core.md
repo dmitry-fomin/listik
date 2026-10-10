@@ -731,7 +731,7 @@ listik claim <id> --holder claude --actor agent:claude --harness claude
 `pipeline-full:xlow`, `pipeline-cc:xlow` и `pipeline-full:nano`. Если `issue_type == "epic"`, а пресет из этого списка:
 
 ```
-listik needs-owner <id> "эпик нельзя вести пресетом без писателя ТЗ: порции и дочерние карточки заводит только писатель ТЗ. Выберите пресет с писателем ТЗ — pipeline-full:xhigh, pipeline-full:high, pipeline-full:medium, pipeline-full:low, pipeline-full:cross, pipeline-cc:xhigh, pipeline-cc:high, pipeline-cc:medium, pipeline-cc:low, pipeline-claude:high или pipeline-claude:xhigh — либо заведите обычную задачу." --actor agent:claude --harness claude
+listik needs-owner <id> "эпик нельзя вести пресетом без писателя ТЗ: порции и дочерние карточки заводит только писатель ТЗ. Выберите пресет с писателем ТЗ — pipeline-full:xhigh, pipeline-full:high, pipeline-full:medium, pipeline-full:low, pipeline-cc:xhigh, pipeline-cc:high, pipeline-cc:medium, pipeline-cc:low, pipeline-claude:high или pipeline-claude:xhigh — либо заведите обычную задачу." --actor agent:claude --harness claude
 ```
 
 Вопрос — дословно в чат, дальше стоп: этапы не начинаются.

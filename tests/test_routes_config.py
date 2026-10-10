@@ -51,7 +51,6 @@ EXPECTED_KEYS = [
     "full-low", "cc-low",
     "full-xlow", "cc-xlow",
     "full-nano",
-    "full-cross",
 ]
 
 # Таблицы маршрутов, зашитые в доске до шага 09, порции c: их заменил ответ API.
@@ -104,9 +103,9 @@ class RepoRoutesFileTests(unittest.TestCase):
             self.skipTest(f"git недоступен: {exc}")
         self.assertEqual(done.returncode, 1, done.stdout + done.stderr)
 
-    def test_has_fourteen_records_in_order(self) -> None:
+    def test_has_thirteen_records_in_order(self) -> None:
         self.assertEqual(self.raw["version"], 1)
-        self.assertEqual(len(self.raw["routes"]), 14)
+        self.assertEqual(len(self.raw["routes"]), 13)
         self.assertEqual([r["key"] for r in self.raw["routes"]], EXPECTED_KEYS)
 
     def test_validates_and_every_record_is_visible(self) -> None:
@@ -117,7 +116,7 @@ class RepoRoutesFileTests(unittest.TestCase):
 
     def test_kinds_match_the_table(self) -> None:
         kinds = [r["kind"] for r in self.raw["routes"]]
-        self.assertEqual(kinds, ["pipeline"] * 14)
+        self.assertEqual(kinds, ["pipeline"] * 13)
 
     def test_icons_are_the_route_levels(self) -> None:
         normalized = {r["key"]: r["icon"] for r in routes_mod.validate(self.raw)}
@@ -695,9 +694,9 @@ class FileLoadTests(TempDbTestCase):
 
     def test_database_update_is_visible_immediately(self) -> None:
         routes_store.import_file(self.conn, self.source)
-        self.conn.execute("UPDATE routes SET title = ? WHERE key = 'full-cross'", ("Проверка",))
+        self.conn.execute("UPDATE routes SET title = ? WHERE key = 'full-xlow'", ("Проверка",))
         self.conn.commit()
-        self.assertEqual(routes_mod.state(self.conn).by_key["full-cross"]["title"], "Проверка")
+        self.assertEqual(routes_mod.state(self.conn).by_key["full-xlow"]["title"], "Проверка")
 
     def test_database_error_is_reported(self) -> None:
         with mock.patch.object(routes_store, "list_routes",
@@ -772,7 +771,7 @@ class RoutesApiTests(TempDbTestCase):
     def test_routes_with_bad_icon_import_fallback_and_keep_all_records(self) -> None:
         """Предупреждение при ввозе; база хранит фолбэк, без файловых предупреждений."""
         bad = {**pipeline_record(), "key": "full-xhigh", "plugin": "pipeline-full", "icon": "xhihg"}
-        plain = {**pipeline_record(), "key": "full-cross", "plugin": "pipeline-full"}
+        plain = {**pipeline_record(), "key": "full-nano", "plugin": "pipeline-full"}
         self.target.parent.mkdir(parents=True)
         self.target.write_text(json.dumps({"version": 1, "routes": [bad, plain, swarm_record()]},
                                           ensure_ascii=False), encoding="utf-8")
@@ -787,11 +786,11 @@ class RoutesApiTests(TempDbTestCase):
         self.assertIsNone(data["error"])
         self.assertEqual(data["warnings"], [])
         records = {record["key"]: record for record in data["routes"]}
-        self.assertEqual(sorted(records), ["dsh", "full-cross", "full-xhigh"])
+        self.assertEqual(sorted(records), ["dsh", "full-nano", "full-xhigh"])
         self.assertEqual(records["full-xhigh"]["icon"], "xhigh")
         self.assertNotIn("icon_error", records["full-xhigh"])
-        self.assertIsNone(records["full-cross"]["icon"])
-        self.assertNotIn("icon_error", records["full-cross"])
+        self.assertIsNone(records["full-nano"]["icon"])
+        self.assertNotIn("icon_error", records["full-nano"])
         self.assertIsNone(records["dsh"]["icon"])
         for record in records.values():
             self.assertIn("command", record)
@@ -871,11 +870,11 @@ class RoutesApiTests(TempDbTestCase):
 
     def test_database_change_reaches_live_http_without_restart(self) -> None:
         self._init_from_repo()
-        self.conn.execute("UPDATE routes SET title = ? WHERE key = ?", ("Проверка", "full-cross"))
+        self.conn.execute("UPDATE routes SET title = ? WHERE key = ?", ("Проверка", "full-xlow"))
         self.conn.commit()
         status, payload = self._get("/api/routes", token=self.TOKEN)
         self.assertEqual(status, 200)
-        self.assertEqual(next(r for r in payload["data"]["routes"] if r["key"] == "full-cross")
+        self.assertEqual(next(r for r in payload["data"]["routes"] if r["key"] == "full-xlow")
                          ["title"], "Проверка")
 
     def test_health_reports_routes(self) -> None:

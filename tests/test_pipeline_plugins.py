@@ -1350,7 +1350,6 @@ class FeaturePipelineCopyAndNegativeControlTests(unittest.TestCase):
         _skill_rel("pipeline-full:xhigh"),
         _skill_rel("pipeline-full:low"),
         _skill_rel("pipeline-full:xlow"),
-        _skill_rel("pipeline-full:cross"),
         _skill_rel("pipeline-full:nano"),
     ]
 
@@ -1507,8 +1506,7 @@ def _critique_core_problems(text: str) -> list[str]:
     return problems
 
 
-CRITIQUE_PRESETS = ("pipeline-full:xhigh", "pipeline-full:high", "pipeline-full:medium", "pipeline-full:low",
-                    "pipeline-full:cross")
+CRITIQUE_PRESETS = ("pipeline-full:xhigh", "pipeline-full:high", "pipeline-full:medium", "pipeline-full:low")
 #: Обязательные для всех пресетов с критикой подстроки: скилы внешнего критика (pi) и общие.
 CRITIQUE_PRESET_REQUIRED = ("pi:pi-delegate", "pi:pi-jobs", "`pipeline-core.md`, «Критика ТЗ»",
                             "$STEPS/$BASE.review-<X>.md")
@@ -1809,9 +1807,8 @@ class FeaturePipelineLensAcceptanceTests(unittest.TestCase):
 
 
 #: Приёмка линзами в пресетах (listik-3exw, порция b; линзы Haiku — listik-jllp, порция a;
-#: medium и cross — listik-jllp, порция b): кто ссылается на ядро и что несёт.
-LENS_PRESETS = ("pipeline-full:high", "pipeline-full:xhigh",
-                "pipeline-full:medium", "pipeline-full:cross")
+#: medium — listik-jllp, порция b): кто ссылается на ядро и что несёт.
+LENS_PRESETS = ("pipeline-full:high", "pipeline-full:xhigh", "pipeline-full:medium")
 #: Пресеты pipeline-cc с теми же линзами (listik-jllp, порция b); их тексты сверяет
 #: tests/test_pipeline_cc_plugin.py — здесь список нужен строке `pipeline-lens` в README ядра.
 CC_LENS_PRESETS = ("pipeline-cc:xhigh", "pipeline-cc:high",
@@ -1950,7 +1947,7 @@ def _lens_readme_problems(text: str, skills: set[str]) -> list[str]:
 
 
 def _core_readme_lens_problems(text: str) -> list[str]:
-    """Строка `pipeline-lens` в README ядра: haiku / max и все десять пресетов с линзами."""
+    """Строка `pipeline-lens` в README ядра: haiku / max и все девять пресетов с линзами."""
     problems: list[str] = []
     if "pipeline-lens-xhigh" in text:
         problems.append("README ядра называет удалённого pipeline-lens-xhigh")
@@ -1989,8 +1986,8 @@ def _lens_agent_problems(text: str) -> list[str]:
 
 
 class FeaturePipelineLensPresetTests(unittest.TestCase):
-    """Пресеты high, xhigh, medium и cross ведут приёмку линзами по ядру (listik-3exw,
-    порция b; medium и cross — listik-jllp, порция b)."""
+    """Пресеты high, xhigh и medium ведут приёмку линзами по ядру (listik-3exw,
+    порция b; medium — listik-jllp, порция b)."""
 
     def test_skills_follow_lens_acceptance(self) -> None:
         names = _skill_names()
@@ -2084,10 +2081,6 @@ CRITIQUE_COMPOSITION = {
     "pipeline-full:xhigh": (CRITIQUE_SONNET + ("deepseek", "glm"), ("devin:devin-delegate",), ()),
     "pipeline-full:high": (CRITIQUE_SONNET + ("deepseek", "glm"), ("devin:devin-delegate",), ()),
     "pipeline-full:medium": (CRITIQUE_SONNET + ("deepseek", "glm"), ("devin:devin-delegate",), ()),
-    # в cross автор ТЗ — devin: возврат автору законно зовёт devin:devin-delegate, а
-    # devin-критика выдали бы devin:devin-check или --thinking max.
-    "pipeline-full:cross": (CRITIQUE_SONNET + ("deepseek",), ("devin:devin-check", "--thinking max"),
-                       ("glm",)),
     "pipeline-full:low": (("deepseek", "glm", "`pipeline-core:pipeline-critic`", "model: haiku"),
                      ("devin:devin-delegate", "pipeline-critic-low", "Sonnet low"), ()),
 }
@@ -2096,14 +2089,12 @@ CRITIQUE_NAMES = {
     "pipeline-full:xhigh": ("Sonnet", "DeepSeek", "GLM"),
     "pipeline-full:high": ("Sonnet", "DeepSeek", "GLM"),
     "pipeline-full:medium": ("Sonnet", "DeepSeek", "GLM"),
-    "pipeline-full:cross": ("Sonnet", "DeepSeek"),
     "pipeline-full:low": ("DeepSeek", "GLM", "Haiku"),
 }
 CRITIQUE_OLD_DESCRIPTION = "GLM 5.3 Flash и DeepSeek V4.1 Flash"
 CRITIQUE_README_COLUMN = "Критика ТЗ"
 CRITIC_LABELS = {"full-xhigh": "S+DS+GLM", "full-high": "S+DS+GLM",
-                 "full-medium": "S+DS+GLM", "full-cross": "S+DS", "full-low": "GLM+DS+H"}
-CROSS_HINT = "Devin ТЗ · Sonnet+DS критика · GLM код · Grok приёмка"
+                 "full-medium": "S+DS+GLM", "full-low": "GLM+DS+H"}
 
 
 def _description(text: str) -> str:
@@ -2211,7 +2202,6 @@ class FeaturePipelineCritiqueCompositionTests(unittest.TestCase):
                                                     lambda s: s + "\ndevin:devin-delegate"),
             "medium + devin:devin-delegate": in_stage2("pipeline-full:medium",
                                                        lambda s: s + "\ndevin:devin-delegate"),
-            "cross + GLM 5.3 Flash": in_stage2("pipeline-full:cross", lambda s: s + "\nGLM 5.3 Flash"),
             "medium без «кворум»": in_stage2("pipeline-full:medium", lambda s: s.replace("кворум", "")),
             "low + pipeline-critic-low": in_stage2(
                 "pipeline-full:low", lambda s: s + "\n`pipeline-core:pipeline-critic-low`"),
@@ -2250,7 +2240,6 @@ class FeaturePipelineCritiqueCompositionTests(unittest.TestCase):
                 else:
                     self.assertEqual(cell["provider"], "claude")
                     self.assertNotIn("skill", cell)
-        self.assertEqual(routes["full-cross"]["hint"], CROSS_HINT)
 
 
 #: Старые имена плагинов и пресетов до listik-d9rj (порция c): в текстах плагинов их быть не должно.

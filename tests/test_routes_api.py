@@ -332,7 +332,7 @@ class PatchRouteTests(RoutesApiBase):
         self.import_sample()
 
     def test_patch_updates_title_hint_icon_visible(self) -> None:
-        status, record = self.patch("/api/routes/full-cross",
+        status, record = self.patch("/api/routes/full-xlow",
                                     {"title": "Новый", "hint": "h", "icon": "high",
                                      "visible": False})
         self.assertEqual(status, 200)
@@ -352,7 +352,7 @@ class PatchRouteTests(RoutesApiBase):
         for field, value in (("kind", "swarm"), ("key", "x"), ("harness", "dsh"),
                              ("position", 0), ("command", ["run", "{task_id}"])):
             with self.assertRaises(server.ApiError) as ctx:
-                self.patch("/api/routes/full-cross", {field: value})
+                self.patch("/api/routes/full-xlow", {field: value})
             self.assertEqual(ctx.exception.status, 400, field)
             self.assertIn(field, ctx.exception.message)
             self.assertIn("нельзя менять", ctx.exception.message)
@@ -364,13 +364,13 @@ class PatchRouteTests(RoutesApiBase):
 
     def test_patch_unknown_field_is_400_names_it(self) -> None:
         with self.assertRaises(server.ApiError) as ctx:
-            self.patch("/api/routes/full-cross", {"foo": 1})
+            self.patch("/api/routes/full-xlow", {"foo": 1})
         self.assertEqual(ctx.exception.status, 400)
         self.assertIn("foo", ctx.exception.message)
 
     def test_patch_empty_body_is_400(self) -> None:
         with self.assertRaises(server.ApiError) as ctx:
-            self.patch("/api/routes/full-cross", {})
+            self.patch("/api/routes/full-xlow", {})
         self.assertEqual(ctx.exception.status, 400)
 
     def test_patch_unknown_key_is_404(self) -> None:
@@ -414,12 +414,12 @@ class DeleteRouteTests(RoutesApiBase):
         self.import_sample()
 
     def test_delete_clears_route_and_labels_but_keeps_tasks(self) -> None:
-        open_task = store.create_task(self.conn, title="open", project="p", route="full-cross")
-        working = store.create_task(self.conn, title="working", project="p", route="full-cross")
+        open_task = store.create_task(self.conn, title="open", project="p", route="full-xlow")
+        working = store.create_task(self.conn, title="working", project="p", route="full-xlow")
         store.claim(self.conn, working["id"], holder="dsh")
-        status, data = self.delete("/api/routes/full-cross")
+        status, data = self.delete("/api/routes/full-xlow")
         self.assertEqual(status, 200)
-        self.assertEqual(data["removed"], "full-cross")
+        self.assertEqual(data["removed"], "full-xlow")
         self.assertEqual(data["tasks_cleared"], 2)
         for tid in (open_task["id"], working["id"]):
             row = self.conn.execute(
@@ -427,7 +427,7 @@ class DeleteRouteTests(RoutesApiBase):
                 (tid,)).fetchone()
             self.assertIsNone(row["launch_route"])
             self.assertNotIn("harness:claude", json.loads(row["labels"]))
-            self.assertNotIn("process:full-cross", json.loads(row["labels"]))
+            self.assertNotIn("process:full-xlow", json.loads(row["labels"]))
         # Держатель и статус задачи в работе — не тронуты.
         self.assertEqual(
             self.conn.execute("SELECT holder FROM tasks WHERE id = ?",
@@ -435,7 +435,7 @@ class DeleteRouteTests(RoutesApiBase):
         self.assertIsNotNone(store.get_task(self.conn, open_task["id"]))
         self.assertIsNotNone(store.get_task(self.conn, working["id"]))
         with self.assertRaises(errors.NotFound):
-            routes_store.get_route(self.conn, "full-cross")
+            routes_store.get_route(self.conn, "full-xlow")
 
     def test_delete_unknown_key_is_404(self) -> None:
         with self.assertRaises(server.ApiError) as ctx:
@@ -473,33 +473,33 @@ class ReimportRoutesTests(RoutesApiBase):
 
     def test_reimport_rewrites_table(self) -> None:
         self.import_sample()
-        shipped = routes_store.get_route(self.conn, "full-cross")["title"]
-        routes_store.update_route(self.conn, "full-cross", title="Моя правка")
+        shipped = routes_store.get_route(self.conn, "full-xlow")["title"]
+        routes_store.update_route(self.conn, "full-xlow", title="Моя правка")
         with mock.patch.object(server, "publish") as publish:
             status, report = server.handle("POST", "/api/routes/reimport", {}, {}, authed=True)
         self.assertEqual(status, 200)
         self.assertTrue(report["replaced"])
         self.assertEqual(report["imported"], len(EXPECTED_KEYS))
         self.assertEqual(report["orphans"], {})
-        self.assertEqual(routes_store.get_route(self.conn, "full-cross")["title"], shipped)
+        self.assertEqual(routes_store.get_route(self.conn, "full-xlow")["title"], shipped)
         publish.assert_called_once_with("route", {"key": None, "action": "reimported"})
 
     def test_reimport_from_backup_path(self) -> None:
         from listik import paths
         self.import_sample()
-        shipped = routes_store.get_route(self.conn, "full-cross")["title"]
-        routes_store.update_route(self.conn, "full-cross", title="Моя правка")
+        shipped = routes_store.get_route(self.conn, "full-xlow")["title"]
+        routes_store.update_route(self.conn, "full-xlow", title="Моя правка")
         with mock.patch.object(paths, "DATA_DIR", self.tmp_path / "data"), \
                 mock.patch.object(server, "publish"), \
                 contextlib.redirect_stderr(io.StringIO()):
             _, first = server.handle("POST", "/api/routes/reimport", {}, {}, authed=True)
-            self.assertEqual(routes_store.get_route(self.conn, "full-cross")["title"],
+            self.assertEqual(routes_store.get_route(self.conn, "full-xlow")["title"],
                              shipped)
             status, report = server.handle("POST", "/api/routes/reimport", {},
                                            {"path": first["backup"]}, authed=True)
         self.assertEqual(status, 200)
         self.assertEqual(report["source"], first["backup"])
-        self.assertEqual(routes_store.get_route(self.conn, "full-cross")["title"],
+        self.assertEqual(routes_store.get_route(self.conn, "full-xlow")["title"],
                          "Моя правка")
 
     def test_reimport_bad_path_is_400(self) -> None:

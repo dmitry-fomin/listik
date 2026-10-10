@@ -2,7 +2,7 @@
 
 Пресеты конвейера реализации задачи: ТЗ → критика ТЗ → код → приёмка с коммитом. Основной контекст
 только маршрутизирует, носит вопросы автору и ведёт журнал; код пишет исполнитель, коммитит судья
-(в `pipeline-full:xhigh`, `pipeline-full:high`, `pipeline-full:medium` и `pipeline-full:cross` при чистых линзах приёмки порцию коммитит оркестратор).
+(в `pipeline-full:xhigh`, `pipeline-full:high` и `pipeline-full:medium` при чистых линзах приёмки порцию коммитит оркестратор).
 Каждый скил запускается только по явному имени — маршрутом карточки Listik (`launch_route` или
 метка `process:<ключ>`) или когда человек назвал пресет: имя запуска `/pipeline-full:<уровень>`, ключ маршрута
 `full-<уровень>`.
@@ -36,7 +36,6 @@
 | `low` | поджимает лимит Max: код вне квоты; ~$3 | Opus 5.5 low (`pipeline-spec-writer-low`, `model: opus`) | DeepSeek V4.1 Flash + GLM 5.3 Flash в pi + Haiku 5.5 high (`pipeline-critic`, `model: haiku`), кворум, сводит оркестратор | devin SWE-2 max (`devin:devin-delegate --thinking max`) | Grok 4.7 high |
 | `xlow` | задача в один прогон, нужна независимая приёмка | — | — | devin SWE-2 max (`devin:devin-delegate --thinking max`) | Grok 4.7 high |
 | `nano` | то же, дешевле; при пустом `write_scope` сперва ход на чтении за границами правки | — | — | devin SWE-2 high (`devin:devin-delegate --thinking high`) | GLM 5.3 Flash (`pi:pi-delegate --channel glm`) |
-| `cross` | автор ТЗ и исполнитель на разных вендорах: Devin пишет ТЗ, GLM в pi — код | Devin (SWE-2, max) | DeepSeek V4.1 Flash в pi + Sonnet 5.5 high (`pipeline-critic`, `model: sonnet`), кворум, сводит оркестратор | GLM 5.3 Flash в pi | линзы Haiku 5.5 max ×3 (`pipeline-lens`, `model: haiku`), при находке — Grok 4.7 xhigh |
 
 Агенты, хук автоодобрения и ядро `pipeline-core.md` — в плагине `pipeline-core` (`plugins/pipeline-core/README.md`).
 
@@ -77,9 +76,3 @@
 ![pipeline-full:nano](docs/nano.svg)
 
 Когда брать: без ТЗ и критики · не для эпиков
-
-### pipeline-full:cross
-
-![pipeline-full:cross](docs/cross.svg)
-
-Когда брать: Devin ТЗ · Sonnet+DS критика · GLM код · Grok приёмка

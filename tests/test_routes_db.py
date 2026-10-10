@@ -113,22 +113,22 @@ class ImportSampleTests(RoutesDbTestCase):
             self.assertNotIn("harness", record)
             self.assertTrue(record["command"] is None or isinstance(record["command"], list))
 
-    def test_cross_pipeline_roles_and_route_placeholder(self) -> None:
-        """full-cross: четыре роли, команда claude, свой скил `/pipeline-full:cross` и ключ в {route}."""
+    def test_high_pipeline_roles_and_route_placeholder(self) -> None:
+        """full-high: четыре роли, команда claude, свой скил `/pipeline-full:high` и ключ в {route}."""
         self.import_sample()
-        record = routes_store.get_route(self.conn, "full-cross")
+        record = routes_store.get_route(self.conn, "full-high")
         self.assertEqual(record["kind"], "pipeline")
         self.assertEqual(list(record["roles"]), ["spec", "critic", "impl", "judge"])
         self.assertEqual([cell["label"] for cell in record["roles"].values()],
-                         ["max", "S+DS", "GLM", "линзы"])
+                         ["high", "S+DS+GLM", "high", "линзы"])
         self.assertEqual(record["command"][0], "claude")
         values = {name: name for name in routes_mod.PLACEHOLDERS}
-        values["route"] = "full-cross"
+        values["route"] = "full-high"
         values["plugin"] = record["plugin"]
-        values["skill"] = skills_mod.skill_of(record["plugin"], "full-cross")
+        values["skill"] = skills_mod.skill_of(record["plugin"], "full-high")
         substituted = [launcher._substitute(element, values)
                        for element in record["command"]]
-        self.assertTrue(any("/pipeline-full:cross" in line and "маршрут full-cross" in line
+        self.assertTrue(any("/pipeline-full:high" in line and "маршрут full-high" in line
                             for line in substituted))
 
 
@@ -137,17 +137,17 @@ class ShippedAdditionsTests(RoutesDbTestCase):
 
     def test_existing_install_gets_addition_once(self) -> None:
         self.import_sample()
-        routes_store.delete_route(self.conn, "full-cross")
+        routes_store.delete_route(self.conn, "full-xlow")
         with self.patch_paths(source=ROUTES_JSON), \
-                mock.patch.object(routes_store, "ROUTE_ADDITIONS", [(2, ("full-cross",))]):
-            self.assertEqual(routes_store.add_shipped(self.conn), ["full-cross"])
+                mock.patch.object(routes_store, "ROUTE_ADDITIONS", [(2, ("full-xlow",))]):
+            self.assertEqual(routes_store.add_shipped(self.conn), ["full-xlow"])
             positions = [r["position"] for r in routes_store.list_routes(self.conn)]
-            self.assertEqual(routes_store.get_route(self.conn, "full-cross")["position"],
+            self.assertEqual(routes_store.get_route(self.conn, "full-xlow")["position"],
                              max(positions))
-            routes_store.delete_route(self.conn, "full-cross")
+            routes_store.delete_route(self.conn, "full-xlow")
             self.assertEqual(routes_store.add_shipped(self.conn), [])
         self.assertIsNone(self.conn.execute(
-            "SELECT 1 FROM routes WHERE key = 'full-cross'").fetchone())
+            "SELECT 1 FROM routes WHERE key = 'full-xlow'").fetchone())
 
     def test_install_after_addition_2_gets_claude_codex_routes_once(self) -> None:
         self.import_sample()
@@ -228,22 +228,22 @@ class ReimportTests(RoutesDbTestCase):
 
     def test_second_import_without_replace_is_skipped(self) -> None:
         self.import_sample()
-        routes_store.update_route(self.conn, "full-cross", title="Правленый")
+        routes_store.update_route(self.conn, "full-xlow", title="Правленый")
         report = self.import_sample()
         self.assertTrue(report["skipped"])
         self.assertEqual(report["imported"], 0)
         self.assertFalse(report["replaced"])
-        self.assertEqual(routes_store.get_route(self.conn, "full-cross")["title"], "Правленый")
+        self.assertEqual(routes_store.get_route(self.conn, "full-xlow")["title"], "Правленый")
 
     def test_import_with_replace_rewrites(self) -> None:
         self.import_sample()
-        shipped = routes_store.get_route(self.conn, "full-cross")["title"]
-        routes_store.update_route(self.conn, "full-cross", title="Правленый", visible=False)
+        shipped = routes_store.get_route(self.conn, "full-xlow")["title"]
+        routes_store.update_route(self.conn, "full-xlow", title="Правленый", visible=False)
         report = self.import_sample(replace=True)
         self.assertFalse(report["skipped"])
         self.assertTrue(report["replaced"])
         self.assertEqual(report["imported"], len(EXPECTED_KEYS))
-        record = routes_store.get_route(self.conn, "full-cross")
+        record = routes_store.get_route(self.conn, "full-xlow")
         self.assertEqual(record["title"], shipped)
         self.assertTrue(record["visible"])
 
@@ -291,8 +291,8 @@ class ReimportCommandTests(RoutesDbTestCase):
     def test_reimport_rewrites_and_reports_orphans(self) -> None:
         from listik import store
         self.import_sample()
-        shipped = routes_store.get_route(self.conn, "full-cross")["title"]
-        routes_store.update_route(self.conn, "full-cross", title="Моя правка")
+        shipped = routes_store.get_route(self.conn, "full-xlow")["title"]
+        routes_store.update_route(self.conn, "full-xlow", title="Моя правка")
         task = store.create_task(self.conn, title="проба", project="listik")
         self.conn.execute("UPDATE tasks SET launch_route = 'gone-route' WHERE id = ?",
                           (task["id"],))
@@ -301,7 +301,7 @@ class ReimportCommandTests(RoutesDbTestCase):
         self.assertTrue(report["replaced"])
         self.assertEqual(report["imported"], len(EXPECTED_KEYS))
         self.assertEqual(report["orphans"], {"gone-route": 1})
-        self.assertEqual(routes_store.get_route(self.conn, "full-cross")["title"], shipped)
+        self.assertEqual(routes_store.get_route(self.conn, "full-xlow")["title"], shipped)
         row = self.conn.execute("SELECT launch_route FROM tasks WHERE id = ?",
                                 (task["id"],)).fetchone()
         self.assertEqual(row[0], "gone-route", "задачу трогать нельзя")
@@ -312,8 +312,8 @@ class ReimportCommandTests(RoutesDbTestCase):
         import sys
         from tests.test_claim import LISTIK_BIN
         self.import_sample()
-        shipped = routes_store.get_route(self.conn, "full-cross")["title"]
-        routes_store.update_route(self.conn, "full-cross", title="Моя правка")
+        shipped = routes_store.get_route(self.conn, "full-xlow")["title"]
+        routes_store.update_route(self.conn, "full-xlow", title="Моя правка")
         env = {**os.environ, "LISTIK_DB": str(self.db_path),
                "LISTIK_LOG": str(self.tmp_path / "listik.log")}
         proc = subprocess.run([sys.executable, str(LISTIK_BIN), "--local", "routes",
@@ -324,7 +324,7 @@ class ReimportCommandTests(RoutesDbTestCase):
         self.assertTrue(report["replaced"])
         self.assertEqual(report["imported"], len(EXPECTED_KEYS))
         self.assertEqual(report["orphans"], {})
-        self.assertEqual(routes_store.get_route(self.conn, "full-cross")["title"], shipped)
+        self.assertEqual(routes_store.get_route(self.conn, "full-xlow")["title"], shipped)
 
 
 class ReimportKeepsUserRoutesTests(RoutesDbTestCase):
@@ -669,8 +669,8 @@ class UpdateRouteTests(RoutesDbTestCase):
         self.assertIn("нельзя менять", str(ctx.exception))
 
     def test_partial_update_keeps_other_fields(self) -> None:
-        before = routes_store.get_route(self.conn, "full-cross")
-        after = routes_store.update_route(self.conn, "full-cross", title="Новый")
+        before = routes_store.get_route(self.conn, "full-xlow")
+        after = routes_store.update_route(self.conn, "full-xlow", title="Новый")
         self.assertEqual(after["title"], "Новый")
         self.assertEqual(after["command"], before["command"])
         self.assertEqual(after["roles"], before["roles"])
@@ -691,9 +691,9 @@ class CrudTests(RoutesDbTestCase):
 
     def test_create_duplicate_key(self) -> None:
         with self.assertRaises(ValueError) as ctx:
-            routes_store.create_route(self.conn, key="full-cross", kind="swarm", title="Dup",
+            routes_store.create_route(self.conn, key="full-xlow", kind="swarm", title="Dup",
                                       roles={"impl": {"harness": "dsh"}})
-        self.assertIn("full-cross", str(ctx.exception))
+        self.assertIn("full-xlow", str(ctx.exception))
 
     def test_get_unknown_raises_not_found(self) -> None:
         with self.assertRaises(errors.NotFound):
@@ -704,16 +704,16 @@ class CrudTests(RoutesDbTestCase):
                          len(routes_store.list_routes(self.conn)))
 
     def test_delete_counts_tasks_but_keeps_them(self) -> None:
-        self.conn.execute("INSERT INTO tasks(id, launch_route) VALUES('t1', 'full-cross')")
-        self.conn.execute("INSERT INTO tasks(id, launch_route) VALUES('t2', 'full-cross')")
+        self.conn.execute("INSERT INTO tasks(id, launch_route) VALUES('t1', 'full-xlow')")
+        self.conn.execute("INSERT INTO tasks(id, launch_route) VALUES('t2', 'full-xlow')")
         self.conn.execute("INSERT INTO tasks(id, launch_route) VALUES('t3', 'full-nano')")
         self.conn.commit()
-        removed = routes_store.delete_route(self.conn, "full-cross")
+        removed = routes_store.delete_route(self.conn, "full-xlow")
         self.assertEqual(removed, 2)
         self.assertEqual(self.conn.execute("SELECT COUNT(*) FROM tasks").fetchone()[0], 3)
-        self.assertNotIn("full-cross", [r["key"] for r in routes_store.list_routes(self.conn)])
+        self.assertNotIn("full-xlow", [r["key"] for r in routes_store.list_routes(self.conn)])
         with self.assertRaises(errors.NotFound):
-            routes_store.get_route(self.conn, "full-cross")
+            routes_store.get_route(self.conn, "full-xlow")
 
     def test_reorder_full(self) -> None:
         reordered = routes_store.reorder(self.conn, list(reversed(EXPECTED_KEYS)))
@@ -723,9 +723,9 @@ class CrudTests(RoutesDbTestCase):
                          list(reversed(EXPECTED_KEYS)))
 
     def test_reorder_subset_pushes_rest_to_end(self) -> None:
-        rest = [k for k in EXPECTED_KEYS if k not in ("full-cross", "full-nano")]
-        reordered = routes_store.reorder(self.conn, ["full-cross", "full-nano"])
-        self.assertEqual([r["key"] for r in reordered], ["full-cross", "full-nano", *rest])
+        rest = [k for k in EXPECTED_KEYS if k not in ("full-xlow", "full-nano")]
+        reordered = routes_store.reorder(self.conn, ["full-xlow", "full-nano"])
+        self.assertEqual([r["key"] for r in reordered], ["full-xlow", "full-nano", *rest])
         positions = [r["position"] for r in reordered]
         self.assertEqual(positions, list(range(len(EXPECTED_KEYS))))
 

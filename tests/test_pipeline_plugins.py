@@ -2083,7 +2083,7 @@ CRITIQUE_COMPOSITION = {
     # имя: (есть в этапе 2, нет в этапе 2 (с учётом регистра), нет без учёта регистра)
     "pipeline-full:xhigh": (CRITIQUE_SONNET + ("deepseek", "glm"), ("devin:devin-delegate",), ()),
     "pipeline-full:high": (CRITIQUE_SONNET + ("deepseek", "glm"), ("devin:devin-delegate",), ()),
-    "pipeline-full:medium": (CRITIQUE_SONNET + ("deepseek",), ("devin:devin-delegate",), ("glm",)),
+    "pipeline-full:medium": (CRITIQUE_SONNET + ("deepseek", "glm"), ("devin:devin-delegate",), ()),
     # в cross автор ТЗ — devin: возврат автору законно зовёт devin:devin-delegate, а
     # devin-критика выдали бы devin:devin-check или --thinking max.
     "pipeline-full:cross": (CRITIQUE_SONNET + ("deepseek",), ("devin:devin-check", "--thinking max"),
@@ -2095,14 +2095,14 @@ CRITIQUE_COMPOSITION = {
 CRITIQUE_NAMES = {
     "pipeline-full:xhigh": ("Sonnet", "DeepSeek", "GLM"),
     "pipeline-full:high": ("Sonnet", "DeepSeek", "GLM"),
-    "pipeline-full:medium": ("Sonnet", "DeepSeek"),
+    "pipeline-full:medium": ("Sonnet", "DeepSeek", "GLM"),
     "pipeline-full:cross": ("Sonnet", "DeepSeek"),
     "pipeline-full:low": ("DeepSeek", "GLM", "Haiku"),
 }
 CRITIQUE_OLD_DESCRIPTION = "GLM 5.3 Flash и DeepSeek V4.1 Flash"
 CRITIQUE_README_COLUMN = "Критика ТЗ"
 CRITIC_LABELS = {"full-xhigh": "S+DS+GLM", "full-high": "S+DS+GLM",
-                 "full-medium": "S+DS", "full-cross": "S+DS", "full-low": "GLM+DS+H"}
+                 "full-medium": "S+DS+GLM", "full-cross": "S+DS", "full-low": "GLM+DS+H"}
 CROSS_HINT = "Devin ТЗ · Sonnet+DS критика · GLM код · Grok приёмка"
 
 
@@ -2128,8 +2128,6 @@ def _critique_preset_problems(name: str, text: str) -> list[str]:
                     for needle in CRITIQUE_NAMES[name] if needle not in description)
     if CRITIQUE_OLD_DESCRIPTION in description:
         problems.append(f"{name}: в description старое {CRITIQUE_OLD_DESCRIPTION!r}")
-    if name == "pipeline-full:medium" and "GLM" in description:
-        problems.append(f"{name}: в description есть 'GLM'")
     if name == "pipeline-full:low" and _has_spare_critic(text):
         problems.append(f"{name}: есть «запасной критик»")
     return problems
@@ -2206,7 +2204,7 @@ class FeaturePipelineCritiqueCompositionTests(unittest.TestCase):
             return name, text.replace(stage2, edit(stage2), 1)
 
         broken = {
-            "medium + --channel glm": in_stage2("pipeline-full:medium", lambda s: s + "\n--channel glm"),
+            "medium без glm": in_stage2("pipeline-full:medium", lambda s: s.replace("glm", "")),
             "high без model: sonnet": in_stage2("pipeline-full:high",
                                                 lambda s: s.replace("model: sonnet", "")),
             "low + devin:devin-delegate": in_stage2("pipeline-full:low",

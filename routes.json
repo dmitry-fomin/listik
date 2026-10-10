@@ -249,8 +249,8 @@
         },
         "critic": {
           "provider": "claude",
-          "label": "S+DS",
-          "title": "Sonnet 5.5 · high + DeepSeek Flash · high"
+          "label": "S+DS+GLM",
+          "title": "Sonnet 5.5 · high + DeepSeek Flash · high + GLM 5.3 Flash · high"
         },
         "impl": {
           "provider": "claude",

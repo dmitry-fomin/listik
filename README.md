@@ -91,7 +91,7 @@ MCP-инструментами `listik_*` или командой `listik new`. 
 | `claude-xhigh` | `pipeline-claude:xhigh` | Opus xhigh | Sonnet xhigh + Opus xhigh | Opus xhigh | линзы Haiku 5.5 max → Sonnet xhigh | только Claude: внешних денег ноль |
 | `full-high` | `pipeline-full:high` | Opus high | Sonnet + DeepSeek V4.1 Flash + GLM 5.3 Flash | Opus high | линзы Haiku 5.5 max → Grok xhigh | расклад по умолчанию |
 | `claude-high` | `pipeline-claude:high` | Opus high | Sonnet high + Opus high | Opus high | линзы Haiku 5.5 max → Sonnet high | только Claude: внешних денег ноль |
-| `full-medium` | `pipeline-full:medium` | Opus medium | Sonnet + DeepSeek V4.1 Flash | Opus medium | линзы Haiku 5.5 max → Grok high | работа понятная |
+| `full-medium` | `pipeline-full:medium` | Opus medium | Sonnet + DeepSeek V4.1 Flash + GLM 5.3 Flash | Opus medium | линзы Haiku 5.5 max → Grok high | работа понятная |
 | `full-low` | `pipeline-full:low` | Opus low | DeepSeek V4.1 Flash + GLM 5.3 Flash + Haiku 5.5 | devin SWE-2 max | Grok high | код вне квоты Max |
 | `full-xlow` | `pipeline-full:xlow` | — | — | devin SWE-2 max | Grok high | один прогон с приёмкой |
 | `full-nano` | `pipeline-full:nano` | — | — | devin SWE-2 high | GLM 5.3 Flash в pi | короткая задача: сделать и принять |

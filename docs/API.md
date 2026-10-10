@@ -990,7 +990,9 @@ generation + 1, dispatch_id = NULL, launched_by = NULL … WHERE id = ? AND gene
 `LISTIK_CONFIG`, `LISTIK_LOG`, `LISTIK_PORT`, `LISTIK_PROJECTS_ROOT`, `LISTIK_OLLAMA_URL`,
 `LISTIK_EMBED_MODEL`, `LISTIK_EMBED_DIM`, `LISTIK_EMBED_BATCH`, `LISTIK_EMBED_MAX_CHARS`,
 `LISTIK_ACTOR`, `LISTIK_OWNER`, `LISTIK_PROJECT`, `LISTIK_WRAPPER`, `LISTIK_TASK_ID`,
-`LISTIK_ROUTE`, `LISTIK_LAUNCHED_BY`, `LISTIK_GENERATION`, `LISTIK_DISPATCH_ID` — 20 имён;
+`LISTIK_ROUTE`, `LISTIK_LAUNCHED_BY`, `LISTIK_GENERATION`, `LISTIK_DISPATCH_ID`,
+`LISTIK_STAGE`, `LISTIK_ROLE`, `LISTIK_HARNESS`, `LISTIK_REMOTE_TOKEN` (токен общего
+сервера для `listik remote set`, процессу задачи не передаётся);
 переменные `install.sh`, такие как `LISTIK_VERSION`, туда не входят — их видит только
 установщик, не воркер); значения — строка или число, не длиннее 512 символов и без символа
 NUL (`\x00`), не больше 20 ключей. Нарушение любого правила — `400 bad_argument` до захвата: карточка не трогается.
@@ -1888,7 +1890,7 @@ stdio (`listik mcp`) на строку с невалидным JSON отвеча
 | `listik_actors` | — | `GET /api/meta` → `actors[]` (`listik actors`) |
 | `listik_timeline` | — | `GET /api/timeline` (`listik timeline`) |
 | `listik_deps_suggested` | — | `GET /api/deps/suggested` (`listik dep suggested`) |
-| `listik_cycles` | — | — (`listik cycles` — только локально; `cycles[]` есть и в `GET /api/ready`) |
+| `listik_cycles` | — | HTTP-эндпоинта у циклов нет: `cycles[]` отдаёт `GET /api/ready` (циклы считаются независимо от `limit`); `listik dep cycles` на общем сервере (remote) берёт их оттуда, локально — считает по базе; те же `cycles[]` отдаёт `listik_ready` (ответ `{"tasks", "cycles"}`) |
 | `listik_waves` | `project` | `GET /api/waves` (`listik waves`); `apply: true` — `POST /api/waves/apply` (`listik waves --apply`) |
 | `listik_delete` | `id` | `DELETE /api/tasks/{id}` (CLI нет) |
 | `listik_mentions` | `id` | `POST /api/tasks/{id}/mentions` (`listik dep suggest`); `link: true` — как `listik dep link`, — связи через `POST /api/tasks/{id}/deps` |

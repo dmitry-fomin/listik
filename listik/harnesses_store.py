@@ -90,7 +90,8 @@ SEEDS: list[dict] = [
      "prompt": _prompt(DIRECT_PROMPT, "grok"), "kind": "exec", "builtin": 1},
     {"key": "pi-glm", "label": "pi · GLM", "hint": "pi --print · GLM 5.3 Flash",
      "icon": "pi-glm",
-     "argv": ["pi", "--print", "--no-session", "--model", "glm-a6/glm-5.3-flash"],
+     "argv": ["pi", "--print", "--no-session", "--model",
+              "openrouter/z-ai/glm-5.3-flash"],
      "prompt": _prompt(DIRECT_PROMPT, "pi-glm"), "kind": "exec", "builtin": 1},
     {"key": "pi-deepseek", "label": "pi · DeepSeek",
      "hint": "pi --print · DeepSeek Flash", "icon": "pi-deepseek",
@@ -410,3 +411,15 @@ def seed(conn: sqlite3.Connection) -> None:
                          "b-ai-glm/glm-5.3-flash"], ensure_ascii=False)))
         conn.execute(
             "INSERT INTO meta(key, value) VALUES('seed_pi_glm_a6', '1')")
+    # Затем с `glm-a6` на `z-ai/glm-5.3-flash` встроенного провайдера `openrouter`.
+    if conn.execute(
+            "SELECT value FROM meta WHERE key = 'seed_pi_glm_openrouter'").fetchone() is None:
+        conn.execute(
+            "UPDATE harnesses SET argv = ?, updated_at = ? "
+            "WHERE key = 'pi-glm' AND builtin = 1 AND argv = ?",
+            (json.dumps(["pi", "--print", "--no-session", "--model",
+                         "openrouter/z-ai/glm-5.3-flash"], ensure_ascii=False), ts,
+             json.dumps(["pi", "--print", "--no-session", "--model",
+                         "glm-a6/glm-5.3-flash"], ensure_ascii=False)))
+        conn.execute(
+            "INSERT INTO meta(key, value) VALUES('seed_pi_glm_openrouter', '1')")

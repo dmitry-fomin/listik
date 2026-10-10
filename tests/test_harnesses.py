@@ -89,6 +89,19 @@ class SeedTests(TempDbTestCase):
         harnesses_store.seed(self.conn)
         self.assertEqual(harnesses_store.get(self.conn, "pi-glm")["argv"], old)
 
+    def test_seed_moves_pi_glm_to_openrouter_once(self) -> None:
+        old = ["pi", "--print", "--no-session", "--model", "glm-a6/glm-5.3-flash"]
+        harnesses_store.update(self.conn, "pi-glm", {"argv": old})
+        self.conn.execute("DELETE FROM meta WHERE key = 'seed_pi_glm_openrouter'")
+        self.conn.commit()
+        harnesses_store.seed(self.conn)
+        self.assertEqual(harnesses_store.get(self.conn, "pi-glm")["argv"],
+                         ["pi", "--print", "--no-session", "--model",
+                          "openrouter/z-ai/glm-5.3-flash"])
+        harnesses_store.update(self.conn, "pi-glm", {"argv": old})
+        harnesses_store.seed(self.conn)
+        self.assertEqual(harnesses_store.get(self.conn, "pi-glm")["argv"], old)
+
 
 class CrudTests(TempDbTestCase):
     def test_create_and_get(self) -> None:

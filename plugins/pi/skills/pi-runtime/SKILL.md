@@ -120,6 +120,7 @@ the job is honestly `running`.
 - The `glm` channel is `z-ai/glm-5.3-flash` on pi's built-in `openrouter` provider; the
   `deepseek` channel is pi's built-in `deepseek` provider. `PI_CLAUDE_DEFAULT_MODEL` moves the default,
   `PI_CLAUDE_BIN` points at the binary, `PI_CLAUDE_STATE_DIR` at the state directory.
+- **Channel models come from Listik.** The model behind each channel name is set in Listik — harness `pi`, page «Настройки → Харнессы»; the bridge reads it with `listik harnesses pi --json` (binary from `LISTIK_BIN`, default `listik`) once per `check`/`run`/`resume`. The models named here are the shipped defaults (по умолчанию в поставке): the script's built-in fallback, used only when Listik is unavailable or answers with an unusable table. `check` shows the source — the `channels from` line, `channels_source`/`channels_source_error` in `--json`. A channel deleted in Listik is `unknown channel` (exit 2) and the role on it is unavailable; the bridge does not revive it from the fallback.
 - **`pi auth check` only says a key is stored**, not that the channel answers. Readiness
   is decided by a probe run, never by `auth check`.
 

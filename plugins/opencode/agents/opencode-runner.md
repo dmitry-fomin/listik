@@ -1,6 +1,6 @@
 ---
 name: opencode-runner
-description: "Hands one task to opencode (`opencode run`, GLM 5.3 Flash by default, DeepSeek V4.1 Flash on request) through `opencode-run.sh` and returns its output verbatim — or collects the answer of an already running background job by its job-id, or continues a named session. Use when the work has been decided to go out to opencode: codebase investigation, an independent read, a mechanical change from a description. Investigates and fixes nothing itself. Several tasks — launch one copy per task in a single message."
+description: "Hands one task to opencode (`opencode run`, GLM 5.3 Flash by default, DeepSeek V4.1 Flash on request — по умолчанию; модели — из Listik) through `opencode-run.sh` and returns its output verbatim — or collects the answer of an already running background job by its job-id, or continues a named session. Use when the work has been decided to go out to opencode: codebase investigation, an independent read, a mechanical change from a description. Investigates and fixes nothing itself. Several tasks — launch one copy per task in a single message."
 model: sonnet
 tools: Bash
 skills:
@@ -71,6 +71,8 @@ channel (`--model deepseek`), in which case pass it through and flag in your rep
 is DeepSeek, which confabulates files and functions; or the call comes from a pipeline
 preset, which must pass its required `--model` and `--variant` because model-per-role is
 part of the preset (rationale in `plugins/pipeline-core/references/ROLES.md`).
+
+**Channel models come from Listik.** The model behind each channel name is set in Listik — harness `opencode`, page «Настройки → Харнессы»; the bridge reads it with `listik harnesses opencode --json` (binary from `LISTIK_BIN`, default `listik`) once per `check`/`run`/`resume`. The models named here are the shipped defaults (по умолчанию в поставке): the script's built-in fallback, used only when Listik is unavailable or answers with an unusable table. `check` shows the source — the `channels from` line, `channels_source`/`channels_source_error` in `--json`. A channel deleted in Listik is `unknown channel` (exit 2) and the role on it is unavailable; the bridge does not revive it from the fallback. A full `provider/model` id passed with `--model` still works as before.
 
 ## What to return
 

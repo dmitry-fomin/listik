@@ -126,6 +126,7 @@ class OpencodeRunResumeTests(unittest.TestCase):
             "OPENCODE_BIN": str(self.bin),
             "FAKE_OPENCODE_LOG": str(self.log),
             "FAKE_OPENCODE_STORE": str(self.store),
+            "LISTIK_BIN": str(self.root / "no-listik"),
         })
         env.update(extra)
         return env

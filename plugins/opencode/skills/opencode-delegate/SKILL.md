@@ -105,6 +105,8 @@ Cut flags out of the task text so they don't land in the prompt as content.
 Channel, variant and agent are never your choice: default is `glm`, and you pass them only
 when the human named one or when a pipeline preset requires it.
 
+**Channel models come from Listik.** The model behind each channel name is set in Listik — harness `opencode`, page «Настройки → Харнессы»; the bridge reads it with `listik harnesses opencode --json` (binary from `LISTIK_BIN`, default `listik`) once per `check`/`run`/`resume`. The models named here are the shipped defaults (по умолчанию в поставке): the script's built-in fallback, used only when Listik is unavailable or answers with an unusable table. `check` shows the source — the `channels from` line, `channels_source`/`channels_source_error` in `--json`. A channel deleted in Listik is `unknown channel` (exit 2) and the role on it is unavailable; the bridge does not revive it from the fallback. A full `provider/model` id passed with `--model` still works as before.
+
 ## Handling the answer
 
 - Show opencode's answer verbatim, marked as another harness's output rather than your

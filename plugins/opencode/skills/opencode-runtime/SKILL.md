@@ -129,6 +129,7 @@ stream and write the outcome, and during those seconds the job is honestly `runn
   (`b.ai/deepseek-v4.1-flash`). `OPENCODE_DEFAULT_MODEL` moves the default (it takes a
   channel name too), `OPENCODE_BIN` points at the binary, `OPENCODE_CLAUDE_STATE_DIR` at the
   state directory.
+- **Channel models come from Listik.** The model behind each channel name is set in Listik — harness `opencode`, page «Настройки → Харнессы»; the bridge reads it with `listik harnesses opencode --json` (binary from `LISTIK_BIN`, default `listik`) once per `check`/`run`/`resume`. The models named here are the shipped defaults (по умолчанию в поставке): the script's built-in fallback, used only when Listik is unavailable or answers with an unusable table. `check` shows the source — the `channels from` line, `channels_source`/`channels_source_error` in `--json`. A channel deleted in Listik is `unknown channel` (exit 2) and the role on it is unavailable; the bridge does not revive it from the fallback. A full `provider/model` id passed with `--model` still works as before.
 
 ## Exit codes
 

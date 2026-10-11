@@ -1,6 +1,6 @@
 ---
 name: opencode-check
-description: "Check whether opencode is ready to work — binary, version, both channels (glm = b.ai/glm-5.3-flash by default, deepseek = b.ai/deepseek-v4.1-flash), provider credentials, what parses the event stream, and how many background jobs are already running."
+description: "Check whether opencode is ready to work — binary, version, both channels (glm = b.ai/glm-5.3-flash, deepseek = b.ai/deepseek-v4.1-flash by default; models — from Listik), provider credentials, what parses the event stream, and how many background jobs are already running."
 when_to_use: "Triggers — \"is opencode working\", \"check opencode\", \"why doesn't opencode answer\", \"what model does opencode use\". Run it on your own when a delegation failed at launch. This is about harness readiness, not about work in flight — \"opencode is silent\" after a background job is /opencode:opencode-jobs, and posing a task is /opencode:opencode-delegate."
 allowed-tools: Bash(${CLAUDE_PLUGIN_ROOT}/scripts/opencode-run.sh *)
 ---
@@ -13,7 +13,7 @@ Current state of opencode:
 
 Report readiness to the human in one paragraph — default channel, the other channel,
 credentials, jobs in flight. Don't retell the whole report. `check --json` returns the same
-data with keys `ready`, `binary_status`, `model_status`, `channels[].status`, `auth_status`,
+data with keys `ready`, `binary_status`, `model_status`, `channels[].status`, `channels_source`, `channels_source_error`, `auth_status`,
 `json_parser`, `running_jobs`, `state_dir`.
 
 ## Reading the output
@@ -31,6 +31,8 @@ data with keys `ready`, `binary_status`, `model_status`, `channels[].status`, `a
   external requirement of this bridge.
 - Ready but a run comes back empty — that is not a readiness problem: look at
   `transcript <job-id>` to see what opencode actually did.
+- `channels from: built-in fallback - …` — Listik did not give a usable channel table, so
+  the shipped models are in use. **Channel models come from Listik.** The model behind each channel name is set in Listik — harness `opencode`, page «Настройки → Харнессы»; the bridge reads it with `listik harnesses opencode --json` (binary from `LISTIK_BIN`, default `listik`) once per `check`/`run`/`resume`. The models named here are the shipped defaults (по умолчанию в поставке): the script's built-in fallback, used only when Listik is unavailable or answers with an unusable table. `check` shows the source — the `channels from` line, `channels_source`/`channels_source_error` in `--json`. A channel deleted in Listik is `unknown channel` (exit 2) and the role on it is unavailable; the bridge does not revive it from the fallback. A full `provider/model` id passed with `--model` still works as before.
 
 Diagnosis ends here: installing and authenticating are the human's actions, not yours.
 Don't go checking `brew`/`npm`/`curl` on your own. Once ready, delegate via

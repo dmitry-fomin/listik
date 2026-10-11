@@ -1,6 +1,6 @@
 ---
 name: pi-check
-description: Check whether pi is ready to work — binary, version, rpc client and python3, both channels (glm = openrouter/z-ai/glm-5.3-flash by default, deepseek = deepseek/deepseek-flash), and how many background jobs are already running.
+description: Check whether pi is ready to work — binary, version, rpc client and python3, both channels (glm = openrouter/z-ai/glm-5.3-flash, deepseek = deepseek/deepseek-flash by default; models — from Listik), and how many background jobs are already running.
 when_to_use: Triggers — "is pi working", "check pi", "why doesn't pi answer", "what channel does pi use". Run it on your own when a delegation failed at launch. This is about harness readiness, not about work in flight — "pi is silent" after a background job is /pi:pi-jobs, and posing a task is /pi:pi-delegate.
 allowed-tools: Bash(${CLAUDE_PLUGIN_ROOT}/scripts/pi-run.sh *)
 ---
@@ -13,7 +13,7 @@ Quick probe (shortened ceiling so the injection doesn't hit the execution limit)
 
 Full probe is `check` without `--probe-timeout` (up to 120 s per channel) — offer it if a
 channel timed out above. `check --json` returns the same data with keys `ready`,
-`default_channel`, `probe_timeout`, `channels[].probe` (`ok|timeout|error|skipped`),
+`default_channel`, `channels_source`, `channels_source_error`, `probe_timeout`, `channels[].probe` (`ok|timeout|error|skipped`),
 `state_dir`.
 
 Report readiness to the human in one paragraph — default channel, probe result per
@@ -40,6 +40,9 @@ channel, jobs in flight. Don't retell the whole table.
 - **`pi auth check` lies for these providers** (`not_ready` / `provider_not_found`) even
   when runs succeed, because they come from an extension rather than static config.
   Readiness here is decided by the probe run, never by `auth check`.
+
+- `channels from: built-in fallback - …` — Listik did not give a usable channel table, so
+  the shipped models are in use. **Channel models come from Listik.** The model behind each channel name is set in Listik — harness `pi`, page «Настройки → Харнессы»; the bridge reads it with `listik harnesses pi --json` (binary from `LISTIK_BIN`, default `listik`) once per `check`/`run`/`resume`. The models named here are the shipped defaults (по умолчанию в поставке): the script's built-in fallback, used only when Listik is unavailable or answers with an unusable table. `check` shows the source — the `channels from` line, `channels_source`/`channels_source_error` in `--json`. A channel deleted in Listik is `unknown channel` (exit 2) and the role on it is unavailable; the bridge does not revive it from the fallback.
 
 Diagnosis ends here: installing and authenticating are the human's actions, not yours.
 Don't go checking `brew`/`npm`/`curl` on your own. Once ready, delegate via

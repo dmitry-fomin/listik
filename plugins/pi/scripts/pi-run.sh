@@ -253,6 +253,117 @@ die() {
   exit "$code"
 }
 
+# --- каналы из Listik -----------------------------------------------------------
+# Модель за именем канала берётся из Listik: харнесс `pi` (страница
+# «Настройки → Харнессы», `listik harnesses pi --json`). Зашитые CHANNELS —
+# запасная таблица на случай, когда Listik недоступен или ответил негодным.
+# Канал, которого нет в годной таблице Listik, — `unknown channel`, без отката
+# на запасную таблицу: удалённый на странице канал не должен молча оживать.
+# Загрузка — один раз за запуск, явным вызовом в родительской оболочке
+# (check/run/resume), не в $(...): иначе таблица осталась бы в подоболочке.
+LISTIK_BIN="${LISTIK_BIN:-listik}"
+CHANNELS_SOURCE="fallback"
+CHANNELS_ERROR=""
+DEFAULT_CHANNEL="${CHANNELS[0]%%:*}"
+
+# Вызов и разбор — в python3: у macOS нет timeout(1). Listik не получает stdin
+# (там промпт run/resume). Ответ: "listik", канал по умолчанию, пары
+# «имя:модель» — или "fallback" и причина.
+LOAD_CHANNELS_PY='
+import json, subprocess, sys
+bin_, key = sys.argv[1], sys.argv[2]
+def fallback(reason):
+    print("fallback")
+    print(" ".join(str(reason).split())[:300])
+    sys.exit(0)
+cmd = "%s harnesses %s --json" % (bin_, key)
+try:
+    p = subprocess.run([bin_, "harnesses", key, "--json"], stdin=subprocess.DEVNULL,
+                       stdout=subprocess.PIPE, stderr=subprocess.PIPE, timeout=10)
+except subprocess.TimeoutExpired:
+    fallback("%s: timed out after 10s" % cmd)
+except FileNotFoundError:
+    fallback("listik binary %r not found (LISTIK_BIN)" % bin_)
+except OSError as e:
+    fallback("cannot run %r: %s" % (bin_, e))
+try:
+    data = json.loads(p.stdout.decode("utf-8", "replace"))
+except ValueError:
+    data = None
+if p.returncode != 0:
+    code = ""
+    if isinstance(data, dict) and isinstance(data.get("error"), dict):
+        code = data["error"].get("code") or ""
+    fallback("%s exited with code %d%s" % (cmd, p.returncode, (" (%s)" % code) if code else ""))
+if data is None:
+    fallback("%s: output is not JSON" % cmd)
+chans = data.get("channels") if isinstance(data, dict) else None
+if not isinstance(chans, list) or not chans:
+    fallback("harness %r has no channels in Listik" % key)
+rows, default = [], None
+for i, c in enumerate(chans):
+    c = c if isinstance(c, dict) else {}
+    name, model = c.get("name"), c.get("model")
+    if not isinstance(name, str) or not name.strip():
+        fallback("channels[%d] has no name" % i)
+    if not isinstance(model, str) or not model.strip():
+        fallback("channel %r has no model" % name)
+    if ":" in name or any(ch.isspace() for ch in name + model):
+        fallback("channel %r / model %r: bad characters" % (name, model))
+    if "/" not in model:
+        fallback("channel %r model %r is not a provider/model id" % (name, model))
+    rows.append("%s:%s" % (name, model))
+    if c.get("default") is True and default is None:
+        default = name
+print("listik")
+print(default or rows[0].split(":", 1)[0])
+print("\n".join(rows))
+'
+
+# load_channels [--warn] — заполнить CHANNELS/DEFAULT_CHANNEL/CHANNELS_SOURCE/
+# CHANNELS_ERROR и пересчитать DEFAULT_MODEL. --warn (run/resume) печатает
+# одну строку об откате в stderr; check показывает источник в своём выводе.
+load_channels() {
+  local out="" line n=0 table=() src="" dflt=""
+  if ! command -v python3 >/dev/null 2>&1; then
+    CHANNELS_ERROR="python3 not found"
+  else
+    out="$(python3 -c "$LOAD_CHANNELS_PY" "$LISTIK_BIN" pi 2>/dev/null)" || out=""
+    while IFS= read -r line; do
+      n=$((n+1))
+      case "$n" in
+        1) src="$line" ;;
+        2) dflt="$line" ;;
+        *) [[ "$src" == "listik" && -n "$line" ]] && table+=("$line") ;;
+      esac
+    done <<< "$out"
+    if [[ "$src" == "listik" && ${#table[@]} -gt 0 ]]; then
+      CHANNELS=("${table[@]}")
+      DEFAULT_CHANNEL="$dflt"
+      CHANNELS_SOURCE="listik"
+      CHANNELS_ERROR=""
+    elif [[ "$src" == "fallback" && -n "$dflt" ]]; then
+      CHANNELS_ERROR="$dflt"
+    else
+      CHANNELS_ERROR="channel loader failed"
+    fi
+  fi
+  [[ "$CHANNELS_SOURCE" == "listik" ]] || DEFAULT_CHANNEL="${CHANNELS[0]%%:*}"
+  DEFAULT_MODEL="$(expand_channel "${PI_CLAUDE_DEFAULT_MODEL:-$(expand_channel "$DEFAULT_CHANNEL")}")"
+  if [[ "${1:-}" == "--warn" && "$CHANNELS_SOURCE" != "listik" ]]; then
+    echo "channels: built-in fallback - $CHANNELS_ERROR" >&2
+  fi
+  return 0
+}
+
+channels_source_label() {
+  if [[ "$CHANNELS_SOURCE" == "listik" ]]; then
+    printf 'listik (harness pi)'
+  else
+    printf 'built-in fallback - %s' "$CHANNELS_ERROR"
+  fi
+}
+
 usage() {
   cat >&2 <<USAGE
 usage:
@@ -274,9 +385,12 @@ usage:
 --permission: read (default, read/grep/find/ls only), bash (plus commands, no
   edit tools), write (everything). --write and --bash are kept as aliases for
   --permission write / --permission bash.
-channels (value of --channel/--model): glm = openrouter/z-ai/glm-5.3-flash (default),
-  deepseek = deepseek/deepseek-flash; --model also takes a full
-  provider/model id, --channel takes the short name only.
+channels (value of --channel/--model) come from Listik: harness pi
+  ("listik harnesses pi --json", page "Настройки → Харнессы"; LISTIK_BIN,
+  default listik). Built-in fallback when Listik is unavailable: glm =
+  openrouter/z-ai/glm-5.3-flash (default), deepseek = deepseek/deepseek-flash.
+  --model also takes a full provider/model id, --channel takes the short name
+  only. check shows the source (channels from).
 --thinking: off, minimal, low, medium, high, xhigh, max
 USAGE
   exit 2
@@ -604,6 +718,7 @@ probe_one() {
 }
 
 cmd_check() {
+  load_channels
   local as_json=0 no_probe=0 probe_timeout=$DEFAULT_PROBE_TIMEOUT
   while [[ $# -gt 0 ]]; do
     case "$1" in
@@ -634,7 +749,7 @@ cmd_check() {
   local py3=""
   py3="$(command -v python3 2>/dev/null || true)"
 
-  local default_channel="${CHANNELS[0]%%:*}" dc_name
+  local default_channel="$DEFAULT_CHANNEL" dc_name
   dc_name="$(model_channel_name "$DEFAULT_MODEL")"
   [[ -n "$dc_name" ]] && default_channel="$dc_name"
 
@@ -722,10 +837,11 @@ cmd_check() {
   [[ -d "$NAMES_DIR" ]] && named="$(ls -1 "$NAMES_DIR" 2>/dev/null | wc -l | tr -d ' ' || true)"
 
   if [[ $as_json -eq 1 ]]; then
-    printf '{"ready":"%s","binary":"%s","binary_status":"%s","version":"%s","rpc_client":"%s","rpc_client_status":"%s","python3":"%s","default_channel":"%s","probe_timeout":%s,"channels":[%s],"running_jobs":%s,"named_sessions":%s,"state_dir":"%s"}\n' \
+    printf '{"ready":"%s","binary":"%s","binary_status":"%s","version":"%s","rpc_client":"%s","rpc_client_status":"%s","python3":"%s","default_channel":"%s","channels_source":"%s","channels_source_error":"%s","probe_timeout":%s,"channels":[%s],"running_jobs":%s,"named_sessions":%s,"state_dir":"%s"}\n' \
       "$(json_escape "$ready")" "$(json_escape "${bin:-}")" "$(json_escape "$bin_status")" \
       "$(json_escape "$version")" "$(json_escape "$RPC")" "$(json_escape "$rpc_status")" \
-      "$(json_escape "${py3:-}")" "$(json_escape "$default_channel")" "$probe_timeout" \
+      "$(json_escape "${py3:-}")" "$(json_escape "$default_channel")" \
+      "$(json_escape "$CHANNELS_SOURCE")" "$(json_escape "$CHANNELS_ERROR")" "$probe_timeout" \
       "$channels_json" "$running" "${named:-0}" "$(json_escape "$STATE_DIR")"
   else
     echo "ready:            $ready"
@@ -734,6 +850,7 @@ cmd_check() {
     echo "rpc client:       $RPC ($( [[ "$rpc_status" == "ok" ]] && echo ok || echo "file missing" )) · python3: ${py3:-missing}"
     echo "default channel:  $default_channel -> $(expand_channel "$default_channel")"
     printf 'channels:         %s\n' "$(printf '%s' "$channels_lines" | sed '2,$s/^/                  /')"
+    echo "channels from:    $(channels_source_label)"
     echo "note: \"in catalog\" lists models with configured auth - \"no\" does not mean the model does not exist; the probe is the final word"
     echo "default permission: $(mode_label read-only) (--tools $(tools_for_mode read-only))"
     echo "background jobs running: $running"
@@ -755,6 +872,7 @@ count_running_jobs() {
 
 # --- run ------------------------------------------------------------------
 cmd_run() {
+  load_channels --warn
   local mode="read-only" model="" model_given=0 channel_given=0 \
         thinking="" workdir="" timeout_s="" background=0 label="" name=""
   while [[ $# -gt 0 ]]; do
@@ -1461,6 +1579,7 @@ cmd_clean() {
 
 # --- resume -----------------------------------------------------------------
 cmd_resume() {
+  load_channels --warn
   local target="" name="" mode="" model="" model_given=0 channel_given=0 \
         thinking="" workdir="" timeout_s="" background=0 label=""
   while [[ $# -gt 0 ]]; do

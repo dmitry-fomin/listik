@@ -26,13 +26,15 @@ addressable by a short channel name via `--model` or `--channel`:
 
 | Channel | Model | Notes |
 | --- | --- | --- |
-| `glm` | `openrouter/z-ai/glm-5.3-flash` | the default: every run without `--model`/`--channel` goes here |
+| `glm` | `openrouter/z-ai/glm-5.3-flash` (shipped default; the model comes from Listik) | the default: every run without `--model`/`--channel` goes here |
 | `deepseek` | `deepseek/deepseek-flash` | second opinion from a different family — **prone to making things up**: it will invent a file, a flag or an API that does not exist and sound sure about it, so treat every concrete claim as a lead to verify, not as a fact |
 
 `--model deepseek` and `--model deepseek/deepseek-flash` are the same thing: the
 short name is expanded by the bridge, and a full `provider/model` id is passed through
 untouched. `--channel` accepts only the short name. `PI_CLAUDE_DEFAULT_MODEL` moves the
 default globally and takes a channel name too.
+
+**Channel models come from Listik.** The model behind each channel name is set in Listik — harness `pi`, page «Настройки → Харнессы»; the bridge reads it with `listik harnesses pi --json` (binary from `LISTIK_BIN`, default `listik`) once per `check`/`run`/`resume`. The models named here are the shipped defaults (по умолчанию в поставке): the script's built-in fallback, used only when Listik is unavailable or answers with an unusable table. `check` shows the source — the `channels from` line, `channels_source`/`channels_source_error` in `--json`. A channel deleted in Listik is `unknown channel` (exit 2) and the role on it is unavailable; the bridge does not revive it from the fallback.
 
 GLM sometimes stalls before the first token; the agent never switches to `deepseek` on its
 own when that happens — it reports the timeout and lets you choose.
@@ -203,6 +205,7 @@ rpc client:       /Users/you/.claude/plugins/.../pi-rpc.py (ok) · python3: /usr
 default channel:  glm -> openrouter/z-ai/glm-5.3-flash
 channels:         glm -> openrouter/z-ai/glm-5.3-flash (in catalog: yes; probe: timeout 30s, default)
                   deepseek -> deepseek/deepseek-flash (in catalog: yes; probe: answered in 4s)
+channels from:    listik (harness pi)
 note: "in catalog" lists models with configured auth - "no" does not mean the model does not exist; the probe is the final word
 default permission: read-only (edits and bash blocked) (--tools read,grep,find,ls)
 background jobs running: 0
@@ -218,6 +221,7 @@ verbatim.
 | --- | --- | --- |
 | `PI_CLAUDE_BIN` | `pi` from `PATH` | full path to the CLI binary when it isn't on `PATH` |
 | `PI_CLAUDE_DEFAULT_MODEL` | `openrouter/z-ai/glm-5.3-flash` | model used when `--model`/`--channel` is not given; accepts a channel name or a full model id |
+| `LISTIK_BIN` | `listik` | the Listik CLI the bridge reads channel models from (`listik harnesses pi --json`) |
 | `PI_CLAUDE_STATE_DIR` | `${XDG_STATE_HOME:-~/.local/state}/pi-claude` | where background jobs and session names are kept |
 | `PI_CLAUDE_SESSION` | `CLAUDE_SESSION_ID` | tags jobs so `status` scopes by session instead of by directory |
 

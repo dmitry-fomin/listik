@@ -1,6 +1,6 @@
 ---
 name: pi-runner
-description: "Hands one task to pi (`pi --mode rpc`, GLM 5.3 Flash by default, DeepSeek V4.1 Flash on request) through `pi-run.sh` and returns its output verbatim — or collects the answer of an already running background job by its job-id, or continues a named session. Use when the work has been decided to go out to pi: codebase investigation, an independent read, a mechanical change from a description. Investigates and fixes nothing itself. Several tasks — launch one copy per task in a single message."
+description: "Hands one task to pi (`pi --mode rpc`, GLM 5.3 Flash by default, DeepSeek V4.1 Flash on request — по умолчанию; модели — из Listik) through `pi-run.sh` and returns its output verbatim — or collects the answer of an already running background job by its job-id, or continues a named session. Use when the work has been decided to go out to pi: codebase investigation, an independent read, a mechanical change from a description. Investigates and fixes nothing itself. Several tasks — launch one copy per task in a single message."
 model: sonnet
 tools: Bash
 skills:
@@ -72,6 +72,8 @@ that this is DeepSeek, which confabulates files and functions; or the call comes
 pipeline preset, which must pass its required `--model`/`--channel` and `--thinking`
 because model-per-role is part of the preset. A default-channel timeout is not an
 exception.
+
+**Channel models come from Listik.** The model behind each channel name is set in Listik — harness `pi`, page «Настройки → Харнессы»; the bridge reads it with `listik harnesses pi --json` (binary from `LISTIK_BIN`, default `listik`) once per `check`/`run`/`resume`. The models named here are the shipped defaults (по умолчанию в поставке): the script's built-in fallback, used only when Listik is unavailable or answers with an unusable table. `check` shows the source — the `channels from` line, `channels_source`/`channels_source_error` in `--json`. A channel deleted in Listik is `unknown channel` (exit 2) and the role on it is unavailable; the bridge does not revive it from the fallback.
 
 ## What to return
 

@@ -76,6 +76,7 @@ class OpencodeChannelsTests(unittest.TestCase):
             "OPENCODE_CLAUDE_STATE_DIR": str(self.state),
             "OPENCODE_BIN": str(self.bin),
             "FAKE_OPENCODE_LOG": str(self.log),
+            "LISTIK_BIN": str(self.root / "no-listik"),
         })
         env.pop("OPENCODE_DEFAULT_MODEL", None)
         env.update(extra)
@@ -275,6 +276,130 @@ class OpencodeChannelsTests(unittest.TestCase):
         card = json.loads(proc.stdout)
         statuses = {c["name"]: c["status"] for c in card["channels"]}
         self.assertEqual(statuses, {"glm": "ok", "deepseek": "missing"})
+
+
+# Поддельный listik (listik-46q6, порция b): пишет argv в лог, печатает файл из
+# FAKE_LISTIK_OUT и выходит с кодом FAKE_LISTIK_RC.
+FAKE_LISTIK = r"""#!/usr/bin/env bash
+printf '%s\n' "$*" >> "${FAKE_LISTIK_LOG}"
+cat "${FAKE_LISTIK_OUT}" 2>/dev/null
+exit "${FAKE_LISTIK_RC:-0}"
+"""
+
+
+class OpencodeChannelsFromListikTests(unittest.TestCase):
+    """Модель за именем канала берётся из Listik (харнесс opencode)."""
+
+    setUp = OpencodeChannelsTests.setUp
+    tearDown = OpencodeChannelsTests.tearDown
+    _log_lines = OpencodeChannelsTests._log_lines
+    _run_lines = OpencodeChannelsTests._run_lines
+    _wait_job = OpencodeChannelsTests._wait_job
+    _run = OpencodeChannelsTests._run
+
+    def _env(self, **extra: str) -> dict[str, str]:
+        listik = self.root / "fake-listik"
+        if not listik.exists():
+            listik.write_text(FAKE_LISTIK, encoding="utf-8")
+            listik.chmod(listik.stat().st_mode | stat.S_IEXEC)
+        env = OpencodeChannelsTests._env(self)
+        env.update({
+            "LISTIK_BIN": str(listik),
+            "FAKE_LISTIK_LOG": str(self.root / "listik.log"),
+            "FAKE_LISTIK_OUT": str(self.root / "listik.json"),
+        })
+        env.update(extra)
+        return env
+
+    def _listik(self, *channels: tuple[str, str], default: str | None = None) -> None:
+        data = {"key": "opencode", "channels": [
+            {"name": n, "model": m, "default": n == default} for n, m in channels]}
+        (self.root / "listik.json").write_text(json.dumps(data), encoding="utf-8")
+
+    def _listik_calls(self) -> list[str]:
+        log = self.root / "listik.log"
+        return log.read_text(encoding="utf-8").splitlines() if log.exists() else []
+
+    def _check(self, **extra: str) -> dict:
+        return json.loads(self._run(["check", "--json"], **extra).stdout)
+
+    def test_listik_model_used_by_run_and_check(self) -> None:
+        self._listik(("glm", "b.ai/glm-9"), ("deepseek", DEEPSEEK), default="glm")
+        proc = self._run(["run", "--model", "glm"], stdin="вопрос")
+        self.assertEqual(proc.returncode, 0, proc.stderr)
+        self.assertIn("--model b.ai/glm-9", self._run_lines()[0])
+        card = self._check()
+        self.assertEqual(card["channels_source"], "listik")
+        self.assertEqual(card["channels_source_error"], "")
+        self.assertEqual({c["name"]: c["model"] for c in card["channels"]}["glm"], "b.ai/glm-9")
+        self.assertEqual(card["model"], "b.ai/glm-9")
+
+    def test_fallback_without_listik(self) -> None:
+        missing = str(self.root / "missing")
+        card = self._check(LISTIK_BIN=missing)
+        self.assertEqual(card["channels_source"], "fallback")
+        self.assertTrue(card["channels_source_error"])
+        self.assertEqual([c["model"] for c in card["channels"]], [GLM, DEEPSEEK])
+        proc = self._run(["run"], stdin="вопрос", LISTIK_BIN=missing)
+        self.assertEqual(proc.returncode, 0, proc.stderr)
+        warn = [l for l in proc.stderr.splitlines() if l.startswith("channels: built-in fallback - ")]
+        self.assertEqual(len(warn), 1, proc.stderr)
+        self.assertEqual(proc.stderr.count("channels:"), 1, proc.stderr)
+        self.assertIn(f"--model {GLM}", self._run_lines()[0])
+
+    def test_channel_removed_in_listik(self) -> None:
+        self._listik(("deepseek", DEEPSEEK), default="deepseek")
+        proc = self._run(["run", "--model", "glm"], stdin="вопрос")
+        self.assertEqual(proc.returncode, 2, proc.stderr)
+        self.assertIn("unknown channel 'glm'", proc.stderr)
+        self.assertEqual(self._run_lines(), [])
+
+    def test_model_without_provider_falls_back(self) -> None:
+        self._listik(("glm", "glm-9"), default="glm")
+        card = self._check()
+        self.assertEqual(card["channels_source"], "fallback")
+        self.assertIn("not a provider/model id", card["channels_source_error"])
+
+    def test_default_channel_from_listik(self) -> None:
+        self._listik(("glm", "b.ai/glm-9"), ("deepseek", "b.ai/deepseek-9"), default="deepseek")
+        proc = self._run(["run"], stdin="вопрос")
+        self.assertEqual(proc.returncode, 0, proc.stderr)
+        self.assertIn("--model b.ai/deepseek-9", self._run_lines()[-1])
+        self.assertEqual(self._check()["model"], "b.ai/deepseek-9")
+
+        proc = self._run(["run"], stdin="вопрос", OPENCODE_DEFAULT_MODEL="glm")
+        self.assertEqual(proc.returncode, 0, proc.stderr)
+        self.assertIn("--model b.ai/glm-9", self._run_lines()[-1])
+        self.assertEqual(self._check(OPENCODE_DEFAULT_MODEL="glm")["model"], "b.ai/glm-9")
+
+    def test_resume_keeps_session_model(self) -> None:
+        self._listik(("glm", GLM), default="glm")
+        first = self._run(["run", "--session", "ветка", "--model", "glm"], stdin="первый")
+        self.assertEqual(first.returncode, 0, first.stderr)
+        self._listik(("glm", "b.ai/glm-9"), default="glm")
+        again = self._run(["resume", "ветка"], stdin="второй")
+        self.assertEqual(again.returncode, 0, again.stderr)
+        self.assertIn(f"--model {GLM}", self._run_lines()[-1])
+
+    def test_listik_call_count(self) -> None:
+        self._listik(("glm", GLM), ("deepseek", DEEPSEEK), default="glm")
+        launched = self._run(["run", "--background", "--session", "фон"], stdin="вопрос")
+        self.assertEqual(launched.returncode, 0, launched.stderr)
+        job_id = launched.stdout.strip().splitlines()[0]
+        self.assertEqual(len(self._listik_calls()), 1)
+        log = self.root / "listik.log"
+        log.unlink()
+        self._wait_job(job_id)
+        self._run(["status"])
+        self._run(["result", job_id])
+        self._run(["logs", job_id])
+        self.assertEqual(self._listik_calls(), [])
+        for args in (["check"], ["run"], ["resume", "фон"]):
+            with self.subTest(args[0]):
+                if log.exists():
+                    log.unlink()
+                self._run(args, stdin="вопрос")
+                self.assertEqual(self._listik_calls(), ["harnesses opencode --json"])
 
 
 if __name__ == "__main__":

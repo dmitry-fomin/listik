@@ -31,7 +31,7 @@ short channel name:
 
 | Channel | Model | Notes |
 | --- | --- | --- |
-| `glm` | `b.ai/glm-5.3-flash` | the default: every run without `--model` goes here |
+| `glm` | `b.ai/glm-5.3-flash` (shipped default; the model comes from Listik) | the default: every run without `--model` goes here |
 | `deepseek` | `b.ai/deepseek-v4.1-flash` | second opinion from a different family — **prone to making things up**: it will invent a file, a flag or an API that does not exist and sound sure about it, so treat every concrete claim as a lead to verify, not as a fact |
 
 `--model deepseek` and `--model b.ai/deepseek-v4.1-flash` are the same thing: the short name
@@ -43,6 +43,8 @@ always a typo in the channel name.
 `OPENCODE_DEFAULT_MODEL` moves the default globally and takes a channel name too.
 `/opencode:opencode-check` prints both channels with their availability and marks the
 default one.
+
+**Channel models come from Listik.** The model behind each channel name is set in Listik — harness `opencode`, page «Настройки → Харнессы»; the bridge reads it with `listik harnesses opencode --json` (binary from `LISTIK_BIN`, default `listik`) once per `check`/`run`/`resume`. The models named here are the shipped defaults (по умолчанию в поставке): the script's built-in fallback, used only when Listik is unavailable or answers with an unusable table. `check` shows the source — the `channels from` line, `channels_source`/`channels_source_error` in `--json`. A channel deleted in Listik is `unknown channel` (exit 2) and the role on it is unavailable; the bridge does not revive it from the fallback. A full `provider/model` id passed with `--model` still works as before.
 
 `resume` stays on the channel the session was started on — both when resuming by job id and
 by session name — unless `--model` says otherwise. Switching channels mid-session is
@@ -221,6 +223,7 @@ version:          1.18.31
 model:            b.ai/glm-5.3-flash (available)
 channels:         glm -> b.ai/glm-5.3-flash (available, default)
                   deepseek -> b.ai/deepseek-v4.1-flash (available)
+channels from:    listik (harness opencode)
 provider:         b.ai (credentials: found)
 agent:            build (default permission: read-only (edits and bash blocked))
 answer parser:    python3
@@ -238,6 +241,7 @@ verbatim.
 | --- | --- | --- |
 | `OPENCODE_BIN` | `opencode` from `PATH` | full path to the CLI binary when it isn't on `PATH` |
 | `OPENCODE_DEFAULT_MODEL` | `b.ai/glm-5.3-flash` | model used when `--model` is not given; accepts a channel name (`glm`, `deepseek`) or a full model id |
+| `LISTIK_BIN` | `listik` | the Listik CLI the bridge reads channel models from (`listik harnesses opencode --json`) |
 | `OPENCODE_DEFAULT_AGENT` | `build` | opencode agent used when `--agent` is not given |
 | `OPENCODE_CLAUDE_STATE_DIR` | `${XDG_STATE_HOME:-~/.local/state}/opencode-claude` | where background jobs and session names are kept |
 | `OPENCODE_CLAUDE_SESSION` | `CLAUDE_SESSION_ID` | tags jobs so `status` scopes by session instead of by directory |

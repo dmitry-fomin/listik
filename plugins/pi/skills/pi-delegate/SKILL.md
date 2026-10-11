@@ -104,6 +104,8 @@ Channel and thinking level are never your choice: default is `glm`, and you pass
 when the human named one or when a pipeline preset requires it. A `glm` timeout is not an
 exception — report it and let the human decide.
 
+**Channel models come from Listik.** The model behind each channel name is set in Listik — harness `pi`, page «Настройки → Харнессы»; the bridge reads it with `listik harnesses pi --json` (binary from `LISTIK_BIN`, default `listik`) once per `check`/`run`/`resume`. The models named here are the shipped defaults (по умолчанию в поставке): the script's built-in fallback, used only when Listik is unavailable or answers with an unusable table. `check` shows the source — the `channels from` line, `channels_source`/`channels_source_error` in `--json`. A channel deleted in Listik is `unknown channel` (exit 2) and the role on it is unavailable; the bridge does not revive it from the fallback.
+
 ## Handling the answer
 
 - Show pi's answer verbatim, marked as another harness's output rather than your conclusion

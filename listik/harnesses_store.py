@@ -104,15 +104,36 @@ SEEDS: list[dict] = [
      "prompt": _prompt(DIRECT_PROMPT, "devin"), "kind": "exec", "builtin": 1},
     {"key": "me", "label": "Человек", "hint": "ручная выдача, без команды",
      "icon": "user", "argv": None, "prompt": None, "kind": "manual", "builtin": 1},
+    # Источники каналов мостов (listik-46q6): команды нет, в селекторах роя не
+    # предлагаются (`enabled: 0`), актора `agent:<key>` не получают. Стоят в
+    # конце, чтобы `position` прежних сидов на существующих базах не съехала.
+    {"key": "pi", "label": "pi", "hint": "мост pi: каналы для pi:pi-delegate",
+     "icon": "pi", "argv": None, "prompt": None, "kind": "exec", "builtin": 1,
+     "enabled": 0,
+     "channels": [{"name": "glm", "model": "openrouter/z-ai/glm-5.3-flash",
+                   "default": True},
+                  {"name": "deepseek", "model": "deepseek/deepseek-flash"}]},
+    {"key": "opencode", "label": "opencode",
+     "hint": "мост opencode: каналы для opencode:opencode-delegate",
+     "icon": None, "argv": None, "prompt": None, "kind": "exec", "builtin": 1,
+     "enabled": 0,
+     "channels": [{"name": "glm", "model": "b.ai/glm-5.3-flash", "default": True},
+                  {"name": "deepseek", "model": "b.ai/deepseek-v4.1-flash"}]},
 ]
 
 #: Поля записи в порядке колонок таблицы.
 COLUMNS = ("key", "label", "hint", "icon", "argv", "prompt", "kind", "builtin",
-           "enabled", "position", "created_at", "updated_at")
+           "enabled", "position", "channels", "created_at", "updated_at")
 
 #: Поля, которые принимает PATCH /api/harnesses/<key>. Ключ, kind и builtin
 #: неизменны: на ключ ссылаются маршруты и держатели карточек.
-UPDATE_FIELDS = ("label", "hint", "icon", "argv", "prompt", "enabled", "position")
+UPDATE_FIELDS = ("label", "hint", "icon", "argv", "prompt", "enabled", "position",
+                 "channels")
+
+#: Каналы харнесса: не больше стольких записей, модель — не длиннее стольких символов.
+MAX_CHANNELS = 20
+MAX_MODEL_LEN = 200
+CHANNEL_KEYS = ("name", "model", "effort", "default")
 
 
 def _argv_of(value, where: str) -> list | None:
@@ -139,6 +160,55 @@ def _icon_of(value, where: str) -> str | None:
     return value.strip()
 
 
+def _channels_of(value) -> list[dict]:
+    """Нормализовать список каналов: `[]` — каналов нет (в колонке NULL).
+
+    Канал — `{name, model, effort, default}`; `name`/`effort` целиком подходят под
+    `routes.KEY_RE` (`fullmatch`: имя уходит аргументом `--channel` в мосты);
+    `model` — без пробелов. Ровно один канал по умолчанию: нет ни одного — первый.
+    """
+    if value is None:
+        return []
+    if not isinstance(value, list):
+        raise ValueError("channels: ожидается массив каналов или null")
+    if len(value) > MAX_CHANNELS:
+        raise ValueError(f"channels: не больше {MAX_CHANNELS} каналов")
+    out: list[dict] = []
+    seen: set[str] = set()
+    for i, item in enumerate(value):
+        where = f"channels[{i}]"
+        if not isinstance(item, dict):
+            raise ValueError(f"{where}: ожидается объект {{name, model, effort, default}}")
+        extra = [k for k in item if k not in CHANNEL_KEYS]
+        if extra:
+            raise ValueError(f"{where}: лишнее поле {extra[0]!r}")
+        name = item.get("name")
+        if not isinstance(name, str) or not routes_mod.KEY_RE.fullmatch(name):
+            raise ValueError(f"{where}.name: ожидается {routes_mod.KEY_RE.pattern}")
+        if name in seen:
+            raise ValueError(f"{where}.name: канал {name!r} уже есть")
+        seen.add(name)
+        model = item.get("model")
+        if (not isinstance(model, str) or not model or len(model) > MAX_MODEL_LEN
+                or any(ch.isspace() for ch in model)):
+            raise ValueError(f"{where}.model: нужна непустая строка без пробелов, "
+                             f"не длиннее {MAX_MODEL_LEN}")
+        effort = item.get("effort")
+        if effort is not None and (not isinstance(effort, str)
+                                   or not routes_mod.KEY_RE.fullmatch(effort)):
+            raise ValueError(f"{where}.effort: ожидается {routes_mod.KEY_RE.pattern} или null")
+        default = item.get("default", False)
+        if not isinstance(default, bool):
+            raise ValueError(f"{where}.default: ожидается true или false")
+        out.append({"name": name, "model": model, "effort": effort, "default": default})
+    defaults = sum(1 for ch in out if ch["default"])
+    if defaults > 1:
+        raise ValueError("channels: канал по умолчанию может быть только один")
+    if out and not defaults:
+        out[0]["default"] = True
+    return out
+
+
 def _record(row) -> dict:
     return {
         "key": row["key"],
@@ -151,6 +221,7 @@ def _record(row) -> dict:
         "builtin": bool(row["builtin"]),
         "enabled": bool(row["enabled"]),
         "position": row["position"],
+        "channels": json.loads(row["channels"]) if row["channels"] else [],
         "created_at": row["created_at"],
         "updated_at": row["updated_at"],
     }
@@ -231,6 +302,11 @@ def _normalize(body: dict, *, existing: dict | None = None,
             raise ValueError("argv/prompt: у ручной выдачи (kind=manual) команды нет")
         out["argv"] = json.dumps(argv, ensure_ascii=False) if argv else None
         out["prompt"] = prompt
+    if "channels" in body:
+        channels = _channels_of(body["channels"])
+        if kind == "manual" and channels:
+            raise ValueError("channels: у ручной выдачи (kind=manual) каналов нет")
+        out["channels"] = json.dumps(channels, ensure_ascii=False) if channels else None
     return out
 
 
@@ -238,7 +314,7 @@ def create(conn: sqlite3.Connection, body: dict) -> dict:
     """Завести харнесс: ключ уникален, `kind`/`builtin` снаружи не ставятся."""
     unknown = [k for k in body
                if k not in ("key", "label", "hint", "icon", "argv", "prompt",
-                            "enabled", "position", "kind")]
+                            "enabled", "position", "kind", "channels")]
     if unknown:
         raise errors_mod.BadArgument(f"поле нельзя передать: {unknown[0]}")
     key = body.get("key")
@@ -261,9 +337,11 @@ def create(conn: sqlite3.Connection, body: dict) -> dict:
         position = row[0]
     conn.execute(
         "INSERT INTO harnesses(key, label, hint, icon, argv, prompt, kind, builtin, "
-        "enabled, position, created_at, updated_at) VALUES(?,?,?,?,?,?,?,?,?,?,?,?)",
+        "enabled, position, channels, created_at, updated_at) "
+        "VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?)",
         (key, values["label"], values["hint"], values["icon"], values["argv"],
-         values["prompt"], kind, 0, values["enabled"], position, ts, ts))
+         values["prompt"], kind, 0, values["enabled"], position,
+         values.get("channels"), ts, ts))
     register_holder(conn, key)
     conn.commit()
     return get(conn, key)
@@ -305,19 +383,28 @@ def register_holder(conn: sqlite3.Connection, key: str) -> None:
         (actor, key, "agent", key))
 
 
+def _seed_channels(item: dict) -> str | None:
+    channels = _channels_of(item.get("channels"))
+    return json.dumps(channels, ensure_ascii=False) if channels else None
+
+
 def seed(conn: sqlite3.Connection) -> None:
     """Ввезти поставку: недостающие ключи дописываются, существующие не трогаются."""
     ts = now_iso()
     for position, item in enumerate(SEEDS):
         conn.execute(
             "INSERT INTO harnesses(key, label, hint, icon, argv, prompt, kind, "
-            "builtin, enabled, position, created_at, updated_at) "
-            "VALUES(?,?,?,?,?,?,?,?,1,?,?,?)"
+            "builtin, enabled, position, channels, created_at, updated_at) "
+            "VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?)"
             " ON CONFLICT(key) DO NOTHING",
             (item["key"], item["label"], item["hint"], item["icon"],
              json.dumps(item["argv"], ensure_ascii=False) if item["argv"] else None,
-             item["prompt"], item["kind"], item["builtin"], position, ts, ts))
-        register_holder(conn, item["key"])
+             item["prompt"], item["kind"], item["builtin"], item.get("enabled", 1),
+             position, _seed_channels(item), ts, ts))
+        # Сиды без команды (источники каналов мостов) — не исполнители: актора
+        # `agent:<key>` и алиаса им не заводим.
+        if item["argv"] is not None:
+            register_holder(conn, item["key"])
     # У pi-glm/pi-deepseek поставочной иконкой был общий «pi»: записи, до сих
     # пор стоящие на нём, поднимаем до собственных глифов — разово (meta-флаг),
     # чтобы не откатывать осознанный выбор «pi» в пикере.
@@ -423,3 +510,17 @@ def seed(conn: sqlite3.Connection) -> None:
                          "glm-a6/glm-5.3-flash"], ensure_ascii=False)))
         conn.execute(
             "INSERT INTO meta(key, value) VALUES('seed_pi_glm_openrouter', '1')")
+    # Каналы мостов pi/opencode (listik-46q6): страховка баз, где эти ключи завёл
+    # человек до обновления (`ON CONFLICT DO NOTHING` их не трогает). Разово
+    # (meta-флаг) и только у `kind='exec'` без каналов: очищенный или
+    # переписанный человеком список сид потом не возвращает.
+    if conn.execute(
+            "SELECT value FROM meta WHERE key = 'seed_bridge_channels'").fetchone() is None:
+        for item in SEEDS:
+            if item["key"] in ("pi", "opencode"):
+                conn.execute(
+                    "UPDATE harnesses SET channels = ?, updated_at = ? "
+                    "WHERE key = ? AND kind = 'exec' AND channels IS NULL",
+                    (_seed_channels(item), ts, item["key"]))
+        conn.execute(
+            "INSERT INTO meta(key, value) VALUES('seed_bridge_channels', '1')")

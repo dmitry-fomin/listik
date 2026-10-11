@@ -172,11 +172,11 @@ class Schema15Base(unittest.TestCase):
 
 class FreshDatabaseTests(Schema15Base):
     def test_fresh_database_has_plugin_and_nothing_to_rename(self) -> None:
-        self.assertEqual(db_mod.SCHEMA_VERSION, 16)
+        self.assertEqual(db_mod.SCHEMA_VERSION, 17)
         conn = self.init(self.dir / "fresh.db")
         self.assertIn("plugin", self.columns(conn))
         self.assertEqual(conn.execute(
-            "SELECT value FROM meta WHERE key = 'schema_version'").fetchone()[0], "16")
+            "SELECT value FROM meta WHERE key = 'schema_version'").fetchone()[0], "17")
         self.assertFalse(db_mod.rename_pipeline_routes(conn))
 
     def test_plugin_column_is_not_in_generic_migrations(self) -> None:

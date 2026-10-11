@@ -103,7 +103,7 @@ class DriverMigrationTests(unittest.TestCase):
             try:
                 self.assertNotIn("driver", self.columns(conn))
                 self.assertEqual(conn.execute(
-                    "SELECT value FROM meta WHERE key = 'schema_version'").fetchone()[0], "16")
+                    "SELECT value FROM meta WHERE key = 'schema_version'").fetchone()[0], "17")
             finally:
                 conn.close()
 
@@ -124,7 +124,7 @@ class DriverMigrationTests(unittest.TestCase):
         for key in records:
             self.assertNotIn("driver", routes_store.get_route(conn, key))
         self.assertEqual(conn.execute(
-            "SELECT value FROM meta WHERE key = 'schema_version'").fetchone()[0], "16")
+            "SELECT value FROM meta WHERE key = 'schema_version'").fetchone()[0], "17")
         task = conn.execute(
             "SELECT launch_route, launch_driver FROM tasks WHERE id = 't1'").fetchone()
         self.assertEqual(tuple(task), ("p-swarm", "skill"))

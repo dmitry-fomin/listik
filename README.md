@@ -108,6 +108,7 @@ MCP-инструментами `listik_*` или командой `listik new`. 
 Отчёт `--json`: `imported`, `source`, `kept`, `removed`, `backup`, `orphans`.
 Скрыть маршруты — `listik routes --hide <ключ> …`; вернуть видимость — на доске или
 `PATCH /api/routes/{key}`.
+Каталог харнессов и их каналы моделей — `listik harnesses [ключ]` (только чтение).
 Полный список — `listik routes`, `GET /api/routes` или
 доска; там же собирается свой набор. Исполнители подключаются плагинами Claude Code,
 репозиторий сам является маркетплейсом:

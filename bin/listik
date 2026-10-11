@@ -2821,6 +2821,46 @@ def _cmd_routes_list(args) -> int:
     return 0
 
 
+def _channels_line(channels: list[dict]) -> str:
+    return ", ".join(f"{c.get('name')}{'*' if c.get('default') else ''}={c.get('model')}"
+                     for c in channels or []) or "—"
+
+
+def cmd_harnesses(args) -> int:
+    """Каталог харнессов (только чтение): список или одна запись с каналами."""
+    key = getattr(args, "key", None)
+    if key:
+        data = call("harnesses", args, f"/api/harnesses/{urllib.parse.quote(key, safe='')}",
+                    local_kwargs={"key": key}, fallback_warning=False)
+    else:
+        data = call("harnesses", args, "/api/harnesses", local_kwargs={},
+                    fallback_warning=False)
+    if getattr(args, "json", False):
+        emit(args, data, "")
+        return 0
+    if key:
+        for field in ("key", "label", "hint", "icon", "kind", "builtin", "enabled",
+                      "position"):
+            print(f"{field + ':':10s} {data.get(field)}")
+        argv = data.get("argv")
+        print(f"{'argv:':10s} {' '.join(argv) if argv else '—'}")
+        channels = data.get("channels") or []
+        print("каналы:" + ("" if channels else " —"))
+        for c in channels:
+            effort = f"  effort={c.get('effort')}" if c.get("effort") else ""
+            mark = "  (по умолчанию)" if c.get("default") else ""
+            print(f"  {c.get('name')}: {c.get('model')}{effort}{mark}")
+        return 0
+    rows = data.get("harnesses") or []
+    print(f"{'ключ':14s} {'имя':18s} {'вид':7s} {'вкл':4s} каналы")
+    for r in rows:
+        print(f"{r.get('key', ''):14s} {(r.get('label') or '')[:18]:18s} "
+              f"{r.get('kind', ''):7s} {'да' if r.get('enabled') else 'нет':4s} "
+              f"{_channels_line(r.get('channels'))}")
+    print(f"\nвсего: {len(rows)}")
+    return 0
+
+
 def _dep_add(args, issue_id, depends_on, dep_type, confirm):
     """Одна связь через call(): сервер (fence, событие доске) или локальный фолбэк."""
     return call("dep_add", args, f"/api/tasks/{issue_id}/deps", method="POST",
@@ -3423,6 +3463,10 @@ def build_parser() -> argparse.ArgumentParser:
     sp.add_argument("--hide", nargs="+", metavar="KEY",
                     help="скрыть маршруты с этими ключами (visible=false); хоть одного "
                          "ключа нет — ничего не меняется")
+
+    sp = add("harnesses", cmd_harnesses,
+             help="каталог харнессов: список или одна запись с каналами (только чтение)")
+    sp.add_argument("key", nargs="?", help="ключ харнесса — показать одну запись")
 
     sp = add("dep", cmd_dep,
              help="связи между задачами: add, confirm, rm, tree, cycles, suggest, link, suggested")

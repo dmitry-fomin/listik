@@ -504,6 +504,15 @@ def _local_op(conn, op: str, fence: fence_mod.Token | dict | None, kwargs: dict)
     if op == "routes":
         from . import routes_store
         return routes_store.routes_response(conn)
+    if op == "harnesses":
+        # Как GET /api/harnesses[/<key>], но без `swarm_*` списка: только записи и `used_by`.
+        from . import harnesses_store
+        key = kwargs.get("key")
+        records = ([harnesses_store.get(conn, key)] if key
+                   else harnesses_store.list_harnesses(conn))
+        for record in records:
+            record["used_by"] = harnesses_store.used_by(conn, record["key"])
+        return records[0] if key else {"harnesses": records}
     if op == "project_add":
         try:
             return store.add_project(conn, path=kwargs.get("path"), slug=kwargs.get("slug"),

@@ -11,7 +11,7 @@ from pathlib import Path
 
 from . import paths
 
-SCHEMA_VERSION = 16
+SCHEMA_VERSION = 17
 
 SCHEMA = """
 PRAGMA journal_mode = WAL;
@@ -229,6 +229,7 @@ CREATE TABLE IF NOT EXISTS harnesses (
     builtin    INTEGER NOT NULL DEFAULT 0,     -- 1 — из поставки, 0 — заведён руками
     enabled    INTEGER NOT NULL DEFAULT 1,     -- 0 — в селекторах не предлагать
     position   INTEGER NOT NULL DEFAULT 0,
+    channels   TEXT,                       -- JSON-массив каналов {name, model, effort, default}, NULL — нет
     created_at TEXT,
     updated_at TEXT
 );
@@ -349,6 +350,7 @@ MIGRATIONS: list[tuple[str, str, str]] = [
     ("documents", "source", "TEXT NOT NULL DEFAULT 'file'"),
     ("documents", "content", "TEXT"),
     ("events", "transition", "TEXT"),
+    ("harnesses", "channels", "TEXT"),
 ]
 
 

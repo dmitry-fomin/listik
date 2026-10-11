@@ -650,6 +650,35 @@ class HarnessesApiTests(RoutesApiBase):
             self.get("/api/harnesses/nope")
         self.assertEqual(ctx.exception.status, 404)
 
+    def test_post_with_channels_normalizes(self) -> None:
+        status, record = self.post("/api/harnesses", {
+            "key": "mini", "argv": ["mini"],
+            "channels": [{"name": "a", "model": "p/m"}, {"name": "b", "model": "q/n"}]})
+        self.assertEqual(status, 201)
+        self.assertEqual(record["channels"], [
+            {"name": "a", "model": "p/m", "effort": None, "default": True},
+            {"name": "b", "model": "q/n", "effort": None, "default": False}])
+
+    def test_patch_channels_replaces_list(self) -> None:
+        status, record = self.patch("/api/harnesses/pi", {
+            "channels": [{"name": "deepseek", "model": "deepseek/deepseek-flash"}]})
+        self.assertEqual(status, 200)
+        self.assertEqual([c["name"] for c in record["channels"]], ["deepseek"])
+        _, data = self.get("/api/harnesses")
+        pi = next(h for h in data["harnesses"] if h["key"] == "pi")
+        self.assertEqual(pi["channels"], record["channels"])
+
+    def test_patch_bad_channels_is_400_and_keeps_list(self) -> None:
+        _, before = self.get("/api/harnesses/pi")
+        with self.assertRaises(server.ApiError) as ctx:
+            self.patch("/api/harnesses/pi",
+                       {"channels": [{"name": "glm", "model": "a b"}]})
+        self.assertEqual(ctx.exception.status, 400)
+        self.assertEqual(ctx.exception.code, errors.BAD_ARGUMENT)
+        self.assertTrue(ctx.exception.message.startswith("channels[0].model"))
+        _, after = self.get("/api/harnesses/pi")
+        self.assertEqual(after["channels"], before["channels"])
+
 
 class CreateSwarmRouteTests(RoutesApiBase):
     """`POST /api/routes` с `kind="swarm"` — маршрут роя с ролями (listik-2gry)."""

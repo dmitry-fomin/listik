@@ -107,7 +107,7 @@ def _check_roles(conn, value, kind: str) -> dict:
 
     Роли есть у `pipeline` и у `swarm`. Форма ячейки — по `kind`: `swarm` —
     `{harness,argv?,prompt?}`, харнесс из каталога; `pipeline` —
-    `{provider,label,title}`. Проверки бросают
+    `{provider,label,title}`, `members` сверяются с каталогом (`_check_members`). Проверки бросают
     `RoutesError` — подкласс `ValueError`, поэтому нарушение уходит наружу тем же
     путём, что и остальные поля (400 `bad_argument`).
     """
@@ -116,7 +116,31 @@ def _check_roles(conn, value, kind: str) -> dict:
     if kind == "swarm":
         harnesses = {h["key"]: h for h in harnesses_store.list_harnesses(conn)}
         return routes.validate_swarm_roles(value, "roles", harnesses)
-    return routes._validate_roles(value, "roles")
+    roles = routes._validate_roles(value, "roles")
+    _check_members(conn, roles)
+    return roles
+
+
+def _check_members(conn, roles: dict) -> None:
+    """Сверить `members` конвейера с каталогом `harnesses`: харнесс есть, канал у него есть.
+
+    `enabled` харнесса не важен (`pi` поставляется выключенным). Скил пресета с
+    `members` не сверяется: сервер их не исполняет.
+    """
+    catalog = None
+    for role, cell in roles.items():
+        for i, member in enumerate(cell.get("members") or ()):
+            if catalog is None:
+                catalog = {h["key"]: h for h in harnesses_store.list_harnesses(conn)}
+            where = f"roles.{role}.members[{i}]"
+            harness = catalog.get(member["harness"])
+            if harness is None:
+                raise routes.RoutesError(
+                    f"{where}.harness: харнесса {member['harness']!r} нет в каталоге")
+            if not any(ch["name"] == member["channel"] for ch in harness["channels"]):
+                raise routes.RoutesError(
+                    f"{where}.channel: у харнесса {member['harness']!r} нет канала "
+                    f"{member['channel']!r}")
 
 
 def _prepare(conn, record: dict) -> dict:
@@ -464,6 +488,7 @@ def ensure_imported(conn: sqlite3.Connection) -> dict:
     try:
         result = import_file(conn)
         result["added"] = add_shipped(conn, fresh=not result["skipped"])
+        fill_members(conn)
         return result
     except Exception as exc:  # noqa: BLE001 — ввоз не должен ронять init/старт
         message = errors.message_of(exc)
@@ -510,6 +535,58 @@ def add_shipped(conn: sqlite3.Connection, *, fresh: bool = False) -> list[str]:
                  "ON CONFLICT(key) DO UPDATE SET value = excluded.value", (str(latest),))
     conn.commit()
     return added
+
+
+#: Подстрока подписи роли → ссылка на канал pi (разовое заполнение `fill_members`).
+MEMBER_HINTS = (("DeepSeek", "deepseek"), ("GLM", "glm"))
+
+
+def fill_members(conn: sqlite3.Connection) -> list[str]:
+    """Разово (meta `route_members_v1`) дописать `members` в конвейеры `pipeline-full`.
+
+    Ячейка без `members` и без `skill` (или со `skill == "pi:pi-delegate"`) получает
+    пары `pi`/`deepseek` и `pi`/`glm` по подстрокам `DeepSeek`/`GLM` в `title`, в порядке
+    первого появления, — только каналы, которые у `pi` есть сейчас. Запись — прямой
+    `UPDATE` без проверки всего расклада: одна устаревшая строка не должна уронить
+    заполнение. Битый JSON в `roles` — строка пропускается. Флаг ставится последним.
+    """
+    if conn.execute("SELECT 1 FROM meta WHERE key = 'route_members_v1'").fetchone():
+        return []
+    try:
+        pi = harnesses_store.by_key(conn, "pi")
+        channels = {ch["name"] for ch in pi["channels"]} if pi else set()
+        changed: list[str] = []
+        rows = conn.execute("SELECT key, roles FROM routes WHERE kind = 'pipeline' "
+                            "AND plugin = 'pipeline-full' ORDER BY position, key").fetchall()
+        for row in rows:
+            try:
+                roles = json.loads(row["roles"]) if row["roles"] else {}
+            except ValueError:
+                continue
+            if not isinstance(roles, dict):
+                continue
+            touched = False
+            for cell in roles.values():
+                if (not isinstance(cell, dict) or "members" in cell
+                        or cell.get("skill", "pi:pi-delegate") != "pi:pi-delegate"):
+                    continue
+                title = cell.get("title") if isinstance(cell.get("title"), str) else ""
+                found = sorted((title.find(hint), channel) for hint, channel in MEMBER_HINTS
+                               if hint in title and channel in channels)
+                if found:
+                    cell["members"] = [{"harness": "pi", "channel": channel} for _, channel in found]
+                    touched = True
+            if touched:
+                conn.execute("UPDATE routes SET roles = ?, updated_at = ? WHERE key = ?",
+                             (_dumps(roles), store.now_iso(), row["key"]))
+                changed.append(row["key"])
+        conn.execute("INSERT INTO meta(key, value) VALUES('route_members_v1', '1') "
+                     "ON CONFLICT(key) DO NOTHING")
+        conn.commit()
+    except Exception:
+        conn.rollback()
+        raise
+    return changed
 
 
 # ------------------------------------------------------------------ скилы (справочник)

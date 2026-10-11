@@ -138,6 +138,47 @@ class PatchRolesTests(RolesApiBase):
         self.assertEqual(routes_mod.validate(document)[0]["roles"], ROLES)
 
 
+class MembersApiTests(RolesApiBase):
+    """`members` роли конвейера сверяются с каталогом харнессов (listik-46q6 c)."""
+
+    def setUp(self) -> None:
+        super().setUp()
+        self.write_and_import([pipeline_record(key="full-medium"), swarm_record()])
+
+    def roles(self, harness: str, channel: str) -> dict:
+        return {"critic": {"provider": "claude", "label": "S+DS", "title": "Sonnet + DeepSeek",
+                           "members": [{"harness": harness, "channel": channel}]}}
+
+    def test_patch_members_saved(self) -> None:
+        roles = self.roles("pi", "deepseek")
+        status, _ = self.patch("/api/routes/full-medium", {"roles": roles})
+        self.assertEqual(status, 200)
+        _, listing = self.get("/api/routes")
+        record = next(r for r in listing["routes"] if r["key"] == "full-medium")
+        self.assertEqual(record["roles"]["critic"]["members"],
+                         [{"harness": "pi", "channel": "deepseek"}])
+
+    def test_patch_unknown_channel_or_harness_rejected(self) -> None:
+        before = self.route("full-medium")
+        for harness, channel, where in (("pi", "nope", "members[0].channel"),
+                                        ("ghost", "glm", "members[0].harness")):
+            with self.subTest(harness=harness):
+                with self.assertRaises(server.ApiError) as ctx:
+                    self.patch("/api/routes/full-medium", {"roles": self.roles(harness, channel)})
+                self.assertEqual(ctx.exception.status, 400)
+                self.assertEqual(ctx.exception.code, errors.BAD_ARGUMENT)
+                self.assertIn(where, ctx.exception.message)
+                self.assertEqual(self.route("full-medium"), before)
+
+    def test_post_unknown_channel_rejected(self) -> None:
+        with self.assertRaises(server.ApiError) as ctx:
+            self.post("/api/routes", {"key": "full-high", "roles": self.roles("pi", "nope")})
+        self.assertEqual(ctx.exception.status, 400)
+        self.assertIn("members[0].channel", ctx.exception.message)
+        self.assertIsNone(self.conn.execute(
+            "SELECT 1 FROM routes WHERE key = 'full-high'").fetchone())
+
+
 class PostRolesTests(RolesApiBase):
     def setUp(self) -> None:
         super().setUp()

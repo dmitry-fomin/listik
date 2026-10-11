@@ -18,7 +18,17 @@
         "critic": {
           "provider": "claude",
           "label": "S+DS+GLM",
-          "title": "Sonnet 5.5 · high + DeepSeek Flash · high + GLM 5.3 Flash · high"
+          "title": "Sonnet 5.5 · high + DeepSeek Flash · high + GLM 5.3 Flash · high",
+          "members": [
+            {
+              "harness": "pi",
+              "channel": "deepseek"
+            },
+            {
+              "harness": "pi",
+              "channel": "glm"
+            }
+          ]
         },
         "impl": {
           "provider": "claude",
@@ -134,7 +144,17 @@
         "critic": {
           "provider": "claude",
           "label": "S+DS+GLM",
-          "title": "Sonnet 5.5 · high + DeepSeek Flash · high + GLM 5.3 Flash · high"
+          "title": "Sonnet 5.5 · high + DeepSeek Flash · high + GLM 5.3 Flash · high",
+          "members": [
+            {
+              "harness": "pi",
+              "channel": "deepseek"
+            },
+            {
+              "harness": "pi",
+              "channel": "glm"
+            }
+          ]
         },
         "impl": {
           "provider": "claude",
@@ -250,7 +270,17 @@
         "critic": {
           "provider": "claude",
           "label": "S+DS+GLM",
-          "title": "Sonnet 5.5 · high + DeepSeek Flash · high + GLM 5.3 Flash · high"
+          "title": "Sonnet 5.5 · high + DeepSeek Flash · high + GLM 5.3 Flash · high",
+          "members": [
+            {
+              "harness": "pi",
+              "channel": "deepseek"
+            },
+            {
+              "harness": "pi",
+              "channel": "glm"
+            }
+          ]
         },
         "impl": {
           "provider": "claude",
@@ -330,7 +360,17 @@
           "provider": "glm",
           "label": "GLM+DS+H",
           "title": "GLM 5.3 Flash · high + DeepSeek Flash · high + Haiku 5.5 · high",
-          "skill": "pi:pi-delegate"
+          "skill": "pi:pi-delegate",
+          "members": [
+            {
+              "harness": "pi",
+              "channel": "glm"
+            },
+            {
+              "harness": "pi",
+              "channel": "deepseek"
+            }
+          ]
         },
         "impl": {
           "provider": "devin",
@@ -489,7 +529,13 @@
           "skill": "pi:pi-delegate",
           "params": {
             "channel": "glm"
-          }
+          },
+          "members": [
+            {
+              "harness": "pi",
+              "channel": "glm"
+            }
+          ]
         }
       },
       "command": [

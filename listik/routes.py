@@ -31,7 +31,8 @@
   * `visible` — именно JSON `true`/`false`;
   * `roles` — обязателен: ключи только из `spec`/`critic`/`impl`/`judge`; у `pipeline`
     режима скила значение — `{provider, label, title}` из непустых строк (провайдер —
-    `claude`/`glm`/`openai`/`grok`/`deepseek`/`devin`), у роя — `{harness, argv?, prompt?}`;
+    `claude`/`glm`/`openai`/`grok`/`deepseek`/`devin`; необязательны `skill`, `params` и
+    `members` — 1–10 пар `{harness, channel}`), у роя — `{harness, argv?, prompt?}`;
     у `pipeline` допустим пустой объект `{}` (конвейер без раскладки, как его заводит
     `POST /api/routes` без `roles`), у `swarm` нужна хотя бы одна роль;
   * `icon` — необязательный уровень маршрута для иконки на доске, одно из
@@ -80,7 +81,7 @@ PLACEHOLDERS = ("task_id", "project", "route", "cwd", "worktree", "branch",
 
 ROOT_FIELDS = ("version", "routes")
 RECORD_FIELDS = ("key", "kind", "plugin", "title", "hint", "visible", "icon", "roles", "strip", "command")
-ROLE_FIELDS = ("provider", "label", "title", "skill", "params")
+ROLE_FIELDS = ("provider", "label", "title", "skill", "params", "members")
 #: Поля ячейки роли маршрута `kind=swarm`: харнесс из каталога (`harnesses`),
 #: свой argv и свой промпт — последним аргументом. Пустая ячейка (роль не задана)
 #: — этап пропускается.
@@ -95,6 +96,9 @@ ROLE_REQUIRED = ("provider", "label", "title")
 SKILL_RE = re.compile(r"^[a-z0-9][a-z0-9-]*:[a-z0-9][a-z0-9-]*$")
 PARAM_KEY_RE = re.compile(r"^[a-z][a-z0-9_]*$")
 PARAMS_MAX_KEYS = 20
+#: `members` ячейки конвейера — ссылки роли на харнесс и канал каталога `harnesses`.
+MEMBERS_MAX = 10
+MEMBER_FIELDS = ("harness", "channel")
 
 KEY_RE = re.compile(r"^[a-z0-9][a-z0-9-]*$")
 PLACEHOLDER_RE = re.compile(r"\{([^{}]*)\}")
@@ -173,6 +177,36 @@ def _validate_params(value, where: str) -> dict:
     return params
 
 
+def _validate_members(value, where: str) -> list[dict]:
+    """`members`: 1–10 пар `{harness, channel}`, оба ключа под `KEY_RE`, без повторов.
+
+    Наличие харнесса и канала в каталоге сверяет слой базы (`routes_store._check_roles`).
+    """
+    if not isinstance(value, list) or not value:
+        raise _err(where, "непустой массив {harness, channel}")
+    if len(value) > MEMBERS_MAX:
+        raise _err(where, f"не больше {MEMBERS_MAX} элементов")
+    out: list[dict] = []
+    seen: set[tuple] = set()
+    for i, item in enumerate(value):
+        item_where = f"{where}[{i}]"
+        if not isinstance(item, dict):
+            raise _err(item_where, "ожидается объект {harness, channel}")
+        for name in item:
+            if name not in MEMBER_FIELDS:
+                raise _err(f"{item_where}.{name}", "посторонний ключ, допустимы harness и channel")
+        for name in MEMBER_FIELDS:
+            text = _present(item, name, item_where)
+            if not isinstance(text, str) or not KEY_RE.fullmatch(text):
+                raise _err(f"{item_where}.{name}", f"строка под {KEY_RE.pattern}")
+        pair = (item["harness"], item["channel"])
+        if pair in seen:
+            raise _err(item_where, "повтор пары (harness, channel)")
+        seen.add(pair)
+        out.append({"harness": pair[0], "channel": pair[1]})
+    return out
+
+
 def _validate_role_cell(cell, where: str) -> dict:
     if not isinstance(cell, dict):
         raise _err(where, "должна быть объектом {provider, label, title}")
@@ -195,6 +229,8 @@ def _validate_role_cell(cell, where: str) -> dict:
         if "skill" not in out:
             raise _err(f"{where}.params", "без skill параметры некуда передать")
         out["params"] = _validate_params(cell["params"], f"{where}.params")
+    if "members" in cell:
+        out["members"] = _validate_members(cell["members"], f"{where}.members")
     return out
 
 

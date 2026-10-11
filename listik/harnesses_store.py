@@ -251,20 +251,32 @@ def list_harnesses(conn: sqlite3.Connection) -> list[dict]:
 
 
 def used_by(conn: sqlite3.Connection, key: str) -> list[dict]:
-    """Где харнесс задействован: роли маршрутов роя."""
+    """Где харнесс задействован: роли роя (`harness`) и `members` ролей конвейеров.
+
+    Порядок — маршруты по `position, key`, роли в порядке расклада, элементы в
+    порядке `members`; у записи конвейера есть `channel`, у роя — нет.
+    """
     out: list[dict] = []
     for row in conn.execute(
-            "SELECT key, kind, roles FROM routes WHERE roles LIKE ?",
+            "SELECT key, kind, roles FROM routes WHERE roles LIKE ? ORDER BY position, key",
             (f'%"{key}"%',)).fetchall():
-        swarm = row["kind"] == "swarm"
-        if swarm and row["roles"]:
-            try:
-                roles = json.loads(row["roles"])
-            except ValueError:
+        try:
+            roles = json.loads(row["roles"]) if row["roles"] else {}
+        except ValueError:
+            continue
+        if not isinstance(roles, dict):
+            continue
+        for role, cell in roles.items():
+            if not isinstance(cell, dict):
                 continue
-            for role, cell in roles.items():
-                if isinstance(cell, dict) and cell.get("harness") == key:
+            if row["kind"] == "swarm":
+                if cell.get("harness") == key:
                     out.append({"route": row["key"], "kind": "swarm", "role": role})
+            elif row["kind"] == "pipeline" and isinstance(cell.get("members"), list):
+                for member in cell["members"]:
+                    if isinstance(member, dict) and member.get("harness") == key:
+                        out.append({"route": row["key"], "kind": "pipeline", "role": role,
+                                    "channel": member.get("channel")})
     return out
 
 

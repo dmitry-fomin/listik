@@ -119,6 +119,63 @@ class RoleCellSchemaTest(unittest.TestCase):
         self.assertTrue(out)
 
 
+class MembersSchemaTest(unittest.TestCase):
+    """`members` ячейки конвейера: форма, пути и причины отказов (listik-46q6 c)."""
+
+    def validate(self, members) -> dict:
+        return routes_mod.validate(record({"critic": role(members=members)}))[0]["roles"]
+
+    def rejected(self, members, where: str, reason: str | None = None) -> None:
+        with self.assertRaises(routes_mod.RoutesError) as ctx:
+            self.validate(members)
+        text = str(ctx.exception)
+        self.assertIn(f"roles.critic.{where}", text)
+        if reason:
+            self.assertIn(reason, text)
+        self.assertNotIn("лишнее поле", text)
+
+    def test_good_members_kept(self):
+        members = [{"harness": "pi", "channel": "deepseek"}, {"harness": "pi", "channel": "glm"}]
+        self.assertEqual(self.validate(members)["critic"]["members"], members)
+
+    def test_cell_without_members_unchanged(self):
+        roles = routes_mod.validate(record({"critic": role()}))[0]["roles"]
+        self.assertNotIn("members", roles["critic"])
+
+    def test_empty_and_not_list(self):
+        for bad in ([], None, "pi", {"harness": "pi", "channel": "glm"}):
+            with self.subTest(bad=bad):
+                self.rejected(bad, "members:", "непустой массив")
+
+    def test_item_not_object(self):
+        self.rejected(["pi"], "members[0]")
+
+    def test_extra_key(self):
+        self.rejected([{"harness": "pi", "channel": "glm", "x": 1}], "members[0].x")
+
+    def test_bad_channel_and_harness(self):
+        self.rejected([{"harness": "pi", "channel": "GLM"}], "members[0].channel")
+        self.rejected([{"harness": "Pi", "channel": "glm"}], "members[0].harness")
+        self.rejected([{"harness": 1, "channel": "glm"}], "members[0].harness")
+
+    def test_duplicate_pair(self):
+        pair = {"harness": "pi", "channel": "glm"}
+        self.rejected([pair, dict(pair)], "members[1]", "повтор пары")
+
+    def test_too_many(self):
+        members = [{"harness": "pi", "channel": f"c{i}"} for i in range(11)]
+        self.rejected(members, "members:", "не больше 10")
+
+    def test_swarm_cell_members_is_extra(self):
+        doc = {"version": 1, "routes": [
+            {"key": "rx", "kind": "swarm", "title": "Рой", "hint": "", "visible": False,
+             "roles": {"impl": {"harness": "dsh", "argv": ["dsh"],
+                                "members": [{"harness": "pi", "channel": "glm"}]}}}]}
+        with self.assertRaises(routes_mod.RoutesError) as ctx:
+            routes_mod.validate(doc)
+        self.assertIn("roles.impl.members: лишнее поле", str(ctx.exception))
+
+
 class LauncherCatalogueTest(unittest.TestCase):
     def setUp(self):
         self.tmp = tempfile.TemporaryDirectory()

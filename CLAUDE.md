@@ -105,7 +105,8 @@ Database migrations exist as two parallel mechanisms — don't confuse them:
   the db and are edited from the board's route settings and over HTTP (`PATCH`/`POST /api/routes`,
   listik-syu8); `kind`/`key`/`position` stay unwritable. A role cell is `{provider, label, title}`
   plus the optional `skill` (a launcher skill, `плагин:скил` — e.g. `pi:pi-delegate`) and its
-  flat `params`; the same validation (`routes._validate_roles`) serves the seed file and the HTTP
+  flat `params`, and the optional `members` (`[{harness, channel}]`, checked against the
+  `harnesses` catalog and its `channels`); the same validation (`routes._validate_roles`) serves the seed file and the HTTP
   path. A pipeline route key is `<plugin without "pipeline-">-<skill name>` (`full-high`,
   `cc-high`, `claude-high`); a `kind=pipeline` record has the `plugin` field (the preset's plugin:
   `pipeline-full`/`pipeline-cc`/`pipeline-claude`; `null` for swarm routes and the author's own

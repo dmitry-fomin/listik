@@ -1892,7 +1892,7 @@ class FeaturePipelineLensAcceptanceTests(unittest.TestCase):
 
 #: Приёмка линзами в пресетах (listik-3exw, порция b; линзы Haiku — listik-jllp, порция a;
 #: medium — listik-jllp, порция b): кто ссылается на ядро и что несёт.
-LENS_PRESETS = ("pipeline-full:high", "pipeline-full:xhigh", "pipeline-full:medium")
+LENS_PRESETS = ("pipeline-full:high", "pipeline-full:xhigh", "pipeline-full:medium", "pipeline-full:low")
 #: Пресеты pipeline-cc с теми же линзами (listik-jllp, порция b); их тексты сверяет
 #: tests/test_pipeline_cc_plugin.py — здесь список нужен строке `pipeline-lens` в README ядра.
 CC_LENS_PRESETS = ("pipeline-cc:xhigh", "pipeline-cc:high",
@@ -2031,7 +2031,7 @@ def _lens_readme_problems(text: str, skills: set[str]) -> list[str]:
 
 
 def _core_readme_lens_problems(text: str) -> list[str]:
-    """Строка `pipeline-lens` в README ядра: haiku / max и все девять пресетов с линзами."""
+    """Строка `pipeline-lens` в README ядра: haiku / max и все десять пресетов с линзами."""
     problems: list[str] = []
     if "pipeline-lens-xhigh" in text:
         problems.append("README ядра называет удалённого pipeline-lens-xhigh")
@@ -2094,8 +2094,8 @@ class FeaturePipelineLensPresetTests(unittest.TestCase):
         for case, mutated in {
             "medium: линзы без «max»": text.replace(
                 medium_row, medium_row.replace("Haiku 5.5 max ×3", "Haiku 5.5 ×3")),
-            "low: строка с «линз»": text.replace(
-                "| `low` |", "| `low` | линзы,"),
+            "xlow: строка с «линз»": text.replace(
+                "| `xlow` |", "| `xlow` | линзы,"),
         }.items():
             with self.subTest(case=case):
                 self.assertNotEqual(mutated, text, "изменение не применилось")
@@ -2109,6 +2109,7 @@ class FeaturePipelineLensPresetTests(unittest.TestCase):
         high = _skill_text("pipeline-full:high")
         medium = _skill_text("pipeline-full:medium")
         low = _skill_text("pipeline-full:low")
+        xlow = _skill_text("pipeline-full:xlow")
         xhigh = _skill_text("pipeline-full:xhigh")
         claude_xhigh = _skill_text("pipeline-claude:xhigh")
         judge = _fenced_block_with(xhigh, LENS_JUDGE_BLOCK_MARK)
@@ -2119,8 +2120,9 @@ class FeaturePipelineLensPresetTests(unittest.TestCase):
             "high без «Приёмка линзами»": ("pipeline-full:high", high, high.replace(LENS_REF, "")),
             "medium без «Приёмка линзами»": ("pipeline-full:medium", medium,
                                              medium.replace(LENS_REF, "")),
-            "low с «Приёмка линзами»": ("pipeline-full:low", low,
-                                       low + f"\nПриёмка — по {LENS_CORE_REF}.\n"),
+            "low без «Приёмка линзами»": ("pipeline-full:low", low, low.replace(LENS_REF, "")),
+            "xlow с «Приёмка линзами»": ("pipeline-full:xlow", xlow,
+                                        xlow + f"\nПриёмка — по {LENS_CORE_REF}.\n"),
             "xhigh: задание судье без «вынести:»": (
                 "pipeline-full:xhigh", xhigh, xhigh.replace(judge, judge.replace("вынести:", ""), 1)),
             "high без «Haiku 5.5 max» в description": (

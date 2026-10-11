@@ -343,8 +343,8 @@
         },
         "judge": {
           "provider": "grok",
-          "label": "high",
-          "title": "Grok 4.7"
+          "label": "линзы",
+          "title": "Haiku 5.5 · max · 3 линзы → Grok 4.7 · high"
         }
       },
       "command": [

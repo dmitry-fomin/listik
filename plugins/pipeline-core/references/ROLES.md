@@ -200,11 +200,11 @@ $2.31 снаружи. Один бенч индекс не перебивает (
 
 ### Линзы приёмки — Haiku 5.5 max
 
-С 09.10.2026 приёмку в девяти пресетах начинают три линзы Haiku 5.5 на усилии max — локальные
+С 09.10.2026 приёмку в десяти пресетах начинают три линзы Haiku 5.5 на усилии max — локальные
 субагенты `pipeline-core:pipeline-lens` (`model: haiku`), у каждой один вопрос
-(`pipeline-core.md`, «Приёмка линзами»): `pipeline-full:xhigh|high|medium`,
-`pipeline-claude:xhigh|high`, `pipeline-cc:xhigh|high|medium|low`. В `pipeline-full:low|xlow|nano`
-и `pipeline-cc:xlow|nano` линз нет: там судья обязателен по замыслу, нет отдельного чек-листа
+(`pipeline-core.md`, «Приёмка линзами»): `pipeline-full:xhigh|high|medium|low`,
+`pipeline-claude:xhigh|high`, `pipeline-cc:xhigh|high|medium|low`. В `pipeline-full:xlow|nano`
+и `pipeline-cc:xlow|nano` линз нет: там нет отдельного чек-листа
 или судья и так дешёвый. Судья пресета зовётся при находке линз, при «Критичных инвариантах»
 в чек-листе и на повторных заходах (`r2`+); при чистых линзах порцию коммитит оркестратор,
 а линза `scope` сама прогоняет негативные контроли чек-листа.

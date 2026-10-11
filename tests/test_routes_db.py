@@ -131,6 +131,13 @@ class ImportSampleTests(RoutesDbTestCase):
         self.assertTrue(any("/pipeline-full:high" in line and "маршрут full-high" in line
                             for line in substituted))
 
+    def test_low_pipeline_judge_is_lenses(self) -> None:
+        """full-low: приёмка линзами, судья Grok 4.7 — после ` → ` (listik-ixej)."""
+        self.import_sample()
+        judge = routes_store.get_route(self.conn, "full-low")["roles"]["judge"]
+        self.assertEqual(judge["label"], "линзы")
+        self.assertIn("→ Grok 4.7", judge["title"])
+
 
 class ShippedAdditionsTests(RoutesDbTestCase):
     """Маршрут, добавленный в поставку позже, доезжает в уже наполненную базу один раз."""

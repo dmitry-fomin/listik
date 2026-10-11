@@ -2804,5 +2804,147 @@ class PipelineClaudeAgentsTests(unittest.TestCase):
         self.assertEqual(_inherit_hits(PLUGINS_DIR), [])
 
 
+#: Правила судьи и UI-порция через линзы (listik-ixej, порция a).
+JUDGE_RULES_HEADING = "## Правила судьи: дерево и живые пункты"
+JUDGE_RULES_PLACEHOLDER = "<блок «Правила судьи: дерево и живые пункты» из pipeline-core-accept.md — вставь дословно>"
+JUDGE_RULES_BLOCK_REQUIRED = (
+    "<пути пакета>", "git apply --numstat",
+    "worktree add --detach", "git apply", "worktree remove --force", "stash", "reset", "clean",
+    "GIT_INDEX_FILE", "read-tree HEAD", "diff --cached -U10", "дерево не совпало с пакетом диффа",
+    "CGWindowListCopyWindowInfo", "kCGWindowOwnerPID", "frontmost",
+    "CGSSessionScreenIsLocked", "не проверено вживую: <пункт> — экран заблокирован",
+    "не проверено вживую: <что> — <почему>",
+)
+#: Строки-команды блока, которые локальные судьи несут дословно (ищутся по метке).
+JUDGE_RULES_VERBATIM_MARKS = ('worktree add --detach "$T" HEAD', "diff --cached -U10",
+                              "osascript -l JavaScript", "CGSSessionScreenIsLocked")
+JUDGE_FINGERPRINT_HEADING = "### Отпечаток дерева вокруг судьи"
+JUDGE_FINGERPRINT_LINES = (
+    "порция <X>: отпечаток до судьи r<R> <sha>",
+    "порция <X>: отпечаток после судьи r<R> <sha>",
+    "порция <X>: судья изменил дерево — стоп",
+    "порция <X>: после коммита судьи дерево не пусто — стоп",
+    "порция <X>: артефакты прогона вне пакета: <пути>",
+)
+LIVE_SCENARIO = "## Живой сценарий"
+UI_PREFLIGHT_START = "**Предполёт UI-порции.**"
+UI_PREFLIGHT_REQUIRED = (LIVE_SCENARIO, "по умолчанию: принято без живой проверки")
+UI_PREFLIGHT_FORBIDDEN = ("закрывает только судья", "с потраченным прогоном")
+LENS_UI_FORBIDDEN = ("порция не UI", "порция UI", "или UI", "UI-порцией", "Так же — с")
+LENS_UI_REQUIRED = (LIVE_SCENARIO, "приёмка линзами без судьи")
+SPEC_INVARIANTS_START = "**Раздел `## Критичные инварианты`"
+JUDGE_AGENT_FILES = ("pipeline-judge.md", "pipeline-judge-xhigh.md")
+
+
+def _fence_lines(lines: list[str]) -> list[int]:
+    return [i for i, line in enumerate(lines) if line.lstrip().startswith("```")]
+
+
+def _judge_rules_block(text: str) -> list[str]:
+    """Строки единственного fenced-блока раздела правил судьи; пусто — нет раздела или блока."""
+    lines = _text_section(text, JUDGE_RULES_HEADING).splitlines()
+    fences = _fence_lines(lines)
+    return lines[fences[0] + 1:fences[1]] if len(fences) >= 2 else []
+
+
+def _judge_rules_problems(core: str, writers: dict[str, str], judges: dict[str, str],
+                          lens_agent: str) -> list[str]:
+    """Проблемы правил судьи, отпечатка вокруг судьи и маркера UI-порции; пусто — всё на месте."""
+    problems: list[str] = []
+    section = _text_section(core, JUDGE_RULES_HEADING)
+    block = _judge_rules_block(core)
+    if not section:
+        problems.append(f"нет раздела {JUDGE_RULES_HEADING!r}")
+    else:
+        lines = section.splitlines()
+        fences = _fence_lines(lines)
+        if len(fences) != 2:
+            problems.append(f"в разделе правил судьи строк-ограждений {len(fences)}, нужен ровно один блок")
+        intro = " ".join(lines[:fences[0]] if fences else lines)
+        problems.extend(f"в абзаце-инструкции нет {needle!r}"
+                        for needle in (JUDGE_RULES_PLACEHOLDER, "внешнему") if needle not in intro)
+        joined = "\n".join(block)
+        problems.extend(f"в блоке правил судьи нет {needle!r}"
+                        for needle in JUDGE_RULES_BLOCK_REQUIRED if needle not in joined)
+    verbatim = []
+    for mark in JUDGE_RULES_VERBATIM_MARKS:
+        found = [line.strip() for line in block if mark in line]
+        if not found:
+            problems.append(f"в блоке правил судьи нет строки с {mark!r}")
+        verbatim.extend(found)
+    for name, text in judges.items():
+        problems.extend(f"{name}: нет строки блока {line!r}" for line in verbatim if line not in text)
+    package = _text_section(core, "## Пакет диффа для приёмки")
+    fingerprint = _text_block(package, JUDGE_FINGERPRINT_HEADING, lambda line: line.startswith("#"))
+    if not fingerprint:
+        problems.append(f"в «Пакет диффа для приёмки» нет {JUDGE_FINGERPRINT_HEADING!r}")
+    problems.extend(f"в отпечатке вокруг судьи нет {line!r}"
+                    for line in JUDGE_FINGERPRINT_LINES if line not in fingerprint)
+    headless = _text_block(core, HEADLESS_PARAGRAPH_START, _is_blank)
+    if "изменённое судьёй дерево" not in headless:
+        problems.append("абзац headless не называет «изменённое судьёй дерево»")
+    preflight = " ".join(_text_block(core, UI_PREFLIGHT_START, lambda line: line.startswith("#")).splitlines())
+    problems.extend(f"в предполёте UI нет {needle!r}" for needle in UI_PREFLIGHT_REQUIRED if needle not in preflight)
+    problems.extend(f"в предполёте UI есть {needle!r}" for needle in UI_PREFLIGHT_FORBIDDEN if needle in preflight)
+    lens = _text_section(core, LENS_HEADING)
+    problems.extend(f"в «Приёмке линзами» есть {needle!r}" for needle in LENS_UI_FORBIDDEN if needle in lens)
+    problems.extend(f"в «Приёмке линзами» нет {needle!r}" for needle in LENS_UI_REQUIRED if needle not in lens)
+    for name, text in writers.items():
+        if LIVE_SCENARIO not in text:
+            problems.append(f"{name}: нет {LIVE_SCENARIO!r}")
+        invariants = _text_block(text, SPEC_INVARIANTS_START, _is_blank)
+        if not invariants:
+            problems.append(f"{name}: нет абзаца инвариантов")
+        elif "GUI" in invariants:
+            problems.append(f"{name}: абзац инвариантов называет GUI")
+    if LIVE_SCENARIO not in lens_agent:
+        problems.append(f"pipeline-lens.md: нет {LIVE_SCENARIO!r}")
+    return problems
+
+
+class FeaturePipelineJudgeRulesTests(unittest.TestCase):
+    """Правила судьи, отпечаток вокруг судьи, UI-порция через линзы (listik-ixej, порция a)."""
+
+    def _inputs(self):
+        writers = {str(path): _plugin_text(path) for path in _spec_writer_paths()}
+        judges = {name: _plugin_text(pathlib.Path(AGENTS_SUBDIR) / name) for name in JUDGE_AGENT_FILES}
+        return _plugin_text(CORE_DOC), writers, judges, _plugin_text(LENS_AGENT_FILE)
+
+    def test_judge_rules_in_place(self) -> None:
+        core, writers, judges, lens_agent = self._inputs()
+        self.assertEqual(len(writers), 4)
+        self.assertEqual(_judge_rules_problems(core, writers, judges, lens_agent), [])
+
+    def test_judge_rules_check_rejects_mutations(self) -> None:
+        core, writers, judges, lens_agent = self._inputs()
+        section = _text_section(core, JUDGE_RULES_HEADING)
+        lens = _text_section(core, LENS_HEADING)
+        writer = next(iter(writers))
+        invariants = _text_block(writers[writer], SPEC_INVARIANTS_START, _is_blank)
+        green = "**Все три `чисто` и в чек-листе нет `## Критичные инварианты`**"
+        self.assertIn(green, lens)
+        osascript = next(line.strip() for line in _judge_rules_block(core) if "osascript" in line)
+        broken = {
+            "без заголовка правил": (core.replace(JUDGE_RULES_HEADING + "\n", "", 1), writers, judges),
+            "без CGSSessionScreenIsLocked": (
+                core.replace(section, section.replace("CGSSessionScreenIsLocked", "ScreenLocked")),
+                writers, judges),
+            "вложенное ограждение": (
+                core.replace(section, section.replace('    rm -f "$I"\n', '    rm -f "$I"\n    ```\n    echo\n    ```\n', 1)),
+                writers, judges),
+            "развилка «или порция UI»": (
+                core.replace(lens, lens.replace(green, green[:-2] + " или порция UI**", 1)), writers, judges),
+            "GUI в инвариантах автора ТЗ": (
+                core, {**writers, writer: writers[writer].replace(invariants, invariants + " GUI", 1)}, judges),
+            "osascript в pipeline-judge.md изменён": (
+                core, writers, {**judges, "pipeline-judge.md": judges["pipeline-judge.md"].replace(
+                    osascript, osascript.replace("kCGWindowLayer", "kCGWindowAlpha"))}),
+        }
+        for case, (c, w, j) in broken.items():
+            with self.subTest(case=case):
+                self.assertNotEqual((c, w, j), (core, writers, judges), "изменение не применилось")
+                self.assertNotEqual(_judge_rules_problems(c, w, j, lens_agent), [])
+
+
 if __name__ == "__main__":
     unittest.main()

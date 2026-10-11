@@ -2946,5 +2946,105 @@ class FeaturePipelineJudgeRulesTests(unittest.TestCase):
                 self.assertNotEqual(_judge_rules_problems(c, w, j, lens_agent), [])
 
 
+#: Заглушка блока «Правила судьи: дерево и живые пункты» (listik-ixej, порция b): оркестратор
+#: вставляет на её место блок из pipeline-core-accept.md дословно.
+JUDGE_RULES_STUB = "<блок «Правила судьи: дерево и живые пункты» из pipeline-core-accept.md — вставь дословно>"
+JUDGE_RULES_HEADING = "## Правила судьи: дерево и живые пункты"
+NANO_JUDGE_TASK_MARK = "Задание судье (pi, GLM 5.3 Flash):"
+#: Скилы, где задание внешнему судье несёт заглушку: пять full с fenced-заданием, nano списком, пять cc.
+JUDGE_STUB_FULL_SKILLS = tuple(f"pipeline-full:{level}"
+                               for level in ("xhigh", "high", "medium", "low", "xlow", "nano"))
+JUDGE_STUB_SKILLS = JUDGE_STUB_FULL_SKILLS + tuple(sorted(CC_SKILLS))
+#: Текст блока, которому не место в задании: задание несёт только заглушку.
+JUDGE_STUB_FORBIDDEN = ("mktemp", "CGWindowList", "worktree add", "porcelain")
+#: Старые тексты full-заданий о том же, что теперь несёт блок.
+JUDGE_STUB_OLD_FULL = ("мутационную и негативную проверку", "а не тихий")
+
+
+def _judge_task_text(text: str) -> str:
+    """Задание судье: fenced-блок с LENS_JUDGE_BLOCK_MARK или nano-список до пункта верхнего уровня."""
+    fenced = _fenced_block_with(text, LENS_JUDGE_BLOCK_MARK)
+    if fenced:
+        return fenced
+    lines = text.splitlines()
+    start = next((i for i, line in enumerate(lines) if NANO_JUDGE_TASK_MARK in line), None)
+    if start is None:
+        return ""
+    end = next((i for i in range(start + 1, len(lines))
+                if lines[i].startswith("## ") or re.match(r"^\d+\. ", lines[i])), len(lines))
+    return "\n".join(lines[start:end])
+
+
+def _judge_stub_problems(name: str, text: str) -> list[str]:
+    """Проблемы заглушки правил судьи в SKILL.md пресета; пусто — всё на месте."""
+    problems: list[str] = []
+    count = text.count(JUDGE_RULES_STUB)
+    if count != 1:
+        problems.append(f"{name}: заглушка встречается {count} раз, нужно ровно 1")
+    task = _judge_task_text(text)
+    if not task:
+        return problems + [f"{name}: нет задания судье"]
+    if not any(line.strip().removeprefix("- ") == JUDGE_RULES_STUB for line in task.splitlines()):
+        problems.append(f"{name}: в задании судье нет строки-заглушки")
+    problems.extend(f"{name}: в задании судье есть {needle!r}"
+                    for needle in JUDGE_STUB_FORBIDDEN if needle in task)
+    if name in JUDGE_STUB_FULL_SKILLS:
+        flat = " ".join(task.split()).lower()
+        problems.extend(f"{name}: в задании судье осталась старая фраза {needle!r}"
+                        for needle in JUDGE_STUB_OLD_FULL if needle in flat)
+    return problems
+
+
+class FeaturePipelineJudgeRulesStubTests(unittest.TestCase):
+    """Задание внешнему судье несёт заглушку блока правил судьи (listik-ixej, порция b)."""
+
+    def test_core_instruction_names_stub(self) -> None:
+        section = _text_section(_plugin_text(CORE_DOC), JUDGE_RULES_HEADING)
+        self.assertTrue(section, f"{CORE_DOC}: нет раздела {JUDGE_RULES_HEADING!r}")
+        instruction = section.split("```", 1)[0]
+        self.assertIn(JUDGE_RULES_STUB, instruction,
+                      f"{CORE_DOC}: абзац-инструкция раздела {JUDGE_RULES_HEADING!r} не называет заглушку")
+
+    def test_judge_tasks_carry_stub(self) -> None:
+        for name in JUDGE_STUB_SKILLS:
+            with self.subTest(skill=name):
+                self.assertEqual(_judge_stub_problems(name, _skill_text(name)), [])
+
+    def test_judge_task_skills_are_all_listed(self) -> None:
+        listed = set(JUDGE_STUB_SKILLS)
+        marked = 0
+        for name in sorted(_all_skill_names()):
+            text = _skill_text(name)
+            if LENS_JUDGE_BLOCK_MARK not in text and NANO_JUDGE_TASK_MARK not in text:
+                continue
+            marked += 1
+            with self.subTest(skill=name):
+                self.assertIn(name, listed, f"{name}: задание судье есть, а скила нет в JUDGE_STUB_SKILLS")
+        self.assertEqual(marked, len(listed), "скан нашёл не все скилы из JUDGE_STUB_SKILLS")
+        self.assertNotIn("pipeline-full:cross", listed)
+
+    def test_judge_stub_check_rejects_mutations(self) -> None:
+        full = _skill_text("pipeline-full:high")
+        cc = _skill_text("pipeline-cc:medium")
+        stub_line = JUDGE_RULES_STUB + "\n"
+        full_task = _fenced_block_with(full, LENS_JUDGE_BLOCK_MARK)
+        broken = {
+            "full без заглушки": ("pipeline-full:high", full, full.replace(stub_line, "", 1)),
+            "cc без заглушки": ("pipeline-cc:medium", cc, cc.replace(stub_line, "", 1)),
+            "заглушка вынесена за fenced-блок": (
+                "pipeline-full:high", full,
+                full.replace(stub_line, "", 1).replace("Задание судье", stub_line + "Задание судье", 1)),
+            "заглушка продублирована": ("pipeline-full:high", full,
+                                        full.replace(stub_line, stub_line + stub_line, 1)),
+            "копия заглушки вне задания": ("pipeline-cc:medium", cc, cc + "\n" + stub_line),
+            "в задании mktemp -d": ("pipeline-full:high", full,
+                                    full.replace(full_task, full_task + "\nкопия в `mktemp -d`", 1)),
+        }
+        for case, (name, text, mutated) in broken.items():
+            with self.subTest(case=case):
+                self.assertNotEqual(mutated, text, "изменение не применилось")
+                self.assertNotEqual(_judge_stub_problems(name, mutated), [])
+
+
 if __name__ == "__main__":
     unittest.main()

@@ -67,6 +67,26 @@
  * успешным удалением серия вводов в «Подпись» без blur — через 300 мс PATCH
  * ещё нет, через 1000 мс ровно один с единственным ключом `hint`.
  *
+ * listik-46q6 d (каналы харнесса, `/settings/harnesses`): у `me` (`manual`)
+ * раздела «Каналы» нет; у `pi` — строки `glm`/`deepseek` из `GET`, отметка
+ * `UiRadioGroup` у `glm`, раздел вне `__fields`; после прямого `PATCH` роли
+ * `critic` маршрута `full-medium` (два канала `pi` в `members`) «Где
+ * используется» показывает две строки `конвейер full-medium · роль s2 · канал …`
+ * без предупреждений Vue о ключах. Дальше: серия вводов в «Модель» — один PATCH
+ * с единственным ключом `channels`; новая пустая строка PATCH не шлёт,
+ * заполненная — список из трёх; удаление строки и выбор канала по умолчанию —
+ * PATCH не позже 300 мс; удаление канала по умолчанию — оставшийся с
+ * `default: false`, после ответа отметка у `glm`, второго PATCH нет (deepseek
+ * возвращается через UI); повтор имени и модель с пробелом — ошибка у поля,
+ * PATCH нет; отказ сервера (`window.__failHarnessPatch` — перехват отвечает 400)
+ * — плашка «Сервер не принял правку»; ввод во время запроса
+ * (`window.__delayHarnessPatch`) не теряется и уходит вторым PATCH. Команда:
+ * у `pi` без команды пустая команда не ошибка, аргумент `pi` уходит PATCH-ем,
+ * очистка — ошибка без PATCH (возврат — прямой `{"argv": null}` и перезагрузка);
+ * у `claude` очистка аргументов — ошибка без PATCH, возврат тем же путём.
+ * `finalize()` страхует прямыми PATCH каналов/argv `pi`, argv `claude` и
+ * расклада `full-medium` (`d46q6Restore`).
+ *
  * Работает с живой страницей (dev или прод) и настоящим API Listik, поэтому
  * трогает базу маршрутов: исходные значения полей возвращаются прямым `PATCH`
  * в `finalize()` и при успехе сценария, и при падении посреди него. Этот откат
@@ -147,6 +167,18 @@ const ROUTES_INTERCEPT = `(() => {
       const harnessMatch = reqUrl.match(/\\/api\\/harnesses\\/([^/?]+)$/);
       if (harnessMatch && init && init.method === 'PATCH' && typeof init.body === 'string') {
         window.__harnessPatchCalls.push({ key: harnessMatch[1], body: JSON.parse(init.body), t: Date.now() });
+        /* listik-46q6 d: __failHarnessPatch — текст отказа 400 вместо сервера,
+         * __delayHarnessPatch — задержка запроса, мс (ввод во время запроса). */
+        if (window.__failHarnessPatch) {
+          return Promise.resolve(new Response(JSON.stringify({ ok: false, error: window.__failHarnessPatch }), {
+            status: 400,
+            headers: { 'Content-Type': 'application/json' },
+          }));
+        }
+        if (window.__delayHarnessPatch) {
+          const wait = window.__delayHarnessPatch;
+          return new Promise((resolve) => setTimeout(resolve, wait)).then(() => original(input, init));
+        }
       }
     } catch (_e) { /* тело не JSON — не мешаем запросу */ }
     const out = original(input, init);
@@ -551,6 +583,9 @@ let harnessCardKey = null
 let harnessCardOriginal = null
 let harnessHintRestoreNeeded = false
 let harnessEnabledRestoreNeeded = false
+/** listik-46q6 d: исходные каналы/argv pi, argv claude, расклад full-medium и флаги отката. */
+let d46q6Original = null
+const d46q6Restore = { pi: false, piArgv: false, claudeArgv: false, route: false }
 /** Временные маршрут и задача порции `a` — убираются в finalize() при любом исходе. */
 let tmpRouteKey = null
 let tmpTaskId = null
@@ -620,6 +655,40 @@ async function finalize() {
     } catch (restoreError) {
       report.harnessRestoreFallbackOk = false
       report.harnessRestoreError = String(restoreError?.stack ?? restoreError)
+    }
+  }
+  // Страховка listik-46q6 d: прямые PATCH исходных каналов/argv pi, argv claude и full-medium.
+  if (d46q6Original && Object.values(d46q6Restore).some(Boolean)) {
+    try {
+      await withTimeout(
+        (async () => {
+          await evaluate('window.__failHarnessPatch = null; window.__delayHarnessPatch = 0')
+          const ok = []
+          if (d46q6Restore.pi || d46q6Restore.piArgv) {
+            const body = {}
+            if (d46q6Restore.pi) body.channels = d46q6Original.piChannels
+            if (d46q6Restore.piArgv) body.argv = d46q6Original.piArgv
+            ok.push((await evaluate(apiCall('PATCH', '/api/harnesses/pi', body)))?.status === 200)
+          }
+          if (d46q6Restore.claudeArgv) {
+            ok.push(
+              (await evaluate(apiCall('PATCH', '/api/harnesses/claude', { argv: d46q6Original.claudeArgv })))
+                ?.status === 200,
+            )
+          }
+          if (d46q6Restore.route) {
+            ok.push(
+              (await evaluate(apiCall('PATCH', '/api/routes/full-medium', { roles: d46q6Original.routeRoles })))
+                ?.status === 200,
+            )
+          }
+          report.d46q6RestoreFallbackOk = ok.every(Boolean)
+        })(),
+        10000,
+      )
+    } catch (restoreError) {
+      report.d46q6RestoreFallbackOk = false
+      report.d46q6RestoreError = String(restoreError?.stack ?? restoreError)
     }
   }
   try {
@@ -1265,6 +1334,408 @@ try {
   report.iw75HarnessSame =
     JSON.stringify(harnessProbe(iw75HarnessBefore)) === JSON.stringify(harnessProbe(iw75HarnessAfter))
 
+  /*
+   * ── listik-46q6 d: каналы харнесса ──
+   * Раздел «Каналы» карточки харнесса (`.listik-harness-card__channels`, вне
+   * `__fields`): `pi` — строки каналов и `UiRadioGroup` по умолчанию, «Где
+   * используется» с участниками конвейера, автосохранение списка целиком,
+   * ошибки полей, отказ сервера, ввод во время запроса; `claude` и `pi` —
+   * правило пустой команды. Всё возвращается тем же путём (UI), `finalize()`
+   * страхует прямыми PATCH (`d46q6Restore`).
+   */
+  // предупреждения Vue (console.warn) в consoleErrors не попадают — свой слушатель
+  report.d46q6KeyWarnings = []
+  client.socket.addEventListener('message', (message) => {
+    const data = JSON.parse(message.data)
+    if (data.method !== 'Runtime.consoleAPICalled') return
+    const text = (data.params.args ?? []).map((arg) => arg.value ?? arg.description).join(' ')
+    if (/\[Vue warn\].*key/i.test(text)) report.d46q6KeyWarnings.push(text)
+  })
+
+  const CH = '.listik-harness-card .listik-harness-card__channels'
+  /** Строки каналов: значения трёх полей, тексты ошибок строки; отметка по умолчанию. */
+  const channelsState = `(() => {
+    const section = document.querySelector('${CH}')
+    if (!section) return null
+    const rows = [...section.querySelectorAll('.ui-record-list__row')].map((row) => {
+      const inputs = [...row.querySelectorAll('input')]
+      return {
+        name: inputs[0]?.value ?? null,
+        model: inputs[1]?.value ?? null,
+        effort: inputs[2]?.value ?? null,
+        problems: [...row.querySelectorAll('.listik-harness-card__problem, .ui-field__error')].map((p) => p.textContent.trim()),
+      }
+    })
+    const radios = [...section.querySelectorAll('.ui-radio')].map((label) => ({
+      label: label.querySelector('.ui-radio__label')?.textContent.trim() ?? '',
+      checked: Boolean(label.querySelector('input')?.checked),
+    }))
+    return { rows, radios, checked: radios.find((r) => r.checked)?.label ?? null }
+  })()`
+  const COLS = { name: 0, model: 1, effort: 2 }
+  /** Посимвольная печать в поле строки канала без blur (как typeHarnessField). */
+  const typeChannel = (row, col, value) => `(async () => {
+    const tr = document.querySelectorAll('${CH} .ui-record-list__row')[${row}]
+    const input = tr?.querySelectorAll('input')[${COLS[col]}]
+    if (!input) return false
+    input.focus()
+    const setter = Object.getOwnPropertyDescriptor(window.HTMLInputElement.prototype, 'value').set
+    setter.call(input, '')
+    input.dispatchEvent(new Event('input', { bubbles: true }))
+    let acc = ''
+    for (const ch of ${JSON.stringify(value)}) {
+      acc += ch
+      setter.call(input, acc)
+      input.dispatchEvent(new Event('input', { bubbles: true }))
+      await new Promise((r) => setTimeout(r, 25))
+    }
+    return true
+  })()`
+  /** Дописать символы в конец поля, не стирая (ввод во время запроса). */
+  const appendChannel = (row, col, value) => `(() => {
+    const tr = document.querySelectorAll('${CH} .ui-record-list__row')[${row}]
+    const input = tr?.querySelectorAll('input')[${COLS[col]}]
+    if (!input) return false
+    const setter = Object.getOwnPropertyDescriptor(window.HTMLInputElement.prototype, 'value').set
+    setter.call(input, input.value + ${JSON.stringify(value)})
+    input.dispatchEvent(new Event('input', { bubbles: true }))
+    return true
+  })()`
+  const blurChannel = (row, col) => `(() => {
+    const tr = document.querySelectorAll('${CH} .ui-record-list__row')[${row}]
+    const input = tr?.querySelectorAll('input')[${COLS[col]}]
+    if (!input) return false
+    input.dispatchEvent(new FocusEvent('blur'))
+    return true
+  })()`
+  const channelFocused = (row, col) => `(() => {
+    const tr = document.querySelectorAll('${CH} .ui-record-list__row')[${row}]
+    return Boolean(tr) && tr.querySelectorAll('input')[${COLS[col]}] === document.activeElement
+  })()`
+  const clickAddChannel = `(() => {
+    const btn = [...document.querySelectorAll('${CH} button')].find((b) => b.textContent.trim() === 'Добавить канал')
+    if (!btn) return false
+    btn.click()
+    return true
+  })()`
+  /**
+   * Действие в карточке и ожидание ближайшего PATCH харнесса: { delay, calls }
+   * (как typeHarnessFieldBlur). `action` — тело функции на странице.
+   */
+  const actAndWaitPatch = (action) => `(async () => {
+    const before = window.__harnessPatchCalls.length
+    const t0 = Date.now()
+    const done = (() => { ${action} })()
+    if (!done) return null
+    while (window.__harnessPatchCalls.length === before && Date.now() - t0 < 2000) {
+      await new Promise((r) => setTimeout(r, 10))
+    }
+    const calls = window.__harnessPatchCalls.slice(before)
+    return { delay: calls.length > 0 ? calls[0].t - t0 : -1, calls: calls.length }
+  })()`
+  const removeChannelAction = (row) => `
+    const tr = document.querySelectorAll('${CH} .ui-record-list__row')[${row}]
+    const btn = tr?.querySelector('button[aria-label="Удалить запись"]')
+    if (!btn) return false
+    btn.click()
+    return true`
+  const pickDefaultAction = (name) => `
+    const label = [...document.querySelectorAll('${CH} .ui-radio')]
+      .find((el) => el.querySelector('.ui-radio__label')?.textContent.trim() === ${JSON.stringify(name)})
+    const input = label?.querySelector('input')
+    if (!input) return false
+    input.click()
+    return true`
+  /** Секция «Команда по умолчанию» карточки. */
+  const CMD = `[...document.querySelectorAll('.listik-harness-card .listik-harness-card__section')]
+    .find((el) => el.querySelector('.listik-harness-card__section-title')?.textContent.trim() === 'Команда по умолчанию')`
+  const commandState = `(() => {
+    const section = ${CMD}
+    if (!section) return null
+    return {
+      args: [...section.querySelectorAll('.ui-record-list__row input')].map((i) => i.value),
+      emptyError: [...section.querySelectorAll('.listik-harness-card__problem')].some((p) => p.textContent.includes('команда пустая')),
+    }
+  })()`
+  /** Убрать все строки аргументов кнопками ✕. */
+  const clearCommand = `(async () => {
+    for (let i = 0; i < 50; i += 1) {
+      const section = ${CMD}
+      const btn = section?.querySelector('.ui-record-list__row button[aria-label="Удалить запись"]')
+      if (!btn) return true
+      btn.click()
+      await new Promise((r) => setTimeout(r, 30))
+    }
+    return false
+  })()`
+  /** Добавить строки «Добавить аргумент» и заполнить их одним махом (один дебаунс). */
+  const fillCommand = (values) => `(async () => {
+    const values = ${JSON.stringify(values)}
+    for (const _v of values) {
+      const add = [...((${CMD})?.querySelectorAll('button') ?? [])].find((b) => b.textContent.trim() === 'Добавить аргумент')
+      if (!add) return false
+      add.click()
+      await new Promise((r) => setTimeout(r, 30))
+    }
+    const inputs = [...(${CMD}).querySelectorAll('.ui-record-list__row input')]
+    if (inputs.length !== values.length) return false
+    const setter = Object.getOwnPropertyDescriptor(window.HTMLInputElement.prototype, 'value').set
+    // по полю за тик: UiRecordList правит строку по своему model, а тот
+    // догоняет родителя только после ре-рендера — два ввода в один тик затёрли бы друг друга
+    for (const [i, input] of inputs.entries()) {
+      setter.call(input, values[i])
+      input.dispatchEvent(new Event('input', { bubbles: true }))
+      await new Promise((r) => setTimeout(r, 30))
+    }
+    return true
+  })()`
+  const piCalls = async (from) =>
+    ((await evaluate(harnessPatchCallsSince(from))) ?? []).filter((call) => call.key === 'pi')
+  const onlyChannels = (call) => Boolean(call) && Object.keys(call.body).join() === 'channels'
+  const getHarness = async (key) => {
+    const resp = await evaluate(apiCall('GET', `/api/harnesses/${key}`))
+    return resp?.status === 200 ? resp.data : null
+  }
+
+  await send('Page.navigate', { url: harnessesUrl })
+  await sleep(4000)
+  await evaluate('window.__failHarnessPatch = null; window.__delayHarnessPatch = 0')
+  const dPi = await getHarness('pi')
+  const dClaude = await getHarness('claude')
+  const dRouteResp = await evaluate(apiCall('GET', '/api/routes'))
+  const dRoute = (dRouteResp?.data?.routes ?? []).find((route) => route.key === 'full-medium') ?? null
+  if (!dPi || !dClaude || !dRoute || !(await getHarness('me'))) {
+    throw new Error('listik-46q6 d: нужны харнессы pi, claude, me и маршрут full-medium')
+  }
+  d46q6Original = {
+    piChannels: dPi.channels,
+    piArgv: dPi.argv,
+    claudeArgv: dClaude.argv,
+    routeRoles: dRoute.roles,
+  }
+  const glmOriginal = dPi.channels.find((ch) => ch.name === 'glm')
+  const deepseekOriginal = dPi.channels.find((ch) => ch.name === 'deepseek')
+  if (!glmOriginal || !deepseekOriginal || dPi.channels.length !== 2) {
+    throw new Error(`listik-46q6 d: у pi ждались каналы glm и deepseek: ${JSON.stringify(dPi.channels)}`)
+  }
+
+  // 1) manual — раздела «Каналы» нет
+  report.d46q6MeClicked = await evaluate(clickHarnessRow('me'))
+  await sleep(500)
+  report.d46q6MeNoChannels =
+    (await evaluate(`Boolean(document.querySelector('.listik-harness-card')) && !document.querySelector('${CH}')`)) === true
+
+  // 3 (подготовка) — расклад full-medium: critic с двумя каналами pi
+  const dRoles = JSON.parse(JSON.stringify(dRoute.roles))
+  dRoles.critic = {
+    ...(dRoles.critic ?? {}),
+    members: [{ harness: 'pi', channel: 'glm' }, { harness: 'pi', channel: 'deepseek' }],
+  }
+  d46q6Restore.route = true
+  report.d46q6RoutePatched =
+    (await evaluate(apiCall('PATCH', '/api/routes/full-medium', { roles: dRoles })))?.status === 200
+  await send('Page.navigate', { url: harnessesUrl })
+  await sleep(4000)
+
+  // 2) pi — строки glm/deepseek из GET, по умолчанию отмечен канал сервера
+  report.d46q6PiClicked = await evaluate(clickHarnessRow('pi'))
+  await until(`Boolean(document.querySelector('${CH}'))`)
+  const dInitial = await evaluate(channelsState)
+  report.d46q6InitialRows = dInitial?.rows ?? null
+  report.d46q6InitialMatches =
+    JSON.stringify((dInitial?.rows ?? []).map((r) => [r.name, r.model])) ===
+    JSON.stringify(dPi.channels.map((ch) => [ch.name, ch.model]))
+  report.d46q6InitialDefault = dInitial?.checked ?? null
+  report.d46q6InitialDefaultOk = dInitial?.checked === 'glm' && glmOriginal.default === true
+  report.d46q6OutsideFields =
+    (await evaluate(`!document.querySelector('.listik-harness-card__fields ${CH.split(' ').pop()}')`)) === true
+
+  // 3) «Где используется»: две строки конвейера full-medium · роль s2, без предупреждений о ключах
+  const dUsages = (await evaluate(`[...document.querySelectorAll('.listik-harness-card__usage')].map((el) => el.textContent.trim())`)) ?? []
+  report.d46q6Usages = dUsages.filter((text) => text.startsWith('конвейер full-medium · роль s2'))
+  report.d46q6UsagesOk =
+    report.d46q6Usages.includes('конвейер full-medium · роль s2 · канал glm') &&
+    report.d46q6Usages.includes('конвейер full-medium · роль s2 · канал deepseek') &&
+    report.d46q6Usages.length === 2
+
+  // 4) серия вводов в «Модель» glm без blur — один PATCH, только channels
+  const glmProbe = `${glmOriginal.model}-probe46q6`
+  d46q6Restore.pi = true
+  let dFrom = (await evaluate(harnessPatchCallsCount)) ?? 0
+  report.d46q6ModelTyped = await evaluate(typeChannel(0, 'model', glmProbe))
+  await sleep(1200)
+  let dCalls = await piCalls(dFrom)
+  report.d46q6ModelCalls = dCalls.length
+  report.d46q6ModelSingleKey = onlyChannels(dCalls[0])
+  report.d46q6ModelBody = dCalls[0]?.body.channels?.find((ch) => ch.name === 'glm')?.model ?? null
+  report.d46q6ModelGet = (await getHarness('pi'))?.channels?.find((ch) => ch.name === 'glm')?.model ?? null
+
+  // 5) «Добавить канал» — пустая строка PATCH не шлёт; заполненная — три канала
+  dFrom = (await evaluate(harnessPatchCallsCount)) ?? 0
+  report.d46q6AddClicked = await evaluate(clickAddChannel)
+  await sleep(1500)
+  report.d46q6AddEmptyCalls = (await piCalls(dFrom)).length
+  await evaluate(typeChannel(2, 'name', 'test-46q6'))
+  await evaluate(typeChannel(2, 'model', 'x/y'))
+  await sleep(1200)
+  dCalls = await piCalls(dFrom)
+  report.d46q6AddCalls = dCalls.length
+  report.d46q6AddBody = dCalls[dCalls.length - 1]?.body.channels?.map((ch) => ch.name) ?? null
+
+  // 6) удалить test-46q6 — PATCH со списком из двух не позже 300 мс
+  dFrom = (await evaluate(harnessPatchCallsCount)) ?? 0
+  const dRemove = await evaluate(actAndWaitPatch(removeChannelAction(2)))
+  report.d46q6RemoveDelay = dRemove?.delay ?? null
+  await sleep(800)
+  dCalls = await piCalls(dFrom)
+  report.d46q6RemoveCalls = dCalls.length
+  report.d46q6RemoveBody = dCalls[0]?.body.channels?.map((ch) => ch.name) ?? null
+
+  // 7) по умолчанию deepseek — PATCH не позже 300 мс, default только у deepseek
+  dFrom = (await evaluate(harnessPatchCallsCount)) ?? 0
+  const dPick = await evaluate(actAndWaitPatch(pickDefaultAction('deepseek')))
+  report.d46q6PickDelay = dPick?.delay ?? null
+  await sleep(800)
+  dCalls = await piCalls(dFrom)
+  report.d46q6PickCalls = dCalls.length
+  report.d46q6PickSingleKey = onlyChannels(dCalls[0])
+  report.d46q6PickDefaults =
+    dCalls[0]?.body.channels?.filter((ch) => ch.default).map((ch) => ch.name) ?? null
+
+  // 8) удалить deepseek (по умолчанию) — оставшийся уходит с default:false,
+  //    после ответа отметка у glm, второго PATCH нет; deepseek вернуть через UI
+  dFrom = (await evaluate(harnessPatchCallsCount)) ?? 0
+  await evaluate(actAndWaitPatch(removeChannelAction(1)))
+  await sleep(1500)
+  dCalls = await piCalls(dFrom)
+  report.d46q6DropDefaultCalls = dCalls.length
+  report.d46q6DropDefaultBody = dCalls[0]?.body.channels ?? null
+  report.d46q6DropDefaultChecked = (await evaluate(channelsState))?.checked ?? null
+  dFrom = (await evaluate(harnessPatchCallsCount)) ?? 0
+  await evaluate(clickAddChannel)
+  await evaluate(typeChannel(1, 'name', 'deepseek'))
+  await evaluate(typeChannel(1, 'model', deepseekOriginal.model))
+  if (deepseekOriginal.effort) await evaluate(typeChannel(1, 'effort', deepseekOriginal.effort))
+  await sleep(1200)
+  report.d46q6DeepseekBack =
+    (await getHarness('pi'))?.channels?.some(
+      (ch) => ch.name === 'deepseek' && ch.model === deepseekOriginal.model && ch.default === false,
+    ) === true
+
+  // 9) повтор имени — ошибка у поля, PATCH нет; строку убрать
+  await evaluate(clickAddChannel)
+  dFrom = (await evaluate(harnessPatchCallsCount)) ?? 0
+  await evaluate(typeChannel(2, 'name', 'glm'))
+  await sleep(1500)
+  report.d46q6DupCalls = (await piCalls(dFrom)).length
+  report.d46q6DupProblems = (await evaluate(channelsState))?.rows?.[2]?.problems ?? null
+  report.d46q6DupShown = (report.d46q6DupProblems ?? []).some((text) => text.includes('повтор'))
+  await evaluate(actAndWaitPatch(removeChannelAction(2)))
+  await sleep(800)
+  report.d46q6DupRemovedCalls = (await piCalls(dFrom)).length
+
+  // 10) модель с пробелом — ошибка у поля, PATCH нет; исправить — ровно один PATCH
+  dFrom = (await evaluate(harnessPatchCallsCount)) ?? 0
+  await evaluate(typeChannel(0, 'model', 'a b'))
+  await sleep(1500)
+  report.d46q6SpaceCalls = (await piCalls(dFrom)).length
+  report.d46q6SpaceShown =
+    ((await evaluate(channelsState))?.rows?.[0]?.problems ?? []).some((text) => text.includes('пробел'))
+  const glmFix = `${glmOriginal.model}-fix46q6`
+  await evaluate(typeChannel(0, 'model', glmFix))
+  await sleep(1200)
+  dCalls = await piCalls(dFrom)
+  report.d46q6FixCalls = dCalls.length
+  report.d46q6FixModel = dCalls[0]?.body.channels?.[0]?.model ?? null
+
+  // 11) отказ сервера — плашка «Сервер не принял правку» с текстом ответа
+  const T46 = 'channels[0].model: проверка'
+  await evaluate(`window.__failHarnessPatch = ${JSON.stringify(T46)}`)
+  dFrom = (await evaluate(harnessPatchCallsCount)) ?? 0
+  await evaluate(typeChannel(0, 'model', `${glmOriginal.model}-fail46q6`))
+  await evaluate(blurChannel(0, 'model'))
+  report.d46q6FailAlert = Boolean(
+    await until(`[...document.querySelectorAll('.listik-harness-card .ui-alert')].some((el) =>
+      el.textContent.includes('Сервер не принял правку') && el.textContent.includes(${JSON.stringify(T46)}))`),
+  )
+  report.d46q6FailCalls = (await piCalls(dFrom)).length
+  await evaluate('window.__failHarnessPatch = null')
+
+  // 14) ввод во время запроса: ответ задержан, дописанный символ не теряется,
+  //     после ответа уходит ещё один PATCH
+  await evaluate('window.__delayHarnessPatch = 1500')
+  const glmFlight = `${glmOriginal.model}-flight`
+  dFrom = (await evaluate(harnessPatchCallsCount)) ?? 0
+  await evaluate(typeChannel(0, 'model', glmFlight))
+  report.d46q6FlightLeft = Boolean(await until(`window.__harnessPatchCalls.length > ${dFrom}`, 40, 50))
+  await evaluate(appendChannel(0, 'model', 'z'))
+  await sleep(4000)
+  await evaluate('window.__delayHarnessPatch = 0')
+  dCalls = await piCalls(dFrom)
+  report.d46q6FlightCalls = dCalls.length
+  report.d46q6FlightField = (await evaluate(channelsState))?.rows?.[0]?.model ?? null
+  report.d46q6FlightFocused = (await evaluate(channelFocused(0, 'model'))) === true
+  report.d46q6FlightLast = dCalls[dCalls.length - 1]?.body.channels?.[0]?.model ?? null
+
+  // исходная модель glm — тем же вводом
+  dFrom = (await evaluate(harnessPatchCallsCount)) ?? 0
+  await evaluate(typeChannel(0, 'model', glmOriginal.model))
+  await sleep(1200)
+  const dPiBack = await getHarness('pi')
+  report.d46q6ChannelsRestored =
+    JSON.stringify(dPiBack?.channels) === JSON.stringify(d46q6Original.piChannels)
+  if (report.d46q6ChannelsRestored) d46q6Restore.pi = false
+
+  // 13) pi без команды: аргумент «pi» — PATCH с argv ["pi"]; очистить — ошибка, PATCH нет
+  d46q6Restore.piArgv = true
+  report.d46q6PiNoCommandError = (await evaluate(commandState))?.emptyError ?? null
+  dFrom = (await evaluate(harnessPatchCallsCount)) ?? 0
+  report.d46q6PiArgFilled = await evaluate(fillCommand(['pi']))
+  await sleep(1200)
+  dCalls = await piCalls(dFrom)
+  report.d46q6PiArgvCalls = dCalls.map((call) => call.body)
+  dFrom = (await evaluate(harnessPatchCallsCount)) ?? 0
+  await evaluate(clearCommand)
+  await sleep(1500)
+  report.d46q6PiClearedCalls = (await piCalls(dFrom)).length
+  report.d46q6PiClearedError = (await evaluate(commandState))?.emptyError ?? null
+  report.d46q6PiArgvNull =
+    (await evaluate(apiCall('PATCH', '/api/harnesses/pi', { argv: null })))?.status === 200
+  if (report.d46q6PiArgvNull) d46q6Restore.piArgv = false
+  await send('Page.navigate', { url: harnessesUrl })
+  await sleep(4000)
+
+  // 12) харнесс с командой (claude): пустая команда — ошибка и PATCH нет; вернуть
+  d46q6Restore.claudeArgv = true
+  report.d46q6ClaudeClicked = await evaluate(clickHarnessRow('claude'))
+  await sleep(700)
+  dFrom = (await evaluate(harnessPatchCallsCount)) ?? 0
+  await evaluate(clearCommand)
+  await sleep(1500)
+  const dClaudeCleared = await evaluate(commandState)
+  report.d46q6ClaudeEmptyError = dClaudeCleared?.emptyError ?? null
+  report.d46q6ClaudeClearedCalls = ((await evaluate(harnessPatchCallsSince(dFrom))) ?? []).length
+  await evaluate(fillCommand(d46q6Original.claudeArgv))
+  await sleep(1200)
+  const dClaudeCalls = ((await evaluate(harnessPatchCallsSince(dFrom))) ?? []).filter(
+    (call) => call.key === 'claude',
+  )
+  report.d46q6ClaudeRestoreCalls = dClaudeCalls.length
+  report.d46q6ClaudeRestoreBodies = dClaudeCalls.map((call) => call.body)
+  report.d46q6ClaudeRestoreOk =
+    dClaudeCalls.length === 0 ||
+    (dClaudeCalls.length === 1 &&
+      JSON.stringify(dClaudeCalls[0].body.argv) === JSON.stringify(d46q6Original.claudeArgv))
+  report.d46q6ClaudeArgvSame =
+    JSON.stringify((await getHarness('claude'))?.argv) === JSON.stringify(d46q6Original.claudeArgv)
+  if (report.d46q6ClaudeArgvSame) d46q6Restore.claudeArgv = false
+
+  // откат расклада full-medium
+  report.d46q6RouteRestored =
+    (await evaluate(apiCall('PATCH', '/api/routes/full-medium', { roles: d46q6Original.routeRoles })))
+      ?.status === 200
+  if (report.d46q6RouteRestored) d46q6Restore.route = false
+
   report.consoleErrors = consoleErrors
   report.ok =
     report.settingsOpen === true &&
@@ -1401,6 +1872,69 @@ try {
     report.iw75ReadAfter?.harness === true &&
     report.iw75RouteSame === true &&
     report.iw75HarnessSame === true &&
+    /* listik-46q6 d: каналы харнесса */
+    report.d46q6MeClicked === true &&
+    report.d46q6MeNoChannels === true &&
+    report.d46q6RoutePatched === true &&
+    report.d46q6PiClicked === true &&
+    report.d46q6InitialMatches === true &&
+    report.d46q6InitialDefaultOk === true &&
+    report.d46q6OutsideFields === true &&
+    report.d46q6UsagesOk === true &&
+    report.d46q6KeyWarnings.length === 0 &&
+    report.d46q6ModelTyped === true &&
+    report.d46q6ModelCalls === 1 &&
+    report.d46q6ModelSingleKey === true &&
+    report.d46q6ModelBody === `${d46q6Original.piChannels[0].model}-probe46q6` &&
+    report.d46q6ModelGet === report.d46q6ModelBody &&
+    report.d46q6AddClicked === true &&
+    report.d46q6AddEmptyCalls === 0 &&
+    report.d46q6AddCalls === 1 &&
+    JSON.stringify(report.d46q6AddBody) === JSON.stringify(['glm', 'deepseek', 'test-46q6']) &&
+    report.d46q6RemoveDelay !== null &&
+    report.d46q6RemoveDelay >= 0 &&
+    report.d46q6RemoveDelay <= 300 &&
+    report.d46q6RemoveCalls === 1 &&
+    JSON.stringify(report.d46q6RemoveBody) === JSON.stringify(['glm', 'deepseek']) &&
+    report.d46q6PickDelay !== null &&
+    report.d46q6PickDelay >= 0 &&
+    report.d46q6PickDelay <= 300 &&
+    report.d46q6PickCalls === 1 &&
+    report.d46q6PickSingleKey === true &&
+    JSON.stringify(report.d46q6PickDefaults) === JSON.stringify(['deepseek']) &&
+    report.d46q6DropDefaultCalls === 1 &&
+    report.d46q6DropDefaultBody?.length === 1 &&
+    report.d46q6DropDefaultBody[0].name === 'glm' &&
+    report.d46q6DropDefaultBody[0].default === false &&
+    report.d46q6DropDefaultChecked === 'glm' &&
+    report.d46q6DeepseekBack === true &&
+    report.d46q6DupCalls === 0 &&
+    report.d46q6DupShown === true &&
+    report.d46q6DupRemovedCalls === 0 &&
+    report.d46q6SpaceCalls === 0 &&
+    report.d46q6SpaceShown === true &&
+    report.d46q6FixCalls === 1 &&
+    report.d46q6FixModel === `${d46q6Original.piChannels[0].model}-fix46q6` &&
+    report.d46q6FailAlert === true &&
+    report.d46q6FailCalls === 1 &&
+    report.d46q6FlightLeft === true &&
+    report.d46q6FlightCalls === 2 &&
+    report.d46q6FlightField === `${d46q6Original.piChannels[0].model}-flightz` &&
+    report.d46q6FlightLast === report.d46q6FlightField &&
+    report.d46q6ChannelsRestored === true &&
+    report.d46q6PiNoCommandError === false &&
+    report.d46q6PiArgFilled === true &&
+    report.d46q6PiArgvCalls.length === 1 &&
+    JSON.stringify(report.d46q6PiArgvCalls[0]) === JSON.stringify({ argv: ['pi'] }) &&
+    report.d46q6PiClearedCalls === 0 &&
+    report.d46q6PiClearedError === true &&
+    report.d46q6PiArgvNull === true &&
+    report.d46q6ClaudeClicked === true &&
+    report.d46q6ClaudeEmptyError === true &&
+    report.d46q6ClaudeClearedCalls === 0 &&
+    report.d46q6ClaudeRestoreOk === true &&
+    report.d46q6ClaudeArgvSame === true &&
+    report.d46q6RouteRestored === true &&
     consoleErrors.length === 0
 } catch (error) {
   report.error = String(error?.stack ?? error)
@@ -1410,7 +1944,7 @@ try {
 
 console.log(JSON.stringify(report, null, 2))
 if (report.ok) {
-  console.error('ок: «Маршруты» — группы, выбор строки, автосохранение карточки, удаление маршрута роя и 401/отказ сети через handleError; «Харнессы» — автосохранение карточки и отказ сети')
+  console.error('ок: «Маршруты» — группы, выбор строки, автосохранение карточки, удаление маршрута роя и 401/отказ сети через handleError; «Харнессы» — автосохранение карточки, отказ сети и каналы')
 } else {
   console.error(`ошибка: ${report.error ?? 'сценарий не прошёл — см. отчёт выше'}`)
   process.exitCode = 1

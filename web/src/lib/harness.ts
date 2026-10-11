@@ -1,3 +1,5 @@
+import type { HarnessChannel } from '@/api/types'
+
 /**
  * Харнесс по ключу актора/держателя — те же подстроки и порядок, что на сервере
  * (`listik/actors.py AGENT_HINTS`), чтобы доска и сервер сходились в разборе.
@@ -152,4 +154,95 @@ export function harnessTitle(key: string | null | undefined): string {
  */
 export function runnableHarness(item: { enabled: boolean; argv: string[] | null }): boolean {
   return item.enabled && Array.isArray(item.argv) && item.argv.length > 0
+}
+
+/* ── каналы харнесса (listik-46q6): строки редактора и проверки по контракту API ── */
+
+/** Каналов у харнесса не больше — то же ограничение, что на сервере. */
+export const MAX_CHANNELS = 20
+
+/** Строка редактора каналов; `fresh` — добавлена в карточке и ещё не сохранена. */
+export interface ChannelRow extends Record<string, unknown> {
+  id: string
+  name: string
+  model: string
+  effort: string
+  fresh: boolean
+}
+
+let channelSeq = 0
+
+export function channelRowsOf(channels: HarnessChannel[]): ChannelRow[] {
+  return channels.map((channel) => ({
+    id: `channel-${(channelSeq += 1)}`,
+    name: channel.name,
+    model: channel.model,
+    effort: channel.effort ?? '',
+    fresh: false,
+  }))
+}
+
+export function createChannelRow(): ChannelRow {
+  return { id: `channel-${(channelSeq += 1)}`, name: '', model: '', effort: '', fresh: true }
+}
+
+/** Пустая новая строка (имя и модель пусты) — не ошибка, в патч не идёт. */
+export function channelRowBlank(row: ChannelRow): boolean {
+  return row.fresh && row.name.trim() === '' && row.model.trim() === ''
+}
+
+export interface ChannelProblems {
+  name: string | null
+  model: string | null
+  effort: string | null
+}
+
+/** Ошибки полей по строкам (у пустой новой строки — никаких); порядок — порядок `rows`. */
+export function channelProblems(rows: ChannelRow[]): ChannelProblems[] {
+  const seen = new Map<string, number>()
+  for (const row of rows) {
+    if (channelRowBlank(row)) continue
+    const name = row.name.trim()
+    seen.set(name, (seen.get(name) ?? 0) + 1)
+  }
+  return rows.map((row) => {
+    if (channelRowBlank(row)) return { name: null, model: null, effort: null }
+    const name = row.name.trim()
+    const model = row.model.trim()
+    const effort = row.effort.trim()
+    return {
+      name:
+        name === ''
+          ? 'имя не заполнено'
+          : !KEY_RE.test(name)
+            ? 'имя: строчные латинские буквы, цифры и дефис, начинается с буквы или цифры'
+            : (seen.get(name) ?? 0) > 1
+              ? 'имя повторяется'
+              : null,
+      model:
+        model === ''
+          ? 'модель не заполнена'
+          : /\s/.test(model)
+            ? 'модель без пробелов'
+            : model.length > 200
+              ? 'модель длиннее 200 символов'
+              : null,
+      effort:
+        effort !== '' && !KEY_RE.test(effort)
+          ? 'усилие: строчные латинские буквы, цифры и дефис'
+          : null,
+    }
+  })
+}
+
+/** Тело `channels` из черновика: непустые строки по порядку, `default` — у строки `defaultId`. */
+export function channelsOf(rows: ChannelRow[], defaultId: string | null): HarnessChannel[] {
+  return rows
+    .filter((row) => !channelRowBlank(row))
+    .map((row) => ({
+      name: row.name.trim(),
+      model: row.model.trim(),
+      effort: row.effort.trim() === '' ? null : row.effort.trim(),
+      default: row.id === defaultId,
+    }))
 }

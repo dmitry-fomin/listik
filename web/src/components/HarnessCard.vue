@@ -17,7 +17,20 @@
  * «В списках выбора», у `kind=exec` — команда по умолчанию (argv по строкам +
  * промпт последним аргументом) и предпросмотр. У `manual` командного блока нет.
  * Ниже — «Где используется»: записи `used_by` из `GET /api/harnesses`
- * (роль роя с кодом этапа).
+ * (роль роя с кодом этапа; участник роли конвейера — с кодом этапа и каналом).
+ *
+ * Каналы (listik-46q6, только `kind=exec`, над командой и вне блока
+ * `__fields`): `UiRecordList` строк «Имя / Модель / Усилие» и `UiRadioGroup`
+ * «Канал по умолчанию». `channels` уходит в PATCH целым списком непустых строк
+ * и только при отличии от сохранённого; пустая новая строка молча отбрасывается,
+ * строка с ошибкой (имя, повтор, модель, усилие, больше 20) держит весь патч.
+ * Ввод текста — в общий дебаунс, выбор канала по умолчанию и удаление строки —
+ * сразу. Ответ сервера кладётся в `baseline.channels`, а в черновик — только
+ * если тот всё ещё равен отправленному (ввод во время запроса не теряется).
+ *
+ * Харнесс без команды на сервере (`argv: null`, например `pi`/`opencode`):
+ * пока строки аргументов пусты, пустая команда — не ошибка и `argv` в патч не
+ * идёт; после сохранения непустого `argv` действует обычное правило.
  *
  * `:key="harness.key"` у вызывающей стороны — часть контракта: другая запись =
  * заново созданная карточка со свежим черновиком.
@@ -27,6 +40,7 @@ import {
   UiAlert,
   UiField,
   UiInput,
+  UiRadioGroup,
   UiRecordList,
   UiSaveStatus,
   UiSwitch,
@@ -38,9 +52,19 @@ import HarnessIcon from './marks/HarnessIcon.vue'
 import RouteSubstitutions from './RouteSubstitutions.vue'
 import store from '@/store/listik'
 import { useAutosave } from '@/lib/autosave'
-import type { Harness, HarnessPatch } from '@/api/types'
+import type { Harness, HarnessChannel, HarnessPatch } from '@/api/types'
+import type { UiRecordListColumn } from '@zoloto585/facet'
 import { roleStage } from '@/lib/pipelines'
-import { HARNESS_ICON_OPTIONS } from '@/lib/harness'
+import {
+  type ChannelRow,
+  HARNESS_ICON_OPTIONS,
+  MAX_CHANNELS,
+  channelProblems,
+  channelRowBlank,
+  channelRowsOf,
+  channelsOf,
+  createChannelRow,
+} from '@/lib/harness'
 import {
   ARG_COLUMNS,
   type ArgRow,
@@ -62,6 +86,13 @@ const icon = ref(props.harness.icon ?? '')
 const enabled = ref(props.harness.enabled)
 const argRows = ref<ArgRow[]>(argRowsOf(props.harness.argv ?? []))
 const prompt = ref(props.harness.prompt ?? '')
+const channelRows = ref<ChannelRow[]>(channelRowsOf(props.harness.channels ?? []))
+/** Строка канала по умолчанию (id строки, не имя — имя правится). */
+const defaultChannelId = ref<string | null>(
+  channelRows.value[(props.harness.channels ?? []).findIndex((channel) => channel.default)]?.id ?? null,
+)
+/** Команды нет на сервере (`argv: null`) — снимается, когда сохранён непустой `argv`. */
+const noServerCommand = ref(props.harness.argv === null)
 
 const manual = computed(() => props.harness.kind === 'manual')
 
@@ -82,7 +113,7 @@ const promptProblem = computed(() => commandProblemText(prompt.value))
 const commandError = computed<string | null>(() => {
   if (manual.value) return null
   if (argRows.value.every((row) => row.value.trim() === '')) {
-    return 'команда пустая: нужен хотя бы один аргумент'
+    return noServerCommand.value ? null : 'команда пустая: нужен хотя бы один аргумент'
   }
   return argProblems.value.find((problem) => problem !== null) ?? promptProblem.value
 })
@@ -90,6 +121,71 @@ const commandError = computed<string | null>(() => {
 const argv = computed<string[]>(() =>
   argRows.value.map((row) => row.value).filter((value) => value.trim() !== ''),
 )
+
+/* ── каналы ── */
+
+const CHANNEL_COLUMNS: UiRecordListColumn[] = [
+  { key: 'name', label: 'Имя', type: 'custom' },
+  { key: 'model', label: 'Модель', type: 'custom' },
+  { key: 'effort', label: 'Усилие', type: 'custom' },
+]
+
+const channelFieldProblems = computed(() => channelProblems(channelRows.value))
+const channelsFull = computed(() => channelRows.value.length >= MAX_CHANNELS)
+const channelsCountError = computed(() =>
+  channelRows.value.filter((row) => !channelRowBlank(row)).length > MAX_CHANNELS
+    ? `каналов больше ${MAX_CHANNELS}`
+    : null,
+)
+const channelsError = computed(
+  () =>
+    channelsCountError.value !== null ||
+    channelFieldProblems.value.some((p) => p.name !== null || p.model !== null || p.effort !== null),
+)
+const draftChannels = computed<HarnessChannel[]>(() =>
+  channelsOf(channelRows.value, defaultChannelId.value),
+)
+
+/** Варианты «Канала по умолчанию» — годные непустые строки. */
+const defaultOptions = computed(() =>
+  channelRows.value
+    .filter((row, index) => {
+      const problem = channelFieldProblems.value[index]
+      return !channelRowBlank(row) && !problem?.name && !problem?.model && !problem?.effort
+    })
+    .map((row) => ({ value: row.id, label: row.name.trim() })),
+)
+
+/** Строк не больше `MAX_CHANNELS`: при полном списке «Добавить канал» спрятана, лишняя строка не встаёт. */
+function onChannelRows(rows: ChannelRow[]): void {
+  if (rows.length > MAX_CHANNELS && rows.length > channelRows.value.length) return
+  channelRows.value = rows
+}
+
+function onDefaultChannel(id: string | null): void {
+  if (id === null || id === defaultChannelId.value) return
+  defaultChannelId.value = id
+  schedule(true)
+}
+
+function onChannelRemoved(): void {
+  schedule(true)
+}
+
+/** Ответ сервера → черновик: те же строки (id, фокус), значения и отметка — из ответа. */
+function applyChannels(channels: HarnessChannel[]): void {
+  const rows = channelRows.value.filter((row) => !channelRowBlank(row))
+  if (rows.length !== channels.length) return
+  rows.forEach((row, index) => {
+    const channel = channels[index]
+    if (!channel) return
+    if (row.name !== channel.name) row.name = channel.name
+    if (row.model !== channel.model) row.model = channel.model
+    if (row.effort !== (channel.effort ?? '')) row.effort = channel.effort ?? ''
+    row.fresh = false
+    if (channel.default) defaultChannelId.value = row.id
+  })
+}
 
 /* ── автосохранение: тот же порядок, что у карточек маршрутов ── */
 
@@ -101,6 +197,7 @@ const baseline = reactive({
   enabled: props.harness.enabled,
   argv: [...(props.harness.argv ?? [])],
   prompt: props.harness.prompt ?? '',
+  channels: (props.harness.channels ?? []).map((channel) => ({ ...channel })),
 })
 
 const serverError = ref<string | null>(null)
@@ -108,6 +205,7 @@ const serverError = ref<string | null>(null)
 /** Диф черновика против сохранённой записи; `null` — черновик с ошибкой не уходит и не откатывается. */
 function diffPatch(): HarnessPatch | null {
   if (labelError.value || commandError.value) return null
+  if (!manual.value && channelsError.value) return null
   const patch: HarnessPatch = {}
   if (label.value !== baseline.label) patch.label = label.value.trim()
   if (hint.value !== baseline.hint) patch.hint = hint.value
@@ -116,24 +214,44 @@ function diffPatch(): HarnessPatch | null {
   }
   if (enabled.value !== baseline.enabled) patch.enabled = enabled.value
   if (!manual.value) {
-    if (JSON.stringify(argv.value) !== JSON.stringify(baseline.argv)) patch.argv = argv.value
+    const skipArgv = noServerCommand.value && argv.value.length === 0
+    if (!skipArgv && JSON.stringify(argv.value) !== JSON.stringify(baseline.argv)) {
+      patch.argv = argv.value
+    }
     if (prompt.value !== baseline.prompt) {
       patch.prompt = prompt.value.trim() === '' ? null : prompt.value
+    }
+    if (JSON.stringify(draftChannels.value) !== JSON.stringify(baseline.channels)) {
+      patch.channels = draftChannels.value
     }
   }
   return patch
 }
 
+/** Ответ последнего успешного PATCH — `onSaved` берёт из него нормализованные каналы. */
+let savedHarness: Harness | null = null
+
 const { status, schedule } = useAutosave<HarnessPatch>({
   diff: diffPatch,
-  send: async (patch) => (await store.patchHarness(props.harness.key, patch)) !== null,
+  send: async (patch) => {
+    savedHarness = await store.patchHarness(props.harness.key, patch)
+    return savedHarness !== null
+  },
   onSaved: (patch) => {
     if (patch.label !== undefined) baseline.label = patch.label
     if (patch.hint !== undefined) baseline.hint = patch.hint
     if (patch.icon !== undefined) baseline.icon = patch.icon ?? ''
     if (patch.enabled !== undefined) baseline.enabled = patch.enabled
     if (patch.argv !== undefined) baseline.argv = [...(patch.argv ?? [])]
+    if (patch.argv && patch.argv.length > 0) noServerCommand.value = false
     if (patch.prompt !== undefined) baseline.prompt = patch.prompt ?? ''
+    if (patch.channels !== undefined) {
+      const sent = JSON.stringify(patch.channels)
+      const saved = (savedHarness?.channels ?? patch.channels).map((channel) => ({ ...channel }))
+      baseline.channels = saved
+      // Черновик заменяется ответом, только если пользователь не правил его, пока запрос летел.
+      if (JSON.stringify(draftChannels.value) === sent) applyChannels(saved)
+    }
     serverError.value = null
   },
   onFailed: (patch) => {
@@ -167,6 +285,8 @@ function onEnabled(value: boolean): void {
 
 /* Список аргументов (ввод в строке, добавление, удаление, перестановка) — в общий дебаунс. */
 watch(argRows, () => schedule(false), { deep: true })
+/* Каналы — так же; удаление строки и выбор по умолчанию дополнительно шлют сразу. */
+watch(channelRows, () => schedule(false), { deep: true })
 
 /* ── список аргументов и предпросмотр ── */
 
@@ -174,7 +294,7 @@ const preview = computed(() => previewCommand(withPrompt(argv.value, prompt.valu
 
 /* ── «Где используется» ── */
 
-/** Код этапа роли роя для строки использования (`s1`…`s4`). */
+/** Код этапа роли для строки использования (`s1`…`s4`). */
 function roleCode(role: string | null): string {
   return roleStage(role)?.code ?? role ?? ''
 }
@@ -185,9 +305,12 @@ interface UsageRow {
 }
 
 const usages = computed<UsageRow[]>(() =>
-  (props.harness.used_by ?? []).map((entry) => ({
-    key: `${entry.kind}:${entry.route}:${entry.role ?? ''}`,
-    text: `рой ${entry.route} · роль ${roleCode(entry.role)}`,
+  (props.harness.used_by ?? []).map((entry, index) => ({
+    key: `${index}:${entry.kind}:${entry.route}:${entry.role ?? ''}`,
+    text:
+      entry.kind === 'pipeline'
+        ? `конвейер ${entry.route} · роль ${roleCode(entry.role)} · канал ${entry.channel}`
+        : `рой ${entry.route} · роль ${roleCode(entry.role)}`,
   })),
 )
 </script>
@@ -248,6 +371,88 @@ const usages = computed<UsageRow[]>(() =>
     </section>
 
     <template v-if="!manual">
+      <section class="listik-harness-card__section listik-harness-card__channels">
+        <div class="listik-harness-card__section-head">
+          <h4 class="listik-harness-card__section-title">Каналы</h4>
+          <span v-if="channelsCountError" class="listik-harness-card__problem">
+            {{ channelsCountError }}
+          </span>
+        </div>
+        <p class="listik-harness-card__hint">
+          Модели каналов читают мосты pi и opencode (харнессы <code class="listik-mono">pi</code> и
+          <code class="listik-mono">opencode</code>); у других харнессов каналы пока никто не читает.
+          Правка действует со следующего запуска. Удаление или переименование канала, на который
+          ссылаются роли (см. «Где используется»), остановит роль, которая его просит.
+        </p>
+        <UiRecordList
+          :class="{ 'listik-harness-card__channels-list--full': channelsFull }"
+          :model-value="channelRows"
+          :columns="CHANNEL_COLUMNS"
+          :row-key="(row: ChannelRow) => row.id"
+          :create-row="createChannelRow"
+          add-label="Добавить канал"
+          empty-title="Каналов нет"
+          @update:model-value="onChannelRows"
+          @remove="onChannelRemoved"
+        >
+          <template #cell-name="{ row, index, update }">
+            <div class="listik-harness-card__arg">
+              <UiInput
+                size="sm"
+                :model-value="row.name"
+                :invalid="Boolean(channelFieldProblems[index]?.name)"
+                @update:model-value="(value: string) => update(value)"
+                v-bind="{ onBlur: onBlurText }"
+              />
+              <p v-if="channelFieldProblems[index]?.name" class="listik-harness-card__problem">
+                {{ channelFieldProblems[index]?.name }}
+              </p>
+            </div>
+          </template>
+          <template #cell-model="{ row, index, update }">
+            <div class="listik-harness-card__arg">
+              <UiInput
+                class="listik-mono"
+                size="sm"
+                placeholder="provider/model"
+                :model-value="row.model"
+                :invalid="Boolean(channelFieldProblems[index]?.model)"
+                @update:model-value="(value: string) => update(value)"
+                v-bind="{ onBlur: onBlurText }"
+              />
+              <p v-if="channelFieldProblems[index]?.model" class="listik-harness-card__problem">
+                {{ channelFieldProblems[index]?.model }}
+              </p>
+            </div>
+          </template>
+          <template #cell-effort="{ row, index, update }">
+            <div class="listik-harness-card__arg">
+              <UiInput
+                size="sm"
+                placeholder="необязательно"
+                :model-value="row.effort"
+                :invalid="Boolean(channelFieldProblems[index]?.effort)"
+                @update:model-value="(value: string) => update(value)"
+                v-bind="{ onBlur: onBlurText }"
+              />
+              <p v-if="channelFieldProblems[index]?.effort" class="listik-harness-card__problem">
+                {{ channelFieldProblems[index]?.effort }}
+              </p>
+            </div>
+          </template>
+        </UiRecordList>
+        <p v-if="channelsFull" class="listik-harness-card__hint">
+          не больше {{ MAX_CHANNELS }} каналов
+        </p>
+        <UiField v-if="defaultOptions.length > 0" label="Канал по умолчанию">
+          <UiRadioGroup
+            :model-value="defaultChannelId"
+            :options="defaultOptions"
+            @update:model-value="onDefaultChannel"
+          />
+        </UiField>
+      </section>
+
       <section class="listik-harness-card__section">
         <div class="listik-harness-card__section-head">
           <h4 class="listik-harness-card__section-title">Команда по умолчанию</h4>
@@ -279,6 +484,10 @@ const usages = computed<UsageRow[]>(() =>
             </div>
           </template>
         </UiRecordList>
+        <!-- Ошибки строк стоят у строк; пустая команда — одна на весь список. -->
+        <p v-if="commandError && argv.length === 0" class="listik-harness-card__problem">
+          {{ commandError }}
+        </p>
       </section>
 
       <section class="listik-harness-card__section">
@@ -422,6 +631,11 @@ const usages = computed<UsageRow[]>(() =>
   gap: var(--space-1);
   width: 100%;
   min-width: 0;
+}
+
+/* При 20 строках кнопка кита «Добавить канал» недоступна — отдельного пропа у UiRecordList нет. */
+.listik-harness-card__channels-list--full :deep(.ui-record-list__add) {
+  display: none;
 }
 
 .listik-harness-card__problem {

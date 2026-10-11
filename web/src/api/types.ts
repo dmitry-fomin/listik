@@ -554,6 +554,23 @@ export interface RouteRemoved {
 /** Вид харнесса: `exec` — процесс с командой, `manual` — ручная выдача без команды. */
 export type HarnessKind = 'exec' | 'manual'
 
+/**
+ * Канал харнесса — именованная модель (`GET /api/harnesses`, поле `channels`).
+ * `name`/`effort` — `^[a-z0-9][a-z0-9-]*$`, `model` — без пробелов, до 200 символов;
+ * в нормализованном ответе ровно один канал с `default: true`.
+ */
+export interface HarnessChannel {
+  name: string
+  model: string
+  effort: string | null
+  default: boolean
+}
+
+/** Ссылка маршрута на харнесс: роль роя или участник (`members`) роли конвейера. */
+export type HarnessUsage =
+  | { route: string; kind: 'swarm'; role: string | null }
+  | { route: string; kind: 'pipeline'; role: string; channel: string }
+
 /** Харнесс каталога: исполнитель роли роя. */
 export interface Harness {
   /** Ключ `^[a-z0-9][a-z0-9-]*$`; держатель на сервере — `agent:<key>`. */
@@ -571,8 +588,10 @@ export interface Harness {
   /** Показывать в списках выбора; выключенный остаётся в базе. */
   enabled: boolean
   position: number
-  /** Где задействован: роли маршрутов роя (есть у GET). */
-  used_by?: { route: string; kind: 'swarm'; role: string | null }[]
+  /** Каналы модели; старый сервер поля не отдаёт — читать как `channels ?? []`. */
+  channels: HarnessChannel[]
+  /** Где задействован: роли роя и участники ролей конвейеров (есть у GET). */
+  used_by?: HarnessUsage[]
   created_at?: string | null
   updated_at?: string | null
 }
@@ -613,6 +632,8 @@ export interface HarnessPatch {
   prompt?: string | null
   enabled?: boolean
   position?: number
+  /** Заменяет список каналов целиком; `[]` очищает. */
+  channels?: HarnessChannel[]
 }
 
 // ── помощник DeepSeek при создании задачи: GET /api/assistant/status,

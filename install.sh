@@ -1127,6 +1127,18 @@ ui_step ok "listik init: схема базы"
 
 # ------------------------------------ шаг 7.1: автозапуск, MCP и плагины Claude
 
+tty_read() {
+    # $1 — имя переменной ответа. Возврат 1 — строки нет (tty отдан или закрыт).
+    # Временный трап с exit 130 — тот же, что у строчного ввода общего сервера
+    # ниже: bash 3.2 (/bin/sh на macOS) после трапа без exit снова ждал бы
+    # ввода, уже без временного каталога.
+    trap 'printf "\n" 2>/dev/null >/dev/tty; exit 130' HUP INT TERM QUIT
+    tty_read_rc=0
+    read -r "$1" < /dev/tty 2>/dev/null || tty_read_rc=1
+    trap cleanup HUP INT TERM QUIT
+    return "$tty_read_rc"
+}
+
 ask_yes_default_yes() {
     # $1 — значение флага (может быть пустым), $2 — вопрос, $3 — подсказка под ним.
     # Результат — $decision (yes/no), по умолчанию yes: без флага, без --yes и при
@@ -1152,7 +1164,7 @@ ask_yes_default_yes() {
         return
     fi
     answer=
-    if ! read -r answer < /dev/tty 2>/dev/null; then
+    if ! tty_read answer; then
         decision=yes
         return
     fi
@@ -1185,7 +1197,7 @@ ask_yes_default_no() {
         return
     fi
     answer=
-    if ! read -r answer < /dev/tty 2>/dev/null; then
+    if ! tty_read answer; then
         decision=no
         return
     fi
@@ -1221,7 +1233,7 @@ ask_list_plain() {
             printf 'Номера через пробел или запятую; Enter — все, 0 — ни одной: '
         } 2>/dev/null >/dev/tty || return 1
         al_answer=
-        if ! read -r al_answer < /dev/tty 2>/dev/null; then
+        if ! tty_read al_answer; then
             list_numbers=$al_every
             break
         fi
@@ -1740,7 +1752,7 @@ ask_codex_network() {
         return 1
     fi
     answer=
-    read -r answer < /dev/tty 2>/dev/null || return 1
+    tty_read answer || return 1
     case $answer in
         [nN]*)
             codex_reason="ответ '$answer'"
@@ -1800,7 +1812,7 @@ ask_routes_reimport() {
     printf 'Перезаписать маршруты из routes.json? Пайплайны перезапишутся из файла, свои маршруты роя останутся, копия таблицы — в каталоге данных (routes.bak-*.json), задачи не тронутся [y/N] ' \
         >/dev/tty 2>/dev/null || return 1
     answer=
-    read -r answer < /dev/tty 2>/dev/null || return 1
+    tty_read answer || return 1
     case $answer in
         [yY]*) return 0 ;;
         *) return 1 ;;

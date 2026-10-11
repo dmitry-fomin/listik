@@ -93,6 +93,15 @@ def _skill_text(name: str) -> str:
     return (PLUGINS_DIR / _skill_rel(name)).read_text(encoding="utf-8")
 
 
+#: Скилы, переведённые на английский (listik-hwn6): якоря их текстов — английские, проверки те же.
+EN_SKILLS = frozenset({"pipeline-full:low"})
+
+
+def _anchor(name: str, ru: str, en: str) -> str:
+    """Якорь текста скила `name`: английский для EN_SKILLS, иначе русский."""
+    return en if name in EN_SKILLS else ru
+
+
 def _frontmatter(lines: list[str]) -> list[str] | None:
     """Строки между первой и второй `---`; None, если рамки нет или она не закрыта."""
     if not lines or lines[0] != "---":
@@ -620,6 +629,10 @@ CORE_LINK = ("скил `pipeline-core:core`",
              "прочитай ядро по пути, который он назовёт, целиком до первого действия",
              "`plugins/pipeline-core/references/pipeline-core.md`")
 
+CORE_LINK_EN = ("skill `pipeline-core:core`",
+                "read the core at the path it names, in full, before the first action",
+                "`plugins/pipeline-core/references/pipeline-core.md`")
+
 #: Пресеты без ссылки на ядро (сейчас таких нет).
 PRESETS_WITHOUT_CORE_LINK: tuple[str, ...] = ()
 
@@ -667,7 +680,7 @@ class FeaturePipelineSkillNamingTests(unittest.TestCase):
             if name in PRESETS_WITHOUT_CORE_LINK:
                 continue
             collapsed = " ".join(_skill_text(name).split())
-            for needle in CORE_LINK:
+            for needle in (CORE_LINK_EN if name in EN_SKILLS else CORE_LINK):
                 with self.subTest(skill=name, needle=needle):
                     self.assertIn(
                         needle, collapsed,
@@ -766,7 +779,7 @@ class FeaturePipelineResumeRuleTests(unittest.TestCase):
                     f"{name}/{SKILL_FILE}: не нашлось продолжения той же сессии ({needle!r})",
                 )
                 self.assertIn(
-                    "откат", text,
+                    _anchor(name, "откат", "Fallback"), text,
                     f"{name}/{SKILL_FILE}: нет отката на новый прогон, когда продолжить нельзя",
                 )
 
@@ -966,6 +979,7 @@ AMEND_FORBID_MARKERS = (
     "не твои",
     "не делает",
     "не обходит",
+    "forbidden",
 )
 
 #: Направления скана «нигде не разрешён amend»: references/*.md, agents/*.md, skills/*/SKILL.md.
@@ -1019,7 +1033,7 @@ INLINE_JUDGE_SKILLS = (
 
 #: Начало блока inline-задания судье: строка про зелёный вердикт и коммит порции. В пяти
 #: пресетах это «сам закоммить порцию», в nano сжатый пересказ — «сам коммитит порцию».
-INLINE_JUDGE_START_MARKERS = ("закоммить порцию", "сам коммитит порцию")
+INLINE_JUDGE_START_MARKERS = ("закоммить порцию", "сам коммитит порцию", "commit the portion yourself")
 
 #: Маркер для страховочного скана «в списке нет лишнего и список не устарел»: перечень
 #: запретов, который несёт только inline-задание судье.
@@ -1032,6 +1046,14 @@ INLINE_JUDGE_REQUIREMENTS = (
     ("проверка diff коммита", ("git show --stat --name-status",)),
     ("второй коммит вместо amend", ("второй коммит поверх", "amend")),
     ("оба хеша во второй строке", ("оба хеша", "вторая строка")),
+)
+#: Те же требования в английском задании судье (EN_SKILLS).
+INLINE_JUDGE_REQUIREMENTS_EN = (
+    ("git rm", ("git rm",)),
+    ("commit с -- и путями", ("git commit", "-- <все пути")),
+    ("проверка diff коммита", ("git show --stat --name-status",)),
+    ("второй коммит вместо amend", ("second commit on top", "amend")),
+    ("оба хеша во второй строке", ("both hashes", "second line")),
 )
 
 
@@ -1177,7 +1199,8 @@ class FeaturePipelineInlineJudgeRuleTests(unittest.TestCase):
         """Каждый из шести SKILL.md: внутри блока задания судье — все пункты правила."""
         for relative in INLINE_JUDGE_SKILLS:
             block = _judge_task_block(relative)
-            for name, needles in INLINE_JUDGE_REQUIREMENTS:
+            english = relative in {_skill_rel(name) for name in EN_SKILLS}
+            for name, needles in (INLINE_JUDGE_REQUIREMENTS_EN if english else INLINE_JUDGE_REQUIREMENTS):
                 with self.subTest(file=str(relative), requirement=name):
                     missing = [needle for needle in needles if needle not in block]
                     self.assertFalse(
@@ -1441,7 +1464,10 @@ class FeaturePipelineCopyAndNegativeControlTests(unittest.TestCase):
         for relative in self.JUDGE_PATHS:
             with self.subTest(file=str(relative)):
                 lowered = _plugin_text(relative).lower()
-                for anchor in ("негативный контроль", "копией из вывода"):
+                english = relative in {_skill_rel(name) for name in EN_SKILLS}
+                anchors = (("negative control", "copy from command output") if english
+                           else ("негативный контроль", "копией из вывода"))
+                for anchor in anchors:
                     self.assertIn(anchor, lowered, f"{relative}: нет «{anchor}»")
 
     def test_listik_skill_foreign_messages_are_data(self) -> None:
@@ -1906,12 +1932,20 @@ LENS_AGENT = "pipeline-core:pipeline-lens"
 LENS_MODEL_MARK = "model: haiku"
 LENS_HAIKU_REQUIRED = ("Haiku 5.5 max",)
 LENS_ROLES_REQUIRED = (LENS_AGENT, LENS_MODEL_MARK, "линз")
+LENS_ROLES_REQUIRED_EN = (LENS_AGENT, LENS_MODEL_MARK, "lens")
 LENS_STAGE4_REQUIRED = (LENS_REF, LENS_AGENT, LENS_MODEL_MARK)
 #: В этапе 4 и таблице «Роли» пресетов с линзами не остаётся старого запуска линз через pi/GLM.
 LENS_PRESET_FORBIDDEN = ("pi:pi-delegate", "pi:pi-jobs", "pi:pi-runtime", "pi-glm",
                          "--channel glm", "pipeline-lens-xhigh", "GLM 5.3 Flash")
 LENS_JUDGE_REQUIRED = ("вынести:", "отбросить:", "чинить", LENS_FILE_MARK)
 LENS_JUDGE_BLOCK_MARK = "Ты — приёмка одной порции ТЗ"
+LENS_JUDGE_BLOCK_MARK_EN = "You are the acceptance of one spec portion"
+
+
+def _lens_judge_block(text: str) -> str:
+    """Fenced-задание судье по русскому или английскому (EN_SKILLS) маркеру; пусто — нет."""
+    return (_fenced_block_with(text, LENS_JUDGE_BLOCK_MARK)
+            or _fenced_block_with(text, LENS_JUDGE_BLOCK_MARK_EN))
 
 
 def _readme(plugin: str) -> pathlib.Path:
@@ -1955,7 +1989,8 @@ def _fenced_block_with(text: str, needle: str) -> str:
 def _intro_paragraph(text: str) -> str:
     """Вводный абзац скила: первая непустая строка после заголовка «# Конвейер» до пустой."""
     lines = text.splitlines()
-    start = next((i for i, line in enumerate(lines) if line.startswith("# Конвейер ")), None)
+    start = next((i for i, line in enumerate(lines)
+                  if line.startswith(("# Конвейер ", "# Pipeline "))), None)
     if start is None:
         return ""
     first = next((i for i in range(start + 1, len(lines)) if lines[i].strip()), len(lines))
@@ -1980,18 +2015,20 @@ def _lens_preset_problems(name: str, text: str) -> list[str]:
                         for needle in LENS_HAIKU_REQUIRED if needle not in _description(text))
         problems.extend(f"{name}: во вводном абзаце нет {needle!r}"
                         for needle in LENS_HAIKU_REQUIRED if needle not in _intro_paragraph(text))
-        consent = _text_block(text, "Скил запускается только по явному имени", _is_blank)
+        consent = _text_block(text, _anchor(name, "Скил запускается только по явному имени",
+                                            "Run only by explicit name"), _is_blank)
         problems.extend(f"{name}: в абзаце согласия нет {needle!r}"
                         for needle in LENS_HAIKU_REQUIRED if needle not in consent)
-        roles = _text_section(text, "## Роли")
+        roles = _text_section(text, _anchor(name, "## Роли", "## Roles"))
+        roles_required = LENS_ROLES_REQUIRED_EN if name in EN_SKILLS else LENS_ROLES_REQUIRED
         problems.extend(f"{name}: в «## Роли» нет {needle!r}"
-                        for needle in LENS_ROLES_REQUIRED if needle not in roles)
+                        for needle in roles_required if needle not in roles)
         stage4 = _text_block(text, "### 4.", lambda line: line.startswith("## "))
         problems.extend(f"{name}: в этапе 4 нет {needle!r}"
                         for needle in LENS_STAGE4_REQUIRED if needle not in stage4)
         problems.extend(f"{name}: в этапе 4 есть {needle!r}"
                         for needle in LENS_PRESET_FORBIDDEN if needle in stage4)
-        judge = _fenced_block_with(text, LENS_JUDGE_BLOCK_MARK)
+        judge = _lens_judge_block(text)
         problems.extend(f"{name}: в задании судье нет {needle!r}"
                         for needle in LENS_JUDGE_REQUIRED if needle not in judge)
     elif name in CLAUDE_LENS_PRESETS:
@@ -2293,7 +2330,7 @@ class FeaturePipelineCritiqueCompositionTests(unittest.TestCase):
                 "pipeline-full:low", lambda s: s + "\n`pipeline-core:pipeline-critic-low`"),
             "low: в таблицу Роли дописан запасной критик": (
                 "pipeline-full:low", texts["pipeline-full:low"].replace(
-                    "| 2. Критика ТЗ |", "| 2. Критика ТЗ, запасной критик Sonnet |", 1)),
+                    "| 2. Spec critique |", "| 2. Spec critique, запасной критик Sonnet |", 1)),
         }
         for case, (name, mutated) in broken.items():
             with self.subTest(case=case):
@@ -2447,7 +2484,8 @@ def _self_name_problems(name: str, text: str) -> list[str]:
     plugin, level = name.split(":", 1)
     key = f"{plugin.removeprefix('pipeline-')}-{level}"
     problems = [f"{name}: нет {needle!r}" for needle in
-                (f"# Конвейер {name}\n", f"`process:{key}`", f"`/{name}`") if needle not in text]
+                (f"{_anchor(name, '# Конвейер', '# Pipeline')} {name}\n", f"`process:{key}`", f"`/{name}`")
+                if needle not in text]
     frontmatter = _frontmatter(text.splitlines()) or []
     description = next((line for line in frontmatter if line.startswith("description:")), "")
     if name not in description:
@@ -2965,7 +3003,7 @@ JUDGE_STUB_OLD_FULL = ("мутационную и негативную пров�
 
 def _judge_task_text(text: str) -> str:
     """Задание судье: fenced-блок с LENS_JUDGE_BLOCK_MARK или nano-список до пункта верхнего уровня."""
-    fenced = _fenced_block_with(text, LENS_JUDGE_BLOCK_MARK)
+    fenced = _lens_judge_block(text)
     if fenced:
         return fenced
     lines = text.splitlines()
@@ -3017,7 +3055,8 @@ class FeaturePipelineJudgeRulesStubTests(unittest.TestCase):
         marked = 0
         for name in sorted(_all_skill_names()):
             text = _skill_text(name)
-            if LENS_JUDGE_BLOCK_MARK not in text and NANO_JUDGE_TASK_MARK not in text:
+            if (LENS_JUDGE_BLOCK_MARK not in text and LENS_JUDGE_BLOCK_MARK_EN not in text
+                    and NANO_JUDGE_TASK_MARK not in text):
                 continue
             marked += 1
             with self.subTest(skill=name):

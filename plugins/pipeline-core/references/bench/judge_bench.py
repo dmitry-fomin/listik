@@ -24,8 +24,8 @@ HERE = Path(__file__).resolve().parent
 SKILL = (HERE / "../../../pipeline-full/skills/low/SKILL.md").resolve()
 CORE = (HERE / "../pipeline-core-accept.md").resolve()
 
-TASK_ANCHOR = "Задание судье (файл"
-TASK_TAIL = "Listik, карточка"
+TASK_ANCHOR = "Judge task (file"
+TASK_TAIL = "Listik, card"
 DIFF_HEAD = "## Пакет диффа для приёмки"
 STEPS_REL = "docs/specs/steps"
 NAME_RE = re.compile(r"case-\d{2}")

@@ -197,11 +197,11 @@ class JudgeBench(unittest.TestCase):
         self.assertIn("return x + 2", dump.read_text(encoding="utf-8"))
         task = task_file.read_text(encoding="utf-8")
         self.assertIn(task, r.stdout)
-        self.assertIn("Ты — приёмка одной порции ТЗ", task)
+        self.assertIn("You are the acceptance of one spec portion", task)
         for p in (f"{tree}/docs/specs/steps/s.check-a.md", f"{tree}/docs/specs/steps/s.a.md",
                   f"{tree}/.git/pipeline-core/s.diff-a.r1.txt"):
             self.assertIn(p, task)
-        for bad in ("Listik, карточка", "listik claim", DEFECT, CLASS, self.impl):
+        for bad in ("Listik, card", "listik claim", DEFECT, CLASS, self.impl):
             self.assertNotIn(bad, task)
         self.assertFalse((tree / "web").exists(), "без node_modules в репо симлинка нет")
 

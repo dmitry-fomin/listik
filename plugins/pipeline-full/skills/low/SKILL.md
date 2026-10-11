@@ -1,315 +1,221 @@
 ---
 name: low
-description: "Конвейер реализации на пресете pipeline-full:low — ТЗ пишет Opus на low, ТЗ критикуют сразу DeepSeek V4.1 Flash и GLM 5.3 Flash в pi и Haiku 5.5 high, код пишет devin на SWE-2 max фоновой задачей, приёмку начинают три линзы Haiku 5.5 max — локальные субагенты, при их находке судьёй идёт Grok 4.7 на high в своём агентном харнессе, при их чистоте порцию коммитит оркестратор; основной контекст только маршрутизирует, носит вопросы автору и ведёт журнал. Вызывай, когда шаг спеки или фичу надо провести через ТЗ, критику, реализацию и независимую приёмку, а лимит подписки Max поджимает — на подписке ТЗ, критик Haiku и линзы приёмки Haiku, а код и судья — снаружи, внешних денег около трёх долларов на задачу. Запускай только по явному имени: маршрутом карточки Listik (launch_route или метка process:<ключ>) или когда человек назвал пресет; по сходству задачи сам не подхватывай."
-argument-hint: "[путь к <id>.<X>.md или описание задачи]"
+description: "Pipeline preset pipeline-full:low: spec by Opus low, critique by DeepSeek V4.1 Flash and GLM 5.3 Flash in pi plus Haiku 5.5 high, code by devin on SWE-2 max, acceptance by three Haiku 5.5 max lenses, judge Grok 4.7 high only on a lens finding. Spec → critique → implementation → independent acceptance when the Max subscription quota is tight. Run only by explicit name: a Listik card route (launch_route or label process:<key>) or a human naming the preset; never pick it up by task similarity."
+argument-hint: "[path to <id>.<X>.md or task description]"
 license: MIT
 ---
 
-# Конвейер pipeline-full:low
+# Pipeline pipeline-full:low
 
-Пресет для случая, когда кончается не кошелёк, а квота подписки: на подписке — ТЗ (Opus low), критик Haiku
-5.5 high и линзы приёмки Haiku 5.5 max (три локальных субагента), а код и судья — снаружи. Код пишет devin на
-`swe-2-max`; при находке линз судья — Grok 4.7 high, при чистых линзах коммитит оркестратор; внешних **≈ $3**. Обоснование расклада — в
-[presets-2026-09-24.md](../../../pipeline-core/references/presets-2026-09-24.md) и [ROLES.md](../../../pipeline-core/references/ROLES.md).
+Subscription: spec (Opus low), critic Haiku 5.5 high, lenses Haiku 5.5 max (three local subagents). Outside: code
+(devin `swe-2-max`), judge (Grok 4.7 high, only on a lens finding). Clean lenses — you commit.
 
-**Вызови скил `pipeline-core:core` и прочитай ядро по пути, который он назовёт, целиком до первого действия** (в репозитории — `plugins/pipeline-core/references/pipeline-core.md`). Там всё, что
-у пресетов общее: твоя роль, жёсткие правила, протокол вопросов, шаг 0, треки, сборка пакета диффа, пределы
-на порцию, журнал и общие грабли. Ниже — только то, чем pipeline-full:low отличается: кто делает каждый этап и как его
-позвать.
+**Invoke the skill `pipeline-core:core` and read the core at the path it names, in full, before the first action**
+(in the repo: `plugins/pipeline-core/references/pipeline-core.md`). This file only adds who runs each stage and how.
 
-Скил запускается только по явному имени — маршрутом карточки Listik (`launch_route` или метка
-`process:full-low`) или человеком (`/pipeline-full:low`); по сходству задачи сам его не подхватывай, и запуск скила — согласие автора
-на отправку **ТЗ, чек-листа, кода и диффа порции** наружу: критикам — шаг, ТЗ и чек-лист, код на чтение, исполнителю — рабочий
-каталог целиком (devin ходит по коду сам), судье — дифф, и дифф уходит ему, только когда судья зовётся; линзы приёмки —
-Haiku 5.5 max, локальные субагенты, наружу им ничего не уходит. Секреты в ТЗ не пропускает этап 1, в дифф — границы
-правки порции; все команды — из корня основного дерева.
+Run only by explicit name: a Listik card route (`launch_route` or label `process:full-low`) or a human
+(`/pipeline-full:low`). Launch = author's consent to send out: spec, checklist, read-only code to critics; the
+working directory to the executor; the portion diff to the judge when called. Lenses (Haiku 5.5 max) are local.
+Secrets: stage 1 keeps them out of the spec, portion write bounds out of the diff. Run commands from the main tree root.
 
-## Роли
+## Roles
 
-| Этап | Кто | Модель и усилие | Первая строка отчёта |
+| Stage | Who | Model, effort | First report line |
 | --- | --- | --- | --- |
-| 1. ТЗ и чек-листы | субагент `pipeline-core:pipeline-spec-writer-low` | **`model: opus` в вызове** (frontmatter — opus, effort low) → Opus low | `готово` или `вопрос` |
-| 2. Критика ТЗ | три критика одним сообщением: `deepseek` и `glm` — скил `pi:pi-delegate`, фоновыми задачами; `haiku` — `Agent` `pipeline-core:pipeline-critic`, **`model: haiku` в вызове**, фоном | каналы `deepseek` (DeepSeek V4.1 Flash) и `glm` (GLM 5.3 Flash), `--permission read`; Haiku 5.5 high; кворум — хотя бы один из `deepseek`, `glm` | по файлу на критика, потом твоя сводка `review-<X>.md` с разделами «Блокирующие» и «Существенные» |
-| 3. Реализация | скил `devin:devin-delegate`, фоновой задачей, с `--write` | `--thinking max` (модель `swe-2-max`) | `готово`, `не смог` или `вопрос` |
-| 4. Приёмка: линзы | три `Agent` `pipeline-core:pipeline-lens` одним сообщением, фоном, **`model: haiku`**, на заходе `r1` | Haiku 5.5, усилие max | по файлу на линзу, первая строка `чисто` или `находки` |
-| 4. Приёмка: судья | `/grok:delegate`, фоновой задачей — только при находке линз, при «Критичных инвариантах» и на заходах `r2`+ | `--model grok-4.7 --effort high` | `зелёный` с хешем или `красный` |
+| 1. Spec and checklists | `Agent` `pipeline-core:pipeline-spec-writer-low`, **`model: opus` in the call** | Opus low | `готово` / `вопрос` |
+| 2. Spec critique | `deepseek`, `glm` via `pi:pi-delegate`; `haiku` via `Agent` `pipeline-core:pipeline-critic`, **`model: haiku`** | DeepSeek V4.1 Flash, GLM 5.3 Flash; Haiku 5.5 high | file per critic → your summary `review-<X>.md` («Блокирующие», «Существенные») |
+| 3. Implementation | `devin:devin-delegate`, background, `--write` | `--thinking max` (`swe-2-max`) | `готово` / `не смог` / `вопрос` |
+| 4. Acceptance: lenses | three `Agent` `pipeline-core:pipeline-lens`, **`model: haiku`**, round `r1` only | Haiku 5.5 max | file per lens, `чисто` / `находки` |
+| 4. Acceptance: judge | `/grok:delegate`, background; on a lens finding, «Критичные инварианты», or `r2`+ | `--model grok-4.7 --effort high` | `зелёный` + hash / `красный` |
 
-**Про этап 1 отдельно.** Агент `pipeline-spec-writer-low` — тот же, что в `pipeline-full:medium`, и во frontmatter
-у него `opus` + `low`. Здесь его **перебивают параметром `model: opus` в вызове**: так и получается Opus low —
-`model` перебивает frontmatter, усилие остаётся из него. Усилие в вызове не меняется, нужен другой уровень — это другой агент.
+Acceptance is mandatory. devin's `готово` is a claim: lenses verify it, the judge on a finding.
 
-**Чем пресет платит за дешевизну.** SWE-2 в Artificial Analysis **не замерен** — ни качества, ни
-`hallucinationRate`, его заявлениям верить не на чем (замер против DeepSeek — открытый пункт `presets-2026-09-24.md`).
-Отсюда два следствия: **приёмка не опциональна** — канал судьи обязателен на предполёте
-(недоступен — стоп до этапа 1), потому что судья нужен при любой находке линз и на любом `r2`+; и **`не смог` — редкое исключение, а `готово` —
-заявление, не факт**: модель почти никогда не скажет «не смог», её «готово» проверяют линзы, а при находке — судья.
-По той же причине DeepSeek не судья нигде, а критик — только вторым рядом с GLM: его одиночные пункты в сводке
-помечены `сверить с кодом` (`pipeline-core.md`, «Критика ТЗ»).
+## Required skills
 
-## Нужные скилы
+Missing any — stop (`pipeline-core.md`, «Внешние скилы»). Never call scripts from the cache.
 
-Стоп, если нет хотя бы одного — раздел «Внешние скилы» `pipeline-core.md`. Скрипты из кэша не зови.
+- [`pi:pi-delegate`](../../../pi/skills/pi-delegate/SKILL.md) (`plugins/pi/skills/pi-delegate/SKILL.md`) — stage 2; [`pi:pi-check`](../../../pi/skills/pi-check/SKILL.md) — readiness; [`pi:pi-jobs`](../../../pi/skills/pi-jobs/SKILL.md) — collect; [`pi:pi-runtime`](../../../pi/skills/pi-runtime/SKILL.md) — contract.
+- [`devin:devin-delegate`](../../../devin/skills/devin-delegate/SKILL.md) (`plugins/devin/skills/devin-delegate/SKILL.md`) — stage 3; [`devin:devin-check`](../../../devin/skills/devin-check/SKILL.md) — readiness; [`devin:devin-jobs`](../../../devin/skills/devin-jobs/SKILL.md) — progress, collect; [`devin:devin-runtime`](../../../devin/skills/devin-runtime/SKILL.md) — contract, resume.
+- `/grok:delegate` — stage 4 and preflight; `/grok:setup` — readiness if preflight failed not on balance; `/grok:status` — progress; `/grok:result` — fallback collect; `grok:grok-cli-runtime` — contract.
+- [`listik:listik`](../../../listik/skills/listik/SKILL.md) (`plugins/listik/skills/listik/SKILL.md`) — card, stages, journal, questions.
 
-- [`pi:pi-delegate`](../../../pi/skills/pi-delegate/SKILL.md) (`plugins/pi/skills/pi-delegate/SKILL.md`) — критика ТЗ, каналы `deepseek` и `glm`; [`pi:pi-check`](../../../pi/skills/pi-check/SKILL.md) — готовность обоих; [`pi:pi-jobs`](../../../pi/skills/pi-jobs/SKILL.md) — забор ответов; [`pi:pi-runtime`](../../../pi/skills/pi-runtime/SKILL.md) — контракт;
-- [`devin:devin-delegate`](../../../devin/skills/devin-delegate/SKILL.md) (`plugins/devin/skills/devin-delegate/SKILL.md`) — этап 3 (`--write` и `--thinking max` обязательны); [`devin:devin-check`](../../../devin/skills/devin-check/SKILL.md) — готовность; [`devin:devin-jobs`](../../../devin/skills/devin-jobs/SKILL.md) — ход и забор; [`devin:devin-runtime`](../../../devin/skills/devin-runtime/SKILL.md) — контракт и продолжение сессии;
-- `/grok:delegate` — этап 4 и предполётный прогон судьи; `/grok:setup` — готовность, если прогон упал не на балансе; `/grok:status` — ход, `/grok:result` — запасной забор отчёта; `grok:grok-cli-runtime` — контракт;
-- [`listik:listik`](../../../listik/skills/listik/SKILL.md) (`plugins/listik/skills/listik/SKILL.md`) — карточка, этапы, журнал, вопросы автору.
-
-## Префикс
+## Prefix
 
 ```
 STEPS=docs/specs/steps
 BASE=<id>        # без карточки — adhoc-<ГГГГ-ММ-ДД>-<слаг>
 WT=.             # в треке — абсолютный путь дерева трека
 ```
-`<X>` — буква порции, `<R>` — заход приёмки, `DJOB` и `JOB` — id фоновых задач исполнителя и судьи. `DJOB` берётся из ответа `devin:devin-delegate`.
+`<X>` — portion letter, `<R>` — acceptance round, `DJOB`/`JOB` — executor/judge job ids (`DJOB` from `devin:devin-delegate`).
 
-## Предполётная проверка — до этапа 1
+## Stop factor
 
-**Стоп-фактор.** Любая роль недоступна (предполётная проверка не прошла, харнесс не установлен или не залогинен, запуск упал, ответила не та модель) — конвейер стоит: журнал `стоп: <роль> — <харнесс> недоступен: <причина>`, `listik needs-owner <id> "<вопрос>"` и тот же вопрос в чат, и больше ничего. Запасного исполнителя нет: роль не подменяется ни другим харнессом, ни другой моделью, ни локальным субагентом, в headless тоже (`pipeline-core.md`, «Стоп-фактор»). Повтор того же харнесса и той же модели в той же роли — не подмена. Исключение — критики этапа 2: они идут по кворуму, выбывший критик не стоп, пока кворум пресета набран; кворум не набран — стоп по ядру (`pipeline-core.md`, «Критика ТЗ»).
+`pipeline-core.md`, «Стоп-фактор». Any role unavailable (preflight failed, not installed/logged in, launch failed,
+wrong model), at preflight or any stage — only:
 
-Все четыре канала — здесь, не когда понадобятся. Готовность исполнителя —
-`devin:devin-check`; усилие зашито пресетом — `--thinking max`, другое не выбирай; не готов — стоп-фактор (выше).
-Готовность критиков — `pi:pi-check` полной пробой, смотришь `ok` каналов `deepseek` и `glm`; оба без `ok` — кворум не набрать, стоп по ядру до этапа 1. Судья —
-**настоящим коротким прогоном** через `/grok:delegate` без `--background`:
+1. journal `стоп: <роль> — <харнесс> недоступен: <причина>` (executor: `стоп: исполнитель — devin недоступен: <причина>`);
+2. `listik needs-owner <id> "<вопрос>"`;
+3. the same question in chat.
 
-```
-/grok:delegate --no-web --model grok-4.7 --effort low Ответь ровно одним словом: ok
-```
+No substitute harness, model, local subagent or own hand, headless too. Re-running the same harness and model in
+the same role is allowed (e.g. a new devin session after a failed `resume`). Stage 2 critics follow quorum instead.
 
-Вернулось `ok` — канал живой. Вернулся 402 или другая ошибка — **стоп и вопрос автору** с текстом ошибки
-дословно, и остановка здесь жёстче, чем в остальных пресетах: незамеренного исполнителя
-без приёмки проверить нечем, а судья нужен при любой находке линз и на любом `r2`+ — без него порцию не закрыть.
+## Preflight — before stage 1
 
-Локальная роль этапа 4 — агент `pipeline-core:pipeline-lens`: проверь, что он виден в этой сессии.
-Нет — стоп по ядру (`pipeline-core.md`, «Приёмка линзами»: `стоп: линза — агент
-pipeline-core:pipeline-lens не найден`).
+- Executor: `devin:devin-check`; effort fixed at `--thinking max`.
+- Critics: `pi:pi-check` full probe, `ok` of channels `deepseek` and `glm`; neither — quorum stop per core.
+- Judge: a real run via `/grok:delegate` without `--background`; anything but `ok` (402 included) — stop, ask the author with the error verbatim:
 
-## Этапы
+  ```
+  /grok:delegate --no-web --model grok-4.7 --effort low Ответь ровно одним словом: ok
+  ```
 
-### 1. ТЗ и чек-листы — `pipeline-spec-writer-low`, `model: opus`
+- Lenses: agent `pipeline-core:pipeline-lens` visible in the session, else stop per `pipeline-core.md`, «Приёмка линзами» (`стоп: линза — агент pipeline-core:pipeline-lens не найден`).
 
-`Agent` `pipeline-core:pipeline-spec-writer-low`, **`model: opus`** — обязательно, в каждом запуске и в
-режиме правки. В задаче: путь к спеке **или** текст автора; `$STEPS`; имя бумаг `<id>`. В треке добавь **границу
-этого трека** — каталог или слой, за который его ТЗ не выходит, словами автора. Правила порций, границ
-и чек-листов агент знает сам — не пересказывай. ТЗ читать будет модель с высокой склонностью к выдумке:
-недосказанное она додумает и не спросит, поэтому допущения агента показывай автору **всегда**. `вопрос` —
-протокол вопросов, `готово` — в журнал `шаг <id>: старт, пресет pipeline-full:low, порций <K>`.
+## Stages
 
-### 2. Критика ТЗ — DeepSeek + GLM + Haiku
+### 1. Spec and checklists — `pipeline-spec-writer-low`, `model: opus`
 
-**Стоп-фактор.** Критики этапа идут по кворуму, а не по правилу недоступной роли: выбывший критик (запуск упал, не залогинен, ответила не та модель, ответ негоден или не пришёл за окно) — не стоп, пока кворум пресета набран. Не набран — стоп по ядру: журнал `стоп: критика — кворум не набран: <кто не дал годного ответа и почему>`, `needs-owner` и тот же вопрос в чат (`pipeline-core.md`, «Критика ТЗ»).
+- `model: opus` on every launch, edit mode included.
+- Task: spec path **or** author text; `$STEPS`; papers name `<id>`. In a track add the **track boundary** (directory or layer, author's words). Do not retell portion/bounds/checklist rules.
+- Always show the agent's assumptions to the author.
+- `вопрос` → question protocol; `готово` → journal `шаг <id>: старт, пресет pipeline-full:low, порций <K>`.
 
-Состав — три критика: `deepseek` и `glm` — `pi:pi-delegate`, каналы `deepseek` (DeepSeek V4.1 Flash) и `glm` (GLM 5.3 Flash), `--permission read`, фоновыми задачами, ответы — `result` через `pi:pi-jobs`; `haiku` — `Agent` `pipeline-core:pipeline-critic` с **`model: haiku` в вызове** (Haiku 5.5 high), фоном. Все три — одним сообщением, с одним заданием. Кворум — годный ответ хотя бы одного из `deepseek`, `glm`: Haiku той же семьи, что автор ТЗ, и в одиночку кворума не даёт. Ни `deepseek`, ни `glm` не дали годного ответа — стоп «кворум не набран»: Haiku, локальный Sonnet или другой критик Anthropic их не заменяет.
-Проверка на секреты, старые ответы, запуск, задание, окно 15 минут, забор, годность, повтор, журнал выбывших и правила сведения в `$STEPS/$BASE.review-<X>.md` — `pipeline-core.md`, «Критика ТЗ».
+### 2. Spec critique — DeepSeek + GLM + Haiku
 
-Решение по сводке — твоё, по ядру (`pipeline-core.md`, «Решение по сводке»): каждому пункту
-`принять`, `отклонить` или `автору` в `$STEPS/$BASE.decisions-<X>.md`, автору — только пункты `автору`, строка в журнал.
-Есть `принять` или `автору` — **автору ТЗ**: возобнови `pipeline-spec-writer-low` через `SendMessage` с путями к
-`$STEPS/$BASE.decisions-<X>.md` и `$STEPS/$BASE.review-<X>.md`; после `/clear` — новый запуск в режиме правки
-(`model: opus`, пути к порции, чек-листу, файлу решений и сводке). Одна критика на порцию, поправленное ТЗ не критикуется.
+- One message, one shared task, all background: `deepseek` and `glm` — `pi:pi-delegate`, channels `deepseek` and `glm`, `--permission read`, collect `result` via `pi:pi-jobs`; `haiku` — `Agent` `pipeline-core:pipeline-critic`, **`model: haiku` in the call**.
+- Quorum: a valid answer from `deepseek` or `glm`; Haiku never counts. A dropped critic is not a stop while quorum holds.
+- No quorum — journal `стоп: критика — кворум не набран: <кто не дал годного ответа и почему>`, `needs-owner`, same question in chat. Never replace `deepseek`/`glm` with Haiku, Sonnet or another Anthropic critic.
+- Everything else (secrets, launch, task, 15-minute window, collection, validity, retry, merge into `$STEPS/$BASE.review-<X>.md`) — `pipeline-core.md`, «Критика ТЗ».
+- Decide per «Решение по сводке»: each item `принять`/`отклонить`/`автору` in `$STEPS/$BASE.decisions-<X>.md`; only `автору` to the author; journal line.
+- Any `принять`/`автору` → resume the spec writer via `SendMessage` with paths to `$STEPS/$BASE.decisions-<X>.md` and `$STEPS/$BASE.review-<X>.md`; after `/clear` — new launch in edit mode (`model: opus`, paths to portion, checklist, decisions, summary).
+- One critique per portion; the revised spec is not re-critiqued.
 
-### 3. Реализация — `devin:devin-delegate`
+### 3. Implementation — `devin:devin-delegate`
 
-**Стоп-фактор.** Харнесс этапа недоступен (запуск упал, не залогинен, ответила не та модель) — конвейер стоит: журнал `стоп: <роль> — <харнесс> недоступен: <причина>`, `needs-owner` и тот же вопрос в чат; подмены другим харнессом, моделью или локальным субагентом нет (`pipeline-core.md`, «Стоп-фактор»).
+Hand over the card (devin claims it itself): `listik stage <P> --to s3-impl --holder devin --actor agent:claude --harness claude`.
 
-Карточку Listik выдаёшь до запуска, а `claim` за devin не пишешь — он сам:
-`listik stage <P> --to s3-impl --holder devin --actor agent:claude --harness claude`.
-
-Дальше **вызови скил `devin:devin-delegate`**. В аргументах скила обязательно:
-
-- `--write` — этап пишет код; без флага devin только читает, и «похоже на реализацию» он в право записи сам не переводит;
-- `--thinking max` — усилие пресета (модель `swe-2-max`);
-- рабочий каталог `--cwd $WT`, `--label "$BASE <X>"` и `--session "$BASE-<X>"` — по ней идёт продолжение;
-- фоновой запуск: ответ — job-id;
-- путь к порции **строкой**, не содержимое файла.
-
-**devin недоступен — стоп.** `devin:devin-check` не готов или запуск devin упал на старте (не на `не смог`) —
-стоп-фактор ядра: журнал `стоп: исполнитель — devin недоступен: <причина>`, `needs-owner <id> "<вопрос>"` и тот же
-вопрос в чат. Запасного исполнителя нет: ни pi, ни другая модель, ни локальный субагент роль не берут. Повтор
-того же devin с тем же `--thinking max` (новая сессия после упавшего `resume`) — не подмена.
-
-Задание, которое уходит в скил:
+**Invoke `devin:devin-delegate`** with `--write`, `--thinking max`, `--cwd $WT`, `--label "$BASE <X>"`,
+`--session "$BASE-<X>"`, background, and the portion path **as a string** (never the contents). Task:
 
 ```
-Реализуй порцию ТЗ из файла <путь $STEPS/$BASE.<X>.md подставь буквально>. Прочитай его целиком; раздел «Границы
-правки» — жёсткое условие, не пожелание. Разберись в коде, который правишь, прежде чем править. Прогони то, чем проект
-проверяется (тесты, линтер, типы). Не коммить и не делай git add/stash/checkout/reset. Не трогай .env, *.key, *.pem,
-credentials.json. Не правь тесты под реализацию и не глуши гарды. Требование непонятно или противоречиво — не выбирай
-за автора: сделай то, что от ответа не зависит, и верни ответ с первой строкой `вопрос` и списком вопросов, у каждого
-варианты, один помечен словом «предпочитаю». Ответ — не длиннее 30 строк, первая строка `готово`, `не смог` или
-`вопрос`; дальше: сделано по пунктам требований / не сделано с причиной / открытые вопросы и расхождения / изменённые
-файлы списком / проверки одной строкой каждая. Хоть одно требование не выполнено — первая строка `не смог`. Листинги и
-логи в ответ не клади.
+Implement the spec portion <path $STEPS/$BASE.<X>.md, literal>. Read it in full; «Границы правки» is a hard
+constraint. Understand the code before editing. Run the project's checks (tests, linter, types). Do not commit; no
+git add/stash/checkout/reset. Do not touch .env, *.key, *.pem, credentials.json. Do not adapt tests to the code or
+silence guards. Unclear or contradictory requirement — do not choose for the author: do what does not depend on the
+answer, reply with first line `вопрос` and questions, each with options, one marked «предпочитаю». Reply ≤30 lines,
+first line `готово`, `не смог` or `вопрос`; then: done per requirement / not done with reason / open questions and
+discrepancies / changed files / checks, one line each. Any requirement unmet — `не смог`. No listings or logs.
 
-Listik, карточка <P> (подставь её id буквально): отчитывайся по ней, а не только в дереве. Писать в трекер
-не запрещено — это твоя карточка, и claim в ней и есть доказательство, что ты запустился.
+Listik, card <P> (literal id): report on it, not only in the tree; it is your card, your claim proves you started.
 listik
-Первым действием возьми её сам: listik claim <P> --holder devin --actor agent:devin --harness devin
-Дальше каждые 10–15 минут работы — heartbeat с тем, что идёт сейчас:
+First action: listik claim <P> --holder devin --actor agent:devin --harness devin
+Every 10–15 minutes of work:
   listik heartbeat <P> --holder devin --note "<что делаешь>" --actor agent:devin --harness devin
-Перед ответом — итог в журнал:
+Before replying:
   listik comment <P> "<первая строка отчёта и суть: файлы, проверки>" -k journal --actor agent:devin --harness devin
-Не смог или вопрос — тот же journal и release <P>: не держи карточку, если по ней не работаешь.
+On `не смог` or `вопрос` — the same journal, then release <P>.
 ```
 
-Job id из ответа скила сразу в журнал: `порция <X>: devin <job-id>`, он же `DJOB=`. Ожидание и забор — как говорит `devin:devin-delegate`; ход уже запущенной задачи — `devin:devin-jobs`. Ответ devin дословно — отчёт этапа.
+- Job id → journal `порция <X>: devin <job-id>`, `DJOB=`. Wait/collect per `devin:devin-delegate`, progress via `devin:devin-jobs`. devin's reply verbatim is the stage report.
+- Session → journal `порция <X>: devin сессия <id>` (the name is the id).
+- Retry (`pipeline-core.md`, «Шаг 0 — конфиг»): after `вопрос` continue the session with the author's answers verbatim; after red — with «Красные пункты приёмки» verbatim: `resume --session "<имя>" --background --label "…"` per `devin:devin-runtime`.
+- Fallback when `resume` returns exit 2 (no session) or another error: new run via `devin:devin-delegate`, session `$BASE-<X>-2`, …; text = current task + «Ответы автора» or «Красные пункты приёмки» verbatim + «Changes from the previous round are already in the working tree — do not revert or rewrite them, build on top.»; journal the fallback and the new `порция <X>: devin сессия <имя>`.
+- `не смог` → retry with its wording within budget; failure, timeout, empty reply → per `devin:devin-jobs`, as `не смог`; `готово` → stage 4.
 
-**Сессия devin и повтор.** Прогон идёт в именованной сессии `--session "$BASE-<X>"`, имя сразу в журнал
-строкой `порция <X>: devin сессия <id>` (имя сессии и есть её id). Повторный заход по той же порции **продолжает её**:
-`resume --session "<имя>" --background --label "…"` по `devin:devin-runtime` (наследует каталог, права и
-усилие). **`resume` вернул exit 2 (сессии нет) или другую ошибку — откат на новый прогон** тем же
-`devin:devin-delegate` с текущим текстом задачи и новым именем сессии (`$BASE-<X>-2` и т.д.), строкой в журнал
-об откате и с новой строкой `порция <X>: devin сессия <имя>`.
+### 4. Acceptance — Haiku lenses, Grok 4.7 high judge on findings
 
-**Чем повторяется заход.** Правило одно на все пресеты и задано протоколом (`pipeline-core.md`,
-«Шаг 0 — конфиг»), отдельного ключа настройки у него нет. После `вопрос` — продолжение сессии, ответы
-автора уходят в неё дословно. После красного приёмки — то же продолжение сессии, «Красные пункты
-приёмки» уходят в неё дословно. Новый прогон в обоих случаях только **откат** (см. выше): тогда в текст
-идёт текущий текст задачи, «Ответы автора» или «Красные пункты приёмки» дословно и в конец — «Правки
-предыдущего захода уже лежат в рабочем дереве — не откатывай и не переписывай их, работай поверх».
+**`r1` — lenses**, strictly per `pipeline-core.md`, «Приёмка линзами» (card to yourself, diff package, secret
+check, fingerprints, three `pipeline-core:pipeline-lens` with `model: haiku` in one message, collection, branching).
+`r2`+ skip lenses.
 
-`вопрос` — протокол вопросов: продолжение той же сессии с ответами автора дословно, и только откат
-продолжения идёт новым прогоном; `не смог` — повтор **его формулировкой** в пределах бюджета;
-сбой, таймаут или пустой ответ — по `devin:devin-jobs` как `не смог`; `готово` идёт на этап 4 без обсуждения.
+**Lenses clean, no «Критичные инварианты»** — no judge: commit per core, post `VERDICT: PASS` with the hash (core
+command), check `git -C "$WT" log --oneline -1`, continue as after green.
 
-### 4. Приёмка — линзы Haiku, по находкам судья Grok 4.7 high
+**Lens findings, «Критичные инварианты», or `r2`+ — judge.**
 
-**Стоп-фактор.** Харнесс этапа недоступен (запуск упал, не залогинен, ответила не та модель) — конвейер стоит: журнал `стоп: <роль> — <харнесс> недоступен: <причина>`, `needs-owner` и тот же вопрос в чат; подмены другим харнессом, моделью или локальным субагентом нет (`pipeline-core.md`, «Стоп-фактор»).
+- `r2`+: diff package per `pipeline-core.md`, «Пакет диффа для приёмки».
+- Hand over the card; the judge claims and writes the verdict itself: `listik stage <P> --holder grok --actor agent:claude --harness claude`
+- Never hint that something is not a defect; you resolve findings from its report.
+- Write the task below, paths substituted, to `$STEPS/$BASE.judge-<X>.r<R>.task.md`; never put task text on the command line.
+- **Invoke `/grok:delegate`** `--background --write --no-web --model grok-4.7 --effort high`, cwd `$WT`, then one line: `Task is in <absolute path>: read and execute it.` On `r1` the task lists the three lens files.
+- Wait via `/grok:status` for phase `done`/`failed`/`cancelled` (not for `running` to vanish), ≤3 hours; over — stop, journal line, ask the author.
+- Read `$STEPS/$BASE.judge-<X>.r<R>.md` after `done`; `/grok:result` only if it is missing or empty, from the launch directory.
 
-Приёмку начинают дешёвые линзы, судья зовётся по их находкам. Когда судья зовётся, вердикт и коммит —
-его: он единственный видит требования, чек-лист и код одновременно. Подсказок «это не дефект» ему не
-давай: находку разрешаешь ты по отчёту.
-
-**Первый заход (`r1`) — линзы.** Пакет диффа, проверка дампа на секреты, отпечаток дерева, три линзы
-`pipeline-core:pipeline-lens` с `model: haiku` одним сообщением, их забор, отпечаток после и развилка —
-строго по `pipeline-core.md`, «Приёмка линзами»: запуск, задание линзе и команды там, здесь они не
-повторяются. Там же — как выдать карточку себе перед линзами. На заходах `r2` и дальше линзы не
-запускаются: повтор приёмки после красного идёт сразу судьёй.
-
-**Линзы чисты и в чек-листе нет «Критичных инвариантов»** — судья не запускается. Коммитишь ты, по
-ядру (пути, сообщение, `git show`), и сам ставишь в карточку `VERDICT: PASS` с хешем — команда там же.
-После коммита — та же проверка, что после зелёного судьи: `git -C "$WT" log --oneline -1`. Дальше —
-как после зелёного вердикта (ниже).
-
-**Находки линз, «Критичные инварианты» или заход `r2`+ — судья.** На `r2`+ пакет диффа собирается по
-`pipeline-core.md` («Пакет диффа для приёмки»). Выдай карточку судье заново — `claim` и вердикт он
-пишет сам, за него — нельзя:
+Judge task (file `$STEPS/$BASE.judge-<X>.r<R>.task.md`):
 
 ```
-listik stage <P> --holder grok --actor agent:claude --harness claude
-```
-
-и запусти судью. **Вызови `/grok:delegate`** с `--background`, `--write`, `--no-web`,
-`--model grok-4.7`, `--effort high`, каталог `$WT`. На `r1` в задание идут абсолютные пути трёх
-файлов линз. Как ждать — `/grok:status`, забор — файлом отчёта судьи (ниже): ждать финальной фазы `done`/`failed`/`cancelled`, не пропажи `running`, не дольше
-трёх часов; предел исчерпан — стоп, строка в журнал и вопрос автору.
-
-**Задание судье — только файлом.** Текст ниже с подставленными путями кладёшь файлом
-`$STEPS/$BASE.judge-<X>.r<R>.task.md`, а в `/grok:delegate` после флагов идёт одна строка:
-`Задание — в файле <абсолютный путь к нему>: прочитай и выполни.` Текст задания в командную строку не
-вставляй никогда: форвардер разбирает её на флаги, и строка `-m "<сообщение>"` из задания однажды ушла
-флагом модели. Отчёт судья пишет сам в `$STEPS/$BASE.judge-<X>.r<R>.md` — его и читаешь после фазы `done`;
-`/grok:result` — только запасной путь, когда файла нет или он пуст, и только из того же каталога, что запуск.
-
-Задание судье (файл `$STEPS/$BASE.judge-<X>.r<R>.task.md`):
-
-```
-Ты — приёмка одной порции ТЗ и последняя инстанция по ней. Кода ты не правишь никогда: твой результат — вердикт и,
-если он зелёный, коммит.
-
-Отчёт — твой ответ ниже, целиком — запиши сам в <абсолютный путь $STEPS/$BASE.judge-<X>.r<R>.md>:
-это единственный файл, который тебе можно создать. `listik done` не делаешь: карточку закрывает
-оркестратор.
+You are the acceptance of one spec portion and its final authority. Never edit code: your result is a verdict and,
+if green, a commit. Write your whole reply yourself to <absolute path $STEPS/$BASE.judge-<X>.r<R>.md> — the only
+file you may create. Do not run `listik done`: the orchestrator closes the card.
 
 <блок «Правила судьи: дерево и живые пункты» из pipeline-core-accept.md — вставь дословно>
 
-Пути (подставлены буквально): чек-лист приёмки, файл порции, пакет диффа; при повторном заходе — ещё дамп предыдущего
-захода, тогда смотри разницу, а не всю порцию заново. На первом заходе с находками линз — ещё три файла линз:
-`…lens-<X>.scope.md`, `…lens-<X>.holes.md`, `…lens-<X>.intent.md`.
+Paths (literal): acceptance checklist, portion file, diff package; on a repeat round also the previous round's dump —
+review the difference, not the whole portion. First round with lens findings: also `…lens-<X>.scope.md`,
+`…lens-<X>.holes.md`, `…lens-<X>.intent.md`.
 
-Порядок: прочитай порцию и чек-лист. Прогони каждый пункт чек-листа по факту — открой код, запусти команду, посмотри
-вывод; «выглядит сделанным» не считается. Прочитай пакет диффа и ищи срезанные углы: правку тестов под реализацию,
-ослабленные ассерты, скипы и xfail, отключённые правила линтера, заглушенные гарды, выход за границы правки порции,
-правки не по теме порции. Прогони команды из раздела «Проверки порции» чек-листа — это минимум. Полный набор тестов сверх него — на твоё усмотрение: гоняй, если дифф задевает общий код, от которого зависит многое, конфиг сборки/тестов или зависимости, либо узкий запуск вызывает сомнение; в ответе строкой — запускал ли и почему. Дифф не трогает исполняемый код (документация, тексты, комментарии) — тесты не запускай вовсе, строкой «код не менялся». Раздела в чек-листе нет — минимум определи сам тем же правилом.
+Read the portion and the checklist. Verify every checklist item by fact — open code, run the command, read output;
+"looks done" does not count. In the diff package hunt for cut corners: tests adapted to the code, weakened asserts,
+skips and xfail, disabled lint rules, silenced guards, edits outside the portion write bounds, off-topic edits. Run
+the checklist's «Проверки порции» — the minimum. Run the full suite too if the diff touches widely shared code,
+build/test config or dependencies, or a narrow run leaves doubt; say in one line whether and why. No executable code
+changed (docs, texts, comments) — no tests, one line «код не менялся». No such section — set the minimum by the same rule.
 
-Находки линз — сигнал, не вердикт. Каждую проверь по факту — команда, вывод, `path:line` — и поставь
-исход: `чинить` — дефект порции, пункт красного списка; `вынести` — реальная проблема вне требований
-или границ порции, строка `вынести: <заголовок> — <суть, path:line>`, зелёный не блокирует;
-`отбросить` — не подтвердилась, строка `отбросить: <находка> — <почему>`. Весь чек-лист и срезанные
-углы проверяешь сам, как без линз: их чистота твою проверку не заменяет.
+Lens findings are signals, not verdicts. Verify each by fact (command, output, `path:line`) and mark it: `чинить` —
+portion defect, red-list item; `вынести` — real problem outside the portion requirements or bounds, line
+`вынести: <заголовок> — <суть, path:line>`, does not block green; `отбросить` — not confirmed, line
+`отбросить: <находка> — <почему>`. Clean lenses do not replace your own full check.
 
-Чек-лист содержит непустой раздел «Критичные инварианты» — по каждому пункту предъяви конкретный ломающий
-сценарий (одновременные запросы, повтор доставки, отрицательное значение и т.п.) с наблюдаемым результатом:
-логом, состоянием тестовой БД, ответом API. Пересказ кода без попытки не считается проверкой.
+Non-empty «Критичные инварианты» — for each item run a concrete breaking scenario (concurrent requests, redelivery,
+negative value, …) with an observable result: log, test DB state, API response. Retelling code is not a check.
 
-Чек-лист содержит негативный контроль — прогони его и покажи отказ выводом команды; отказа нет — красный
-пункт. Порция добавляет или чинит проверку (барьер, `claim`, шлюз, гард, валидацию, отказ API), а негативного
-контроля в чек-листе нет — построй сценарий отказа сам и прогони его.
+Checklist has a negative control — run it and show the refusal in command output; no refusal — red item. Portion
+adds or fixes a check (barrier, `claim`, gate, guard, validation, API refusal) without a negative control in the
+checklist — build and run the refusal scenario yourself.
 
-Каждое число, SHA и цитата в вердикте и отчёте — копией из вывода команды этого захода: хеш — из
-`git rev-parse --short HEAD` после коммита, счётчики — из вывода раннера тестов, место в файле — `path:line`;
-числа не из вывода в вердикт не идут. Утверждение исполнителя с числом или хешем сверяй с выводом своей
-команды, а не принимай на веру.
+Every number, SHA and quote in verdict and report is a copy from command output of this round: hash from
+`git rev-parse --short HEAD` after the commit, counts from the test runner, locations as `path:line`. Check every
+executor number or hash against your own output.
 
-Вердикт первой строкой:
-- `зелёный` — все пункты чек-листа закрыты, проверки зелёные, срезанных углов нет. Тогда сам закоммить порцию.
-  `git add` — только новые и изменённые пути порции; удалённый через `git rm` путь в него не передавай:
-  упадёт `did not match any files` и не застейджит **ничего**. Коммить `git commit -m "<сообщение>" -- <все пути
-  порции, включая удалённые>`. После проверь `git show --stat --name-status HEAD` — ровно пути порции. Неполный —
-  второй коммит поверх, не `git commit --amend` (запрещён); в отчёте оба хеша: вторая строка вердикта — через
-  запятую, последний итоговый. Не добавляй `-A` и `.`: в
-  дереве может лежать чужое. Не коммить бумаги шага (каталог ТЗ и файлы `*.journal.md`). Не пушить. Не делать
-  reset, stash, checkout файлов, clean, rebase, amend и --no-verify. Не трогать .env, *.key, *.pem, credentials.json.
-- `красный` — коммита нет. Дальше нумерованный список: пункт чек-листа или найденный срезанный угол, каждый — что
-  не так и что именно доделать. Находку про выход за границы правки порции ставь первым словом строки
-  `ГРАНИЦЫ:` — дальше её иначе маршрутизирует оркестратор. Остальные формулировки уйдут исполнителю дословно,
-  поэтому они про дефект, а не про впечатление.
+Verdict on the first line:
+- `зелёный` — all items closed, checks green, no cut corners. Then commit the portion yourself.
+  `git add` only the portion's new and modified paths; never a path removed via `git rm` (fails with
+  `did not match any files`, stages **nothing**). Commit `git commit -m "<сообщение>" -- <все пути
+  порции, включая удалённые>`. Check `git show --stat --name-status HEAD` — exactly the portion paths.
+  Incomplete — a second commit on top; `git commit --amend` is forbidden; both hashes on the second line of
+  the verdict, comma-separated, the last one final. No `-A` or `.`. Do not commit step papers (spec directory,
+  `*.journal.md`). Do not touch .env, *.key, *.pem, credentials.json.
+  Forbidden: push, reset, stash, file checkout, clean, rebase, amend, --no-verify.
+- `красный` — no commit. Numbered list: checklist item or cut corner, what is wrong and what exactly to finish.
+  A write-bounds finding starts with `ГРАНИЦЫ:`. Items go to the executor verbatim: name the defect, not an impression.
 
-Ответ — не длиннее 40 строк. Первая строка `зелёный` с хешем коммита или `красный`; дальше: пункты чек-листа с исходом
-по каждому / найденные срезанные углы / проверки одной строкой каждая / что отложено или перенесено. Листинги и логи в
-ответ не клади.
+Reply ≤40 lines: first line `зелёный` with the commit hash or `красный`; then checklist items with outcomes / cut
+corners / checks, one line each / deferred or moved. No listings or logs.
 
-Listik, карточка <P> (подставь её id буквально): судья берёт её сам и сам пишет вердикт — за тебя его не напишут.
+Listik, card <P> (literal id): claim it and write the verdict yourself — nobody does it for you.
 listik
-Первым действием: listik claim <P> --holder grok --actor agent:grok --harness grok
-Вердикт — сразу после ответа, первой строкой аргумента ровно `VERDICT: PASS` или `VERDICT: FAIL`
-(сервер читает только её), дальше хеш коммита или красные пункты дословно, по одному в строке:
+First action: listik claim <P> --holder grok --actor agent:grok --harness grok
+Verdict right after the reply; first line of the argument exactly `VERDICT: PASS` or `VERDICT: FAIL`
+(the server reads only it), then the commit hash or the red items verbatim, one per line:
   listik comment <P> $'VERDICT: PASS\n<hash7>' -k verdict --actor agent:grok --harness grok
   listik comment <P> $'VERDICT: FAIL\n<пункты дословно>' -k verdict --actor agent:grok --harness grok
-Красный вердикт — ещё и release <P>: карточку снова возьмёт исполнитель.
+Red verdict — also release <P>.
 ```
 
-Job id из ответа `/grok:delegate` — в журнал и в `JOB=`. Вердикт:
+Job id → journal and `JOB=`. Verdict:
 
-- **зелёный** — судья уже закоммитил, в отчёте хеш. В журнал `порция <X>: готово (коммит <hash7>)`, отложенное и
-  перенесённое — отдельными строками. Дальше следующая порция — с этапа 3, если её критика уже прошла параллельно (см. «Цикл» в pipeline-core.md), иначе с этапа 2.
-- **строки `вынести:`** в отчёте судьи захода `r1` — и зелёном, и красном — по каждой карточка
-  `--discovered-from <P>` по ядру (`pipeline-core.md`, «Приёмка линзами»), id — строкой журнала;
-  **строки `отбросить:`** — только в журнал, карточек по ним нет.
-- **красный** — коммита нет, `K+1` по ядру (находки линз сами по себе не красное и `K` не
-  трогают), порция на этап 3 с пунктами дословно, в пределах бюджета; повтор идёт
-  продолжением сессии исполнителя (правило `pipeline-core.md`, «Шаг 0 — конфиг»), а новый прогон — только
-  откат, когда продолжить нельзя.
-- **`failed`, `402` или пустой ответ** — это не красное: вердикта не было. Строка в журнал и вопрос автору;
-  порция остаётся незакрытой, следующую не начинаешь.
+- **зелёный** — check `git -C "$WT" log --oneline -1` (no commit — ask the author); journal `порция <X>: готово (коммит <hash7>)`, deferred/moved items as separate lines. Next portion from stage 3 if its critique already ran in parallel (`pipeline-core.md`, «Цикл»), else stage 2.
+- **`вынести:`** in an `r1` report (green or red) — a card each `--discovered-from <P>` per `pipeline-core.md`, «Приёмка линзами», id to the journal. **`отбросить:`** — journal only.
+- **красный** — `K+1` per core (lens findings alone do not count); back to stage 3 with the items verbatim, within budget, by session continuation; new run only as fallback.
+- **`failed`, `402`, empty reply** — no verdict, not red: journal line, ask the author; the portion stays open, do not start the next.
 
-Проверь после зелёного, что коммит действительно есть: `git -C "$WT" log --oneline -1`. Судья работает с
-автоодобрением своих инструментов, и его «закоммитил» стоит одной команды проверки.
+## Preset pitfalls
 
-## Грабли пресета
-
-| Симптом | Причина | Что делать |
-| --- | --- | --- |
-| В сессии нет `devin:devin-delegate` | плагин devin не установлен или сессия стартовала до установки | стоп-фактор: `стоп: исполнитель — devin недоступен: …`, `needs-owner` и вопрос в чат; запасного нет; скрипт из кэша не зови |
-| devin вернул разбор порции вместо правки, дерево чистое | в `devin:devin-delegate` забыт `--write` | перезапуск скила с `--write`; предыдущий ответ отчётом этапа не считается |
-| devin ушёл не на `swe-2-max` | в вызов не попал `--thinking max` | ответ отчётом не считается, перезапуск с `--thinking max` |
-| Исполнителю ушло содержимое ТЗ | в скил попал текст файла, а не путь | в задание идёт путь к порции |
-| Порция закоммичена недоделанной | `готово` от исполнителя принято на веру без приёмки | приёмка не опциональна: SWE-2 не замерен, «готово» проверяют линзы, а при находке — судья; коммит оркестратора — только при трёх `чисто` |
-| Судья упал с 402, порция повисла | баланс Grok Build исчерпан | предполётный прогон судьи до этапа 1; 402 по ходу — вопрос автору, порция не закрывается |
-| Фоновая задача не находится по статусу | статус или забор вызваны из другого каталога, чем запуск | тот же каталог во всех вызовах; ход — скил jobs/status плагина |
-| Судья сказал «зелёный», коммита нет | прогон оборвался после вердикта | `git log --oneline -1` после каждого зелёного; нет коммита — вопрос автору |
-| Повтор после `вопрос` или красного начал сессию с нуля | имя сессии не попало в журнал или сессия по имени не нашлась (`resume` — exit 2) | это откат, а не сбой: новый прогон через `devin:devin-delegate` с текущим текстом задачи и новым именем сессии, строка в журнал |
-| Линза отработала не Haiku | забыт `model: haiku` у `pipeline-core:pipeline-lens` | повтор линзы с `model: haiku` |
-| Линза изменила дерево (отпечатки до и после не совпали) | у линзы есть Bash | стоп по ядру: `needs-owner` и вопрос автору, ничего не коммитить, судью не звать |
-| После красного снова зовутся линзы | линзы — только на заходе `r1` | повтор приёмки сразу судьёй, без линз |
+| Symptom | Action |
+| --- | --- |
+| devin returned analysis, tree clean | `--write` missing: rerun; the old reply is not a report |
+| devin not on `swe-2-max` | `--thinking max` missing: rerun; the old reply is not a report |
+| Background job not found by status | call status/collect from the launch directory |
+| Lens ran not on Haiku | rerun it with `model: haiku` |
+| Lens changed the tree (fingerprints differ) | stop per core: `needs-owner`, ask the author, commit nothing, no judge |

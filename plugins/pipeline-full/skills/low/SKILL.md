@@ -103,7 +103,7 @@ Implement the spec portion <path $STEPS/$BASE.<X>.md, literal>. Read it in full;
 constraint. Understand the code before editing. Run the project's checks (tests, linter, types). Do not commit; no
 git add/stash/checkout/reset. Do not touch .env, *.key, *.pem, credentials.json. Do not adapt tests to the code or
 silence guards. Unclear or contradictory requirement — do not choose for the author: do what does not depend on the
-answer, reply with first line `вопрос` and questions, each with options, one marked «предпочитаю». Reply ≤30 lines,
+answer, reply with first line `вопрос` and questions, each with options, one marked «предпочитаю», each question written for a human: first what is being decided, context without jargon, options as consequences, a recommendation with its reason. Reply ≤30 lines,
 first line `готово`, `не смог` or `вопрос`; then: done per requirement / not done with reason / open questions and
 discrepancies / changed files / checks, one line each. Any requirement unmet — `не смог`. No listings or logs.
 

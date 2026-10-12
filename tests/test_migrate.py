@@ -81,7 +81,7 @@ class UpsertTests(unittest.TestCase):
         result = migrate.upsert(target)
         self.assertEqual(result, "unchanged")
 
-        other_body = "<!-- listik-protocol: 5 -->\n\nдругой текст\n"
+        other_body = f"<!-- listik-protocol: {migrate.protocol_version(migrate.body())} -->\n\nдругой текст\n"
         result = migrate.upsert(target, body=other_body)
         self.assertEqual(result, "updated")
         after_update = target.read_text(encoding="utf-8")
@@ -562,7 +562,7 @@ class InitProjectsForceCliTests(TempDbTestCase):
         self.assertEqual(proc.returncode, 0, proc.stdout + proc.stderr)
         self.assertIn("обновлено: 1", proc.stdout)
         text = agents.read_text(encoding="utf-8")
-        self.assertIn(migrate.BEGIN + "\n<!-- listik-protocol: 5 -->\n", text)
+        self.assertIn(migrate.BEGIN + f"\n<!-- listik-protocol: {migrate.protocol_version(migrate.body())} -->\n", text)
         self.assertIn("## Listik — harness protocol", text)
 
 if __name__ == "__main__":

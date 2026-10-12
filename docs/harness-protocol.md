@@ -1,4 +1,4 @@
-<!-- listik-protocol: 5 -->
+<!-- listik-protocol: 6 -->
 
 ## Listik — harness protocol
 
@@ -28,9 +28,11 @@ The board tells the two apart — `holder_taken=false` / `not_taken=true` means 
 6. Comment kinds: `review` for remarks, `journal` for decisions/progress, `verdict` for verdicts.
 7. Questions for the human go to `needs-owner <id> "exact question"`, not just the chat. When the human
    launched the work through your session (you orchestrate other harnesses or subagents), also put the full question
-   text in the chat — both places, never a one-line summary; relay executors' questions verbatim. Questions
-   never stall the pipeline: keep working other tasks, apply the answer (`needs-owner --clear`) when it comes.
-   A question must name the default: the last line of the question text is `по умолчанию: <option>`
+   text in the chat — both places, never a one-line summary; relay executors' questions
+   keeping their substance (options, consequences, preference): you may reshape the form to the question
+   format below; put the original text verbatim in a `journal` comment. Questions never stall the pipeline:
+   keep working other tasks, apply the answer (`needs-owner --clear`) when it comes. A question must name
+   the default: the last line of the question text is `по умолчанию: <option in words> — <what I will do>`
    (this exact Russian prefix, own line) — the option you take if nobody answers; you keep working with it,
    write `решение: … основание: …` as a `journal` comment, and only then continue. No default is allowed
    only where the default is irreversible: deleting or overwriting someone else's work, a merge conflict
@@ -39,6 +41,15 @@ The board tells the two apart — `holder_taken=false` / `not_taken=true` means 
    When the swarm runs the card, an unanswered default question is closed by the swarm after its timeout
    with «действует вариант по умолчанию» and your work continues (or is relaunched) as if the human had
    answered with the default.
+   Question format:
+   - Applies to every question for the human: `needs-owner`, the same text in chat, AskUserQuestion.
+   - First line: one phrase saying what is being decided.
+   - Context: 1–2 sentences without abbreviations or jargon; a needed term gets its meaning in brackets.
+   - Options are described by consequences for the human or the project, not by mechanics (files, flags).
+   - One question per message; independent ones as separate `needs-owner`; one without a default goes alone.
+   - Recommend one option and say why.
+   - Last line, if there is a default: `по умолчанию: <option in words, not a letter> — <what I will do>`.
+   - Paragraphs separated by a blank line; pass the text as `$'…'`, an apostrophe inside is `\'`.
 8. Before handoff check `spec_path`, acceptance, worktree/branch, deps and journal.
 9. Finish with `done <id> -r "short verifiable result"`.
 10. Don't rewrite someone else's card — comment on it instead.
@@ -131,7 +142,7 @@ listik stage <id> --to <same stage> --holder <next>   # re-issue after release: 
 listik comment <id> "text" -k journal|review
 listik comment <id> "VERDICT: PASS" -k verdict
 listik comment <id> $'VERDICT: FAIL\n1. <item> — <problem> — <file:line> — <fix>' -k verdict
-listik needs-owner <id> "question"
+listik needs-owner <id> $'<what we decide>\n\n<context, options, recommendation>\n\nпо умолчанию: <option in words> — <what I will do>'
 listik needs-owner <id> --clear "answer"
 listik release <id>
 listik done <id> -r "short verifiable result"

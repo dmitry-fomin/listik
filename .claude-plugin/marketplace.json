@@ -10,30 +10,30 @@
       "name": "listik",
       "source": "./plugins/listik",
       "description": "Работа с задачами в Listik: очередь, этапы конвейера, heartbeat, зависимости, вопросы человеку и журнал.",
-      "version": "0.9.6"
+      "version": "0.9.7"
     },
     {
       "name": "pipeline-core",
       "source": "./plugins/pipeline-core",
-      "version": "1.0.0",
+      "version": "1.0.1",
       "description": "Общее ядро конвейеров pipeline-*: протокол этапов, агенты конвейера и хук автоодобрения их команд; от него зависят плагины пресетов."
     },
     {
       "name": "pipeline-full",
       "source": "./plugins/pipeline-full",
-      "version": "1.0.0",
+      "version": "1.0.1",
       "description": "Пресеты конвейера ТЗ → критика → код → приёмка со смешанными вендорами: xhigh, high, medium, low, xlow и nano."
     },
     {
       "name": "pipeline-cc",
       "source": "./plugins/pipeline-cc",
-      "version": "1.0.0",
+      "version": "1.0.1",
       "description": "Пресеты конвейера ТЗ → критика → код → приёмка только на Claude и Codex; ставится вместе с pipeline-core и codex."
     },
     {
       "name": "pipeline-claude",
       "source": "./plugins/pipeline-claude",
-      "version": "1.0.0",
+      "version": "1.0.1",
       "description": "Пресеты конвейера только на Claude: high и xhigh — полный конвейер силами Claude на усилии high или xhigh."
     },
     {
@@ -45,19 +45,19 @@
     {
       "name": "codex",
       "source": "./plugins/codex",
-      "version": "0.3.0",
+      "version": "0.3.1",
       "description": "Отдать задачу OpenAI Codex CLI из Claude Code: второй агент сам ходит по коду, по умолчанию только читает."
     },
     {
       "name": "opencode",
       "source": "./plugins/opencode",
-      "version": "0.1.1",
+      "version": "0.1.2",
       "description": "Мост в opencode CLI: делегирование задач в GLM 5.3 Flash и DeepSeek v4.1 Flash с фоновыми задачами и продолжением сессии"
     },
     {
       "name": "pi",
       "source": "./plugins/pi",
-      "version": "0.1.2",
+      "version": "0.1.3",
       "description": "Мост в pi CLI: делегирование задач в GLM 5.3 Flash и DeepSeek v4.1 Flash через RPC-режим pi, с фоновыми задачами и продолжением сессии"
     },
     {

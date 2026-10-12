@@ -10,24 +10,24 @@
       "name": "listik",
       "source": "./plugins/listik",
       "description": "Работа с задачами в Listik: очередь, этапы конвейера, heartbeat, зависимости, вопросы человеку и журнал.",
-      "version": "0.9.7"
+      "version": "0.9.8"
     },
     {
       "name": "pipeline-core",
       "source": "./plugins/pipeline-core",
-      "version": "1.0.1",
+      "version": "1.0.2",
       "description": "Общее ядро конвейеров pipeline-*: протокол этапов, агенты конвейера и хук автоодобрения их команд; от него зависят плагины пресетов."
     },
     {
       "name": "pipeline-full",
       "source": "./plugins/pipeline-full",
-      "version": "1.0.1",
+      "version": "1.0.2",
       "description": "Пресеты конвейера ТЗ → критика → код → приёмка со смешанными вендорами: xhigh, high, medium, low, xlow и nano."
     },
     {
       "name": "pipeline-cc",
       "source": "./plugins/pipeline-cc",
-      "version": "1.0.1",
+      "version": "1.0.2",
       "description": "Пресеты конвейера ТЗ → критика → код → приёмка только на Claude и Codex; ставится вместе с pipeline-core и codex."
     },
     {

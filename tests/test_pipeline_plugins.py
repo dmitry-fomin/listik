@@ -1915,6 +1915,16 @@ class FeaturePipelineLensAcceptanceTests(unittest.TestCase):
                 self.assertNotEqual(mutated, text, "изменение не применилось")
                 self.assertNotEqual(_lens_core_problems(mutated), [])
 
+    def test_glm_lens_channel_is_opt_in(self) -> None:
+        """Канал линз GLM: отдельный раздел, без права записи, ни один пресет его не включает."""
+        glm = _text_section(_plugin_text(CORE_DOC), "## Линзы на GLM")
+        for needle in ("pi:pi-delegate", "--channel glm", "--thinking max", "agents/pipeline-lens.md",
+                       "одним сообщением", "pi:pi-jobs", "pi-glm job <id> (линза <имя>)"):
+            self.assertIn(needle, glm)
+        self.assertNotIn("--permission write", glm)
+        for preset in LENS_PRESETS:
+            self.assertNotIn("Линзы на GLM", _skill_text(preset))
+
 
 #: Приёмка линзами в пресетах (listik-3exw, порция b; линзы Haiku — listik-jllp, порция a;
 #: medium — listik-jllp, порция b): кто ссылается на ядро и что несёт.

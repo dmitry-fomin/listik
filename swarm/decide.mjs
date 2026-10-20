@@ -98,25 +98,38 @@ export function fromComments(comments) {
   return (comments || []).map(c => ({kind: c.kind, ts: c.created_at, text: c.text}));
 }
 
-export function openQuestion(items) {
+// Все открытые вопросы: kind `question` с ts строго позже последнего ответа
+// (ответов нет — все), по возрастанию ts. Вопрос без разбираемого ts открыт всегда,
+// ответ без ts ничего не закрывает; совпадение ts ответа и вопроса — вопрос закрыт.
+export function openQuestions(items) {
   const qa = (items || []).filter(it => it && (it.kind === "question" || it.kind === "answer"));
   const questions = qa.filter(it => it.kind === "question");
-  if (!questions.length) return null;
-  questions.sort((a, b) => (tsMs(a.ts) ?? 0) - (tsMs(b.ts) ?? 0));
-  const last = questions[questions.length - 1];
-  const lastTs = tsMs(last.ts);
-  const answered = qa.some(it => {
-    if (it.kind !== "answer") return false;
+  if (!questions.length) return [];
+  let lastAnswerTs = null;
+  for (const it of qa) {
+    if (it.kind !== "answer") continue;
     const at = tsMs(it.ts);
-    return at != null && lastTs != null && at >= lastTs;
-  });
-  if (answered) return null;
-  return {ts: last.ts, text: last.text};
+    if (at != null && (lastAnswerTs == null || at > lastAnswerTs)) lastAnswerTs = at;
+  }
+  return questions
+    .filter(it => {
+      const qt = tsMs(it.ts);
+      return qt == null || lastAnswerTs == null || qt > lastAnswerTs;
+    })
+    .sort((a, b) => (tsMs(a.ts) ?? 0) - (tsMs(b.ts) ?? 0))
+    .map(it => ({ts: it.ts, text: it.text}));
 }
 
+export function openQuestion(items) {
+  const open = openQuestions(items);
+  return open.length ? open[open.length - 1] : null;
+}
+
+// Карточка мягкая, только когда каждый открытый вопрос мягкий: один открытый
+// вопрос без дефолта делает её жёсткой для надзора, dueDefaults и барьера.
 function isSoftTask(t, events) {
-  const q = openQuestion(fromEvents((events || {})[t.id] || []));
-  return !!(q && isSoftQuestion(q.text));
+  const open = openQuestions(fromEvents((events || {})[t.id] || []));
+  return open.length > 0 && open.every(q => isSoftQuestion(q.text));
 }
 
 // Карточка, которую держит не рой: держатель есть, а запуска роя не было —
@@ -133,12 +146,12 @@ export function dueDefaults({tasks, events, config, now}) {
   for (const t of tasks || []) {
     if (!t.needs_owner || heldByOther(t)) continue;
     if (!OPEN_STATUSES.has(t.status) && t.status !== "done") continue;
-    const q = openQuestion(fromEvents((events || {})[t.id] || []));
-    if (!q || !isSoftQuestion(q.text)) continue;
-    const qTs = tsMs(q.ts);
+    const open = openQuestions(fromEvents((events || {})[t.id] || []));
+    if (!open.length || !open.every(q => isSoftQuestion(q.text))) continue;
+    const qTs = tsMs(open[open.length - 1].ts);
     if (qTs == null) continue;
     if (minutesSince(now, qTs) > minutes) {
-      out.push({id: t.id, line: defaultLine(q.text), minutes});
+      out.push({id: t.id, line: open.map(q => defaultLine(q.text)).join("; "), minutes});
     }
   }
   return out;

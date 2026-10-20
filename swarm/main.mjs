@@ -7,7 +7,8 @@
 import fs from "node:fs";
 import path from "node:path";
 import {parseConfig, ConfigError, HelpRequested} from "./config.mjs";
-import {isSoftQuestion, OPEN_STATUSES, portOf, SWARM_PREFIX, swarmTasks} from "./decide.mjs";
+import {fromComments, isSoftQuestion, OPEN_STATUSES, openQuestions, portOf, SWARM_PREFIX,
+  swarmTasks} from "./decide.mjs";
 import {Listik} from "./listik.mjs";
 import {tick} from "./run.mjs";
 import {open as openLog, skipLabel, questionCode, QUESTION_REASONS} from "./log.mjs";
@@ -50,9 +51,9 @@ async function reportWaiting(listik, config, log, result) {
     }
     try {
       const shown = await listik.show(id);
-      const questions = (shown.comments || []).filter(c => c.kind === "question");
-      const last = questions[questions.length - 1];
-      log.line(`${id} — ${questionReason(last && last.text)}`);
+      const open = openQuestions(fromComments(shown.comments));
+      const q = open.find(x => !isSoftQuestion(x.text)) || open[open.length - 1];
+      log.line(`${id} — ${questionReason(q && q.text)}`);
     } catch (err) {
       log.line(`${id} — ждёт человека (show ошибка: ${errText(err)})`);
     }

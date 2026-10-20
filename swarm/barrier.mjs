@@ -6,7 +6,7 @@
 import path from "node:path";
 import {runWithTimeout} from "./proc.mjs";
 import {stampFile} from "./log.mjs";
-import {OPEN_STATUSES, isFrozen, portOf, REJECTED_MARK, isSoftQuestion, openQuestion,
+import {OPEN_STATUSES, isFrozen, portOf, REJECTED_MARK, isSoftQuestion, openQuestions,
   fromComments, FROZEN_LABEL} from "./decide.mjs";
 import {resolveWithArbiter} from "./arbiter.mjs";
 import {errText, isMainWorktree, taskBranch} from "./util.mjs";
@@ -220,8 +220,8 @@ export async function runBarrier({listik, git, fs, config, swarmConfig, log, tas
         log.line(`${c.id} не влита: ждёт человека`);
         continue;
       }
-      const q = openQuestion(fromComments(shown.comments));
-      if (!q || !isSoftQuestion(q.text)) {
+      const open = openQuestions(fromComments(shown.comments));
+      if (!open.length || !open.every(q => isSoftQuestion(q.text))) {
         let mergedByHand = false;
         if (!fs.existsSync(c.worktree || "")) {
           try {

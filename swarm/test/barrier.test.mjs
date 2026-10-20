@@ -2649,3 +2649,55 @@ suite("барьер c7nj: жёсткий вопрос, aheadCount бросает
   assert.deepEqual(listik.calls.set, []);
   assert.deepEqual(result.cleaned, []);
 });
+
+// --- listik-vtw8: все открытые вопросы карточки ---
+
+suite("барьер: жёсткий вопрос раньше мягкого — ждёт человека, ветка и HEAD не изменились", async () => {
+  const repo = initRepo("swarm-barrier-repo-");
+  const tree = addWorktree(repo, "t1");
+  commitFile(tree, "a.txt", "a\n", "t1");
+  const tasks = [{id: "t1", status: "done", worktree: tree, branch: "task/t1", labels: ["port:1"], needs_owner: true}];
+  const listik = fakeListik({
+    t1: {id: "t1", comments: [
+      {kind: "question", text: "Какой формат?", created_at: "2026-01-01T00:00:00Z"},
+      {kind: "question", text: "Продолжать?\nпо умолчанию: да", created_at: "2026-01-01T00:10:00Z"},
+    ], write_scope: []},
+  });
+  const log = makeLog();
+  const branchSha = sh(repo, "rev-parse", "task/t1").trim();
+  const headSha = sh(repo, "rev-parse", "HEAD").trim();
+  const result = await runBarrier({
+    listik, git, fs: nodeFs, config: {dryRun: false, project: "demo", logDir: tmpLogDir()},
+    swarmConfig: {integration: []}, log, tasks, projectPath: repo, now: new Date(),
+  });
+  assert.deepEqual(result.unmerged, ["t1"]);
+  assert.ok(log.lines.includes("t1 не влита: ждёт человека"));
+  assert.equal(sh(repo, "rev-parse", "task/t1").trim(), branchSha);
+  assert.equal(sh(repo, "rev-parse", "HEAD").trim(), headSha);
+  assert.deepEqual(listik.calls.needsOwner, []);
+  assert.deepEqual(listik.calls.answer, []);
+  assert.deepEqual(listik.calls.comment, []);
+  assert.deepEqual(listik.calls.set, []);
+});
+
+suite("барьер: жёсткий вопрос закрыт ответом, мягкий открыт — влита", async () => {
+  const repo = initRepo("swarm-barrier-repo-");
+  const tree = addWorktree(repo, "t1");
+  commitFile(tree, "a.txt", "a\n", "t1");
+  const tasks = [{id: "t1", status: "done", worktree: tree, branch: "task/t1", labels: ["port:1"], needs_owner: true}];
+  const listik = fakeListik({
+    t1: {id: "t1", comments: [
+      {kind: "question", text: "Какой формат?", created_at: "2026-01-01T00:00:00Z"},
+      {kind: "answer", text: "XML", created_at: "2026-01-01T00:10:00Z"},
+      {kind: "question", text: "Продолжать?\nпо умолчанию: да", created_at: "2026-01-01T00:20:00Z"},
+    ], write_scope: []},
+  });
+  const log = makeLog();
+  const result = await runBarrier({
+    listik, git, fs: nodeFs, config: {dryRun: false, project: "demo", logDir: tmpLogDir()},
+    swarmConfig: {integration: []}, log, tasks, projectPath: repo, now: new Date(),
+  });
+  assert.ok(result.merged.includes("t1"));
+  assert.deepEqual(result.unmerged, []);
+  assert.equal(listik.calls.answer.length, 0);
+});

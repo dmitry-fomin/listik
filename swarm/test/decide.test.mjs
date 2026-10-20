@@ -1122,3 +1122,80 @@ test("рой берёт только маршруты роя: пайплайн �
   assert.deepEqual(res.report.unscoped, []);
   assert.equal(res.report.blocked, 0);
 });
+
+// --- listik-vtw8: все открытые вопросы карточки ---
+
+test("openQuestions: все вопросы позже последнего ответа; без ts — открыт; ответ с тем же ts закрывает", async () => {
+  const {openQuestions} = await import("../decide.mjs");
+  const q = (ts, text = "q?") => ({kind: "question", ts, text});
+  const a = (ts) => ({kind: "answer", ts, text: "a"});
+  const t1 = "2026-01-01T00:00:00Z", t2 = "2026-01-01T00:10:00Z", t3 = "2026-01-01T00:20:00Z";
+  assert.deepEqual(openQuestions([]), []);
+  assert.deepEqual(openQuestions([a(t1)]), []);
+  assert.deepEqual(openQuestions([q(t2, "b"), q(t1, "a")]), [{ts: t1, text: "a"}, {ts: t2, text: "b"}]);
+  assert.deepEqual(openQuestions([q(t1, "old"), a(t2), q(t3, "new")]), [{ts: t3, text: "new"}]);
+  assert.deepEqual(openQuestions([q(t1, "same"), a(t1)]), []);
+  assert.deepEqual(openQuestions([q("junk", "no-ts"), a(t2)]), [{ts: "junk", text: "no-ts"}]);
+  assert.deepEqual(openQuestions([a(t1), q(null, "no-ts")]), [{ts: null, text: "no-ts"}]);
+  assert.deepEqual(openQuestions([q(t1, "q1"), a("junk")]), [{ts: t1, text: "q1"}]);
+  assert.deepEqual(openQuestions([{kind: "comment", ts: t3, text: "x"}, q(t1, "q1")]),
+    [{ts: t1, text: "q1"}]);
+});
+
+test("надзор: бегущая с жёстким вопросом раньше мягкого — restart/giveUp пусты", () => {
+  const now = new Date();
+  const t = runningTask("a", {
+    launched_at: minsAgo(now, 30), holder_at: minsAgo(now, 30), labels: ["port:5170"],
+    needs_owner: true,
+  });
+  const events = {a: [
+    {kind: "question", actor: "agent:fake", ts: minsAgo(now, 50), note: "Какой формат?"},
+    {kind: "question", actor: "agent:fake", ts: minsAgo(now, 40), note: SOFT_Q},
+  ]};
+  const res = decideRunning(t, {now, events, config: {...supConfig, timeoutMinutes: 20}});
+  assert.deepEqual(res.restart, []);
+  assert.deepEqual(res.giveUp, []);
+});
+
+test("dueDefaults: жёсткий вопрос раньше мягкого — пусто", () => {
+  const now = new Date();
+  const t = crashedSoft();
+  const events = {a: [
+    {kind: "question", actor: "agent:fake", ts: minsAgo(now, 50), note: "Какой формат?"},
+    {kind: "question", actor: "agent:fake", ts: minsAgo(now, 40), note: SOFT_Q},
+  ]};
+  assert.deepEqual(dueDefaults({tasks: [t], events, config: {...supConfig, questionTimeout: 30}, now}), []);
+});
+
+test("dueDefaults: два мягких вопроса — один элемент, line — дефолты через «; » по ts", () => {
+  const now = new Date();
+  const t = crashedSoft();
+  const events = {a: [
+    {kind: "question", actor: "agent:fake", ts: minsAgo(now, 50), note: SOFT_Q},
+    {kind: "question", actor: "agent:fake", ts: minsAgo(now, 40), note: "Делать?\nпо умолчанию: да"},
+  ]};
+  assert.deepEqual(dueDefaults({tasks: [t], events, config: {...supConfig, questionTimeout: 30}, now}),
+    [{id: "a", line: "JSON; да", minutes: 30}]);
+});
+
+test("dueDefaults: свежий мягкий вопрос перезапускает ожидание — таймаут от самого позднего, пусто", () => {
+  const now = new Date();
+  const t = crashedSoft();
+  const events = {a: [
+    {kind: "question", actor: "agent:fake", ts: minsAgo(now, 50), note: SOFT_Q},
+    {kind: "question", actor: "agent:fake", ts: minsAgo(now, 10), note: "Делать?\nпо умолчанию: да"},
+  ]};
+  assert.deepEqual(dueDefaults({tasks: [t], events, config: {...supConfig, questionTimeout: 30}, now}), []);
+});
+
+test("dueDefaults: жёсткий вопрос закрыт ответом, затем мягкий — элемент есть", () => {
+  const now = new Date();
+  const t = crashedSoft();
+  const events = {a: [
+    {kind: "question", actor: "agent:fake", ts: minsAgo(now, 60), note: "Какой формат?"},
+    {kind: "answer", actor: "dmitry", ts: minsAgo(now, 50), note: "XML"},
+    {kind: "question", actor: "agent:fake", ts: minsAgo(now, 40), note: SOFT_Q},
+  ]};
+  assert.deepEqual(dueDefaults({tasks: [t], events, config: {...supConfig, questionTimeout: 30}, now}),
+    [{id: "a", line: "JSON", minutes: 30}]);
+});

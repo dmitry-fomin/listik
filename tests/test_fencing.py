@@ -872,12 +872,17 @@ def snapshot(conn, task_id: str) -> dict:
     """Карточка и всё, что к ней привязано, — сравнивается до и после отказа."""
     def rows(sql: str, *params) -> list[dict]:
         return [dict(r) for r in conn.execute(sql, params).fetchall()]
+    # checked_at — служебная метка последней проверки файла: её двигает само чтение
+    # (context → index_document), так что в «не изменилось» она не входит.
+    documents = rows("SELECT * FROM documents WHERE task_id = ? ORDER BY rowid", task_id)
+    for doc in documents:
+        doc.pop("checked_at", None)
     return {
         "task": rows("SELECT * FROM tasks WHERE id = ?", task_id),
         "comments": rows("SELECT * FROM comments WHERE task_id = ? ORDER BY rowid", task_id),
         "deps": rows("SELECT * FROM deps WHERE issue_id = ? OR depends_on = ? ORDER BY rowid",
                      task_id, task_id),
-        "documents": rows("SELECT * FROM documents WHERE task_id = ? ORDER BY rowid", task_id),
+        "documents": documents,
     }
 
 

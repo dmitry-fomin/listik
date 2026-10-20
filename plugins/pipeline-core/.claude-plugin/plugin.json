@@ -1,7 +1,7 @@
 {
   "name": "pipeline-core",
   "displayName": "Pipeline core",
-  "version": "1.0.2",
+  "version": "1.0.3",
   "description": "Shared core of the pipeline-* presets: the stage protocol (references/pipeline-core.md), the pipeline agents (spec writers, critics, implementers, judges) and the opt-in hook that auto-approves their non-destructive commands. Preset plugins depend on it and read the core through its pipeline-core:core skill.",
   "userConfig": {
     "auto_approve_agents": {

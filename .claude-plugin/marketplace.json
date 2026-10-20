@@ -15,7 +15,7 @@
     {
       "name": "pipeline-core",
       "source": "./plugins/pipeline-core",
-      "version": "1.0.2",
+      "version": "1.0.3",
       "description": "Общее ядро конвейеров pipeline-*: протокол этапов, агенты конвейера и хук автоодобрения их команд; от него зависят плагины пресетов."
     },
     {

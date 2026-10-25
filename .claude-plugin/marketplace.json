@@ -37,6 +37,12 @@
       "description": "Пресеты конвейера только на Claude: high и xhigh — полный конвейер силами Claude на усилии high или xhigh."
     },
     {
+      "name": "listik-pipeline",
+      "source": "./plugins/listik-pipeline",
+      "version": "0.1.0",
+      "description": "Конвейер реализации: оркестратор — Claude Code, роли — локальные субагенты и внешние харнессы (pi, devin, codex, grok) по раскладке режима."
+    },
+    {
       "name": "dsh",
       "source": "./plugins/dsh",
       "version": "0.6.2",

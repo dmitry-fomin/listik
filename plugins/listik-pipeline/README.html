@@ -1,0 +1,1867 @@
+<!DOCTYPE html>
+<html lang="ru">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Пайплайн listik-pipeline — карта, роли, ответы</title>
+<style>
+/* OD-LAYOUT-PRIMITIVES v1 — structure only: display, flex/grid, overflow, wrapping, ratio, geometry.
+   Put this @layer first; product CSS outside the layer wins ordinary layout rules.
+   Native hidden and closed-dialog states take precedence over component display rules. */
+@layer od-layout {
+  [hidden]:not([hidden="until-found" i]) { display: none !important; }
+  dialog:not([open]) { display: none !important; }
+
+  :where(.od-stack,.od-row,.od-row-top,.od-cluster,.od-grid,.od-field,.od-stat,.od-cell,.od-tile) > :where(*) { min-width: 0; }
+
+  /* containers */
+  .od-stack   { display: flex; flex-direction: column; gap: var(--od-gap, 8px); }
+  .od-row     { display: flex; align-items: center; gap: var(--od-gap, 8px); }
+  .od-row-top { display: flex; align-items: flex-start; gap: var(--od-gap, 8px); }
+  .od-cluster { display: flex; flex-wrap: wrap; align-items: center; gap: var(--od-gap, 8px); }
+  .od-fill    { flex: 1 1 0; min-width: 0; }
+  .od-fixed   { flex: none; }
+  .od-grid    { display: grid; gap: var(--od-gap, 12px); grid-template-columns: repeat(var(--od-cols, 3), minmax(0, 1fr)); }
+
+  /* stacked information: each piece is its own line — never sibling inline spans */
+  .od-stat, .od-field, .od-cell { display: grid; gap: var(--od-gap, 2px); }
+  :where(.od-stat,.od-field,.od-cell) > :where(*) { display: block; }
+  .od-tile { display: grid; grid-template-rows: auto 1fr; }
+  :where(.od-tile) > :where(*) { display: block; }
+
+  .od-media { display: block; width: 100%; height: auto; aspect-ratio: var(--od-ratio, auto); }
+  .od-media-cover { object-fit: cover; }
+
+  .od-icon { display: inline-block; inline-size: var(--od-icon-size, 1em); block-size: var(--od-icon-size, 1em); flex: none; }
+
+  .od-truncate { display: block; max-width: 100%; overflow: hidden; white-space: nowrap; text-overflow: ellipsis; }
+  .od-clamp-2, .od-clamp-3 { display: -webkit-box; -webkit-box-orient: vertical; overflow: hidden; overflow-wrap: anywhere; }
+  .od-clamp-2 { -webkit-line-clamp: 2; }
+  .od-clamp-3 { -webkit-line-clamp: 3; }
+  .od-lines-2 { min-height: calc(2 * 1.4em); }
+  .od-nowrap  { white-space: nowrap; }
+  .od-keep    { word-break: keep-all; overflow-wrap: anywhere; }
+
+  .od-screen { display: grid; grid-template-rows: auto minmax(0, 1fr) auto; height: 100%; }
+  .od-scroll { overflow-y: auto; overscroll-behavior: contain; min-height: 0; }
+
+  .od-rail { display: flex; gap: var(--od-gap, 8px); overflow-x: auto; scroll-snap-type: x proximity; scrollbar-width: none;
+             padding-inline: var(--od-rail-pad, 16px); scroll-padding-inline: var(--od-rail-pad, 16px); }
+  .od-rail::-webkit-scrollbar { display: none; }
+  :where(.od-rail) > :where(*) { flex: none; scroll-snap-align: start; }
+  :where(.od-rail) > :where(:last-child) { margin-inline-end: var(--od-rail-pad, 16px); }
+
+  .od-spacer { flex: none; visibility: hidden; pointer-events: none; }
+  .od-touch  { min-width: 44px; min-height: 44px; }
+}
+:root [hidden]:where(:not([hidden="until-found" i])) { display: none; }
+/* /OD-LAYOUT-PRIMITIVES v1 */
+
+:root {
+  --paper: #EFF1F3;
+  --panel: #FFFFFF;
+  --ink: #12151A;
+  --ink-2: #3F4752;
+  --ink-3: #5D6672;
+  --rule: #CFD6DE;
+  --rule-2: #E2E7EC;
+  --accent: #1B4FD8;
+  --accent-soft: #E7EDFC;
+  --loop: #8A4B00;
+
+  --human: #4B5563;
+  --orch: #6D28D9;
+  --writer: #1D4ED8;
+  --critic: #0E7490;
+  --impl: #047857;
+  --lens: #B45309;
+  --judge: #BE123C;
+  --finish: #334155;
+
+  --sans: -apple-system, BlinkMacSystemFont, "Segoe UI", "Helvetica Neue", sans-serif;
+  --serif: "New York", "Iowan Old Style", Georgia, "Times New Roman", serif;
+  --mono: ui-monospace, "SF Mono", "JetBrains Mono", Menlo, Consolas, monospace;
+
+  --max: 1140px;
+}
+
+* { margin: 0; padding: 0; box-sizing: border-box; }
+
+html { scroll-behavior: smooth; }
+
+body {
+  font-family: var(--sans);
+  color: var(--ink);
+  line-height: 1.6;
+  background-color: var(--paper);
+  background-image:
+    linear-gradient(to right, rgba(18, 21, 26, .028) 1px, transparent 1px),
+    linear-gradient(to bottom, rgba(18, 21, 26, .028) 1px, transparent 1px);
+  background-size: 40px 40px;
+  padding: 40px 20px 72px;
+  -webkit-font-smoothing: antialiased;
+}
+
+.wrap { max-width: var(--max); margin: 0 auto; }
+
+code, pre, .mono { font-family: var(--mono); }
+
+a { color: inherit; }
+
+:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 2px;
+}
+
+/* ---------- header ---------- */
+
+header { padding-bottom: 4px; }
+
+.eyebrow {
+  font-family: var(--mono);
+  font-size: 10.5px;
+  letter-spacing: .16em;
+  text-transform: uppercase;
+  color: var(--ink-3);
+  display: flex;
+  align-items: center;
+  gap: 10px;
+}
+.eyebrow::after {
+  content: "";
+  flex: 1;
+  height: 1px;
+  background: var(--rule);
+}
+
+/* ---------- sections ---------- */
+
+section { margin-top: 46px; scroll-margin-top: 20px; }
+section[tabindex="-1"]:focus { outline: none; }
+
+.sec-head {
+  display: flex;
+  align-items: baseline;
+  gap: 14px;
+  flex-wrap: wrap;
+  padding-bottom: 10px;
+  border-bottom: 1px solid var(--rule);
+  margin-bottom: 18px;
+}
+.sec-num {
+  font-family: var(--mono);
+  font-size: 10.5px;
+  color: var(--ink-3);
+  letter-spacing: .12em;
+}
+.sec-head h2 {
+  font-family: var(--serif);
+  font-size: 24px;
+  font-weight: 500;
+  letter-spacing: -.01em;
+}
+.sec-hint {
+  margin-left: auto;
+  font-size: 12.5px;
+  color: var(--ink-3);
+}
+
+/* ---------- board ---------- */
+
+.board {
+  background: var(--panel);
+  border: 1px solid var(--rule);
+  border-radius: 8px;
+  padding: 20px 20px 16px;
+}
+
+.board-head {
+  display: grid;
+  gap: 6px;
+  padding-bottom: 14px;
+  border-bottom: 1px solid var(--rule-2);
+  margin-bottom: 16px;
+}
+.board-kicker {
+  font-family: var(--mono);
+  font-size: 9.5px;
+  letter-spacing: .14em;
+  text-transform: uppercase;
+  color: var(--ink-3);
+}
+.board-line {
+  font-size: 13.5px;
+  color: var(--ink-2);
+  max-width: 90ch;
+}
+.board-line code {
+  font-size: 11.5px;
+  background: #F4F5F7;
+  border: 1px solid var(--rule-2);
+  border-radius: 3px;
+  padding: 1px 5px;
+}
+
+.pill {
+  display: inline-block;
+  font-family: var(--mono);
+  font-size: .86em;
+  line-height: 1.4;
+  color: var(--ink);
+  background: #F4F5F7;
+  border: 1px solid var(--rule);
+  border-radius: 3px;
+  padding: 0 5px;
+  white-space: nowrap;
+}
+
+.modes {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 10px;
+  margin-bottom: 16px;
+}
+.mode {
+  border: 1px solid var(--rule-2);
+  border-radius: 5px;
+  background: #FBFCFD;
+  padding: 10px 12px 11px;
+  display: grid;
+  gap: 4px;
+  align-content: start;
+}
+.mode-tag {  font-family: var(--mono);
+  font-size: 9.5px;
+  letter-spacing: .12em;
+  text-transform: uppercase;
+  color: var(--ink-2);
+}
+.mode-flags {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px 12px;
+  font-family: var(--mono);
+  font-size: 11px;
+  color: var(--ink);
+}
+.flag { display: inline-flex; align-items: center; gap: 4px; }
+.flag svg { inline-size: 12px; block-size: 12px; color: var(--ink-3); }
+.mode p { font-size: 12px; line-height: 1.5; color: var(--ink-2); margin: 2px 0 0; }
+.mode p b { color: var(--ink); font-weight: 620; }
+
+.map {
+  display: flex;
+  align-items: flex-start;
+  gap: 8px;
+}
+
+.step {
+  flex: 1 1 0;
+  min-width: 0;
+  display: grid;
+  align-content: start;
+  gap: 8px;
+}
+
+.map-arrow {
+  flex: 0 0 22px;
+  margin-top: 42px;
+  display: grid;
+  place-items: center;
+  color: #8792A0;
+}
+
+.station {
+  display: grid;
+  gap: 5px;
+  align-content: start;
+  min-height: 88px;
+  text-align: left;
+  background: var(--panel);
+  border: 1px solid var(--rule);
+  border-radius: 5px;
+  padding: 12px 11px 11px;
+  font: inherit;
+  color: inherit;
+  cursor: pointer;
+  position: relative;
+  transition: border-color .18s ease, box-shadow .18s ease, transform .18s ease, opacity .18s ease;
+}
+.station::before {
+  content: "";
+  position: absolute;
+  top: -1px;
+  left: 10px;
+  width: 26px;
+  height: 2px;
+  background: var(--rc);
+  border-radius: 2px;
+}
+.station:hover {
+  border-color: var(--rc);
+  box-shadow: 0 1px 0 rgba(18, 21, 26, .05);
+  transform: translateY(-1px);
+}
+.station:active { transform: translateY(0); }
+
+.st-num {
+  display: block;
+  font-family: var(--mono);
+  font-size: 9.5px;
+  letter-spacing: .1em;
+  color: var(--rc);
+}
+.st-head {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  color: var(--rc);
+}
+.st-head svg { inline-size: 13px; block-size: 13px; }
+.st-name {
+  display: block;
+  font-size: 14.5px;
+  font-weight: 620;
+  letter-spacing: -.01em;
+  line-height: 1.25;
+}
+.st-who {
+  display: block;
+  font-family: var(--mono);
+  font-size: 9.5px;
+  color: var(--ink-3);
+  line-height: 1.35;
+  overflow-wrap: anywhere;
+}
+.st-reply[data-drawer] { cursor: pointer; }
+.st-reply[data-drawer]:hover { background: color-mix(in srgb, var(--rc) 14%, transparent); }
+.sw-chip[data-drawer] { cursor: pointer; }
+.sw-chip[data-drawer]:hover { border-color: var(--ink-3); color: var(--ink); }
+.st-reply {
+  display: block;
+  margin-top: 3px;
+  font-family: var(--mono);
+  font-size: 10px;
+  line-height: 1.4;
+  color: var(--rc);
+  background: color-mix(in srgb, var(--rc) 7%, transparent);
+  border: 1px solid color-mix(in srgb, var(--rc) 24%, transparent);
+  border-radius: 3px;
+  padding: 2px 5px;
+}
+.st-loop {
+  display: none;
+  font-family: var(--mono);
+  font-size: 10px;
+  color: var(--loop);
+  margin-top: 2px;
+}
+
+.sat {
+  position: relative;
+  display: grid;
+  gap: 2px;
+  text-align: left;
+  background: #FBFCFD;
+  border: 1px dashed #BFC7D1;
+  border-radius: 4px;
+  padding: 8px 9px;
+  font: inherit;
+  color: inherit;
+  cursor: pointer;
+  transition: border-color .18s ease, background .18s ease;
+}
+.sat::before {
+  content: "";
+  position: absolute;
+  top: -9px;
+  left: 14px;
+  height: 8px;
+  border-left: 1px dashed #BFC7D1;
+}
+.sat:hover { border-color: var(--sc, var(--critic)); background: #F7FBFC; }
+.sat-k {
+  font-family: var(--mono);
+  font-size: 9px;
+  letter-spacing: .08em;
+  text-transform: uppercase;
+  color: var(--sc, var(--critic));
+}
+.sat-head {
+  display: flex;
+  align-items: center;
+  gap: 5px;
+  color: var(--sc, var(--critic));
+}
+.sat-head svg { inline-size: 12px; block-size: 12px; }
+.sat-t {
+  font-size: 11.5px;
+  font-weight: 620;
+  line-height: 1.3;
+}
+.sat-d {
+  font-family: var(--mono);
+  font-size: 9.5px;
+  line-height: 1.4;
+  color: var(--ink-3);
+}
+
+/* return channel */
+
+.return {
+  margin-top: 20px;
+  padding-top: 12px;
+  border-top: 1px dashed var(--rule);
+}
+.return-cap {
+  font-family: var(--mono);
+  font-size: 9.5px;
+  letter-spacing: .12em;
+  text-transform: uppercase;
+  color: var(--ink-3);
+  margin-bottom: 8px;
+}
+.return-grid {
+  display: grid;
+  grid-template-columns: repeat(4, minmax(0, 1fr) 22px) minmax(0, 1fr);
+  gap: 7px 8px;
+}
+
+.lane {
+  position: relative;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  min-width: 0;
+  height: 26px;
+}
+.lane::before,
+.lane::after {
+  content: "";
+  position: absolute;
+  top: -8px;
+  height: 8px;
+  border-left: 1px dashed #AEB7C2;
+}
+.lane::before { left: 0; }
+.lane::after { right: 0; }
+.lane-wire {
+  flex: 1 1 0;
+  min-width: 12px;
+  height: 0;
+  border-top: 1px dashed #AEB7C2;
+}
+.lane-label {
+  font-family: var(--mono);
+  font-size: 10px;
+  line-height: 1.35;
+  color: var(--lc);
+  text-align: right;
+  overflow-wrap: anywhere;
+}
+.lane-arrow { color: var(--loop); }
+.lane-lens { grid-column: 5 / 8; }
+.lane-judge { grid-column: 5 / 8; }
+
+/* git lane */
+
+.git-lane {
+  display: grid;
+  grid-template-columns: repeat(4, minmax(0, 1fr) 22px) minmax(0, 1fr);
+  gap: 8px;
+  margin-top: 14px;
+  padding-top: 9px;
+  border-top: 1px solid var(--rule-2);
+}
+.git-mark {
+  font-family: var(--mono);
+  font-size: 9.5px;
+  letter-spacing: .02em;
+  color: var(--ink-3);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  border-left: 2px solid var(--rule);
+  padding-left: 5px;
+}
+.git-cap {
+  grid-column: 1 / 10;
+  font-family: var(--mono);
+  font-size: 9px;
+  letter-spacing: .1em;
+  text-transform: uppercase;
+  color: var(--ink-3);
+}
+.git-stack {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  min-width: 0;
+}
+
+/* scenario bar */
+
+.scenario {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 10px;
+  margin-top: 18px;
+  padding-top: 14px;
+  border-top: 1px solid var(--rule-2);
+}
+.seg {
+  display: inline-flex;
+  border: 1px solid var(--rule);
+  border-radius: 4px;
+  overflow: hidden;
+  background: var(--panel);
+}
+.seg button {
+  font: inherit;
+  font-family: var(--mono);
+  font-size: 10.5px;
+  letter-spacing: .02em;
+  color: var(--ink-2);
+  background: none;
+  border: 0;
+  padding: 6px 11px;
+  cursor: pointer;
+  transition: background .16s ease, color .16s ease;
+}
+.seg button + button { border-left: 1px solid var(--rule); }
+.seg button:hover { background: #F4F5F7; color: var(--ink); }
+.seg button[aria-pressed="true"] {
+  background: var(--ink);
+  color: #FFFFFF;
+}
+
+.path-note {
+  flex: 1 1 320px;
+  min-height: 34px;
+  font-size: 13px;
+  color: var(--ink-2);
+  line-height: 1.55;
+}
+.path-note b { color: var(--ink); font-weight: 620; }
+.path-note code { font-size: 11px; color: var(--ink); }
+
+.board[data-path="short"] .station[data-role="judge"] {
+  border-style: dashed;
+  background: #FBFCFD;
+}
+.board[data-path="short"] .return { display: none; }
+.board[data-path="short"] .st-loop { display: none; }
+.board[data-path="fix"] .station[data-role="lens"],
+.board[data-path="fix"] .station[data-role="judge"] { border-color: #A9B8DD; }
+
+.legend {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px 20px;
+  margin-top: 16px;
+  padding-top: 12px;
+  border-top: 1px solid var(--rule-2);
+  font-size: 11.5px;
+  color: var(--ink-3);
+}
+.legend > span { display: inline-flex; align-items: center; gap: 7px; }
+.legend .sw-solid { width: 22px; height: 0; border-top: 1.5px solid #8792A0; }
+.legend .sw-dash { width: 22px; height: 0; border-top: 1.5px dashed #AEB7C2; }
+.legend .sw-chip {
+  font-family: var(--mono);
+  font-size: 9.5px;
+  color: var(--ink-2);
+  border: 1px solid var(--rule);
+  border-radius: 3px;
+  padding: 1px 5px;
+}
+
+/* ---------- drawer ---------- */
+
+body.drawer-open { overflow: hidden; }
+
+.drawer {
+  position: fixed;
+  inset: 0 0 0 auto;
+  margin: 0;
+  width: min(440px, 100%);
+  max-width: 100%;
+  height: 100dvh;
+  max-height: 100dvh;
+  padding: 0;
+  border: 0;
+  border-left: 1px solid var(--rule);
+  background: var(--panel);
+  color: var(--ink);
+  display: grid;
+  grid-template-rows: auto minmax(0, 1fr);
+  box-shadow: -16px 0 40px rgba(18, 21, 26, .14);
+  animation: drawer-in .26s cubic-bezier(.22, .61, .36, 1);
+}
+.drawer.is-closing { animation: drawer-out .18s ease-in forwards; }
+.drawer::backdrop { background: rgba(18, 21, 26, .34); }
+
+@keyframes drawer-in {
+  from { transform: translateX(100%); }
+  to { transform: translateX(0); }
+}
+@keyframes drawer-out {
+  from { transform: translateX(0); }
+  to { transform: translateX(100%); }
+}
+
+.drawer-bar {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  padding: 12px 16px;
+  border-bottom: 1px solid var(--rule-2);
+}
+.drawer-kicker {
+  font-family: var(--mono);
+  font-size: 9.5px;
+  letter-spacing: .14em;
+  text-transform: uppercase;
+  color: var(--ink-3);
+}
+.drawer-close {
+  width: 34px;
+  height: 34px;
+  display: grid;
+  place-items: center;
+  background: var(--panel);
+  border: 1px solid var(--rule);
+  border-radius: 4px;
+  color: var(--ink-2);
+  cursor: pointer;
+  transition: border-color .16s ease, color .16s ease, background .16s ease;
+}
+.drawer-close:hover { border-color: var(--ink-3); color: var(--ink); background: #F4F5F7; }
+
+.drawer-scroll {
+  overflow-y: auto;
+  overscroll-behavior: contain;
+  padding: 20px 18px 32px;
+}
+
+.drawer .role { border: 0; padding: 0; border-radius: 0; }
+.drawer .role::before { display: none; }
+.drawer .role .role-name { font-size: 24px; }
+.drawer .role .role-note { font-size: 14px; }
+.drawer .role .role-meta { margin-top: 14px; }
+.drawer .role details { margin-top: 14px; }
+.drawer .role .role-reply { white-space: normal; }
+
+.drawer-final .finish-grid { grid-template-columns: minmax(0, 1fr); gap: 18px; }
+.drawer-final .panel { border: 0; padding: 0; border-radius: 0; }
+.drawer-final .panel h3 { font-size: 14px; }
+.drawer-final .panel + .panel { border-top: 1px solid var(--rule-2); padding-top: 16px; }
+
+/* ---------- roles ---------- */
+
+.role {
+  background: var(--panel);
+  border: 1px solid var(--rule);
+  border-radius: 6px;
+  padding: 16px 16px 14px;
+  position: relative;
+  scroll-margin-top: 24px;
+  transition: border-color .2s ease, box-shadow .2s ease;
+}
+.role::before {
+  content: "";
+  position: absolute;
+  top: -1px;
+  left: 16px;
+  width: 30px;
+  height: 2px;
+  background: var(--rc);
+}
+
+.role-top {
+  display: flex;
+  align-items: center;
+  gap: 9px;
+  margin-bottom: 6px;
+}
+.role-mark {
+  width: 8px;
+  height: 8px;
+  background: var(--rc);
+  border-radius: 1px;
+  flex: none;
+}
+.role-name {
+  font-family: var(--serif);
+  font-size: 19px;
+  font-weight: 500;
+  letter-spacing: -.01em;
+}
+.role-reply {
+  margin-left: auto;
+  font-family: var(--mono);
+  font-size: 10px;
+  color: var(--rc);
+  background: color-mix(in srgb, var(--rc) 7%, transparent);
+  border: 1px solid color-mix(in srgb, var(--rc) 24%, transparent);
+  border-radius: 3px;
+  padding: 2px 6px;
+  white-space: nowrap;
+}
+
+.role-meta { display: grid; gap: 4px; margin: 10px 0 12px; }
+.meta-row {
+  display: grid;
+  grid-template-columns: 50px minmax(0, 1fr);
+  gap: 8px;
+  align-items: baseline;
+}
+.meta-k {
+  font-family: var(--mono);
+  font-size: 9px;
+  letter-spacing: .08em;
+  text-transform: uppercase;
+  color: var(--ink-3);
+}
+.meta-v {
+  font-family: var(--mono);
+  font-size: 11px;
+  line-height: 1.45;
+  color: var(--ink-2);
+  overflow-wrap: anywhere;
+}
+.meta-v .sep { color: #9AA3AE; }
+
+.role-note {
+  font-size: 13.5px;
+  color: var(--ink-2);
+  margin-bottom: 10px;
+}
+.role-note b { color: var(--ink); font-weight: 620; }
+
+details {
+  border-top: 1px solid var(--rule-2);
+  padding-top: 9px;
+}
+details summary {
+  list-style: none;
+  cursor: pointer;
+  display: flex;
+  align-items: center;
+  gap: 7px;
+  font-family: var(--mono);
+  font-size: 10px;
+  letter-spacing: .08em;
+  text-transform: uppercase;
+  color: var(--ink-3);
+  min-height: 24px;
+}
+details summary::-webkit-details-marker { display: none; }
+details summary::marker { content: ""; }
+details summary:hover { color: var(--ink); }
+details[open] summary { color: var(--ink-2); }
+details summary .chev { transition: transform .18s ease; }
+details[open] summary .chev { transform: rotate(90deg); }
+
+.details-body { display: grid; gap: 10px; padding-top: 9px; }
+
+pre {
+  font-size: 11px;
+  line-height: 1.65;
+  background: #F6F7F8;
+  border: 1px solid var(--rule-2);
+  border-radius: 4px;
+  padding: 10px 11px;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+  color: #262D36;
+}
+
+ul.plain { list-style: none; display: grid; gap: 5px; }
+ul.plain li {
+  position: relative;
+  padding-left: 14px;
+  font-size: 13px;
+  color: var(--ink-2);
+}
+ul.plain li::before {
+  content: "";
+  position: absolute;
+  left: 2px;
+  top: 8px;
+  width: 4px;
+  height: 1px;
+  background: var(--rc, var(--ink-3));
+}
+ul.plain li b { color: var(--ink); font-weight: 620; }
+ul.plain li code {
+  font-size: 10.5px;
+  background: #F4F5F7;
+  border: 1px solid var(--rule-2);
+  border-radius: 3px;
+  padding: 0 4px;
+}
+
+.mini-cap {
+  font-family: var(--mono);
+  font-size: 9px;
+  letter-spacing: .1em;
+  text-transform: uppercase;
+  color: var(--ink-3);
+  margin-bottom: 5px;
+}
+
+/* ---------- answers drawer ---------- */
+
+.drawer-doc h2 {
+  font-family: var(--serif);
+  font-size: 24px;
+  line-height: 1.2;
+  font-weight: 600;
+  letter-spacing: -.01em;
+  margin: 0 0 6px;
+}
+.doc-lead {
+  margin: 0 0 16px;
+  font-size: 13.5px;
+  line-height: 1.55;
+  color: var(--ink-2);
+}
+.answer-list { display: grid; gap: 8px; }
+.answer-item {
+  background: var(--panel);
+  border: 1px solid var(--rule);
+  border-left: 2px solid var(--rc);
+  border-radius: 4px;
+  padding: 10px 12px 11px;
+}
+.answer-head { display: flex; align-items: baseline; gap: 8px; flex-wrap: wrap; }
+.answer-role {
+  font-family: var(--mono);
+  font-size: 9px;
+  letter-spacing: .12em;
+  text-transform: uppercase;
+  color: var(--rc);
+}
+.answer-code {
+  font-size: 11.5px;
+  color: var(--ink);
+  background: #F4F5F7;
+  border: 1px solid var(--rule-2);
+  border-radius: 3px;
+  padding: 1px 5px;
+}
+.answer-verdict {
+  margin-left: auto;
+  font-family: var(--mono);
+  font-size: 9px;
+  letter-spacing: .1em;
+  color: var(--ink-2);
+  border: 1px solid var(--rule);
+  border-radius: 3px;
+  padding: 1px 5px;
+}
+.answer-mean { margin: 6px 0 0; font-size: 13px; line-height: 1.45; color: var(--ink); }
+.answer-next { margin: 5px 0 0; font-size: 11.5px; line-height: 1.45; color: var(--ink-3); }
+.doc-foot {
+  margin: 14px 0 0;
+  padding-top: 12px;
+  border-top: 1px solid var(--rule-2);
+  font-size: 11.5px;
+  line-height: 1.5;
+  color: var(--ink-3);
+}
+
+.callout {
+  display: flex;
+  gap: 10px;
+  align-items: flex-start;
+  border: 1px solid var(--rule);
+  border-radius: 4px;
+  background: var(--panel);
+  padding: 11px 13px;
+  font-size: 13.5px;
+  color: var(--ink-2);
+  margin-bottom: 12px;
+}
+.callout svg { color: var(--accent); margin-top: 3px; }
+.callout b { color: var(--ink); font-weight: 620; }
+
+/* ---------- finish ---------- */
+
+.finish-grid {
+  display: grid;
+  grid-template-columns: 1fr 1.05fr;
+  gap: 14px;
+}
+.panel {
+  background: var(--panel);
+  border: 1px solid var(--rule);
+  border-radius: 6px;
+  padding: 15px 16px;
+}
+.panel h3 {
+  font-size: 13px;
+  font-weight: 650;
+  letter-spacing: -.005em;
+  margin-bottom: 9px;
+}
+.codebox { position: relative; }
+.codebox pre { padding-right: 74px; }
+.copy {
+  position: absolute;
+  top: 6px;
+  right: 6px;
+  font-family: var(--mono);
+  font-size: 9px;
+  letter-spacing: .06em;
+  text-transform: uppercase;
+  color: var(--ink-3);
+  background: var(--panel);
+  border: 1px solid var(--rule);
+  border-radius: 3px;
+  padding: 3px 7px;
+  cursor: pointer;
+  transition: color .16s ease, border-color .16s ease;
+}
+.copy:hover { color: var(--ink); border-color: var(--ink-3); }
+
+/* ---------- layers ---------- */
+
+.layers {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(250px, 1fr));
+  gap: 12px;
+}
+.layer {
+  background: var(--panel);
+  border: 1px solid var(--rule);
+  border-radius: 6px;
+  padding: 15px 16px;
+}
+.layer-tag {
+  display: inline-block;
+  font-family: var(--mono);
+  font-size: 9px;
+  letter-spacing: .08em;
+  text-transform: uppercase;
+  border-radius: 3px;
+  padding: 2px 6px;
+  margin-bottom: 9px;
+}
+.layer.now .layer-tag { color: #045742; background: #E4F4EE; }
+.layer.next .layer-tag { color: #7A4A00; background: #FBF0DC; }
+.layer.later .layer-tag { color: var(--ink-3); background: #F1F3F5; }
+.layer h3 {
+  font-family: var(--serif);
+  font-size: 17px;
+  font-weight: 500;
+  margin-bottom: 7px;
+}
+.layer ul { list-style: none; display: grid; gap: 5px; }
+.layer li {
+  position: relative;
+  padding-left: 12px;
+  font-size: 13px;
+  color: var(--ink-2);
+}
+.layer li::before {
+  content: "";
+  position: absolute;
+  left: 2px;
+  top: 9px;
+  width: 4px;
+  height: 1px;
+  background: #9AA3AE;
+}
+
+footer {
+  margin-top: 52px;
+  padding-top: 14px;
+  border-top: 1px solid var(--rule);
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: space-between;
+  gap: 8px 16px;
+  font-family: var(--mono);
+  font-size: 10.5px;
+  color: var(--ink-3);
+}
+
+/* ---------- responsive ---------- */
+
+@media (max-width: 980px) {
+  .map { flex-direction: column; gap: 0; }
+  .step { width: 100%; }
+  .map-arrow {
+    flex: none;
+    width: 100%;
+    height: 22px;
+    margin: 2px 0;
+  }
+  .map-arrow svg { transform: rotate(90deg); }
+  .station { padding: 13px 14px; }
+  .st-name { font-size: 16px; }
+  .st-who { font-size: 10.5px; }
+  .st-reply { font-size: 10.5px; justify-self: start; }
+  .st-loop { display: block; }
+  .sat { justify-self: start; min-width: min(100%, 300px); }
+  .return { display: none; }
+  .git-lane { display: none; }
+  .finish-grid { grid-template-columns: minmax(0, 1fr); }
+}
+
+@media (max-width: 720px) {
+  body { padding: 24px 14px 56px; }
+  .drawer { width: 100%; border-left: 0; box-shadow: none; }
+  .board { padding: 14px 12px 12px; }
+  .sec-hint { margin-left: 0; flex-basis: 100%; }
+  .scenario { gap: 8px; }
+  .path-note { flex-basis: 100%; }
+  .modes { grid-template-columns: minmax(0, 1fr); }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  html { scroll-behavior: auto; }
+  *, *::before, *::after {
+    animation-duration: .01ms !important;
+    transition-duration: .01ms !important;
+  }
+}
+</style>
+</head>
+<body>
+<div class="wrap">
+
+  <header>
+    <div class="eyebrow">listik-pipeline · схема работы</div>
+  </header>
+
+  <!-- ================= КАРТА ================= -->
+  <section id="map">
+    <div class="sec-head">
+      <span class="sec-num">01</span>
+      <h2>Карта</h2>
+      <span class="sec-hint">клик по станции открывает досье роли, клик по статусу — словарь</span>
+    </div>
+
+    <div class="board" data-path="fix" id="board">
+
+      <div class="board-head">
+        <span class="board-kicker">дорожка запуска</span>
+        <p class="board-line">
+          Человек вызывает скил режима — <code>/listik-pipeline:high</code>, <code>/listik-pipeline:nano</code>, … —
+          оркестратор это сессия Claude Code, роли — локальные субагенты и внешние харнессы
+          по раскладке режима.
+        </p>
+      </div>
+
+      <div class="modes" role="group" aria-label="Режимы критиков">
+        <div class="mode">
+          <span class="mode-tag">с линзами</span>
+          <div class="mode-flags">
+            <span class="flag"><svg class="od-icon" viewBox="0 0 16 16" aria-hidden="true"><path d="M2.5 13.5v-3M6.5 13.5v-6M10.5 13.5v-9M14.5 13.5V1.5" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round"/></svg>xhigh</span>
+            <span class="flag"><svg class="od-icon" viewBox="0 0 16 16" aria-hidden="true"><path d="M4.5 13.5v-3.5M9 13.5v-7.5M13.5 13.5v-11.5" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round"/></svg>high</span>
+            <span class="flag"><svg class="od-icon" viewBox="0 0 16 16" aria-hidden="true"><path d="M6.5 13.5v-4.5M11.5 13.5v-10" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round"/></svg>medium</span>
+            <span class="flag"><svg class="od-icon" viewBox="0 0 16 16" aria-hidden="true"><path d="M9 13.5v-6" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round"/></svg>low</span>
+          </div>
+          <p>Полный цикл: ТЗ → критика → код → линза → судья, каждый этап на своём харнессе
+          по <code>references/lineups.md</code>. Судья — если находки, <code>RISK: YES</code>
+          или когда линза нашла <span class="pill">FIXES</span>.</p>
+        </div>
+        <div class="mode">
+          <span class="mode-tag">без линз</span>
+          <div class="mode-flags">
+            <span class="flag"><svg class="od-icon" viewBox="0 0 16 16" aria-hidden="true"><path d="M9 13.5v-6" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round"/></svg>xlow</span>
+            <span class="flag"><svg class="od-icon" viewBox="0 0 16 16" aria-hidden="true"><path d="M9 13.5v-3.5" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round"/></svg>nano</span>
+          </div>
+          <p>Без ТЗ, критики и линз: сразу код, дальше судья — он единственная проверка. Флаг <code>RISK:</code> не читается. Третий заход без <span class="pill">PASS</span> — стоп, вопрос человеку.</p>
+        </div>
+      </div>
+
+      <div class="map" role="group" aria-label="Последовательность шагов пайплайна">
+
+        <div class="step">
+          <button class="station" data-role="orchestrator" aria-label="Запуск: досье оркестратора" style="--rc:var(--human)">
+            <span class="st-head">
+              <svg class="od-icon" viewBox="0 0 16 16" aria-hidden="true"><circle cx="8" cy="8" r="6.2" fill="none" stroke="currentColor" stroke-width="1.4"/><path d="M6.7 5.6v4.8L10.9 8z" fill="none" stroke="currentColor" stroke-width="1.4" stroke-linejoin="round"/></svg>
+              <span class="st-num">00</span>
+            </span>
+            <span class="st-name">Запуск</span>
+            <span class="st-who">человек</span>
+            <span class="st-reply">описание / карточка</span>
+          </button>
+        </div>
+
+        <span class="map-arrow" aria-hidden="true">
+          <svg class="od-icon" style="--od-icon-size:14px" viewBox="0 0 16 16"><path d="M2.5 8h11M9.5 4l4 4-4 4" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"/></svg>
+        </span>
+
+        <div class="step">
+          <button class="station" data-role="writer" aria-label="ТЗ: досье писателя" style="--rc:var(--writer)">
+            <span class="st-head">
+              <svg class="od-icon" viewBox="0 0 16 16" aria-hidden="true"><path d="M4 1.8h5.2L12.8 5.4v8.8H4z" fill="none" stroke="currentColor" stroke-width="1.4" stroke-linejoin="round"/><path d="M9.2 1.8v3.6h3.6M6.2 8.2h3.6M6.2 10.6h3.6" fill="none" stroke="currentColor" stroke-width="1.4" stroke-linecap="round"/></svg>
+              <span class="st-num">01</span>
+            </span>
+            <span class="st-name">ТЗ</span>
+            <span class="st-who">Claude</span>
+            <span class="st-reply" data-drawer="answers" title="открыть словарь ответов">READY</span>
+          </button>
+          <button class="sat" data-role="critic" aria-label="Критика ТЗ: досье критика">
+            <span class="sat-head">
+              <svg class="od-icon" viewBox="0 0 16 16" aria-hidden="true"><circle cx="7" cy="7" r="4.2" fill="none" stroke="currentColor" stroke-width="1.4"/><path d="m10.3 10.3 3.2 3.2" fill="none" stroke="currentColor" stroke-width="1.4" stroke-linecap="round"/></svg>
+              <span class="sat-k">02 · подшаг</span>
+            </span>
+            <span class="sat-t">Критика ТЗ</span>
+            <span class="sat-d">Claude · pi · зовёт писатель, один заход</span>
+          </button>
+        </div>
+
+        <span class="map-arrow" aria-hidden="true">
+          <svg class="od-icon" style="--od-icon-size:14px" viewBox="0 0 16 16"><path d="M2.5 8h11M9.5 4l4 4-4 4" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"/></svg>
+        </span>
+
+        <div class="step">
+          <button class="station" data-role="implementer" aria-label="Код: досье исполнителя" style="--rc:var(--impl)">
+            <span class="st-head">
+              <svg class="od-icon" viewBox="0 0 16 16" aria-hidden="true"><path d="m5.5 4.5-3.5 3.5 3.5 3.5M10.5 4.5l3.5 3.5-3.5 3.5" fill="none" stroke="currentColor" stroke-width="1.4" stroke-linecap="round" stroke-linejoin="round"/></svg>
+              <span class="st-num">03</span>
+            </span>
+            <span class="st-name">Код</span>
+            <span class="st-who">Claude · devin</span>
+            <span class="st-reply">DONE</span>
+          </button>
+        </div>
+
+        <span class="map-arrow" aria-hidden="true">
+          <svg class="od-icon" style="--od-icon-size:14px" viewBox="0 0 16 16"><path d="M2.5 8h11M9.5 4l4 4-4 4" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"/></svg>
+        </span>
+
+        <div class="step">
+          <button class="station" data-role="lens" aria-label="Линза: досье линзы" style="--rc:var(--lens)">
+            <span class="st-head">
+              <svg class="od-icon" viewBox="0 0 16 16" aria-hidden="true"><path d="M1.8 8S4.3 3.8 8 3.8 14.2 8 14.2 8 11.7 12.2 8 12.2 1.8 8 1.8 8z" fill="none" stroke="currentColor" stroke-width="1.4" stroke-linejoin="round"/><circle cx="8" cy="8" r="1.9" fill="none" stroke="currentColor" stroke-width="1.4"/></svg>
+              <span class="st-num">04</span>
+            </span>
+            <span class="st-name">Линза</span>
+            <span class="st-who">pi · Claude</span>
+            <span class="st-reply" data-drawer="answers" title="открыть словарь ответов">PASS / FIXES</span>
+            <span class="st-loop">↺ <span class="pill">FIXES</span> → к 03, та же сессия; после правки — судья, линза повторно не зовётся</span>
+          </button>
+          <button class="sat sat-judge" data-role="judge" aria-label="Судья: досье судьи" style="--sc:var(--judge); --rc:var(--judge)">
+            <span class="sat-head">
+              <svg class="od-icon" viewBox="0 0 16 16" aria-hidden="true"><path d="M8 2.5v10.8M5.4 13.3h5.2M2.5 5h11M2.5 5 1.1 8.7m1.4-3.7 1.4 3.7M1.1 8.7a1.4 1.4 0 0 0 2.8 0M13.5 5l-1.4 3.7m1.4-3.7 1.4 3.7M12.1 8.7a1.4 1.4 0 0 0 2.8 0" fill="none" stroke="currentColor" stroke-width="1.3" stroke-linecap="round" stroke-linejoin="round"/></svg>
+              <span class="sat-k">04 · grok</span>
+            </span>
+            <span class="sat-t">Судья</span>
+            <span class="sat-d">grok · codex в nano · при находках линзы или «RISK: YES»; коммитит оркестратор</span>
+            <span class="st-reply">PASS / FIXES</span>
+            <span class="st-loop">↺ <span class="pill">FIXES</span> → к 03, затем снова судья; третий без <span class="pill">PASS</span> — стоп, вопрос человеку</span>
+          </button>
+        </div>
+
+        <span class="map-arrow" aria-hidden="true">
+          <svg class="od-icon" style="--od-icon-size:14px" viewBox="0 0 16 16"><path d="M2.5 8h11M9.5 4l4 4-4 4" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"/></svg>
+        </span>
+
+        <div class="step">
+          <button class="station" data-role="finish" aria-label="Коммит: кто коммитит" style="--rc:var(--finish)">
+            <span class="st-head">
+              <svg class="od-icon" viewBox="0 0 16 16" aria-hidden="true"><path d="M1.8 8h3.4M10.8 8h3.4" fill="none" stroke="currentColor" stroke-width="1.4" stroke-linecap="round"/><circle cx="8" cy="8" r="2.6" fill="none" stroke="currentColor" stroke-width="1.4"/></svg>
+              <span class="st-num">05</span>
+            </span>
+            <span class="st-name">Закрытие</span>
+            <span class="st-who">оркестратор</span>
+            <span class="st-reply">done · worktree удалён</span>
+          </button>
+        </div>
+
+      </div>
+
+      <div class="return">
+        <div class="return-cap">петли возврата · всегда в ту же сессию исполнителя</div>
+        <div class="return-grid">
+          <div class="lane lane-lens" style="--lc:var(--lens)">
+            <svg class="od-icon lane-arrow" style="--od-icon-size:14px" viewBox="0 0 16 16" aria-hidden="true"><path d="M13.5 8h-11M6.5 4l-4 4 4 4" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"/></svg>
+            <span class="lane-wire"></span>
+            <span class="lane-label">↺ линза <span class="pill">FIXES</span> → та же сессия</span>
+          </div>
+          <div class="lane lane-judge" style="--lc:var(--judge)">
+            <svg class="od-icon lane-arrow" style="--od-icon-size:14px" viewBox="0 0 16 16" aria-hidden="true"><path d="M13.5 8h-11M6.5 4l-4 4 4 4" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"/></svg>
+            <span class="lane-wire"></span>
+            <span class="lane-label">↺ судья <span class="pill">FIXES</span> → та же сессия → снова судья</span>
+          </div>
+        </div>
+      </div>
+
+      <div class="git-lane" role="group" aria-label="Вызовы Listik по шагам">
+        <span class="git-cap">нижняя строка — что уходит в карточку Listik</span>
+        <span class="git-mark" style="grid-column:1">claim · кому выдали</span>
+        <div class="git-stack" style="grid-column:3">
+          <span class="git-mark">stage s1-spec</span>
+          <span class="git-mark">stage s2-review</span>
+        </div>
+        <span class="git-mark" style="grid-column:5">stage s3-impl</span>
+        <span class="git-mark" style="grid-column:7">stage s4-judge</span>
+        <span class="git-mark" style="grid-column:9">done</span>
+      </div>
+
+      <div class="scenario">
+        <div class="seg" role="group" aria-label="Сценарий прохождения">
+          <button type="button" data-path="short" aria-pressed="false">линза чиста</button>
+          <button type="button" data-path="fix" aria-pressed="true">находки линзы</button>
+        </div>
+        <p class="path-note" id="pathNote" aria-live="polite">
+          Находки линзы — или <b><code>RISK: YES</code></b> от писателя — приёмка судьёй;
+          иначе судья не запускается — коммит и закрытие у оркестратора.
+          <span class="pill">FIXES</span> → возврат в ту же сессию
+          исполнителя.
+        </p>
+      </div>
+
+      <div class="legend">
+        <span><span class="sw-solid" aria-hidden="true"></span> передача управления</span>
+        <span><span class="sw-dash" aria-hidden="true"></span> возврат в ту же сессию</span>
+        <span><span class="sw-chip" data-drawer="answers" title="открыть словарь ответов">PASS</span> статус ответа · клик открывает словарь</span>
+      </div>
+
+    </div>
+  </section>
+
+  <!-- ================= ФИНАЛ ================= -->
+  <section id="final" tabindex="-1">
+    <div class="sec-head">
+      <span class="sec-num">02</span>
+      <h2>Финал и карточка Listik</h2>
+      <span class="sec-hint">два пути к коммиту</span>
+    </div>
+
+    <div class="finish-grid">
+      <div class="panel">
+        <h3>Кто коммитит</h3>
+        <ul class="plain">
+          <li>Коммит всегда у оркестратора: явные пути, сообщение по ТЗ, <code>listik-pipeline: &lt;id&gt;</code>, пути из <code>git status --porcelain</code> — и после <span class="pill">PASS</span> судьи, и когда судьи не было</li>
+          <li>Закрытие — всегда оркестратор: <code>done</code>, удаление worktree (и при стопе на <code>needs-owner</code>)</li>
+          <li>Worktree создаёт оркестратор после <code>READY</code>: <code>listik worktree &lt;id&gt;</code> — дерево <code>.worktrees/&lt;id&gt;</code> на ветке <code>task/&lt;id&gt;</code>, путь и ветка пишутся в карточку; коммит и вливание ветки в основную — тоже оркестратор. На стопе по <code>needs-owner</code> дерево не удаляется: там ещё будут править</li>
+          <li>Судья не запускается, если линза чиста и <code>RISK: NO</code>; линза дала <span class="pill">FIXES</span> хотя бы раз — судья зовётся</li>
+          <li>Пункт чек-листа блокирует, только если назван <code>file:line</code> или покрыт командой проверки</li>
+          <li>В <code>xlow</code> и <code>nano</code> линзы нет: судья — единственная проверка, поэтому он зовётся всегда</li>
+          <li><span class="pill">FIXES</span> → возврат в ту же сессию исполнителя; других путей к коммиту нет</li>
+        </ul>
+        <h3 style="margin-top:14px">Если работа шла по карточке</h3>
+        <ul class="plain">
+          <li><code>claim</code> в начале, <code>heartbeat</code> каждые 10–15 минут</li>
+          <li>Пишет тот, кто взял: оркестратор выдаёт карточку, дальше <code>claim</code>, журнал и вердикт — того, кому выдали</li>
+          <li><code>comment -k journal</code> после каждого этапа</li>
+          <li><code>stage</code> двигает карточку: <code>s1-spec</code> — ТЗ, <code>s2-review</code> — критика, <code>s3-impl</code> — код, <code>s4-judge</code> — линза и судья</li>
+          <li><code>done</code> в конце</li>
+        </ul>
+      </div>
+
+      <div class="panel">
+        <h3>Последовательность вызовов</h3>
+        <div class="codebox">
+          <button class="copy" type="button" data-copy>копировать</button>
+          <pre id="listikSeq">listik stage &lt;id&gt; --to s1-spec --holder &lt;harness&gt;  <span style="color:#667080"># ТЗ</span>
+listik stage &lt;id&gt; --to s2-review                   <span style="color:#667080"># критика, своя сессия</span>
+listik stage &lt;id&gt; --to s3-impl --holder &lt;harness&gt;  <span style="color:#667080"># код</span>
+listik stage &lt;id&gt; --to s4-judge --holder &lt;harness&gt; <span style="color:#667080"># приёмка</span>
+listik done &lt;id&gt; -r "коммит &lt;hash7&gt;"              <span style="color:#667080"># закрытие</span>
+
+<span style="color:#667080"># к каждой команде: --actor agent:&lt;harness&gt; --harness &lt;harness&gt;</span>
+<span style="color:#667080"># claim, heartbeat, journal и вердикт пишет тот, кому карточку выдали</span></pre>
+        </div>
+      </div>
+    </div>
+  </section>
+
+  <!-- ================= СЛОИ ================= -->
+  <section id="layers">
+    <div class="sec-head">
+      <span class="sec-num">03</span>
+      <h2>Слои</h2>
+      <span class="sec-hint">что уже есть и что добавится</span>
+    </div>
+
+    <div class="layers">
+      <div class="layer now">
+        <span class="layer-tag">слой 0 · есть</span>
+        <h3>Маршрутизация</h3>
+        <ul>
+          <li>Раскладка режимов: роль → харнесс, модель, усилие, права</li>
+          <li>Порядок ролей и переходы</li>
+          <li>Решения <span class="pill">READY</span> / <span class="pill">PASS</span> / <span class="pill">FIXES</span></li>
+          <li>Словарь статусов и флаг риска — <code>references/statuses.md</code>; команда проверки, worktree</li>
+          <li>Каждая роль — на своём харнессе: локальный субагент или делегат <code>codex</code>/<code>pi</code>/<code>devin</code></li>
+          <li>Базовый промпт критики: три вопроса</li>
+        </ul>
+      </div>
+      <div class="layer next">
+        <span class="layer-tag">слой 1 · далее</span>
+        <h3>Параметризация</h3>
+        <ul>
+          <li>Выбор моделей аргументами</li>
+          <li>Передача параметров между скилами</li>
+          <li>Формат ответов ролей</li>
+          <li>Ретрай и отмена при сбое канала</li>
+        </ul>
+      </div>
+      <div class="layer later">
+        <span class="layer-tag">слой 2 · потом</span>
+        <h3>Операционные детали</h3>
+        <ul>
+          <li>Предполётная проверка ролей</li>
+          <li>Стоп-факторы: модель недоступна</li>
+          <li>Грабли и окно ожидания</li>
+          <li>Журналирование и правила git</li>
+        </ul>
+      </div>
+    </div>
+  </section>
+
+</div>
+
+  <!-- ================= ДОСЬЕ РОЛЕЙ · шаблоны для панели справа ================= -->
+    <template id="tpl-role-orchestrator">
+      <article class="role" style="--rc:var(--orch)">
+              <div class="role-top">
+                <span class="role-mark" aria-hidden="true"></span>
+                <h3 class="role-name">Оркестратор</h3>
+                <span class="role-reply">маршрут</span>
+              </div>
+              <div class="role-meta">
+                <div class="meta-row"><span class="meta-k">скил</span><span class="meta-v">listik-pipeline:&lt;режим&gt;</span></div>
+                <div class="meta-row"><span class="meta-k">агент</span><span class="meta-v">agents/orchestrator.md</span></div>
+                <div class="meta-row"><span class="meta-k">зовёт</span><span class="meta-v">человек</span></div>
+                <div class="meta-row"><span class="meta-k">умеет</span><span class="meta-v">Agent <span class="sep">·</span> Skill <span class="sep">·</span> Read <span class="sep">·</span> Bash</span></div>
+              </div>
+              <p class="role-note">
+                Не читает и не пересказывает ТЗ. Создаёт worktree после <code>READY</code>. В его тексте
+                нет моделей, имён проверяющих и слова «блокеры» — только маршрутизация.
+              </p>
+              <details>
+                <summary>
+                  <svg class="od-icon chev" style="--od-icon-size:11px" viewBox="0 0 16 16" aria-hidden="true"><path d="m6 3.5 4.5 4.5L6 12.5" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"/></svg>
+                  запуск и обязанности
+                </summary>
+                <div class="details-body">
+                  <div>
+                    <div class="mini-cap">команда</div>
+                    <pre>/listik-pipeline:high "Добавить экспорт в CSV"
+
+<span style="color:#667080"># с номером карточки:</span>
+/listik-pipeline:high listik-abc1
+
+<span style="color:#667080"># режим — именем скила запуска: xhigh / high / medium / low — с линзами,
+# xlow / nano — без ТЗ, критики и линз:</span>
+/listik-pipeline:nano "…"</pre>
+                  </div>
+                  <div>
+                    <div class="mini-cap">что делает</div>
+                    <ul class="plain">
+                      <li>Получил <code>listik-*</code> → выдаёт карточку по этапам (<code>stage --holder</code>): внешний харнесс берёт её сам (<code>claim</code>, <code>heartbeat</code>, журнал, вердикт), за локального субагента держит её и heartbeat'ит оркестратор</li>
+                      <li>Отдаёт писателю задачу как есть</li>
+                      <li>Идёт по словарю статусов: <span class="pill">READY</span> → <span class="pill">PASS</span> / <span class="pill">FIXES</span> (линза) → <span class="pill">PASS</span> (судья)</li>
+                      <li>Из ответа писателя читает <code>RISK: NO</code> или <code>RISK: YES — reason</code>; оба варианта через <code>|</code> — ответ негоден, переспрашивает строку</li>
+                      <li>После <code>READY</code> заводит worktree <code>listik worktree &lt;id&gt;</code> (ветка <code>task/&lt;id&gt;</code>, поля карточки заполняются)</li>
+                      <li>Линза чиста и <code>RISK: NO</code> → судья не запускается, коммитит сам</li>
+                      <li>Линза дала <span class="pill">FIXES</span> хотя бы раз или <code>RISK: YES</code> → судья; третий заход без <span class="pill">PASS</span> — стоп и вопрос человеку</li>
+                      <li>Коммитит всегда сам: пути из <code>git status --porcelain</code>, <code>listik-pipeline: &lt;id&gt;</code>, удаление worktree, закрытие задачи</li>
+                    </ul>
+                  </div>
+                </div>
+              </details>
+            </article>
+    </template>
+
+    <template id="tpl-role-writer">
+      <article class="role" style="--rc:var(--writer)">
+              <div class="role-top">
+                <span class="role-mark" aria-hidden="true"></span>
+                <h3 class="role-name">Писатель</h3>
+                <span class="role-reply">READY</span>
+              </div>
+              <div class="role-meta">
+                <div class="meta-row"><span class="meta-k">скил</span><span class="meta-v">listik-pipeline:writer</span></div>
+                <div class="meta-row"><span class="meta-k">агент</span><span class="meta-v">writer-&lt;суффикс&gt;</span></div>
+                <div class="meta-row"><span class="meta-k">зовёт</span><span class="meta-v">оркестратор</span></div>
+                <div class="meta-row"><span class="meta-k">умеет</span><span class="meta-v">Read <span class="sep">·</span> Write <span class="sep">·</span> Edit <span class="sep">·</span> Bash <span class="sep">·</span> Skill</span></div>
+              </div>
+              <p class="role-note">
+                Пишет <b>&lt;id&gt;.spec.md</b> и <b>&lt;id&gt;.checklist.md</b>, сам зовёт критиков
+                своей строки и решает, что из замечаний блокирующее.
+              </p>
+              <details>
+                <summary>
+                  <svg class="od-icon chev" style="--od-icon-size:11px" viewBox="0 0 16 16" aria-hidden="true"><path d="m6 3.5 4.5 4.5L6 12.5" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"/></svg>
+                  промпт, флаги, карточка
+                </summary>
+                <div class="details-body">
+                  <div>
+                    <div class="mini-cap">промпт роли</div>
+                    <pre>Пишешь ТЗ + чек-лист. Блокирующие замечания критиков правишь сам (замечания — от критиков, которых зовёшь ты). Остальное игнорируешь. ТЗ ведёшь ссылками, первой строкой — шаг.
+Оркестратору: READY и одна строка риска —
+
+RISK: NO
+
+или
+
+RISK: YES — &lt;reason in three words&gt;</pre>
+                  </div>
+                  <div>
+                    <div class="mini-cap">критика</div>
+                    <ul class="plain">
+                      <li><code>xhigh / high / medium / low</code> → критики из строки режима</li>
+                      <li><code>xlow / nano</code> → критики нет</li>
+                      <li>критиков зовёт писатель: всех сразу, один заход; спрашивает только то, что в теле роли критика</li>
+                    </ul>
+                  </div>
+                  <div>
+                    <div class="mini-cap">Listik</div>
+                    <ul class="plain">
+                      <li>первым делом <code>claim &lt;id&gt; --holder &lt;харнесс&gt; --actor agent:&lt;харнесс&gt; --harness &lt;харнесс&gt;</code>, потом <code>heartbeat</code></li>
+                      <li><code>comment &lt;id&gt; -k journal "READY · RISK: NO"</code></li>
+                      <li><code>stage</code> и <code>done</code> двигает оркестратор</li>
+                    </ul>
+                  </div>
+                </div>
+              </details>
+            </article>
+    </template>
+
+    <template id="tpl-role-critic">
+      <article class="role" style="--rc:var(--critic)">
+              <div class="role-top">
+                <span class="role-mark" aria-hidden="true"></span>
+                <h3 class="role-name">Критик</h3>
+                <span class="role-reply">замечания</span>
+              </div>
+              <div class="role-meta">
+                <div class="meta-row"><span class="meta-k">скил</span><span class="meta-v">нет — зовётся снаружи</span></div>
+                <div class="meta-row"><span class="meta-k">агент</span><span class="meta-v">critic-&lt;суффикс&gt; · в low — pi deepseek</span></div>
+                <div class="meta-row"><span class="meta-k">зовёт</span><span class="meta-v">писатель</span></div>
+                <div class="meta-row"><span class="meta-k">умеет</span><span class="meta-v">Read</span></div>
+              </div>
+              <p class="role-note">
+                Стадия 02 внутри шага 01: критиков зовёт писатель, и только на чтение.
+                Запреты: не править, не создавать, не запускать.
+              </p>
+              <details>
+                <summary>
+                  <svg class="od-icon chev" style="--od-icon-size:11px" viewBox="0 0 16 16" aria-hidden="true"><path d="m6 3.5 4.5 4.5L6 12.5" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"/></svg>
+                  три вопроса и формат ответа
+                </summary>
+                <div class="details-body">
+                  <pre>Рецензируешь ТЗ до реализации.
+Читай сам: шаг &lt;путь&gt;, ТЗ &lt;путь&gt;, чек-лист &lt;путь&gt;, код.
+
+## 1. Границы и ценность
+## 2. Сверка с кодом
+## 3. Проверяемость
+
+Нумерованный список или «нет».
+Замечание про код — со ссылкой path:line.
+До 700 слов, без вступления.</pre>
+                  <div>
+                    <div class="mini-cap">что спрашивает</div>
+                    <ul class="plain">
+                      <li>Служит ли каждое требование цели? Что сверх цели? Какие неверные реализации чек-лист пропустит?</li>
+                      <li>Верны ли утверждения о коде? Все потребители учтены? Все пути доставки названы?</li>
+                      <li>Каждый пункт проверяем эмпирически? Команды выполнимы? Чек-лист покрывает всё?</li>
+                    </ul>
+                  </div>
+                </div>
+              </details>
+            </article>
+    </template>
+
+    <template id="tpl-role-implementer">
+      <article class="role" style="--rc:var(--impl)">
+              <div class="role-top">
+                <span class="role-mark" aria-hidden="true"></span>
+                <h3 class="role-name">Исполнитель</h3>
+                <span class="role-reply">код</span>
+              </div>
+              <div class="role-meta">
+                <div class="meta-row"><span class="meta-k">скил</span><span class="meta-v">listik-pipeline:implementer</span></div>
+                <div class="meta-row"><span class="meta-k">агент</span><span class="meta-v">implementer-&lt;суффикс&gt; · в low/xlow/nano — devin</span></div>
+                <div class="meta-row"><span class="meta-k">зовёт</span><span class="meta-v">оркестратор</span></div>
+                <div class="meta-row"><span class="meta-k">умеет</span><span class="meta-v">Read <span class="sep">·</span> Write <span class="sep">·</span> Edit <span class="sep">·</span> Bash <span class="sep">·</span> Skill</span></div>
+              </div>
+              <p class="role-note">
+                Получает путь к карточке и путь к worktree; шаг, спеку, макет и кит читает сам по
+                ссылкам из ТЗ. Повторные заходы после <span class="pill">FIXES</span> идут
+                <b>в эту же сессию</b> — контекст не теряется.
+              </p>
+              <details>
+                <summary>
+                  <svg class="od-icon chev" style="--od-icon-size:11px" viewBox="0 0 16 16" aria-hidden="true"><path d="m6 3.5 4.5 4.5L6 12.5" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"/></svg>
+                  промпт, границы, карточка
+                </summary>
+                <div class="details-body">
+                  <pre>Путь к карточке и worktree → читаешь ТЗ, чек-лист, границы → пишешь код в worktree.
+Шаг, спеку, макет, кит читаешь сам по ссылкам из ТЗ.
+Повторный заход (после FIXES) — та же сессия, замечания приходят дословно.
+Оркестратору: что сделано (коротко) + вывод команды проверки.</pre>
+                  <ul class="plain">
+                    <li>Границы правки из ТЗ — жёсткое ограничение (в xlow/nano ТЗ нет — вместо него текст задачи из карточки)</li>
+                    <li>первым делом <code>claim &lt;id&gt; --holder &lt;харнесс&gt; --actor agent:&lt;харнесс&gt; --harness &lt;харнесс&gt;</code>, потом <code>heartbeat</code></li>
+                    <li><code>comment &lt;id&gt; -k journal "DONE" --actor agent:&lt;харнесс&gt; --harness &lt;харнесс&gt;</code></li>
+                    <li><code>stage</code> и <code>done</code> двигает оркестратор</li>
+                  </ul>
+                </div>
+              </details>
+            </article>
+    </template>
+
+    <template id="tpl-role-lens">
+      <article class="role" style="--rc:var(--lens)">
+              <div class="role-top">
+                <span class="role-mark" aria-hidden="true"></span>
+                <h3 class="role-name">Линза</h3>
+                <span class="role-reply">PASS / FIXES</span>
+              </div>
+              <div class="role-meta">
+                <div class="meta-row"><span class="meta-k">скил</span><span class="meta-v">listik-pipeline:lens</span></div>
+                <div class="meta-row"><span class="meta-k">агент</span><span class="meta-v">lens-&lt;суффикс&gt; · в high/xhigh — pi glm</span></div>
+                <div class="meta-row"><span class="meta-k">зовёт</span><span class="meta-v">оркестратор</span></div>
+                <div class="meta-row"><span class="meta-k">умеет</span><span class="meta-v">Read <span class="sep">·</span> Bash</span></div>
+              </div>
+              <p class="role-note">
+                Карточку не берёт: её держит исполнитель. Быстрая приёмка: <span class="pill">PASS</span> = находок нет и команда проверки прогнана
+                с выводом. При <code>RISK: YES</code> или находках линзы приёмку ведёт судья.
+              </p>
+              <details>
+                <summary>
+                  <svg class="od-icon chev" style="--od-icon-size:11px" viewBox="0 0 16 16" aria-hidden="true"><path d="m6 3.5 4.5 4.5L6 12.5" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"/></svg>
+                  промпт и развилка
+                </summary>
+                <div class="details-body">
+                  <pre>Путь к карточке → проверяешь (карточку не берёшь: её держит исполнитель):
+1. Код = ТЗ
+2. Чек-лист выполнен
+3. Границы правки не нарушены
+4. Код работает: команда проверки из ТЗ вышла с кодом 0, вывод приложен
+5. Первая строка ТЗ — ссылка на шаг
+
+Оркестратору: PASS или FIXES.
+PASS без успешного (код 0) вывода команды проверки не ставишь.
+Пункт чек-листа блокирует, только если назван file:line или покрыт этой командой.
+FIXES → список замечаний.</pre>
+                  <ul class="plain">
+                    <li><span class="pill">PASS</span> → при <code>RISK: NO</code> судья не запускается: коммит и закрытие — оркестратор; вердикт он не пишет никогда — приёмку фиксирует журналом</li>
+                    <li><span class="pill">FIXES</span> → та же сессия исполнителя, затем судья</li>
+                  </ul>
+                </div>
+              </details>
+            </article>
+    </template>
+
+    <template id="tpl-role-judge">
+      <article class="role" style="--rc:var(--judge)">
+              <div class="role-top">
+                <span class="role-mark" aria-hidden="true"></span>
+                <h3 class="role-name">Судья</h3>
+                <span class="role-reply">PASS / FIXES</span>
+              </div>
+              <div class="role-meta">
+                <div class="meta-row"><span class="meta-k">скил</span><span class="meta-v">listik-pipeline:judge</span></div>
+                <div class="meta-row"><span class="meta-k">агент</span><span class="meta-v">grok (все режимы, кроме nano; усилие xhigh в xhigh/high, high в остальных) · codex (nano)</span></div>
+                <div class="meta-row"><span class="meta-k">зовёт</span><span class="meta-v">оркестратор: находки линзы, <code>RISK: YES</code>; без линз — всегда</span></div>
+                <div class="meta-row"><span class="meta-k">умеет</span><span class="meta-v">Read <span class="sep">·</span> Bash</span></div>
+              </div>
+              <p class="role-note">
+                Финальная проверка: замечания линзы закрыты, код = ТЗ, чек-лист выполнен,
+                за границами нет регрессий. Без линз вызывается всегда.
+              </p>
+              <details>
+                <summary>
+                  <svg class="od-icon chev" style="--od-icon-size:11px" viewBox="0 0 16 16" aria-hidden="true"><path d="m6 3.5 4.5 4.5L6 12.5" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"/></svg>
+                  промпт и развилка
+                </summary>
+                <div class="details-body">
+                  <pre>Первым делом claim &lt;id&gt; --holder &lt;харнесс&gt;, потом heartbeat. Вердикт — твой: comment -k verdict.
+Путь к карточке → проверяешь:
+1. Замечания линзы закрыты
+2. Код = ТЗ
+3. Чек-лист выполнен
+4. Нет регрессий за границами
+5. Команда проверки из ТЗ вышла с кодом 0, вывод в ответе
+6. Красное в одну строку — в FIXES, сам не правишь
+
+Оркестратору: PASS или FIXES.
+PASS → вердикт в карточку — твой; коммит — оркестратора.
+FIXES → список замечаний, каждое со ссылкой path:line.
+Код не правишь никогда: правку вносит исполнитель.</pre>
+                  <ul class="plain">
+                    <li><span class="pill">PASS</span> → судья пишет <span class="pill">VERDICT: PASS</span> в карточку; коммит, <code>done</code> и worktree — оркестратор</li>
+                    <li><span class="pill">FIXES</span> → та же сессия исполнителя → снова судья; третий заход без <span class="pill">PASS</span> — стоп, вопрос человеку</li>
+                  </ul>
+                </div>
+              </details>
+            </article>
+    </template>
+
+  <!-- ================= СЛОВАРЬ ОТВЕТОВ · шаблон для панели справа ================= -->
+  <template id="tpl-answers">
+    <div class="drawer-doc">
+      <h2>Словарь ответов</h2>
+      <p class="doc-lead">
+        Оркестратор не понимает содержания — он сверяет <b>статус</b> с этим списком
+        и делает следующий вызов. Статусы фиксированы — на английском, заглавными:
+        решение принимается по ним и только по ним. Вторая строка писателя
+        <code>RISK: NO</code> или <code>RISK: YES — reason</code> в режиме с линзами решает, звать ли судью; без линз не читается.
+      </p>
+
+      <div class="answer-list">
+        <div class="answer-item" style="--rc:var(--writer)">
+          <div class="answer-head">
+            <span class="answer-role">Писатель</span>
+            <code class="answer-code">READY</code>
+          </div>
+          <p class="answer-mean">ТЗ написано, блокирующие замечания критиков закрыты. Вторая строка — <code>RISK: NO</code> или <code>RISK: YES — reason</code>.</p>
+          <p class="answer-next">→ оркестратор создаёт worktree, зовёт исполнителя и передаёт путь к карточке и worktree</p>
+        </div>
+
+        <div class="answer-item" style="--rc:var(--impl)">
+          <div class="answer-head">
+            <span class="answer-role">Исполнитель</span>
+            <code class="answer-code">DONE</code>
+          </div>
+          <p class="answer-mean">Код в worktree, вывод команды проверки приложен.</p>
+          <p class="answer-next">→ линза, а без линзы — судья</p>
+        </div>
+
+        <div class="answer-item" style="--rc:var(--impl)">
+          <div class="answer-head">
+            <span class="answer-role">Исполнитель</span>
+            <code class="answer-code">CANNOT</code>
+          </div>
+          <p class="answer-mean">Сделать не удалось: причина в тексте ответа.</p>
+          <p class="answer-next">→ повтор его же формулировкой, тот же харнесс</p>
+        </div>
+
+        <div class="answer-item" style="--rc:var(--writer)">
+          <div class="answer-head">
+            <span class="answer-role">Писатель, исполнитель</span>
+            <code class="answer-code">QUESTION</code>
+          </div>
+          <p class="answer-mean">Без ответа человека дальше нельзя.</p>
+          <p class="answer-next">→ <code>needs-owner</code> и тот же вопрос в чат</p>
+        </div>
+
+        <div class="answer-item" style="--rc:var(--lens)">
+          <div class="answer-head">
+            <span class="answer-role">Линза</span>
+            <code class="answer-code">PASS</code>
+            <span class="answer-verdict">PASS</span>
+          </div>
+          <p class="answer-mean">Находок нет, команда проверки прогнана.</p>
+          <p class="answer-next">→ при <code>RISK: NO</code> судья не запускается: коммитит оркестратор; иначе приёмка судьёй</p>
+        </div>
+
+        <div class="answer-item" style="--rc:var(--lens)">
+          <div class="answer-head">
+            <span class="answer-role">Линза</span>
+            <code class="answer-code">FIXES</code>
+          </div>
+          <p class="answer-mean">К коду есть замечания, их нужно закрыть.</p>
+          <p class="answer-next">→ та же сессия исполнителя правит, затем оркестратор зовёт судью</p>
+        </div>
+
+        <div class="answer-item" style="--rc:var(--judge)">
+          <div class="answer-head">
+            <span class="answer-role">Судья</span>
+            <code class="answer-code">PASS</code>
+            <span class="answer-verdict">PASS</span>
+          </div>
+          <p class="answer-mean">Приёмка пройдена: замечания закрыты, код совпадает с ТЗ, чек-лист выполнен. Красное в одну строку — в FIXES, судья код не правит.</p>
+          <p class="answer-next">→ судья пишет <span class="pill">VERDICT: PASS</span>; коммит и <code>done</code> — оркестратор</p>
+        </div>
+
+        <div class="answer-item" style="--rc:var(--judge)">
+          <div class="answer-head">
+            <span class="answer-role">Судья</span>
+            <code class="answer-code">FIXES</code>
+          </div>
+          <p class="answer-mean">Остались замечания — нужна ещё одна итерация правок.</p>
+          <p class="answer-next">→ та же сессия исполнителя правит → снова судья; третий без <span class="pill">PASS</span> — стоп, вопрос человеку</p>
+        </div>
+      </div>
+
+      <p class="doc-foot">
+        <span class="pill">PASS</span> (линза) и <span class="pill">PASS</span> (судья) — вердикт «работа принята».
+        При <span class="pill">PASS</span> коммитит оркестратор; <code>done</code> и worktree — он же.
+        Судья зовётся при находках линзы, при <code>RISK: YES</code> и всегда в <code>xlow</code>/<code>nano</code>.
+        Сокращать, переводить или пересказывать статусы нельзя.
+      </p>
+    </div>
+  </template>
+
+<dialog class="drawer" id="drawer" aria-label="Досье роли">
+  <div class="drawer-bar">
+    <span class="drawer-kicker">досье роли</span>
+    <button class="drawer-close" type="button" aria-label="Закрыть досье">
+      <svg class="od-icon" style="--od-icon-size:14px" viewBox="0 0 16 16" aria-hidden="true"><path d="m4 4 8 8M12 4l-8 8" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round"/></svg>
+    </button>
+  </div>
+  <div class="drawer-scroll" id="drawerBody"></div>
+</dialog>
+
+<script>
+(function () {
+  var board = document.getElementById('board');
+  var pathNote = document.getElementById('pathNote');
+  var prefersReduced = window.matchMedia('(prefers-reduced-motion: reduce)');
+
+  var paths = {
+    short: 'Линза чиста и «RISK: NO» → судья не запускается: оркестратор коммитит в дереве задачи,' +
+           ' вливает ветку task/&lt;id&gt; в основную, закрывает задачу и удаляет worktree.',
+    fix: 'Находки линзы или «RISK: YES» → судья: приёмка — его роль.' +
+         ' <span class="pill">FIXES</span> → судья снимает себя с карточки (<code>release</code>), оркестратор снова выдаёт s3-impl тому же исполнителю и передаёт замечания дословно; красное правит исполнитель, не судья; третий заход без <span class="pill">PASS</span> — стоп, вопрос человеку.'
+  };
+
+  function setPath(path) {
+    if (!paths[path]) return;
+    board.dataset.path = path;
+    document.querySelectorAll('.seg button').forEach(function (btn) {
+      btn.setAttribute('aria-pressed', String(btn.dataset.path === path));
+    });
+    pathNote.innerHTML = paths[path];
+  }
+
+  document.querySelectorAll('.seg button').forEach(function (btn) {
+    btn.addEventListener('click', function () { setPath(btn.dataset.path); });
+  });
+
+  var drawer = document.getElementById('drawer');
+  var drawerBody = document.getElementById('drawerBody');
+  var drawerClose = drawer.querySelector('.drawer-close');
+  var drawerKicker = drawer.querySelector('.drawer-kicker');
+  var boundCopy = new WeakSet();
+
+  var drawerSources = {
+    orchestrator: { tpl: 'tpl-role-orchestrator', label: 'Оркестратор' },
+    writer: { tpl: 'tpl-role-writer', label: 'Писатель' },
+    critic: { tpl: 'tpl-role-critic', label: 'Критик' },
+    implementer: { tpl: 'tpl-role-implementer', label: 'Исполнитель' },
+    lens: { tpl: 'tpl-role-lens', label: 'Линза' },
+    judge: { tpl: 'tpl-role-judge', label: 'Судья' },
+    answers: { tpl: 'tpl-answers', label: 'Словарь ответов', kicker: 'словарь ответов' },
+    finish: { id: 'final', label: 'Финал и коммит', kicker: 'финал и Listik' }
+  };
+
+  function bindCopy(root) {
+    root.querySelectorAll('[data-copy]').forEach(function (btn) {
+      if (boundCopy.has(btn)) return;
+      boundCopy.add(btn);
+      btn.addEventListener('click', function () {
+        var box = btn.parentElement.querySelector('pre');
+        if (!box) return;
+        var text = box.innerText;
+        var restore = function () { btn.textContent = 'копировать'; };
+        var done = function () {
+          btn.textContent = 'скопировано';
+          setTimeout(restore, 1400);
+        };
+        var fail = function () {
+          btn.textContent = 'не удалось';
+          setTimeout(restore, 1600);
+        };
+        if (navigator.clipboard && navigator.clipboard.writeText) {
+          navigator.clipboard.writeText(text).then(done, fail);
+        } else {
+          fail();
+        }
+      });
+    });
+  }
+
+  function stripIds(node) {
+    node.removeAttribute('id');
+    node.querySelectorAll('[id]').forEach(function (el) { el.removeAttribute('id'); });
+    node.querySelectorAll('[tabindex]').forEach(function (el) { el.removeAttribute('tabindex'); });
+  }
+
+  function openDrawer(key) {
+    var cfg = drawerSources[key];
+    if (!cfg) return;
+
+    var content;
+    if (cfg.tpl) {
+      var tpl = document.getElementById(cfg.tpl);
+      if (!tpl || !tpl.content.firstElementChild) return;
+      content = tpl.content.firstElementChild.cloneNode(true);
+      content.querySelectorAll('details').forEach(function (block) { block.open = true; });
+    } else {
+      var source = document.getElementById(cfg.id);
+      if (!source) return;
+      content = document.createElement('div');
+      content.className = 'drawer-final';
+      var grid = source.querySelector('.finish-grid');
+      if (!grid) return;
+      content.appendChild(grid.cloneNode(true));
+    }
+    stripIds(content);
+
+    drawerBody.textContent = '';
+    drawerBody.appendChild(content);
+    drawerBody.scrollTop = 0;
+    drawer.setAttribute('aria-label', cfg.label);
+    drawerKicker.textContent = cfg.kicker || 'досье роли';
+    if (!drawer.open) drawer.showModal();
+    document.body.classList.add('drawer-open');
+    bindCopy(content);
+    drawerClose.focus({ preventScroll: true });
+  }
+
+  function closeDrawer() {
+    if (!drawer.open || drawer.classList.contains('is-closing')) return;
+    drawer.classList.add('is-closing');
+    window.setTimeout(function () {
+      drawer.close();
+      drawer.classList.remove('is-closing');
+    }, prefersReduced.matches ? 0 : 170);
+  }
+
+  drawerClose.addEventListener('click', closeDrawer);
+
+  drawer.addEventListener('cancel', function (event) {
+    event.preventDefault();
+    closeDrawer();
+  });
+
+  drawer.addEventListener('click', function (event) {
+    var rect = drawer.getBoundingClientRect();
+    if (event.clientX < rect.left || event.clientX > rect.right ||
+        event.clientY < rect.top || event.clientY > rect.bottom) {
+      closeDrawer();
+    }
+  });
+
+  drawer.addEventListener('close', function () {
+    document.body.classList.remove('drawer-open');
+    drawerBody.textContent = '';
+  });
+
+  document.querySelectorAll('.station, .sat').forEach(function (station) {
+    station.addEventListener('click', function () {
+      openDrawer(station.dataset.role);
+    });
+  });
+
+  document.querySelectorAll('[data-drawer]').forEach(function (trigger) {
+    trigger.addEventListener('click', function (event) {
+      if (trigger.closest('.station, .sat')) event.stopPropagation();
+      event.preventDefault();
+      openDrawer(trigger.dataset.drawer);
+    });
+  });
+
+  bindCopy(document);
+})();
+</script>
+</body>
+</html>

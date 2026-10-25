@@ -176,8 +176,8 @@ class FeaturePipelinePluginTests(unittest.TestCase):
         names = [entry.get("name") for entry in entries]
         self.assertEqual(
             names,
-            ["listik", "pipeline-core", "pipeline-full", "pipeline-cc", "pipeline-claude", "dsh", "codex",
-             "opencode", "pi", "devin", "second-opinion"],
+            ["listik", "pipeline-core", "pipeline-full", "pipeline-cc", "pipeline-claude", "listik-pipeline",
+             "dsh", "codex", "opencode", "pi", "devin", "second-opinion"],
             f"состав маркетплейса не тот: {names}",
         )
         for entry in entries:

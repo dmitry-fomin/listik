@@ -36,7 +36,7 @@ CHECKLIST: <abs path>
 REPLY: first line of your reply is exactly one word: <слова роли>; nothing before it, no quotes, no bold
 ```
 
-`REPLY:` — всегда последней строкой. Слова роли (`statuses.md`): писателю `DRAFT, QUESTION, CANNOT`, во втором заходе `READY, QUESTION, CANNOT` и `second line: RISK: NO | RISK: YES — <reason>`; локальному критику `REVIEWED <path>, CANNOT`; исполнителю `DONE, CANNOT, QUESTION`; линзе и судье `PASS, FIXES, CANNOT`. Внешнему критику — `REPLY: the review itself, starting with its first ## section; no preface`.
+`REPLY:` — всегда последней строкой. Слова роли (`statuses.md`): писателю `DRAFT, QUESTION, CANNOT`, во втором заходе `READY, DRAFT, QUESTION, CANNOT`, в третьем `READY, QUESTION, CANNOT` и `second line: RISK: NO | RISK: YES — <reason>`; локальному критику `REVIEWED <path>, CANNOT`; исполнителю `DONE, CANNOT, QUESTION`; линзе и судье `PASS, FIXES, CANNOT`. Внешнему критику — `REPLY: the review itself, starting with its first ## section; no preface`.
 
 Критику вместо `CARD:` — `REVIEW: <abs path к <id>.review-<критик>.md>`. Судье после находок линзы — ещё `LENS: <abs path к <id>.lens.md>`. В `xlow`/`nano` ТЗ нет — вместо `SPEC:`/`CHECKLIST:` исполнителю и судье: `CHECK: acceptance карточки; нет его — тесты затронутых модулей, полный набор не запускать`.
 

@@ -335,7 +335,18 @@ class VersionTests(unittest.TestCase):
         self.assertRegex(version, r"^\d+\.\d+\.\d+$")
         result = run_cli(["--version"], env=clean_env(), cwd=self.tmp_path)
         self.assertEqual(result.returncode, 0, result.stderr)
-        self.assertEqual(result.stdout.strip(), f"listik {version}")
+        self.assertEqual(result.stdout.strip(), f"listik {version} ({LISTIK_BIN.resolve()})")
+
+    def test_version_through_symlink_prints_real_path(self) -> None:
+        # Через ссылку в скобках — путь цели: resolve(), а не abspath(argv[0]).
+        link = self.tmp_path / "listik-link"
+        link.symlink_to(LISTIK_BIN)
+        version = (REPO_DIR / "VERSION").read_text(encoding="utf-8").strip()
+        result = subprocess.run([PYTHON, str(link), "--version"], env=clean_env(),
+                                cwd=str(self.tmp_path), capture_output=True, text=True,
+                                timeout=90)
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertEqual(result.stdout.strip(), f"listik {version} ({LISTIK_BIN.resolve()})")
 
     def test_copy_without_version_file(self) -> None:
         copy = self.tmp_path / "без-версии"
@@ -355,7 +366,8 @@ class VersionTests(unittest.TestCase):
                                 env=clean_env(PYTHONPATH=str(copy)), cwd=str(copy),
                                 capture_output=True, text=True, timeout=90)
         self.assertEqual(result.returncode, 0, result.stderr)
-        self.assertEqual(result.stdout.strip(), "listik 9.9.9")
+        self.assertEqual(result.stdout.strip(),
+                         f"listik 9.9.9 ({(copy / 'bin' / 'listik').resolve()})")
 
     def _copy_code(self, target: pathlib.Path) -> None:
         shutil.copytree(REPO_DIR / "listik", target / "listik",

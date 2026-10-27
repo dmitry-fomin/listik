@@ -3049,8 +3049,12 @@ def cmd_service(args) -> int:
 # ------------------------------------------------------------------ парсер
 
 def build_parser() -> argparse.ArgumentParser:
-    p = ListikParser(prog="listik", description="Listik — трекер задач и память")
-    p.add_argument("--version", action="version", version=f"listik {__version__}")
+    # Raw: argparse переносит текст --version по ширине терминала, а длинный путь
+    # в скобках обязан остаться одной строкой. Описание корня короткое — не задето.
+    p = ListikParser(prog="listik", description="Listik — трекер задач и память",
+                     formatter_class=argparse.RawDescriptionHelpFormatter)
+    p.add_argument("--version", action="version",
+                   version=f"listik {__version__} ({Path(__file__).resolve()})")
     p.add_argument("--json", action="store_true", help="вывод в JSON (для агентов)")
     p.add_argument("--actor", help="кто выполняет действие (me, agent:dsh, ...)")
     p.add_argument("--owner",

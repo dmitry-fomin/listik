@@ -315,7 +315,7 @@ class InstallScriptTests(unittest.TestCase):
 
         version_out = self.run_wrapper("--version")
         self.assertEqual(version_out.returncode, 0, version_out.stderr)
-        self.assertEqual(version_out.stdout.strip(), f"listik {VERSION}")
+        self.assertRegex(version_out.stdout.strip(), rf"\Alistik {re.escape(VERSION)} \(.*/bin/listik\)\Z")
 
         status = self.run_wrapper("--local", "status", "--json")
         self.assertEqual(status.returncode, 0, status.stdout + status.stderr)
@@ -353,7 +353,7 @@ class InstallScriptTests(unittest.TestCase):
         self.assertTrue((self.app / VERSION / "bin" / "listik").is_file(),
                         "каталог первой версии удалён")
         version_out = self.run_wrapper("--version")
-        self.assertEqual(version_out.stdout.strip(), f"listik {NEXT_VERSION}")
+        self.assertRegex(version_out.stdout.strip(), rf"\Alistik {re.escape(NEXT_VERSION)} \(.*/bin/listik\)\Z")
 
     # --- пункт 15: routes.json больше не трогается ------------------------
 
@@ -581,7 +581,7 @@ class InstallScriptTests(unittest.TestCase):
         self.assert_installed(VERSION)
         version_out = self.run_wrapper("--version", env=env)
         self.assertEqual(version_out.returncode, 0, version_out.stderr)
-        self.assertEqual(version_out.stdout.strip(), f"listik {VERSION}")
+        self.assertRegex(version_out.stdout.strip(), rf"\Alistik {re.escape(VERSION)} \(.*/bin/listik\)\Z")
 
     def test_reinstall_with_loaded_unit_reloads(self) -> None:
         fake_dir, log = self.make_fake_tools()

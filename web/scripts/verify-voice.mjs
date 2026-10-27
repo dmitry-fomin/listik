@@ -508,7 +508,7 @@ try {
     }
   })
 
-  await record('открыть форму: поля из черновика, маршрут full-low, автостарт выключен', async () => {
+  await record('открыть форму: поля из черновика, маршрут lp-low, автостарт выключен', async () => {
     await resetUi()
     await setCase('ok')
     await resetRequests()
@@ -543,10 +543,10 @@ try {
         expectedCriteria.every((item) => acceptanceLines.includes(item)) &&
         filled.modalType === 'задача' &&
         filled.modalProject === 'Listik' &&
-        filled.modalRoute === 'full-low' &&
+        filled.modalRoute === 'lp-low' &&
         filled.modalAutostart === null &&
-        after.modalRoute === 'full-low',
-      expect: 'заполнены заголовок/описание/критерии, тип task, проект listik, маршрут full-low, галки автостарта нет; после смены типа маршрут не сброшен',
+        after.modalRoute === 'lp-low',
+      expect: 'заполнены заголовок/описание/критерии, тип task, проект listik, маршрут lp-low, галки автостарта нет; после смены типа маршрут не сброшен',
       got: {
         filled: {
           title: filled.modalTitle,
@@ -561,6 +561,46 @@ try {
         expectedCriteria,
         expectedTitle: before.draftTitle,
       },
+    }
+  })
+
+  // Пустая форма: тип «эпик» без тронутого маршрута ставит умолчание эпика — `lp-high`
+  // (`defaultPipelineFor`); у задачи по умолчанию — `lp-low`.
+  await record('«Новая задача», тип эпик: выбран lp-high', async () => {
+    await resetUi()
+    await setCase('ok')
+    const clicked = await evaluate(`(() => {
+      const button = [...document.querySelectorAll('button')]
+        .find((el) => el.textContent.replace(/\\s+/g, ' ').trim() === 'Новая задача');
+      if (!button) return false;
+      button.click();
+      return true;
+    })()`)
+    const opened = await waitFor(async () => {
+      const seen = await state()
+      return seen.modal && seen.modalRoute ? seen : null
+    }, 5000)
+    const picked = await evaluate(`(() => {
+      const heading = (el) =>
+        (el.querySelector('.ui-drawer__header') ?? el.querySelector('.ui-drawer__title'))?.textContent ?? '';
+      const drawers = [...document.querySelectorAll('.ui-drawer')].filter((el) =>
+        heading(el).includes('Новая задача'),
+      );
+      const drawer = drawers[drawers.length - 1];
+      const radio = drawer?.querySelector('.listik-icon-toggle[aria-label="Тип задачи"] [role="radio"][aria-label^="эпик"]');
+      if (radio) radio.click();
+      return Boolean(radio);
+    })()`)
+    const epic = await waitFor(async () => {
+      const seen = await state()
+      return seen.modalType?.startsWith('эпик') && seen.modalRoute === 'lp-high' ? seen : null
+    }, 3000)
+    const last = epic ?? (await state())
+    await resetUi()
+    return {
+      ok: clicked && opened?.modalRoute === 'lp-low' && picked && Boolean(epic),
+      expect: 'пустая форма — lp-low; после выбора типа «эпик» — lp-high',
+      got: { clicked, initialRoute: opened?.modalRoute ?? null, picked, type: last.modalType, route: last.modalRoute },
     }
   })
 

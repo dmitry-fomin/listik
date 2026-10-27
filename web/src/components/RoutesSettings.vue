@@ -34,7 +34,7 @@ import RouteName from './marks/RouteName.vue'
 import store from '@/store/listik'
 import type { PipelineRouteDef, RouteDef, RouteRemoved, SwarmRouteDef } from '@/api/types'
 import { pipelineRowsOf, routeSkillRef, swarmRoutesOf } from '@/lib/routes'
-import { ROLE_KEYS, roleStage } from '@/lib/pipelines'
+import { ROLE_KEYS, roleExecutors, roleStage } from '@/lib/pipelines'
 import { plural } from '@/lib/format'
 import { registerLeaveGuard } from '@/lib/router'
 
@@ -42,9 +42,14 @@ import { registerLeaveGuard } from '@/lib/router'
 const pipelineRoutes = computed<PipelineRouteDef[]>(() => pipelineRowsOf(store.routes.value))
 const swarmRoutes = computed<SwarmRouteDef[]>(() => swarmRoutesOf(store.routes.value))
 
-/** Непустые ячейки `route.roles`: ключ со значением `null`/`undefined` не считается. */
+/**
+ * Заполненные роли: у конвейера — только роли-массивы с исполнителями (старая
+ * ячейка-объект ролью не считается), у роя — ячейки не `null`/`undefined`.
+ */
 function filledRoles(route: RouteDef): number {
-  return Object.values(route.roles).filter((cell) => cell !== null && cell !== undefined).length
+  const cells: unknown[] = Object.values(route.roles)
+  if (route.kind === 'pipeline') return cells.filter((cell) => roleExecutors(cell).length > 0).length
+  return cells.filter((cell) => cell !== null && cell !== undefined).length
 }
 
 /** Моноширинная подпись конвейера — только ключ: роли ушли в пилюлю справа. */

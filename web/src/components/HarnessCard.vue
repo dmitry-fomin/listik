@@ -309,7 +309,7 @@ const usages = computed<UsageRow[]>(() =>
     key: `${index}:${entry.kind}:${entry.route}:${entry.role ?? ''}`,
     text:
       entry.kind === 'pipeline'
-        ? `конвейер ${entry.route} · роль ${roleCode(entry.role)} · канал ${entry.channel}`
+        ? `конвейер ${entry.route} · роль ${roleCode(entry.role)}${entry.channel ? ` · канал ${entry.channel}` : ''}`
         : `рой ${entry.route} · роль ${roleCode(entry.role)}`,
   })),
 )

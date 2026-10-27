@@ -4,26 +4,32 @@
  * показывается тот, кто реально делает этап, а не держатель-оркестратор.
  *
  * Поднимает mock-api в режиме `--routes` (карточка `listik-executor` на s3-impl
- * конвейера `full-low` с держателем `claude`, плюс `listik-routes-fresh`
+ * конвейера `lp-low` с держателем `claude`, плюс `listik-routes-fresh`
  * без маршрута), отдаёт собранный `web/dist` и гоняет сценарии в headless
  * Chrome через CDP.
  *
- * Сценарии: 1–2 — подвал карточки доски; 3–7 — блок «Кто держит» панели
- * (listik-6g0q). Строка «делает» — только когда этап делает не сам держатель:
- * title роли, а за ним через пробел серый `detail` (effort) — только если
- * label ячейки не встречается словом в title (listik-erjx), без разделителя « · »;
- * строка «оркестратор» — всегда, когда поле заполнено:
- *   3. `listik-executor` — «делает» ровно «DeepSeek — код» без серого уточнения
- *      (label «DeepSeek» уже в title), держит Claude, оркестратор `claude`
- *      (совпадает с держателем, но строка есть);
- *   4. `listik-executor-same` — роль `spec` вендора `claude`, держит `claude`:
+ * Сценарии: 1–2 — подвал карточки доски; 3–10 — блок «Кто держит» панели
+ * (listik-6g0q). Роли конвейера v2 — массивы исполнителей (listik-906l):
+ * строка «делает» — только когда держатель не совпал с глифом ни одного
+ * исполнителя роли этапа; один исполнитель — его имя и серое усилие, несколько —
+ * строка `имя · усилие + …` без серого уточнения; строка «оркестратор» — всегда,
+ * когда поле заполнено:
+ *   3. `listik-executor` — implementer `lp-low` (devin swe-2 · max), держит Claude:
+ *      «делает swe-2» с серым `max`, оркестратор `claude`;
+ *   4. `listik-executor-same` — writer `lp-low` (claude), держит `claude`:
  *      «делает» нет; оркестратор `listik` — запасное значение при пустой подписи;
  *   5. `listik-routes-fresh` — оркестратора нет, строки «оркестратор» нет;
- *   6. `listik-executor-glm` — роль `critic` вендора `glm`, держит `agent:pi-glm`:
- *      «делает» нет, держит «pi · GLM»;
- *   7. `listik-executor-free` — роль `judge`, без держателя: «делает Проверка Судья»
- *      («Судья» — серый `.listik-drawer__executor-detail`), держит «никто»,
- *      тултип подвала «исполнитель этапа: Проверка (Судья)».
+ *   6. `listik-executor-glm` — critic `lp-low`, держит `agent:pi-glm` (глиф первого
+ *      исполнителя `pi-glm`): «делает» нет, держит «pi · GLM»;
+ *   7. `listik-executor-free` — judge `lp-low` (grok-4.7 · high), без держателя:
+ *      «делает grok-4.7 high» (серый `high`), держит «никто»,
+ *      тултип подвала «исполнитель этапа: grok-4.7 (high)»;
+ *   8. `listik-executor-deepseek` — critic, держит `agent:pi-deepseek` (второй
+ *      исполнитель): «делает» нет;
+ *   9. `listik-executor-multi` — critic, держит `codex`: «делает glm · high +
+ *      deepseek · high + haiku · high», серого уточнения нет;
+ *  10. `listik-executor-swarm` — рой `dsh-direct` на s3-impl, держит `claude`:
+ *      «делает dsh» (карта роя).
  *
  * Запуск: node scripts/verify-card-executor.mjs [url]
  *   Без аргумента сам поднимает мок и статику — нужен собранный `web/dist`
@@ -49,17 +55,26 @@ const CARD = 'listik-executor'
 const CARD_TITLE = 'Этап делает роль маршрута'
 const FRESH = 'listik-routes-fresh'
 const FRESH_TITLE = 'Заведена без маршрута'
-/** title роли `impl` в `full-low` мока — должен попасть в «делает …». */
-const IMPL_TITLE = 'DeepSeek — код'
+/** Имя и усилие implementer `lp-low` мока — «делает swe-2» с серым `max`. */
+const IMPL_TITLE = 'swe-2'
+const IMPL_EFFORT = 'max'
 const SAME = 'listik-executor-same'
 const SAME_TITLE = 'Этап делает сам держатель'
 const GLM = 'listik-executor-glm'
 const GLM_TITLE = 'Критик GLM держит сам'
 const FREE = 'listik-executor-free'
 const FREE_TITLE = 'Этап без держателя'
-/** title и label роли `judge` в `full-low` мока. */
-const JUDGE_TITLE = 'Проверка'
-const JUDGE_LABEL = 'Судья'
+/** Имя и усилие judge `lp-low` мока. */
+const JUDGE_TITLE = 'grok-4.7'
+const JUDGE_LABEL = 'high'
+const DEEPSEEK = 'listik-executor-deepseek'
+const DEEPSEEK_TITLE = 'Критик DeepSeek держит сам'
+const MULTI = 'listik-executor-multi'
+const MULTI_TITLE = 'Критиков несколько, держит codex'
+/** Строка-тултип critic `lp-low`: исполнители через ` + `, каждый `имя · усилие`. */
+const MULTI_TEXT = 'glm · high + deepseek · high + haiku · high'
+const SWARM = 'listik-executor-swarm'
+const SWARM_TITLE = 'Рой: этап делает dsh'
 
 /* ── Сценарии ───────────────────────────────────────────────────────────── */
 
@@ -87,7 +102,10 @@ const DRAWER_STATE = `(() => {
   for (const dt of drawer.querySelectorAll('.listik-dl dt')) {
     const dd = dt.nextElementSibling;
     const key = dt.textContent.trim();
-    rows[key] = dd ? dd.textContent.replace(/\\s+/g, ' ').trim() : null;
+    // Текст без глифа харнесса: у pi глиф — буква «π», в подпись она не входит.
+    const bare = dd ? dd.cloneNode(true) : null;
+    bare?.querySelectorAll('.listik-harness-icon').forEach((el) => el.remove());
+    rows[key] = bare ? bare.textContent.replace(/\\s+/g, ' ').trim() : null;
     if (key === 'делает' && dd) {
       const el = dd.querySelector('.listik-drawer__executor-detail');
       detail = el
@@ -197,10 +215,10 @@ try {
       && foot.executor.startsWith('делает')
       && foot.holder.includes('держит Claude')
       && !foot.holder.startsWith('Claude')
-      && foot.tooltip === `исполнитель этапа: ${IMPL_TITLE}`
+      && foot.tooltip === `исполнитель этапа: ${IMPL_TITLE} (${IMPL_EFFORT})`
     return {
       ok,
-      expect: `«делает ${IMPL_TITLE}» + «· держит Claude» + тултип «исполнитель этапа: ${IMPL_TITLE}»`,
+      expect: `«делает ${IMPL_TITLE}» + «· держит Claude» + тултип «исполнитель этапа: ${IMPL_TITLE} (${IMPL_EFFORT})»`,
       got: foot ?? (await cardFoot(evaluate, CARD_TITLE)),
     }
   })
@@ -212,25 +230,25 @@ try {
     return { ok, expect: 'без держателя', got: foot }
   })
 
-  // 3. Панель задачи: строка «делает» ровно с title роли — label «DeepSeek» уже
-  //    словом в title, серого уточнения нет; перед «держит»; оркестратор `claude`
-  //    виден, хотя совпадает с держателем.
+  // 3. Панель задачи: строка «делает» — имя единственного исполнителя и серое
+  //    усилие; перед «держит»; оркестратор `claude` виден, хотя совпадает с держателем.
   await record('панель задачи: строка «делает» с исполнителем этапа', async () => {
     const { clicked, drawer, rows, detail } = await openDrawer(CARD_TITLE, CARD, (seen) => seen['делает'] && seen['оркестратор'])
     const ok = Boolean(clicked)
       && Boolean(drawer)
-      && rows['делает'] === IMPL_TITLE
-      && detail === null
+      && rows['делает'] === `${IMPL_TITLE} ${IMPL_EFFORT}`
+      && detail?.text === IMPL_EFFORT
+      && detail.color !== detail.ddColor
       && Boolean(rows['держит']?.includes('Claude'))
       && rows['оркестратор'] === 'claude'
     return {
       ok,
-      expect: `делает «${IMPL_TITLE}» без .listik-drawer__executor-detail, держит «Claude …», оркестратор «claude»`,
+      expect: `делает «${IMPL_TITLE} ${IMPL_EFFORT}» (серый «${IMPL_EFFORT}»), держит «Claude …», оркестратор «claude»`,
       got: { clicked, делает: rows['делает'], detail, держит: rows['держит'], оркестратор: rows['оркестратор'] },
     }
   })
 
-  // 4. Этап делает сам держатель (роль `spec` вендора `claude`, держит `claude`):
+  // 4. Этап делает сам держатель (writer `lp-low` — claude, держит `claude`):
   //    строки «делает» нет; пустая подпись оркестратора — запасное значение ключа.
   await record('панель задачи: держатель сам делает этап — «делает» нет', async () => {
     const { clicked, drawer, rows } = await openDrawer(SAME_TITLE, SAME, (seen) => seen['держит'] && seen['оркестратор'])
@@ -257,7 +275,8 @@ try {
     }
   })
 
-  // 6. Роль `critic` вендора `glm`, держит `agent:pi-glm` — это она же: «делает» нет.
+  // 6. Critic `lp-low`, первый исполнитель — pi канала glm (глиф `pi-glm`), держит
+  //    `agent:pi-glm` — это он же: «делает» нет. Сравнение только с `harness` (`pi`) дало бы «делает».
   await record('панель задачи: GLM-критик держит сам — «делает» нет', async () => {
     const { clicked, drawer, rows } = await openDrawer(GLM_TITLE, GLM, (seen) => seen['держит'])
     const ok = Boolean(clicked)
@@ -271,8 +290,8 @@ try {
     }
   })
 
-  // 7. Этап без держателя — «делает» с title роли и серым label («Судья» нет
-  //    в «Проверка»), «держит никто»; тултип подвала с уточнением в скобках.
+  // 7. Этап без держателя — «делает» с именем judge и серым усилием, «держит никто»;
+  //    тултип подвала с уточнением в скобках.
   await record('панель задачи: этап без держателя — «делает» видна', async () => {
     const foot = await cardFoot(evaluate, FREE_TITLE)
     const { clicked, drawer, rows, detail } = await openDrawer(FREE_TITLE, FREE, (seen) => seen['делает'] && seen['держит'])
@@ -290,6 +309,32 @@ try {
       expect: `делает «${JUDGE_TITLE} ${JUDGE_LABEL}» (серый «${JUDGE_LABEL}»), держит «никто», тултип «${tooltip}»`,
       got: { clicked, делает: rows['делает'], detail, держит: rows['держит'], tooltip: foot?.tooltip ?? null },
     }
+  })
+
+  // 8. Держатель совпал со вторым исполнителем критика (`pi-deepseek`) — «делает» нет.
+  //    Сравнение только с первым исполнителем (`pi-glm`) дало бы «делает».
+  await record('панель задачи: держит второй исполнитель роли — «делает» нет', async () => {
+    const { clicked, drawer, rows } = await openDrawer(DEEPSEEK_TITLE, DEEPSEEK, (seen) => seen['держит'])
+    const ok = Boolean(clicked) && Boolean(drawer) && !('делает' in rows)
+    return { ok, expect: 'нет «делает»', got: { clicked, делает: rows['делает'], держит: rows['держит'] } }
+  })
+
+  // 9. Держит `codex`, критиков трое — «делает» строкой-тултипом, серого уточнения нет.
+  await record('панель задачи: несколько исполнителей — «делает» строкой без уточнения', async () => {
+    const { clicked, drawer, rows, detail } = await openDrawer(MULTI_TITLE, MULTI, (seen) => seen['делает'] && seen['держит'])
+    const ok = Boolean(clicked) && Boolean(drawer) && rows['делает'] === MULTI_TEXT && detail === null
+    return {
+      ok,
+      expect: `делает «${MULTI_TEXT}» без .listik-drawer__executor-detail`,
+      got: { clicked, делает: rows['делает'], detail, держит: rows['держит'] },
+    }
+  })
+
+  // 10. Рой `dsh-direct`, s3-impl (карта роя → `impl`), держит `claude` — «делает dsh».
+  await record('панель задачи: рой — «делает dsh»', async () => {
+    const { clicked, drawer, rows, detail } = await openDrawer(SWARM_TITLE, SWARM, (seen) => seen['делает'] && seen['держит'])
+    const ok = Boolean(clicked) && Boolean(drawer) && rows['делает'] === 'dsh' && detail === null
+    return { ok, expect: 'делает «dsh»', got: { clicked, делает: rows['делает'], detail, держит: rows['держит'] } }
   })
 
   report.consoleErrors = consoleErrors

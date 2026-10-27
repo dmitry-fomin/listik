@@ -69,7 +69,6 @@ import {
   type FeedFilterValue,
 } from '@/lib/dictionaries'
 import HarnessIcon from './marks/HarnessIcon.vue'
-import ProviderIcon from './marks/ProviderIcon.vue'
 import type {
   CommentKind,
   DepInfo,
@@ -1258,8 +1257,7 @@ async function loadTree(): Promise<void> {
             <template v-if="executorRow">
               <dt>делает</dt>
               <dd>
-                <ProviderIcon v-if="executorRow.provider" :provider="executorRow.provider" />
-                <HarnessIcon v-else-if="executorRow.harness" :harness="executorRow.harness" />
+                <HarnessIcon v-if="executorRow.harness" :harness="executorRow.harness" />
                 {{ executorRow.title }}
                 <span v-if="executorRow.detail" class="listik-drawer__executor-detail">{{ executorRow.detail }}</span>
               </dd>

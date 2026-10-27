@@ -1,7 +1,7 @@
 /**
  * Типы ответов API Listik. Источник правды — docs/API.md и listik/store.py.
  */
-import type { RoleCell, RoleKey } from '@/lib/pipelines'
+import type { PipelineRoleKey, RoleKey } from '@/lib/pipelines'
 import type { Transition } from '@/lib/stages'
 import type { IssueType } from '@/lib/dictionaries'
 
@@ -449,9 +449,8 @@ interface RouteBase {
    */
   icon?: RouteIconKey | null
   /**
-   * Плагин пресета конвейера (`pipeline-full`/`pipeline-cc`/`pipeline-claude`);
-   * у роя и у конвейера без плагина — `null`. Ключ конвейера с плагином —
-   * `<плагин без pipeline->-<скил>`. Сервер до схемы 16 поле не отдаёт.
+   * Плагин конвейера (`listik-pipeline`); у роя и у конвейера без плагина —
+   * `null`. Ключ конвейера с плагином — `lp-<скил>`. Сервер до схемы 16 поле не отдаёт.
    */
   plugin?: string | null
   /** Порядок записи (сквозной по всей таблице `routes`), серверный; из доски не меняется. */
@@ -460,14 +459,26 @@ interface RouteBase {
   command: string[] | null
 }
 
+/** Исполнитель роли конвейера v2: харнесс, агент/модель/канал и усилие. */
+export interface PipelineExecutor {
+  harness: string
+  agent?: string
+  model?: string
+  channel?: string
+  effort: string
+}
+
 /**
- * Пресет конвейера: роли ТЗ/критик/исполнитель/судья. `SwarmRoleCell` в типе
- * ролей — наследие роевых конвейеров; сужение до `RoleCell` — вне шага
- * listik-ujra. Различают ячейки `isSwarmCell`/`isProviderCell` из `lib/pipelines.ts`.
+ * Конвейер формата v2 (`listik-pipeline`): роли writer/critic/implementer/lens/judge,
+ * значение — массив исполнителей. Роли нет в объекте — этапа в режиме нет.
+ * Значение не массив (старая ячейка в базе до `--reimport`) читается как «роли нет»
+ * (`roleExecutors` из `lib/pipelines.ts`).
  */
 export interface PipelineRouteDef extends RouteBase {
   kind: 'pipeline'
-  roles: Partial<Record<RoleKey, RoleCell | SwarmRoleCell | null>>
+  roles: Partial<Record<PipelineRoleKey, PipelineExecutor[]>>
+  /** Скил режима в плагине (`low`, `high`); у конвейера без плагина — `null`. */
+  skill?: string | null
   /** Путь к `SKILL.md` относительно корня Listik; каталога скила нет — `null`. */
   skill_path?: string | null
   /** Каталог скила пропал (переименовали/удалили) — запись отдаётся скрытой (`visible:false`). */
@@ -532,11 +543,11 @@ export interface RoutePatch {
   icon?: RouteIconKey | null
   visible?: boolean
   /**
-   * Расклад ролей целиком: у `kind=pipeline` ячейки скилового вида
-   * (`{provider,label,title}`), у `kind=swarm` — `{harness,argv?,prompt?}`
-   * или `null` (пропуск этапа).
+   * Расклад ролей целиком: у `kind=pipeline` — роли v2 массивами исполнителей
+   * (`{harness,agent?,model?,channel?,effort}`), у `kind=swarm` —
+   * `{harness,argv?,prompt?}` или `null` (пропуск этапа).
    */
-  roles?: Partial<Record<RoleKey, RoleCell | SwarmRoleCell | null>>
+  roles?: Partial<Record<PipelineRoleKey, PipelineExecutor[]>> | SwarmRoles
 }
 
 /**
@@ -569,7 +580,7 @@ export interface HarnessChannel {
 /** Ссылка маршрута на харнесс: роль роя или участник (`members`) роли конвейера. */
 export type HarnessUsage =
   | { route: string; kind: 'swarm'; role: string | null }
-  | { route: string; kind: 'pipeline'; role: string; channel: string }
+  | { route: string; kind: 'pipeline'; role: string; channel: string | null }
 
 /** Харнесс каталога: исполнитель роли роя. */
 export interface Harness {

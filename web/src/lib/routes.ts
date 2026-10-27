@@ -13,6 +13,7 @@ import type {
   RouteDef,
   SwarmRouteDef,
 } from '@/api/types'
+import { roleExecutors } from './pipelines'
 
 /**
  * Пустая строка — снять маршрут на сервере (`set launch_route=` / PATCH
@@ -22,11 +23,13 @@ export const NO_ROUTE = ''
 
 /**
  * Разрешён ли маршрут типу задачи — одно правило у «Новой задачи» и у смены
- * маршрута в карточке, для конвейера и роя: эпику нужен этап ТЗ (заполненная
- * `roles.spec`), остальным типам — любой маршрут.
+ * маршрута в карточке, для конвейера и роя: эпику нужен этап ТЗ (у конвейера —
+ * непустой массив `roles.writer`, у роя — заполненная `roles.spec`), остальным
+ * типам — любой маршрут.
  */
 export function routeAllowedForType(route: RouteDef, type: string): boolean {
   if (type !== 'epic') return true
+  if (route.kind === 'pipeline') return roleExecutors(route.roles.writer).length > 0
   return Boolean(route.roles.spec)
 }
 
@@ -41,8 +44,8 @@ export function routesAlertText(requestFailed: boolean, error: string | null): s
 }
 
 /**
- * Пресет по умолчанию зависит от типа: эпик крупнее и рискованнее — `full-high`,
- * задаче и багу хватает `full-low`. Если нужного ключа нет среди видимых
+ * Пресет по умолчанию зависит от типа: эпик крупнее и рискованнее — `lp-high`,
+ * задаче и багу хватает `lp-low`. Если нужного ключа нет среди видимых
  * разрешённых, берётся первый видимый разрешённый `pipeline` в порядке ответа;
  * если и его нет — маршрут не выбран (`null`).
  */
@@ -51,7 +54,7 @@ export function defaultPipelineFor(type: string, routes: RouteDef[]): PipelineRo
     (route): route is PipelineRouteDef =>
       route.kind === 'pipeline' && route.visible && routeAllowedForType(route, type),
   )
-  const preferred = type === 'epic' ? 'full-high' : 'full-low'
+  const preferred = type === 'epic' ? 'lp-high' : 'lp-low'
   return allowed.find((route) => route.key === preferred) ?? allowed[0] ?? null
 }
 
@@ -303,20 +306,21 @@ const PLACEHOLDER_EXAMPLES: Record<string, string> = {
   harness: 'claude',
 }
 
-/** Плагины пресетов конвейера — `skills.PIPELINE_PLUGINS` сервера. */
-const PIPELINE_PLUGINS = ['pipeline-full', 'pipeline-cc', 'pipeline-claude'] as const
+/** Плагин конвейера → префикс ключа (семейство): `lp-<скил>`. */
+const PIPELINE_KEY_PREFIX = new Map<string, string>([['listik-pipeline', 'lp']])
 
 /**
- * Разбор ключа конвейера `<плагин без pipeline->-<скил>`: `full-high` →
- * `{ plugin: 'pipeline-full', skill: 'high' }`. Передан `plugin` (поле записи) —
+ * Разбор ключа конвейера `<префикс>-<скил>`: `lp-high` →
+ * `{ plugin: 'listik-pipeline', skill: 'high' }`. Передан `plugin` (поле записи) —
  * берётся он и ключ сверяется с его префиксом; иначе плагин выводится из
  * префикса ключа. Не разбирается — `null`.
  */
 function splitPipelineKey(key: string, plugin?: string | null): { plugin: string; skill: string } | null {
-  const candidates = plugin ? [plugin] : PIPELINE_PLUGINS
+  const candidates = plugin ? [plugin] : [...PIPELINE_KEY_PREFIX.keys()]
   for (const name of candidates) {
-    if (!(PIPELINE_PLUGINS as readonly string[]).includes(name)) continue
-    const prefix = `${name.slice('pipeline-'.length)}-`
+    const family = PIPELINE_KEY_PREFIX.get(name)
+    if (!family) continue
+    const prefix = `${family}-`
     if (key.startsWith(prefix) && key.length > prefix.length) {
       return { plugin: name, skill: key.slice(prefix.length) }
     }
@@ -325,7 +329,7 @@ function splitPipelineKey(key: string, plugin?: string | null): { plugin: string
 }
 
 /**
- * Скил записи конвейера для текстов: `/pipeline-full:high` по полю `plugin`;
+ * Скил записи конвейера для текстов: `/listik-pipeline:high` по полю `plugin`;
  * плагин не задан (или ключ с ним не сходится) — `null`.
  */
 export function routeSkillRef(route: { key: string; plugin?: string | null }): string | null {
@@ -336,13 +340,13 @@ export function routeSkillRef(route: { key: string; plugin?: string | null }): s
 
 /**
  * Название маршрута для показа, разложенное на уровень и семейство. У
- * пресетов-конвейеров (`plugin` — один из `PIPELINE_PLUGINS`) семейство
- * рисуется отдельным серым хвостом (`RouteName`), а `title` у них обычно
+ * конвейеров (`plugin` — ключ `PIPELINE_KEY_PREFIX`) семейство (`lp`)
+ * рисуется отдельным серым хвостом (`RouteName`), а `title` у них бывает
  * «<семейство> <уровень>» — префикс снимается, чтобы семейство не
  * дублировалось. Уровень берётся из `title`, а не из `key`: автор может
  * переименовать маршрут в настройках, и его название остаётся видно.
- * Префикс снимается только целиком («cc » — семейство и пробел); если после
- * снятия ничего не осталось (title ровно «cc»), возвращается `title` как есть.
+ * Префикс снимается только целиком («lp » — семейство и пробел); если после
+ * снятия ничего не осталось (title ровно «lp»), возвращается `title` как есть.
  * У роя, devin и своих маршрутов `plugin` пуст — `family` `null`.
  */
 export function routeNameParts(route: {
@@ -351,10 +355,8 @@ export function routeNameParts(route: {
   plugin?: string | null
 }): { level: string; family: string | null } {
   const plugin = route.plugin ?? null
-  if (!plugin || !(PIPELINE_PLUGINS as readonly string[]).includes(plugin)) {
-    return { level: route.title, family: null }
-  }
-  const family = plugin.slice('pipeline-'.length)
+  const family = plugin ? PIPELINE_KEY_PREFIX.get(plugin) : undefined
+  if (!family) return { level: route.title, family: null }
   const prefix = `${family} `
   const level =
     route.title.startsWith(prefix) && route.title.length > prefix.length

@@ -19,12 +19,15 @@
  * так проверяется пункт «без маршрута» в панели задачи
  * (scripts/verify-route-clear.mjs). В том же режиме живёт карточка
  * `listik-executor`: держит её `claude`, а этап s3-impl по маршруту делает
- * роль `impl` — по ней проверяется подпись «делает …»
+ * роль `implementer` — по ней проверяется подпись «делает …»
  * (scripts/verify-card-executor.mjs). Там же — карточки блока «Кто держит»:
- * `listik-executor-same` (s1-spec, роль `spec` вендора `claude`, держит
+ * `listik-executor-same` (s1-spec, роль `writer` харнесса `claude`, держит
  * `claude`, оркестратор `listik` с пустой подписью), `listik-executor-glm`
- * (s2-review, роль `critic` вендора `glm`, держит `agent:pi-glm`) и
- * `listik-executor-free` (s4-judge, роль `judge`, без держателя и оркестратора).
+ * (s2-review, роль `critic`, держит `agent:pi-glm`), `listik-executor-free`
+ * (s4-judge, роль `judge`, без держателя и оркестратора), `listik-executor-deepseek`
+ * (s2-review, держит `agent:pi-deepseek` — второй критик), `listik-executor-multi`
+ * (s2-review, держит `codex`) и `listik-executor-swarm` (рой `dsh-direct`, s3-impl,
+ * держит `claude`); эпик `listik-routes-epic` с `route_editable: true`.
  * `--assistant` добавляет `GET /api/assistant/status` (`enabled`) и
  * `POST /api/assistant/suggest`; формы — `AssistantStatus` и
  * `AssistantSuggestResponse` из `web/src/api/types.ts`. Ответ подбирается по
@@ -43,7 +46,7 @@
  * при `noproject`, `project: 'ghost-project'` (нет в `/api/meta`) при `badproject`,
  * `title: null` при `notitle`, `type: 'feature'` (остальное — как у полного) при
  * `feature`, HTTP 502 при `draft-fail`, иначе полный
- * (`project: 'listik'`, `type: 'task'`, видимый маршрут `full-low`).
+ * (`project: 'listik'`, `type: 'task'`, видимый маршрут `lp-low`).
  * Только под `--voice` ручки голоса и живут.
  * `--cold` добавляет четыре задачи под строку «worktree · branch» блока
  * «Холодный старт»: отдельное дерево, работа в `main`, она же в `master`, и
@@ -946,45 +949,74 @@ if (markdownMode) {
 
 /**
  * `--routes`: записи таблицы маршрутов и карточка с отказавшим автостартом. Маршрут
- * `full-low` у неё есть, а запуск не удался — `launch_error`, флаг «нужен
+ * `lp-low` у неё есть, а запуск не удался — `launch_error`, флаг «нужен
  * человек» и метки маршрута стоят ровно так, как их пишет `launcher.refuse`.
  * Панель задачи по `route_editable: true` показывает ту же матрицу маршрутов,
  * что «Новая задача»; снятие маршрута пунктом «без маршрута» (клик сразу
  * шлёт PATCH) проверяет scripts/verify-route-clear.mjs.
  */
 const ROUTES = [
+  // Конвейеры v2 в серверной форме (`GET /api/routes`): `plugin`/`skill`,
+  // `command: null`, `title` — имя скила; роли — массивы исполнителей.
+  // `lp-low` — ровно пример из ТЗ listik-906l.c, `lp-high` и `lp-xlow` — как в routes.json.
   {
-    key: 'full-low',
+    key: 'lp-low',
     kind: 'pipeline',
-    title: 'Низкий — конвейер',
-    hint: 'дёшево и быстро',
+    plugin: 'listik-pipeline',
+    skill: 'low',
+    title: 'low',
+    hint: 'Listik-pipeline, режим low: дёшево и быстро',
     visible: true,
     icon: 'low',
+    command: null,
     roles: {
-      spec: { provider: 'claude', label: 'ТЗ', title: 'ТЗ и чек-лист' },
-      critic: { provider: 'glm', label: 'GLM', title: 'GLM — критик' },
-      // provider — валидный ProviderKey ('deepseek', не 'dsh'); title отличен
-      // от названия этапа, чтобы подпись «делает …» проверялась однозначно.
-      impl: { provider: 'deepseek', label: 'DeepSeek', title: 'DeepSeek — код' },
-      judge: { provider: 'grok', label: 'Судья', title: 'Проверка' },
+      writer: [{ harness: 'claude', agent: 'listik-pipeline:writer-low', model: 'opus', effort: 'low' }],
+      critic: [
+        { harness: 'pi', channel: 'glm', effort: 'high' },
+        { harness: 'pi', channel: 'deepseek', effort: 'high' },
+        { harness: 'claude', agent: 'listik-pipeline:critic-high', model: 'haiku', effort: 'high' },
+      ],
+      implementer: [{ harness: 'devin', model: 'swe-2', effort: 'max' }],
+      lens: [{ harness: 'claude', agent: 'listik-pipeline:lens-max', model: 'haiku', effort: 'max' }],
+      judge: [{ harness: 'grok', model: 'grok-4.7', effort: 'high' }],
     },
   },
   {
-    key: 'full-high',
+    key: 'lp-high',
     kind: 'pipeline',
-    title: 'Высокий — конвейер',
-    hint: 'дороже, но надёжнее',
+    plugin: 'listik-pipeline',
+    skill: 'high',
+    title: 'high',
+    hint: 'Listik-pipeline, режим high: дороже, но надёжнее',
     visible: true,
     icon: 'high',
+    command: null,
     roles: {
-      spec: { provider: 'claude', label: 'ТЗ', title: 'ТЗ и чек-лист' },
-      critic: {
-        provider: 'claude',
-        label: 'S+DS+GLM',
-        title: 'Sonnet 5.5 · high + DeepSeek V4.1 Flash + GLM 5.3 Flash',
-      },
-      impl: { provider: 'claude', label: 'Код', title: 'Реализация' },
-      judge: { provider: 'grok', label: 'Судья', title: 'Проверка' },
+      writer: [{ harness: 'claude', agent: 'listik-pipeline:writer-high', model: 'opus', effort: 'high' }],
+      critic: [
+        { harness: 'claude', agent: 'listik-pipeline:critic-high', model: 'sonnet', effort: 'high' },
+        { harness: 'pi', channel: 'deepseek', effort: 'high' },
+        { harness: 'pi', channel: 'glm', effort: 'high' },
+      ],
+      implementer: [{ harness: 'claude', agent: 'listik-pipeline:implementer-high', model: 'opus', effort: 'high' }],
+      lens: [{ harness: 'claude', agent: 'listik-pipeline:lens-max', model: 'haiku', effort: 'max' }],
+      judge: [{ harness: 'grok', model: 'grok-4.7', effort: 'xhigh' }],
+    },
+  },
+  {
+    // Без `writer`: этапа ТЗ нет — эпику маршрут закрыт (`routeAllowedForType`).
+    key: 'lp-xlow',
+    kind: 'pipeline',
+    plugin: 'listik-pipeline',
+    skill: 'xlow',
+    title: 'xlow',
+    hint: 'Listik-pipeline, режим xlow: один прогон без ТЗ',
+    visible: true,
+    icon: 'xlow',
+    command: null,
+    roles: {
+      implementer: [{ harness: 'devin', model: 'swe-2', effort: 'max' }],
+      judge: [{ harness: 'grok', model: 'grok-4.7', effort: 'high' }],
     },
   },
   {
@@ -1028,12 +1060,12 @@ const ASSISTANT_COMPLEXITY = {
 
 /**
  * Маршрут ответа `full` — видимая запись из `--routes`, допустимая типу `task`.
- * Умолчание формы для задачи (`lib/routes.ts` → `full-low`) пропускаем: оно и
+ * Умолчание формы для задачи (`lib/routes.ts` → `lp-low`) пропускаем: оно и
  * так выбрано, и кнопка была бы «Уже выбран» — применить маршрут нечем.
  */
 function assistantRouteOf() {
   const visible = ROUTES.filter((route) => route.visible)
-  return visible.find((route) => route.key !== 'full-low') ?? visible[0] ?? null
+  return visible.find((route) => route.key !== 'lp-low') ?? visible[0] ?? null
 }
 
 /** Поле `route` ответа: `noroute` — null, `blocked` — ключ, которого нет в таблице маршрутов. */
@@ -1096,10 +1128,10 @@ const listQueries = []
 /** id созданных моком карточек: `mock-1`, `mock-2`, … */
 let nextMockId = 1
 
-/** Маршрут полного черновика — видимая запись `ROUTES` (`key: 'full-low'`). */
+/** Маршрут полного черновика — видимая запись `ROUTES` (`key: 'lp-low'`). */
 function voiceDraftRoute() {
   const route =
-    ROUTES.find((item) => item.key === 'full-low' && item.visible) ??
+    ROUTES.find((item) => item.key === 'lp-low' && item.visible) ??
     ROUTES.find((item) => item.visible)
   if (!route) return null
   return {
@@ -1193,10 +1225,10 @@ if (routesMode) {
       orchestrator: null,
       orchestrator_title: '',
       autostart: true,
-      launch_route: 'full-low',
-      launch_error: 'маршрута full-low нет в базе',
+      launch_route: 'lp-low',
+      launch_error: 'маршрута lp-low нет в базе',
       needs_owner: true,
-      labels: ['harness:claude', 'process:full-low', 'frontend'],
+      labels: ['harness:claude', 'process:lp-low', 'frontend'],
       stale: false,
       abandoned: false,
     }),
@@ -1221,8 +1253,8 @@ if (routesMode) {
       stale: false,
       abandoned: false,
     }),
-    // Карточка на s3-impl конвейера `full-low`: держит оркестратор
-    // (`claude`), а этап делает роль `impl` (DeepSeek) — по ней проверяется
+    // Карточка на s3-impl конвейера `lp-low`: держит оркестратор
+    // (`claude`), а этап делает роль `implementer` (devin, swe-2) — по ней проверяется
     // подпись «делает …» в подвале и в панели (scripts/verify-card-executor.mjs).
     task({
       id: 'listik-executor',
@@ -1240,12 +1272,12 @@ if (routesMode) {
       idle_age: '6 мин',
       orchestrator: 'claude',
       orchestrator_title: 'claude',
-      launch_route: 'full-low',
-      labels: ['harness:claude', 'process:full-low', 'frontend'],
+      launch_route: 'lp-low',
+      labels: ['harness:claude', 'process:lp-low', 'frontend'],
       stale: false,
       abandoned: false,
     }),
-    // Этап s1-spec делает роль `spec` вендора `claude`, держит тоже `claude` —
+    // Этап s1-spec делает роль `writer` харнесса `claude`, держит тоже `claude` —
     // строки «делает» в панели нет. Пустой `orchestrator_title` проверяет
     // запасное значение `orchestrator` в строке «оркестратор».
     task({
@@ -1264,13 +1296,13 @@ if (routesMode) {
       idle_age: '6 мин',
       orchestrator: 'listik',
       orchestrator_title: '',
-      launch_route: 'full-low',
-      labels: ['harness:claude', 'process:full-low', 'frontend'],
+      launch_route: 'lp-low',
+      labels: ['harness:claude', 'process:lp-low', 'frontend'],
       stale: false,
       abandoned: false,
     }),
-    // Этап s2-review — роль `critic` вендора `glm`, держит `agent:pi-glm`:
-    // вендор и харнесс совпадают (`glm` ↔ `pi-glm`), «делает» скрыта.
+    // Этап s2-review — роль `critic` (первый исполнитель pi канала glm, глиф
+    // `pi-glm`), держит `agent:pi-glm`: глиф и держатель совпадают, «делает» скрыта.
     task({
       id: 'listik-executor-glm',
       title: 'Критик GLM держит сам',
@@ -1287,12 +1319,12 @@ if (routesMode) {
       idle_age: '6 мин',
       orchestrator: 'listik',
       orchestrator_title: 'listik',
-      launch_route: 'full-low',
-      labels: ['harness:claude', 'process:full-low', 'frontend'],
+      launch_route: 'lp-low',
+      labels: ['harness:claude', 'process:lp-low', 'frontend'],
       stale: false,
       abandoned: false,
     }),
-    // Этап s4-judge — роль `judge` («Проверка»), держателя нет: «делает» видна,
+    // Этап s4-judge — роль `judge` (grok-4.7 · high), держателя нет: «делает» видна,
     // «держит никто».
     task({
       id: 'listik-executor-free',
@@ -1311,8 +1343,100 @@ if (routesMode) {
       idle_age: '6 мин',
       orchestrator: null,
       orchestrator_title: '',
-      launch_route: 'full-low',
-      labels: ['harness:claude', 'process:full-low', 'frontend'],
+      launch_route: 'lp-low',
+      labels: ['harness:claude', 'process:lp-low', 'frontend'],
+      stale: false,
+      abandoned: false,
+    }),
+    // Держатель `agent:pi-deepseek` совпал со вторым исполнителем критика `lp-low` —
+    // «делает» скрыта (сравнение только с первым дало бы «делает»).
+    task({
+      id: 'listik-executor-deepseek',
+      title: 'Критик DeepSeek держит сам',
+      status: 'in_progress',
+      status_title: 'в работе',
+      stage: 's2-review',
+      stage_title: '2. Второе мнение',
+      holder: 'agent:pi-deepseek',
+      holder_title: 'pi · DeepSeek',
+      holder_at: iso(0.1),
+      holder_age: '6 мин',
+      holder_hours: 0.1,
+      idle_hours: 0.1,
+      idle_age: '6 мин',
+      orchestrator: 'listik',
+      orchestrator_title: 'listik',
+      launch_route: 'lp-low',
+      labels: ['harness:claude', 'process:lp-low', 'frontend'],
+      stale: false,
+      abandoned: false,
+    }),
+    // Держит `codex`, критиков `lp-low` трое и никто из них не codex — «делает»
+    // строкой-тултипом всех исполнителей, без серого уточнения.
+    task({
+      id: 'listik-executor-multi',
+      title: 'Критиков несколько, держит codex',
+      status: 'in_progress',
+      status_title: 'в работе',
+      stage: 's2-review',
+      stage_title: '2. Второе мнение',
+      holder: 'codex',
+      holder_title: 'Codex',
+      holder_at: iso(0.1),
+      holder_age: '6 мин',
+      holder_hours: 0.1,
+      idle_hours: 0.1,
+      idle_age: '6 мин',
+      orchestrator: 'listik',
+      orchestrator_title: 'listik',
+      launch_route: 'lp-low',
+      labels: ['harness:claude', 'process:lp-low', 'frontend'],
+      stale: false,
+      abandoned: false,
+    }),
+    // Рой `dsh-direct` на s3-impl (карта роя `impl`), держит `claude` — «делает dsh».
+    task({
+      id: 'listik-executor-swarm',
+      title: 'Рой: этап делает dsh',
+      status: 'in_progress',
+      status_title: 'в работе',
+      stage: 's3-impl',
+      stage_title: '3. Реализация',
+      holder: 'claude',
+      holder_title: 'Claude',
+      holder_at: iso(0.1),
+      holder_age: '6 мин',
+      holder_hours: 0.1,
+      idle_hours: 0.1,
+      idle_age: '6 мин',
+      orchestrator: 'listik',
+      orchestrator_title: 'listik',
+      launch_route: 'dsh-direct',
+      labels: ['process:dsh-direct', 'frontend'],
+      stale: false,
+      abandoned: false,
+    }),
+    // Заведённый эпик (`route_editable: true`): в его матрице маршрут без
+    // `writer` (`lp-xlow`) закрыт — проверка правила эпика (verify-route-clear).
+    task({
+      id: 'listik-routes-epic',
+      title: 'Эпик выбирает маршрут',
+      issue_type: 'epic',
+      status: 'open',
+      status_title: 'открыта',
+      stage: null,
+      stage_title: null,
+      holder: null,
+      holder_title: '—',
+      holder_at: null,
+      holder_age: '',
+      holder_hours: null,
+      holder_note: null,
+      stage_at: null,
+      stage_age: '',
+      orchestrator: null,
+      orchestrator_title: '',
+      labels: ['frontend'],
       stale: false,
       abandoned: false,
     }),

@@ -43,7 +43,7 @@ import {
 } from '@zoloto585/facet'
 import IconToggle from './IconToggle.vue'
 import ListikIcon from './ListikIcon.vue'
-import ProviderIcon from './marks/ProviderIcon.vue'
+import HarnessIcon from './marks/HarnessIcon.vue'
 import RouteIcon from './marks/RouteIcon.vue'
 import RouteName from './marks/RouteName.vue'
 import RouteSubstitutions from './RouteSubstitutions.vue'
@@ -52,14 +52,13 @@ import type { PipelineRouteDef, RouteIconKey, RoutePatch } from '@/api/types'
 import { useAutosave } from '@/lib/autosave'
 import { ROUTE_ICON_OPTIONS, routeIconGlyph } from '@/lib/dictionaries'
 import {
-  isProviderCell,
-  ROLE_KEYS,
-  roleModels,
+  executorGlyph,
+  executorName,
+  executorsTitle,
+  PIPELINE_ROLE_KEYS,
+  roleExecutors,
   roleStage,
-  type ProviderKey,
-  type RoleModel,
-  type RoleCell,
-  type RoleKey,
+  type PipelineRoleKey,
 } from '@/lib/pipelines'
 import { routeSkillRef, splitPlaceholders, unknownPlaceholders } from '@/lib/routes'
 
@@ -147,31 +146,36 @@ function onIcon(value: string): void {
 /* ── состав конвейера: только показ ── */
 
 interface RoleTile {
-  role: RoleKey
-  /** Код этапа (`s1`…) — из `PIPELINE_STAGES` по `ROLE_STAGE`. */
+  role: PipelineRoleKey
+  /** Код этапа (`s1`…) — из `PIPELINE_STAGES` по `PIPELINE_ROLE_STAGE`. */
   stageCode: string
   /** Подпись этапа — из `PIPELINE_STAGES`, руками не пишется. */
   stageLabel: string
-  /** Вендор роли — глифом `ProviderIcon`, как в `RoutePicker`. */
-  provider: ProviderKey
-  /** Модели ячейки построчно (`roleModels`): имя, усилие, эскалация после ` → `. */
-  models: RoleModel[]
-  /** Полная расшифровка ячейки — в тултип плитки. */
+  /** Глиф `HarnessIcon` первого исполнителя роли. */
+  glyph: string
+  /** Исполнители роли построчно: имя и усилие. */
+  models: { name: string; effort: string }[]
+  /** Строка-тултип роли (`имя · усилие + …`). */
   vendorTitle: string
 }
 
+/** Плитки — роли v2 с непустым массивом исполнителей; ячейка-объект ролью не считается. */
 const roleTiles = computed<RoleTile[]>(() =>
-  ROLE_KEYS.filter((role) => isProviderCell(props.route.roles[role])).map((role) => {
-    const cell = props.route.roles[role] as RoleCell
+  PIPELINE_ROLE_KEYS.flatMap((role) => {
+    const executors = roleExecutors(props.route.roles[role])
+    const first = executors[0]
+    if (!first) return []
     const stage = roleStage(role)
-    return {
-      role,
-      stageCode: stage?.code ?? '',
-      stageLabel: stage?.label ?? '',
-      provider: cell.provider,
-      models: roleModels(cell),
-      vendorTitle: cell.title || cell.label || cell.provider,
-    }
+    return [
+      {
+        role,
+        stageCode: stage?.code ?? '',
+        stageLabel: stage?.label ?? '',
+        glyph: executorGlyph(first),
+        models: executors.map((executor) => ({ name: executorName(executor), effort: executor.effort })),
+        vendorTitle: executorsTitle(executors),
+      },
+    ]
   }),
 )
 
@@ -249,16 +253,10 @@ function braced(name: string): string {
         <div v-for="tile in roleTiles" :key="tile.role" class="listik-route-card__role" :title="tile.vendorTitle">
           <span class="listik-route-card__role-head">
             <span class="listik-route-card__role-stage">{{ tile.stageCode }} · {{ tile.stageLabel }}</span>
-            <ProviderIcon :provider="tile.provider" size="sm" />
+            <HarnessIcon :harness="tile.glyph" size="sm" />
           </span>
           <ul class="listik-route-card__role-models">
-            <li
-              v-for="(model, at) in tile.models"
-              :key="at"
-              class="listik-route-card__role-model"
-              :class="{ 'is-escalation': model.escalation }"
-            >
-              <span v-if="model.escalation" class="listik-route-card__role-then">при находке</span>
+            <li v-for="(model, at) in tile.models" :key="at" class="listik-route-card__role-model">
               <span class="listik-route-card__role-name">{{ model.name }}</span>
               <span v-if="model.effort" class="listik-route-card__role-effort">{{ model.effort }}</span>
             </li>
@@ -472,22 +470,6 @@ function braced(name: string): string {
   min-width: 0;
   font-size: var(--text-sm);
   color: var(--ink-1);
-}
-
-/* Модель после ` → ` (судья за линзами) — отделена чертой и подписью «при находке». */
-.listik-route-card__role-model.is-escalation {
-  padding-top: var(--space-1);
-  border-top: 1px dashed var(--hairline);
-}
-
-.listik-route-card__role-then {
-  flex-basis: 100%;
-  font-size: var(--text-xs);
-  color: var(--ink-3);
-}
-
-.listik-route-card__role-then::before {
-  content: '→\00a0';
 }
 
 .listik-route-card__role-name {

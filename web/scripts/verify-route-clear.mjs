@@ -34,7 +34,8 @@ const chromePort = 9400 + Math.floor(Math.random() * 400)
 const profile = mkdtempSync(join(tmpdir(), 'listik-routes-'))
 const CARD = 'listik-routes-error'
 const FRESH = 'listik-routes-fresh'
-const ROUTE = 'full-low'
+const ROUTE = 'lp-low'
+const EPIC = 'listik-routes-epic'
 
 /* ── Сценарии ───────────────────────────────────────────────────────────── */
 
@@ -184,13 +185,13 @@ try {
     })
     const ok = Boolean(current)
       && current.sectionTitle === 'Маршрут запуска'
-      && current.selectedLabel === 'Низкий — конвейер'
+      && current.selectedLabel === 'low lp'
       && current.hasClear === true
       && current.hasSave === false
       && current.icons > 0
       && current.alert == null
       && current.labels.includes('harness:claude')
-      && current.labels.includes('process:full-low')
+      && current.labels.includes('process:lp-low')
     return {
       ok,
       expect: 'матрица с текущим маршрутом и иконками, без кнопки сохранения и без алерта, метки harness:/process:',
@@ -199,66 +200,73 @@ try {
   })
 
   // 1a. Та же карточка: подписи групп — оркестраторы, ячейки конвейеров —
-  //     модели текстом (без глифа вендора), роевые ячейки — с глифом харнесса.
-  await record('матрица маршрута: оркестраторы групп и модели текстом', async () => {
+  //     исполнители текстом (без глифа), роевые ячейки — с глифом харнесса;
+  //     пять колонок ролей v2 в одну строку сетки, у роя — четыре.
+  await record('матрица маршрута: роли v2, исполнители текстом, сетка в одну строку', async () => {
     const seen = await evaluate(`(() => {
       const picker = document.querySelector('.ui-drawer [role="radiogroup"][aria-label="Маршрут запуска"]');
       if (!picker) return null;
       const text = (el) => el ? el.textContent.replace(/\\s+/g, ' ').trim() : null;
-      const hintOf = (title) => {
-        const head = [...picker.querySelectorAll('.listik-rgroup__head')]
-          .find((el) => text(el.querySelector('.listik-rgroup__title')) === title);
-        return head ? text(head.querySelector('.listik-rgroup__hint')) : null;
-      };
+      const groupOf = (title) => [...picker.querySelectorAll('.listik-rgroup')]
+        .find((el) => text(el.querySelector('.listik-rgroup__title')) === title) ?? null;
+      const hintOf = (title) => text(groupOf(title)?.querySelector('.listik-rgroup__hint'));
       const row = (key) => picker.querySelector('[data-route-key="' + key + '"]');
       const cellsOf = (key) => row(key) ? [...row(key).querySelectorAll('.listik-pipelines__cell')] : [];
       const modelsOf = (cell) => cell
-        ? [...cell.querySelectorAll('.listik-pipelines__model')].map((model) => {
-            const effort = model.querySelector('.listik-pipelines__model-effort');
-            return {
-              name: text(model.querySelector('.listik-pipelines__model-name')),
-              effort: effort ? effort.textContent.replace(/^[\\s·]+|[\\s·]+$/g, '') : null,
-            };
-          })
+        ? [...cell.querySelectorAll('.listik-pipelines__model')].map((model) => ({
+            name: text(model.querySelector('.listik-pipelines__model-name')),
+            effort: text(model.querySelector('.listik-pipelines__model-effort')),
+          }))
         : null;
-      const pipeline = (key) => ({
-        models: row(key) ? row(key).querySelectorAll('.listik-pipelines__model').length : -1,
-        glyphs: cellsOf(key).reduce((sum, cell) => sum + cell.querySelectorAll('.listik-harness-icon').length, 0),
-      });
-      const critic = cellsOf('full-high')[1];
-      const low = cellsOf('full-low');
+      const pipelinesGroup = groupOf('Конвейеры');
+      const pipelineRows = pipelinesGroup ? [...pipelinesGroup.querySelectorAll('.listik-pipelines__row')] : [];
+      const swarmRows = groupOf('Рой') ? [...groupOf('Рой').querySelectorAll('.listik-pipelines__row')] : [];
+      // Вертикальный отрезок ребёнка строки: [offsetTop, offsetTop + offsetHeight].
+      const tops = (el) => [...el.children].map((child) => [child.offsetTop, child.offsetTop + child.offsetHeight]);
+      const critic = cellsOf('lp-high')[1];
       return {
         pipelinesHint: hintOf('Конвейеры'),
         swarmHint: hintOf('Рой'),
-        high: pipeline('full-high'),
-        low: pipeline('full-low'),
+        headers: pipelinesGroup
+          ? [...pipelinesGroup.querySelectorAll('.listik-pipelines__header .listik-pipelines__col-title')].map(text)
+          : [],
+        pipelineGlyphs: pipelineRows.reduce((sum, el) => sum + [...el.querySelectorAll('.listik-pipelines__cell')]
+          .reduce((acc, cell) => acc + cell.querySelectorAll('.listik-harness-icon').length, 0), 0),
+        pipelineRows: pipelineRows.map((el) => ({ key: el.getAttribute('data-route-key'), tops: tops(el) })),
+        swarmCells: swarmRows.map((el) => el.querySelectorAll('.listik-pipelines__cell').length),
+        swarmTops: swarmRows.map((el) => tops(el)),
         highCritic: modelsOf(critic),
         highCriticTitle: critic ? critic.getAttribute('title') : null,
-        highHasShort: row('full-high') ? row('full-high').textContent.includes('S+DS+GLM') : null,
-        lowJudge: modelsOf(low[3]),
-        lowCritic: modelsOf(low[1]),
+        lowCounts: cellsOf('lp-low').map((cell) => cell.querySelectorAll('.listik-pipelines__model').length),
         swarmGlyphs: row('dsh-direct') ? row('dsh-direct').querySelectorAll('.listik-harness-icon').length : -1,
       };
     })()`)
     const same = (got, want) => JSON.stringify(got) === JSON.stringify(want)
+    // Одна строка сетки: у детей разная высота и `align-items: center`, поэтому
+    // равенства offsetTop нет; уехавшая на вторую строку ячейка начинается ниже
+    // низа любой ячейки первой — значит, все отрезки попарно пересекаются.
+    const oneLine = (list) => list.length > 0
+      && Math.max(...list.map(([top]) => top)) < Math.min(...list.map(([, bottom]) => bottom))
     const ok = Boolean(seen)
       && seen.pipelinesHint === 'оркестратор — Claude Code'
       && seen.swarmHint === 'оркестратор — Listik'
-      && seen.high.models > 0 && seen.high.glyphs === 0
-      && seen.low.models > 0 && seen.low.glyphs === 0
+      && same(seen.headers, ['ТЗ', 'Критик', 'Исполнитель', 'Линза', 'Судья'])
+      && seen.pipelineGlyphs === 0
+      && seen.pipelineRows.length > 0
+      && seen.pipelineRows.every((item) => item.tops.length === 6 && oneLine(item.tops))
+      && seen.swarmCells.length > 0 && seen.swarmCells.every((count) => count === 4)
+      && seen.swarmTops.every(oneLine)
       && same(seen.highCritic, [
-        { name: 'Sonnet 5.5', effort: 'high' },
-        { name: 'DeepSeek V4.1 Flash', effort: null },
-        { name: 'GLM 5.3 Flash', effort: null },
+        { name: 'sonnet', effort: 'high' },
+        { name: 'deepseek', effort: 'high' },
+        { name: 'glm', effort: 'high' },
       ])
-      && seen.highCriticTitle === 'Sonnet 5.5 · high + DeepSeek V4.1 Flash + GLM 5.3 Flash'
-      && seen.highHasShort === false
-      && same(seen.lowJudge, [{ name: 'Проверка', effort: 'Судья' }])
-      && same(seen.lowCritic, [{ name: 'GLM — критик', effort: null }])
+      && seen.highCriticTitle === 'sonnet · high + deepseek · high + glm · high'
+      && same(seen.lowCounts, [1, 3, 1, 1, 1])
       && seen.swarmGlyphs > 0
     return {
       ok,
-      expect: 'подписи «оркестратор — Claude Code»/«оркестратор — Listik»; в ячейках конвейеров модели текстом без глифа; критик high — три модели, тултип — title; роевая строка с глифом',
+      expect: 'шапка «ТЗ, Критик, Исполнитель, Линза, Судья»; строки конвейеров — 6 детей в одной строке сетки (отрезки offsetTop…+offsetHeight пересекаются), у роя 4 ячейки; глифов в ячейках конвейеров 0, у dsh-direct > 0; критик lp-high — sonnet/deepseek/glm · high с тултипом; lp-low по ролям [1,3,1,1,1]',
       got: seen,
     }
   })
@@ -346,24 +354,55 @@ try {
   // 6. Клик по пресету сразу шлёт его ключ — без отдельной кнопки «Сохранить».
   await record('клик по пресету сразу сохраняет маршрут', async () => {
     const before = patches.length
-    const clicked = await clickRoute('full-high')
+    const clicked = await clickRoute('lp-high')
     const sent = await waitFor(async () => (patches.length > before ? patches[patches.length - 1] : null))
     const body = sent?.body ?? {}
     const after = await waitFor(async () => {
       const current = await state()
-      return current.selectedKey === 'full-high' ? current : null
+      return current.selectedKey === 'lp-high' ? current : null
     })
     const ok = Boolean(clicked)
       && Boolean(sent)
       && sent.path.includes(`/api/tasks/${FRESH}`)
-      && body.route === 'full-high'
+      && body.route === 'lp-high'
       && body.labels === undefined
-      && after?.selectedLabel === 'Высокий — конвейер'
+      && after?.selectedLabel === 'high lp'
     return {
       ok,
-      expect: `клик сразу PATCH /api/tasks/${FRESH} с route:'full-high', пресет выбран`,
+      expect: `клик сразу PATCH /api/tasks/${FRESH} с route:'lp-high', пресет выбран`,
       got: { clicked, patch: sent, selectedKey: after?.selectedKey, selectedLabel: after?.selectedLabel },
     }
+  })
+
+  // 7. Заведённый эпик: маршрут без `writer` (`lp-xlow`) закрыт, его ячейка ТЗ — «—»;
+  //    `lp-high`/`lp-low` доступны.
+  await record('эпик: маршрут без writer закрыт', async () => {
+    await openCard('Эпик выбирает маршрут', EPIC)
+    const seen = await waitFor(async () => {
+      const got = await evaluate(`(() => {
+        const picker = document.querySelector('.ui-drawer [role="radiogroup"][aria-label="Маршрут запуска"]');
+        if (!picker) return null;
+        const row = (key) => picker.querySelector('[data-route-key="' + key + '"]');
+        const xlow = row('lp-xlow');
+        if (!xlow) return null;
+        const writer = xlow.querySelector('.listik-pipelines__cell');
+        return {
+          xlowOff: xlow.classList.contains('is-off'),
+          xlowWriter: writer ? writer.textContent.trim() : null,
+          xlowWriterEmpty: Boolean(writer && writer.querySelector('.listik-pipelines__cell-empty')),
+          highOff: row('lp-high') ? row('lp-high').classList.contains('is-off') : null,
+          lowOff: row('lp-low') ? row('lp-low').classList.contains('is-off') : null,
+        };
+      })()`)
+      return got
+    })
+    const ok = Boolean(seen)
+      && seen.xlowOff === true
+      && seen.xlowWriter === '—'
+      && seen.xlowWriterEmpty
+      && seen.highOff === false
+      && seen.lowOff === false
+    return { ok, expect: 'lp-xlow — is-off, ячейка writer «—»; lp-high и lp-low доступны', got: seen }
   })
 
   report.patches = patches

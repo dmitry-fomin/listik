@@ -1923,6 +1923,12 @@ body .ui-drawer-backdrop.ui-drawer-backdrop--right .ui-drawer.ui-drawer--right.u
   align-items: center;
 }
 
+/* Конвейеры v2 — пять ролей (ТЗ, критик, исполнитель, линза, судья); рой — четыре. */
+.listik-pipelines--five .listik-pipelines__header,
+.listik-pipelines--five .listik-pipelines__row {
+  grid-template-columns: minmax(0, 1.7fr) repeat(5, minmax(0, 1fr));
+}
+
 .listik-pipelines__header {
   padding: 0 var(--space-2);
 }
@@ -2031,15 +2037,6 @@ body .ui-drawer-backdrop.ui-drawer-backdrop--right .ui-drawer.ui-drawer--right.u
 
 .listik-pipelines__model-effort::before {
   content: '\00a0·\00a0';
-}
-
-/* Модель после ` → ` (судья за линзами): зовётся только при находке —
-   стрелка перед именем показывает эскалацию. */
-.listik-pipelines__model--escalation::before {
-  content: '→\00a0';
-  flex-shrink: 0;
-  font-size: var(--text-xs);
-  color: var(--ink-3);
 }
 
 .listik-pipelines__cell-label {
@@ -2171,6 +2168,11 @@ body .ui-drawer-backdrop.ui-drawer-backdrop--right .ui-drawer.ui-drawer--right.u
   .listik-pipelines__row {
     grid-template-columns: minmax(0, 1fr) repeat(4, minmax(0, 44px));
     gap: var(--space-1);
+  }
+
+  .listik-pipelines--five .listik-pipelines__header,
+  .listik-pipelines--five .listik-pipelines__row {
+    grid-template-columns: minmax(0, 1fr) repeat(5, minmax(0, 44px));
   }
 
   .listik-pipelines__row-hint {

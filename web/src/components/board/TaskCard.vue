@@ -11,7 +11,6 @@ import ProjectMark from '../marks/ProjectMark.vue'
 import CountGlyph from '../marks/CountGlyph.vue'
 import HealthDot from '../marks/HealthDot.vue'
 import HarnessIcon from '../marks/HarnessIcon.vue'
-import ProviderIcon from '../marks/ProviderIcon.vue'
 import RouteIcon from '../marks/RouteIcon.vue'
 import ListikIcon from '../ListikIcon.vue'
 import type { ProjectRow, Task } from '@/api/types'
@@ -214,8 +213,7 @@ function onKeydown(event: KeyboardEvent): void {
           </span>
         </template>
         <template v-else-if="executor">
-          <ProviderIcon v-if="executor.provider" :provider="executor.provider" size="xs" />
-          <HarnessIcon v-else-if="executor.harness" :harness="executor.harness" size="xs" />
+          <HarnessIcon v-if="executor.harness" :harness="executor.harness" size="xs" />
           <span class="listik-task-card__executor" :title="executorTooltip">
             делает <strong>{{ executor.title }}</strong>
           </span>

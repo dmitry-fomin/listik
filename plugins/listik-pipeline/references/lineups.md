@@ -58,7 +58,7 @@ REPLY: first line of your reply is exactly one word: <слова роли>; noth
 
 `REPLY:` — всегда последней строкой. Слова роли (`statuses.md`): писателю `READY, QUESTION, CANNOT` и `second line after READY: RISK: NO | RISK: YES — <reason>`; локальному критику `REVIEWED <path>, CANNOT`; исполнителю `DONE, CANNOT, QUESTION`; линзе и судье `PASS, FIXES, CANNOT`. Внешнему критику — `REPLY: the review itself, starting with its first ## section; no preface`.
 
-Критику вместо `CARD:` — `REVIEW: <abs path к <id>.review-<критик>.md>`. Судье после находок линзы — ещё `LENS: <abs path к <id>.lens.md>`. В `xlow`/`nano` ТЗ нет — вместо `SPEC:`/`CHECKLIST:` исполнителю и судье: `CHECK: acceptance карточки; нет его — тесты затронутых модулей, полный набор не запускать`.
+Исполнителю, линзе и судье `SPEC:` — файл порции `<id>.<X>.md`, `CHECKLIST:` — её `<id>.check-<X>.md`; критику `SPEC:` — ТЗ шага `<id>.spec.md`, без `CHECKLIST:` (порции он читает по ссылкам). Критику вместо `CARD:` — `REVIEW: <abs path к <id>.review-<критик>.md>`. Судье после находок линзы — ещё `LENS: <abs path к <id>.lens-<X>.md>`. В `xlow`/`nano` ТЗ нет — вместо `SPEC:`/`CHECKLIST:` исполнителю и судье: `CHECK: acceptance карточки; нет его — тесты затронутых модулей, полный набор не запускать`.
 
 `WORKTREE:` — только исполнителю, линзе и судье. Критик работает в **основном дереве** (worktree создаётся на шаге 3, после критики): строка `WORKTREE:` в его задание не идёт, `--cwd` — корень репозитория.
 
@@ -74,18 +74,18 @@ REPLY: first line of your reply is exactly one word: <слова роли>; noth
 python3 -c 'import json,os,sys;print(json.load(open(os.path.expanduser("~/.claude/plugins/installed_plugins.json")))["plugins"][sys.argv[1]][0]["installPath"])' pi@listik
 ```
 
-Задание — в stdin (heredoc). `run --background` печатает job-id; ответ — `result <job-id> --wait <сек>`, годен только код 0 (при таймауте или отмене `result` печатает обрубок с ненулевым кодом). Линзе — `result` прямо в файл (stdout `result` — ровно ответ), в контекст не читаешь. Продолжение после `FIXES` — только у исполнителя-девина, той же сессией: `resume lp-<id>-impl`. Критик, линза и судья — всегда свежим заходом.
+Задание — в stdin (heredoc). `run --background` печатает job-id; ответ — `result <job-id> --wait <сек>`, годен только код 0 (при таймауте или отмене `result` печатает обрубок с ненулевым кодом). Линзе — `result` прямо в файл (stdout `result` — ровно ответ), в контекст не читаешь. Продолжение после `FIXES` — только у исполнителя-девина, той же сессией: `resume lp-<id>-<X>-impl`. Критик, линза и судья — всегда свежим заходом.
 
 ```bash
 # pi — линза (bash) или судья (write), если так в раскладке
 pi-run.sh run --background --permission <bash|write> --channel <glm|deepseek> --thinking <effort> --cwd <wt> --label "<id> <роль>" <<'EOF'
 <задание>
 EOF
-pi-run.sh result <job-id> --wait <сек> > <id>.lens.md   # судья — > <id>.judge.r<N>.out.md
+pi-run.sh result <job-id> --wait <сек> > <id>.lens-<X>.md   # судья — > <id>.judge-<X>.r<N>.out.md
 
 # devin — код (write = режим dangerous); после FIXES — resume той же сессии
-devin-run.sh run --background --thinking <high|max> --permission write --session lp-<id>-impl --cwd <wt> --label "<id> исполнитель" <<'EOF' … EOF
-devin-run.sh resume lp-<id>-impl --background --thinking <high|max> --permission write --cwd <wt> <<'EOF' … EOF
+devin-run.sh run --background --thinking <high|max> --permission write --session lp-<id>-<X>-impl --cwd <wt> --label "<id> исполнитель" <<'EOF' … EOF
+devin-run.sh resume lp-<id>-<X>-impl --background --thinking <high|max> --permission write --cwd <wt> <<'EOF' … EOF
 devin-run.sh result <job-id> --wait <сек>
 
 # codex — судья, если так в раскладке (write: в read-only у песочницы нет сети до Listik; без --model/--effort — настройки ~/.codex/config.toml)
@@ -95,11 +95,11 @@ codex-run.sh result <job-id> --wait <сек>
 # grok — судья: прямой node, пока нет моста (listik-g6xh); все три вызова — из одного каталога
 node <installPath>/scripts/grok-companion.mjs task --background --write --no-web --fresh --model <model> --effort <effort> "TASK_FILE: <абс путь>"
 node <installPath>/scripts/grok-companion.mjs status <job-id> --json   # job.status: running → completed | failed | cancelled
-node <installPath>/scripts/grok-companion.mjs result <job-id> > <id>.judge.r<N>.out.md
+node <installPath>/scripts/grok-companion.mjs result <job-id> > <id>.judge-<X>.r<N>.out.md
 ```
 
 grok: модель и усилие — из раскладки. `--write` обязателен: без него судья пойдёт на чтение, и ни проверка, ни вердикт в карточку не пройдут. Задание судье — файлом
-`<id>.judge.r<N>.task.md`, в команду после флагов одна строка `TASK_FILE: <абс путь>`
+`<id>.judge-<X>.r<N>.task.md`, в команду после флагов одна строка `TASK_FILE: <абс путь>`
 (текст задания в командную строку не вставлять). Опрос `status --json` — до терминального `completed`/`failed`/`cancelled`, забор `result` — из того же каталога, что запуск. `result` grok склеивает ход работы с ответом (до listik-g6xh): слово ответа там не первой строкой, поэтому исход судьи grok читаешь из карточки — последний `verdict`, первая строка `VERDICT: PASS` или `VERDICT: FAIL`; вердикта нет — сбой роли (`statuses.md`).
 
 ## Готовность канала
@@ -111,7 +111,7 @@ grok: модель и усилие — из раскладки. `--write` обя
 
 ## Грабли
 
-- **Локальный субагент в фоне просит разрешение у человека на каждый `Write`/`Edit`/`Bash`**, а в фоне отвечать некому: плагинные субагенты не принимают `permissionMode` (frontmatter игнорируется). Для этого у плагина есть хук `hooks/approve-agents.py` (`PermissionRequest`, как в pipeline-core): включи настройку плагина `auto_approve_agents` — правки в проекте и worktree и неопасный Bash ролей пройдут без запроса. Выключена — зови локальные роли на переднем плане, иначе исполнитель встанет на первой же правке.
+- **Локальный субагент в фоне просит разрешение у человека на каждый `Write`/`Edit`/`Bash`**, а в фоне отвечать некому: плагинные субагенты не принимают `permissionMode` (frontmatter игнорируется). Для этого у плагина есть хук `hooks/approve-agents.py` (`PermissionRequest`): включи настройку плагина `auto_approve_agents` — правки в проекте и worktree и неопасный Bash ролей пройдут без запроса. Выключена — зови локальные роли на переднем плане, иначе исполнитель встанет на первой же правке.
 - **`${CLAUDE_PLUGIN_ROOT}` живёт только в теле скилов и агентов.** В файлах, прочитанных Read-ом, и в Bash-окружении его нет: путь берётся из скила режима и уходит в задание готовой строкой.
 - **Вердикт — только на `s4-judge`,** иначе Listik молча сохранит его как обычный комментарий (`verdict_accepted: false`).
 - **Красный вердикт оставляет держателя-судью:** без `listik release <id>` исполнитель не возьмёт карточку и будет ждать 24 ч до истечения окна возврата.

@@ -27,14 +27,17 @@ Claude Code и внешние харнессы раскладки режима (
 
 ```
 00 Запуск     человек: описание / карточка         → нет id — listik new
-01 ТЗ         stage s1-spec → writer: черновик, ТЗ в статусе DRAFT
+01 ТЗ         stage s1-spec → writer: ТЗ шага + порции a, b, c… с чек-листами, ТЗ в статусе DRAFT
 02 Критика    writer: stage s2-review, сам зовёт критиков режима (CRITICS:), не больше двух заходов;
               блокеры во втором заходе → QUESTION → needs-owner
-              → READY + RISK                       → set spec_path/checklist_path
-03 Код        listik worktree; implementer → DONE   → stage s3-impl
+              → READY + RISK                       → set spec_path; порции — ls <id>.?.md
+03 Код        listik worktree (одно на шаг)
+   по порциям, по очереди:
+              set checklist_path; новый implementer → DONE → stage s3-impl
 04 Линза      lens → PASS / FIXES                  → на s3-impl; FIXES или RISK: YES → stage s4-judge
    04 Судья   judge → VERDICT: PASS / FAIL; после FAIL — release и снова s3-impl; третий заход без PASS — стоп
-05 Закрытие   оркестратор: коммит в дереве, rebase + merge --ff-only task/<id>, done, удаление worktree и ветки
+   Коммит     оркестратор: коммит порции в дереве → следующая порция
+05 Закрытие   после последней порции: rebase + merge --ff-only task/<id>, done, удаление worktree и ветки
    Стоп       needs-owner и тот же вопрос в чат; worktree не трогается
 ```
 
@@ -79,4 +82,6 @@ listik-pipeline/
 
 ## Конвенции
 
-Бумаги — в `docs/specs/` основного дерева: ТЗ — `<id>.spec.md`, чек-лист — `<id>.checklist.md`, рецензии — `<id>.review-<критик>.md` (второй заход — `.r2.md`), задание судье — `<id>.judge.r<N>.task.md`, где `<id>` — идентификатор задачи (например, `listik-abc1`). Формат ТЗ и чек-листа — `references/writer.md`, рецензии — `references/critic.md`.
+Бумаги — в `docs/specs/` основного дерева: ТЗ шага — `<id>.spec.md`, порции — `<id>.<X>.md`, их чек-листы — `<id>.check-<X>.md` (`X` — `a`, `b`, `c`…; та же схема, что читает `listik portions sync`), рецензии — `<id>.review-<критик>.md` (второй заход — `.r2.md`), ответ линзы — `<id>.lens-<X>.md`, задание судье — `<id>.judge-<X>.r<N>.task.md`, где `<id>` — идентификатор задачи (например, `listik-abc1`). Формат ТЗ, порций и чек-листов — `references/writer.md`, рецензии — `references/critic.md`.
+
+Порции нужны ради контекста: на каждую запускается новый исполнитель, который видит только её файл, поэтому его контекст не растёт с размером задачи.

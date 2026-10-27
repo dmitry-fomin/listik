@@ -252,10 +252,11 @@ def list_harnesses(conn: sqlite3.Connection) -> list[dict]:
 
 
 def used_by(conn: sqlite3.Connection, key: str) -> list[dict]:
-    """Где харнесс задействован: роли роя (`harness`) и `members` ролей конвейеров.
+    """Где харнесс задействован: роли роя (`harness`) и исполнители ролей конвейеров.
 
-    Порядок — маршруты по `position, key`, роли в порядке расклада, элементы в
-    порядке `members`; у записи конвейера есть `channel`, у роя — нет.
+    Порядок — маршруты по `position, key`, роли в порядке расклада, исполнители в
+    порядке ячейки-массива; у записи конвейера есть `channel` (`None`, если его нет у
+    исполнителя), у роя — нет. Ячейки-объекты конвейера (старый формат) пропускаются.
     """
     out: list[dict] = []
     for row in conn.execute(
@@ -268,16 +269,14 @@ def used_by(conn: sqlite3.Connection, key: str) -> list[dict]:
         if not isinstance(roles, dict):
             continue
         for role, cell in roles.items():
-            if not isinstance(cell, dict):
-                continue
             if row["kind"] == "swarm":
-                if cell.get("harness") == key:
+                if isinstance(cell, dict) and cell.get("harness") == key:
                     out.append({"route": row["key"], "kind": "swarm", "role": role})
-            elif row["kind"] == "pipeline" and isinstance(cell.get("members"), list):
-                for member in cell["members"]:
-                    if isinstance(member, dict) and member.get("harness") == key:
+            elif row["kind"] == "pipeline" and isinstance(cell, list):
+                for executor in cell:
+                    if isinstance(executor, dict) and executor.get("harness") == key:
                         out.append({"route": row["key"], "kind": "pipeline", "role": role,
-                                    "channel": member.get("channel")})
+                                    "channel": executor.get("channel")})
     return out
 
 

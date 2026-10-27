@@ -1,8 +1,9 @@
-"""Схема ячейки роли v2 и каталог скилов-запускаторов (listik-syu8, порция a).
+"""Расклад ролей конвейера v2, справочник скилов-режимов и каталог запускаторов.
 
-Каталог проверяется на временном дереве с подменой `skills.PLUGINS_DIR`: настоящий
-`plugins/` репозитория как источник данных для тестов не годится — он меняется вместе
-с плагинами.
+Роли и исполнители проверяются через `routes.validate` (путь `routes[0].roles…`) и
+напрямую через `routes.validate_pipeline_roles`. Каталог запускаторов — на временном
+дереве с подменой `skills.PLUGINS_DIR`: настоящий `plugins/` репозитория как источник
+данных для таких тестов не годится — он меняется вместе с плагинами.
 """
 from __future__ import annotations
 
@@ -17,163 +18,246 @@ from listik import skills as skills_mod
 
 REPO_DIR = pathlib.Path(__file__).resolve().parent.parent
 
-
-def role(**over) -> dict:
-    cell = {"provider": "claude", "label": "medium", "title": "Opus · medium"}
-    cell.update(over)
-    return cell
-
-
-def record(roles: dict) -> dict:
-    return {"version": 1, "routes": [
-        {"key": "demo", "kind": "pipeline", "title": "Демо", "hint": "", "visible": False,
-         "roles": roles},
-    ]}
+WRITER = {"harness": "claude", "agent": "listik-pipeline:writer-high", "model": "opus",
+          "effort": "high"}
+PI_GLM = {"harness": "pi", "channel": "glm", "effort": "high"}
+DEVIN = {"harness": "devin", "model": "swe-2", "effort": "max"}
+GROK = {"harness": "grok", "model": "grok-4.7", "effort": "high"}
 
 
-class RoleCellSchemaTest(unittest.TestCase):
-    def validate(self, roles: dict) -> dict:
-        out = routes_mod.validate(record(roles))
-        return out[0]["roles"]
+def document(roles) -> dict:
+    return {"version": 2, "routes": [
+        {"key": "lp-high", "plugin": "listik-pipeline", "skill": "high", "roles": roles}]}
 
-    def test_old_cell_unchanged(self):
-        """Старая ячейка проходит и не получает ключей skill/params."""
-        roles = self.validate({"impl": role()})
-        self.assertEqual(roles["impl"], {"provider": "claude", "label": "medium",
-                                         "title": "Opus · medium"})
-        self.assertNotIn("skill", roles["impl"])
-        self.assertNotIn("params", roles["impl"])
 
-    def test_skill_and_params_kept(self):
-        roles = self.validate({"impl": role(skill="pi:pi-delegate",
-                                           params={"channel": "glm", "thinking": "high"})})
-        self.assertEqual(roles["impl"]["skill"], "pi:pi-delegate")
-        self.assertEqual(roles["impl"]["params"], {"channel": "glm", "thinking": "high"})
+class PipelineRolesTest(unittest.TestCase):
+    """Пункты 10 и 12 чек-листа: форма расклада и число исполнителей."""
 
-    def test_param_scalar_types_kept(self):
-        roles = self.validate({"impl": role(skill="pi:pi-delegate",
-                                            params={"a": True, "b": 1.5, "c": "", "d": 7})})
-        params = roles["impl"]["params"]
-        self.assertIs(params["a"], True)
-        self.assertEqual(params["b"], 1.5)
-        self.assertEqual(params["c"], "")
-        self.assertEqual(params["d"], 7)
-        # значения не подменяются типом и после сериализации в файл
-        self.assertEqual(json.loads(json.dumps(params)), params)
-
-    def test_empty_params_ok(self):
-        roles = self.validate({"impl": role(skill="pi:pi-delegate", params={})})
-        self.assertEqual(roles["impl"]["params"], {})
-
-    def test_skill_format_rejected(self):
-        for bad in ("", " pi:pi-delegate", "x pi:pi-delegate", "a:b:c", "Pi:Delegate",
-                    "pi:", ":delegate", "pi", 5):
-            with self.subTest(bad=bad):
-                with self.assertRaises(routes_mod.RoutesError) as ctx:
-                    self.validate({"impl": role(skill=bad)})
-                self.assertIn("roles.impl.skill", str(ctx.exception))
-
-    def test_param_values_rejected(self):
-        for bad in (None, [1], {"x": 1}):
-            with self.subTest(bad=bad):
-                with self.assertRaises(routes_mod.RoutesError) as ctx:
-                    self.validate({"impl": role(skill="pi:pi-delegate", params={"a": bad})})
-                self.assertIn("roles.impl.params.a", str(ctx.exception))
-
-    def test_param_keys_rejected(self):
-        for bad in ("Channel", "1a", "", "с_каналом"):
-            with self.subTest(bad=bad):
-                with self.assertRaises(routes_mod.RoutesError) as ctx:
-                    self.validate({"impl": role(skill="pi:pi-delegate", params={bad: "x"})})
-                self.assertIn("roles.impl.params", str(ctx.exception))
-
-    def test_params_without_skill(self):
+    def error(self, roles) -> str:
         with self.assertRaises(routes_mod.RoutesError) as ctx:
-            self.validate({"impl": role(params={"channel": "glm"})})
-        self.assertIn("roles.impl.params", str(ctx.exception))
-        self.assertIn("skill", str(ctx.exception))
+            routes_mod.validate(document(roles))
+        return str(ctx.exception)
 
-    def test_params_too_many(self):
-        params = {f"p{i}": i for i in range(routes_mod.PARAMS_MAX_KEYS + 1)}
-        with self.assertRaises(routes_mod.RoutesError):
-            self.validate({"impl": role(skill="pi:pi-delegate", params=params)})
+    def roles(self, roles) -> dict:
+        return routes_mod.validate(document(roles))[0]["roles"]
 
-    def test_required_fields_still_required(self):
-        for missing in ("provider", "label", "title"):
-            cell = role(skill="pi:pi-delegate")
-            cell.pop(missing)
-            with self.subTest(missing=missing):
-                with self.assertRaises(routes_mod.RoutesError):
-                    self.validate({"impl": cell})
+    def test_constants(self) -> None:
+        self.assertEqual(routes_mod.PIPELINE_ROLE_KEYS,
+                         ("writer", "critic", "implementer", "lens", "judge"))
+        self.assertEqual(routes_mod.PIPELINE_HARNESSES, ("claude", "pi", "devin", "codex", "grok"))
 
-    def test_no_filesystem_access(self):
-        """Проверка схемы не смотрит на диск: каталога plugins/ может не быть вовсе."""
-        with mock.patch.object(skills_mod, "PLUGINS_DIR", pathlib.Path("/нет/такого")):
-            roles = self.validate({"impl": role(skill="no-such:launcher")})
-        self.assertEqual(roles["impl"]["skill"], "no-such:launcher")
+    def test_roles_not_object(self) -> None:
+        for bad in ("x", [], 1, None):
+            with self.subTest(roles=bad):
+                self.assertEqual(self.error(bad), "routes[0].roles: должен быть объектом с ролями "
+                                                  "writer/critic/implementer/lens/judge")
 
-    def test_repo_routes_json_still_valid(self):
-        """Реальный routes.json репозитория читается той же проверкой."""
+    def test_unknown_role(self) -> None:
+        for role in ("spec", "impl", "reviewer"):
+            with self.subTest(role=role):
+                self.assertEqual(self.error({role: [DEVIN]}),
+                                 f"routes[0].roles.{role}: неизвестная роль, допустимы: "
+                                 "writer, critic, implementer, lens, judge")
+
+    def test_cell_not_nonempty_array(self) -> None:
+        old_cell = {"provider": "claude", "label": "x", "title": "y"}
+        for bad in ([], old_cell, None, "devin"):
+            with self.subTest(cell=bad):
+                self.assertEqual(self.error({"implementer": bad}),
+                                 "routes[0].roles.implementer: непустой массив исполнителей")
+
+    def test_one_executor_except_critic(self) -> None:
+        for role in ("writer", "implementer", "lens", "judge"):
+            with self.subTest(role=role):
+                self.assertEqual(self.error({role: [DEVIN, GROK]}),
+                                 f"routes[0].roles.{role}: у роли {role} ровно один исполнитель")
+
+    def test_critic_up_to_ten(self) -> None:
+        self.assertEqual(len(self.roles({"critic": [dict(PI_GLM)] * 10})["critic"]), 10)
+        self.assertEqual(self.error({"critic": [dict(PI_GLM)] * 11}),
+                         "routes[0].roles.critic: не больше 10 исполнителей")
+
+    def test_xlow_without_writer(self) -> None:
+        roles = {"implementer": [DEVIN], "judge": [GROK]}
+        self.assertEqual(self.roles(roles), roles)
+
+    def test_three_critics_of_different_harnesses(self) -> None:
+        critics = [{"harness": "claude", "agent": "listik-pipeline:critic-high",
+                    "model": "sonnet", "effort": "high"},
+                   PI_GLM, {"harness": "codex", "effort": "high"}]
+        self.assertEqual(self.roles({"critic": critics})["critic"], critics)
+
+    def test_empty_roles_by_flag(self) -> None:
+        self.assertEqual(routes_mod.validate_pipeline_roles({}, "roles", allow_empty=True), {})
+        with self.assertRaises(routes_mod.RoutesError) as ctx:
+            routes_mod.validate_pipeline_roles({}, "roles", allow_empty=False)
+        self.assertEqual(str(ctx.exception), "roles: нужна хотя бы одна роль")
+
+    def test_role_order_kept(self) -> None:
+        roles = {"judge": [GROK], "writer": [WRITER], "implementer": [DEVIN]}
+        self.assertEqual(list(self.roles(roles)), ["judge", "writer", "implementer"])
+
+    def test_repo_routes_json_valid(self) -> None:
         data = json.loads((REPO_DIR / "routes.json").read_text(encoding="utf-8"))
         out = routes_mod.validate(data)
-        self.assertTrue(out)
+        self.assertEqual([r["roles"] for r in out], [r["roles"] for r in data["routes"]])
 
 
-class MembersSchemaTest(unittest.TestCase):
-    """`members` ячейки конвейера: форма, пути и причины отказов (listik-46q6 c)."""
+class ExecutorTest(unittest.TestCase):
+    """Пункт 11 чек-листа: исполнитель роли, текст ошибки целиком, путь до поля."""
 
-    def validate(self, members) -> dict:
-        return routes_mod.validate(record({"critic": role(members=members)}))[0]["roles"]
-
-    def rejected(self, members, where: str, reason: str | None = None) -> None:
+    def error(self, executor, role: str = "critic", index: int = 1) -> str:
+        cell = [dict(PI_GLM)] * index + [executor]
         with self.assertRaises(routes_mod.RoutesError) as ctx:
-            self.validate(members)
-        text = str(ctx.exception)
-        self.assertIn(f"roles.critic.{where}", text)
-        if reason:
-            self.assertIn(reason, text)
-        self.assertNotIn("лишнее поле", text)
+            routes_mod.validate(document({role: cell}))
+        return str(ctx.exception)
 
-    def test_good_members_kept(self):
-        members = [{"harness": "pi", "channel": "deepseek"}, {"harness": "pi", "channel": "glm"}]
-        self.assertEqual(self.validate(members)["critic"]["members"], members)
+    def where(self, field: str = "", role: str = "critic", index: int = 1) -> str:
+        return f"routes[0].roles.{role}[{index}]" + (f".{field}" if field else "")
 
-    def test_cell_without_members_unchanged(self):
-        roles = routes_mod.validate(record({"critic": role()}))[0]["roles"]
-        self.assertNotIn("members", roles["critic"])
+    def test_not_object(self) -> None:
+        for bad in ("claude", None, ["claude"]):
+            with self.subTest(executor=bad):
+                self.assertEqual(self.error(bad), self.where() + ": исполнитель — объект "
+                                 "{harness, agent?, model?, channel?, effort}")
 
-    def test_empty_and_not_list(self):
-        for bad in ([], None, "pi", {"harness": "pi", "channel": "glm"}):
-            with self.subTest(bad=bad):
-                self.rejected(bad, "members:", "непустой массив")
+    def test_extra_field(self) -> None:
+        self.assertEqual(self.error({**PI_GLM, "label": "x"}), self.where("label") + ": лишнее поле")
 
-    def test_item_not_object(self):
-        self.rejected(["pi"], "members[0]")
+    def test_extra_field_goes_first(self) -> None:
+        self.assertEqual(self.error({"harness": "claude", "label": "x"}),
+                         self.where("label") + ": лишнее поле")
 
-    def test_extra_key(self):
-        self.rejected([{"harness": "pi", "channel": "glm", "x": 1}], "members[0].x")
+    def test_harness(self) -> None:
+        for bad in ("dsh", "Claude", "", 1):
+            with self.subTest(harness=bad):
+                self.assertEqual(self.error({**PI_GLM, "harness": bad}),
+                                 self.where("harness") + ": допустимы claude, pi, devin, codex, grok")
+        self.assertEqual(self.error({"channel": "glm", "effort": "high"}),
+                         self.where("harness") + ": обязательное поле отсутствует")
 
-    def test_bad_channel_and_harness(self):
-        self.rejected([{"harness": "pi", "channel": "GLM"}], "members[0].channel")
-        self.rejected([{"harness": "Pi", "channel": "glm"}], "members[0].harness")
-        self.rejected([{"harness": 1, "channel": "glm"}], "members[0].harness")
+    def test_agent_only_for_claude(self) -> None:
+        for executor in ({**PI_GLM, "agent": "listik-pipeline:x"},
+                         {**DEVIN, "agent": "listik-pipeline:x"}):
+            with self.subTest(harness=executor["harness"]):
+                self.assertEqual(self.error(executor),
+                                 self.where("agent") + ": только у harness=claude")
 
-    def test_duplicate_pair(self):
-        pair = {"harness": "pi", "channel": "glm"}
-        self.rejected([pair, dict(pair)], "members[1]", "повтор пары")
+    def test_foreign_agent_goes_before_missing_channel(self) -> None:
+        executor = {"harness": "pi", "agent": "listik-pipeline:x", "effort": "high"}
+        self.assertEqual(self.error(executor), self.where("agent") + ": только у harness=claude")
 
-    def test_too_many(self):
-        members = [{"harness": "pi", "channel": f"c{i}"} for i in range(11)]
-        self.rejected(members, "members:", "не больше 10")
+    def test_channel_only_for_pi(self) -> None:
+        for executor in ({**WRITER, "channel": "glm"}, {**GROK, "channel": "glm"}):
+            with self.subTest(harness=executor["harness"]):
+                self.assertEqual(self.error(executor),
+                                 self.where("channel") + ": только у harness=pi")
 
-    def test_swarm_cell_members_is_extra(self):
-        doc = {"version": 1, "routes": [
-            {"key": "rx", "kind": "swarm", "title": "Рой", "hint": "", "visible": False,
-             "roles": {"impl": {"harness": "dsh", "argv": ["dsh"],
-                                "members": [{"harness": "pi", "channel": "glm"}]}}}]}
-        with self.assertRaises(routes_mod.RoutesError) as ctx:
-            routes_mod.validate(doc)
-        self.assertIn("roles.impl.members: лишнее поле", str(ctx.exception))
+    def test_missing_required(self) -> None:
+        cases = (({k: v for k, v in WRITER.items() if k != "agent"}, "agent"),
+                 ({k: v for k, v in WRITER.items() if k != "model"}, "model"),
+                 ({k: v for k, v in WRITER.items() if k != "effort"}, "effort"),
+                 ({"harness": "pi", "effort": "high"}, "channel"),
+                 ({"harness": "pi", "channel": "glm"}, "effort"),
+                 ({"harness": "devin"}, "effort"))
+        for executor, field in cases:
+            with self.subTest(executor=executor):
+                self.assertEqual(self.error(executor),
+                                 self.where(field) + ": обязательное поле отсутствует")
+
+    def test_missing_in_order_agent_model_channel_effort(self) -> None:
+        self.assertEqual(self.error({"harness": "claude"}),
+                         self.where("agent") + ": обязательное поле отсутствует")
+        self.assertEqual(self.error({"harness": "claude", "agent": "x"}),
+                         self.where("model") + ": обязательное поле отсутствует")
+
+    def test_missing_goes_before_format(self) -> None:
+        self.assertEqual(self.error({"harness": "claude", "agent": "bad", "effort": "high"}),
+                         self.where("model") + ": обязательное поле отсутствует")
+
+    def test_agent_format(self) -> None:
+        for bad in ("pipeline-core:x", "listik-pipeline:", "listik-pipeline:Writer", "writer", 1):
+            with self.subTest(agent=bad):
+                self.assertEqual(self.error({**WRITER, "agent": bad}),
+                                 self.where("agent") + ": ожидается listik-pipeline:<имя>")
+
+    def test_claude_model(self) -> None:
+        for bad in ("gpt", "Opus", "", None):
+            with self.subTest(model=bad):
+                self.assertEqual(self.error({**WRITER, "model": bad}),
+                                 self.where("model") + ": у claude допустимы opus, sonnet, haiku")
+
+    def test_other_model_nonempty_string(self) -> None:
+        for bad in ("", "  ", 1, None):
+            with self.subTest(model=bad):
+                self.assertEqual(self.error({**DEVIN, "model": bad}),
+                                 self.where("model") + ": непустая строка")
+
+    def test_channel_and_effort_format(self) -> None:
+        self.assertEqual(self.error({**PI_GLM, "channel": "GLM"}),
+                         self.where("channel") + ": строка под ^[a-z0-9][a-z0-9-]*$")
+        self.assertEqual(self.error({**PI_GLM, "effort": ""}),
+                         self.where("effort") + ": строка под ^[a-z0-9][a-z0-9-]*$")
+
+    def test_path_names_role_and_index(self) -> None:
+        message = self.error({"harness": "dsh", "effort": "high"}, role="judge", index=0)
+        self.assertTrue(message.startswith("routes[0].roles.judge[0].harness:"), message)
+
+    def test_normalized_has_only_given_fields_in_order(self) -> None:
+        given = {"effort": "high", "model": "sonnet", "agent": "listik-pipeline:critic-high",
+                 "harness": "claude"}
+        roles = routes_mod.validate(document({"critic": [given, {"effort": "max",
+                                                                 "harness": "codex"}]}))[0]["roles"]
+        self.assertEqual(list(roles["critic"][0]), ["harness", "agent", "model", "effort"])
+        self.assertEqual(roles["critic"][1], {"harness": "codex", "effort": "max"})
+        self.assertEqual(list(roles["critic"][1]), ["harness", "effort"])
+
+    def test_model_optional_outside_claude(self) -> None:
+        roles = routes_mod.validate(document({"judge": [{"harness": "grok", "effort": "high"}]}))
+        self.assertEqual(roles[0]["roles"]["judge"], [{"harness": "grok", "effort": "high"}])
+
+
+class PipelineSkillsTest(unittest.TestCase):
+    """Пункт 13 чек-листа: справочник скилов-режимов `listik-pipeline`."""
+
+    def test_skill_keys(self) -> None:
+        self.assertEqual(skills_mod.skill_keys(),
+                         ["lp-high", "lp-low", "lp-medium", "lp-nano", "lp-xhigh", "lp-xlow"])
+        self.assertTrue(skills_mod.skills_available())
+
+    def test_skill_of(self) -> None:
+        self.assertEqual(skills_mod.skill_of("listik-pipeline", "lp-high"), "high")
+        self.assertIsNone(skills_mod.skill_of("pipeline-full", "full-high"))
+        self.assertIsNone(skills_mod.skill_of("listik-pipeline", "lp-"))
+        self.assertIsNone(skills_mod.skill_of("listik-pipeline", "full-high"))
+
+    def test_skill_ref(self) -> None:
+        self.assertEqual(skills_mod.skill_ref("lp-high"), "/listik-pipeline:high")
+        self.assertIsNone(skills_mod.skill_ref("full-high"))
+
+    def test_skill_info(self) -> None:
+        info = skills_mod.skill_info("lp-high")
+        self.assertEqual({k: v for k, v in info.items() if k != "hint"},
+                         {"key": "lp-high", "plugin": "listik-pipeline", "skill": "high",
+                          "title": "high",
+                          "skill_path": "plugins/listik-pipeline/skills/high/SKILL.md"})
+        self.assertTrue(info["hint"])
+        self.assertEqual(info, skills_mod.skill_info("lp-high", "listik-pipeline"))
+
+    def test_role_skills_are_not_modes(self) -> None:
+        for skill in skills_mod.ROLE_SKILLS:
+            with self.subTest(skill=skill):
+                self.assertIsNone(skills_mod.skill_info(f"lp-{skill}"))
+                self.assertNotIn(f"lp-{skill}", skills_mod.skill_keys())
+        self.assertIsNone(skills_mod.skill_info("full-high"))
+        self.assertIsNone(skills_mod.skill_info("lp-nope"))
+
+    def test_no_plugins_dir(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp, \
+                mock.patch.object(skills_mod, "PIPELINE_PLUGINS_DIR", pathlib.Path(tmp)):
+            self.assertEqual(skills_mod.skill_keys(), [])
+            self.assertFalse(skills_mod.skills_available())
+            self.assertIsNone(skills_mod.skill_info("lp-high"))
 
 
 class LauncherCatalogueTest(unittest.TestCase):

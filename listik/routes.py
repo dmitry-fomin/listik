@@ -4,56 +4,42 @@
 таблице `routes` (см. :mod:`listik.routes_store`). `routes.json` в корне репозитория
 (`SOURCE_PATH`) — только затравка при установке: этот модуль читает, разбирает и
 проверяет файл (`load`/`validate`), а первичный ввоз в пустую таблицу делает
-`listik.routes_store` (при `listik init` и старте сервера). Больше файл не перечитывает
-никто и ни с чем не сверяет: записи в базе главнее. В образце у каждой записи
-есть `command`: конвейер запускает `claude -p` со скилом `/{plugin}:{skill}` — плагином
-записи и ключом без его префикса (`full-high` → `/pipeline-full:high`, см.
-`listik.skills.skill_of`).
+`listik.routes_store` (при `listik init` и старте сервера) и `listik routes --reimport`.
+Больше файл не перечитывает никто и ни с чем не сверяет: записи в базе главнее.
 
 Читатели берут маршруты только из базы (`state(conn)`), файл в обход ввоза не читает
 никто. Кеша нет: правка записи в базе видна сразу, перезапуск сервера не нужен.
 
-Формат (версия 1)::
+Формат (версия 2)::
 
-    {"version": 1, "routes": [ {...}, ... ]}
+    {"version": 2, "routes": [ {...}, ... ]}
 
-Запись маршрута:
-  * `key` — `^[a-z0-9][a-z0-9-]*$`, уникален в файле;
-  * `kind` — `"pipeline"` или `"swarm"`;
-  * `plugin` — плагин пресета конвейера, одно из `pipeline-full`/`pipeline-cc`/
-    `pipeline-claude`; необязательно (старые бэкапы без поля читаются), отсутствие и
-    `null` — `None`. Только у `kind=pipeline`. При заданном плагине ключ начинается с
-    имени плагина без `pipeline-` и дефиса, и после префикса непуст (`pipeline-full` →
-    `full-high`). Проверка — `check_plugin`, её же зовёт `routes_store._prepare`.
-    Нормализованная запись всегда содержит `plugin` (значение или `None`);
-  * `title` — непустая строка;
-  * `hint` — строка, по умолчанию `""`;
-  * `visible` — именно JSON `true`/`false`;
-  * `roles` — обязателен: ключи только из `spec`/`critic`/`impl`/`judge`; у `pipeline`
-    режима скила значение — `{provider, label, title}` из непустых строк (провайдер —
-    `claude`/`glm`/`openai`/`grok`/`deepseek`/`devin`; необязательны `skill`, `params` и
-    `members` — 1–10 пар `{harness, channel}`), у роя — `{harness, argv?, prompt?}`;
-    у `pipeline` допустим пустой объект `{}` (конвейер без раскладки, как его заводит
-    `POST /api/routes` без `roles`), у `swarm` нужна хотя бы одна роль;
-  * `icon` — необязательный уровень маршрута для иконки на доске, одно из
-    `xhigh`/`high`/`medium`/`low`/`xlow`/`direct`. Если поля нет, уровень выводится из самой
-    ключа (`fallback_icon`): часть ключа до первого `-`, если она из того же набора
-    (`xhigh-team` → `xhigh`), а у конвейера ещё и часть после первого `-`
-    (`full-high` → `high`); у записи без выводимого уровня (`pidi`) иконки нет;
-    у маршрута роя второе правило не действует; явный `null` — иконки нет. Неизвестное значение — не ошибка
-    файла, а предупреждение (listik-itg8): запись получает уровень по ключу, поле
-    `icon_error` с причиной и текст в `warnings` ответа `GET /api/routes`; строка уходит
-    в stderr (у демона — в `listik.log`), а остальные записи и автостарт работают как обычно;
-  * `command` — необязательный непустой массив непустых строк, argv запуска.
+В файле — только раскладки ролей конвейеров плагина `listik-pipeline`; маршруты роя
+живут только в базе. Запись файла — ровно поля (все обязательны):
+  * `key` — `^[a-z0-9][a-z0-9-]*$`, уникален в файле, равен `lp-<skill>`;
+  * `plugin` — `listik-pipeline` (`skills.PIPELINE_PLUGINS`);
+  * `skill` — имя каталога скила-режима `plugins/listik-pipeline/skills/<skill>`; скилы
+    ролей (`skills.ROLE_SKILLS`) — не режимы и ошибка;
+  * `roles` — объект с ролями `writer`/`critic`/`implementer`/`lens`/`judge`
+    (`PIPELINE_ROLE_KEYS`); `{}` допустим (так бэкап пишет конвейер без ролей). Значение
+    роли — непустой массив исполнителей: у `critic` 1–10, у остальных ровно один.
+    Исполнитель — `{harness, agent?, model?, channel?, effort}`: `harness` из
+    `PIPELINE_HARNESSES`; `effort` обязателен; `agent` (`listik-pipeline:<имя>`) и `model`
+    (`opus`/`sonnet`/`haiku`) обязательны у `claude`, `agent` — только у него; `channel`
+    обязателен и допустим только у `pi`; `model` у остальных — необязательная непустая
+    строка. Проверка — `validate_pipeline_roles`, её же зовёт слой базы.
 
-Лишние поля на любом уровне — ошибка (защита от опечаток вроде `visble`).
-В `command` допустимы только подстановки `{task_id}`, `{project}`, `{route}`, `{cwd}`,
-`{worktree}`, `{branch}`, `{stage}`, `{role}`, `{harness}`, `{plugin}`, `{skill}`; любая другая
-фигурная скобка (включая `{{`) — ошибка. `{plugin}` — значение поля `plugin` записи,
-`{skill}` — ключ без `<плагин без pipeline->-` (`full-high` → `high`); у записи без
-`plugin` обе пустые (запуск конвейера, чья команда на них ссылается, — отказ лаунчера).
-Подставляет значения `launcher`: целиком в элемент массива, без shell и без повторной
-подстановки внутри значения.
+Лишние поля на любом уровне — ошибка (защита от опечаток вроде `skil`). `validate`
+отдаёт записи в форме слоя базы: `kind="pipeline"`, `title`/`hint` — из `SKILL.md`
+режима (нет скила — `title` = ключ, `hint` = `""`), `visible=True`, `icon` — по ключу
+(`fallback_icon`), `command=None`.
+
+У записей в базе (не в файле) может быть `command` — argv запуска. В нём допустимы
+только подстановки `{task_id}`, `{project}`, `{route}`, `{cwd}`, `{worktree}`, `{branch}`,
+`{stage}`, `{role}`, `{harness}`, `{plugin}`, `{skill}`; любая другая фигурная скобка
+(включая `{{`) — ошибка. `{plugin}` — значение поля `plugin` записи, `{skill}` — ключ без
+префикса плагина (`lp-high` → `high`); у записи без `plugin` обе пустые. Подставляет
+значения `launcher`: целиком в элемент массива, без shell и без повторной подстановки.
 
 Метки карточки для маршрута выводит `labels_for(conn, ...)` — по ним сервер помечает
 задачу и переписывает метки при смене маршрута.
@@ -69,10 +55,18 @@ from . import errors, paths, skills, util
 
 SOURCE_PATH = paths.ROOT_DIR / "routes.json"
 
-VERSION = 1
+VERSION = 2
 KINDS = ("pipeline", "swarm")
+#: Роли маршрута роя (`kind=swarm`).
 ROLE_KEYS = ("spec", "critic", "impl", "judge")
-PROVIDERS = ("claude", "glm", "openai", "grok", "deepseek", "devin")
+#: Роли конвейера (`kind=pipeline`) в формате v2.
+PIPELINE_ROLE_KEYS = ("writer", "critic", "implementer", "lens", "judge")
+#: Харнессы исполнителя роли конвейера.
+PIPELINE_HARNESSES = ("claude", "pi", "devin", "codex", "grok")
+#: Модели исполнителя `harness=claude`.
+CLAUDE_MODELS = ("opus", "sonnet", "haiku")
+EXECUTOR_FIELDS = ("harness", "agent", "model", "channel", "effort")
+CRITICS_MAX = 10
 # Уровни маршрута — значения поля `icon`; подписи и иконки для доски лежат в
 # `web/src/lib/dictionaries.ts` (`ROUTE_ICONS`).
 ROUTE_ICONS = ("xhigh", "high", "medium", "low", "xlow", "direct")
@@ -80,27 +74,15 @@ PLACEHOLDERS = ("task_id", "project", "route", "cwd", "worktree", "branch",
                 "stage", "role", "harness", "plugin", "skill")
 
 ROOT_FIELDS = ("version", "routes")
-RECORD_FIELDS = ("key", "kind", "plugin", "title", "hint", "visible", "icon", "roles", "strip", "command")
-ROLE_FIELDS = ("provider", "label", "title", "skill", "params", "members")
+#: Поля записи файла v2.
+RECORD_FIELDS = ("key", "plugin", "skill", "roles")
 #: Поля ячейки роли маршрута `kind=swarm`: харнесс из каталога (`harnesses`),
 #: свой argv и свой промпт — последним аргументом. Пустая ячейка (роль не задана)
 #: — этап пропускается.
 SWARM_ROLE_FIELDS = ("harness", "argv", "prompt")
-#: Обязательные поля ячейки роли; `skill`/`params` необязательны и в результате
-#: проверки появляются только тогда, когда были во входе (иначе экспорт начал бы
-#: писать `"skill": null` во все старые записи).
-ROLE_REQUIRED = ("provider", "label", "title")
-#: Скил-запускатор роли — `плагин:скил` (`pi:pi-delegate`, `grok:delegate`).
-#: Существование скила на диске здесь не проверяется: файл маршрутов ввозится и на
-#: машине без каталога `plugins/`; наличие сверяет слой HTTP по `skills.launcher_info`.
-SKILL_RE = re.compile(r"^[a-z0-9][a-z0-9-]*:[a-z0-9][a-z0-9-]*$")
-PARAM_KEY_RE = re.compile(r"^[a-z][a-z0-9_]*$")
-PARAMS_MAX_KEYS = 20
-#: `members` ячейки конвейера — ссылки роли на харнесс и канал каталога `harnesses`.
-MEMBERS_MAX = 10
-MEMBER_FIELDS = ("harness", "channel")
 
 KEY_RE = re.compile(r"^[a-z0-9][a-z0-9-]*$")
+AGENT_RE = re.compile(r"^listik-pipeline:[a-z0-9][a-z0-9-]*$")
 PLACEHOLDER_RE = re.compile(r"\{([^{}]*)\}")
 
 #: Префиксы меток маршрута на карточке: их выводит сервер из `launch_route`
@@ -155,95 +137,62 @@ def _extra_fields(obj: dict, allowed: tuple, where: str) -> None:
             raise _err(_at(where, name), "лишнее поле")
 
 
-def _validate_params(value, where: str) -> dict:
-    """Параметры запускатора: плоский объект скалярных значений.
+def _validate_executor(item, where: str) -> dict:
+    """Исполнитель роли конвейера; ошибка одна — первая по порядку проверок."""
+    if not isinstance(item, dict):
+        raise _err(where, "исполнитель — объект {harness, agent?, model?, channel?, effort}")
+    _extra_fields(item, EXECUTOR_FIELDS, where)
+    harness = _present(item, "harness", where)
+    if not isinstance(harness, str) or harness not in PIPELINE_HARNESSES:
+        raise _err(f"{where}.harness", "допустимы " + ", ".join(PIPELINE_HARNESSES))
+    if "agent" in item and harness != "claude":
+        raise _err(f"{where}.agent", "только у harness=claude")
+    if "channel" in item and harness != "pi":
+        raise _err(f"{where}.channel", "только у harness=pi")
+    required = {"claude": ("agent", "model"), "pi": ("channel",)}.get(harness, ())
+    for name in ("agent", "model", "channel", "effort"):
+        if name in required or name == "effort":
+            _present(item, name, where)
+    if "agent" in item and (not isinstance(item["agent"], str)
+                            or not AGENT_RE.fullmatch(item["agent"])):
+        raise _err(f"{where}.agent", "ожидается listik-pipeline:<имя>")
+    if "model" in item:
+        if harness == "claude":
+            if item["model"] not in CLAUDE_MODELS:
+                raise _err(f"{where}.model", "у claude допустимы " + ", ".join(CLAUDE_MODELS))
+        elif not _text(item["model"]):
+            raise _err(f"{where}.model", "непустая строка")
+    for name in ("channel", "effort"):
+        if name in item and (not isinstance(item[name], str) or not KEY_RE.fullmatch(item[name])):
+            raise _err(f"{where}.{name}", f"строка под {KEY_RE.pattern}")
+    return {name: item[name] for name in EXECUTOR_FIELDS if name in item}
 
-    `bool` проверяется до `int` намеренно — `isinstance(True, int)` истинно, и без
-    этого порядка `true` разбиралось бы как число.
+
+def validate_pipeline_roles(value, where: str, *, allow_empty: bool) -> dict:
+    """Расклад ролей конвейера v2: `{роль: [исполнитель, …]}`.
+
+    Роли — `PIPELINE_ROLE_KEYS`; у `critic` 1–`CRITICS_MAX` исполнителей, у остальных
+    ровно один. `allow_empty=True` — пустой `{}` допустим (файл, бэкап); иначе —
+    `нужна хотя бы одна роль` (слой базы). Каталог харнессов не сверяется: каналы `pi`
+    сверяет `routes_store._check_roles`. Ошибка — `RoutesError` с путём до поля.
     """
     if not isinstance(value, dict):
-        raise _err(where, "должен быть объектом с параметрами запускатора")
-    if len(value) > PARAMS_MAX_KEYS:
-        raise _err(where, f"не больше {PARAMS_MAX_KEYS} параметров")
-    params: dict = {}
-    for name, item in value.items():
-        if not isinstance(name, str) or not PARAM_KEY_RE.match(name):
-            raise _err(f"{where}.{name}",
-                       "имя параметра — строчные буквы, цифры и подчёркивание, начиная с буквы")
-        if isinstance(item, bool) or isinstance(item, (str, int, float)):
-            params[name] = item
-            continue
-        raise _err(f"{where}.{name}", "допустимы только строка, число и true/false")
-    return params
-
-
-def _validate_members(value, where: str) -> list[dict]:
-    """`members`: 1–10 пар `{harness, channel}`, оба ключа под `KEY_RE`, без повторов.
-
-    Наличие харнесса и канала в каталоге сверяет слой базы (`routes_store._check_roles`).
-    """
-    if not isinstance(value, list) or not value:
-        raise _err(where, "непустой массив {harness, channel}")
-    if len(value) > MEMBERS_MAX:
-        raise _err(where, f"не больше {MEMBERS_MAX} элементов")
-    out: list[dict] = []
-    seen: set[tuple] = set()
-    for i, item in enumerate(value):
-        item_where = f"{where}[{i}]"
-        if not isinstance(item, dict):
-            raise _err(item_where, "ожидается объект {harness, channel}")
-        for name in item:
-            if name not in MEMBER_FIELDS:
-                raise _err(f"{item_where}.{name}", "посторонний ключ, допустимы harness и channel")
-        for name in MEMBER_FIELDS:
-            text = _present(item, name, item_where)
-            if not isinstance(text, str) or not KEY_RE.fullmatch(text):
-                raise _err(f"{item_where}.{name}", f"строка под {KEY_RE.pattern}")
-        pair = (item["harness"], item["channel"])
-        if pair in seen:
-            raise _err(item_where, "повтор пары (harness, channel)")
-        seen.add(pair)
-        out.append({"harness": pair[0], "channel": pair[1]})
-    return out
-
-
-def _validate_role_cell(cell, where: str) -> dict:
-    if not isinstance(cell, dict):
-        raise _err(where, "должна быть объектом {provider, label, title}")
-    _extra_fields(cell, ROLE_FIELDS, where)
-    for name in ROLE_REQUIRED:
-        value = _present(cell, name, where)
-        if not _text(value):
-            raise _err(f"{where}.{name}", "непустая строка")
-    if cell["provider"] not in PROVIDERS:
-        raise _err(f"{where}.provider",
-                   f"неизвестный провайдер {cell['provider']!r}, допустимы: {', '.join(PROVIDERS)}")
-    out = {"provider": cell["provider"], "label": cell["label"], "title": cell["title"]}
-    if "skill" in cell:
-        skill = cell["skill"]
-        if not isinstance(skill, str) or not SKILL_RE.match(skill):
-            raise _err(f"{where}.skill",
-                       'ожидается "плагин:скил" из строчных букв, цифр и дефисов')
-        out["skill"] = skill
-    if "params" in cell:
-        if "skill" not in out:
-            raise _err(f"{where}.params", "без skill параметры некуда передать")
-        out["params"] = _validate_params(cell["params"], f"{where}.params")
-    if "members" in cell:
-        out["members"] = _validate_members(cell["members"], f"{where}.members")
-    return out
-
-
-def _validate_roles(value, where: str) -> dict:
-    if not isinstance(value, dict):
-        raise _err(where, "должен быть объектом с ролями spec/critic/impl/judge")
-    if not value:
+        raise _err(where, "должен быть объектом с ролями " + "/".join(PIPELINE_ROLE_KEYS))
+    if not value and not allow_empty:
         raise _err(where, "нужна хотя бы одна роль")
     roles: dict = {}
-    for role in value:
-        if role not in ROLE_KEYS:
-            raise _err(f"{where}.{role}", f"неизвестная роль, допустимы: {', '.join(ROLE_KEYS)}")
-        roles[role] = _validate_role_cell(value[role], f"{where}.{role}")
+    for role, cell in value.items():
+        role_where = f"{where}.{role}"
+        if role not in PIPELINE_ROLE_KEYS:
+            raise _err(role_where, "неизвестная роль, допустимы: " + ", ".join(PIPELINE_ROLE_KEYS))
+        if not isinstance(cell, list) or not cell:
+            raise _err(role_where, "непустой массив исполнителей")
+        if role == "critic":
+            if len(cell) > CRITICS_MAX:
+                raise _err(role_where, f"не больше {CRITICS_MAX} исполнителей")
+        elif len(cell) > 1:
+            raise _err(role_where, f"у роли {role} ровно один исполнитель")
+        roles[role] = [_validate_executor(item, f"{role_where}[{j}]") for j, item in enumerate(cell)]
     return roles
 
 
@@ -337,21 +286,21 @@ def validate_command(value, where: str) -> list[str]:
 
 
 def check_plugin(kind, key, value, where: str):
-    """Поле `plugin` записи маршрута: `None` (нет поля или `null`) либо плагин пресета.
+    """Поле `plugin` записи маршрута в базе: `None` (нет поля или `null`) либо плагин конвейера.
 
     Плагин — только у `kind=pipeline`, из `skills.PIPELINE_PLUGINS`, и ключ записи
-    начинается с `<плагин без pipeline->-` с непустым остатком. Нарушение —
+    начинается с `<префикс плагина>-` (`lp-`) с непустым остатком. Нарушение —
     `RoutesError` с путём до поля (`where` — путь до записи, `""` — корень).
     """
     if value is None:
         return None
     if kind != "pipeline":
         raise _err(_at(where, "plugin"), "поле только у kind=pipeline")
-    if value not in skills.PIPELINE_PLUGINS:
+    if not isinstance(value, str) or value not in skills.PIPELINE_PLUGINS:
         raise _err(_at(where, "plugin"), "допустимы " + ", ".join(skills.PIPELINE_PLUGINS))
     if skills.skill_of(value, key) is None:
-        short = value[len(skills.PIPELINE_PREFIX):]
-        raise _err(_at(where, "key"), f"у плагина {value} ключ начинается с '{short}-'")
+        prefix = skills.PIPELINE_KEY_PREFIX[value]
+        raise _err(_at(where, "key"), f"у плагина {value} ключ начинается с '{prefix}-'")
     return value
 
 
@@ -374,107 +323,49 @@ def fallback_icon(key: str, kind: str = "pipeline") -> str | None:
     return None
 
 
-def _validate_icon(item: dict, key: str, kind: str, where: str,
-                   warnings: list[str] | None = None) -> tuple[str | None, str | None]:
-    """Поле `icon`: явный уровень, иначе фолбэк по записи; `None` — иконки нет.
-
-    Неизвестный уровень не отменяет весь файл (listik-itg8): запись получает
-    фолбэк по ключу, предупреждение добавляется в `warnings`, а второй элемент
-    результата — `icon_error` с причиной, по которой явный уровень не принят
-    (его отдаёт `GET /api/routes` — доска помечает такую иконку как недоступную).
-    """
-    if "icon" not in item:
-        return fallback_icon(key, kind), None
-    value = item["icon"]
-    if value is None:
-        return None, None  # явный null — иконки нет (так пишет бэкап маршрутов)
-    if value in ROUTE_ICONS:
-        return value, None
-    fallback = fallback_icon(key, kind)
-    error = (f"неизвестный уровень {value!r}, допустимы: " + ", ".join(ROUTE_ICONS))
-    if fallback is not None:
-        warning = f"{where}.icon: {error}; беру уровень из ключа {key!r}: {fallback!r}"
-    else:
-        warning = f"{where}.icon: {error}; из ключа {key!r} уровень не выводится — иконки не будет"
-    if warnings is not None:
-        warnings.append(warning)
-    return fallback, warning
-
-
-def _validate_route(item, where: str, warnings: list[str] | None = None) -> dict:
+def _validate_route(item, where: str) -> dict:
+    """Запись файла v2 → запись в форме слоя базы; ошибка одна — первая по порядку."""
     if not isinstance(item, dict):
         raise _err(where, "запись должна быть объектом")
-    # driver: совместимость со старыми бэкапами — поле допустимо, только если равно выводу из kind
-    _extra_fields(item, RECORD_FIELDS + ("driver",), where)
-    old, kind = item.get("driver"), item.get("kind")
-    if old is not None and kind in KINDS and old != ("skill" if kind == "pipeline" else "swarm"):
-        raise _err(f"{where}.driver", "устаревшее поле: допустимо только значение по kind "
-                   "(pipeline — \"skill\", swarm — \"swarm\") или null")
+    _extra_fields(item, RECORD_FIELDS, where)
 
     key = _present(item, "key", where)
     if not isinstance(key, str) or not KEY_RE.match(key):
         raise _err(f"{where}.key", "ключ должен подходить под ^[a-z0-9][a-z0-9-]*$")
 
-    kind = _present(item, "kind", where)
-    if kind not in KINDS:
-        raise _err(f"{where}.kind", 'должен быть "pipeline" или "swarm"')
+    plugin = _present(item, "plugin", where)
+    if not isinstance(plugin, str) or plugin not in skills.PIPELINE_PLUGINS:
+        raise _err(f"{where}.plugin", "допустимы " + ", ".join(skills.PIPELINE_PLUGINS))
 
-    plugin = check_plugin(kind, key, item.get("plugin"), where)
+    skill = _present(item, "skill", where)
+    if not isinstance(skill, str) or not KEY_RE.fullmatch(skill):
+        raise _err(f"{where}.skill", f"имя каталога скила под {KEY_RE.pattern}")
+    if skill in skills.ROLE_SKILLS:
+        raise _err(f"{where}.skill", f"{skill!r} — скил роли, а не режим")
 
-    title = _present(item, "title", where)
-    if not _text(title):
-        raise _err(f"{where}.title", "непустая строка")
+    prefix = skills.PIPELINE_KEY_PREFIX[plugin]
+    expected = f"{prefix}-{skill}"
+    if key != expected:
+        raise _err(f"{where}.key",
+                   f"у плагина {plugin} ключ — {prefix}-<skill> (ожидается {expected!r})")
 
-    hint = item.get("hint", "")
-    if not isinstance(hint, str):
-        raise _err(f"{where}.hint", "должна быть строкой")
-
-    visible = _present(item, "visible", where)
-    if not isinstance(visible, bool):
-        raise _err(f"{where}.visible", "должно быть true или false, не строка и не число")
-
-    icon, icon_error = _validate_icon(item, key, kind, where, warnings)
-    record = {"key": key, "kind": kind, "plugin": plugin, "title": title, "hint": hint, "visible": visible,
-              "icon": icon}
-    # Поле появляется только у записи с непринятым `icon`: у остальных записей
-    # набор полей не меняется, а доска по нему рисует «иконка недоступна».
-    if icon_error is not None:
-        record["icon_error"] = icon_error
-
-    if kind == "pipeline":
-        if "roles" not in item:
-            raise _err(f"{where}.roles", "обязательно для pipeline")
-        # Пустой расклад `{}` — хранимое состояние конвейера, заведённого без ролей
-        # (`POST /api/routes` без `roles`): бэкап такой записи должен читаться обратно.
-        if item["roles"] == {}:
-            record["roles"] = {}
-        else:
-            record["roles"] = _validate_roles(item["roles"], f"{where}.roles")
-    else:
-        if "roles" not in item:
-            raise _err(f"{where}.roles", "обязательно для swarm")
-        # Каталог харнессов файлу недоступен: проверяется только форма ячеек
-        # и наличие команды у самой роли (argv) — слой базы проверит строже.
-        record["roles"] = validate_swarm_roles(item["roles"], f"{where}.roles")
-
-    record["command"] = (validate_command(item["command"], f"{where}.command")
-                         if "command" in item else None)
-    return record
+    info = skills.skill_info(key, plugin)
+    return {"key": key, "kind": "pipeline", "plugin": plugin,
+            "title": info["title"] if info else key,
+            "hint": info["hint"] if info else "",
+            "visible": True, "icon": fallback_icon(key), "command": None}
 
 
 def validate(obj, warnings: list[str] | None = None) -> list[dict]:
-    """Проверить разобранный JSON по формату версии 1.
+    """Проверить разобранный JSON по формату версии 2.
 
-    При первой же ошибке бросает `RoutesError` с путём до поля (`routes[3].roles.impl.provider`)
-    и причиной по-русски. Возвращает нормализованные записи: `hint` по умолчанию подставлен,
-    `icon` — явный уровень или фолбэк по записи (`None` — иконки нет), `command` — список
-    или `None`.
-
-    Неизвестный `icon` ошибкой не считается: запись получает фолбэк по ключу и поле
-    `icon_error`, а тексты предупреждений складываются в переданный `warnings` (listik-itg8).
+    При первой же ошибке бросает `RoutesError` с путём до поля
+    (`routes[3].roles.critic[1].channel`) и причиной по-русски. Возвращает записи в форме
+    слоя базы (см. модуль-docstring). `warnings` оставлен ради сигнатуры: у v2
+    предупреждений нет, список не пополняется.
     """
     if not isinstance(obj, dict):
-        raise _err("routes.json", 'корень — объект {"version": 1, "routes": [...]}')
+        raise _err("routes.json", f'корень — объект {{"version": {VERSION}, "routes": [...]}}')
     _extra_fields(obj, ROOT_FIELDS, "")
     version = _present(obj, "version", "")
     if isinstance(version, bool) or not isinstance(version, int) or version != VERSION:
@@ -486,10 +377,13 @@ def validate(obj, warnings: list[str] | None = None) -> list[dict]:
     out: list[dict] = []
     seen: set[str] = set()
     for i, item in enumerate(routes):
-        record = _validate_route(item, f"routes[{i}]", warnings)
+        where = f"routes[{i}]"
+        record = _validate_route(item, where)
         if record["key"] in seen:
-            raise _err(f"routes[{i}].key", f"дубликат ключа {record['key']!r}")
+            raise _err(f"{where}.key", f"дубликат ключа {record['key']!r}")
         seen.add(record["key"])
+        roles = _present(item, "roles", where)
+        record["roles"] = validate_pipeline_roles(roles, f"{where}.roles", allow_empty=True)
         out.append(record)
     return out
 
@@ -511,8 +405,8 @@ def _failed(error: str, path) -> RoutesState:
 def _warned(warning: str) -> None:
     """Предупреждение проверки в stderr (у демона — в listik.log).
 
-    Файл при этом рабочий: автостарт включён, запись получила фолбэк, — поэтому
-    «нужен ты» не пишем, в отличие от `_failed`.
+    Файл при этом рабочий: автостарт включён, — поэтому «нужен ты» не пишем, в
+    отличие от `_failed`. У формата v2 предупреждений нет.
     """
     print(f"routes.json: предупреждение: {warning}", file=sys.stderr, flush=True)
 
@@ -521,10 +415,9 @@ def load(path=SOURCE_PATH) -> RoutesState:
     """Прочитать, разобрать и проверить файл. Никогда не бросает исключений.
 
     Любая ошибка (нет файла, нет прав, путь — каталог, битый JSON, `RoutesError`)
-    даёт `ok=False`, текст ошибки и строку в stderr. Неизвестный `icon` — не ошибка:
-    запись получает фолбэк, каждый такой случай идёт в `warnings` состояния и
-    отдельной строкой в stderr. Состояние модуля не меняет и в базу не пишет: ввоз
-    делает :mod:`listik.routes_store`.
+    даёт `ok=False`, текст ошибки и строку в stderr. `warnings` у формата v2 всегда
+    пуст (поле оставлено ради сигнатуры). Состояние модуля не меняет и в базу не
+    пишет: ввоз делает :mod:`listik.routes_store`.
     """
     file = util.path(path)
     warnings: list[str] = []

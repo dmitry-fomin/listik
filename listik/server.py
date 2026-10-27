@@ -593,28 +593,6 @@ def _publish_edge_changes(edges: dict | None) -> None:
         publish("task", {"id": tid, "action": "deps"})
 
 
-def _check_role_launchers(roles) -> None:
-    """Отказать, если роль ссылается на скил-запускатор, которого нет у этой установки.
-
-    Смысл проверки — поймать опечатку в ключе до записи в базу: формат `плагин:скил`
-    проверяет схема (`listik/routes.py`), а существование скила зависит от машины и
-    потому проверяется только здесь.  Каталога запускаторов нет вовсе (установка без
-    `plugins/`) — проверки нет: иначе на такой машине нельзя было бы записать ни один
-    расклад.
-    """
-    if not isinstance(roles, dict) or not skills_mod.launchers_available():
-        return
-    known = set(skills_mod.launcher_keys())
-    for role, cell in roles.items():
-        if not isinstance(cell, dict):
-            continue
-        skill = cell.get("skill")
-        if isinstance(skill, str) and skill not in known:
-            raise ApiError(400, f"roles.{role}.skill: скила-запускатора {skill!r} нет; "
-                           f"доступны: {', '.join(sorted(known))}",
-                           code=errors_mod.BAD_ARGUMENT)
-
-
 def need(body: dict, key: str):
     value = body.get(key)
     if value is None or (isinstance(value, str) and not value.strip()):
@@ -725,13 +703,13 @@ def handle(method: str, path: str, query: dict, body: dict, authed: bool = False
 
     if path == "/api/routes/launchers":
         # Справочник для редактора состава ролей на доске: какие скилы-запускаторы
-        # стоят у этой установки, какие вендоры и роли вообще бывают.
+        # стоят у этой установки, какие харнессы и роли конвейера вообще бывают.
         if method != "GET":
             raise ApiError(405, "метод не поддерживается")
         return 200, {"skills_available": skills_mod.launchers_available(),
                      "launchers": skills_mod.launchers(),
-                     "providers": list(routes_mod.PROVIDERS),
-                     "roles": list(routes_mod.ROLE_KEYS)}
+                     "harnesses": list(routes_mod.PIPELINE_HARNESSES),
+                     "roles": list(routes_mod.PIPELINE_ROLE_KEYS)}
 
     if path == "/api/harnesses":
         # Каталог харнессов (listik-2gry): список, у каждого — «где используется»
@@ -834,9 +812,9 @@ def handle(method: str, path: str, query: dict, body: dict, authed: bool = False
             info = skills_mod.skill_info(key)
             if info is None:
                 raise ApiError(400, f"скила {key!r} нет среди "
-                               f"plugins/pipeline-full|pipeline-cc|pipeline-claude/skills "
-                               f"(ключ <плагин>-<скил>: full-high → "
-                               f"plugins/pipeline-full/skills/high)",
+                               f"plugins/listik-pipeline/skills "
+                               f"(ключ lp-<скил>: lp-high → "
+                               f"plugins/listik-pipeline/skills/high)",
                                code=errors_mod.BAD_ARGUMENT)
             try:
                 routes_store.get_route(conn, key)
@@ -851,7 +829,6 @@ def handle(method: str, path: str, query: dict, body: dict, authed: bool = False
                 if roles == {}:
                     raise ApiError(400, "roles: нужна хотя бы одна роль",
                                    code=errors_mod.BAD_ARGUMENT)
-                _check_role_launchers(roles)
             try:
                 record = routes_store.create_route(
                     conn, key=key, kind="pipeline", title=info["title"], hint=info["hint"],
@@ -909,8 +886,6 @@ def handle(method: str, path: str, query: dict, body: dict, authed: bool = False
                                code=errors_mod.BAD_ARGUMENT)
             if not body:
                 raise ApiError(400, "нечего менять", code=errors_mod.BAD_ARGUMENT)
-            if "roles" in body:
-                _check_role_launchers(body["roles"])
             try:
                 record = routes_store.update_route(conn, key, **body)
             except errors_mod.NotFound as exc:

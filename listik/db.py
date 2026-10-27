@@ -202,14 +202,14 @@ CREATE TABLE IF NOT EXISTS meta (
 CREATE TABLE IF NOT EXISTS routes (
     key        TEXT PRIMARY KEY,
     kind       TEXT NOT NULL,              -- pipeline | swarm
-    plugin     TEXT,                       -- pipeline-full | pipeline-cc | pipeline-claude, NULL — рой или запись без плагина
+    plugin     TEXT,                       -- listik-pipeline, NULL — рой или запись без плагина
     title      TEXT NOT NULL,
     hint       TEXT NOT NULL DEFAULT '',
     icon       TEXT,                       -- xhigh|high|medium|low|xlow|direct, NULL — уровня нет
     visible    INTEGER NOT NULL DEFAULT 1, -- 0/1
     position   INTEGER NOT NULL DEFAULT 0, -- порядок в списке и в «Новой задаче»
     command    TEXT,                       -- JSON-массив argv, либо NULL
-    roles      TEXT,                       -- pipeline: {"spec":{provider,label,title},…}; swarm: {"spec":{harness,argv,prompt},…}
+    roles      TEXT,                       -- pipeline: {"writer":[{harness,agent?,model?,channel?,effort}],…}; swarm: {"spec":{harness,argv,prompt},…}
     created_at TEXT,
     updated_at TEXT
 );

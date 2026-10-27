@@ -7,6 +7,7 @@
 """
 from __future__ import annotations
 
+import contextlib
 import io
 import json
 import logging
@@ -37,7 +38,7 @@ def route_records() -> list[dict]:
             "title": "low",
             "hint": "на 20 мин, самый дешёвый",
             "visible": True,
-            "roles": {"impl": {"provider": "deepseek", "label": "dsh", "title": "dsh"}},
+            "roles": {"implementer": [{"harness": "devin", "model": "swe-2", "effort": "max"}]},
             "command": None,
         },
         {
@@ -46,7 +47,8 @@ def route_records() -> list[dict]:
             "title": "high",
             "hint": "от 40 мин",
             "visible": True,
-            "roles": {"impl": {"provider": "claude", "label": "medium", "title": "Opus"}},
+            "roles": {"implementer": [{"harness": "claude", "agent": "listik-pipeline:implementer-medium",
+                                        "model": "opus", "effort": "medium"}]},
             "command": None,
         },
         {
@@ -55,7 +57,7 @@ def route_records() -> list[dict]:
             "title": "скрытый",
             "hint": "",
             "visible": False,
-            "roles": {"impl": {"provider": "claude", "label": "low", "title": "Opus"}},
+            "roles": {"judge": [{"harness": "pi", "channel": "glm", "effort": "high"}]},
             "command": None,
         },
         {
@@ -607,6 +609,36 @@ class MatchRouteTests(unittest.TestCase):
         self.assertEqual(
             assistant_mod.match_route({"key": "low-pipeline", "reason": 5},
                                       self.CANDIDATES)["reason"], "")
+
+
+
+class RouteCandidatesTests(TempDbTestCase):
+    """Роли маршрута для модели: по исполнителю v2 — модель, канал или харнесс (listik-906l)."""
+
+    def test_array_cells(self) -> None:
+        record = {"key": "lp-x", "kind": "pipeline", "title": "x", "hint": "", "visible": True,
+                  "roles": {"critic": [{"harness": "pi", "channel": "glm", "effort": "high"},
+                                       {"harness": "codex", "effort": "high"},
+                                       {"harness": "claude", "agent": "listik-pipeline:critic-high",
+                                        "model": "sonnet", "effort": "high"}]}}
+        [item] = assistant_mod.route_candidates([record])
+        self.assertEqual(item["roles"], {"critic": ["glm", "codex", "sonnet"]})
+
+    def test_object_cell_keeps_provider(self) -> None:
+        record = {"key": "full-high", "kind": "pipeline", "title": "x", "hint": "",
+                  "visible": True, "roles": {"spec": {"provider": "claude", "label": "x",
+                                                      "title": "y"}}}
+        [item] = assistant_mod.route_candidates([record])
+        self.assertEqual(item["roles"], {"spec": "claude"})
+
+    def test_sample_routes(self) -> None:
+        """Пункт 27: после ввоза `routes.json` у `lp-low` критики и исполнитель по порядку."""
+        with contextlib.redirect_stderr(io.StringIO()):
+            routes_store.import_file(self.conn)
+        items = {item["key"]: item
+                 for item in assistant_mod.route_candidates(routes_store.list_routes(self.conn))}
+        self.assertEqual(items["lp-low"]["roles"]["critic"], ["glm", "deepseek", "haiku"])
+        self.assertEqual(items["lp-low"]["roles"]["implementer"], ["swe-2"])
 
 
 if __name__ == "__main__":

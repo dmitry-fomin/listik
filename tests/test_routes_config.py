@@ -18,6 +18,7 @@ import pathlib
 import re
 import sqlite3
 import subprocess
+import tempfile
 import threading
 import unittest
 from unittest import mock
@@ -44,48 +45,28 @@ ROUTE_LEVEL_RE = re.compile(r"value: '([a-z0-9-]+)'")
 ROUTE_GLYPH_RE = re.compile(r"icon: '([a-z0-9-]+)'")
 
 # Порядок записей в routes.json — он же порядок строк формы «Новая задача».
-EXPECTED_KEYS = [
-    "full-xhigh", "cc-xhigh", "claude-xhigh",
-    "full-high", "cc-high", "claude-high",
-    "full-medium", "cc-medium",
-    "full-low", "cc-low",
-    "full-xlow", "cc-xlow",
-    "full-nano",
-]
+EXPECTED_KEYS = ["lp-xhigh", "lp-high", "lp-medium", "lp-low", "lp-xlow", "lp-nano"]
 
 # Таблицы маршрутов, зашитые в доске до шага 09, порции c: их заменил ответ API.
 REMOVED_TS_TABLES = ("PIPELINES", "DIRECT_HARNESSES")
 
-
-def pipeline_record() -> dict:
-    return {
-        "key": "demo-pipeline",
-        "kind": "pipeline",
-        "title": "Демо",
-        "hint": "подсказка",
-        "visible": True,
-        "roles": {"impl": {"provider": "claude", "label": "Opus", "title": "Opus · medium"}},
-    }
+IMPLEMENTER = [{"harness": "devin", "model": "swe-2", "effort": "max"}]
 
 
-def swarm_record() -> dict:
-    return {"key": "dsh", "kind": "swarm", "title": "dsh", "hint": "", "visible": True,
-            "roles": {"impl": {"harness": "dsh"}}}
-
-
-def swarm_normalized(**over) -> dict:
-    """`swarm_record()` после `routes.validate`: у ключа `dsh` уровня нет."""
-    return {"key": "dsh", "kind": "swarm", "plugin": None, "title": "dsh", "hint": "",
-            "visible": True, "icon": None, "roles": {"impl": {"harness": "dsh"}},
-            "command": None, **over}
+def lp_record(skill: str = "high", **over) -> dict:
+    """Запись файла v2 для `lp-<skill>` с одним исполнителем."""
+    record = {"key": f"lp-{skill}", "plugin": "listik-pipeline", "skill": skill,
+              "roles": {"implementer": [dict(e) for e in IMPLEMENTER]}}
+    record.update(over)
+    return record
 
 
 def document(*records) -> dict:
-    return {"version": 1, "routes": list(records) if records else [pipeline_record()]}
+    return {"version": 2, "routes": list(records) if records else [lp_record()]}
 
 
 class RepoRoutesFileTests(unittest.TestCase):
-    """Пункты 1–3 чек-листа: файл в репозитории, перенос данных, проверка.
+    """`routes.json` репозитория — формат v2, шесть режимов `listik-pipeline`.
 
     Сверки с `web/src` больше нет: зашитые таблицы маршрутов оттуда убраны
     (шаг 09, порция c). Здесь проверяются структура образца для ввоза и отсутствие
@@ -103,61 +84,52 @@ class RepoRoutesFileTests(unittest.TestCase):
             self.skipTest(f"git недоступен: {exc}")
         self.assertEqual(done.returncode, 1, done.stdout + done.stderr)
 
-    def test_has_thirteen_records_in_order(self) -> None:
-        self.assertEqual(self.raw["version"], 1)
-        self.assertEqual(len(self.raw["routes"]), 13)
+    def test_has_six_records_in_order(self) -> None:
+        self.assertEqual(self.raw["version"], 2)
         self.assertEqual([r["key"] for r in self.raw["routes"]], EXPECTED_KEYS)
 
-    def test_validates_and_every_record_is_visible(self) -> None:
+    def test_records_are_exactly_v2_fields(self) -> None:
+        for raw in self.raw["routes"]:
+            with self.subTest(key=raw["key"]):
+                self.assertEqual(list(raw), ["key", "plugin", "skill", "roles"])
+                self.assertEqual(raw["plugin"], "listik-pipeline")
+                self.assertEqual(raw["key"], "lp-" + raw["skill"])
+
+    def test_validates_into_database_form(self) -> None:
+        """Пункт 5 чек-листа: шесть записей в форме слоя базы, роли — как в файле."""
         normalized = routes_mod.validate(self.raw)
         self.assertEqual([r["key"] for r in normalized], EXPECTED_KEYS)
-        self.assertTrue(all(r["visible"] is True for r in normalized))
-        self.assertTrue(all(r["visible"] is True for r in self.raw["routes"]))
-
-    def test_kinds_match_the_table(self) -> None:
-        kinds = [r["kind"] for r in self.raw["routes"]]
-        self.assertEqual(kinds, ["pipeline"] * 13)
+        for raw, record in zip(self.raw["routes"], normalized):
+            with self.subTest(key=raw["key"]):
+                self.assertEqual(record["kind"], "pipeline")
+                self.assertEqual(record["plugin"], "listik-pipeline")
+                self.assertIs(record["visible"], True)
+                self.assertIsNone(record["command"])
+                self.assertEqual(record["title"],
+                                 skills_mod.skill_info(raw["key"])["title"])
+                self.assertEqual(record["roles"], raw["roles"])
+                for cell in record["roles"].values():
+                    self.assertIsInstance(cell, list)
+        by_key = {r["key"]: r for r in normalized}
+        self.assertEqual(by_key["lp-high"]["title"], "high")
+        self.assertEqual(list(by_key["lp-high"]),
+                         ["key", "kind", "plugin", "title", "hint", "visible", "icon",
+                          "command", "roles"])
 
     def test_icons_are_the_route_levels(self) -> None:
         normalized = {r["key"]: r["icon"] for r in routes_mod.validate(self.raw)}
-        self.assertEqual(normalized["full-xhigh"], "xhigh")
-        self.assertEqual(normalized["full-high"], "high")
-        self.assertEqual(normalized["full-medium"], "medium")
-        self.assertEqual(normalized["cc-medium"], "medium")
-        self.assertEqual(normalized["full-low"], "low")
-        self.assertEqual(normalized["full-xlow"], "xlow")
-        # Уровень nano из ключа не выводится — стоит явно, на ступени xlow.
-        self.assertEqual(normalized["full-nano"], "xlow")
+        self.assertEqual(normalized, {"lp-xhigh": "xhigh", "lp-high": "high",
+                                      "lp-medium": "medium", "lp-low": "low",
+                                      "lp-xlow": "xlow", "lp-nano": None})
 
-    def test_repo_every_record_has_command(self) -> None:
-        """В образце у каждой записи есть argv автостарта: конвейер — claude.
-
-        У всех записей конвейера argv одинаков и содержит `/{plugin}:{skill}`, а
-        подстановка `plugin`/`skill` записи даёт `skills.skill_ref(key)` (listik-d9rj,
-        порции b и d).
-        """
-        normalized = {record["key"]: record for record in routes_mod.validate(self.raw)}
-        pipeline_cmd = None
-        pipeline_records = []
-        for raw in self.raw["routes"]:
-            self.assertIn("command", raw, raw["key"])
-            self.assertEqual(normalized[raw["key"]]["command"], raw["command"])
-            if raw["kind"] == "pipeline":
-                self.assertEqual(raw["command"][:3],
-                                 ["claude", "--dangerously-skip-permissions", "-p"], raw["key"])
-                ref = skills_mod.skill_ref(raw["key"])
-                self.assertIsNotNone(ref, raw["key"])
-                self.assertIn("Запусти скил /{plugin}:{skill} ", raw["command"][-1], raw["key"])
-                values = {"plugin": raw["plugin"],
-                          "skill": skills_mod.skill_of(raw["plugin"], raw["key"])}
-                self.assertIn(f"Запусти скил {ref} ",
-                              launcher._substitute(raw["command"][-1], values), raw["key"])
-                pipeline_records.append(raw)
-                if pipeline_cmd is None:
-                    pipeline_cmd = raw["command"]
-        self.assertTrue(pipeline_records)
-        for raw in pipeline_records:
-            self.assertEqual(raw["command"], pipeline_cmd, raw["key"])
+    def test_validates_without_skills_on_disk(self) -> None:
+        """Пункт 13a: машина без `plugins/` — файл проходит, title = ключ, hint пуст."""
+        with tempfile.TemporaryDirectory() as tmp, \
+                mock.patch.object(skills_mod, "PIPELINE_PLUGINS_DIR", pathlib.Path(tmp)):
+            normalized = {r["key"]: r for r in routes_mod.validate(self.raw)}
+        self.assertEqual(normalized["lp-high"]["title"], "lp-high")
+        self.assertEqual(normalized["lp-high"]["hint"], "")
+        self.assertEqual(normalized["lp-high"]["icon"], "high")
 
     def test_web_src_has_no_embedded_route_tables(self) -> None:
         offenders: list[str] = []
@@ -172,116 +144,171 @@ class RepoRoutesFileTests(unittest.TestCase):
 
 
 class ValidateTests(unittest.TestCase):
-    """Пункт 4–5 чек-листа: каждое правило формата — отдельный случай."""
+    """Правила записи файла v2: каждое — отдельный случай, текст ошибки целиком."""
 
-    def check_error(self, document_obj, *path_parts) -> str:
+    def error(self, document_obj) -> str:
         with self.assertRaises(routes_mod.RoutesError) as ctx:
             routes_mod.validate(document_obj)
         self.assertIsInstance(ctx.exception, ValueError)
-        message = str(ctx.exception)
-        for part in path_parts:
-            self.assertIn(part, message)
-        return message
+        return str(ctx.exception)
 
-    # -- key ---------------------------------------------------------------
+    # -- version и корень ---------------------------------------------------
+
+    def test_version_must_be_exactly_two(self) -> None:
+        for bad in (1, "2", True, 2.0, None):
+            with self.subTest(version=bad):
+                self.assertEqual(self.error({"version": bad, "routes": []}),
+                                 "version: должна быть ровно целая 2")
+
+    def test_version_missing(self) -> None:
+        self.assertEqual(self.error({"routes": []}), "version: обязательное поле отсутствует")
+
+    def test_root_extra_field(self) -> None:
+        self.assertEqual(self.error({"version": 2, "routes": [], "visble": True}),
+                         "visble: лишнее поле")
+
+    def test_root_not_object(self) -> None:
+        self.assertIn("routes.json", self.error(["routes"]))
+
+    def test_routes_not_list(self) -> None:
+        self.assertIn("routes", self.error({"version": 2, "routes": {}}))
+
+    def test_empty_routes_ok(self) -> None:
+        self.assertEqual(routes_mod.validate({"version": 2, "routes": []}), [])
+
+    # -- поля записи ---------------------------------------------------------
+
+    def test_v1_fields_are_extra(self) -> None:
+        """Пункт 9: поля записи v1 и старых бэкапов — `лишнее поле`."""
+        for name, value in (("kind", "pipeline"), ("title", "x"), ("hint", ""),
+                            ("visible", True), ("icon", "high"), ("command", ["true"]),
+                            ("driver", "skill"), ("strip", {}), ("visble", True)):
+            with self.subTest(field=name):
+                self.assertEqual(self.error(document(lp_record(**{name: value}))),
+                                 f"routes[0].{name}: лишнее поле")
+
+    def test_extra_field_goes_before_other_errors(self) -> None:
+        record = lp_record(key="Bad", plugin=None, kind="pipeline")
+        self.assertEqual(self.error(document(record)), "routes[0].kind: лишнее поле")
+
+    def test_required_fields(self) -> None:
+        for name in ("key", "plugin", "skill", "roles"):
+            record = lp_record()
+            del record[name]
+            with self.subTest(field=name):
+                self.assertEqual(self.error(document(record)),
+                                 f"routes[0].{name}: обязательное поле отсутствует")
+
+    def test_key_format(self) -> None:
+        for bad in ("Lp-high", "-x", "", 5):
+            with self.subTest(key=bad):
+                self.assertEqual(self.error(document(lp_record(key=bad))),
+                                 "routes[0].key: ключ должен подходить под ^[a-z0-9][a-z0-9-]*$")
+
+    def test_plugin_not_listed(self) -> None:
+        """Пункт 7: `pipeline-full`, `null` и прочее — один текст."""
+        for bad in ("pipeline-full", None, "pipeline-cc", "", 1):
+            with self.subTest(plugin=bad):
+                self.assertEqual(self.error(document(lp_record(plugin=bad))),
+                                 "routes[0].plugin: допустимы listik-pipeline")
+
+    def test_skill_format(self) -> None:
+        for bad in ("High", "", "a/b", None, 5):
+            with self.subTest(skill=bad):
+                self.assertEqual(
+                    self.error(document(lp_record(skill="high") | {"skill": bad})),
+                    "routes[0].skill: имя каталога скила под ^[a-z0-9][a-z0-9-]*$")
+
+    def test_role_skill_is_not_a_mode(self) -> None:
+        for skill in ("writer", "critic", "implementer", "lens", "judge"):
+            with self.subTest(skill=skill):
+                self.assertEqual(self.error(document(lp_record(skill))),
+                                 f"routes[0].skill: '{skill}' — скил роли, а не режим")
+
+    def test_key_must_be_lp_skill(self) -> None:
+        """Пункт 8: ключ не `lp-<skill>` — один текст, без текста `check_plugin`."""
+        expected = ("routes[0].key: у плагина listik-pipeline ключ — lp-<skill> "
+                    "(ожидается 'lp-high')")
+        for key in ("full-high", "lp-low", "high", "lp-high-x"):
+            with self.subTest(key=key):
+                message = self.error(document(lp_record("high", key=key)))
+                self.assertEqual(message, expected)
+                self.assertNotIn("начинается с", message)
+
+    def test_plugin_error_goes_before_key_mismatch(self) -> None:
+        record = lp_record("high", key="full-high", plugin="pipeline-full")
+        self.assertEqual(self.error(document(record)),
+                         "routes[0].plugin: допустимы listik-pipeline")
 
     def test_key_duplicate(self) -> None:
-        second = {**swarm_record(), "key": "demo-pipeline"}
-        self.check_error(document(pipeline_record(), second), "routes[1].key", "дубликат")
+        self.assertEqual(self.error(document(lp_record(), lp_record())),
+                         "routes[1].key: дубликат ключа 'lp-high'")
 
-    def test_key_uppercase(self) -> None:
-        self.check_error(document({**pipeline_record(), "key": "Demo"}), "routes[0].key")
+    def test_record_not_object(self) -> None:
+        self.assertEqual(self.error(document("lp-high")),
+                         "routes[0]: запись должна быть объектом")
 
-    # -- kind --------------------------------------------------------------
+    # -- положительные случаи -----------------------------------------------
 
-    def test_kind_unknown(self) -> None:
-        self.check_error(document({**pipeline_record(), "kind": "foo"}), "routes[0].kind")
+    def test_record_in_database_form(self) -> None:
+        info = skills_mod.skill_info("lp-high")
+        self.assertEqual(routes_mod.validate(document(lp_record()))[0], {
+            "key": "lp-high", "kind": "pipeline", "plugin": "listik-pipeline",
+            "title": info["title"], "hint": info["hint"], "visible": True, "icon": "high",
+            "command": None, "roles": {"implementer": IMPLEMENTER}})
 
-    # -- visible -----------------------------------------------------------
+    def test_unknown_skill_on_disk_gets_key_as_title(self) -> None:
+        record = routes_mod.validate(document(lp_record("nope")))[0]
+        self.assertEqual((record["title"], record["hint"], record["icon"]), ("lp-nope", "", None))
 
-    def test_visible_string(self) -> None:
-        self.check_error(document({**pipeline_record(), "visible": "true"}), "routes[0].visible")
+    def test_empty_roles_in_file_ok(self) -> None:
+        """Пункт 12: `{}` в файле допустим — так бэкап пишет конвейер без ролей."""
+        self.assertEqual(routes_mod.validate(document(lp_record(roles={})))[0]["roles"], {})
 
-    def test_visible_number(self) -> None:
-        self.check_error(document({**pipeline_record(), "visible": 1}), "routes[0].visible")
-
-    def test_visible_missing(self) -> None:
-        record = pipeline_record()
-        del record["visible"]
-        self.check_error(document(record), "routes[0].visible")
-
-    # -- icon --------------------------------------------------------------
-
-    def validate_with_warnings(self, document_obj) -> tuple[list[dict], list[str]]:
-        """`validate` вместе с собранными предупреждениями (listik-itg8)."""
+    def test_warnings_stay_empty(self) -> None:
         warnings: list[str] = []
-        return routes_mod.validate(document_obj, warnings), warnings
-
-    def test_icon_unknown_level_warns_and_falls_back_to_key(self) -> None:
-        """Опечатка в `icon` не отменяет файл: уровень берётся из ключа, а не из поля."""
-        record = {**pipeline_record(), "key": "xhigh-pipeline", "icon": "xhihg"}
-        normalized, warnings = self.validate_with_warnings(document(record))
-        self.assertEqual(normalized[0]["icon"], "xhigh")
-        self.assertEqual(len(warnings), 1)
-        self.assertIn("routes[0].icon", warnings[0])
-        self.assertIn("'xhihg'", warnings[0])
-        self.assertIn("'xhigh'", warnings[0])
-        self.assertEqual(normalized[0]["icon_error"], warnings[0])
-
-    def test_icon_unknown_level_without_fallback_has_no_icon(self) -> None:
-        normalized, warnings = self.validate_with_warnings(
-            document({**pipeline_record(), "icon": "xhihg"}))
-        self.assertIsNone(normalized[0]["icon"])
-        self.assertIn("routes[0].icon", warnings[0])
-        self.assertEqual(normalized[0]["icon_error"], warnings[0])
-
-    def test_icon_unknown_level_keeps_other_records(self) -> None:
-        """Битая запись не мешает остальным: файл валиден целиком (приёмка 1)."""
-        bad = {**pipeline_record(), "key": "bad-pipeline", "icon": "xhihg"}
-        good = {**swarm_record(), "icon": "direct"}
-        normalized, warnings = self.validate_with_warnings(document(bad, good))
-        self.assertEqual([r["key"] for r in normalized], ["bad-pipeline", "dsh"])
-        self.assertEqual(normalized[1], swarm_normalized(icon="direct"))
-        self.assertEqual(len(warnings), 1)
-        self.assertIn("routes[0].icon", warnings[0])
-
-    def test_icon_unknown_levels_accumulate_warnings(self) -> None:
-        first = {**pipeline_record(), "key": "xhigh-pipeline", "icon": "xhihg"}
-        second = {**swarm_record(), "key": "low-solo", "icon": "dirct"}
-        normalized, warnings = self.validate_with_warnings(document(first, second))
-        self.assertEqual([r["icon"] for r in normalized], ["xhigh", "low"])
-        self.assertEqual(len(warnings), 2)
-        self.assertIn("routes[0].icon", warnings[0])
-        self.assertIn("routes[1].icon", warnings[1])
-
-    def test_icon_not_string_warns(self) -> None:
-        normalized, warnings = self.validate_with_warnings(
-            document({**pipeline_record(), "key": "high-pipeline", "icon": 4}))
-        self.assertEqual(normalized[0]["icon"], "high")
-        self.assertIn("routes[0].icon", warnings[0])
-        self.assertIn("4", warnings[0])
-
-    def test_icon_null_means_no_icon(self) -> None:
-        normalized, warnings = self.validate_with_warnings(
-            document({**pipeline_record(), "key": "high-pipeline", "icon": None}))
-        self.assertIsNone(normalized[0]["icon"])
+        routes_mod.validate(json.loads(ROUTES_JSON.read_text(encoding="utf-8")), warnings)
         self.assertEqual(warnings, [])
-        self.assertNotIn("icon_error", normalized[0])
 
-    def test_icon_explicit_level_passes(self) -> None:
-        record = {**pipeline_record(), "key": "cross-pipeline", "icon": "high"}
-        normalized, warnings = self.validate_with_warnings(document(record))
-        self.assertEqual(normalized[0]["icon"], "high")
-        self.assertEqual(warnings, [])
-        self.assertNotIn("icon_error", normalized[0])
+    # -- command (записи базы) и подстановки ---------------------------------
 
-    def test_icon_falls_back_to_key_prefix(self) -> None:
-        for key, level in (("xhigh-pipeline", "xhigh"), ("high-pipeline", "high"),
-                           ("medium-pipeline", "medium"), ("low-pipeline", "low"),
-                           ("xlow-pipeline", "xlow")):
-            with self.subTest(key=key):
-                normalized = routes_mod.validate(document({**pipeline_record(), "key": key}))
-                self.assertEqual(normalized[0]["icon"], level)
+    def command_error(self, value) -> str:
+        with self.assertRaises(routes_mod.RoutesError) as ctx:
+            routes_mod.validate_command(value, "command")
+        return str(ctx.exception)
+
+    def test_command_empty(self) -> None:
+        self.assertIn("command", self.command_error([]))
+
+    def test_command_empty_element(self) -> None:
+        self.assertIn("command[1]", self.command_error(["x", ""]))
+
+    def test_command_unknown_placeholder(self) -> None:
+        message = self.command_error(["{taskid}"])
+        self.assertIn("command[0]", message)
+        self.assertIn("{taskid}", message)
+
+    def test_command_double_braces(self) -> None:
+        self.assertIn("command[0]", self.command_error(["{{task_id}}"]))
+
+    def test_command_stray_brace(self) -> None:
+        self.assertIn("command[0]", self.command_error(["a}"]))
+
+    def test_title_is_unknown_and_lists_all_placeholders(self) -> None:
+        message = self.command_error(["{title}"])
+        self.assertIn("неизвестная подстановка", message)
+        self.assertEqual(routes_mod.PLACEHOLDERS,
+                         ("task_id", "project", "route", "cwd", "worktree", "branch",
+                          "stage", "role", "harness", "plugin", "skill"))
+        for name in routes_mod.PLACEHOLDERS:
+            self.assertIn("{" + name + "}", message)
+
+    def test_valid_command_with_placeholders(self) -> None:
+        command = ["run", "{task_id}", "--p={project}", "{route}", "{cwd}",
+                   "{worktree}", "{branch}"]
+        self.assertEqual(routes_mod.validate_command(command, "command"), command)
+
+    # -- уровень по ключу ------------------------------------------------------
 
     def test_icon_fallback_ignores_kind(self) -> None:
         """Первое правило — уровень из префикса ключа, у обоих видов (listik-ar8v)."""
@@ -290,198 +317,15 @@ class ValidateTests(unittest.TestCase):
         for key, level in cases:
             with self.subTest(key=key):
                 self.assertEqual(routes_mod.fallback_icon(key), level)
-        self.assertIsNone(routes_mod.validate(document(swarm_record()))[0]["icon"])
 
     def test_icon_fallback_second_rule_only_for_pipeline(self) -> None:
-        """Второе правило (listik-d9rj): часть после первого `-` — только у конвейера."""
-        cases = (("full-high", "high"), ("cc-xlow", "xlow"), ("claude-opus", None),
+        cases = (("lp-high", "high"), ("lp-xlow", "xlow"), ("lp-nano", None),
                  ("xhigh-pipeline", "xhigh"), ("pidi", None))
         for key, level in cases:
             with self.subTest(key=key):
                 self.assertEqual(routes_mod.fallback_icon(key), level)
         self.assertIsNone(routes_mod.fallback_icon("x-high", "swarm"))
         self.assertEqual(routes_mod.fallback_icon("x-high", "pipeline"), "high")
-        swarm = {**swarm_record(), "key": "x-high"}
-        self.assertIsNone(routes_mod.validate(document(swarm))[0]["icon"])
-        pipeline = {**pipeline_record(), "key": "x-high"}
-        self.assertEqual(routes_mod.validate(document(pipeline))[0]["icon"], "high")
-
-    def test_icon_fallback_has_nothing_for_unknown_prefix(self) -> None:
-        for key in ("cross-pipeline", "demo-pipeline"):
-            with self.subTest(key=key):
-                normalized = routes_mod.validate(document({**pipeline_record(), "key": key}))
-                self.assertIsNone(normalized[0]["icon"])
-
-    # -- title -------------------------------------------------------------
-
-    def test_title_empty(self) -> None:
-        self.check_error(document({**pipeline_record(), "title": ""}), "routes[0].title")
-
-    # -- version -----------------------------------------------------------
-
-    def test_version_missing(self) -> None:
-        self.check_error({"routes": [pipeline_record()]}, "version")
-
-    def test_version_string(self) -> None:
-        self.check_error({"version": "1", "routes": [pipeline_record()]}, "version")
-
-    def test_version_two(self) -> None:
-        self.check_error({"version": 2, "routes": [pipeline_record()]}, "version")
-
-    def test_version_bool_is_not_one(self) -> None:
-        self.check_error({"version": True, "routes": [pipeline_record()]}, "version")
-
-    # -- roles -------------------------------------------------------------
-
-    def test_pipeline_without_roles(self) -> None:
-        record = pipeline_record()
-        del record["roles"]
-        self.check_error(document(record), "routes[0].roles")
-
-    def test_roles_empty(self) -> None:
-        """Пустой расклад — хранимое состояние конвейера (listik-1lbn), у роя — ошибка."""
-        normalized = routes_mod.validate(document({**pipeline_record(), "roles": {}}))
-        self.assertEqual(normalized[0]["roles"], {})
-        self.check_error(document({**swarm_record(), "roles": {}}), "routes[0].roles")
-
-    def test_old_backup_driver_matching_kind_is_dropped(self) -> None:
-        """listik-ujra: `driver` из старого бэкапа принимается, только если равен выводу
-        из `kind` (или null), и в нормализованную запись не попадает."""
-        for record in ({**pipeline_record(), "driver": "skill"},
-                       {**swarm_record(), "driver": "swarm"},
-                       {**pipeline_record(), "driver": None},
-                       {**swarm_record(), "driver": None}):
-            with self.subTest(kind=record["kind"], value=record["driver"]):
-                self.assertNotIn("driver", routes_mod.validate(document(record))[0])
-
-    def test_old_backup_driver_other_value_is_error(self) -> None:
-        for record in ({**pipeline_record(), "driver": "swarm"},
-                       {**swarm_record(), "driver": "skill"},
-                       {**pipeline_record(), "driver": "bogus"},
-                       {**swarm_record(), "driver": 1}):
-            with self.subTest(kind=record["kind"], value=record["driver"]):
-                self.check_error(document(record), "routes[0].driver")
-
-    def test_role_unknown(self) -> None:
-        record = pipeline_record()
-        record["roles"] = {**record["roles"], "reviewer": {"provider": "claude",
-                                                          "label": "x", "title": "y"}}
-        self.check_error(document(record), "routes[0].roles.reviewer")
-
-    def test_role_without_label(self) -> None:
-        cell = {"provider": "claude", "title": "Opus"}
-        self.check_error(document({**pipeline_record(), "roles": {"impl": cell}}),
-                         "routes[0].roles.impl.label")
-
-    def test_provider_unknown(self) -> None:
-        cell = {"provider": "gpt", "label": "x", "title": "y"}
-        self.check_error(document({**pipeline_record(), "roles": {"impl": cell}}),
-                         "routes[0].roles.impl.provider")
-
-    # -- harness -----------------------------------------------------------
-
-    def test_pipeline_with_harness(self) -> None:
-        message = self.check_error(document({**pipeline_record(), "harness": "dsh"}),
-                                   "routes[0].harness")
-        self.assertIn("лишнее поле", message)
-
-    def test_swarm_with_harness_is_extra_field(self) -> None:
-        message = self.check_error(document({**swarm_record(), "harness": "dsh"}),
-                                   "routes[0].harness")
-        self.assertIn("лишнее поле", message)
-
-    def test_direct_kind_names_allowed_kinds(self) -> None:
-        record = {**swarm_record(), "kind": "direct"}
-        del record["roles"]
-        message = self.check_error(document(record), "routes[0].kind", '"pipeline"', '"swarm"')
-        self.assertNotIn('"direct"', message)
-
-    # -- лишние поля --------------------------------------------------------
-
-    def test_extra_field_typo(self) -> None:
-        self.check_error(document({**pipeline_record(), "visble": True}), "routes[0].visble")
-
-    def test_root_extra_field(self) -> None:
-        self.check_error({"version": 1, "routes": [], "visble": True}, "visble")
-
-    def test_root_not_object(self) -> None:
-        self.check_error(["routes"], "routes.json")
-
-    def test_routes_not_list(self) -> None:
-        self.check_error({"version": 1, "routes": {}}, "routes")
-
-    # -- command -----------------------------------------------------------
-
-    def test_command_empty(self) -> None:
-        self.check_error(document({**pipeline_record(), "command": []}), "routes[0].command")
-
-    def test_command_empty_element(self) -> None:
-        self.check_error(document({**pipeline_record(), "command": ["x", ""]}),
-                         "routes[0].command[1]")
-
-    def test_command_unknown_placeholder(self) -> None:
-        self.check_error(document({**pipeline_record(), "command": ["{taskid}"]}),
-                         "routes[0].command[0]")
-
-    def test_command_double_braces(self) -> None:
-        self.check_error(document({**pipeline_record(), "command": ["{{task_id}}"]}),
-                         "routes[0].command[0]")
-
-    def test_command_stray_brace(self) -> None:
-        self.check_error(document({**pipeline_record(), "command": ["a}"]}),
-                         "routes[0].command[0]")
-
-    def test_command_unknown_placeholder_message_names_it(self) -> None:
-        message = self.check_error(document({**pipeline_record(), "command": ["{taskid}"]}),
-                                   "routes[0].command[0]")
-        self.assertIn("{taskid}", message)
-
-    def test_title_is_unknown_and_lists_all_placeholders(self) -> None:
-        message = self.check_error(document({**pipeline_record(), "command": ["{title}"]}),
-                                   "routes[0].command[0]", "{title}")
-        self.assertIn("неизвестная подстановка", message)
-        self.assertEqual(routes_mod.PLACEHOLDERS,
-                         ("task_id", "project", "route", "cwd", "worktree", "branch",
-                          "stage", "role", "harness", "plugin", "skill"))
-        for name in routes_mod.PLACEHOLDERS:
-            self.assertIn("{" + name + "}", message)
-
-    # -- положительные случаи -----------------------------------------------
-
-    def test_valid_command_with_placeholders(self) -> None:
-        record = {**pipeline_record(),
-                  "command": ["run", "{task_id}", "--p={project}", "{route}", "{cwd}",
-                              "{worktree}", "{branch}"]}
-        normalized = routes_mod.validate(document(record))
-        self.assertEqual(normalized[0]["command"], record["command"])
-
-    def test_legacy_strip_is_ignored_without_validation(self) -> None:
-        record = {**pipeline_record(), "strip": {"glyph": "Invalid Glyph", "label": 123}}
-        warnings: list[str] = []
-        normalized = routes_mod.validate(document(record), warnings)
-        self.assertNotIn("strip", normalized[0])
-        self.assertEqual(warnings, [])
-
-    def test_valid_swarm_record(self) -> None:
-        normalized = routes_mod.validate(document(swarm_record()))
-        self.assertEqual(normalized[0], swarm_normalized())
-        self.assertNotIn("harness", normalized[0])
-
-    def test_hint_defaults_to_empty_string(self) -> None:
-        record = pipeline_record()
-        del record["hint"]
-        self.assertEqual(routes_mod.validate(document(record))[0]["hint"], "")
-
-    def test_all_four_roles_pass(self) -> None:
-        record = pipeline_record()
-        record["roles"] = {
-            "spec": {"provider": "claude", "label": "Fable", "title": "Fable · low"},
-            "critic": {"provider": "glm", "label": "GLM", "title": "GLM 5.3 Flash по HTTP"},
-            "impl": {"provider": "deepseek", "label": "dsh", "title": "DeepSeek Harness"},
-            "judge": {"provider": "grok", "label": "low", "title": "Grok 4.6 · low"},
-        }
-        normalized = routes_mod.validate(document(record))
-        self.assertEqual(list(normalized[0]["roles"]), ["spec", "critic", "impl", "judge"])
 
 
 def board_icon_names() -> set[str]:
@@ -492,60 +336,47 @@ def board_icon_names() -> set[str]:
 
 
 class PluginFieldTests(unittest.TestCase):
-    """Поле `plugin` записи маршрута (listik-d9rj, порция d)."""
+    """`check_plugin` — поле `plugin` записи в базе."""
 
-    def check_error(self, record) -> str:
+    def check_error(self, kind, key, value) -> str:
         with self.assertRaises(routes_mod.RoutesError) as ctx:
-            routes_mod.validate(document(record))
+            routes_mod.check_plugin(kind, key, value, "")
         return str(ctx.exception)
 
+    def test_none_is_none(self) -> None:
+        self.assertIsNone(routes_mod.check_plugin("pipeline", "my-flow", None, ""))
+        self.assertIsNone(routes_mod.check_plugin("swarm", "dsh", None, ""))
+
+    def test_good_plugin_kept(self) -> None:
+        self.assertEqual(routes_mod.check_plugin("pipeline", "lp-high", "listik-pipeline", ""),
+                         "listik-pipeline")
+
+    def test_only_for_pipeline(self) -> None:
+        self.assertEqual(self.check_error("swarm", "lp-high", "listik-pipeline"),
+                         "plugin: поле только у kind=pipeline")
+
     def test_unknown_plugin(self) -> None:
-        message = self.check_error({**pipeline_record(), "key": "full-high",
-                                    "plugin": "pipeline-foo"})
-        self.assertIn("routes[0].plugin: допустимы pipeline-full, pipeline-cc, pipeline-claude",
-                      message)
-        self.assertNotIn("лишнее поле", message)
+        self.assertEqual(self.check_error("pipeline", "full-high", "pipeline-full"),
+                         "plugin: допустимы listik-pipeline")
 
-    def test_key_must_start_with_plugin_prefix(self) -> None:
-        message = self.check_error({**pipeline_record(), "key": "full-high",
-                                    "plugin": "pipeline-cc"})
-        self.assertIn("routes[0].key: у плагина pipeline-cc ключ начинается с 'cc-'", message)
+    def test_key_must_start_with_lp(self) -> None:
+        for key in ("full-high", "lp-"):
+            with self.subTest(key=key):
+                self.assertEqual(self.check_error("pipeline", key, "listik-pipeline"),
+                                 "key: у плагина listik-pipeline ключ начинается с 'lp-'")
 
-    def test_key_with_empty_skill_is_rejected(self) -> None:
-        message = self.check_error({**pipeline_record(), "key": "full-",
-                                    "plugin": "pipeline-full"})
-        self.assertIn("routes[0].key: у плагина pipeline-full ключ начинается с 'full-'", message)
+    def test_where_prefixes_path(self) -> None:
+        with self.assertRaises(routes_mod.RoutesError) as ctx:
+            routes_mod.check_plugin("swarm", "x", "listik-pipeline", "routes[2]")
+        self.assertEqual(str(ctx.exception), "routes[2].plugin: поле только у kind=pipeline")
 
-    def test_swarm_record_has_no_plugin(self) -> None:
-        message = self.check_error({**swarm_record(), "plugin": "pipeline-full"})
-        self.assertIn("routes[0].plugin: поле только у kind=pipeline", message)
-
-    def test_missing_or_null_plugin_is_none(self) -> None:
-        normalized = routes_mod.validate(document(
-            pipeline_record(), {**pipeline_record(), "key": "other", "plugin": None},
-            {**swarm_record(), "plugin": None}))
-        self.assertEqual([r["plugin"] for r in normalized], [None, None, None])
-
-    def test_plugin_is_kept_and_follows_kind(self) -> None:
-        record = routes_mod.validate(document(
-            {**pipeline_record(), "key": "cc-high", "plugin": "pipeline-cc"}))[0]
-        self.assertEqual(record["plugin"], "pipeline-cc")
-        self.assertEqual(list(record)[:3], ["key", "kind", "plugin"])
-        self.assertEqual(routes_mod.RECORD_FIELDS[:3], ("key", "kind", "plugin"))
-
-    def test_sample_pipelines_name_plugin_by_key_prefix(self) -> None:
-        raw = json.loads(ROUTES_JSON.read_text(encoding="utf-8"))
-        pipelines = [r for r in raw["routes"] if r["kind"] == "pipeline"]
-        self.assertEqual(len(pipelines), len(EXPECTED_KEYS))
-        for record in pipelines:
-            with self.subTest(key=record["key"]):
-                self.assertEqual(record["plugin"], "pipeline-" + record["key"].split("-", 1)[0])
-                self.assertEqual(list(record)[:3], ["key", "kind", "plugin"])
+    def test_record_fields(self) -> None:
+        self.assertEqual(routes_mod.RECORD_FIELDS, ("key", "plugin", "skill", "roles"))
 
     def test_substitute_plugin_and_skill(self) -> None:
         self.assertEqual(launcher._substitute("/{plugin}:{skill}",
-                                              {"plugin": "pipeline-full", "skill": "high"}),
-                         "/pipeline-full:high")
+                                              {"plugin": "listik-pipeline", "skill": "high"}),
+                         "/listik-pipeline:high")
         # Без значений (запуск роя, запись без плагина) — пустые строки.
         self.assertEqual(launcher._substitute("/{plugin}:{skill}", {}), "/:")
 
@@ -633,11 +464,11 @@ class FileLoadTests(TempDbTestCase):
 
     def test_load_schema_error(self) -> None:
         bad = self.tmp_path / "bad-schema.json"
-        bad.write_text(json.dumps({"version": 2, "routes": []}), encoding="utf-8")
+        bad.write_text(json.dumps({"version": 1, "routes": []}), encoding="utf-8")
         with contextlib.redirect_stderr(io.StringIO()):
             state = routes_mod.load(bad)
         self.assertFalse(state.ok)
-        self.assertIn("version", state.error)
+        self.assertEqual(state.error, "version: должна быть ровно целая 2")
 
     def test_load_valid_file(self) -> None:
         state = routes_mod.load(self.source)
@@ -647,38 +478,6 @@ class FileLoadTests(TempDbTestCase):
         self.assertEqual(len(state.routes), len(EXPECTED_KEYS))
         self.assertEqual(sorted(state.by_key), sorted(r["key"] for r in state.routes))
         self.assertEqual(state.warnings, [])
-
-    def _write_routes(self, records, name: str = "custom-routes.json") -> pathlib.Path:
-        path = self.tmp_path / name
-        path.write_text(json.dumps({"version": 1, "routes": list(records)}, ensure_ascii=False),
-                        encoding="utf-8")
-        return path
-
-    def test_load_unknown_icon_warns_but_keeps_the_file(self) -> None:
-        """Опечатка в `icon` — предупреждение, а не ошибка файла (приёмка 1).
-
-        Автостарт остаётся включённым, остальные записи работают, у битой записи
-        посчитан фолбэк по ключу и есть `icon_error` для доски.
-        """
-        bad = {**pipeline_record(), "key": "xhigh-pipeline", "icon": "xhihg"}
-        path = self._write_routes([bad, swarm_record()])
-        with contextlib.redirect_stderr(io.StringIO()) as err:
-            state = routes_mod.load(path)
-        self.assertTrue(state.ok)
-        self.assertIsNone(state.error)
-        self.assertEqual([r["key"] for r in state.routes], ["xhigh-pipeline", "dsh"])
-        self.assertEqual([r["icon"] for r in state.routes], ["xhigh", None])
-        self.assertEqual(sorted(state.by_key), ["dsh", "xhigh-pipeline"])
-        self.assertEqual(len(state.warnings), 1)
-        self.assertIn("routes[0].icon", state.warnings[0])
-        self.assertEqual(state.routes[0]["icon_error"], state.warnings[0])
-        self.assertNotIn("icon_error", state.routes[1])
-        text = err.getvalue()
-        self.assertIn("предупреждение", text)
-        self.assertIn("routes[0].icon", text)
-        # В отличие от ошибки файла: автостарт не выключен и человек не нужен.
-        self.assertNotIn("нужен ты", text)
-        self.assertNotIn("автостарт выключен", text)
 
     def test_file_change_after_import_does_not_change_state(self) -> None:
         routes_store.import_file(self.conn, self.source)
@@ -694,9 +493,9 @@ class FileLoadTests(TempDbTestCase):
 
     def test_database_update_is_visible_immediately(self) -> None:
         routes_store.import_file(self.conn, self.source)
-        self.conn.execute("UPDATE routes SET title = ? WHERE key = 'full-xlow'", ("Проверка",))
+        self.conn.execute("UPDATE routes SET title = ? WHERE key = 'lp-xlow'", ("Проверка",))
         self.conn.commit()
-        self.assertEqual(routes_mod.state(self.conn).by_key["full-xlow"]["title"], "Проверка")
+        self.assertEqual(routes_mod.state(self.conn).by_key["lp-xlow"]["title"], "Проверка")
 
     def test_database_error_is_reported(self) -> None:
         with mock.patch.object(routes_store, "list_routes",
@@ -764,59 +563,17 @@ class RoutesApiTests(TempDbTestCase):
             self.assertNotIn("strip", record)
             self.assertIn("icon", record)
         icons = {record["key"]: record["icon"] for record in data["routes"]}
-        self.assertEqual(icons["full-xhigh"], "xhigh")
-        self.assertEqual(icons["full-medium"], "medium")
-        self.assertEqual(icons["full-nano"], "xlow")
-
-    def test_routes_with_bad_icon_import_fallback_and_keep_all_records(self) -> None:
-        """Предупреждение при ввозе; база хранит фолбэк, без файловых предупреждений."""
-        bad = {**pipeline_record(), "key": "full-xhigh", "plugin": "pipeline-full", "icon": "xhihg"}
-        plain = {**pipeline_record(), "key": "full-nano", "plugin": "pipeline-full"}
-        self.target.parent.mkdir(parents=True)
-        self.target.write_text(json.dumps({"version": 1, "routes": [bad, plain, swarm_record()]},
-                                          ensure_ascii=False), encoding="utf-8")
-        with contextlib.redirect_stderr(io.StringIO()) as err:
-            report = routes_store.import_file(self.conn, self.target)
-        self.assertEqual(report["imported"], 3)
-        self.assertIn("предупреждение", err.getvalue())
-        status, payload = self._get("/api/routes", token=self.TOKEN)
-        self.assertEqual(status, 200)
-        data = payload["data"]
-        self.assertTrue(data["ok"])
-        self.assertIsNone(data["error"])
-        self.assertEqual(data["warnings"], [])
-        records = {record["key"]: record for record in data["routes"]}
-        self.assertEqual(sorted(records), ["dsh", "full-nano", "full-xhigh"])
-        self.assertEqual(records["full-xhigh"]["icon"], "xhigh")
-        self.assertNotIn("icon_error", records["full-xhigh"])
-        self.assertIsNone(records["full-nano"]["icon"])
-        self.assertNotIn("icon_error", records["full-nano"])
-        self.assertIsNone(records["dsh"]["icon"])
-        for record in records.values():
-            self.assertIn("command", record)
-            self.assertIsNone(record["command"])
+        self.assertEqual(icons["lp-xhigh"], "xhigh")
+        self.assertEqual(icons["lp-medium"], "medium")
+        self.assertIsNone(icons["lp-nano"])
+        self.assertEqual({record["key"]: record["skill"] for record in data["routes"]}["lp-high"],
+                         "high")
 
     def test_handle_routes_has_empty_warnings_for_valid_file(self) -> None:
         self._init_from_repo()
         status, data = server.handle("GET", "/api/routes", {}, {}, authed=True)
         self.assertEqual(status, 200)
         self.assertEqual(data["warnings"], [])
-
-    def test_icon_falls_back_to_key_for_old_runtime_copy(self) -> None:
-        """Рабочая копия без поля `icon` (создана до его появления) — уровни по ключу."""
-        records = [
-            {**pipeline_record(), "key": "low-pipeline"},
-            {**pipeline_record(), "key": "cross-pipeline"},
-            swarm_record(),
-        ]
-        self.target.parent.mkdir(parents=True)
-        self.target.write_text(json.dumps({"version": 1, "routes": records}, ensure_ascii=False),
-                               encoding="utf-8")
-        routes_store.import_file(self.conn, self.target)
-        status, payload = self._get("/api/routes", token=self.TOKEN)
-        self.assertEqual(status, 200)
-        icons = {record["key"]: record["icon"] for record in payload["data"]["routes"]}
-        self.assertEqual(icons, {"low-pipeline": "low", "cross-pipeline": None, "dsh": None})
 
     def test_handle_routes_reports_database_error(self) -> None:
         with mock.patch.object(routes_store, "list_routes",
@@ -846,12 +603,11 @@ class RoutesApiTests(TempDbTestCase):
         self.assertTrue(all("command" in r for r in data["routes"]))
 
     def test_invisible_records_are_returned(self) -> None:
-        hidden = {**pipeline_record(), "key": "hidden-pipeline", "visible": False,
-                  "command": ["run", "{task_id}"]}
-        self.target.parent.mkdir(parents=True)
-        self.target.write_text(json.dumps({"version": 1, "routes": [hidden, swarm_record()]},
-                                          ensure_ascii=False), encoding="utf-8")
-        routes_store.import_file(self.conn, self.target)
+        routes_store.upsert_route(self.conn, {
+            "key": "hidden-pipeline", "kind": "pipeline", "title": "Демо", "visible": False,
+            "roles": {}, "command": ["run", "{task_id}"]})
+        routes_store.create_route(self.conn, key="dsh", kind="swarm", title="dsh",
+                                  roles={"impl": {"harness": "dsh"}})
         status, payload = self._get("/api/routes", token=self.TOKEN)
         self.assertEqual(status, 200)
         records = payload["data"]["routes"]
@@ -870,11 +626,11 @@ class RoutesApiTests(TempDbTestCase):
 
     def test_database_change_reaches_live_http_without_restart(self) -> None:
         self._init_from_repo()
-        self.conn.execute("UPDATE routes SET title = ? WHERE key = ?", ("Проверка", "full-xlow"))
+        self.conn.execute("UPDATE routes SET title = ? WHERE key = ?", ("Проверка", "lp-xlow"))
         self.conn.commit()
         status, payload = self._get("/api/routes", token=self.TOKEN)
         self.assertEqual(status, 200)
-        self.assertEqual(next(r for r in payload["data"]["routes"] if r["key"] == "full-xlow")
+        self.assertEqual(next(r for r in payload["data"]["routes"] if r["key"] == "lp-xlow")
                          ["title"], "Проверка")
 
     def test_health_reports_routes(self) -> None:

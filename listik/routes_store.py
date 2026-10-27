@@ -6,18 +6,22 @@
 записями.  На верхнем уровне `routes_store` импортирует `routes`; обратный импорт
 (`routes.labels_for`, `routes.state`) — ленивый, внутри функции, чтобы не было цикла.
 
-Запись в базе и запись наружу — та же форма, что отдаёт `routes.validate`:
+Запись в базе — та же форма, что отдаёт `routes.validate`:
 `{"key", "kind", "plugin": str|None, "title", "hint", "visible": bool, "icon": str|None,
 "position": int, "command": list[str]|None, "roles": dict}`
-(`roles` — пустой словарь, если ролей нет).
+(`roles` — пустой словарь, если ролей нет).  Запись наружу (`list_routes`,
+`get_route`) дополнительно несёт `skill` — `skills.skill_of(plugin, key)` (`lp-high` →
+`high`), у записи без плагина или со старым плагином — `None`; в базе поле не хранится.
 JSON-колонки (`command`, `roles`) разбираются здесь, битый JSON — пустое
 значение, а не исключение.
 
-Правила полей живут в одном месте (`_check_*`): их одинаково применяют
-`update_route`, `upsert_route` и `create_route`.  Любое нарушение —
-`ValueError` с именем поля и причиной по-русски.  Расклад ролей (`roles`)
-проверяется той же функцией, что у файла (`routes._validate_roles`), поэтому
-правка по HTTP и ввоз файла принимают ровно одно и то же.
+Роли конвейера — формат v2 файла (`{роль: [исполнитель, …]}`, см. :mod:`listik.routes`),
+роли роя — `{spec|critic|impl|judge: {harness, argv?, prompt?}}`.  Правила полей живут
+в одном месте (`_check_*`): их одинаково применяют `update_route`, `upsert_route` и
+`create_route`.  Любое нарушение — `ValueError` с именем поля и причиной по-русски.
+Расклад конвейера проверяется той же функцией, что у файла
+(`routes.validate_pipeline_roles`), поэтому правка по HTTP и ввоз файла принимают
+ровно одно и то же; слой базы вдобавок сверяет каналы `pi` с каталогом харнессов.
 """
 from __future__ import annotations
 
@@ -106,8 +110,9 @@ def _check_roles(conn, value, kind: str) -> dict:
     """Проверить расклад ролей той же проверкой, что у файла маршрутов.
 
     Роли есть у `pipeline` и у `swarm`. Форма ячейки — по `kind`: `swarm` —
-    `{harness,argv?,prompt?}`, харнесс из каталога; `pipeline` —
-    `{provider,label,title}`, `members` сверяются с каталогом (`_check_members`). Проверки бросают
+    `{harness,argv?,prompt?}`, харнесс из каталога; `pipeline` — расклад v2
+    (`routes.validate_pipeline_roles`, пустой `{}` не принимается), каналы `pi`
+    сверяются с каталогом (`_check_channels`). Проверки бросают
     `RoutesError` — подкласс `ValueError`, поэтому нарушение уходит наружу тем же
     путём, что и остальные поля (400 `bad_argument`).
     """
@@ -116,31 +121,31 @@ def _check_roles(conn, value, kind: str) -> dict:
     if kind == "swarm":
         harnesses = {h["key"]: h for h in harnesses_store.list_harnesses(conn)}
         return routes.validate_swarm_roles(value, "roles", harnesses)
-    roles = routes._validate_roles(value, "roles")
-    _check_members(conn, roles)
+    roles = routes.validate_pipeline_roles(value, "roles", allow_empty=False)
+    _check_channels(conn, roles)
     return roles
 
 
-def _check_members(conn, roles: dict) -> None:
-    """Сверить `members` конвейера с каталогом `harnesses`: харнесс есть, канал у него есть.
+def _check_channels(conn, roles: dict) -> None:
+    """Сверить исполнителей `pi` с каталогом `harnesses`: харнесс есть, канал у него есть.
 
-    `enabled` харнесса не важен (`pi` поставляется выключенным). Скил пресета с
-    `members` не сверяется: сервер их не исполняет.
+    `enabled` харнесса не важен (`pi` поставляется выключенным). Остальные харнессы
+    с каталогом не сверяются: у них нет каналов.
     """
     catalog = None
     for role, cell in roles.items():
-        for i, member in enumerate(cell.get("members") or ()):
+        for j, executor in enumerate(cell):
+            if executor["harness"] != "pi":
+                continue
             if catalog is None:
                 catalog = {h["key"]: h for h in harnesses_store.list_harnesses(conn)}
-            where = f"roles.{role}.members[{i}]"
-            harness = catalog.get(member["harness"])
+            where = f"roles.{role}[{j}]"
+            harness = catalog.get("pi")
             if harness is None:
+                raise routes.RoutesError(f"{where}.harness: харнесса 'pi' нет в каталоге")
+            if not any(ch["name"] == executor["channel"] for ch in harness["channels"]):
                 raise routes.RoutesError(
-                    f"{where}.harness: харнесса {member['harness']!r} нет в каталоге")
-            if not any(ch["name"] == member["channel"] for ch in harness["channels"]):
-                raise routes.RoutesError(
-                    f"{where}.channel: у харнесса {member['harness']!r} нет канала "
-                    f"{member['channel']!r}")
+                    f"{where}.channel: у харнесса 'pi' нет канала {executor['channel']!r}")
 
 
 def _prepare(conn, record: dict) -> dict:
@@ -161,14 +166,11 @@ def _prepare(conn, record: dict) -> dict:
     command = _check_command(record.get("command"))
     roles = record.get("roles")
     if kind == "pipeline":
-        if roles is None:
+        if roles is None or roles == {}:
             roles = {}
-        if not isinstance(roles, dict):
-            raise ValueError("roles: должен быть объектом с ролями spec/critic/impl/judge")
-        if roles:
-            # Непустой расклад проверяется целиком, а не только «это
-            # словарь»: иначе запись мимо файла могла бы положить в базу расклад,
-            # который ввоз того же файла отверг бы.
+        else:
+            # Непустой расклад (и не-объект) проверяется целиком: иначе запись мимо
+            # файла могла бы положить в базу расклад, который ввоз того же файла отверг бы.
             roles = _check_roles(conn, roles, kind)
     else:
         if not isinstance(roles, dict) or not roles:
@@ -187,6 +189,7 @@ def _row_to_record(row: sqlite3.Row) -> dict:
         "key": row["key"],
         "kind": row["kind"],
         "plugin": row["plugin"],
+        "skill": skills.skill_of(row["plugin"], row["key"]) if row["plugin"] else None,
         "title": row["title"],
         "hint": row["hint"],
         "visible": bool(row["visible"]),
@@ -399,21 +402,29 @@ def _backup_stamp() -> str:
 
 
 def _backup_record(record: dict) -> dict:
-    """Запись `list_routes` в форме `routes.json`: без полей, которых нет в формате
-    файла (`position`) и без пустого `command` (валидатор
-    файла `null` в нём не принимает). `icon: null` остаётся: без поля ввоз вывел бы
-    уровень по ключу, и снятая иконка вернулась бы из бэкапа. `plugin` пишется всегда
-    (у роя и у конвейера без плагина — `null`)."""
-    out = {k: v for k, v in record.items() if k in routes.RECORD_FIELDS}
-    if out.get("command") is None:
-        out.pop("command", None)
-    return out
+    """Запись `list_routes` в форме файла v2: ровно `key, plugin, skill, roles`."""
+    return {"key": record["key"], "plugin": record["plugin"], "skill": record["skill"],
+            "roles": record["roles"]}
+
+
+def _backupable(record: dict) -> bool:
+    """В бэкап — только конвейеры плагина `listik-pipeline` со скилом-режимом:
+    иначе бэкап не ввёзся бы обратно (рой и старые плагины в файле v2 — ошибка)."""
+    return (record["kind"] == "pipeline" and record["plugin"] in skills.PIPELINE_PLUGINS
+            and record["skill"] is not None and record["skill"] not in skills.ROLE_SKILLS)
 
 
 def _write_backup(conn: sqlite3.Connection) -> str:
-    """Снять таблицу в `<DATA_DIR>/routes.bak-<UTC>.json`; занятое имя — суффикс `-2`, `-3`…"""
+    """Снять раскладки конвейеров в `<DATA_DIR>/routes.bak-<UTC>.json` (формат v2).
+
+    Занятое имя — суффикс `-2`, `-3`… Бэкап хранит только раскладки ролей `lp-*`
+    (`_backupable`): рой, конвейеры без плагина и со старым плагином в него не
+    попадают. Восстановление из него (`reimport(conn, <бэкап>)`) заново вычисляет
+    `title`/`hint` (из `SKILL.md`), `icon` (по ключу) и ставит `visible=true` — правки
+    этих полей на доске и скрытие (`--hide`) не возвращаются.
+    """
     doc = {"version": routes.VERSION,
-           "routes": [_backup_record(r) for r in list_routes(conn)]}
+           "routes": [_backup_record(r) for r in list_routes(conn) if _backupable(r)]}
     text = json.dumps(doc, ensure_ascii=False, indent=2) + "\n"
     base = paths.DATA_DIR / f"routes.bak-{_backup_stamp()}"
     paths.DATA_DIR.mkdir(parents=True, exist_ok=True)
@@ -437,6 +448,14 @@ def reimport(conn: sqlite3.Connection, path=None) -> dict:
     сохраняются как есть и встают после записей файла в прежнем порядке. До записи
     таблица снимается в бэкап (`backup`) — из него можно восстановиться, передав его
     как `path`. Ошибка файла — `routes.RoutesError`, база и бэкапы не меняются.
+
+    Что даёт восстановление из бэкапа (`_write_backup`):
+      * бэкап хранит только раскладки ролей `lp-*`;
+      * `title`/`hint` вычисляются заново из `SKILL.md`, `icon` — по ключу, `visible=true`:
+        правки этих полей на доске и скрытие (`--hide`) не возвращаются;
+      * конвейеры без плагина и со старым плагином `reimport` удаляет, в бэкапе их нет —
+        вернуть их нечем;
+      * рой `reimport` не трогает.
 
     Отчёт: `imported`, `skipped`, `source`, `replaced`, `kept`, `removed`, `backup`
     и `orphans` — `{ключ: число задач}` для задач, чей `launch_route` указывает на
@@ -488,7 +507,6 @@ def ensure_imported(conn: sqlite3.Connection) -> dict:
     try:
         result = import_file(conn)
         result["added"] = add_shipped(conn, fresh=not result["skipped"])
-        fill_members(conn)
         return result
     except Exception as exc:  # noqa: BLE001 — ввоз не должен ронять init/старт
         message = errors.message_of(exc)
@@ -535,58 +553,6 @@ def add_shipped(conn: sqlite3.Connection, *, fresh: bool = False) -> list[str]:
                  "ON CONFLICT(key) DO UPDATE SET value = excluded.value", (str(latest),))
     conn.commit()
     return added
-
-
-#: Подстрока подписи роли → ссылка на канал pi (разовое заполнение `fill_members`).
-MEMBER_HINTS = (("DeepSeek", "deepseek"), ("GLM", "glm"))
-
-
-def fill_members(conn: sqlite3.Connection) -> list[str]:
-    """Разово (meta `route_members_v1`) дописать `members` в конвейеры `pipeline-full`.
-
-    Ячейка без `members` и без `skill` (или со `skill == "pi:pi-delegate"`) получает
-    пары `pi`/`deepseek` и `pi`/`glm` по подстрокам `DeepSeek`/`GLM` в `title`, в порядке
-    первого появления, — только каналы, которые у `pi` есть сейчас. Запись — прямой
-    `UPDATE` без проверки всего расклада: одна устаревшая строка не должна уронить
-    заполнение. Битый JSON в `roles` — строка пропускается. Флаг ставится последним.
-    """
-    if conn.execute("SELECT 1 FROM meta WHERE key = 'route_members_v1'").fetchone():
-        return []
-    try:
-        pi = harnesses_store.by_key(conn, "pi")
-        channels = {ch["name"] for ch in pi["channels"]} if pi else set()
-        changed: list[str] = []
-        rows = conn.execute("SELECT key, roles FROM routes WHERE kind = 'pipeline' "
-                            "AND plugin = 'pipeline-full' ORDER BY position, key").fetchall()
-        for row in rows:
-            try:
-                roles = json.loads(row["roles"]) if row["roles"] else {}
-            except ValueError:
-                continue
-            if not isinstance(roles, dict):
-                continue
-            touched = False
-            for cell in roles.values():
-                if (not isinstance(cell, dict) or "members" in cell
-                        or cell.get("skill", "pi:pi-delegate") != "pi:pi-delegate"):
-                    continue
-                title = cell.get("title") if isinstance(cell.get("title"), str) else ""
-                found = sorted((title.find(hint), channel) for hint, channel in MEMBER_HINTS
-                               if hint in title and channel in channels)
-                if found:
-                    cell["members"] = [{"harness": "pi", "channel": channel} for _, channel in found]
-                    touched = True
-            if touched:
-                conn.execute("UPDATE routes SET roles = ?, updated_at = ? WHERE key = ?",
-                             (_dumps(roles), store.now_iso(), row["key"]))
-                changed.append(row["key"])
-        conn.execute("INSERT INTO meta(key, value) VALUES('route_members_v1', '1') "
-                     "ON CONFLICT(key) DO NOTHING")
-        conn.commit()
-    except Exception:
-        conn.rollback()
-        raise
-    return changed
 
 
 # ------------------------------------------------------------------ скилы (справочник)

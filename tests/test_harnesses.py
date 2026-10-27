@@ -194,6 +194,23 @@ class UsedByTests(TempDbTestCase):
         # Чужое упоминание в roles не считается: ключа "mini2" нет в раскладе.
         self.assertEqual(harnesses_store.used_by(self.conn, "grok"), [])
 
+    def test_used_by_pipeline_executors(self) -> None:
+        """Исполнители v2 конвейера; ячейка-объект старого формата пропускается."""
+        routes_store.create_route(
+            self.conn, key="lp-high", kind="pipeline", title="high", plugin="listik-pipeline",
+            roles={"critic": [{"harness": "codex", "effort": "high"},
+                              {"harness": "grok", "effort": "high"}],
+                   "judge": [{"harness": "grok", "model": "grok-4.7", "effort": "high"}]})
+        self.conn.execute(
+            "INSERT INTO routes(key, kind, plugin, title, position, roles) "
+            "VALUES('full-high', 'pipeline', 'pipeline-full', 'old', 9, ?)",
+            ('{"judge": {"provider": "grok", "label": "x", "title": "grok"}}',))
+        self.conn.commit()
+        self.assertEqual(harnesses_store.used_by(self.conn, "grok"), [
+            {"route": "lp-high", "kind": "pipeline", "role": "critic", "channel": None},
+            {"route": "lp-high", "kind": "pipeline", "role": "judge", "channel": None},
+        ])
+
 
 if __name__ == "__main__":
     unittest.main()

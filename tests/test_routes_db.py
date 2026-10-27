@@ -1,4 +1,4 @@
-"""Тесты таблицы `routes` и ввоза `routes.json` (шаг 09, порция b).
+"""Тесты таблицы `routes` и ввоза `routes.json` формата v2 (шаг 09, порция b; listik-906l).
 
 База — временная (`TempDbTestCase`), настоящий `~/.config/listik/` не трогается:
 у ввоза всегда явный путь, а `SOURCE_PATH` подменяется на файл во временном каталоге.
@@ -14,8 +14,10 @@ import tempfile
 import unittest
 from unittest import mock
 
+from listik import assistant
 from listik import db as db_mod
 from listik import errors
+from listik import harnesses_store
 from listik import launcher
 from listik import routes as routes_mod
 from listik import routes_store
@@ -26,19 +28,27 @@ REPO_DIR = pathlib.Path(__file__).resolve().parent.parent
 ROUTES_JSON = REPO_DIR / "routes.json"
 
 from tests.test_routes_config import EXPECTED_KEYS
-#: Маршруты пресетов pipeline-cc (бывшего claude-codex) — запись 3 `ROUTE_ADDITIONS`.
-CC_ADDITION_KEYS = [k for k in EXPECTED_KEYS if k.startswith("cc-")]
+
+#: Ячейка конвейера v1 — в живой базе до `--reimport`, слой базы её больше не принимает.
+OLD_CELL = {"provider": "claude", "label": "x", "title": "y"}
+DEVIN = {"harness": "devin", "model": "swe-2", "effort": "max"}
+GROK = {"harness": "grok", "model": "grok-4.7", "effort": "high"}
 
 
-def pipeline_record() -> dict:
-    return {
-        "key": "demo-pipeline",
-        "kind": "pipeline",
-        "title": "Демо",
-        "hint": "подсказка",
-        "visible": True,
-        "roles": {"impl": {"provider": "claude", "label": "Opus", "title": "Opus · medium"}},
-    }
+def lp_record(skill: str = "high", **over) -> dict:
+    """Запись файла v2."""
+    record = {"key": f"lp-{skill}", "plugin": "listik-pipeline", "skill": skill,
+              "roles": {"implementer": [dict(DEVIN)]}}
+    record.update(over)
+    return record
+
+
+def my_flow(**over) -> dict:
+    """Свой конвейер в форме слоя базы: без плагина, со своей командой."""
+    record = {"key": "my-flow", "kind": "pipeline", "title": "x", "visible": True,
+              "roles": {}, "command": ["true"]}
+    record.update(over)
+    return record
 
 
 def swarm_record() -> dict:
@@ -46,8 +56,12 @@ def swarm_record() -> dict:
             "roles": {"impl": {"harness": "dsh"}}}
 
 
-def document(*records) -> dict:
-    return {"version": 1, "routes": list(records) if records else [pipeline_record()]}
+def insert_old_row(conn, key: str = "full-high", plugin: str = "pipeline-full") -> None:
+    """Строка конвейера со старым плагином и ячейкой v1 — как в живой базе до `--reimport`."""
+    conn.execute("INSERT INTO routes(key, kind, plugin, title, hint, icon, visible, position, "
+                 "command, roles) VALUES(?, 'pipeline', ?, 'Старый', '', 'high', 1, 100, NULL, ?)",
+                 (key, plugin, json.dumps({"spec": OLD_CELL})))
+    conn.commit()
 
 
 class RoutesDbTestCase(TempDbTestCase):
@@ -62,15 +76,15 @@ class RoutesDbTestCase(TempDbTestCase):
         source = source if source is not None else self.tmp_path / "нет-образца.json"
         return mock.patch.object(routes_mod, "SOURCE_PATH", source)
 
-    def write_routes(self, records, name: str = "routes.json"):
+    def write_routes(self, records, name: str = "routes.json", version: int = 2):
         path = self.tmp_path / name
-        path.write_text(json.dumps({"version": 1, "routes": list(records)},
+        path.write_text(json.dumps({"version": version, "routes": list(records)},
                                    ensure_ascii=False), encoding="utf-8")
         return path
 
 
 class ImportSampleTests(RoutesDbTestCase):
-    """Пункты чек-листа про ввоз образца `routes.json`."""
+    """Ввоз образца `routes.json` (пункт 14 чек-листа)."""
 
     def test_sample_imports_in_file_order(self) -> None:
         report = self.import_sample()
@@ -80,14 +94,19 @@ class ImportSampleTests(RoutesDbTestCase):
         self.assertEqual([r["key"] for r in records], EXPECTED_KEYS)
         self.assertEqual([r["position"] for r in records], list(range(len(EXPECTED_KEYS))))
 
-    def test_high_pipeline_roles_keep_providers(self) -> None:
+    def test_sample_records_have_skill_and_v2_roles(self) -> None:
         self.import_sample()
-        record = routes_store.get_route(self.conn, "full-high")
-        self.assertEqual(list(record["roles"]), ["spec", "critic", "impl", "judge"])
-        for cell in record["roles"].values():
-            self.assertTrue(cell["provider"])
-            self.assertTrue(cell["label"])
-            self.assertTrue(cell["title"])
+        raw = {r["key"]: r for r in json.loads(ROUTES_JSON.read_text(encoding="utf-8"))["routes"]}
+        for record in routes_store.list_routes(self.conn):
+            with self.subTest(key=record["key"]):
+                self.assertEqual(record["skill"], raw[record["key"]]["skill"])
+                self.assertEqual(record["plugin"], "listik-pipeline")
+                self.assertEqual(record["roles"], raw[record["key"]]["roles"])
+                self.assertIs(record["visible"], True)
+                self.assertIsNone(record["command"])
+        self.assertEqual(routes_store.get_route(self.conn, "lp-high")["skill"], "high")
+        self.assertEqual(list(routes_store.get_route(self.conn, "lp-xlow")["roles"]),
+                         ["implementer", "judge"])
 
     def test_direct_kind_is_rejected(self) -> None:
         """Вида `direct` нет (listik-ar8v): ни `_prepare`, ни `create_route` его не берут."""
@@ -113,30 +132,12 @@ class ImportSampleTests(RoutesDbTestCase):
             self.assertNotIn("harness", record)
             self.assertTrue(record["command"] is None or isinstance(record["command"], list))
 
-    def test_high_pipeline_roles_and_route_placeholder(self) -> None:
-        """full-high: четыре роли, команда claude, свой скил `/pipeline-full:high` и ключ в {route}."""
+    def test_plugin_and_skill_substitute_into_skill_ref(self) -> None:
         self.import_sample()
-        record = routes_store.get_route(self.conn, "full-high")
-        self.assertEqual(record["kind"], "pipeline")
-        self.assertEqual(list(record["roles"]), ["spec", "critic", "impl", "judge"])
-        self.assertEqual([cell["label"] for cell in record["roles"].values()],
-                         ["high", "S+DS+GLM", "high", "линзы"])
-        self.assertEqual(record["command"][0], "claude")
-        values = {name: name for name in routes_mod.PLACEHOLDERS}
-        values["route"] = "full-high"
-        values["plugin"] = record["plugin"]
-        values["skill"] = skills_mod.skill_of(record["plugin"], "full-high")
-        substituted = [launcher._substitute(element, values)
-                       for element in record["command"]]
-        self.assertTrue(any("/pipeline-full:high" in line and "маршрут full-high" in line
-                            for line in substituted))
-
-    def test_low_pipeline_judge_is_lenses(self) -> None:
-        """full-low: приёмка линзами, судья Grok 4.7 — после ` → ` (listik-ixej)."""
-        self.import_sample()
-        judge = routes_store.get_route(self.conn, "full-low")["roles"]["judge"]
-        self.assertEqual(judge["label"], "линзы")
-        self.assertIn("→ Grok 4.7", judge["title"])
+        record = routes_store.get_route(self.conn, "lp-high")
+        values = {"plugin": record["plugin"], "skill": record["skill"]}
+        self.assertEqual(launcher._substitute("/{plugin}:{skill}", values),
+                         skills_mod.skill_ref("lp-high"))
 
 
 class ShippedAdditionsTests(RoutesDbTestCase):
@@ -144,57 +145,27 @@ class ShippedAdditionsTests(RoutesDbTestCase):
 
     def test_existing_install_gets_addition_once(self) -> None:
         self.import_sample()
-        routes_store.delete_route(self.conn, "full-xlow")
+        routes_store.delete_route(self.conn, "lp-xlow")
         with self.patch_paths(source=ROUTES_JSON), \
-                mock.patch.object(routes_store, "ROUTE_ADDITIONS", [(2, ("full-xlow",))]):
-            self.assertEqual(routes_store.add_shipped(self.conn), ["full-xlow"])
+                mock.patch.object(routes_store, "ROUTE_ADDITIONS", [(2, ("lp-xlow",))]):
+            self.assertEqual(routes_store.add_shipped(self.conn), ["lp-xlow"])
             positions = [r["position"] for r in routes_store.list_routes(self.conn)]
-            self.assertEqual(routes_store.get_route(self.conn, "full-xlow")["position"],
+            self.assertEqual(routes_store.get_route(self.conn, "lp-xlow")["position"],
                              max(positions))
-            routes_store.delete_route(self.conn, "full-xlow")
+            routes_store.delete_route(self.conn, "lp-xlow")
             self.assertEqual(routes_store.add_shipped(self.conn), [])
         self.assertIsNone(self.conn.execute(
-            "SELECT 1 FROM routes WHERE key = 'full-xlow'").fetchone())
+            "SELECT 1 FROM routes WHERE key = 'lp-xlow'").fetchone())
 
-    def test_install_after_addition_2_gets_claude_codex_routes_once(self) -> None:
+    def test_old_additions_not_in_file_add_nothing(self) -> None:
+        """Ключи старых пресетов из `ROUTE_ADDITIONS` в файле v2 не поставляются."""
         self.import_sample()
-        cc_keys = CC_ADDITION_KEYS
-        for key in cc_keys:
-            routes_store.delete_route(self.conn, key)
-        self.conn.execute("INSERT INTO meta(key, value) VALUES('routes_additions', '2') "
-                          "ON CONFLICT(key) DO UPDATE SET value = excluded.value")
-        self.conn.commit()
-        with self.patch_paths(source=ROUTES_JSON):
-            self.assertEqual(routes_store.add_shipped(self.conn), cc_keys)
-            records = routes_store.list_routes(self.conn)
-            self.assertEqual([r["key"] for r in records][-len(cc_keys):], cc_keys)
-            self.assertEqual([r["position"] for r in records],
-                             sorted(r["position"] for r in records))
-            self.assertEqual(routes_store.add_shipped(self.conn), [])
-
-    def test_addition_3_matches_claude_codex_keys_of_routes_json(self) -> None:
-        shipped = [r["key"] for r in json.loads(ROUTES_JSON.read_text(encoding="utf-8"))["routes"]
-                   if r["key"].startswith("cc-")]
-        addition = dict(routes_store.ROUTE_ADDITIONS)[3]
-        self.assertEqual(set(addition), set(shipped))
-        self.assertEqual(len(addition), len(shipped))
-
-    def test_install_after_addition_1_gets_renamed_keys(self) -> None:
-        """listik-d9rj: записи 2 и 3 — с новыми ключами; база после записи 1 их получает из файла."""
-        self.assertEqual(dict(routes_store.ROUTE_ADDITIONS)[2], ())
-        self.assertEqual(list(dict(routes_store.ROUTE_ADDITIONS)[3]), CC_ADDITION_KEYS)
-        self.import_sample()
-        expected = CC_ADDITION_KEYS
-        for key in expected:
-            routes_store.delete_route(self.conn, key)
         self.conn.execute("INSERT INTO meta(key, value) VALUES('routes_additions', '1') "
                           "ON CONFLICT(key) DO UPDATE SET value = excluded.value")
         self.conn.commit()
         with self.patch_paths(source=ROUTES_JSON):
-            self.assertEqual(routes_store.add_shipped(self.conn), expected)
-            self.assertEqual(sorted(r["key"] for r in routes_store.list_routes(self.conn)),
-                             sorted(EXPECTED_KEYS))
             self.assertEqual(routes_store.add_shipped(self.conn), [])
+        self.assertEqual([r["key"] for r in routes_store.list_routes(self.conn)], EXPECTED_KEYS)
 
     def test_additions_numbering_and_claude_presets_last(self) -> None:
         """listik-d9rj, порция f: номера строго растут, последняя запись — пресеты pipeline-claude."""
@@ -203,25 +174,6 @@ class ShippedAdditionsTests(RoutesDbTestCase):
         self.assertEqual(routes_store.ROUTE_ADDITIONS[-1][0], max(numbers))
         self.assertEqual(numbers[-1], numbers[-2] + 1)
         self.assertEqual(routes_store.ROUTE_ADDITIONS[-1][1], ("claude-xhigh", "claude-high"))
-
-    def test_install_before_claude_presets_gets_them_last_once(self) -> None:
-        """База до записи с пресетами pipeline-claude получает их в конец, удалённый не возвращается."""
-        previous = str(routes_store.ROUTE_ADDITIONS[-2][0])
-        expected = ["claude-xhigh", "claude-high"]
-        self.import_sample()
-        for key in expected:
-            routes_store.delete_route(self.conn, key)
-        self.conn.execute("INSERT INTO meta(key, value) VALUES('routes_additions', ?) "
-                          "ON CONFLICT(key) DO UPDATE SET value = excluded.value", (previous,))
-        self.conn.commit()
-        with self.patch_paths(source=ROUTES_JSON), contextlib.redirect_stderr(io.StringIO()):
-            self.assertEqual(routes_store.ensure_imported(self.conn)["added"], expected)
-            records = sorted(routes_store.list_routes(self.conn), key=lambda r: r["position"])
-            self.assertEqual([r["key"] for r in records][-2:], expected)
-            routes_store.delete_route(self.conn, "claude-xhigh")
-            self.assertEqual(routes_store.ensure_imported(self.conn)["added"], [])
-        self.assertIsNone(self.conn.execute(
-            "SELECT 1 FROM routes WHERE key = 'claude-xhigh'").fetchone())
 
     def test_fresh_import_only_marks(self) -> None:
         with self.patch_paths(source=ROUTES_JSON), contextlib.redirect_stderr(io.StringIO()):
@@ -235,35 +187,55 @@ class ReimportTests(RoutesDbTestCase):
 
     def test_second_import_without_replace_is_skipped(self) -> None:
         self.import_sample()
-        routes_store.update_route(self.conn, "full-xlow", title="Правленый")
+        routes_store.update_route(self.conn, "lp-xlow", title="Правленый")
         report = self.import_sample()
         self.assertTrue(report["skipped"])
         self.assertEqual(report["imported"], 0)
         self.assertFalse(report["replaced"])
-        self.assertEqual(routes_store.get_route(self.conn, "full-xlow")["title"], "Правленый")
+        self.assertEqual(routes_store.get_route(self.conn, "lp-xlow")["title"], "Правленый")
 
     def test_import_with_replace_rewrites(self) -> None:
         self.import_sample()
-        shipped = routes_store.get_route(self.conn, "full-xlow")["title"]
-        routes_store.update_route(self.conn, "full-xlow", title="Правленый", visible=False)
+        shipped = routes_store.get_route(self.conn, "lp-xlow")["title"]
+        routes_store.update_route(self.conn, "lp-xlow", title="Правленый", visible=False)
         report = self.import_sample(replace=True)
         self.assertFalse(report["skipped"])
         self.assertTrue(report["replaced"])
         self.assertEqual(report["imported"], len(EXPECTED_KEYS))
-        record = routes_store.get_route(self.conn, "full-xlow")
+        record = routes_store.get_route(self.conn, "lp-xlow")
         self.assertEqual(record["title"], shipped)
         self.assertTrue(record["visible"])
 
-    def test_broken_file_keeps_db_and_raises(self) -> None:
+    def test_v1_file_keeps_db_and_raises(self) -> None:
         self.import_sample()
-        bad = self.tmp_path / "bad.json"
-        bad.write_text(json.dumps({"version": 2, "routes": []}), encoding="utf-8")
+        bad = self.write_routes([], name="bad.json", version=1)
         before = routes_store.list_routes(self.conn)
         with contextlib.redirect_stderr(io.StringIO()):
-            with self.assertRaises(routes_mod.RoutesError):
+            with self.assertRaises(routes_mod.RoutesError) as ctx:
                 routes_store.import_file(self.conn, bad)
+        self.assertEqual(str(ctx.exception), "version: должна быть ровно целая 2")
         self.assertEqual(routes_store.list_routes(self.conn), before)
         self.assertEqual(routes_store.count(self.conn), len(EXPECTED_KEYS))
+
+    def test_channel_outside_catalog_is_rejected(self) -> None:
+        """Пункт 15: канал `pi` вне каталога — отказ ввоза и `reimport`, таблица прежняя."""
+        bad = self.write_routes([lp_record(roles={
+            "critic": [{"harness": "pi", "channel": "nope", "effort": "high"}]})])
+        text = "roles.critic[0].channel: у харнесса 'pi' нет канала 'nope'"
+        with contextlib.redirect_stderr(io.StringIO()):
+            with self.assertRaises(routes_mod.RoutesError) as ctx:
+                routes_store.import_file(self.conn, bad)
+        self.assertIn(text, str(ctx.exception))
+        self.assertEqual(routes_store.list_routes(self.conn), [])
+        self.import_sample()
+        before = routes_store.list_routes(self.conn)
+        from listik import paths
+        with mock.patch.object(paths, "DATA_DIR", self.tmp_path / "data"), \
+                contextlib.redirect_stderr(io.StringIO()):
+            with self.assertRaises(routes_mod.RoutesError) as ctx:
+                routes_store.reimport(self.conn, bad)
+        self.assertIn(text, str(ctx.exception))
+        self.assertEqual(routes_store.list_routes(self.conn), before)
 
     def test_ensure_imported_swallows_broken_file(self) -> None:
         bad = self.tmp_path / "broken.json"
@@ -275,31 +247,31 @@ class ReimportTests(RoutesDbTestCase):
         self.assertIn("routes: ввоз не удался", err.getvalue())
 
     def test_default_source_is_sample(self) -> None:
+        """Пункт 18: свежая база — отчёт без `error`, `fill_members` больше нет."""
         with self.patch_paths(source=ROUTES_JSON):
             report = routes_store.ensure_imported(self.conn)
+        self.assertNotIn("error", report)
         self.assertEqual(report["imported"], len(EXPECTED_KEYS))
         self.assertEqual(report["source"], str(ROUTES_JSON))
-
-    def test_strip_field_is_not_stored(self) -> None:
-        source = self.write_routes([{**pipeline_record(),
-                                     "strip": {"glyph": "gear", "label": "x"}}])
-        self.import_sample()  # прогреваем базу, дальше replace
-        with contextlib.redirect_stderr(io.StringIO()):
-            routes_store.import_file(self.conn, source, replace=True)
-        record = routes_store.get_route(self.conn, "demo-pipeline")
-        self.assertNotIn("strip", record)
-        columns = {row["name"] for row in self.conn.execute("PRAGMA table_info(routes)")}
-        self.assertNotIn("strip", columns)
+        self.assertFalse(hasattr(routes_store, "fill_members"))
+        self.assertFalse(hasattr(routes_store, "MEMBER_HINTS"))
 
 
 class ReimportCommandTests(RoutesDbTestCase):
     """`listik routes --reimport` (listik-ttjm): перезапись из файла поставки."""
 
+    def setUp(self) -> None:
+        super().setUp()
+        from listik import paths
+        patcher = mock.patch.object(paths, "DATA_DIR", self.tmp_path / "data")
+        patcher.start()
+        self.addCleanup(patcher.stop)
+
     def test_reimport_rewrites_and_reports_orphans(self) -> None:
         from listik import store
         self.import_sample()
-        shipped = routes_store.get_route(self.conn, "full-xlow")["title"]
-        routes_store.update_route(self.conn, "full-xlow", title="Моя правка")
+        shipped = routes_store.get_route(self.conn, "lp-xlow")["title"]
+        routes_store.update_route(self.conn, "lp-xlow", title="Моя правка")
         task = store.create_task(self.conn, title="проба", project="listik")
         self.conn.execute("UPDATE tasks SET launch_route = 'gone-route' WHERE id = ?",
                           (task["id"],))
@@ -308,7 +280,7 @@ class ReimportCommandTests(RoutesDbTestCase):
         self.assertTrue(report["replaced"])
         self.assertEqual(report["imported"], len(EXPECTED_KEYS))
         self.assertEqual(report["orphans"], {"gone-route": 1})
-        self.assertEqual(routes_store.get_route(self.conn, "full-xlow")["title"], shipped)
+        self.assertEqual(routes_store.get_route(self.conn, "lp-xlow")["title"], shipped)
         row = self.conn.execute("SELECT launch_route FROM tasks WHERE id = ?",
                                 (task["id"],)).fetchone()
         self.assertEqual(row[0], "gone-route", "задачу трогать нельзя")
@@ -319,9 +291,10 @@ class ReimportCommandTests(RoutesDbTestCase):
         import sys
         from tests.test_claim import LISTIK_BIN
         self.import_sample()
-        shipped = routes_store.get_route(self.conn, "full-xlow")["title"]
-        routes_store.update_route(self.conn, "full-xlow", title="Моя правка")
+        shipped = routes_store.get_route(self.conn, "lp-xlow")["title"]
+        routes_store.update_route(self.conn, "lp-xlow", title="Моя правка")
         env = {**os.environ, "LISTIK_DB": str(self.db_path),
+               "LISTIK_HOME": str(self.tmp_path / "data"),
                "LISTIK_LOG": str(self.tmp_path / "listik.log")}
         proc = subprocess.run([sys.executable, str(LISTIK_BIN), "--local", "routes",
                                "--reimport", "--json"], capture_output=True, text=True,
@@ -331,12 +304,12 @@ class ReimportCommandTests(RoutesDbTestCase):
         self.assertTrue(report["replaced"])
         self.assertEqual(report["imported"], len(EXPECTED_KEYS))
         self.assertEqual(report["orphans"], {})
-        self.assertEqual(routes_store.get_route(self.conn, "full-xlow")["title"], shipped)
+        self.assertEqual(routes_store.get_route(self.conn, "lp-xlow")["title"], shipped)
 
 
 class ReimportKeepsUserRoutesTests(RoutesDbTestCase):
-    """`reimport` сохраняет маршруты не из файла, кроме конвейеров, и пишет бэкап
-    (listik-zr05, порция g)."""
+    """`reimport` сохраняет рой, удаляет конвейеры не из файла и пишет бэкап v2
+    (listik-zr05, порция g; listik-906l)."""
 
     SWARM_ROLES = {"impl": {"harness": "codex", "argv": ["codex", "exec", "{task_id}"]}}
     KEPT = ["chiki-pow", "my-solo", "my-roy"]
@@ -356,8 +329,8 @@ class ReimportKeepsUserRoutesTests(RoutesDbTestCase):
                                               "title": "Мой dsh"})
         routes_store.upsert_route(self.conn, {**swarm_record(), "key": "my-roy",
                                               "roles": self.SWARM_ROLES})
-        routes_store.upsert_route(self.conn, {**pipeline_record(), "key": "my-pipe"})
-        routes_store.update_route(self.conn, "full-high", title="Моя правка")
+        routes_store.upsert_route(self.conn, my_flow())
+        routes_store.update_route(self.conn, "lp-high", title="Моя правка")
         task = store.create_task(self.conn, title="рой", project="listik")
         self.conn.execute("UPDATE tasks SET launch_route = 'chiki-pow' WHERE id = ?",
                           (task["id"],))
@@ -375,17 +348,17 @@ class ReimportKeepsUserRoutesTests(RoutesDbTestCase):
     def without_position(record: dict) -> dict:
         return {k: v for k, v in record.items() if k != "position"}
 
-    def test_keeps_user_routes_and_drops_skill_pipelines(self) -> None:
+    def test_keeps_user_routes_and_drops_other_pipelines(self) -> None:
         report = self.reimport()
         for key in self.KEPT:
             self.assertEqual(self.without_position(routes_store.get_route(self.conn, key)),
                              self.without_position(self.before[key]), key)
         with self.assertRaises(errors.NotFound):
-            routes_store.get_route(self.conn, "my-pipe")
-        self.assertEqual(routes_store.get_route(self.conn, "full-high")["title"],
-                         routes_mod.load(ROUTES_JSON).by_key["full-high"]["title"])
+            routes_store.get_route(self.conn, "my-flow")
+        self.assertEqual(routes_store.get_route(self.conn, "lp-high")["title"],
+                         routes_mod.load(ROUTES_JSON).by_key["lp-high"]["title"])
         self.assertEqual(sorted(report["kept"]), sorted(self.KEPT))
-        self.assertEqual(report["removed"], ["my-pipe"])
+        self.assertEqual(report["removed"], ["my-flow"])
         self.assertEqual(report["orphans"], {})
         self.assertTrue(report["replaced"])
         self.assertFalse(report["skipped"])
@@ -395,71 +368,83 @@ class ReimportKeepsUserRoutesTests(RoutesDbTestCase):
         self.assertEqual(backup.parent, self.data_dir)
         self.assertRegex(backup.name, "^" + self.BACKUP_RE + "$")
 
+    def test_old_pipelines_removed_swarm_kept(self) -> None:
+        """Пункт 20: рой остаётся, старый конвейер `full-high` удаляется."""
+        self.conn.execute("DELETE FROM routes WHERE key IN ('chiki-pow', 'my-solo', 'my-roy', "
+                          "'my-flow')")
+        self.conn.commit()
+        routes_store.create_route(self.conn, key="dsh", kind="swarm", title="dsh",
+                                  roles={"impl": {"harness": "dsh"}})
+        insert_old_row(self.conn)
+        report = self.reimport()
+        self.assertEqual(report["kept"], ["dsh"])
+        self.assertIn("full-high", report["removed"])
+        self.assertEqual([r["key"] for r in routes_store.list_routes(self.conn)],
+                         [*EXPECTED_KEYS, "dsh"])
+
     def test_backup_of_pipeline_without_roles_reads_back(self) -> None:
-        """listik-1lbn: конвейер без раскладки не ломает бэкап и `reimport` из него."""
-        routes_store.create_route(self.conn, key="bare-pipeline", kind="pipeline", title="Голый")
+        """listik-1lbn: конвейер `lp-*` без раскладки пишется `{}` и читается обратно."""
+        routes_store.delete_route(self.conn, "lp-nano")
+        routes_store.create_route(self.conn, key="lp-nano", kind="pipeline", title="Голый",
+                                  plugin="listik-pipeline")
         path = routes_store._write_backup(self.conn)
         with contextlib.redirect_stderr(io.StringIO()):
             state = routes_mod.load(path)
         self.assertTrue(state.ok, state.error)
+        self.assertEqual(state.by_key["lp-nano"]["roles"], {})
         self.reimport(path)
-        record = routes_store.get_route(self.conn, "bare-pipeline")
+        record = routes_store.get_route(self.conn, "lp-nano")
         self.assertEqual(record["kind"], "pipeline")
         self.assertEqual(record["roles"], {})
 
-    def test_backup_is_loadable_and_complete(self) -> None:
+    def test_backup_is_v2_with_only_lp_pipelines(self) -> None:
         report = self.reimport()
+        doc = json.loads(pathlib.Path(report["backup"]).read_text(encoding="utf-8"))
+        self.assertEqual(list(doc), ["version", "routes"])
+        self.assertEqual(doc["version"], 2)
+        self.assertEqual([r["key"] for r in doc["routes"]], EXPECTED_KEYS)
+        for record in doc["routes"]:
+            self.assertEqual(list(record), ["key", "plugin", "skill", "roles"], record["key"])
+            self.assertEqual(record["roles"], self.before[record["key"]]["roles"])
         with contextlib.redirect_stderr(io.StringIO()):
             state = routes_mod.load(report["backup"])
         self.assertTrue(state.ok, state.error)
-        for key in ["full-high", "my-pipe", *self.KEPT]:
-            self.assertIn(key, state.by_key)
-        self.assertEqual(state.by_key["full-high"]["title"], "Моя правка")
 
-    def test_backup_records_have_no_harness(self) -> None:
-        """Бэкап таблицы без полей `harness` (listik-ar8v) и `driver` (listik-ujra)."""
+    def test_restore_from_backup(self) -> None:
+        """Пункт 21: бэкап возвращает раскладки, остальные поля вычисляются заново."""
+        insert_old_row(self.conn)
+        routes_store.create_route(self.conn, key="dsh", kind="swarm", title="dsh",
+                                  roles={"impl": {"harness": "dsh"}})
+        roles = {"implementer": [dict(DEVIN)], "judge": [dict(GROK)]}
+        routes_store.update_route(self.conn, "lp-low", roles=roles, visible=False, title="моё")
         report = self.reimport()
-        saved = json.loads(pathlib.Path(report["backup"]).read_text(encoding="utf-8"))["routes"]
-        self.assertEqual({r["key"] for r in saved}, set(self.before))
-        for record in saved:
-            self.assertNotIn("harness", record, record["key"])
-            self.assertNotIn("driver", record, record["key"])
-        self.assertEqual(next(r for r in saved if r["key"] == "my-solo")["roles"],
-                         {"impl": {"harness": "dsh"}})
-
-    def test_swarm_cell_without_argv_survives_backup(self) -> None:
-        # Ячейка роя без своего argv (команда — argv харнесса по умолчанию) в файле
-        # допустима: каталога харнессов у валидатора файла нет.
-        routes_store.create_route(self.conn, key="roy-default", kind="swarm", title="Рой",
-                                  roles={"impl": {"harness": "codex"}})
-        report = self.reimport()
-        with contextlib.redirect_stderr(io.StringIO()):
-            state = routes_mod.load(report["backup"])
-        self.assertTrue(state.ok, state.error)
-        self.assertEqual(state.by_key["roy-default"]["roles"], {"impl": {"harness": "codex"}})
-        routes_store.delete_route(self.conn, "roy-default")
+        doc = json.loads(pathlib.Path(report["backup"]).read_text(encoding="utf-8"))
+        self.assertEqual(doc["version"], 2)
+        keys = [r["key"] for r in doc["routes"]]
+        for key in ("dsh", "my-flow", "full-high", *self.KEPT):
+            self.assertNotIn(key, keys)
+        for record in doc["routes"]:
+            self.assertEqual(list(record), ["key", "plugin", "skill", "roles"])
         self.reimport(report["backup"])
-        self.assertEqual(routes_store.get_route(self.conn, "roy-default")["roles"],
-                         {"impl": {"harness": "codex"}})
+        record = routes_store.get_route(self.conn, "lp-low")
+        self.assertEqual(record["roles"], roles)
+        self.assertIs(record["visible"], True)
+        self.assertEqual(record["title"], "low")
+        for key in self.KEPT:
+            self.assertEqual(self.without_position(routes_store.get_route(self.conn, key)),
+                             self.without_position(self.before[key]), key)
+        self.assertEqual(routes_store.get_route(self.conn, "dsh")["kind"], "swarm")
 
     def test_file_validator_swarm_cells(self) -> None:
-        base = {"key": "p", "title": "t", "visible": True}
+        """Ячейки роя в файле v2 не проходят; проверка роя живёт в `validate_swarm_roles`."""
         cell = {"impl": {"harness": "codex"}}
-        self.assertEqual(routes_mod.validate(document({**base, "kind": "swarm", "roles": cell}))
-                         [0]["roles"], cell)
-        # Форма ячеек — только по `kind`: у конвейера роевые ячейки не проходят.
-        with self.assertRaises(routes_mod.RoutesError):
-            routes_mod.validate(document({**base, "kind": "pipeline", "roles": cell}))
+        with self.assertRaises(routes_mod.RoutesError) as ctx:
+            routes_mod.validate({"version": 2, "routes": [lp_record(roles=cell)]})
+        self.assertIn("routes[0].roles.impl: неизвестная роль", str(ctx.exception))
+        self.assertEqual(routes_mod.validate_swarm_roles(cell, "roles"), cell)
         # С каталогом без argv по умолчанию команда по-прежнему обязательна.
         with self.assertRaises(routes_mod.RoutesError):
             routes_mod.validate_swarm_roles(cell, "roles", {"codex": {"argv": None}})
-
-    def test_restore_from_backup(self) -> None:
-        report = self.reimport()
-        self.reimport(report["backup"])
-        self.assertEqual(routes_store.get_route(self.conn, "my-pipe")["title"], "Демо")
-        self.assertEqual(routes_store.get_route(self.conn, "full-high")["title"],
-                         "Моя правка")
 
     def test_positions_file_first_then_kept_in_order(self) -> None:
         old_order = [k for k in self.before if k in self.KEPT]
@@ -476,6 +461,16 @@ class ReimportKeepsUserRoutesTests(RoutesDbTestCase):
             self.reimport(broken)
         self.assertEqual({r["key"]: r for r in routes_store.list_routes(self.conn)},
                          self.before)
+        self.assertEqual(self.backups(), [])
+
+    def test_file_error_changes_nothing_and_writes_no_backup(self) -> None:
+        """Пункт 19: запись со старым плагином — отказ до бэкапа и до удаления."""
+        bad = self.write_routes([lp_record(plugin="pipeline-full")], name="bad.json")
+        before = routes_store.list_routes(self.conn)
+        with self.assertRaises(routes_mod.RoutesError) as ctx:
+            self.reimport(bad)
+        self.assertEqual(str(ctx.exception), "routes[0].plugin: допустимы listik-pipeline")
+        self.assertEqual(routes_store.list_routes(self.conn), before)
         self.assertEqual(self.backups(), [])
 
     def test_same_second_backups_get_suffix(self) -> None:
@@ -495,7 +490,7 @@ class ReimportKeepsUserRoutesTests(RoutesDbTestCase):
                          self.before)
         [backup] = self.backups()
         saved = json.loads(backup.read_text(encoding="utf-8"))["routes"]
-        self.assertEqual([r["key"] for r in saved], list(self.before))
+        self.assertEqual([r["key"] for r in saved], EXPECTED_KEYS)
 
     def run_cli(self, *argv):
         import os
@@ -508,6 +503,7 @@ class ReimportKeepsUserRoutesTests(RoutesDbTestCase):
                               capture_output=True, text=True, env=env, cwd=str(REPO_DIR))
 
     def test_cli_from_backup_json(self) -> None:
+        routes_store.update_route(self.conn, "lp-low", roles={"judge": [dict(GROK)]})
         backup = self.reimport()["backup"]
         proc = self.run_cli("--reimport", "--from", backup, "--json")
         self.assertEqual(proc.returncode, 0, proc.stdout + proc.stderr)
@@ -515,7 +511,9 @@ class ReimportKeepsUserRoutesTests(RoutesDbTestCase):
         self.assertEqual(report["source"], backup)
         for name in ("backup", "kept", "removed"):
             self.assertIn(name, report)
-        self.assertEqual(routes_store.get_route(self.conn, "my-pipe")["title"], "Демо")
+        self.assertEqual(sorted(report["kept"]), sorted(self.KEPT))
+        self.assertEqual(routes_store.get_route(self.conn, "lp-low")["roles"],
+                         {"judge": [GROK]})
 
     def test_cli_from_without_reimport_is_bad_argument(self) -> None:
         proc = self.run_cli("--from", str(ROUTES_JSON))
@@ -525,12 +523,12 @@ class ReimportKeepsUserRoutesTests(RoutesDbTestCase):
         proc = self.run_cli("--reimport")
         self.assertEqual(proc.returncode, 0, proc.stdout + proc.stderr)
         self.assertIn("сохранены:", proc.stdout)
-        self.assertIn("удалены: my-pipe", proc.stdout)
+        self.assertIn("удалены: my-flow", proc.stdout)
         self.assertIn("копия таблицы:", proc.stdout)
 
 
 class PluginStoreTests(RoutesDbTestCase):
-    """Поле `plugin` в хранилище и бэкапе (listik-d9rj, порция d)."""
+    """Поле `plugin` и вычисляемое `skill` в хранилище (listik-d9rj, порция d; listik-906l)."""
 
     def setUp(self) -> None:
         super().setUp()
@@ -541,59 +539,91 @@ class PluginStoreTests(RoutesDbTestCase):
 
     def test_sample_rows_carry_plugin(self) -> None:
         self.import_sample()
-        record = routes_store.get_route(self.conn, "full-high")
-        self.assertEqual(record["plugin"], "pipeline-full")
-        row = self.conn.execute("SELECT plugin FROM routes WHERE key = 'cc-low'").fetchone()
-        self.assertEqual(row[0], "pipeline-cc")
-        self.assertIn("/{plugin}:{skill}", record["command"][-1])
-        values = {name: name for name in routes_mod.PLACEHOLDERS}
-        values.update(plugin=record["plugin"],
-                      skill=skills_mod.skill_of(record["plugin"], "full-high"))
-        self.assertIn("/pipeline-full:high", launcher._substitute(record["command"][-1], values))
+        record = routes_store.get_route(self.conn, "lp-high")
+        self.assertEqual((record["plugin"], record["skill"]), ("listik-pipeline", "high"))
+        row = self.conn.execute("SELECT * FROM routes WHERE key = 'lp-low'").fetchone()
+        self.assertEqual(row["plugin"], "listik-pipeline")
+        self.assertNotIn("skill", row.keys())
 
     def test_prepare_checks_plugin(self) -> None:
-        cases = (({"key": "full-high", "plugin": "pipeline-cc"}, "key: у плагина pipeline-cc"),
-                 ({"key": "full-high", "plugin": "pipeline-foo"}, "plugin: допустимы"),
-                 ({**swarm_record(), "plugin": "pipeline-full"}, "plugin: поле только у kind=pipeline"))
-        for over, text in cases:
+        """Пункт 18a: три текста `check_plugin` через `upsert_route`, целиком."""
+        cases = (({**swarm_record(), "plugin": "listik-pipeline"},
+                  "plugin: поле только у kind=pipeline"),
+                 (my_flow(key="full-high", plugin="pipeline-full"),
+                  "plugin: допустимы listik-pipeline"),
+                 (my_flow(key="full-high", plugin="listik-pipeline"),
+                  "key: у плагина listik-pipeline ключ начинается с 'lp-'"))
+        for record, text in cases:
             with self.subTest(text=text):
                 with self.assertRaises(ValueError) as ctx:
-                    routes_store.upsert_route(self.conn, {**pipeline_record(), **over})
-                self.assertIn(text, str(ctx.exception))
+                    routes_store.upsert_route(self.conn, record)
+                self.assertEqual(str(ctx.exception), text)
+        self.assertEqual(routes_store.count(self.conn), 0)
 
     def test_create_route_with_plugin(self) -> None:
-        record = routes_store.create_route(self.conn, key="full-high", kind="pipeline",
-                                           title="t", plugin="pipeline-full")
-        self.assertEqual(record["plugin"], "pipeline-full")
+        record = routes_store.create_route(self.conn, key="lp-high", kind="pipeline",
+                                           title="t", plugin="listik-pipeline")
+        self.assertEqual((record["plugin"], record["skill"]), ("listik-pipeline", "high"))
         bare = routes_store.create_route(self.conn, key="bare", kind="pipeline", title="t")
         self.assertIsNone(bare["plugin"])
+        self.assertIsNone(bare["skill"])
+
+    def test_own_pipeline_without_plugin(self) -> None:
+        """Пункт 17: свой конвейер с `command` и `roles={}` сохраняется без плагина."""
+        record = routes_store.upsert_route(self.conn, my_flow())
+        self.assertIsNone(record["plugin"])
+        self.assertIsNone(record["skill"])
+        self.assertEqual(record["roles"], {})
+        self.assertEqual(record["command"], ["true"])
 
     def test_update_route_does_not_change_plugin(self) -> None:
         self.import_sample()
         self.assertNotIn("plugin", routes_store.UPDATE_FIELDS)
         with self.assertRaises(ValueError):
-            routes_store.update_route(self.conn, "full-high", plugin="pipeline-cc")
-        self.assertEqual(routes_store.get_route(self.conn, "full-high")["plugin"], "pipeline-full")
+            routes_store.update_route(self.conn, "lp-high", plugin="pipeline-full")
+        self.assertEqual(routes_store.get_route(self.conn, "lp-high")["plugin"],
+                         "listik-pipeline")
 
     def test_backup_has_plugin_and_reads_back(self) -> None:
         self.import_sample()
-        routes_store.create_route(self.conn, key="roy", kind="swarm", title="Рой",
-                                  roles={"impl": {"harness": "dsh"}})
-        routes_store.create_route(self.conn, key="bare", kind="pipeline", title="Голый")
         before = {r["key"]: r["plugin"] for r in routes_store.list_routes(self.conn)}
         with contextlib.redirect_stderr(io.StringIO()):
             report = routes_store.reimport(self.conn, ROUTES_JSON)
         saved = json.loads(pathlib.Path(report["backup"]).read_text(encoding="utf-8"))["routes"]
-        for record in saved:
-            self.assertIn("plugin", record, record["key"])
         self.assertEqual({r["key"]: r["plugin"] for r in saved}, before)
-        self.assertIsNone(next(r for r in saved if r["key"] == "roy")["plugin"])
         self.conn.execute("UPDATE routes SET plugin = NULL")
         self.conn.commit()
         with contextlib.redirect_stderr(io.StringIO()):
             routes_store.reimport(self.conn, report["backup"])
         self.assertEqual({r["key"]: r["plugin"] for r in routes_store.list_routes(self.conn)},
                          before)
+
+
+class OldRowTests(RoutesDbTestCase):
+    """Пункт 18b: строка со старым плагином и ячейкой v1 в живой базе до `--reimport`."""
+
+    def setUp(self) -> None:
+        super().setUp()
+        insert_old_row(self.conn)
+
+    def test_get_route_has_no_skill(self) -> None:
+        record = routes_store.get_route(self.conn, "full-high")
+        self.assertIsNone(record["skill"])
+        self.assertEqual(record["roles"], {"spec": OLD_CELL})
+
+    def test_routes_response_hides_it(self) -> None:
+        data = routes_store.routes_response(self.conn)
+        record = next(r for r in data["routes"] if r["key"] == "full-high")
+        self.assertIs(record["skill_missing"], True)
+        self.assertIs(record["visible"], False)
+        self.assertTrue(any("full-high" in w for w in data["warnings"]))
+
+    def test_readers_skip_object_cells(self) -> None:
+        self.assertEqual([u for u in harnesses_store.used_by(self.conn, "claude")
+                          if u["route"] == "full-high"], [])
+        record = {**routes_store.get_route(self.conn, "full-high"), "visible": True}
+        [candidate] = assistant.route_candidates([record])
+        self.assertEqual(candidate["roles"], {"spec": "claude"})
 
 
 class FieldRulesTests(RoutesDbTestCase):
@@ -605,7 +635,7 @@ class FieldRulesTests(RoutesDbTestCase):
 
     def bad(self, **fields) -> str:
         with self.assertRaises(ValueError) as ctx:
-            routes_store.update_route(self.conn, "full-high", **fields)
+            routes_store.update_route(self.conn, "lp-high", **fields)
         return str(ctx.exception)
 
     def test_title_empty(self) -> None:
@@ -633,22 +663,29 @@ class FieldRulesTests(RoutesDbTestCase):
         self.assertIn("command", self.bad(command=["", "x"]))
 
     def test_hint_empty_is_allowed(self) -> None:
-        self.assertEqual(routes_store.update_route(self.conn, "full-high", hint="")["hint"], "")
+        self.assertEqual(routes_store.update_route(self.conn, "lp-high", hint="")["hint"], "")
 
     def test_icon_none_is_allowed(self) -> None:
-        self.assertIsNone(routes_store.update_route(self.conn, "full-high", icon=None)["icon"])
+        self.assertIsNone(routes_store.update_route(self.conn, "lp-high", icon=None)["icon"])
 
     def test_visible_false_is_allowed(self) -> None:
-        self.assertFalse(routes_store.update_route(self.conn, "full-high",
+        self.assertFalse(routes_store.update_route(self.conn, "lp-high",
                                                    visible=False)["visible"])
 
 
 class UpdateRouteTests(RoutesDbTestCase):
-    """`update_route`: допустимые и отвергаемые поля."""
+    """`update_route`: допустимые и отвергаемые поля, расклад v2 (пункт 16)."""
 
     def setUp(self) -> None:
         super().setUp()
         self.import_sample()
+
+    def rejected_roles(self, roles) -> str:
+        before = routes_store.get_route(self.conn, "lp-high")
+        with self.assertRaises(ValueError) as ctx:
+            routes_store.update_route(self.conn, "lp-high", roles=roles)
+        self.assertEqual(routes_store.get_route(self.conn, "lp-high"), before)
+        return str(ctx.exception)
 
     def test_rejected_fields_name_the_field(self) -> None:
         # `key` сюда не подставить: оно уже занято позиционным параметром
@@ -658,12 +695,42 @@ class UpdateRouteTests(RoutesDbTestCase):
                             ("command", ["echo", "{task_id}"])):
             with self.subTest(name=name):
                 with self.assertRaises(ValueError) as ctx:
-                    routes_store.update_route(self.conn, "full-high", **{name: value})
+                    routes_store.update_route(self.conn, "lp-high", **{name: value})
                 self.assertIn(name, str(ctx.exception))
+
+    def test_empty_roles_rejected(self) -> None:
+        self.assertEqual(self.rejected_roles({}), "roles: нужна хотя бы одна роль")
+
+    def test_old_cell_rejected(self) -> None:
+        self.assertEqual(self.rejected_roles({"writer": OLD_CELL}),
+                         "roles.writer: непустой массив исполнителей")
+        self.assertIn("неизвестная роль", self.rejected_roles({"spec": OLD_CELL}))
+
+    def test_roles_not_object_rejected(self) -> None:
+        self.assertEqual(self.rejected_roles("x"),
+                         "roles: должен быть объектом с ролями writer/critic/implementer/lens/judge")
+
+    def test_pi_channel_outside_catalog(self) -> None:
+        roles = {"critic": [dict(DEVIN | {"harness": "codex"}),
+                            {"harness": "pi", "channel": "nope", "effort": "high"}]}
+        self.assertEqual(self.rejected_roles(roles),
+                         "roles.critic[1].channel: у харнесса 'pi' нет канала 'nope'")
+
+    def test_pi_missing_from_catalog(self) -> None:
+        self.conn.execute("DELETE FROM harnesses WHERE key = 'pi'")
+        self.conn.commit()
+        roles = {"critic": [{"harness": "pi", "channel": "glm", "effort": "high"}]}
+        self.assertEqual(self.rejected_roles(roles),
+                         "roles.critic[0].harness: харнесса 'pi' нет в каталоге")
+
+    def test_disabled_pi_is_fine(self) -> None:
+        roles = {"critic": [{"harness": "pi", "channel": "deepseek", "effort": "high"}]}
+        self.assertEqual(routes_store.update_route(self.conn, "lp-high", roles=roles)["roles"],
+                         roles)
 
     def test_command_on_pipeline_is_rejected(self) -> None:
         with self.assertRaises(ValueError) as ctx:
-            routes_store.update_route(self.conn, "full-high", command=["echo", "{task_id}"])
+            routes_store.update_route(self.conn, "lp-high", command=["echo", "{task_id}"])
         self.assertIn("command", str(ctx.exception))
 
     def test_command_is_not_updatable(self) -> None:
@@ -676,8 +743,8 @@ class UpdateRouteTests(RoutesDbTestCase):
         self.assertIn("нельзя менять", str(ctx.exception))
 
     def test_partial_update_keeps_other_fields(self) -> None:
-        before = routes_store.get_route(self.conn, "full-xlow")
-        after = routes_store.update_route(self.conn, "full-xlow", title="Новый")
+        before = routes_store.get_route(self.conn, "lp-xlow")
+        after = routes_store.update_route(self.conn, "lp-xlow", title="Новый")
         self.assertEqual(after["title"], "Новый")
         self.assertEqual(after["command"], before["command"])
         self.assertEqual(after["roles"], before["roles"])
@@ -698,9 +765,9 @@ class CrudTests(RoutesDbTestCase):
 
     def test_create_duplicate_key(self) -> None:
         with self.assertRaises(ValueError) as ctx:
-            routes_store.create_route(self.conn, key="full-xlow", kind="swarm", title="Dup",
+            routes_store.create_route(self.conn, key="lp-xlow", kind="swarm", title="Dup",
                                       roles={"impl": {"harness": "dsh"}})
-        self.assertIn("full-xlow", str(ctx.exception))
+        self.assertIn("lp-xlow", str(ctx.exception))
 
     def test_get_unknown_raises_not_found(self) -> None:
         with self.assertRaises(errors.NotFound):
@@ -711,16 +778,16 @@ class CrudTests(RoutesDbTestCase):
                          len(routes_store.list_routes(self.conn)))
 
     def test_delete_counts_tasks_but_keeps_them(self) -> None:
-        self.conn.execute("INSERT INTO tasks(id, launch_route) VALUES('t1', 'full-xlow')")
-        self.conn.execute("INSERT INTO tasks(id, launch_route) VALUES('t2', 'full-xlow')")
-        self.conn.execute("INSERT INTO tasks(id, launch_route) VALUES('t3', 'full-nano')")
+        self.conn.execute("INSERT INTO tasks(id, launch_route) VALUES('t1', 'lp-xlow')")
+        self.conn.execute("INSERT INTO tasks(id, launch_route) VALUES('t2', 'lp-xlow')")
+        self.conn.execute("INSERT INTO tasks(id, launch_route) VALUES('t3', 'lp-nano')")
         self.conn.commit()
-        removed = routes_store.delete_route(self.conn, "full-xlow")
+        removed = routes_store.delete_route(self.conn, "lp-xlow")
         self.assertEqual(removed, 2)
         self.assertEqual(self.conn.execute("SELECT COUNT(*) FROM tasks").fetchone()[0], 3)
-        self.assertNotIn("full-xlow", [r["key"] for r in routes_store.list_routes(self.conn)])
+        self.assertNotIn("lp-xlow", [r["key"] for r in routes_store.list_routes(self.conn)])
         with self.assertRaises(errors.NotFound):
-            routes_store.get_route(self.conn, "full-xlow")
+            routes_store.get_route(self.conn, "lp-xlow")
 
     def test_reorder_full(self) -> None:
         reordered = routes_store.reorder(self.conn, list(reversed(EXPECTED_KEYS)))
@@ -730,9 +797,9 @@ class CrudTests(RoutesDbTestCase):
                          list(reversed(EXPECTED_KEYS)))
 
     def test_reorder_subset_pushes_rest_to_end(self) -> None:
-        rest = [k for k in EXPECTED_KEYS if k not in ("full-xlow", "full-nano")]
-        reordered = routes_store.reorder(self.conn, ["full-xlow", "full-nano"])
-        self.assertEqual([r["key"] for r in reordered], ["full-xlow", "full-nano", *rest])
+        rest = [k for k in EXPECTED_KEYS if k not in ("lp-xlow", "lp-nano")]
+        reordered = routes_store.reorder(self.conn, ["lp-xlow", "lp-nano"])
+        self.assertEqual([r["key"] for r in reordered], ["lp-xlow", "lp-nano", *rest])
         positions = [r["position"] for r in reordered]
         self.assertEqual(positions, list(range(len(EXPECTED_KEYS))))
 
@@ -747,9 +814,9 @@ class BrokenJsonColumnsTests(RoutesDbTestCase):
 
     def test_list_routes_survives_broken_columns(self) -> None:
         self.import_sample()
-        self.conn.execute("UPDATE routes SET roles = '{', command = '[' WHERE key = 'full-high'")
+        self.conn.execute("UPDATE routes SET roles = '{', command = '[' WHERE key = 'lp-high'")
         self.conn.commit()
-        record = routes_store.get_route(self.conn, "full-high")
+        record = routes_store.get_route(self.conn, "lp-high")
         self.assertEqual(record["roles"], {})
         self.assertIsNone(record["command"])
 

@@ -1,20 +1,20 @@
-"""Справочник скилов конвейеров трёх плагинов пресетов (шаг listik-8jgz, порция c; listik-d9rj).
+"""Справочник скилов-режимов плагина конвейера `listik-pipeline` (listik-906l).
 
-Пресеты живут в `plugins/pipeline-full`, `plugins/pipeline-cc` и `plugins/pipeline-claude`
-(`PIPELINE_PLUGINS`), скил — каталог `plugins/<плагин>/skills/<имя>` с `SKILL.md`. Ключ
-маршрута — имя плагина без префикса `pipeline-`, дефис и имя каталога:
-`plugins/pipeline-full/skills/high` → `full-high`, `plugins/pipeline-cc/skills/high` → `cc-high`;
-команда маршрута зовёт скил `/<плагин>:<имя>` (`skill_ref`). У записи маршрута плагин —
-явное поле `plugin` (порция d): по нему `skill_of`/`skill_md` находят скил записи, а
-`skill_info`/`skill_ref` без `plugin=` выводят плагин из ключа каталога.
+Плагин — `plugins/listik-pipeline` (`PIPELINE_PLUGINS`), скил — каталог
+`plugins/listik-pipeline/skills/<имя>` с `SKILL.md`. Ключ маршрута — префикс плагина
+(`PIPELINE_KEY_PREFIX`: `listik-pipeline` → `lp`), дефис и имя каталога:
+`plugins/listik-pipeline/skills/high` → `lp-high`; скил зовётся `/listik-pipeline:high`
+(`skill_ref`). Каталоги скилов ролей (`ROLE_SKILLS`: writer, critic, implementer, lens,
+judge) — не режимы: в `skill_keys()` их нет, `skill_info()` для них — `None`. У записи
+маршрута плагин — явное поле `plugin`: по нему `skill_of`/`skill_md` находят скил записи,
+а `skill_info`/`skill_ref` без `plugin=` выводят плагин из префикса ключа.
 
 Скилы дают заголовок (`name`) и подсказку (`description`) для маршрутов
 `kind=pipeline`, но не роли: роли живут только в таблице `routes`
-(:mod:`listik.routes_store`) и меняются только ввозом файла — см.
-`GET /api/routes/sync` и критичный инвариант шага. Установленный (не собранный
-из исходников) Listik может быть без каталога `plugins/` вовсе: тогда сверка
-обязана отдавать пустые расхождения и не прятать ни один маршрут — все функции
-здесь на такой случай отвечают пустыми, а не бросают исключение.
+(:mod:`listik.routes_store`). Установленный (не собранный из исходников) Listik может
+быть без каталога `plugins/` вовсе: тогда сверка обязана отдавать пустые расхождения и
+не прятать ни один маршрут — все функции здесь на такой случай отвечают пустыми, а не
+бросают исключение.
 
 Примитивный разбор YAML-заголовка `SKILL.md` (строки между двумя `---`,
 `ключ: значение`, кавычки снимаются) — тащить YAML-парсер в stdlib-проект
@@ -24,9 +24,12 @@ from __future__ import annotations
 
 from . import paths
 
-#: Плагины пресетов конвейера; ключ скила — `<плагин без "pipeline-">-<каталог скила>`.
-PIPELINE_PLUGINS = ("pipeline-full", "pipeline-cc", "pipeline-claude")
-PIPELINE_PREFIX = "pipeline-"
+#: Плагин конвейера; ключ скила — `<префикс плагина>-<каталог скила>`.
+PIPELINE_PLUGINS = ("listik-pipeline",)
+#: Префикс ключа маршрута по плагину: `lp-high` → `listik-pipeline`, скил `high`.
+PIPELINE_KEY_PREFIX = {"listik-pipeline": "lp"}
+#: Скилы ролей плагина — не режимы конвейера, маршрута у них нет.
+ROLE_SKILLS = ("writer", "critic", "implementer", "lens", "judge")
 #: Корень плагинов пресетов — отдельно от `PLUGINS_DIR` запускаторов: тесты подменяют их независимо.
 PIPELINE_PLUGINS_DIR = paths.ROOT_DIR / "plugins"
 
@@ -75,10 +78,11 @@ def _first_sentence(text: str, *, max_chars: int = HINT_MAX_CHARS) -> str:
 
 
 def _dir_skills(directory) -> list[str]:
-    """Имена подкаталогов с `SKILL.md`; нет каталога — пустой список."""
+    """Имена подкаталогов-режимов с `SKILL.md` (без `ROLE_SKILLS`); нет каталога — пусто."""
     if not directory.is_dir():
         return []
-    return [p.name for p in directory.iterdir() if p.is_dir() and (p / "SKILL.md").is_file()]
+    return [p.name for p in directory.iterdir()
+            if p.is_dir() and p.name not in ROLE_SKILLS and (p / "SKILL.md").is_file()]
 
 
 def _plugin_skills_dir(plugin: str):
@@ -86,38 +90,38 @@ def _plugin_skills_dir(plugin: str):
 
 
 def _split_key(key: str) -> tuple[str, str] | None:
-    """`(плагин, каталог скила)` по ключу `full-high`; префикс не из трёх плагинов — `None`."""
+    """`(плагин, каталог скила)` по ключу `lp-high`; префикс не из плагинов — `None`."""
     if not isinstance(key, str):
         return None
-    prefix, sep, skill = key.partition("-")
-    plugin = PIPELINE_PREFIX + prefix
-    if not sep or not skill or plugin not in PIPELINE_PLUGINS:
-        return None
-    return plugin, skill
+    for plugin in PIPELINE_PLUGINS:
+        skill = skill_of(plugin, key)
+        if skill is not None:
+            return plugin, skill
+    return None
 
 
 def skill_keys() -> list[str]:
-    """Отсортированные ключи `<плагин без pipeline->-<скил>` всех скилов трёх плагинов."""
-    return sorted(f"{plugin[len(PIPELINE_PREFIX):]}-{name}"
+    """Отсортированные ключи `<префикс плагина>-<скил>` всех скилов-режимов."""
+    return sorted(f"{PIPELINE_KEY_PREFIX[plugin]}-{name}"
                   for plugin in PIPELINE_PLUGINS
                   for name in _dir_skills(_plugin_skills_dir(plugin)))
 
 
 def skills_available() -> bool:
-    """Хотя бы у одного из трёх плагинов пресетов есть хотя бы один скил."""
+    """Есть хотя бы один скил-режим."""
     return any(_dir_skills(_plugin_skills_dir(plugin)) for plugin in PIPELINE_PLUGINS)
 
 
 def skill_of(plugin, key) -> str | None:
-    """Имя каталога скила записи с плагином `plugin`: ключ без `<плагин без pipeline->-`.
+    """Имя каталога скила записи с плагином `plugin`: ключ без `<префикс плагина>-`.
 
-    `skill_of("pipeline-full", "full-high")` → `"high"`. Плагин не из
+    `skill_of("listik-pipeline", "lp-high")` → `"high"`. Плагин не из
     `PIPELINE_PLUGINS`, ключ не начинается с его префикса или после префикса пусто —
     `None`. Файлов не читает.
     """
     if plugin not in PIPELINE_PLUGINS or not isinstance(key, str):
         return None
-    prefix = plugin[len(PIPELINE_PREFIX):] + "-"
+    prefix = PIPELINE_KEY_PREFIX[plugin] + "-"
     if not key.startswith(prefix) or len(key) == len(prefix):
         return None
     return key[len(prefix):]
@@ -137,12 +141,12 @@ def _parts(key, plugin) -> tuple[str, str] | None:
 
 
 def skill_ref(key: str, plugin: str | None = None) -> str | None:
-    """Имя скила для команды и текстов: `full-high` → `/pipeline-full:high`.
+    """Имя скила для команды и текстов: `lp-high` → `/listik-pipeline:high`.
 
     Чистое преобразование строки: файлов не читает и наличие `SKILL.md` не
-    проверяет (`cc-fake` → `/pipeline-cc:fake`). Префикс ключа не `full`/`cc`/
-    `claude`, дефиса нет или после него пусто — `None`. Передан `plugin` — плагин
-    берётся из него, а не из префикса ключа (`skill_of`).
+    проверяет (`lp-fake` → `/listik-pipeline:fake`). Префикс ключа не `lp`, дефиса нет
+    или после него пусто — `None`. Передан `plugin` — плагин берётся из него, а не из
+    префикса ключа (`skill_of`).
     """
     parts = _parts(key, plugin)
     if parts is None:
@@ -154,17 +158,19 @@ def skill_ref(key: str, plugin: str | None = None) -> str | None:
 def skill_info(key: str, plugin: str | None = None) -> dict | None:
     """`{"key", "plugin", "skill", "title", "hint", "skill_path"}` по ключу скила; нет скила — `None`.
 
-    `plugin` — имя плагина (`pipeline-full`), `skill` — имя каталога скила,
+    `plugin` — имя плагина (`listik-pipeline`), `skill` — имя каталога скила,
     `title` — поле `name` из frontmatter (нет — сам ключ), короткое, без имени
     плагина; `hint` — первое предложение `description`, `skill_path` — путь к
-    `SKILL.md` относительно корня репозитория. Префикс ключа не из трёх плагинов
-    или нет `SKILL.md` — `None`. Передан `plugin` (поле записи маршрута) — плагин
-    берётся из него, а не из префикса ключа.
+    `SKILL.md` относительно корня репозитория. Префикс ключа не из плагинов, скил роли
+    (`ROLE_SKILLS`) или нет `SKILL.md` — `None`. Передан `plugin` (поле записи
+    маршрута) — плагин берётся из него, а не из префикса ключа.
     """
     parts = _parts(key, plugin)
     if parts is None:
         return None
     plugin, skill = parts
+    if skill in ROLE_SKILLS:
+        return None
     md_path = skill_md(plugin, skill)
     if not md_path.is_file():
         return None

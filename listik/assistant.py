@@ -274,8 +274,15 @@ def route_candidates(routes: list[dict] | None = None) -> list[dict]:
         }
         roles = record.get("roles")
         if isinstance(roles, dict):
-            item["roles"] = {role: cell.get("provider") for role, cell in roles.items()
-                             if isinstance(cell, dict)}
+            # Ячейка v2 — массив исполнителей: по каждому модель, канал или харнесс;
+            # ячейка-объект (старый формат в живой базе) — её `provider`.
+            item["roles"] = {}
+            for role, cell in roles.items():
+                if isinstance(cell, list):
+                    item["roles"][role] = [e.get("model") or e.get("channel") or e.get("harness")
+                                           for e in cell if isinstance(e, dict)]
+                elif isinstance(cell, dict):
+                    item["roles"][role] = cell.get("provider")
         harness = record.get("harness")
         if harness:
             item["harness"] = harness

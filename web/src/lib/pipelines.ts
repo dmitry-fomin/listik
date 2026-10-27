@@ -62,10 +62,19 @@ export const PIPELINE_ROLE_KEYS: PipelineRoleKey[] = ['writer', 'critic', 'imple
 
 export const PIPELINE_ROLE_TITLES: Record<PipelineRoleKey, string> = {
   writer: 'ТЗ',
-  critic: 'Критик',
-  implementer: 'Исполнитель',
+  critic: 'Критика',
+  implementer: 'Код',
   lens: 'Линза',
   judge: 'Судья',
+}
+
+/** Глиф роли конвейера v2 (`lib/icons.ts`) — в схеме «Состав конвейера». */
+export const PIPELINE_ROLE_ICONS: Record<PipelineRoleKey, string> = {
+  writer: 'edit',
+  critic: 'review',
+  implementer: 'branch',
+  lens: 'search',
+  judge: 'check',
 }
 
 /** Роль конвейера v2 → этап задачи; у линзы и судьи этап общий — `s4-judge`. */

@@ -22,8 +22,7 @@ listik routes --json | python3 -c 'import json,sys; d=json.load(sys.stdin); d=d.
 | Роль | Харнесс | Модель | Усилие | Вызов |
 | --- | --- | --- | --- | --- |
 | ТЗ | claude | Opus 5.5 | medium | `Agent listik-pipeline:writer-medium`, `model: opus` |
-| Критика | claude | Sonnet 5.5 | high | `Agent listik-pipeline:critic-high`, `model: sonnet` |
-|  | pi deepseek | DeepSeek V4.1 Flash | high | скил `pi:pi-delegate --channel deepseek --thinking high` (зовёт писатель) |
+| Критика | pi deepseek | DeepSeek V4.1 Flash | high | скил `pi:pi-delegate --channel deepseek --thinking high` (зовёт писатель) |
 |  | pi glm | GLM 5.3 Flash | high | скил `pi:pi-delegate --channel glm --thinking high` (зовёт писатель) |
 | Код | claude | Opus 5.5 | medium | `Agent listik-pipeline:implementer-medium`, `model: opus` |
 | Линза | claude | Haiku 5.5 | max | `Agent listik-pipeline:lens-max`, `model: haiku` |

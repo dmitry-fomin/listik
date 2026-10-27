@@ -384,16 +384,16 @@ class ReimportKeepsUserRoutesTests(RoutesDbTestCase):
 
     def test_backup_of_pipeline_without_roles_reads_back(self) -> None:
         """listik-1lbn: конвейер `lp-*` без раскладки пишется `{}` и читается обратно."""
-        routes_store.delete_route(self.conn, "lp-nano")
-        routes_store.create_route(self.conn, key="lp-nano", kind="pipeline", title="Голый",
+        routes_store.delete_route(self.conn, "lp-xlow")
+        routes_store.create_route(self.conn, key="lp-xlow", kind="pipeline", title="Голый",
                                   plugin="listik-pipeline")
         path = routes_store._write_backup(self.conn)
         with contextlib.redirect_stderr(io.StringIO()):
             state = routes_mod.load(path)
         self.assertTrue(state.ok, state.error)
-        self.assertEqual(state.by_key["lp-nano"]["roles"], {})
+        self.assertEqual(state.by_key["lp-xlow"]["roles"], {})
         self.reimport(path)
-        record = routes_store.get_route(self.conn, "lp-nano")
+        record = routes_store.get_route(self.conn, "lp-xlow")
         self.assertEqual(record["kind"], "pipeline")
         self.assertEqual(record["roles"], {})
 
@@ -780,7 +780,7 @@ class CrudTests(RoutesDbTestCase):
     def test_delete_counts_tasks_but_keeps_them(self) -> None:
         self.conn.execute("INSERT INTO tasks(id, launch_route) VALUES('t1', 'lp-xlow')")
         self.conn.execute("INSERT INTO tasks(id, launch_route) VALUES('t2', 'lp-xlow')")
-        self.conn.execute("INSERT INTO tasks(id, launch_route) VALUES('t3', 'lp-nano')")
+        self.conn.execute("INSERT INTO tasks(id, launch_route) VALUES('t3', 'lp-low')")
         self.conn.commit()
         removed = routes_store.delete_route(self.conn, "lp-xlow")
         self.assertEqual(removed, 2)
@@ -797,9 +797,9 @@ class CrudTests(RoutesDbTestCase):
                          list(reversed(EXPECTED_KEYS)))
 
     def test_reorder_subset_pushes_rest_to_end(self) -> None:
-        rest = [k for k in EXPECTED_KEYS if k not in ("lp-xlow", "lp-nano")]
-        reordered = routes_store.reorder(self.conn, ["lp-xlow", "lp-nano"])
-        self.assertEqual([r["key"] for r in reordered], ["lp-xlow", "lp-nano", *rest])
+        rest = [k for k in EXPECTED_KEYS if k not in ("lp-xlow", "lp-low")]
+        reordered = routes_store.reorder(self.conn, ["lp-xlow", "lp-low"])
+        self.assertEqual([r["key"] for r in reordered], ["lp-xlow", "lp-low", *rest])
         positions = [r["position"] for r in reordered]
         self.assertEqual(positions, list(range(len(EXPECTED_KEYS))))
 

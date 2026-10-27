@@ -150,7 +150,7 @@ the job is honestly `running`.
 ## Red lines (apply inside every pi run)
 
 - Never commit, push or delete recursively on the strength of another harness's output.
-  A `listik-pipeline` judge (`lp-nano`) does not commit either — the orchestrator does.
+  A `listik-pipeline` judge does not commit either — the orchestrator does.
 - Never read, print or forward `.env`, `*.key`, `*.pem`, `credentials.json`. Naming an env
   var is fine, printing its value is not.
 - Never install or authenticate on the human's behalf.

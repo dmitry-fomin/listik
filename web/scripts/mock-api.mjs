@@ -974,7 +974,6 @@ const ROUTES = [
       critic: [
         { harness: 'pi', channel: 'glm', effort: 'high' },
         { harness: 'pi', channel: 'deepseek', effort: 'high' },
-        { harness: 'claude', agent: 'listik-pipeline:critic-high', model: 'haiku', effort: 'high' },
       ],
       implementer: [{ harness: 'devin', model: 'swe-2', effort: 'max' }],
       lens: [{ harness: 'claude', agent: 'listik-pipeline:lens-max', model: 'haiku', effort: 'max' }],
@@ -1371,7 +1370,7 @@ if (routesMode) {
       stale: false,
       abandoned: false,
     }),
-    // Держит `codex`, критиков `lp-low` трое и никто из них не codex — «делает»
+    // Держит `codex`, критиков `lp-low` двое и никто из них не codex — «делает»
     // строкой-тултипом всех исполнителей, без серого уточнения.
     task({
       id: 'listik-executor-multi',

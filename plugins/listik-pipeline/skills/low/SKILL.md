@@ -24,7 +24,6 @@ listik routes --json | python3 -c 'import json,sys; d=json.load(sys.stdin); d=d.
 | ТЗ | claude | Opus 5.5 | low | `Agent listik-pipeline:writer-low`, `model: opus` |
 | Критика | pi glm | GLM 5.3 Flash | high | скил `pi:pi-delegate --channel glm --thinking high` (зовёт писатель) |
 |  | pi deepseek | DeepSeek V4.1 Flash | high | скил `pi:pi-delegate --channel deepseek --thinking high` (зовёт писатель) |
-|  | claude | Haiku 5.5 | high | `Agent listik-pipeline:critic-high`, `model: haiku` |
 | Код | devin | SWE-2 | max | `devin-run.sh run --permission write --thinking max` |
 | Линза | claude | Haiku 5.5 | max | `Agent listik-pipeline:lens-max`, `model: haiku` |
 | Судья | grok | Grok 4.7 | high | `grok-companion.mjs task --write --model grok-4.7 --effort high` |

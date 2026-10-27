@@ -99,12 +99,6 @@
           }
         ],
         "critic": [
-          {
-            "harness": "claude",
-            "agent": "listik-pipeline:critic-high",
-            "model": "sonnet",
-            "effort": "high"
-          },
           { "harness": "pi", "channel": "deepseek", "effort": "high" },
           { "harness": "pi", "channel": "glm", "effort": "high" }
         ],
@@ -142,13 +136,7 @@
         ],
         "critic": [
           { "harness": "pi", "channel": "glm", "effort": "high" },
-          { "harness": "pi", "channel": "deepseek", "effort": "high" },
-          {
-            "harness": "claude",
-            "agent": "listik-pipeline:critic-high",
-            "model": "haiku",
-            "effort": "high"
-          }
+          { "harness": "pi", "channel": "deepseek", "effort": "high" }
         ],
         "implementer": [
           { "harness": "devin", "model": "swe-2", "effort": "max" }
@@ -173,17 +161,6 @@
           { "harness": "devin", "model": "swe-2", "effort": "max" }
         ],
         "judge": [{ "harness": "grok", "model": "grok-4.7", "effort": "high" }]
-      }
-    },
-    {
-      "key": "lp-nano",
-      "plugin": "listik-pipeline",
-      "skill": "nano",
-      "roles": {
-        "implementer": [
-          { "harness": "devin", "model": "swe-2", "effort": "high" }
-        ],
-        "judge": [{ "harness": "pi", "channel": "glm", "effort": "high" }]
       }
     }
   ]

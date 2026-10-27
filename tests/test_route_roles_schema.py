@@ -222,7 +222,7 @@ class PipelineSkillsTest(unittest.TestCase):
 
     def test_skill_keys(self) -> None:
         self.assertEqual(skills_mod.skill_keys(),
-                         ["lp-high", "lp-low", "lp-medium", "lp-nano", "lp-xhigh", "lp-xlow"])
+                         ["lp-high", "lp-low", "lp-medium", "lp-xhigh", "lp-xlow"])
         self.assertTrue(skills_mod.skills_available())
 
     def test_skill_of(self) -> None:

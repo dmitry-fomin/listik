@@ -54,8 +54,9 @@ import { ROUTE_ICON_OPTIONS, routeIconGlyph } from '@/lib/dictionaries'
 import {
   executorGlyph,
   executorName,
-  executorsTitle,
+  PIPELINE_ROLE_ICONS,
   PIPELINE_ROLE_KEYS,
+  PIPELINE_ROLE_TITLES,
   roleExecutors,
   roleStage,
   type PipelineRoleKey,
@@ -147,37 +148,52 @@ function onIcon(value: string): void {
 
 interface RoleTile {
   role: PipelineRoleKey
+  title: string
+  icon: string
   /** Код этапа (`s1`…) — из `PIPELINE_STAGES` по `PIPELINE_ROLE_STAGE`. */
   stageCode: string
-  /** Подпись этапа — из `PIPELINE_STAGES`, руками не пишется. */
-  stageLabel: string
-  /** Глиф `HarnessIcon` первого исполнителя роли. */
-  glyph: string
-  /** Исполнители роли построчно: имя и усилие. */
-  models: { name: string; effort: string }[]
-  /** Строка-тултип роли (`имя · усилие + …`). */
-  vendorTitle: string
+  /** Исполнители роли построчно: глиф харнесса, имя и усилие. */
+  models: { glyph: string; name: string; effort: string }[]
 }
 
-/** Плитки — роли v2 с непустым массивом исполнителей; ячейка-объект ролью не считается. */
-const roleTiles = computed<RoleTile[]>(() =>
-  PIPELINE_ROLE_KEYS.flatMap((role) => {
-    const executors = roleExecutors(props.route.roles[role])
-    const first = executors[0]
-    if (!first) return []
-    const stage = roleStage(role)
-    return [
-      {
-        role,
-        stageCode: stage?.code ?? '',
-        stageLabel: stage?.label ?? '',
-        glyph: executorGlyph(first),
-        models: executors.map((executor) => ({ name: executorName(executor), effort: executor.effort })),
-        vendorTitle: executorsTitle(executors),
-      },
-    ]
-  }),
-)
+/** Колонка схемы: основной шаг и подшаг под ним (критика под ТЗ, судья под линзой). */
+interface RoleColumn {
+  main: RoleTile
+  sub: RoleTile | null
+}
+
+function tileOf(role: PipelineRoleKey): RoleTile | null {
+  const executors = roleExecutors(props.route.roles[role])
+  if (executors.length === 0) return null
+  return {
+    role,
+    title: PIPELINE_ROLE_TITLES[role],
+    icon: PIPELINE_ROLE_ICONS[role],
+    stageCode: roleStage(role)?.code ?? '',
+    models: executors.map((executor) => ({
+      glyph: executorGlyph(executor),
+      name: executorName(executor),
+      effort: executor.effort,
+    })),
+  }
+}
+
+/** Роли v2 с непустым массивом исполнителей; без линзы судья встаёт в основной ряд. */
+const roleColumns = computed<RoleColumn[]>(() => {
+  const tiles = Object.fromEntries(PIPELINE_ROLE_KEYS.map((role) => [role, tileOf(role)])) as Record<
+    PipelineRoleKey,
+    RoleTile | null
+  >
+  const columns: RoleColumn[] = []
+  const push = (main: RoleTile | null, sub: RoleTile | null) => {
+    if (main) columns.push({ main, sub })
+    else if (sub) columns.push({ main: sub, sub: null })
+  }
+  push(tiles.writer, tiles.critic)
+  push(tiles.implementer, null)
+  push(tiles.lens, tiles.judge)
+  return columns
+})
 
 /* ── чем запускается + подстановки ── */
 
@@ -249,20 +265,28 @@ function braced(name: string): string {
       <div class="listik-route-card__section-head">
         <h4 class="listik-route-card__section-title">Состав конвейера</h4>
       </div>
-      <div v-if="roleTiles.length > 0" class="listik-route-card__roles">
-        <div v-for="tile in roleTiles" :key="tile.role" class="listik-route-card__role" :title="tile.vendorTitle">
-          <span class="listik-route-card__role-head">
-            <span class="listik-route-card__role-stage">{{ tile.stageCode }} · {{ tile.stageLabel }}</span>
-            <HarnessIcon :harness="tile.glyph" size="sm" />
-          </span>
-          <ul class="listik-route-card__role-models">
-            <li v-for="(model, at) in tile.models" :key="at" class="listik-route-card__role-model">
-              <span class="listik-route-card__role-name">{{ model.name }}</span>
-              <span v-if="model.effort" class="listik-route-card__role-effort">{{ model.effort }}</span>
-            </li>
-          </ul>
-        </div>
-      </div>
+      <ol v-if="roleColumns.length > 0" class="listik-route-card__flow">
+        <li v-for="column in roleColumns" :key="column.main.role" class="listik-route-card__column">
+          <div
+            v-for="tile in column.sub ? [column.main, column.sub] : [column.main]"
+            :key="tile.role"
+            :class="['listik-route-card__role', `is-${tile.role}`, { 'is-sub': tile === column.sub }]"
+          >
+            <span class="listik-route-card__role-stage">
+              <ListikIcon :name="tile.icon" size="sm" />
+              {{ tile.stageCode }}<template v-if="tile === column.sub"> · подшаг</template>
+            </span>
+            <span class="listik-route-card__role-title">{{ tile.title }}</span>
+            <ul class="listik-route-card__role-models">
+              <li v-for="(model, at) in tile.models" :key="at" class="listik-route-card__role-model">
+                <HarnessIcon :harness="model.glyph" size="xs" />
+                <span class="listik-route-card__role-name">{{ model.name }}</span>
+                <span v-if="model.effort" class="listik-route-card__role-effort">{{ model.effort }}</span>
+              </li>
+            </ul>
+          </div>
+        </li>
+      </ol>
       <UiEmptyState v-else compact title="ролей нет" />
     </section>
 
@@ -419,38 +443,92 @@ function braced(name: string): string {
   color: var(--ink-2);
 }
 
-/* ── плитки ролей (только показ) ── */
+/* ── схема ролей (только показ): основной ряд → и подшаги под шагом ── */
 
-.listik-route-card__roles {
+.listik-route-card__flow {
   display: grid;
-  grid-template-columns: repeat(auto-fit, minmax(150px, 1fr));
-  gap: var(--space-2);
+  grid-auto-columns: minmax(0, 1fr);
+  grid-auto-flow: column;
+  gap: var(--space-6);
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.listik-route-card__column {
+  position: relative;
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-3);
+  min-width: 0;
+}
+
+.listik-route-card__column + .listik-route-card__column::before {
+  content: '→';
+  position: absolute;
+  top: var(--space-6);
+  left: calc(-1 * var(--space-6));
+  width: var(--space-6);
+  text-align: center;
+  color: var(--ink-3);
 }
 
 .listik-route-card__role {
+  --role-color: var(--accent-600);
+  position: relative;
   display: flex;
   flex-direction: column;
-  gap: var(--space-2);
+  gap: var(--space-1);
   min-width: 0;
   padding: var(--space-3);
   border: 1px solid var(--hairline);
+  border-top: 3px solid var(--role-color);
   border-radius: var(--radius-lg);
+  background: var(--surface-1);
+}
+
+.listik-route-card__role.is-sub {
+  border: 1px dashed var(--hairline);
   background: var(--surface-2);
 }
 
-.listik-route-card__role-stage {
-  font-size: var(--text-xs);
-  font-weight: var(--weight-semibold);
-  letter-spacing: 0.06em;
-  text-transform: uppercase;
-  color: var(--accent-600);
+/* Подшаг висит на шаге: короткая пунктирная связка сверху. */
+.listik-route-card__role.is-sub::before {
+  content: '';
+  position: absolute;
+  top: calc(-1 * var(--space-3) - 1px);
+  left: var(--space-4);
+  height: var(--space-3);
+  border-left: 1px dashed var(--hairline);
 }
 
-.listik-route-card__role-head {
-  display: flex;
+.listik-route-card__role.is-writer,
+.listik-route-card__role.is-critic {
+  --role-color: var(--info-500);
+}
+.listik-route-card__role.is-implementer {
+  --role-color: var(--success-600);
+}
+.listik-route-card__role.is-lens {
+  --role-color: var(--warning-600);
+}
+.listik-route-card__role.is-judge {
+  --role-color: var(--danger-600);
+}
+
+.listik-route-card__role-stage {
+  display: inline-flex;
   align-items: center;
-  justify-content: space-between;
-  gap: var(--space-2);
+  gap: var(--space-1);
+  font-family: var(--font-mono);
+  font-size: var(--text-xs);
+  color: var(--role-color);
+}
+
+.listik-route-card__role-title {
+  font-size: var(--text-md);
+  font-weight: var(--weight-semibold);
+  color: var(--ink-1);
 }
 
 .listik-route-card__role-models {
@@ -464,12 +542,11 @@ function braced(name: string): string {
 
 .listik-route-card__role-model {
   display: flex;
-  align-items: baseline;
-  flex-wrap: wrap;
-  gap: 0 var(--space-1);
+  align-items: center;
+  gap: var(--space-1);
   min-width: 0;
   font-size: var(--text-sm);
-  color: var(--ink-1);
+  color: var(--ink-2);
 }
 
 .listik-route-card__role-name {

@@ -45,7 +45,7 @@ ROUTE_LEVEL_RE = re.compile(r"value: '([a-z0-9-]+)'")
 ROUTE_GLYPH_RE = re.compile(r"icon: '([a-z0-9-]+)'")
 
 # Порядок записей в routes.json — он же порядок строк формы «Новая задача».
-EXPECTED_KEYS = ["lp-xhigh", "lp-high", "lp-medium", "lp-low", "lp-xlow", "lp-nano"]
+EXPECTED_KEYS = ["lp-xhigh", "lp-high", "lp-medium", "lp-low", "lp-xlow"]
 
 # Таблицы маршрутов, зашитые в доске до шага 09, порции c: их заменил ответ API.
 REMOVED_TS_TABLES = ("PIPELINES", "DIRECT_HARNESSES")
@@ -66,7 +66,7 @@ def document(*records) -> dict:
 
 
 class RepoRoutesFileTests(unittest.TestCase):
-    """`routes.json` репозитория — формат v2, шесть режимов `listik-pipeline`.
+    """`routes.json` репозитория — формат v2, пять режимов `listik-pipeline`.
 
     Сверки с `web/src` больше нет: зашитые таблицы маршрутов оттуда убраны
     (шаг 09, порция c). Здесь проверяются структура образца для ввоза и отсутствие
@@ -84,7 +84,7 @@ class RepoRoutesFileTests(unittest.TestCase):
             self.skipTest(f"git недоступен: {exc}")
         self.assertEqual(done.returncode, 1, done.stdout + done.stderr)
 
-    def test_has_six_records_in_order(self) -> None:
+    def test_has_five_records_in_order(self) -> None:
         self.assertEqual(self.raw["version"], 2)
         self.assertEqual([r["key"] for r in self.raw["routes"]], EXPECTED_KEYS)
 
@@ -96,7 +96,7 @@ class RepoRoutesFileTests(unittest.TestCase):
                 self.assertEqual(raw["key"], "lp-" + raw["skill"])
 
     def test_validates_into_database_form(self) -> None:
-        """Пункт 5 чек-листа: шесть записей в форме слоя базы, роли — как в файле."""
+        """Пункт 5 чек-листа: пять записей в форме слоя базы, роли — как в файле."""
         normalized = routes_mod.validate(self.raw)
         self.assertEqual([r["key"] for r in normalized], EXPECTED_KEYS)
         for raw, record in zip(self.raw["routes"], normalized):
@@ -120,7 +120,7 @@ class RepoRoutesFileTests(unittest.TestCase):
         normalized = {r["key"]: r["icon"] for r in routes_mod.validate(self.raw)}
         self.assertEqual(normalized, {"lp-xhigh": "xhigh", "lp-high": "high",
                                       "lp-medium": "medium", "lp-low": "low",
-                                      "lp-xlow": "xlow", "lp-nano": None})
+                                      "lp-xlow": "xlow"})
 
     def test_validates_without_skills_on_disk(self) -> None:
         """Пункт 13a: машина без `plugins/` — файл проходит, title = ключ, hint пуст."""
@@ -565,7 +565,6 @@ class RoutesApiTests(TempDbTestCase):
         icons = {record["key"]: record["icon"] for record in data["routes"]}
         self.assertEqual(icons["lp-xhigh"], "xhigh")
         self.assertEqual(icons["lp-medium"], "medium")
-        self.assertIsNone(icons["lp-nano"])
         self.assertEqual({record["key"]: record["skill"] for record in data["routes"]}["lp-high"],
                          "high")
 

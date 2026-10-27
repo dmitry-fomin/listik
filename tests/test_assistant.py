@@ -637,7 +637,7 @@ class RouteCandidatesTests(TempDbTestCase):
             routes_store.import_file(self.conn)
         items = {item["key"]: item
                  for item in assistant_mod.route_candidates(routes_store.list_routes(self.conn))}
-        self.assertEqual(items["lp-low"]["roles"]["critic"], ["glm", "deepseek", "haiku"])
+        self.assertEqual(items["lp-low"]["roles"]["critic"], ["glm", "deepseek"])
         self.assertEqual(items["lp-low"]["roles"]["implementer"], ["swe-2"])
 
 

@@ -107,7 +107,7 @@ Database migrations exist as two parallel mechanisms — don't confuse them:
   plus the optional `skill` (a launcher skill, `плагин:скил` — e.g. `pi:pi-delegate`) and its
   flat `params`, and the optional `members` (`[{harness, channel}]`, checked against the
   `harnesses` catalog and its `channels`); the same validation (`routes._validate_roles`) serves the seed file and the HTTP
-  path. A pipeline route key is `lp-<mode>` (`lp-high`, `lp-nano`: the plugin prefix
+  path. A pipeline route key is `lp-<mode>` (`lp-high`, `lp-xlow`: the plugin prefix
   `listik-pipeline` → `lp`, then the mode skill name); a `kind=pipeline` record has the `plugin`
   field (`listik-pipeline`; `null` for swarm routes and the author's own pipelines, checked by
   `routes.check_plugin`). It feeds the `{plugin}`/`{skill}` placeholders
@@ -192,7 +192,7 @@ committed (see `.gitignore`).
 ## Project plugins (skills)
 
 The skills used to run this project's work live in this repo and are made exactly for it:
-- `plugins/listik-pipeline/` — the pipeline: mode skills `listik-pipeline:<mode>` (xhigh/high/medium/low/xlow/nano, route keys `lp-<mode>`), role skills, agents `listik-pipeline:<role>-<effort>`, role bodies in `references/` and the agent auto-approve hook;
+- `plugins/listik-pipeline/` — the pipeline: mode skills `listik-pipeline:<mode>` (xhigh/high/medium/low/xlow, route keys `lp-<mode>`), role skills, agents `listik-pipeline:<role>-<effort>`, role bodies in `references/` and the agent auto-approve hook;
 - `plugins/listik/` — the `listik:listik` task-protocol skill;
 - `plugins/dsh/` — DeepSeek Harness bridge (`dsh:dsh-delegate` and related skills);
 - `plugins/codex/` — OpenAI Codex CLI bridge (`codex:codex-delegate` and related skills);

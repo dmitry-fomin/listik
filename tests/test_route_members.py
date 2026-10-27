@@ -81,8 +81,8 @@ class UsedByPipelineTests(TempDbTestCase):
             {"route": "lp-xhigh", "kind": "pipeline", "role": "critic", "channel": "deepseek"},
             {"route": "lp-xhigh", "kind": "pipeline", "role": "critic", "channel": "glm"},
         ])
-        self.assertEqual(used[-1], {"route": "lp-nano", "kind": "pipeline", "role": "judge",
-                                    "channel": "glm"})
+        self.assertEqual(used[-1], {"route": "lp-low", "kind": "pipeline", "role": "critic",
+                                    "channel": "deepseek"})
         self.assertIn({"route": "lp-xhigh", "kind": "pipeline", "role": "judge", "channel": None},
                       harnesses_store.used_by(self.conn, "grok"))
         self.assertIn({"route": "lp-low", "kind": "pipeline", "role": "implementer",
@@ -101,8 +101,8 @@ class EnsureImportedTests(TempDbTestCase):
             result = routes_store.ensure_imported(self.conn)
         self.assertNotIn("error", result)
         self.assertIsNone(self.flag())
-        self.assertEqual(routes_store.get_route(self.conn, "lp-nano")["roles"]["judge"],
-                         [pi("glm")])
+        self.assertEqual(routes_store.get_route(self.conn, "lp-medium")["roles"]["critic"],
+                         [pi("deepseek"), pi("glm")])
 
     def test_old_flag_left_alone(self) -> None:
         self.conn.execute("INSERT INTO meta(key, value) VALUES('route_members_v1', '1')")

@@ -4,7 +4,7 @@
 Прогоняется через `server.handle(...)`, как соседние тесты ручек (`test_route_change.py`,
 `test_projects_add.py`): `get_conn` подменяется на временное соединение, ошибки — это
 `server.ApiError`, пойманный `assertRaises`. Скилы читаются из настоящих
-`plugins/listik-pipeline/skills/*` репозитория (скилы-режимы — ровно те 6 ключей, что и в
+`plugins/listik-pipeline/skills/*` репозитория (скилы-режимы — ровно те 5 ключей, что и в
 образце `routes.json`, ключ `lp-<скил>`) — кроме тестов, которые явно подменяют
 `skills.PIPELINE_PLUGINS_DIR` на пустой/чужой каталог.
 """
@@ -426,9 +426,9 @@ class DeleteRouteTests(RoutesApiBase):
         self.assertEqual(ctx.exception.status, 404)
 
     def test_second_delete_of_same_key_is_404_and_noop(self) -> None:
-        self.delete("/api/routes/lp-nano")
+        self.delete("/api/routes/lp-xlow")
         with self.assertRaises(server.ApiError) as ctx:
-            self.delete("/api/routes/lp-nano")
+            self.delete("/api/routes/lp-xlow")
         self.assertEqual(ctx.exception.status, 404)
 
 

@@ -965,7 +965,7 @@ class InstallScriptTests(unittest.TestCase):
         self.assertEqual(self.installed_plugins(log), {"listik", "codex", "second-opinion"})
         visibility = self.route_visibility()
         self.assertEqual(len(visibility), ROUTES_COUNT)
-        self.assertEqual(ROUTES_COUNT, 6)
+        self.assertEqual(ROUTES_COUNT, 5)
         self.assertTrue(all(k.startswith("lp-") for k in visibility), visibility)
         self.assertTrue(all(visibility.values()), visibility)
         self.assertNotIn("скрыты маршруты", result.stdout)

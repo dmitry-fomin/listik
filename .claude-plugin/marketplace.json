@@ -15,7 +15,7 @@
     {
       "name": "listik-pipeline",
       "source": "./plugins/listik-pipeline",
-      "version": "0.5.0",
+      "version": "0.6.0",
       "description": "Конвейер реализации: оркестратор — Claude Code, роли — локальные субагенты и внешние харнессы (pi, devin, codex, grok) по раскладке режима."
     },
     {
@@ -39,7 +39,7 @@
     {
       "name": "pi",
       "source": "./plugins/pi",
-      "version": "0.1.3",
+      "version": "0.1.4",
       "description": "Мост в pi CLI: делегирование задач в GLM 5.3 Flash и DeepSeek v4.1 Flash через RPC-режим pi, с фоновыми задачами и продолжением сессии"
     },
     {

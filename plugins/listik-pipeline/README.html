@@ -1052,7 +1052,7 @@ footer {
       <div class="board-head">
         <span class="board-kicker">дорожка запуска</span>
         <p class="board-line">
-          Человек вызывает скил режима — <code>/listik-pipeline:high</code>, <code>/listik-pipeline:nano</code>, … —
+          Человек вызывает скил режима — <code>/listik-pipeline:high</code>, <code>/listik-pipeline:xlow</code>, … —
           оркестратор это сессия Claude Code, роли — локальные субагенты и внешние харнессы
           по раскладке режима.
         </p>
@@ -1075,7 +1075,6 @@ footer {
           <span class="mode-tag">без линз</span>
           <div class="mode-flags">
             <span class="flag"><svg class="od-icon" viewBox="0 0 16 16" aria-hidden="true"><path d="M9 13.5v-6" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round"/></svg>xlow</span>
-            <span class="flag"><svg class="od-icon" viewBox="0 0 16 16" aria-hidden="true"><path d="M9 13.5v-3.5" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round"/></svg>nano</span>
           </div>
           <p>Без ТЗ, критики и линз: сразу код, дальше судья — он единственная проверка. Флаг <code>RISK:</code> не читается. Третий заход без <span class="pill">PASS</span> — стоп, вопрос человеку.</p>
         </div>
@@ -1156,7 +1155,7 @@ footer {
               <span class="sat-k">04 · grok</span>
             </span>
             <span class="sat-t">Судья</span>
-            <span class="sat-d">grok · codex в nano · при находках линзы или «RISK: YES»; коммитит оркестратор</span>
+            <span class="sat-d">grok · при находках линзы или «RISK: YES»; коммитит оркестратор</span>
             <span class="st-reply">PASS / FIXES</span>
             <span class="st-loop">↺ <span class="pill">FIXES</span> → к 03, затем снова судья; третий без <span class="pill">PASS</span> — стоп, вопрос человеку</span>
           </button>
@@ -1247,7 +1246,7 @@ footer {
           <li>Worktree создаёт оркестратор после <code>READY</code>: <code>listik worktree &lt;id&gt;</code> — дерево <code>.worktrees/&lt;id&gt;</code> на ветке <code>task/&lt;id&gt;</code>, путь и ветка пишутся в карточку; коммит и вливание ветки в основную — тоже оркестратор, как у роя: <code>rebase</code> ветки на основную в worktree, затем <code>merge --ff-only</code> в основном дереве; <code>--ff-only</code> отказал — rebase заново; конфликт — <code>rebase --abort</code> и стоп с вопросом человеку, сам не разрешает. На стопе по <code>needs-owner</code> дерево не удаляется: там ещё будут править</li>
           <li>Судья не запускается, если линза чиста и <code>RISK: NO</code>; линза дала <span class="pill">FIXES</span> хотя бы раз — судья зовётся</li>
           <li>Пункт чек-листа блокирует, только если назван <code>file:line</code> или покрыт командой проверки</li>
-          <li>В <code>xlow</code> и <code>nano</code> линзы нет: судья — единственная проверка, поэтому он зовётся всегда</li>
+          <li>В <code>xlow</code> линзы нет: судья — единственная проверка, поэтому он зовётся всегда</li>
           <li><span class="pill">FIXES</span> → возврат в ту же сессию исполнителя; других путей к коммиту нет</li>
         </ul>
         <h3 style="margin-top:14px">Карточка Listik (без id её заводит оркестратор)</h3>
@@ -1352,8 +1351,8 @@ listik done &lt;id&gt; -r "коммит &lt;hash7&gt;"                  <span st
 /listik-pipeline:high listik-abc1
 
 <span style="color:#667080"># режим — именем скила запуска: xhigh / high / medium / low — с линзами,
-# xlow / nano — без ТЗ, критики и линз:</span>
-/listik-pipeline:nano "…"</pre>
+# xlow — без ТЗ, критики и линз:</span>
+/listik-pipeline:xlow "…"</pre>
                   </div>
                   <div>
                     <div class="mini-cap">что делает</div>
@@ -1412,7 +1411,7 @@ RISK: YES — &lt;reason in three words&gt;</pre>
                     <div class="mini-cap">критика</div>
                     <ul class="plain">
                       <li><code>xhigh / high / medium / low</code> → критики из строки режима</li>
-                      <li><code>xlow / nano</code> → критики нет</li>
+                      <li><code>xlow</code> → критики нет</li>
                       <li>критиков зовёт писатель: всех сразу, не больше двух заходов — второй, только если в первом были BLOCKER; субагент может звать субагентов и скилы</li>
                     </ul>
                   </div>
@@ -1484,7 +1483,7 @@ RISK: YES — &lt;reason in three words&gt;</pre>
               </div>
               <div class="role-meta">
                 <div class="meta-row"><span class="meta-k">скил</span><span class="meta-v">listik-pipeline:implementer</span></div>
-                <div class="meta-row"><span class="meta-k">агент</span><span class="meta-v">implementer-&lt;суффикс&gt; · в low/xlow/nano — devin</span></div>
+                <div class="meta-row"><span class="meta-k">агент</span><span class="meta-v">implementer-&lt;суффикс&gt; · в low/xlow — devin</span></div>
                 <div class="meta-row"><span class="meta-k">зовёт</span><span class="meta-v">оркестратор</span></div>
                 <div class="meta-row"><span class="meta-k">умеет</span><span class="meta-v">Read <span class="sep">·</span> Write <span class="sep">·</span> Edit <span class="sep">·</span> Bash <span class="sep">·</span> Grep <span class="sep">·</span> Glob</span></div>
               </div>
@@ -1505,7 +1504,7 @@ RISK: YES — &lt;reason in three words&gt;</pre>
 Оркестратору первой строкой: DONE (+ вывод команды проверки), CANNOT или QUESTION.
 После красного вердикта судьи карточку выдают заново — снова claim.</pre>
                   <ul class="plain">
-                    <li>Границы правки из ТЗ — жёсткое ограничение (в xlow/nano ТЗ нет — вместо него текст задачи из карточки)</li>
+                    <li>Границы правки из ТЗ — жёсткое ограничение (в xlow ТЗ нет — вместо него текст задачи из карточки)</li>
                     <li>первым делом <code>claim &lt;id&gt; --holder &lt;харнесс&gt; --actor agent:&lt;харнесс&gt; --harness &lt;харнесс до «-»&gt;</code>, потом <code>heartbeat</code></li>
                     <li><code>comment &lt;id&gt; -k journal "DONE" --actor agent:&lt;харнесс&gt; --harness &lt;харнесс до «-»&gt;</code></li>
                     <li><code>stage</code> и <code>done</code> двигает оркестратор</li>
@@ -1567,7 +1566,7 @@ FIXES → список замечаний.</pre>
               </div>
               <div class="role-meta">
                 <div class="meta-row"><span class="meta-k">скил</span><span class="meta-v">listik-pipeline:judge</span></div>
-                <div class="meta-row"><span class="meta-k">агент</span><span class="meta-v">grok (все режимы, кроме nano; усилие xhigh в xhigh/high, high в остальных) · codex (nano)</span></div>
+                <div class="meta-row"><span class="meta-k">агент</span><span class="meta-v">grok (усилие xhigh в xhigh/high, high в остальных)</span></div>
                 <div class="meta-row"><span class="meta-k">зовёт</span><span class="meta-v">оркестратор: находки линзы, <code>RISK: YES</code>; без линз — всегда</span></div>
                 <div class="meta-row"><span class="meta-k">умеет</span><span class="meta-v">Read <span class="sep">·</span> Bash</span></div>
               </div>
@@ -1714,7 +1713,7 @@ FIXES → список замечаний, каждое со ссылкой path
         При принятой работе коммитит оркестратор; <code>done</code> и worktree — он же.
         <code>failed</code> / <code>timeout</code> / <code>canceled</code> / <code>cancelled</code> / <code>orphaned</code> / пустой ответ — не <span class="pill">FIXES</span>: вердикта не было → журнал, <code>&lt;харнесс&gt;-run.sh check</code>, <code>needs-owner</code>.
         Первая строка не из словаря — сбой роли, слово ниже по тексту не ищется: один свежий повтор на том же харнессе, второй сбой подряд — стоп.
-        Судья зовётся при находках линзы, при <code>RISK: YES</code> и всегда в <code>xlow</code>/<code>nano</code>.
+        Судья зовётся при находках линзы, при <code>RISK: YES</code> и всегда в <code>xlow</code>.
         Сокращать, переводить или пересказывать статусы нельзя.
       </p>
     </div>

@@ -61,10 +61,10 @@ class HideLocalTests(HideBase):
             self.assertEqual(before.get(field), after.get(field), field)
 
     def test_text_output_and_repeat_hide(self) -> None:
-        self.run_cli("--hide", "lp-nano")
-        p = self.run_cli("--hide", "lp-nano", "lp-low")
+        self.run_cli("--hide", "lp-medium")
+        p = self.run_cli("--hide", "lp-medium", "lp-low")
         self.assertEqual(p.returncode, 0, p.stdout + p.stderr)
-        self.assertEqual(p.stdout.strip(), "скрыты: lp-nano, lp-low")
+        self.assertEqual(p.stdout.strip(), "скрыты: lp-medium, lp-low")
 
     def test_missing_keys_change_nothing(self) -> None:
         before = self.all_visible()

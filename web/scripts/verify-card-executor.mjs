@@ -27,7 +27,7 @@
  *   8. `listik-executor-deepseek` — critic, держит `agent:pi-deepseek` (второй
  *      исполнитель): «делает» нет;
  *   9. `listik-executor-multi` — critic, держит `codex`: «делает glm · high +
- *      deepseek · high + haiku · high», серого уточнения нет;
+ *      deepseek · high», серого уточнения нет;
  *  10. `listik-executor-swarm` — рой `dsh-direct` на s3-impl, держит `claude`:
  *      «делает dsh» (карта роя).
  *
@@ -72,7 +72,7 @@ const DEEPSEEK_TITLE = 'Критик DeepSeek держит сам'
 const MULTI = 'listik-executor-multi'
 const MULTI_TITLE = 'Критиков несколько, держит codex'
 /** Строка-тултип critic `lp-low`: исполнители через ` + `, каждый `имя · усилие`. */
-const MULTI_TEXT = 'glm · high + deepseek · high + haiku · high'
+const MULTI_TEXT = 'glm · high + deepseek · high'
 const SWARM = 'listik-executor-swarm'
 const SWARM_TITLE = 'Рой: этап делает dsh'
 

@@ -250,7 +250,7 @@ try {
     const ok = Boolean(seen)
       && seen.pipelinesHint === 'оркестратор — Claude Code'
       && seen.swarmHint === 'оркестратор — Listik'
-      && same(seen.headers, ['ТЗ', 'Критик', 'Исполнитель', 'Линза', 'Судья'])
+      && same(seen.headers, ['ТЗ', 'Критика', 'Код', 'Линза', 'Судья'])
       && seen.pipelineGlyphs === 0
       && seen.pipelineRows.length > 0
       && seen.pipelineRows.every((item) => item.tops.length === 6 && oneLine(item.tops))
@@ -262,11 +262,11 @@ try {
         { name: 'glm', effort: 'high' },
       ])
       && seen.highCriticTitle === 'sonnet · high + deepseek · high + glm · high'
-      && same(seen.lowCounts, [1, 3, 1, 1, 1])
+      && same(seen.lowCounts, [1, 2, 1, 1, 1])
       && seen.swarmGlyphs > 0
     return {
       ok,
-      expect: 'шапка «ТЗ, Критик, Исполнитель, Линза, Судья»; строки конвейеров — 6 детей в одной строке сетки (отрезки offsetTop…+offsetHeight пересекаются), у роя 4 ячейки; глифов в ячейках конвейеров 0, у dsh-direct > 0; критик lp-high — sonnet/deepseek/glm · high с тултипом; lp-low по ролям [1,3,1,1,1]',
+      expect: 'шапка «ТЗ, Критика, Код, Линза, Судья»; строки конвейеров — 6 детей в одной строке сетки (отрезки offsetTop…+offsetHeight пересекаются), у роя 4 ячейки; глифов в ячейках конвейеров 0, у dsh-direct > 0; критик lp-high — sonnet/deepseek/glm · high с тултипом; lp-low по ролям [1,2,1,1,1]',
       got: seen,
     }
   })

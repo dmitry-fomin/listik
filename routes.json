@@ -7,22 +7,40 @@
       "skill": "xhigh",
       "roles": {
         "writer": [
-          {"harness": "claude", "agent": "listik-pipeline:writer-xhigh", "model": "opus", "effort": "xhigh"}
+          {
+            "harness": "claude",
+            "agent": "listik-pipeline:writer-xhigh",
+            "model": "opus",
+            "effort": "xhigh"
+          }
         ],
         "critic": [
-          {"harness": "claude", "agent": "listik-pipeline:critic-high", "model": "sonnet", "effort": "high"},
-          {"harness": "pi", "channel": "deepseek", "effort": "high"},
-          {"harness": "pi", "channel": "glm", "effort": "high"}
+          {
+            "harness": "claude",
+            "agent": "listik-pipeline:critic-high",
+            "model": "sonnet",
+            "effort": "high"
+          },
+          { "harness": "pi", "channel": "deepseek", "effort": "high" },
+          { "harness": "pi", "channel": "glm", "effort": "high" }
         ],
         "implementer": [
-          {"harness": "claude", "agent": "listik-pipeline:implementer-xhigh", "model": "opus", "effort": "xhigh"}
+          {
+            "harness": "claude",
+            "agent": "listik-pipeline:implementer-xhigh",
+            "model": "opus",
+            "effort": "xhigh"
+          }
         ],
         "lens": [
-          {"harness": "claude", "agent": "listik-pipeline:lens-max", "model": "haiku", "effort": "max"}
+          {
+            "harness": "claude",
+            "agent": "listik-pipeline:lens-max",
+            "model": "haiku",
+            "effort": "max"
+          }
         ],
-        "judge": [
-          {"harness": "grok", "model": "grok-4.7", "effort": "xhigh"}
-        ]
+        "judge": [{ "harness": "grok", "model": "grok-4.7", "effort": "xhigh" }]
       }
     },
     {
@@ -31,22 +49,40 @@
       "skill": "high",
       "roles": {
         "writer": [
-          {"harness": "claude", "agent": "listik-pipeline:writer-high", "model": "opus", "effort": "high"}
+          {
+            "harness": "claude",
+            "agent": "listik-pipeline:writer-high",
+            "model": "opus",
+            "effort": "high"
+          }
         ],
         "critic": [
-          {"harness": "claude", "agent": "listik-pipeline:critic-high", "model": "sonnet", "effort": "high"},
-          {"harness": "pi", "channel": "deepseek", "effort": "high"},
-          {"harness": "pi", "channel": "glm", "effort": "high"}
+          {
+            "harness": "claude",
+            "agent": "listik-pipeline:critic-high",
+            "model": "sonnet",
+            "effort": "high"
+          },
+          { "harness": "pi", "channel": "deepseek", "effort": "high" },
+          { "harness": "pi", "channel": "glm", "effort": "high" }
         ],
         "implementer": [
-          {"harness": "claude", "agent": "listik-pipeline:implementer-high", "model": "opus", "effort": "high"}
+          {
+            "harness": "claude",
+            "agent": "listik-pipeline:implementer-high",
+            "model": "opus",
+            "effort": "high"
+          }
         ],
         "lens": [
-          {"harness": "claude", "agent": "listik-pipeline:lens-max", "model": "haiku", "effort": "max"}
+          {
+            "harness": "claude",
+            "agent": "listik-pipeline:lens-max",
+            "model": "haiku",
+            "effort": "max"
+          }
         ],
-        "judge": [
-          {"harness": "grok", "model": "grok-4.7", "effort": "xhigh"}
-        ]
+        "judge": [{ "harness": "grok", "model": "grok-4.7", "effort": "xhigh" }]
       }
     },
     {
@@ -55,22 +91,40 @@
       "skill": "medium",
       "roles": {
         "writer": [
-          {"harness": "claude", "agent": "listik-pipeline:writer-medium", "model": "opus", "effort": "medium"}
+          {
+            "harness": "claude",
+            "agent": "listik-pipeline:writer-medium",
+            "model": "opus",
+            "effort": "medium"
+          }
         ],
         "critic": [
-          {"harness": "claude", "agent": "listik-pipeline:critic-high", "model": "sonnet", "effort": "high"},
-          {"harness": "pi", "channel": "deepseek", "effort": "high"},
-          {"harness": "pi", "channel": "glm", "effort": "high"}
+          {
+            "harness": "claude",
+            "agent": "listik-pipeline:critic-high",
+            "model": "sonnet",
+            "effort": "high"
+          },
+          { "harness": "pi", "channel": "deepseek", "effort": "high" },
+          { "harness": "pi", "channel": "glm", "effort": "high" }
         ],
         "implementer": [
-          {"harness": "claude", "agent": "listik-pipeline:implementer-medium", "model": "opus", "effort": "medium"}
+          {
+            "harness": "claude",
+            "agent": "listik-pipeline:implementer-medium",
+            "model": "opus",
+            "effort": "medium"
+          }
         ],
         "lens": [
-          {"harness": "claude", "agent": "listik-pipeline:lens-max", "model": "haiku", "effort": "max"}
+          {
+            "harness": "claude",
+            "agent": "listik-pipeline:lens-max",
+            "model": "haiku",
+            "effort": "max"
+          }
         ],
-        "judge": [
-          {"harness": "grok", "model": "grok-4.7", "effort": "high"}
-        ]
+        "judge": [{ "harness": "grok", "model": "grok-4.7", "effort": "high" }]
       }
     },
     {
@@ -79,22 +133,35 @@
       "skill": "low",
       "roles": {
         "writer": [
-          {"harness": "claude", "agent": "listik-pipeline:writer-low", "model": "opus", "effort": "low"}
+          {
+            "harness": "claude",
+            "agent": "listik-pipeline:writer-low",
+            "model": "opus",
+            "effort": "low"
+          }
         ],
         "critic": [
-          {"harness": "pi", "channel": "glm", "effort": "high"},
-          {"harness": "pi", "channel": "deepseek", "effort": "high"},
-          {"harness": "claude", "agent": "listik-pipeline:critic-high", "model": "haiku", "effort": "high"}
+          { "harness": "pi", "channel": "glm", "effort": "high" },
+          { "harness": "pi", "channel": "deepseek", "effort": "high" },
+          {
+            "harness": "claude",
+            "agent": "listik-pipeline:critic-high",
+            "model": "haiku",
+            "effort": "high"
+          }
         ],
         "implementer": [
-          {"harness": "devin", "model": "swe-2", "effort": "max"}
+          { "harness": "devin", "model": "swe-2", "effort": "max" }
         ],
         "lens": [
-          {"harness": "claude", "agent": "listik-pipeline:lens-max", "model": "haiku", "effort": "max"}
+          {
+            "harness": "claude",
+            "agent": "listik-pipeline:lens-max",
+            "model": "haiku",
+            "effort": "max"
+          }
         ],
-        "judge": [
-          {"harness": "grok", "model": "grok-4.7", "effort": "high"}
-        ]
+        "judge": [{ "harness": "grok", "model": "grok-4.7", "effort": "high" }]
       }
     },
     {
@@ -103,11 +170,9 @@
       "skill": "xlow",
       "roles": {
         "implementer": [
-          {"harness": "devin", "model": "swe-2", "effort": "max"}
+          { "harness": "devin", "model": "swe-2", "effort": "max" }
         ],
-        "judge": [
-          {"harness": "grok", "model": "grok-4.7", "effort": "high"}
-        ]
+        "judge": [{ "harness": "grok", "model": "grok-4.7", "effort": "high" }]
       }
     },
     {
@@ -116,11 +181,9 @@
       "skill": "nano",
       "roles": {
         "implementer": [
-          {"harness": "devin", "model": "swe-2", "effort": "high"}
+          { "harness": "devin", "model": "swe-2", "effort": "high" }
         ],
-        "judge": [
-          {"harness": "pi", "channel": "glm", "effort": "high"}
-        ]
+        "judge": [{ "harness": "pi", "channel": "glm", "effort": "high" }]
       }
     }
   ]

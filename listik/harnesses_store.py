@@ -91,11 +91,12 @@ SEEDS: list[dict] = [
     {"key": "pi-glm", "label": "pi · GLM", "hint": "pi --print · GLM 5.3 Flash",
      "icon": "pi-glm",
      "argv": ["pi", "--print", "--no-session", "--model",
-              "openrouter/z-ai/glm-5.3-flash"],
+              "glm-opendesign/glm-5.3-flash"],
      "prompt": _prompt(DIRECT_PROMPT, "pi-glm"), "kind": "exec", "builtin": 1},
     {"key": "pi-deepseek", "label": "pi · DeepSeek",
-     "hint": "pi --print · DeepSeek Flash", "icon": "pi-deepseek",
-     "argv": ["pi", "--print", "--no-session", "--model", "deepseek/deepseek-flash"],
+     "hint": "pi --print · DeepSeek v4.1 Flash", "icon": "pi-deepseek",
+     "argv": ["pi", "--print", "--no-session", "--model",
+              "deepseek-opendesign/deepseek-v4.1-flash"],
      "prompt": _prompt(DIRECT_PROMPT, "pi-deepseek"), "kind": "exec", "builtin": 1},
     {"key": "devin", "label": "devin", "hint": "Devin · devin -p",
      "icon": "devin",
@@ -522,6 +523,25 @@ def seed(conn: sqlite3.Connection) -> None:
                          "glm-a6/glm-5.3-flash"], ensure_ascii=False)))
         conn.execute(
             "INSERT INTO meta(key, value) VALUES('seed_pi_glm_openrouter', '1')")
+    # Оба канала pi переехали на провайдеров `glm-opendesign`/`deepseek-opendesign`
+    # из models.json. Тем же правилом: одноразово и только по старому сиду.
+    if conn.execute(
+            "SELECT value FROM meta WHERE key = 'seed_pi_opendesign'").fetchone() is None:
+        for key, old_model, new_model, hint in (
+                ("pi-glm", "openrouter/z-ai/glm-5.3-flash",
+                 "glm-opendesign/glm-5.3-flash", "pi --print · GLM 5.3 Flash"),
+                ("pi-deepseek", "deepseek/deepseek-flash",
+                 "deepseek-opendesign/deepseek-v4.1-flash",
+                 "pi --print · DeepSeek v4.1 Flash")):
+            conn.execute(
+                "UPDATE harnesses SET argv = ?, hint = ?, updated_at = ? "
+                "WHERE key = ? AND builtin = 1 AND argv = ?",
+                (json.dumps(["pi", "--print", "--no-session", "--model", new_model],
+                            ensure_ascii=False), hint, ts, key,
+                 json.dumps(["pi", "--print", "--no-session", "--model", old_model],
+                            ensure_ascii=False)))
+        conn.execute(
+            "INSERT INTO meta(key, value) VALUES('seed_pi_opendesign', '1')")
     # Каналы мостов pi/opencode (listik-46q6): страховка баз, где эти ключи завёл
     # человек до обновления (`ON CONFLICT DO NOTHING` их не трогает). Разово
     # (meta-флаг) и только у `kind='exec'` без каналов: очищенный или

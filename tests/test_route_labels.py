@@ -6,7 +6,7 @@
 (`labels_with_route` при создании, `labels_after_route_change` при смене маршрута);
 доска метки не считает — только показывает пришедшие с сервера.
 
-Тесты герметичны: маршруты ввезены во временную базу (`TempDbTestCase`),
+Тесты герметичны: маршруты положены во временную базу (`TempDbTestCase`),
 рабочая копия `~/.config/listik/` не читается.
 """
 from __future__ import annotations
@@ -39,43 +39,36 @@ SWARM = "dsh"
 PIPELINE_LABELS = ["harness:claude", "process:low-pipeline"]
 SWARM_LABELS = ["process:dsh"]
 
-#: Образец таблицы маршрутов: конвейер с чужим провайдером роли impl (правило меток от
-#: него не зависит) и маршрут роя. Ключ `нет-такого` намеренно отсутствует.
-ROUTES_DOC = {
-    "version": 1,
-    "routes": [
-        {
-            "key": PIPELINE,
-            "kind": "pipeline",
-            "title": "low",
-            "hint": "",
-            "visible": True,
-            "roles": {
-                "spec": {"provider": "claude", "label": "low", "title": "Fable · low"},
-                "critic": {"provider": "glm", "label": "GLM", "title": "GLM · flash"},
-                "impl": {"provider": "deepseek", "label": "flash", "title": "DeepSeek · flash"},
-                "judge": {"provider": "grok", "label": "xhigh", "title": "Grok · xhigh"},
-            },
+#: Образец таблицы маршрутов: конвейер с чужими харнессами ролей (правило меток от
+#: них не зависит) и маршрут роя. Ключ `нет-такого` намеренно отсутствует.
+ROUTES = [
+    {
+        "key": PIPELINE,
+        "kind": "pipeline",
+        "title": "low",
+        "hint": "",
+        "visible": True,
+        "roles": {
+            "writer": [{"harness": "claude", "agent": "listik-pipeline:writer-low",
+                        "model": "opus", "effort": "low"}],
+            "critic": [{"harness": "codex", "effort": "high"}],
+            "implementer": [{"harness": "devin", "effort": "high"}],
+            "judge": [{"harness": "grok", "model": "grok-4.7", "effort": "xhigh"}],
         },
-        {"key": SWARM, "kind": "swarm", "title": "dsh", "hint": "", "visible": True,
-         "roles": {"impl": {"harness": "dsh"}}},
-    ],
-}
-
-
-def write_routes(path: pathlib.Path) -> pathlib.Path:
-    path.write_text(json.dumps(ROUTES_DOC, ensure_ascii=False), encoding="utf-8")
-    return path
+    },
+    {"key": SWARM, "kind": "swarm", "title": "dsh", "hint": "", "visible": True,
+     "roles": {"impl": {"harness": "dsh"}}},
+]
 
 
 class RoutesStateMixin:
-    """Временный файл ввозится в таблицу временной базы."""
+    """Маршруты образца кладутся в таблицу временной базы."""
 
     def setUp(self) -> None:
         super().setUp()
-        self.routes_path = write_routes(self.tmp_path / "routes.json")
-        report = routes_store.import_file(self.conn, self.routes_path)
-        self.assertEqual(report["imported"], 2)
+        for record in ROUTES:
+            routes_store.upsert_route(self.conn, record)
+        self.assertEqual(routes_store.count(self.conn), 2)
 
 
 class LabelRuleTests(RoutesStateMixin, TempDbTestCase):

@@ -44,7 +44,7 @@ def route_records() -> list[dict]:
             "title": "low",
             "hint": "на 20 мин, самый дешёвый",
             "visible": True,
-            "roles": {"impl": {"provider": "deepseek", "label": "dsh", "title": "dsh"}},
+            "roles": {"implementer": [{"harness": "codex", "effort": "medium"}]},
             "command": None,
         },
         {
@@ -53,7 +53,8 @@ def route_records() -> list[dict]:
             "title": "high",
             "hint": "от 40 мин",
             "visible": True,
-            "roles": {"impl": {"provider": "claude", "label": "medium", "title": "Opus"}},
+            "roles": {"implementer": [{"harness": "claude", "agent": "listik-pipeline:implementer-high",
+                                       "model": "opus", "effort": "medium"}]},
             "command": None,
         },
         {
@@ -62,7 +63,8 @@ def route_records() -> list[dict]:
             "title": "скрытый",
             "hint": "",
             "visible": False,
-            "roles": {"impl": {"provider": "claude", "label": "low", "title": "Opus"}},
+            "roles": {"implementer": [{"harness": "claude", "agent": "listik-pipeline:implementer-low",
+                                       "model": "opus", "effort": "low"}]},
             "command": None,
         },
     ]

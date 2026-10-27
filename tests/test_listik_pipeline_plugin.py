@@ -6,12 +6,17 @@
 """
 from __future__ import annotations
 
+import json
 import pathlib
 import re
 import unittest
 
 REPO_DIR = pathlib.Path(__file__).resolve().parents[1]
 PLUGIN_DIR = REPO_DIR / "plugins" / "listik-pipeline"
+#: Читается в момент вызова теста: подмена константы уводит сверку на другой файл.
+ROUTES_JSON = REPO_DIR / "routes.json"
+#: Скилы ролей — не режимы конвейера, маршрута у них нет.
+ROLE_SKILLS = ("writer", "critic", "implementer", "lens", "judge")
 PLUGIN_ROOT_VAR = "${CLAUDE_PLUGIN_ROOT}"
 DESCRIPTION_LIMIT = 1024
 
@@ -68,9 +73,23 @@ class ListikPipelinePluginTests(unittest.TestCase):
 
     def test_worktree_step_uses_the_cli(self) -> None:
         # `git worktree add -b <id>` даёт ветку не task/<id> и пустые поля карточки.
-        text = (PLUGIN_DIR / "agents" / "orchestrator.md").read_text(encoding="utf-8")
+        text = (PLUGIN_DIR / "references" / "orchestrator.md").read_text(encoding="utf-8")
         step = next(line for line in text.splitlines() if line.startswith("3. **Worktree"))
         self.assertIn("listik worktree", step)
+
+    def test_routes_match_mode_skills(self) -> None:
+        # Маршрут routes.json ↔ скил-режим plugins/listik-pipeline/skills/<d> (lp-<d>).
+        records = json.loads(ROUTES_JSON.read_text(encoding="utf-8"))["routes"]
+        keys = [record["key"] for record in records]
+        self.assertEqual(len(keys), len(set(keys)), f"дубли ключей в routes.json: {keys}")
+        modes = {"lp-" + path.parent.name for path in _skill_files()
+                 if path.parent.name not in ROLE_SKILLS}
+        self.assertTrue(modes, "у плагина нет скилов-режимов")
+        self.assertEqual(set(keys), modes, "ключи routes.json и скилы-режимы плагина разошлись")
+        for record in records:
+            with self.subTest(route=record["key"]):
+                self.assertEqual(record["plugin"], "listik-pipeline")
+                self.assertEqual(record["skill"], record["key"][3:])
 
 
 def _agent_files_for(role: str) -> list[pathlib.Path]:

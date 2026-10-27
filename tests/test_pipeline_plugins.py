@@ -1,17 +1,15 @@
-"""Согласие плагинов пресетов pipeline-full, pipeline-cc и pipeline-claude с routes.json
+"""Плагины пресетов pipeline-full, pipeline-cc и pipeline-claude: файлы, манифесты, скилы
 (шаг 10, порция a; раскладка по трём плагинам — listik-d9rj, порция b).
 
 Скил пресета — это каталог `plugins/<плагин>/skills/<имя>` с файлом `SKILL.md`;
 каталог без него скилом не считается (поэтому пустой
 `skills/codex-pipeline/agents` старого репозитория сюда не переехал). Здесь скил
-зовётся полным именем `<плагин>:<имя>` (`pipeline-full:high`). Ключи записей
-`kind == "pipeline"` в `routes.json` обязаны совпадать с ключами скилов
-`skills.skill_keys()` (`full-high` ↔ `plugins/pipeline-full/skills/high`): доска
-выбирает конвейер по ключу маршрута, а плагин исполняет его скилом. Записей
-`kind == "direct"` в `routes.json` больше нет (listik-ar8v).
+зовётся полным именем `<плагин>:<имя>` (`pipeline-full:high`). С `routes.json` эти
+плагины больше не связаны: маршруты — формат v2 плагина `listik-pipeline` (listik-906l),
+их сверку со скилами делает `tests/test_listik_pipeline_plugin.py`.
 
 Файлы читаются в момент вызова через константы модуля, а не при импорте:
-поэтому `unittest.mock.patch.object` на `ROUTES_JSON`, `PLUGINS_DIR` и
+поэтому `unittest.mock.patch.object` на `PLUGINS_DIR` и
 `MARKETPLACE_JSON` уводит проверку на копию во временном каталоге.
 """
 from __future__ import annotations
@@ -25,10 +23,8 @@ import shutil
 import tempfile
 import unittest
 
-from listik import skills as skills_mod
 
 REPO_DIR = pathlib.Path(__file__).resolve().parents[1]
-ROUTES_JSON = REPO_DIR / "routes.json"
 PLUGINS_DIR = REPO_DIR / "plugins"
 #: Плагин ядра: агенты, хук и `references` пресетов живут здесь, скилы — в PRESET_PLUGINS.
 CORE_PLUGIN_DIR = REPO_DIR / "plugins" / "pipeline-core"
@@ -49,17 +45,8 @@ def _read_json(path: pathlib.Path):
     return json.loads(path.read_text(encoding="utf-8"))
 
 
-def _routes() -> list[dict]:
-    return _read_json(ROUTES_JSON)["routes"]
-
-
-def _keys_of_kind(kind: str) -> set[str]:
-    """Ключи записей routes.json указанного вида."""
-    return {record["key"] for record in _routes() if record.get("kind") == kind}
-
-
 #: Скилы pipeline-cc: их тексты сверяет tests/test_pipeline_cc_plugin.py,
-#: здесь — только имя во frontmatter и связь с routes.json.
+#: здесь — только имя во frontmatter.
 CC_SKILLS = frozenset(f"pipeline-cc:{level}" for level in ("xhigh", "high", "medium", "low", "xlow"))
 
 
@@ -112,23 +99,8 @@ def _frontmatter(lines: list[str]) -> list[str] | None:
     return None
 
 
-#: Скилы плагина без маршрута в routes.json (сейчас таких нет).
-SKILLS_WITHOUT_ROUTE: set[str] = set()
-
 class FeaturePipelinePluginTests(unittest.TestCase):
-    """routes.json, скилы плагина и маркетплейс не разъезжаются."""
-
-    def test_routes_pipelines_match_plugin_skills(self) -> None:
-        keys = _keys_of_kind("pipeline")
-        skills = set(skills_mod.skill_keys())
-        self.assertTrue(keys, "в routes.json нет ни одной записи kind == pipeline")
-        extra = sorted(keys - skills)
-        missing = sorted(skills - keys - SKILLS_WITHOUT_ROUTE)
-        self.assertEqual(
-            (extra, missing), ([], []),
-            "ключи конвейеров в routes.json и скилы плагина разошлись: "
-            f"лишние ключи без скила {extra}, скилы без ключа {missing}",
-        )
+    """Скилы плагинов и маркетплейс не разъезжаются."""
 
     def test_skill_frontmatter_name_matches_dir(self) -> None:
         skills = sorted(_all_skill_names())
@@ -177,7 +149,7 @@ class FeaturePipelinePluginTests(unittest.TestCase):
         self.assertEqual(
             names,
             ["listik", "pipeline-core", "pipeline-full", "pipeline-cc", "pipeline-claude", "listik-pipeline",
-             "dsh", "codex", "opencode", "pi", "devin", "second-opinion"],
+             "dsh", "codex", "opencode", "pi", "devin", "second-opinion", "flow-map"],
             f"состав маркетплейса не тот: {names}",
         )
         for entry in entries:
@@ -194,10 +166,6 @@ class FeaturePipelinePluginTests(unittest.TestCase):
                 )
                 self.assertEqual(manifest.get("name"), name,
                                  f"{name}: name в plugin.json не совпал")
-
-    def test_no_direct_routes(self) -> None:
-        self.assertEqual(_keys_of_kind("direct"), set(),
-                         "в routes.json осталась запись kind == direct")
 
 #: Пути (относительно плагина, см. `_plugin_path`), которые должны называть работу по id карточки (`<id>`), а не
 #: по номеру шага. `agents/*.md` собирается в момент вызова теста, а не при импорте.
@@ -451,7 +419,7 @@ class PipelineCorePluginTests(unittest.TestCase):
             entry["name"] for entry in _read_json(MARKETPLACE_JSON)["plugins"]
             if "auto_approve_agents" in _read_json(REPO_DIR / entry["source"] / PLUGIN_MANIFEST)
             .get("userConfig", {}))
-        self.assertEqual(with_option, ["pipeline-core"])
+        self.assertEqual(with_option, ["listik-pipeline", "pipeline-core"])
 
 
 class FeaturePipelineStepNamingTests(unittest.TestCase):
@@ -2226,8 +2194,6 @@ CRITIQUE_NAMES = {
 }
 CRITIQUE_OLD_DESCRIPTION = "GLM 5.3 Flash и DeepSeek V4.1 Flash"
 CRITIQUE_README_COLUMN = "Критика ТЗ"
-CRITIC_LABELS = {"full-xhigh": "S+DS+GLM", "full-high": "S+DS+GLM",
-                 "full-medium": "S+DS+GLM", "full-low": "GLM+DS+H"}
 
 
 def _description(text: str) -> str:
@@ -2361,18 +2327,6 @@ class FeaturePipelineCritiqueCompositionTests(unittest.TestCase):
         mutated = text.replace(paragraph, paragraph.replace("Роли:", "Каждая роль на xhigh:", 1), 1)
         self.assertNotEqual(mutated, text, "изменение не применилось")
         self.assertNotEqual(_xhigh_intro_problems(mutated), [])
-
-    def test_routes_critic_cells(self) -> None:
-        routes = {record["key"]: record for record in _routes()}
-        for name, label in CRITIC_LABELS.items():
-            cell = routes[name]["roles"]["critic"]
-            with self.subTest(route=name):
-                self.assertEqual(cell["label"], label)
-                if name == "full-low":
-                    self.assertEqual(cell.get("skill"), "pi:pi-delegate")
-                else:
-                    self.assertEqual(cell["provider"], "claude")
-                    self.assertNotIn("skill", cell)
 
 
 #: Старые имена плагинов и пресетов до listik-d9rj (порция c): в текстах плагинов их быть не должно.

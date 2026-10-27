@@ -808,7 +808,7 @@ class InstallScriptTests(unittest.TestCase):
         import sqlite3
         conn = sqlite3.connect(self.installed_home / "listik.db")
         with conn:
-            cur = conn.execute("UPDATE routes SET title = 'Моя правка' WHERE key = 'full-low'")
+            cur = conn.execute("UPDATE routes SET title = 'Моя правка' WHERE key = 'lp-low'")
             self.assertEqual(cur.rowcount, 1)
         conn.close()
 
@@ -816,7 +816,7 @@ class InstallScriptTests(unittest.TestCase):
         import sqlite3
         conn = sqlite3.connect(self.installed_home / "listik.db")
         try:
-            return conn.execute("SELECT title FROM routes WHERE key = 'full-low'").fetchone()[0]
+            return conn.execute("SELECT title FROM routes WHERE key = 'lp-low'").fetchone()[0]
         finally:
             conn.close()
 
@@ -825,7 +825,8 @@ class InstallScriptTests(unittest.TestCase):
         self.install(archive)
         self.edit_installed_route()
         result = self.install(archive, "--routes-reimport", "yes")
-        self.assertEqual(self.installed_route_title(), "low")
+        # Архив без plugins/: заголовка из SKILL.md нет, title — сам ключ.
+        self.assertEqual(self.installed_route_title(), "lp-low")
         self.assertIn("маршруты: перезаписаны", result.stdout)
         self.assertRegex(result.stdout, rf"ввезено {ROUTES_COUNT}(?!\d)")
 
@@ -834,7 +835,7 @@ class InstallScriptTests(unittest.TestCase):
         self.install(archive)
         self.edit_installed_route()
         self.install(archive, env=self.env(LISTIK_ROUTES_REIMPORT="yes"))
-        self.assertEqual(self.installed_route_title(), "low")
+        self.assertEqual(self.installed_route_title(), "lp-low")
 
     def test_routes_reimport_no_keeps(self) -> None:
         archive = self.make_archive(VERSION)
@@ -902,7 +903,10 @@ class InstallScriptTests(unittest.TestCase):
         """Скрыты ровно маршруты, у которых `plugin` в `unselected`, остальные видимы
         (listik-z8fy, listik-d9rj).
 
-        `stdout` простого режима — ещё и сверка строки «скрыты маршруты: …» с базой."""
+        После перехода на v2 (listik-906l) в поставке только `lp-*`, а установщик прячет
+        маршруты плагинов pipeline-full|cc|claude: прятать бывает нечего, `expected` пуст.
+        `stdout` простого режима — ещё и сверка строки «скрыты маршруты: …» с базой:
+        при пустом `expected` строки нет."""
         conn = sqlite3.connect(self.installed_home / "listik.db")
         try:
             rows = conn.execute("SELECT key, visible, plugin FROM routes").fetchall()
@@ -910,8 +914,6 @@ class InstallScriptTests(unittest.TestCase):
             conn.close()
         hidden = {k for k, v, _ in rows if not v}
         expected = {k for k, _, p in rows if p in unselected}
-        if unselected:
-            self.assertTrue(expected, rows)
         self.assertEqual(hidden, expected, rows)
         if stdout is not None:
             line = next((ln for ln in stdout.splitlines() if "скрыты маршруты: " in ln), "")
@@ -954,20 +956,21 @@ class InstallScriptTests(unittest.TestCase):
                                     "codex@listik", "opencode@listik",
                                     "second-opinion@listik"])
         visibility = self.route_visibility()
-        self.assertTrue(any(k.startswith("cc-") for k in visibility), visibility)
-        # pipeline-full не выбран (нет grok/devin/pi) — скрыт только он, cc-* видимы.
+        self.assertTrue(any(k.startswith("lp-") for k in visibility), visibility)
+        # pipeline-full не выбран (нет grok/devin/pi), но его маршрутов в поставке нет — lp-* видимы.
         self.assert_hidden_plugins({"pipeline-full"}, result.stdout)
 
-    def test_without_claude_model_hides_pipeline_routes(self) -> None:
+    def test_without_claude_model_keeps_lp_routes_visible(self) -> None:
         env, log = self.fake_env()
         result = self.install_plugins("--models", "openai", "--harnesses", "claude,codex",
                                       env=env)
         self.assertEqual(self.installed_plugins(log), {"listik", "codex", "second-opinion"})
         visibility = self.route_visibility()
         self.assertEqual(len(visibility), ROUTES_COUNT)
-        self.assertFalse(any(visibility.values()), visibility)
-        self.assertIn("скрыты маршруты: ", result.stdout)
-        self.assertIn("full-low", result.stdout)
+        self.assertEqual(ROUTES_COUNT, 6)
+        self.assertTrue(all(k.startswith("lp-") for k in visibility), visibility)
+        self.assertTrue(all(visibility.values()), visibility)
+        self.assertNotIn("скрыты маршруты", result.stdout)
         self.assertNotIn("plugin install pipeline-", self.log_text(log))
 
     def test_without_claude_harness_installs_nothing(self) -> None:
@@ -976,7 +979,9 @@ class InstallScriptTests(unittest.TestCase):
         self.assertNotIn("claude plugin", self.log_text(log))
         self.assertIn("плагины: пропущен (не выбран claude)", result.stdout)
         self.assertIn("grok: плагина в marketplace listik нет, ставится отдельно", result.stdout)
-        self.assertFalse(any(self.route_visibility().values()))
+        visibility = self.route_visibility()
+        self.assertTrue(all(k.startswith("lp-") for k in visibility), visibility)
+        self.assertTrue(all(visibility.values()), visibility)
 
     def test_only_listik_when_claude_harness_alone(self) -> None:
         env, log = self.fake_env()
@@ -1038,7 +1043,7 @@ class InstallScriptTests(unittest.TestCase):
         self.install_plugins("--models", "openai", "--harnesses", "claude", env=env)
         conn = sqlite3.connect(self.installed_home / "listik.db")
         with conn:
-            cur = conn.execute("UPDATE routes SET visible = 1 WHERE key = 'full-low'")
+            cur = conn.execute("UPDATE routes SET visible = 1 WHERE key = 'lp-low'")
             self.assertEqual(cur.rowcount, 1)
         conn.close()
         before = self.route_visibility()
@@ -1171,7 +1176,16 @@ class InstallScriptTests(unittest.TestCase):
                 cur = conn.execute(
                     f"INSERT INTO routes (key, plugin, {', '.join(cols)}) "
                     f"SELECT 'my-flow', NULL, {', '.join(cols)} FROM routes "
-                    "WHERE key = 'full-low'")
+                    "WHERE key = 'lp-low'")
+                self.assertEqual(cur.rowcount, 1)
+                # Строка старого плагина (как после миграции схемы 16): upsert_route её
+                # не примет, поэтому — прямым SQL. Вторая установка идёт без перезаписи
+                # маршрутов, строка доживает и её прячет установщик.
+                rest = [c for c in cols if c not in ("kind", "visible")]
+                cur = conn.execute(
+                    f"INSERT INTO routes (key, plugin, kind, visible, {', '.join(rest)}) "
+                    f"SELECT 'full-low', 'pipeline-full', 'pipeline', 1, {', '.join(rest)} "
+                    "FROM routes WHERE key = 'lp-low'")
                 self.assertEqual(cur.rowcount, 1)
             conn.row_factory = sqlite3.Row
             routes_store.create_route(conn, key="my-swarm", kind="swarm", title="рой",
@@ -1181,9 +1195,14 @@ class InstallScriptTests(unittest.TestCase):
         result = self.install_plugins("--models", "openai", "--harnesses", "claude,codex",
                                       env=env)
         visibility = self.route_visibility()
+        self.assertEqual(visibility["full-low"], 0)
         self.assertEqual(visibility["my-flow"], 1)
         self.assertEqual(visibility["my-swarm"], 1)
+        lp = {k: v for k, v in visibility.items() if k.startswith("lp-")}
+        self.assertEqual(len(lp), ROUTES_COUNT)
+        self.assertTrue(all(lp.values()), lp)
         line = next(ln for ln in result.stdout.splitlines() if "скрыты маршруты: " in ln)
+        self.assertIn("full-low", line)
         self.assertNotIn("my-flow", line)
         self.assertNotIn("my-swarm", line)
         self.assert_hidden_plugins({"pipeline-full", "pipeline-cc", "pipeline-claude"},
@@ -1215,8 +1234,7 @@ class InstallScriptTests(unittest.TestCase):
             with self.subTest(**extra):
                 env, log = self.fake_env(**extra)
                 log.write_text("", encoding="utf-8")
-                # reimport возвращает visible из routes.json — скрытое прошлым случаем
-                # не мешает проверить строку «скрыты маршруты» в этом.
+                # После reimport в базе только lp-*: прятать установщику нечего.
                 result = self.install_plugins("--models", "claude", "--harnesses", "claude",
                                               "--routes-reimport", "yes", env=env)
                 self.assertEqual(result.returncode, 0)
@@ -1224,7 +1242,7 @@ class InstallScriptTests(unittest.TestCase):
                 self.assertIn("не удалось проверить старые", result.stderr)
                 self.assertIn("плагины: ok (listik, pipeline-core, pipeline-claude)",
                               result.stdout)
-                self.assertIn("скрыты маршруты: ", result.stdout)
+                self.assertNotIn("скрыты маршруты", result.stdout)
 
     def test_old_plugin_uninstall_fails(self) -> None:
         env, log = self.fake_env(FAKE_CLAUDE_PLUGIN_LIST=self.OLD_PLUGINS_USER,
@@ -1378,7 +1396,8 @@ class InstallScriptTests(unittest.TestCase):
         self.assertIn("нейронки: —", out)
         self.assertIn("харнессы: claude", out)
         self.assertEqual(self.installed_plugins(log), {"listik"})
-        self.assertFalse(any(self.route_visibility().values()))
+        # Маршруты поставки — lp-*, установщик их не прячет (listik-906l).
+        self.assertTrue(all(self.route_visibility().values()))
 
     @unittest.skipUnless(shutil.which("stty"), "нужен stty")
     def test_pty_eof_means_all(self) -> None:

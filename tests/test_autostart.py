@@ -1,7 +1,7 @@
 """Тесты автостарта задач (шаг 09, порция b; чек-лист `step-09.check-b.md`).
 
 Настоящие харнессы не запускаются: команда маршрута — `[sys.executable, ...]`, а сам
-`routes.json` лежит во временном каталоге и ввозится во временную базу.
+маршруты кладутся прямо во временную базу.
 Настоящий `~/.config/listik/` тесты не трогают.
 Логи автостарта уходят во временный каталог (`log_dir` для `launcher.start`, подмена
 `paths.LOGS_DIR` для запусков через сервер), поэтому в дереве репозитория после прогона
@@ -57,7 +57,7 @@ with open(sys.argv[1], "w", encoding="utf-8") as fh:
 
 def pipeline_record(key="low-pipeline", command=None, visible=True) -> dict:
     record = {"key": key, "kind": "pipeline", "title": "Демо", "hint": "", "visible": visible,
-              "roles": {"impl": {"provider": "claude", "label": "Opus", "title": "Opus"}}}
+              "roles": {}}
     if command is not None:
         record["command"] = command
     return record
@@ -104,10 +104,10 @@ class AutostartTestCase(TempDbTestCase):
         self.notify.append((kind, payload))
 
     def set_routes(self, *records):
-        source = self.tmp_path / "routes-source.json"
-        source.write_text(json.dumps({"version": 1, "routes": list(records)},
-                                     ensure_ascii=False), encoding="utf-8")
-        return routes_store.import_file(self.conn, source, replace=True)
+        self.conn.execute("DELETE FROM routes")
+        self.conn.commit()
+        for position, record in enumerate(records):
+            routes_store.upsert_route(self.conn, record, position=position)
 
     def break_routes(self):
         patch = mock.patch.object(routes_store, "list_routes",
@@ -542,27 +542,23 @@ class PluginLaunchTests(AutostartTestCase):
         self.set_routes(record)
         return self.make_task(project="proj", autostart=True, route=record["key"])
 
-    def test_sample_full_high_argv_names_skill(self) -> None:
-        shipped = json.loads((REPO_DIR / "routes.json").read_text(encoding="utf-8"))
-        record = next(r for r in shipped["routes"] if r["key"] == "full-high")
-        self.assertEqual(record["plugin"], "pipeline-full")
-        task = self.prepare(record)
-        real_popen = subprocess.Popen
-        seen: list[list[str]] = []
-
-        def fake_popen(argv, **kwargs):
-            seen.append(list(argv))
-            return real_popen([sys.executable, "-c", "pass"], **kwargs)
-
-        with mock.patch.object(launcher_mod.subprocess, "Popen", side_effect=fake_popen):
-            self.assertIsNone(self.launch(task["id"]))
-        self.join_tracker(task["id"])
-        self.assertEqual(len(seen), 1)
-        prompt = seen[0][-1]
-        self.assertIn("Запусти скил /pipeline-full:high ", prompt)
-        for argument in seen[0]:
-            self.assertNotIn("{plugin}", argument)
-            self.assertNotIn("{skill}", argument)
+    def test_shipped_lp_high_has_no_command_and_refuses(self) -> None:
+        # Маршруты lp-* ввозятся из routes.json без command: автозапуска у них нет.
+        # skill_info считает путь SKILL.md от ROOT_DIR: на время ввоза — корень репозитория.
+        with mock.patch.object(paths, "ROOT_DIR", REPO_DIR):
+            routes_store.import_file(self.conn, REPO_DIR / "routes.json", replace=True)
+        proj_dir = self.tmp_path / "proj"
+        proj_dir.mkdir(exist_ok=True)
+        self.make_project("proj", path=proj_dir)
+        task = self.make_task(project="proj", autostart=True, route="lp-high")
+        with mock.patch.object(launcher_mod.subprocess, "Popen") as popen, \
+                contextlib.redirect_stderr(io.StringIO()):
+            reason = self.launch(task["id"], notify=self.notify_cb)
+        popen.assert_not_called()
+        self.assertEqual(reason, "у маршрута lp-high нет command в базе")
+        row = self.row(task["id"])
+        self.assertEqual(row["launch_error"], reason)
+        self.assertEqual(row["needs_owner"], 1)
 
     def test_pipeline_without_plugin_referring_placeholders_refuses(self) -> None:
         record = pipeline_record("my-flow", command=["claude", "-p", "Запусти скил /{plugin}:{skill}"])

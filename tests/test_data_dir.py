@@ -67,16 +67,12 @@ def fake_popen(argv, **kwargs):
 
 
 launcher.subprocess.Popen = fake_popen
-source = tmp / "routes-source.json"
-source.write_text(json.dumps({"version": 1, "routes": [
-    {"key": "probe", "kind": "pipeline", "title": "проба", "hint": "", "visible": True,
-     "roles": {"impl": {"provider": "claude", "label": "x", "title": "x"}},
-     "command": ["/bin/true"]}]}, ensure_ascii=False),
-    encoding="utf-8")
 work = tmp / "work"
 work.mkdir(exist_ok=True)
 conn = db.init(paths.DB_PATH)
-routes_store.import_file(conn, source)
+routes_store.upsert_route(conn, {"key": "probe", "kind": "pipeline", "title": "проба",
+                                 "hint": "", "visible": True, "roles": {},
+                                 "command": ["/bin/true"]})
 store.upsert_project(conn, "probe", title="probe", path=str(work))
 task = store.create_task(conn, title="проба", project="probe", route="probe")
 launcher.start(conn, task["id"])

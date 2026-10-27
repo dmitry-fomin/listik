@@ -3222,7 +3222,7 @@ def build_parser() -> argparse.ArgumentParser:
 
     _set_help = ("изменить поля: set <id> status=in_progress priority=1, "
                  "worktree=main — работа в основной ветке без дерева, "
-                 "route=full-low — маршрут, пока задача не начата, "
+                 "route=lp-low — маршрут, пока задача не начата, "
                  "write_scope=listik/store.py,docs/API.md — область правки "
                  "(пути от корня проекта через запятую; пусто — очистить)")
     sp = add("set", cmd_set, help=_set_help, description=_set_help)

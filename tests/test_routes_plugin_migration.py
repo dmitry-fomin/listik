@@ -11,9 +11,7 @@ Alembic: старую базу строит сам alembic (`upgrade 0013_drop_r
 """
 from __future__ import annotations
 
-import contextlib
 import importlib.util
-import io
 import json
 import os
 import pathlib
@@ -184,8 +182,10 @@ class FreshDatabaseTests(Schema15Base):
                          {(table, column) for table, column, _ in db_mod.MIGRATIONS})
 
 
-#: Пресеты, снятые после переименования (09.10.2026): записи в базе остаются без скила.
+#: Пресеты, снятые после переименования: записи в базе остаются без скила.
 #: Снятый пресет — переименованный ключ, которого уже нет в поставке `routes.json`.
+#: После перехода на формат v2 (listik-906l) в поставке только `lp-*`, поэтому сюда
+#: попадают все 16 новых ключей миграции — это ожидаемо.
 SHIPPED_KEYS = {r["key"] for r in json.loads(
     (REPO_DIR / "routes.json").read_text(encoding="utf-8"))["routes"]}
 REMOVED_PRESETS = tuple(key for key in NEW_KEYS if key not in SHIPPED_KEYS)
@@ -263,21 +263,19 @@ class PluginMigrationTests(Schema15Base):
         x = conn.execute("SELECT labels FROM task_fts WHERE task_id = 't-x'").fetchone()[0]
         self.assertEqual(json.loads(x), ["process:high-pipeline-x"])
 
-    def test_no_renamed_route_is_skill_missing(self) -> None:
+    def test_renamed_routes_are_skill_missing_after_v2(self) -> None:
+        # Плагины pipeline-full|cc|claude больше не плагины конвейера: переименованные
+        # миграцией строки остаются в базе, но скила у них нет — скрыты до
+        # `listik routes --reimport`.
         conn = self.init()
         data = routes_store.routes_response(conn)
         records = {r["key"]: r for r in data["routes"]}
+        self.assertEqual(sorted(REMOVED_PRESETS), NEW_KEYS)
+        self.assertEqual(len(NEW_KEYS), 16)
         for key in NEW_KEYS:
-            if key in REMOVED_PRESETS:
-                continue
             with self.subTest(key=key):
-                self.assertNotIn("skill_missing", records[key])
-                self.assertIsNotNone(records[key]["skill_path"])
-        # Снятые пресеты (sol, opus, nano у pipeline-cc, cross у pipeline-full): переименованные записи остаются,
-        # но без скила — скрыты. Список выводится из поставки и имена здесь не зашиты.
-        self.assertEqual(len(REMOVED_PRESETS), 4)
-        for key in REMOVED_PRESETS:
-            self.assertTrue(records[key]["skill_missing"], key)
+                self.assertIs(records[key]["skill_missing"], True)
+                self.assertIsNone(records[key]["skill_path"])
         self.assertTrue(records["my-flow"]["skill_missing"])
 
     def test_second_init_is_noop(self) -> None:
@@ -343,19 +341,6 @@ class CornerCaseTests(Schema15Base):
         row = conn.execute("SELECT kind, plugin FROM routes WHERE key = 'low-pipeline'").fetchone()
         self.assertEqual(tuple(row), ("swarm", None))
         self.assertEqual(self.task(conn, "t-low")[:2], ("low-pipeline", ["process:low-pipeline"]))
-
-    def test_route_additions_bring_cc_routes_with_plugin(self) -> None:
-        cc = {"cc-xhigh-pipeline", "cc-high-pipeline", "cc-medium-pipeline", "cc-low-pipeline",
-              "cc-xlow-pipeline"}
-        make_schema15(self.path, routes=route_rows(skip=cc), additions=2)
-        conn = self.init()
-        with contextlib.redirect_stderr(io.StringIO()):
-            result = routes_store.ensure_imported(conn)
-        self.assertNotIn("error", result)
-        rows = {row["key"]: row["plugin"] for row in conn.execute("SELECT key, plugin FROM routes")}
-        for key in ("cc-xhigh", "cc-high", "cc-medium", "cc-low", "cc-xlow"):
-            with self.subTest(key=key):
-                self.assertEqual(rows.get(key), "pipeline-cc")
 
 
 def load_revision():

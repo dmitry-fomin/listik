@@ -188,8 +188,7 @@ class SwarmE2ECase(AutostartTestCase, FencingHttpCase):
             # «Чужой» маршрут режима скила — прежняя запись `fake-low` под новым ключом.
             {"key": "skill-low", "kind": "pipeline", "title": "skill-low", "hint": "",
              "visible": True, "icon": "low",
-             "roles": {"impl": {"provider": "claude", "label": "Opus", "title": "Opus"}},
-             "command": worker_argv},
+             "roles": {}, "command": worker_argv},
         )
 
         self.swarm_log_dir = self.tmp_path / "swarm-logs"

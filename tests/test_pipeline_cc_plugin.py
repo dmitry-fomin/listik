@@ -16,9 +16,6 @@ import pathlib
 import re
 import unittest
 
-from listik import launcher
-from listik import skills as skills_mod
-
 REPO_DIR = pathlib.Path(__file__).resolve().parents[1]
 PLUGIN_DIR = REPO_DIR / "plugins" / "pipeline-cc"
 CORE_PLUGIN_DIR = REPO_DIR / "plugins" / "pipeline-core"
@@ -674,89 +671,6 @@ class ClaudeCodexAgentTests(unittest.TestCase):
             with self.subTest(case=case):
                 self.assertNotEqual(mutated, text, "изменение не применилось")
                 self.assertNotEqual(_agent_problems(filename, mutated), [])
-
-
-ROUTES_JSON = REPO_DIR / "routes.json"
-ROUTE_PREFIX = "cc-"
-
-
-def _claude(label: str) -> dict:
-    return {"provider": "claude", "label": label, "title": "Opus 5.5"}
-
-
-def _codex(label: str, title: str, model: str, effort: str) -> dict:
-    return {"provider": "openai", "label": label, "title": title,
-            "skill": "codex:codex-delegate", "params": {"model": model, "effort": effort}}
-
-
-_ASTRA_LENS_HIGH = _codex("линзы", "Haiku 5.5 · max · 3 линзы → GPT-6 Astra · high",
-                          "gpt-6-astra", "high")
-_ASTRA_LENS_MEDIUM = _codex("линзы", "Haiku 5.5 · max · 3 линзы → GPT-6 Astra · medium",
-                            "gpt-6-astra", "medium")
-_ASTRA_MEDIUM = _codex("medium", "GPT-6 Astra", "gpt-6-astra", "medium")
-
-#: Маршруты `cc-*` в routes.json: ключ → (icon, title, hint, roles) — по таблицам ТЗ порции d.
-CC_ROUTES: dict[str, tuple[str, str, str, dict]] = {
-    "cc-xhigh": ("xhigh", "cc xhigh", "Claude + Codex · от 50 мин на задачу", {
-        "spec": _claude("xhigh"),
-        "critic": {"provider": "claude", "label": "S+O+Sol",
-                   "title": "Sonnet 5.5 · xhigh + Opus 5.5 · high + GPT-6.1 Sol · high"},
-        "impl": _claude("xhigh"), "judge": _ASTRA_LENS_HIGH}),
-    "cc-high": ("high", "cc high", "Claude + Codex · от 40 мин на задачу", {
-        "spec": _claude("high"),
-        "critic": {"provider": "claude", "label": "S+O+Sol",
-                   "title": "Sonnet 5.5 · high + Opus 5.5 · medium + GPT-6.1 Sol · high"},
-        "impl": _claude("high"), "judge": _ASTRA_LENS_HIGH}),
-    "cc-medium": ("medium", "cc medium", "Claude + Codex · 30 мин на задачу", {
-        "spec": _claude("medium"),
-        "critic": {"provider": "claude", "label": "S+Sol",
-                   "title": "Sonnet 5.5 · medium + GPT-6.1 Sol · medium"},
-        "impl": _claude("medium"), "judge": _ASTRA_LENS_HIGH}),
-    "cc-low": ("low", "cc low", "Claude + Codex · на 20 мин, с ТЗ и критикой", {
-        "spec": _claude("low"),
-        "critic": _codex("Sol", "GPT-6.1 Sol · medium", "gpt-6.1-sol", "medium"),
-        "impl": _claude("low"), "judge": _ASTRA_LENS_MEDIUM}),
-    "cc-xlow": ("xlow", "cc xlow", "Claude + Codex · без ТЗ и критики · не для эпиков", {
-        "impl": _claude("medium"), "judge": _ASTRA_MEDIUM}),
-}
-
-
-def _cc_records() -> dict[str, dict]:
-    return {r["key"]: r for r in _read_json(ROUTES_JSON)["routes"]
-            if r["key"].startswith(ROUTE_PREFIX)}
-
-
-class ClaudeCodexRoutesTests(unittest.TestCase):
-    def test_route_keys_match_skill_dirs(self) -> None:
-        self.assertEqual(set(_cc_records()), {ROUTE_PREFIX + name for name in _skill_dirs()})
-        self.assertEqual(set(CC_ROUTES), set(_cc_records()))
-
-    def test_roles_icon_title_hint(self) -> None:
-        for key, record in _cc_records().items():
-            icon, title, hint, roles = CC_ROUTES[key]
-            with self.subTest(route=key):
-                self.assertEqual(record["kind"], "pipeline")
-                self.assertIs(record["visible"], True)
-                self.assertEqual((record["icon"], record["title"], record["hint"]),
-                                 (icon, title, hint))
-                self.assertEqual(record["roles"], roles)
-                for cell in record["roles"].values():
-                    self.assertIn(cell["provider"], ("claude", "openai"))
-                    if "skill" in cell:
-                        self.assertEqual(cell["skill"], "codex:codex-delegate")
-                impl = record["roles"]["impl"]
-                self.assertEqual(impl["provider"], "claude")
-                self.assertNotIn("skill", impl)
-
-    def test_command_calls_pipeline_cc_skill(self) -> None:
-        for key, record in _cc_records().items():
-            with self.subTest(route=key):
-                self.assertEqual(record["plugin"], PLUGIN_NAME)
-                prompt = launcher._substitute(record["command"][-1], {
-                    "plugin": record["plugin"],
-                    "skill": skills_mod.skill_of(record["plugin"], key)})
-                self.assertIn(f"/{PLUGIN_NAME}:{key[len(ROUTE_PREFIX):]}", prompt)
-                self.assertNotIn("/feature-pipeline:", prompt)
 
 
 if __name__ == "__main__":

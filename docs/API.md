@@ -861,7 +861,7 @@ dispatch_id IS ?` — именно `IS`, чтобы обслуживать и з
 `pi:pi-delegate` и `opencode:opencode-delegate`: `kind=exec`, `argv`/`prompt` — `null`,
 `enabled: false` (в селекторах роя не предлагаются — команды нет), актора `agent:pi`/
 `agent:opencode` и алиаса не получают. Каналы ставит сам `INSERT` сида: у `pi` — `glm` =
-`openrouter/z-ai/glm-5.3-flash` (по умолчанию) и `deepseek` = `deepseek/deepseek-flash`, у
+`glm-opendesign/glm-5.3-flash` (по умолчанию) и `deepseek` = `deepseek-opendesign/deepseek-v4.1-flash`, у
 `opencode` — `glm` = `b.ai/glm-5.3-flash` (по умолчанию) и `deepseek` = `b.ai/deepseek-v4.1-flash`.
 На существующих базах, где эти ключи завёл человек до обновления, разовая миграция `seed()`
 (meta-флаг `seed_bridge_channels`) ставит каналы сида, только если строка есть, `kind='exec'` и

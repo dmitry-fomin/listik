@@ -1,0 +1,316 @@
+<!DOCTYPE html>
+<html lang="ru">
+<head>
+<meta charset="utf-8">
+<title>ИМЯ СЕРВИСА — карта сервиса</title>
+<style>
+  body { margin: 0; padding: 16px 20px 40px; font: 14px/1.45 system-ui, -apple-system, 'Segoe UI', sans-serif; color: #222; background: #fff; }
+  .bar { display: flex; flex-wrap: wrap; align-items: center; gap: 8px 16px; max-width: 1440px; margin-bottom: 6px; }
+  .bar button { font: inherit; padding: 5px 12px; border: 1px solid #ccc; border-radius: 6px; background: #fff; cursor: pointer; }
+  .bar button.on { background: #FFF4DE; border-color: #D99A1E; font-weight: 600; }
+  .bar label { cursor: pointer; margin-left: auto; }
+  .hint { max-width: 1440px; margin: 0 0 8px; color: #555; min-height: 1.45em; }
+  svg { display: block; width: 100%; max-width: 1440px; height: auto; }
+  .node { cursor: pointer; }
+  .node:hover rect { stroke-width: 3; }
+  .node.sel rect { stroke: #111; stroke-width: 3; }
+  .dim { opacity: .18; }
+  body.data-on .s { display: none; }
+  body.data-on .data { display: inline; }
+  body.data-on [data-pii] rect { stroke: #C0392B; stroke-width: 2.5; }
+  h2 { font-size: 14px; margin: 18px 0 6px; }
+  .chips { display: flex; flex-wrap: wrap; align-items: center; gap: 4px; max-width: 1440px; margin-bottom: 6px; }
+  .ent { min-width: 230px; font-size: 13px; color: #444; }
+  .chip { padding: 3px 10px; border: 1px solid #ccc; border-radius: 12px; background: #fafafa; cursor: pointer; font-size: 13px; }
+  .chip.on { background: #111; border-color: #111; color: #fff; }
+  .chip.dim { opacity: .35; }
+  .sep { color: #999; }
+  .legend { display: none; max-width: 1440px; }
+  .legend ul { margin: 0; padding-left: 20px; }
+  body.data-on .legend { display: block; }
+  #pop { position: absolute; z-index: 10; width: 380px; max-width: calc(100vw - 32px); box-sizing: border-box; padding: 12px 16px; background: #fff; border: 1px solid #bbb; border-radius: 8px; box-shadow: 0 6px 24px rgba(0,0,0,.15); }
+  #pop h3 { margin: 0 24px 2px 0; font-size: 15px; }
+  #pop .who { margin: 0 0 6px; color: #666; font-size: 13px; }
+  #pop ul { margin: 0 0 8px; padding-left: 18px; }
+  #pop li { margin-bottom: 3px; }
+  #pop p { margin: 4px 0 0; font-size: 13px; }
+  #pop .x { position: absolute; top: 6px; right: 8px; border: 0; background: none; font-size: 20px; line-height: 1; cursor: pointer; color: #666; }
+  code { font-size: 12px; background: #f3f3f3; padding: 0 3px; border-radius: 3px; }
+</style>
+</head>
+<body>
+
+<!-- Кнопки сценариев: data-sc = ключ сценария; «all» — всегда первой. Ключи совпадают с data-in и HINTS. -->
+<div class="bar">
+  <button data-sc="all" class="on">Вся схема</button>
+  <button data-sc="main">Основной</button>
+  <button data-sc="alt">Другой сценарий</button>
+  <button data-sc="fail">Если сломается</button>
+  <label><input type="checkbox" id="data"> Куда уходят данные</label>
+</div>
+<p class="hint" id="hint">Что делает сервис и для кого → что на выходе (как HINTS.all). Нажмите на блок или статус — появится подсказка.</p>
+
+<!-- SVG ниже — источник для docs/specs/ИМЯ-flow.svg (картинка в ТЗ). После правки схемы обновить её:
+     sed -n '/^<svg/,/^<\/svg>/p' docs/ИМЯ-map.html > docs/specs/ИМЯ-flow.svg -->
+<svg xmlns="http://www.w3.org/2000/svg" width="1440" height="430" viewBox="0 0 1440 430" font-family="system-ui, -apple-system, 'Segoe UI', sans-serif">
+  <defs>
+    <marker id="a" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse">
+      <path d="M0,0 L10,5 L0,10 z" fill="#555"/>
+    </marker>
+    <style>
+      .lane-label { font-size: 13px; font-weight: 600; fill: #444; }
+      .t { font-size: 13px; font-weight: 700; fill: #222; text-anchor: middle; }
+      .s, .data { font-size: 12px; fill: #333; text-anchor: middle; }
+      .data { display: none; fill: #A3271B; }
+      .l { font-size: 11px; fill: #666; }
+      .arr { fill: none; stroke: #555; stroke-width: 1.5; marker-end: url(#a); }
+      .dash { stroke-dasharray: 5 4; }
+      .human { fill: #FFF4DE; stroke: #D99A1E; stroke-width: 2; }
+      .llm { fill: #E8F0FE; stroke: #4A78C2; stroke-width: 1.5; }
+      .worker { fill: #EEF4EA; stroke: #5E8C4A; stroke-width: 1.5; }
+      .bot { fill: #E6F5FA; stroke: #2C8FB5; stroke-width: 1.5; }
+      .note { fill: #fff; stroke: #999; stroke-width: 1.2; stroke-dasharray: 5 4; }
+      rect.end { fill: #fff; stroke: #555; stroke-width: 2; }
+      .et { font-size: 12px; font-weight: 700; fill: #222; text-anchor: middle; }
+      path.msg, .fold { fill: #fff; stroke: #555; stroke-width: 1.2; }
+      .fold { fill: none; }
+      .m { font-size: 12px; fill: #333; text-anchor: middle; }
+      .q { cursor: help; }
+      .q circle { fill: #fff; stroke: #555; stroke-width: 1.2; }
+      .q text { font-size: 11px; font-weight: 700; fill: #444; text-anchor: middle; }
+      [data-off] rect, rect[data-off] { fill: #F4F4F4; stroke: #B5B5B5; stroke-dasharray: none; }
+      [data-off] text { fill: #888; }
+    </style>
+  </defs>
+
+  <text x="20" y="32" font-size="18" font-weight="700" fill="#222">ИМЯ СЕРВИСА — от чего до чего</text>
+
+  <!-- дорожки: по одной на участника, высота 110, фон чередуется; подпись — две строки по ≤ 14 знаков -->
+  <rect x="0" y="50" width="1440" height="110" fill="#FAFAFA"/>
+  <rect x="0" y="160" width="1440" height="110" fill="#FFFFFF"/>
+  <rect x="0" y="270" width="1440" height="100" fill="#FAFAFA"/>
+  <line x1="120" y1="50" x2="120" y2="370" stroke="#ddd"/>
+  <text class="lane-label" x="14" y="100">Люди</text><text class="lane-label" x="14" y="117">(роли)</text>
+  <text class="lane-label" x="14" y="210">Сервер</text><text class="lane-label" x="14" y="227">и LLM</text>
+  <text class="lane-label" x="14" y="320">Внешняя</text><text class="lane-label" x="14" y="337">система</text>
+  <!-- «?» у подписи дорожки — только если из подписи неясно, кто это нам и что делает; подсказка — в <title>, по наведению -->
+  <g class="q"><circle cx="100" cy="316" r="7"/><text x="100" y="320">?</text>
+    <title>Кто это нам (партнёр, конкурент, наша же система) и что она делает по нашей команде.</title></g>
+
+  <!-- стрелки: только абсолютные M/H/V; подпись — .l в 6–8 px от линии; data-in — в каких сценариях видна -->
+  <g data-in="main alt">
+    <path class="arr" d="M220,137 V181"/>
+    <text class="l" x="226" y="165">условие перехода</text>
+  </g>
+  <g data-in="main">
+    <path class="arr" d="M310,215 H338"/>
+  </g>
+  <g data-in="alt">
+    <path class="arr dash" d="M220,247 V325 H548"/>
+  </g>
+  <g data-in="main">
+    <path class="arr" d="M520,215 H548"/>
+  </g>
+  <g data-in="alt">
+    <path class="arr" d="M730,319 H758"/>
+  </g>
+  <g data-in="fail">
+    <path class="arr" d="M730,348 H968"/>
+    <text class="l" x="800" y="362">не ответила</text>
+  </g>
+
+  <!-- посылка: что передаётся по стрелке, когда в подпись .l не влезает; ставится поверх линии стрелки.
+       Форма — лист с загнутым углом, 150×40; одна-две строки .m; подробности — в <title> -->
+  <g class="msg" data-in="alt">
+    <path class="msg" d="M300,305 H440 L450,315 V345 H300 V305"/>
+    <path class="fold" d="M440,305 V315 H450"/>
+    <text class="m" x="375" y="322">что передаётся:</text>
+    <text class="m" x="375" y="337">файл, список, …</text>
+    <title>Подробно: какие поля, в каком формате, как часто.</title>
+  </g>
+
+  <!-- итог пути: чем кончается путь, словами; один на исход, одинаковые по смыслу — объединить -->
+  <g class="end" data-in="main">
+    <rect class="end" x="550" y="197" width="150" height="36" rx="18"/>
+    <text class="et" x="625" y="219">Итог: заявка готова</text>
+  </g>
+  <g class="end" data-in="alt">
+    <rect class="end" x="760" y="301" width="150" height="36" rx="18"/>
+    <text class="et" x="835" y="323">Итог: …</text>
+  </g>
+
+  <!-- блоки: 180×64, сетка x = 130 + 210·k, y = верх дорожки + 23; .t — номер и название, две .s и две .data -->
+  <g class="node" data-id="s1" data-in="main alt">
+    <rect class="human" x="130" y="73" width="180" height="64" rx="8"/>
+    <text class="t" x="220" y="96">1. Решение человека</text>
+    <text class="s" x="220" y="113">что делает,</text>
+    <text class="s" x="220" y="128">в двух строках</text>
+    <text class="data" x="220" y="113">какие данные видит</text>
+    <text class="data" x="220" y="128">и куда они идут</text>
+  </g>
+
+  <g class="node" data-id="s2" data-in="main alt">
+    <rect class="llm" x="130" y="183" width="180" height="64" rx="8"/>
+    <text class="t" x="220" y="206">2. Обработка</text>
+    <text class="s" x="220" y="223">что считает сервер</text>
+    <text class="s" x="220" y="238">или модель</text>
+    <text class="data" x="220" y="223">в LLM — только …,</text>
+    <text class="data" x="220" y="238">без контактов</text>
+  </g>
+
+  <g class="node" data-id="s3" data-in="main">
+    <rect class="llm" x="340" y="183" width="180" height="64" rx="8"/>
+    <text class="t" x="430" y="206">3. Следующий шаг</text>
+    <text class="s" x="430" y="223">…</text>
+    <text class="s" x="430" y="238">…</text>
+    <text class="data" x="430" y="223">…</text>
+    <text class="data" x="430" y="238">…</text>
+  </g>
+
+  <g class="node" data-id="s4" data-in="alt fail" data-pii="">
+    <rect class="worker" x="550" y="293" width="180" height="64" rx="8"/>
+    <text class="t" x="640" y="316">4. Действие вовне</text>
+    <text class="s" x="640" y="333">…</text>
+    <text class="s" x="640" y="348">…</text>
+    <text class="data" x="640" y="333">ПДн: откуда → куда</text>
+    <text class="data" x="640" y="348">в логи — никогда</text>
+  </g>
+
+  <!-- сбой: .note в сценарии fail — последствие словами, что сохраняется и кто узнаёт -->
+  <g class="node" data-id="f4" data-in="fail">
+    <rect class="note" x="970" y="286" width="210" height="78" rx="8"/>
+    <text class="s" x="1075" y="310">Внешняя система не ответила:</text>
+    <text class="s" x="1075" y="326">3 повтора, потом стоп;</text>
+    <text class="s" x="1075" y="342">собранное сохраняется,</text>
+    <text class="s" x="1075" y="358">админу — сообщение</text>
+  </g>
+
+  <!-- легенда: ровно то, что есть на схеме (check.mjs сверяет). Если на схеме есть отключённый блок и ₽ — добавить:
+  <rect class="human" data-off="" x="…" y="395" width="22" height="14" rx="3"/>
+  <text class="l" x="…" y="406">выключено или в плане</text>
+  <text class="l" x="…" y="406">₽ — шаг тратит деньги</text> -->
+  <rect class="human" x="130" y="395" width="22" height="14" rx="3"/>
+  <text class="l" x="160" y="406">решение человека</text>
+  <rect class="llm" x="290" y="395" width="22" height="14" rx="3"/>
+  <text class="l" x="320" y="406">сервер и LLM — без контактов</text>
+  <rect class="worker" x="530" y="395" width="22" height="14" rx="3"/>
+  <text class="l" x="560" y="406">действие во внешней системе</text>
+  <path class="arr dash" d="M760,402 H800"/>
+  <text class="l" x="810" y="406">другой сценарий</text>
+  <rect class="note" x="930" y="395" width="22" height="14" rx="3"/>
+  <text class="l" x="960" y="406">сбой и что будет</text>
+  <rect class="end" x="1060" y="395" width="22" height="14" rx="7"/>
+  <text class="l" x="1090" y="406">итог пути</text>
+  <path class="msg" d="M1150,395 H1166 L1172,401 V409 H1150 V395"/>
+  <text class="l" x="1180" y="406">что передаётся</text>
+</svg>
+
+<h2>Статусы — нажмите, чтобы увидеть, где ставятся</h2>
+<div id="chips"></div>
+
+<div class="legend">
+<h2>Куда уходят данные (§N)</h2>
+<ul>
+  <li><b>Категория данных</b>: откуда → где хранится → куда уходит и куда никогда. Красная рамка — блоки с личными данными.</li>
+</ul>
+</div>
+
+<div id="pop" hidden></div>
+
+<script>
+// SPEC — путь к ТЗ относительно этого файла; spec у шага — разделы ТЗ
+const SPEC = 'specs/ИМЯ.md';
+const STEPS = {
+  s1: { title: '1. Решение человека', who: 'Кто, на каком экране', spec: '§3 п.1', text: [
+    'Факт из ТЗ или кода: что делает, при каком условии.',
+    'Ограничение или правило, которое легко забыть.',
+  ]},
+  s2: { title: '2. Обработка', who: 'Сервер + модель', spec: '§5', text: ['…'] },
+  s3: { title: '3. Следующий шаг', who: '…', spec: '§…', text: ['…'] },
+  s4: { title: '4. Действие вовне', who: '…', spec: '§…', text: ['…'] },
+  f4: { title: 'Сбой: внешняя система не ответила', who: 'Сервер', spec: '§…', text: [
+    'Что видит человек и что с данными.', 'Кто узнаёт и что должен сделать.',
+  ]},
+};
+
+// статусы по сущностям: строка — ряд сущности «Имя (что это словами)»; дальше её статусы в порядке пути.
+// [подпись, блок, где ставится; сценарий, где статуса нет; 'или' — исход-альтернатива предыдущему, а не следующий шаг]
+// подпись — словами, код в скобках: 'готов (done)'
+const STATUSES = [
+  'Заявка (что это одной фразой)',
+  ['создана (new)', 's1'], ['обработана (done)', 's2'], ['отклонена (rejected)', 's2', 'alt', 'или'],
+];
+
+// HINTS.all — зачем сервис и что на выходе одной фразой; сценарии — чем отличаются, без команд и имён кода
+const HINTS = {
+  all: 'Что делает сервис и для кого → что на выходе. Нажмите на блок или статус — появится подсказка.',
+  main: 'Основной сценарий: одна фраза, чем отличается.',
+  alt: 'Другой сценарий (§N): одна фраза, чем отличается.',
+  fail: 'Что будет, если шаг не сработает: последствия для людей и данных, кто узнаёт.',
+};
+// строка над схемой в режиме «Куда уходят данные»
+const DATA_HINT = 'Красным — какие данные в шаге и куда уходят; красная рамка — личные данные (какие).';
+
+const svg = document.querySelector('svg'), pop = document.getElementById('pop'), chips = document.getElementById('chips');
+const node = id => svg.querySelector(`[data-id="${id}"]`);
+
+const where = [];  // [блок, «Сущность: статус»] — для подсказки
+let rows = '', ent = '', first = true;
+for (const x of STATUSES) {
+  if (typeof x === 'string') { rows += `${rows ? '</div>' : ''}<div class="chips"><span class="ent">${x}</span>`; ent = x.split(' (')[0]; first = true; continue; }
+  const [name, id, skip = '', sep = '→'] = x;
+  if (!rows) rows = '<div class="chips">';
+  rows += (first ? '' : `<span class="sep">${sep}</span>`) + `<span class="chip" data-id="${id}" data-skip="${skip}">${name}</span>`;
+  where.push([id, ent ? `${ent}: ${name}` : name]);
+  first = false;
+}
+chips.innerHTML = rows + '</div>';
+let scene = 'all';
+
+function close() {
+  pop.hidden = true;
+  document.querySelectorAll('.sel, .chip.on').forEach(el => el.classList.remove('sel', 'on'));
+}
+
+function open(id) {
+  close();
+  const s = STEPS[id], g = node(id), st = where.filter(x => x[0] === id).map(x => x[1]);
+  g.classList.add('sel');
+  chips.querySelectorAll(`[data-id="${id}"]`).forEach(c => c.classList.add('on'));
+  pop.innerHTML = `<button class="x" title="Закрыть">×</button><h3>${s.title}</h3><p class="who">${s.who}</p>
+    <ul>${s.text.map(t => `<li>${t}</li>`).join('')}</ul>
+    ${st.length ? `<p>Статус: <b>${st.join('</b>, <b>')}</b></p>` : ''}
+    <p>ТЗ: <a href="${SPEC}" target="_blank">${SPEC.split('/').pop()}</a> ${s.spec}</p>`;
+  pop.hidden = false;
+  const r = g.getBoundingClientRect(), w = pop.offsetWidth, h = pop.offsetHeight;
+  const below = r.bottom + 8 + h <= innerHeight || r.top < h + 8;
+  pop.style.left = scrollX + Math.max(8, Math.min(r.left, innerWidth - w - 16)) + 'px';
+  pop.style.top = scrollY + (below ? r.bottom + 8 : r.top - h - 8) + 'px';
+}
+
+document.addEventListener('click', e => {
+  const t = e.target.closest('.node, .chip, #pop, .bar');
+  if (!t) return close();
+  if (t.dataset.id) return open(t.dataset.id);
+  if (e.target.closest('#pop .x')) close();
+});
+
+document.querySelectorAll('.bar button').forEach(b => b.addEventListener('click', () => {
+  const sc = scene = b.dataset.sc;
+  document.querySelectorAll('.bar button').forEach(x => x.classList.toggle('on', x === b));
+  // «Вся схема» — без сбоев: их показывает только своя кнопка
+  svg.querySelectorAll('[data-in]').forEach(el => el.classList.toggle('dim', sc === 'all' ? el.dataset.in === 'fail' : !el.dataset.in.split(' ').includes(sc)));
+  chips.querySelectorAll('.chip').forEach(c => c.classList.toggle('dim', c.dataset.skip === sc || node(c.dataset.id).classList.contains('dim')));
+  document.getElementById('hint').textContent = document.body.classList.contains('data-on') ? DATA_HINT : HINTS[sc];
+  close();
+}));
+
+document.querySelector('.bar button').click();  // сразу применить «Вся схема»: сбои приглушены
+
+document.getElementById('data').addEventListener('change', e => {
+  document.body.classList.toggle('data-on', e.target.checked);
+  document.getElementById('hint').textContent = e.target.checked ? DATA_HINT : HINTS[scene];
+});
+</script>
+</body>
+</html>

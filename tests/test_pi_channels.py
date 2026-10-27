@@ -28,9 +28,9 @@ case "${1:-}" in
   --list-models)
     printf '%s\n' \
       "provider    model" \
-      "openrouter  z-ai/glm-5.3-flash" \
+      "glm-opendesign  glm-5.3-flash" \
       "openrouter  z-ai/glm-9" \
-      "deepseek    deepseek-flash" \
+      "deepseek-opendesign  deepseek-v4.1-flash" \
       "deepseek    deepseek-9"
     exit 0 ;;
 esac
@@ -153,8 +153,8 @@ class PiChannelsFromListikTests(unittest.TestCase):
                 self.assertTrue(card["channels_source_error"], card)
                 got = {c["name"]: (c["provider"], c["model"]) for c in card["channels"]}
                 self.assertEqual(got, {
-                    "glm": ("openrouter", "z-ai/glm-5.3-flash"),
-                    "deepseek": ("deepseek", "deepseek-flash"),
+                    "glm": ("glm-opendesign", "glm-5.3-flash"),
+                    "deepseek": ("deepseek-opendesign", "deepseek-v4.1-flash"),
                 })
                 if label == "no slash":
                     self.assertIn("not a provider/model id", card["channels_source_error"])
@@ -197,7 +197,7 @@ class PiChannelsFromListikTests(unittest.TestCase):
         self.assertEqual(proc.stderr.count("channels:"), 1, proc.stderr)
         rpc = self._rpc_lines()
         self.assertEqual(len(rpc), 1, self._lines(self.pi_log))
-        self.assertIn("--model z-ai/glm-5.3-flash", rpc[0])
+        self.assertIn("--provider glm-opendesign --model glm-5.3-flash", rpc[0])
 
     # --- 7. resume остаётся на модели сессии ---------------------------------------
     def _session(self, name: str = "s1") -> None:

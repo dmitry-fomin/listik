@@ -5,7 +5,8 @@
 - в настройках плагина включён auto_approve_agents;
 - запрос пришёл от субагента конвейера (роль listik-pipeline:<роль>-<усилие>);
 - правка файла лежит в проекте или в одном из его worktree,
-  и это не секрет; команда Bash не попадает в список опасного.
+  и это не секрет; команда Bash не попадает в список опасного;
+  скил — только pi:pi-delegate у писателя (критики).
 
 Во всех остальных случаях хук молчит — и Claude Code задаёт обычный вопрос.
 Ошибка внутри хука тоже означает молчание: одобрение по сбою хуже лишнего запроса.
@@ -20,10 +21,13 @@ import sys
 AGENTS = {
     f"listik-pipeline:{role}-{effort}"
     for role in ("writer", "critic", "implementer", "lens", "judge")
-    for effort in ("xhigh", "high", "medium", "low")
+    for effort in ("max", "xhigh", "high", "medium", "low")
 }
 
 EDIT_TOOLS = {"Edit", "Write", "MultiEdit", "NotebookEdit"}
+
+# Писатель зовёт внешних критиков скилом (references/writer.md).
+WRITER_SKILLS = {"pi:pi-delegate"}
 
 SECRET_PATH = re.compile(
     r"(^|/)(\.env(\.[^/]*)?|credentials\.json|id_(rsa|dsa|ecdsa|ed25519)[^/]*|[^/]*\.(pem|key|p12|pfx))$"
@@ -108,6 +112,10 @@ def main():
         if path and not os.path.isabs(path):
             path = os.path.join(cwd, path)
         ok = edit_allowed(path, project)
+    elif tool == "Skill":
+        ok = event["agent_type"].startswith("listik-pipeline:writer-") and (
+            (tool_input.get("skill") or "").lstrip("/") in WRITER_SKILLS
+        )
     else:
         ok = False
 

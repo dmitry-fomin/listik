@@ -22,8 +22,8 @@ REPO_DIR = pathlib.Path(__file__).resolve().parent.parent
 LISTIK_BIN = REPO_DIR / "bin" / "listik"
 
 PI_CHANNELS = [
-    {"name": "glm", "model": "openrouter/z-ai/glm-5.3-flash", "effort": None, "default": True},
-    {"name": "deepseek", "model": "deepseek/deepseek-flash", "effort": None, "default": False},
+    {"name": "glm", "model": "glm-opendesign/glm-5.3-flash", "effort": None, "default": True},
+    {"name": "deepseek", "model": "deepseek-opendesign/deepseek-v4.1-flash", "effort": None, "default": False},
 ]
 OPENCODE_CHANNELS = [
     {"name": "glm", "model": "b.ai/glm-5.3-flash", "effort": None, "default": True},
@@ -269,8 +269,8 @@ class CliTests(unittest.TestCase):
         proc = self.run_cli("harnesses")
         self.assertEqual(proc.returncode, 0, proc.stderr)
         line = next(l for l in proc.stdout.splitlines() if l.startswith("pi "))
-        self.assertIn("glm*=openrouter/z-ai/glm-5.3-flash", line)
-        self.assertIn("deepseek=deepseek/deepseek-flash", line)
+        self.assertIn("glm*=glm-opendesign/glm-5.3-flash", line)
+        self.assertIn("deepseek=deepseek-opendesign/deepseek-v4.1-flash", line)
 
     def test_unknown_key(self) -> None:
         proc = self.run_cli("harnesses", "nope", "--json")

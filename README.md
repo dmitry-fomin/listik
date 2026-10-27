@@ -131,6 +131,7 @@ MCP-инструментами `listik_*` или командой `listik new`. 
 /plugin install second-opinion@listik     # второе мнение другой LLM
 /plugin install devin@listik              # devin (SWE-2)
 /plugin install opencode@listik           # opencode CLI
+/plugin install flow-map@listik           # интерактивная карта сервиса в HTML
 # обновить уже стоящие: /plugin marketplace update listik, затем /plugin update <имя>@listik
 ```
 

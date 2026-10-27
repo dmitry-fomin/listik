@@ -49,11 +49,12 @@
 # 5. Флага `--rpc` у pi нет — правильно `pi --mode rpc` (клиент собирает это
 #    сам, здесь просто отмечено, чтобы не «исправляли» на несуществующий флаг).
 #
-# 6. Канал glm — модель `z-ai/glm-5.3-flash` встроенного провайдера pi `openrouter`, канал
-#    deepseek — встроенный провайдер pi `deepseek`. Расширения не отключаются:
+# 6. Канал glm — модель `glm-5.3-flash` провайдера `glm-opendesign`, канал deepseek —
+#    `deepseek-v4.1-flash` провайдера `deepseek-opendesign` (оба — пользовательские
+#    провайдеры из ~/.pi/agent/models.json). Расширения не отключаются:
 #    обвязка не трогает пользовательскую настройку pi.
 #
-# 7. Канал GLM (`openrouter/z-ai/glm-5.3-flash`) иногда зависает до первого токена
+# 7. Канал GLM (`glm-opendesign/glm-5.3-flash`) иногда зависает до первого токена
 #    (>120с без ответа) — это не сбой обвязки, у пробы `check` поэтому есть
 #    отдельный статус «таймаут», а не падение с ошибкой.
 #
@@ -76,8 +77,8 @@ RPC="$(cd "$(dirname "$0")" && pwd)/pi-rpc.py"
 # «имя:модель» на строку, порядок — порядок печати в check; первый канал
 # считается каналом по умолчанию (решение автора: glm).
 CHANNELS=(
-  "glm:openrouter/z-ai/glm-5.3-flash"
-  "deepseek:deepseek/deepseek-flash"
+  "glm:glm-opendesign/glm-5.3-flash"
+  "deepseek:deepseek-opendesign/deepseek-v4.1-flash"
 )
 
 THINKING_LEVELS=(off minimal low medium high xhigh max)
@@ -388,7 +389,7 @@ usage:
 channels (value of --channel/--model) come from Listik: harness pi
   ("listik harnesses pi --json", page "Настройки → Харнессы"; LISTIK_BIN,
   default listik). Built-in fallback when Listik is unavailable: glm =
-  openrouter/z-ai/glm-5.3-flash (default), deepseek = deepseek/deepseek-flash.
+  glm-opendesign/glm-5.3-flash (default), deepseek = deepseek-opendesign/deepseek-v4.1-flash.
   --model also takes a full provider/model id, --channel takes the short name
   only. check shows the source (channels from).
 --thinking: off, minimal, low, medium, high, xhigh, max

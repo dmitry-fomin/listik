@@ -6,7 +6,7 @@
 
 ## Что нужно
 
-Claude Code и внешние харнессы строки режима — каждому режиму нужно минимум два (например, `high`: `pi` + `grok`; `nano`: `devin` + `codex`). Плагин `grok` в маркетплейс этого проекта не входит — ставится отдельно. Нужного в строке режима нет — конвейер стоит до первого действия и спрашивает человека.
+Claude Code и внешние харнессы раскладки режима (например, `high`: `pi` + `grok`; `nano`: `devin` + `pi`). Плагин `grok` в маркетплейс этого проекта не входит — ставится отдельно. Нужного из раскладки нет — конвейер стоит до первого действия и спрашивает человека.
 
 ## Запуск
 
@@ -19,7 +19,7 @@ Claude Code и внешние харнессы строки режима — к�
 
 ## Раскладка
 
-Кто на каком харнессе в каждом режиме — [`references/lineups.md`](references/lineups.md). Там же модели, права, команды запуска и формат задания. Здесь не дублируется.
+Кто, на какой модели и с каким усилием — в скиле режима (`skills/<режим>/SKILL.md`): маршрут `lp-<режим>` из Listik (`listik routes --json`, файл поставки — `routes.json` в корне Listik), а пока Listik его не отдаёт — таблица скила. Права, команды запуска, формат задания и маршрута — [`references/lineups.md`](references/lineups.md).
 
 Правила потока — [`references/orchestrator.md`](references/orchestrator.md): порядок шагов, переходы, кто коммитит, что делать при выбывшей роли.
 
@@ -27,9 +27,10 @@ Claude Code и внешние харнессы строки режима — к�
 
 ```
 00 Запуск     человек: описание / карточка         → нет id — listik new
-01 ТЗ         stage s1-spec → writer → DRAFT
-02 Критика    stage s2-review → оркестратор зовёт критиков режима
-              writer по рецензиям → READY + RISK   → set spec_path/checklist_path
+01 ТЗ         stage s1-spec → writer: черновик, ТЗ в статусе DRAFT
+02 Критика    writer: stage s2-review, сам зовёт критиков режима (CRITICS:), не больше двух заходов;
+              блокеры во втором заходе → QUESTION → needs-owner
+              → READY + RISK                       → set spec_path/checklist_path
 03 Код        listik worktree; implementer → DONE   → stage s3-impl
 04 Линза      lens → PASS / FIXES                  → на s3-impl; FIXES или RISK: YES → stage s4-judge
    04 Судья   judge → VERDICT: PASS / FAIL; после FAIL — release и снова s3-impl; третий заход без PASS — стоп
@@ -57,14 +58,14 @@ listik-pipeline/
 │   ├── writer-{xhigh,high,medium,low}.md
 │   ├── critic-{xhigh,high,medium,low}.md
 │   ├── implementer-{xhigh,high,medium,low}.md
-│   ├── lens-{xhigh,high,medium,low}.md
+│   ├── lens-{max,xhigh,high,medium,low}.md
 │   └── judge-{xhigh,high,medium,low}.md
 ├── hooks/                # Автоодобрение команд ролей (настройка auto_approve_agents)
 │   ├── hooks.json
 │   └── approve-agents.py
 └── references/           # Тело роли, одно на все усилия
     ├── orchestrator.md   # Правила потока — читает сессия, не субагент
-    ├── lineups.md        # Раскладка: режим → роль → харнесс, модель, усилие, права
+    ├── lineups.md        # Механика ролей: задание, запуск, права, формат маршрута
     ├── statuses.md       # Словарь статусов и флаг риска
     ├── writer.md
     ├── critic.md
@@ -73,8 +74,9 @@ listik-pipeline/
     └── judge.md
 ```
 
-Не все варианты в `agents/` задействованы текущей раскладкой: `critic-low`, `implementer-low`,
-`lens-xhigh`/`lens-high` и все `judge-*` — запас под будущие режимы (`references/lineups.md`).
+Текущая раскладка (`routes.json`) задействует `writer-*`, `critic-high`, `implementer-{xhigh,high,medium}` и
+`lens-max`; остальные варианты — запас под будущие маршруты.
+
 ## Конвенции
 
-Бумаги — в `docs/specs/` основного дерева: ТЗ — `<id>.spec.md`, чек-лист — `<id>.checklist.md`, рецензии — `<id>.review-<критик>.md`, задание судье — `<id>.judge.r<N>.task.md`, где `<id>` — идентификатор задачи (например, `listik-abc1`). Формат ТЗ и чек-листа — `references/writer.md`, рецензии — `references/critic.md`.
+Бумаги — в `docs/specs/` основного дерева: ТЗ — `<id>.spec.md`, чек-лист — `<id>.checklist.md`, рецензии — `<id>.review-<критик>.md` (второй заход — `.r2.md`), задание судье — `<id>.judge.r<N>.task.md`, где `<id>` — идентификатор задачи (например, `listik-abc1`). Формат ТЗ и чек-листа — `references/writer.md`, рецензии — `references/critic.md`.

@@ -202,6 +202,7 @@ The skills used to run this project's work live in this repo and are made exactl
 - `plugins/opencode/` — opencode CLI bridge, two channels: GLM 5.3 Flash and DeepSeek v4.1 Flash (`opencode:opencode-delegate` and related skills);
 - `plugins/pi/` — pi CLI bridge (`pi --mode rpc`), two channels: GLM 5.3 Flash and DeepSeek v4.1 Flash (`pi:pi-delegate` and related skills);
 - `plugins/second-opinion/` — independent LLM review (`second-opinion:ask`).
+- `plugins/flow-map/` — interactive service map as one HTML file (`flow-map:flow-map`).
 
 Edit skills only there — never the copies under `~/.claude/plugins/cache/` or
 `~/.claude/plugins/marketplaces/`, which are overwritten on plugin update.

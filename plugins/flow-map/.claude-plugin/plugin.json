@@ -1,0 +1,19 @@
+{
+  "name": "flow-map",
+  "displayName": "Flow map",
+  "version": "0.1.0",
+  "description": "Интерактивная карта сервиса одним HTML-файлом: дорожки участников, сценарии, путь по статусам, слой данных и SVG-копия для ТЗ.",
+  "author": {
+    "name": "Dmitry Fomin",
+    "url": "https://github.com/dmitry-fomin"
+  },
+  "homepage": "https://github.com/dmitry-fomin/listik",
+  "repository": "https://github.com/dmitry-fomin/listik",
+  "license": "MIT",
+  "keywords": [
+    "flow-map",
+    "diagram",
+    "svg",
+    "spec"
+  ]
+}

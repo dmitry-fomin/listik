@@ -1265,8 +1265,8 @@ footer {
         <div class="codebox">
           <button class="copy" type="button" data-copy>копировать</button>
           <pre id="listikSeq">listik new "&lt;заголовок&gt;" -p &lt;проект&gt; -d "&lt;описание&gt;"   <span style="color:#667080"># нет id</span>
-listik stage &lt;id&gt; --to s1-spec --holder &lt;писатель&gt;     <span style="color:#667080"># ТЗ → DRAFT</span>
-listik stage &lt;id&gt; --to s2-review                       <span style="color:#667080"># критика → READY; s1→s2 липкий, держатель — писатель</span>
+listik stage &lt;id&gt; --to s1-spec --holder &lt;писатель&gt;     <span style="color:#667080"># ТЗ и критика → READY</span>
+listik stage &lt;id&gt; --to s2-review                       <span style="color:#667080"># двигает писатель перед критикой; s1→s2 липкий</span>
 listik set &lt;id&gt; spec_path=&lt;абс&gt; checklist_path=&lt;абс&gt;
 listik worktree &lt;id&gt;
 listik stage &lt;id&gt; --to s3-impl --holder &lt;исполнитель&gt;  <span style="color:#667080"># код и линза</span>
@@ -1295,9 +1295,9 @@ listik done &lt;id&gt; -r "коммит &lt;hash7&gt;"                  <span st
         <ul>
           <li>Раскладка режимов: роль → харнесс, модель, усилие, права</li>
           <li>Порядок ролей и переходы</li>
-          <li>Решения <span class="pill">DRAFT</span> / <span class="pill">READY</span> / <span class="pill">PASS</span> / <span class="pill">FIXES</span></li>
+          <li>Решения <span class="pill">DRAFT</span> / <span class="pill">READY</span> / <span class="pill">QUESTION</span> / <span class="pill">PASS</span> / <span class="pill">FIXES</span></li>
           <li>Словарь статусов и флаг риска — <code>references/statuses.md</code>; команда проверки, worktree</li>
-          <li>Каждая роль — на своём харнессе: локальный субагент или внешний харнесс <code>codex</code>/<code>pi</code>/<code>devin</code>/<code>grok</code> — командой скрипта моста, не скилом</li>
+          <li>Каждая роль — на своём харнессе: локальный субагент или внешний харнесс <code>codex</code>/<code>pi</code>/<code>devin</code>/<code>grok</code> — командой скрипта моста, не скилом; критиков зовёт писатель: субагентом и скилом <code>pi:pi-delegate</code></li>
           <li>Базовый промпт критики: три вопроса</li>
           <li>Хук автоодобрения команд локальных ролей — <code>hooks/</code>, настройка <code>auto_approve_agents</code>; опасное и секреты идут запросом</li>
           <li>Формат ответов ролей</li>
@@ -1360,7 +1360,7 @@ listik done &lt;id&gt; -r "коммит &lt;hash7&gt;"                  <span st
                     <ul class="plain">
                       <li>Получил <code>listik-*</code> → выдаёт карточку по этапам (<code>stage --holder</code>): роль — и внешний харнесс, и локальный субагент — берёт её сам (<code>claim</code>, <code>heartbeat</code>, журнал, вердикт)</li>
                       <li>Нет <code>listik-*</code> — заводит карточку <code>listik new</code></li>
-                      <li>Отдаёт писателю задачу как есть; после <span class="pill">DRAFT</span> зовёт критиков, рецензии кладёт файлами и отдаёт писателю только пути</li>
+                      <li>Отдаёт писателю задачу как есть и строку <code>CRITICS:</code>; критиков не зовёт и рецензий не читает</li>
                       <li>Идёт по словарю статусов: <span class="pill">DRAFT</span> → <span class="pill">READY</span> → <span class="pill">PASS</span> / <span class="pill">FIXES</span> (линза) → <span class="pill">PASS</span> (судья); первая строка не из словаря — сбой роли: один свежий повтор, второй подряд — стоп</li>
                       <li>Из ответа писателя читает <code>RISK: NO</code> или <code>RISK: YES — reason</code>; оба варианта через <code>|</code>, «почему» или пустая причина — ответ негоден, переспрашивает строку; перед линзой берёт флаг из журнала карточки (<code>READY · RISK: …</code>), не из памяти</li>
                       <li>После <code>READY</code> заводит worktree <code>listik worktree &lt;id&gt;</code> (ветка <code>task/&lt;id&gt;</code>, поля карточки заполняются)</li>
@@ -1388,8 +1388,8 @@ listik done &lt;id&gt; -r "коммит &lt;hash7&gt;"                  <span st
                 <div class="meta-row"><span class="meta-k">умеет</span><span class="meta-v">Read <span class="sep">·</span> Write <span class="sep">·</span> Edit <span class="sep">·</span> Bash <span class="sep">·</span> Grep <span class="sep">·</span> Glob</span></div>
               </div>
               <p class="role-note">
-                Пишет <b>&lt;id&gt;.spec.md</b> и <b>&lt;id&gt;.checklist.md</b> в два захода: черновик, затем
-                правка по рецензиям — сам решает, что из замечаний блокирующее.
+                Пишет <b>&lt;id&gt;.spec.md</b> и <b>&lt;id&gt;.checklist.md</b> и сам зовёт критиков: заход 1, правка
+                всех BLOCKER, заход 2 только при блокерах; блокеры во втором заходе — вопрос человеку.
               </p>
               <details>
                 <summary>
@@ -1399,7 +1399,7 @@ listik done &lt;id&gt; -r "коммит &lt;hash7&gt;"                  <span st
                 <div class="details-body">
                   <div>
                     <div class="mini-cap">промпт роли</div>
-                    <pre>Пишешь ТЗ + чек-лист → DRAFT. Получаешь пути рецензий → блокирующие замечания правишь сам, остальное игнорируешь. ТЗ ведёшь ссылками, первой строкой — id карточки.
+                    <pre>Пишешь ТЗ + чек-лист (STATUS: DRAFT), зовёшь критиков из CRITICS: параллельно. BLOCKER правишь все, NOTE — на усмотрение; блокеры в заходе 2 → QUESTION. ТЗ ведёшь ссылками, первой строкой — id карточки.
 Оркестратору: READY и одна строка риска —
 
 RISK: NO
@@ -1413,7 +1413,7 @@ RISK: YES — &lt;reason in three words&gt;</pre>
                     <ul class="plain">
                       <li><code>xhigh / high / medium / low</code> → критики из строки режима</li>
                       <li><code>xlow / nano</code> → критики нет</li>
-                      <li>критиков зовёт оркестратор: всех сразу, не больше двух заходов — второй, если писатель после рецензий снова ответил DRAFT; субагент не может звать субагентов</li>
+                      <li>критиков зовёт писатель: всех сразу, не больше двух заходов — второй, только если в первом были BLOCKER; субагент может звать субагентов и скилы</li>
                     </ul>
                   </div>
                   <div>
@@ -1443,7 +1443,7 @@ RISK: YES — &lt;reason in three words&gt;</pre>
                 <div class="meta-row"><span class="meta-k">умеет</span><span class="meta-v">Read <span class="sep">·</span> Grep <span class="sep">·</span> Glob <span class="sep">·</span> Write (только файл рецензии)</span></div>
               </div>
               <p class="role-note">
-                Стадия 02 после черновика: критиков зовёт оркестратор, рецензия ложится файлом.
+                Стадия 02 после черновика: критиков зовёт писатель, рецензия ложится файлом; каждое замечание — BLOCKER: или NOTE:.
                 Запреты: не править, не создавать, не запускать.
               </p>
               <details>
@@ -1621,8 +1621,17 @@ FIXES → список замечаний, каждое со ссылкой path
             <span class="answer-role">Писатель</span>
             <code class="answer-code">DRAFT</code>
           </div>
-          <p class="answer-mean">Черновик ТЗ и чек-листа готов.</p>
-          <p class="answer-next">→ оркестратор зовёт критиков и отдаёт писателю пути рецензий в ту же сессию</p>
+          <p class="answer-mean">Статус ТЗ: черновик готов, идёт критика (STATUS: DRAFT в ТЗ, журнал DRAFT · critique r1/r2).</p>
+          <p class="answer-next">→ писатель зовёт критиков; после них ТЗ становится READY</p>
+        </div>
+
+        <div class="answer-item" style="--rc:var(--writer)">
+          <div class="answer-head">
+            <span class="answer-role">Писатель</span>
+            <code class="answer-code">QUESTION</code>
+          </div>
+          <p class="answer-mean">Во втором заходе критики остались BLOCKER — решает человек.</p>
+          <p class="answer-next">→ оркестратор: needs-owner и тот же вопрос в чат; ответ — в ту же сессию писателя строкой ANSWER:</p>
         </div>
 
         <div class="answer-item" style="--rc:var(--writer)">

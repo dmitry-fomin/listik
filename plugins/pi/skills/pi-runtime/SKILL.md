@@ -46,7 +46,7 @@ Options for `run`/`resume`:
 | `--write` / `--bash` | off | aliases for `--permission write` / `--permission bash`, kept for Listik routes and pipeline presets |
 | `--cwd <dir>` | current | working directory of the run |
 | `--timeout <s>` | 540 foreground, 7200 background | `0` removes the limit |
-| `--model <channel\|provider/model>` | `glm` = `openrouter/z-ai/glm-5.3-flash` | short channel name or a full `provider/model` id |
+| `--model <channel\|provider/model>` | `glm` = `glm-opendesign/glm-5.3-flash` | short channel name or a full `provider/model` id |
 | `--channel <channel>` | `glm` | short channel name only; never combine with `--model` |
 | `--thinking <level>` | model default | `off`, `minimal`, `low`, `medium`, `high`, `xhigh`, `max` — this list only |
 
@@ -63,7 +63,7 @@ Options for `run`/`resume`:
 - **Secrets are a prompt-side concern.** pi opens files on its own, so scope the task to
   the files it needs and explicitly forbid `.env`, `*.key`, `*.pem`, `credentials.json`.
 - **Channel and thinking level are the human's choice.** Runs go on `glm`
-  (`openrouter/z-ai/glm-5.3-flash`). Add `--channel`/`--model`/`--thinking` only when the human
+  (`glm-opendesign/glm-5.3-flash`). Add `--channel`/`--model`/`--thinking` only when the human
   named it, or when a pipeline preset passes it — model-per-role is part of the preset.
   A default-channel timeout is *not* an exception: report it and offer the choice instead
   of silently switching.
@@ -117,8 +117,9 @@ the job is honestly `running`.
   final assistant message from the event stream.
 - A provider error arrives as `stop_reason=error` — that is job status `failed`, not a
   script crash; the text is in `logs`.
-- The `glm` channel is `z-ai/glm-5.3-flash` on pi's built-in `openrouter` provider; the
-  `deepseek` channel is pi's built-in `deepseek` provider. `PI_CLAUDE_DEFAULT_MODEL` moves the default,
+- The `glm` channel is `glm-5.3-flash` on the custom `glm-opendesign` provider; the
+  `deepseek` channel is `deepseek-v4.1-flash` on the custom `deepseek-opendesign` provider
+  (both from `~/.pi/agent/models.json`). `PI_CLAUDE_DEFAULT_MODEL` moves the default,
   `PI_CLAUDE_BIN` points at the binary, `PI_CLAUDE_STATE_DIR` at the state directory.
 - **Channel models come from Listik.** The model behind each channel name is set in Listik — harness `pi`, page «Настройки → Харнессы»; the bridge reads it with `listik harnesses pi --json` (binary from `LISTIK_BIN`, default `listik`) once per `check`/`run`/`resume`. The models named here are the shipped defaults (по умолчанию в поставке): the script's built-in fallback, used only when Listik is unavailable or answers with an unusable table. `check` shows the source — the `channels from` line, `channels_source`/`channels_source_error` in `--json`. A channel deleted in Listik is `unknown channel` (exit 2) and the role on it is unavailable; the bridge does not revive it from the fallback.
 - **`pi auth check` only says a key is stored**, not that the channel answers. Readiness

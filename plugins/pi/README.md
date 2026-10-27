@@ -13,8 +13,8 @@ bridge is built around.
 
 ## Where your code goes
 
-`pi` sends the files it reads to whichever provider its configuration points at — `openrouter`
-for the `glm` channel, pi's built-in `deepseek` for the `deepseek` channel, or any other provider you have set up. This plugin is a
+`pi` sends the files it reads to whichever provider its configuration points at — `glm-opendesign`
+for the `glm` channel, `deepseek-opendesign` for the `deepseek` channel, or any other provider you have set up. This plugin is a
 bridge, not a sandbox: installing it means your working directory can leave your machine.
 Read-only mode prevents writes, not reads. Decide whether that is acceptable for a given
 repository *before* you delegate, and scope every task to the files it actually needs.
@@ -26,10 +26,10 @@ addressable by a short channel name via `--model` or `--channel`:
 
 | Channel | Model | Notes |
 | --- | --- | --- |
-| `glm` | `openrouter/z-ai/glm-5.3-flash` (shipped default; the model comes from Listik) | the default: every run without `--model`/`--channel` goes here |
-| `deepseek` | `deepseek/deepseek-flash` | second opinion from a different family — **prone to making things up**: it will invent a file, a flag or an API that does not exist and sound sure about it, so treat every concrete claim as a lead to verify, not as a fact |
+| `glm` | `glm-opendesign/glm-5.3-flash` (shipped default; the model comes from Listik) | the default: every run without `--model`/`--channel` goes here |
+| `deepseek` | `deepseek-opendesign/deepseek-v4.1-flash` | second opinion from a different family — **prone to making things up**: it will invent a file, a flag or an API that does not exist and sound sure about it, so treat every concrete claim as a lead to verify, not as a fact |
 
-`--model deepseek` and `--model deepseek/deepseek-flash` are the same thing: the
+`--model deepseek` and `--model deepseek-opendesign/deepseek-v4.1-flash` are the same thing: the
 short name is expanded by the bridge, and a full `provider/model` id is passed through
 untouched. `--channel` accepts only the short name. `PI_CLAUDE_DEFAULT_MODEL` moves the
 default globally and takes a channel name too.
@@ -48,9 +48,9 @@ history.
 
 - [Claude Code](https://code.claude.com) v2.1.216 or later — earlier versions drop the
   plugin prefix from command names, so `/pi:pi-delegate` would not resolve
-- `pi` on your `PATH` (or `PI_CLAUDE_BIN`), **with pi's built-in `openrouter` provider
-  authenticated** — without it the `glm` channel is
-  unreachable — and pi's built-in `deepseek` provider authenticated for the `deepseek` channel
+- `pi` on your `PATH` (or `PI_CLAUDE_BIN`), **with the custom providers `glm-opendesign`
+  and `deepseek-opendesign` configured in `~/.pi/agent/models.json`** — without them the
+  `glm` and `deepseek` channels are unreachable
 - `bash`
 - **`python3` as a hard requirement** — every run goes through the RPC client
   (`pi-rpc.py`), and without python3 `run` refuses to start at all
@@ -129,7 +129,7 @@ EOF
 | `--session <name>` | none | name the session (`run`) or find it (`resume`) |
 | `--permission <read\|bash\|write>` | `read` | permission mode in one flag |
 | `--write` / `--bash` | off | aliases for `--permission write` / `--permission bash` |
-| `--model <channel\|provider/model>` | `glm` = `openrouter/z-ai/glm-5.3-flash` | short channel name or a full model id |
+| `--model <channel\|provider/model>` | `glm` = `glm-opendesign/glm-5.3-flash` | short channel name or a full model id |
 | `--channel <channel>` | `glm` | same as `--model`, short name only; not combined with `--model` |
 | `--thinking <level>` | model default | `off`, `minimal`, `low`, `medium`, `high`, `xhigh`, `max` |
 | `--cwd <dir>` | current directory | working directory of the run |
@@ -202,9 +202,9 @@ ready:            yes
 binary:           /Users/you/.local/bin/pi (ok)
 version:          0.85.1
 rpc client:       /Users/you/.claude/plugins/.../pi-rpc.py (ok) · python3: /usr/bin/python3
-default channel:  glm -> openrouter/z-ai/glm-5.3-flash
-channels:         glm -> openrouter/z-ai/glm-5.3-flash (in catalog: yes; probe: timeout 30s, default)
-                  deepseek -> deepseek/deepseek-flash (in catalog: yes; probe: answered in 4s)
+default channel:  glm -> glm-opendesign/glm-5.3-flash
+channels:         glm -> glm-opendesign/glm-5.3-flash (in catalog: yes; probe: timeout 30s, default)
+                  deepseek -> deepseek-opendesign/deepseek-v4.1-flash (in catalog: yes; probe: answered in 4s)
 channels from:    listik (harness pi)
 note: "in catalog" lists models with configured auth - "no" does not mean the model does not exist; the probe is the final word
 default permission: read-only (edits and bash blocked) (--tools read,grep,find,ls)
@@ -220,7 +220,7 @@ verbatim.
 | Variable | Default | Purpose |
 | --- | --- | --- |
 | `PI_CLAUDE_BIN` | `pi` from `PATH` | full path to the CLI binary when it isn't on `PATH` |
-| `PI_CLAUDE_DEFAULT_MODEL` | `openrouter/z-ai/glm-5.3-flash` | model used when `--model`/`--channel` is not given; accepts a channel name or a full model id |
+| `PI_CLAUDE_DEFAULT_MODEL` | `glm-opendesign/glm-5.3-flash` | model used when `--model`/`--channel` is not given; accepts a channel name or a full model id |
 | `LISTIK_BIN` | `listik` | the Listik CLI the bridge reads channel models from (`listik harnesses pi --json`) |
 | `PI_CLAUDE_STATE_DIR` | `${XDG_STATE_HOME:-~/.local/state}/pi-claude` | where background jobs and session names are kept |
 | `PI_CLAUDE_SESSION` | `CLAUDE_SESSION_ID` | tags jobs so `status` scopes by session instead of by directory |
@@ -238,7 +238,7 @@ implementation:
 - **`pi --rpc` does not exist — the flag is `--mode rpc`.** The RPC client builds the
   invocation itself; nothing in this plugin ever passes a bare `--rpc`.
 - **Extensions are left as they are** — the bridge never passes `--no-extensions`; the
-  `glm` channel's provider is pi's built-in `openrouter`, not an extension.
+  channel providers are custom providers from `~/.pi/agent/models.json`, not extensions.
 - **Provider errors arrive as `stopReason: "error"` with exit code 0 from `pi`**, so the
   bridge reads the message the RPC stream carries, not the process exit code, to detect a
   failed run.

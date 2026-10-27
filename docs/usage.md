@@ -103,6 +103,7 @@ listik memory "про что-то"
 /plugin install codex@listik              # OpenAI Codex CLI: codex:codex-delegate
 /plugin install pi@listik                 # pi CLI (GLM 5.3 Flash, DeepSeek v4.1 Flash): pi:pi-delegate, в т.ч. критика ТЗ
 /plugin install second-opinion@listik     # второе мнение другой LLM: second-opinion:ask
+/plugin install flow-map@listik           # карта сервиса в HTML: flow-map:flow-map
 ```
 
 Пресеты `pipeline-full` и `pipeline-cc` зовут внешние харнессы скилами этих плагинов; Grok остаётся

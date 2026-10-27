@@ -14,4 +14,4 @@
 
 ## Listik
 
-Карточка: берёшь её сам — `claim <id> --holder <харнесс> --actor agent:<харнесс> --harness <харнесс>`, потом `heartbeat` каждые 10–15 минут (или сама роль-сессия, если ты главная сессия). `stage` и `done` двигает оркестратор. Журнал результата — `comment <id> -k journal "DONE" --actor agent:<харнесс> --harness <харнесс>`.
+Карточка: берёшь её сам — `claim <id> --holder <харнесс> --actor agent:<харнесс> --harness <харнесс до «-»>` (`<харнесс>` — строка `HARNESS:` задания: `claude-opus` → `--harness claude`), потом `heartbeat` каждые 10–15 минут (или сама роль-сессия, если ты главная сессия). `stage` и `done` двигает оркестратор. Журнал результата — `comment <id> -k journal "DONE" --actor agent:<харнесс> --harness <харнесс до «-»>`.

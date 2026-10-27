@@ -1242,7 +1242,7 @@ footer {
       <div class="panel">
         <h3>Кто коммитит</h3>
         <ul class="plain">
-          <li>Коммит всегда у оркестратора: <code>git -C .worktrees/&lt;id&gt; add -A</code>, <code>commit -m "listik-pipeline: &lt;id&gt;"</code> — и после <span class="pill">PASS</span> судьи, и когда судьи не было</li>
+          <li>Коммит всегда у оркестратора: <code>git -C .worktrees/&lt;id&gt; add -A</code>, <code>commit -m "listik-pipeline: &lt;id&gt; &lt;заголовок карточки&gt;"</code> — и после <span class="pill">PASS</span> судьи, и когда судьи не было</li>
           <li>Закрытие — всегда оркестратор: <code>done</code> (держателя снимает сам), удаление worktree и ветки; на стопе по <code>needs-owner</code> дерево не трогает</li>
           <li>Worktree создаёт оркестратор после <code>READY</code>: <code>listik worktree &lt;id&gt;</code> — дерево <code>.worktrees/&lt;id&gt;</code> на ветке <code>task/&lt;id&gt;</code>, путь и ветка пишутся в карточку; коммит и вливание ветки в основную — тоже оркестратор, как у роя: <code>rebase</code> ветки на основную в worktree, затем <code>merge --ff-only</code> в основном дереве; <code>--ff-only</code> отказал — rebase заново; конфликт — <code>rebase --abort</code> и стоп с вопросом человеку, сам не разрешает. На стопе по <code>needs-owner</code> дерево не удаляется: там ещё будут править</li>
           <li>Судья не запускается, если линза чиста и <code>RISK: NO</code>; линза дала <span class="pill">FIXES</span> хотя бы раз — судья зовётся</li>
@@ -1274,7 +1274,7 @@ listik stage &lt;id&gt; --to s4-judge --holder &lt;судья&gt;       <span st
 listik done &lt;id&gt; -r "коммит &lt;hash7&gt;"                  <span style="color:#667080"># закрытие</span>
 
 <span style="color:#667080"># команды оркестратора: --actor agent:claude --harness claude</span>
-<span style="color:#667080"># claim, heartbeat, journal, вердикт — сама роль: --actor agent:&lt;харнесс&gt; --harness &lt;харнесс&gt;</span></pre>
+<span style="color:#667080"># claim, heartbeat, journal, вердикт — сама роль: --actor agent:&lt;харнесс&gt; --harness &lt;харнесс до «-»&gt;</span></pre>
         </div>
       </div>
     </div>
@@ -1297,7 +1297,7 @@ listik done &lt;id&gt; -r "коммит &lt;hash7&gt;"                  <span st
           <li>Порядок ролей и переходы</li>
           <li>Решения <span class="pill">DRAFT</span> / <span class="pill">READY</span> / <span class="pill">PASS</span> / <span class="pill">FIXES</span></li>
           <li>Словарь статусов и флаг риска — <code>references/statuses.md</code>; команда проверки, worktree</li>
-          <li>Каждая роль — на своём харнессе: локальный субагент или делегат <code>codex</code>/<code>pi</code>/<code>devin</code>/<code>grok</code></li>
+          <li>Каждая роль — на своём харнессе: локальный субагент или внешний харнесс <code>codex</code>/<code>pi</code>/<code>devin</code>/<code>grok</code> — командой скрипта моста, не скилом</li>
           <li>Базовый промпт критики: три вопроса</li>
           <li>Хук автоодобрения команд локальных ролей — <code>hooks/</code>, настройка <code>auto_approve_agents</code>; опасное и секреты идут запросом</li>
           <li>Формат ответов ролей</li>
@@ -1361,12 +1361,12 @@ listik done &lt;id&gt; -r "коммит &lt;hash7&gt;"                  <span st
                       <li>Получил <code>listik-*</code> → выдаёт карточку по этапам (<code>stage --holder</code>): роль — и внешний харнесс, и локальный субагент — берёт её сам (<code>claim</code>, <code>heartbeat</code>, журнал, вердикт)</li>
                       <li>Нет <code>listik-*</code> — заводит карточку <code>listik new</code></li>
                       <li>Отдаёт писателю задачу как есть; после <span class="pill">DRAFT</span> зовёт критиков, рецензии кладёт файлами и отдаёт писателю только пути</li>
-                      <li>Идёт по словарю статусов: <span class="pill">DRAFT</span> → <span class="pill">READY</span> → <span class="pill">PASS</span> / <span class="pill">FIXES</span> (линза) → <span class="pill">PASS</span> (судья)</li>
-                      <li>Из ответа писателя читает <code>RISK: NO</code> или <code>RISK: YES — reason</code>; оба варианта через <code>|</code>, «почему» или пустая причина — ответ негоден, переспрашивает строку</li>
+                      <li>Идёт по словарю статусов: <span class="pill">DRAFT</span> → <span class="pill">READY</span> → <span class="pill">PASS</span> / <span class="pill">FIXES</span> (линза) → <span class="pill">PASS</span> (судья); первая строка не из словаря — сбой роли: один свежий повтор, второй подряд — стоп</li>
+                      <li>Из ответа писателя читает <code>RISK: NO</code> или <code>RISK: YES — reason</code>; оба варианта через <code>|</code>, «почему» или пустая причина — ответ негоден, переспрашивает строку; перед линзой берёт флаг из журнала карточки (<code>READY · RISK: …</code>), не из памяти</li>
                       <li>После <code>READY</code> заводит worktree <code>listik worktree &lt;id&gt;</code> (ветка <code>task/&lt;id&gt;</code>, поля карточки заполняются)</li>
                       <li>Линза чиста и <code>RISK: NO</code> → судья не запускается, коммитит сам</li>
                       <li>Линза дала <span class="pill">FIXES</span> хотя бы раз или <code>RISK: YES</code> → судья; третий заход без <span class="pill">PASS</span> — стоп и вопрос человеку</li>
-                      <li>Коммитит всегда сам: <code>add -A</code>, <code>listik-pipeline: &lt;id&gt;</code>; вливает (<code>rebase</code> + <code>merge --ff-only</code>), закрывает (<code>done</code>), удаляет worktree и ветку</li>
+                      <li>Коммитит всегда сам: <code>add -A</code>, <code>listik-pipeline: &lt;id&gt; &lt;заголовок карточки&gt;</code>; вливает (<code>rebase</code> + <code>merge --ff-only</code>), закрывает (<code>done</code>), удаляет worktree и ветку</li>
                     </ul>
                   </div>
                 </div>
@@ -1419,7 +1419,7 @@ RISK: YES — &lt;reason in three words&gt;</pre>
                   <div>
                     <div class="mini-cap">Listik</div>
                     <ul class="plain">
-                      <li>первым делом <code>claim &lt;id&gt; --holder &lt;харнесс&gt; --actor agent:&lt;харнесс&gt; --harness &lt;харнесс&gt;</code>, потом <code>heartbeat</code></li>
+                      <li>первым делом <code>claim &lt;id&gt; --holder &lt;харнесс&gt; --actor agent:&lt;харнесс&gt; --harness &lt;харнесс до «-»&gt;</code>, потом <code>heartbeat</code></li>
                       <li><code>comment &lt;id&gt; -k journal "READY · RISK: NO"</code></li>
                       <li><code>stage</code> и <code>done</code> двигает оркестратор</li>
                     </ul>
@@ -1506,8 +1506,8 @@ RISK: YES — &lt;reason in three words&gt;</pre>
 После красного вердикта судьи карточку выдают заново — снова claim.</pre>
                   <ul class="plain">
                     <li>Границы правки из ТЗ — жёсткое ограничение (в xlow/nano ТЗ нет — вместо него текст задачи из карточки)</li>
-                    <li>первым делом <code>claim &lt;id&gt; --holder &lt;харнесс&gt; --actor agent:&lt;харнесс&gt; --harness &lt;харнесс&gt;</code>, потом <code>heartbeat</code></li>
-                    <li><code>comment &lt;id&gt; -k journal "DONE" --actor agent:&lt;харнесс&gt; --harness &lt;харнесс&gt;</code></li>
+                    <li>первым делом <code>claim &lt;id&gt; --holder &lt;харнесс&gt; --actor agent:&lt;харнесс&gt; --harness &lt;харнесс до «-»&gt;</code>, потом <code>heartbeat</code></li>
+                    <li><code>comment &lt;id&gt; -k journal "DONE" --actor agent:&lt;харнесс&gt; --harness &lt;харнесс до «-»&gt;</code></li>
                     <li><code>stage</code> и <code>done</code> двигает оркестратор</li>
                   </ul>
                 </div>
@@ -1542,7 +1542,8 @@ RISK: YES — &lt;reason in three words&gt;</pre>
 1. Код = ТЗ
 2. Чек-лист выполнен
 3. Границы правки не нарушены
-4. Код работает: команда проверки из ТЗ вышла с кодом 0, вывод приложен
+4. Код работает: команда проверки из чек-листа вышла с кодом 0, вывод приложен
+5. Тесты ловят то, что ТЗ запрещает, а не только то, что требует
 
 Оркестратору: PASS или FIXES.
 PASS без успешного (код 0) вывода команды проверки не ставишь.
@@ -1580,14 +1581,15 @@ FIXES → список замечаний.</pre>
                   промпт и развилка
                 </summary>
                 <div class="details-body">
-                  <pre>Первым делом claim &lt;id&gt; --holder &lt;харнесс&gt; --actor agent:&lt;харнесс&gt; --harness &lt;харнесс&gt;, потом heartbeat. Вердикт — твой: comment -k verdict.
+                  <pre>Первым делом claim &lt;id&gt; --holder &lt;харнесс&gt; --actor agent:&lt;харнесс&gt; --harness &lt;харнесс до «-»&gt;, потом heartbeat. Вердикт — твой: comment -k verdict.
 Путь к карточке → проверяешь:
 1. Замечания линзы закрыты
 2. Код = ТЗ
 3. Чек-лист выполнен
 4. Нет регрессий за границами
-5. Команда проверки из ТЗ вышла с кодом 0, вывод в ответе (ТЗ нет — команда из задания)
-6. Красное в одну строку — в FIXES, сам не правишь
+5. Команда проверки из чек-листа вышла с кодом 0, вывод в ответе (чек-листа нет — команда из задания)
+6. Тесты ловят то, что ТЗ запрещает, а не только то, что требует
+7. Красное в одну строку — в FIXES, сам не правишь
 
 Оркестратору: PASS или FIXES.
 PASS → вердикт в карточку — твой; коммит — оркестратора.
@@ -1701,7 +1703,8 @@ FIXES → список замечаний, каждое со ссылкой path
       <p class="doc-foot">
         <span class="pill">PASS</span> судьи — работа принята; <span class="pill">PASS</span> линзы — только при <code>RISK: NO</code>, иначе дальше судья.
         При принятой работе коммитит оркестратор; <code>done</code> и worktree — он же.
-        <code>failed</code> / <code>timeout</code> / <code>canceled</code> / <code>cancelled</code> / <code>orphaned</code> / пустой ответ — не <span class="pill">FIXES</span>: вердикта не было → журнал, <code>&lt;харнесс&gt;-check</code>, <code>needs-owner</code>.
+        <code>failed</code> / <code>timeout</code> / <code>canceled</code> / <code>cancelled</code> / <code>orphaned</code> / пустой ответ — не <span class="pill">FIXES</span>: вердикта не было → журнал, <code>&lt;харнесс&gt;-run.sh check</code>, <code>needs-owner</code>.
+        Первая строка не из словаря — сбой роли, слово ниже по тексту не ищется: один свежий повтор на том же харнессе, второй сбой подряд — стоп.
         Судья зовётся при находках линзы, при <code>RISK: YES</code> и всегда в <code>xlow</code>/<code>nano</code>.
         Сокращать, переводить или пересказывать статусы нельзя.
       </p>

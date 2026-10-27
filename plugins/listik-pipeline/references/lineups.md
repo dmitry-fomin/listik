@@ -4,6 +4,7 @@
 Все роли, включая критиков, зовёт оркестратор: субагент не может звать других субагентов.
 `Claude <усилие>` — локальный субагент `listik-pipeline:<роль>-<усилие>`, параметр `model` не
 передаётся: модель роли — модель главной сессии (из сессии на Sonnet все роли пойдут на Sonnet).
+Держатель локальной роли — `claude-<модель>` (`claude-opus`, `claude-haiku`), `--harness claude`.
 
 | Режим | ТЗ | Критика | Код | Линза | Судья |
 | --- | --- | --- | --- | --- | --- |
@@ -28,11 +29,14 @@
 ```
 ROLE: <абс путь к references/<роль>.md из скила режима>
 CARD: <id>
-HARNESS: <имя>
+HARNESS: <имя: pi, devin, codex, grok; локальная роль — claude-<модель>>
 WORKTREE: <abs path>
 SPEC: <abs path>
 CHECKLIST: <abs path>
+REPLY: first line of your reply is exactly one word: <слова роли>; nothing before it, no quotes, no bold
 ```
+
+`REPLY:` — всегда последней строкой. Слова роли (`statuses.md`): писателю `DRAFT, QUESTION, CANNOT`, во втором заходе `READY, QUESTION, CANNOT` и `second line: RISK: NO | RISK: YES — <reason>`; локальному критику `REVIEWED <path>, CANNOT`; исполнителю `DONE, CANNOT, QUESTION`; линзе и судье `PASS, FIXES, CANNOT`. Внешнему критику — `REPLY: the review itself, starting with its first ## section; no preface`.
 
 Критику вместо `CARD:` — `REVIEW: <abs path к <id>.review-<критик>.md>`. Судье после находок линзы — ещё `LENS: <abs path к <id>.lens.md>`. В `xlow`/`nano` ТЗ нет — вместо `SPEC:`/`CHECKLIST:` исполнителю и судье: `CHECK: acceptance карточки; нет его — тесты затронутых модулей, полный набор не запускать`.
 
@@ -42,33 +46,45 @@ CHECKLIST: <abs path>
 
 Локальный субагент — `Agent listik-pipeline:<роль>-<усилие>`. Повтор после `FIXES` — та же сессия (`SendMessage` по agent id).
 
-Внешний харнесс — скилом или командой, фоном; ответ — `result <job-id>` (кроме grok). Внешнему критику и линзе забор — после статуса `done` `result <job-id>` с выводом прямо в файл (stdout `result` — ровно ответ); годен только код 0, в контекст рецензию не читаешь. Продолжение после `FIXES` — только у исполнителя-девина, той же сессией: `resume --session lp-<id>-impl`. Критик, линза и судья — всегда свежим заходом.
+Внешний харнесс — командой скрипта моста, фоном, не скилом: скилы `*-delegate`/`*-jobs` работают в fork-контексте и сами ждут и забирают ответ, а ответ должен лечь в файл, не читая. Скрипт — `<installPath>/scripts/…`, `installPath` — из `~/.claude/plugins/installed_plugins.json` по ключу `pi@listik`, `devin@listik`, `codex@listik`, `grok@grok-build` (версию в путь не зашиваешь, в кэше их бывает несколько):
+
+```bash
+python3 -c 'import json,os,sys;print(json.load(open(os.path.expanduser("~/.claude/plugins/installed_plugins.json")))["plugins"][sys.argv[1]][0]["installPath"])' pi@listik
+```
+
+Задание — в stdin (heredoc). `run --background` печатает job-id; ответ — `result <job-id> --wait <сек>`, годен только код 0 (при таймауте или отмене `result` печатает обрубок с ненулевым кодом). Внешнему критику и линзе — `result` прямо в файл (stdout `result` — ровно ответ), в контекст не читаешь. Продолжение после `FIXES` — только у исполнителя-девина, той же сессией: `resume lp-<id>-impl`. Критик, линза и судья — всегда свежим заходом.
 
 ```bash
 # pi — критик (read) и линза (bash)
-pi:pi-delegate --channel <glm|deepseek> --permission <read|bash> --cwd <корень|wt> --label "<id> <роль>" <задание>
+pi-run.sh run --background --permission <read|bash> --channel <glm|deepseek> --cwd <корень|wt> --label "<id> <роль>" <<'EOF'
+<задание>
+EOF
+pi-run.sh result <job-id> --wait <сек> > <id>.review-pi-<канал>.md   # линза — > <id>.lens.md
 
-# devin — код (write = режим dangerous)
-devin:devin-delegate --thinking <high|max> --permission write --session lp-<id>-impl --cwd <wt> --label "<id> исполнитель" <задание>
+# devin — код (write = режим dangerous); после FIXES — resume той же сессии
+devin-run.sh run --background --thinking <high|max> --permission write --session lp-<id>-impl --cwd <wt> --label "<id> исполнитель" <<'EOF' … EOF
+devin-run.sh resume lp-<id>-impl --background --thinking <high|max> --permission write --cwd <wt> <<'EOF' … EOF
+devin-run.sh result <job-id> --wait <сек>
 
 # codex — судья nano (write: в read-only у песочницы нет сети до Listik; без --model/--effort — настройки ~/.codex/config.toml)
-codex:codex-delegate --permission write --cwd <wt> --label "<id> судья" <задание>
+codex-run.sh run --background --permission write --cwd <wt> --label "<id> судья" <<'EOF' … EOF
+codex-run.sh result <job-id> --wait <сек>
 
-# grok — судья (команда, не скил: Skill(grok:…) вешает сессию); worktree — строкой задания, все три вызова (delegate/status/result) — из одного каталога
-/grok:delegate --background --write --no-web --fresh --model grok-4.7 --effort <xhigh|high> <задание файлом>
+# grok — судья: прямой node, пока нет моста (listik-g6xh); все три вызова — из одного каталога
+node <installPath>/scripts/grok-companion.mjs task --background --write --no-web --fresh --model grok-4.7 --effort <xhigh|high> "TASK_FILE: <абс путь>"
+node <installPath>/scripts/grok-companion.mjs status <job-id> --json   # job.status: running → completed | failed | cancelled
+node <installPath>/scripts/grok-companion.mjs result <job-id> > <id>.judge.r<N>.out.md
 ```
 
-grok: усилие `xhigh` в `xhigh`/`high`, `high` в остальных. `--write` обязателен, как в старом конвейере: без него форвардер вправе пустить судью на чтение, и ни проверка, ни вердикт в карточку не пройдут. Задание судье — файлом
+grok: усилие `xhigh` в `xhigh`/`high`, `high` в остальных. `--write` обязателен: без него судья пойдёт на чтение, и ни проверка, ни вердикт в карточку не пройдут. Задание судье — файлом
 `<id>.judge.r<N>.task.md`, в команду после флагов одна строка `TASK_FILE: <абс путь>`
-(текст задания в командную строку не вставлять). Ход — `/grok:status <job-id>`,
-забор — `/grok:result <job-id>` **из того же каталога, что запуск**; ждать терминальной фазы
-`done`/`failed`/`cancelled`.
+(текст задания в командную строку не вставлять). Опрос `status --json` — до терминального `completed`/`failed`/`cancelled`, забор `result` — из того же каталога, что запуск. `result` grok склеивает ход работы с ответом (до listik-g6xh): слово ответа там не первой строкой, поэтому исход судьи grok читаешь из карточки — последний `verdict`, первая строка `VERDICT: PASS` или `VERDICT: FAIL`; вердикта нет — сбой роли (`statuses.md`).
 
 ## Готовность канала
 
-`pi:pi-check`, `codex:codex-check`, `devin:devin-check` — до выдачи (все роли выдаёт оркестратор). Судья codex — ещё `[sandbox_workspace_write] network_access = true` в `~/.codex/config.toml`: без сети claim и вердикт не дойдут до Listik. grok — `/grok:setup` + короткий
-прогон: `/grok:delegate --no-web --model grok-4.7 --effort low Reply with exactly one word: OK`. Не
-`ready` — стоп-фактор: журнал `STOP: <role> — <harness> unavailable: <причина>`, `needs-owner`, тот же
+`pi-run.sh check --probe-timeout 30`, `devin-run.sh check`, `codex-run.sh check` — до выдачи (все роли выдаёт оркестратор), годен код 0; у pi ещё канал роли — `ok` (код 0 значит, что жив хоть один канал). Судья codex — ещё `[sandbox_workspace_write] network_access = true` в `~/.codex/config.toml`: без сети claim и вердикт не дойдут до Listik. grok — `grok-companion.mjs setup --json` + короткий
+прогон: `task --no-web --model grok-4.7 --effort low "Reply with exactly one word: OK"`. Не
+готов — стоп-фактор: журнал `STOP: <role> — <harness> unavailable: <причина>`, `needs-owner`, тот же
 вопрос в чат. Роль не подменяется другим харнессом, моделью ниже или локальным субагентом.
 
 ## Грабли
@@ -80,14 +96,14 @@ grok: усилие `xhigh` в `xhigh`/`high`, `high` в остальных. `--w
 
 ## Окна ожидания
 
-Критика — 15 минут на всех критиков задачи. Судья grok — 3 часа (не мост, предела 7200 с у него нет), судья codex и исполнитель — 2 часа: предел фоновых
-скриптов мостов 7200 с, окно больше него не живёт (или передавай `--timeout` в делегат). Исчерпано — `failed`/`timeout`/`canceled`/`cancelled`/`orphaned`/пустой ответ — не
-`FIXES`: вердикта не было. Журнал, `<харнесс>-check`, `needs-owner`, следующий шаг не выбираешь.
+Критика — 15 минут на всех критиков задачи: pi glm тратит на рецензию около 8 минут, так что `result --wait` — на остаток окна, раньше его молчание не сбой. Судья grok — 3 часа (не мост, предела 7200 с у него нет), судья codex и исполнитель — 2 часа: предел фоновых
+скриптов мостов 7200 с, окно больше него не живёт (или передавай `--timeout` в `run`). Исчерпано — `failed`/`timeout`/`canceled`/`cancelled`/`orphaned`/пустой ответ — не
+`FIXES`: вердикта не было. Журнал, `<харнесс>-run.sh check`, `needs-owner`, следующий шаг не выбираешь.
 
 ## Listik
 
-Оркестратор выдаёт карточку: `stage <id> --to <этап> --holder <харнесс> --actor agent:claude
---harness claude`. Роль, которой выдана карточка (писатель, исполнитель, судья), ведёт её сама: `claim <id> --holder <харнесс> --actor
-agent:<харнесс> --harness <харнесс>`, heartbeat, журнал, вердикт — и внешний харнесс, и локальный
+Оркестратор выдаёт карточку: `stage <id> --to <этап> --holder <HARNESS> --actor agent:claude
+--harness claude`, где `<HARNESS>` — то же имя, что в задании (локальная роль — `claude-<модель>`). Роль, которой выдана карточка (писатель, исполнитель, судья), ведёт её сама: `claim <id> --holder <HARNESS> --actor
+agent:<HARNESS> --harness <HARNESS до «-»>`, heartbeat, журнал, вердикт — и внешний харнесс, и локальный
 субагент (у него есть Bash). Критик и линза карточку не трогают. Коммит и `done` — всегда оркестратор. Полный протокол — `AGENTS.md`
 проекта: вопросы человеку, `--actor`, `release`, повторная выдача.

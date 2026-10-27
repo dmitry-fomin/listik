@@ -9,4 +9,4 @@ disable-model-invocation: true
 
 Тела нет (путь не открылся) — первая строка ответа `CANNOT: writer body not found`. Роль по памяти не восстанавливай.
 
-Карточка названа — первым действием `listik claim <id> --holder <ты> --actor agent:<ты> --harness <ты>`, дальше `heartbeat` каждые 10–15 минут. `stage`, `done` и `set` — оркестратора.
+Карточка названа — первым действием `listik claim <id> --holder <ты> --actor agent:<ты> --harness <ты до «-»>`, дальше `heartbeat` каждые 10–15 минут. `stage`, `done` и `set` — оркестратора.

@@ -8,4 +8,4 @@ disable-model-invocation: true
 
 Тела нет (путь не открылся) — первая строка ответа `CANNOT: implementer body not found`. Роль по памяти не восстанавливай.
 
-Получаешь путь к карточке, путь к worktree и путь к ТЗ. Первым действием `listik claim <id> --holder <ты> --actor agent:<ты> --harness <ты>`, дальше `heartbeat` каждые 10–15 минут. `stage` и `done` — оркестратора.
+Получаешь путь к карточке, путь к worktree и путь к ТЗ. Первым действием `listik claim <id> --holder <ты> --actor agent:<ты> --harness <ты до «-»>`, дальше `heartbeat` каждые 10–15 минут. `stage` и `done` — оркестратора.

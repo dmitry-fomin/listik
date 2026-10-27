@@ -95,10 +95,7 @@ listik memory "про что-то"
 ```
 /plugin marketplace add dmitry-fomin/listik
 /plugin install listik@listik             # скил listik:listik — протокол задач
-/plugin install pipeline-core@listik      # ядро конвейера, агенты pipeline-*, хук; ставится зависимостью пресетов
-/plugin install pipeline-full@listik      # пресеты pipeline-full:* на всех харнессах
-/plugin install pipeline-cc@listik        # пресеты pipeline-cc:* на Claude + Codex
-/plugin install pipeline-claude@listik    # пресеты pipeline-claude:* только на Claude
+/plugin install listik-pipeline@listik    # конвейер: скилы режимов listik-pipeline:*, агенты ролей, хук
 /plugin install dsh@listik                # DeepSeek Harness: dsh:dsh-delegate
 /plugin install codex@listik              # OpenAI Codex CLI: codex:codex-delegate
 /plugin install pi@listik                 # pi CLI (GLM 5.3 Flash, DeepSeek v4.1 Flash): pi:pi-delegate, в т.ч. критика ТЗ
@@ -106,9 +103,8 @@ listik memory "про что-то"
 /plugin install flow-map@listik           # карта сервиса в HTML: flow-map:flow-map
 ```
 
-Пресеты `pipeline-full` и `pipeline-cc` зовут внешние харнессы скилами этих плагинов; Grok остаётся
-отдельным (`grok@grok-build`). `pipeline-claude:*` обходятся
-субагентами Claude. При изменении плагина поднимайте `version` в его `plugin.json` и в `marketplace.json`.
+Конвейер `listik-pipeline` зовёт внешние харнессы раскладки режима скилами своих плагинов;
+Grok остаётся отдельным (`grok@grok-build`), локальные роли — субагенты Claude. При изменении плагина поднимайте `version` в его `plugin.json` и в `marketplace.json`.
 
 **MCP** (инструменты `listik_*`, список — в docs/API.md):
 
@@ -720,7 +716,7 @@ show <id>`).
 вопросов через «; » в порядке их времени.
 
 Правило для исполнителей — правило 7 протокола харнессов (`docs/harness-protocol.md`); для
-конвейера — часть ядра `plugins/pipeline-core/references/pipeline-core-headless.md`.
+конвейера — п. 7 «Стоп» в `plugins/listik-pipeline/references/orchestrator.md`.
 
 Наблюдатель `listik watch` рой зовёт каждый тик, если у проекта есть каталог и в плане нет
 цикла: до `decide` и до барьера, в том числе пока воркеры ещё бегут. Успешная заморозка

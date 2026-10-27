@@ -29,13 +29,13 @@ VERSION = "1.2.3"
 TOP = "listik-" + VERSION
 ARCHIVE = TOP + ".tar.gz"
 
-# Файлы агентов pipeline-core — единственное из plugins/, что идёт в релиз.
+# Файлы ролей listik-pipeline — единственное из plugins/, что идёт в релиз.
 AGENT_FILES = tuple(
-    f"plugins/pipeline-core/agents/pipeline-{name}.md"
-    for name in ("spec-writer", "critic", "implementer", "judge")
+    f"plugins/listik-pipeline/references/{name}.md"
+    for name in ("writer", "critic", "implementer", "judge")
 )
-# Вариант-сосед: лежит рядом с агентами, но в архив идти не должен.
-AGENT_VARIANT = "plugins/pipeline-core/agents/pipeline-judge-x.md"
+# Вариант-сосед: лежит рядом с ролями, но в архив идти не должен.
+AGENT_VARIANT = "plugins/listik-pipeline/references/lens.md"
 
 # Отслеживаемые файлы тестового репозитория — тот же белый список, что в настоящем.
 TRACKED_FILES = {

@@ -294,16 +294,13 @@ const fetchRoute = (key) => `(async () => {
  * Отображаемое название записи маршрута — копия `routeNameText` из
  * `src/lib/routes.ts` (listik-5oi5, порция a): у конвейера с `plugin` строка
  * и шапка показывают «<уровень> <семейство>» (уровень — title без ведущего
- * «<семейство> », семейство — plugin без «pipeline-»), а поле «Название»
+ * «<семейство> », семейство — префикс ключа плагина: `listik-pipeline` → `lp`), а поле «Название»
  * по-прежнему держит сырой title, поэтому сравнивать текст списка с ним
  * больше нельзя.
  */
-const VERIFY_PIPELINE_PLUGINS = ['pipeline-full', 'pipeline-cc', 'pipeline-claude']
+const VERIFY_PIPELINE_KEY_PREFIX = new Map([['listik-pipeline', 'lp']])
 const displayRouteName = (route) => {
-  const family =
-    route && VERIFY_PIPELINE_PLUGINS.includes(route.plugin)
-      ? route.plugin.slice('pipeline-'.length)
-      : null
+  const family = (route && VERIFY_PIPELINE_KEY_PREFIX.get(route.plugin)) ?? null
   if (family === null) return route?.title ?? null
   const prefix = `${family} `
   const level =

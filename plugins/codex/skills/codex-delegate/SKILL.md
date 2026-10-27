@@ -73,7 +73,7 @@ One flag, three values (`--write` still works as an alias for `--permission writ
 | --- | --- | --- |
 | `read` | reading and commands, writes denied by the sandbox | default, any investigation |
 | `bash` | the same sandbox as `read` — codex has no separate command tier | accepted for parity with the other bridges |
-| `write` | file edits inside `--cwd` | only if the human asked for a change in this message, or for the judge of a `pipeline-full`, `pipeline-cc` or `pipeline-claude` preset whose SKILL.md names codex as the judge (every `pipeline-cc:*` preset): launching the preset is that consent |
+| `write` | file edits inside `--cwd` | only if the human asked for a change in this message, or for a `listik-pipeline` role whose route gives it `write` (`references/lineups.md`): launching the pipeline is that consent |
 
 Never infer write access from a task merely looking like implementation: a read-only run
 that hits the ban says so honestly, which is cheaper than an unrequested edit. A background
@@ -93,8 +93,7 @@ Cut flags out of the task text so they don't land in the prompt as content.
 | "continue that run", a past job-id named | `resume <job-id>`, with `--permission write` if the continuation must edit (the mode is inherited, flags are not added silently) |
 
 Model, provider and effort are never your choice: a run goes on the human's settings in
-`~/.codex/config.toml`. The one exception is a call from a `pipeline-full`, `pipeline-cc` or `pipeline-claude`
-preset, which must pass the `--model` and `--effort` it requires; never add `--provider` for it.
+`~/.codex/config.toml`; `listik-pipeline` runs pass none of them either.
 
 ## Handling the answer
 
@@ -110,8 +109,5 @@ A job running far longer than expected is a `logs <job-id>` question; a misphras
 `codex-runtime`.
 
 Project red lines hold inside codex too: no commits, pushes, recursive deletes or secrets.
-If the task implies any of those, ask the human before delegating. One standing exception: a
-`pipeline-full`, `pipeline-cc` or `pipeline-claude` preset whose SKILL.md names codex as the judge
-(every `pipeline-cc:*` preset) — launching the preset is the human's consent for that judge to
-commit the portion on a green verdict, with explicit paths only; push, amend, reset and secrets
-stay forbidden.
+If the task implies any of those, ask the human before delegating. A `listik-pipeline` judge
+on codex does not commit either — the orchestrator does.

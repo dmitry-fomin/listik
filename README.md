@@ -87,18 +87,14 @@ MCP-инструментами `listik_*` или командой `listik new`. 
 
 | Маршрут | Скил | ТЗ | Критика | Реализация | Приёмка | Когда берут |
 |---|---|---|---|---|---|---|
-| `full-xhigh` | `pipeline-full:xhigh` | Opus xhigh | Sonnet + DeepSeek V4.1 Flash + GLM 5.3 Flash | Opus xhigh | линзы Haiku 5.5 max → Grok xhigh | ошибка дороже прогона |
-| `claude-xhigh` | `pipeline-claude:xhigh` | Opus xhigh | Sonnet xhigh + Opus xhigh | Opus xhigh | линзы Haiku 5.5 max → Sonnet xhigh | только Claude: внешних денег ноль |
-| `full-high` | `pipeline-full:high` | Opus high | Sonnet + DeepSeek V4.1 Flash + GLM 5.3 Flash | Opus high | линзы Haiku 5.5 max → Grok xhigh | расклад по умолчанию |
-| `claude-high` | `pipeline-claude:high` | Opus high | Sonnet high + Opus high | Opus high | линзы Haiku 5.5 max → Sonnet high | только Claude: внешних денег ноль |
-| `full-medium` | `pipeline-full:medium` | Opus medium | Sonnet + DeepSeek V4.1 Flash + GLM 5.3 Flash | Opus medium | линзы Haiku 5.5 max → Grok high | работа понятная |
-| `full-low` | `pipeline-full:low` | Opus low | DeepSeek V4.1 Flash + GLM 5.3 Flash + Haiku 5.5 | devin SWE-2 max | линзы Haiku 5.5 max → Grok high | код вне квоты Max |
-| `full-xlow` | `pipeline-full:xlow` | — | — | devin SWE-2 max | Grok high | один прогон с приёмкой |
-| `full-nano` | `pipeline-full:nano` | — | — | devin SWE-2 high | GLM 5.3 Flash в pi | короткая задача: сделать и принять |
-| `cc-xhigh`, `cc-high`, `cc-medium`, `cc-low`, `cc-xlow` | `pipeline-cc:<уровень>` | по уровню | по уровню | Opus | линзы Haiku 5.5 max → Astra (Codex), кроме cc-xlow | линейка Claude + Codex — см. `plugins/pipeline-cc/README.md` |
+| `lp-xhigh` | `listik-pipeline:xhigh` | Opus xhigh | Sonnet + DeepSeek V4.1 Flash + GLM 5.3 Flash | Opus xhigh | линза Haiku 5.5 max → Grok xhigh | ошибка дороже прогона |
+| `lp-high` | `listik-pipeline:high` | Opus high | Sonnet + DeepSeek V4.1 Flash + GLM 5.3 Flash | Opus high | линза Haiku 5.5 max → Grok xhigh | расклад по умолчанию |
+| `lp-medium` | `listik-pipeline:medium` | Opus medium | Sonnet + DeepSeek V4.1 Flash + GLM 5.3 Flash | Opus medium | линза Haiku 5.5 max → Grok high | работа понятная |
+| `lp-low` | `listik-pipeline:low` | Opus low | GLM 5.3 Flash + DeepSeek V4.1 Flash + Haiku 5.5 | devin SWE-2 max | линза Haiku 5.5 max → Grok high | код вне квоты Max |
+| `lp-xlow` | `listik-pipeline:xlow` | — | — | devin SWE-2 max | Grok high | один прогон с приёмкой |
+| `lp-nano` | `listik-pipeline:nano` | — | — | devin SWE-2 high | GLM 5.3 Flash в pi | короткая задача: сделать и принять |
 
-Схема каждого пресета — в README его плагина: [pipeline-full](plugins/pipeline-full/README.md),
-[pipeline-cc](plugins/pipeline-cc/README.md), [pipeline-claude](plugins/pipeline-claude/README.md).
+Схема конвейера и механика ролей — [plugins/listik-pipeline/README.md](plugins/listik-pipeline/README.md).
 
 Привести таблицу к `routes.json` установленной копии — `listik routes --reimport`: пайплайны
 из файла перезаписываются (их правки на доске пропадают), пайплайны-скилы не из файла удаляются,
@@ -110,7 +106,7 @@ MCP-инструментами `listik_*` или командой `listik new`. 
 `PATCH /api/routes/{key}`.
 Каталог харнессов и их каналы моделей — `listik harnesses [ключ]` (только чтение).
 Модели каналов мостов pi и opencode задаются в «Настройки → Харнессы» — каналы харнессов `pi` и
-`opencode` (`GET /api/harnesses`, `listik harnesses --json`). Скилы пресетов передают мосту только
+`opencode` (`GET /api/harnesses`, `listik harnesses --json`). Скилы конвейера передают мосту только
 имя канала (`--channel glm`, `--model deepseek`), а модель за ним мост читает из Listik при каждом
 запуске, поэтому смена модели канала не требует релиза. Зашитые в мосты модели — запасные, на случай
 недоступного Listik; источник показывает `check` (`channels from`).
@@ -121,10 +117,7 @@ MCP-инструментами `listik_*` или командой `listik new`. 
 ```
 /plugin marketplace add dmitry-fomin/listik
 /plugin install listik@listik             # протокол задач: скил listik:listik
-/plugin install pipeline-core@listik      # ядро конвейера, агенты pipeline-*, хук; ставится зависимостью пресетов
-/plugin install pipeline-full@listik      # пресеты конвейера на всех харнессах
-/plugin install pipeline-cc@listik        # пресеты конвейера на Claude + Codex
-/plugin install pipeline-claude@listik    # пресеты конвейера только на Claude
+/plugin install listik-pipeline@listik    # конвейер: скилы режимов listik-pipeline:*, агенты ролей, хук
 /plugin install dsh@listik                # DeepSeek Harness
 /plugin install codex@listik              # OpenAI Codex CLI
 /plugin install pi@listik                 # pi CLI (GLM 5.3 Flash, DeepSeek v4.1 Flash); критика ТЗ в конвейерах
@@ -274,10 +267,7 @@ marketplace `listik` — плагины Claude Code, поэтому без ха�
 | Плагин | Когда ставится (при выбранном харнессе `claude`) |
 |---|---|
 | `listik` | всегда |
-| `pipeline-core` | нейронка `claude`; от него зависят три пресетных плагина |
-| `pipeline-full` | нейронка `claude` и харнесс `grok` и харнесс `devin` и харнесс `pi` и нейронка `grok` и нейронка `devin` и нейронка `glm` и нейронка `deepseek` |
-| `pipeline-cc` | нейронка `claude` и харнесс `codex` и нейронка `openai` |
-| `pipeline-claude` | нейронка `claude` |
+| `listik-pipeline` | нейронка `claude` |
 | `dsh` | харнесс `dsh`, нейронка `deepseek` |
 | `codex` | харнесс `codex`, нейронка `openai` |
 | `opencode` | харнесс `opencode`, нейронка `glm` или `deepseek` |
@@ -287,17 +277,17 @@ marketplace `listik` — плагины Claude Code, поэтому без ха�
 
 У Grok CLI плагина в marketplace `listik` нет — он ставится отдельно. Ответы задаются и
 флагами `--models LIST` / `--harnesses LIST` (`LISTIK_MODELS` / `LISTIK_HARNESSES`): id через
-запятую, `all` или `none`. Маршруты невыбранных `pipeline-full`, `pipeline-cc`, `pipeline-claude`
-установщик скрывает с доски (`listik routes --hide`) по полю `plugin` записи маршрута; свои
-конвейеры без `plugin` и маршруты роя не скрываются; обратно установщик их не открывает.
-Невыбранные плагины, которые уже стоят, не удаляются, кроме старых `feature-pipeline` и
-`claude-codex` — их установщик удаляет.
+запятую, `all` или `none`. Маршруты старых плагинов `pipeline-full`, `pipeline-cc`,
+`pipeline-claude`, дожившие в базе, установщик скрывает с доски (`listik routes --hide`) по полю
+`plugin` записи маршрута; маршруты `listik-pipeline`, свои конвейеры без `plugin` и маршруты роя
+не скрываются; обратно установщик их не открывает. Невыбранные плагины, которые уже стоят, не
+удаляются, кроме старых плагинов конвейера (`feature-pipeline`, `claude-codex`, `pipeline-core`,
+`pipeline-full`, `pipeline-cc`, `pipeline-claude`) — их заменил `listik-pipeline`.
 
-Старые `feature-pipeline@listik` и `claude-codex@listik` установщик удаляет, только когда встал
-`pipeline-core`, и только установленные в области `user`; стоящие в области проекта
-(`project`/`local`) он не трогает и печатает команду `/plugin uninstall …` для ручного удаления.
-Если проверить список плагинов не удалось или `pipeline-core` не поставился — тоже подсказка
-удалить их вручную.
+Старые плагины конвейера установщик удаляет, только когда встал `listik-pipeline`, и только
+установленные в области `user`; стоящие в области проекта (`project`/`local`) он не трогает и
+печатает команду `/plugin uninstall …` для ручного удаления. Если проверить список плагинов не
+удалось или `listik-pipeline` не поставился — тоже подсказка удалить их вручную.
 
 Все флаги (`--version`, `--archive`, `--home`, `--service`, `--swarm`, `--mcp`, `--plugins`,
 `--models`, `--harnesses`, `--codex-network`, `--routes-reimport`, `--server`, `--owner`, `--yes`, …) —

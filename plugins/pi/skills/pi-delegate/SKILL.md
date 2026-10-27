@@ -118,7 +118,5 @@ exception — report it and let the human decide.
 - If pi failed, report that instead of quietly finishing the task for it.
 
 Project red lines hold inside pi too: no commits, pushes, recursive deletes or secrets. If
-the task implies any of those, ask the human before delegating. One standing exception: a
-pipeline-full preset whose SKILL.md names pi as the judge (`pipeline-full:nano`) — launching the
-preset is the human's consent for that judge to commit the portion on a green verdict, with
-explicit paths only; push, amend, reset and secrets stay forbidden.
+the task implies any of those, ask the human before delegating. A `listik-pipeline` judge on pi
+(`lp-nano`) does not commit either — the orchestrator does.

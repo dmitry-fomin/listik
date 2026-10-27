@@ -164,11 +164,11 @@ class SwarmE2ECase(AutostartTestCase, FencingHttpCase):
         with (paths.CONFIG_PATH).open("a", encoding="utf-8") as fh:
             fh.write(f'\n[server]\nhost = "127.0.0.1"\nport = {self.port}\n')
 
-        # Промпт роли дописывает критерии агента из `stage_launch.AGENTS_DIR`; константа
+        # Промпт роли дописывает критерии из `stage_launch.REFS_DIR`; константа
         # берётся из `paths.ROOT_DIR` при импорте, а `AutostartTestCase` подменяет его
-        # временным каталогом — указываем на настоящие файлы агентов репозитория.
+        # временным каталогом — указываем на настоящие файлы ролей репозитория.
         agents_patch = mock.patch.object(
-            stage_launch, "AGENTS_DIR", REPO_DIR / "plugins" / "pipeline-core" / "agents")
+            stage_launch, "REFS_DIR", REPO_DIR / "plugins" / "listik-pipeline" / "references")
         agents_patch.start()
         self.addCleanup(agents_patch.stop)
 

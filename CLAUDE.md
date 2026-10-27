@@ -107,16 +107,16 @@ Database migrations exist as two parallel mechanisms — don't confuse them:
   plus the optional `skill` (a launcher skill, `плагин:скил` — e.g. `pi:pi-delegate`) and its
   flat `params`, and the optional `members` (`[{harness, channel}]`, checked against the
   `harnesses` catalog and its `channels`); the same validation (`routes._validate_roles`) serves the seed file and the HTTP
-  path. A pipeline route key is `<plugin without "pipeline-">-<skill name>` (`full-high`,
-  `cc-high`, `claude-high`); a `kind=pipeline` record has the `plugin` field (the preset's plugin:
-  `pipeline-full`/`pipeline-cc`/`pipeline-claude`; `null` for swarm routes and the author's own
-  pipelines, checked by `routes.check_plugin`). It feeds the `{plugin}`/`{skill}` placeholders
+  path. A pipeline route key is `lp-<mode>` (`lp-high`, `lp-nano`: the plugin prefix
+  `listik-pipeline` → `lp`, then the mode skill name); a `kind=pipeline` record has the `plugin`
+  field (`listik-pipeline`; `null` for swarm routes and the author's own pipelines, checked by
+  `routes.check_plugin`). It feeds the `{plugin}`/`{skill}` placeholders
   in `command` (`{skill}` is the key without its plugin prefix, both empty without `plugin`;
   launching a pipeline whose command uses them without a `plugin` is refused) and the skill path
   `plugins/<plugin>/skills/<skill>/SKILL.md` (`skill_path` in `routes_response`; with `plugins/`
   present, no `plugin` or no such directory — `skill_missing`). `listik/skills.py` is a
-  read-only catalogue of two things — `plugins/pipeline-full|pipeline-cc|pipeline-claude/skills/*/SKILL.md`
-  (title/hint/path) used to prefill new pipeline routes and flag routes whose skill directory
+  read-only catalogue of two things — the mode skills `plugins/listik-pipeline/skills/*/SKILL.md`
+  (title/hint/path; the role skills writer/critic/implementer/lens/judge are not modes) used to prefill new pipeline routes and flag routes whose skill directory
   disappeared, and the launcher skills (`plugins/*/skills/*-delegate`) offered to role cells —
   never a source of roles itself.
 - `listik/backup.py` — `listik backup` / `listik restore` via the sqlite backup API (a plain
@@ -192,10 +192,7 @@ committed (see `.gitignore`).
 ## Project plugins (skills)
 
 The skills used to run this project's work live in this repo and are made exactly for it:
-- `plugins/pipeline-core/` — the pipeline core (`references/`), the `pipeline-core:*` agents, the agent auto-approve hook and the pointer skill `pipeline-core:core`;
-- `plugins/pipeline-full/` — presets `pipeline-full:<skill>` across all harnesses;
-- `plugins/pipeline-cc/` — presets `pipeline-cc:<skill>` on Claude + Codex;
-- `plugins/pipeline-claude/` — presets `pipeline-claude:<skill>` on Claude only;
+- `plugins/listik-pipeline/` — the pipeline: mode skills `listik-pipeline:<mode>` (xhigh/high/medium/low/xlow/nano, route keys `lp-<mode>`), role skills, agents `listik-pipeline:<role>-<effort>`, role bodies in `references/` and the agent auto-approve hook;
 - `plugins/listik/` — the `listik:listik` task-protocol skill;
 - `plugins/dsh/` — DeepSeek Harness bridge (`dsh:dsh-delegate` and related skills);
 - `plugins/codex/` — OpenAI Codex CLI bridge (`codex:codex-delegate` and related skills);

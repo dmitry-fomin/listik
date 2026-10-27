@@ -62,10 +62,8 @@ Never infer write access from the shape of the task — only from an explicit re
 change files. A read-only run that hits the ban reports it honestly, which is cheaper than
 an unrequested edit.
 
-Model, provider and effort stay as the human configured them in `~/.codex/config.toml`.
-One exception: a call from a `pipeline-full`, `pipeline-cc` or `pipeline-claude` preset, which must pass the `--model` and
-`--effort` the preset requires, because model-per-role is part of the preset (rationale in
-`plugins/pipeline-core/references/ROLES.md`). Never add `--provider` for it.
+Model, provider and effort stay as the human configured them in `~/.codex/config.toml`;
+`listik-pipeline` runs pass none of them either.
 
 ## What to return
 

@@ -245,12 +245,11 @@ class LaunchTests(SwarmCase):
 
     # ---------------------------------------------- критерии роли (listik-2cu2)
 
-    BRIDGE = ("Критерии роли {role} — разделы агента {stem} "
-              "(plugins/pipeline-core/agents/{stem}.md). Где они расходятся с протоколом "
-              "выше, действует протокол: ответ — последняя строка вывода, а не первая строка "
-              "отчёта; claim, heartbeat, release, stage, needs-owner и вердикт (-k verdict) "
-              "ты не делаешь — карточку ведёт Listik; оркестратора и дампов диффа нет, всё "
-              "нужное — в listik context.")
+    BRIDGE = ("Критерии роли {role} — из plugins/listik-pipeline/references/{stem}.md. "
+              "Где они расходятся с протоколом выше, действует протокол: ответ — последняя "
+              "строка вывода, а не первая строка отчёта; claim, heartbeat, release, stage, "
+              "needs-owner и вердикт (-k verdict) ты не делаешь — карточку ведёт Listik; "
+              "оркестратора и строк задания нет, всё нужное — в listik context.")
     JUDGE_NOTE = ("Красные пункты пиши строками над последней строкой «красный» — Listik "
                   "переносит их в VERDICT: FAIL дословно. При зелёном коммит делаешь ты, до "
                   "ответа «зелёный». Перед работой смотри `listik context <id задачи> --stage "
@@ -260,19 +259,19 @@ class LaunchTests(SwarmCase):
                   "закрыть или принять — коммитишь, если есть что коммитить, и отвечаешь "
                   "«зелёный»; выбран вариант с правками — отвечаешь «красный» и перечисляешь "
                   "правки. Уже отвеченный вопрос повторно не задают: «вопрос» — только о "
-                  "новом обстоятельстве, которого не было в прошлом вопросе.")
+                  "новом обстоятельстве, которого не было в прошлом вопросе. Код не правишь "
+                  "никогда, даже в одну строку. Рабочее дерево не перекладываешь (git stash, "
+                  "git checkout <файл>, git reset, git clean); ломать код ради негативной "
+                  "проверки — только в копии (git worktree add --detach во временный каталог). "
+                  "Коммит при зелёном: пути перечисляешь явно — без git add -A, без бумаг шага "
+                  "и журнала; без --amend, reset, rebase, --no-verify; не пушишь. Секрет в "
+                  "диффе — «красный», без коммита.")
     JUDGE_LAST = ("Последняя строка вывода — одно слово: «зелёный», «красный», «вопрос» "
                   "или «не смог».")
-    ROLE_CASES = (("spec", "s1-spec", "pipeline-spec-writer",
-                   ("Вопрос автору — это остановка, а не абзац в отчёте",
-                    "Что тебе запрещено", "Файлы"), "готово"),
-                  ("critic", "s2-review", "pipeline-critic",
-                   ("Что ты смотришь", "Что тебе запрещено"), "готово"),
-                  ("impl", "s3-impl", "pipeline-implementer",
-                   ("Порядок работы", "Что тебе запрещено", "Если не получается"), "готово"),
-                  ("judge", "s4-judge", "pipeline-judge",
-                   ("Что тебе запрещено", "Работа", "Коммит при зелёном вердикте"),
-                   "зелёный"))
+    ROLE_CASES = (("spec", "s1-spec", "writer", ("ТЗ", "Чек-лист"), "готово"),
+                  ("critic", "s2-review", "critic", ("Вопросы", "Формат"), "готово"),
+                  ("impl", "s3-impl", "implementer", ("",), "готово"),
+                  ("judge", "s4-judge", "judge", ("",), "зелёный"))
 
     def echo_probe(self, answer: str) -> None:
         harnesses_store.update(self.conn, "probe", {
@@ -291,31 +290,30 @@ class LaunchTests(SwarmCase):
         self.assertTrue(out.endswith(f"\n{answer}\n"), out[-200:])
         return task_id, out[:-len(answer) - 2], log.read_text(encoding="utf-8")
 
-    def patch_agents_dir(self, path: Path) -> None:
-        patcher = mock.patch.object(stage_launch, "AGENTS_DIR", path)
+    def patch_refs_dir(self, path: Path) -> None:
+        patcher = mock.patch.object(stage_launch, "REFS_DIR", path)
         patcher.start()
         self.addCleanup(patcher.stop)
 
     def test_each_role_sees_its_criteria_in_log(self) -> None:
-        agents = Path(__file__).resolve().parent.parent / "plugins/pipeline-core/agents"
+        refs = Path(__file__).resolve().parent.parent / "plugins/listik-pipeline/references"
         for role, stage, stem, titles, answer in self.ROLE_CASES:
             with self.subTest(role=role):
-                lines = (agents / f"{stem}.md").read_text(encoding="utf-8").splitlines()
+                lines = (refs / f"{stem}.md").read_text(encoding="utf-8").splitlines()
                 _, _, logged = self.run_role(role, stage, answer, key=f"roy-{role}")
                 self.assertIn(self.BRIDGE.format(role=role, stem=stem), logged)
                 for title in titles:
-                    start = lines.index(f"## {title}")
+                    start = lines.index(f"## {title}") if title else 0
                     first = next(line for line in lines[start + 1:] if line.strip())
                     self.assertIn(first, logged)
-                absent = {"judge": ("## Карточка Listik", "## Отчёт"),
-                          "impl": ("## Карточка Listik", "## Формат отчёта")}
-                for header in absent.get(role, ()):
+                # Разделы «Ответ» и «Listik» противоречат протоколу роя — их нет.
+                for header in ("## Ответ", "## Listik"):
                     self.assertNotIn(header, logged)
 
-    def test_judge_prompt_has_duplicates_point(self) -> None:
-        agents = Path(__file__).resolve().parent.parent / "plugins/pipeline-core/agents"
-        point = next(line for line in (agents / "pipeline-judge.md").read_text(
-            encoding="utf-8").splitlines() if "Отдельно — **дубликаты**" in line)
+    def test_judge_prompt_has_regressions_point(self) -> None:
+        refs = Path(__file__).resolve().parent.parent / "plugins/listik-pipeline/references"
+        point = next(line for line in (refs / "judge.md").read_text(
+            encoding="utf-8").splitlines() if "Нет регрессий" in line)
         _, prompt, logged = self.run_role("judge", "s4-judge", "зелёный")
         self.assertIn(point, prompt)
         self.assertIn(point, logged)
@@ -323,38 +321,27 @@ class LaunchTests(SwarmCase):
         self.assertEqual(last, self.JUDGE_LAST)
 
     def test_own_cell_prompt_has_no_criteria(self) -> None:
-        self.patch_agents_dir(self.tmp_path / "нет-агентов")  # файлы не читаются
+        self.patch_refs_dir(self.tmp_path / "нет-ролей")  # файлы не читаются
         task_id, prompt, logged = self.run_role(
             "impl", "s3-impl", "готово", cell={"harness": "probe", "prompt": "свой {task_id}"})
         self.assertEqual(prompt, f"свой {task_id}")
         self.assertNotIn("Критерии роли", logged)
 
     def test_judge_prompt_exact_assembly(self) -> None:
-        agents = self.tmp_path / "agents"
-        agents.mkdir()
-        (agents / "pipeline-judge.md").write_text(
-            "# Судья\n\n"
-            "## Карточка Listik\nлишнее до\n\n"
-            "## Что тебе запрещено\n- не трогай {task_id}\n\n\n\n"
-            "## Работа судьи\nне тот раздел\n\n"
-            "## Работа   \n1. шаг\n### подраздел\n2. ещё\n\n"
-            "## Коммит при зелёном вердикте\nкоммить\n\n\n"
-            "## Отчёт\nлишнее после\n", encoding="utf-8")
-        self.patch_agents_dir(agents)
+        refs = self.tmp_path / "refs"
+        refs.mkdir()
+        (refs / "judge.md").write_text(
+            "# Судья\n\n\n"
+            "1. не трогай {task_id}\n### подраздел\n2. ещё\n\n\n"
+            "## Ответ\nлишнее после\n", encoding="utf-8")
+        self.patch_refs_dir(refs)
         task_id, prompt, _ = self.run_role("judge", "s4-judge", "зелёный")
         cwd = self.conn.execute("SELECT path FROM projects WHERE slug = 'proj'").fetchone()[0]
         protocol = harnesses_store.SWARM_PROMPT.format(
             task_id=task_id, project="proj", stage="s4-judge", role="judge",
             worktree=cwd, branch="", cwd=cwd)
-        bridge = ("Критерии роли judge — разделы агента pipeline-judge "
-                  "(plugins/pipeline-core/agents/pipeline-judge.md). Где они расходятся с "
-                  "протоколом выше, действует протокол: ответ — последняя строка вывода, а не "
-                  "первая строка отчёта; claim, heartbeat, release, stage, needs-owner и "
-                  "вердикт (-k verdict) ты не делаешь — карточку ведёт Listik; оркестратора и "
-                  "дампов диффа нет, всё нужное — в listik context.")
-        criteria = ("## Что тебе запрещено\n- не трогай {task_id}\n\n"
-                    "## Работа\n1. шаг\n### подраздел\n2. ещё\n\n"
-                    "## Коммит при зелёном вердикте\nкоммить")
+        bridge = self.BRIDGE.format(role="judge", stem="judge")
+        criteria = "1. не трогай {task_id}\n### подраздел\n2. ещё"
         self.assertEqual(prompt, "\n\n".join(
             [protocol, bridge, self.JUDGE_NOTE, criteria, self.JUDGE_LAST]))
 
@@ -385,58 +372,57 @@ class LaunchTests(SwarmCase):
         self.assertEqual(claims, 0)
         return self.comments(task_id, "question")[-1]
 
-    def test_missing_agent_file_is_refusal(self) -> None:
-        agents = self.tmp_path / "agents"
-        agents.mkdir()
-        self.patch_agents_dir(agents)
+    def test_missing_role_file_is_refusal(self) -> None:
+        refs = self.tmp_path / "refs"
+        refs.mkdir()
+        self.patch_refs_dir(refs)
         self.add_route({"judge": {"harness": "probe"}})
         task_id = self.add_task(stage="s4-judge")
         question = self.assert_refused(task_id, self.start_and_wait(task_id))
         self.assertEqual(question, "рой: нет критериев роли judge (этап s4-judge): "
-                                   f"нет файла {agents}/pipeline-judge.md")
+                                   f"нет файла {refs}/judge.md")
 
-    def test_non_utf8_agent_file_is_refusal(self) -> None:
-        agents = self.tmp_path / "agents"
-        agents.mkdir()
-        (agents / "pipeline-judge.md").write_bytes(b"\xff\xfe")
-        self.patch_agents_dir(agents)
+    def test_non_utf8_role_file_is_refusal(self) -> None:
+        refs = self.tmp_path / "refs"
+        refs.mkdir()
+        (refs / "judge.md").write_bytes(b"\xff\xfe")
+        self.patch_refs_dir(refs)
         self.add_route({"judge": {"harness": "probe"}})
         task_id = self.add_task(stage="s4-judge")
         question = self.assert_refused(task_id, self.start_and_wait(task_id))
         self.assertEqual(question, "рой: нет критериев роли judge (этап s4-judge): "
-                                   f"файл {agents}/pipeline-judge.md не в UTF-8")
+                                   f"файл {refs}/judge.md не в UTF-8")
 
-    def test_unreadable_agent_file_is_refusal(self) -> None:
-        agents = self.tmp_path / "agents"
-        (agents / "pipeline-judge.md").mkdir(parents=True)
-        self.patch_agents_dir(agents)
+    def test_unreadable_role_file_is_refusal(self) -> None:
+        refs = self.tmp_path / "refs"
+        (refs / "judge.md").mkdir(parents=True)
+        self.patch_refs_dir(refs)
         self.add_route({"judge": {"harness": "probe"}})
         task_id = self.add_task(stage="s4-judge")
         question = self.assert_refused(task_id, self.start_and_wait(task_id))
         prefix = ("рой: нет критериев роли judge (этап s4-judge): "
-                  f"не читается файл {agents}/pipeline-judge.md: ")
+                  f"не читается файл {refs}/judge.md: ")
         self.assertTrue(question.startswith(prefix), question)
         self.assertGreater(len(question), len(prefix))
 
-    def test_missing_agent_section_is_refusal(self) -> None:
-        agents = self.tmp_path / "agents"
-        agents.mkdir()
-        (agents / "pipeline-judge.md").write_text(
-            "## Что тебе запрещено\nx\n\n## Работа судьи\ny\n\n"
-            "## Коммит при зелёном вердикте\nz\n", encoding="utf-8")
-        self.patch_agents_dir(agents)
+    def test_missing_role_preamble_is_refusal(self) -> None:
+        refs = self.tmp_path / "refs"
+        refs.mkdir()
+        (refs / "judge.md").write_text(
+            "# Судья\n\n## Ответ\nPASS\n", encoding="utf-8")
+        self.patch_refs_dir(refs)
         self.add_route({"judge": {"harness": "probe"}})
         task_id = self.add_task(stage="s4-judge")
         question = self.assert_refused(task_id, self.start_and_wait(task_id))
-        self.assertTrue(question.endswith("в pipeline-judge.md нет раздела «Работа»"),
+        self.assertTrue(question.endswith("в judge.md нет вступления"),
                         question)
 
-    def test_roles_visible_without_agents_dir(self) -> None:
+    def test_roles_visible_without_refs_dir(self) -> None:
         record = self.add_route({"impl": {"harness": "probe"},
                                  "judge": {"harness": "probe"}})
         real = (stage_launch.has_roles(self.conn, record),
                 [stage_launch.next_stage_with_role(self.conn, record, s) for s in _STAGES])
-        self.patch_agents_dir(self.tmp_path / "нет-агентов")
+        self.patch_refs_dir(self.tmp_path / "нет-ролей")
         self.assertEqual((stage_launch.has_roles(self.conn, record),
                           [stage_launch.next_stage_with_role(self.conn, record, s)
                            for s in _STAGES]), real)

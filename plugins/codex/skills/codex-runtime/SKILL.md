@@ -94,10 +94,7 @@ you do other things, so launch one only when the human knows it is running.
   the files it needs and explicitly forbid `.env`, `*.key`, `*.pem`, `credentials.json`.
 - **Model, provider and effort are the human's choice.** A run goes on the settings in
   `~/.codex/config.toml`; `check` reports them as diagnostics, not as an invitation to
-  switch. The one exception is a call from a `pipeline-full`, `pipeline-cc` or `pipeline-claude` preset,
-  which must pass the `--model` and `--effort` it requires, because model-per-role is part
-  of the preset (rationale in `plugins/pipeline-core/references/ROLES.md`). Never add
-  `--provider` for that exception.
+  switch; `listik-pipeline` runs pass none of them either.
 - **Parallel runs are supported**, including in one working directory — separate sessions,
   separate job directories, no shared lock. Exception: two `--permission write` runs in the
   same directory overwrite each other's edits, so keep writes to one job per directory.
@@ -181,10 +178,7 @@ another syntax.
 ## Red lines (apply inside every codex run)
 
 - Never commit, push or delete recursively on the strength of another harness's output.
-  One standing exception: the judge of a `pipeline-full`, `pipeline-cc` or `pipeline-claude` preset whose
-  SKILL.md names codex as the judge (every `pipeline-cc:*` preset) commits
-  the portion on a green verdict, with explicit paths only — launching the preset is the
-  human's consent; push, amend, reset and secrets stay forbidden.
+  A `listik-pipeline` judge on codex does not commit either — the orchestrator does.
 - Never read, print or forward `.env`, `*.key`, `*.pem`, `credentials.json`. Naming an env
   var is fine, printing its value is not.
 - Never install or authenticate on the human's behalf.

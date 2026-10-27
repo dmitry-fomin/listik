@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""PermissionRequest-хук плагина listik-pipeline (перенесён из pipeline-core).
+"""PermissionRequest-хук плагина listik-pipeline.
 
 Одобряет запрос разрешения без участия автора, только если одновременно:
 - в настройках плагина включён auto_approve_agents;

@@ -579,7 +579,7 @@ class HarnessesApiTests(RoutesApiBase):
     def test_list_without_agent_files_reports_role_errors(self) -> None:
         agents = self.tmp_path / "agents"
         agents.mkdir()
-        with mock.patch.object(stage_launch, "AGENTS_DIR", agents):
+        with mock.patch.object(stage_launch, "REFS_DIR", agents):
             status, data = self.get("/api/harnesses")
         self.assertEqual(status, 200)
         self.assertEqual(data["swarm_prompt"], harnesses_store.SWARM_PROMPT)
@@ -587,7 +587,7 @@ class HarnessesApiTests(RoutesApiBase):
         self.assertEqual(set(data["swarm_role_errors"]),
                          {"spec", "critic", "impl", "impl_last", "judge"})
         self.assertEqual(data["swarm_role_errors"]["judge"],
-                         f"нет файла {agents}/pipeline-judge.md")
+                         f"нет файла {agents}/judge.md")
 
     def test_create_get_patch(self) -> None:
         status, record = self.post("/api/harnesses", {

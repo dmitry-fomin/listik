@@ -65,9 +65,7 @@ Options for `run`/`resume`:
 - **Secrets are a prompt-side concern.** opencode opens files on its own, so scope the task
   to the files it needs and explicitly forbid `.env`, `*.key`, `*.pem`, `credentials.json`.
 - **Channel, variant and agent are the human's choice.** Runs go on `glm`
-  (`b.ai/glm-5.3-flash`). Add `--model`/`--variant`/`--agent` only when the human named it,
-  or when a pipeline preset passes it — model-per-role is part of the preset (rationale in
-  `plugins/pipeline-core/references/ROLES.md`).
+  (`b.ai/glm-5.3-flash`). Add `--model`/`--variant`/`--agent` only when the human named it.
 - **DeepSeek confabulates** — it will confidently name files, flags and functions that do
   not exist. Treat `deepseek` answers as claims to verify against the code.
 - **Parallel runs are supported**, including in one working directory — separate sessions,

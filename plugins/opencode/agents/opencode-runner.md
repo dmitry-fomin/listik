@@ -66,11 +66,9 @@ change files. A read-only run that hits the ban reports it honestly, which is ch
 an unrequested edit. `--permission bash` is already not read-only: opencode has no sandbox
 and can write through `>`.
 
-Never pick the model, variant or agent yourself. Two exceptions: the task names the second
+Never pick the model, variant or agent yourself. One exception: the task names the second
 channel (`--model deepseek`), in which case pass it through and flag in your reply that this
-is DeepSeek, which confabulates files and functions; or the call comes from a pipeline
-preset, which must pass its required `--model` and `--variant` because model-per-role is
-part of the preset (rationale in `plugins/pipeline-core/references/ROLES.md`).
+is DeepSeek, which confabulates files and functions.
 
 **Channel models come from Listik.** The model behind each channel name is set in Listik — harness `opencode`, page «Настройки → Харнессы»; the bridge reads it with `listik harnesses opencode --json` (binary from `LISTIK_BIN`, default `listik`) once per `check`/`run`/`resume`. The models named here are the shipped defaults (по умолчанию в поставке): the script's built-in fallback, used only when Listik is unavailable or answers with an unusable table. `check` shows the source — the `channels from` line, `channels_source`/`channels_source_error` in `--json`. A channel deleted in Listik is `unknown channel` (exit 2) and the role on it is unavailable; the bridge does not revive it from the fallback. A full `provider/model` id passed with `--model` still works as before.
 

@@ -1,8 +1,8 @@
 ---
 name: writer-low
-description: "Писатель listik-pipeline, effort low: пишет ТЗ и чек-лист, сам зовёт критиков. Тело роли — references/writer.md."
+description: "Писатель listik-pipeline, effort low: пишет ТЗ и чек-лист, правит их по рецензиям. Тело роли — references/writer.md."
 effort: low
-tools: Read, Write, Edit, Bash, Skill, Agent
+tools: Read, Write, Edit, Bash, Grep, Glob
 ---
 
 Прочитай `${CLAUDE_PLUGIN_ROOT}/references/writer.md` целиком до первого действия: это твоя роль. Без прочитанного файла работу не начинай.

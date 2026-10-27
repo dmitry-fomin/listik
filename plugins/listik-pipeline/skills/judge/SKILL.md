@@ -1,6 +1,7 @@
 ---
 name: judge
 description: "Судья listik-pipeline: финальная приёмка, вердикт VERDICT: PASS или VERDICT: FAIL с замечаниями; коммит — оркестратора. Вызывай после находок линзы или при RISK: YES."
+disable-model-invocation: true
 ---
 
 Твоя роль целиком — `${CLAUDE_PLUGIN_ROOT}/references/judge.md`. Прочитай её до первого действия.

@@ -1,8 +1,16 @@
 {
   "name": "listik-pipeline",
   "displayName": "Listik pipeline",
-  "version": "0.1.0",
+  "version": "0.2.0",
   "description": "Конвейер реализации: ТЗ → критика → код → независимая приёмка. Оркестратор — сессия Claude Code, роли — локальные субагенты и внешние харнессы (pi, devin, codex, grok) по раскладке режима.",
+  "userConfig": {
+    "auto_approve_agents": {
+      "type": "boolean",
+      "title": "Автоодобрение команд агентов конвейера",
+      "description": "Агенты listik-pipeline:writer-*, critic-*, implementer-*, lens-*, judge-* получают без запроса правки файлов в проекте и его worktree и команды Bash. push, reset, clean, stash, rebase, rm -r, sudo, docker, ssh, publish, секреты и прочее опасное по-прежнему идут запросом. `git add` и `git commit` проходят без запроса — кому коммитить нельзя, того держит тело его роли, а не хук. Основная сессия и другие агенты не затрагиваются.",
+      "default": false
+    }
+  },
   "author": {
     "name": "Dmitry Fomin",
     "url": "https://github.com/dmitry-fomin"

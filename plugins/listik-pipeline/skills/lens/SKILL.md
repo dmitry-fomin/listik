@@ -1,6 +1,7 @@
 ---
 name: lens
 description: "Линза listik-pipeline: дешёвая приёмка готового кода по чек-листу, ответ PASS или FIXES со ссылками file:line. Вызывай, когда код уже в worktree и нужна быстрая проверка без судьи."
+disable-model-invocation: true
 ---
 
 Твоя роль целиком — `${CLAUDE_PLUGIN_ROOT}/references/lens.md`. Прочитай её до первого действия.

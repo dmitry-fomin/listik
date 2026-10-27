@@ -1,6 +1,7 @@
 ---
 name: implementer
 description: "Исполнитель listik-pipeline: пишет код по ТЗ и чек-листу в worktree карточки, отвечает DONE с выводом команды проверки. Вызывай, когда ТЗ готово и нужен код."
+disable-model-invocation: true
 ---
 
 Твоя роль целиком — `${CLAUDE_PLUGIN_ROOT}/references/implementer.md`. Прочитай её до первого действия.

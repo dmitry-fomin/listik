@@ -1065,7 +1065,6 @@ footer {
             <span class="flag"><svg class="od-icon" viewBox="0 0 16 16" aria-hidden="true"><path d="M2.5 13.5v-3M6.5 13.5v-6M10.5 13.5v-9M14.5 13.5V1.5" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round"/></svg>xhigh</span>
             <span class="flag"><svg class="od-icon" viewBox="0 0 16 16" aria-hidden="true"><path d="M4.5 13.5v-3.5M9 13.5v-7.5M13.5 13.5v-11.5" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round"/></svg>high</span>
             <span class="flag"><svg class="od-icon" viewBox="0 0 16 16" aria-hidden="true"><path d="M6.5 13.5v-4.5M11.5 13.5v-10" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round"/></svg>medium</span>
-            <span class="flag"><svg class="od-icon" viewBox="0 0 16 16" aria-hidden="true"><path d="M9 13.5v-6" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round"/></svg>low</span>
           </div>
           <p>Полный цикл: ТЗ → критика → код → линза → судья, каждый этап на своём харнессе
           по <code>references/lineups.md</code>. Судья — если линза нашла <span class="pill">FIXES</span>
@@ -1074,6 +1073,7 @@ footer {
         <div class="mode">
           <span class="mode-tag">без линз</span>
           <div class="mode-flags">
+            <span class="flag"><svg class="od-icon" viewBox="0 0 16 16" aria-hidden="true"><path d="M9 13.5v-6" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round"/></svg>low</span>
             <span class="flag"><svg class="od-icon" viewBox="0 0 16 16" aria-hidden="true"><path d="M9 13.5v-6" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round"/></svg>xlow</span>
           </div>
           <p>Без ТЗ, критики и линз: сразу код, дальше судья — он единственная проверка. Флаг <code>RISK:</code> не читается. Третий заход без <span class="pill">PASS</span> — стоп, вопрос человеку.</p>
@@ -1350,8 +1350,8 @@ listik done &lt;id&gt; -r "коммит &lt;hash7&gt;"                  <span st
 <span style="color:#667080"># с номером карточки:</span>
 /listik-pipeline:high listik-abc1
 
-<span style="color:#667080"># режим — именем скила запуска: xhigh / high / medium / low — с линзами,
-# xlow — без ТЗ, критики и линз:</span>
+<span style="color:#667080"># режим — именем скила запуска: xhigh / high / medium — с линзами,
+# low и xlow — без ТЗ, критики и линз:</span>
 /listik-pipeline:xlow "…"</pre>
                   </div>
                   <div>
@@ -1410,8 +1410,8 @@ RISK: YES — &lt;reason in three words&gt;</pre>
                   <div>
                     <div class="mini-cap">критика</div>
                     <ul class="plain">
-                      <li><code>xhigh / high / medium / low</code> → критики из строки режима</li>
-                      <li><code>xlow</code> → критики нет</li>
+                      <li><code>xhigh / high / medium</code> → критики из строки режима</li>
+                      <li><code>low / xlow</code> → критики нет</li>
                       <li>критиков зовёт писатель: всех сразу, не больше двух заходов — второй, только если в первом были BLOCKER; субагент может звать субагентов и скилы</li>
                     </ul>
                   </div>
@@ -1437,7 +1437,7 @@ RISK: YES — &lt;reason in three words&gt;</pre>
               </div>
               <div class="role-meta">
                 <div class="meta-row"><span class="meta-k">скил</span><span class="meta-v">нет — зовётся снаружи</span></div>
-                <div class="meta-row"><span class="meta-k">агент</span><span class="meta-v">critic-&lt;суффикс&gt; + pi (xhigh: deepseek и glm, high: glm, medium: deepseek) · в low — только pi deepseek</span></div>
+                <div class="meta-row"><span class="meta-k">агент</span><span class="meta-v">critic-high (Sonnet, в xhigh и high) + pi deepseek и glm · в low/xlow — критики нет</span></div>
                 <div class="meta-row"><span class="meta-k">зовёт</span><span class="meta-v">оркестратор</span></div>
                 <div class="meta-row"><span class="meta-k">умеет</span><span class="meta-v">Read <span class="sep">·</span> Grep <span class="sep">·</span> Glob <span class="sep">·</span> Write (только файл рецензии)</span></div>
               </div>
@@ -1483,7 +1483,7 @@ RISK: YES — &lt;reason in three words&gt;</pre>
               </div>
               <div class="role-meta">
                 <div class="meta-row"><span class="meta-k">скил</span><span class="meta-v">listik-pipeline:implementer</span></div>
-                <div class="meta-row"><span class="meta-k">агент</span><span class="meta-v">implementer-&lt;суффикс&gt; · в low/xlow — devin</span></div>
+                <div class="meta-row"><span class="meta-k">агент</span><span class="meta-v">implementer-&lt;суффикс&gt; · в low — implementer-high · в xlow — devin</span></div>
                 <div class="meta-row"><span class="meta-k">зовёт</span><span class="meta-v">оркестратор</span></div>
                 <div class="meta-row"><span class="meta-k">умеет</span><span class="meta-v">Read <span class="sep">·</span> Write <span class="sep">·</span> Edit <span class="sep">·</span> Bash <span class="sep">·</span> Grep <span class="sep">·</span> Glob</span></div>
               </div>

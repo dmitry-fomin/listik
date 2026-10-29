@@ -26,7 +26,7 @@ listik routes --json | python3 -c 'import json,sys; d=json.load(sys.stdin); d=d.
 |  | pi deepseek | DeepSeek V4.1 Flash | high | скил `pi:pi-delegate --channel deepseek --thinking high` (зовёт писатель) |
 |  | pi glm | GLM 5.3 Flash | high | скил `pi:pi-delegate --channel glm --thinking high` (зовёт писатель) |
 | Код | claude | Opus 5.5 | xhigh | `Agent listik-pipeline:implementer-xhigh`, `model: opus` |
-| Линза | claude | Haiku 5.5 | max | `Agent listik-pipeline:lens-max`, `model: haiku` |
+| Линза | claude | Haiku 5.5 | xhigh | `Agent listik-pipeline:lens-xhigh`, `model: haiku` |
 | Судья | grok | Grok 4.7 | xhigh | `grok-companion.mjs task --write --model grok-4.7 --effort xhigh` |
 
 Правила потока — `${CLAUDE_PLUGIN_ROOT}/references/orchestrator.md`: читаешь его до первого действия, он единственный источник. Механика вызова ролей (задание, команды, окна) — `${CLAUDE_PLUGIN_ROOT}/references/lineups.md`. Тела ролей — в `${CLAUDE_PLUGIN_ROOT}/references/`: этот абсолютный путь и уходит внешнему харнессу.

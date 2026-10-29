@@ -1,7 +1,7 @@
 {
   "name": "listik-pipeline",
   "displayName": "Listik pipeline",
-  "version": "0.6.0",
+  "version": "0.7.0",
   "description": "Конвейер реализации: ТЗ → критика → код → независимая приёмка. Оркестратор — сессия Claude Code, роли — локальные субагенты и внешние харнессы (pi, devin, codex, grok) по раскладке режима.",
   "userConfig": {
     "auto_approve_agents": {

@@ -15,7 +15,7 @@ Claude Code и внешние харнессы раскладки режима (
 /listik-pipeline:xlow listik-abc1                # номер карточки Listik
 ```
 
-Режим задаёт скил запуска, флагов нет: `xhigh`, `high`, `medium`, `low` — ТЗ, критика, код, линза, судья; `xlow` — без ТЗ, критики и линз: код и судья.
+Режим задаёт скил запуска, флагов нет: `xhigh`, `high`, `medium` — ТЗ, критика, код, линза, судья; `low` и `xlow` — без ТЗ, критики и линз: код и судья (`low` — Opus high + Grok xhigh, `xlow` — devin + Grok high).
 
 ## Раскладка
 
@@ -61,7 +61,7 @@ listik-pipeline/
 │   ├── writer-{xhigh,high,medium,low}.md
 │   ├── critic-{xhigh,high,medium,low}.md
 │   ├── implementer-{xhigh,high,medium,low}.md
-│   ├── lens-{max,xhigh,high,medium,low}.md
+│   ├── lens-{xhigh,high,medium,low}.md
 │   └── judge-{xhigh,high,medium,low}.md
 ├── hooks/                # Автоодобрение команд ролей (настройка auto_approve_agents)
 │   ├── hooks.json
@@ -77,8 +77,8 @@ listik-pipeline/
     └── judge.md
 ```
 
-Текущая раскладка (`routes.json`) задействует `writer-*`, `critic-high`, `implementer-{xhigh,high,medium}` и
-`lens-max`; остальные варианты — запас под будущие маршруты.
+Текущая раскладка (`routes.json`) задействует `writer-{xhigh,high,medium}`, `critic-high`, `implementer-{xhigh,high,medium}` и
+`lens-{xhigh,high}`; остальные варианты — запас под будущие маршруты.
 
 ## Конвенции
 

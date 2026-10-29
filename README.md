@@ -87,10 +87,10 @@ MCP-инструментами `listik_*` или командой `listik new`. 
 
 | Маршрут | Скил | ТЗ | Критика | Реализация | Приёмка | Когда берут |
 |---|---|---|---|---|---|---|
-| `lp-xhigh` | `listik-pipeline:xhigh` | Opus xhigh | Sonnet + DeepSeek V4.1 Flash + GLM 5.3 Flash | Opus xhigh | линза Haiku 5.5 max → Grok xhigh | ошибка дороже прогона |
-| `lp-high` | `listik-pipeline:high` | Opus high | Sonnet + DeepSeek V4.1 Flash + GLM 5.3 Flash | Opus high | линза Haiku 5.5 max → Grok xhigh | расклад по умолчанию |
-| `lp-medium` | `listik-pipeline:medium` | Opus medium | DeepSeek V4.1 Flash + GLM 5.3 Flash | Opus medium | линза Haiku 5.5 max → Grok high | работа понятная |
-| `lp-low` | `listik-pipeline:low` | Opus low | GLM 5.3 Flash + DeepSeek V4.1 Flash | devin SWE-2 max | линза Haiku 5.5 max → Grok high | код вне квоты Max |
+| `lp-xhigh` | `listik-pipeline:xhigh` | Opus xhigh | Sonnet + DeepSeek V4.1 Flash + GLM 5.3 Flash | Opus xhigh | линза Haiku 5.5 xhigh → Grok xhigh | ошибка дороже прогона |
+| `lp-high` | `listik-pipeline:high` | Opus high | Sonnet + DeepSeek V4.1 Flash + GLM 5.3 Flash | Opus high | линза Haiku 5.5 high → Grok xhigh | расклад по умолчанию |
+| `lp-medium` | `listik-pipeline:medium` | Opus medium | DeepSeek V4.1 Flash + GLM 5.3 Flash | Opus medium | линза Haiku 5.5 high → Grok high | работа понятная |
+| `lp-low` | `listik-pipeline:low` | — | — | Opus high | Grok xhigh | небольшая задача, строгая приёмка |
 | `lp-xlow` | `listik-pipeline:xlow` | — | — | devin SWE-2 max | Grok high | один прогон с приёмкой |
 
 Схема конвейера и механика ролей — [plugins/listik-pipeline/README.md](plugins/listik-pipeline/README.md).

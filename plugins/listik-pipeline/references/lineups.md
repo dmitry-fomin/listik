@@ -58,7 +58,7 @@ REPLY: first line of your reply is exactly one word: <слова роли>; noth
 
 `REPLY:` — всегда последней строкой. Слова роли (`statuses.md`): писателю `READY, QUESTION, CANNOT` и `second line after READY: RISK: NO | RISK: YES — <reason>`; локальному критику `REVIEWED <path>, CANNOT`; исполнителю `DONE, CANNOT, QUESTION`; линзе и судье `PASS, FIXES, CANNOT`. Внешнему критику — `REPLY: the review itself, starting with its first ## section; no preface`.
 
-Исполнителю, линзе и судье `SPEC:` — файл порции `<id>.<X>.md`, `CHECKLIST:` — её `<id>.check-<X>.md`; критику `SPEC:` — ТЗ шага `<id>.spec.md`, без `CHECKLIST:` (порции он читает по ссылкам). Критику вместо `CARD:` — `REVIEW: <abs path к <id>.review-<критик>.md>`. Судье после находок линзы — ещё `LENS: <abs path к <id>.lens-<X>.md>`. В `xlow` ТЗ нет — вместо `SPEC:`/`CHECKLIST:` исполнителю и судье: `CHECK: acceptance карточки; нет его — тесты затронутых модулей, полный набор не запускать`.
+Исполнителю, линзе и судье `SPEC:` — файл порции `<id>.<X>.md`, `CHECKLIST:` — её `<id>.check-<X>.md`; критику `SPEC:` — ТЗ шага `<id>.spec.md`, без `CHECKLIST:` (порции он читает по ссылкам). Критику вместо `CARD:` — `REVIEW: <abs path к <id>.review-<критик>.md>`. Судье после находок линзы — ещё `LENS: <abs path к <id>.lens-<X>.md>`. В `low` и `xlow` ТЗ нет — вместо `SPEC:`/`CHECKLIST:` исполнителю и судье: `CHECK: acceptance карточки; нет его — тесты затронутых модулей, полный набор не запускать`.
 
 `WORKTREE:` — только исполнителю, линзе и судье. Критик работает в **основном дереве** (worktree создаётся на шаге 3, после критики): строка `WORKTREE:` в его задание не идёт, `--cwd` — корень репозитория.
 

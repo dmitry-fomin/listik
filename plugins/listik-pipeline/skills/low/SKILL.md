@@ -1,13 +1,13 @@
 ---
 name: low
-description: "Listik-pipeline, режим low: полный цикл — ТЗ, критика, код, линза, судья; роли уходят на харнессы по раскладке режима (критика и код — дешёвые каналы). Вызывай для небольшой задачи, которую всё равно надо провести через ТЗ и приёмку."
+description: "Listik-pipeline, режим low: без ТЗ, критики и линз — сразу код (Opus high) и судья (Grok xhigh). Вызывай для небольшой задачи, которую надо написать в worktree и принять строгой независимой проверкой."
 disable-model-invocation: true
 argument-hint: "<описание задачи или номер карточки Listik>"
 ---
 
 # Listik-pipeline · low
 
-Режим этого запуска — `low`: ТЗ, критика, код, линза и (при находках линзы или `RISK: YES`) судья.
+Режим этого запуска — `low`: писателя и критиков нет — сразу worktree, код и судья. Судья — единственная проверка, флаг `RISK:` не читается.
 
 ## Раскладка
 
@@ -21,13 +21,11 @@ listik routes --json | python3 -c 'import json,sys; d=json.load(sys.stdin); d=d.
 
 | Роль | Харнесс | Модель | Усилие | Вызов |
 | --- | --- | --- | --- | --- |
-| ТЗ | claude | Opus 5.5 | low | `Agent listik-pipeline:writer-low`, `model: opus` |
-| Критика | pi glm | GLM 5.3 Flash | high | скил `pi:pi-delegate --channel glm --thinking high` (зовёт писатель) |
-|  | pi deepseek | DeepSeek V4.1 Flash | high | скил `pi:pi-delegate --channel deepseek --thinking high` (зовёт писатель) |
-| Код | devin | SWE-2 | max | `devin-run.sh run --permission write --thinking max` |
-| Линза | claude | Haiku 5.5 | max | `Agent listik-pipeline:lens-max`, `model: haiku` |
-| Судья | grok | Grok 4.7 | high | `grok-companion.mjs task --write --model grok-4.7 --effort high` |
+| Код | claude | Opus 5.5 | high | `Agent listik-pipeline:implementer-high`, `model: opus` |
+| Судья | grok | Grok 4.7 | xhigh | `grok-companion.mjs task --write --model grok-4.7 --effort xhigh` |
+
+ТЗ, Критика, Линза — нет в этом режиме.
 
 Правила потока — `${CLAUDE_PLUGIN_ROOT}/references/orchestrator.md`: читаешь его до первого действия, он единственный источник. Механика вызова ролей (задание, команды, окна) — `${CLAUDE_PLUGIN_ROOT}/references/lineups.md`. Тела ролей — в `${CLAUDE_PLUGIN_ROOT}/references/`: этот абсолютный путь и уходит внешнему харнессу.
 
-Запуск скила — согласие автора на отправку задачи, ТЗ, чек-листа и диффа порции наружу (критикам и судье на другие харнессы). Коммит — всегда оркестратор.
+Запуск скила — согласие автора на отправку задачи и диффа порции наружу (судье на другой харнесс). Коммит — всегда оркестратор.

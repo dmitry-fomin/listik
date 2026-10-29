@@ -31,7 +31,7 @@
 
 Лишние поля на любом уровне — ошибка (защита от опечаток вроде `skil`). `validate`
 отдаёт записи в форме слоя базы: `kind="pipeline"`, `title`/`hint` — из `SKILL.md`
-режима (нет скила — `title` = ключ, `hint` = `""`), `visible=True`, `icon` — по ключу
+режима (нет скила — `title` = имя скила `skill`, `hint` = `""`), `visible=True`, `icon` — по ключу
 (`fallback_icon`), `command=None`.
 
 У записей в базе (не в файле) может быть `command` — argv запуска. В нём допустимы
@@ -351,7 +351,7 @@ def _validate_route(item, where: str) -> dict:
 
     info = skills.skill_info(key, plugin)
     return {"key": key, "kind": "pipeline", "plugin": plugin,
-            "title": info["title"] if info else key,
+            "title": info["title"] if info else skill,
             "hint": info["hint"] if info else "",
             "visible": True, "icon": fallback_icon(key), "command": None}
 

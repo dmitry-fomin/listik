@@ -123,11 +123,11 @@ class RepoRoutesFileTests(unittest.TestCase):
                                       "lp-xlow": "xlow"})
 
     def test_validates_without_skills_on_disk(self) -> None:
-        """Пункт 13a: машина без `plugins/` — файл проходит, title = ключ, hint пуст."""
+        """Пункт 13a: машина без `plugins/` — файл проходит, title = имя скила, hint пуст."""
         with tempfile.TemporaryDirectory() as tmp, \
                 mock.patch.object(skills_mod, "PIPELINE_PLUGINS_DIR", pathlib.Path(tmp)):
             normalized = {r["key"]: r for r in routes_mod.validate(self.raw)}
-        self.assertEqual(normalized["lp-high"]["title"], "lp-high")
+        self.assertEqual(normalized["lp-high"]["title"], "high")
         self.assertEqual(normalized["lp-high"]["hint"], "")
         self.assertEqual(normalized["lp-high"]["icon"], "high")
 
@@ -257,9 +257,9 @@ class ValidateTests(unittest.TestCase):
             "title": info["title"], "hint": info["hint"], "visible": True, "icon": "high",
             "command": None, "roles": {"implementer": IMPLEMENTER}})
 
-    def test_unknown_skill_on_disk_gets_key_as_title(self) -> None:
+    def test_unknown_skill_on_disk_gets_skill_as_title(self) -> None:
         record = routes_mod.validate(document(lp_record("nope")))[0]
-        self.assertEqual((record["title"], record["hint"], record["icon"]), ("lp-nope", "", None))
+        self.assertEqual((record["title"], record["hint"], record["icon"]), ("nope", "", None))
 
     def test_empty_roles_in_file_ok(self) -> None:
         """Пункт 12: `{}` в файле допустим — так бэкап пишет конвейер без ролей."""

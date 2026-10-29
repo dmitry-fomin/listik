@@ -632,13 +632,13 @@ class RouteCandidatesTests(TempDbTestCase):
         self.assertEqual(item["roles"], {"spec": "claude"})
 
     def test_sample_routes(self) -> None:
-        """Пункт 27: после ввоза `routes.json` у `lp-low` критики и исполнитель по порядку."""
+        """Пункт 27: после ввоза `routes.json` у `lp-medium` критики, у `lp-low` исполнитель по порядку."""
         with contextlib.redirect_stderr(io.StringIO()):
             routes_store.import_file(self.conn)
         items = {item["key"]: item
                  for item in assistant_mod.route_candidates(routes_store.list_routes(self.conn))}
-        self.assertEqual(items["lp-low"]["roles"]["critic"], ["glm", "deepseek"])
-        self.assertEqual(items["lp-low"]["roles"]["implementer"], ["swe-2"])
+        self.assertEqual(items["lp-medium"]["roles"]["critic"], ["deepseek", "glm"])
+        self.assertEqual(items["lp-low"]["roles"]["implementer"], ["opus"])
 
 
 if __name__ == "__main__":

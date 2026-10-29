@@ -35,9 +35,9 @@
         "lens": [
           {
             "harness": "claude",
-            "agent": "listik-pipeline:lens-max",
+            "agent": "listik-pipeline:lens-xhigh",
             "model": "haiku",
-            "effort": "max"
+            "effort": "xhigh"
           }
         ],
         "judge": [{ "harness": "grok", "model": "grok-4.7", "effort": "xhigh" }]
@@ -77,9 +77,9 @@
         "lens": [
           {
             "harness": "claude",
-            "agent": "listik-pipeline:lens-max",
+            "agent": "listik-pipeline:lens-high",
             "model": "haiku",
-            "effort": "max"
+            "effort": "high"
           }
         ],
         "judge": [{ "harness": "grok", "model": "grok-4.7", "effort": "xhigh" }]
@@ -113,9 +113,9 @@
         "lens": [
           {
             "harness": "claude",
-            "agent": "listik-pipeline:lens-max",
+            "agent": "listik-pipeline:lens-high",
             "model": "haiku",
-            "effort": "max"
+            "effort": "high"
           }
         ],
         "judge": [{ "harness": "grok", "model": "grok-4.7", "effort": "high" }]
@@ -126,30 +126,15 @@
       "plugin": "listik-pipeline",
       "skill": "low",
       "roles": {
-        "writer": [
-          {
-            "harness": "claude",
-            "agent": "listik-pipeline:writer-low",
-            "model": "opus",
-            "effort": "low"
-          }
-        ],
-        "critic": [
-          { "harness": "pi", "channel": "glm", "effort": "high" },
-          { "harness": "pi", "channel": "deepseek", "effort": "high" }
-        ],
         "implementer": [
-          { "harness": "devin", "model": "swe-2", "effort": "max" }
-        ],
-        "lens": [
           {
             "harness": "claude",
-            "agent": "listik-pipeline:lens-max",
-            "model": "haiku",
-            "effort": "max"
+            "agent": "listik-pipeline:implementer-high",
+            "model": "opus",
+            "effort": "high"
           }
         ],
-        "judge": [{ "harness": "grok", "model": "grok-4.7", "effort": "high" }]
+        "judge": [{ "harness": "grok", "model": "grok-4.7", "effort": "xhigh" }]
       }
     },
     {

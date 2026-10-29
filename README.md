@@ -92,6 +92,7 @@ MCP-инструментами `listik_*` или командой `listik new`. 
 | `lp-medium` | `listik-pipeline:medium` | Opus medium | DeepSeek V4.1 Flash + GLM 5.3 Flash | Opus medium | линза Haiku 5.5 high → Grok high | работа понятная |
 | `lp-low` | `listik-pipeline:low` | — | — | Opus high | Grok xhigh | небольшая задача, строгая приёмка |
 | `lp-xlow` | `listik-pipeline:xlow` | — | — | devin SWE-2 max | Grok high | один прогон с приёмкой |
+| `lp-devin` | `listik-pipeline:devin` | Opus medium | DeepSeek V4.1 Flash + GLM 5.3 Flash | devin SWE-2 max | Sonnet high | по ТЗ, но код дешевле Opus |
 
 Схема конвейера и механика ролей — [plugins/listik-pipeline/README.md](plugins/listik-pipeline/README.md).
 

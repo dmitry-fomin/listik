@@ -192,7 +192,7 @@ committed (see `.gitignore`).
 ## Project plugins (skills)
 
 The skills used to run this project's work live in this repo and are made exactly for it:
-- `plugins/listik-pipeline/` — the pipeline: mode skills `listik-pipeline:<mode>` (xhigh/high/medium/low/xlow, route keys `lp-<mode>`), role skills, agents `listik-pipeline:<role>-<effort>`, role bodies in `references/` and the agent auto-approve hook;
+- `plugins/listik-pipeline/` — the pipeline: mode skills `listik-pipeline:<mode>` (xhigh/high/medium/low/xlow/devin, route keys `lp-<mode>`), role skills, agents `listik-pipeline:<role>-<effort>`, role bodies in `references/` and the agent auto-approve hook;
 - `plugins/listik/` — the `listik:listik` task-protocol skill;
 - `plugins/dsh/` — DeepSeek Harness bridge (`dsh:dsh-delegate` and related skills);
 - `plugins/codex/` — OpenAI Codex CLI bridge (`codex:codex-delegate` and related skills);

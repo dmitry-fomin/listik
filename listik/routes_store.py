@@ -402,9 +402,12 @@ def _backup_stamp() -> str:
 
 
 def _backup_record(record: dict) -> dict:
-    """Запись `list_routes` в форме файла v2: ровно `key, plugin, skill, roles`."""
-    return {"key": record["key"], "plugin": record["plugin"], "skill": record["skill"],
-            "roles": record["roles"]}
+    """Запись `list_routes` в форме файла v2: `key, plugin, skill, roles` и `icon`, если он не тот, что по ключу."""
+    out = {"key": record["key"], "plugin": record["plugin"], "skill": record["skill"],
+           "roles": record["roles"]}
+    if record.get("icon") and record["icon"] != routes.fallback_icon(record["key"]):
+        out["icon"] = record["icon"]
+    return out
 
 
 def _backupable(record: dict) -> bool:
@@ -420,8 +423,8 @@ def _write_backup(conn: sqlite3.Connection) -> str:
     Занятое имя — суффикс `-2`, `-3`… Бэкап хранит только раскладки ролей `lp-*`
     (`_backupable`): рой, конвейеры без плагина и со старым плагином в него не
     попадают. Восстановление из него (`reimport(conn, <бэкап>)`) заново вычисляет
-    `title`/`hint` (из `SKILL.md`), `icon` (по ключу) и ставит `visible=true` — правки
-    этих полей на доске и скрытие (`--hide`) не возвращаются.
+    `title`/`hint` (из `SKILL.md`) и ставит `visible=true` — правки этих полей на доске
+    и скрытие (`--hide`) не возвращаются; `icon` бэкап хранит.
     """
     doc = {"version": routes.VERSION,
            "routes": [_backup_record(r) for r in list_routes(conn) if _backupable(r)]}
@@ -524,6 +527,7 @@ ROUTE_ADDITIONS: list[tuple[int, tuple[str, ...]]] = [
     (3, ("cc-xhigh", "cc-high", "cc-medium",
          "cc-low", "cc-xlow")),  # пресеты pipeline-cc (бывший claude-codex); пресет nano снят 09.10.2026
     (4, ("claude-xhigh", "claude-high")),  # пресеты pipeline-claude с линзами (listik-d9rj)
+    (5, ("lp-devin",)),  # Opus medium ТЗ → devin SWE-2 max → судья Sonnet high
 ]
 
 

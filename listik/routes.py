@@ -31,7 +31,8 @@
 
 Лишние поля на любом уровне — ошибка (защита от опечаток вроде `skil`). `validate`
 отдаёт записи в форме слоя базы: `kind="pipeline"`, `title`/`hint` — из `SKILL.md`
-режима (нет скила — `title` = имя скила `skill`, `hint` = `""`), `visible=True`, `icon` — по ключу
+режима (нет скила — `title` = имя скила `skill`, `hint` = `""`), `visible=True`, `icon` — из
+необязательного поля `icon` записи (уровень из `ROUTE_ICONS`), без него — по ключу
 (`fallback_icon`), `command=None`.
 
 У записей в базе (не в файле) может быть `command` — argv запуска. В нём допустимы
@@ -74,8 +75,8 @@ PLACEHOLDERS = ("task_id", "project", "route", "cwd", "worktree", "branch",
                 "stage", "role", "harness", "plugin", "skill")
 
 ROOT_FIELDS = ("version", "routes")
-#: Поля записи файла v2.
-RECORD_FIELDS = ("key", "plugin", "skill", "roles")
+#: Поля записи файла v2; `icon` необязателен.
+RECORD_FIELDS = ("key", "plugin", "skill", "roles", "icon")
 #: Поля ячейки роли маршрута `kind=swarm`: харнесс из каталога (`harnesses`),
 #: свой argv и свой промпт — последним аргументом. Пустая ячейка (роль не задана)
 #: — этап пропускается.
@@ -349,11 +350,15 @@ def _validate_route(item, where: str) -> dict:
         raise _err(f"{where}.key",
                    f"у плагина {plugin} ключ — {prefix}-<skill> (ожидается {expected!r})")
 
+    icon = item.get("icon")
+    if icon is not None and icon not in ROUTE_ICONS:
+        raise _err(f"{where}.icon", "допустимы " + ", ".join(ROUTE_ICONS))
+
     info = skills.skill_info(key, plugin)
     return {"key": key, "kind": "pipeline", "plugin": plugin,
             "title": info["title"] if info else skill,
             "hint": info["hint"] if info else "",
-            "visible": True, "icon": fallback_icon(key), "command": None}
+            "visible": True, "icon": icon or fallback_icon(key), "command": None}
 
 
 def validate(obj, warnings: list[str] | None = None) -> list[dict]:

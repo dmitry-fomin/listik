@@ -15,7 +15,7 @@ Claude Code и внешние харнессы раскладки режима (
 /listik-pipeline:xlow listik-abc1                # номер карточки Listik
 ```
 
-Режим задаёт скил запуска, флагов нет: `xhigh`, `high`, `medium` — ТЗ, критика, код, линза, судья; `low` и `xlow` — без ТЗ, критики и линз: код и судья (`low` — Opus high + Grok xhigh, `xlow` — devin + Grok high).
+Режим задаёт скил запуска, флагов нет: `xhigh`, `high`, `medium` — ТЗ, критика, код, линза, судья; `low` и `xlow` — без ТЗ, критики и линз: код и судья (`low` — Opus high + Grok xhigh, `xlow` — devin + Grok high). `devin` — ТЗ Opus medium и критика как в `medium`, код devin, без линзы, судья Sonnet high.
 
 ## Раскладка
 

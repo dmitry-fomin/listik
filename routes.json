@@ -147,6 +147,37 @@
         ],
         "judge": [{ "harness": "grok", "model": "grok-4.7", "effort": "high" }]
       }
+    },
+    {
+      "key": "lp-devin",
+      "plugin": "listik-pipeline",
+      "skill": "devin",
+      "icon": "low",
+      "roles": {
+        "writer": [
+          {
+            "harness": "claude",
+            "agent": "listik-pipeline:writer-medium",
+            "model": "opus",
+            "effort": "medium"
+          }
+        ],
+        "critic": [
+          { "harness": "pi", "channel": "deepseek", "effort": "high" },
+          { "harness": "pi", "channel": "glm", "effort": "high" }
+        ],
+        "implementer": [
+          { "harness": "devin", "model": "swe-2", "effort": "max" }
+        ],
+        "judge": [
+          {
+            "harness": "claude",
+            "agent": "listik-pipeline:judge-high",
+            "model": "sonnet",
+            "effort": "high"
+          }
+        ]
+      }
     }
   ]
 }

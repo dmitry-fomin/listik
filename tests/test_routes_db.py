@@ -167,13 +167,13 @@ class ShippedAdditionsTests(RoutesDbTestCase):
             self.assertEqual(routes_store.add_shipped(self.conn), [])
         self.assertEqual([r["key"] for r in routes_store.list_routes(self.conn)], EXPECTED_KEYS)
 
-    def test_additions_numbering_and_claude_presets_last(self) -> None:
-        """listik-d9rj, порция f: номера строго растут, последняя запись — пресеты pipeline-claude."""
+    def test_additions_numbering_and_devin_last(self) -> None:
+        """Номера строго растут, последняя запись — конвейер lp-devin."""
         numbers = [number for number, _ in routes_store.ROUTE_ADDITIONS]
         self.assertEqual(numbers, sorted(set(numbers)), "номера не растут строго или повторяются")
         self.assertEqual(routes_store.ROUTE_ADDITIONS[-1][0], max(numbers))
         self.assertEqual(numbers[-1], numbers[-2] + 1)
-        self.assertEqual(routes_store.ROUTE_ADDITIONS[-1][1], ("claude-xhigh", "claude-high"))
+        self.assertEqual(routes_store.ROUTE_ADDITIONS[-1][1], ("lp-devin",))
 
     def test_fresh_import_only_marks(self) -> None:
         with self.patch_paths(source=ROUTES_JSON), contextlib.redirect_stderr(io.StringIO()):
@@ -404,7 +404,8 @@ class ReimportKeepsUserRoutesTests(RoutesDbTestCase):
         self.assertEqual(doc["version"], 2)
         self.assertEqual([r["key"] for r in doc["routes"]], EXPECTED_KEYS)
         for record in doc["routes"]:
-            self.assertEqual(list(record), ["key", "plugin", "skill", "roles"], record["key"])
+            extra = ["icon"] if record["key"] == "lp-devin" else []
+            self.assertEqual(list(record), ["key", "plugin", "skill", "roles", *extra], record["key"])
             self.assertEqual(record["roles"], self.before[record["key"]]["roles"])
         with contextlib.redirect_stderr(io.StringIO()):
             state = routes_mod.load(report["backup"])
@@ -424,8 +425,10 @@ class ReimportKeepsUserRoutesTests(RoutesDbTestCase):
         for key in ("dsh", "my-flow", "full-high", *self.KEPT):
             self.assertNotIn(key, keys)
         for record in doc["routes"]:
-            self.assertEqual(list(record), ["key", "plugin", "skill", "roles"])
+            extra = ["icon"] if record["key"] == "lp-devin" else []
+            self.assertEqual(list(record), ["key", "plugin", "skill", "roles", *extra])
         self.reimport(report["backup"])
+        self.assertEqual(routes_store.get_route(self.conn, "lp-devin")["icon"], "low")
         record = routes_store.get_route(self.conn, "lp-low")
         self.assertEqual(record["roles"], roles)
         self.assertIs(record["visible"], True)

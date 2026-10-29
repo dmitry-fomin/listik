@@ -45,7 +45,7 @@ ROUTE_LEVEL_RE = re.compile(r"value: '([a-z0-9-]+)'")
 ROUTE_GLYPH_RE = re.compile(r"icon: '([a-z0-9-]+)'")
 
 # Порядок записей в routes.json — он же порядок строк формы «Новая задача».
-EXPECTED_KEYS = ["lp-xhigh", "lp-high", "lp-medium", "lp-low", "lp-xlow"]
+EXPECTED_KEYS = ["lp-xhigh", "lp-high", "lp-medium", "lp-low", "lp-xlow", "lp-devin"]
 
 # Таблицы маршрутов, зашитые в доске до шага 09, порции c: их заменил ответ API.
 REMOVED_TS_TABLES = ("PIPELINES", "DIRECT_HARNESSES")
@@ -91,7 +91,9 @@ class RepoRoutesFileTests(unittest.TestCase):
     def test_records_are_exactly_v2_fields(self) -> None:
         for raw in self.raw["routes"]:
             with self.subTest(key=raw["key"]):
-                self.assertEqual(list(raw), ["key", "plugin", "skill", "roles"])
+                # `icon` — только там, где уровень не вывести из ключа (lp-devin).
+                extra = ["icon"] if raw["key"] == "lp-devin" else []
+                self.assertEqual(list(raw), ["key", "plugin", "skill", *extra, "roles"])
                 self.assertEqual(raw["plugin"], "listik-pipeline")
                 self.assertEqual(raw["key"], "lp-" + raw["skill"])
 
@@ -120,7 +122,7 @@ class RepoRoutesFileTests(unittest.TestCase):
         normalized = {r["key"]: r["icon"] for r in routes_mod.validate(self.raw)}
         self.assertEqual(normalized, {"lp-xhigh": "xhigh", "lp-high": "high",
                                       "lp-medium": "medium", "lp-low": "low",
-                                      "lp-xlow": "xlow"})
+                                      "lp-xlow": "xlow", "lp-devin": "low"})
 
     def test_validates_without_skills_on_disk(self) -> None:
         """Пункт 13a: машина без `plugins/` — файл проходит, title = имя скила, hint пуст."""
@@ -181,11 +183,18 @@ class ValidateTests(unittest.TestCase):
     def test_v1_fields_are_extra(self) -> None:
         """Пункт 9: поля записи v1 и старых бэкапов — `лишнее поле`."""
         for name, value in (("kind", "pipeline"), ("title", "x"), ("hint", ""),
-                            ("visible", True), ("icon", "high"), ("command", ["true"]),
+                            ("visible", True), ("command", ["true"]),
                             ("driver", "skill"), ("strip", {}), ("visble", True)):
             with self.subTest(field=name):
                 self.assertEqual(self.error(document(lp_record(**{name: value}))),
                                  f"routes[0].{name}: лишнее поле")
+
+    def test_icon_field(self) -> None:
+        """`icon` записи главнее уровня по ключу; не из набора — ошибка."""
+        record = routes_mod.validate(document(lp_record("devin", icon="low")))[0]
+        self.assertEqual(record["icon"], "low")
+        self.assertEqual(self.error(document(lp_record(icon="turbo"))),
+                         "routes[0].icon: допустимы xhigh, high, medium, low, xlow, direct")
 
     def test_extra_field_goes_before_other_errors(self) -> None:
         record = lp_record(key="Bad", plugin=None, kind="pipeline")
@@ -371,7 +380,7 @@ class PluginFieldTests(unittest.TestCase):
         self.assertEqual(str(ctx.exception), "routes[2].plugin: поле только у kind=pipeline")
 
     def test_record_fields(self) -> None:
-        self.assertEqual(routes_mod.RECORD_FIELDS, ("key", "plugin", "skill", "roles"))
+        self.assertEqual(routes_mod.RECORD_FIELDS, ("key", "plugin", "skill", "roles", "icon"))
 
     def test_substitute_plugin_and_skill(self) -> None:
         self.assertEqual(launcher._substitute("/{plugin}:{skill}",

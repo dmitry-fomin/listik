@@ -1,0 +1,311 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1440" height="850" viewBox="0 0 1440 850" font-family="system-ui, -apple-system, 'Segoe UI', sans-serif">
+  <defs>
+    <marker id="a" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse">
+      <path d="M0,0 L10,5 L0,10 z" fill="#555"/>
+    </marker>
+    <style>
+      .lane-label { font-size: 13px; font-weight: 600; fill: #444; }
+      .t { font-size: 13px; font-weight: 700; fill: #222; text-anchor: middle; }
+      .s, .data { font-size: 12px; fill: #333; text-anchor: middle; }
+      .data { display: none; fill: #A3271B; }
+      .l { font-size: 11px; fill: #666; }
+      .arr { fill: none; stroke: #555; stroke-width: 1.5; marker-end: url(#a); }
+      .dash { stroke-dasharray: 5 4; }
+      .human { fill: #FFF4DE; stroke: #D99A1E; stroke-width: 2; }
+      .llm { fill: #E8F0FE; stroke: #4A78C2; stroke-width: 1.5; }
+      .worker { fill: #EEF4EA; stroke: #5E8C4A; stroke-width: 1.5; }
+      .bot { fill: #E6F5FA; stroke: #2C8FB5; stroke-width: 1.5; }
+      .note { fill: #fff; stroke: #999; stroke-width: 1.2; stroke-dasharray: 5 4; }
+      rect.end { fill: #fff; stroke: #555; stroke-width: 2; }
+      .et { font-size: 12px; font-weight: 700; fill: #222; text-anchor: middle; }
+      path.msg, .fold { fill: #fff; stroke: #555; stroke-width: 1.2; }
+      .fold { fill: none; }
+      .m { font-size: 12px; fill: #333; text-anchor: middle; }
+      .q { cursor: help; }
+      .q circle { fill: #fff; stroke: #555; stroke-width: 1.2; }
+      .q text { font-size: 11px; font-weight: 700; fill: #444; text-anchor: middle; }
+      [data-off] rect, rect[data-off] { fill: #F4F4F4; stroke: #B5B5B5; stroke-dasharray: none; }
+      [data-off] text { fill: #888; }
+    </style>
+  </defs>
+
+  <text x="20" y="32" font-size="18" font-weight="700" fill="#222">Listik — задача → база → агенты по этапам → код в main</text>
+
+  <!-- дорожки -->
+  <rect x="0" y="50" width="1440" height="110" fill="#FAFAFA"/>
+  <rect x="0" y="160" width="1440" height="110" fill="#FFFFFF"/>
+  <rect x="0" y="270" width="1440" height="110" fill="#FAFAFA"/>
+  <rect x="0" y="380" width="1440" height="110" fill="#FFFFFF"/>
+  <rect x="0" y="490" width="1440" height="110" fill="#FAFAFA"/>
+  <rect x="0" y="600" width="1440" height="110" fill="#FFFFFF"/>
+  <rect x="0" y="710" width="1440" height="100" fill="#FAFAFA"/>
+  <line x1="120" y1="50" x2="120" y2="810" stroke="#ddd"/>
+  <text class="lane-label" x="14" y="100">Человек</text><text class="lane-label" x="14" y="117">(владелец)</text>
+  <text class="lane-label" x="14" y="210">Доска</text><text class="lane-label" x="14" y="227">в браузере</text>
+  <text class="lane-label" x="14" y="320">Сервер</text><text class="lane-label" x="14" y="337">→ в базу</text>
+  <text class="lane-label" x="14" y="430">CLI и MCP</text><text class="lane-label" x="14" y="447">Listik</text>
+  <text class="lane-label" x="14" y="540">Агенты</text><text class="lane-label" x="14" y="557">(харнессы)</text>
+  <text class="lane-label" x="14" y="650">Рой</text><text class="lane-label" x="14" y="667">(фон, 30 с)</text>
+  <text class="lane-label" x="14" y="755">Git проекта</text><text class="lane-label" x="14" y="772">и арбитр</text>
+  <g class="q"><circle cx="100" cy="536" r="7"/><text x="100" y="540">?</text>
+    <title>Чужие CLI-агенты, которых Listik запускает по маршруту карточки: Claude Code, Codex, pi, devin, Grok, dsh, opencode. Каждая роль (ТЗ, критика, код, приёмка) — свой харнесс и модель. С Listik они говорят только командами CLI или MCP.</title></g>
+  <g class="q"><circle cx="100" cy="646" r="7"/><text x="100" y="650">?</text>
+    <title>Фоновый процесс listik-swarm при сервере: сам запускает готовые задачи по маршруту и после волны вливает их ветки в main. Экспериментальный, по умолчанию выключен (listik swarm on).</title></g>
+
+  <!-- стрелки -->
+  <g data-in="swarm">
+    <path class="arr" d="M220,137 V291"/>
+    <text class="l" x="226" y="205">новая задача</text>
+  </g>
+  <g data-in="swarm">
+    <path class="arr" d="M220,357 V621"/>
+    <text class="l" x="226" y="440">рой читает очередь</text>
+  </g>
+  <g data-in="swarm">
+    <path class="arr" d="M290,623 V545 H338"/>
+    <text class="l" x="234" y="580">запуск</text>
+  </g>
+  <g data-in="swarm ask offline fail">
+    <path class="arr" d="M430,513 V469"/>
+    <text class="l" x="436" y="495">команды</text>
+  </g>
+  <g data-in="swarm ask">
+    <path class="arr" d="M430,403 V359"/>
+    <text class="l" x="436" y="385">по HTTP</text>
+  </g>
+  <g data-in="offline">
+    <path class="arr dash" d="M520,435 H548"/>
+  </g>
+  <g data-in="swarm ask">
+    <path class="arr" d="M430,293 V249"/>
+    <text class="l" x="436" y="275">события</text>
+  </g>
+  <g data-in="ask">
+    <path class="arr" d="M520,215 H640 V139"/>
+    <text class="l" x="560" y="209">вопрос</text>
+  </g>
+  <g data-in="ask">
+    <path class="arr" d="M700,139 V325 H522"/>
+    <text class="l" x="706" y="205">ответ</text>
+  </g>
+  <g data-in="swarm">
+    <path class="arr" d="M310,655 H968"/>
+    <text class="l" x="560" y="649">волна закончилась: никто не работает</text>
+  </g>
+  <g data-in="swarm fail">
+    <path class="arr" d="M1060,687 V731"/>
+    <text class="l" x="1066" y="713">по одной ветке</text>
+  </g>
+  <g data-in="swarm">
+    <path class="arr" d="M1150,765 H1178"/>
+  </g>
+  <!-- сбои -->
+  <g data-in="fail">
+    <path class="arr" d="M520,530 H865 V476"/>
+    <text class="l" x="560" y="524">харнесс не запустился</text>
+  </g>
+  <g data-in="fail">
+    <path class="arr" d="M520,562 H968"/>
+    <text class="l" x="760" y="556">судья: не принято</text>
+  </g>
+  <g data-in="fail">
+    <path class="arr" d="M520,345 H758"/>
+    <text class="l" x="540" y="369">нет отметок</text>
+  </g>
+  <g data-in="fail">
+    <path class="arr" d="M520,240 H758"/>
+    <text class="l" x="560" y="258">сервер не отвечает</text>
+  </g>
+  <g data-in="fail">
+    <path class="arr" d="M1150,640 H1178"/>
+  </g>
+  <g data-in="fail">
+    <path class="arr" d="M970,750 H732"/>
+    <text class="l" x="790" y="744">конфликт при rebase</text>
+  </g>
+  <g data-in="fail">
+    <path class="arr" d="M730,782 H968"/>
+    <text class="l" x="790" y="776">разрешён</text>
+  </g>
+  <g data-in="fail">
+    <path class="arr" d="M550,765 H342"/>
+    <text class="l" x="400" y="759">не справился</text>
+  </g>
+
+  <g class="end" data-in="swarm">
+    <rect class="end" x="1180" y="747" width="150" height="36" rx="18"/>
+    <text class="et" x="1255" y="769">Итог: код в main</text>
+  </g>
+
+  <!-- блоки -->
+  <g class="node" data-id="s1" data-in="swarm">
+    <rect class="human" x="130" y="73" width="180" height="64" rx="8"/>
+    <text class="t" x="220" y="96">1. Завести задачу</text>
+    <text class="s" x="220" y="113">доска, CLI или MCP:</text>
+    <text class="s" x="220" y="128">проект, маршрут, ТЗ</text>
+    <text class="data" x="220" y="113">текст задачи,</text>
+    <text class="data" x="220" y="128">путь к ТЗ → в базу</text>
+  </g>
+
+  <g class="node" data-id="s7a" data-in="ask">
+    <rect class="human" x="550" y="73" width="180" height="64" rx="8"/>
+    <text class="t" x="640" y="96">7а. Ответить агенту</text>
+    <text class="s" x="640" y="113">ответ, подтвердить</text>
+    <text class="s" x="640" y="128">блокер или отпустить</text>
+    <text class="data" x="640" y="113">ответ комментарием</text>
+    <text class="data" x="640" y="128">→ в базу</text>
+  </g>
+
+  <g class="node" data-id="s7" data-in="swarm ask fail">
+    <rect class="bot" x="340" y="183" width="180" height="64" rx="8"/>
+    <text class="t" x="430" y="206">7. Лента и «Нужен ты»</text>
+    <text class="s" x="430" y="223">кто взял, этап, итог;</text>
+    <text class="s" x="430" y="238">колонка вопросов к вам</text>
+    <text class="data" x="430" y="223">события из базы</text>
+    <text class="data" x="430" y="238">→ браузер по токену</text>
+  </g>
+
+  <g class="node" data-id="s2" data-in="swarm">
+    <rect class="llm" x="130" y="293" width="180" height="64" rx="8"/>
+    <text class="t" x="220" y="316">2. Записать карточку</text>
+    <text class="s" x="220" y="333">открыта, этап ТЗ,</text>
+    <text class="s" x="220" y="348">связи и блокеры</text>
+    <text class="data" x="220" y="333">карточка и связи</text>
+    <text class="data" x="220" y="348">→ в базу</text>
+  </g>
+
+  <g class="node" data-id="s6" data-in="swarm ask fail">
+    <rect class="llm" x="340" y="293" width="180" height="64" rx="8"/>
+    <text class="t" x="430" y="316">6. Проверить, записать</text>
+    <text class="s" x="430" y="333">блокеры, занятое дерево;</text>
+    <text class="s" x="430" y="348">этап, журнал, держатель</text>
+    <text class="data" x="430" y="333">журнал и события</text>
+    <text class="data" x="430" y="348">→ в базу</text>
+  </g>
+
+  <g class="node" data-id="s5" data-in="swarm ask offline fail">
+    <rect class="llm" x="340" y="403" width="180" height="64" rx="8"/>
+    <text class="t" x="430" y="426">5. Команда Listik</text>
+    <text class="s" x="430" y="443">сервер жив — по HTTP,</text>
+    <text class="s" x="430" y="458">иначе прямо в базу</text>
+    <text class="data" x="430" y="443">этап, журнал, вердикт</text>
+    <text class="data" x="430" y="458">→ сервер</text>
+  </g>
+
+  <g class="node" data-id="s5a" data-in="offline">
+    <rect class="llm" x="550" y="403" width="180" height="64" rx="8"/>
+    <text class="t" x="640" y="426">5а. Прямо в базу</text>
+    <text class="s" x="640" y="443">те же правила,</text>
+    <text class="s" x="640" y="458">только без сервера</text>
+    <text class="data" x="640" y="443">запись в базу</text>
+    <text class="data" x="640" y="458">напрямую</text>
+  </g>
+
+  <g class="node" data-id="s4" data-in="swarm ask offline fail">
+    <rect class="worker" x="340" y="513" width="180" height="64" rx="8"/>
+    <text class="t" x="430" y="536">4. Агент ведёт этап</text>
+    <text class="s" x="430" y="553">ТЗ → критика → код →</text>
+    <text class="s" x="430" y="568">приёмка, роли маршрута</text>
+    <text class="data" x="430" y="553">код и ТЗ — в дереве</text>
+    <text class="data" x="430" y="568">задачи, не в базе</text>
+  </g>
+
+  <g class="node" data-id="s3" data-in="swarm">
+    <rect class="llm" x="130" y="623" width="180" height="64" rx="8"/>
+    <text class="t" x="220" y="646">3. Рой берёт готовое</text>
+    <text class="s" x="220" y="663">никем не взятые и не</text>
+    <text class="s" x="220" y="678">ждущие других задач</text>
+    <text class="data" x="220" y="663">читает очередь</text>
+    <text class="data" x="220" y="678">через CLI</text>
+  </g>
+
+  <g class="node" data-id="s8" data-in="swarm fail">
+    <rect class="llm" x="970" y="623" width="180" height="64" rx="8"/>
+    <text class="t" x="1060" y="646">8. Влить в main</text>
+    <text class="s" x="1060" y="663">готовые ветки по одной,</text>
+    <text class="s" x="1060" y="678">потом тесты проекта</text>
+    <text class="data" x="1060" y="663">отметка «влито»</text>
+    <text class="data" x="1060" y="678">→ журнал задачи</text>
+  </g>
+
+  <g class="node" data-id="s9a" data-in="fail">
+    <rect class="worker" x="550" y="733" width="180" height="64" rx="8"/>
+    <text class="t" x="640" y="756">9а. Модель-арбитр</text>
+    <text class="s" x="640" y="773">только конфликт</text>
+    <text class="s" x="640" y="788">при переносе ветки</text>
+    <text class="data" x="640" y="773">конфликтные файлы</text>
+    <text class="data" x="640" y="788">→ модель-арбитр</text>
+  </g>
+
+  <g class="node" data-id="s9" data-in="swarm fail">
+    <rect class="worker" x="970" y="733" width="180" height="64" rx="8"/>
+    <text class="t" x="1060" y="756">9. Ветка → main</text>
+    <text class="s" x="1060" y="773">rebase и слияние,</text>
+    <text class="s" x="1060" y="788">дерево задачи удалить</text>
+    <text class="data" x="1060" y="773">код проекта</text>
+    <text class="data" x="1060" y="788">→ main, без пуша</text>
+  </g>
+
+  <!-- сбои -->
+  <g class="node" data-id="f2" data-in="fail">
+    <rect class="note" x="760" y="286" width="210" height="78" rx="8"/>
+    <text class="s" x="865" y="310">Держатель не отмечается:</text>
+    <text class="s" x="865" y="326">через 24 ч карточка «молчит»;</text>
+    <text class="s" x="865" y="342">другой её не возьмёт, пока</text>
+    <text class="s" x="865" y="358">человек не отпустит</text>
+  </g>
+
+  <g class="node" data-id="f6" data-in="fail">
+    <rect class="note" x="760" y="176" width="210" height="78" rx="8"/>
+    <text class="s" x="865" y="200">Сервер не отвечает:</text>
+    <text class="s" x="865" y="216">доска не обновляется; агенты</text>
+    <text class="s" x="865" y="232">пишут прямо в базу, всё видно</text>
+    <text class="s" x="865" y="248">после перезапуска сервера</text>
+  </g>
+
+  <g class="node" data-id="f1" data-in="fail">
+    <rect class="note" x="760" y="396" width="210" height="78" rx="8"/>
+    <text class="s" x="865" y="420">Харнесс роли недоступен:</text>
+    <text class="s" x="865" y="436">конвейер стоп, без подмены;</text>
+    <text class="s" x="865" y="452">карточка — в «Нужен ты»</text>
+  </g>
+
+  <g class="node" data-id="f3" data-in="fail">
+    <rect class="note" x="970" y="506" width="210" height="78" rx="8"/>
+    <text class="s" x="1075" y="530">Судья не принял:</text>
+    <text class="s" x="1075" y="546">задача снова у исполнителя,</text>
+    <text class="s" x="1075" y="562">с замечаниями в журнале</text>
+  </g>
+
+  <g class="node" data-id="f4" data-in="fail">
+    <rect class="note" x="1180" y="616" width="210" height="78" rx="8"/>
+    <text class="s" x="1285" y="640">Тесты красные или не заданы:</text>
+    <text class="s" x="1285" y="656">стоп-карточка — рой проекта</text>
+    <text class="s" x="1285" y="672">не вливает и не запускает,</text>
+    <text class="s" x="1285" y="688">пока её не закроют</text>
+  </g>
+
+  <g class="node" data-id="f5" data-in="fail">
+    <rect class="note" x="130" y="721" width="210" height="78" rx="8"/>
+    <text class="s" x="235" y="745">Арбитр не справился:</text>
+    <text class="s" x="235" y="761">перенос откачен, задача</text>
+    <text class="s" x="235" y="777">не влита, вопрос — в «Нужен</text>
+    <text class="s" x="235" y="793">ты»; остальные вливаются</text>
+  </g>
+
+  <!-- легенда -->
+  <rect class="human" x="130" y="825" width="22" height="14" rx="3"/>
+  <text class="l" x="160" y="836">действие человека</text>
+  <rect class="bot" x="280" y="825" width="22" height="14" rx="3"/>
+  <text class="l" x="310" y="836">доска: что видит человек</text>
+  <rect class="llm" x="470" y="825" width="22" height="14" rx="3"/>
+  <text class="l" x="500" y="836">код Listik: сервер, CLI, рой</text>
+  <rect class="worker" x="685" y="825" width="22" height="14" rx="3"/>
+  <text class="l" x="715" y="836">чужая программа по команде Listik</text>
+  <path class="arr dash" d="M930,832 H970"/>
+  <text class="l" x="980" y="836">другой сценарий</text>
+  <rect class="note" x="1090" y="825" width="22" height="14" rx="3"/>
+  <text class="l" x="1120" y="836">сбой и что будет</text>
+  <rect class="end" x="1235" y="825" width="22" height="14" rx="7"/>
+  <text class="l" x="1265" y="836">итог пути</text>
+</svg>

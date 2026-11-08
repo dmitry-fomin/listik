@@ -2496,13 +2496,17 @@ def cmd_stats(args) -> int:
     print("по статусам:  " + ", ".join(f"{k}={v}" for k, v in res["by_status"].items()))
     print("по этапам:    " + ", ".join(f"{k}={v}" for k, v in res["by_stage"].items()))
     print(f"нужен человек: {res['needs_owner']}   брошено: {res['stale']}")
-    print("\nпроекты:")
-    for p in res["by_project"][:20]:
-        print(f"  {p['total']:4d}  в работе {p['in_progress']:2d}  ждут {p['waiting']:2d}  {p['project']}")
-    print("\nдержат прямо сейчас:")
-    for h in res["by_holder"]:
-        if h["holder"] != "—":
-            print(f"  {h['count']:4d}  {h['title']} ({h['holder']})")
+    # живые = открытые: by_project/by_holder в ответе построены по OPEN_STATUSES
+    if not res["by_project"]:
+        print("\nживых задач нет")
+    else:
+        print("\nпроекты:")
+        for p in res["by_project"][:20]:
+            print(f"  {p['total']:4d}  в работе {p['in_progress']:2d}  ждут {p['waiting']:2d}  {p['project']}")
+        print("\nдержат прямо сейчас:")
+        for h in res["by_holder"]:
+            if h["holder"] != "—":
+                print(f"  {h['count']:4d}  {h['title']} ({h['holder']})")
     if res["running"]:
         print("\nчто в работе:")
         for t in res["running"][:25]:

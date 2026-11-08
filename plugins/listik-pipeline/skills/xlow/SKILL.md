@@ -1,7 +1,6 @@
 ---
 name: xlow
 description: "Listik-pipeline, режим xlow: без ТЗ, критики и линз — сразу код и судья. Вызывай для небольшой задачи, которую надо написать в worktree и принять независимой проверкой."
-disable-model-invocation: true
 argument-hint: "<описание задачи или номер карточки Listik>"
 ---
 

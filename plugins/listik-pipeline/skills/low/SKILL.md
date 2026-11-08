@@ -1,7 +1,6 @@
 ---
 name: low
 description: "Listik-pipeline, режим low: без ТЗ, критики и линз — сразу код (Opus high) и судья (Grok xhigh). Вызывай для небольшой задачи, которую надо написать в worktree и принять строгой независимой проверкой."
-disable-model-invocation: true
 argument-hint: "<описание задачи или номер карточки Listik>"
 ---
 

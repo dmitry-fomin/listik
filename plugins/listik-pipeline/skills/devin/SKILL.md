@@ -1,7 +1,6 @@
 ---
 name: devin
 description: "Listik-pipeline, режим devin: ТЗ и критика, код пишет devin, принимает судья Sonnet — без линзы. Вызывай для обычной задачи, которую надо провести через ТЗ и критику и отдать в код devin."
-disable-model-invocation: true
 argument-hint: "<описание задачи или номер карточки Listik>"
 ---
 

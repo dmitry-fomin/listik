@@ -1,3 +1,12 @@
+---
+id: listik-pipeline
+type: submodule-design
+title: Конвейер listik-pipeline — роли, станции и режимы
+status: draft
+parent: listik-plugins
+tags: [pipeline, agents]
+---
+
 # listik-pipeline
 
 Конвейер реализации задачи: ТЗ → критика ТЗ → код → приёмка. Оркестратором работает **сессия Claude Code**, а роли — **локальные субагенты и внешние харнессы**: плагины `pi`, `devin`, `codex` и отдельно ставимый `grok`.

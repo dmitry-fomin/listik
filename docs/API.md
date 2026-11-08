@@ -1,3 +1,12 @@
+---
+id: listik-api
+type: module-design
+title: Контракт данных и API Listik
+status: draft
+parent: listik-arch
+tags: [api, contract]
+---
+
 # Listik — API и модель задачи
 
 ## Что это

@@ -8,7 +8,9 @@ Listik: one server, one SQLite database, one API — a task tracker plus
 long-term memory with hybrid (full-text + vector) search, used across all of Дмитрий's projects.
 `bin/listik` is both the CLI and the API client. `README.md` has the full command reference;
 `docs/API.md` is the authoritative data/endpoint contract — read it before changing task/comment/dep
-behavior. For the day-to-day task-tracking commands (`claim`/`heartbeat`/`stage`/`comment`/`done`)
+behavior. Intent, boundaries and decisions live in the spec graph: `goal-and-requirements.md`,
+`architecture.md`, `specs/` (one spec per module). For the day-to-day task-tracking commands
+(`claim`/`heartbeat`/`stage`/`comment`/`done`)
 used while working *any* task, see `AGENTS.md` — this file covers code architecture instead.
 
 ## Commands
